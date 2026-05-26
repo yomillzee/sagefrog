@@ -31,3 +31,11 @@ class TestTokenResponse(BaseModel):
     message: str
     token_expires_at: str | None = None
     error: str | None = None
+
+
+class CredsFingerprintResponse(BaseModel):
+    client_id: dict | None = None
+    client_id_looks_valid: bool = False
+    client_secret: dict | None = None
+    refresh_token: dict | None = None
+    refresh_token_looks_valid: bool = False

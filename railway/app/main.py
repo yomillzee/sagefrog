@@ -6,12 +6,13 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 
 import google_ads_service
-from auth import env_summary
+from auth import creds_fingerprint, env_summary
 from models import (
     GoogleAdsEnvSummary,
     HealthResponse,
     SearchRequest,
     SearchResponse,
+    CredsFingerprintResponse,
     TestTokenResponse,
 )
 
@@ -38,6 +39,12 @@ def health() -> HealthResponse:
 @app.get("/google-ads/env", response_model=GoogleAdsEnvSummary)
 def google_ads_env() -> GoogleAdsEnvSummary:
     return GoogleAdsEnvSummary(**env_summary())
+
+
+@app.get("/google-ads/creds-check", response_model=CredsFingerprintResponse)
+def google_ads_creds_check() -> CredsFingerprintResponse:
+    """Compare token prefixes/lengths with OAuth Playground (no secrets returned)."""
+    return CredsFingerprintResponse(**creds_fingerprint())
 
 
 @app.get("/google-ads/test-token", response_model=TestTokenResponse)
