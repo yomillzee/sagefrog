@@ -1,0 +1,5 @@
+fastapi
+uvicorn[standard]
+google-ads
+pydantic
+python-dotenv

@@ -1,0 +1,26 @@
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+
+class HealthResponse(BaseModel):
+    status: str = "ok"
+
+
+class GoogleAdsEnvSummary(BaseModel):
+    has_developer_token: bool
+    has_login_customer_id: bool
+    has_client_id: bool
+    has_client_secret: bool
+    has_refresh_token: bool
+
+
+class SearchRequest(BaseModel):
+    customer_id: str = Field(..., description="Google Ads customer ID without dashes, e.g. 1234567890")
+    query: str = Field(..., description="GAQL query")
+
+
+class SearchResponse(BaseModel):
+    customer_id: str
+    row_count: int
+    rows: list[dict]
