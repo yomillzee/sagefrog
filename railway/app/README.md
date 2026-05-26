@@ -25,6 +25,7 @@ Copy from `.env.example` into Railway **Variables**:
 
 - `GET /health` — deploy health check
 - `GET /google-ads/env` — which credentials are set (no secrets returned)
+- `GET /google-ads/test-token` — OAuth refresh only (debug `invalid_grant` before GAQL)
 - `POST /google-ads/search` — run a GAQL query
 
 Example body:

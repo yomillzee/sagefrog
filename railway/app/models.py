@@ -24,3 +24,10 @@ class SearchResponse(BaseModel):
     customer_id: str
     row_count: int
     rows: list[dict]
+
+
+class TestTokenResponse(BaseModel):
+    ok: bool
+    message: str
+    token_expires_at: str | None = None
+    error: str | None = None
