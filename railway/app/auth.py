@@ -31,11 +31,10 @@ def load_google_ads_env() -> GoogleAdsEnv:
 
 
 def env_summary() -> dict:
-    keys = [
-        "GOOGLE_ADS_DEVELOPER_TOKEN",
-        "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
-        "GOOGLE_ADS_CLIENT_ID",
-        "GOOGLE_ADS_CLIENT_SECRET",
-        "GOOGLE_ADS_REFRESH_TOKEN",
-    ]
-    return {f"has_{k.lower().replace('google_ads_', '')}": bool(os.getenv(k)) for k in keys}
+    return {
+        "has_developer_token": bool(os.getenv("GOOGLE_ADS_DEVELOPER_TOKEN")),
+        "has_login_customer_id": bool(os.getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID")),
+        "has_client_id": bool(os.getenv("GOOGLE_ADS_CLIENT_ID")),
+        "has_client_secret": bool(os.getenv("GOOGLE_ADS_CLIENT_SECRET")),
+        "has_refresh_token": bool(os.getenv("GOOGLE_ADS_REFRESH_TOKEN")),
+    }

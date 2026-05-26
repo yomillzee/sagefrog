@@ -4,7 +4,7 @@ from typing import Any
 
 from google.ads.googleads.client import GoogleAdsClient
 
-from .auth import GoogleAdsEnv, load_google_ads_env
+from auth import GoogleAdsEnv, load_google_ads_env
 
 
 def build_client(env: GoogleAdsEnv | None = None) -> GoogleAdsClient:
