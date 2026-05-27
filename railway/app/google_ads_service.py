@@ -74,10 +74,11 @@ def test_refresh_token(env: GoogleAdsEnv | None = None) -> dict[str, Any]:
         }
 
 
-def search(customer_id: str, query: str, *, client: GoogleAdsClient | None = None, page_size: int = 100) -> list[dict]:
+def search(customer_id: str, query: str, *, client: GoogleAdsClient | None = None) -> list[dict]:
     client = client or build_client()
     ga_service = client.get_service("GoogleAdsService")
-    resp = ga_service.search(customer_id=customer_id, query=query, page_size=page_size)
+    # Newer google-ads Python clients don't accept page_size here.
+    resp = ga_service.search(customer_id=customer_id, query=query)
     rows: list[dict] = []
     for row in resp:
         # proto-plus objects are not JSON-serializable; convert to dict-ish via str for now
