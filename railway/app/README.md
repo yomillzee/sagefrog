@@ -15,11 +15,21 @@ FastAPI wrapper for Google Ads API search (GAQL).
 
 Copy from `.env.example` into Railway **Variables**:
 
+- **`API_KEY`** (recommended in production) — random secret you generate. When set, all `/google-ads/*` endpoints require it via **`Authorization: Bearer <API_KEY>`** or **`X-API-Key: <API_KEY>`**. Leave unset for local-only testing (no auth).
 - `GOOGLE_ADS_DEVELOPER_TOKEN`
 - `GOOGLE_ADS_CLIENT_ID`
 - `GOOGLE_ADS_CLIENT_SECRET`
 - `GOOGLE_ADS_REFRESH_TOKEN`
 - `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional, MCC / manager account)
+
+### ChatGPT Custom Action (GPT)
+
+1. Deploy this service on Railway and set **`API_KEY`** to a long random string.
+2. In the GPT Action, point the schema at your public base URL (e.g. `https://<your-service>.up.railway.app/openapi.json`) or paste an OpenAPI fragment for the routes you need.
+3. **Authentication:** use **API key** (or equivalent) and send either:
+   - Header **`Authorization`**: `Bearer <API_KEY>`, or
+   - Header **`X-API-Key`**: `<API_KEY>`
+4. `GET /health` stays **unauthenticated** so Railway’s health check keeps working.
 
 ## Endpoints
 
