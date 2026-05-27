@@ -26,6 +26,61 @@ class SearchResponse(BaseModel):
     rows: list[dict]
 
 
+class AccountRef(BaseModel):
+    customer_id: str
+    resource_name: str
+    descriptive_name: str | None = None
+    currency_code: str | None = None
+    time_zone: str | None = None
+    status: str = "ok"
+    error: str | None = None
+
+
+class AccountsResponse(BaseModel):
+    count: int
+    accounts: list[AccountRef]
+
+
+class SearchManyRequest(BaseModel):
+    customer_ids: list[str] = Field(..., description="One or more Google Ads customer IDs (digits only)")
+    query: str = Field(..., description="GAQL query")
+
+
+class SearchManyResult(BaseModel):
+    customer_id: str
+    row_count: int = 0
+    rows: list[dict] = Field(default_factory=list)
+    status: str = "ok"
+    error: str | None = None
+
+
+class SearchManyResponse(BaseModel):
+    requested_count: int
+    success_count: int
+    failure_count: int
+    results: list[SearchManyResult]
+
+
+class SummaryAllRequest(BaseModel):
+    customer_ids: list[str] | None = Field(
+        default=None,
+        description="Optional subset of customer IDs. If omitted, all accessible accounts are used.",
+    )
+    date_range: str = Field(
+        default="LAST_30_DAYS",
+        description="One of: LAST_7_DAYS, LAST_30_DAYS, THIS_MONTH, LAST_MONTH",
+    )
+
+
+class SummaryAllResponse(BaseModel):
+    date_range: str
+    account_count: int
+    success_count: int
+    failure_count: int
+    totals: dict
+    accounts: list[dict]
+
+
 class TestTokenResponse(BaseModel):
     ok: bool
     message: str

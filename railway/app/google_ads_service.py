@@ -85,3 +85,88 @@ def search(customer_id: str, query: str, *, client: GoogleAdsClient | None = Non
         # (you can replace with MessageToDict if you want richer structured output)
         rows.append({"row": str(row)})
     return rows
+
+
+def list_accessible_customer_ids(*, client: GoogleAdsClient | None = None) -> list[str]:
+    client = client or build_client()
+    customer_service = client.get_service("CustomerService")
+    resp = customer_service.list_accessible_customers()
+    ids: list[str] = []
+    for resource_name in resp.resource_names:
+        # Format is usually "customers/1234567890"
+        cid = resource_name.split("/")[-1].strip()
+        if cid:
+            ids.append(cid)
+    return sorted(set(ids))
+
+
+def get_account_metadata(customer_id: str, *, client: GoogleAdsClient | None = None) -> dict[str, Any]:
+    client = client or build_client()
+    ga_service = client.get_service("GoogleAdsService")
+    query = (
+        "SELECT customer.id, customer.descriptive_name, customer.currency_code, "
+        "customer.time_zone, customer.status FROM customer LIMIT 1"
+    )
+    resp = ga_service.search(customer_id=customer_id, query=query)
+    first = next(iter(resp), None)
+    if first is None:
+        return {
+            "customer_id": customer_id,
+            "resource_name": f"customers/{customer_id}",
+            "descriptive_name": None,
+            "currency_code": None,
+            "time_zone": None,
+            "status": "ok",
+            "error": None,
+        }
+    customer = first.customer
+    return {
+        "customer_id": str(customer.id),
+        "resource_name": customer.resource_name,
+        "descriptive_name": getattr(customer, "descriptive_name", None),
+        "currency_code": getattr(customer, "currency_code", None),
+        "time_zone": getattr(customer, "time_zone", None),
+        "status": "ok",
+        "error": None,
+    }
+
+
+def account_summary(customer_id: str, date_range: str = "LAST_30_DAYS", *, client: GoogleAdsClient | None = None) -> dict[str, Any]:
+    client = client or build_client()
+    ga_service = client.get_service("GoogleAdsService")
+    query = f"""
+        SELECT
+          customer.id,
+          customer.descriptive_name,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.conversions,
+          metrics.cost_micros
+        FROM customer
+        WHERE segments.date DURING {date_range}
+    """
+    resp = ga_service.search(customer_id=customer_id, query=query)
+    impressions = 0
+    clicks = 0
+    conversions = 0.0
+    cost_micros = 0
+    name: str | None = None
+    for row in resp:
+        name = row.customer.descriptive_name or name
+        impressions += int(getattr(row.metrics, "impressions", 0) or 0)
+        clicks += int(getattr(row.metrics, "clicks", 0) or 0)
+        conversions += float(getattr(row.metrics, "conversions", 0.0) or 0.0)
+        cost_micros += int(getattr(row.metrics, "cost_micros", 0) or 0)
+
+    spend = cost_micros / 1_000_000
+    ctr = (clicks / impressions) if impressions else 0.0
+    return {
+        "customer_id": customer_id,
+        "descriptive_name": name,
+        "impressions": impressions,
+        "clicks": clicks,
+        "conversions": conversions,
+        "cost_micros": cost_micros,
+        "spend": spend,
+        "ctr": ctr,
+    }

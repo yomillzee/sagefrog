@@ -10,8 +10,15 @@ import google_ads_service
 from auth import creds_fingerprint, env_summary
 from security import require_api_key
 from models import (
+    AccountsResponse,
+    AccountRef,
+    SummaryAllRequest,
+    SummaryAllResponse,
     GoogleAdsEnvSummary,
     HealthResponse,
+    SearchManyRequest,
+    SearchManyResponse,
+    SearchManyResult,
     SearchRequest,
     SearchResponse,
     CredsFingerprintResponse,
@@ -128,6 +135,97 @@ def google_ads_search(body: SearchRequest) -> SearchResponse:
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return SearchResponse(customer_id=body.customer_id, row_count=len(rows), rows=rows)
+
+
+@app.get(
+    "/google-ads/accounts",
+    response_model=AccountsResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def google_ads_accounts() -> AccountsResponse:
+    try:
+        customer_ids = google_ads_service.list_accessible_customer_ids()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    accounts: list[AccountRef] = []
+    for cid in customer_ids:
+        try:
+            meta = google_ads_service.get_account_metadata(customer_id=cid)
+            accounts.append(AccountRef(**meta))
+        except Exception as e:
+            accounts.append(
+                AccountRef(
+                    customer_id=cid,
+                    resource_name=f"customers/{cid}",
+                    status="error",
+                    error=str(e),
+                )
+            )
+    return AccountsResponse(count=len(accounts), accounts=accounts)
+
+
+@app.post(
+    "/google-ads/search-many",
+    response_model=SearchManyResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def google_ads_search_many(body: SearchManyRequest) -> SearchManyResponse:
+    results: list[SearchManyResult] = []
+    for cid in body.customer_ids:
+        try:
+            rows = google_ads_service.search(customer_id=cid, query=body.query)
+            results.append(SearchManyResult(customer_id=cid, row_count=len(rows), rows=rows))
+        except Exception as e:
+            results.append(SearchManyResult(customer_id=cid, status="error", error=str(e)))
+
+    success_count = sum(1 for r in results if r.status == "ok")
+    failure_count = len(results) - success_count
+    return SearchManyResponse(
+        requested_count=len(body.customer_ids),
+        success_count=success_count,
+        failure_count=failure_count,
+        results=results,
+    )
+
+
+@app.post(
+    "/google-ads/summary-all",
+    response_model=SummaryAllResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def google_ads_summary_all(body: SummaryAllRequest) -> SummaryAllResponse:
+    allowed_ranges = {"LAST_7_DAYS", "LAST_30_DAYS", "THIS_MONTH", "LAST_MONTH"}
+    if body.date_range not in allowed_ranges:
+        raise HTTPException(status_code=400, detail=f"Invalid date_range: {body.date_range}")
+
+    customer_ids = body.customer_ids or google_ads_service.list_accessible_customer_ids()
+    account_rows: list[dict] = []
+    totals = {"impressions": 0, "clicks": 0, "conversions": 0.0, "cost_micros": 0, "spend": 0.0}
+    success_count = 0
+
+    for cid in customer_ids:
+        try:
+            summary = google_ads_service.account_summary(customer_id=cid, date_range=body.date_range)
+            account_rows.append({"customer_id": cid, "status": "ok", "summary": summary})
+            totals["impressions"] += int(summary.get("impressions", 0) or 0)
+            totals["clicks"] += int(summary.get("clicks", 0) or 0)
+            totals["conversions"] += float(summary.get("conversions", 0.0) or 0.0)
+            totals["cost_micros"] += int(summary.get("cost_micros", 0) or 0)
+            totals["spend"] += float(summary.get("spend", 0.0) or 0.0)
+            success_count += 1
+        except Exception as e:
+            account_rows.append({"customer_id": cid, "status": "error", "error": str(e)})
+
+    totals["ctr"] = (totals["clicks"] / totals["impressions"]) if totals["impressions"] else 0.0
+    return SummaryAllResponse(
+        date_range=body.date_range,
+        account_count=len(customer_ids),
+        success_count=success_count,
+        failure_count=len(customer_ids) - success_count,
+        totals=totals,
+        accounts=account_rows,
+    )
 
 
 if __name__ == "__main__":

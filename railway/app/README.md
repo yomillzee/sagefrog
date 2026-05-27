@@ -37,6 +37,9 @@ Copy from `.env.example` into Railway **Variables**:
 - `GET /google-ads/env` — which credentials are set (no secrets returned)
 - `GET /google-ads/test-token` — OAuth refresh only (debug `invalid_grant` before GAQL)
 - `POST /google-ads/search` — run a GAQL query
+- `GET /google-ads/accounts` — list accessible customer accounts under current credentials
+- `POST /google-ads/search-many` — run one GAQL query across multiple customer IDs
+- `POST /google-ads/summary-all` — aggregate account-level metrics across all (or selected) accounts
 
 Example body:
 
