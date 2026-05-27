@@ -1,6 +1,6 @@
-# EOS Google Ads Service (Railway)
+# EOS Ads + GA4 Service (Railway)
 
-FastAPI wrapper for Google Ads API search (GAQL).
+FastAPI wrapper for Google Ads API search (GAQL) and GA4 BigQuery querying.
 
 ## Railway settings
 
@@ -21,6 +21,9 @@ Copy from `.env.example` into Railway **Variables**:
 - `GOOGLE_ADS_CLIENT_SECRET`
 - `GOOGLE_ADS_REFRESH_TOKEN`
 - `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional, MCC / manager account)
+- `GCP_SERVICE_ACCOUNT_JSON` (full JSON key contents for a service account with BigQuery access)
+- `BQ_PROJECT_ID` (e.g. `penn-community-b-1699391543298`)
+- `BQ_DATASET_ID` (e.g. `analytics_313855909`)
 
 ### ChatGPT Custom Action (GPT)
 
@@ -40,6 +43,8 @@ Copy from `.env.example` into Railway **Variables**:
 - `GET /google-ads/accounts` — list accessible customer accounts under current credentials
 - `POST /google-ads/search-many` — run one GAQL query across multiple customer IDs
 - `POST /google-ads/summary-all` — aggregate account-level metrics across all (or selected) accounts
+- `GET /ga4/env` — validate GA4 BigQuery env wiring
+- `POST /ga4/query` — run a BigQuery SQL query (returns rows)
 
 Example body:
 
@@ -47,6 +52,15 @@ Example body:
 {
   "customer_id": "1234567890",
   "query": "SELECT campaign.id, campaign.name FROM campaign LIMIT 5"
+}
+```
+
+GA4 query body:
+
+```json
+{
+  "sql": "SELECT event_date, COUNT(*) AS events FROM `penn-community-b-1699391543298.analytics_313855909.events_*` WHERE _TABLE_SUFFIX BETWEEN '20260501' AND '20260527' GROUP BY event_date ORDER BY event_date",
+  "max_rows": 500
 }
 ```
 

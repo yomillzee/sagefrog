@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.openapi.utils import get_openapi
 
+import bigquery_service
 import google_ads_service
 from auth import creds_fingerprint, env_summary
 from security import require_api_key
@@ -22,6 +23,9 @@ from models import (
     SearchRequest,
     SearchResponse,
     CredsFingerprintResponse,
+    Ga4EnvSummary,
+    Ga4QueryRequest,
+    Ga4QueryResponse,
     TestTokenResponse,
 )
 
@@ -57,7 +61,7 @@ def custom_openapi() -> dict:
         "description": "Same value as Railway `API_KEY`.",
     }
     for path, item in schema.get("paths", {}).items():
-        if not path.startswith("/google-ads"):
+        if not (path.startswith("/google-ads") or path.startswith("/ga4")):
             continue
         for method in ("get", "post", "put", "delete", "patch"):
             op = item.get(method)
@@ -79,6 +83,7 @@ def root() -> dict:
         "docs": "/docs",
         "health": "/health",
         "test_token": "/google-ads/test-token",
+        "ga4_env": "/ga4/env",
     }
 
 
@@ -226,6 +231,28 @@ def google_ads_summary_all(body: SummaryAllRequest) -> SummaryAllResponse:
         totals=totals,
         accounts=account_rows,
     )
+
+
+@app.get(
+    "/ga4/env",
+    response_model=Ga4EnvSummary,
+    dependencies=[Depends(require_api_key)],
+)
+def ga4_env() -> Ga4EnvSummary:
+    return Ga4EnvSummary(**bigquery_service.env_summary())
+
+
+@app.post(
+    "/ga4/query",
+    response_model=Ga4QueryResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def ga4_query(body: Ga4QueryRequest) -> Ga4QueryResponse:
+    try:
+        rows = bigquery_service.run_query(sql=body.sql, max_rows=body.max_rows)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return Ga4QueryResponse(row_count=len(rows), rows=rows)
 
 
 if __name__ == "__main__":

@@ -81,6 +81,24 @@ class SummaryAllResponse(BaseModel):
     accounts: list[dict]
 
 
+class Ga4EnvSummary(BaseModel):
+    has_gcp_service_account_json: bool
+    has_bq_project_id: bool
+    has_bq_dataset_id: bool
+    bq_project_id: str | None = None
+    bq_dataset_id: str | None = None
+
+
+class Ga4QueryRequest(BaseModel):
+    sql: str = Field(..., description="BigQuery SQL query")
+    max_rows: int = Field(default=1000, ge=1, le=50000, description="Maximum rows to return")
+
+
+class Ga4QueryResponse(BaseModel):
+    row_count: int
+    rows: list[dict]
+
+
 class TestTokenResponse(BaseModel):
     ok: bool
     message: str
