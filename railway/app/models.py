@@ -87,6 +87,20 @@ class Ga4EnvSummary(BaseModel):
     has_bq_dataset_id: bool
     bq_project_id: str | None = None
     bq_dataset_id: str | None = None
+    gcp_service_account_json_char_count: int = 0
+    gcp_service_account_json_hint: str = Field(
+        default="empty",
+        description="empty | raw_json | possibly_double_quoted_wrap | base64_or_other",
+    )
+    gcp_service_account_json_suspected_truncated: bool = Field(
+        default=False,
+        description="True if value is very short — common when Railway truncates a multiline paste.",
+    )
+    gcp_service_account_json_parse_ok: bool = False
+    gcp_service_account_json_parse_error: str | None = Field(
+        default=None,
+        description="Parse error detail when parse_ok is false (no secret material).",
+    )
 
 
 class Ga4QueryRequest(BaseModel):

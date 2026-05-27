@@ -251,7 +251,29 @@ def ga4_query(body: Ga4QueryRequest) -> Ga4QueryResponse:
     try:
         rows = bigquery_service.run_query(sql=body.sql, max_rows=body.max_rows)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        msg = str(e)
+        if "GCP_SERVICE_ACCOUNT_JSON" in msg:
+            summ = bigquery_service.env_summary()
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": msg,
+                    "hint": (
+                        "Redeploy the latest railway/app so base64 + diagnostics work. "
+                        "Set GCP_SERVICE_ACCOUNT_JSON to one-line base64 from PowerShell "
+                        "([Convert]::ToBase64String([IO.File]::ReadAllBytes(\"FULL_PATH_TO_KEY.json\")) | Set-Clipboard). "
+                        "Call GET /ga4/env and confirm gcp_service_account_json_parse_ok is true."
+                    ),
+                    "gcp_service_account_diagnostics": {
+                        "char_count": summ.get("gcp_service_account_json_char_count"),
+                        "hint": summ.get("gcp_service_account_json_hint"),
+                        "parse_ok": summ.get("gcp_service_account_json_parse_ok"),
+                        "suspected_truncated": summ.get("gcp_service_account_json_suspected_truncated"),
+                        "parse_error": summ.get("gcp_service_account_json_parse_error"),
+                    },
+                },
+            ) from e
+        raise HTTPException(status_code=400, detail=msg) from e
     return Ga4QueryResponse(row_count=len(rows), rows=rows)
 
 

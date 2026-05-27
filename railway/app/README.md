@@ -21,9 +21,41 @@ Copy from `.env.example` into Railway **Variables**:
 - `GOOGLE_ADS_CLIENT_SECRET`
 - `GOOGLE_ADS_REFRESH_TOKEN`
 - `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional, MCC / manager account)
-- `GCP_SERVICE_ACCOUNT_JSON` (full JSON key contents for a service account with BigQuery access)
+- `GCP_SERVICE_ACCOUNT_JSON` — see [GCP key on Railway](#gcp_service_account_json-on-railway) below
 - `BQ_PROJECT_ID` (e.g. `penn-community-b-1699391543298`)
 - `BQ_DATASET_ID` (e.g. `analytics_313855909`)
+
+### `GCP_SERVICE_ACCOUNT_JSON` on Railway
+
+Pasting the raw multiline JSON into Railway often fails (the UI may truncate or strip content so you only see a single `{`). **Do not rely on multiline paste.**
+
+**Option A — Base64 (recommended):** Put the **entire key file** into one line of base64. This service decodes it when the value does **not** start with `{`.
+
+PowerShell (replace the path, then paste the printed line into Railway):
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\your-key.json"))
+```
+
+Or copy straight to the clipboard:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\your-key.json")) | Set-Clipboard
+```
+
+Paste that **one long line** into `GCP_SERVICE_ACCOUNT_JSON` in Railway (no quotes around it).
+
+**Option B — Minified one line:** If you prefer raw JSON, it must be a **single line** with no line breaks inside the string. Example with Python:
+
+```bash
+python -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1])), separators=(',',':')))" key.json
+```
+
+**Option C — Railway CLI:** From the folder that contains the key file, you can set the variable from a file without the web UI mangling newlines (adjust service name as needed):
+
+```bash
+railway variables --set "GCP_SERVICE_ACCOUNT_JSON=$(cat key.json)"
+```
 
 ### ChatGPT Custom Action (GPT)
 
@@ -43,7 +75,7 @@ Copy from `.env.example` into Railway **Variables**:
 - `GET /google-ads/accounts` — list accessible customer accounts under current credentials
 - `POST /google-ads/search-many` — run one GAQL query across multiple customer IDs
 - `POST /google-ads/summary-all` — aggregate account-level metrics across all (or selected) accounts
-- `GET /ga4/env` — validate GA4 BigQuery env wiring
+- `GET /ga4/env` — validate GA4 BigQuery env wiring (includes **`gcp_service_account_json_char_count`**, **`gcp_service_account_json_parse_ok`**, and a short **`gcp_service_account_json_parse_error`** when parsing fails — no secrets returned)
 - `POST /ga4/query` — run a BigQuery SQL query (returns rows)
 
 Example body:
