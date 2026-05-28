@@ -7,6 +7,14 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
+class CacheHealthResponse(BaseModel):
+    has_database_url: bool
+    schema_ready: bool
+    table_exists: bool
+    cache_rows: int = 0
+    error: str | None = None
+
+
 class GoogleAdsEnvSummary(BaseModel):
     has_developer_token: bool
     has_login_customer_id: bool

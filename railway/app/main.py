@@ -8,11 +8,13 @@ from fastapi.openapi.utils import get_openapi
 
 import bigquery_service
 import google_ads_service
+import db_cache
 from auth import creds_fingerprint, env_summary
 from security import require_api_key
 from models import (
     AccountsResponse,
     AccountRef,
+    CacheHealthResponse,
     SummaryAllRequest,
     SummaryAllResponse,
     GoogleAdsEnvSummary,
@@ -40,6 +42,12 @@ app = FastAPI(
         "GET /health stays public for load balancers."
     ),
 )
+
+try:
+    db_cache.ensure_schema()
+except Exception:
+    # If Postgres isn't attached (or is temporarily unavailable), the service should still run.
+    pass
 
 
 def custom_openapi() -> dict:
@@ -93,6 +101,15 @@ def health() -> HealthResponse:
 
 
 @app.get(
+    "/cache/health",
+    response_model=CacheHealthResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def cache_health() -> CacheHealthResponse:
+    return CacheHealthResponse(**db_cache.status())
+
+
+@app.get(
     "/google-ads/env",
     response_model=GoogleAdsEnvSummary,
     dependencies=[Depends(require_api_key)],
@@ -135,10 +152,29 @@ def google_ads_test_token() -> TestTokenResponse:
     dependencies=[Depends(require_api_key)],
 )
 def google_ads_search(body: SearchRequest) -> SearchResponse:
+    cache_payload = {"customer_id": body.customer_id, "query": body.query}
+    hit = db_cache.get_cached("google_ads.search", cache_payload)
+    if hit is not None:
+        return SearchResponse(
+            customer_id=body.customer_id,
+            row_count=int(hit.row_count or 0),
+            rows=hit.response_json or [],
+        )
     try:
         rows = google_ads_service.search(customer_id=body.customer_id, query=body.query)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        db_cache.put_cached(
+            "google_ads.search",
+            cache_payload,
+            response_json=rows,
+            row_count=len(rows),
+            status="ok",
+            error=None,
+        )
+    except Exception:
+        pass
     return SearchResponse(customer_id=body.customer_id, row_count=len(rows), rows=rows)
 
 
@@ -248,6 +284,11 @@ def ga4_env() -> Ga4EnvSummary:
     dependencies=[Depends(require_api_key)],
 )
 def ga4_query(body: Ga4QueryRequest) -> Ga4QueryResponse:
+    cache_payload = {"sql": body.sql, "max_rows": body.max_rows}
+    hit = db_cache.get_cached("ga4.query", cache_payload)
+    if hit is not None:
+        rows = hit.response_json or []
+        return Ga4QueryResponse(row_count=int(hit.row_count or len(rows)), rows=rows)
     try:
         rows = bigquery_service.run_query(sql=body.sql, max_rows=body.max_rows)
     except Exception as e:
@@ -274,6 +315,17 @@ def ga4_query(body: Ga4QueryRequest) -> Ga4QueryResponse:
                 },
             ) from e
         raise HTTPException(status_code=400, detail=msg) from e
+    try:
+        db_cache.put_cached(
+            "ga4.query",
+            cache_payload,
+            response_json=rows,
+            row_count=len(rows),
+            status="ok",
+            error=None,
+        )
+    except Exception:
+        pass
     return Ga4QueryResponse(row_count=len(rows), rows=rows)
 
 
