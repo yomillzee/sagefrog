@@ -1,0 +1,20 @@
+---
+description: Commit and push to git after completing code changes when the user wants deployable work saved
+alwaysApply: true
+---
+
+# Auto commit and push
+
+When you finish a task that includes **code changes** the user will deploy or use from GitHub (e.g. Railway, production):
+
+1. **Commit** relevant files with a clear message focused on why (not a giant file list).
+2. **Push** to `origin` on the current branch unless the user says not to push.
+3. Briefly tell the user the commit hash and that push succeeded (or report push errors).
+
+Do **not** commit or push when:
+
+- The user only asked a question with no code changes.
+- The user explicitly says not to commit/push this time.
+- Changes likely contain secrets (`.env`, keys, credentials) — warn instead.
+
+Do not force-push to `main`/`master` unless the user explicitly requests it.
