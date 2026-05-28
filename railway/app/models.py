@@ -185,3 +185,57 @@ class YoutubeVideosResponse(BaseModel):
     customer_id: str
     row_count: int
     videos: list[YoutubeVideoItem]
+
+
+class LinkedInEnvSummary(BaseModel):
+    has_client_id: bool
+    has_client_secret: bool
+    has_refresh_token: bool
+    linkedin_version: str = "202604"
+    refresh_token_looks_valid: bool = False
+
+
+class LinkedInTestTokenResponse(BaseModel):
+    ok: bool
+    message: str
+    account_count: int = 0
+    error: str | None = None
+
+
+class LinkedInAccountRef(BaseModel):
+    id: str
+    name: str = ""
+    status: str = ""
+    currency: str = ""
+    type: str = ""
+
+
+class LinkedInAccountsResponse(BaseModel):
+    count: int
+    accounts: list[LinkedInAccountRef]
+
+
+class LinkedInPerformanceTotals(BaseModel):
+    spend: float = 0.0
+    clicks: int = 0
+    impressions: int = 0
+    conversions: float = 0.0
+    conversion_value: float = 0.0
+    campaign_count: int = 0
+
+
+class LinkedInCampaignPerformance(BaseModel):
+    id: str
+    name: str = ""
+    status: str = ""
+    spend: float = 0.0
+    clicks: int = 0
+    impressions: int = 0
+    conversions: float = 0.0
+
+
+class LinkedInPerformanceResponse(BaseModel):
+    account_id: str
+    date_range: dict
+    totals: LinkedInPerformanceTotals
+    campaigns: list[LinkedInCampaignPerformance]

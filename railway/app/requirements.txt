@@ -3,6 +3,7 @@ uvicorn[standard]
 google-ads
 pydantic
 python-dotenv
+httpx
 google-cloud-bigquery
 psycopg==3.2.9
 psycopg-binary==3.2.9

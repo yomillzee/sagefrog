@@ -1,6 +1,6 @@
 # EOS Ads + GA4 Service (Railway)
 
-FastAPI wrapper for Google Ads API search (GAQL) and GA4 BigQuery querying.
+FastAPI wrapper for Google Ads API search (GAQL), LinkedIn Marketing API reporting, and GA4 BigQuery querying.
 
 ## Railway settings
 
@@ -15,7 +15,7 @@ FastAPI wrapper for Google Ads API search (GAQL) and GA4 BigQuery querying.
 
 Copy from `.env.example` into Railway **Variables**:
 
-- **`API_KEY`** (recommended in production) — random secret you generate. When set, all `/google-ads/*` endpoints require it via **`Authorization: Bearer <API_KEY>`** or **`X-API-Key: <API_KEY>`**. Leave unset for local-only testing (no auth).
+- **`API_KEY`** (recommended in production) — random secret you generate. When set, all `/google-ads/*`, `/linkedin/*`, and `/ga4/*` endpoints require it via **`Authorization: Bearer <API_KEY>`** or **`X-API-Key: <API_KEY>`**. Leave unset for local-only testing (no auth).
 - `GOOGLE_ADS_DEVELOPER_TOKEN`
 - `GOOGLE_ADS_CLIENT_ID`
 - `GOOGLE_ADS_CLIENT_SECRET`
@@ -24,6 +24,21 @@ Copy from `.env.example` into Railway **Variables**:
 - `GCP_SERVICE_ACCOUNT_JSON` — see [GCP key on Railway](#gcp_service_account_json-on-railway) below
 - `BQ_PROJECT_ID` (e.g. `penn-community-b-1699391543298`)
 - `BQ_DATASET_ID` (e.g. `analytics_313855909`)
+
+### LinkedIn Marketing API
+
+Set these in Railway (same names as `help/linkedin-ads-dashboard`):
+
+- `LINKEDIN_CLIENT_ID`
+- `LINKEDIN_CLIENT_SECRET`
+- `LINKEDIN_REFRESH_TOKEN` — long-lived refresh token from the LinkedIn OAuth flow (scopes: `r_ads`, `r_ads_reporting`)
+- `LINKEDIN_VERSION` (optional, default `202604`) — sent as the `Linkedin-Version` header
+
+Mint a refresh token locally with the dashboard (`npm start` → Settings → Connect LinkedIn), or run your OAuth callback once and copy `refresh_token` into Railway.
+
+**Verify wiring:** `GET /linkedin/env` then `GET /linkedin/test-token` (refreshes OAuth and lists ad accounts).
+
+**Performance:** `GET /linkedin/performance?account_id=123456789&date_range=LAST_30_DAYS`
 
 ### `GCP_SERVICE_ACCOUNT_JSON` on Railway
 
@@ -93,6 +108,10 @@ Example response fields per row: `campaign_name`, `ad_name`, `youtube_video_id`,
 - `GET /google-ads/accounts` — list accessible customer accounts under current credentials
 - `POST /google-ads/search-many` — run one GAQL query across multiple customer IDs
 - `POST /google-ads/summary-all` — aggregate account-level metrics across all (or selected) accounts
+- `GET /linkedin/env` — which LinkedIn credentials are set (no secrets)
+- `GET /linkedin/test-token` — OAuth refresh + ad account count
+- `GET /linkedin/accounts` — LinkedIn ad accounts for the token
+- `GET /linkedin/performance` — spend/clicks/impressions/conversions by active campaign
 - `GET /ga4/env` — validate GA4 BigQuery env wiring (includes **`gcp_service_account_json_char_count`**, **`gcp_service_account_json_parse_ok`**, and a short **`gcp_service_account_json_parse_error`** when parsing fails — no secrets returned)
 - `POST /ga4/query` — run a BigQuery SQL query (returns rows)
 

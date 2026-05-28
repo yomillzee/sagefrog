@@ -5,11 +5,15 @@ import os
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
 
 import bigquery_service
 import google_ads_service
+import linkedin_service
 import db_cache
 from auth import creds_fingerprint, env_summary
+from linkedin_auth import env_summary as linkedin_env_summary
+from openapi_gpt import build_chatgpt_openapi
 from security import require_api_key
 from models import (
     AccountsResponse,
@@ -32,17 +36,24 @@ from models import (
     YoutubeVideosRequest,
     YoutubeVideosResponse,
     YoutubeVideoItem,
+    LinkedInEnvSummary,
+    LinkedInTestTokenResponse,
+    LinkedInAccountsResponse,
+    LinkedInAccountRef,
+    LinkedInPerformanceResponse,
+    LinkedInPerformanceTotals,
+    LinkedInCampaignPerformance,
 )
 
 load_dotenv()
 
 app = FastAPI(
-    title="EOS Google Ads Service",
-    version="0.1.0",
+    title="EOS Ads + GA4 Service",
+    version="0.2.0",
     description=(
-        "When the server has API_KEY set in Railway, all /google-ads/* routes require "
-        "Authorization: Bearer (your API_KEY value) or header X-API-Key with the same value. "
-        "GET /health stays public for load balancers."
+        "When the server has API_KEY set in Railway, all /google-ads/*, /linkedin/*, and /ga4/* "
+        "routes require Authorization: Bearer (your API_KEY value) or header X-API-Key with the "
+        "same value. GET /health stays public for load balancers."
     ),
 )
 
@@ -72,7 +83,11 @@ def custom_openapi() -> dict:
         "description": "Same value as Railway `API_KEY`.",
     }
     for path, item in schema.get("paths", {}).items():
-        if not (path.startswith("/google-ads") or path.startswith("/ga4")):
+        if not (
+            path.startswith("/google-ads")
+            or path.startswith("/linkedin")
+            or path.startswith("/ga4")
+        ):
             continue
         for method in ("get", "post", "put", "delete", "patch"):
             op = item.get(method)
@@ -80,21 +95,42 @@ def custom_openapi() -> dict:
                 continue
             # Either Bearer or X-API-Key (OpenAPI: alternatives are OR).
             op["security"] = [{"BearerAuth": []}, {"ApiKeyHeader": []}]
+    # ChatGPT Custom Actions require a root-level `servers` URL (FastAPI omits it by default).
+    base_url = (
+        os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+        or "https://sagefrog-production.up.railway.app"
+    )
+    schema["servers"] = [{"url": base_url}]
     app.openapi_schema = schema
     return app.openapi_schema
 
 
 app.openapi = custom_openapi  # type: ignore[method-assign]
 
+_gpt_openapi_cache: dict | None = None
+
+
+@app.get("/openapi-gpt.json", include_in_schema=False)
+def openapi_for_chatgpt() -> JSONResponse:
+    """OpenAPI document compatible with ChatGPT Custom Actions (single auth scheme)."""
+    global _gpt_openapi_cache
+    if _gpt_openapi_cache is None:
+        _gpt_openapi_cache = build_chatgpt_openapi(app)
+    return JSONResponse(_gpt_openapi_cache)
+
 
 @app.get("/")
 def root() -> dict:
     return {
-        "service": "EOS Google Ads Service",
+        "service": "EOS Ads + GA4 Service",
         "docs": "/docs",
         "health": "/health",
-        "test_token": "/google-ads/test-token",
+        "google_ads_test_token": "/google-ads/test-token",
         "youtube_videos": "/google-ads/youtube-videos",
+        "linkedin_env": "/linkedin/env",
+        "linkedin_test_token": "/linkedin/test-token",
+        "linkedin_accounts": "/linkedin/accounts",
+        "linkedin_performance": "/linkedin/performance",
         "ga4_env": "/ga4/env",
     }
 
@@ -325,6 +361,129 @@ def google_ads_summary_all(body: SummaryAllRequest) -> SummaryAllResponse:
         failure_count=len(customer_ids) - success_count,
         totals=totals,
         accounts=account_rows,
+    )
+
+
+@app.get(
+    "/linkedin/env",
+    response_model=LinkedInEnvSummary,
+    dependencies=[Depends(require_api_key)],
+)
+def linkedin_env() -> LinkedInEnvSummary:
+    return LinkedInEnvSummary(**linkedin_env_summary())
+
+
+@app.get(
+    "/linkedin/test-token",
+    response_model=LinkedInTestTokenResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def linkedin_test_token() -> LinkedInTestTokenResponse:
+    """Verify LinkedIn OAuth refresh and ad account access."""
+    try:
+        result = linkedin_service.test_refresh_token()
+    except Exception as e:
+        return LinkedInTestTokenResponse(
+            ok=False,
+            message="Could not load LinkedIn credentials from environment.",
+            error=str(e),
+        )
+    return LinkedInTestTokenResponse(**result)
+
+
+@app.get(
+    "/linkedin/accounts",
+    response_model=LinkedInAccountsResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def linkedin_accounts() -> LinkedInAccountsResponse:
+    cache_payload: dict = {}
+    hit = db_cache.get_cached("linkedin.accounts", cache_payload)
+    if hit is not None:
+        rows = hit.response_json or []
+        return LinkedInAccountsResponse(
+            count=int(hit.row_count or len(rows)),
+            accounts=[LinkedInAccountRef(**r) for r in rows],
+        )
+    try:
+        rows = linkedin_service.list_ad_accounts()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        db_cache.put_cached(
+            "linkedin.accounts",
+            cache_payload,
+            response_json=rows,
+            row_count=len(rows),
+            status="ok",
+            error=None,
+        )
+    except Exception:
+        pass
+    return LinkedInAccountsResponse(
+        count=len(rows),
+        accounts=[LinkedInAccountRef(**r) for r in rows],
+    )
+
+
+@app.get(
+    "/linkedin/performance",
+    response_model=LinkedInPerformanceResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="LinkedIn Ads performance for one account",
+)
+def linkedin_performance(
+    account_id: str,
+    date_range: str = "LAST_30_DAYS",
+) -> LinkedInPerformanceResponse:
+    account_id = account_id.strip()
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Missing account_id query parameter.")
+    allowed_ranges = {
+        "LAST_7_DAYS",
+        "LAST_30_DAYS",
+        "LAST_90_DAYS",
+        "LAST_180_DAYS",
+        "THIS_MONTH",
+        "LAST_MONTH",
+    }
+    preset = date_range.strip().upper().replace("-", "_")
+    if preset not in allowed_ranges:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid date_range: {date_range}. Use one of: {', '.join(sorted(allowed_ranges))}",
+        )
+
+    cache_payload = {"account_id": account_id, "date_range": preset}
+    hit = db_cache.get_cached("linkedin.performance", cache_payload)
+    if hit is not None:
+        payload = hit.response_json or {}
+        return LinkedInPerformanceResponse(
+            account_id=payload.get("account_id", account_id),
+            date_range=payload.get("date_range", {}),
+            totals=LinkedInPerformanceTotals(**(payload.get("totals") or {})),
+            campaigns=[LinkedInCampaignPerformance(**c) for c in payload.get("campaigns") or []],
+        )
+    try:
+        payload = linkedin_service.account_performance(account_id, date_range=preset)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        db_cache.put_cached(
+            "linkedin.performance",
+            cache_payload,
+            response_json=payload,
+            row_count=len(payload.get("campaigns") or []),
+            status="ok",
+            error=None,
+        )
+    except Exception:
+        pass
+    return LinkedInPerformanceResponse(
+        account_id=payload["account_id"],
+        date_range=payload["date_range"],
+        totals=LinkedInPerformanceTotals(**payload["totals"]),
+        campaigns=[LinkedInCampaignPerformance(**c) for c in payload["campaigns"]],
     )
 
 
