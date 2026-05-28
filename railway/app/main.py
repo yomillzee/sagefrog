@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
@@ -11,6 +12,7 @@ import bigquery_service
 import google_ads_service
 import linkedin_service
 import db_cache
+import warehouse
 from auth import creds_fingerprint, env_summary
 from linkedin_auth import env_summary as linkedin_env_summary
 from openapi_gpt import build_chatgpt_openapi
@@ -43,6 +45,10 @@ from models import (
     LinkedInPerformanceResponse,
     LinkedInPerformanceTotals,
     LinkedInCampaignPerformance,
+    LinkedInWarehouseSyncRequest,
+    LinkedInWarehouseSyncResponse,
+    WarehouseStatusResponse,
+    WarehouseMetricsResponse,
 )
 
 load_dotenv()
@@ -59,6 +65,7 @@ app = FastAPI(
 
 try:
     db_cache.ensure_schema()
+    warehouse.ensure_schema()
 except Exception:
     # If Postgres isn't attached (or is temporarily unavailable), the service should still run.
     pass
@@ -87,6 +94,7 @@ def custom_openapi() -> dict:
             path.startswith("/google-ads")
             or path.startswith("/linkedin")
             or path.startswith("/ga4")
+            or path.startswith("/warehouse")
         ):
             continue
         for method in ("get", "post", "put", "delete", "patch"):
@@ -131,6 +139,9 @@ def root() -> dict:
         "linkedin_test_token": "/linkedin/test-token",
         "linkedin_accounts": "/linkedin/accounts",
         "linkedin_performance": "/linkedin/performance",
+        "linkedin_warehouse_sync": "/linkedin/warehouse/sync",
+        "warehouse_status": "/warehouse/status",
+        "warehouse_metrics": "/warehouse/metrics",
         "ga4_env": "/ga4/env",
     }
 
@@ -463,6 +474,7 @@ def linkedin_performance(
             date_range=payload.get("date_range", {}),
             totals=LinkedInPerformanceTotals(**(payload.get("totals") or {})),
             campaigns=[LinkedInCampaignPerformance(**c) for c in payload.get("campaigns") or []],
+            warehouse=payload.get("warehouse"),
         )
     try:
         payload = linkedin_service.account_performance(account_id, date_range=preset)
@@ -484,7 +496,72 @@ def linkedin_performance(
         date_range=payload["date_range"],
         totals=LinkedInPerformanceTotals(**payload["totals"]),
         campaigns=[LinkedInCampaignPerformance(**c) for c in payload["campaigns"]],
+        warehouse=payload.get("warehouse"),
     )
+
+
+@app.post(
+    "/linkedin/warehouse/sync",
+    response_model=LinkedInWarehouseSyncResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="Sync LinkedIn daily metrics into Postgres warehouse",
+)
+def linkedin_warehouse_sync(body: LinkedInWarehouseSyncRequest) -> LinkedInWarehouseSyncResponse:
+    allowed_ranges = {
+        "LAST_7_DAYS",
+        "LAST_30_DAYS",
+        "LAST_90_DAYS",
+        "LAST_180_DAYS",
+        "THIS_MONTH",
+        "LAST_MONTH",
+    }
+    preset = body.date_range.strip().upper().replace("-", "_")
+    if preset not in allowed_ranges:
+        raise HTTPException(status_code=400, detail=f"Invalid date_range: {body.date_range}")
+    try:
+        result = linkedin_service.sync_account_to_warehouse(body.account_id, date_range=preset)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return LinkedInWarehouseSyncResponse(**result)
+
+
+@app.get(
+    "/warehouse/status",
+    response_model=WarehouseStatusResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def warehouse_status() -> WarehouseStatusResponse:
+    return WarehouseStatusResponse(**warehouse.status())
+
+
+@app.get(
+    "/warehouse/metrics",
+    response_model=WarehouseMetricsResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="Read stored daily metrics from Postgres",
+)
+def warehouse_metrics(
+    from_date: str,
+    to_date: str,
+    source: str | None = None,
+    account_id: str | None = None,
+    limit: int = 5000,
+) -> WarehouseMetricsResponse:
+    try:
+        start = date.fromisoformat(from_date.strip()[:10])
+        end = date.fromisoformat(to_date.strip()[:10])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="from_date and to_date must be YYYY-MM-DD") from e
+    if end < start:
+        raise HTTPException(status_code=400, detail="to_date must be on or after from_date")
+    rows = warehouse.query_metrics(
+        source=source,
+        account_id=account_id,
+        from_date=start,
+        to_date=end,
+        limit=limit,
+    )
+    return WarehouseMetricsResponse(count=len(rows), rows=rows)
 
 
 @app.get(

@@ -25,6 +25,31 @@ Copy from `.env.example` into Railway **Variables**:
 - `BQ_PROJECT_ID` (e.g. `penn-community-b-1699391543298`)
 - `BQ_DATASET_ID` (e.g. `analytics_313855909`)
 
+### Postgres warehouse (`metrics_daily`)
+
+Attach a **Postgres** plugin on Railway so `DATABASE_URL` is injected. The service creates:
+
+| Table | Purpose |
+|--------|---------|
+| `api_cache` | Short-lived API response cache (~1 hour) |
+| `metrics_daily` | One row per **day** per account (`source` = `linkedin` or `google`) |
+
+**Backfill LinkedIn history for ChatGPT or reporting:**
+
+```http
+POST /linkedin/warehouse/sync
+{"account_id": "502439493", "date_range": "LAST_180_DAYS"}
+```
+
+Each `linkedinPerformance` call also syncs that window into `metrics_daily` when the warehouse is enabled.
+
+**Verify storage:**
+
+```http
+GET /warehouse/status
+GET /warehouse/metrics?from_date=2025-12-01&to_date=2026-05-28&source=linkedin&account_id=502439493
+```
+
 ### LinkedIn Marketing API
 
 Set these in Railway (same names as `help/linkedin-ads-dashboard`):
@@ -111,7 +136,10 @@ Example response fields per row: `campaign_name`, `ad_name`, `youtube_video_id`,
 - `GET /linkedin/env` — which LinkedIn credentials are set (no secrets)
 - `GET /linkedin/test-token` — OAuth refresh + ad account count
 - `GET /linkedin/accounts` — LinkedIn ad accounts for the token
-- `GET /linkedin/performance` — spend/clicks/impressions/conversions by active campaign
+- `GET /linkedin/performance` — spend/clicks/impressions/conversions by active campaign (auto-syncs daily rows to Postgres when `DATABASE_URL` is set)
+- `POST /linkedin/warehouse/sync` — backfill `metrics_daily` for a date range (up to `LAST_180_DAYS` per call)
+- `GET /warehouse/status` — row counts in `metrics_daily` (LinkedIn vs Google)
+- `GET /warehouse/metrics?from_date=YYYY-MM-DD&to_date=YYYY-MM-DD&source=linkedin&account_id=` — read stored daily history
 - `GET /ga4/env` — validate GA4 BigQuery env wiring (includes **`gcp_service_account_json_char_count`**, **`gcp_service_account_json_parse_ok`**, and a short **`gcp_service_account_json_parse_error`** when parsing fails — no secrets returned)
 - `POST /ga4/query` — run a BigQuery SQL query (returns rows)
 

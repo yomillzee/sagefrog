@@ -47,7 +47,7 @@ def build_chatgpt_openapi(app: FastAPI) -> dict:
     for skip in _SKIP_PATHS:
         paths.pop(skip, None)
 
-    protected_prefixes = ("/google-ads", "/linkedin", "/ga4", "/cache")
+    protected_prefixes = ("/google-ads", "/linkedin", "/ga4", "/warehouse", "/cache")
     for path, item in paths.items():
         if not isinstance(item, dict):
             continue

@@ -202,6 +202,16 @@ def _campaign_id_from_pivot(urn: str) -> str:
     return str(urn or "").strip().split(":")[-1]
 
 
+def _date_from_analytics_row(row: dict[str, Any]) -> date | None:
+    parts = (row.get("dateRange") or {}).get("start") or (row.get("dateRange") or {})
+    if not isinstance(parts, dict):
+        return None
+    try:
+        return date(int(parts["year"]), int(parts["month"]), int(parts["day"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _analytics_url(
     *,
     pivot: str,
@@ -209,13 +219,14 @@ def _analytics_url(
     start: date,
     end: date,
     fields: str,
+    time_granularity: str = "ALL",
 ) -> str:
     account_urn = quote(_account_urn(account_id), safe="")
     date_range = _format_date_range(start, end)
     return (
         f"/adAnalytics?q=analytics"
         f"&pivot={pivot}"
-        f"&timeGranularity=ALL"
+        f"&timeGranularity={time_granularity}"
         f"&dateRange={date_range}"
         f"&accounts=List({account_urn})"
         f"&fields={fields}"
@@ -272,6 +283,120 @@ def _fetch_analytics(
             raise
         payload = _linkedin_get(fallback, access_token=access_token, env=env)
         return payload.get("elements") or [], False
+
+
+def fetch_daily_metrics(
+    account_id: str,
+    *,
+    start: date,
+    end: date,
+    access_token: str | None = None,
+    env: LinkedInEnv | None = None,
+) -> list[dict[str, Any]]:
+    """Account-level metrics per day (for Postgres warehouse / metrics_daily)."""
+    env = env or load_linkedin_env()
+    access_token = access_token or refresh_access_token(env)["access_token"]
+    account_id_clean = _normalize_account_id(account_id)
+
+    with_conversions = _analytics_url(
+        pivot="ACCOUNT",
+        account_id=account_id_clean,
+        start=start,
+        end=end,
+        time_granularity="DAILY",
+        fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,dateRange",
+    )
+    fallback = _analytics_url(
+        pivot="ACCOUNT",
+        account_id=account_id_clean,
+        start=start,
+        end=end,
+        time_granularity="DAILY",
+        fields="impressions,clicks,costInUsd,dateRange",
+    )
+
+    try:
+        payload = _linkedin_get(with_conversions, access_token=access_token, env=env)
+        conversion_ok = True
+    except Exception as primary_error:
+        msg = str(primary_error)
+        if 'Projected field "conversions"' not in msg:
+            raise
+        payload = _linkedin_get(fallback, access_token=access_token, env=env)
+        conversion_ok = False
+
+    by_date: dict[str, dict[str, Any]] = {}
+    for row in payload.get("elements") or []:
+        metric_day = _date_from_analytics_row(row)
+        if not metric_day:
+            continue
+        key = metric_day.isoformat()
+        if key not in by_date:
+            by_date[key] = {
+                "metric_date": key,
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+            }
+        rec = by_date[key]
+        rec["spend"] += _parse_spend(row)
+        rec["clicks"] += int(row.get("clicks") or 0)
+        rec["impressions"] += int(row.get("impressions") or 0)
+        if conversion_ok:
+            rec["conversions"] += _parse_conversions(row)
+            rec["conversion_value"] += _parse_conversion_value(row)
+
+    out: list[dict[str, Any]] = []
+    cursor = start
+    while cursor <= end:
+        key = cursor.isoformat()
+        out.append(
+            by_date.get(key)
+            or {
+                "metric_date": key,
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+            }
+        )
+        cursor += timedelta(days=1)
+    return out
+
+
+def sync_account_to_warehouse(
+    account_id: str,
+    *,
+    date_range: str = "LAST_30_DAYS",
+    access_token: str | None = None,
+    env: LinkedInEnv | None = None,
+) -> dict[str, Any]:
+    """Pull daily LinkedIn metrics and upsert into metrics_daily."""
+    import warehouse
+
+    if not warehouse.enabled():
+        raise RuntimeError("DATABASE_URL is not set — warehouse storage is disabled.")
+
+    start, end, preset = resolve_date_range(date_range)
+    daily_rows = fetch_daily_metrics(
+        account_id,
+        start=start,
+        end=end,
+        access_token=access_token,
+        env=env,
+    )
+    account_id_clean = _normalize_account_id(account_id)
+    written = warehouse.upsert_metrics_daily_batch("linkedin", account_id_clean, daily_rows)
+    coverage = warehouse.account_date_coverage("linkedin", account_id_clean)
+    return {
+        "account_id": account_id_clean,
+        "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
+        "days_synced": written,
+        "coverage": coverage,
+    }
 
 
 def _fetch_campaign_by_id(
@@ -376,7 +501,7 @@ def account_performance(
             }
         )
 
-    return {
+    result = {
         "account_id": account_id_clean,
         "date_range": {
             "start": start.isoformat(),
@@ -386,3 +511,23 @@ def account_performance(
         "totals": totals,
         "campaigns": campaigns_out,
     }
+
+    try:
+        import warehouse
+
+        if warehouse.enabled():
+            sync_meta = sync_account_to_warehouse(
+                account_id_clean,
+                date_range=preset,
+                access_token=access_token,
+                env=env,
+            )
+            result["warehouse"] = {
+                "stored": True,
+                "days_synced": sync_meta["days_synced"],
+                "coverage": sync_meta["coverage"],
+            }
+    except Exception as exc:
+        result["warehouse"] = {"stored": False, "error": str(exc)[:500]}
+
+    return result

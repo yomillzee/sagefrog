@@ -239,3 +239,33 @@ class LinkedInPerformanceResponse(BaseModel):
     date_range: dict
     totals: LinkedInPerformanceTotals
     campaigns: list[LinkedInCampaignPerformance]
+    warehouse: dict | None = None
+
+
+class LinkedInWarehouseSyncRequest(BaseModel):
+    account_id: str = Field(..., description="LinkedIn ad account ID (digits only)")
+    date_range: str = Field(
+        default="LAST_30_DAYS",
+        description="LAST_7_DAYS, LAST_30_DAYS, LAST_90_DAYS, LAST_180_DAYS, THIS_MONTH, LAST_MONTH",
+    )
+
+
+class LinkedInWarehouseSyncResponse(BaseModel):
+    account_id: str
+    date_range: dict
+    days_synced: int
+    coverage: dict
+
+
+class WarehouseStatusResponse(BaseModel):
+    enabled: bool
+    connected: bool
+    metrics_rows: int = 0
+    linkedin_rows: int = 0
+    google_rows: int = 0
+    error: str | None = None
+
+
+class WarehouseMetricsResponse(BaseModel):
+    count: int
+    rows: list[dict]

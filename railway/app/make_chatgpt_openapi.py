@@ -11,7 +11,7 @@ URL = "https://sagefrog-production.up.railway.app/openapi.json"
 OUT = "openapi-chatgpt.json"
 _SKIP_PATHS = {"/"}
 _AUTH = "ApiKeyAuth"
-_PROTECTED = ("/google-ads", "/linkedin", "/ga4", "/cache")
+_PROTECTED = ("/google-ads", "/linkedin", "/ga4", "/warehouse", "/cache")
 
 
 def _fix_object_schemas(node: Any) -> None:

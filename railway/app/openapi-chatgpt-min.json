@@ -413,6 +413,145 @@
         "security": [{ "ApiKeyAuth": [] }]
       }
     },
+    "/linkedin/warehouse/sync": {
+      "post": {
+        "operationId": "linkedinWarehouseSync",
+        "summary": "Sync LinkedIn daily metrics to Postgres (metrics_daily)",
+        "description": "Pulls day-by-day spend/clicks/impressions from LinkedIn and upserts into metrics_daily. Use LAST_180_DAYS for max history in one call. Requires Railway DATABASE_URL.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["account_id"],
+                "properties": {
+                  "account_id": { "type": "string" },
+                  "date_range": {
+                    "type": "string",
+                    "default": "LAST_30_DAYS",
+                    "enum": [
+                      "LAST_7_DAYS",
+                      "LAST_30_DAYS",
+                      "LAST_90_DAYS",
+                      "LAST_180_DAYS",
+                      "THIS_MONTH",
+                      "LAST_MONTH"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sync result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": { "type": "string" },
+                    "days_synced": { "type": "integer" },
+                    "date_range": { "type": "object", "properties": {} },
+                    "coverage": {
+                      "type": "object",
+                      "properties": {
+                        "min_date": { "type": "string" },
+                        "max_date": { "type": "string" },
+                        "day_count": { "type": "integer" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/warehouse/status": {
+      "get": {
+        "operationId": "warehouseStatus",
+        "summary": "Postgres warehouse status (metrics_daily row counts)",
+        "responses": {
+          "200": {
+            "description": "Status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": { "type": "boolean" },
+                    "connected": { "type": "boolean" },
+                    "metrics_rows": { "type": "integer" },
+                    "linkedin_rows": { "type": "integer" },
+                    "error": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/warehouse/metrics": {
+      "get": {
+        "operationId": "warehouseMetrics",
+        "summary": "Read stored daily metrics from Postgres",
+        "parameters": [
+          {
+            "name": "from_date",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "YYYY-MM-DD"
+          },
+          {
+            "name": "to_date",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "YYYY-MM-DD"
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["linkedin", "google"] }
+          },
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daily metric rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": { "type": "integer" },
+                    "rows": {
+                      "type": "array",
+                      "items": { "type": "object", "properties": {} }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
     "/ga4/env": {
       "get": {
         "operationId": "ga4Env",
