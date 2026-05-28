@@ -204,6 +204,28 @@ def _campaign_urns(campaign: dict[str, Any]) -> set[str]:
     return {raw, raw_no_prefix, f"urn:li:sponsoredCampaign:{raw_no_prefix}"}
 
 
+def _linkedin_search_pages(
+    path: str,
+    *,
+    base_params: dict[str, Any],
+    access_token: str,
+    env: LinkedInEnv,
+) -> list[dict[str, Any]]:
+    """Cursor-paginate a LinkedIn q=search endpoint (metadata.nextPageToken)."""
+    rows: list[dict[str, Any]] = []
+    page_token: str | None = None
+    while True:
+        params = dict(base_params)
+        if page_token:
+            params["pageToken"] = page_token
+        payload = _linkedin_get(path, params=params, access_token=access_token, env=env)
+        rows.extend(payload.get("elements") or [])
+        page_token = (payload.get("metadata") or {}).get("nextPageToken")
+        if not page_token:
+            break
+    return rows
+
+
 def _fetch_active_campaigns(
     account_id: str,
     *,
@@ -211,14 +233,38 @@ def _fetch_active_campaigns(
     env: LinkedInEnv,
 ) -> list[dict[str, Any]]:
     account_id_clean = _normalize_account_id(account_id)
-    payload = _linkedin_get(
-        f"/adAccounts/{account_id_clean}/adCampaigns",
-        params={"q": "search", "search": "(status:(values:List(ACTIVE)))"},
-        access_token=access_token,
-        env=env,
-    )
-    campaigns = payload.get("elements") or []
-    return [c for c in campaigns if c.get("status") == "ACTIVE"]
+    path = f"/adAccounts/{account_id_clean}/adCampaigns"
+
+    # RestLI parenthesized search=(status:(values:List(ACTIVE))) is rejected on current REST
+    # versions — use dotted finder params per LinkedIn docs (202604+).
+    search_attempts: list[dict[str, Any]] = [
+        {
+            "q": "search",
+            "search.status.values[0]": "ACTIVE",
+            "search.test": "false",
+            "pageSize": 1000,
+        },
+        {
+            "q": "search",
+            "search.status.values": "ACTIVE",
+            "search.test": "false",
+            "pageSize": 1000,
+        },
+    ]
+
+    last_error: Exception | None = None
+    for params in search_attempts:
+        try:
+            campaigns = _linkedin_search_pages(
+                path, base_params=params, access_token=access_token, env=env
+            )
+            return [c for c in campaigns if c.get("status") == "ACTIVE"]
+        except Exception as e:
+            last_error = e
+
+    if last_error:
+        raise last_error
+    return []
 
 
 def _fetch_campaign_analytics(

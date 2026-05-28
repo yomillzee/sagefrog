@@ -1,0 +1,469 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "EOS Ads + GA4 Service",
+    "version": "0.2.0",
+    "description": "Google Ads, LinkedIn Ads, and GA4 BigQuery. Protected routes need header X-API-Key (Railway API_KEY). GET /health is public."
+  },
+  "servers": [
+    {
+      "url": "https://sagefrog-production.up.railway.app"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "summary": "Health check",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/google-ads/accounts": {
+      "get": {
+        "operationId": "googleAdsAccounts",
+        "summary": "List accessible Google Ads accounts",
+        "responses": {
+          "200": {
+            "description": "Accounts list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": { "type": "integer" },
+                    "accounts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "customer_id": { "type": "string" },
+                          "descriptive_name": { "type": "string" },
+                          "resource_name": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/google-ads/search": {
+      "post": {
+        "operationId": "googleAdsSearch",
+        "summary": "Run GAQL search for one account",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["customer_id", "query"],
+                "properties": {
+                  "customer_id": {
+                    "type": "string",
+                    "description": "Google Ads customer ID, digits only"
+                  },
+                  "query": { "type": "string", "description": "GAQL query" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Search result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "customer_id": { "type": "string" },
+                    "row_count": { "type": "integer" },
+                    "rows": {
+                      "type": "array",
+                      "items": { "type": "object", "properties": {} }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/google-ads/search-many": {
+      "post": {
+        "operationId": "googleAdsSearchMany",
+        "summary": "Run GAQL search across multiple accounts",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["customer_ids", "query"],
+                "properties": {
+                  "customer_ids": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "query": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Per-account results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": { "type": "object", "properties": {} }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/google-ads/summary-all": {
+      "post": {
+        "operationId": "googleAdsSummaryAll",
+        "summary": "Aggregate summary across accounts",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "customer_ids": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional subset of customer IDs"
+                  },
+                  "date_range": {
+                    "type": "string",
+                    "description": "LAST_7_DAYS, LAST_30_DAYS, THIS_MONTH, or LAST_MONTH",
+                    "default": "LAST_30_DAYS"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Aggregated summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "date_range": { "type": "string" },
+                    "account_count": { "type": "integer" },
+                    "totals": { "type": "object", "properties": {} },
+                    "accounts": {
+                      "type": "array",
+                      "items": { "type": "object", "properties": {} }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/google-ads/youtube-videos": {
+      "post": {
+        "operationId": "googleAdsYoutubeVideos",
+        "summary": "List YouTube video assets with URLs",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["customer_id"],
+                "properties": {
+                  "customer_id": { "type": "string" },
+                  "include_metrics": { "type": "boolean", "default": false },
+                  "date_range": { "type": "string", "default": "LAST_30_DAYS" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "YouTube videos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "customer_id": { "type": "string" },
+                    "row_count": { "type": "integer" },
+                    "videos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "youtube_video_id": { "type": "string" },
+                          "youtube_watch_url": { "type": "string" },
+                          "campaign_name": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/linkedin/env": {
+      "get": {
+        "operationId": "linkedinEnv",
+        "summary": "LinkedIn credential status (no secrets)",
+        "responses": {
+          "200": {
+            "description": "Env summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "has_client_id": { "type": "boolean" },
+                    "has_client_secret": { "type": "boolean" },
+                    "has_refresh_token": { "type": "boolean" },
+                    "linkedin_version": { "type": "string" },
+                    "refresh_token_looks_valid": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/linkedin/test-token": {
+      "get": {
+        "operationId": "linkedinTestToken",
+        "summary": "Verify LinkedIn OAuth refresh",
+        "responses": {
+          "200": {
+            "description": "Token test",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "message": { "type": "string" },
+                    "account_count": { "type": "integer" },
+                    "error": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/linkedin/accounts": {
+      "get": {
+        "operationId": "linkedinAccounts",
+        "summary": "List LinkedIn ad accounts",
+        "responses": {
+          "200": {
+            "description": "Account list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": { "type": "integer" },
+                    "accounts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "name": { "type": "string" },
+                          "status": { "type": "string" },
+                          "currency": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/linkedin/performance": {
+      "get": {
+        "operationId": "linkedinPerformance",
+        "summary": "LinkedIn Ads performance for one account",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "LinkedIn ad account ID (digits only)"
+          },
+          {
+            "name": "date_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "LAST_30_DAYS",
+              "enum": [
+                "LAST_7_DAYS",
+                "LAST_30_DAYS",
+                "LAST_90_DAYS",
+                "LAST_180_DAYS",
+                "THIS_MONTH",
+                "LAST_MONTH"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Performance summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": { "type": "string" },
+                    "date_range": { "type": "object", "properties": {} },
+                    "totals": {
+                      "type": "object",
+                      "properties": {
+                        "spend": { "type": "number" },
+                        "clicks": { "type": "integer" },
+                        "impressions": { "type": "integer" },
+                        "conversions": { "type": "number" },
+                        "conversion_value": { "type": "number" },
+                        "campaign_count": { "type": "integer" }
+                      }
+                    },
+                    "campaigns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "name": { "type": "string" },
+                          "status": { "type": "string" },
+                          "spend": { "type": "number" },
+                          "clicks": { "type": "integer" },
+                          "impressions": { "type": "integer" },
+                          "conversions": { "type": "number" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/ga4/query": {
+      "post": {
+        "operationId": "ga4Query",
+        "summary": "Run BigQuery SQL on GA4 export",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["sql"],
+                "properties": {
+                  "sql": { "type": "string" },
+                  "max_rows": { "type": "integer", "default": 1000 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Query rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "row_count": { "type": "integer" },
+                    "rows": {
+                      "type": "array",
+                      "items": { "type": "object", "properties": {} }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    }
+  },
+  "components": {
+    "schemas": {},
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Railway API_KEY value."
+      }
+    }
+  }
+}

@@ -1,0 +1,1647 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "EOS Ads + GA4 Service",
+    "version": "0.2.0",
+    "description": "Google Ads, LinkedIn Ads, and GA4 BigQuery. Protected routes need header X-API-Key (Railway API_KEY). GET /health is public."
+  },
+  "servers": [
+    {
+      "url": "https://sagefrog-production.up.railway.app"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cache/health": {
+      "get": {
+        "summary": "Cache Health",
+        "operationId": "cache_health_cache_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheHealthResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/google-ads/env": {
+      "get": {
+        "summary": "Google Ads Env",
+        "operationId": "google_ads_env_google_ads_env_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleAdsEnvSummary"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/google-ads/creds-check": {
+      "get": {
+        "summary": "Google Ads Creds Check",
+        "description": "Compare token prefixes/lengths with OAuth Playground (no secrets returned).",
+        "operationId": "google_ads_creds_check_google_ads_creds_check_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredsFingerprintResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/google-ads/test-token": {
+      "get": {
+        "summary": "Google Ads Test Token",
+        "description": "Verify OAuth refresh only (no GAQL). Returns ok=false with error detail on failure.",
+        "operationId": "google_ads_test_token_google_ads_test_token_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestTokenResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/google-ads/search": {
+      "post": {
+        "summary": "Google Ads Search",
+        "operationId": "google_ads_search_google_ads_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/google-ads/accounts": {
+      "get": {
+        "summary": "Google Ads Accounts",
+        "operationId": "google_ads_accounts_google_ads_accounts_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/google-ads/youtube-videos": {
+      "post": {
+        "summary": "List YouTube video assets with watch/embed URLs",
+        "description": "Returns YouTube links from Google Ads video assets (not parsed from ad names). Merges ad_group_ad_asset_view (Demand Gen, etc.), classic VIDEO ads, and optional account-level YOUTUBE_VIDEO assets. Intended for ChatGPT Custom Actions.",
+        "operationId": "google_ads_youtube_videos_google_ads_youtube_videos_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/YoutubeVideosRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YoutubeVideosResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/google-ads/search-many": {
+      "post": {
+        "summary": "Google Ads Search Many",
+        "operationId": "google_ads_search_many_google_ads_search_many_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchManyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchManyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/google-ads/summary-all": {
+      "post": {
+        "summary": "Google Ads Summary All",
+        "operationId": "google_ads_summary_all_google_ads_summary_all_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SummaryAllRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryAllResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/linkedin/env": {
+      "get": {
+        "summary": "Linkedin Env",
+        "operationId": "linkedin_env_linkedin_env_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedInEnvSummary"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/linkedin/test-token": {
+      "get": {
+        "summary": "Linkedin Test Token",
+        "description": "Verify LinkedIn OAuth refresh and ad account access.",
+        "operationId": "linkedin_test_token_linkedin_test_token_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedInTestTokenResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/linkedin/accounts": {
+      "get": {
+        "summary": "Linkedin Accounts",
+        "operationId": "linkedin_accounts_linkedin_accounts_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedInAccountsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/linkedin/performance": {
+      "get": {
+        "summary": "LinkedIn Ads performance for one account",
+        "operationId": "linkedin_performance_linkedin_performance_get",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Account Id"
+            }
+          },
+          {
+            "name": "date_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "LAST_30_DAYS",
+              "title": "Date Range"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedInPerformanceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ga4/env": {
+      "get": {
+        "summary": "Ga4 Env",
+        "operationId": "ga4_env_ga4_env_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ga4EnvSummary"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/ga4/query": {
+      "post": {
+        "summary": "Ga4 Query",
+        "operationId": "ga4_query_ga4_query_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Ga4QueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ga4QueryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AccountRef": {
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "title": "Customer Id"
+          },
+          "resource_name": {
+            "type": "string",
+            "title": "Resource Name"
+          },
+          "descriptive_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Descriptive Name"
+          },
+          "currency_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency Code"
+          },
+          "time_zone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Zone"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "ok"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "customer_id",
+          "resource_name"
+        ],
+        "title": "AccountRef"
+      },
+      "AccountsResponse": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/AccountRef"
+            },
+            "type": "array",
+            "title": "Accounts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "count",
+          "accounts"
+        ],
+        "title": "AccountsResponse"
+      },
+      "CacheHealthResponse": {
+        "properties": {
+          "has_database_url": {
+            "type": "boolean",
+            "title": "Has Database Url"
+          },
+          "schema_ready": {
+            "type": "boolean",
+            "title": "Schema Ready"
+          },
+          "table_exists": {
+            "type": "boolean",
+            "title": "Table Exists"
+          },
+          "cache_rows": {
+            "type": "integer",
+            "title": "Cache Rows",
+            "default": 0
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "has_database_url",
+          "schema_ready",
+          "table_exists"
+        ],
+        "title": "CacheHealthResponse"
+      },
+      "CredsFingerprintResponse": {
+        "properties": {
+          "client_id": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object",
+                "properties": {}
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "client_id_looks_valid": {
+            "type": "boolean",
+            "title": "Client Id Looks Valid",
+            "default": false
+          },
+          "client_secret": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object",
+                "properties": {}
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Secret"
+          },
+          "refresh_token": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object",
+                "properties": {}
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Token"
+          },
+          "refresh_token_looks_valid": {
+            "type": "boolean",
+            "title": "Refresh Token Looks Valid",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "CredsFingerprintResponse"
+      },
+      "Ga4EnvSummary": {
+        "properties": {
+          "has_gcp_service_account_json": {
+            "type": "boolean",
+            "title": "Has Gcp Service Account Json"
+          },
+          "has_bq_project_id": {
+            "type": "boolean",
+            "title": "Has Bq Project Id"
+          },
+          "has_bq_dataset_id": {
+            "type": "boolean",
+            "title": "Has Bq Dataset Id"
+          },
+          "bq_project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bq Project Id"
+          },
+          "bq_dataset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bq Dataset Id"
+          },
+          "gcp_service_account_json_char_count": {
+            "type": "integer",
+            "title": "Gcp Service Account Json Char Count",
+            "default": 0
+          },
+          "gcp_service_account_json_hint": {
+            "type": "string",
+            "title": "Gcp Service Account Json Hint",
+            "description": "empty | raw_json | possibly_double_quoted_wrap | base64_or_other",
+            "default": "empty"
+          },
+          "gcp_service_account_json_suspected_truncated": {
+            "type": "boolean",
+            "title": "Gcp Service Account Json Suspected Truncated",
+            "description": "True if value is very short \u2014 common when Railway truncates a multiline paste.",
+            "default": false
+          },
+          "gcp_service_account_json_parse_ok": {
+            "type": "boolean",
+            "title": "Gcp Service Account Json Parse Ok",
+            "default": false
+          },
+          "gcp_service_account_json_parse_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gcp Service Account Json Parse Error",
+            "description": "Parse error detail when parse_ok is false (no secret material)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "has_gcp_service_account_json",
+          "has_bq_project_id",
+          "has_bq_dataset_id"
+        ],
+        "title": "Ga4EnvSummary"
+      },
+      "Ga4QueryRequest": {
+        "properties": {
+          "sql": {
+            "type": "string",
+            "title": "Sql",
+            "description": "BigQuery SQL query"
+          },
+          "max_rows": {
+            "type": "integer",
+            "maximum": 50000.0,
+            "minimum": 1.0,
+            "title": "Max Rows",
+            "description": "Maximum rows to return",
+            "default": 1000
+          }
+        },
+        "type": "object",
+        "required": [
+          "sql"
+        ],
+        "title": "Ga4QueryRequest"
+      },
+      "Ga4QueryResponse": {
+        "properties": {
+          "row_count": {
+            "type": "integer",
+            "title": "Row Count"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object",
+              "properties": {}
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "row_count",
+          "rows"
+        ],
+        "title": "Ga4QueryResponse"
+      },
+      "GoogleAdsEnvSummary": {
+        "properties": {
+          "has_developer_token": {
+            "type": "boolean",
+            "title": "Has Developer Token"
+          },
+          "has_login_customer_id": {
+            "type": "boolean",
+            "title": "Has Login Customer Id"
+          },
+          "has_client_id": {
+            "type": "boolean",
+            "title": "Has Client Id"
+          },
+          "has_client_secret": {
+            "type": "boolean",
+            "title": "Has Client Secret"
+          },
+          "has_refresh_token": {
+            "type": "boolean",
+            "title": "Has Refresh Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "has_developer_token",
+          "has_login_customer_id",
+          "has_client_id",
+          "has_client_secret",
+          "has_refresh_token"
+        ],
+        "title": "GoogleAdsEnvSummary"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "ok"
+          }
+        },
+        "type": "object",
+        "title": "HealthResponse"
+      },
+      "LinkedInAccountRef": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency",
+            "default": ""
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "LinkedInAccountRef"
+      },
+      "LinkedInAccountsResponse": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/LinkedInAccountRef"
+            },
+            "type": "array",
+            "title": "Accounts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "count",
+          "accounts"
+        ],
+        "title": "LinkedInAccountsResponse"
+      },
+      "LinkedInCampaignPerformance": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "spend": {
+            "type": "number",
+            "title": "Spend",
+            "default": 0.0
+          },
+          "clicks": {
+            "type": "integer",
+            "title": "Clicks",
+            "default": 0
+          },
+          "impressions": {
+            "type": "integer",
+            "title": "Impressions",
+            "default": 0
+          },
+          "conversions": {
+            "type": "number",
+            "title": "Conversions",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "LinkedInCampaignPerformance"
+      },
+      "LinkedInEnvSummary": {
+        "properties": {
+          "has_client_id": {
+            "type": "boolean",
+            "title": "Has Client Id"
+          },
+          "has_client_secret": {
+            "type": "boolean",
+            "title": "Has Client Secret"
+          },
+          "has_refresh_token": {
+            "type": "boolean",
+            "title": "Has Refresh Token"
+          },
+          "linkedin_version": {
+            "type": "string",
+            "title": "Linkedin Version",
+            "default": "202604"
+          },
+          "refresh_token_looks_valid": {
+            "type": "boolean",
+            "title": "Refresh Token Looks Valid",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "has_client_id",
+          "has_client_secret",
+          "has_refresh_token"
+        ],
+        "title": "LinkedInEnvSummary"
+      },
+      "LinkedInPerformanceResponse": {
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "title": "Account Id"
+          },
+          "date_range": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Date Range",
+            "properties": {}
+          },
+          "totals": {
+            "$ref": "#/components/schemas/LinkedInPerformanceTotals"
+          },
+          "campaigns": {
+            "items": {
+              "$ref": "#/components/schemas/LinkedInCampaignPerformance"
+            },
+            "type": "array",
+            "title": "Campaigns"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_id",
+          "date_range",
+          "totals",
+          "campaigns"
+        ],
+        "title": "LinkedInPerformanceResponse"
+      },
+      "LinkedInPerformanceTotals": {
+        "properties": {
+          "spend": {
+            "type": "number",
+            "title": "Spend",
+            "default": 0.0
+          },
+          "clicks": {
+            "type": "integer",
+            "title": "Clicks",
+            "default": 0
+          },
+          "impressions": {
+            "type": "integer",
+            "title": "Impressions",
+            "default": 0
+          },
+          "conversions": {
+            "type": "number",
+            "title": "Conversions",
+            "default": 0.0
+          },
+          "conversion_value": {
+            "type": "number",
+            "title": "Conversion Value",
+            "default": 0.0
+          },
+          "campaign_count": {
+            "type": "integer",
+            "title": "Campaign Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "LinkedInPerformanceTotals"
+      },
+      "LinkedInTestTokenResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "account_count": {
+            "type": "integer",
+            "title": "Account Count",
+            "default": 0
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "message"
+        ],
+        "title": "LinkedInTestTokenResponse"
+      },
+      "SearchManyRequest": {
+        "properties": {
+          "customer_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Customer Ids",
+            "description": "One or more Google Ads customer IDs (digits only)"
+          },
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "GAQL query"
+          }
+        },
+        "type": "object",
+        "required": [
+          "customer_ids",
+          "query"
+        ],
+        "title": "SearchManyRequest"
+      },
+      "SearchManyResponse": {
+        "properties": {
+          "requested_count": {
+            "type": "integer",
+            "title": "Requested Count"
+          },
+          "success_count": {
+            "type": "integer",
+            "title": "Success Count"
+          },
+          "failure_count": {
+            "type": "integer",
+            "title": "Failure Count"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SearchManyResult"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": [
+          "requested_count",
+          "success_count",
+          "failure_count",
+          "results"
+        ],
+        "title": "SearchManyResponse"
+      },
+      "SearchManyResult": {
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "title": "Customer Id"
+          },
+          "row_count": {
+            "type": "integer",
+            "title": "Row Count",
+            "default": 0
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object",
+              "properties": {}
+            },
+            "type": "array",
+            "title": "Rows"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "ok"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "customer_id"
+        ],
+        "title": "SearchManyResult"
+      },
+      "SearchRequest": {
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "title": "Customer Id",
+            "description": "Google Ads customer ID without dashes, e.g. 1234567890"
+          },
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "GAQL query"
+          }
+        },
+        "type": "object",
+        "required": [
+          "customer_id",
+          "query"
+        ],
+        "title": "SearchRequest"
+      },
+      "SearchResponse": {
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "title": "Customer Id"
+          },
+          "row_count": {
+            "type": "integer",
+            "title": "Row Count"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object",
+              "properties": {}
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "customer_id",
+          "row_count",
+          "rows"
+        ],
+        "title": "SearchResponse"
+      },
+      "SummaryAllRequest": {
+        "properties": {
+          "customer_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Ids",
+            "description": "Optional subset of customer IDs. If omitted, all accessible accounts are used."
+          },
+          "date_range": {
+            "type": "string",
+            "title": "Date Range",
+            "description": "One of: LAST_7_DAYS, LAST_30_DAYS, THIS_MONTH, LAST_MONTH",
+            "default": "LAST_30_DAYS"
+          }
+        },
+        "type": "object",
+        "title": "SummaryAllRequest"
+      },
+      "SummaryAllResponse": {
+        "properties": {
+          "date_range": {
+            "type": "string",
+            "title": "Date Range"
+          },
+          "account_count": {
+            "type": "integer",
+            "title": "Account Count"
+          },
+          "success_count": {
+            "type": "integer",
+            "title": "Success Count"
+          },
+          "failure_count": {
+            "type": "integer",
+            "title": "Failure Count"
+          },
+          "totals": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Totals",
+            "properties": {}
+          },
+          "accounts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object",
+              "properties": {}
+            },
+            "type": "array",
+            "title": "Accounts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date_range",
+          "account_count",
+          "success_count",
+          "failure_count",
+          "totals",
+          "accounts"
+        ],
+        "title": "SummaryAllResponse"
+      },
+      "TestTokenResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "token_expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Expires At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "message"
+        ],
+        "title": "TestTokenResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context",
+            "properties": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "YoutubeVideoItem": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "ad_group_ad_asset_view | video_ad | asset"
+          },
+          "campaign_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Campaign Id"
+          },
+          "campaign_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Campaign Name"
+          },
+          "ad_group_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ad Group Id"
+          },
+          "ad_group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ad Group Name"
+          },
+          "ad_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ad Id"
+          },
+          "ad_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ad Name"
+          },
+          "ad_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ad Status"
+          },
+          "asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Id"
+          },
+          "asset_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Name"
+          },
+          "asset_field_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Field Type"
+          },
+          "youtube_video_id": {
+            "type": "string",
+            "title": "Youtube Video Id"
+          },
+          "youtube_video_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Video Title"
+          },
+          "youtube_watch_url": {
+            "type": "string",
+            "title": "Youtube Watch Url"
+          },
+          "youtube_embed_url": {
+            "type": "string",
+            "title": "Youtube Embed Url"
+          },
+          "youtube_thumbnail_url": {
+            "type": "string",
+            "title": "Youtube Thumbnail Url"
+          },
+          "metrics": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object",
+                "properties": {}
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metrics"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "youtube_video_id",
+          "youtube_watch_url",
+          "youtube_embed_url",
+          "youtube_thumbnail_url"
+        ],
+        "title": "YoutubeVideoItem"
+      },
+      "YoutubeVideosRequest": {
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "title": "Customer Id",
+            "description": "Google Ads customer ID without dashes, e.g. 1234567890",
+            "examples": [
+              "1234567890"
+            ]
+          },
+          "include_account_assets": {
+            "type": "boolean",
+            "title": "Include Account Assets",
+            "description": "Also include YOUTUBE_VIDEO rows from the asset table (account inventory). Useful when ad_group_ad_asset_view does not cover a campaign type.",
+            "default": true
+          },
+          "include_metrics": {
+            "type": "boolean",
+            "title": "Include Metrics",
+            "description": "Include impressions/clicks/cost/conversions for ad_group_ad_asset_view rows.",
+            "default": false
+          },
+          "date_range": {
+            "type": "string",
+            "title": "Date Range",
+            "description": "Date range for metrics. One of: LAST_7_DAYS, LAST_30_DAYS, THIS_MONTH, LAST_MONTH",
+            "default": "LAST_30_DAYS"
+          }
+        },
+        "type": "object",
+        "required": [
+          "customer_id"
+        ],
+        "title": "YoutubeVideosRequest"
+      },
+      "YoutubeVideosResponse": {
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "title": "Customer Id"
+          },
+          "row_count": {
+            "type": "integer",
+            "title": "Row Count"
+          },
+          "videos": {
+            "items": {
+              "$ref": "#/components/schemas/YoutubeVideoItem"
+            },
+            "type": "array",
+            "title": "Videos"
+          }
+        },
+        "type": "object",
+        "required": [
+          "customer_id",
+          "row_count",
+          "videos"
+        ],
+        "title": "YoutubeVideosResponse"
+      }
+    },
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Railway API_KEY value."
+      }
+    }
+  }
+}
