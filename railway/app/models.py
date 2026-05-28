@@ -134,3 +134,54 @@ class CredsFingerprintResponse(BaseModel):
     client_secret: dict | None = None
     refresh_token: dict | None = None
     refresh_token_looks_valid: bool = False
+
+
+class YoutubeVideosRequest(BaseModel):
+    customer_id: str = Field(
+        ...,
+        description="Google Ads customer ID without dashes, e.g. 1234567890",
+        examples=["1234567890"],
+    )
+    include_account_assets: bool = Field(
+        default=True,
+        description=(
+            "Also include YOUTUBE_VIDEO rows from the asset table (account inventory). "
+            "Useful when ad_group_ad_asset_view does not cover a campaign type."
+        ),
+    )
+    include_metrics: bool = Field(
+        default=False,
+        description="Include impressions/clicks/cost/conversions for ad_group_ad_asset_view rows.",
+    )
+    date_range: str = Field(
+        default="LAST_30_DAYS",
+        description="Date range for metrics. One of: LAST_7_DAYS, LAST_30_DAYS, THIS_MONTH, LAST_MONTH",
+    )
+
+
+class YoutubeVideoItem(BaseModel):
+    source: str = Field(
+        description="ad_group_ad_asset_view | video_ad | asset",
+    )
+    campaign_id: str | None = None
+    campaign_name: str | None = None
+    ad_group_id: str | None = None
+    ad_group_name: str | None = None
+    ad_id: str | None = None
+    ad_name: str | None = None
+    ad_status: str | None = None
+    asset_id: str | None = None
+    asset_name: str | None = None
+    asset_field_type: str | None = None
+    youtube_video_id: str
+    youtube_video_title: str | None = None
+    youtube_watch_url: str
+    youtube_embed_url: str
+    youtube_thumbnail_url: str
+    metrics: dict | None = None
+
+
+class YoutubeVideosResponse(BaseModel):
+    customer_id: str
+    row_count: int
+    videos: list[YoutubeVideoItem]

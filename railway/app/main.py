@@ -29,6 +29,9 @@ from models import (
     Ga4QueryRequest,
     Ga4QueryResponse,
     TestTokenResponse,
+    YoutubeVideosRequest,
+    YoutubeVideosResponse,
+    YoutubeVideoItem,
 )
 
 load_dotenv()
@@ -91,6 +94,7 @@ def root() -> dict:
         "docs": "/docs",
         "health": "/health",
         "test_token": "/google-ads/test-token",
+        "youtube_videos": "/google-ads/youtube-videos",
         "ga4_env": "/ga4/env",
     }
 
@@ -204,6 +208,61 @@ def google_ads_accounts() -> AccountsResponse:
                 )
             )
     return AccountsResponse(count=len(accounts), accounts=accounts)
+
+
+@app.post(
+    "/google-ads/youtube-videos",
+    response_model=YoutubeVideosResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="List YouTube video assets with watch/embed URLs",
+    description=(
+        "Returns YouTube links from Google Ads video assets (not parsed from ad names). "
+        "Merges ad_group_ad_asset_view (Demand Gen, etc.), classic VIDEO ads, and optional "
+        "account-level YOUTUBE_VIDEO assets. Intended for ChatGPT Custom Actions."
+    ),
+)
+def google_ads_youtube_videos(body: YoutubeVideosRequest) -> YoutubeVideosResponse:
+    cache_payload = {
+        "customer_id": body.customer_id,
+        "include_account_assets": body.include_account_assets,
+        "include_metrics": body.include_metrics,
+        "date_range": body.date_range,
+    }
+    hit = db_cache.get_cached("google_ads.youtube_videos", cache_payload)
+    if hit is not None:
+        rows = hit.response_json or []
+        return YoutubeVideosResponse(
+            customer_id=body.customer_id,
+            row_count=int(hit.row_count or len(rows)),
+            videos=[YoutubeVideoItem(**r) for r in rows],
+        )
+    try:
+        rows = google_ads_service.list_youtube_videos(
+            customer_id=body.customer_id,
+            include_account_assets=body.include_account_assets,
+            include_metrics=body.include_metrics,
+            date_range=body.date_range,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        db_cache.put_cached(
+            "google_ads.youtube_videos",
+            cache_payload,
+            response_json=rows,
+            row_count=len(rows),
+            status="ok",
+            error=None,
+        )
+    except Exception:
+        pass
+    return YoutubeVideosResponse(
+        customer_id=body.customer_id,
+        row_count=len(rows),
+        videos=[YoutubeVideoItem(**r) for r in rows],
+    )
 
 
 @app.post(

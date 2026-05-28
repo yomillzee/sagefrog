@@ -66,12 +66,30 @@ railway variables --set "GCP_SERVICE_ACCOUNT_JSON=$(cat key.json)"
    - Header **`X-API-Key`**: `<API_KEY>`
 4. `GET /health` stays **unauthenticated** so Railway’s health check keeps working.
 
+#### YouTube video links (recommended for video creative review)
+
+Use **`POST /google-ads/youtube-videos`** — reads `asset.youtube_video_asset.youtube_video_id` from Google Ads (not ad name text).
+
+```json
+{
+  "customer_id": "1234567890",
+  "include_account_assets": true,
+  "include_metrics": false,
+  "date_range": "LAST_30_DAYS"
+}
+```
+
+Example response fields per row: `campaign_name`, `ad_name`, `youtube_video_id`, `youtube_watch_url`, `youtube_embed_url`, `youtube_thumbnail_url`, `source` (`ad_group_ad_asset_view`, `video_ad`, or `asset`).
+
+**GPT instruction snippet:** “When the user asks for YouTube links for Google Ads videos, call `youtubeVideos` with their customer ID. Return `youtube_watch_url` and campaign/ad context from the response.”
+
 ## Endpoints
 
 - `GET /health` — deploy health check
 - `GET /google-ads/env` — which credentials are set (no secrets returned)
 - `GET /google-ads/test-token` — OAuth refresh only (debug `invalid_grant` before GAQL)
-- `POST /google-ads/search` — run a GAQL query
+- `POST /google-ads/search` — run a GAQL query (rows are structured JSON dicts)
+- `POST /google-ads/youtube-videos` — YouTube watch/embed/thumbnail URLs from **video assets** (for GPT Custom Actions)
 - `GET /google-ads/accounts` — list accessible customer accounts under current credentials
 - `POST /google-ads/search-many` — run one GAQL query across multiple customer IDs
 - `POST /google-ads/summary-all` — aggregate account-level metrics across all (or selected) accounts
