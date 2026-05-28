@@ -34,14 +34,22 @@ Attach a **Postgres** plugin on Railway so `DATABASE_URL` is injected. The servi
 | `api_cache` | Short-lived API response cache (~1 hour) |
 | `metrics_daily` | One row per **day** per account (`source` = `linkedin` or `google`) |
 
-**Backfill LinkedIn history for ChatGPT or reporting:**
+**Backfill history (up to `LAST_180_DAYS` per call):**
 
 ```http
 POST /linkedin/warehouse/sync
 {"account_id": "502439493", "date_range": "LAST_180_DAYS"}
+
+POST /google-ads/warehouse/sync
+{"customer_id": "8032778786", "date_range": "LAST_180_DAYS"}
+
+POST /ga4/warehouse/sync
+{"date_range": "LAST_180_DAYS"}
 ```
 
-Each `linkedinPerformance` call also syncs that window into `metrics_daily` when the warehouse is enabled.
+Each `linkedinPerformance` call also syncs LinkedIn for that window when Postgres is enabled.
+
+**GA4 warehouse field mapping:** `clicks` = sessions, `impressions` = page views, `conversions` = key events, `spend` = 0.
 
 **Verify storage:**
 
@@ -137,9 +145,11 @@ Example response fields per row: `campaign_name`, `ad_name`, `youtube_video_id`,
 - `GET /linkedin/test-token` — OAuth refresh + ad account count
 - `GET /linkedin/accounts` — LinkedIn ad accounts for the token
 - `GET /linkedin/performance` — spend/clicks/impressions/conversions by active campaign (auto-syncs daily rows to Postgres when `DATABASE_URL` is set)
-- `POST /linkedin/warehouse/sync` — backfill `metrics_daily` for a date range (up to `LAST_180_DAYS` per call)
-- `GET /warehouse/status` — row counts in `metrics_daily` (LinkedIn vs Google)
-- `GET /warehouse/metrics?from_date=YYYY-MM-DD&to_date=YYYY-MM-DD&source=linkedin&account_id=` — read stored daily history
+- `POST /linkedin/warehouse/sync` — backfill LinkedIn into `metrics_daily`
+- `POST /google-ads/warehouse/sync` — backfill Google Ads (`customer_id` + `date_range`)
+- `POST /ga4/warehouse/sync` — backfill GA4 from BigQuery export (`source=ga4`)
+- `GET /warehouse/status` — row counts: `linkedin_rows`, `google_rows`, `ga4_rows`
+- `GET /warehouse/metrics?from_date=&to_date=&source=linkedin|google|ga4&account_id=` — read stored daily history
 - `GET /ga4/env` — validate GA4 BigQuery env wiring (includes **`gcp_service_account_json_char_count`**, **`gcp_service_account_json_parse_ok`**, and a short **`gcp_service_account_json_parse_error`** when parsing fails — no secrets returned)
 - `POST /ga4/query` — run a BigQuery SQL query (returns rows)
 

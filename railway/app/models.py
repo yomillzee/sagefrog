@@ -257,12 +257,37 @@ class LinkedInWarehouseSyncResponse(BaseModel):
     coverage: dict
 
 
+class GoogleAdsWarehouseSyncRequest(BaseModel):
+    customer_id: str = Field(..., description="Google Ads customer ID, digits only")
+    date_range: str = Field(
+        default="LAST_30_DAYS",
+        description="LAST_7_DAYS, LAST_30_DAYS, LAST_90_DAYS, LAST_180_DAYS, THIS_MONTH, LAST_MONTH",
+    )
+
+
+class Ga4WarehouseSyncRequest(BaseModel):
+    date_range: str = Field(
+        default="LAST_30_DAYS",
+        description="LAST_7_DAYS, LAST_30_DAYS, LAST_90_DAYS, LAST_180_DAYS, THIS_MONTH, LAST_MONTH",
+    )
+
+
+class WarehouseSyncResponse(BaseModel):
+    account_id: str
+    date_range: dict
+    days_synced: int
+    coverage: dict
+    bq_project_id: str | None = None
+    bq_dataset_id: str | None = None
+
+
 class WarehouseStatusResponse(BaseModel):
     enabled: bool
     connected: bool
     metrics_rows: int = 0
     linkedin_rows: int = 0
     google_rows: int = 0
+    ga4_rows: int = 0
     error: str | None = None
 
 

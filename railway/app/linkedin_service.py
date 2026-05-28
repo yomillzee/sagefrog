@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 import httpx
 
+from dates_util import resolve_date_range
 from linkedin_auth import LinkedInEnv, load_linkedin_env
 
 LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
@@ -60,30 +61,6 @@ def _format_date_range(start: date, end: date) -> str:
         f"(start:(year:{s['year']},month:{s['month']},day:{s['day']}),"
         f"end:(year:{e['year']},month:{e['month']},day:{e['day']}))"
     )
-
-
-def resolve_date_range(preset: str) -> tuple[date, date, str]:
-    """Map GPT-style presets to inclusive UTC calendar dates."""
-    today = date.today()
-    key = str(preset or "LAST_30_DAYS").strip().upper().replace("-", "_")
-
-    if key == "LAST_7_DAYS":
-        return today - timedelta(days=6), today, key
-    if key == "LAST_30_DAYS":
-        return today - timedelta(days=29), today, key
-    if key == "LAST_90_DAYS":
-        return today - timedelta(days=89), today, key
-    if key == "LAST_180_DAYS":
-        return today - timedelta(days=179), today, key
-    if key == "THIS_MONTH":
-        return today.replace(day=1), today, key
-    if key == "LAST_MONTH":
-        first_this_month = today.replace(day=1)
-        last_month_end = first_this_month - timedelta(days=1)
-        last_month_start = last_month_end.replace(day=1)
-        return last_month_start, last_month_end, key
-
-    return today - timedelta(days=29), today, "LAST_30_DAYS"
 
 
 def _client_headers(access_token: str, env: LinkedInEnv | None = None) -> dict[str, str]:

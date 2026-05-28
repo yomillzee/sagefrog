@@ -9,6 +9,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
 import bigquery_service
+import ga4_warehouse_service
 import google_ads_service
 import linkedin_service
 import db_cache
@@ -47,8 +48,22 @@ from models import (
     LinkedInCampaignPerformance,
     LinkedInWarehouseSyncRequest,
     LinkedInWarehouseSyncResponse,
+    GoogleAdsWarehouseSyncRequest,
+    Ga4WarehouseSyncRequest,
+    WarehouseSyncResponse,
     WarehouseStatusResponse,
     WarehouseMetricsResponse,
+)
+
+_WAREHOUSE_DATE_RANGES = frozenset(
+    {
+        "LAST_7_DAYS",
+        "LAST_30_DAYS",
+        "LAST_90_DAYS",
+        "LAST_180_DAYS",
+        "THIS_MONTH",
+        "LAST_MONTH",
+    }
 )
 
 load_dotenv()
@@ -140,6 +155,8 @@ def root() -> dict:
         "linkedin_accounts": "/linkedin/accounts",
         "linkedin_performance": "/linkedin/performance",
         "linkedin_warehouse_sync": "/linkedin/warehouse/sync",
+        "google_ads_warehouse_sync": "/google-ads/warehouse/sync",
+        "ga4_warehouse_sync": "/ga4/warehouse/sync",
         "warehouse_status": "/warehouse/status",
         "warehouse_metrics": "/warehouse/metrics",
         "ga4_env": "/ga4/env",
@@ -375,6 +392,40 @@ def google_ads_summary_all(body: SummaryAllRequest) -> SummaryAllResponse:
     )
 
 
+@app.post(
+    "/google-ads/warehouse/sync",
+    response_model=WarehouseSyncResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="Sync Google Ads daily metrics into Postgres warehouse",
+)
+def google_ads_warehouse_sync(body: GoogleAdsWarehouseSyncRequest) -> WarehouseSyncResponse:
+    preset = body.date_range.strip().upper().replace("-", "_")
+    if preset not in _WAREHOUSE_DATE_RANGES:
+        raise HTTPException(status_code=400, detail=f"Invalid date_range: {body.date_range}")
+    try:
+        result = google_ads_service.sync_account_to_warehouse(body.customer_id, date_range=preset)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return WarehouseSyncResponse(**result)
+
+
+@app.post(
+    "/ga4/warehouse/sync",
+    response_model=WarehouseSyncResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="Sync GA4 daily metrics from BigQuery into Postgres warehouse",
+)
+def ga4_warehouse_sync(body: Ga4WarehouseSyncRequest) -> WarehouseSyncResponse:
+    preset = body.date_range.strip().upper().replace("-", "_")
+    if preset not in _WAREHOUSE_DATE_RANGES:
+        raise HTTPException(status_code=400, detail=f"Invalid date_range: {body.date_range}")
+    try:
+        result = ga4_warehouse_service.sync_to_warehouse(date_range=preset)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return WarehouseSyncResponse(**result)
+
+
 @app.get(
     "/linkedin/env",
     response_model=LinkedInEnvSummary,
@@ -450,19 +501,11 @@ def linkedin_performance(
     account_id = account_id.strip()
     if not account_id:
         raise HTTPException(status_code=400, detail="Missing account_id query parameter.")
-    allowed_ranges = {
-        "LAST_7_DAYS",
-        "LAST_30_DAYS",
-        "LAST_90_DAYS",
-        "LAST_180_DAYS",
-        "THIS_MONTH",
-        "LAST_MONTH",
-    }
     preset = date_range.strip().upper().replace("-", "_")
-    if preset not in allowed_ranges:
+    if preset not in _WAREHOUSE_DATE_RANGES:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid date_range: {date_range}. Use one of: {', '.join(sorted(allowed_ranges))}",
+            detail=f"Invalid date_range: {date_range}. Use one of: {', '.join(sorted(_WAREHOUSE_DATE_RANGES))}",
         )
 
     cache_payload = {"account_id": account_id, "date_range": preset}
@@ -507,16 +550,8 @@ def linkedin_performance(
     summary="Sync LinkedIn daily metrics into Postgres warehouse",
 )
 def linkedin_warehouse_sync(body: LinkedInWarehouseSyncRequest) -> LinkedInWarehouseSyncResponse:
-    allowed_ranges = {
-        "LAST_7_DAYS",
-        "LAST_30_DAYS",
-        "LAST_90_DAYS",
-        "LAST_180_DAYS",
-        "THIS_MONTH",
-        "LAST_MONTH",
-    }
     preset = body.date_range.strip().upper().replace("-", "_")
-    if preset not in allowed_ranges:
+    if preset not in _WAREHOUSE_DATE_RANGES:
         raise HTTPException(status_code=400, detail=f"Invalid date_range: {body.date_range}")
     try:
         result = linkedin_service.sync_account_to_warehouse(body.account_id, date_range=preset)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date, timedelta
 from typing import Any
 
 from google.ads.googleads.client import GoogleAdsClient
@@ -9,6 +10,7 @@ from google.oauth2.credentials import Credentials
 from google.protobuf.json_format import MessageToDict
 
 from auth import GoogleAdsEnv, load_google_ads_env
+from dates_util import resolve_date_range
 
 _YOUTUBE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
 
@@ -384,6 +386,93 @@ def get_account_metadata(customer_id: str, *, client: GoogleAdsClient | None = N
         "time_zone": getattr(customer, "time_zone", None),
         "status": "ok",
         "error": None,
+    }
+
+
+def fetch_daily_metrics(
+    customer_id: str,
+    *,
+    start: date,
+    end: date,
+    client: GoogleAdsClient | None = None,
+) -> list[dict[str, Any]]:
+    """Account-level Google Ads metrics per day (sums all campaigns)."""
+    customer_id = str(customer_id).replace("-", "").strip()
+    start_key = start.isoformat()
+    end_key = end.isoformat()
+    query = f"""
+        SELECT
+          segments.date,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.conversions,
+          metrics.conversions_value,
+          metrics.cost_micros
+        FROM campaign
+        WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
+    """
+    rows = search(customer_id, query, client=client)
+    by_day: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        day = str(_dig(row, "segments", "date") or "").strip()
+        if not day:
+            continue
+        if day not in by_day:
+            by_day[day] = {
+                "metric_date": day,
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+            }
+        rec = by_day[day]
+        rec["spend"] += int(_dig(row, "metrics", "cost_micros") or 0) / 1_000_000
+        rec["clicks"] += int(_dig(row, "metrics", "clicks") or 0)
+        rec["impressions"] += int(_dig(row, "metrics", "impressions") or 0)
+        rec["conversions"] += float(_dig(row, "metrics", "conversions") or 0)
+        rec["conversion_value"] += float(_dig(row, "metrics", "conversions_value") or 0)
+
+    out: list[dict[str, Any]] = []
+    cursor = start
+    while cursor <= end:
+        key = cursor.isoformat()
+        out.append(
+            by_day.get(key)
+            or {
+                "metric_date": key,
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+            }
+        )
+        cursor += timedelta(days=1)
+    return out
+
+
+def sync_account_to_warehouse(
+    customer_id: str,
+    *,
+    date_range: str = "LAST_30_DAYS",
+    client: GoogleAdsClient | None = None,
+) -> dict[str, Any]:
+    import warehouse
+
+    if not warehouse.enabled():
+        raise RuntimeError("DATABASE_URL is not set — warehouse storage is disabled.")
+
+    start, end, preset = resolve_date_range(date_range)
+    daily_rows = fetch_daily_metrics(customer_id, start=start, end=end, client=client)
+    customer_id_clean = str(customer_id).replace("-", "").strip()
+    written = warehouse.upsert_metrics_daily_batch("google", customer_id_clean, daily_rows)
+    coverage = warehouse.account_date_coverage("google", customer_id_clean)
+    return {
+        "account_id": customer_id_clean,
+        "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
+        "days_synced": written,
+        "coverage": coverage,
     }
 
 

@@ -253,6 +253,93 @@
         "security": [{ "ApiKeyAuth": [] }]
       }
     },
+    "/google-ads/warehouse/sync": {
+      "post": {
+        "operationId": "googleAdsWarehouseSync",
+        "summary": "Sync Google Ads daily metrics to Postgres (metrics_daily)",
+        "description": "Pulls day-by-day spend/clicks/impressions/conversions from Google Ads GAQL into metrics_daily. Requires DATABASE_URL and Google Ads credentials.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["customer_id"],
+                "properties": {
+                  "customer_id": { "type": "string", "description": "Google Ads customer ID, digits only" },
+                  "date_range": {
+                    "type": "string",
+                    "default": "LAST_30_DAYS",
+                    "enum": ["LAST_7_DAYS", "LAST_30_DAYS", "LAST_90_DAYS", "LAST_180_DAYS", "THIS_MONTH", "LAST_MONTH"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sync result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": { "type": "string" },
+                    "days_synced": { "type": "integer" },
+                    "coverage": { "type": "object", "properties": {} }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/ga4/warehouse/sync": {
+      "post": {
+        "operationId": "ga4WarehouseSync",
+        "summary": "Sync GA4 daily metrics from BigQuery to Postgres",
+        "description": "Site-wide daily sessions (clicks), page views (impressions), and key events (conversions) from GA4 BigQuery export. Requires BQ_PROJECT_ID, BQ_DATASET_ID, GCP_SERVICE_ACCOUNT_JSON. spend is always 0 for GA4 rows.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "date_range": {
+                    "type": "string",
+                    "default": "LAST_30_DAYS",
+                    "enum": ["LAST_7_DAYS", "LAST_30_DAYS", "LAST_90_DAYS", "LAST_180_DAYS", "THIS_MONTH", "LAST_MONTH"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sync result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": { "type": "string", "description": "GA4 property/dataset key" },
+                    "days_synced": { "type": "integer" },
+                    "bq_project_id": { "type": "string" },
+                    "bq_dataset_id": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
     "/linkedin/env": {
       "get": {
         "operationId": "linkedinEnv",
@@ -488,6 +575,8 @@
                     "connected": { "type": "boolean" },
                     "metrics_rows": { "type": "integer" },
                     "linkedin_rows": { "type": "integer" },
+                    "google_rows": { "type": "integer" },
+                    "ga4_rows": { "type": "integer" },
                     "error": { "type": "string" }
                   }
                 }
@@ -521,7 +610,7 @@
             "name": "source",
             "in": "query",
             "required": false,
-            "schema": { "type": "string", "enum": ["linkedin", "google"] }
+            "schema": { "type": "string", "enum": ["linkedin", "google", "ga4"] }
           },
           {
             "name": "account_id",

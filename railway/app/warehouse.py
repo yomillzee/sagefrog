@@ -58,6 +58,7 @@ def status() -> dict[str, Any]:
             "metrics_rows": 0,
             "linkedin_rows": 0,
             "google_rows": 0,
+            "ga4_rows": 0,
             "error": "DATABASE_URL is missing.",
         }
     try:
@@ -75,12 +76,18 @@ def status() -> dict[str, Any]:
                     "SELECT COUNT(*) FROM metrics_daily WHERE source = %s", ("google",)
                 ).fetchone()[0]
             )
+            ga4_rows = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM metrics_daily WHERE source = %s", ("ga4",)
+                ).fetchone()[0]
+            )
         return {
             "enabled": True,
             "connected": True,
             "metrics_rows": metrics_rows,
             "linkedin_rows": linkedin_rows,
             "google_rows": google_rows,
+            "ga4_rows": ga4_rows,
             "error": None,
         }
     except Exception as exc:
@@ -90,8 +97,18 @@ def status() -> dict[str, Any]:
             "metrics_rows": 0,
             "linkedin_rows": 0,
             "google_rows": 0,
+            "ga4_rows": 0,
             "error": str(exc)[:500],
         }
+
+
+def _normalize_source(source: str) -> str:
+    key = str(source or "").strip().lower()
+    if key == "google":
+        return "google"
+    if key == "ga4":
+        return "ga4"
+    return "linkedin"
 
 
 def upsert_metrics_daily_batch(
@@ -104,7 +121,7 @@ def upsert_metrics_daily_batch(
         return 0
     ensure_schema()
     account_id = str(account_id).strip()
-    source = "google" if source == "google" else "linkedin"
+    source_key = _normalize_source(source)
     written = 0
     sql = """
       INSERT INTO metrics_daily (
@@ -126,7 +143,7 @@ def upsert_metrics_daily_batch(
             conn.execute(
                 sql,
                 (
-                    source,
+                    source_key,
                     account_id,
                     str(metric_date)[:10],
                     float(row.get("spend") or 0),
@@ -155,7 +172,7 @@ def query_metrics(
     where = "WHERE metric_date >= %s::date AND metric_date <= %s::date"
     if source:
         where += " AND source = %s"
-        params.append("google" if source == "google" else "linkedin")
+        params.append(_normalize_source(source))
     if account_id and str(account_id).strip():
         where += " AND account_id = %s"
         params.append(str(account_id).strip().split(":")[-1])
@@ -180,14 +197,14 @@ def account_date_coverage(source: str, account_id: str) -> dict[str, Any]:
         return {"min_date": None, "max_date": None, "day_count": 0}
     ensure_schema()
     account_id = str(account_id).strip().split(":")[-1]
-    source = "google" if source == "google" else "linkedin"
+    source_key = _normalize_source(source)
     sql = """
       SELECT MIN(metric_date)::text, MAX(metric_date)::text, COUNT(*)
       FROM metrics_daily
       WHERE source = %s AND account_id = %s
     """
     with psycopg.connect(_get_db_url()) as conn:
-        row = conn.execute(sql, (source, account_id)).fetchone()
+        row = conn.execute(sql, (source_key, account_id)).fetchone()
     if not row or not row[0]:
         return {"min_date": None, "max_date": None, "day_count": 0}
     return {"min_date": row[0], "max_date": row[1], "day_count": int(row[2])}
