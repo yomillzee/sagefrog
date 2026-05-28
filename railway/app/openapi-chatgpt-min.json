@@ -301,7 +301,7 @@
       "post": {
         "operationId": "ga4WarehouseSync",
         "summary": "Sync GA4 daily metrics from BigQuery to Postgres",
-        "description": "Site-wide daily sessions (clicks), page views (impressions), and key events (conversions) from GA4 BigQuery export. Requires BQ_PROJECT_ID, BQ_DATASET_ID, GCP_SERVICE_ACCOUNT_JSON. spend is always 0 for GA4 rows.",
+        "description": "Multi-project: use client_key from ga4Clients, or bq_project_id + bq_dataset_id. Default falls back to Railway BQ_PROJECT_ID/BQ_DATASET_ID (Penn). Service account needs BigQuery Data Viewer on each GCP project.",
         "requestBody": {
           "required": false,
           "content": {
@@ -313,7 +313,14 @@
                     "type": "string",
                     "default": "LAST_30_DAYS",
                     "enum": ["LAST_7_DAYS", "LAST_30_DAYS", "LAST_90_DAYS", "LAST_180_DAYS", "THIS_MONTH", "LAST_MONTH"]
-                  }
+                  },
+                  "client_key": {
+                    "type": "string",
+                    "description": "Registry slug: penn, sagefrog, synergistix (from GA4_CLIENTS env)"
+                  },
+                  "bq_project_id": { "type": "string", "description": "GCP project override, e.g. sagefrog" },
+                  "bq_dataset_id": { "type": "string", "description": "GA4 export dataset, e.g. analytics_123456789" },
+                  "account_id": { "type": "string", "description": "Optional warehouse key (defaults from dataset id)" }
                 }
               }
             }
@@ -331,6 +338,43 @@
                     "days_synced": { "type": "integer" },
                     "bq_project_id": { "type": "string" },
                     "bq_dataset_id": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/ga4/clients": {
+      "get": {
+        "operationId": "ga4Clients",
+        "summary": "List GA4 BigQuery clients (multi-project registry)",
+        "responses": {
+          "200": {
+            "description": "Configured GA4 clients",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": { "type": "integer" },
+                    "default_bq_project_id": { "type": "string" },
+                    "default_bq_dataset_id": { "type": "string" },
+                    "clients": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "client_key": { "type": "string" },
+                          "label": { "type": "string" },
+                          "bq_project_id": { "type": "string" },
+                          "bq_dataset_id": { "type": "string" },
+                          "account_id": { "type": "string" }
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -657,6 +701,7 @@
                     "has_gcp_service_account_json": { "type": "boolean" },
                     "has_bq_project_id": { "type": "boolean" },
                     "has_bq_dataset_id": { "type": "boolean" },
+                    "has_ga4_clients_registry": { "type": "boolean" },
                     "bq_project_id": { "type": "string" },
                     "bq_dataset_id": { "type": "string" },
                     "gcp_service_account_json_parse_ok": { "type": "boolean" },

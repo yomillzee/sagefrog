@@ -89,10 +89,26 @@ class SummaryAllResponse(BaseModel):
     accounts: list[dict]
 
 
+class Ga4ClientRef(BaseModel):
+    client_key: str | None = None
+    label: str | None = None
+    bq_project_id: str
+    bq_dataset_id: str
+    account_id: str
+
+
+class Ga4ClientsResponse(BaseModel):
+    count: int
+    clients: list[Ga4ClientRef]
+    default_bq_project_id: str | None = None
+    default_bq_dataset_id: str | None = None
+
+
 class Ga4EnvSummary(BaseModel):
     has_gcp_service_account_json: bool
     has_bq_project_id: bool
     has_bq_dataset_id: bool
+    has_ga4_clients_registry: bool = False
     bq_project_id: str | None = None
     bq_dataset_id: str | None = None
     gcp_service_account_json_char_count: int = 0
@@ -270,6 +286,22 @@ class Ga4WarehouseSyncRequest(BaseModel):
         default="LAST_30_DAYS",
         description="LAST_7_DAYS, LAST_30_DAYS, LAST_90_DAYS, LAST_180_DAYS, THIS_MONTH, LAST_MONTH",
     )
+    client_key: str | None = Field(
+        default=None,
+        description="Slug from GA4_CLIENTS registry (e.g. penn, sagefrog, synergistix)",
+    )
+    bq_project_id: str | None = Field(
+        default=None,
+        description="Override GCP project (use when client is not the Railway default)",
+    )
+    bq_dataset_id: str | None = Field(
+        default=None,
+        description="GA4 export dataset id, e.g. analytics_313855909",
+    )
+    account_id: str | None = Field(
+        default=None,
+        description="Warehouse account_id for metrics_daily (defaults from dataset id)",
+    )
 
 
 class WarehouseSyncResponse(BaseModel):
@@ -279,6 +311,8 @@ class WarehouseSyncResponse(BaseModel):
     coverage: dict
     bq_project_id: str | None = None
     bq_dataset_id: str | None = None
+    client_key: str | None = None
+    label: str | None = None
 
 
 class WarehouseStatusResponse(BaseModel):

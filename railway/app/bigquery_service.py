@@ -100,14 +100,17 @@ def _load_service_account_info() -> dict[str, Any]:
     raise RuntimeError(f"GCP_SERVICE_ACCOUNT_JSON is not valid JSON ({last_err}). {hint}") from last_err
 
 
-def build_client() -> bigquery.Client:
-    project_id = _get_required_env("BQ_PROJECT_ID")
+def build_client(project_id: str | None = None) -> bigquery.Client:
+    """BigQuery client. Uses project_id arg, else BQ_PROJECT_ID (billing / job default project)."""
+    pid = (project_id or os.getenv("BQ_PROJECT_ID") or "").strip()
+    if not pid:
+        raise RuntimeError("Missing BigQuery project id (BQ_PROJECT_ID or request override).")
     info = _load_service_account_info()
     creds = service_account.Credentials.from_service_account_info(
         info,
         scopes=["https://www.googleapis.com/auth/bigquery"],
     )
-    return bigquery.Client(project=project_id, credentials=creds)
+    return bigquery.Client(project=pid, credentials=creds)
 
 
 def env_summary() -> dict[str, Any]:
@@ -159,8 +162,8 @@ def env_summary() -> dict[str, Any]:
     return summary
 
 
-def run_query(sql: str, *, max_rows: int = 1000) -> list[dict[str, Any]]:
-    client = build_client()
+def run_query(sql: str, *, max_rows: int = 1000, project_id: str | None = None) -> list[dict[str, Any]]:
+    client = build_client(project_id)
     query_job = client.query(sql)
     rows = query_job.result(max_results=max_rows)
     return [dict(row.items()) for row in rows]

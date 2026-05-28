@@ -2,28 +2,20 @@
 
 from __future__ import annotations
 
-import os
 from datetime import date, timedelta
 from typing import Any
 
 from bigquery_service import env_summary, run_query
 from dates_util import resolve_date_range
+from ga4_clients import Ga4ClientTarget, list_clients_public, resolve_target
 
 
-def ga4_account_id() -> str:
-    """Stable warehouse key for GA4 property (dataset id or explicit GA4_PROPERTY_ID)."""
-    explicit = (os.getenv("GA4_PROPERTY_ID") or "").strip()
-    if explicit:
-        return explicit.replace("properties/", "").split("/")[-1]
-    summ = env_summary()
-    dataset = summ.get("bq_dataset_id") or ""
-    if dataset:
-        return str(dataset).replace("analytics_", "")
-    project = summ.get("bq_project_id") or "ga4"
-    return str(project)
-
-
-def fetch_daily_metrics(*, start: date, end: date) -> list[dict[str, Any]]:
+def fetch_daily_metrics(
+    *,
+    start: date,
+    end: date,
+    target: Ga4ClientTarget | None = None,
+) -> list[dict[str, Any]]:
     """
     Site-wide GA4 daily metrics from BigQuery events_* export.
 
@@ -33,11 +25,8 @@ def fetch_daily_metrics(*, start: date, end: date) -> list[dict[str, Any]]:
     - conversions = purchase + generate_lead + sign_up events
     - spend = 0 (not applicable to GA4)
     """
+    target = target or resolve_target()
     summ = env_summary()
-    project = summ.get("bq_project_id")
-    dataset = summ.get("bq_dataset_id")
-    if not project or not dataset:
-        raise RuntimeError("BQ_PROJECT_ID and BQ_DATASET_ID are required for GA4 warehouse sync.")
     if not summ.get("gcp_service_account_json_parse_ok"):
         raise RuntimeError(
             summ.get("gcp_service_account_json_parse_error")
@@ -46,7 +35,7 @@ def fetch_daily_metrics(*, start: date, end: date) -> list[dict[str, Any]]:
 
     suffix_start = start.strftime("%Y%m%d")
     suffix_end = end.strftime("%Y%m%d")
-    table = f"`{project}.{dataset}.events_*`"
+    table = f"`{target.bq_project_id}.{target.bq_dataset_id}.events_*`"
     sql = f"""
         SELECT
           PARSE_DATE('%Y%m%d', event_date) AS metric_date,
@@ -58,7 +47,7 @@ def fetch_daily_metrics(*, start: date, end: date) -> list[dict[str, Any]]:
         GROUP BY metric_date
         ORDER BY metric_date
     """
-    rows = run_query(sql, max_rows=2000)
+    rows = run_query(sql, max_rows=2000, project_id=target.bq_project_id)
     by_day: dict[str, dict[str, Any]] = {}
     for row in rows:
         raw_date = row.get("metric_date") or row.get("event_date")
@@ -96,22 +85,40 @@ def fetch_daily_metrics(*, start: date, end: date) -> list[dict[str, Any]]:
     return out
 
 
-def sync_to_warehouse(*, date_range: str = "LAST_30_DAYS") -> dict[str, Any]:
+def sync_to_warehouse(
+    *,
+    date_range: str = "LAST_30_DAYS",
+    client_key: str | None = None,
+    bq_project_id: str | None = None,
+    bq_dataset_id: str | None = None,
+    account_id: str | None = None,
+) -> dict[str, Any]:
     import warehouse
 
     if not warehouse.enabled():
         raise RuntimeError("DATABASE_URL is not set — warehouse storage is disabled.")
 
+    target = resolve_target(
+        client_key=client_key,
+        bq_project_id=bq_project_id,
+        bq_dataset_id=bq_dataset_id,
+        account_id=account_id,
+    )
     start, end, preset = resolve_date_range(date_range)
-    daily_rows = fetch_daily_metrics(start=start, end=end)
-    account_id = ga4_account_id()
-    written = warehouse.upsert_metrics_daily_batch("ga4", account_id, daily_rows)
-    coverage = warehouse.account_date_coverage("ga4", account_id)
+    daily_rows = fetch_daily_metrics(start=start, end=end, target=target)
+    written = warehouse.upsert_metrics_daily_batch("ga4", target.account_id, daily_rows)
+    coverage = warehouse.account_date_coverage("ga4", target.account_id)
     return {
-        "account_id": account_id,
+        "account_id": target.account_id,
+        "client_key": target.client_key,
+        "label": target.label,
         "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
         "days_synced": written,
         "coverage": coverage,
-        "bq_project_id": env_summary().get("bq_project_id"),
-        "bq_dataset_id": env_summary().get("bq_dataset_id"),
+        "bq_project_id": target.bq_project_id,
+        "bq_dataset_id": target.bq_dataset_id,
     }
+
+
+def list_configured_clients() -> list[dict[str, Any]]:
+    return list_clients_public()

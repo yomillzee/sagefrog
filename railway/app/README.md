@@ -51,6 +51,31 @@ Each `linkedinPerformance` call also syncs LinkedIn for that window when Postgre
 
 **GA4 warehouse field mapping:** `clicks` = sessions, `impressions` = page views, `conversions` = key events, `spend` = 0.
 
+### Multiple GA4 clients (different GCP projects)
+
+Railway `BQ_PROJECT_ID` / `BQ_DATASET_ID` stay the **default** (e.g. Penn). Add other projects via **`GA4_CLIENTS`** (one-line JSON) or per-request overrides on sync.
+
+1. **IAM:** Grant your Railway service account **BigQuery Data Viewer** on each project (`penn-community-b-...`, `sagefrog`, `synergistix-497616`). Cross-project reads fail without this even if SQL is correct.
+
+2. **Registry (recommended for GPT):** set `GA4_CLIENTS` with slugs `penn`, `sagefrog`, `synergistix` and each project's `bq_dataset_id` (`analytics_XXXXX` from GA4 → BigQuery Link).
+
+3. **Sync per client:**
+   ```http
+   POST /ga4/warehouse/sync
+   {"client_key": "sagefrog", "date_range": "LAST_180_DAYS"}
+   ```
+   Or without registry:
+   ```http
+   {"bq_project_id": "sagefrog", "bq_dataset_id": "analytics_123456789", "date_range": "LAST_180_DAYS"}
+   ```
+
+4. **List configured clients:** `GET /ga4/clients`
+
+5. **Ad-hoc SQL:** `POST /ga4/query` with fully qualified tables:
+   `` `sagefrog.analytics_XXXXX.events_*` ``
+
+Each client gets separate rows in `metrics_daily` (`source=ga4`, different `account_id`).
+
 **Verify storage:**
 
 ```http

@@ -33,6 +33,8 @@ from models import (
     SearchResponse,
     CredsFingerprintResponse,
     Ga4EnvSummary,
+    Ga4ClientsResponse,
+    Ga4ClientRef,
     Ga4QueryRequest,
     Ga4QueryResponse,
     TestTokenResponse,
@@ -420,7 +422,13 @@ def ga4_warehouse_sync(body: Ga4WarehouseSyncRequest) -> WarehouseSyncResponse:
     if preset not in _WAREHOUSE_DATE_RANGES:
         raise HTTPException(status_code=400, detail=f"Invalid date_range: {body.date_range}")
     try:
-        result = ga4_warehouse_service.sync_to_warehouse(date_range=preset)
+        result = ga4_warehouse_service.sync_to_warehouse(
+            date_range=preset,
+            client_key=body.client_key,
+            bq_project_id=body.bq_project_id,
+            bq_dataset_id=body.bq_dataset_id,
+            account_id=body.account_id,
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return WarehouseSyncResponse(**result)
@@ -605,7 +613,31 @@ def warehouse_metrics(
     dependencies=[Depends(require_api_key)],
 )
 def ga4_env() -> Ga4EnvSummary:
-    return Ga4EnvSummary(**bigquery_service.env_summary())
+    summ = bigquery_service.env_summary()
+    try:
+        from ga4_clients import load_client_registry
+
+        summ["has_ga4_clients_registry"] = bool(load_client_registry())
+    except Exception:
+        summ["has_ga4_clients_registry"] = False
+    return Ga4EnvSummary(**summ)
+
+
+@app.get(
+    "/ga4/clients",
+    response_model=Ga4ClientsResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="List configured GA4 BigQuery clients (multi-project)",
+)
+def ga4_clients() -> Ga4ClientsResponse:
+    clients = ga4_warehouse_service.list_configured_clients()
+    summ = bigquery_service.env_summary()
+    return Ga4ClientsResponse(
+        count=len(clients),
+        clients=[Ga4ClientRef(**c) for c in clients],
+        default_bq_project_id=summ.get("bq_project_id"),
+        default_bq_dataset_id=summ.get("bq_dataset_id"),
+    )
 
 
 @app.post(
