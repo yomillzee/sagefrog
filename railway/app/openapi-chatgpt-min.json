@@ -413,10 +413,42 @@
         "security": [{ "ApiKeyAuth": [] }]
       }
     },
+    "/ga4/env": {
+      "get": {
+        "operationId": "ga4Env",
+        "summary": "GA4 BigQuery env status (project, dataset, credential parse check)",
+        "description": "Call before ga4Query to get bq_project_id and bq_dataset_id for SQL table names. No secrets returned.",
+        "responses": {
+          "200": {
+            "description": "Env summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "has_gcp_service_account_json": { "type": "boolean" },
+                    "has_bq_project_id": { "type": "boolean" },
+                    "has_bq_dataset_id": { "type": "boolean" },
+                    "bq_project_id": { "type": "string" },
+                    "bq_dataset_id": { "type": "string" },
+                    "gcp_service_account_json_parse_ok": { "type": "boolean" },
+                    "gcp_service_account_json_parse_error": { "type": "string" },
+                    "gcp_service_account_json_char_count": { "type": "integer" },
+                    "gcp_service_account_json_suspected_truncated": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
     "/ga4/query": {
       "post": {
         "operationId": "ga4Query",
         "summary": "Run BigQuery SQL on GA4 export",
+        "description": "Query GA4 export tables, e.g. `{bq_project_id}.{bq_dataset_id}.events_*`. Call ga4Env first for project/dataset IDs.",
         "requestBody": {
           "required": true,
           "content": {

@@ -198,94 +198,70 @@ def list_ad_accounts(
     return accounts
 
 
-def _campaign_urns(campaign: dict[str, Any]) -> set[str]:
-    raw = str(campaign.get("id") or "")
-    raw_no_prefix = raw.split(":")[-1]
-    return {raw, raw_no_prefix, f"urn:li:sponsoredCampaign:{raw_no_prefix}"}
+def _campaign_id_from_pivot(urn: str) -> str:
+    return str(urn or "").strip().split(":")[-1]
 
 
-def _linkedin_search_pages(
-    path: str,
+def _analytics_url(
     *,
-    base_params: dict[str, Any],
-    access_token: str,
-    env: LinkedInEnv,
-) -> list[dict[str, Any]]:
-    """Cursor-paginate a LinkedIn q=search endpoint (metadata.nextPageToken)."""
-    rows: list[dict[str, Any]] = []
-    page_token: str | None = None
-    while True:
-        params = dict(base_params)
-        if page_token:
-            params["pageToken"] = page_token
-        payload = _linkedin_get(path, params=params, access_token=access_token, env=env)
-        rows.extend(payload.get("elements") or [])
-        page_token = (payload.get("metadata") or {}).get("nextPageToken")
-        if not page_token:
-            break
-    return rows
+    pivot: str,
+    account_id: str,
+    start: date,
+    end: date,
+    fields: str,
+) -> str:
+    account_urn = quote(_account_urn(account_id), safe="")
+    date_range = _format_date_range(start, end)
+    return (
+        f"/adAnalytics?q=analytics"
+        f"&pivot={pivot}"
+        f"&timeGranularity=ALL"
+        f"&dateRange={date_range}"
+        f"&accounts=List({account_urn})"
+        f"&fields={fields}"
+    )
 
 
-def _fetch_active_campaigns(
+def _fetch_analytics(
     account_id: str,
     *,
-    access_token: str,
-    env: LinkedInEnv,
-) -> list[dict[str, Any]]:
-    account_id_clean = _normalize_account_id(account_id)
-    path = f"/adAccounts/{account_id_clean}/adCampaigns"
-
-    # RestLI parenthesized search=(status:(values:List(ACTIVE))) is rejected on current REST
-    # versions — use dotted finder params per LinkedIn docs (202604+).
-    search_attempts: list[dict[str, Any]] = [
-        {
-            "q": "search",
-            "search.status.values[0]": "ACTIVE",
-            "search.test": "false",
-            "pageSize": 1000,
-        },
-        {
-            "q": "search",
-            "search.status.values": "ACTIVE",
-            "search.test": "false",
-            "pageSize": 1000,
-        },
-    ]
-
-    last_error: Exception | None = None
-    for params in search_attempts:
-        try:
-            campaigns = _linkedin_search_pages(
-                path, base_params=params, access_token=access_token, env=env
-            )
-            return [c for c in campaigns if c.get("status") == "ACTIVE"]
-        except Exception as e:
-            last_error = e
-
-    if last_error:
-        raise last_error
-    return []
-
-
-def _fetch_campaign_analytics(
-    account_id: str,
-    *,
+    pivot: str,
     start: date,
     end: date,
     access_token: str,
     env: LinkedInEnv,
 ) -> tuple[list[dict[str, Any]], bool]:
-    account_urn = quote(_account_urn(account_id), safe="")
-    date_range = _format_date_range(start, end)
-    base = (
-        f"/adAnalytics?q=analytics"
-        f"&pivot=CAMPAIGN"
-        f"&timeGranularity=ALL"
-        f"&dateRange={date_range}"
-        f"&accounts=List({account_urn})"
+    """Load adAnalytics for ACCOUNT or CAMPAIGN pivot (conversions field optional)."""
+    with_conversions = _analytics_url(
+        pivot=pivot,
+        account_id=account_id,
+        start=start,
+        end=end,
+        fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,pivotValues",
     )
-    with_conversions = f"{base}&fields=pivotValues,impressions,clicks,costInUsd,conversions,conversionValueInUsd"
-    fallback = f"{base}&fields=pivotValues,impressions,clicks,costInUsd"
+    fallback = _analytics_url(
+        pivot=pivot,
+        account_id=account_id,
+        start=start,
+        end=end,
+        fields="impressions,clicks,costInUsd,pivotValues",
+    )
+    if pivot == "ACCOUNT":
+        # Account pivot does not use pivotValues in the same way.
+        with_conversions = _analytics_url(
+            pivot=pivot,
+            account_id=account_id,
+            start=start,
+            end=end,
+            fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd",
+        )
+        fallback = _analytics_url(
+            pivot=pivot,
+            account_id=account_id,
+            start=start,
+            end=end,
+            fields="impressions,clicks,costInUsd",
+        )
 
     try:
         payload = _linkedin_get(with_conversions, access_token=access_token, env=env)
@@ -296,6 +272,25 @@ def _fetch_campaign_analytics(
             raise
         payload = _linkedin_get(fallback, access_token=access_token, env=env)
         return payload.get("elements") or [], False
+
+
+def _fetch_campaign_by_id(
+    account_id: str,
+    campaign_id: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+) -> dict[str, Any]:
+    account_id_clean = _normalize_account_id(account_id)
+    campaign_id_clean = _campaign_id_from_pivot(campaign_id)
+    try:
+        return _linkedin_get(
+            f"/adAccounts/{account_id_clean}/adCampaigns/{campaign_id_clean}",
+            access_token=access_token,
+            env=env,
+        )
+    except Exception:
+        return {}
 
 
 def account_performance(
@@ -312,83 +307,68 @@ def account_performance(
         raise ValueError("account_id is required")
 
     start, end, preset = resolve_date_range(date_range)
-    active_campaigns = _fetch_active_campaigns(account_id_clean, access_token=access_token, env=env)
 
-    empty_totals = {
-        "spend": 0.0,
-        "clicks": 0,
-        "impressions": 0,
-        "conversions": 0.0,
-        "conversion_value": 0.0,
-        "campaign_count": len(active_campaigns),
-    }
-
-    if not active_campaigns:
-        return {
-            "account_id": account_id_clean,
-            "date_range": {
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-                "preset": preset,
-            },
-            "totals": empty_totals,
-            "campaigns": [],
-        }
-
-    rows, conversion_fields_supported = _fetch_campaign_analytics(
+    # Avoid adCampaigns?q=search — 202604 rejects both RestLI `search=(...)` and dotted
+    # search.status.values / search.test params. Use adAnalytics only.
+    account_rows, account_conversions_ok = _fetch_analytics(
         account_id_clean,
+        pivot="ACCOUNT",
         start=start,
         end=end,
         access_token=access_token,
         env=env,
     )
+    campaign_rows, campaign_conversions_ok = _fetch_analytics(
+        account_id_clean,
+        pivot="CAMPAIGN",
+        start=start,
+        end=end,
+        access_token=access_token,
+        env=env,
+    )
+    conversion_fields_supported = account_conversions_ok or campaign_conversions_ok
 
-    active_urns: set[str] = set()
-    campaign_by_urn: dict[str, dict[str, Any]] = {}
-    for campaign in active_campaigns:
-        urns = _campaign_urns(campaign)
-        for urn in urns:
-            active_urns.add(urn)
-            campaign_by_urn[urn] = campaign
+    account_ins = account_rows[0] if account_rows else {}
+    totals = {
+        "spend": _parse_spend(account_ins),
+        "clicks": int(account_ins.get("clicks") or 0),
+        "impressions": int(account_ins.get("impressions") or 0),
+        "conversions": _parse_conversions(account_ins) if conversion_fields_supported else 0.0,
+        "conversion_value": (
+            _parse_conversion_value(account_ins) if conversion_fields_supported else 0.0
+        ),
+        "campaign_count": 0,
+    }
 
-    active_rows = [
-        row
-        for row in rows
-        if any(urn in active_urns for urn in (row.get("pivotValues") or []))
-    ]
+    by_campaign: dict[str, list[dict[str, Any]]] = {}
+    for row in campaign_rows:
+        for urn in row.get("pivotValues") or []:
+            if "sponsoredCampaign" not in str(urn):
+                continue
+            cid = _campaign_id_from_pivot(urn)
+            if cid:
+                by_campaign.setdefault(cid, []).append(row)
 
-    totals = dict(empty_totals)
-    totals["spend"] = sum(_parse_spend(row) for row in active_rows)
-    totals["clicks"] = int(sum(int(row.get("clicks") or 0) for row in active_rows))
-    totals["impressions"] = int(sum(int(row.get("impressions") or 0) for row in active_rows))
-    if conversion_fields_supported:
-        totals["conversions"] = sum(_parse_conversions(row) for row in active_rows)
-        totals["conversion_value"] = sum(_parse_conversion_value(row) for row in active_rows)
+    totals["campaign_count"] = len(by_campaign)
 
     campaigns_out: list[dict[str, Any]] = []
-    seen_campaign_ids: set[str] = set()
-    for campaign in active_campaigns:
-        cid = str(campaign.get("id") or "").split(":")[-1]
-        if cid in seen_campaign_ids:
-            continue
-        seen_campaign_ids.add(cid)
-        urns = _campaign_urns(campaign)
-        matched = [
-            row
-            for row in active_rows
-            if any(urn in urns for urn in (row.get("pivotValues") or []))
-        ]
+    for cid, matched in sorted(by_campaign.items()):
+        meta = _fetch_campaign_by_id(
+            account_id_clean, cid, access_token=access_token, env=env
+        )
         spend = sum(_parse_spend(row) for row in matched)
         clicks = int(sum(int(row.get("clicks") or 0) for row in matched))
         impressions = int(sum(int(row.get("impressions") or 0) for row in matched))
         conversions = (
-            sum(_parse_conversions(row) for row in matched) if conversion_fields_supported else 0.0
+            sum(_parse_conversions(row) for row in matched)
+            if conversion_fields_supported
+            else 0.0
         )
         campaigns_out.append(
             {
                 "id": cid,
-                "name": campaign.get("name") or "",
-                "status": campaign.get("status") or "",
+                "name": meta.get("name") or "",
+                "status": meta.get("status") or "",
                 "spend": spend,
                 "clicks": clicks,
                 "impressions": impressions,
