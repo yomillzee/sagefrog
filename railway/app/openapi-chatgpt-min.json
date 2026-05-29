@@ -206,7 +206,8 @@
     "/google-ads/youtube-videos": {
       "post": {
         "operationId": "googleAdsYoutubeVideos",
-        "summary": "List YouTube video assets with URLs",
+        "summary": "List YouTube video assets with watch, embed, and thumbnail URLs",
+        "description": "Returns YouTube video IDs and URLs from Google Ads video assets (not parsed from ad names). Merges ad_group_ad_asset_view (Demand Gen, Performance Max video, etc.), classic VIDEO ads, and optional account-level YOUTUBE_VIDEO assets. Each row includes youtube_thumbnail_url (img.youtube.com).",
         "requestBody": {
           "required": true,
           "content": {
@@ -216,8 +217,17 @@
                 "required": ["customer_id"],
                 "properties": {
                   "customer_id": { "type": "string" },
+                  "include_account_assets": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Also include YOUTUBE_VIDEO rows from the asset table (account inventory)."
+                  },
                   "include_metrics": { "type": "boolean", "default": false },
-                  "date_range": { "type": "string", "default": "LAST_30_DAYS" }
+                  "date_range": {
+                    "type": "string",
+                    "default": "LAST_30_DAYS",
+                    "enum": ["LAST_7_DAYS", "LAST_30_DAYS", "THIS_MONTH", "LAST_MONTH"]
+                  }
                 }
               }
             }
@@ -225,7 +235,7 @@
         },
         "responses": {
           "200": {
-            "description": "YouTube videos",
+            "description": "YouTube videos with thumbnail URLs",
             "content": {
               "application/json": {
                 "schema": {
@@ -238,9 +248,39 @@
                       "items": {
                         "type": "object",
                         "properties": {
+                          "source": {
+                            "type": "string",
+                            "enum": ["ad_group_ad_asset_view", "video_ad", "asset"],
+                            "description": "Where the video link was discovered in Google Ads."
+                          },
+                          "campaign_id": { "type": "string" },
+                          "campaign_name": { "type": "string" },
+                          "ad_group_id": { "type": "string" },
+                          "ad_group_name": { "type": "string" },
+                          "ad_id": { "type": "string" },
+                          "ad_name": { "type": "string" },
+                          "ad_status": { "type": "string" },
+                          "asset_id": { "type": "string" },
+                          "asset_name": { "type": "string" },
+                          "asset_field_type": { "type": "string" },
                           "youtube_video_id": { "type": "string" },
+                          "youtube_video_title": { "type": "string" },
                           "youtube_watch_url": { "type": "string" },
-                          "campaign_name": { "type": "string" }
+                          "youtube_embed_url": { "type": "string" },
+                          "youtube_thumbnail_url": {
+                            "type": "string",
+                            "description": "YouTube thumbnail image URL (hqdefault.jpg). Use for previews in dashboards."
+                          },
+                          "metrics": {
+                            "type": "object",
+                            "description": "Present when include_metrics=true (ad_group_ad_asset_view rows only).",
+                            "properties": {
+                              "impressions": { "type": "integer" },
+                              "clicks": { "type": "integer" },
+                              "cost_micros": { "type": "integer" },
+                              "conversions": { "type": "number" }
+                            }
+                          }
                         }
                       }
                     }

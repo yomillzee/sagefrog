@@ -123,6 +123,11 @@ def build_client_schema(client_key: str) -> dict[str, Any]:
             description=f"YouTube videos for {label} Google Ads account only.",
             enum_value=gid,
         )
+        op["summary"] = f"List YouTube video assets with thumbnails — {label} only"
+        op["description"] = (
+            f"{penn_only} Returns youtube_watch_url, youtube_embed_url, and "
+            f"youtube_thumbnail_url for each video asset."
+        )
 
     # LinkedIn
     linkedin_perf_paths = (
@@ -299,6 +304,9 @@ def write_instructions(client_key: str, out_path: Path) -> None:
         "### Google Ads",
         "- Use `googleAdsAccounts`, then only the Penn customer ID.",
         "- Do not use multi-account search or summary-all actions (not available in this GPT).",
+        "- **Video creatives (YouTube):** use `googleAdsYoutubeVideos`. Each row has `youtube_watch_url`, `youtube_embed_url`, and `youtube_thumbnail_url` — show thumbnails in dashboards when the user asks for video previews.",
+        "- Set `include_account_assets: true` (default) to catch videos not tied to a live ad view.",
+        "- LinkedIn and Meta video/thumbnail URLs are **not** exposed yet — Google Ads YouTube only.",
         "",
         "### LinkedIn",
         f"- Use `linkedinAccounts`, then `linkedinPerformance` with {cfg['name_match']}'s account ID for **campaign**-level metrics only.",
