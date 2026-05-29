@@ -190,38 +190,119 @@ def _linkedin_get_all_elements(
     params: dict[str, Any] | None = None,
     env: LinkedInEnv | None = None,
 ) -> list[dict[str, Any]]:
-    """Follow LinkedIn cursor pagination (pageToken) until exhausted."""
+    """Follow LinkedIn cursor pagination (pageToken / nextPageToken) until exhausted."""
     env = env or load_linkedin_env()
     query = dict(params or {})
     elements: list[dict[str, Any]] = []
     while True:
         payload = _linkedin_get(path, params=query, access_token=access_token, env=env)
         elements.extend(payload.get("elements") or [])
-        page_token = (payload.get("paging") or {}).get("pageToken")
+        page_token = (payload.get("metadata") or {}).get("nextPageToken") or (
+            (payload.get("paging") or {}).get("pageToken")
+        )
         if not page_token:
             break
         query["pageToken"] = page_token
     return elements
 
 
+def _linkedin_get_paged_elements(
+    path: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv | None = None,
+    count: int = 100,
+    max_pages: int = 50,
+) -> list[dict[str, Any]]:
+    """Non-search LinkedIn list APIs use start/count pagination."""
+    env = env or load_linkedin_env()
+    elements: list[dict[str, Any]] = []
+    start = 0
+    for _ in range(max_pages):
+        payload = _linkedin_get(
+            path,
+            params={"start": start, "count": count},
+            access_token=access_token,
+            env=env,
+        )
+        batch = payload.get("elements") or []
+        elements.extend(batch)
+        if len(batch) < count:
+            break
+        start += count
+    return elements
+
+
+def _format_run_schedule_value(value: Any) -> str:
+    if isinstance(value, dict):
+        parts = [value.get("year"), value.get("month"), value.get("day")]
+        if all(parts):
+            return f"{parts[0]:04d}-{parts[1]:02d}-{parts[2]:02d}"
+        return ""
+    if isinstance(value, (int, float)) and value > 0:
+        from datetime import datetime, timezone
+
+        return datetime.fromtimestamp(float(value) / 1000, tz=timezone.utc).date().isoformat()
+    return ""
+
+
 def _normalize_campaign_group_row(row: dict[str, Any]) -> dict[str, Any]:
     group_id = _campaign_group_id_from_pivot(str(row.get("id") or ""))
     run_schedule = row.get("runSchedule") if isinstance(row.get("runSchedule"), dict) else {}
-    start = run_schedule.get("start") if isinstance(run_schedule.get("start"), dict) else {}
-    end = run_schedule.get("end") if isinstance(run_schedule.get("end"), dict) else {}
     return {
         "id": group_id,
         "name": row.get("name") or "",
         "status": row.get("status") or "",
-        "run_schedule_start": (
-            f"{start.get('year', '')}-{start.get('month', '')}-{start.get('day', '')}".strip("-")
-            if start
-            else ""
-        ),
-        "run_schedule_end": (
-            f"{end.get('year', '')}-{end.get('month', '')}-{end.get('day', '')}".strip("-") if end else ""
-        ),
+        "run_schedule_start": _format_run_schedule_value(run_schedule.get("start")),
+        "run_schedule_end": _format_run_schedule_value(run_schedule.get("end")),
     }
+
+
+def _batch_get_campaign_groups(
+    account_id: str,
+    group_ids: list[str],
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+) -> list[dict[str, Any]]:
+    if not group_ids:
+        return []
+    rows: list[dict[str, Any]] = []
+    chunk_size = 50
+    for offset in range(0, len(group_ids), chunk_size):
+        chunk = group_ids[offset : offset + chunk_size]
+        ids_param = "List(" + ",".join(chunk) + ")"
+        path = f"/adAccounts/{account_id}/adCampaignGroups?ids={ids_param}"
+        payload = _linkedin_get(path, access_token=access_token, env=env)
+        rows.extend((payload.get("results") or {}).values())
+    return rows
+
+
+def _campaign_group_ids_from_analytics(
+    account_id: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+    date_range: str = "LAST_180_DAYS",
+) -> list[str]:
+    start, end, _ = resolve_date_range(date_range)
+    rows, _ = _fetch_analytics(
+        account_id,
+        pivot="CAMPAIGN_GROUP",
+        start=start,
+        end=end,
+        access_token=access_token,
+        env=env,
+    )
+    ids: set[str] = set()
+    for row in rows:
+        for urn in row.get("pivotValues") or []:
+            if "sponsoredCampaignGroup" not in str(urn):
+                continue
+            gid = _campaign_group_id_from_pivot(urn)
+            if gid:
+                ids.add(gid)
+    return sorted(ids)
 
 
 def list_campaign_groups(
@@ -237,41 +318,62 @@ def list_campaign_groups(
     if not account_id_clean:
         raise ValueError("account_id is required")
 
-    status_search = "(status:(values:List(ACTIVE,DRAFT,PAUSED,ARCHIVED,CANCELED)))"
-    account_urn_encoded = quote(_account_urn(account_id_clean), safe="")
-    account_search = f"(account:(values:List({account_urn_encoded})))"
+    account_path = f"/adAccounts/{account_id_clean}/adCampaignGroups"
+    errors: list[str] = []
 
-    attempts: list[tuple[str, dict[str, Any]]] = [
-        (
-            f"/adAccounts/{account_id_clean}/adCampaignGroups",
-            {"q": "search", "search": status_search, "pageSize": 100},
-        ),
-        (
-            "/adCampaignGroups",
-            {"q": "search", "search": account_search, "pageSize": 100},
-        ),
-        (
-            f"/adAccounts/{account_id_clean}/adCampaignGroups",
-            {"q": "search", "search": "(status:(values:List(ACTIVE)))", "pageSize": 100},
-        ),
+    # 1) Non-search pagination (202604 often rejects q=search RestLI syntax).
+    try:
+        rows = _linkedin_get_paged_elements(account_path, access_token=access_token, env=env)
+        groups = [_normalize_campaign_group_row(row) for row in rows if row.get("id")]
+        groups = [g for g in groups if g["id"]]
+        if groups:
+            return sorted(groups, key=lambda item: (item.get("name") or item["id"]).lower())
+        if rows == []:
+            return []
+    except Exception as exc:
+        errors.append(f"pagination: {exc}")
+
+    # 2) Search with RestLI in the URL path (avoid httpx param re-encoding).
+    search_urls = [
+        f"{account_path}?q=search&search=(status:(values:List(ACTIVE,DRAFT,PAUSED,ARCHIVED,CANCELED)))&pageSize=100",
+        f"{account_path}?q=search&search=(status:(values:List(ACTIVE,DRAFT)))&pageSize=100",
+        f"{account_path}?q=search&search=(status:(values:List(ACTIVE)))&pageSize=100",
     ]
-
-    last_error: Exception | None = None
-    for path, params in attempts:
+    for url in search_urls:
         try:
-            rows = _linkedin_get_all_elements(
-                path, params=params, access_token=access_token, env=env
-            )
+            rows = _linkedin_get_all_elements(url, access_token=access_token, env=env)
             groups = [_normalize_campaign_group_row(row) for row in rows if row.get("id")]
             groups = [g for g in groups if g["id"]]
             if groups or rows == []:
                 return sorted(groups, key=lambda item: (item.get("name") or item["id"]).lower())
         except Exception as exc:
-            last_error = exc
-            continue
+            errors.append(f"search: {exc}")
 
-    if last_error:
-        raise last_error
+    # 3) Discover IDs from adAnalytics CAMPAIGN_GROUP pivot, then batch-get metadata.
+    try:
+        discovered_ids = _campaign_group_ids_from_analytics(
+            account_id_clean, access_token=access_token, env=env
+        )
+        if discovered_ids:
+            rows = _batch_get_campaign_groups(
+                account_id_clean,
+                discovered_ids,
+                access_token=access_token,
+                env=env,
+            )
+            groups = [_normalize_campaign_group_row(row) for row in rows if row.get("id")]
+            groups = [g for g in groups if g["id"]]
+            if groups:
+                return sorted(groups, key=lambda item: (item.get("name") or item["id"]).lower())
+    except Exception as exc:
+        errors.append(f"analytics+batch: {exc}")
+
+    if errors:
+        raise RuntimeError(
+            f"LinkedIn campaign groups unavailable for account {account_id_clean} on API "
+            f"{env.version}. Tried pagination, search, and analytics fallback. "
+            f"Last errors: {' | '.join(errors[-3:])}"
+        )
     return []
 
 
