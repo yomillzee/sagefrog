@@ -132,7 +132,7 @@ def _linkedin_get(
     path: str,
     *,
     access_token: str,
-    params: dict[str, Any] | None = None,
+    params: dict[str, Any] | list[tuple[str, Any]] | None = None,
     env: LinkedInEnv | None = None,
 ) -> dict[str, Any]:
     url = f"{LINKEDIN_API_BASE}{path}"
@@ -187,7 +187,7 @@ def _linkedin_get_all_elements(
     path: str,
     *,
     access_token: str,
-    params: dict[str, Any] | None = None,
+    params: dict[str, Any] | list[tuple[str, Any]] | None = None,
     env: LinkedInEnv | None = None,
 ) -> list[dict[str, Any]]:
     """Follow LinkedIn cursor pagination (pageToken / nextPageToken) until exhausted."""
@@ -258,12 +258,37 @@ def _normalize_campaign_group_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _batch_get_campaign_groups(
-    account_id: str,
+def _row_belongs_to_account(row: dict[str, Any], account_id: str) -> bool:
+    acct = str(row.get("account") or "")
+    clean = _normalize_account_id(account_id)
+    if not clean:
+        return False
+    return _normalize_account_id(acct) == clean
+
+
+def _filter_campaign_groups_for_account(
+    rows: list[dict[str, Any]], account_id: str
+) -> list[dict[str, Any]]:
+    return [row for row in rows if _row_belongs_to_account(row, account_id)]
+
+
+def _search_global_campaign_groups(
+    search_fragment: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+) -> list[dict[str, Any]]:
+    """Top-level /adCampaignGroups FINDER search (works when account-nested search 404s)."""
+    url = f"/adCampaignGroups?q=search&search={search_fragment}&pageSize=100"
+    return _linkedin_get_all_elements(url, access_token=access_token, env=env)
+
+
+def _batch_get_campaign_groups_by_ids(
     group_ids: list[str],
     *,
     access_token: str,
     env: LinkedInEnv,
+    account_id: str | None = None,
 ) -> list[dict[str, Any]]:
     if not group_ids:
         return []
@@ -272,10 +297,33 @@ def _batch_get_campaign_groups(
     for offset in range(0, len(group_ids), chunk_size):
         chunk = group_ids[offset : offset + chunk_size]
         ids_param = "List(" + ",".join(chunk) + ")"
-        path = f"/adAccounts/{account_id}/adCampaignGroups?ids={ids_param}"
-        payload = _linkedin_get(path, access_token=access_token, env=env)
-        rows.extend((payload.get("results") or {}).values())
+        paths = [f"/adCampaignGroups?ids={ids_param}"]
+        if account_id:
+            paths.append(
+                f"/adAccounts/{_normalize_account_id(account_id)}/adCampaignGroups?ids={ids_param}"
+            )
+        last_error: Exception | None = None
+        for path in paths:
+            try:
+                payload = _linkedin_get(path, access_token=access_token, env=env)
+                rows.extend((payload.get("results") or {}).values())
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+        if last_error:
+            raise last_error
     return rows
+
+
+def _stub_campaign_group(group_id: str) -> dict[str, Any]:
+    return {
+        "id": group_id,
+        "name": "",
+        "status": "",
+        "run_schedule_start": "",
+        "run_schedule_end": "",
+    }
 
 
 def _campaign_group_ids_from_analytics(
@@ -305,6 +353,40 @@ def _campaign_group_ids_from_analytics(
     return sorted(ids)
 
 
+def _enrich_campaign_group_ids(
+    account_id: str,
+    group_ids: list[str],
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+) -> list[dict[str, Any]]:
+    """Resolve metadata for group IDs; return id-only stubs when LinkedIn metadata APIs fail."""
+    if not group_ids:
+        return []
+    meta_by_id: dict[str, dict[str, Any]] = {}
+    try:
+        for row in _batch_get_campaign_groups_by_ids(
+            group_ids, access_token=access_token, env=env, account_id=account_id
+        ):
+            normalized = _normalize_campaign_group_row(row)
+            if normalized["id"]:
+                meta_by_id[normalized["id"]] = normalized
+    except Exception:
+        for gid in group_ids:
+            row = _fetch_campaign_group_by_id(
+                account_id, gid, access_token=access_token, env=env
+            )
+            if row:
+                normalized = _normalize_campaign_group_row(row)
+                if normalized["id"]:
+                    meta_by_id[normalized["id"]] = normalized
+
+    out: list[dict[str, Any]] = []
+    for gid in group_ids:
+        out.append(meta_by_id.get(gid) or _stub_campaign_group(gid))
+    return out
+
+
 def list_campaign_groups(
     account_id: str,
     *,
@@ -318,60 +400,66 @@ def list_campaign_groups(
     if not account_id_clean:
         raise ValueError("account_id is required")
 
-    account_path = f"/adAccounts/{account_id_clean}/adCampaignGroups"
+    account_urn_encoded = quote(_account_urn(account_id_clean), safe="")
     errors: list[str] = []
 
-    # 1) Non-search pagination (202604 often rejects q=search RestLI syntax).
-    try:
-        rows = _linkedin_get_paged_elements(account_path, access_token=access_token, env=env)
-        groups = [_normalize_campaign_group_row(row) for row in rows if row.get("id")]
-        groups = [g for g in groups if g["id"]]
-        if groups:
-            return sorted(groups, key=lambda item: (item.get("name") or item["id"]).lower())
-        if rows == []:
-            return []
-    except Exception as exc:
-        errors.append(f"pagination: {exc}")
+    def _finish(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        cleaned = [g for g in groups if g.get("id")]
+        return sorted(cleaned, key=lambda item: (item.get("name") or item["id"]).lower())
 
-    # 2) Search with RestLI in the URL path (avoid httpx param re-encoding).
-    search_urls = [
-        f"{account_path}?q=search&search=(status:(values:List(ACTIVE,DRAFT,PAUSED,ARCHIVED,CANCELED)))&pageSize=100",
-        f"{account_path}?q=search&search=(status:(values:List(ACTIVE,DRAFT)))&pageSize=100",
-        f"{account_path}?q=search&search=(status:(values:List(ACTIVE)))&pageSize=100",
+    # 1) Top-level FINDER search filtered to this account (LinkedIn docs: /rest/adCampaignGroups).
+    global_searches = [
+        f"(account:(values:List({account_urn_encoded})))",
+        "(status:(values:List(ACTIVE,DRAFT,PAUSED,ARCHIVED,CANCELED)))",
+        "(status:(values:List(ACTIVE,DRAFT)))",
     ]
-    for url in search_urls:
+    for search_fragment in global_searches:
         try:
-            rows = _linkedin_get_all_elements(url, access_token=access_token, env=env)
+            rows = _search_global_campaign_groups(
+                search_fragment, access_token=access_token, env=env
+            )
+            if search_fragment.startswith("(status:"):
+                rows = _filter_campaign_groups_for_account(rows, account_id_clean)
             groups = [_normalize_campaign_group_row(row) for row in rows if row.get("id")]
-            groups = [g for g in groups if g["id"]]
-            if groups or rows == []:
-                return sorted(groups, key=lambda item: (item.get("name") or item["id"]).lower())
+            if groups:
+                return _finish(groups)
+            if rows == [] and search_fragment.startswith("(account:"):
+                return []
         except Exception as exc:
-            errors.append(f"search: {exc}")
+            errors.append(f"global-search: {exc}")
 
-    # 3) Discover IDs from adAnalytics CAMPAIGN_GROUP pivot, then batch-get metadata.
+    # 2) adAnalytics CAMPAIGN_GROUP pivot (always works when groups had delivery).
     try:
         discovered_ids = _campaign_group_ids_from_analytics(
             account_id_clean, access_token=access_token, env=env
         )
         if discovered_ids:
-            rows = _batch_get_campaign_groups(
-                account_id_clean,
-                discovered_ids,
-                access_token=access_token,
-                env=env,
+            return _finish(
+                _enrich_campaign_group_ids(
+                    account_id_clean,
+                    discovered_ids,
+                    access_token=access_token,
+                    env=env,
+                )
             )
-            groups = [_normalize_campaign_group_row(row) for row in rows if row.get("id")]
-            groups = [g for g in groups if g["id"]]
-            if groups:
-                return sorted(groups, key=lambda item: (item.get("name") or item["id"]).lower())
     except Exception as exc:
-        errors.append(f"analytics+batch: {exc}")
+        errors.append(f"analytics: {exc}")
+
+    # 3) Legacy account-nested pagination (some API versions only).
+    try:
+        account_path = f"/adAccounts/{account_id_clean}/adCampaignGroups"
+        rows = _linkedin_get_paged_elements(account_path, access_token=access_token, env=env)
+        groups = [_normalize_campaign_group_row(row) for row in rows if row.get("id")]
+        if groups or rows == []:
+            return _finish(groups)
+    except Exception as exc:
+        errors.append(f"account-pagination: {exc}")
 
     if errors:
         raise RuntimeError(
             f"LinkedIn campaign groups unavailable for account {account_id_clean} on API "
-            f"{env.version}. Tried pagination, search, and analytics fallback. "
+            f"{env.version}. Tried global FINDER search, analytics, and account pagination. "
+            f"Tip: set LINKEDIN_VERSION=202509 if using 202604. "
             f"Last errors: {' | '.join(errors[-3:])}"
         )
     return []
@@ -384,16 +472,17 @@ def _fetch_campaign_group_by_id(
     access_token: str,
     env: LinkedInEnv,
 ) -> dict[str, Any]:
-    account_id_clean = _normalize_account_id(account_id)
     group_id_clean = _campaign_group_id_from_pivot(campaign_group_id)
-    try:
-        return _linkedin_get(
-            f"/adAccounts/{account_id_clean}/adCampaignGroups/{group_id_clean}",
-            access_token=access_token,
-            env=env,
-        )
-    except Exception:
-        return {}
+    account_id_clean = _normalize_account_id(account_id)
+    for path in (
+        f"/adCampaignGroups/{group_id_clean}",
+        f"/adAccounts/{account_id_clean}/adCampaignGroups/{group_id_clean}",
+    ):
+        try:
+            return _linkedin_get(path, access_token=access_token, env=env)
+        except Exception:
+            continue
+    return {}
 
 
 def campaign_groups_performance(
