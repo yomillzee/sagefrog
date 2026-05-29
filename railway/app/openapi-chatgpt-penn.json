@@ -1,0 +1,1252 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Penn Community Bank \u2014 EOS Marketing Analytics",
+    "version": "0.2.0",
+    "description": "Penn Community Bank only. Google Ads, LinkedIn, Meta, and GA4 via agency API. Never use other clients' accounts or GA4 projects. Auth: X-API-Key (Railway API_KEY)."
+  },
+  "servers": [
+    {
+      "url": "https://sagefrog-production.up.railway.app"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "summary": "Health check",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/google-ads/accounts": {
+      "get": {
+        "operationId": "googleAdsAccounts",
+        "summary": "List Google Ads accounts \u2014 use Penn Community Bank only",
+        "responses": {
+          "200": {
+            "description": "Accounts list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer"
+                    },
+                    "accounts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "customer_id": {
+                            "type": "string"
+                          },
+                          "descriptive_name": {
+                            "type": "string"
+                          },
+                          "resource_name": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Penn Community Bank only. After listing accounts, use only rows whose name contains 'Penn'. Refuse other clients."
+      }
+    },
+    "/google-ads/search": {
+      "post": {
+        "operationId": "googleAdsSearch",
+        "summary": "Run GAQL search for one account",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "customer_id",
+                  "query"
+                ],
+                "properties": {
+                  "customer_id": {
+                    "type": "string",
+                    "description": "Google Ads customer ID for Penn Community Bank only."
+                  },
+                  "query": {
+                    "type": "string",
+                    "description": "GAQL query"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Search result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "customer_id": {
+                      "type": "string"
+                    },
+                    "row_count": {
+                      "type": "integer"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/google-ads/youtube-videos": {
+      "post": {
+        "operationId": "googleAdsYoutubeVideos",
+        "summary": "List YouTube video assets with URLs",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "customer_id"
+                ],
+                "properties": {
+                  "customer_id": {
+                    "type": "string",
+                    "description": "YouTube videos for Penn Community Bank Google Ads account only."
+                  },
+                  "include_metrics": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "date_range": {
+                    "type": "string",
+                    "default": "LAST_30_DAYS"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "YouTube videos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "customer_id": {
+                      "type": "string"
+                    },
+                    "row_count": {
+                      "type": "integer"
+                    },
+                    "videos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "youtube_video_id": {
+                            "type": "string"
+                          },
+                          "youtube_watch_url": {
+                            "type": "string"
+                          },
+                          "campaign_name": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/google-ads/warehouse/sync": {
+      "post": {
+        "operationId": "googleAdsWarehouseSync",
+        "summary": "Sync Google Ads daily metrics to Postgres (metrics_daily)",
+        "description": "Pulls day-by-day spend/clicks/impressions/conversions from Google Ads GAQL into metrics_daily. Requires DATABASE_URL and Google Ads credentials.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "customer_id"
+                ],
+                "properties": {
+                  "customer_id": {
+                    "type": "string",
+                    "description": "Google Ads customer ID for Penn Community Bank only."
+                  },
+                  "date_range": {
+                    "type": "string",
+                    "default": "LAST_30_DAYS",
+                    "enum": [
+                      "LAST_7_DAYS",
+                      "LAST_30_DAYS",
+                      "LAST_90_DAYS",
+                      "LAST_180_DAYS",
+                      "THIS_MONTH",
+                      "LAST_MONTH"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sync result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": {
+                      "type": "string"
+                    },
+                    "days_synced": {
+                      "type": "integer"
+                    },
+                    "coverage": {
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/ga4/warehouse/sync": {
+      "post": {
+        "operationId": "ga4WarehouseSync",
+        "summary": "Sync GA4 daily metrics from BigQuery to Postgres",
+        "description": "Sync GA4 daily metrics for Penn Community Bank only. Always use client_key 'penn'.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "date_range": {
+                    "type": "string",
+                    "default": "LAST_30_DAYS",
+                    "enum": [
+                      "LAST_7_DAYS",
+                      "LAST_30_DAYS",
+                      "LAST_90_DAYS",
+                      "LAST_180_DAYS",
+                      "THIS_MONTH",
+                      "LAST_MONTH"
+                    ]
+                  },
+                  "client_key": {
+                    "type": "string",
+                    "description": "Must be 'penn' for Penn Community Bank.",
+                    "enum": [
+                      "penn"
+                    ],
+                    "default": "penn"
+                  },
+                  "account_id": {
+                    "type": "string",
+                    "description": "Optional warehouse key (defaults from dataset id)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sync result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": {
+                      "type": "string",
+                      "description": "GA4 property/dataset key"
+                    },
+                    "days_synced": {
+                      "type": "integer"
+                    },
+                    "bq_project_id": {
+                      "type": "string"
+                    },
+                    "bq_dataset_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/linkedin/env": {
+      "get": {
+        "operationId": "linkedinEnv",
+        "summary": "LinkedIn credential status (no secrets)",
+        "responses": {
+          "200": {
+            "description": "Env summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "has_client_id": {
+                      "type": "boolean"
+                    },
+                    "has_client_secret": {
+                      "type": "boolean"
+                    },
+                    "has_refresh_token": {
+                      "type": "boolean"
+                    },
+                    "linkedin_version": {
+                      "type": "string"
+                    },
+                    "refresh_token_looks_valid": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/linkedin/test-token": {
+      "get": {
+        "operationId": "linkedinTestToken",
+        "summary": "Verify LinkedIn OAuth refresh",
+        "responses": {
+          "200": {
+            "description": "Token test",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "account_count": {
+                      "type": "integer"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/linkedin/accounts": {
+      "get": {
+        "operationId": "linkedinAccounts",
+        "summary": "List LinkedIn ad accounts \u2014 use Penn Community Bank only",
+        "responses": {
+          "200": {
+            "description": "Account list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer"
+                    },
+                    "accounts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "currency": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Penn Community Bank only. After listing accounts, use only rows whose name contains 'Penn'. Refuse other clients."
+      }
+    },
+    "/linkedin/performance": {
+      "get": {
+        "operationId": "linkedinPerformance",
+        "summary": "LinkedIn Ads performance for one account",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "LinkedIn ad account ID for Penn Community Bank (digits only)."
+          },
+          {
+            "name": "date_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "LAST_30_DAYS",
+              "enum": [
+                "LAST_7_DAYS",
+                "LAST_30_DAYS",
+                "LAST_90_DAYS",
+                "LAST_180_DAYS",
+                "THIS_MONTH",
+                "LAST_MONTH"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Performance summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": {
+                      "type": "string"
+                    },
+                    "date_range": {
+                      "type": "object",
+                      "properties": {}
+                    },
+                    "totals": {
+                      "type": "object",
+                      "properties": {
+                        "spend": {
+                          "type": "number"
+                        },
+                        "clicks": {
+                          "type": "integer"
+                        },
+                        "impressions": {
+                          "type": "integer"
+                        },
+                        "conversions": {
+                          "type": "number"
+                        },
+                        "conversion_value": {
+                          "type": "number"
+                        },
+                        "campaign_count": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "campaigns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "spend": {
+                            "type": "number"
+                          },
+                          "clicks": {
+                            "type": "integer"
+                          },
+                          "impressions": {
+                            "type": "integer"
+                          },
+                          "conversions": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/linkedin/warehouse/sync": {
+      "post": {
+        "operationId": "linkedinWarehouseSync",
+        "summary": "Sync LinkedIn daily metrics to Postgres (metrics_daily)",
+        "description": "Pulls day-by-day spend/clicks/impressions from LinkedIn and upserts into metrics_daily. Use LAST_180_DAYS for max history in one call. Requires Railway DATABASE_URL.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "account_id"
+                ],
+                "properties": {
+                  "account_id": {
+                    "type": "string",
+                    "description": "LinkedIn account ID for Penn Community Bank only."
+                  },
+                  "date_range": {
+                    "type": "string",
+                    "default": "LAST_30_DAYS",
+                    "enum": [
+                      "LAST_7_DAYS",
+                      "LAST_30_DAYS",
+                      "LAST_90_DAYS",
+                      "LAST_180_DAYS",
+                      "THIS_MONTH",
+                      "LAST_MONTH"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sync result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": {
+                      "type": "string"
+                    },
+                    "days_synced": {
+                      "type": "integer"
+                    },
+                    "date_range": {
+                      "type": "object",
+                      "properties": {}
+                    },
+                    "coverage": {
+                      "type": "object",
+                      "properties": {
+                        "min_date": {
+                          "type": "string"
+                        },
+                        "max_date": {
+                          "type": "string"
+                        },
+                        "day_count": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/meta/env": {
+      "get": {
+        "operationId": "metaEnv",
+        "summary": "Meta credential status (no secrets)",
+        "responses": {
+          "200": {
+            "description": "Env summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "has_app_id": {
+                      "type": "boolean"
+                    },
+                    "has_app_secret": {
+                      "type": "boolean"
+                    },
+                    "has_access_token": {
+                      "type": "boolean"
+                    },
+                    "has_business_id": {
+                      "type": "boolean"
+                    },
+                    "business_id": {
+                      "type": "string"
+                    },
+                    "meta_api_version": {
+                      "type": "string"
+                    },
+                    "access_token_looks_valid": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/meta/test-token": {
+      "get": {
+        "operationId": "metaTestToken",
+        "summary": "Verify Meta access token and Business Manager access",
+        "responses": {
+          "200": {
+            "description": "Token test",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "account_count": {
+                      "type": "integer"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/meta/accounts": {
+      "get": {
+        "operationId": "metaAccounts",
+        "summary": "List Meta ad accounts \u2014 use Penn Community Bank only",
+        "description": "Penn Community Bank only. After listing accounts, use only rows whose name contains 'Penn'. Refuse other clients.",
+        "responses": {
+          "200": {
+            "description": "Account list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer"
+                    },
+                    "accounts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "currency": {
+                            "type": "string"
+                          },
+                          "ownership": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/meta/performance": {
+      "get": {
+        "operationId": "metaPerformance",
+        "summary": "Meta Ads performance for one ad account",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Meta ad account ID for Penn Community Bank (digits only)."
+          },
+          {
+            "name": "date_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "LAST_30_DAYS",
+              "enum": [
+                "LAST_7_DAYS",
+                "LAST_30_DAYS",
+                "LAST_90_DAYS",
+                "LAST_180_DAYS",
+                "THIS_MONTH",
+                "LAST_MONTH"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Performance summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": {
+                      "type": "string"
+                    },
+                    "date_range": {
+                      "type": "object",
+                      "properties": {}
+                    },
+                    "totals": {
+                      "type": "object",
+                      "properties": {
+                        "spend": {
+                          "type": "number"
+                        },
+                        "clicks": {
+                          "type": "integer"
+                        },
+                        "impressions": {
+                          "type": "integer"
+                        },
+                        "conversions": {
+                          "type": "number"
+                        },
+                        "conversion_value": {
+                          "type": "number"
+                        },
+                        "campaign_count": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "campaigns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "spend": {
+                            "type": "number"
+                          },
+                          "clicks": {
+                            "type": "integer"
+                          },
+                          "impressions": {
+                            "type": "integer"
+                          },
+                          "conversions": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/meta/warehouse/sync": {
+      "post": {
+        "operationId": "metaWarehouseSync",
+        "summary": "Sync Meta daily metrics to Postgres (metrics_daily)",
+        "description": "Pulls day-by-day spend/clicks/impressions from Meta and upserts into metrics_daily with source=meta. Requires Railway DATABASE_URL.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "account_id"
+                ],
+                "properties": {
+                  "account_id": {
+                    "type": "string",
+                    "description": "Meta ad account ID for Penn Community Bank only."
+                  },
+                  "date_range": {
+                    "type": "string",
+                    "default": "LAST_30_DAYS",
+                    "enum": [
+                      "LAST_7_DAYS",
+                      "LAST_30_DAYS",
+                      "LAST_90_DAYS",
+                      "LAST_180_DAYS",
+                      "THIS_MONTH",
+                      "LAST_MONTH"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sync result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": {
+                      "type": "string"
+                    },
+                    "date_range": {
+                      "type": "object",
+                      "properties": {}
+                    },
+                    "days_synced": {
+                      "type": "integer"
+                    },
+                    "coverage": {
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/warehouse/status": {
+      "get": {
+        "operationId": "warehouseStatus",
+        "summary": "Postgres warehouse status (metrics_daily row counts)",
+        "responses": {
+          "200": {
+            "description": "Status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "connected": {
+                      "type": "boolean"
+                    },
+                    "metrics_rows": {
+                      "type": "integer"
+                    },
+                    "linkedin_rows": {
+                      "type": "integer"
+                    },
+                    "google_rows": {
+                      "type": "integer"
+                    },
+                    "ga4_rows": {
+                      "type": "integer"
+                    },
+                    "meta_rows": {
+                      "type": "integer"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/warehouse/metrics": {
+      "get": {
+        "operationId": "warehouseMetrics",
+        "summary": "Read stored daily metrics from Postgres",
+        "parameters": [
+          {
+            "name": "from_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "YYYY-MM-DD"
+          },
+          {
+            "name": "to_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "YYYY-MM-DD"
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "linkedin",
+                "google",
+                "ga4",
+                "meta"
+              ]
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Account ID for Penn Community Bank only (Google customer ID, LinkedIn/Meta account ID, or GA4 property 313855909)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daily metric rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/ga4/env": {
+      "get": {
+        "operationId": "ga4Env",
+        "summary": "GA4 BigQuery env status (project, dataset, credential parse check)",
+        "description": "GA4 env check for Penn Community Bank (Penn BigQuery project/dataset).",
+        "responses": {
+          "200": {
+            "description": "Env summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "has_gcp_service_account_json": {
+                      "type": "boolean"
+                    },
+                    "has_bq_project_id": {
+                      "type": "boolean"
+                    },
+                    "has_bq_dataset_id": {
+                      "type": "boolean"
+                    },
+                    "has_ga4_clients_registry": {
+                      "type": "boolean"
+                    },
+                    "bq_project_id": {
+                      "type": "string"
+                    },
+                    "bq_dataset_id": {
+                      "type": "string"
+                    },
+                    "gcp_service_account_json_parse_ok": {
+                      "type": "boolean"
+                    },
+                    "gcp_service_account_json_parse_error": {
+                      "type": "string"
+                    },
+                    "gcp_service_account_json_char_count": {
+                      "type": "integer"
+                    },
+                    "gcp_service_account_json_suspected_truncated": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/ga4/query": {
+      "post": {
+        "operationId": "ga4Query",
+        "summary": "Run BigQuery SQL on GA4 export",
+        "description": "BigQuery SQL for Penn Community Bank GA4 export only. Tables must be under `penn-community-b-1699391543298.analytics_313855909.events_*` (project penn-community-b-1699391543298, dataset analytics_313855909). Do not query other projects.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "sql"
+                ],
+                "properties": {
+                  "sql": {
+                    "type": "string"
+                  },
+                  "max_rows": {
+                    "type": "integer",
+                    "default": 1000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Query rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "row_count": {
+                      "type": "integer"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {},
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Railway API_KEY value."
+      }
+    }
+  }
+}

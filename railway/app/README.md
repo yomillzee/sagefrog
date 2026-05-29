@@ -151,11 +151,21 @@ railway variables --set "GCP_SERVICE_ACCOUNT_JSON=$(cat key.json)"
 ### ChatGPT Custom Action (GPT)
 
 1. Deploy this service on Railway and set **`API_KEY`** to a long random string.
-2. In the GPT Action, point the schema at your public base URL (e.g. `https://<your-service>.up.railway.app/openapi.json`) or paste an OpenAPI fragment for the routes you need.
-3. **Authentication:** use **API key** (or equivalent) and send either:
-   - Header **`Authorization`**: `Bearer <API_KEY>`, or
-   - Header **`X-API-Key`**: `<API_KEY>`
-4. `GET /health` stays **unauthenticated** so Railway’s health check keeps working.
+2. In the GPT Action, paste **`openapi-chatgpt-min.json`** for the full agency GPT, or a client file like **`openapi-chatgpt-penn.json`** for one client.
+3. **Authentication:** API key → header **`X-API-Key`**: `<API_KEY>` (same Railway secret for all client GPTs until per-client keys exist).
+4. Copy instructions from **`gpt-instructions-penn.md`** into the GPT’s Instructions field.
+5. Regenerate a client schema: `python make_chatgpt_openapi_client.py penn` (add more clients in `CLIENTS` inside that script).
+
+#### Client-scoped GPTs (instructions + schema only)
+
+Not server-enforced — same `API_KEY` can still reach other accounts if prompted. Good for internal use.
+
+| File | Purpose |
+|------|---------|
+| `openapi-chatgpt-penn.json` | Penn-only actions; omits multi-account / `ga4Clients` |
+| `gpt-instructions-penn.md` | Paste into Custom GPT Instructions |
+
+Optional: set `google_ads_customer_id`, `linkedin_account_id`, `meta_account_id` in `make_chatgpt_openapi_client.py` `CLIENTS["penn"]` to lock IDs in the schema once known.
 
 #### YouTube video links (recommended for video creative review)
 
