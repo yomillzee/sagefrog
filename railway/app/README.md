@@ -198,6 +198,8 @@ Example response fields per row: `campaign_name`, `ad_name`, `youtube_video_id`,
 - `GET /linkedin/test-token` — OAuth refresh + ad account count
 - `GET /linkedin/accounts` — LinkedIn ad accounts for the token
 - `GET /linkedin/performance` — spend/clicks/impressions/conversions by active campaign (auto-syncs daily rows to Postgres when `DATABASE_URL` is set)
+- `GET /linkedin/campaign-groups` — list campaign groups for one ad account
+- `GET /linkedin/campaign-groups/performance` — spend/clicks/impressions/conversions by campaign group
 - `POST /linkedin/warehouse/sync` — backfill LinkedIn into `metrics_daily`
 - `GET /meta/env` — which Meta credentials are set (no secrets)
 - `GET /meta/test-token` — verify access token + ad account count

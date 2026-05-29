@@ -179,6 +179,215 @@ def _campaign_id_from_pivot(urn: str) -> str:
     return str(urn or "").strip().split(":")[-1]
 
 
+def _campaign_group_id_from_pivot(urn: str) -> str:
+    return str(urn or "").strip().split(":")[-1]
+
+
+def _linkedin_get_all_elements(
+    path: str,
+    *,
+    access_token: str,
+    params: dict[str, Any] | None = None,
+    env: LinkedInEnv | None = None,
+) -> list[dict[str, Any]]:
+    """Follow LinkedIn cursor pagination (pageToken) until exhausted."""
+    env = env or load_linkedin_env()
+    query = dict(params or {})
+    elements: list[dict[str, Any]] = []
+    while True:
+        payload = _linkedin_get(path, params=query, access_token=access_token, env=env)
+        elements.extend(payload.get("elements") or [])
+        page_token = (payload.get("paging") or {}).get("pageToken")
+        if not page_token:
+            break
+        query["pageToken"] = page_token
+    return elements
+
+
+def _normalize_campaign_group_row(row: dict[str, Any]) -> dict[str, Any]:
+    group_id = _campaign_group_id_from_pivot(str(row.get("id") or ""))
+    run_schedule = row.get("runSchedule") if isinstance(row.get("runSchedule"), dict) else {}
+    start = run_schedule.get("start") if isinstance(run_schedule.get("start"), dict) else {}
+    end = run_schedule.get("end") if isinstance(run_schedule.get("end"), dict) else {}
+    return {
+        "id": group_id,
+        "name": row.get("name") or "",
+        "status": row.get("status") or "",
+        "run_schedule_start": (
+            f"{start.get('year', '')}-{start.get('month', '')}-{start.get('day', '')}".strip("-")
+            if start
+            else ""
+        ),
+        "run_schedule_end": (
+            f"{end.get('year', '')}-{end.get('month', '')}-{end.get('day', '')}".strip("-") if end else ""
+        ),
+    }
+
+
+def list_campaign_groups(
+    account_id: str,
+    *,
+    access_token: str | None = None,
+    env: LinkedInEnv | None = None,
+) -> list[dict[str, Any]]:
+    """List campaign groups for one ad account."""
+    env = env or load_linkedin_env()
+    access_token = access_token or refresh_access_token(env)["access_token"]
+    account_id_clean = _normalize_account_id(account_id)
+    if not account_id_clean:
+        raise ValueError("account_id is required")
+
+    status_search = "(status:(values:List(ACTIVE,DRAFT,PAUSED,ARCHIVED,CANCELED)))"
+    account_urn_encoded = quote(_account_urn(account_id_clean), safe="")
+    account_search = f"(account:(values:List({account_urn_encoded})))"
+
+    attempts: list[tuple[str, dict[str, Any]]] = [
+        (
+            f"/adAccounts/{account_id_clean}/adCampaignGroups",
+            {"q": "search", "search": status_search, "pageSize": 100},
+        ),
+        (
+            "/adCampaignGroups",
+            {"q": "search", "search": account_search, "pageSize": 100},
+        ),
+        (
+            f"/adAccounts/{account_id_clean}/adCampaignGroups",
+            {"q": "search", "search": "(status:(values:List(ACTIVE)))", "pageSize": 100},
+        ),
+    ]
+
+    last_error: Exception | None = None
+    for path, params in attempts:
+        try:
+            rows = _linkedin_get_all_elements(
+                path, params=params, access_token=access_token, env=env
+            )
+            groups = [_normalize_campaign_group_row(row) for row in rows if row.get("id")]
+            groups = [g for g in groups if g["id"]]
+            if groups or rows == []:
+                return sorted(groups, key=lambda item: (item.get("name") or item["id"]).lower())
+        except Exception as exc:
+            last_error = exc
+            continue
+
+    if last_error:
+        raise last_error
+    return []
+
+
+def _fetch_campaign_group_by_id(
+    account_id: str,
+    campaign_group_id: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+) -> dict[str, Any]:
+    account_id_clean = _normalize_account_id(account_id)
+    group_id_clean = _campaign_group_id_from_pivot(campaign_group_id)
+    try:
+        return _linkedin_get(
+            f"/adAccounts/{account_id_clean}/adCampaignGroups/{group_id_clean}",
+            access_token=access_token,
+            env=env,
+        )
+    except Exception:
+        return {}
+
+
+def campaign_groups_performance(
+    account_id: str,
+    *,
+    date_range: str = "LAST_30_DAYS",
+    access_token: str | None = None,
+    env: LinkedInEnv | None = None,
+) -> dict[str, Any]:
+    """Account totals plus spend/clicks/impressions by campaign group."""
+    env = env or load_linkedin_env()
+    access_token = access_token or refresh_access_token(env)["access_token"]
+    account_id_clean = _normalize_account_id(account_id)
+    if not account_id_clean:
+        raise ValueError("account_id is required")
+
+    start, end, preset = resolve_date_range(date_range)
+
+    account_rows, account_conversions_ok = _fetch_analytics(
+        account_id_clean,
+        pivot="ACCOUNT",
+        start=start,
+        end=end,
+        access_token=access_token,
+        env=env,
+    )
+    group_rows, group_conversions_ok = _fetch_analytics(
+        account_id_clean,
+        pivot="CAMPAIGN_GROUP",
+        start=start,
+        end=end,
+        access_token=access_token,
+        env=env,
+    )
+    conversion_fields_supported = account_conversions_ok or group_conversions_ok
+
+    account_ins = account_rows[0] if account_rows else {}
+    totals = {
+        "spend": _parse_spend(account_ins),
+        "clicks": int(account_ins.get("clicks") or 0),
+        "impressions": int(account_ins.get("impressions") or 0),
+        "conversions": _parse_conversions(account_ins) if conversion_fields_supported else 0.0,
+        "conversion_value": (
+            _parse_conversion_value(account_ins) if conversion_fields_supported else 0.0
+        ),
+        "campaign_group_count": 0,
+    }
+
+    by_group: dict[str, list[dict[str, Any]]] = {}
+    for row in group_rows:
+        for urn in row.get("pivotValues") or []:
+            if "sponsoredCampaignGroup" not in str(urn):
+                continue
+            gid = _campaign_group_id_from_pivot(urn)
+            if gid:
+                by_group.setdefault(gid, []).append(row)
+
+    totals["campaign_group_count"] = len(by_group)
+
+    groups_out: list[dict[str, Any]] = []
+    for gid, matched in sorted(by_group.items()):
+        meta = _fetch_campaign_group_by_id(
+            account_id_clean, gid, access_token=access_token, env=env
+        )
+        spend = sum(_parse_spend(row) for row in matched)
+        clicks = int(sum(int(row.get("clicks") or 0) for row in matched))
+        impressions = int(sum(int(row.get("impressions") or 0) for row in matched))
+        conversions = (
+            sum(_parse_conversions(row) for row in matched)
+            if conversion_fields_supported
+            else 0.0
+        )
+        groups_out.append(
+            {
+                "id": gid,
+                "name": meta.get("name") or "",
+                "status": meta.get("status") or "",
+                "spend": spend,
+                "clicks": clicks,
+                "impressions": impressions,
+                "conversions": conversions,
+            }
+        )
+
+    return {
+        "account_id": account_id_clean,
+        "date_range": {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "preset": preset,
+        },
+        "totals": totals,
+        "campaign_groups": groups_out,
+    }
+
+
 def _date_from_analytics_row(row: dict[str, Any]) -> date | None:
     parts = (row.get("dateRange") or {}).get("start") or (row.get("dateRange") or {})
     if not isinstance(parts, dict):

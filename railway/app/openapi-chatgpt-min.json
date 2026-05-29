@@ -544,6 +544,126 @@
         "security": [{ "ApiKeyAuth": [] }]
       }
     },
+    "/linkedin/campaign-groups": {
+      "get": {
+        "operationId": "linkedinCampaignGroups",
+        "summary": "List LinkedIn campaign groups for one ad account",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "LinkedIn ad account ID (digits only)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Campaign group list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": { "type": "string" },
+                    "count": { "type": "integer" },
+                    "campaign_groups": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "name": { "type": "string" },
+                          "status": { "type": "string" },
+                          "run_schedule_start": { "type": "string" },
+                          "run_schedule_end": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/linkedin/campaign-groups/performance": {
+      "get": {
+        "operationId": "linkedinCampaignGroupsPerformance",
+        "summary": "LinkedIn Ads performance by campaign group",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "LinkedIn ad account ID (digits only)"
+          },
+          {
+            "name": "date_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "LAST_30_DAYS",
+              "enum": [
+                "LAST_7_DAYS",
+                "LAST_30_DAYS",
+                "LAST_90_DAYS",
+                "LAST_180_DAYS",
+                "THIS_MONTH",
+                "LAST_MONTH"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Performance by campaign group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": { "type": "string" },
+                    "date_range": { "type": "object", "properties": {} },
+                    "totals": {
+                      "type": "object",
+                      "properties": {
+                        "spend": { "type": "number" },
+                        "clicks": { "type": "integer" },
+                        "impressions": { "type": "integer" },
+                        "conversions": { "type": "number" },
+                        "conversion_value": { "type": "number" },
+                        "campaign_group_count": { "type": "integer" }
+                      }
+                    },
+                    "campaign_groups": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "name": { "type": "string" },
+                          "status": { "type": "string" },
+                          "spend": { "type": "number" },
+                          "clicks": { "type": "integer" },
+                          "impressions": { "type": "integer" },
+                          "conversions": { "type": "number" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
     "/linkedin/warehouse/sync": {
       "post": {
         "operationId": "linkedinWarehouseSync",

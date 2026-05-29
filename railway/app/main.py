@@ -50,6 +50,11 @@ from models import (
     LinkedInPerformanceResponse,
     LinkedInPerformanceTotals,
     LinkedInCampaignPerformance,
+    LinkedInCampaignGroupRef,
+    LinkedInCampaignGroupsResponse,
+    LinkedInCampaignGroupPerformance,
+    LinkedInCampaignGroupsPerformanceTotals,
+    LinkedInCampaignGroupsPerformanceResponse,
     LinkedInWarehouseSyncRequest,
     LinkedInWarehouseSyncResponse,
     MetaEnvSummary,
@@ -168,6 +173,8 @@ def root() -> dict:
         "linkedin_test_token": "/linkedin/test-token",
         "linkedin_accounts": "/linkedin/accounts",
         "linkedin_performance": "/linkedin/performance",
+        "linkedin_campaign_groups": "/linkedin/campaign-groups",
+        "linkedin_campaign_groups_performance": "/linkedin/campaign-groups/performance",
         "linkedin_warehouse_sync": "/linkedin/warehouse/sync",
         "meta_env": "/meta/env",
         "meta_test_token": "/meta/test-token",
@@ -565,6 +572,105 @@ def linkedin_performance(
         totals=LinkedInPerformanceTotals(**payload["totals"]),
         campaigns=[LinkedInCampaignPerformance(**c) for c in payload["campaigns"]],
         warehouse=payload.get("warehouse"),
+    )
+
+
+@app.get(
+    "/linkedin/campaign-groups",
+    response_model=LinkedInCampaignGroupsResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="List LinkedIn campaign groups for one ad account",
+)
+def linkedin_campaign_groups(account_id: str) -> LinkedInCampaignGroupsResponse:
+    account_id = account_id.strip()
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Missing account_id query parameter.")
+
+    cache_payload = {"account_id": account_id}
+    hit = db_cache.get_cached("linkedin.campaign_groups", cache_payload)
+    if hit is not None:
+        rows = hit.response_json or []
+        return LinkedInCampaignGroupsResponse(
+            account_id=account_id,
+            count=int(hit.row_count or len(rows)),
+            campaign_groups=[LinkedInCampaignGroupRef(**r) for r in rows],
+        )
+    try:
+        rows = linkedin_service.list_campaign_groups(account_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        db_cache.put_cached(
+            "linkedin.campaign_groups",
+            cache_payload,
+            response_json=rows,
+            row_count=len(rows),
+            status="ok",
+            error=None,
+        )
+    except Exception:
+        pass
+    return LinkedInCampaignGroupsResponse(
+        account_id=str(account_id).strip().split(":")[-1],
+        count=len(rows),
+        campaign_groups=[LinkedInCampaignGroupRef(**r) for r in rows],
+    )
+
+
+@app.get(
+    "/linkedin/campaign-groups/performance",
+    response_model=LinkedInCampaignGroupsPerformanceResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="LinkedIn Ads performance by campaign group",
+)
+def linkedin_campaign_groups_performance(
+    account_id: str,
+    date_range: str = "LAST_30_DAYS",
+) -> LinkedInCampaignGroupsPerformanceResponse:
+    account_id = account_id.strip()
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Missing account_id query parameter.")
+    preset = date_range.strip().upper().replace("-", "_")
+    if preset not in _WAREHOUSE_DATE_RANGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid date_range: {date_range}. Use one of: {', '.join(sorted(_WAREHOUSE_DATE_RANGES))}",
+        )
+
+    cache_payload = {"account_id": account_id, "date_range": preset}
+    hit = db_cache.get_cached("linkedin.campaign_groups.performance", cache_payload)
+    if hit is not None:
+        payload = hit.response_json or {}
+        return LinkedInCampaignGroupsPerformanceResponse(
+            account_id=payload.get("account_id", account_id),
+            date_range=payload.get("date_range", {}),
+            totals=LinkedInCampaignGroupsPerformanceTotals(**(payload.get("totals") or {})),
+            campaign_groups=[
+                LinkedInCampaignGroupPerformance(**g) for g in payload.get("campaign_groups") or []
+            ],
+        )
+    try:
+        payload = linkedin_service.campaign_groups_performance(account_id, date_range=preset)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        db_cache.put_cached(
+            "linkedin.campaign_groups.performance",
+            cache_payload,
+            response_json=payload,
+            row_count=len(payload.get("campaign_groups") or []),
+            status="ok",
+            error=None,
+        )
+    except Exception:
+        pass
+    return LinkedInCampaignGroupsPerformanceResponse(
+        account_id=payload["account_id"],
+        date_range=payload["date_range"],
+        totals=LinkedInCampaignGroupsPerformanceTotals(**payload["totals"]),
+        campaign_groups=[
+            LinkedInCampaignGroupPerformance(**g) for g in payload["campaign_groups"]
+        ],
     )
 
 

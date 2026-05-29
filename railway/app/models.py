@@ -250,6 +250,46 @@ class LinkedInCampaignPerformance(BaseModel):
     conversions: float = 0.0
 
 
+class LinkedInCampaignGroupRef(BaseModel):
+    id: str
+    name: str = ""
+    status: str = ""
+    run_schedule_start: str = ""
+    run_schedule_end: str = ""
+
+
+class LinkedInCampaignGroupsResponse(BaseModel):
+    account_id: str
+    count: int
+    campaign_groups: list[LinkedInCampaignGroupRef]
+
+
+class LinkedInCampaignGroupPerformance(BaseModel):
+    id: str
+    name: str = ""
+    status: str = ""
+    spend: float = 0.0
+    clicks: int = 0
+    impressions: int = 0
+    conversions: float = 0.0
+
+
+class LinkedInCampaignGroupsPerformanceTotals(BaseModel):
+    spend: float = 0.0
+    clicks: int = 0
+    impressions: int = 0
+    conversions: float = 0.0
+    conversion_value: float = 0.0
+    campaign_group_count: int = 0
+
+
+class LinkedInCampaignGroupsPerformanceResponse(BaseModel):
+    account_id: str
+    date_range: dict
+    totals: LinkedInCampaignGroupsPerformanceTotals
+    campaign_groups: list[LinkedInCampaignGroupPerformance]
+
+
 class LinkedInPerformanceResponse(BaseModel):
     account_id: str
     date_range: dict
