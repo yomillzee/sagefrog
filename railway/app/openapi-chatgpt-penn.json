@@ -488,7 +488,8 @@
     "/linkedin/performance": {
       "get": {
         "operationId": "linkedinPerformance",
-        "summary": "LinkedIn Ads performance for one account",
+        "summary": "LinkedIn Ads performance by campaign (one account)",
+        "description": "Campaign-level metrics only. Each row has entity_level=campaign. LinkedIn has no ad set \u2014 do not use this for campaign groups or creatives. For groups use linkedinCampaignGroupsPerformance; for ads/creatives use linkedinCreativesPerformance. Always key rows by id, never by name.",
         "parameters": [
           {
             "name": "account_id",
@@ -528,6 +529,13 @@
                     "account_id": {
                       "type": "string"
                     },
+                    "entity_level": {
+                      "type": "string",
+                      "enum": [
+                        "account"
+                      ],
+                      "description": "Roll-up level for totals; row items are campaigns."
+                    },
                     "date_range": {
                       "type": "object",
                       "properties": {}
@@ -563,10 +571,23 @@
                           "id": {
                             "type": "string"
                           },
+                          "entity_level": {
+                            "type": "string",
+                            "enum": [
+                              "campaign"
+                            ]
+                          },
                           "name": {
                             "type": "string"
                           },
                           "status": {
+                            "type": "string"
+                          },
+                          "campaign_group_id": {
+                            "type": "string",
+                            "description": "Parent campaign group ID (folder), not an ad set."
+                          },
+                          "campaign_group_name": {
                             "type": "string"
                           },
                           "spend": {
@@ -610,7 +631,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "LinkedIn ad account ID (digits only)"
+            "description": "LinkedIn ad account ID for Penn Community Bank (digits only)."
           }
         ],
         "responses": {
@@ -667,6 +688,7 @@
       "get": {
         "operationId": "linkedinCampaignGroupsPerformance",
         "summary": "LinkedIn Ads performance by campaign group",
+        "description": "Campaign group (folder above campaigns). Not Meta ad set and not LinkedIn campaign. Do not merge with linkedinPerformance rows \u2014 groups and campaigns are different levels.",
         "parameters": [
           {
             "name": "account_id",
@@ -675,7 +697,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "LinkedIn ad account ID (digits only)"
+            "description": "LinkedIn ad account ID for Penn Community Bank (digits only)."
           },
           {
             "name": "date_range",
@@ -705,6 +727,12 @@
                   "properties": {
                     "account_id": {
                       "type": "string"
+                    },
+                    "entity_level": {
+                      "type": "string",
+                      "enum": [
+                        "account"
+                      ]
                     },
                     "date_range": {
                       "type": "object",
@@ -741,10 +769,159 @@
                           "id": {
                             "type": "string"
                           },
+                          "entity_level": {
+                            "type": "string",
+                            "enum": [
+                              "campaign_group"
+                            ]
+                          },
                           "name": {
                             "type": "string"
                           },
                           "status": {
+                            "type": "string"
+                          },
+                          "spend": {
+                            "type": "number"
+                          },
+                          "clicks": {
+                            "type": "integer"
+                          },
+                          "impressions": {
+                            "type": "integer"
+                          },
+                          "conversions": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/linkedin/creatives/performance": {
+      "get": {
+        "operationId": "linkedinCreativesPerformance",
+        "summary": "LinkedIn Ads performance by creative (ad)",
+        "description": "Sub-campaign level (creative/ad). LinkedIn has no ad set \u2014 use this instead of Meta ad-set logic. Do not roll creative rows into campaign dashboards; filter by campaign_id when needed.",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "LinkedIn ad account ID for Penn Community Bank (digits only)."
+          },
+          {
+            "name": "date_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "LAST_30_DAYS",
+              "enum": [
+                "LAST_7_DAYS",
+                "LAST_30_DAYS",
+                "LAST_90_DAYS",
+                "LAST_180_DAYS",
+                "THIS_MONTH",
+                "LAST_MONTH"
+              ]
+            }
+          },
+          {
+            "name": "campaign_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Optional LinkedIn campaign ID to limit creatives to one campaign"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Performance by creative",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": {
+                      "type": "string"
+                    },
+                    "entity_level": {
+                      "type": "string",
+                      "enum": [
+                        "account"
+                      ]
+                    },
+                    "date_range": {
+                      "type": "object",
+                      "properties": {}
+                    },
+                    "totals": {
+                      "type": "object",
+                      "properties": {
+                        "spend": {
+                          "type": "number"
+                        },
+                        "clicks": {
+                          "type": "integer"
+                        },
+                        "impressions": {
+                          "type": "integer"
+                        },
+                        "conversions": {
+                          "type": "number"
+                        },
+                        "creative_count": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "creatives": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "entity_level": {
+                            "type": "string",
+                            "enum": [
+                              "creative"
+                            ]
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "campaign_id": {
+                            "type": "string"
+                          },
+                          "campaign_name": {
+                            "type": "string"
+                          },
+                          "campaign_group_id": {
+                            "type": "string"
+                          },
+                          "campaign_group_name": {
                             "type": "string"
                           },
                           "spend": {

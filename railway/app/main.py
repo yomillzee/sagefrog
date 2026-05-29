@@ -55,6 +55,9 @@ from models import (
     LinkedInCampaignGroupPerformance,
     LinkedInCampaignGroupsPerformanceTotals,
     LinkedInCampaignGroupsPerformanceResponse,
+    LinkedInCreativePerformance,
+    LinkedInCreativesPerformanceTotals,
+    LinkedInCreativesPerformanceResponse,
     LinkedInWarehouseSyncRequest,
     LinkedInWarehouseSyncResponse,
     MetaEnvSummary,
@@ -175,6 +178,7 @@ def root() -> dict:
         "linkedin_performance": "/linkedin/performance",
         "linkedin_campaign_groups": "/linkedin/campaign-groups",
         "linkedin_campaign_groups_performance": "/linkedin/campaign-groups/performance",
+        "linkedin_creatives_performance": "/linkedin/creatives/performance",
         "linkedin_warehouse_sync": "/linkedin/warehouse/sync",
         "meta_env": "/meta/env",
         "meta_test_token": "/meta/test-token",
@@ -546,6 +550,7 @@ def linkedin_performance(
         payload = hit.response_json or {}
         return LinkedInPerformanceResponse(
             account_id=payload.get("account_id", account_id),
+            entity_level=payload.get("entity_level", "account"),
             date_range=payload.get("date_range", {}),
             totals=LinkedInPerformanceTotals(**(payload.get("totals") or {})),
             campaigns=[LinkedInCampaignPerformance(**c) for c in payload.get("campaigns") or []],
@@ -568,6 +573,7 @@ def linkedin_performance(
         pass
     return LinkedInPerformanceResponse(
         account_id=payload["account_id"],
+        entity_level=payload.get("entity_level", "account"),
         date_range=payload["date_range"],
         totals=LinkedInPerformanceTotals(**payload["totals"]),
         campaigns=[LinkedInCampaignPerformance(**c) for c in payload["campaigns"]],
@@ -643,6 +649,7 @@ def linkedin_campaign_groups_performance(
         payload = hit.response_json or {}
         return LinkedInCampaignGroupsPerformanceResponse(
             account_id=payload.get("account_id", account_id),
+            entity_level=payload.get("entity_level", "account"),
             date_range=payload.get("date_range", {}),
             totals=LinkedInCampaignGroupsPerformanceTotals(**(payload.get("totals") or {})),
             campaign_groups=[
@@ -666,11 +673,71 @@ def linkedin_campaign_groups_performance(
         pass
     return LinkedInCampaignGroupsPerformanceResponse(
         account_id=payload["account_id"],
+        entity_level=payload.get("entity_level", "account"),
         date_range=payload["date_range"],
         totals=LinkedInCampaignGroupsPerformanceTotals(**payload["totals"]),
         campaign_groups=[
             LinkedInCampaignGroupPerformance(**g) for g in payload["campaign_groups"]
         ],
+    )
+
+
+@app.get(
+    "/linkedin/creatives/performance",
+    response_model=LinkedInCreativesPerformanceResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="LinkedIn Ads performance by creative (sub-campaign; LinkedIn has no ad set)",
+)
+def linkedin_creatives_performance(
+    account_id: str,
+    date_range: str = "LAST_30_DAYS",
+    campaign_id: str | None = None,
+) -> LinkedInCreativesPerformanceResponse:
+    account_id = account_id.strip()
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Missing account_id query parameter.")
+    preset = date_range.strip().upper().replace("-", "_")
+    if preset not in _WAREHOUSE_DATE_RANGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid date_range: {date_range}. Use one of: {', '.join(sorted(_WAREHOUSE_DATE_RANGES))}",
+        )
+    campaign_id = (campaign_id or "").strip() or None
+
+    cache_payload = {"account_id": account_id, "date_range": preset, "campaign_id": campaign_id}
+    hit = db_cache.get_cached("linkedin.creatives.performance", cache_payload)
+    if hit is not None:
+        payload = hit.response_json or {}
+        return LinkedInCreativesPerformanceResponse(
+            account_id=payload.get("account_id", account_id),
+            entity_level=payload.get("entity_level", "account"),
+            date_range=payload.get("date_range", {}),
+            totals=LinkedInCreativesPerformanceTotals(**(payload.get("totals") or {})),
+            creatives=[LinkedInCreativePerformance(**c) for c in payload.get("creatives") or []],
+        )
+    try:
+        payload = linkedin_service.creatives_performance(
+            account_id, date_range=preset, campaign_id=campaign_id
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        db_cache.put_cached(
+            "linkedin.creatives.performance",
+            cache_payload,
+            response_json=payload,
+            row_count=len(payload.get("creatives") or []),
+            status="ok",
+            error=None,
+        )
+    except Exception:
+        pass
+    return LinkedInCreativesPerformanceResponse(
+        account_id=payload["account_id"],
+        entity_level=payload.get("entity_level", "account"),
+        date_range=payload["date_range"],
+        totals=LinkedInCreativesPerformanceTotals(**payload["totals"]),
+        creatives=[LinkedInCreativePerformance(**c) for c in payload["creatives"]],
     )
 
 

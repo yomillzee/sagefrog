@@ -242,8 +242,11 @@ class LinkedInPerformanceTotals(BaseModel):
 
 class LinkedInCampaignPerformance(BaseModel):
     id: str
+    entity_level: str = "campaign"
     name: str = ""
     status: str = ""
+    campaign_group_id: str = ""
+    campaign_group_name: str = ""
     spend: float = 0.0
     clicks: int = 0
     impressions: int = 0
@@ -266,12 +269,44 @@ class LinkedInCampaignGroupsResponse(BaseModel):
 
 class LinkedInCampaignGroupPerformance(BaseModel):
     id: str
+    entity_level: str = "campaign_group"
     name: str = ""
     status: str = ""
     spend: float = 0.0
     clicks: int = 0
     impressions: int = 0
     conversions: float = 0.0
+
+
+class LinkedInCreativePerformance(BaseModel):
+    id: str
+    entity_level: str = "creative"
+    name: str = ""
+    status: str = ""
+    campaign_id: str = ""
+    campaign_name: str = ""
+    campaign_group_id: str = ""
+    campaign_group_name: str = ""
+    spend: float = 0.0
+    clicks: int = 0
+    impressions: int = 0
+    conversions: float = 0.0
+
+
+class LinkedInCreativesPerformanceTotals(BaseModel):
+    spend: float = 0.0
+    clicks: int = 0
+    impressions: int = 0
+    conversions: float = 0.0
+    creative_count: int = 0
+
+
+class LinkedInCreativesPerformanceResponse(BaseModel):
+    account_id: str
+    entity_level: str = "account"
+    date_range: dict
+    totals: LinkedInCreativesPerformanceTotals
+    creatives: list[LinkedInCreativePerformance]
 
 
 class LinkedInCampaignGroupsPerformanceTotals(BaseModel):
@@ -285,6 +320,7 @@ class LinkedInCampaignGroupsPerformanceTotals(BaseModel):
 
 class LinkedInCampaignGroupsPerformanceResponse(BaseModel):
     account_id: str
+    entity_level: str = "account"
     date_range: dict
     totals: LinkedInCampaignGroupsPerformanceTotals
     campaign_groups: list[LinkedInCampaignGroupPerformance]
@@ -292,6 +328,7 @@ class LinkedInCampaignGroupsPerformanceResponse(BaseModel):
 
 class LinkedInPerformanceResponse(BaseModel):
     account_id: str
+    entity_level: str = "account"
     date_range: dict
     totals: LinkedInPerformanceTotals
     campaigns: list[LinkedInCampaignPerformance]

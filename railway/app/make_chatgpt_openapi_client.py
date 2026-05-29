@@ -125,24 +125,40 @@ def build_client_schema(client_key: str) -> dict[str, Any]:
         )
 
     # LinkedIn
-    for path_key, method in (
-        ("/linkedin/accounts", "get"),
-        ("/linkedin/performance", "get"),
-    ):
-        op = paths.get(path_key, {}).get(method)
+    linkedin_perf_paths = (
+        "/linkedin/performance",
+        "/linkedin/campaign-groups/performance",
+        "/linkedin/creatives/performance",
+    )
+    for path_key in linkedin_perf_paths:
+        op = paths.get(path_key, {}).get("get")
         if not op:
             continue
-        if path_key.endswith("/accounts"):
-            op["summary"] = f"List LinkedIn ad accounts — use {label} only"
-            op["description"] = penn_only
+        if path_key == "/linkedin/accounts":
+            continue
         lid = cfg.get("linkedin_account_id")
-        if path_key.endswith("/performance"):
-            desc = (
-                f"LinkedIn ad account ID for {label} (digits only)."
-                if not lid
-                else f"LinkedIn ad account ID for {label}: {lid}"
-            )
-            _patch_account_param(op, param_name="account_id", description=desc, enum_value=lid)
+        desc = (
+            f"LinkedIn ad account ID for {label} (digits only)."
+            if not lid
+            else f"LinkedIn ad account ID for {label}: {lid}"
+        )
+        _patch_account_param(op, param_name="account_id", description=desc, enum_value=lid)
+
+    if op := paths.get("/linkedin/accounts", {}).get("get"):
+        op["summary"] = f"List LinkedIn ad accounts — use {label} only"
+        op["description"] = penn_only
+
+    for path_key in ("/linkedin/campaign-groups",):
+        op = paths.get(path_key, {}).get("get")
+        if not op:
+            continue
+        lid = cfg.get("linkedin_account_id")
+        desc = (
+            f"LinkedIn ad account ID for {label} (digits only)."
+            if not lid
+            else f"LinkedIn ad account ID for {label}: {lid}"
+        )
+        _patch_account_param(op, param_name="account_id", description=desc, enum_value=lid)
 
     if op := paths.get("/linkedin/warehouse/sync", {}).get("post"):
         body_schema = op["requestBody"]["content"]["application/json"]["schema"]
@@ -255,10 +271,20 @@ def write_instructions(client_key: str, out_path: Path) -> None:
         "| Account | Ad account | Ad account | Customer ID | `*Accounts` |",
         "| Group/folder | **Campaign group** | *(none)* | *(none)* | `linkedinCampaignGroups*` only |",
         "| Campaign | Campaign | Campaign | Campaign | `linkedinPerformance`, `metaPerformance`, GAQL |",
-        "| Ad set/ad group | *(none)* | **Ad set** | **Ad group** | Not exposed for LinkedIn/Meta |",
+        "| Ad/creative | **Creative** (ad) | **Ad set** | **Ad group** | `linkedinCreativesPerformance`; Meta ad set not exposed |",
         "",
+        "**LinkedIn has no ad set.** Do not treat campaign groups or creatives as ad sets.",
         "**Never map Meta ad set to LinkedIn campaign group.** For LinkedIn group spend use "
         "`linkedinCampaignGroupsPerformance`, not Meta.",
+        "",
+        "## Dashboard rules (LinkedIn)",
+        "",
+        "- **Campaign dashboard** → `linkedinPerformance` only. Rows have `entity_level=campaign`.",
+        "- **Campaign group dashboard** → `linkedinCampaignGroupsPerformance` only (`entity_level=campaign_group`).",
+        "- **Ad/creative dashboard** → `linkedinCreativesPerformance` (`entity_level=creative`).",
+        "- Always join and aggregate by **`id`**, never by **`name`** (names can repeat across levels).",
+        "- Do **not** sum campaign groups + campaigns + creatives — that double-counts.",
+        "- Filter creatives to one campaign with optional `campaign_id` on `linkedinCreativesPerformance`.",
         "",
         "## Platform rules",
         "",
@@ -267,9 +293,11 @@ def write_instructions(client_key: str, out_path: Path) -> None:
         "- Do not use multi-account search or summary-all actions (not available in this GPT).",
         "",
         "### LinkedIn",
-        f"- Use `linkedinAccounts`, then `linkedinPerformance` with {cfg['name_match']}'s account ID for **campaign**-level metrics.",
-        "- For **campaign group** (folder above campaigns): prefer `linkedinCampaignGroupsPerformance`.",
-        "- `linkedinCampaignGroups` lists names/IDs only; if empty, use performance anyway.",
+        f"- Use `linkedinAccounts`, then `linkedinPerformance` with {cfg['name_match']}'s account ID for **campaign**-level metrics only.",
+        "- For **campaign group** (folder above campaigns): `linkedinCampaignGroupsPerformance` — not the same as Meta ad set.",
+        "- For **ads/creatives** (below campaign): `linkedinCreativesPerformance`. LinkedIn has no ad set.",
+        "- `linkedinCampaignGroups` lists group names/IDs only; if empty, use performance anyway.",
+        "- When building dashboards, use `entity_level` and row `id` — never merge rows from different actions by name.",
         "",
         "### Meta (Facebook/Instagram ads)",
         "- Use `metaAccounts`, then `metaPerformance` with Penn's account ID only.",

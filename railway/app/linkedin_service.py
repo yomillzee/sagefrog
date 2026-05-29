@@ -481,6 +481,34 @@ def _campaign_group_id_from_campaign_meta(meta: dict[str, Any]) -> str:
     return ""
 
 
+def _campaign_group_context_from_campaign_meta(
+    meta: dict[str, Any],
+    account_id: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+    group_name_cache: dict[str, str] | None = None,
+) -> dict[str, str]:
+    gid = _campaign_group_id_from_campaign_meta(meta)
+    if not gid:
+        return {"campaign_group_id": "", "campaign_group_name": ""}
+    gname = ""
+    if group_name_cache is not None and gid in group_name_cache:
+        gname = group_name_cache[gid]
+    else:
+        gmeta = _fetch_campaign_group_by_id(
+            account_id, gid, access_token=access_token, env=env
+        )
+        gname = gmeta.get("name") or ""
+        if group_name_cache is not None:
+            group_name_cache[gid] = gname
+    return {"campaign_group_id": gid, "campaign_group_name": gname}
+
+
+def _creative_id_from_pivot(urn: str) -> str:
+    return str(urn or "").strip().split(":")[-1]
+
+
 def _campaign_group_ids_from_campaigns(
     account_id: str,
     *,
@@ -805,6 +833,7 @@ def campaign_groups_performance(
         groups_out.append(
             {
                 "id": gid,
+                "entity_level": "campaign_group",
                 "name": meta.get("name") or "",
                 "status": meta.get("status") or "",
                 "spend": spend,
@@ -816,6 +845,7 @@ def campaign_groups_performance(
 
     return {
         "account_id": account_id_clean,
+        "entity_level": "account",
         "date_range": {
             "start": start.isoformat(),
             "end": end.isoformat(),
@@ -1042,6 +1072,134 @@ def _fetch_campaign_by_id(
         return {}
 
 
+def _fetch_creative_by_id(
+    account_id: str,
+    creative_id: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+) -> dict[str, Any]:
+    account_id_clean = _normalize_account_id(account_id)
+    creative_id_clean = _creative_id_from_pivot(creative_id)
+    creative_urn = quote(f"urn:li:sponsoredCreative:{creative_id_clean}", safe="")
+    try:
+        return _linkedin_get(
+            f"/adAccounts/{account_id_clean}/creatives/{creative_urn}",
+            access_token=access_token,
+            env=env,
+        )
+    except Exception:
+        return {}
+
+
+def creatives_performance(
+    account_id: str,
+    *,
+    date_range: str = "LAST_30_DAYS",
+    campaign_id: str | None = None,
+    access_token: str | None = None,
+    env: LinkedInEnv | None = None,
+) -> dict[str, Any]:
+    """
+    Creative-level metrics (LinkedIn has no ad set — this is the level below campaign).
+    Use for ad/creative dashboards; do not roll into campaign totals by name.
+    """
+    env = env or load_linkedin_env()
+    access_token = access_token or refresh_access_token(env)["access_token"]
+    account_id_clean = _normalize_account_id(account_id)
+    if not account_id_clean:
+        raise ValueError("account_id is required")
+
+    start, end, preset = resolve_date_range(date_range)
+    creative_rows, conversion_ok = _fetch_analytics(
+        account_id_clean,
+        pivot="CREATIVE",
+        start=start,
+        end=end,
+        access_token=access_token,
+        env=env,
+    )
+
+    by_creative: dict[str, list[dict[str, Any]]] = {}
+    for row in creative_rows:
+        for urn in row.get("pivotValues") or []:
+            if "sponsoredCreative" not in str(urn):
+                continue
+            crid = _creative_id_from_pivot(urn)
+            if crid:
+                by_creative.setdefault(crid, []).append(row)
+
+    group_name_cache: dict[str, str] = {}
+    creatives_out: list[dict[str, Any]] = []
+    filter_campaign = _normalize_account_id(campaign_id) if campaign_id else ""
+
+    for crid, matched in sorted(by_creative.items()):
+        meta = _fetch_creative_by_id(
+            account_id_clean, crid, access_token=access_token, env=env
+        )
+        campaign_urn = str(meta.get("campaign") or "")
+        cid = _campaign_id_from_pivot(campaign_urn) if campaign_urn else ""
+        if filter_campaign and cid != filter_campaign:
+            continue
+
+        cname = ""
+        group_ctx = {"campaign_group_id": "", "campaign_group_name": ""}
+        if cid:
+            cmeta = _fetch_campaign_by_id(
+                account_id_clean, cid, access_token=access_token, env=env
+            )
+            cname = cmeta.get("name") or ""
+            group_ctx = _campaign_group_context_from_campaign_meta(
+                cmeta,
+                account_id_clean,
+                access_token=access_token,
+                env=env,
+                group_name_cache=group_name_cache,
+            )
+
+        spend = sum(_parse_spend(row) for row in matched)
+        clicks = int(sum(int(row.get("clicks") or 0) for row in matched))
+        impressions = int(sum(int(row.get("impressions") or 0) for row in matched))
+        conversions = sum(_parse_conversions(row) for row in matched) if conversion_ok else 0.0
+
+        creatives_out.append(
+            {
+                "id": crid,
+                "entity_level": "creative",
+                "name": meta.get("name") or meta.get("intendedStatus") or "",
+                "status": meta.get("intendedStatus") or meta.get("status") or "",
+                "campaign_id": cid,
+                "campaign_name": cname,
+                "campaign_group_id": group_ctx["campaign_group_id"],
+                "campaign_group_name": group_ctx["campaign_group_name"],
+                "spend": spend,
+                "clicks": clicks,
+                "impressions": impressions,
+                "conversions": conversions,
+            }
+        )
+
+    totals = {
+        "spend": sum(c["spend"] for c in creatives_out),
+        "clicks": sum(c["clicks"] for c in creatives_out),
+        "impressions": sum(c["impressions"] for c in creatives_out),
+        "conversions": sum(c["conversions"] for c in creatives_out),
+        "creative_count": len(creatives_out),
+    }
+
+    return {
+        "account_id": account_id_clean,
+        "entity_level": "account",
+        "date_range": {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "preset": preset,
+        },
+        "totals": totals,
+        "creatives": creatives_out,
+    }
+
+
 def account_performance(
     account_id: str,
     *,
@@ -1101,9 +1259,17 @@ def account_performance(
     totals["campaign_count"] = len(by_campaign)
 
     campaigns_out: list[dict[str, Any]] = []
+    group_name_cache: dict[str, str] = {}
     for cid, matched in sorted(by_campaign.items()):
         meta = _fetch_campaign_by_id(
             account_id_clean, cid, access_token=access_token, env=env
+        )
+        group_ctx = _campaign_group_context_from_campaign_meta(
+            meta,
+            account_id_clean,
+            access_token=access_token,
+            env=env,
+            group_name_cache=group_name_cache,
         )
         spend = sum(_parse_spend(row) for row in matched)
         clicks = int(sum(int(row.get("clicks") or 0) for row in matched))
@@ -1116,8 +1282,11 @@ def account_performance(
         campaigns_out.append(
             {
                 "id": cid,
+                "entity_level": "campaign",
                 "name": meta.get("name") or "",
                 "status": meta.get("status") or "",
+                "campaign_group_id": group_ctx["campaign_group_id"],
+                "campaign_group_name": group_ctx["campaign_group_name"],
                 "spend": spend,
                 "clicks": clicks,
                 "impressions": impressions,
@@ -1127,6 +1296,7 @@ def account_performance(
 
     result = {
         "account_id": account_id_clean,
+        "entity_level": "account",
         "date_range": {
             "start": start.isoformat(),
             "end": end.isoformat(),
