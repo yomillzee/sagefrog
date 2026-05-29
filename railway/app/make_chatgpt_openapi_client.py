@@ -134,6 +134,7 @@ def build_client_schema(client_key: str) -> dict[str, Any]:
         "/linkedin/performance",
         "/linkedin/campaign-groups/performance",
         "/linkedin/creatives/performance",
+        "/linkedin/videos",
     )
     for path_key in linkedin_perf_paths:
         op = paths.get(path_key, {}).get("get")
@@ -178,6 +179,7 @@ def build_client_schema(client_key: str) -> dict[str, Any]:
     meta_perf_paths = (
         "/meta/performance",
         "/meta/adsets/performance",
+        "/meta/videos",
     )
     for path_key in meta_perf_paths:
         op = paths.get(path_key, {}).get("get")
@@ -306,7 +308,9 @@ def write_instructions(client_key: str, out_path: Path) -> None:
         "- Do not use multi-account search or summary-all actions (not available in this GPT).",
         "- **Video creatives (YouTube):** use `googleAdsYoutubeVideos`. Each row has `youtube_watch_url`, `youtube_embed_url`, and `youtube_thumbnail_url` — show thumbnails in dashboards when the user asks for video previews.",
         "- Set `include_account_assets: true` (default) to catch videos not tied to a live ad view.",
-        "- LinkedIn and Meta video/thumbnail URLs are **not** exposed yet — Google Ads YouTube only.",
+        "- **Meta video previews:** `metaVideos` — returns `thumbnail_url` and `video_url` per ad.",
+        "- **LinkedIn video previews:** `linkedinVideos` — returns `thumbnail_url` and `video_url` per creative.",
+        "- For all platforms, show `thumbnail_url` in dashboards when the user asks for video previews.",
         "",
         "### LinkedIn",
         f"- Use `linkedinAccounts`, then `linkedinPerformance` with {cfg['name_match']}'s account ID for **campaign**-level metrics only.",
@@ -314,11 +318,13 @@ def write_instructions(client_key: str, out_path: Path) -> None:
         "- For **ads/creatives** (below campaign): `linkedinCreativesPerformance`. LinkedIn has no ad set.",
         "- `linkedinCampaignGroups` lists group names/IDs only; if empty, use performance anyway.",
         "- When building dashboards, use `entity_level` and row `id` — never merge rows from different actions by name.",
+        "- For **video/creative previews**: `linkedinVideos` (`thumbnail_url`, `video_url`). Optional `campaign_id` filter.",
         "",
         "### Meta (Facebook/Instagram ads)",
         "- Use `metaAccounts`, then `metaPerformance` with Penn's account ID for **campaign**-level metrics only.",
         "- For **ad sets** (below campaign): `metaAdsetsPerformance`. Optional `campaign_id` to filter.",
         "- When building dashboards, use `entity_level` and row `id` — never merge rows from different actions by name.",
+        "- For **video/creative previews**: `metaVideos` (`thumbnail_url`, `video_url`). Optional `campaign_id` filter.",
         "",
         "### GA4 / BigQuery",
         f"- For warehouse sync, always pass `\"client_key\": \"{ga4_key}\"` in `ga4WarehouseSync`.",

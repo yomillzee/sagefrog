@@ -71,14 +71,18 @@ def _client_headers(
     env: LinkedInEnv | None = None,
     *,
     api_version: str | None = None,
+    restli_method: str | None = None,
 ) -> dict[str, str]:
     env = env or load_linkedin_env()
     version = (api_version or env.version).strip()
-    return {
+    headers = {
         "Authorization": f"Bearer {access_token}",
         "X-Restli-Protocol-Version": "2.0.0",
         "Linkedin-Version": version,
     }
+    if restli_method:
+        headers["X-RestLi-Method"] = restli_method
+    return headers
 
 
 def _version_candidates(env: LinkedInEnv) -> list[str]:
@@ -104,13 +108,16 @@ def _linkedin_get(
     params: dict[str, Any] | list[tuple[str, Any]] | None = None,
     env: LinkedInEnv | None = None,
     api_version: str | None = None,
+    restli_method: str | None = None,
 ) -> dict[str, Any]:
     url = f"{LINKEDIN_API_BASE}{path}"
     with httpx.Client(timeout=120.0) as client:
         response = client.get(
             url,
             params=params,
-            headers=_client_headers(access_token, env, api_version=api_version),
+            headers=_client_headers(
+                access_token, env, api_version=api_version, restli_method=restli_method
+            ),
         )
     if response.status_code >= 400:
         detail = response.text
@@ -131,6 +138,7 @@ def _linkedin_get_with_versions(
     access_token: str,
     params: dict[str, Any] | list[tuple[str, Any]] | None = None,
     env: LinkedInEnv | None = None,
+    restli_method: str | None = None,
 ) -> dict[str, Any]:
     env = env or load_linkedin_env()
     last_error: Exception | None = None
@@ -142,6 +150,7 @@ def _linkedin_get_with_versions(
                 params=params,
                 env=env,
                 api_version=version,
+                restli_method=restli_method,
             )
         except Exception as exc:
             last_error = exc
@@ -1325,3 +1334,313 @@ def account_performance(
         result["warehouse"] = {"stored": False, "error": str(exc)[:500]}
 
     return result
+
+
+def _linkedin_finder_get_all_elements(
+    path: str,
+    *,
+    access_token: str,
+    params: dict[str, Any] | None = None,
+    env: LinkedInEnv | None = None,
+) -> list[dict[str, Any]]:
+    """Cursor-paginated FINDER (q=criteria) requests."""
+    query = dict(params or {})
+    elements: list[dict[str, Any]] = []
+    while True:
+        payload = _linkedin_get_with_versions(
+            path,
+            access_token=access_token,
+            params=query,
+            env=env,
+            restli_method="FINDER",
+        )
+        elements.extend(payload.get("elements") or [])
+        page_token = (payload.get("metadata") or {}).get("nextPageToken") or (
+            (payload.get("paging") or {}).get("pageToken")
+        )
+        if not page_token:
+            break
+        query["pageToken"] = page_token
+    return elements
+
+
+def _collect_media_urns(node: Any, *, videos: set[str], images: set[str]) -> None:
+    if isinstance(node, str):
+        text = node.strip()
+        if not text.startswith("urn:li:"):
+            return
+        lower = text.lower()
+        if ":video:" in lower:
+            videos.add(text)
+        elif ":image:" in lower or ":digitalmediaasset:" in lower:
+            images.add(text)
+        return
+    if isinstance(node, dict):
+        for value in node.values():
+            _collect_media_urns(value, videos=videos, images=images)
+    elif isinstance(node, list):
+        for value in node:
+            _collect_media_urns(value, videos=videos, images=images)
+
+
+def _fetch_linkedin_post_content(
+    reference: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+) -> dict[str, Any]:
+    ref = str(reference or "").strip()
+    if not ref:
+        return {}
+    encoded = quote(ref, safe="")
+    for path in (f"/posts/{encoded}",):
+        try:
+            return _linkedin_get_with_versions(path, access_token=access_token, env=env)
+        except Exception:
+            continue
+    if "ugcPost" in ref:
+        post_id = ref.split(":")[-1]
+        try:
+            return _linkedin_get_with_versions(
+                f"/ugcPosts/{post_id}", access_token=access_token, env=env
+            )
+        except Exception:
+            return {}
+    return {}
+
+
+def _fetch_linkedin_video_asset(
+    video_urn: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+    cache: dict[str, dict[str, str]],
+) -> dict[str, str]:
+    if video_urn in cache:
+        return cache[video_urn]
+    encoded = quote(video_urn, safe="")
+    out = {"video_urn": video_urn, "video_url": "", "thumbnail_url": ""}
+    try:
+        data = _linkedin_get_with_versions(
+            f"/videos/{encoded}", access_token=access_token, env=env
+        )
+        out["video_url"] = str(data.get("downloadUrl") or "")
+        out["thumbnail_url"] = str(data.get("thumbnail") or "")
+    except Exception:
+        pass
+    cache[video_urn] = out
+    return out
+
+
+def _fetch_linkedin_image_asset(
+    image_urn: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+    cache: dict[str, dict[str, str]],
+) -> dict[str, str]:
+    if image_urn in cache:
+        return cache[image_urn]
+    encoded = quote(image_urn, safe="")
+    out = {"image_urn": image_urn, "image_url": "", "thumbnail_url": ""}
+    try:
+        data = _linkedin_get_with_versions(
+            f"/images/{encoded}", access_token=access_token, env=env
+        )
+        url = str(data.get("downloadUrl") or "")
+        out["image_url"] = url
+        out["thumbnail_url"] = url
+    except Exception:
+        pass
+    cache[image_urn] = out
+    return out
+
+
+def _list_creatives_for_account(
+    account_id: str,
+    *,
+    campaign_id: str | None = None,
+    access_token: str,
+    env: LinkedInEnv,
+) -> list[dict[str, Any]]:
+    account_id_clean = _normalize_account_id(account_id)
+    params: dict[str, Any] = {"q": "criteria", "pageSize": 100}
+    if campaign_id:
+        cid = _normalize_account_id(campaign_id)
+        params["campaigns"] = f"List(urn:li:sponsoredCampaign:{cid})"
+
+    try:
+        rows = _linkedin_finder_get_all_elements(
+            f"/adAccounts/{account_id_clean}/creatives",
+            access_token=access_token,
+            params=params,
+            env=env,
+        )
+        if rows:
+            return rows
+    except Exception:
+        pass
+
+    # Fallback: discover creatives with recent delivery via analytics.
+    start, end, _ = resolve_date_range("LAST_180_DAYS")
+    analytics_rows, _ = _fetch_analytics(
+        account_id_clean,
+        pivot="CREATIVE",
+        start=start,
+        end=end,
+        access_token=access_token,
+        env=env,
+    )
+    creative_ids: set[str] = set()
+    for row in analytics_rows:
+        for urn in row.get("pivotValues") or []:
+            if "sponsoredCreative" not in str(urn):
+                continue
+            crid = _creative_id_from_pivot(urn)
+            if crid:
+                creative_ids.add(crid)
+
+    out: list[dict[str, Any]] = []
+    for crid in sorted(creative_ids):
+        meta = _fetch_creative_by_id(
+            account_id_clean, crid, access_token=access_token, env=env
+        )
+        if meta:
+            out.append(meta)
+    return out
+
+
+def list_video_creatives(
+    account_id: str,
+    *,
+    campaign_id: str | None = None,
+    videos_only: bool = True,
+    access_token: str | None = None,
+    env: LinkedInEnv | None = None,
+) -> dict[str, Any]:
+    """
+    Video/image preview URLs for LinkedIn ad creatives.
+    Resolves video thumbnail + downloadUrl via Videos API and images via Images API.
+    """
+    env = env or load_linkedin_env()
+    access_token = access_token or refresh_access_token(env)["access_token"]
+    account_id_clean = _normalize_account_id(account_id)
+    if not account_id_clean:
+        raise ValueError("account_id is required")
+
+    filter_campaign = _normalize_account_id(campaign_id) if campaign_id else ""
+    creatives = _list_creatives_for_account(
+        account_id_clean,
+        campaign_id=filter_campaign or None,
+        access_token=access_token,
+        env=env,
+    )
+
+    video_cache: dict[str, dict[str, str]] = {}
+    image_cache: dict[str, dict[str, str]] = {}
+    campaign_name_cache: dict[str, str] = {}
+    videos_out: list[dict[str, Any]] = []
+
+    for creative in creatives:
+        crid = _creative_id_from_pivot(str(creative.get("id") or ""))
+        if not crid:
+            continue
+
+        campaign_urn = str(creative.get("campaign") or "")
+        cid = _campaign_id_from_pivot(campaign_urn) if campaign_urn else ""
+        if filter_campaign and cid != filter_campaign:
+            continue
+
+        cname = ""
+        if cid:
+            if cid in campaign_name_cache:
+                cname = campaign_name_cache[cid]
+            else:
+                cmeta = _fetch_campaign_by_id(
+                    account_id_clean, cid, access_token=access_token, env=env
+                )
+                cname = cmeta.get("name") or ""
+                campaign_name_cache[cid] = cname
+
+        content = creative.get("content") if isinstance(creative.get("content"), dict) else {}
+        inline = (
+            creative.get("inlineContent")
+            if isinstance(creative.get("inlineContent"), dict)
+            else {}
+        )
+        videos: set[str] = set()
+        images: set[str] = set()
+        _collect_media_urns(content, videos=videos, images=images)
+        _collect_media_urns(inline, videos=videos, images=images)
+
+        ref = str(content.get("reference") or "")
+        if ref and not videos and not images:
+            post = _fetch_linkedin_post_content(
+                ref, access_token=access_token, env=env
+            )
+            _collect_media_urns(post, videos=videos, images=images)
+
+        if videos:
+            for video_urn in sorted(videos):
+                asset = _fetch_linkedin_video_asset(
+                    video_urn,
+                    access_token=access_token,
+                    env=env,
+                    cache=video_cache,
+                )
+                videos_out.append(
+                    {
+                        "source": "linkedin_creative",
+                        "creative_id": crid,
+                        "creative_name": creative.get("name") or "",
+                        "creative_status": creative.get("intendedStatus") or "",
+                        "campaign_id": cid,
+                        "campaign_name": cname,
+                        "media_type": "video",
+                        "video_urn": video_urn,
+                        "video_url": asset.get("video_url") or "",
+                        "thumbnail_url": asset.get("thumbnail_url") or "",
+                        "image_url": "",
+                    }
+                )
+            continue
+
+        if videos_only:
+            continue
+
+        for image_urn in sorted(images):
+            asset = _fetch_linkedin_image_asset(
+                image_urn,
+                access_token=access_token,
+                env=env,
+                cache=image_cache,
+            )
+            videos_out.append(
+                {
+                    "source": "linkedin_creative",
+                    "creative_id": crid,
+                    "creative_name": creative.get("name") or "",
+                    "creative_status": creative.get("intendedStatus") or "",
+                    "campaign_id": cid,
+                    "campaign_name": cname,
+                    "media_type": "image",
+                    "video_urn": "",
+                    "video_url": "",
+                    "thumbnail_url": asset.get("thumbnail_url") or "",
+                    "image_url": asset.get("image_url") or "",
+                }
+            )
+
+    videos_out.sort(
+        key=lambda row: (
+            str(row.get("campaign_name") or ""),
+            str(row.get("creative_name") or ""),
+            str(row.get("creative_id") or ""),
+        )
+    )
+
+    return {
+        "account_id": account_id_clean,
+        "row_count": len(videos_out),
+        "videos": videos_out,
+    }

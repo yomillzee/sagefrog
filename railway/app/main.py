@@ -58,6 +58,8 @@ from models import (
     LinkedInCreativePerformance,
     LinkedInCreativesPerformanceTotals,
     LinkedInCreativesPerformanceResponse,
+    LinkedInVideoItem,
+    LinkedInVideosResponse,
     LinkedInWarehouseSyncRequest,
     LinkedInWarehouseSyncResponse,
     MetaEnvSummary,
@@ -70,6 +72,8 @@ from models import (
     MetaAdSetPerformance,
     MetaAdSetsPerformanceTotals,
     MetaAdSetsPerformanceResponse,
+    MetaVideoItem,
+    MetaVideosResponse,
     MetaWarehouseSyncRequest,
     MetaWarehouseSyncResponse,
     GoogleAdsWarehouseSyncRequest,
@@ -182,12 +186,14 @@ def root() -> dict:
         "linkedin_campaign_groups": "/linkedin/campaign-groups",
         "linkedin_campaign_groups_performance": "/linkedin/campaign-groups/performance",
         "linkedin_creatives_performance": "/linkedin/creatives/performance",
+        "linkedin_videos": "/linkedin/videos",
         "linkedin_warehouse_sync": "/linkedin/warehouse/sync",
         "meta_env": "/meta/env",
         "meta_test_token": "/meta/test-token",
         "meta_accounts": "/meta/accounts",
         "meta_performance": "/meta/performance",
         "meta_adsets_performance": "/meta/adsets/performance",
+        "meta_videos": "/meta/videos",
         "meta_warehouse_sync": "/meta/warehouse/sync",
         "google_ads_warehouse_sync": "/google-ads/warehouse/sync",
         "ga4_warehouse_sync": "/ga4/warehouse/sync",
@@ -745,6 +751,59 @@ def linkedin_creatives_performance(
     )
 
 
+@app.get(
+    "/linkedin/videos",
+    response_model=LinkedInVideosResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="LinkedIn ad creative video/image URLs with thumbnails",
+)
+def linkedin_videos(
+    account_id: str,
+    campaign_id: str | None = None,
+    videos_only: bool = True,
+) -> LinkedInVideosResponse:
+    account_id = account_id.strip()
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Missing account_id query parameter.")
+    campaign_id = (campaign_id or "").strip() or None
+
+    cache_payload = {
+        "account_id": account_id,
+        "campaign_id": campaign_id,
+        "videos_only": videos_only,
+    }
+    hit = db_cache.get_cached("linkedin.videos", cache_payload)
+    if hit is not None:
+        payload = hit.response_json or {}
+        return LinkedInVideosResponse(
+            account_id=payload.get("account_id", account_id),
+            row_count=int(payload.get("row_count") or 0),
+            videos=[LinkedInVideoItem(**v) for v in payload.get("videos") or []],
+        )
+    try:
+        payload = linkedin_service.list_video_creatives(
+            account_id, campaign_id=campaign_id, videos_only=videos_only
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        db_cache.put_cached(
+            "linkedin.videos",
+            cache_payload,
+            response_json=payload,
+            row_count=len(payload.get("videos") or []),
+            status="ok",
+            error=None,
+        )
+    except Exception:
+        pass
+    return LinkedInVideosResponse(
+        account_id=payload["account_id"],
+        row_count=payload["row_count"],
+        videos=[LinkedInVideoItem(**v) for v in payload["videos"]],
+    )
+
+
 @app.post(
     "/linkedin/warehouse/sync",
     response_model=LinkedInWarehouseSyncResponse,
@@ -937,6 +996,59 @@ def meta_adsets_performance(
         date_range=payload["date_range"],
         totals=MetaAdSetsPerformanceTotals(**payload["totals"]),
         adsets=[MetaAdSetPerformance(**a) for a in payload["adsets"]],
+    )
+
+
+@app.get(
+    "/meta/videos",
+    response_model=MetaVideosResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="Meta ad video/image URLs with thumbnails",
+)
+def meta_videos(
+    account_id: str,
+    campaign_id: str | None = None,
+    videos_only: bool = True,
+) -> MetaVideosResponse:
+    account_id = account_id.strip()
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Missing account_id query parameter.")
+    campaign_id = (campaign_id or "").strip() or None
+
+    cache_payload = {
+        "account_id": account_id,
+        "campaign_id": campaign_id,
+        "videos_only": videos_only,
+    }
+    hit = db_cache.get_cached("meta.videos", cache_payload)
+    if hit is not None:
+        payload = hit.response_json or {}
+        return MetaVideosResponse(
+            account_id=payload.get("account_id", account_id),
+            row_count=int(payload.get("row_count") or 0),
+            videos=[MetaVideoItem(**v) for v in payload.get("videos") or []],
+        )
+    try:
+        payload = meta_service.list_videos(
+            account_id, campaign_id=campaign_id, videos_only=videos_only
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        db_cache.put_cached(
+            "meta.videos",
+            cache_payload,
+            response_json=payload,
+            row_count=len(payload.get("videos") or []),
+            status="ok",
+            error=None,
+        )
+    except Exception:
+        pass
+    return MetaVideosResponse(
+        account_id=payload["account_id"],
+        row_count=payload["row_count"],
+        videos=[MetaVideoItem(**v) for v in payload["videos"]],
     )
 
 

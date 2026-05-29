@@ -203,6 +203,50 @@ class YoutubeVideosResponse(BaseModel):
     videos: list[YoutubeVideoItem]
 
 
+class MetaVideoItem(BaseModel):
+    source: str = "meta_ad"
+    ad_id: str = ""
+    ad_name: str = ""
+    ad_status: str = ""
+    campaign_id: str = ""
+    campaign_name: str = ""
+    adset_id: str = ""
+    adset_name: str = ""
+    creative_id: str = ""
+    creative_name: str = ""
+    media_type: str = Field(description="video or image")
+    video_id: str = ""
+    video_url: str = ""
+    thumbnail_url: str = ""
+    image_url: str = ""
+
+
+class MetaVideosResponse(BaseModel):
+    account_id: str
+    row_count: int
+    videos: list[MetaVideoItem]
+
+
+class LinkedInVideoItem(BaseModel):
+    source: str = "linkedin_creative"
+    creative_id: str
+    creative_name: str = ""
+    creative_status: str = ""
+    campaign_id: str = ""
+    campaign_name: str = ""
+    media_type: str = Field(description="video or image")
+    video_urn: str = ""
+    video_url: str = ""
+    thumbnail_url: str = ""
+    image_url: str = ""
+
+
+class LinkedInVideosResponse(BaseModel):
+    account_id: str
+    row_count: int
+    videos: list[LinkedInVideoItem]
+
+
 class LinkedInEnvSummary(BaseModel):
     has_client_id: bool
     has_client_secret: bool

@@ -476,3 +476,243 @@ def adsets_performance(
         "totals": totals,
         "adsets": adsets_out,
     }
+
+
+_AD_MEDIA_FIELDS = (
+    "id,name,status,effective_status,"
+    "campaign{id,name},adset{id,name},"
+    "creative{"
+    "id,name,thumbnail_url,image_url,video_id,object_type,"
+    "object_story_spec,asset_feed_spec"
+    "}"
+)
+_VIDEO_DETAIL_FIELDS = "id,source,picture,title,permalink_url"
+
+
+def _dig_dict(data: dict[str, Any], *keys: str) -> dict[str, Any]:
+    cur: Any = data
+    for key in keys:
+        if not isinstance(cur, dict):
+            return {}
+        cur = cur.get(key)
+    return cur if isinstance(cur, dict) else {}
+
+
+def _extract_creative_media(creative: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return zero or more media entries from a Meta ad creative."""
+    if not creative:
+        return []
+
+    out: list[dict[str, Any]] = []
+    base = {
+        "creative_id": str(creative.get("id") or ""),
+        "creative_name": str(creative.get("name") or ""),
+        "thumbnail_url": str(creative.get("thumbnail_url") or ""),
+        "image_url": str(creative.get("image_url") or ""),
+    }
+
+    video_id = str(creative.get("video_id") or "")
+    if video_id:
+        out.append({**base, "media_type": "video", "video_id": video_id})
+        return out
+
+    story = creative.get("object_story_spec") if isinstance(creative.get("object_story_spec"), dict) else {}
+    video_data = _dig_dict(story, "video_data")
+    vid = str(video_data.get("video_id") or "")
+    if vid:
+        thumb = str(video_data.get("image_url") or base["thumbnail_url"])
+        out.append(
+            {
+                **base,
+                "media_type": "video",
+                "video_id": vid,
+                "thumbnail_url": thumb or base["thumbnail_url"],
+            }
+        )
+        return out
+
+    link_data = _dig_dict(story, "link_data")
+    for child in link_data.get("child_attachments") or []:
+        if not isinstance(child, dict):
+            continue
+        child_vid = str(child.get("video_id") or "")
+        if child_vid:
+            out.append(
+                {
+                    **base,
+                    "media_type": "video",
+                    "video_id": child_vid,
+                    "creative_name": str(child.get("name") or base["creative_name"]),
+                    "thumbnail_url": base["thumbnail_url"],
+                }
+            )
+
+    asset_feed = creative.get("asset_feed_spec") if isinstance(creative.get("asset_feed_spec"), dict) else {}
+    for item in asset_feed.get("videos") or []:
+        if not isinstance(item, dict):
+            continue
+        feed_vid = str(item.get("video_id") or "")
+        if feed_vid:
+            out.append({**base, "media_type": "video", "video_id": feed_vid})
+
+    if out:
+        return out
+
+    if base["image_url"] or base["thumbnail_url"]:
+        out.append({**base, "media_type": "image", "video_id": ""})
+
+    return out
+
+
+def _fetch_video_details(
+    video_ids: set[str],
+    *,
+    access_token: str,
+    env: MetaEnv,
+) -> dict[str, dict[str, str]]:
+    details: dict[str, dict[str, str]] = {}
+    for video_id in sorted(video_ids):
+        if not video_id:
+            continue
+        try:
+            payload = _graph_get(
+                f"/{video_id}",
+                access_token=access_token,
+                params={"fields": _VIDEO_DETAIL_FIELDS},
+                env=env,
+            )
+            details[video_id] = {
+                "video_url": str(payload.get("source") or payload.get("permalink_url") or ""),
+                "thumbnail_url": str(payload.get("picture") or ""),
+                "video_title": str(payload.get("title") or ""),
+            }
+        except Exception:
+            details[video_id] = {"video_url": "", "thumbnail_url": "", "video_title": ""}
+    return details
+
+
+def list_videos(
+    account_id: str,
+    *,
+    campaign_id: str | None = None,
+    videos_only: bool = True,
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+) -> dict[str, Any]:
+    """
+    Video/image preview URLs for Meta ads via ad creative metadata.
+    """
+    env = env or load_meta_env()
+    access_token = access_token or env.access_token
+    account_id_clean = _normalize_account_id(account_id)
+    if not account_id_clean:
+        raise ValueError("account_id is required")
+
+    filter_campaign = str(campaign_id or "").strip()
+    params: dict[str, Any] = {
+        "fields": _AD_MEDIA_FIELDS,
+        "limit": 500,
+        "effective_status": json.dumps(
+            ["ACTIVE", "PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "PENDING_REVIEW", "DISAPPROVED"]
+        ),
+    }
+    if filter_campaign:
+        params["filtering"] = json.dumps(
+            [{"field": "campaign.id", "operator": "EQUAL", "value": filter_campaign}]
+        )
+
+    ad_rows = _graph_get_all(
+        f"/{_act_id(account_id_clean)}/ads",
+        access_token=access_token,
+        params=params,
+        env=env,
+    )
+
+    pending_video_ids: set[str] = set()
+    draft_rows: list[dict[str, Any]] = []
+
+    for ad in ad_rows:
+        creative = ad.get("creative") if isinstance(ad.get("creative"), dict) else {}
+        campaign = ad.get("campaign") if isinstance(ad.get("campaign"), dict) else {}
+        adset = ad.get("adset") if isinstance(ad.get("adset"), dict) else {}
+        cid = str(campaign.get("id") or "")
+        if filter_campaign and cid != filter_campaign:
+            continue
+
+        media_entries = _extract_creative_media(creative)
+        if not media_entries:
+            continue
+
+        for entry in media_entries:
+            if entry.get("media_type") == "video":
+                vid = str(entry.get("video_id") or "")
+                if vid:
+                    pending_video_ids.add(vid)
+            elif videos_only:
+                continue
+
+            draft_rows.append(
+                {
+                    "source": "meta_ad",
+                    "ad_id": str(ad.get("id") or ""),
+                    "ad_name": str(ad.get("name") or ""),
+                    "ad_status": str(ad.get("effective_status") or ad.get("status") or ""),
+                    "campaign_id": cid,
+                    "campaign_name": str(campaign.get("name") or ""),
+                    "adset_id": str(adset.get("id") or ""),
+                    "adset_name": str(adset.get("name") or ""),
+                    **entry,
+                    "video_url": "",
+                }
+            )
+
+    video_details = _fetch_video_details(pending_video_ids, access_token=access_token, env=env)
+
+    videos_out: list[dict[str, Any]] = []
+    for row in draft_rows:
+        media_type = str(row.get("media_type") or "")
+        if videos_only and media_type != "video":
+            continue
+
+        video_id = str(row.get("video_id") or "")
+        if video_id:
+            detail = video_details.get(video_id) or {}
+            row["video_url"] = detail.get("video_url") or row.get("video_url") or ""
+            if not row.get("thumbnail_url"):
+                row["thumbnail_url"] = detail.get("thumbnail_url") or ""
+            if not row.get("creative_name") and detail.get("video_title"):
+                row["creative_name"] = detail.get("video_title") or ""
+
+        videos_out.append(
+            {
+                "source": row["source"],
+                "ad_id": row["ad_id"],
+                "ad_name": row["ad_name"],
+                "ad_status": row["ad_status"],
+                "campaign_id": row["campaign_id"],
+                "campaign_name": row["campaign_name"],
+                "adset_id": row["adset_id"],
+                "adset_name": row["adset_name"],
+                "creative_id": row.get("creative_id") or "",
+                "creative_name": row.get("creative_name") or "",
+                "media_type": media_type,
+                "video_id": video_id,
+                "video_url": str(row.get("video_url") or ""),
+                "thumbnail_url": str(row.get("thumbnail_url") or ""),
+                "image_url": str(row.get("image_url") or ""),
+            }
+        )
+
+    videos_out.sort(
+        key=lambda row: (
+            str(row.get("campaign_name") or ""),
+            str(row.get("adset_name") or ""),
+            str(row.get("ad_name") or ""),
+        )
+    )
+
+    return {
+        "account_id": account_id_clean,
+        "row_count": len(videos_out),
+        "videos": videos_out,
+    }

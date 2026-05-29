@@ -823,6 +823,75 @@
         "security": [{ "ApiKeyAuth": [] }]
       }
     },
+    "/linkedin/videos": {
+      "get": {
+        "operationId": "linkedinVideos",
+        "summary": "LinkedIn ad creative video/image URLs with thumbnails",
+        "description": "Returns thumbnail_url and video_url for LinkedIn ad creatives. Resolves video assets via LinkedIn Videos API. Set videos_only=false to include static image creatives.",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "LinkedIn ad account ID (digits only)"
+          },
+          {
+            "name": "campaign_id",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "Optional LinkedIn campaign ID filter"
+          },
+          {
+            "name": "videos_only",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "boolean", "default": true },
+            "description": "When true (default), return video creatives only."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "LinkedIn creative media URLs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": { "type": "string" },
+                    "row_count": { "type": "integer" },
+                    "videos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source": { "type": "string", "enum": ["linkedin_creative"] },
+                          "creative_id": { "type": "string" },
+                          "creative_name": { "type": "string" },
+                          "creative_status": { "type": "string" },
+                          "campaign_id": { "type": "string" },
+                          "campaign_name": { "type": "string" },
+                          "media_type": { "type": "string", "enum": ["video", "image"] },
+                          "video_urn": { "type": "string" },
+                          "video_url": { "type": "string" },
+                          "thumbnail_url": {
+                            "type": "string",
+                            "description": "LinkedIn video thumbnail URL when available."
+                          },
+                          "image_url": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
     "/linkedin/warehouse/sync": {
       "post": {
         "operationId": "linkedinWarehouseSync",
@@ -1137,6 +1206,79 @@
                           "impressions": { "type": "integer" },
                           "conversions": { "type": "number" },
                           "conversion_value": { "type": "number" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/meta/videos": {
+      "get": {
+        "operationId": "metaVideos",
+        "summary": "Meta ad video/image URLs with thumbnails",
+        "description": "Returns thumbnail_url and video_url from Meta ad creatives. Set videos_only=false to include static image ads.",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Meta ad account ID (digits only, from metaAccounts)"
+          },
+          {
+            "name": "campaign_id",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "Optional Meta campaign ID filter"
+          },
+          {
+            "name": "videos_only",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "boolean", "default": true },
+            "description": "When true (default), return video ads only."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Meta ad media URLs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": { "type": "string" },
+                    "row_count": { "type": "integer" },
+                    "videos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source": { "type": "string", "enum": ["meta_ad"] },
+                          "ad_id": { "type": "string" },
+                          "ad_name": { "type": "string" },
+                          "ad_status": { "type": "string" },
+                          "campaign_id": { "type": "string" },
+                          "campaign_name": { "type": "string" },
+                          "adset_id": { "type": "string" },
+                          "adset_name": { "type": "string" },
+                          "creative_id": { "type": "string" },
+                          "creative_name": { "type": "string" },
+                          "media_type": { "type": "string", "enum": ["video", "image"] },
+                          "video_id": { "type": "string" },
+                          "video_url": { "type": "string" },
+                          "thumbnail_url": {
+                            "type": "string",
+                            "description": "Meta creative or video thumbnail URL."
+                          },
+                          "image_url": { "type": "string" }
                         }
                       }
                     }
