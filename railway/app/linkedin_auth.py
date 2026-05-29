@@ -49,7 +49,7 @@ def load_linkedin_env() -> LinkedInEnv:
         client_id=_get_required_env(*_ENV_ALIASES["client_id"]),
         client_secret=_get_required_env(*_ENV_ALIASES["client_secret"]),
         refresh_token=_get_required_env(*_ENV_ALIASES["refresh_token"]),
-        version=_get_env(*_ENV_ALIASES["version"]) or "202604",
+        version=_get_env(*_ENV_ALIASES["version"]) or "202509",
     )
 
 
@@ -59,6 +59,6 @@ def env_summary() -> dict:
         "has_client_id": bool(_get_env(*_ENV_ALIASES["client_id"])),
         "has_client_secret": bool(_get_env(*_ENV_ALIASES["client_secret"])),
         "has_refresh_token": bool(refresh),
-        "linkedin_version": _get_env(*_ENV_ALIASES["version"]) or "202604",
+        "linkedin_version": _get_env(*_ENV_ALIASES["version"]) or "202509",
         "refresh_token_looks_valid": bool(refresh and len(refresh) > 20),
     }

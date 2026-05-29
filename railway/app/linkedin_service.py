@@ -63,13 +63,94 @@ def _format_date_range(start: date, end: date) -> str:
     )
 
 
-def _client_headers(access_token: str, env: LinkedInEnv | None = None) -> dict[str, str]:
+_LINKEDIN_VERSION_FALLBACKS = ("202509", "202604", "202401", "202309")
+
+
+def _client_headers(
+    access_token: str,
+    env: LinkedInEnv | None = None,
+    *,
+    api_version: str | None = None,
+) -> dict[str, str]:
     env = env or load_linkedin_env()
+    version = (api_version or env.version).strip()
     return {
         "Authorization": f"Bearer {access_token}",
         "X-Restli-Protocol-Version": "2.0.0",
-        "Linkedin-Version": env.version,
+        "Linkedin-Version": version,
     }
+
+
+def _version_candidates(env: LinkedInEnv) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw in (env.version, *_LINKEDIN_VERSION_FALLBACKS):
+        val = str(raw or "").strip()
+        if val and val not in seen:
+            seen.add(val)
+            ordered.append(val)
+    return ordered
+
+
+def _is_version_resource_not_found(exc: Exception) -> bool:
+    msg = str(exc)
+    return "404" in msg and ("RESOURCE_NOT_FOUND" in msg or "No virtual resource" in msg)
+
+
+def _linkedin_get(
+    path: str,
+    *,
+    access_token: str,
+    params: dict[str, Any] | list[tuple[str, Any]] | None = None,
+    env: LinkedInEnv | None = None,
+    api_version: str | None = None,
+) -> dict[str, Any]:
+    url = f"{LINKEDIN_API_BASE}{path}"
+    with httpx.Client(timeout=120.0) as client:
+        response = client.get(
+            url,
+            params=params,
+            headers=_client_headers(access_token, env, api_version=api_version),
+        )
+    if response.status_code >= 400:
+        detail = response.text
+        try:
+            detail = response.json()
+        except Exception:
+            pass
+        version_note = f" (Linkedin-Version={api_version})" if api_version else ""
+        raise RuntimeError(
+            f"LinkedIn API error {response.status_code} on {path}{version_note}: {detail}"
+        )
+    return response.json()
+
+
+def _linkedin_get_with_versions(
+    path: str,
+    *,
+    access_token: str,
+    params: dict[str, Any] | list[tuple[str, Any]] | None = None,
+    env: LinkedInEnv | None = None,
+) -> dict[str, Any]:
+    env = env or load_linkedin_env()
+    last_error: Exception | None = None
+    for version in _version_candidates(env):
+        try:
+            return _linkedin_get(
+                path,
+                access_token=access_token,
+                params=params,
+                env=env,
+                api_version=version,
+            )
+        except Exception as exc:
+            last_error = exc
+            if _is_version_resource_not_found(exc):
+                continue
+            raise
+    if last_error:
+        raise last_error
+    raise RuntimeError(f"LinkedIn request failed for {path}")
 
 
 def refresh_access_token(env: LinkedInEnv | None = None) -> dict[str, Any]:
@@ -126,26 +207,6 @@ def test_refresh_token(env: LinkedInEnv | None = None) -> dict[str, Any]:
             "account_count": 0,
             "error": f"{err} — {hint}",
         }
-
-
-def _linkedin_get(
-    path: str,
-    *,
-    access_token: str,
-    params: dict[str, Any] | list[tuple[str, Any]] | None = None,
-    env: LinkedInEnv | None = None,
-) -> dict[str, Any]:
-    url = f"{LINKEDIN_API_BASE}{path}"
-    with httpx.Client(timeout=120.0) as client:
-        response = client.get(url, params=params, headers=_client_headers(access_token, env))
-    if response.status_code >= 400:
-        detail = response.text
-        try:
-            detail = response.json()
-        except Exception:
-            pass
-        raise RuntimeError(f"LinkedIn API error {response.status_code} on {path}: {detail}")
-    return response.json()
 
 
 def list_ad_accounts(
@@ -280,7 +341,20 @@ def _search_global_campaign_groups(
 ) -> list[dict[str, Any]]:
     """Top-level /adCampaignGroups FINDER search (works when account-nested search 404s)."""
     url = f"/adCampaignGroups?q=search&search={search_fragment}&pageSize=100"
-    return _linkedin_get_all_elements(url, access_token=access_token, env=env)
+    query: dict[str, Any] = {}
+    elements: list[dict[str, Any]] = []
+    while True:
+        payload = _linkedin_get_with_versions(
+            url, params=query or None, access_token=access_token, env=env
+        )
+        elements.extend(payload.get("elements") or [])
+        page_token = (payload.get("metadata") or {}).get("nextPageToken") or (
+            (payload.get("paging") or {}).get("pageToken")
+        )
+        if not page_token:
+            break
+        query["pageToken"] = page_token
+    return elements
 
 
 def _batch_get_campaign_groups_by_ids(
@@ -305,7 +379,9 @@ def _batch_get_campaign_groups_by_ids(
         last_error: Exception | None = None
         for path in paths:
             try:
-                payload = _linkedin_get(path, access_token=access_token, env=env)
+                payload = _linkedin_get_with_versions(
+                    path, access_token=access_token, env=env
+                )
                 rows.extend((payload.get("results") or {}).values())
                 last_error = None
                 break
@@ -350,6 +426,77 @@ def _campaign_group_ids_from_analytics(
             gid = _campaign_group_id_from_pivot(urn)
             if gid:
                 ids.add(gid)
+    return sorted(ids)
+
+
+def _campaign_group_id_from_campaign_meta(meta: dict[str, Any]) -> str:
+    for key in ("campaignGroup", "associatedCampaignGroup", "campaignGroupUrn"):
+        val = meta.get(key)
+        if val:
+            gid = _campaign_group_id_from_pivot(str(val))
+            if gid:
+                return gid
+    return ""
+
+
+def _campaign_group_ids_from_campaigns(
+    account_id: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+    date_range: str = "LAST_180_DAYS",
+) -> list[str]:
+    """Discover campaign group IDs via CAMPAIGN analytics + adCampaigns metadata."""
+    start, end, _ = resolve_date_range(date_range)
+    rows, _ = _fetch_analytics(
+        account_id,
+        pivot="CAMPAIGN",
+        start=start,
+        end=end,
+        access_token=access_token,
+        env=env,
+    )
+    campaign_ids: set[str] = set()
+    for row in rows:
+        for urn in row.get("pivotValues") or []:
+            if "sponsoredCampaign" not in str(urn):
+                continue
+            cid = _campaign_id_from_pivot(urn)
+            if cid:
+                campaign_ids.add(cid)
+
+    account_id_clean = _normalize_account_id(account_id)
+    group_ids: set[str] = set()
+    for cid in campaign_ids:
+        meta = _fetch_campaign_by_id(
+            account_id_clean, cid, access_token=access_token, env=env
+        )
+        gid = _campaign_group_id_from_campaign_meta(meta)
+        if gid:
+            group_ids.add(gid)
+    return sorted(group_ids)
+
+
+def _discover_campaign_group_ids(
+    account_id: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+) -> list[str]:
+    ids: set[str] = set()
+    for date_range in ("LAST_180_DAYS", "LAST_90_DAYS", "LAST_30_DAYS"):
+        for loader in (_campaign_group_ids_from_analytics, _campaign_group_ids_from_campaigns):
+            try:
+                ids.update(
+                    loader(
+                        account_id,
+                        access_token=access_token,
+                        env=env,
+                        date_range=date_range,
+                    )
+                )
+            except Exception:
+                continue
     return sorted(ids)
 
 
@@ -407,7 +554,24 @@ def list_campaign_groups(
         cleaned = [g for g in groups if g.get("id")]
         return sorted(cleaned, key=lambda item: (item.get("name") or item["id"]).lower())
 
-    # 1) Top-level FINDER search filtered to this account (LinkedIn docs: /rest/adCampaignGroups).
+    # 1) adAnalytics + campaign metadata (works when adCampaignGroups FINDER 404s on older versions).
+    try:
+        discovered_ids = _discover_campaign_group_ids(
+            account_id_clean, access_token=access_token, env=env
+        )
+        if discovered_ids:
+            return _finish(
+                _enrich_campaign_group_ids(
+                    account_id_clean,
+                    discovered_ids,
+                    access_token=access_token,
+                    env=env,
+                )
+            )
+    except Exception as exc:
+        errors.append(f"discover: {exc}")
+
+    # 2) Top-level FINDER search with LinkedIn-Version fallbacks (202509, etc.).
     global_searches = [
         f"(account:(values:List({account_urn_encoded})))",
         "(status:(values:List(ACTIVE,DRAFT,PAUSED,ARCHIVED,CANCELED)))",
@@ -428,23 +592,6 @@ def list_campaign_groups(
         except Exception as exc:
             errors.append(f"global-search: {exc}")
 
-    # 2) adAnalytics CAMPAIGN_GROUP pivot (always works when groups had delivery).
-    try:
-        discovered_ids = _campaign_group_ids_from_analytics(
-            account_id_clean, access_token=access_token, env=env
-        )
-        if discovered_ids:
-            return _finish(
-                _enrich_campaign_group_ids(
-                    account_id_clean,
-                    discovered_ids,
-                    access_token=access_token,
-                    env=env,
-                )
-            )
-    except Exception as exc:
-        errors.append(f"analytics: {exc}")
-
     # 3) Legacy account-nested pagination (some API versions only).
     try:
         account_path = f"/adAccounts/{account_id_clean}/adCampaignGroups"
@@ -458,8 +605,9 @@ def list_campaign_groups(
     if errors:
         raise RuntimeError(
             f"LinkedIn campaign groups unavailable for account {account_id_clean} on API "
-            f"{env.version}. Tried global FINDER search, analytics, and account pagination. "
-            f"Tip: set LINKEDIN_VERSION=202509 if using 202604. "
+            f"{env.version}. adCampaignGroups may be missing on this version — set "
+            f"LINKEDIN_VERSION=202509 in Railway. Tried analytics/campaign discovery, global "
+            f"FINDER (with version fallbacks), and account pagination. "
             f"Last errors: {' | '.join(errors[-3:])}"
         )
     return []
@@ -479,10 +627,39 @@ def _fetch_campaign_group_by_id(
         f"/adAccounts/{account_id_clean}/adCampaignGroups/{group_id_clean}",
     ):
         try:
-            return _linkedin_get(path, access_token=access_token, env=env)
+            return _linkedin_get_with_versions(path, access_token=access_token, env=env)
         except Exception:
             continue
     return {}
+
+
+def _rollup_campaign_rows_to_groups(
+    account_id: str,
+    campaign_rows: list[dict[str, Any]],
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+) -> dict[str, list[dict[str, Any]]]:
+    """When CAMPAIGN_GROUP analytics is empty, map CAMPAIGN rows to groups via campaign metadata."""
+    account_id_clean = _normalize_account_id(account_id)
+    campaign_to_group: dict[str, str] = {}
+    by_group: dict[str, list[dict[str, Any]]] = {}
+
+    for row in campaign_rows:
+        for urn in row.get("pivotValues") or []:
+            if "sponsoredCampaign" not in str(urn):
+                continue
+            cid = _campaign_id_from_pivot(urn)
+            if not cid:
+                continue
+            if cid not in campaign_to_group:
+                meta = _fetch_campaign_by_id(
+                    account_id_clean, cid, access_token=access_token, env=env
+                )
+                gid = _campaign_group_id_from_campaign_meta(meta) or cid
+                campaign_to_group[cid] = gid
+            by_group.setdefault(campaign_to_group[cid], []).append(row)
+    return by_group
 
 
 def campaign_groups_performance(
@@ -539,6 +716,25 @@ def campaign_groups_performance(
             gid = _campaign_group_id_from_pivot(urn)
             if gid:
                 by_group.setdefault(gid, []).append(row)
+
+    if not by_group:
+        campaign_rows, campaign_conversions_ok = _fetch_analytics(
+            account_id_clean,
+            pivot="CAMPAIGN",
+            start=start,
+            end=end,
+            access_token=access_token,
+            env=env,
+        )
+        conversion_fields_supported = (
+            conversion_fields_supported or campaign_conversions_ok
+        )
+        by_group = _rollup_campaign_rows_to_groups(
+            account_id_clean,
+            campaign_rows,
+            access_token=access_token,
+            env=env,
+        )
 
     totals["campaign_group_count"] = len(by_group)
 
