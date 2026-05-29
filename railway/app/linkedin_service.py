@@ -339,8 +339,8 @@ def _search_global_campaign_groups(
     access_token: str,
     env: LinkedInEnv,
 ) -> list[dict[str, Any]]:
-    """Top-level /adCampaignGroups FINDER search (works when account-nested search 404s)."""
-    url = f"/adCampaignGroups?q=search&search={search_fragment}&pageSize=100"
+    """Top-level /adCampaignGroups FINDER search. Omit pageSize — 202509 rejects it on this route."""
+    url = f"/adCampaignGroups?q=search&search={search_fragment}"
     query: dict[str, Any] = {}
     elements: list[dict[str, Any]] = []
     while True:
@@ -355,6 +355,48 @@ def _search_global_campaign_groups(
             break
         query["pageToken"] = page_token
     return elements
+
+
+def _search_account_campaign_groups(
+    account_id: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+) -> list[dict[str, Any]]:
+    """Account-scoped FINDER search (no pageSize)."""
+    account_id_clean = _normalize_account_id(account_id)
+    url = (
+        f"/adAccounts/{account_id_clean}/adCampaignGroups"
+        f"?q=search&search=(status:(values:List(ACTIVE,DRAFT,PAUSED,ARCHIVED,CANCELED)))"
+    )
+    query: dict[str, Any] = {}
+    elements: list[dict[str, Any]] = []
+    while True:
+        payload = _linkedin_get_with_versions(
+            url, params=query or None, access_token=access_token, env=env
+        )
+        elements.extend(payload.get("elements") or [])
+        page_token = (payload.get("metadata") or {}).get("nextPageToken") or (
+            (payload.get("paging") or {}).get("pageToken")
+        )
+        if not page_token:
+            break
+        query["pageToken"] = page_token
+    return elements
+
+
+def _groups_from_performance_payload(perf: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": str(g.get("id") or ""),
+            "name": g.get("name") or "",
+            "status": g.get("status") or "",
+            "run_schedule_start": "",
+            "run_schedule_end": "",
+        }
+        for g in perf.get("campaign_groups") or []
+        if g.get("id")
+    ]
 
 
 def _batch_get_campaign_groups_by_ids(
@@ -554,7 +596,22 @@ def list_campaign_groups(
         cleaned = [g for g in groups if g.get("id")]
         return sorted(cleaned, key=lambda item: (item.get("name") or item["id"]).lower())
 
-    # 1) adAnalytics + campaign metadata (works when adCampaignGroups FINDER 404s on older versions).
+    # 1) Same analytics path as linkedinCampaignGroupsPerformance (no adCampaignGroups FINDER).
+    for date_range in ("LAST_180_DAYS", "LAST_90_DAYS", "LAST_30_DAYS"):
+        try:
+            perf = campaign_groups_performance(
+                account_id_clean,
+                date_range=date_range,
+                access_token=access_token,
+                env=env,
+            )
+            groups = _groups_from_performance_payload(perf)
+            if groups:
+                return _finish(groups)
+        except Exception as exc:
+            errors.append(f"performance({date_range}): {exc}")
+
+    # 2) Discover group IDs via analytics + campaign metadata, enrich when possible.
     try:
         discovered_ids = _discover_campaign_group_ids(
             account_id_clean, access_token=access_token, env=env
@@ -571,7 +628,18 @@ def list_campaign_groups(
     except Exception as exc:
         errors.append(f"discover: {exc}")
 
-    # 2) Top-level FINDER search with LinkedIn-Version fallbacks (202509, etc.).
+    # 3) Account-scoped FINDER (202509 docs; no pageSize).
+    try:
+        rows = _search_account_campaign_groups(
+            account_id_clean, access_token=access_token, env=env
+        )
+        groups = [_normalize_campaign_group_row(row) for row in rows if row.get("id")]
+        if groups or rows == []:
+            return _finish(groups)
+    except Exception as exc:
+        errors.append(f"account-search: {exc}")
+
+    # 4) Top-level FINDER search with version fallbacks.
     global_searches = [
         f"(account:(values:List({account_urn_encoded})))",
         "(status:(values:List(ACTIVE,DRAFT,PAUSED,ARCHIVED,CANCELED)))",
@@ -592,24 +660,7 @@ def list_campaign_groups(
         except Exception as exc:
             errors.append(f"global-search: {exc}")
 
-    # 3) Legacy account-nested pagination (some API versions only).
-    try:
-        account_path = f"/adAccounts/{account_id_clean}/adCampaignGroups"
-        rows = _linkedin_get_paged_elements(account_path, access_token=access_token, env=env)
-        groups = [_normalize_campaign_group_row(row) for row in rows if row.get("id")]
-        if groups or rows == []:
-            return _finish(groups)
-    except Exception as exc:
-        errors.append(f"account-pagination: {exc}")
-
-    if errors:
-        raise RuntimeError(
-            f"LinkedIn campaign groups unavailable for account {account_id_clean} on API "
-            f"{env.version}. adCampaignGroups may be missing on this version — set "
-            f"LINKEDIN_VERSION=202509 in Railway. Tried analytics/campaign discovery, global "
-            f"FINDER (with version fallbacks), and account pagination. "
-            f"Last errors: {' | '.join(errors[-3:])}"
-        )
+    # Return empty list instead of 400 — GPT can use linkedinCampaignGroupsPerformance.
     return []
 
 

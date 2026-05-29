@@ -601,6 +601,7 @@
       "get": {
         "operationId": "linkedinCampaignGroups",
         "summary": "List LinkedIn campaign groups for one ad account",
+        "description": "Lists campaign group names/IDs. Uses adAnalytics when LinkedIn adCampaignGroups FINDER is unavailable. If empty, call linkedinCampaignGroupsPerformance for spend by group.",
         "parameters": [
           {
             "name": "account_id",
