@@ -59,6 +59,7 @@ def status() -> dict[str, Any]:
             "linkedin_rows": 0,
             "google_rows": 0,
             "ga4_rows": 0,
+            "meta_rows": 0,
             "error": "DATABASE_URL is missing.",
         }
     try:
@@ -81,6 +82,11 @@ def status() -> dict[str, Any]:
                     "SELECT COUNT(*) FROM metrics_daily WHERE source = %s", ("ga4",)
                 ).fetchone()[0]
             )
+            meta_rows = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM metrics_daily WHERE source = %s", ("meta",)
+                ).fetchone()[0]
+            )
         return {
             "enabled": True,
             "connected": True,
@@ -88,6 +94,7 @@ def status() -> dict[str, Any]:
             "linkedin_rows": linkedin_rows,
             "google_rows": google_rows,
             "ga4_rows": ga4_rows,
+            "meta_rows": meta_rows,
             "error": None,
         }
     except Exception as exc:
@@ -98,6 +105,7 @@ def status() -> dict[str, Any]:
             "linkedin_rows": 0,
             "google_rows": 0,
             "ga4_rows": 0,
+            "meta_rows": 0,
             "error": str(exc)[:500],
         }
 
@@ -108,6 +116,8 @@ def _normalize_source(source: str) -> str:
         return "google"
     if key == "ga4":
         return "ga4"
+    if key == "meta":
+        return "meta"
     return "linkedin"
 
 

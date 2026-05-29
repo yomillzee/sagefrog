@@ -12,10 +12,12 @@ import bigquery_service
 import ga4_warehouse_service
 import google_ads_service
 import linkedin_service
+import meta_service
 import db_cache
 import warehouse
 from auth import creds_fingerprint, env_summary
 from linkedin_auth import env_summary as linkedin_env_summary
+from meta_auth import env_summary as meta_env_summary
 from openapi_gpt import build_chatgpt_openapi
 from security import require_api_key
 from models import (
@@ -50,6 +52,15 @@ from models import (
     LinkedInCampaignPerformance,
     LinkedInWarehouseSyncRequest,
     LinkedInWarehouseSyncResponse,
+    MetaEnvSummary,
+    MetaTestTokenResponse,
+    MetaAccountsResponse,
+    MetaAccountRef,
+    MetaPerformanceResponse,
+    MetaPerformanceTotals,
+    MetaCampaignPerformance,
+    MetaWarehouseSyncRequest,
+    MetaWarehouseSyncResponse,
     GoogleAdsWarehouseSyncRequest,
     Ga4WarehouseSyncRequest,
     WarehouseSyncResponse,
@@ -74,7 +85,7 @@ app = FastAPI(
     title="EOS Ads + GA4 Service",
     version="0.2.0",
     description=(
-        "When the server has API_KEY set in Railway, all /google-ads/*, /linkedin/*, and /ga4/* "
+        "When the server has API_KEY set in Railway, all /google-ads/*, /linkedin/*, /meta/*, and /ga4/* "
         "routes require Authorization: Bearer (your API_KEY value) or header X-API-Key with the "
         "same value. GET /health stays public for load balancers."
     ),
@@ -110,6 +121,7 @@ def custom_openapi() -> dict:
         if not (
             path.startswith("/google-ads")
             or path.startswith("/linkedin")
+            or path.startswith("/meta")
             or path.startswith("/ga4")
             or path.startswith("/warehouse")
         ):
@@ -157,6 +169,11 @@ def root() -> dict:
         "linkedin_accounts": "/linkedin/accounts",
         "linkedin_performance": "/linkedin/performance",
         "linkedin_warehouse_sync": "/linkedin/warehouse/sync",
+        "meta_env": "/meta/env",
+        "meta_test_token": "/meta/test-token",
+        "meta_accounts": "/meta/accounts",
+        "meta_performance": "/meta/performance",
+        "meta_warehouse_sync": "/meta/warehouse/sync",
         "google_ads_warehouse_sync": "/google-ads/warehouse/sync",
         "ga4_warehouse_sync": "/ga4/warehouse/sync",
         "warehouse_status": "/warehouse/status",
@@ -566,6 +583,140 @@ def linkedin_warehouse_sync(body: LinkedInWarehouseSyncRequest) -> LinkedInWareh
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return LinkedInWarehouseSyncResponse(**result)
+
+
+@app.get(
+    "/meta/env",
+    response_model=MetaEnvSummary,
+    dependencies=[Depends(require_api_key)],
+)
+def meta_env() -> MetaEnvSummary:
+    return MetaEnvSummary(**meta_env_summary())
+
+
+@app.get(
+    "/meta/test-token",
+    response_model=MetaTestTokenResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def meta_test_token() -> MetaTestTokenResponse:
+    try:
+        result = meta_service.test_access_token()
+    except Exception as e:
+        return MetaTestTokenResponse(
+            ok=False,
+            message="Could not load Meta credentials from environment.",
+            error=str(e),
+        )
+    return MetaTestTokenResponse(**result)
+
+
+@app.get(
+    "/meta/accounts",
+    response_model=MetaAccountsResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="List Meta ad accounts in Business Manager",
+)
+def meta_accounts() -> MetaAccountsResponse:
+    cache_payload: dict = {}
+    hit = db_cache.get_cached("meta.accounts", cache_payload)
+    if hit is not None:
+        rows = hit.response_json or []
+        return MetaAccountsResponse(
+            count=int(hit.row_count or len(rows)),
+            accounts=[MetaAccountRef(**r) for r in rows],
+        )
+    try:
+        rows = meta_service.list_ad_accounts()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        db_cache.put_cached(
+            "meta.accounts",
+            cache_payload,
+            response_json=rows,
+            row_count=len(rows),
+            status="ok",
+            error=None,
+        )
+    except Exception:
+        pass
+    return MetaAccountsResponse(
+        count=len(rows),
+        accounts=[MetaAccountRef(**r) for r in rows],
+    )
+
+
+@app.get(
+    "/meta/performance",
+    response_model=MetaPerformanceResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="Meta Ads performance for one ad account",
+)
+def meta_performance(
+    account_id: str,
+    date_range: str = "LAST_30_DAYS",
+) -> MetaPerformanceResponse:
+    account_id = account_id.strip()
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Missing account_id query parameter.")
+    preset = date_range.strip().upper().replace("-", "_")
+    if preset not in _WAREHOUSE_DATE_RANGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid date_range: {date_range}. Use one of: {', '.join(sorted(_WAREHOUSE_DATE_RANGES))}",
+        )
+
+    cache_payload = {"account_id": account_id, "date_range": preset}
+    hit = db_cache.get_cached("meta.performance", cache_payload)
+    if hit is not None:
+        payload = hit.response_json or {}
+        return MetaPerformanceResponse(
+            account_id=payload.get("account_id", account_id),
+            date_range=payload.get("date_range", {}),
+            totals=MetaPerformanceTotals(**(payload.get("totals") or {})),
+            campaigns=[MetaCampaignPerformance(**c) for c in payload.get("campaigns") or []],
+            warehouse=payload.get("warehouse"),
+        )
+    try:
+        payload = meta_service.account_performance(account_id, date_range=preset)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        db_cache.put_cached(
+            "meta.performance",
+            cache_payload,
+            response_json=payload,
+            row_count=len(payload.get("campaigns") or []),
+            status="ok",
+            error=None,
+        )
+    except Exception:
+        pass
+    return MetaPerformanceResponse(
+        account_id=payload["account_id"],
+        date_range=payload["date_range"],
+        totals=MetaPerformanceTotals(**payload["totals"]),
+        campaigns=[MetaCampaignPerformance(**c) for c in payload["campaigns"]],
+        warehouse=payload.get("warehouse"),
+    )
+
+
+@app.post(
+    "/meta/warehouse/sync",
+    response_model=MetaWarehouseSyncResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="Sync Meta daily metrics into Postgres warehouse",
+)
+def meta_warehouse_sync(body: MetaWarehouseSyncRequest) -> MetaWarehouseSyncResponse:
+    preset = body.date_range.strip().upper().replace("-", "_")
+    if preset not in _WAREHOUSE_DATE_RANGES:
+        raise HTTPException(status_code=400, detail=f"Invalid date_range: {body.date_range}")
+    try:
+        result = meta_service.sync_account_to_warehouse(body.account_id, date_range=preset)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return MetaWarehouseSyncResponse(**result)
 
 
 @app.get(

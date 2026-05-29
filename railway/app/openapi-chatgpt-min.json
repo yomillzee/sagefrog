@@ -3,7 +3,7 @@
   "info": {
     "title": "EOS Ads + GA4 Service",
     "version": "0.2.0",
-    "description": "Google Ads, LinkedIn Ads, and GA4 BigQuery. Protected routes need header X-API-Key (Railway API_KEY). GET /health is public."
+    "description": "Google Ads, LinkedIn Ads, Meta Ads, and GA4 BigQuery. Protected routes need header X-API-Key (Railway API_KEY). GET /health is public."
   },
   "servers": [
     {
@@ -603,6 +603,222 @@
         "security": [{ "ApiKeyAuth": [] }]
       }
     },
+    "/meta/env": {
+      "get": {
+        "operationId": "metaEnv",
+        "summary": "Meta credential status (no secrets)",
+        "responses": {
+          "200": {
+            "description": "Env summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "has_app_id": { "type": "boolean" },
+                    "has_app_secret": { "type": "boolean" },
+                    "has_access_token": { "type": "boolean" },
+                    "has_business_id": { "type": "boolean" },
+                    "business_id": { "type": "string" },
+                    "meta_api_version": { "type": "string" },
+                    "access_token_looks_valid": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/meta/test-token": {
+      "get": {
+        "operationId": "metaTestToken",
+        "summary": "Verify Meta access token and Business Manager access",
+        "responses": {
+          "200": {
+            "description": "Token test",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "message": { "type": "string" },
+                    "account_count": { "type": "integer" },
+                    "error": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/meta/accounts": {
+      "get": {
+        "operationId": "metaAccounts",
+        "summary": "List Meta ad accounts in Business Manager",
+        "description": "Returns owned and client ad accounts from META_BUSINESS_ID. Use account id when calling metaPerformance or metaWarehouseSync.",
+        "responses": {
+          "200": {
+            "description": "Account list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": { "type": "integer" },
+                    "accounts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "name": { "type": "string" },
+                          "status": { "type": "string" },
+                          "currency": { "type": "string" },
+                          "ownership": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/meta/performance": {
+      "get": {
+        "operationId": "metaPerformance",
+        "summary": "Meta Ads performance for one ad account",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Meta ad account ID (digits only, from metaAccounts)"
+          },
+          {
+            "name": "date_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "LAST_30_DAYS",
+              "enum": [
+                "LAST_7_DAYS",
+                "LAST_30_DAYS",
+                "LAST_90_DAYS",
+                "LAST_180_DAYS",
+                "THIS_MONTH",
+                "LAST_MONTH"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Performance summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": { "type": "string" },
+                    "date_range": { "type": "object", "properties": {} },
+                    "totals": {
+                      "type": "object",
+                      "properties": {
+                        "spend": { "type": "number" },
+                        "clicks": { "type": "integer" },
+                        "impressions": { "type": "integer" },
+                        "conversions": { "type": "number" },
+                        "conversion_value": { "type": "number" },
+                        "campaign_count": { "type": "integer" }
+                      }
+                    },
+                    "campaigns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "name": { "type": "string" },
+                          "status": { "type": "string" },
+                          "spend": { "type": "number" },
+                          "clicks": { "type": "integer" },
+                          "impressions": { "type": "integer" },
+                          "conversions": { "type": "number" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
+    "/meta/warehouse/sync": {
+      "post": {
+        "operationId": "metaWarehouseSync",
+        "summary": "Sync Meta daily metrics to Postgres (metrics_daily)",
+        "description": "Pulls day-by-day spend/clicks/impressions from Meta and upserts into metrics_daily with source=meta. Requires Railway DATABASE_URL.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["account_id"],
+                "properties": {
+                  "account_id": { "type": "string" },
+                  "date_range": {
+                    "type": "string",
+                    "default": "LAST_30_DAYS",
+                    "enum": [
+                      "LAST_7_DAYS",
+                      "LAST_30_DAYS",
+                      "LAST_90_DAYS",
+                      "LAST_180_DAYS",
+                      "THIS_MONTH",
+                      "LAST_MONTH"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sync result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": { "type": "string" },
+                    "date_range": { "type": "object", "properties": {} },
+                    "days_synced": { "type": "integer" },
+                    "coverage": { "type": "object", "properties": {} }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
     "/warehouse/status": {
       "get": {
         "operationId": "warehouseStatus",
@@ -621,6 +837,7 @@
                     "linkedin_rows": { "type": "integer" },
                     "google_rows": { "type": "integer" },
                     "ga4_rows": { "type": "integer" },
+                    "meta_rows": { "type": "integer" },
                     "error": { "type": "string" }
                   }
                 }
@@ -654,7 +871,7 @@
             "name": "source",
             "in": "query",
             "required": false,
-            "schema": { "type": "string", "enum": ["linkedin", "google", "ga4"] }
+            "schema": { "type": "string", "enum": ["linkedin", "google", "ga4", "meta"] }
           },
           {
             "name": "account_id",

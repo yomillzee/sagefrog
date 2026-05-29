@@ -273,6 +273,78 @@ class LinkedInWarehouseSyncResponse(BaseModel):
     coverage: dict
 
 
+class MetaEnvSummary(BaseModel):
+    has_app_id: bool
+    has_app_secret: bool
+    has_access_token: bool
+    has_business_id: bool
+    business_id: str | None = None
+    meta_api_version: str = "v21.0"
+    access_token_looks_valid: bool = False
+
+
+class MetaTestTokenResponse(BaseModel):
+    ok: bool
+    message: str
+    account_count: int = 0
+    error: str | None = None
+
+
+class MetaAccountRef(BaseModel):
+    id: str
+    name: str = ""
+    status: str = ""
+    currency: str = ""
+    ownership: str = ""
+
+
+class MetaAccountsResponse(BaseModel):
+    count: int
+    accounts: list[MetaAccountRef]
+
+
+class MetaPerformanceTotals(BaseModel):
+    spend: float = 0.0
+    clicks: int = 0
+    impressions: int = 0
+    conversions: float = 0.0
+    conversion_value: float = 0.0
+    campaign_count: int = 0
+
+
+class MetaCampaignPerformance(BaseModel):
+    id: str
+    name: str = ""
+    status: str = ""
+    spend: float = 0.0
+    clicks: int = 0
+    impressions: int = 0
+    conversions: float = 0.0
+
+
+class MetaPerformanceResponse(BaseModel):
+    account_id: str
+    date_range: dict
+    totals: MetaPerformanceTotals
+    campaigns: list[MetaCampaignPerformance]
+    warehouse: dict | None = None
+
+
+class MetaWarehouseSyncRequest(BaseModel):
+    account_id: str = Field(..., description="Meta ad account ID (digits only or act_ prefix)")
+    date_range: str = Field(
+        default="LAST_30_DAYS",
+        description="LAST_7_DAYS, LAST_30_DAYS, LAST_90_DAYS, LAST_180_DAYS, THIS_MONTH, LAST_MONTH",
+    )
+
+
+class MetaWarehouseSyncResponse(BaseModel):
+    account_id: str
+    date_range: dict
+    days_synced: int
+    coverage: dict
+
+
 class GoogleAdsWarehouseSyncRequest(BaseModel):
     customer_id: str = Field(..., description="Google Ads customer ID, digits only")
     date_range: str = Field(
@@ -322,6 +394,7 @@ class WarehouseStatusResponse(BaseModel):
     linkedin_rows: int = 0
     google_rows: int = 0
     ga4_rows: int = 0
+    meta_rows: int = 0
     error: str | None = None
 
 

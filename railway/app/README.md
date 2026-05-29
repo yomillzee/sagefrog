@@ -98,6 +98,24 @@ Mint a refresh token locally with the dashboard (`npm start` → Settings → Co
 
 **Performance:** `GET /linkedin/performance?account_id=123456789&date_range=LAST_30_DAYS`
 
+### Meta Marketing API (Business Manager)
+
+One Business Manager token lists **all client ad accounts** under that BM. Set in Railway:
+
+- `META_APP_ID` — Meta app ID
+- `META_APP_SECRET` — Meta app secret
+- `META_ACCESS_TOKEN` — system user token with `ads_read`, `read_insights`, `business_management`
+- `META_BUSINESS_ID` — e.g. `1064007753695517`
+- `META_API_VERSION` (optional, default `v21.0`)
+
+**Setup:** Business Settings → Users → System users → assign all ad accounts → generate token.
+
+**Verify:** `GET /meta/env` then `GET /meta/test-token` then `GET /meta/accounts`.
+
+**Performance:** `GET /meta/performance?account_id=123456789&date_range=LAST_30_DAYS`
+
+**Warehouse:** `POST /meta/warehouse/sync` with `{"account_id":"123456789","date_range":"LAST_180_DAYS"}` → `metrics_daily` rows with `source=meta`.
+
 ### `GCP_SERVICE_ACCOUNT_JSON` on Railway
 
 Pasting the raw multiline JSON into Railway often fails (the UI may truncate or strip content so you only see a single `{`). **Do not rely on multiline paste.**
@@ -171,10 +189,15 @@ Example response fields per row: `campaign_name`, `ad_name`, `youtube_video_id`,
 - `GET /linkedin/accounts` — LinkedIn ad accounts for the token
 - `GET /linkedin/performance` — spend/clicks/impressions/conversions by active campaign (auto-syncs daily rows to Postgres when `DATABASE_URL` is set)
 - `POST /linkedin/warehouse/sync` — backfill LinkedIn into `metrics_daily`
+- `GET /meta/env` — which Meta credentials are set (no secrets)
+- `GET /meta/test-token` — verify access token + ad account count
+- `GET /meta/accounts` — Meta ad accounts in Business Manager (owned + client)
+- `GET /meta/performance` — spend/clicks/impressions/conversions by campaign (auto-syncs daily rows to Postgres when `DATABASE_URL` is set)
+- `POST /meta/warehouse/sync` — backfill Meta into `metrics_daily`
 - `POST /google-ads/warehouse/sync` — backfill Google Ads (`customer_id` + `date_range`)
 - `POST /ga4/warehouse/sync` — backfill GA4 from BigQuery export (`source=ga4`)
-- `GET /warehouse/status` — row counts: `linkedin_rows`, `google_rows`, `ga4_rows`
-- `GET /warehouse/metrics?from_date=&to_date=&source=linkedin|google|ga4&account_id=` — read stored daily history
+- `GET /warehouse/status` — row counts: `linkedin_rows`, `google_rows`, `ga4_rows`, `meta_rows`
+- `GET /warehouse/metrics?from_date=&to_date=&source=linkedin|google|ga4|meta&account_id=` — read stored daily history
 - `GET /ga4/env` — validate GA4 BigQuery env wiring (includes **`gcp_service_account_json_char_count`**, **`gcp_service_account_json_parse_ok`**, and a short **`gcp_service_account_json_parse_error`** when parsing fails — no secrets returned)
 - `POST /ga4/query` — run a BigQuery SQL query (returns rows)
 

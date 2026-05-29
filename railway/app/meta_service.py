@@ -1,0 +1,392 @@
+from __future__ import annotations
+
+import json
+from datetime import date, timedelta
+from typing import Any
+
+import httpx
+
+from dates_util import resolve_date_range
+from meta_auth import MetaEnv, load_meta_env
+
+_ACCOUNT_FIELDS = "id,account_id,name,account_status,currency,business_name"
+_INSIGHT_FIELDS = (
+    "spend,impressions,clicks,actions,action_values,"
+    "campaign_id,campaign_name,date_start,date_stop"
+)
+_ACCOUNT_STATUS = {
+    1: "ACTIVE",
+    2: "DISABLED",
+    3: "UNSETTLED",
+    7: "PENDING_RISK_REVIEW",
+    8: "PENDING_SETTLEMENT",
+    9: "IN_GRACE_PERIOD",
+    100: "PENDING_CLOSURE",
+    101: "CLOSED",
+}
+_CONVERSION_ACTION_HINTS = (
+    "purchase",
+    "lead",
+    "complete_registration",
+    "submit_application",
+    "offsite_conversion",
+    "omni_purchase",
+    "omni_lead",
+    "onsite_conversion",
+)
+_EXCLUDE_ACTION_HINTS = (
+    "link_click",
+    "landing_page_view",
+    "page_engagement",
+    "post_engagement",
+    "video_view",
+    "post_reaction",
+    "comment",
+    "like",
+)
+
+
+def _normalize_account_id(account_id: str) -> str:
+    raw = str(account_id or "").strip()
+    if raw.lower().startswith("act_"):
+        raw = raw[4:]
+    return raw.split(":")[-1]
+
+
+def _act_id(account_id: str) -> str:
+    clean = _normalize_account_id(account_id)
+    return f"act_{clean}"
+
+
+def _graph_base(env: MetaEnv) -> str:
+    version = env.api_version.strip()
+    if not version.startswith("v"):
+        version = f"v{version}"
+    return f"https://graph.facebook.com/{version}"
+
+
+def _client_headers() -> dict[str, str]:
+    return {"Accept": "application/json"}
+
+
+def _graph_get(
+    path: str,
+    *,
+    access_token: str,
+    params: dict[str, Any] | None = None,
+    env: MetaEnv | None = None,
+) -> dict[str, Any]:
+    env = env or load_meta_env()
+    query = dict(params or {})
+    query["access_token"] = access_token
+    url = path if path.startswith("http") else f"{_graph_base(env)}{path}"
+    with httpx.Client(timeout=120.0) as client:
+        response = client.get(url, params=query, headers=_client_headers())
+    if response.status_code >= 400:
+        detail = response.text
+        try:
+            detail = response.json()
+        except Exception:
+            pass
+        raise RuntimeError(f"Meta Graph API error {response.status_code} on {path}: {detail}")
+    return response.json()
+
+
+def _graph_get_all(
+    path: str,
+    *,
+    access_token: str,
+    params: dict[str, Any] | None = None,
+    env: MetaEnv | None = None,
+) -> list[dict[str, Any]]:
+    payload = _graph_get(path, access_token=access_token, params=params, env=env)
+    rows = list(payload.get("data") or [])
+    while payload.get("paging", {}).get("next"):
+        payload = _graph_get(payload["paging"]["next"], access_token=access_token, env=env)
+        rows.extend(payload.get("data") or [])
+    return rows
+
+
+def _account_status_label(value: Any) -> str:
+    try:
+        return _ACCOUNT_STATUS.get(int(value), str(value or ""))
+    except (TypeError, ValueError):
+        return str(value or "")
+
+
+def _parse_conversions(actions: list[dict[str, Any]] | None) -> float:
+    total = 0.0
+    for item in actions or []:
+        action_type = str(item.get("action_type") or "").lower()
+        if any(x in action_type for x in _EXCLUDE_ACTION_HINTS):
+            continue
+        if any(x in action_type for x in _CONVERSION_ACTION_HINTS):
+            total += float(item.get("value") or 0)
+    return total
+
+
+def _parse_conversion_value(action_values: list[dict[str, Any]] | None) -> float:
+    total = 0.0
+    for item in action_values or []:
+        action_type = str(item.get("action_type") or "").lower()
+        if any(x in action_type for x in _EXCLUDE_ACTION_HINTS):
+            continue
+        if any(x in action_type for x in _CONVERSION_ACTION_HINTS):
+            total += float(item.get("value") or 0)
+    return total
+
+
+def _parse_insight_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "spend": float(row.get("spend") or 0),
+        "clicks": int(float(row.get("clicks") or 0)),
+        "impressions": int(float(row.get("impressions") or 0)),
+        "conversions": _parse_conversions(row.get("actions")),
+        "conversion_value": _parse_conversion_value(row.get("action_values")),
+    }
+
+
+def _normalize_account_row(row: dict[str, Any], *, ownership: str) -> dict[str, Any]:
+    account_id = _normalize_account_id(str(row.get("account_id") or row.get("id") or ""))
+    return {
+        "id": account_id,
+        "name": row.get("name") or row.get("business_name") or "",
+        "status": _account_status_label(row.get("account_status")),
+        "currency": row.get("currency") or "",
+        "ownership": ownership,
+    }
+
+
+def list_ad_accounts(
+    *,
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+) -> list[dict[str, Any]]:
+    env = env or load_meta_env()
+    access_token = access_token or env.access_token
+    business_id = env.business_id
+
+    merged: dict[str, dict[str, Any]] = {}
+    for ownership, edge in (("owned", "owned_ad_accounts"), ("client", "client_ad_accounts")):
+        rows = _graph_get_all(
+            f"/{business_id}/{edge}",
+            access_token=access_token,
+            params={"fields": _ACCOUNT_FIELDS, "limit": 500},
+            env=env,
+        )
+        for row in rows:
+            normalized = _normalize_account_row(row, ownership=ownership)
+            if normalized["id"]:
+                merged[normalized["id"]] = normalized
+
+    return sorted(merged.values(), key=lambda item: (item.get("name") or item["id"]).lower())
+
+
+def test_access_token(env: MetaEnv | None = None) -> dict[str, Any]:
+    env = env or load_meta_env()
+    try:
+        accounts = list_ad_accounts(access_token=env.access_token, env=env)
+        return {
+            "ok": True,
+            "message": "Meta access token is valid for this Business Manager.",
+            "account_count": len(accounts),
+            "error": None,
+        }
+    except Exception as exc:
+        err = str(exc)
+        hint = (
+            "Usually: expired token, missing ads_read/read_insights/business_management scopes, "
+            "or system user not assigned to ad accounts in Business Manager."
+        )
+        return {
+            "ok": False,
+            "message": "Meta access token test failed.",
+            "account_count": 0,
+            "error": f"{err} — {hint}",
+        }
+
+
+def _time_range(start: date, end: date) -> str:
+    return json.dumps({"since": start.isoformat(), "until": end.isoformat()})
+
+
+def fetch_daily_metrics(
+    account_id: str,
+    *,
+    start: date,
+    end: date,
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+) -> list[dict[str, Any]]:
+    env = env or load_meta_env()
+    access_token = access_token or env.access_token
+    account_id_clean = _normalize_account_id(account_id)
+
+    rows = _graph_get_all(
+        f"/{_act_id(account_id_clean)}/insights",
+        access_token=access_token,
+        params={
+            "fields": _INSIGHT_FIELDS,
+            "time_range": _time_range(start, end),
+            "time_increment": 1,
+            "level": "account",
+            "limit": 500,
+        },
+        env=env,
+    )
+
+    by_date: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        metric_day = str(row.get("date_start") or "")[:10]
+        if not metric_day:
+            continue
+        parsed = _parse_insight_row(row)
+        by_date[metric_day] = {
+            "metric_date": metric_day,
+            **parsed,
+        }
+
+    out: list[dict[str, Any]] = []
+    cursor = start
+    while cursor <= end:
+        key = cursor.isoformat()
+        out.append(
+            by_date.get(key)
+            or {
+                "metric_date": key,
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+            }
+        )
+        cursor += timedelta(days=1)
+    return out
+
+
+def sync_account_to_warehouse(
+    account_id: str,
+    *,
+    date_range: str = "LAST_30_DAYS",
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+) -> dict[str, Any]:
+    import warehouse
+
+    if not warehouse.enabled():
+        raise RuntimeError("DATABASE_URL is not set — warehouse storage is disabled.")
+
+    start, end, preset = resolve_date_range(date_range)
+    daily_rows = fetch_daily_metrics(
+        account_id,
+        start=start,
+        end=end,
+        access_token=access_token,
+        env=env,
+    )
+    account_id_clean = _normalize_account_id(account_id)
+    written = warehouse.upsert_metrics_daily_batch("meta", account_id_clean, daily_rows)
+    coverage = warehouse.account_date_coverage("meta", account_id_clean)
+    return {
+        "account_id": account_id_clean,
+        "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
+        "days_synced": written,
+        "coverage": coverage,
+    }
+
+
+def account_performance(
+    account_id: str,
+    *,
+    date_range: str = "LAST_30_DAYS",
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+) -> dict[str, Any]:
+    env = env or load_meta_env()
+    access_token = access_token or env.access_token
+    account_id_clean = _normalize_account_id(account_id)
+    if not account_id_clean:
+        raise ValueError("account_id is required")
+
+    start, end, preset = resolve_date_range(date_range)
+
+    account_rows = _graph_get_all(
+        f"/{_act_id(account_id_clean)}/insights",
+        access_token=access_token,
+        params={
+            "fields": _INSIGHT_FIELDS,
+            "time_range": _time_range(start, end),
+            "level": "account",
+            "limit": 500,
+        },
+        env=env,
+    )
+    campaign_rows = _graph_get_all(
+        f"/{_act_id(account_id_clean)}/insights",
+        access_token=access_token,
+        params={
+            "fields": _INSIGHT_FIELDS,
+            "time_range": _time_range(start, end),
+            "level": "campaign",
+            "limit": 500,
+        },
+        env=env,
+    )
+
+    account_parsed = _parse_insight_row(account_rows[0]) if account_rows else {
+        "spend": 0.0,
+        "clicks": 0,
+        "impressions": 0,
+        "conversions": 0.0,
+        "conversion_value": 0.0,
+    }
+    totals = {
+        **account_parsed,
+        "campaign_count": 0,
+    }
+
+    campaigns_out: list[dict[str, Any]] = []
+    for row in campaign_rows:
+        parsed = _parse_insight_row(row)
+        campaigns_out.append(
+            {
+                "id": str(row.get("campaign_id") or ""),
+                "name": row.get("campaign_name") or "",
+                "status": "",
+                **parsed,
+            }
+        )
+    campaigns_out.sort(key=lambda item: item.get("spend", 0), reverse=True)
+    totals["campaign_count"] = len(campaigns_out)
+
+    result = {
+        "account_id": account_id_clean,
+        "date_range": {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "preset": preset,
+        },
+        "totals": totals,
+        "campaigns": campaigns_out,
+    }
+
+    try:
+        import warehouse
+
+        if warehouse.enabled():
+            sync_meta = sync_account_to_warehouse(
+                account_id_clean,
+                date_range=preset,
+                access_token=access_token,
+                env=env,
+            )
+            result["warehouse"] = {
+                "stored": True,
+                "days_synced": sync_meta["days_synced"],
+                "coverage": sync_meta["coverage"],
+            }
+    except Exception as exc:
+        result["warehouse"] = {"stored": False, "error": str(exc)[:500]}
+
+    return result
