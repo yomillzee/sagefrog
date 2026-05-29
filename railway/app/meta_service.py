@@ -96,6 +96,28 @@ def _graph_get(
     return response.json()
 
 
+def _is_meta_ads_read_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return (
+        "ads_read" in msg
+        or "ads_management" in msg
+        or "has not grant" in msg
+        or "not grant ads" in msg
+    )
+
+
+def _meta_ads_read_help(account_id: str) -> str:
+    act = _act_id(account_id)
+    return (
+        f"metaVideos requires ads_read on ad account {account_id} ({act}). "
+        "metaPerformance only needs read_insights, so campaign metrics can work while "
+        "video creatives fail. In Meta Business Manager: (1) confirm the system user token "
+        "includes ads_read, (2) assign that system user to this ad account with at least "
+        "View performance, or (3) for client accounts, have the client grant your Business "
+        f"Manager access to {act}. Then call GET /meta/test-ads-access?account_id={account_id}."
+    )
+
+
 def _graph_get_all(
     path: str,
     *,
@@ -208,6 +230,73 @@ def test_access_token(env: MetaEnv | None = None) -> dict[str, Any]:
             "account_count": 0,
             "error": f"{err} — {hint}",
         }
+
+
+def test_ads_read_access(
+    account_id: str,
+    *,
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+) -> dict[str, Any]:
+    """Probe whether this token can read ads (required for metaVideos)."""
+    env = env or load_meta_env()
+    access_token = access_token or env.access_token
+    account_id_clean = _normalize_account_id(account_id)
+    if not account_id_clean:
+        raise ValueError("account_id is required")
+
+    ads_ok = False
+    ads_error: str | None = None
+    try:
+        _graph_get(
+            f"/{_act_id(account_id_clean)}/ads",
+            access_token=access_token,
+            params={"fields": "id", "limit": 1},
+            env=env,
+        )
+        ads_ok = True
+    except Exception as exc:
+        ads_error = str(exc)
+
+    insights_ok = False
+    insights_error: str | None = None
+    try:
+        _graph_get(
+            f"/{_act_id(account_id_clean)}/insights",
+            access_token=access_token,
+            params={
+                "fields": "impressions",
+                "date_preset": "last_7d",
+                "level": "account",
+                "limit": 1,
+            },
+            env=env,
+        )
+        insights_ok = True
+    except Exception as exc:
+        insights_error = str(exc)
+
+    ok = ads_ok
+    if ok:
+        message = f"ads_read access confirmed for account {account_id_clean}."
+    elif insights_ok:
+        message = (
+            f"read_insights works for account {account_id_clean}, but ads_read is missing — "
+            "metaVideos will fail until ads are readable."
+        )
+    else:
+        message = f"Neither ads_read nor read_insights works for account {account_id_clean}."
+
+    return {
+        "ok": ok,
+        "account_id": account_id_clean,
+        "ads_read": ads_ok,
+        "read_insights": insights_ok,
+        "message": message,
+        "error": ads_error,
+        "insights_error": insights_error,
+        "help": None if ads_ok else _meta_ads_read_help(account_id_clean),
+    }
 
 
 def _time_range(start: date, end: date) -> str:
@@ -621,12 +710,17 @@ def list_videos(
             [{"field": "campaign.id", "operator": "EQUAL", "value": filter_campaign}]
         )
 
-    ad_rows = _graph_get_all(
-        f"/{_act_id(account_id_clean)}/ads",
-        access_token=access_token,
-        params=params,
-        env=env,
-    )
+    try:
+        ad_rows = _graph_get_all(
+            f"/{_act_id(account_id_clean)}/ads",
+            access_token=access_token,
+            params=params,
+            env=env,
+        )
+    except Exception as exc:
+        if _is_meta_ads_read_error(exc):
+            raise ValueError(_meta_ads_read_help(account_id_clean)) from exc
+        raise
 
     pending_video_ids: set[str] = set()
     draft_rows: list[dict[str, Any]] = []

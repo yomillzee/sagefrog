@@ -1004,6 +1004,45 @@
         "security": [{ "ApiKeyAuth": [] }]
       }
     },
+    "/meta/test-ads-access": {
+      "get": {
+        "operationId": "metaTestAdsAccess",
+        "summary": "Check ads_read on one Meta ad account (required for metaVideos)",
+        "description": "metaPerformance uses read_insights; metaVideos needs ads_read on the specific ad account. Call this before metaVideos if creatives fail with permission errors.",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Meta ad account ID (digits only)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Permission probe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "account_id": { "type": "string" },
+                    "ads_read": { "type": "boolean" },
+                    "read_insights": { "type": "boolean" },
+                    "message": { "type": "string" },
+                    "error": { "type": "string" },
+                    "insights_error": { "type": "string" },
+                    "help": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [{ "ApiKeyAuth": [] }]
+      }
+    },
     "/meta/accounts": {
       "get": {
         "operationId": "metaAccounts",
@@ -1222,7 +1261,7 @@
       "get": {
         "operationId": "metaVideos",
         "summary": "Meta ad video/image URLs with thumbnails",
-        "description": "Returns thumbnail_url and video_url from Meta ad creatives. Set videos_only=false to include static image ads.",
+        "description": "Returns thumbnail_url and video_url from Meta ad creatives. Requires ads_read on the ad account (not just read_insights). If metaPerformance works but this fails, call metaTestAdsAccess first. Set videos_only=false to include static image ads.",
         "parameters": [
           {
             "name": "account_id",

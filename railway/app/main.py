@@ -64,6 +64,7 @@ from models import (
     LinkedInWarehouseSyncResponse,
     MetaEnvSummary,
     MetaTestTokenResponse,
+    MetaTestAdsAccessResponse,
     MetaAccountsResponse,
     MetaAccountRef,
     MetaPerformanceResponse,
@@ -190,6 +191,7 @@ def root() -> dict:
         "linkedin_warehouse_sync": "/linkedin/warehouse/sync",
         "meta_env": "/meta/env",
         "meta_test_token": "/meta/test-token",
+        "meta_test_ads_access": "/meta/test-ads-access",
         "meta_accounts": "/meta/accounts",
         "meta_performance": "/meta/performance",
         "meta_adsets_performance": "/meta/adsets/performance",
@@ -845,6 +847,23 @@ def meta_test_token() -> MetaTestTokenResponse:
             error=str(e),
         )
     return MetaTestTokenResponse(**result)
+
+
+@app.get(
+    "/meta/test-ads-access",
+    response_model=MetaTestAdsAccessResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="Check ads_read access for one Meta ad account (required for metaVideos)",
+)
+def meta_test_ads_access(account_id: str) -> MetaTestAdsAccessResponse:
+    account_id = account_id.strip()
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Missing account_id query parameter.")
+    try:
+        result = meta_service.test_ads_read_access(account_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return MetaTestAdsAccessResponse(**result)
 
 
 @app.get(

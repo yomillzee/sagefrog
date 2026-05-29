@@ -324,7 +324,7 @@ def write_instructions(client_key: str, out_path: Path) -> None:
         "- Use `metaAccounts`, then `metaPerformance` with Penn's account ID for **campaign**-level metrics only.",
         "- For **ad sets** (below campaign): `metaAdsetsPerformance`. Optional `campaign_id` to filter.",
         "- When building dashboards, use `entity_level` and row `id` — never merge rows from different actions by name.",
-        "- For **video/creative previews**: `metaVideos` (`thumbnail_url`, `video_url`). Optional `campaign_id` filter.",
+        "- For **video/creative previews**: `metaVideos` (`thumbnail_url`, `video_url`). Requires **ads_read** on the account — if it fails, call `metaTestAdsAccess` first.",
         "",
         "### GA4 / BigQuery",
         f"- For warehouse sync, always pass `\"client_key\": \"{ga4_key}\"` in `ga4WarehouseSync`.",

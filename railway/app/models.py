@@ -411,6 +411,17 @@ class MetaTestTokenResponse(BaseModel):
     error: str | None = None
 
 
+class MetaTestAdsAccessResponse(BaseModel):
+    ok: bool
+    account_id: str
+    ads_read: bool = False
+    read_insights: bool = False
+    message: str
+    error: str | None = None
+    insights_error: str | None = None
+    help: str | None = None
+
+
 class MetaAccountRef(BaseModel):
     id: str
     name: str = ""
