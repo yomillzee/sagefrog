@@ -1171,7 +1171,8 @@
     "/meta/performance": {
       "get": {
         "operationId": "metaPerformance",
-        "summary": "Meta Ads performance for one ad account",
+        "summary": "Meta Ads performance by campaign (one account)",
+        "description": "Campaign-level metrics only. Each row has entity_level=campaign. For ad sets use metaAdsetsPerformance. Always key rows by id, never by name.",
         "parameters": [
           {
             "name": "account_id",
@@ -1202,7 +1203,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Performance summary",
+            "description": "Campaign-level performance",
             "content": {
               "application/json": {
                 "schema": {
@@ -1210,6 +1211,12 @@
                   "properties": {
                     "account_id": {
                       "type": "string"
+                    },
+                    "entity_level": {
+                      "type": "string",
+                      "enum": [
+                        "account"
+                      ]
                     },
                     "date_range": {
                       "type": "object",
@@ -1246,6 +1253,12 @@
                           "id": {
                             "type": "string"
                           },
+                          "entity_level": {
+                            "type": "string",
+                            "enum": [
+                              "campaign"
+                            ]
+                          },
                           "name": {
                             "type": "string"
                           },
@@ -1262,6 +1275,149 @@
                             "type": "integer"
                           },
                           "conversions": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/meta/adsets/performance": {
+      "get": {
+        "operationId": "metaAdsetsPerformance",
+        "summary": "Meta Ads performance by ad set",
+        "description": "Ad set-level metrics (sub-campaign). Do not roll ad set rows into campaign dashboards; filter by campaign_id when needed.",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Meta ad account ID for Penn Community Bank (digits only)."
+          },
+          {
+            "name": "date_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "LAST_30_DAYS",
+              "enum": [
+                "LAST_7_DAYS",
+                "LAST_30_DAYS",
+                "LAST_90_DAYS",
+                "LAST_180_DAYS",
+                "THIS_MONTH",
+                "LAST_MONTH"
+              ]
+            }
+          },
+          {
+            "name": "campaign_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Optional Meta campaign ID to limit ad sets to one campaign"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Performance by ad set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": {
+                      "type": "string"
+                    },
+                    "entity_level": {
+                      "type": "string",
+                      "enum": [
+                        "account"
+                      ]
+                    },
+                    "date_range": {
+                      "type": "object",
+                      "properties": {}
+                    },
+                    "totals": {
+                      "type": "object",
+                      "properties": {
+                        "spend": {
+                          "type": "number"
+                        },
+                        "clicks": {
+                          "type": "integer"
+                        },
+                        "impressions": {
+                          "type": "integer"
+                        },
+                        "conversions": {
+                          "type": "number"
+                        },
+                        "conversion_value": {
+                          "type": "number"
+                        },
+                        "adset_count": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "adsets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "entity_level": {
+                            "type": "string",
+                            "enum": [
+                              "adset"
+                            ]
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "campaign_id": {
+                            "type": "string"
+                          },
+                          "campaign_name": {
+                            "type": "string"
+                          },
+                          "spend": {
+                            "type": "number"
+                          },
+                          "clicks": {
+                            "type": "integer"
+                          },
+                          "impressions": {
+                            "type": "integer"
+                          },
+                          "conversions": {
+                            "type": "number"
+                          },
+                          "conversion_value": {
                             "type": "number"
                           }
                         }

@@ -391,6 +391,7 @@ class MetaPerformanceTotals(BaseModel):
 
 class MetaCampaignPerformance(BaseModel):
     id: str
+    entity_level: str = "campaign"
     name: str = ""
     status: str = ""
     spend: float = 0.0
@@ -401,10 +402,42 @@ class MetaCampaignPerformance(BaseModel):
 
 class MetaPerformanceResponse(BaseModel):
     account_id: str
+    entity_level: str = "account"
     date_range: dict
     totals: MetaPerformanceTotals
     campaigns: list[MetaCampaignPerformance]
     warehouse: dict | None = None
+
+
+class MetaAdSetPerformance(BaseModel):
+    id: str
+    entity_level: str = "adset"
+    name: str = ""
+    status: str = ""
+    campaign_id: str = ""
+    campaign_name: str = ""
+    spend: float = 0.0
+    clicks: int = 0
+    impressions: int = 0
+    conversions: float = 0.0
+    conversion_value: float = 0.0
+
+
+class MetaAdSetsPerformanceTotals(BaseModel):
+    spend: float = 0.0
+    clicks: int = 0
+    impressions: int = 0
+    conversions: float = 0.0
+    conversion_value: float = 0.0
+    adset_count: int = 0
+
+
+class MetaAdSetsPerformanceResponse(BaseModel):
+    account_id: str
+    entity_level: str = "account"
+    date_range: dict
+    totals: MetaAdSetsPerformanceTotals
+    adsets: list[MetaAdSetPerformance]
 
 
 class MetaWarehouseSyncRequest(BaseModel):

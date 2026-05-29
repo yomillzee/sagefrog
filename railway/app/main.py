@@ -67,6 +67,9 @@ from models import (
     MetaPerformanceResponse,
     MetaPerformanceTotals,
     MetaCampaignPerformance,
+    MetaAdSetPerformance,
+    MetaAdSetsPerformanceTotals,
+    MetaAdSetsPerformanceResponse,
     MetaWarehouseSyncRequest,
     MetaWarehouseSyncResponse,
     GoogleAdsWarehouseSyncRequest,
@@ -184,6 +187,7 @@ def root() -> dict:
         "meta_test_token": "/meta/test-token",
         "meta_accounts": "/meta/accounts",
         "meta_performance": "/meta/performance",
+        "meta_adsets_performance": "/meta/adsets/performance",
         "meta_warehouse_sync": "/meta/warehouse/sync",
         "google_ads_warehouse_sync": "/google-ads/warehouse/sync",
         "ga4_warehouse_sync": "/ga4/warehouse/sync",
@@ -846,6 +850,7 @@ def meta_performance(
         payload = hit.response_json or {}
         return MetaPerformanceResponse(
             account_id=payload.get("account_id", account_id),
+            entity_level=payload.get("entity_level", "account"),
             date_range=payload.get("date_range", {}),
             totals=MetaPerformanceTotals(**(payload.get("totals") or {})),
             campaigns=[MetaCampaignPerformance(**c) for c in payload.get("campaigns") or []],
@@ -868,10 +873,70 @@ def meta_performance(
         pass
     return MetaPerformanceResponse(
         account_id=payload["account_id"],
+        entity_level=payload.get("entity_level", "account"),
         date_range=payload["date_range"],
         totals=MetaPerformanceTotals(**payload["totals"]),
         campaigns=[MetaCampaignPerformance(**c) for c in payload["campaigns"]],
         warehouse=payload.get("warehouse"),
+    )
+
+
+@app.get(
+    "/meta/adsets/performance",
+    response_model=MetaAdSetsPerformanceResponse,
+    dependencies=[Depends(require_api_key)],
+    summary="Meta Ads performance by ad set",
+)
+def meta_adsets_performance(
+    account_id: str,
+    date_range: str = "LAST_30_DAYS",
+    campaign_id: str | None = None,
+) -> MetaAdSetsPerformanceResponse:
+    account_id = account_id.strip()
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Missing account_id query parameter.")
+    preset = date_range.strip().upper().replace("-", "_")
+    if preset not in _WAREHOUSE_DATE_RANGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid date_range: {date_range}. Use one of: {', '.join(sorted(_WAREHOUSE_DATE_RANGES))}",
+        )
+    campaign_id = (campaign_id or "").strip() or None
+
+    cache_payload = {"account_id": account_id, "date_range": preset, "campaign_id": campaign_id}
+    hit = db_cache.get_cached("meta.adsets.performance", cache_payload)
+    if hit is not None:
+        payload = hit.response_json or {}
+        return MetaAdSetsPerformanceResponse(
+            account_id=payload.get("account_id", account_id),
+            entity_level=payload.get("entity_level", "account"),
+            date_range=payload.get("date_range", {}),
+            totals=MetaAdSetsPerformanceTotals(**(payload.get("totals") or {})),
+            adsets=[MetaAdSetPerformance(**a) for a in payload.get("adsets") or []],
+        )
+    try:
+        payload = meta_service.adsets_performance(
+            account_id, date_range=preset, campaign_id=campaign_id
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        db_cache.put_cached(
+            "meta.adsets.performance",
+            cache_payload,
+            response_json=payload,
+            row_count=len(payload.get("adsets") or []),
+            status="ok",
+            error=None,
+        )
+    except Exception:
+        pass
+    return MetaAdSetsPerformanceResponse(
+        account_id=payload["account_id"],
+        entity_level=payload.get("entity_level", "account"),
+        date_range=payload["date_range"],
+        totals=MetaAdSetsPerformanceTotals(**payload["totals"]),
+        adsets=[MetaAdSetPerformance(**a) for a in payload["adsets"]],
     )
 
 

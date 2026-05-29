@@ -170,25 +170,25 @@ def build_client_schema(client_key: str) -> dict[str, Any]:
             enum_value=lid,
         )
 
-    # Meta
-    for path_key, method in (
-        ("/meta/accounts", "get"),
-        ("/meta/performance", "get"),
-    ):
-        op = paths.get(path_key, {}).get(method)
+    meta_perf_paths = (
+        "/meta/performance",
+        "/meta/adsets/performance",
+    )
+    for path_key in meta_perf_paths:
+        op = paths.get(path_key, {}).get("get")
         if not op:
             continue
-        if path_key.endswith("/accounts"):
-            op["summary"] = f"List Meta ad accounts — use {label} only"
-            op["description"] = penn_only
         mid = cfg.get("meta_account_id")
-        if path_key.endswith("/performance"):
-            desc = (
-                f"Meta ad account ID for {label} (digits only)."
-                if not mid
-                else f"Meta ad account ID for {label}: {mid}"
-            )
-            _patch_account_param(op, param_name="account_id", description=desc, enum_value=mid)
+        desc = (
+            f"Meta ad account ID for {label} (digits only)."
+            if not mid
+            else f"Meta ad account ID for {label}: {mid}"
+        )
+        _patch_account_param(op, param_name="account_id", description=desc, enum_value=mid)
+
+    if op := paths.get("/meta/accounts", {}).get("get"):
+        op["summary"] = f"List Meta ad accounts — use {label} only"
+        op["description"] = penn_only
 
     if op := paths.get("/meta/warehouse/sync", {}).get("post"):
         body_schema = op["requestBody"]["content"]["application/json"]["schema"]
@@ -271,7 +271,7 @@ def write_instructions(client_key: str, out_path: Path) -> None:
         "| Account | Ad account | Ad account | Customer ID | `*Accounts` |",
         "| Group/folder | **Campaign group** | *(none)* | *(none)* | `linkedinCampaignGroups*` only |",
         "| Campaign | Campaign | Campaign | Campaign | `linkedinPerformance`, `metaPerformance`, GAQL |",
-        "| Ad/creative | **Creative** (ad) | **Ad set** | **Ad group** | `linkedinCreativesPerformance`; Meta ad set not exposed |",
+        "| Ad/creative | **Creative** (ad) | **Ad set** | **Ad group** | `linkedinCreativesPerformance`, `metaAdsetsPerformance` |",
         "",
         "**LinkedIn has no ad set.** Do not treat campaign groups or creatives as ad sets.",
         "**Never map Meta ad set to LinkedIn campaign group.** For LinkedIn group spend use "
@@ -285,6 +285,14 @@ def write_instructions(client_key: str, out_path: Path) -> None:
         "- Always join and aggregate by **`id`**, never by **`name`** (names can repeat across levels).",
         "- Do **not** sum campaign groups + campaigns + creatives — that double-counts.",
         "- Filter creatives to one campaign with optional `campaign_id` on `linkedinCreativesPerformance`.",
+        "",
+        "## Dashboard rules (Meta)",
+        "",
+        "- **Campaign dashboard** → `metaPerformance` only. Rows have `entity_level=campaign`.",
+        "- **Ad set dashboard** → `metaAdsetsPerformance` only (`entity_level=adset`).",
+        "- Always join and aggregate by **`id`**, never by **`name`**.",
+        "- Do **not** sum campaigns + ad sets — that double-counts.",
+        "- Filter ad sets to one campaign with optional `campaign_id` on `metaAdsetsPerformance`.",
         "",
         "## Platform rules",
         "",
@@ -300,7 +308,9 @@ def write_instructions(client_key: str, out_path: Path) -> None:
         "- When building dashboards, use `entity_level` and row `id` — never merge rows from different actions by name.",
         "",
         "### Meta (Facebook/Instagram ads)",
-        "- Use `metaAccounts`, then `metaPerformance` with Penn's account ID only.",
+        "- Use `metaAccounts`, then `metaPerformance` with Penn's account ID for **campaign**-level metrics only.",
+        "- For **ad sets** (below campaign): `metaAdsetsPerformance`. Optional `campaign_id` to filter.",
+        "- When building dashboards, use `entity_level` and row `id` — never merge rows from different actions by name.",
         "",
         "### GA4 / BigQuery",
         f"- For warehouse sync, always pass `\"client_key\": \"{ga4_key}\"` in `ga4WarehouseSync`.",

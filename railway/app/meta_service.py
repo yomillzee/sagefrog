@@ -14,6 +14,10 @@ _INSIGHT_FIELDS = (
     "spend,impressions,clicks,actions,action_values,"
     "campaign_id,campaign_name,date_start,date_stop"
 )
+_ADSET_INSIGHT_FIELDS = (
+    "spend,impressions,clicks,actions,action_values,"
+    "adset_id,adset_name,campaign_id,campaign_name,date_start,date_stop"
+)
 _ACCOUNT_STATUS = {
     1: "ACTIVE",
     2: "DISABLED",
@@ -352,6 +356,7 @@ def account_performance(
         campaigns_out.append(
             {
                 "id": str(row.get("campaign_id") or ""),
+                "entity_level": "campaign",
                 "name": row.get("campaign_name") or "",
                 "status": "",
                 **parsed,
@@ -362,6 +367,7 @@ def account_performance(
 
     result = {
         "account_id": account_id_clean,
+        "entity_level": "account",
         "date_range": {
             "start": start.isoformat(),
             "end": end.isoformat(),
@@ -390,3 +396,83 @@ def account_performance(
         result["warehouse"] = {"stored": False, "error": str(exc)[:500]}
 
     return result
+
+
+def adsets_performance(
+    account_id: str,
+    *,
+    date_range: str = "LAST_30_DAYS",
+    campaign_id: str | None = None,
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+) -> dict[str, Any]:
+    """
+    Ad set-level metrics (sub-campaign). Use for ad set dashboards;
+    do not roll into campaign totals by name.
+    """
+    env = env or load_meta_env()
+    access_token = access_token or env.access_token
+    account_id_clean = _normalize_account_id(account_id)
+    if not account_id_clean:
+        raise ValueError("account_id is required")
+
+    start, end, preset = resolve_date_range(date_range)
+    filter_campaign = str(campaign_id or "").strip()
+
+    params: dict[str, Any] = {
+        "fields": _ADSET_INSIGHT_FIELDS,
+        "time_range": _time_range(start, end),
+        "level": "adset",
+        "limit": 500,
+    }
+    if filter_campaign:
+        params["filtering"] = json.dumps(
+            [{"field": "campaign.id", "operator": "EQUAL", "value": filter_campaign}]
+        )
+
+    adset_rows = _graph_get_all(
+        f"/{_act_id(account_id_clean)}/insights",
+        access_token=access_token,
+        params=params,
+        env=env,
+    )
+
+    adsets_out: list[dict[str, Any]] = []
+    for row in adset_rows:
+        parsed = _parse_insight_row(row)
+        cid = str(row.get("campaign_id") or "")
+        if filter_campaign and cid != filter_campaign:
+            continue
+        adsets_out.append(
+            {
+                "id": str(row.get("adset_id") or ""),
+                "entity_level": "adset",
+                "name": row.get("adset_name") or "",
+                "status": "",
+                "campaign_id": cid,
+                "campaign_name": row.get("campaign_name") or "",
+                **parsed,
+            }
+        )
+    adsets_out.sort(key=lambda item: item.get("spend", 0), reverse=True)
+
+    totals = {
+        "spend": sum(a["spend"] for a in adsets_out),
+        "clicks": sum(a["clicks"] for a in adsets_out),
+        "impressions": sum(a["impressions"] for a in adsets_out),
+        "conversions": sum(a["conversions"] for a in adsets_out),
+        "conversion_value": sum(a["conversion_value"] for a in adsets_out),
+        "adset_count": len(adsets_out),
+    }
+
+    return {
+        "account_id": account_id_clean,
+        "entity_level": "account",
+        "date_range": {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "preset": preset,
+        },
+        "totals": totals,
+        "adsets": adsets_out,
+    }
