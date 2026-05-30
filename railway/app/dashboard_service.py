@@ -17,6 +17,11 @@ import meta_service
 import warehouse
 from dates_util import resolve_date_range
 from penn_config import PennDashboardConfig, load_penn_config
+from penn_business_lines import (
+    build_business_line_campaigns,
+    business_line_catalog,
+    platform_catalog,
+)
 
 
 def configured_dashboard_secret() -> str | None:
@@ -273,6 +278,7 @@ def refresh_penn(*, date_range: str = "LAST_30_DAYS") -> dict[str, Any]:
             payload["platform_totals"]["meta"] = meta_totals
 
     payload["breakdowns"] = breakdowns
+    payload["business_line_campaigns"] = build_business_line_campaigns(breakdowns)
 
     if cfg.ga4_client_key:
         try:
@@ -656,6 +662,13 @@ def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+def _business_line_campaigns_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    stored = snapshot.get("business_line_campaigns")
+    if stored:
+        return stored
+    return build_business_line_campaigns(_breakdowns_from_snapshot(snapshot))
+
+
 def _breakdowns_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     breakdowns = snapshot.get("breakdowns")
     if breakdowns:
@@ -720,6 +733,10 @@ def render_penn_html(
     aggregated = snapshot.get("aggregated_paid_media") or _aggregated_paid_media(totals)
     breakdown_html = _platform_breakdown_html(breakdowns)
     breakdowns_json = _json_for_html_script(breakdowns)
+    bl_campaigns = _business_line_campaigns_from_snapshot(snapshot)
+    bl_campaigns_json = _json_for_html_script(bl_campaigns)
+    bl_catalog_json = _json_for_html_script(business_line_catalog())
+    platform_catalog_json = _json_for_html_script(platform_catalog())
     ga4_note = "Sessions / page views / conversions (no ad spend)"
 
     return f"""<!DOCTYPE html>
@@ -942,6 +959,121 @@ def render_penn_html(
     .refresh-btn:hover:not(:disabled) {{ filter: brightness(1.08); }}
     .refresh-btn:disabled {{ opacity: 0.45; cursor: not-allowed; background: #94a3b8; border-color: #94a3b8; }}
     .notice {{ font-size: 0.86rem; color: var(--muted); }}
+
+    .dash-tabs {{
+      display: flex;
+      gap: 4px;
+      margin-bottom: 20px;
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 0;
+    }}
+    .dash-tab {{
+      appearance: none;
+      border: none;
+      background: transparent;
+      padding: 12px 20px;
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      border-radius: 8px 8px 0 0;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
+    }}
+    .dash-tab:hover {{ color: var(--text); background: rgba(255,255,255,0.5); }}
+    .dash-tab.active {{
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      background: var(--panel);
+    }}
+    .tab-panel {{ display: none; }}
+    .tab-panel.active {{ display: block; }}
+
+    .filter-panel {{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-top: 3px solid #2e7d32;
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow-sm);
+    }}
+    .filter-group {{ margin-bottom: 14px; }}
+    .filter-group:last-child {{ margin-bottom: 0; }}
+    .filter-label {{
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }}
+    .filter-chips {{ display: flex; flex-wrap: wrap; gap: 8px; }}
+    .filter-chip {{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1.5px solid var(--border);
+      background: #fff;
+      font-size: 0.84rem;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.12s, border-color 0.12s;
+    }}
+    .filter-chip input {{ accent-color: var(--accent); cursor: pointer; }}
+    .filter-chip.checked {{
+      background: #eef4fb;
+      border-color: var(--accent);
+      font-weight: 600;
+    }}
+    .filter-chip.chip-google.checked {{ border-color: #4285f4; background: #eef4ff; }}
+    .filter-chip.chip-meta.checked {{ border-color: #1877f2; background: #eef3fc; }}
+    .filter-chip.chip-linkedin.checked {{ border-color: #e67e22; background: #fef6ee; }}
+    .filter-status {{
+      margin-top: 14px;
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-align: right;
+    }}
+    .bl-summary {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }}
+    .bl-stat {{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      box-shadow: var(--shadow-sm);
+    }}
+    .bl-stat-val {{ font-size: 1.35rem; font-weight: 700; }}
+    .bl-stat-lbl {{ font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-top: 4px; }}
+    .platform-pill {{
+      display: inline-block;
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+    }}
+    .platform-pill.google {{ background: #eef4ff; color: #4285f4; }}
+    .platform-pill.meta {{ background: #eef3fc; color: #1877f2; }}
+    .platform-pill.linkedin {{ background: #fef6ee; color: #e67e22; }}
+    .bl-tag {{
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--muted);
+      background: #f0f4f8;
+      padding: 2px 8px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }}
   </style>
 </head>
 <body>
@@ -960,26 +1092,78 @@ def render_penn_html(
     <div class="wrap">
       {error_html}
 
-      {_aggregated_card(aggregated)}
+      <nav class="dash-tabs" role="tablist">
+        <button type="button" class="dash-tab active" data-tab="platform" role="tab" aria-selected="true">By platform</button>
+        <button type="button" class="dash-tab" data-tab="business-line" role="tab" aria-selected="false">By business line</button>
+      </nav>
 
-      <div class="cards">
-        {_summary_card("Google Ads", totals.get("google"))}
-        {_summary_card("LinkedIn", totals.get("linkedin"), note="Account total · expand groups inline")}
-        {_summary_card("Meta", totals.get("meta"), note="Account total · expand campaigns inline")}
-        {_summary_card("GA4 (site)", totals.get("ga4"), note=ga4_note)}
+      <div id="tab-platform" class="tab-panel active" role="tabpanel">
+        {_aggregated_card(aggregated)}
+
+        <div class="cards">
+          {_summary_card("Google Ads", totals.get("google"))}
+          {_summary_card("LinkedIn", totals.get("linkedin"), note="Account total · expand groups inline")}
+          {_summary_card("Meta", totals.get("meta"), note="Account total · expand campaigns inline")}
+          {_summary_card("GA4 (site)", totals.get("ga4"), note=ga4_note)}
+        </div>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Daily ad spend (account level)</h2></div>
+          <p class="table-note">One line per platform per day from warehouse — not campaign/ad set breakdown.</p>
+          <canvas id="spendChart"></canvas>
+        </section>
+
+        {breakdown_html}
       </div>
 
-      <section class="panel">
-        <div class="panel-head"><h2>Daily ad spend (account level)</h2></div>
-        <p class="table-note">One line per platform per day from warehouse — not campaign/ad set breakdown.</p>
-        <canvas id="spendChart"></canvas>
-      </section>
+      <div id="tab-business-line" class="tab-panel" role="tabpanel">
+        <section class="filter-panel">
+          <div class="filter-group">
+            <div class="filter-label">Channel</div>
+            <div class="filter-chips" id="channelFilters"></div>
+          </div>
+          <div class="filter-group">
+            <div class="filter-label">Business line</div>
+            <div class="filter-chips" id="businessLineFilters"></div>
+          </div>
+          <div class="filter-status" id="filterStatus"></div>
+        </section>
 
-      {breakdown_html}
+        <div class="bl-summary" id="blSummary"></div>
+
+        <section class="panel platform-panel">
+          <div class="panel-head">
+            <h2>Campaign performance</h2>
+            <span class="badge" id="blRowCount">0 rows</span>
+          </div>
+          <p class="table-note">Campaigns grouped by business line from campaign naming. Select channels and lines above to filter.</p>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Platform</th>
+                  <th>Business line</th>
+                  <th>Campaign</th>
+                  <th>Spend</th>
+                  <th>Clicks</th>
+                  <th>Impressions</th>
+                  <th>CTR</th>
+                  <th>Conv.</th>
+                  <th>CPC</th>
+                </tr>
+              </thead>
+              <tbody id="blTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </div>
   </div>
   <script type="application/json" id="chart-data">{chart_json}</script>
   <script type="application/json" id="breakdowns-data">{breakdowns_json}</script>
+  <script type="application/json" id="bl-campaigns-data">{bl_campaigns_json}</script>
+  <script type="application/json" id="bl-catalog-data">{bl_catalog_json}</script>
+  <script type="application/json" id="platform-catalog-data">{platform_catalog_json}</script>
   <script>
     function readJson(id, fallback) {{
       const el = document.getElementById(id);
@@ -994,6 +1178,159 @@ def render_penn_html(
 
     const chartPayload = readJson('chart-data', {{ labels: [], datasets: [] }});
     const breakdowns = readJson('breakdowns-data', {{}});
+    const blCampaigns = readJson('bl-campaigns-data', []);
+    const blCatalog = readJson('bl-catalog-data', []);
+    const platformCatalog = readJson('platform-catalog-data', []);
+
+    const fmtMoney = n => '$' + Number(n || 0).toLocaleString(undefined, {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
+    const fmtInt = n => Number(n || 0).toLocaleString();
+    const fmtPct = (n, d) => d ? (100 * n / d).toFixed(2) + '%' : '—';
+    const escHtml = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+
+    document.querySelectorAll('.dash-tab').forEach(btn => {{
+      btn.addEventListener('click', () => {{
+        const tab = btn.dataset.tab;
+        document.querySelectorAll('.dash-tab').forEach(b => {{
+          const on = b.dataset.tab === tab;
+          b.classList.toggle('active', on);
+          b.setAttribute('aria-selected', on ? 'true' : 'false');
+        }});
+        document.querySelectorAll('.tab-panel').forEach(p => {{
+          p.classList.toggle('active', p.id === 'tab-' + tab);
+        }});
+      }});
+    }});
+
+    const channelState = new Set(platformCatalog.map(p => p.id));
+    const blState = new Set(blCatalog.map(b => b.id));
+    const ALL_CHANNELS = '__all_channels__';
+    const ALL_BL = '__all_bl__';
+
+    function syncAllChip(group, allId, state, catalog) {{
+      const allOn = catalog.every(item => state.has(item.id));
+      return allOn;
+    }}
+
+    function renderFilterChips() {{
+      const chWrap = document.getElementById('channelFilters');
+      const blWrap = document.getElementById('businessLineFilters');
+      if (!chWrap || !blWrap) return;
+
+      chWrap.innerHTML = '';
+      const allCh = document.createElement('label');
+      allCh.className = 'filter-chip' + (syncAllChip('channel', ALL_CHANNELS, channelState, platformCatalog) ? ' checked' : '');
+      allCh.innerHTML = `<input type="checkbox" data-group="channel" data-all="1" ${{syncAllChip('channel', ALL_CHANNELS, channelState, platformCatalog) ? 'checked' : ''}}> All Channels`;
+      chWrap.appendChild(allCh);
+      for (const p of platformCatalog) {{
+        const chip = document.createElement('label');
+        const on = channelState.has(p.id);
+        chip.className = `filter-chip chip-${{p.id}}${{on ? ' checked' : ''}}`;
+        chip.innerHTML = `<input type="checkbox" data-group="channel" data-id="${{p.id}}" ${{on ? 'checked' : ''}}> ${{escHtml(p.label)}}`;
+        chWrap.appendChild(chip);
+      }}
+
+      blWrap.innerHTML = '';
+      const allBl = document.createElement('label');
+      allBl.className = 'filter-chip' + (syncAllChip('bl', ALL_BL, blState, blCatalog) ? ' checked' : '');
+      allBl.innerHTML = `<input type="checkbox" data-group="bl" data-all="1" ${{syncAllChip('bl', ALL_BL, blState, blCatalog) ? 'checked' : ''}}> All Business Lines`;
+      blWrap.appendChild(allBl);
+      for (const b of blCatalog) {{
+        const chip = document.createElement('label');
+        const on = blState.has(b.id);
+        chip.className = 'filter-chip' + (on ? ' checked' : '');
+        chip.innerHTML = `<input type="checkbox" data-group="bl" data-id="${{b.id}}" ${{on ? 'checked' : ''}}> ${{escHtml(b.label)}}`;
+        blWrap.appendChild(chip);
+      }}
+    }}
+
+    function onFilterChange(e) {{
+      const input = e.target;
+      if (!input.matches('input[type=checkbox]')) return;
+      const group = input.dataset.group;
+      const isAll = input.dataset.all === '1';
+      const id = input.dataset.id;
+      const state = group === 'channel' ? channelState : blState;
+      const catalog = group === 'channel' ? platformCatalog : blCatalog;
+
+      if (isAll) {{
+        if (input.checked) {{
+          catalog.forEach(item => state.add(item.id));
+        }} else {{
+          state.clear();
+        }}
+      }} else if (input.checked) {{
+        state.add(id);
+      }} else {{
+        state.delete(id);
+      }}
+
+      if (state.size === 0) {{
+        catalog.forEach(item => state.add(item.id));
+      }}
+
+      renderFilterChips();
+      applyBlView();
+    }}
+
+    function applyBlView() {{
+      const filtered = blCampaigns.filter(r =>
+        channelState.has(r.platform) && blState.has(r.business_line)
+      );
+      const spend = filtered.reduce((s, r) => s + (r.spend || 0), 0);
+      const clicks = filtered.reduce((s, r) => s + (r.clicks || 0), 0);
+      const impressions = filtered.reduce((s, r) => s + (r.impressions || 0), 0);
+      const conv = filtered.reduce((s, r) => s + (r.conversions || 0), 0);
+      const cpc = clicks ? spend / clicks : 0;
+
+      const summary = document.getElementById('blSummary');
+      if (summary) {{
+        summary.innerHTML = `
+          <div class="bl-stat"><div class="bl-stat-val">${{fmtMoney(spend)}}</div><div class="bl-stat-lbl">Spend</div></div>
+          <div class="bl-stat"><div class="bl-stat-val">${{fmtInt(clicks)}}</div><div class="bl-stat-lbl">Clicks</div></div>
+          <div class="bl-stat"><div class="bl-stat-val">${{fmtInt(impressions)}}</div><div class="bl-stat-lbl">Impressions</div></div>
+          <div class="bl-stat"><div class="bl-stat-val">${{fmtInt(conv)}}</div><div class="bl-stat-lbl">Conversions</div></div>
+          <div class="bl-stat"><div class="bl-stat-val">${{clicks ? fmtMoney(cpc) : '—'}}</div><div class="bl-stat-lbl">CPC</div></div>`;
+      }}
+
+      const tbody = document.getElementById('blTableBody');
+      if (tbody) {{
+        if (!filtered.length) {{
+          tbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">No campaigns match these filters.</td></tr>';
+        }} else {{
+          tbody.innerHTML = filtered.map(r => {{
+            const cpcVal = r.clicks ? fmtMoney(r.spend / r.clicks) : '—';
+            return `<tr>
+              <td><span class="platform-pill ${{escHtml(r.platform)}}">${{escHtml(r.platform_label)}}</span></td>
+              <td><span class="bl-tag">${{escHtml(r.business_line_label)}}</span></td>
+              <td class="name">${{escHtml(r.name)}}</td>
+              <td class="num">${{fmtMoney(r.spend)}}</td>
+              <td class="num">${{fmtInt(r.clicks)}}</td>
+              <td class="num">${{fmtInt(r.impressions)}}</td>
+              <td class="num">${{fmtPct(r.clicks, r.impressions)}}</td>
+              <td class="num">${{fmtInt(r.conversions)}}</td>
+              <td class="num">${{cpcVal}}</td>
+            </tr>`;
+          }}).join('');
+        }}
+      }}
+
+      const rowCount = document.getElementById('blRowCount');
+      if (rowCount) rowCount.textContent = filtered.length + ' row' + (filtered.length === 1 ? '' : 's');
+
+      const status = document.getElementById('filterStatus');
+      if (status) {{
+        const chLabels = platformCatalog.filter(p => channelState.has(p.id)).map(p => p.label);
+        const blLabels = blCatalog.filter(b => blState.has(b.id)).map(b => b.label);
+        const chText = chLabels.length === platformCatalog.length ? 'all channels' : chLabels.join(', ');
+        const blText = blLabels.length === blCatalog.length ? 'all business lines' : blLabels.join(', ');
+        status.textContent = `Showing ${{blText}} on ${{chText}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}`;
+      }}
+    }}
+
+    document.getElementById('channelFilters')?.addEventListener('change', onFilterChange);
+    document.getElementById('businessLineFilters')?.addEventListener('change', onFilterChange);
+    renderFilterChips();
+    applyBlView();
 
     const DRILL_MAP = {{
       'linkedin:campaign_group': {{ childLevel: 'campaign', childLabel: 'Campaign' }},
@@ -1008,11 +1345,6 @@ def render_penn_html(
       adset: 'Ad set',
       ad: 'Ad',
     }};
-
-    const fmtMoney = n => '$' + Number(n || 0).toLocaleString(undefined, {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
-    const fmtInt = n => Number(n || 0).toLocaleString();
-    const fmtPct = (n, d) => d ? (100 * n / d).toFixed(2) + '%' : '—';
-    const escHtml = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 
     function childRows(platform, level, parentId) {{
       const rule = DRILL_MAP[platform + ':' + level];
