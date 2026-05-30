@@ -28,6 +28,10 @@ PLATFORM_LABELS: dict[str, str] = {
 }
 
 
+def platform_catalog() -> list[dict[str, str]]:
+    return [{"id": pid, "label": label} for pid, label in PLATFORM_LABELS.items()]
+
+
 def business_line_catalog() -> list[dict[str, str]]:
     lines = [{"id": bid, "label": label} for bid, label, _ in BUSINESS_LINE_RULES]
     lines.append({"id": "other", "label": "Other"})
