@@ -947,6 +947,25 @@ def render_penn_html(
       position: sticky;
       top: 0;
     }}
+    .data-table th.sortable {{
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+      transition: color 0.12s;
+    }}
+    .data-table th.sortable:hover {{ color: var(--accent); }}
+    .data-table th.sortable.sort-active {{ color: var(--accent); }}
+    .sort-icon {{
+      display: inline-block;
+      width: 0.9em;
+      margin-left: 2px;
+      opacity: 0.35;
+      font-size: 0.85em;
+    }}
+    .data-table th.sortable.sort-active .sort-icon {{ opacity: 1; }}
+    .data-table th.sort-active[data-sort-dir="asc"] .sort-icon::before {{ content: '↑'; }}
+    .data-table th.sort-active[data-sort-dir="desc"] .sort-icon::before {{ content: '↓'; }}
+    .data-table th.sortable:not(.sort-active) .sort-icon::before {{ content: '↕'; }}
     .data-table tbody tr:last-child td {{ border-bottom: none; }}
     td.num {{ text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }}
     td.name {{ max-width: 340px; font-weight: 500; }}
@@ -1446,18 +1465,18 @@ def render_penn_html(
               </div>
               <p class="table-note">Select business lines and channels in the sidebar. Nothing is selected by default — check items to populate the table.</p>
               <div class="table-wrap">
-                <table class="data-table">
+                <table class="data-table" id="blTable">
                   <thead>
                     <tr>
-                      <th>Platform</th>
-                      <th>Business line</th>
-                      <th>Campaign</th>
-                      <th>Spend</th>
-                      <th>Clicks</th>
-                      <th>Impressions</th>
-                      <th>CTR</th>
-                      <th>Conv.</th>
-                      <th>CPC</th>
+                      <th class="sortable" data-sort="platform" scope="col" aria-sort="none">Platform<span class="sort-icon" aria-hidden="true"></span></th>
+                      <th class="sortable" data-sort="business_line" scope="col" aria-sort="none">Business line<span class="sort-icon" aria-hidden="true"></span></th>
+                      <th class="sortable" data-sort="name" scope="col" aria-sort="none">Campaign<span class="sort-icon" aria-hidden="true"></span></th>
+                      <th class="sortable" data-sort="spend" scope="col" aria-sort="none">Spend<span class="sort-icon" aria-hidden="true"></span></th>
+                      <th class="sortable" data-sort="clicks" scope="col" aria-sort="none">Clicks<span class="sort-icon" aria-hidden="true"></span></th>
+                      <th class="sortable" data-sort="impressions" scope="col" aria-sort="none">Impressions<span class="sort-icon" aria-hidden="true"></span></th>
+                      <th class="sortable" data-sort="ctr" scope="col" aria-sort="none">CTR<span class="sort-icon" aria-hidden="true"></span></th>
+                      <th class="sortable" data-sort="conversions" scope="col" aria-sort="none">Conv.<span class="sort-icon" aria-hidden="true"></span></th>
+                      <th class="sortable" data-sort="cpc" scope="col" aria-sort="none">CPC<span class="sort-icon" aria-hidden="true"></span></th>
                     </tr>
                   </thead>
                   <tbody id="blTableBody"></tbody>
@@ -1521,6 +1540,73 @@ def render_penn_html(
 
     const channelState = new Set();
     const blState = new Set();
+    const blSort = {{ key: 'spend', dir: 'desc' }};
+
+    function blSortValue(r, key) {{
+      switch (key) {{
+        case 'platform':
+          return String(r.platform_label || r.platform || '').toLowerCase();
+        case 'business_line':
+          return String(r.business_line_label || '').toLowerCase();
+        case 'name':
+          return String(r.name || '').toLowerCase();
+        case 'spend':
+          return Number(r.spend || 0);
+        case 'clicks':
+          return Number(r.clicks || 0);
+        case 'impressions':
+          return Number(r.impressions || 0);
+        case 'ctr':
+          return r.impressions ? Number(r.clicks || 0) / Number(r.impressions) : 0;
+        case 'conversions':
+          return Number(r.conversions || 0);
+        case 'cpc':
+          return r.clicks ? Number(r.spend || 0) / Number(r.clicks) : 0;
+        default:
+          return 0;
+      }}
+    }}
+
+    function sortBlRows(rows) {{
+      const {{ key, dir }} = blSort;
+      const mul = dir === 'asc' ? 1 : -1;
+      const textKeys = new Set(['platform', 'business_line', 'name']);
+      return [...rows].sort((a, b) => {{
+        const av = blSortValue(a, key);
+        const bv = blSortValue(b, key);
+        if (textKeys.has(key)) {{
+          return mul * String(av).localeCompare(String(bv));
+        }}
+        return mul * (av - bv);
+      }});
+    }}
+
+    function updateBlSortHeaders() {{
+      document.querySelectorAll('#blTable thead th[data-sort]').forEach(th => {{
+        const active = th.dataset.sort === blSort.key;
+        th.classList.toggle('sort-active', active);
+        if (active) {{
+          th.dataset.sortDir = blSort.dir;
+          th.setAttribute('aria-sort', blSort.dir === 'asc' ? 'ascending' : 'descending');
+        }} else {{
+          delete th.dataset.sortDir;
+          th.setAttribute('aria-sort', 'none');
+        }}
+      }});
+    }}
+
+    function onBlSortClick(e) {{
+      const th = e.target.closest('#blTable thead th[data-sort]');
+      if (!th) return;
+      const key = th.dataset.sort;
+      if (blSort.key === key) {{
+        blSort.dir = blSort.dir === 'asc' ? 'desc' : 'asc';
+      }} else {{
+        blSort.key = key;
+        blSort.dir = (key === 'platform' || key === 'business_line' || key === 'name') ? 'asc' : 'desc';
+      }}
+      applyBlView();
+    }}
 
     function initCheckboxGroup(wrapId, catalog, state, group) {{
       const wrap = document.getElementById(wrapId);
@@ -1600,7 +1686,8 @@ def render_penn_html(
         }} else if (!filtered.length) {{
           tbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">No campaigns match — try other filters or enable $0 spend rows.</td></tr>';
         }} else {{
-          tbody.innerHTML = filtered.map(r => {{
+          const sorted = sortBlRows(filtered);
+          tbody.innerHTML = sorted.map(r => {{
             const cpcVal = r.clicks ? fmtMoney(r.spend / r.clicks) : '—';
             return `<tr>
               <td><span class="platform-pill ${{escHtml(r.platform)}}">${{escHtml(r.platform_label)}}</span></td>
@@ -1635,6 +1722,7 @@ def render_penn_html(
         const zeroNote = showZeroSpend ? ' · incl. $0 spend' : '';
         status.textContent = `${{blText}} · ${{chText}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}${{zeroNote}}`;
       }}
+      updateBlSortHeaders();
     }}
 
     initCheckboxGroup('channelFilters', platformCatalog, channelState, 'channel');
@@ -1642,6 +1730,7 @@ def render_penn_html(
     document.getElementById('channelFilters')?.addEventListener('change', onFilterChange);
     document.getElementById('blFilters')?.addEventListener('change', onFilterChange);
     document.getElementById('showZeroSpend')?.addEventListener('change', applyBlView);
+    document.querySelector('#blTable thead')?.addEventListener('click', onBlSortClick);
     document.getElementById('channelSelectAll')?.addEventListener('click', () =>
       setGroupSelection('channel', platformCatalog.map(p => p.id))
     );
