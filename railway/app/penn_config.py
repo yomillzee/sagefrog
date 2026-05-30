@@ -29,7 +29,7 @@ class PennDashboardConfig:
 # Penn Community Bank — used when PENN_DASHBOARD / PENN_* env vars are unset.
 _PENN_DEFAULTS = {
     "google_customer_id": "1549971930",
-    "linkedin_account_id": "507720820",
+    "linkedin_account_id": "508590994",
     "meta_account_id": "2581574002135957",
     "ga4_client_key": "penn",
 }
@@ -49,7 +49,7 @@ def load_penn_config() -> PennDashboardConfig:
     {
       "label": "Penn Community Bank",
       "google_customer_id": "1549971930",
-      "linkedin_account_id": "507720820",
+      "linkedin_account_id": "508590994",
       "meta_account_id": "2581574002135957",
       "ga4_client_key": "penn"
     }
