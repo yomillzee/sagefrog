@@ -370,13 +370,13 @@ def _drillable_table(
 ) -> str:
     rows = _rows_for_display(rows)
     level_badge = _entity_level_label(entity_level)
-    drillable = platform in ("linkedin", "meta") and entity_level in (
+    expandable = platform in ("linkedin", "meta") and entity_level in (
         "campaign_group",
         "campaign",
     )
     hint = drill_hint or (
-        "Click a row to compare child performance in the detail panel →"
-        if drillable
+        "Click ▸ to expand and compare child rows inline"
+        if expandable
         else ""
     )
     if not rows:
@@ -395,22 +395,28 @@ def _drillable_table(
         clicks = int(row.get("clicks") or 0)
         impressions = int(row.get("impressions") or 0)
         conv = float(row.get("conversions") or 0)
-        row_class = "drill-row" if drillable else ""
-        row_attrs = ""
-        if drillable:
-            row_attrs = (
-                f'data-platform="{_esc(platform)}" '
-                f'data-level="{_esc(entity_level)}" '
-                f'data-id="{_esc(row.get("id"))}" '
-                f'data-name="{_esc(row.get("name"))}" '
-                f'tabindex="0" role="button" '
-                f'aria-label="View breakdown for {_esc(row.get("name"))}"'
-            )
-        chevron = '<td class="chevron">›</td>' if drillable else ""
         cpc = _fmt_money(spend / clicks) if clicks else "—"
+        expand_class = " tree-expandable" if expandable else ""
+        chevron = (
+            '<span class="tree-chevron" aria-hidden="true">▸</span>'
+            if expandable
+            else '<span class="tree-chevron leaf"></span>'
+        )
+        row_attrs = (
+            f'data-platform="{_esc(platform)}" '
+            f'data-level="{_esc(entity_level)}" '
+            f'data-id="{_esc(row.get("id"))}" '
+            f'data-depth="0"'
+        )
+        if expandable:
+            row_attrs += (
+                f' tabindex="0" role="button" '
+                f'aria-expanded="false" '
+                f'aria-label="Expand {_esc(row.get("name"))}"'
+            )
         rows_html.append(
-            f"""<tr class="{row_class}" {row_attrs}>
-              {chevron}
+            f"""<tr class="tree-row tree-depth-0{expand_class}" {row_attrs}>
+              <td class="chevron-col">{chevron}</td>
               <td class="name">{_esc(row.get("name"))}</td>
               <td class="num">{_fmt_money(spend)}</td>
               <td class="num">{_fmt_int(clicks)}</td>
@@ -420,7 +426,7 @@ def _drillable_table(
               <td class="num">{cpc}</td>
             </tr>"""
         )
-    chevron_th = '<th class="chevron-col"></th>' if drillable else ""
+    chevron_th = '<th class="chevron-col"></th>'
     note_html = f'<p class="table-note">{_esc(note)}</p>' if note else ""
     hint_html = f'<p class="drill-hint">{_esc(hint)}</p>' if hint else ""
     return f"""
@@ -445,7 +451,7 @@ def _drillable_table(
               <th>CPC</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody class="tree-table" data-platform="{_esc(platform)}">
             {''.join(rows_html)}
           </tbody>
         </table>
@@ -615,8 +621,8 @@ def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
                 groups,
                 entity_level="campaign_group",
                 note=(
-                    "Top-level groups from the Marketing API (matches GPT linkedinCampaignGroupsPerformance). "
-                    "Click a group to compare campaigns inside it."
+                    "Top-level groups from the Marketing API. "
+                    "Click ▸ to expand campaigns and creatives inline."
                 ),
             )
         )
@@ -644,7 +650,7 @@ def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
                 f"Same {len(meta_campaigns)} campaigns as metaPerformance in GPT. "
                 f"Drill down: {meta_adset_count} ad sets → {meta_ad_count} ads with creative previews."
             ),
-            drill_hint="Click a campaign → ad sets → individual ads with thumbnails →",
+            drill_hint="Click ▸ on a campaign to expand ad sets, then ads with thumbnails",
         )
     )
     return "\n".join(parts)
@@ -769,15 +775,9 @@ def render_penn_html(
     }}
     .hero .refresh-btn:hover:not(:disabled) {{ background: rgba(255,255,255,0.25); }}
     .layout {{
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 0;
       max-width: 1280px;
       margin: 0 auto;
       padding: 0 24px 48px;
-    }}
-    @media (min-width: 1100px) {{
-      .layout.has-drill {{ grid-template-columns: 1fr 380px; gap: 24px; align-items: start; }}
     }}
     .wrap {{ min-width: 0; }}
     .cards {{
@@ -856,10 +856,56 @@ def render_penn_html(
       color: var(--muted);
       font-size: 1.1rem;
     }}
-    tr.drill-row {{ cursor: pointer; transition: background 0.15s; }}
-    tr.drill-row:hover {{ background: #f0f5fb; }}
-    tr.drill-row.selected {{ background: #e3eef9; outline: 2px solid var(--accent); outline-offset: -2px; }}
-    tr.drill-row:focus-visible {{ outline: 2px solid var(--accent); outline-offset: -2px; }}
+    tr.tree-row {{ transition: background 0.12s; }}
+    tr.tree-expandable {{ cursor: pointer; }}
+    tr.tree-expandable:hover {{ background: #f0f5fb; }}
+    tr.tree-row.expanded {{ background: #e8f0fa; }}
+    tr.tree-row.expanded > td {{ border-bottom-color: #c5d9ef; }}
+    tr.tree-empty {{ background: #fafbfc; }}
+    tr.tree-empty td {{ font-size: 0.84rem; font-style: italic; }}
+    tr.tree-depth-1 {{ background: #fafcfe; }}
+    tr.tree-depth-2 {{ background: #f5f9fd; }}
+    tr.tree-depth-3 {{ background: #f0f6fc; }}
+    .tree-chevron {{
+      display: inline-block;
+      width: 1em;
+      color: var(--accent);
+      font-size: 0.85rem;
+      font-weight: 700;
+      transition: transform 0.15s;
+    }}
+    .tree-chevron.leaf {{ visibility: hidden; }}
+    tr.expanded .tree-chevron {{ transform: rotate(90deg); }}
+    td.name {{ max-width: 420px; }}
+    .name-inner {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }}
+    .ad-thumb {{
+      width: 40px;
+      height: 40px;
+      object-fit: cover;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+      background: #f0f4f8;
+    }}
+    .ad-creative-sub {{
+      display: block;
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 2px;
+    }}
+    .entity-tag {{
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--muted);
+      margin-right: 6px;
+    }}
     .drill-hint {{
       margin: 0 0 12px;
       font-size: 0.82rem;
@@ -896,154 +942,6 @@ def render_penn_html(
     .refresh-btn:hover:not(:disabled) {{ filter: brightness(1.08); }}
     .refresh-btn:disabled {{ opacity: 0.45; cursor: not-allowed; background: #94a3b8; border-color: #94a3b8; }}
     .notice {{ font-size: 0.86rem; color: var(--muted); }}
-
-    .drill-panel {{
-      position: fixed;
-      inset: 0;
-      z-index: 100;
-      background: rgba(10, 37, 64, 0.4);
-      display: flex;
-      align-items: flex-end;
-      justify-content: center;
-      opacity: 0;
-      visibility: hidden;
-      pointer-events: none;
-      transition: opacity 0.2s, visibility 0.2s;
-    }}
-    .drill-panel.open {{
-      opacity: 1;
-      visibility: visible;
-      pointer-events: auto;
-    }}
-    .drill-sheet {{
-      width: 100%;
-      max-width: 720px;
-      max-height: min(88vh, 820px);
-      min-height: 220px;
-      background: var(--panel);
-      box-shadow: 0 -10px 40px rgba(10, 37, 64, 0.18);
-      display: flex;
-      flex-direction: column;
-      border-radius: 16px 16px 0 0;
-      transform: translateY(105%);
-      transition: transform 0.26s cubic-bezier(0.4, 0, 0.2, 1);
-    }}
-    .drill-panel.open .drill-sheet {{ transform: translateY(0); }}
-    @media (min-width: 1100px) {{
-      .drill-panel {{
-        position: sticky;
-        top: 24px;
-        inset: unset;
-        background: none;
-        align-items: stretch;
-        justify-content: stretch;
-        opacity: 1;
-        visibility: visible;
-        pointer-events: auto;
-        height: fit-content;
-        max-height: calc(100vh - 48px);
-      }}
-      .drill-panel:not(.open) {{ display: none; }}
-      .layout.has-drill .drill-panel.open {{ display: flex; }}
-      .drill-sheet {{
-        width: 100%;
-        max-width: none;
-        height: auto;
-        min-height: 280px;
-        max-height: calc(100vh - 48px);
-        border-radius: var(--radius);
-        border: 1px solid var(--border);
-        box-shadow: var(--shadow);
-        transform: none;
-      }}
-    }}
-    .drill-header {{
-      padding: 18px 20px 14px;
-      border-bottom: 1px solid var(--border);
-      flex-shrink: 0;
-    }}
-    .drill-header-top {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      margin-bottom: 6px;
-    }}
-    .drill-header h3 {{ margin: 0; font-size: 1rem; font-weight: 650; line-height: 1.35; }}
-    .drill-parent {{ font-size: 0.82rem; color: var(--muted); }}
-    .drill-actions {{ display: flex; gap: 6px; }}
-    .drill-btn {{
-      background: #f0f4f8;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 6px 10px;
-      font-size: 0.8rem;
-      cursor: pointer;
-      color: var(--text);
-    }}
-    .drill-btn:hover {{ background: #e3eaf2; }}
-    .drill-btn.icon {{ padding: 6px 11px; font-size: 1.1rem; line-height: 1; }}
-    .drill-body {{ overflow: auto; flex: 1; padding: 0 12px 16px; }}
-    .drill-empty {{ padding: 32px 20px; text-align: center; color: var(--muted); font-size: 0.9rem; }}
-    .drill-summary {{
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
-      padding: 14px 8px 8px;
-    }}
-    .drill-stat {{
-      background: #f8fafc;
-      border-radius: 10px;
-      padding: 10px 12px;
-      text-align: center;
-    }}
-    .drill-stat-val {{ font-size: 1.1rem; font-weight: 700; display: block; }}
-    .drill-stat-lbl {{ font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }}
-    .drill-row-nested {{ cursor: pointer; }}
-    .drill-row-nested:hover {{ background: #f0f5fb; }}
-    .share-bar {{
-      height: 4px;
-      background: #e8edf3;
-      border-radius: 2px;
-      margin-top: 4px;
-      overflow: hidden;
-    }}
-    .share-bar-fill {{ height: 100%; background: var(--accent); border-radius: 2px; }}
-    .ad-thumb {{
-      width: 44px;
-      height: 44px;
-      object-fit: cover;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      display: block;
-      background: #f0f4f8;
-    }}
-    .ad-thumb-placeholder {{
-      width: 44px;
-      height: 44px;
-      border-radius: 8px;
-      background: linear-gradient(135deg, #eef1f5, #e2e8f0);
-      display: block;
-      flex-shrink: 0;
-    }}
-    .ad-name-cell {{
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      min-width: 0;
-    }}
-    .ad-name-text {{ min-width: 0; }}
-    .ad-creative-sub {{
-      display: block;
-      font-size: 0.72rem;
-      color: var(--muted);
-      margin-top: 2px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 200px;
-    }}
-    td.creative-col {{ width: 52px; padding-right: 0; }}
   </style>
 </head>
 <body>
@@ -1058,7 +956,7 @@ def render_penn_html(
     </div>
   </div>
 
-  <div class="layout" id="layout">
+  <div class="layout">
     <div class="wrap">
       {error_html}
 
@@ -1066,8 +964,8 @@ def render_penn_html(
 
       <div class="cards">
         {_summary_card("Google Ads", totals.get("google"))}
-        {_summary_card("LinkedIn", totals.get("linkedin"), note="Account total · click a group to drill down")}
-        {_summary_card("Meta", totals.get("meta"), note="Account total · campaign → ad set → ad drill-down")}
+        {_summary_card("LinkedIn", totals.get("linkedin"), note="Account total · expand groups inline")}
+        {_summary_card("Meta", totals.get("meta"), note="Account total · expand campaigns inline")}
         {_summary_card("GA4 (site)", totals.get("ga4"), note=ga4_note)}
       </div>
 
@@ -1079,42 +977,6 @@ def render_penn_html(
 
       {breakdown_html}
     </div>
-
-    <aside id="drillPanel" class="drill-panel" aria-hidden="true">
-      <div class="drill-sheet">
-        <div class="drill-header">
-          <div class="drill-header-top">
-            <div class="drill-actions">
-              <button type="button" class="drill-btn" id="drillBack" hidden>← Back</button>
-            </div>
-            <div class="drill-actions">
-              <button type="button" class="drill-btn icon" id="drillClose" aria-label="Close">×</button>
-            </div>
-          </div>
-          <h3 id="drillTitle">Breakdown</h3>
-          <div class="drill-parent" id="drillParent"></div>
-        </div>
-        <div class="drill-summary" id="drillSummary"></div>
-        <div class="drill-body">
-          <div class="table-wrap">
-            <table class="data-table" id="drillTable">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Spend</th>
-                  <th>Clicks</th>
-                  <th>CTR</th>
-                  <th>Conv.</th>
-                  <th>Share</th>
-                </tr>
-              </thead>
-              <tbody id="drillTbody"></tbody>
-            </table>
-          </div>
-          <div class="drill-empty" id="drillEmpty" hidden>No child rows for this selection.</div>
-        </div>
-      </div>
-    </aside>
   </div>
   <script type="application/json" id="chart-data">{chart_json}</script>
   <script type="application/json" id="breakdowns-data">{breakdowns_json}</script>
@@ -1134,30 +996,23 @@ def render_penn_html(
     const breakdowns = readJson('breakdowns-data', {{}});
 
     const DRILL_MAP = {{
-      'linkedin:campaign_group': {{ childLevel: 'campaign', childLabel: 'Campaigns' }},
-      'linkedin:campaign': {{ childLevel: 'creative', childLabel: 'Creatives / ads' }},
-      'meta:campaign': {{ childLevel: 'adset', childLabel: 'Ad sets' }},
-      'meta:adset': {{ childLevel: 'ad', childLabel: 'Ads' }},
+      'linkedin:campaign_group': {{ childLevel: 'campaign', childLabel: 'Campaign' }},
+      'linkedin:campaign': {{ childLevel: 'creative', childLabel: 'Creative' }},
+      'meta:campaign': {{ childLevel: 'adset', childLabel: 'Ad set' }},
+      'meta:adset': {{ childLevel: 'ad', childLabel: 'Ad' }},
+    }};
+    const LEVEL_LABELS = {{
+      campaign_group: 'Group',
+      campaign: 'Campaign',
+      creative: 'Creative',
+      adset: 'Ad set',
+      ad: 'Ad',
     }};
 
     const fmtMoney = n => '$' + Number(n || 0).toLocaleString(undefined, {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
     const fmtInt = n => Number(n || 0).toLocaleString();
     const fmtPct = (n, d) => d ? (100 * n / d).toFixed(2) + '%' : '—';
     const escHtml = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-
-    const drillPanel = document.getElementById('drillPanel');
-    const drillTitle = document.getElementById('drillTitle');
-    const drillParent = document.getElementById('drillParent');
-    const drillTbody = document.getElementById('drillTbody');
-    const drillEmpty = document.getElementById('drillEmpty');
-    const drillSummary = document.getElementById('drillSummary');
-    const drillBack = document.getElementById('drillBack');
-    const drillClose = document.getElementById('drillClose');
-    const drillTable = document.getElementById('drillTable');
-    const layout = document.getElementById('layout');
-
-    let drillStack = [];
-    let selectedRow = null;
 
     function childRows(platform, level, parentId) {{
       const rule = DRILL_MAP[platform + ':' + level];
@@ -1168,193 +1023,125 @@ def render_penn_html(
         .sort((a, b) => (b.spend || 0) - (a.spend || 0));
     }}
 
-    function renderDrillSummary(rows) {{
-      if (!drillSummary) return;
-      const spend = rows.reduce((s, r) => s + (r.spend || 0), 0);
-      const clicks = rows.reduce((s, r) => s + (r.clicks || 0), 0);
-      const conv = rows.reduce((s, r) => s + (r.conversions || 0), 0);
-      drillSummary.innerHTML = `
-        <div class="drill-stat"><span class="drill-stat-val">${{fmtMoney(spend)}}</span><span class="drill-stat-lbl">Spend</span></div>
-        <div class="drill-stat"><span class="drill-stat-val">${{fmtInt(clicks)}}</span><span class="drill-stat-lbl">Clicks</span></div>
-        <div class="drill-stat"><span class="drill-stat-val">${{fmtInt(conv)}}</span><span class="drill-stat-lbl">Conv.</span></div>`;
+    function isExpandable(platform, level) {{
+      return !!DRILL_MAP[platform + ':' + level];
     }}
 
-    function renderDrillTable(rows, platform, currentLevel) {{
-      const totalSpend = rows.reduce((s, r) => s + (r.spend || 0), 0) || 1;
-      const nestedRule = DRILL_MAP[platform + ':' + currentLevel];
-      const showCreative = currentLevel === 'ad';
-      const thead = document.querySelector('#drillTable thead tr');
-      if (thead) {{
-        thead.innerHTML = showCreative
-          ? '<th class="creative-col"></th><th>Name</th><th>Spend</th><th>Clicks</th><th>CTR</th><th>Conv.</th><th>Share</th>'
-          : '<th>Name</th><th>Spend</th><th>Clicks</th><th>CTR</th><th>Conv.</th><th>Share</th>';
-      }}
-      drillTbody.innerHTML = rows.map(r => {{
-        const share = 100 * (r.spend || 0) / totalSpend;
-        const canNest = nestedRule && childRows(platform, currentLevel, r.id).length > 0;
-        const safeName = escHtml(r.name);
-        const nestAttrs = canNest
-          ? `class="drill-row-nested" data-platform="${{platform}}" data-level="${{currentLevel}}" data-id="${{escHtml(r.id)}}" data-name="${{safeName}}" tabindex="0" role="button"`
-          : '';
+    function buildNameCell(r, level, depth) {{
+      const pad = 8 + depth * 20;
+      const tag = LEVEL_LABELS[level]
+        ? `<span class="entity-tag">${{escHtml(LEVEL_LABELS[level])}}</span>` : '';
+      let inner = `${{tag}}${{escHtml(r.name || '—')}}`;
+      if (level === 'ad') {{
         const thumbUrl = r.thumbnail_url || r.image_url || '';
-        const thumbHtml = thumbUrl
+        const thumb = thumbUrl
           ? `<img class="ad-thumb" src="${{escHtml(thumbUrl)}}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none'">`
-          : '<span class="ad-thumb-placeholder"></span>';
+          : '';
         const creativeSub = (r.creative_name && r.creative_name !== r.name)
           ? `<span class="ad-creative-sub">${{escHtml(r.creative_name)}}</span>` : '';
         const typeBadge = r.media_type
           ? `<span class="ad-creative-sub">${{escHtml(r.media_type)}}</span>` : '';
-        const nameCell = showCreative
-          ? `<td class="creative-col">${{thumbHtml}}</td><td class="name"><div class="ad-name-text">${{safeName || '—'}}${{creativeSub}}${{typeBadge}}</div></td>`
-          : `<td class="name">${{safeName || '—'}}${{canNest ? ' <span style="color:var(--muted);font-size:0.75rem">›</span>' : ''}}</td>`;
-        return `<tr ${{nestAttrs}}>
-          ${{nameCell}}
-          <td class="num">${{fmtMoney(r.spend)}}</td>
-          <td class="num">${{fmtInt(r.clicks)}}</td>
-          <td class="num">${{fmtPct(r.clicks, r.impressions)}}</td>
-          <td class="num">${{fmtInt(r.conversions)}}</td>
-          <td class="num"><div class="share-bar"><div class="share-bar-fill" style="width:${{Math.max(share, 2)}}%"></div></div>${{share.toFixed(0)}}%</td>
-        </tr>`;
-      }}).join('');
-      if (drillEmpty) {{
-        drillEmpty.hidden = rows.length > 0;
-        drillEmpty.textContent = rows.length
-          ? ''
-          : 'No child rows for this selection. Try Refresh now if you recently updated the dashboard.';
+        inner = `<div class="name-inner">${{thumb}}<span><span>${{tag}}${{escHtml(r.name || '—')}}</span>${{creativeSub}}${{typeBadge}}</span></div>`;
       }}
-      if (drillTable) drillTable.hidden = rows.length === 0;
-      renderDrillSummary(rows);
+      return `<td class="name" style="padding-left:${{pad}}px">${{inner}}</td>`;
     }}
 
-    function openDrillPanel() {{
-      if (!drillPanel) return;
-      drillPanel.classList.add('open');
-      drillPanel.setAttribute('aria-hidden', 'false');
-      if (layout) layout.classList.add('has-drill');
-    }}
-
-    function showDrillError(message) {{
-      openDrillPanel();
-      if (drillTitle) drillTitle.textContent = 'Breakdown error';
-      if (drillParent) drillParent.textContent = message;
-      if (drillTbody) drillTbody.innerHTML = '';
-      if (drillSummary) drillSummary.innerHTML = '';
-      if (drillEmpty) {{
-        drillEmpty.textContent = message;
-        drillEmpty.hidden = false;
+    function buildTreeRow(r, platform, level, depth) {{
+      const spend = r.spend || 0;
+      const clicks = r.clicks || 0;
+      const impressions = r.impressions || 0;
+      const conv = r.conversions || 0;
+      const cpc = clicks ? fmtMoney(spend / clicks) : '—';
+      const expandable = isExpandable(platform, level);
+      const chevron = expandable
+        ? '<span class="tree-chevron" aria-hidden="true">▸</span>'
+        : '<span class="tree-chevron leaf"></span>';
+      const tr = document.createElement('tr');
+      tr.className = `tree-row tree-depth-${{depth}}${{expandable ? ' tree-expandable' : ''}}`;
+      tr.dataset.platform = platform;
+      tr.dataset.level = level;
+      tr.dataset.id = r.id;
+      tr.dataset.depth = String(depth);
+      if (expandable) {{
+        tr.tabIndex = 0;
+        tr.setAttribute('role', 'button');
+        tr.setAttribute('aria-expanded', 'false');
       }}
-      if (drillTable) drillTable.hidden = true;
+      tr.innerHTML = `
+        <td class="chevron-col">${{chevron}}</td>
+        ${{buildNameCell(r, level, depth)}}
+        <td class="num">${{fmtMoney(spend)}}</td>
+        <td class="num">${{fmtInt(clicks)}}</td>
+        <td class="num">${{fmtInt(impressions)}}</td>
+        <td class="num">${{fmtPct(clicks, impressions)}}</td>
+        <td class="num">${{fmtInt(conv)}}</td>
+        <td class="num">${{cpc}}</td>`;
+      return tr;
     }}
 
-    function showCurrentDrill() {{
-      const frame = drillStack[drillStack.length - 1];
-      if (!frame) return;
-      const rule = DRILL_MAP[frame.platform + ':' + frame.parentLevel];
-      if (!rule) {{
-        showDrillError('No drill-down configured for this row.');
+    function collapseDescendants(row) {{
+      const depth = parseInt(row.dataset.depth || '0', 10);
+      let next = row.nextElementSibling;
+      while (next && next.classList.contains('tree-row') && parseInt(next.dataset.depth || '0', 10) > depth) {{
+        const rm = next;
+        next = next.nextElementSibling;
+        rm.remove();
+      }}
+      row.classList.remove('expanded');
+      row.setAttribute('aria-expanded', 'false');
+    }}
+
+    function toggleTreeRow(row) {{
+      if (!row.classList.contains('tree-expandable')) return;
+      if (row.classList.contains('expanded')) {{
+        collapseDescendants(row);
         return;
       }}
-      const rows = childRows(frame.platform, frame.parentLevel, frame.parentId);
-      if (drillTitle) drillTitle.textContent = rule.childLabel;
-      if (drillParent) drillParent.textContent = frame.breadcrumb;
-      if (drillBack) drillBack.hidden = drillStack.length <= 1;
-      renderDrillTable(rows, frame.platform, rule.childLevel);
-    }}
-
-    function pushDrill(platform, parentLevel, parentId, parentName) {{
-      const rule = DRILL_MAP[platform + ':' + parentLevel];
+      const platform = row.dataset.platform;
+      const level = row.dataset.level;
+      const id = row.dataset.id;
+      const depth = parseInt(row.dataset.depth || '0', 10);
+      const rule = DRILL_MAP[platform + ':' + level];
       if (!rule) return;
-      const breadcrumb = drillStack.length
-        ? drillStack[drillStack.length - 1].breadcrumb + ' → ' + parentName
-        : parentName;
-      drillStack.push({{ platform, parentLevel, parentId, parentName, breadcrumb }});
-      openDrillPanel();
-      showCurrentDrill();
-    }}
-
-    function drillFromMainRow(row, e) {{
-      if (e) {{ e.preventDefault(); e.stopPropagation(); }}
-      try {{
-        if (selectedRow) selectedRow.classList.remove('selected');
-        selectedRow = row;
-        row.classList.add('selected');
-        drillStack = [];
-        pushDrill(row.dataset.platform, row.dataset.level, row.dataset.id, row.dataset.name);
-      }} catch (err) {{
-        console.error(err);
-        showDrillError('Could not open breakdown. Try refreshing the page.');
+      const children = childRows(platform, level, id);
+      let insertAfter = row;
+      if (!children.length) {{
+        const empty = document.createElement('tr');
+        empty.className = 'tree-row tree-empty';
+        empty.dataset.depth = String(depth + 1);
+        empty.innerHTML = `
+          <td></td>
+          <td class="name muted" style="padding-left:${{8 + (depth + 1) * 20}}px">No child rows for this period</td>
+          <td colspan="6"></td>`;
+        insertAfter.after(empty);
+      }} else {{
+        for (const child of children) {{
+          const childRow = buildTreeRow(child, platform, rule.childLevel, depth + 1);
+          insertAfter.after(childRow);
+          insertAfter = childRow;
+        }}
       }}
+      row.classList.add('expanded');
+      row.setAttribute('aria-expanded', 'true');
     }}
 
-    function drillFromNestedRow(row, e) {{
-      if (e) {{ e.preventDefault(); e.stopPropagation(); }}
-      try {{
-        pushDrill(row.dataset.platform, row.dataset.level, row.dataset.id, row.dataset.name);
-      }} catch (err) {{
-        console.error(err);
-        showDrillError('Could not open nested breakdown.');
-      }}
-    }}
-
-    function closeDrill() {{
-      if (drillPanel) {{
-        drillPanel.classList.remove('open');
-        drillPanel.setAttribute('aria-hidden', 'true');
-      }}
-      if (layout) layout.classList.remove('has-drill');
-      drillStack = [];
-      if (selectedRow) {{ selectedRow.classList.remove('selected'); selectedRow = null; }}
-    }}
-
-    if (drillBack) {{
-      drillBack.addEventListener('click', e => {{
+    document.querySelectorAll('.tree-table').forEach(tbody => {{
+      tbody.addEventListener('click', e => {{
+        const row = e.target.closest('tr.tree-expandable');
+        if (!row || !tbody.contains(row)) return;
+        e.preventDefault();
         e.stopPropagation();
-        if (drillStack.length <= 1) {{ closeDrill(); return; }}
-        drillStack.pop();
-        showCurrentDrill();
+        toggleTreeRow(row);
       }});
-    }}
-
-    if (drillClose) {{
-      drillClose.addEventListener('click', e => {{
-        e.stopPropagation();
-        closeDrill();
-      }});
-    }}
-
-    if (drillPanel) {{
-      drillPanel.addEventListener('click', e => {{
-        if (e.target === drillPanel) closeDrill();
-      }});
-      const drillSheet = drillPanel.querySelector('.drill-sheet');
-      if (drillSheet) {{
-        drillSheet.addEventListener('click', e => e.stopPropagation());
-      }}
-    }}
-
-    document.querySelectorAll('tr.drill-row').forEach(row => {{
-      row.addEventListener('click', e => drillFromMainRow(row, e));
-      row.addEventListener('keydown', e => {{
+      tbody.addEventListener('keydown', e => {{
+        const row = e.target.closest('tr.tree-expandable');
+        if (!row || !tbody.contains(row)) return;
         if (e.key === 'Enter' || e.key === ' ') {{
           e.preventDefault();
-          drillFromMainRow(row, e);
+          toggleTreeRow(row);
         }}
       }});
     }});
-
-    if (drillTbody) {{
-      drillTbody.addEventListener('click', e => {{
-        const row = e.target.closest('tr.drill-row-nested');
-        if (row) drillFromNestedRow(row, e);
-      }});
-      drillTbody.addEventListener('keydown', e => {{
-        const row = e.target.closest('tr.drill-row-nested');
-        if (row && (e.key === 'Enter' || e.key === ' ')) {{
-          e.preventDefault();
-          drillFromNestedRow(row, e);
-        }}
-      }});
-    }}
 
     const ctx = document.getElementById('spendChart');
     if (ctx && chartPayload.labels && chartPayload.labels.length) {{
