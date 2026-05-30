@@ -614,7 +614,21 @@ def _fetch_ad_media_index(
             "image_url": str(entry.get("image_url") or ""),
             "media_type": str(entry.get("media_type") or ""),
             "creative_name": str(entry.get("creative_name") or ""),
+            "video_id": str(entry.get("video_id") or ""),
         }
+
+    video_ids = {d["video_id"] for d in index.values() if d.get("video_id")}
+    if video_ids:
+        details = _fetch_video_details(video_ids, access_token=access_token, env=env)
+        for data in index.values():
+            vid = data.get("video_id") or ""
+            if not vid:
+                continue
+            detail = details.get(vid) or {}
+            data["video_url"] = str(detail.get("video_url") or "")
+            if not data.get("thumbnail_url"):
+                data["thumbnail_url"] = str(detail.get("thumbnail_url") or "")
+
     return index
 
 

@@ -125,7 +125,7 @@ def _normalize_entity_row(row: dict[str, Any]) -> dict[str, Any]:
         "parent_id": parent_id,
         "parent_name": parent_name,
     }
-    for key in ("thumbnail_url", "image_url", "media_type", "creative_name"):
+    for key in ("thumbnail_url", "image_url", "media_type", "creative_name", "video_url", "youtube_embed_url", "youtube_watch_url"):
         val = row.get(key)
         if val:
             out[key] = str(val)
@@ -191,6 +191,9 @@ def _merge_linkedin_creative_media(
             image_url = str(media.get("image_url") or "")
             if image_url:
                 creative["image_url"] = image_url
+            video_url = str(media.get("video_url") or "")
+            if video_url:
+                creative["video_url"] = video_url
             media_type = str(media.get("media_type") or "")
             if media_type:
                 creative["media_type"] = media_type
@@ -988,6 +991,94 @@ def render_penn_html(
       border: 1px solid var(--border);
       flex-shrink: 0;
       background: #f0f4f8;
+      display: block;
+    }}
+    .ad-thumb-btn {{
+      position: relative;
+      appearance: none;
+      border: none;
+      padding: 0;
+      background: none;
+      cursor: pointer;
+      flex-shrink: 0;
+      border-radius: 8px;
+      line-height: 0;
+    }}
+    .ad-thumb-btn:hover .ad-thumb {{ box-shadow: 0 0 0 2px var(--accent); }}
+    .ad-thumb-btn.has-video .ad-play-icon {{
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.65rem;
+      color: #fff;
+      background: rgba(0,0,0,0.45);
+      border-radius: 8px;
+      pointer-events: none;
+    }}
+    .creative-preview {{
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }}
+    .creative-preview[hidden] {{ display: none !important; }}
+    .creative-preview-backdrop {{
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 37, 64, 0.72);
+    }}
+    .creative-preview-dialog {{
+      position: relative;
+      background: #fff;
+      border-radius: 14px;
+      max-width: min(720px, 96vw);
+      max-height: 90vh;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      width: 100%;
+    }}
+    .creative-preview-close {{
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      z-index: 2;
+      appearance: none;
+      border: none;
+      background: rgba(0,0,0,0.55);
+      color: #fff;
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      font-size: 1.25rem;
+      line-height: 1;
+      cursor: pointer;
+    }}
+    .creative-preview-body {{
+      background: #000;
+      min-height: 200px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }}
+    .creative-preview-body iframe,
+    .creative-preview-body video,
+    .creative-preview-body img {{
+      display: block;
+      max-width: 100%;
+      max-height: 80vh;
+      width: 100%;
+    }}
+    .creative-preview-body img {{ background: #fff; }}
+    .creative-preview-caption {{
+      padding: 12px 16px;
+      font-size: 0.84rem;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
     }}
     .ad-creative-sub {{
       display: block;
@@ -1077,6 +1168,76 @@ def render_penn_html(
       padding: 16px 18px;
       margin-bottom: 20px;
       box-shadow: var(--shadow-sm);
+    }}
+    .filter-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px 24px;
+    }}
+    .filter-group-head {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }}
+    .filter-group-head .filter-label {{
+      min-width: 0;
+      flex: 1;
+    }}
+    .filter-link {{
+      appearance: none;
+      border: none;
+      background: none;
+      color: var(--accent);
+      font-size: 0.76rem;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 2px 4px;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }}
+    .filter-link:hover {{ color: var(--navy); }}
+    .filter-checks {{
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 180px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }}
+    .filter-check {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.86rem;
+      cursor: pointer;
+      user-select: none;
+      padding: 4px 6px;
+      border-radius: 8px;
+    }}
+    .filter-check:hover {{ background: #f4f7fb; }}
+    .filter-check input {{
+      width: 15px;
+      height: 15px;
+      accent-color: var(--accent);
+      flex-shrink: 0;
+    }}
+    .filter-zero-spend {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+      font-size: 0.84rem;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+    }}
+    .filter-zero-spend input {{
+      width: 15px;
+      height: 15px;
+      accent-color: var(--accent);
     }}
     .filter-toolbar {{
       display: flex;
@@ -1227,21 +1388,28 @@ def render_penn_html(
 
       <div id="tab-business-line" class="tab-panel" role="tabpanel">
         <section class="filter-panel">
-          <div class="filter-toolbar">
-            <div class="filter-row">
-              <span class="filter-label">Business line</span>
-              <div id="blFilters" class="filter-row" style="flex:1;min-width:0"></div>
+          <div class="filter-grid">
+            <div class="filter-group">
+              <div class="filter-group-head">
+                <span class="filter-label">Business line</span>
+                <button type="button" class="filter-link" id="blSelectAll">All</button>
+                <button type="button" class="filter-link" id="blClearAll">Clear</button>
+              </div>
+              <div id="blFilters" class="filter-checks"></div>
             </div>
-            <div class="filter-actions">
-              <button type="button" class="filter-reset" id="resetFilters">Reset</button>
+            <div class="filter-group">
+              <div class="filter-group-head">
+                <span class="filter-label">Channel</span>
+                <button type="button" class="filter-link" id="channelSelectAll">All</button>
+                <button type="button" class="filter-link" id="channelClearAll">Clear</button>
+              </div>
+              <div id="channelFilters" class="filter-checks"></div>
             </div>
           </div>
-          <div class="filter-toolbar" style="margin-top:12px">
-            <div class="filter-row">
-              <span class="filter-label">Channel</span>
-              <div id="channelFilters" class="filter-row" style="flex:1;min-width:0"></div>
-            </div>
-          </div>
+          <label class="filter-zero-spend">
+            <input type="checkbox" id="showZeroSpend">
+            Show inactive / $0 spend campaigns
+          </label>
           <div class="filter-status" id="filterStatus"></div>
         </section>
 
@@ -1252,7 +1420,7 @@ def render_penn_html(
             <h2>Campaign performance</h2>
             <span class="badge" id="blRowCount">0 rows</span>
           </div>
-          <p class="table-note">Toggle business lines and channels above — selected items are filled; click again to exclude.</p>
+          <p class="table-note">Check business lines and channels to include. Uncheck to hide. Use the toggle below to show campaigns with no spend.</p>
           <div class="table-wrap">
             <table class="data-table">
               <thead>
@@ -1273,6 +1441,14 @@ def render_penn_html(
           </div>
         </section>
       </div>
+    </div>
+  </div>
+  <div id="creativePreview" class="creative-preview" hidden>
+    <div class="creative-preview-backdrop" data-close-preview></div>
+    <div class="creative-preview-dialog" role="dialog" aria-modal="true" aria-label="Creative preview">
+      <button type="button" class="creative-preview-close" data-close-preview aria-label="Close">×</button>
+      <div class="creative-preview-body" id="creativePreviewBody"></div>
+      <div class="creative-preview-caption" id="creativePreviewCaption"></div>
     </div>
   </div>
   <script type="application/json" id="chart-data">{chart_json}</script>
@@ -1320,57 +1496,64 @@ def render_penn_html(
     const channelState = new Set(platformCatalog.map(p => p.id));
     const blState = new Set(blCatalog.map(b => b.id));
 
-    function initToggleGroup(wrapId, catalog, state, group, extraClassFor) {{
+    function initCheckboxGroup(wrapId, catalog, state, group) {{
       const wrap = document.getElementById(wrapId);
       if (!wrap) return;
       wrap.innerHTML = '';
       for (const item of catalog) {{
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        const extra = extraClassFor ? extraClassFor(item.id) : '';
-        btn.className = 'filter-toggle' + (extra ? ' t-' + extra : '');
-        btn.classList.toggle('active', state.has(item.id));
-        btn.dataset.group = group;
-        btn.dataset.id = item.id;
-        btn.textContent = item.label;
-        wrap.appendChild(btn);
+        const label = document.createElement('label');
+        label.className = 'filter-check';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = state.has(item.id);
+        input.dataset.group = group;
+        input.dataset.id = item.id;
+        label.appendChild(input);
+        label.appendChild(document.createTextNode(item.label));
+        wrap.appendChild(label);
       }}
     }}
 
-    function syncToggleButtons() {{
-      document.querySelectorAll('.filter-toggle').forEach(btn => {{
-        const state = btn.dataset.group === 'channel' ? channelState : blState;
-        btn.classList.toggle('active', state.has(btn.dataset.id));
+    function syncCheckboxInputs() {{
+      document.querySelectorAll('.filter-check input[type="checkbox"]').forEach(input => {{
+        const state = input.dataset.group === 'channel' ? channelState : blState;
+        input.checked = state.has(input.dataset.id);
       }});
     }}
 
-    function resetFilters() {{
-      platformCatalog.forEach(p => channelState.add(p.id));
-      blCatalog.forEach(b => blState.add(b.id));
-      syncToggleButtons();
+    function setGroupSelection(group, ids) {{
+      const state = group === 'channel' ? channelState : blState;
+      state.clear();
+      ids.forEach(id => state.add(id));
+      syncCheckboxInputs();
       applyBlView();
     }}
 
-    function onFilterClick(e) {{
-      const btn = e.target.closest('.filter-toggle');
-      if (!btn) return;
-      const group = btn.dataset.group;
-      const id = btn.dataset.id;
+    function onFilterChange(e) {{
+      const input = e.target.closest('.filter-check input[type="checkbox"]');
+      if (!input) return;
+      const group = input.dataset.group;
+      const id = input.dataset.id;
       const state = group === 'channel' ? channelState : blState;
-      if (state.has(id)) {{
-        if (state.size <= 1) return;
-        state.delete(id);
-      }} else {{
+      if (input.checked) {{
         state.add(id);
+      }} else {{
+        if (state.size <= 1) {{
+          input.checked = true;
+          return;
+        }}
+        state.delete(id);
       }}
-      syncToggleButtons();
       applyBlView();
     }}
 
     function applyBlView() {{
-      const filtered = blCampaigns.filter(r =>
-        channelState.has(r.platform) && blState.has(r.business_line)
-      );
+      const showZeroSpend = !!document.getElementById('showZeroSpend')?.checked;
+      const filtered = blCampaigns.filter(r => {{
+        if (!channelState.has(r.platform) || !blState.has(r.business_line)) return false;
+        if (!showZeroSpend && (r.spend || 0) < 0.01) return false;
+        return true;
+      }});
       const spend = filtered.reduce((s, r) => s + (r.spend || 0), 0);
       const clicks = filtered.reduce((s, r) => s + (r.clicks || 0), 0);
       const impressions = filtered.reduce((s, r) => s + (r.impressions || 0), 0);
@@ -1390,7 +1573,7 @@ def render_penn_html(
       const tbody = document.getElementById('blTableBody');
       if (tbody) {{
         if (!filtered.length) {{
-          tbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">No campaigns match — try Reset or select another combination.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">No campaigns match — adjust filters or enable $0 spend rows.</td></tr>';
         }} else {{
           tbody.innerHTML = filtered.map(r => {{
             const cpcVal = r.clicks ? fmtMoney(r.spend / r.clicks) : '—';
@@ -1418,17 +1601,32 @@ def render_penn_html(
         const blLabels = blCatalog.filter(b => blState.has(b.id)).map(b => b.label);
         const allCh = chLabels.length === platformCatalog.length;
         const allBl = blLabels.length === blCatalog.length;
-        const chText = allCh ? 'All channels' : chLabels.join(' · ');
-        const blText = allBl ? 'All business lines' : blLabels.join(' · ');
-        status.textContent = `${{blText}} · ${{chText}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}`;
+        const chText = allCh ? 'All channels' : chLabels.join(', ');
+        const blText = allBl ? 'All business lines' : blLabels.join(', ');
+        const zeroNote = showZeroSpend ? ' · incl. $0 spend' : '';
+        status.textContent = `${{blText}} · ${{chText}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}${{zeroNote}}`;
       }}
     }}
 
-    initToggleGroup('channelFilters', platformCatalog, channelState, 'channel', id => id);
-    initToggleGroup('blFilters', blCatalog, blState, 'bl', null);
-    document.getElementById('channelFilters')?.addEventListener('click', onFilterClick);
-    document.getElementById('blFilters')?.addEventListener('click', onFilterClick);
-    document.getElementById('resetFilters')?.addEventListener('click', resetFilters);
+    initCheckboxGroup('channelFilters', platformCatalog, channelState, 'channel');
+    initCheckboxGroup('blFilters', blCatalog, blState, 'bl');
+    document.getElementById('channelFilters')?.addEventListener('change', onFilterChange);
+    document.getElementById('blFilters')?.addEventListener('change', onFilterChange);
+    document.getElementById('showZeroSpend')?.addEventListener('change', applyBlView);
+    document.getElementById('channelSelectAll')?.addEventListener('click', () =>
+      setGroupSelection('channel', platformCatalog.map(p => p.id))
+    );
+    document.getElementById('blSelectAll')?.addEventListener('click', () =>
+      setGroupSelection('bl', blCatalog.map(b => b.id))
+    );
+    document.getElementById('channelClearAll')?.addEventListener('click', () => {{
+      const first = platformCatalog[0]?.id;
+      if (first) setGroupSelection('channel', [first]);
+    }});
+    document.getElementById('blClearAll')?.addEventListener('click', () => {{
+      const first = blCatalog[0]?.id;
+      if (first) setGroupSelection('bl', [first]);
+    }});
     applyBlView();
 
     const DRILL_MAP = {{
@@ -1461,16 +1659,84 @@ def render_penn_html(
       return !!DRILL_MAP[platform + ':' + level];
     }}
 
+    function previewPayload(r) {{
+      const embed = r.youtube_embed_url || '';
+      if (embed) return {{ type: 'embed', url: embed }};
+      const videoUrl = r.video_url || '';
+      if (videoUrl && r.media_type === 'video') {{
+        const ytMatch = videoUrl.match(/(?:youtube\\.com\\/embed\\/|youtu\\.be\\/)([a-zA-Z0-9_-]{{11}})/);
+        if (ytMatch) return {{ type: 'embed', url: 'https://www.youtube.com/embed/' + ytMatch[1] }};
+        return {{ type: 'video', url: videoUrl }};
+      }}
+      const img = r.image_url || r.thumbnail_url || '';
+      if (img) return {{ type: 'image', url: img }};
+      return null;
+    }}
+
+    function buildThumbButton(r) {{
+      const thumbUrl = r.thumbnail_url || r.image_url || '';
+      if (!thumbUrl) return '';
+      const preview = previewPayload(r);
+      const playable = preview && (preview.type === 'embed' || preview.type === 'video');
+      const cls = 'ad-thumb-btn' + (playable ? ' has-video' : '');
+      const attrs = preview
+        ? ` data-preview-type="${{escHtml(preview.type)}}" data-preview-url="${{escHtml(preview.url)}}"`
+        : ` data-preview-type="image" data-preview-url="${{escHtml(thumbUrl)}}"`;
+      const play = playable ? '<span class="ad-play-icon" aria-hidden="true">▶</span>' : '';
+      return `<button type="button" class="${{cls}}"${{attrs}} aria-label="Preview creative">${{play}}<img class="ad-thumb" src="${{escHtml(thumbUrl)}}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.closest('button')?.remove()"></button>`;
+    }}
+
+    let previewPlayer = null;
+
+    function closeCreativePreview() {{
+      const modal = document.getElementById('creativePreview');
+      const body = document.getElementById('creativePreviewBody');
+      const caption = document.getElementById('creativePreviewCaption');
+      if (!modal || !body) return;
+      body.innerHTML = '';
+      if (caption) caption.textContent = '';
+      modal.hidden = true;
+      previewPlayer = null;
+    }}
+
+    function openCreativePreview(type, url, label) {{
+      const modal = document.getElementById('creativePreview');
+      const body = document.getElementById('creativePreviewBody');
+      const caption = document.getElementById('creativePreviewCaption');
+      if (!modal || !body || !url) return;
+      body.innerHTML = '';
+      if (type === 'embed') {{
+        const iframe = document.createElement('iframe');
+        iframe.src = url;
+        iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
+        iframe.allowFullscreen = true;
+        iframe.title = label || 'Video preview';
+        body.appendChild(iframe);
+      }} else if (type === 'video') {{
+        const video = document.createElement('video');
+        video.src = url;
+        video.controls = true;
+        video.autoplay = true;
+        video.playsInline = true;
+        body.appendChild(video);
+        previewPlayer = video;
+      }} else {{
+        const img = document.createElement('img');
+        img.src = url;
+        img.alt = label || 'Creative preview';
+        body.appendChild(img);
+      }}
+      if (caption) caption.textContent = label || '';
+      modal.hidden = false;
+    }}
+
     function buildNameCell(r, level, depth) {{
       const pad = 8 + depth * 20;
       const tag = LEVEL_LABELS[level]
         ? `<span class="entity-tag">${{escHtml(LEVEL_LABELS[level])}}</span>` : '';
       let inner = `${{tag}}${{escHtml(r.name || '—')}}`;
       if (level === 'ad' || level === 'creative') {{
-        const thumbUrl = r.thumbnail_url || r.image_url || '';
-        const thumb = thumbUrl
-          ? `<img class="ad-thumb" src="${{escHtml(thumbUrl)}}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none'">`
-          : '';
+        const thumb = buildThumbButton(r);
         const creativeSub = (r.creative_name && r.creative_name !== r.name)
           ? `<span class="ad-creative-sub">${{escHtml(r.creative_name)}}</span>` : '';
         const typeBadge = r.media_type
@@ -1561,6 +1827,7 @@ def render_penn_html(
 
     document.querySelectorAll('.tree-table').forEach(tbody => {{
       tbody.addEventListener('click', e => {{
+        if (e.target.closest('.ad-thumb-btn')) return;
         const row = e.target.closest('tr.tree-expandable');
         if (!row || !tbody.contains(row)) return;
         e.preventDefault();
@@ -1575,6 +1842,25 @@ def render_penn_html(
           toggleTreeRow(row);
         }}
       }});
+    }});
+
+    document.body.addEventListener('click', e => {{
+      const btn = e.target.closest('.ad-thumb-btn');
+      if (btn) {{
+        e.preventDefault();
+        e.stopPropagation();
+        const type = btn.dataset.previewType || 'image';
+        const url = btn.dataset.previewUrl || '';
+        const label = btn.closest('.name-inner')?.innerText?.trim() || 'Creative preview';
+        openCreativePreview(type, url, label);
+        return;
+      }}
+      if (e.target.closest('[data-close-preview]')) {{
+        closeCreativePreview();
+      }}
+    }});
+    document.addEventListener('keydown', e => {{
+      if (e.key === 'Escape') closeCreativePreview();
     }});
 
     const ctx = document.getElementById('spendChart');

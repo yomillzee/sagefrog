@@ -546,6 +546,8 @@ def fetch_ad_media_index(
             if not ad_id:
                 continue
             thumb = str(row.get("youtube_thumbnail_url") or "")
+            embed = str(row.get("youtube_embed_url") or "")
+            watch = str(row.get("youtube_watch_url") or "")
             index[ad_id] = {
                 "thumbnail_url": thumb,
                 "image_url": "",
@@ -553,6 +555,9 @@ def fetch_ad_media_index(
                 "creative_name": str(
                     row.get("youtube_video_title") or row.get("asset_name") or ""
                 ),
+                "youtube_embed_url": embed,
+                "youtube_watch_url": watch,
+                "video_url": embed or watch,
             }
     except Exception:
         pass
