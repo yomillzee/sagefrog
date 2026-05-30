@@ -1166,13 +1166,34 @@ def render_penn_html(
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: 16px 18px;
-      margin-bottom: 20px;
       box-shadow: var(--shadow-sm);
     }}
-    .filter-grid {{
+    .bl-layout {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 16px 24px;
+      grid-template-columns: 272px minmax(0, 1fr);
+      gap: 20px;
+      align-items: start;
+    }}
+    .bl-sidebar {{
+      position: sticky;
+      top: 16px;
+      align-self: start;
+    }}
+    .bl-filters h3 {{
+      margin: 0 0 14px;
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: var(--navy);
+    }}
+    .bl-filters .filter-group + .filter-group {{
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+    }}
+    .bl-main {{ min-width: 0; }}
+    @media (max-width: 960px) {{
+      .bl-layout {{ grid-template-columns: 1fr; }}
+      .bl-sidebar {{ position: static; }}
     }}
     .filter-group-head {{
       display: flex;
@@ -1201,9 +1222,9 @@ def render_penn_html(
       display: flex;
       flex-direction: column;
       gap: 6px;
-      max-height: 180px;
-      overflow-y: auto;
-      padding-right: 4px;
+      max-height: none;
+      overflow: visible;
+      padding-right: 0;
     }}
     .filter-check {{
       display: flex;
@@ -1387,59 +1408,64 @@ def render_penn_html(
       </div>
 
       <div id="tab-business-line" class="tab-panel" role="tabpanel">
-        <section class="filter-panel">
-          <div class="filter-grid">
-            <div class="filter-group">
-              <div class="filter-group-head">
-                <span class="filter-label">Business line</span>
-                <button type="button" class="filter-link" id="blSelectAll">All</button>
-                <button type="button" class="filter-link" id="blClearAll">Clear</button>
+        <div class="bl-layout">
+          <aside class="bl-sidebar">
+            <section class="filter-panel bl-filters">
+              <h3>Filters</h3>
+              <div class="filter-group">
+                <div class="filter-group-head">
+                  <span class="filter-label">Business line</span>
+                  <button type="button" class="filter-link" id="blSelectAll">All</button>
+                  <button type="button" class="filter-link" id="blClearAll">None</button>
+                </div>
+                <div id="blFilters" class="filter-checks"></div>
               </div>
-              <div id="blFilters" class="filter-checks"></div>
-            </div>
-            <div class="filter-group">
-              <div class="filter-group-head">
-                <span class="filter-label">Channel</span>
-                <button type="button" class="filter-link" id="channelSelectAll">All</button>
-                <button type="button" class="filter-link" id="channelClearAll">Clear</button>
+              <div class="filter-group">
+                <div class="filter-group-head">
+                  <span class="filter-label">Channel</span>
+                  <button type="button" class="filter-link" id="channelSelectAll">All</button>
+                  <button type="button" class="filter-link" id="channelClearAll">None</button>
+                </div>
+                <div id="channelFilters" class="filter-checks"></div>
               </div>
-              <div id="channelFilters" class="filter-checks"></div>
-            </div>
-          </div>
-          <label class="filter-zero-spend">
-            <input type="checkbox" id="showZeroSpend">
-            Show inactive / $0 spend campaigns
-          </label>
-          <div class="filter-status" id="filterStatus"></div>
-        </section>
+              <label class="filter-zero-spend">
+                <input type="checkbox" id="showZeroSpend">
+                Show inactive / $0 spend
+              </label>
+              <div class="filter-status" id="filterStatus"></div>
+            </section>
+          </aside>
 
-        <div class="bl-summary" id="blSummary"></div>
+          <div class="bl-main">
+            <div class="bl-summary" id="blSummary"></div>
 
-        <section class="panel platform-panel">
-          <div class="panel-head">
-            <h2>Campaign performance</h2>
-            <span class="badge" id="blRowCount">0 rows</span>
+            <section class="panel platform-panel">
+              <div class="panel-head">
+                <h2>Campaign performance</h2>
+                <span class="badge" id="blRowCount">0 rows</span>
+              </div>
+              <p class="table-note">Select business lines and channels in the sidebar. Nothing is selected by default — check items to populate the table.</p>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Platform</th>
+                      <th>Business line</th>
+                      <th>Campaign</th>
+                      <th>Spend</th>
+                      <th>Clicks</th>
+                      <th>Impressions</th>
+                      <th>CTR</th>
+                      <th>Conv.</th>
+                      <th>CPC</th>
+                    </tr>
+                  </thead>
+                  <tbody id="blTableBody"></tbody>
+                </table>
+              </div>
+            </section>
           </div>
-          <p class="table-note">Check business lines and channels to include. Uncheck to hide. Use the toggle below to show campaigns with no spend.</p>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Platform</th>
-                  <th>Business line</th>
-                  <th>Campaign</th>
-                  <th>Spend</th>
-                  <th>Clicks</th>
-                  <th>Impressions</th>
-                  <th>CTR</th>
-                  <th>Conv.</th>
-                  <th>CPC</th>
-                </tr>
-              </thead>
-              <tbody id="blTableBody"></tbody>
-            </table>
-          </div>
-        </section>
+        </div>
       </div>
     </div>
   </div>
@@ -1493,8 +1519,8 @@ def render_penn_html(
       }});
     }});
 
-    const channelState = new Set(platformCatalog.map(p => p.id));
-    const blState = new Set(blCatalog.map(b => b.id));
+    const channelState = new Set();
+    const blState = new Set();
 
     function initCheckboxGroup(wrapId, catalog, state, group) {{
       const wrap = document.getElementById(wrapId);
@@ -1538,10 +1564,6 @@ def render_penn_html(
       if (input.checked) {{
         state.add(id);
       }} else {{
-        if (state.size <= 1) {{
-          input.checked = true;
-          return;
-        }}
         state.delete(id);
       }}
       applyBlView();
@@ -1549,11 +1571,12 @@ def render_penn_html(
 
     function applyBlView() {{
       const showZeroSpend = !!document.getElementById('showZeroSpend')?.checked;
-      const filtered = blCampaigns.filter(r => {{
+      const hasSelection = channelState.size > 0 && blState.size > 0;
+      const filtered = hasSelection ? blCampaigns.filter(r => {{
         if (!channelState.has(r.platform) || !blState.has(r.business_line)) return false;
         if (!showZeroSpend && (r.spend || 0) < 0.01) return false;
         return true;
-      }});
+      }}) : [];
       const spend = filtered.reduce((s, r) => s + (r.spend || 0), 0);
       const clicks = filtered.reduce((s, r) => s + (r.clicks || 0), 0);
       const impressions = filtered.reduce((s, r) => s + (r.impressions || 0), 0);
@@ -1572,8 +1595,10 @@ def render_penn_html(
 
       const tbody = document.getElementById('blTableBody');
       if (tbody) {{
-        if (!filtered.length) {{
-          tbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">No campaigns match — adjust filters or enable $0 spend rows.</td></tr>';
+        if (!hasSelection) {{
+          tbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">Select at least one business line and one channel in the sidebar.</td></tr>';
+        }} else if (!filtered.length) {{
+          tbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">No campaigns match — try other filters or enable $0 spend rows.</td></tr>';
         }} else {{
           tbody.innerHTML = filtered.map(r => {{
             const cpcVal = r.clicks ? fmtMoney(r.spend / r.clicks) : '—';
@@ -1599,10 +1624,14 @@ def render_penn_html(
       if (status) {{
         const chLabels = platformCatalog.filter(p => channelState.has(p.id)).map(p => p.label);
         const blLabels = blCatalog.filter(b => blState.has(b.id)).map(b => b.label);
-        const allCh = chLabels.length === platformCatalog.length;
-        const allBl = blLabels.length === blCatalog.length;
-        const chText = allCh ? 'All channels' : chLabels.join(', ');
-        const blText = allBl ? 'All business lines' : blLabels.join(', ');
+        const allCh = chLabels.length === platformCatalog.length && platformCatalog.length > 0;
+        const allBl = blLabels.length === blCatalog.length && blCatalog.length > 0;
+        const chText = channelState.size === 0
+          ? 'No channels selected'
+          : (allCh ? 'All channels' : chLabels.join(', '));
+        const blText = blState.size === 0
+          ? 'No business lines selected'
+          : (allBl ? 'All business lines' : blLabels.join(', '));
         const zeroNote = showZeroSpend ? ' · incl. $0 spend' : '';
         status.textContent = `${{blText}} · ${{chText}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}${{zeroNote}}`;
       }}
@@ -1619,14 +1648,12 @@ def render_penn_html(
     document.getElementById('blSelectAll')?.addEventListener('click', () =>
       setGroupSelection('bl', blCatalog.map(b => b.id))
     );
-    document.getElementById('channelClearAll')?.addEventListener('click', () => {{
-      const first = platformCatalog[0]?.id;
-      if (first) setGroupSelection('channel', [first]);
-    }});
-    document.getElementById('blClearAll')?.addEventListener('click', () => {{
-      const first = blCatalog[0]?.id;
-      if (first) setGroupSelection('bl', [first]);
-    }});
+    document.getElementById('channelClearAll')?.addEventListener('click', () =>
+      setGroupSelection('channel', [])
+    );
+    document.getElementById('blClearAll')?.addEventListener('click', () =>
+      setGroupSelection('bl', [])
+    );
     applyBlView();
 
     const DRILL_MAP = {{
