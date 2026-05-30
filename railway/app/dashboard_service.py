@@ -2301,6 +2301,8 @@ def render_penn_html(
           elements: {{ line: {{ tension: 0.3, borderWidth: 2 }}, point: {{ radius: 0, hitRadius: 8 }} }}
         }}
       }});
+    }}
+
     const ga4AttrChartPayload = readJson('ga4-attr-chart-data', {{ labels: [], datasets: [] }});
     const ga4Ctx = document.getElementById('ga4AttrChart');
     if (ga4Ctx && ga4AttrChartPayload.labels && ga4AttrChartPayload.labels.length) {{
