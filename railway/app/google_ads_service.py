@@ -518,6 +518,236 @@ def campaign_performance(
     }
 
 
+def _accumulate_metrics(rec: dict[str, Any], row: dict[str, Any]) -> None:
+    rec["spend"] += int(_dig(row, "metrics", "cost_micros") or 0) / 1_000_000
+    rec["clicks"] += int(_dig(row, "metrics", "clicks") or 0)
+    rec["impressions"] += int(_dig(row, "metrics", "impressions") or 0)
+    rec["conversions"] += float(_dig(row, "metrics", "conversions") or 0)
+    rec["conversion_value"] += float(_dig(row, "metrics", "conversions_value") or 0)
+
+
+def fetch_ad_media_index(
+    customer_id: str,
+    *,
+    client: GoogleAdsClient | None = None,
+) -> dict[str, dict[str, str]]:
+    """Map Google ad id -> thumbnail / image metadata when available."""
+    customer_id_clean = str(customer_id).replace("-", "").strip()
+    index: dict[str, dict[str, str]] = {}
+
+    try:
+        for row in list_youtube_videos(
+            customer_id_clean,
+            include_account_assets=False,
+            include_metrics=False,
+            client=client,
+        ):
+            ad_id = str(row.get("ad_id") or "")
+            if not ad_id:
+                continue
+            thumb = str(row.get("youtube_thumbnail_url") or "")
+            index[ad_id] = {
+                "thumbnail_url": thumb,
+                "image_url": "",
+                "media_type": "video",
+                "creative_name": str(
+                    row.get("youtube_video_title") or row.get("asset_name") or ""
+                ),
+            }
+    except Exception:
+        pass
+
+    image_query = """
+        SELECT
+          ad_group_ad.ad.id,
+          asset.image_asset.full_size.url
+        FROM ad_group_ad_asset_view
+        WHERE ad_group_ad.status != 'REMOVED'
+          AND asset.image_asset.full_size.url != ''
+    """
+    try:
+        for raw in search(customer_id_clean, image_query, client=client):
+            ad_id = str(_dig(raw, "ad_group_ad", "ad", "id") or "")
+            url = str(_dig(raw, "asset", "image_asset", "full_size", "url") or "")
+            if not ad_id or not url or ad_id in index:
+                continue
+            index[ad_id] = {
+                "thumbnail_url": url,
+                "image_url": url,
+                "media_type": "image",
+                "creative_name": "",
+            }
+    except Exception:
+        pass
+
+    return index
+
+
+def adgroups_performance(
+    customer_id: str,
+    *,
+    date_range: str = "LAST_30_DAYS",
+    campaign_id: str | None = None,
+    client: GoogleAdsClient | None = None,
+) -> dict[str, Any]:
+    """Ad group-level metrics (below campaign)."""
+    start, end, preset = resolve_date_range(date_range)
+    customer_id_clean = str(customer_id).replace("-", "").strip()
+    start_key = start.isoformat()
+    end_key = end.isoformat()
+    filter_campaign = str(campaign_id or "").strip()
+
+    query = f"""
+        SELECT
+          campaign.id,
+          campaign.name,
+          ad_group.id,
+          ad_group.name,
+          ad_group.status,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.conversions,
+          metrics.conversions_value,
+          metrics.cost_micros
+        FROM ad_group
+        WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
+          AND ad_group.status != 'REMOVED'
+    """
+    rows = search(customer_id_clean, query, client=client)
+    by_adgroup: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        cid = str(_dig(row, "campaign", "id") or "").strip()
+        if filter_campaign and cid != filter_campaign:
+            continue
+        agid = str(_dig(row, "ad_group", "id") or "").strip()
+        if not agid:
+            continue
+        if agid not in by_adgroup:
+            by_adgroup[agid] = {
+                "id": agid,
+                "entity_level": "ad_group",
+                "name": _dig(row, "ad_group", "name") or "",
+                "status": _dig(row, "ad_group", "status") or "",
+                "campaign_id": cid,
+                "campaign_name": _dig(row, "campaign", "name") or "",
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+            }
+        _accumulate_metrics(by_adgroup[agid], row)
+
+    adgroups_out = sorted(by_adgroup.values(), key=lambda item: item.get("spend", 0), reverse=True)
+    totals = {
+        "spend": sum(a["spend"] for a in adgroups_out),
+        "clicks": sum(a["clicks"] for a in adgroups_out),
+        "impressions": sum(a["impressions"] for a in adgroups_out),
+        "conversions": sum(a["conversions"] for a in adgroups_out),
+        "adgroup_count": len(adgroups_out),
+    }
+    return {
+        "customer_id": customer_id_clean,
+        "entity_level": "account",
+        "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
+        "totals": totals,
+        "adgroups": adgroups_out,
+    }
+
+
+def ads_performance(
+    customer_id: str,
+    *,
+    date_range: str = "LAST_30_DAYS",
+    campaign_id: str | None = None,
+    ad_group_id: str | None = None,
+    include_creative: bool = True,
+    client: GoogleAdsClient | None = None,
+) -> dict[str, Any]:
+    """Ad-level metrics (below ad group). Optionally merges creative thumbnails."""
+    start, end, preset = resolve_date_range(date_range)
+    customer_id_clean = str(customer_id).replace("-", "").strip()
+    start_key = start.isoformat()
+    end_key = end.isoformat()
+    filter_campaign = str(campaign_id or "").strip()
+    filter_adgroup = str(ad_group_id or "").strip()
+
+    query = f"""
+        SELECT
+          campaign.id,
+          campaign.name,
+          ad_group.id,
+          ad_group.name,
+          ad_group_ad.ad.id,
+          ad_group_ad.ad.name,
+          ad_group_ad.status,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.conversions,
+          metrics.conversions_value,
+          metrics.cost_micros
+        FROM ad_group_ad
+        WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
+          AND ad_group_ad.status != 'REMOVED'
+    """
+    rows = search(customer_id_clean, query, client=client)
+    media_index: dict[str, dict[str, str]] = {}
+    if include_creative:
+        try:
+            media_index = fetch_ad_media_index(customer_id_clean, client=client)
+        except Exception:
+            media_index = {}
+
+    by_ad: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        cid = str(_dig(row, "campaign", "id") or "").strip()
+        agid = str(_dig(row, "ad_group", "id") or "").strip()
+        if filter_campaign and cid != filter_campaign:
+            continue
+        if filter_adgroup and agid != filter_adgroup:
+            continue
+        aid = str(_dig(row, "ad_group_ad", "ad", "id") or "").strip()
+        if not aid:
+            continue
+        if aid not in by_ad:
+            item: dict[str, Any] = {
+                "id": aid,
+                "entity_level": "ad",
+                "name": _dig(row, "ad_group_ad", "ad", "name") or "",
+                "status": _dig(row, "ad_group_ad", "status") or "",
+                "campaign_id": cid,
+                "campaign_name": _dig(row, "campaign", "name") or "",
+                "ad_group_id": agid,
+                "ad_group_name": _dig(row, "ad_group", "name") or "",
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+            }
+            media = media_index.get(aid) or {}
+            if media:
+                item.update(media)
+            by_ad[aid] = item
+        _accumulate_metrics(by_ad[aid], row)
+
+    ads_out = sorted(by_ad.values(), key=lambda item: item.get("spend", 0), reverse=True)
+    totals = {
+        "spend": sum(a["spend"] for a in ads_out),
+        "clicks": sum(a["clicks"] for a in ads_out),
+        "impressions": sum(a["impressions"] for a in ads_out),
+        "conversions": sum(a["conversions"] for a in ads_out),
+        "ad_count": len(ads_out),
+    }
+    return {
+        "customer_id": customer_id_clean,
+        "entity_level": "account",
+        "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
+        "totals": totals,
+        "ads": ads_out,
+    }
+
+
 def sync_account_to_warehouse(
     customer_id: str,
     *,

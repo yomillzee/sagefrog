@@ -87,8 +87,11 @@ def _normalize_entity_row(row: dict[str, Any]) -> dict[str, Any]:
         parent_id = str(row.get("campaign_id") or "")
         parent_name = str(row.get("campaign_name") or "")
     elif entity == "ad":
-        parent_id = str(row.get("adset_id") or "")
-        parent_name = str(row.get("adset_name") or "")
+        parent_id = str(row.get("adset_id") or row.get("ad_group_id") or "")
+        parent_name = str(row.get("adset_name") or row.get("ad_group_name") or "")
+    elif entity == "ad_group":
+        parent_id = str(row.get("campaign_id") or "")
+        parent_name = str(row.get("campaign_name") or "")
     elif entity == "creative":
         parent_id = str(row.get("campaign_id") or "")
         parent_name = str(row.get("campaign_name") or "")
@@ -103,6 +106,7 @@ def _normalize_entity_row(row: dict[str, Any]) -> dict[str, Any]:
             row.get("id")
             or row.get("campaign_id")
             or row.get("adset_id")
+            or row.get("ad_group_id")
             or row.get("ad_id")
             or ""
         ),
@@ -159,6 +163,44 @@ def _aggregated_paid_media(platform_totals: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _merge_linkedin_creative_media(
+    creatives: list[dict[str, Any]], account_id: str
+) -> None:
+    """Attach thumbnail/image metadata to LinkedIn creative rows when available."""
+    if not creatives or not account_id:
+        return
+    try:
+        media_data = linkedin_service.list_video_creatives(account_id, videos_only=False)
+        by_id: dict[str, dict[str, Any]] = {}
+        for row in media_data.get("videos") or []:
+            cid = str(row.get("creative_id") or "")
+            if not cid:
+                continue
+            existing = by_id.get(cid)
+            thumb = str(row.get("thumbnail_url") or row.get("image_url") or "")
+            if existing and (existing.get("thumbnail_url") or not thumb):
+                continue
+            by_id[cid] = row
+        for creative in creatives:
+            media = by_id.get(str(creative.get("id") or ""))
+            if not media:
+                continue
+            thumb = str(media.get("thumbnail_url") or media.get("image_url") or "")
+            if thumb:
+                creative["thumbnail_url"] = thumb
+            image_url = str(media.get("image_url") or "")
+            if image_url:
+                creative["image_url"] = image_url
+            media_type = str(media.get("media_type") or "")
+            if media_type:
+                creative["media_type"] = media_type
+            creative_name = str(media.get("creative_name") or "")
+            if creative_name:
+                creative["creative_name"] = creative_name
+    except Exception:
+        pass
+
+
 def refresh_penn(*, date_range: str = "LAST_30_DAYS") -> dict[str, Any]:
     cfg = load_penn_config()
     start, end, preset = resolve_date_range(date_range)
@@ -193,11 +235,35 @@ def refresh_penn(*, date_range: str = "LAST_30_DAYS") -> dict[str, Any]:
             payload["errors"]["google_sync"] = _platform_error(exc)
         try:
             perf = google_ads_service.campaign_performance(cfg.google_customer_id, date_range=preset)
-            campaigns = [_normalize_entity_row(c) for c in perf.get("campaigns") or []]
-            breakdowns["google"] = {"campaign": campaigns}
+            google_campaigns = [_normalize_entity_row(c) for c in perf.get("campaigns") or []]
             payload["platform_totals"]["google"] = _account_totals(perf)
         except Exception as exc:
             payload["errors"]["google_campaigns"] = _platform_error(exc)
+            google_campaigns = []
+        google_adgroups: list[dict[str, Any]] = []
+        google_ads: list[dict[str, Any]] = []
+        try:
+            ag_perf = google_ads_service.adgroups_performance(
+                cfg.google_customer_id, date_range=preset
+            )
+            google_adgroups = [
+                _normalize_entity_row(g) for g in ag_perf.get("adgroups") or []
+            ]
+        except Exception as exc:
+            payload["errors"]["google_adgroups"] = _platform_error(exc)
+        try:
+            ads_perf = google_ads_service.ads_performance(
+                cfg.google_customer_id, date_range=preset, include_creative=True
+            )
+            google_ads = [_normalize_entity_row(a) for a in ads_perf.get("ads") or []]
+        except Exception as exc:
+            payload["errors"]["google_ads"] = _platform_error(exc)
+        if google_campaigns or google_adgroups or google_ads:
+            breakdowns["google"] = {
+                "campaign": google_campaigns,
+                "ad_group": google_adgroups,
+                "ad": google_ads,
+            }
 
     if cfg.linkedin_account_id:
         try:
@@ -228,7 +294,9 @@ def refresh_penn(*, date_range: str = "LAST_30_DAYS") -> dict[str, Any]:
             creatives_perf = linkedin_service.creatives_performance(
                 cfg.linkedin_account_id, date_range=preset
             )
-            li_creatives = [_normalize_entity_row(c) for c in creatives_perf.get("creatives") or []]
+            li_creatives_raw = creatives_perf.get("creatives") or []
+            _merge_linkedin_creative_media(li_creatives_raw, cfg.linkedin_account_id)
+            li_creatives = [_normalize_entity_row(c) for c in li_creatives_raw]
         except Exception as exc:
             payload["errors"]["linkedin_creatives"] = _platform_error(exc)
         if li_groups or li_campaigns or li_creatives:
@@ -358,6 +426,7 @@ def _entity_level_label(level: str) -> str:
     labels = {
         "campaign": "campaign",
         "campaign_group": "campaign group",
+        "ad_group": "ad group",
         "adset": "ad set",
         "ad": "ad",
         "creative": "creative",
@@ -376,9 +445,12 @@ def _drillable_table(
 ) -> str:
     rows = _rows_for_display(rows)
     level_badge = _entity_level_label(entity_level)
-    expandable = platform in ("linkedin", "meta") and entity_level in (
-        "campaign_group",
-        "campaign",
+    expandable = (
+        (platform == "google" and entity_level in ("campaign", "ad_group"))
+        or (
+            platform in ("linkedin", "meta")
+            and entity_level in ("campaign_group", "campaign")
+        )
     )
     hint = drill_hint or (
         "Click ▸ to expand and compare child rows inline"
@@ -609,11 +681,19 @@ def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
     """Render per-platform tables at the correct entity levels."""
     parts: list[str] = []
     google = breakdowns.get("google") or {}
+    google_campaigns = google.get("campaign") or []
+    google_ag_count = len(google.get("ad_group") or [])
+    google_ad_count = len(google.get("ad") or [])
     parts.append(
-        _entity_table(
+        _drillable_table(
+            "google",
             "Google Ads — campaigns",
-            google.get("campaign") or [],
+            google_campaigns,
             entity_level="campaign",
+            note=(
+                f"Drill down: {google_ag_count} ad groups → {google_ad_count} ads "
+                "with creative previews when available."
+            ),
         )
     )
 
@@ -1352,6 +1432,8 @@ def render_penn_html(
     applyBlView();
 
     const DRILL_MAP = {{
+      'google:campaign': {{ childLevel: 'ad_group', childLabel: 'Ad group' }},
+      'google:ad_group': {{ childLevel: 'ad', childLabel: 'Ad' }},
       'linkedin:campaign_group': {{ childLevel: 'campaign', childLabel: 'Campaign' }},
       'linkedin:campaign': {{ childLevel: 'creative', childLabel: 'Creative' }},
       'meta:campaign': {{ childLevel: 'adset', childLabel: 'Ad set' }},
@@ -1360,6 +1442,7 @@ def render_penn_html(
     const LEVEL_LABELS = {{
       campaign_group: 'Group',
       campaign: 'Campaign',
+      ad_group: 'Ad group',
       creative: 'Creative',
       adset: 'Ad set',
       ad: 'Ad',
@@ -1383,7 +1466,7 @@ def render_penn_html(
       const tag = LEVEL_LABELS[level]
         ? `<span class="entity-tag">${{escHtml(LEVEL_LABELS[level])}}</span>` : '';
       let inner = `${{tag}}${{escHtml(r.name || '—')}}`;
-      if (level === 'ad') {{
+      if (level === 'ad' || level === 'creative') {{
         const thumbUrl = r.thumbnail_url || r.image_url || '';
         const thumb = thumbUrl
           ? `<img class="ad-thumb" src="${{escHtml(thumbUrl)}}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none'">`
