@@ -5,8 +5,9 @@ from __future__ import annotations
 import html
 import json
 import os
-from datetime import date
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
 import dashboard_snapshots
 import ga4_warehouse_service
@@ -21,6 +22,41 @@ from penn_config import PennDashboardConfig, load_penn_config
 def configured_dashboard_secret() -> str | None:
     secret = (os.getenv("DASHBOARD_SECRET") or os.getenv("CRON_SECRET") or "").strip()
     return secret or None
+
+
+def min_refresh_seconds() -> int:
+    """Minimum seconds between manual dashboard refreshes (default 15 min)."""
+    raw = (os.getenv("DASHBOARD_MIN_REFRESH_SECONDS") or "900").strip()
+    try:
+        return max(60, int(raw))
+    except ValueError:
+        return 900
+
+
+def _parse_refreshed_at(snapshot: dict[str, Any] | None) -> datetime | None:
+    raw = (snapshot or {}).get("refreshed_at")
+    if not raw:
+        return None
+    text = str(raw).strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt
+    except ValueError:
+        return None
+
+
+def refresh_cooldown_status(snapshot: dict[str, Any] | None) -> tuple[bool, int]:
+    """Return (allowed_now, seconds_remaining)."""
+    last = _parse_refreshed_at(snapshot)
+    if not last:
+        return True, 0
+    elapsed = (datetime.now(tz=UTC) - last).total_seconds()
+    wait = min_refresh_seconds()
+    if elapsed >= wait:
+        return True, 0
+    return False, int(wait - elapsed)
 
 
 def verify_dashboard_key(key: str | None) -> None:
@@ -266,14 +302,50 @@ def _summary_card(label: str, totals: dict[str, Any] | None, *, note: str = "") 
     """
 
 
-def render_penn_html(snapshot: dict[str, Any] | None) -> str:
+def _refresh_toolbar(
+    *,
+    access_key: str | None,
+    snapshot: dict[str, Any] | None,
+    flash_message: str | None = None,
+) -> str:
+    if not access_key:
+        return ""
+    allowed, remaining = refresh_cooldown_status(snapshot)
+    notice = ""
+    if flash_message:
+        notice = f'<div class="notice">{_esc(flash_message)}</div>'
+    elif not allowed:
+        mins = max(1, (remaining + 59) // 60)
+        notice = (
+            f'<div class="notice muted">Refresh available in ~{mins} min '
+            f"(pulls Google, LinkedIn, Meta + GA4 — takes ~15–20s).</div>"
+        )
+    refresh_url = f"/dashboard/penn/refresh?key={quote(access_key, safe='')}"
+    if allowed:
+        button = (
+            f'<form method="post" action="{refresh_url}" class="refresh-form">'
+            f'<button type="submit" class="refresh-btn">Refresh now</button></form>'
+        )
+    else:
+        button = '<button type="button" class="refresh-btn" disabled>Refresh now</button>'
+    return f'<div class="refresh-bar">{notice}{button}</div>'
+
+
+def render_penn_html(
+    snapshot: dict[str, Any] | None,
+    *,
+    access_key: str | None = None,
+    flash_message: str | None = None,
+) -> str:
     if not snapshot:
-        return """<!DOCTYPE html>
+        toolbar = _refresh_toolbar(access_key=access_key, snapshot=None, flash_message=flash_message)
+        return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Penn Dashboard</title>
-<style>body{font-family:system-ui,sans-serif;max-width:960px;margin:40px auto;padding:0 20px;color:#1a1a1a}
-.muted{color:#666}</style></head><body>
+<style>body{{font-family:system-ui,sans-serif;max-width:960px;margin:40px auto;padding:0 20px;color:#1a1a1a}}
+.muted{{color:#666}}.refresh-bar{{margin:16px 0}}.refresh-btn{{padding:8px 16px;border-radius:8px;border:1px solid #0b5cab;background:#0b5cab;color:#fff;cursor:pointer;font-size:0.95rem}}.refresh-btn:disabled{{opacity:0.5;cursor:not-allowed}}.notice{{margin-bottom:10px;font-size:0.9rem}}</style></head><body>
 <h1>Penn Community Bank — Ads Dashboard</h1>
-<p class="muted">No snapshot yet. Run <code>POST /internal/sync-penn</code> with your cron job first.</p>
+<p class="muted">No snapshot yet. Click refresh to pull data from ad platforms.</p>
+{toolbar}
 </body></html>"""
 
     label = snapshot.get("label") or "Penn Community Bank"
@@ -395,6 +467,19 @@ def render_penn_html(snapshot: dict[str, Any] | None) -> str:
     .errors ul {{ margin: 8px 0 0; padding-left: 20px; }}
     canvas {{ max-height: 300px; }}
     .muted {{ color: var(--muted); }}
+    .refresh-bar {{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }}
+    .refresh-form {{ margin: 0; }}
+    .refresh-btn {{
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }}
+    .refresh-btn:disabled {{ opacity: 0.5; cursor: not-allowed; background: #94a3b8; border-color: #94a3b8; }}
+    .notice {{ font-size: 0.88rem; color: var(--muted); }}
   </style>
 </head>
 <body>
@@ -405,6 +490,7 @@ def render_penn_html(snapshot: dict[str, Any] | None) -> str:
         Paid media performance · {_esc(range_label)}<br>
         Last refreshed: {_esc(refreshed)} UTC
       </div>
+      {_refresh_toolbar(access_key=access_key, snapshot=snapshot, flash_message=flash_message)}
     </header>
 
     {error_html}
