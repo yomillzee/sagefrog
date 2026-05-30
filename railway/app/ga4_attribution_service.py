@@ -548,6 +548,48 @@ def normalize_campaign_name(name: str) -> str:
     return re.sub(r"\s+", " ", (name or "").lower().strip())
 
 
+def build_ga4_campaign_index(
+    ga4_rows: list[dict[str, Any]],
+    ad_campaigns: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Map ad-platform campaign id -> aggregated GA4 onsite metrics."""
+    ads_by_id: dict[str, dict[str, Any]] = {
+        str(c.get("id") or ""): c for c in ad_campaigns if c.get("id")
+    }
+    ads_by_name: dict[str, dict[str, Any]] = {}
+    for campaign in ad_campaigns:
+        norm = normalize_campaign_name(str(campaign.get("name") or ""))
+        if norm and norm not in ads_by_name:
+            ads_by_name[norm] = campaign
+
+    index: dict[str, dict[str, Any]] = {}
+    for row in ga4_rows:
+        cid = str(row.get("campaign_id") or "").strip()
+        cname = str(row.get("campaign_name") or "")
+        ads = ads_by_id.get(cid) if cid else None
+        if not ads and cname:
+            ads = ads_by_name.get(normalize_campaign_name(cname))
+        if not ads:
+            continue
+        aid = str(ads.get("id") or "")
+        if not aid:
+            continue
+        bucket = index.setdefault(
+            aid,
+            {"sessions": 0, "engaged_sessions": 0, "key_events": 0, "page_views": 0},
+        )
+        bucket["sessions"] += int(row.get("sessions") or 0)
+        bucket["engaged_sessions"] += int(row.get("engaged_sessions") or 0)
+        bucket["key_events"] += int(row.get("key_events") or 0)
+        bucket["page_views"] += int(row.get("page_views") or 0)
+
+    for bucket in index.values():
+        sessions = int(bucket["sessions"])
+        engaged = int(bucket["engaged_sessions"])
+        bucket["engagement_rate"] = round(engaged / sessions, 4) if sessions else 0.0
+    return index
+
+
 def match_ga4_campaigns_to_ads(
     ga4_rows: list[dict[str, Any]],
     ad_campaigns: list[dict[str, Any]],

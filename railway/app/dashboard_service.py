@@ -15,6 +15,7 @@ import ga4_attribution_service
 from ga4_attribution_service import (
     METHODOLOGY,
     PLATFORM_TIER_LABELS,
+    build_ga4_campaign_index,
     match_ga4_campaigns_to_ads,
 )
 import google_ads_service
@@ -450,6 +451,43 @@ def _entity_level_label(level: str) -> str:
     return labels.get(level, level.replace("_", " "))
 
 
+_GA4_TABLE_HEADERS = """
+              <th class="ga4-col" title="GA4 attributed sessions">Sess.</th>
+              <th class="ga4-col" title="GA4 engagement rate">Eng.</th>
+              <th class="ga4-col" title="GA4 key events">Events</th>"""
+
+
+def _ga4_row_cells(
+    campaign_id: str,
+    ga4_by_campaign: dict[str, dict[str, Any]] | None,
+    *,
+    is_campaign_row: bool,
+) -> str:
+    if not ga4_by_campaign:
+        return ""
+    if not is_campaign_row:
+        return (
+            '<td class="num ga4-col muted">—</td>'
+            '<td class="num ga4-col muted">—</td>'
+            '<td class="num ga4-col muted">—</td>'
+        )
+    metrics = ga4_by_campaign.get(str(campaign_id or "")) or {}
+    sessions = int(metrics.get("sessions") or 0)
+    if not sessions:
+        return (
+            '<td class="num ga4-col muted">—</td>'
+            '<td class="num ga4-col muted">—</td>'
+            '<td class="num ga4-col muted">—</td>'
+        )
+    engaged = int(metrics.get("engaged_sessions") or 0)
+    key_events = int(metrics.get("key_events") or 0)
+    return (
+        f'<td class="num ga4-col">{_fmt_int(sessions)}</td>'
+        f'<td class="num ga4-col">{_fmt_pct(engaged, sessions)}</td>'
+        f'<td class="num ga4-col">{_fmt_int(key_events)}</td>'
+    )
+
+
 def _drillable_table(
     platform: str,
     title: str,
@@ -459,6 +497,7 @@ def _drillable_table(
     drill_hint: str = "",
     note: str = "",
     site_footer: str = "",
+    ga4_by_campaign: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     rows = _rows_for_display(rows)
     level_badge = _entity_level_label(entity_level)
@@ -510,6 +549,11 @@ def _drillable_table(
                 f'aria-expanded="false" '
                 f'aria-label="Expand {_esc(row.get("name"))}"'
             )
+        ga4_cells = _ga4_row_cells(
+            str(row.get("id") or ""),
+            ga4_by_campaign,
+            is_campaign_row=(entity_level == "campaign"),
+        )
         rows_html.append(
             f"""<tr class="tree-row tree-depth-0{expand_class}" {row_attrs}>
               <td class="chevron-col">{chevron}</td>
@@ -520,9 +564,11 @@ def _drillable_table(
               <td class="num">{_fmt_pct(clicks, impressions or 1)}</td>
               <td class="num">{_fmt_int(conv)}</td>
               <td class="num">{cpc}</td>
+              {ga4_cells}
             </tr>"""
         )
     chevron_th = '<th class="chevron-col"></th>'
+    ga4_headers = _GA4_TABLE_HEADERS if ga4_by_campaign is not None else ""
     note_html = f'<p class="table-note">{_esc(note)}</p>' if note else ""
     hint_html = f'<p class="drill-hint">{_esc(hint)}</p>' if hint else ""
     return f"""
@@ -545,6 +591,7 @@ def _drillable_table(
               <th>CTR</th>
               <th>Conv.</th>
               <th>CPC</th>
+              {ga4_headers}
             </tr>
           </thead>
           <tbody class="tree-table" data-platform="{_esc(platform)}">
@@ -724,13 +771,18 @@ def _platform_breakdown_html(
     ga4_platforms = _ga4_platform_reports(ga4_attr)
     ad_totals = platform_totals or {}
 
-    def site_block(platform: str) -> str:
+    def ga4_index(platform: str) -> dict[str, dict[str, Any]]:
         campaigns = (breakdowns.get(platform) or {}).get("campaign") or []
+        report = ga4_platforms.get(platform) or {}
+        if not campaigns or not report:
+            return {}
+        return build_ga4_campaign_index(report.get("by_campaign") or [], campaigns)
+
+    def site_block(platform: str) -> str:
         return _platform_site_impact_html(
             platform,
             ga4_platforms.get(platform) or {},
             ad_totals=ad_totals.get(platform),
-            ad_campaigns=campaigns,
         )
 
     parts: list[str] = []
@@ -746,9 +798,11 @@ def _platform_breakdown_html(
             entity_level="campaign",
             note=(
                 f"Drill down: {google_ag_count} ad groups → {google_ad_count} ads "
-                "with creative previews when available."
+                "with creative previews when available. "
+                "On-site columns are GA4 sessions matched to each campaign."
             ),
             site_footer=site_block("google"),
+            ga4_by_campaign=ga4_index("google"),
         )
     )
 
@@ -763,9 +817,11 @@ def _platform_breakdown_html(
                 entity_level="campaign_group",
                 note=(
                     "Top-level groups from the Marketing API. "
-                    "Click ▸ to expand campaigns and creatives inline."
+                    "Click ▸ to expand campaigns and creatives inline. "
+                    "On-site columns apply to LinkedIn campaigns when expanded."
                 ),
                 site_footer=site_block("linkedin"),
+                ga4_by_campaign=ga4_index("linkedin"),
             )
         )
     else:
@@ -795,6 +851,7 @@ def _platform_breakdown_html(
             ),
             drill_hint="Click ▸ on a campaign to expand ad sets, then ads with thumbnails",
             site_footer=site_block("meta"),
+            ga4_by_campaign=ga4_index("meta"),
         )
     )
     return "\n".join(parts)
@@ -814,7 +871,6 @@ def _platform_site_impact_html(
     report: dict[str, Any],
     *,
     ad_totals: dict[str, Any] | None,
-    ad_campaigns: list[dict[str, Any]],
 ) -> str:
     """Compact on-site GA4 block embedded under each platform panel."""
     totals = report.get("totals") or {}
@@ -842,22 +898,6 @@ def _platform_site_impact_html(
               <td class="num">{_fmt_int(sessions)}</td>
               <td class="num">{_fmt_pct(engaged, sessions)}</td>
               <td class="num">{_fmt_int(t.get("key_events") or 0)}</td>
-            </tr>"""
-        )
-
-    merged = match_ga4_campaigns_to_ads(report.get("by_campaign") or [], ad_campaigns)
-    campaign_rows_html = []
-    for row in merged:
-        if not any((row.get("spend"), row.get("sessions"), row.get("ad_clicks"))):
-            continue
-        campaign_rows_html.append(
-            f"""<tr>
-              <td class="name">{_esc(row.get("campaign_name"))}</td>
-              <td class="num">{_fmt_money(float(row.get("spend") or 0))}</td>
-              <td class="num">{_fmt_int(row.get("ad_clicks") or 0)}</td>
-              <td class="num">{_fmt_int(row.get("sessions") or 0)}</td>
-              <td class="num">{_fmt_pct(row.get("engaged_sessions") or 0, row.get("sessions") or 1)}</td>
-              <td class="num">{_fmt_int(row.get("key_events") or 0)}</td>
             </tr>"""
         )
 
@@ -894,19 +934,6 @@ def _platform_site_impact_html(
               <tbody>{''.join(tier_rows)}</tbody>
             </table>
           </div>"""
-    if campaign_rows_html:
-        details_inner += f"""
-          <div class="table-wrap">
-            <table class="data-table compact">
-              <thead>
-                <tr>
-                  <th>Campaign</th><th>Spend</th><th>Clicks</th>
-                  <th>GA sessions</th><th>Eng.</th><th>Events</th>
-                </tr>
-              </thead>
-              <tbody>{''.join(campaign_rows_html)}</tbody>
-            </table>
-          </div>"""
     if event_rows:
         details_inner += f"""
           <div class="table-wrap">
@@ -920,7 +947,7 @@ def _platform_site_impact_html(
     if details_inner:
         details_block = f"""
       <details class="site-impact-details">
-        <summary>Campaign &amp; event detail</summary>
+        <summary>Attribution detail &amp; top events</summary>
         {details_inner}
       </details>"""
 
@@ -1015,6 +1042,16 @@ def render_penn_html(
         platform_totals=totals,
     )
     breakdowns_json = _json_for_html_script(breakdowns)
+    ga4_campaign_metrics: dict[str, dict[str, dict[str, Any]]] = {}
+    for platform in ("google", "linkedin", "meta"):
+        campaigns = (breakdowns.get(platform) or {}).get("campaign") or []
+        report = ga4_platforms.get(platform) or {}
+        ga4_campaign_metrics[platform] = (
+            build_ga4_campaign_index(report.get("by_campaign") or [], campaigns)
+            if campaigns and report
+            else {}
+        )
+    ga4_campaign_metrics_json = _json_for_html_script(ga4_campaign_metrics)
     bl_campaigns = _business_line_campaigns_from_snapshot(snapshot)
     bl_campaigns_json = _json_for_html_script(bl_campaigns)
     bl_catalog_json = _json_for_html_script(active_business_line_catalog(bl_campaigns))
@@ -1257,6 +1294,16 @@ def render_penn_html(
     .data-table th.sort-active[data-sort-dir="desc"] .sort-icon::before {{ content: '↓'; }}
     .data-table th.sortable:not(.sort-active) .sort-icon::before {{ content: '↕'; }}
     .data-table tbody tr:last-child td {{ border-bottom: none; }}
+    .data-table th.ga4-col, .data-table td.ga4-col {{
+      border-left: 1px solid var(--border);
+      background: rgba(184, 146, 46, 0.04);
+    }}
+    .data-table thead th.ga4-col {{
+      color: #8a6d1f;
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }}
+    .data-table td.ga4-col.muted {{ color: #9aa3ad; }}
     td.num {{ text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }}
     td.name {{ max-width: 340px; font-weight: 500; }}
     td.chevron, th.chevron-col {{
@@ -1805,6 +1852,7 @@ def render_penn_html(
   <script type="application/json" id="chart-data">{chart_json}</script>
   <script type="application/json" id="ga4-attr-chart-data">{ga4_attr_chart_json}</script>
   <script type="application/json" id="breakdowns-data">{breakdowns_json}</script>
+  <script type="application/json" id="ga4-campaign-metrics">{ga4_campaign_metrics_json}</script>
   <script type="application/json" id="bl-campaigns-data">{bl_campaigns_json}</script>
   <script type="application/json" id="bl-catalog-data">{bl_catalog_json}</script>
   <script type="application/json" id="platform-catalog-data">{platform_catalog_json}</script>
@@ -1822,6 +1870,7 @@ def render_penn_html(
 
     const chartPayload = readJson('chart-data', {{ labels: [], datasets: [] }});
     const breakdowns = readJson('breakdowns-data', {{}});
+    const ga4CampaignMetrics = readJson('ga4-campaign-metrics', {{}});
     const blCampaigns = readJson('bl-campaigns-data', []);
     const blCatalog = readJson('bl-catalog-data', []);
     const platformCatalog = readJson('platform-catalog-data', []);
@@ -2169,6 +2218,24 @@ def render_penn_html(
       return `<td class="name" style="padding-left:${{pad}}px">${{inner}}</td>`;
     }}
 
+    function buildGa4Cells(platform, level, rowId) {{
+      const platformMetrics = ga4CampaignMetrics[platform];
+      if (!platformMetrics) return '';
+      if (level !== 'campaign') {{
+        return '<td class="num ga4-col muted">—</td><td class="num ga4-col muted">—</td><td class="num ga4-col muted">—</td>';
+      }}
+      const metrics = platformMetrics[String(rowId || '')] || {{}};
+      const sessions = metrics.sessions || 0;
+      if (!sessions) {{
+        return '<td class="num ga4-col muted">—</td><td class="num ga4-col muted">—</td><td class="num ga4-col muted">—</td>';
+      }}
+      const engaged = metrics.engaged_sessions || 0;
+      const keyEvents = metrics.key_events || 0;
+      return `<td class="num ga4-col">${{fmtInt(sessions)}}</td>`
+        + `<td class="num ga4-col">${{fmtPct(engaged, sessions)}}</td>`
+        + `<td class="num ga4-col">${{fmtInt(keyEvents)}}</td>`;
+    }}
+
     function buildTreeRow(r, platform, level, depth) {{
       const spend = r.spend || 0;
       const clicks = r.clicks || 0;
@@ -2198,7 +2265,8 @@ def render_penn_html(
         <td class="num">${{fmtInt(impressions)}}</td>
         <td class="num">${{fmtPct(clicks, impressions)}}</td>
         <td class="num">${{fmtInt(conv)}}</td>
-        <td class="num">${{cpc}}</td>`;
+        <td class="num">${{cpc}}</td>
+        ${{buildGa4Cells(platform, level, r.id)}}`;
       return tr;
     }}
 
