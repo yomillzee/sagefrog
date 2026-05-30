@@ -62,18 +62,22 @@ def load_penn_config() -> PennDashboardConfig:
             data = parsed
 
     google = _normalize_google_customer_id(
-        _strip_env(str(data.get("google_customer_id") or ""))
-        or _strip_env(os.getenv("PENN_GOOGLE_CUSTOMER_ID"))
+        _strip_env(os.getenv("PENN_GOOGLE_CUSTOMER_ID"))
+        or _strip_env(str(data.get("google_customer_id") or ""))
         or _PENN_DEFAULTS["google_customer_id"]
     )
 
-    linkedin = _strip_env(str(data.get("linkedin_account_id") or "")) or _strip_env(
-        os.getenv("PENN_LINKEDIN_ACCOUNT_ID")
-    ) or _PENN_DEFAULTS["linkedin_account_id"]
+    linkedin = (
+        _strip_env(os.getenv("PENN_LINKEDIN_ACCOUNT_ID"))
+        or _strip_env(str(data.get("linkedin_account_id") or ""))
+        or _PENN_DEFAULTS["linkedin_account_id"]
+    )
 
-    meta = _strip_env(str(data.get("meta_account_id") or "")) or _strip_env(
-        os.getenv("PENN_META_ACCOUNT_ID")
-    ) or _PENN_DEFAULTS["meta_account_id"]
+    meta = (
+        _strip_env(os.getenv("PENN_META_ACCOUNT_ID"))
+        or _strip_env(str(data.get("meta_account_id") or ""))
+        or _PENN_DEFAULTS["meta_account_id"]
+    )
 
     ga4_key = (
         _strip_env(str(data.get("ga4_client_key") or ""))
