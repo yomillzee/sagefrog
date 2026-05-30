@@ -184,29 +184,18 @@ def refresh_penn(*, date_range: str = "LAST_30_DAYS") -> dict[str, Any]:
             )
         except Exception as exc:
             payload["errors"]["linkedin_sync"] = _platform_error(exc)
-        li_campaigns: list[dict[str, Any]] = []
         li_groups: list[dict[str, Any]] = []
         li_totals: dict[str, Any] | None = None
-        try:
-            perf = linkedin_service.account_performance(cfg.linkedin_account_id, date_range=preset)
-            li_campaigns = [_normalize_entity_row(c) for c in perf.get("campaigns") or []]
-            li_totals = _account_totals(perf)
-        except Exception as exc:
-            payload["errors"]["linkedin_campaigns"] = _platform_error(exc)
         try:
             groups_perf = linkedin_service.campaign_groups_performance(
                 cfg.linkedin_account_id, date_range=preset
             )
             li_groups = [_normalize_entity_row(g) for g in groups_perf.get("campaign_groups") or []]
-            if li_totals is None:
-                li_totals = _account_totals(groups_perf)
+            li_totals = _account_totals(groups_perf)
         except Exception as exc:
             payload["errors"]["linkedin_campaign_groups"] = _platform_error(exc)
-        if li_campaigns or li_groups:
-            breakdowns["linkedin"] = {
-                "campaign_group": li_groups,
-                "campaign": li_campaigns,
-            }
+        if li_groups:
+            breakdowns["linkedin"] = {"campaign_group": li_groups}
         if li_totals:
             payload["platform_totals"]["linkedin"] = li_totals
 
@@ -436,24 +425,6 @@ def _refresh_toolbar(
     return f'<div class="refresh-bar">{notice}{button}</div>'
 
 
-def _hierarchy_rules_html() -> str:
-    return """
-    <section class="panel hierarchy-rules">
-      <h2>Hierarchy rules</h2>
-      <p class="muted">Each platform uses different ad levels. Summary cards are <strong>account totals</strong>.
-      Breakdown tables are separate — never sum campaign groups + campaigns (LinkedIn) or campaigns + ad sets (Meta).</p>
-      <table class="hierarchy-table">
-        <thead><tr><th>Level</th><th>LinkedIn</th><th>Meta</th><th>Google Ads</th></tr></thead>
-        <tbody>
-          <tr><td>Group / folder</td><td>Campaign group</td><td>—</td><td>—</td></tr>
-          <tr><td>Campaign</td><td>Campaign</td><td>Campaign</td><td>Campaign</td></tr>
-          <tr><td>Sub-campaign</td><td>Creative (not ad set)</td><td>Ad set</td><td>Ad group</td></tr>
-        </tbody>
-      </table>
-    </section>
-    """
-
-
 def _aggregated_card(totals: dict[str, Any]) -> str:
     if not totals:
         return ""
@@ -477,32 +448,36 @@ def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
     google = breakdowns.get("google") or {}
     parts.append(
         _entity_table(
-            "Google Ads",
+            "Google Ads — campaigns",
             google.get("campaign") or [],
             entity_level="campaign",
-            note="entity_level=campaign only. Google has no separate ad-set level in this dashboard.",
         )
     )
 
     linkedin = breakdowns.get("linkedin") or {}
-    if linkedin.get("campaign_group"):
+    groups = linkedin.get("campaign_group") or []
+    if groups:
         parts.append(
             _entity_table(
                 "LinkedIn — campaign groups",
-                linkedin.get("campaign_group") or [],
+                groups,
                 entity_level="campaign_group",
-                note="Folders above campaigns. Not comparable to Meta ad sets.",
+                note=(
+                    "Matches linkedinCampaignGroupsPerformance in GPT (e.g. 777414946, 835101716). "
+                    "LinkedIn Campaign Manager may show extra nesting; the Marketing API uses "
+                    "campaign group → campaign → creative."
+                ),
             )
         )
-    parts.append(
-        _entity_table(
-            "LinkedIn — campaigns",
-            linkedin.get("campaign") or [],
-            entity_level="campaign",
-            parent_header="Campaign group",
-            note="entity_level=campaign. LinkedIn has no ad set level.",
+    else:
+        parts.append(
+            """
+        <section class="panel">
+          <h2>LinkedIn — campaign groups</h2>
+          <p class="muted">No campaign group data — click Refresh now.</p>
+        </section>
+        """
         )
-    )
 
     meta = breakdowns.get("meta") or {}
     parts.append(
@@ -510,7 +485,6 @@ def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
             "Meta — campaigns",
             meta.get("campaign") or [],
             entity_level="campaign",
-            note="entity_level=campaign. Do not merge with ad set rows below.",
         )
     )
     if meta.get("adset"):
@@ -520,7 +494,6 @@ def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
                 meta.get("adset") or [],
                 entity_level="adset",
                 parent_header="Parent campaign",
-                note="entity_level=adset (sub-campaign). Not the same as LinkedIn campaign groups.",
             )
         )
     return "\n".join(parts)
@@ -663,8 +636,6 @@ def render_penn_html(
     td.name {{ max-width: 360px; }}
     td.mono {{ font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--muted); }}
     .table-note {{ margin: 0 0 12px; font-size: 0.85rem; color: var(--muted); }}
-    .hierarchy-rules p {{ margin-top: 0; }}
-    .hierarchy-table {{ margin-top: 12px; font-size: 0.88rem; }}
     .aggregated-stats {{ display: flex; flex-wrap: wrap; gap: 16px 24px; font-size: 1rem; margin-top: 8px; }}
     .errors {{
       background: #fff8e6;
@@ -705,13 +676,11 @@ def render_penn_html(
 
     {error_html}
 
-    {_hierarchy_rules_html()}
-
     {_aggregated_card(aggregated)}
 
     <div class="cards">
       {_summary_card("Google Ads", totals.get("google"))}
-      {_summary_card("LinkedIn", totals.get("linkedin"))}
+      {_summary_card("LinkedIn", totals.get("linkedin"), note="Account total · table below is campaign groups only")}
       {_summary_card("Meta", totals.get("meta"))}
       {_summary_card("GA4 (site)", totals.get("ga4"), note=ga4_note)}
     </div>
