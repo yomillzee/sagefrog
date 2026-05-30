@@ -13,7 +13,7 @@ import dashboard_snapshots
 import ga4_warehouse_service
 import ga4_attribution_service
 from ga4_attribution_service import (
-    CONFIRMED_TIERS,
+    METHODOLOGY,
     PLATFORM_TIER_LABELS,
     match_ga4_campaigns_to_ads,
 )
@@ -458,6 +458,7 @@ def _drillable_table(
     entity_level: str,
     drill_hint: str = "",
     note: str = "",
+    site_footer: str = "",
 ) -> str:
     rows = _rows_for_display(rows)
     level_badge = _entity_level_label(entity_level)
@@ -481,6 +482,7 @@ def _drillable_table(
             <span class="badge">{level_badge} · 0 rows</span>
           </div>
           <p class="muted">No {_esc(level_badge)} data for this period.</p>
+          {site_footer}
         </section>
         """
     rows_html = []
@@ -550,6 +552,7 @@ def _drillable_table(
           </tbody>
         </table>
       </div>
+      {site_footer}
     </section>
     """
 
@@ -619,12 +622,29 @@ def _entity_table(
     """
 
 
-def _summary_card(label: str, totals: dict[str, Any] | None, *, note: str = "") -> str:
+def _summary_card(
+    label: str,
+    totals: dict[str, Any] | None,
+    *,
+    note: str = "",
+    site_report: dict[str, Any] | None = None,
+) -> str:
+    site_html = ""
+    if site_report:
+        ga_sessions = int((site_report.get("totals") or {}).get("sessions") or 0)
+        ga_engaged = int((site_report.get("totals") or {}).get("engaged_sessions") or 0)
+        key_events = int((site_report.get("totals") or {}).get("key_events") or 0)
+        if ga_sessions:
+            site_html = f"""
+      <div class="card-site">
+        On-site: {_fmt_int(ga_sessions)} sessions · {_fmt_pct(ga_engaged, ga_sessions)} engaged · {_fmt_int(key_events)} key events
+      </div>"""
     if not totals:
         return f"""
         <div class="card card-empty">
           <div class="card-label">{_esc(label)}</div>
           <div class="card-value muted">No data</div>
+          {site_html}
           {f'<div class="card-note">{_esc(note)}</div>' if note else ''}
         </div>
         """
@@ -642,6 +662,7 @@ def _summary_card(label: str, totals: dict[str, Any] | None, *, note: str = "") 
         <span>{_fmt_int(impressions)} impr.</span>
         <span>{_fmt_int(conversions)} conv.</span>
       </div>
+      {site_html}
       <div class="card-note">{_esc(default_note)}</div>
     </div>
     """
@@ -693,8 +714,25 @@ def _aggregated_card(totals: dict[str, Any]) -> str:
     """
 
 
-def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
+def _platform_breakdown_html(
+    breakdowns: dict[str, Any],
+    *,
+    ga4_attr: dict[str, Any] | None = None,
+    platform_totals: dict[str, Any] | None = None,
+) -> str:
     """Render per-platform tables at the correct entity levels."""
+    ga4_platforms = _ga4_platform_reports(ga4_attr)
+    ad_totals = platform_totals or {}
+
+    def site_block(platform: str) -> str:
+        campaigns = (breakdowns.get(platform) or {}).get("campaign") or []
+        return _platform_site_impact_html(
+            platform,
+            ga4_platforms.get(platform) or {},
+            ad_totals=ad_totals.get(platform),
+            ad_campaigns=campaigns,
+        )
+
     parts: list[str] = []
     google = breakdowns.get("google") or {}
     google_campaigns = google.get("campaign") or []
@@ -710,6 +748,7 @@ def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
                 f"Drill down: {google_ag_count} ad groups → {google_ad_count} ads "
                 "with creative previews when available."
             ),
+            site_footer=site_block("google"),
         )
     )
 
@@ -726,14 +765,16 @@ def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
                     "Top-level groups from the Marketing API. "
                     "Click ▸ to expand campaigns and creatives inline."
                 ),
+                site_footer=site_block("linkedin"),
             )
         )
     else:
         parts.append(
-            """
+            f"""
         <section class="panel platform-panel platform-linkedin">
           <div class="panel-head"><h2>LinkedIn — campaign groups</h2></div>
           <p class="muted">No campaign group data — click Refresh now.</p>
+          {site_block("linkedin")}
         </section>
         """
         )
@@ -753,6 +794,7 @@ def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
                 f"Drill down: {meta_adset_count} ad sets → {meta_ad_count} ads with creative previews."
             ),
             drill_hint="Click ▸ on a campaign to expand ad sets, then ads with thumbnails",
+            site_footer=site_block("meta"),
         )
     )
     return "\n".join(parts)
@@ -767,38 +809,38 @@ def _ga4_platform_reports(ga4_attr: dict[str, Any] | None) -> dict[str, dict[str
     return {"google": ga4_attr}
 
 
-def _render_platform_attribution_section(
+def _platform_site_impact_html(
     platform: str,
-    label: str,
     report: dict[str, Any],
     *,
     ad_totals: dict[str, Any] | None,
     ad_campaigns: list[dict[str, Any]],
-    css_class: str,
 ) -> str:
+    """Compact on-site GA4 block embedded under each platform panel."""
     totals = report.get("totals") or {}
+    ga_sessions = int(totals.get("sessions") or 0)
+    if not ga_sessions and not report:
+        return ""
+
+    ga_engaged = int(totals.get("engaged_sessions") or 0)
+    key_events = int(totals.get("key_events") or 0)
+    page_views = int(totals.get("page_views") or 0)
+    ad_clicks = int((ad_totals or {}).get("clicks") or 0)
     by_tier = totals.get("by_tier") or {}
     tier_labels = PLATFORM_TIER_LABELS.get(platform) or {}
-    confirmed_tiers = CONFIRMED_TIERS.get(platform, ())
-    confirmed = sum(int((by_tier.get(t) or {}).get("sessions") or 0) for t in confirmed_tiers)
-    confirmed_engaged = sum(
-        int((by_tier.get(t) or {}).get("engaged_sessions") or 0) for t in confirmed_tiers
-    )
-    ga_sessions = int(totals.get("sessions") or 0)
-    ga_engaged = int(totals.get("engaged_sessions") or 0)
-    ad_clicks = int((ad_totals or {}).get("clicks") or 0)
 
     tier_rows = []
     for key, tier_label in tier_labels.items():
         t = by_tier.get(key) or {}
         sessions = int(t.get("sessions") or 0)
+        if not sessions:
+            continue
         engaged = int(t.get("engaged_sessions") or 0)
         tier_rows.append(
             f"""<tr>
               <td>{_esc(tier_label)}</td>
               <td class="num">{_fmt_int(sessions)}</td>
-              <td class="num">{_fmt_pct(engaged, sessions) if sessions else "—"}</td>
-              <td class="num">{_fmt_int(t.get("page_views") or 0)}</td>
+              <td class="num">{_fmt_pct(engaged, sessions)}</td>
               <td class="num">{_fmt_int(t.get("key_events") or 0)}</td>
             </tr>"""
         )
@@ -815,7 +857,6 @@ def _render_platform_attribution_section(
               <td class="num">{_fmt_int(row.get("ad_clicks") or 0)}</td>
               <td class="num">{_fmt_int(row.get("sessions") or 0)}</td>
               <td class="num">{_fmt_pct(row.get("engaged_sessions") or 0, row.get("sessions") or 1)}</td>
-              <td class="num">{_fmt_int(row.get("page_views") or 0)}</td>
               <td class="num">{_fmt_int(row.get("key_events") or 0)}</td>
             </tr>"""
         )
@@ -826,165 +867,75 @@ def _render_platform_attribution_section(
           <td class="name">{_esc(ev.get("event_name"))}</td>
           <td class="num">{_fmt_int(ev.get("event_count") or 0)}</td>
         </tr>"""
-        for ev in top_events[:10]
+        for ev in top_events[:8]
     )
 
-    click_note = ""
+    click_span = ""
     if ad_clicks and ga_sessions:
-        ratio = ga_sessions / ad_clicks
-        click_note = (
-            f"{label} reported {_fmt_int(ad_clicks)} clicks vs "
-            f"{_fmt_int(ga_sessions)} GA4 attributed sessions ({ratio:.2f} sessions/click)."
+        click_span = (
+            f'<span class="muted">{_fmt_int(ad_clicks)} ad clicks · '
+            f"{ga_sessions / ad_clicks:.2f} sess/click</span>"
         )
 
-    methodology = report.get("methodology") or ""
-    empty_campaign_msg = {
-        "google": "No linked campaign rows — link GA4 to Google Ads account 1549971930.",
-        "linkedin": "No UTM-matched campaigns — add utm_source=linkedin&utm_medium=paid&utm_campaign=… to ad URLs.",
-        "meta": "No UTM-matched campaigns — ensure fbclid or utm_campaign is on Meta ad destination URLs.",
-    }.get(platform, "No campaign rows.")
-
-    return f"""
-    <section class="panel platform-panel platform-{css_class} attr-platform-section">
-      <div class="panel-head">
-        <h2>{_esc(label)} → site</h2>
-        <span class="badge">{_fmt_int(ga_sessions)} sessions</span>
-      </div>
-      <p class="table-note">{_esc(methodology)}</p>
-      {f'<p class="table-note muted">{_esc(click_note)}</p>' if click_note else ''}
-
-      <div class="bl-summary attr-platform-summary">
-        <div class="bl-stat">
-          <div class="bl-stat-val">{_fmt_int(ga_sessions)}</div>
-          <div class="bl-stat-lbl">GA4 sessions</div>
-        </div>
-        <div class="bl-stat">
-          <div class="bl-stat-val">{_fmt_pct(ga_engaged, ga_sessions) if ga_sessions else "—"}</div>
-          <div class="bl-stat-lbl">Engagement rate</div>
-        </div>
-        <div class="bl-stat">
-          <div class="bl-stat-val">{_fmt_int(totals.get("key_events") or 0)}</div>
-          <div class="bl-stat-lbl">Key events</div>
-        </div>
-        <div class="bl-stat">
-          <div class="bl-stat-val">{_fmt_int(confirmed)}</div>
-          <div class="bl-stat-lbl">High-confidence sessions</div>
-        </div>
-        <div class="bl-stat">
-          <div class="bl-stat-val">{_fmt_pct(confirmed_engaged, confirmed) if confirmed else "—"}</div>
-          <div class="bl-stat-lbl">High-confidence eng. rate</div>
-        </div>
-      </div>
-
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Attribution tier</th>
-              <th>Sessions</th>
-              <th>Engagement rate</th>
-              <th>Page views</th>
-              <th>Key events</th>
-            </tr>
-          </thead>
-          <tbody>{''.join(tier_rows) if tier_rows else f'<tr><td colspan="5" class="muted">No {_esc(label)} sessions in range.</td></tr>'}</tbody>
-        </table>
-      </div>
-
-      <h3 class="attr-subhead">Campaign → site outcomes</h3>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Campaign</th>
-              <th>Ad spend</th>
-              <th>Ad clicks</th>
-              <th>GA sessions</th>
-              <th>Eng. rate</th>
-              <th>Page views</th>
-              <th>Key events</th>
-            </tr>
-          </thead>
-          <tbody>
-            {''.join(campaign_rows_html) if campaign_rows_html else f'<tr><td colspan="7" class="muted">{_esc(empty_campaign_msg)}</td></tr>'}
-          </tbody>
-        </table>
-      </div>
-
-      <h3 class="attr-subhead">Top events</h3>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>Event</th><th>Count</th></tr></thead>
-          <tbody>
-            {event_rows if event_rows else '<tr><td colspan="2" class="muted">No events in range.</td></tr>'}
-          </tbody>
-        </table>
-      </div>
-    </section>
-    """
-
-
-def _ga4_attribution_html(
-    ga4_attr: dict[str, Any] | None,
-    *,
-    platform_totals: dict[str, Any],
-    breakdowns: dict[str, Any],
-) -> str:
-    if not ga4_attr:
+    if not ga_sessions:
         return """
-        <section class="panel">
-          <div class="panel-head"><h2>Ads → site (GA4)</h2></div>
-          <p class="muted">No GA4 attribution data yet. Click Refresh now (requires BigQuery GA4 export).</p>
-        </section>
-        """
+      <div class="site-impact site-impact-empty">
+        <span class="site-impact-label">On-site (GA4)</span>
+        <span class="muted">No attributed sessions this period</span>
+      </div>"""
 
-    platforms = _ga4_platform_reports(ga4_attr)
-    key_events = ga4_attr.get("key_event_names") or []
+    details_inner = ""
+    if tier_rows:
+        details_inner += f"""
+          <p class="table-note muted">{_esc(METHODOLOGY.get(platform, report.get("methodology") or ""))}</p>
+          <div class="table-wrap">
+            <table class="data-table compact">
+              <thead><tr><th>Match tier</th><th>Sessions</th><th>Eng. rate</th><th>Key events</th></tr></thead>
+              <tbody>{''.join(tier_rows)}</tbody>
+            </table>
+          </div>"""
+    if campaign_rows_html:
+        details_inner += f"""
+          <div class="table-wrap">
+            <table class="data-table compact">
+              <thead>
+                <tr>
+                  <th>Campaign</th><th>Spend</th><th>Clicks</th>
+                  <th>GA sessions</th><th>Eng.</th><th>Events</th>
+                </tr>
+              </thead>
+              <tbody>{''.join(campaign_rows_html)}</tbody>
+            </table>
+          </div>"""
+    if event_rows:
+        details_inner += f"""
+          <div class="table-wrap">
+            <table class="data-table compact">
+              <thead><tr><th>Top event</th><th>Count</th></tr></thead>
+              <tbody>{event_rows}</tbody>
+            </table>
+          </div>"""
 
-    sections = [
-        _render_platform_attribution_section(
-            "google",
-            "Google Ads",
-            platforms.get("google") or {},
-            ad_totals=platform_totals.get("google"),
-            ad_campaigns=(breakdowns.get("google") or {}).get("campaign") or [],
-            css_class="google",
-        ),
-        _render_platform_attribution_section(
-            "linkedin",
-            "LinkedIn",
-            platforms.get("linkedin") or {},
-            ad_totals=platform_totals.get("linkedin"),
-            ad_campaigns=(breakdowns.get("linkedin") or {}).get("campaign") or [],
-            css_class="linkedin",
-        ),
-        _render_platform_attribution_section(
-            "meta",
-            "Meta",
-            platforms.get("meta") or {},
-            ad_totals=platform_totals.get("meta"),
-            ad_campaigns=(breakdowns.get("meta") or {}).get("campaign") or [],
-            css_class="meta",
-        ),
-    ]
+    details_block = ""
+    if details_inner:
+        details_block = f"""
+      <details class="site-impact-details">
+        <summary>Campaign &amp; event detail</summary>
+        {details_inner}
+      </details>"""
 
     return f"""
-    <section class="panel">
-      <div class="panel-head"><h2>How we match ads to site behavior</h2></div>
-      <p class="table-note">
-        Each platform uses click IDs (gclid, fbclid, li_fat_id) or UTM parameters when available,
-        with source/medium fallback. Campaign tables join GA4 UTM/linked IDs to ad platform campaign names.
-      </p>
-      <p class="table-note muted">Key events counted: {_esc(", ".join(key_events))}</p>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head"><h2>Daily ad-attributed site activity (all platforms)</h2></div>
-      <canvas id="ga4AttrChart"></canvas>
-    </section>
-
-    {''.join(sections)}
-    """
+      <div class="site-impact">
+        <div class="site-impact-bar">
+          <span class="site-impact-label">On-site (GA4)</span>
+          <span><strong>{_fmt_int(ga_sessions)}</strong> sessions</span>
+          <span>{_fmt_pct(ga_engaged, ga_sessions)} engaged</span>
+          <span>{_fmt_int(key_events)} key events</span>
+          <span>{_fmt_int(page_views)} page views</span>
+          {click_span}
+        </div>
+        {details_block}
+      </div>"""
 
 
 def _business_line_campaigns_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1055,20 +1006,20 @@ def render_penn_html(
     )
 
     breakdowns = _breakdowns_from_snapshot(snapshot)
+    ga4_attr = snapshot.get("ga4_attribution")
+    ga4_platforms = _ga4_platform_reports(ga4_attr)
     aggregated = snapshot.get("aggregated_paid_media") or _aggregated_paid_media(totals)
-    breakdown_html = _platform_breakdown_html(breakdowns)
+    breakdown_html = _platform_breakdown_html(
+        breakdowns,
+        ga4_attr=ga4_attr,
+        platform_totals=totals,
+    )
     breakdowns_json = _json_for_html_script(breakdowns)
     bl_campaigns = _business_line_campaigns_from_snapshot(snapshot)
     bl_campaigns_json = _json_for_html_script(bl_campaigns)
     bl_catalog_json = _json_for_html_script(active_business_line_catalog(bl_campaigns))
     platform_catalog_json = _json_for_html_script(active_platform_catalog(bl_campaigns))
-    ga4_note = "Sessions / page views / conversions (no ad spend)"
-    ga4_attr = snapshot.get("ga4_attribution")
-    ga4_attr_html = _ga4_attribution_html(
-        ga4_attr,
-        platform_totals=totals,
-        breakdowns=breakdowns,
-    )
+    ga4_note = "All-site total (not ad-attributed)"
     combined_daily = (ga4_attr or {}).get("combined_daily") or []
     if not combined_daily and (ga4_attr or {}).get("daily"):
         combined_daily = [
@@ -1192,6 +1143,53 @@ def render_penn_html(
     .card-value {{ font-size: 1.75rem; font-weight: 700; margin: 8px 0 4px; letter-spacing: -0.02em; }}
     .card-stats {{ display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 0.84rem; color: var(--muted); }}
     .card-note {{ margin-top: 10px; font-size: 0.78rem; color: var(--muted); line-height: 1.35; }}
+    .card-site {{
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+      font-size: 0.78rem;
+      color: var(--navy-light);
+      line-height: 1.4;
+    }}
+    .site-impact {{
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }}
+    .site-impact-bar {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 16px;
+      font-size: 0.84rem;
+    }}
+    .site-impact-label {{
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--muted);
+    }}
+    .site-impact-empty {{ font-size: 0.84rem; }}
+    .site-impact-details {{
+      margin-top: 10px;
+      font-size: 0.84rem;
+    }}
+    .site-impact-details summary {{
+      cursor: pointer;
+      color: var(--accent);
+      font-weight: 600;
+      user-select: none;
+    }}
+    .site-impact-details .table-wrap {{ margin-top: 10px; }}
+    .data-table.compact th, .data-table.compact td {{ padding: 8px 10px; font-size: 0.82rem; }}
+    .chart-stack {{ display: flex; flex-direction: column; gap: 24px; }}
+    .chart-subhead {{
+      margin: 0 0 8px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--navy);
+    }}
     .panel {{
       background: var(--panel);
       border: 1px solid var(--border);
@@ -1705,23 +1703,30 @@ def render_penn_html(
       <nav class="dash-tabs" role="tablist">
         <button type="button" class="dash-tab active" data-tab="platform" role="tab" aria-selected="true">By platform</button>
         <button type="button" class="dash-tab" data-tab="business-line" role="tab" aria-selected="false">By business line</button>
-        <button type="button" class="dash-tab" data-tab="ad-site" role="tab" aria-selected="false">Ad → site</button>
       </nav>
 
       <div id="tab-platform" class="tab-panel active" role="tabpanel">
         {_aggregated_card(aggregated)}
 
         <div class="cards">
-          {_summary_card("Google Ads", totals.get("google"))}
-          {_summary_card("LinkedIn", totals.get("linkedin"), note="Account total · expand groups inline")}
-          {_summary_card("Meta", totals.get("meta"), note="Account total · expand campaigns inline")}
-          {_summary_card("GA4 (site)", totals.get("ga4"), note=ga4_note)}
+          {_summary_card("Google Ads", totals.get("google"), site_report=ga4_platforms.get("google"), note="Account total · expand campaigns below")}
+          {_summary_card("LinkedIn", totals.get("linkedin"), site_report=ga4_platforms.get("linkedin"), note="Account total · expand groups below")}
+          {_summary_card("Meta", totals.get("meta"), site_report=ga4_platforms.get("meta"), note="Account total · expand campaigns below")}
+          {_summary_card("GA4 (all site)", totals.get("ga4"), note=ga4_note)}
         </div>
 
         <section class="panel">
-          <div class="panel-head"><h2>Daily ad spend (account level)</h2></div>
-          <p class="table-note">One line per platform per day from warehouse — not campaign/ad set breakdown.</p>
-          <canvas id="spendChart"></canvas>
+          <div class="panel-head"><h2>Daily performance</h2></div>
+          <div class="chart-stack">
+            <div>
+              <p class="chart-subhead">Ad spend (account level)</p>
+              <canvas id="spendChart"></canvas>
+            </div>
+            <div>
+              <p class="chart-subhead">On-site sessions attributed to ads (GA4)</p>
+              <canvas id="siteSessionsChart"></canvas>
+            </div>
+          </div>
         </section>
 
         {breakdown_html}
@@ -1786,10 +1791,6 @@ def render_penn_html(
             </section>
           </div>
         </div>
-      </div>
-
-      <div id="tab-ad-site" class="tab-panel" role="tabpanel">
-        {ga4_attr_html}
       </div>
     </div>
   </div>
@@ -2304,9 +2305,9 @@ def render_penn_html(
     }}
 
     const ga4AttrChartPayload = readJson('ga4-attr-chart-data', {{ labels: [], datasets: [] }});
-    const ga4Ctx = document.getElementById('ga4AttrChart');
-    if (ga4Ctx && ga4AttrChartPayload.labels && ga4AttrChartPayload.labels.length) {{
-      new Chart(ga4Ctx, {{
+    const siteCtx = document.getElementById('siteSessionsChart');
+    if (siteCtx && ga4AttrChartPayload.labels && ga4AttrChartPayload.labels.length) {{
+      new Chart(siteCtx, {{
         type: 'line',
         data: ga4AttrChartPayload,
         options: {{
