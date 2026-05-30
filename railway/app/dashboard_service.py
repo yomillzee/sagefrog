@@ -81,6 +81,9 @@ def _normalize_entity_row(row: dict[str, Any]) -> dict[str, Any]:
     if entity == "adset":
         parent_id = str(row.get("campaign_id") or "")
         parent_name = str(row.get("campaign_name") or "")
+    elif entity == "creative":
+        parent_id = str(row.get("campaign_id") or "")
+        parent_name = str(row.get("campaign_name") or "")
     elif entity == "campaign":
         parent_id = str(row.get("campaign_group_id") or "")
         parent_name = str(row.get("campaign_group_name") or "")
@@ -185,6 +188,8 @@ def refresh_penn(*, date_range: str = "LAST_30_DAYS") -> dict[str, Any]:
         except Exception as exc:
             payload["errors"]["linkedin_sync"] = _platform_error(exc)
         li_groups: list[dict[str, Any]] = []
+        li_campaigns: list[dict[str, Any]] = []
+        li_creatives: list[dict[str, Any]] = []
         li_totals: dict[str, Any] | None = None
         try:
             groups_perf = linkedin_service.campaign_groups_performance(
@@ -194,8 +199,24 @@ def refresh_penn(*, date_range: str = "LAST_30_DAYS") -> dict[str, Any]:
             li_totals = _account_totals(groups_perf)
         except Exception as exc:
             payload["errors"]["linkedin_campaign_groups"] = _platform_error(exc)
-        if li_groups:
-            breakdowns["linkedin"] = {"campaign_group": li_groups}
+        try:
+            perf = linkedin_service.account_performance(cfg.linkedin_account_id, date_range=preset)
+            li_campaigns = [_normalize_entity_row(c) for c in perf.get("campaigns") or []]
+        except Exception as exc:
+            payload["errors"]["linkedin_campaigns"] = _platform_error(exc)
+        try:
+            creatives_perf = linkedin_service.creatives_performance(
+                cfg.linkedin_account_id, date_range=preset
+            )
+            li_creatives = [_normalize_entity_row(c) for c in creatives_perf.get("creatives") or []]
+        except Exception as exc:
+            payload["errors"]["linkedin_creatives"] = _platform_error(exc)
+        if li_groups or li_campaigns or li_creatives:
+            breakdowns["linkedin"] = {
+                "campaign_group": li_groups,
+                "campaign": li_campaigns,
+                "creative": li_creatives,
+            }
         if li_totals:
             payload["platform_totals"]["linkedin"] = li_totals
 
@@ -305,6 +326,101 @@ def _entity_level_label(level: str) -> str:
     return labels.get(level, level.replace("_", " "))
 
 
+def _drillable_table(
+    platform: str,
+    title: str,
+    rows: list[dict[str, Any]],
+    *,
+    entity_level: str,
+    drill_hint: str = "",
+    note: str = "",
+) -> str:
+    rows = _rows_for_display(rows)
+    level_badge = _entity_level_label(entity_level)
+    drillable = platform in ("linkedin", "meta") and entity_level in (
+        "campaign_group",
+        "campaign",
+    )
+    hint = drill_hint or (
+        "Click a row to compare child performance in the detail panel →"
+        if drillable
+        else ""
+    )
+    if not rows:
+        return f"""
+        <section class="panel platform-panel platform-{platform}" data-platform="{platform}">
+          <div class="panel-head">
+            <h2>{_esc(title)}</h2>
+            <span class="badge">{level_badge} · 0 rows</span>
+          </div>
+          <p class="muted">No {_esc(level_badge)} data for this period.</p>
+        </section>
+        """
+    rows_html = []
+    for row in sorted(rows, key=lambda c: c.get("spend", 0), reverse=True):
+        spend = float(row.get("spend") or 0)
+        clicks = int(row.get("clicks") or 0)
+        impressions = int(row.get("impressions") or 0)
+        conv = float(row.get("conversions") or 0)
+        row_class = "drill-row" if drillable else ""
+        row_attrs = ""
+        if drillable:
+            row_attrs = (
+                f'data-platform="{_esc(platform)}" '
+                f'data-level="{_esc(entity_level)}" '
+                f'data-id="{_esc(row.get("id"))}" '
+                f'data-name="{_esc(row.get("name"))}" '
+                f'tabindex="0" role="button" '
+                f'aria-label="View breakdown for {_esc(row.get("name"))}"'
+            )
+        chevron = '<td class="chevron">›</td>' if drillable else ""
+        cpc = _fmt_money(spend / clicks) if clicks else "—"
+        rows_html.append(
+            f"""<tr class="{row_class}" {row_attrs}>
+              {chevron}
+              <td class="name">{_esc(row.get("name"))}</td>
+              <td class="num">{_fmt_money(spend)}</td>
+              <td class="num">{_fmt_int(clicks)}</td>
+              <td class="num">{_fmt_int(impressions)}</td>
+              <td class="num">{_fmt_pct(clicks, impressions or 1)}</td>
+              <td class="num">{_fmt_int(conv)}</td>
+              <td class="num">{cpc}</td>
+            </tr>"""
+        )
+    chevron_th = '<th class="chevron-col"></th>' if drillable else ""
+    note_html = f'<p class="table-note">{_esc(note)}</p>' if note else ""
+    hint_html = f'<p class="drill-hint">{_esc(hint)}</p>' if hint else ""
+    return f"""
+    <section class="panel platform-panel platform-{platform}" data-platform="{platform}">
+      <div class="panel-head">
+        <h2>{_esc(title)}</h2>
+        <span class="badge">{level_badge} · {len(rows)} rows</span>
+      </div>
+      {note_html}
+      {hint_html}
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              {chevron_th}
+              <th>Name</th>
+              <th>Spend</th>
+              <th>Clicks</th>
+              <th>Impressions</th>
+              <th>CTR</th>
+              <th>Conv.</th>
+              <th>CPC</th>
+            </tr>
+          </thead>
+          <tbody>
+            {''.join(rows_html)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    """
+
+
 def _entity_table(
     title: str,
     rows: list[dict[str, Any]],
@@ -313,50 +429,52 @@ def _entity_table(
     parent_header: str | None = None,
     note: str = "",
 ) -> str:
+    """Non-drillable table (Google Ads)."""
     rows = _rows_for_display(rows)
     if not rows:
         return f"""
-        <section class="panel">
-          <h2>{_esc(title)}</h2>
+        <section class="panel platform-panel platform-google">
+          <div class="panel-head">
+            <h2>{_esc(title)}</h2>
+          </div>
           <p class="muted">No {_esc(_entity_level_label(entity_level))} data for this period.</p>
         </section>
         """
     level_badge = _entity_level_label(entity_level)
     rows_html = []
     for row in sorted(rows, key=lambda c: c.get("spend", 0), reverse=True):
-        parent_cell = ""
-        if parent_header:
-            parent_cell = f'<td class="name">{_esc(row.get("parent_name") or "—")}</td>'
+        spend = float(row.get("spend") or 0)
+        clicks = int(row.get("clicks") or 0)
+        cpc = _fmt_money(spend / clicks) if clicks else "—"
         rows_html.append(
             f"""<tr>
-              <td class="mono">{_esc(row.get("id"))}</td>
               <td class="name">{_esc(row.get("name"))}</td>
-              {parent_cell}
-              <td class="num">{_fmt_money(float(row.get("spend") or 0))}</td>
-              <td class="num">{_fmt_int(row.get("clicks") or 0)}</td>
+              <td class="num">{_fmt_money(spend)}</td>
+              <td class="num">{_fmt_int(clicks)}</td>
               <td class="num">{_fmt_int(row.get("impressions") or 0)}</td>
-              <td class="num">{_fmt_pct(float(row.get("clicks") or 0), float(row.get("impressions") or 1))}</td>
+              <td class="num">{_fmt_pct(clicks, float(row.get("impressions") or 1))}</td>
               <td class="num">{_fmt_int(row.get("conversions") or 0)}</td>
+              <td class="num">{cpc}</td>
             </tr>"""
         )
-    parent_th = f"<th>{_esc(parent_header)}</th>" if parent_header else ""
     note_html = f'<p class="table-note">{_esc(note)}</p>' if note else ""
     return f"""
-    <section class="panel">
-      <h2>{_esc(title)} <span class="badge">{level_badge} · {len(rows)} rows</span></h2>
+    <section class="panel platform-panel platform-google">
+      <div class="panel-head">
+        <h2>{_esc(title)} <span class="badge">{level_badge} · {len(rows)} rows</span></h2>
+      </div>
       {note_html}
       <div class="table-wrap">
-        <table>
+        <table class="data-table">
           <thead>
             <tr>
-              <th>ID</th>
               <th>Name</th>
-              {parent_th}
               <th>Spend</th>
               <th>Clicks</th>
               <th>Impressions</th>
               <th>CTR</th>
               <th>Conv.</th>
+              <th>CPC</th>
             </tr>
           </thead>
           <tbody>
@@ -458,44 +576,43 @@ def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
     groups = linkedin.get("campaign_group") or []
     if groups:
         parts.append(
-            _entity_table(
+            _drillable_table(
+                "linkedin",
                 "LinkedIn — campaign groups",
                 groups,
                 entity_level="campaign_group",
                 note=(
-                    "Matches linkedinCampaignGroupsPerformance in GPT (e.g. 777414946, 835101716). "
-                    "LinkedIn Campaign Manager may show extra nesting; the Marketing API uses "
-                    "campaign group → campaign → creative."
+                    "Top-level groups from the Marketing API (matches GPT linkedinCampaignGroupsPerformance). "
+                    "Click a group to compare campaigns inside it."
                 ),
             )
         )
     else:
         parts.append(
             """
-        <section class="panel">
-          <h2>LinkedIn — campaign groups</h2>
+        <section class="panel platform-panel platform-linkedin">
+          <div class="panel-head"><h2>LinkedIn — campaign groups</h2></div>
           <p class="muted">No campaign group data — click Refresh now.</p>
         </section>
         """
         )
 
     meta = breakdowns.get("meta") or {}
+    meta_campaigns = meta.get("campaign") or []
+    meta_adset_count = len(meta.get("adset") or [])
     parts.append(
-        _entity_table(
+        _drillable_table(
+            "meta",
             "Meta — campaigns",
-            meta.get("campaign") or [],
+            meta_campaigns,
             entity_level="campaign",
+            note=(
+                f"Same {len(meta_campaigns)} campaigns as metaPerformance in GPT. "
+                f"{meta_adset_count} ad sets load in the detail panel when you click a campaign."
+            ),
+            drill_hint="Click a campaign to compare its ad sets →",
         )
     )
-    if meta.get("adset"):
-        parts.append(
-            _entity_table(
-                "Meta — ad sets",
-                meta.get("adset") or [],
-                entity_level="adset",
-                parent_header="Parent campaign",
-            )
-        )
     return "\n".join(parts)
 
 
@@ -562,6 +679,7 @@ def render_penn_html(
     breakdowns = _breakdowns_from_snapshot(snapshot)
     aggregated = snapshot.get("aggregated_paid_media") or _aggregated_paid_media(totals)
     breakdown_html = _platform_breakdown_html(breakdowns)
+    breakdowns_json = json.dumps(breakdowns)
     ga4_note = "Sessions / page views / conversions (no ad spend)"
 
     return f"""<!DOCTYPE html>
@@ -573,25 +691,62 @@ def render_penn_html(
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     :root {{
-      --bg: #f4f6f8;
+      --bg: #eef1f5;
       --panel: #fff;
-      --text: #1a2332;
-      --muted: #5c6773;
-      --border: #dde3ea;
+      --text: #0f1c2e;
+      --muted: #5a6578;
+      --border: #d8dee8;
       --accent: #0b5cab;
+      --navy: #0a2540;
+      --navy-light: #123456;
+      --gold: #b8922e;
+      --shadow: 0 4px 24px rgba(10, 37, 64, 0.08);
+      --shadow-sm: 0 1px 3px rgba(10, 37, 64, 0.06);
+      --radius: 14px;
+      --google: #4285f4;
+      --linkedin: #0a66c2;
+      --meta: #1877f2;
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
-      font-family: "Segoe UI", system-ui, sans-serif;
+      font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
       background: var(--bg);
       color: var(--text);
-      line-height: 1.45;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
     }}
-    .wrap {{ max-width: 1200px; margin: 0 auto; padding: 24px 20px 48px; }}
-    header {{ margin-bottom: 24px; }}
-    h1 {{ margin: 0 0 8px; font-size: 1.75rem; }}
-    .meta {{ color: var(--muted); font-size: 0.95rem; }}
+    body.drill-open {{ overflow: hidden; }}
+    .hero {{
+      background: linear-gradient(135deg, var(--navy) 0%, var(--navy-light) 100%);
+      color: #fff;
+      padding: 28px 0 32px;
+      margin-bottom: 28px;
+      box-shadow: var(--shadow);
+    }}
+    .hero-inner {{ max-width: 1280px; margin: 0 auto; padding: 0 24px; }}
+    .hero h1 {{ margin: 0 0 6px; font-size: 1.85rem; font-weight: 700; letter-spacing: -0.02em; }}
+    .hero .meta {{ color: rgba(255,255,255,0.75); font-size: 0.92rem; }}
+    .hero .refresh-bar {{ margin-top: 16px; }}
+    .hero .notice {{ color: rgba(255,255,255,0.85); }}
+    .hero .refresh-btn {{
+      background: rgba(255,255,255,0.15);
+      border-color: rgba(255,255,255,0.35);
+      backdrop-filter: blur(4px);
+    }}
+    .hero .refresh-btn:hover:not(:disabled) {{ background: rgba(255,255,255,0.25); }}
+    .layout {{
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 24px 48px;
+    }}
+    @media (min-width: 1100px) {{
+      .layout.has-drill {{ grid-template-columns: 1fr 380px; gap: 24px; align-items: start; }}
+    }}
+    .wrap {{ min-width: 0; }}
     .cards {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -601,100 +756,424 @@ def render_penn_html(
     .card {{
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 16px 18px;
-      box-shadow: 0 1px 2px rgba(0,0,0,.04);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.2s, transform 0.2s;
     }}
+    .card:hover {{ box-shadow: var(--shadow); transform: translateY(-1px); }}
     .card-empty {{ opacity: 0.85; }}
-    .card-label {{ font-size: 0.85rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }}
-    .card-value {{ font-size: 1.6rem; font-weight: 700; margin: 6px 0; }}
-    .card-stats {{ display: flex; flex-wrap: wrap; gap: 8px 12px; font-size: 0.85rem; color: var(--muted); }}
-    .card-note {{ margin-top: 8px; font-size: 0.8rem; color: var(--muted); }}
+    .card-label {{ font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }}
+    .card-value {{ font-size: 1.75rem; font-weight: 700; margin: 8px 0 4px; letter-spacing: -0.02em; }}
+    .card-stats {{ display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 0.84rem; color: var(--muted); }}
+    .card-note {{ margin-top: 10px; font-size: 0.78rem; color: var(--muted); line-height: 1.35; }}
     .panel {{
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px;
+      border-radius: var(--radius);
+      padding: 22px 24px;
       margin-bottom: 20px;
-      box-shadow: 0 1px 2px rgba(0,0,0,.04);
+      box-shadow: var(--shadow-sm);
     }}
-    h2 {{ margin: 0 0 14px; font-size: 1.15rem; }}
+    .panel.aggregated {{
+      background: linear-gradient(to right, #fafbfd, var(--panel));
+      border-left: 4px solid var(--gold);
+    }}
+    .panel-head {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px 16px;
+      margin-bottom: 12px;
+    }}
+    h2 {{ margin: 0; font-size: 1.12rem; font-weight: 650; letter-spacing: -0.01em; }}
+    .platform-panel {{ border-left: 4px solid var(--border); }}
+    .platform-google {{ border-left-color: var(--google); }}
+    .platform-linkedin {{ border-left-color: var(--linkedin); }}
+    .platform-meta {{ border-left-color: var(--meta); }}
     .badge {{
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       font-weight: 600;
       background: #eef3f9;
       color: var(--accent);
-      padding: 2px 8px;
+      padding: 3px 10px;
       border-radius: 999px;
-      vertical-align: middle;
+      white-space: nowrap;
     }}
-    .table-wrap {{ overflow-x: auto; }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 0.92rem; }}
-    th, td {{ padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; }}
-    th {{ color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: .03em; }}
+    .table-wrap {{ overflow-x: auto; margin: 0 -4px; }}
+    .data-table {{ width: 100%; border-collapse: collapse; font-size: 0.88rem; }}
+    .data-table th, .data-table td {{ padding: 11px 12px; border-bottom: 1px solid var(--border); text-align: left; }}
+    .data-table th {{
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      background: #f8fafc;
+      position: sticky;
+      top: 0;
+    }}
+    .data-table tbody tr:last-child td {{ border-bottom: none; }}
     td.num {{ text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }}
-    td.name {{ max-width: 360px; }}
-    td.mono {{ font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--muted); }}
-    .table-note {{ margin: 0 0 12px; font-size: 0.85rem; color: var(--muted); }}
-    .aggregated-stats {{ display: flex; flex-wrap: wrap; gap: 16px 24px; font-size: 1rem; margin-top: 8px; }}
+    td.name {{ max-width: 340px; font-weight: 500; }}
+    td.chevron, th.chevron-col {{
+      width: 28px;
+      padding-right: 0;
+      color: var(--muted);
+      font-size: 1.1rem;
+    }}
+    tr.drill-row {{ cursor: pointer; transition: background 0.15s; }}
+    tr.drill-row:hover {{ background: #f0f5fb; }}
+    tr.drill-row.selected {{ background: #e3eef9; outline: 2px solid var(--accent); outline-offset: -2px; }}
+    tr.drill-row:focus-visible {{ outline: 2px solid var(--accent); outline-offset: -2px; }}
+    .drill-hint {{
+      margin: 0 0 12px;
+      font-size: 0.82rem;
+      color: var(--accent);
+      font-weight: 500;
+    }}
+    .table-note {{ margin: 0 0 10px; font-size: 0.82rem; color: var(--muted); line-height: 1.4; }}
+    .aggregated-stats {{ display: flex; flex-wrap: wrap; gap: 16px 28px; font-size: 1.02rem; margin-top: 4px; }}
+    .aggregated-stats strong {{ font-size: 1.35rem; color: var(--navy); }}
     .errors {{
       background: #fff8e6;
       border: 1px solid #f0d080;
-      border-radius: 10px;
-      padding: 12px 16px;
+      border-radius: var(--radius);
+      padding: 14px 18px;
       margin-bottom: 20px;
-      font-size: 0.9rem;
+      font-size: 0.88rem;
     }}
     .errors ul {{ margin: 8px 0 0; padding-left: 20px; }}
-    canvas {{ max-height: 300px; }}
+    canvas {{ max-height: 280px; }}
     .muted {{ color: var(--muted); }}
-    .refresh-bar {{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }}
+    .refresh-bar {{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }}
     .refresh-form {{ margin: 0; }}
     .refresh-btn {{
-      padding: 8px 16px;
-      border-radius: 8px;
+      padding: 9px 18px;
+      border-radius: 9px;
       border: 1px solid var(--accent);
       background: var(--accent);
       color: #fff;
       cursor: pointer;
-      font-size: 0.9rem;
+      font-size: 0.88rem;
+      font-weight: 600;
+      transition: background 0.15s;
     }}
-    .refresh-btn:disabled {{ opacity: 0.5; cursor: not-allowed; background: #94a3b8; border-color: #94a3b8; }}
-    .notice {{ font-size: 0.88rem; color: var(--muted); }}
+    .refresh-btn:hover:not(:disabled) {{ filter: brightness(1.08); }}
+    .refresh-btn:disabled {{ opacity: 0.45; cursor: not-allowed; background: #94a3b8; border-color: #94a3b8; }}
+    .notice {{ font-size: 0.86rem; color: var(--muted); }}
+
+    .drill-panel {{
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(10, 37, 64, 0.35);
+      backdrop-filter: blur(2px);
+      display: flex;
+      justify-content: flex-end;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.25s, visibility 0.25s;
+    }}
+    .drill-panel.open {{ opacity: 1; visibility: visible; }}
+    .drill-sheet {{
+      width: min(480px, 100vw);
+      height: 100%;
+      background: var(--panel);
+      box-shadow: -8px 0 32px rgba(10, 37, 64, 0.15);
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    }}
+    .drill-panel.open .drill-sheet {{ transform: translateX(0); }}
+    @media (min-width: 1100px) {{
+      .drill-panel {{
+        position: sticky;
+        top: 24px;
+        inset: auto;
+        background: none;
+        backdrop-filter: none;
+        opacity: 1;
+        visibility: visible;
+        height: fit-content;
+        max-height: calc(100vh - 48px);
+      }}
+      .drill-panel:not(.open) {{ display: none; }}
+      .layout.has-drill .drill-panel {{ display: flex; }}
+      .drill-sheet {{
+        width: 100%;
+        height: auto;
+        max-height: calc(100vh - 48px);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow);
+        transform: none;
+      }}
+    }}
+    .drill-header {{
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }}
+    .drill-header-top {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+    }}
+    .drill-header h3 {{ margin: 0; font-size: 1rem; font-weight: 650; line-height: 1.35; }}
+    .drill-parent {{ font-size: 0.82rem; color: var(--muted); }}
+    .drill-actions {{ display: flex; gap: 6px; }}
+    .drill-btn {{
+      background: #f0f4f8;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      color: var(--text);
+    }}
+    .drill-btn:hover {{ background: #e3eaf2; }}
+    .drill-btn.icon {{ padding: 6px 11px; font-size: 1.1rem; line-height: 1; }}
+    .drill-body {{ overflow: auto; flex: 1; padding: 0 12px 16px; }}
+    .drill-empty {{ padding: 32px 20px; text-align: center; color: var(--muted); font-size: 0.9rem; }}
+    .drill-summary {{
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      padding: 14px 8px 8px;
+    }}
+    .drill-stat {{
+      background: #f8fafc;
+      border-radius: 10px;
+      padding: 10px 12px;
+      text-align: center;
+    }}
+    .drill-stat-val {{ font-size: 1.1rem; font-weight: 700; display: block; }}
+    .drill-stat-lbl {{ font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }}
+    .drill-row-nested {{ cursor: pointer; }}
+    .drill-row-nested:hover {{ background: #f0f5fb; }}
+    .share-bar {{
+      height: 4px;
+      background: #e8edf3;
+      border-radius: 2px;
+      margin-top: 4px;
+      overflow: hidden;
+    }}
+    .share-bar-fill {{ height: 100%; background: var(--accent); border-radius: 2px; }}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <header>
+  <div class="hero">
+    <div class="hero-inner">
       <h1>{_esc(label)}</h1>
       <div class="meta">
         Paid media performance · {_esc(range_label)}<br>
         Last refreshed: {_esc(refreshed)} UTC
       </div>
       {_refresh_toolbar(access_key=access_key, snapshot=snapshot, flash_message=flash_message)}
-    </header>
+    </div>
+  </div>
 
-    {error_html}
+  <div class="layout" id="layout">
+    <div class="wrap">
+      {error_html}
 
-    {_aggregated_card(aggregated)}
+      {_aggregated_card(aggregated)}
 
-    <div class="cards">
-      {_summary_card("Google Ads", totals.get("google"))}
-      {_summary_card("LinkedIn", totals.get("linkedin"), note="Account total · table below is campaign groups only")}
-      {_summary_card("Meta", totals.get("meta"))}
-      {_summary_card("GA4 (site)", totals.get("ga4"), note=ga4_note)}
+      <div class="cards">
+        {_summary_card("Google Ads", totals.get("google"))}
+        {_summary_card("LinkedIn", totals.get("linkedin"), note="Account total · click a group to drill down")}
+        {_summary_card("Meta", totals.get("meta"), note="Account total · click a campaign to see ad sets")}
+        {_summary_card("GA4 (site)", totals.get("ga4"), note=ga4_note)}
+      </div>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Daily ad spend (account level)</h2></div>
+        <p class="table-note">One line per platform per day from warehouse — not campaign/ad set breakdown.</p>
+        <canvas id="spendChart"></canvas>
+      </section>
+
+      {breakdown_html}
     </div>
 
-    <section class="panel">
-      <h2>Daily ad spend (account level)</h2>
-      <p class="table-note">One line per platform per day from warehouse — not campaign/ad set breakdown.</p>
-      <canvas id="spendChart"></canvas>
-    </section>
-
-    {breakdown_html}
+    <aside id="drillPanel" class="drill-panel" aria-hidden="true">
+      <div class="drill-sheet">
+        <div class="drill-header">
+          <div class="drill-header-top">
+            <div class="drill-actions">
+              <button type="button" class="drill-btn" id="drillBack" hidden>← Back</button>
+            </div>
+            <div class="drill-actions">
+              <button type="button" class="drill-btn icon" id="drillClose" aria-label="Close">×</button>
+            </div>
+          </div>
+          <h3 id="drillTitle">Breakdown</h3>
+          <div class="drill-parent" id="drillParent"></div>
+        </div>
+        <div class="drill-summary" id="drillSummary"></div>
+        <div class="drill-body">
+          <div class="table-wrap">
+            <table class="data-table" id="drillTable">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Spend</th>
+                  <th>Clicks</th>
+                  <th>CTR</th>
+                  <th>Conv.</th>
+                  <th>Share</th>
+                </tr>
+              </thead>
+              <tbody id="drillTbody"></tbody>
+            </table>
+          </div>
+          <div class="drill-empty" id="drillEmpty" hidden>No child rows for this selection.</div>
+        </div>
+      </div>
+    </aside>
   </div>
   <script>
     const chartPayload = {chart_json};
+    const breakdowns = {breakdowns_json};
+
+    const DRILL_MAP = {{
+      'linkedin:campaign_group': {{ childLevel: 'campaign', childLabel: 'Campaigns' }},
+      'linkedin:campaign': {{ childLevel: 'creative', childLabel: 'Creatives / ads' }},
+      'meta:campaign': {{ childLevel: 'adset', childLabel: 'Ad sets' }},
+    }};
+
+    const fmtMoney = n => '$' + Number(n || 0).toLocaleString(undefined, {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
+    const fmtInt = n => Number(n || 0).toLocaleString();
+    const fmtPct = (n, d) => d ? (100 * n / d).toFixed(2) + '%' : '—';
+
+    const drillPanel = document.getElementById('drillPanel');
+    const drillTitle = document.getElementById('drillTitle');
+    const drillParent = document.getElementById('drillParent');
+    const drillTbody = document.getElementById('drillTbody');
+    const drillEmpty = document.getElementById('drillEmpty');
+    const drillSummary = document.getElementById('drillSummary');
+    const drillBack = document.getElementById('drillBack');
+    const drillClose = document.getElementById('drillClose');
+    const layout = document.getElementById('layout');
+
+    let drillStack = [];
+    let selectedRow = null;
+
+    function childRows(platform, level, parentId) {{
+      const rule = DRILL_MAP[platform + ':' + level];
+      if (!rule) return [];
+      const pool = (breakdowns[platform] || {{}})[rule.childLevel] || [];
+      return pool.filter(r => String(r.parent_id || '') === String(parentId))
+        .sort((a, b) => (b.spend || 0) - (a.spend || 0));
+    }}
+
+    function renderDrillSummary(rows) {{
+      const spend = rows.reduce((s, r) => s + (r.spend || 0), 0);
+      const clicks = rows.reduce((s, r) => s + (r.clicks || 0), 0);
+      const conv = rows.reduce((s, r) => s + (r.conversions || 0), 0);
+      drillSummary.innerHTML = `
+        <div class="drill-stat"><span class="drill-stat-val">${{fmtMoney(spend)}}</span><span class="drill-stat-lbl">Spend</span></div>
+        <div class="drill-stat"><span class="drill-stat-val">${{fmtInt(clicks)}}</span><span class="drill-stat-lbl">Clicks</span></div>
+        <div class="drill-stat"><span class="drill-stat-val">${{fmtInt(conv)}}</span><span class="drill-stat-lbl">Conv.</span></div>`;
+    }}
+
+    function renderDrillTable(rows, platform, currentLevel) {{
+      const totalSpend = rows.reduce((s, r) => s + (r.spend || 0), 0) || 1;
+      const nestedRule = DRILL_MAP[platform + ':' + currentLevel];
+      drillTbody.innerHTML = rows.map(r => {{
+        const share = 100 * (r.spend || 0) / totalSpend;
+        const canNest = nestedRule && childRows(platform, currentLevel, r.id).length > 0;
+        const nestAttrs = canNest
+          ? `class="drill-row-nested" data-platform="${{platform}}" data-level="${{currentLevel}}" data-id="${{r.id}}" data-name="${{r.name || ''}}" tabindex="0" role="button"`
+          : '';
+        return `<tr ${{nestAttrs}}>
+          <td class="name">${{r.name || '—'}}${{canNest ? ' <span style="color:var(--muted);font-size:0.75rem">›</span>' : ''}}</td>
+          <td class="num">${{fmtMoney(r.spend)}}</td>
+          <td class="num">${{fmtInt(r.clicks)}}</td>
+          <td class="num">${{fmtPct(r.clicks, r.impressions)}}</td>
+          <td class="num">${{fmtInt(r.conversions)}}</td>
+          <td class="num"><div class="share-bar"><div class="share-bar-fill" style="width:${{Math.max(share, 2)}}%"></div></div>${{share.toFixed(0)}}%</td>
+        </tr>`;
+      }}).join('');
+      drillEmpty.hidden = rows.length > 0;
+      document.getElementById('drillTable').hidden = rows.length === 0;
+      renderDrillSummary(rows);
+    }}
+
+    function showCurrentDrill() {{
+      const frame = drillStack[drillStack.length - 1];
+      if (!frame) return;
+      const rule = DRILL_MAP[frame.platform + ':' + frame.parentLevel];
+      if (!rule) return;
+      const rows = childRows(frame.platform, frame.parentLevel, frame.parentId);
+      drillTitle.textContent = rule.childLabel;
+      drillParent.textContent = frame.breadcrumb;
+      drillBack.hidden = drillStack.length <= 1;
+      renderDrillTable(rows, frame.platform, rule.childLevel);
+    }}
+
+    function pushDrill(platform, parentLevel, parentId, parentName) {{
+      const rule = DRILL_MAP[platform + ':' + parentLevel];
+      if (!rule) return;
+      const breadcrumb = drillStack.length
+        ? drillStack[drillStack.length - 1].breadcrumb + ' → ' + parentName
+        : parentName;
+      drillStack.push({{ platform, parentLevel, parentId, parentName, breadcrumb }});
+      drillPanel.classList.add('open');
+      drillPanel.setAttribute('aria-hidden', 'false');
+      layout.classList.add('has-drill');
+      document.body.classList.add('drill-open');
+      showCurrentDrill();
+    }}
+
+    function drillFromMainRow(row) {{
+      if (selectedRow) selectedRow.classList.remove('selected');
+      selectedRow = row;
+      row.classList.add('selected');
+      drillStack = [];
+      pushDrill(row.dataset.platform, row.dataset.level, row.dataset.id, row.dataset.name);
+    }}
+
+    function drillFromNestedRow(row) {{
+      pushDrill(row.dataset.platform, row.dataset.level, row.dataset.id, row.dataset.name);
+    }}
+
+    function closeDrill() {{
+      drillPanel.classList.remove('open');
+      drillPanel.setAttribute('aria-hidden', 'true');
+      layout.classList.remove('has-drill');
+      document.body.classList.remove('drill-open');
+      drillStack = [];
+      if (selectedRow) {{ selectedRow.classList.remove('selected'); selectedRow = null; }}
+    }}
+
+    drillBack.addEventListener('click', () => {{
+      if (drillStack.length <= 1) {{ closeDrill(); return; }}
+      drillStack.pop();
+      showCurrentDrill();
+    }});
+
+    drillClose.addEventListener('click', closeDrill);
+    drillPanel.addEventListener('click', e => {{ if (e.target === drillPanel) closeDrill(); }});
+
+    document.querySelectorAll('tr.drill-row').forEach(row => {{
+      row.addEventListener('click', () => drillFromMainRow(row));
+      row.addEventListener('keydown', e => {{ if (e.key === 'Enter' || e.key === ' ') {{ e.preventDefault(); drillFromMainRow(row); }} }});
+    }});
+
+    drillTbody.addEventListener('click', e => {{
+      const row = e.target.closest('tr.drill-row-nested');
+      if (row) drillFromNestedRow(row);
+    }});
+    drillTbody.addEventListener('keydown', e => {{
+      const row = e.target.closest('tr.drill-row-nested');
+      if (row && (e.key === 'Enter' || e.key === ' ')) {{ e.preventDefault(); drillFromNestedRow(row); }}
+    }});
+
     const ctx = document.getElementById('spendChart');
     if (ctx && chartPayload.labels.length) {{
       new Chart(ctx, {{
@@ -704,9 +1183,11 @@ def render_penn_html(
           responsive: true,
           interaction: {{ mode: 'index', intersect: false }},
           scales: {{
-            y: {{ beginAtZero: true, ticks: {{ callback: v => '$' + v.toLocaleString() }} }}
+            y: {{ beginAtZero: true, ticks: {{ callback: v => '$' + v.toLocaleString() }} }},
+            x: {{ grid: {{ display: false }} }}
           }},
-          plugins: {{ legend: {{ position: 'bottom' }} }}
+          plugins: {{ legend: {{ position: 'bottom' }} }},
+          elements: {{ line: {{ tension: 0.3, borderWidth: 2 }}, point: {{ radius: 0, hitRadius: 8 }} }}
         }}
       }});
     }}
