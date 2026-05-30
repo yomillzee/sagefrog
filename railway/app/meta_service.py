@@ -18,6 +18,10 @@ _ADSET_INSIGHT_FIELDS = (
     "spend,impressions,clicks,actions,action_values,"
     "adset_id,adset_name,campaign_id,campaign_name,date_start,date_stop"
 )
+_AD_INSIGHT_FIELDS = (
+    "spend,impressions,clicks,actions,action_values,"
+    "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,date_start,date_stop"
+)
 _ACCOUNT_STATUS = {
     1: "ACTIVE",
     2: "DISABLED",
@@ -564,6 +568,156 @@ def adsets_performance(
         },
         "totals": totals,
         "adsets": adsets_out,
+    }
+
+
+def _fetch_ad_media_index(
+    account_id: str,
+    *,
+    access_token: str,
+    env: MetaEnv,
+) -> dict[str, dict[str, str]]:
+    """Map ad_id -> thumbnail/image metadata from ad creative (requires ads_read)."""
+    account_id_clean = _normalize_account_id(account_id)
+    params: dict[str, Any] = {
+        "fields": _AD_MEDIA_FIELDS,
+        "limit": 500,
+        "effective_status": json.dumps(
+            ["ACTIVE", "PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "PENDING_REVIEW", "DISAPPROVED"]
+        ),
+    }
+    try:
+        ad_rows = _graph_get_all(
+            f"/{_act_id(account_id_clean)}/ads",
+            access_token=access_token,
+            params=params,
+            env=env,
+        )
+    except Exception as exc:
+        if _is_meta_ads_read_error(exc):
+            return {}
+        raise
+
+    index: dict[str, dict[str, str]] = {}
+    for ad in ad_rows:
+        ad_id = str(ad.get("id") or "")
+        if not ad_id:
+            continue
+        creative = ad.get("creative") if isinstance(ad.get("creative"), dict) else {}
+        entries = _extract_creative_media(creative)
+        if not entries:
+            continue
+        entry = entries[0]
+        thumb = str(entry.get("thumbnail_url") or entry.get("image_url") or "")
+        index[ad_id] = {
+            "thumbnail_url": thumb,
+            "image_url": str(entry.get("image_url") or ""),
+            "media_type": str(entry.get("media_type") or ""),
+            "creative_name": str(entry.get("creative_name") or ""),
+        }
+    return index
+
+
+def ads_performance(
+    account_id: str,
+    *,
+    date_range: str = "LAST_30_DAYS",
+    campaign_id: str | None = None,
+    adset_id: str | None = None,
+    include_creative: bool = True,
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+) -> dict[str, Any]:
+    """
+    Ad-level metrics (below ad set). Optionally merges creative thumbnails when ads_read is available.
+    """
+    env = env or load_meta_env()
+    access_token = access_token or env.access_token
+    account_id_clean = _normalize_account_id(account_id)
+    if not account_id_clean:
+        raise ValueError("account_id is required")
+
+    start, end, preset = resolve_date_range(date_range)
+    filter_campaign = str(campaign_id or "").strip()
+    filter_adset = str(adset_id or "").strip()
+
+    params: dict[str, Any] = {
+        "fields": _AD_INSIGHT_FIELDS,
+        "time_range": _time_range(start, end),
+        "level": "ad",
+        "limit": 500,
+    }
+    if filter_adset:
+        params["filtering"] = json.dumps(
+            [{"field": "adset.id", "operator": "EQUAL", "value": filter_adset}]
+        )
+    elif filter_campaign:
+        params["filtering"] = json.dumps(
+            [{"field": "campaign.id", "operator": "EQUAL", "value": filter_campaign}]
+        )
+
+    ad_rows = _graph_get_all(
+        f"/{_act_id(account_id_clean)}/insights",
+        access_token=access_token,
+        params=params,
+        env=env,
+    )
+
+    media_index: dict[str, dict[str, str]] = {}
+    if include_creative:
+        try:
+            media_index = _fetch_ad_media_index(
+                account_id_clean, access_token=access_token, env=env
+            )
+        except Exception:
+            media_index = {}
+
+    ads_out: list[dict[str, Any]] = []
+    for row in ad_rows:
+        parsed = _parse_insight_row(row)
+        aid = str(row.get("ad_id") or "")
+        asid = str(row.get("adset_id") or "")
+        cid = str(row.get("campaign_id") or "")
+        if filter_adset and asid != filter_adset:
+            continue
+        if filter_campaign and cid != filter_campaign:
+            continue
+        item: dict[str, Any] = {
+            "id": aid,
+            "entity_level": "ad",
+            "name": row.get("ad_name") or "",
+            "status": "",
+            "adset_id": asid,
+            "adset_name": row.get("adset_name") or "",
+            "campaign_id": cid,
+            "campaign_name": row.get("campaign_name") or "",
+            **parsed,
+        }
+        media = media_index.get(aid) or {}
+        if media:
+            item.update(media)
+        ads_out.append(item)
+    ads_out.sort(key=lambda item: item.get("spend", 0), reverse=True)
+
+    totals = {
+        "spend": sum(a["spend"] for a in ads_out),
+        "clicks": sum(a["clicks"] for a in ads_out),
+        "impressions": sum(a["impressions"] for a in ads_out),
+        "conversions": sum(a["conversions"] for a in ads_out),
+        "conversion_value": sum(a["conversion_value"] for a in ads_out),
+        "ad_count": len(ads_out),
+    }
+
+    return {
+        "account_id": account_id_clean,
+        "entity_level": "account",
+        "date_range": {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "preset": preset,
+        },
+        "totals": totals,
+        "ads": ads_out,
     }
 
 

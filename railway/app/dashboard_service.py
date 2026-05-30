@@ -81,6 +81,9 @@ def _normalize_entity_row(row: dict[str, Any]) -> dict[str, Any]:
     if entity == "adset":
         parent_id = str(row.get("campaign_id") or "")
         parent_name = str(row.get("campaign_name") or "")
+    elif entity == "ad":
+        parent_id = str(row.get("adset_id") or "")
+        parent_name = str(row.get("adset_name") or "")
     elif entity == "creative":
         parent_id = str(row.get("campaign_id") or "")
         parent_name = str(row.get("campaign_name") or "")
@@ -90,12 +93,19 @@ def _normalize_entity_row(row: dict[str, Any]) -> dict[str, Any]:
     else:
         parent_id = ""
         parent_name = ""
-    return {
-        "id": str(row.get("id") or row.get("campaign_id") or row.get("adset_id") or ""),
+    out: dict[str, Any] = {
+        "id": str(
+            row.get("id")
+            or row.get("campaign_id")
+            or row.get("adset_id")
+            or row.get("ad_id")
+            or ""
+        ),
         "name": str(
             row.get("name")
             or row.get("campaign_name")
             or row.get("adset_name")
+            or row.get("ad_name")
             or "—"
         ),
         "entity_level": entity,
@@ -106,6 +116,11 @@ def _normalize_entity_row(row: dict[str, Any]) -> dict[str, Any]:
         "parent_id": parent_id,
         "parent_name": parent_name,
     }
+    for key in ("thumbnail_url", "image_url", "media_type", "creative_name"):
+        val = row.get(key)
+        if val:
+            out[key] = str(val)
+    return out
 
 
 def _rows_for_display(rows: list[dict[str, Any]], *, min_spend: float = 0.01) -> list[dict[str, Any]]:
@@ -230,6 +245,7 @@ def refresh_penn(*, date_range: str = "LAST_30_DAYS") -> dict[str, Any]:
             payload["errors"]["meta_sync"] = _platform_error(exc)
         meta_campaigns: list[dict[str, Any]] = []
         meta_adsets: list[dict[str, Any]] = []
+        meta_ads: list[dict[str, Any]] = []
         meta_totals: dict[str, Any] | None = None
         try:
             perf = meta_service.account_performance(cfg.meta_account_id, date_range=preset)
@@ -242,10 +258,16 @@ def refresh_penn(*, date_range: str = "LAST_30_DAYS") -> dict[str, Any]:
             meta_adsets = [_normalize_entity_row(a) for a in adsets_perf.get("adsets") or []]
         except Exception as exc:
             payload["errors"]["meta_adsets"] = _platform_error(exc)
-        if meta_campaigns or meta_adsets:
+        try:
+            ads_perf = meta_service.ads_performance(cfg.meta_account_id, date_range=preset)
+            meta_ads = [_normalize_entity_row(a) for a in ads_perf.get("ads") or []]
+        except Exception as exc:
+            payload["errors"]["meta_ads"] = _platform_error(exc)
+        if meta_campaigns or meta_adsets or meta_ads:
             breakdowns["meta"] = {
                 "campaign": meta_campaigns,
                 "adset": meta_adsets,
+                "ad": meta_ads,
             }
         if meta_totals:
             payload["platform_totals"]["meta"] = meta_totals
@@ -321,6 +343,7 @@ def _entity_level_label(level: str) -> str:
         "campaign": "campaign",
         "campaign_group": "campaign group",
         "adset": "ad set",
+        "ad": "ad",
         "creative": "creative",
     }
     return labels.get(level, level.replace("_", " "))
@@ -600,6 +623,7 @@ def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
     meta = breakdowns.get("meta") or {}
     meta_campaigns = meta.get("campaign") or []
     meta_adset_count = len(meta.get("adset") or [])
+    meta_ad_count = len(meta.get("ad") or [])
     parts.append(
         _drillable_table(
             "meta",
@@ -608,9 +632,9 @@ def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
             entity_level="campaign",
             note=(
                 f"Same {len(meta_campaigns)} campaigns as metaPerformance in GPT. "
-                f"{meta_adset_count} ad sets load in the detail panel when you click a campaign."
+                f"Drill down: {meta_adset_count} ad sets → {meta_ad_count} ads with creative previews."
             ),
-            drill_hint="Click a campaign to compare its ad sets →",
+            drill_hint="Click a campaign → ad sets → individual ads with thumbnails →",
         )
     )
     return "\n".join(parts)
@@ -964,6 +988,41 @@ def render_penn_html(
       overflow: hidden;
     }}
     .share-bar-fill {{ height: 100%; background: var(--accent); border-radius: 2px; }}
+    .ad-thumb {{
+      width: 44px;
+      height: 44px;
+      object-fit: cover;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      display: block;
+      background: #f0f4f8;
+    }}
+    .ad-thumb-placeholder {{
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #eef1f5, #e2e8f0);
+      display: block;
+      flex-shrink: 0;
+    }}
+    .ad-name-cell {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }}
+    .ad-name-text {{ min-width: 0; }}
+    .ad-creative-sub {{
+      display: block;
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 200px;
+    }}
+    td.creative-col {{ width: 52px; padding-right: 0; }}
   </style>
 </head>
 <body>
@@ -987,7 +1046,7 @@ def render_penn_html(
       <div class="cards">
         {_summary_card("Google Ads", totals.get("google"))}
         {_summary_card("LinkedIn", totals.get("linkedin"), note="Account total · click a group to drill down")}
-        {_summary_card("Meta", totals.get("meta"), note="Account total · click a campaign to see ad sets")}
+        {_summary_card("Meta", totals.get("meta"), note="Account total · campaign → ad set → ad drill-down")}
         {_summary_card("GA4 (site)", totals.get("ga4"), note=ga4_note)}
       </div>
 
@@ -1044,11 +1103,13 @@ def render_penn_html(
       'linkedin:campaign_group': {{ childLevel: 'campaign', childLabel: 'Campaigns' }},
       'linkedin:campaign': {{ childLevel: 'creative', childLabel: 'Creatives / ads' }},
       'meta:campaign': {{ childLevel: 'adset', childLabel: 'Ad sets' }},
+      'meta:adset': {{ childLevel: 'ad', childLabel: 'Ads' }},
     }};
 
     const fmtMoney = n => '$' + Number(n || 0).toLocaleString(undefined, {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
     const fmtInt = n => Number(n || 0).toLocaleString();
     const fmtPct = (n, d) => d ? (100 * n / d).toFixed(2) + '%' : '—';
+    const escHtml = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 
     const drillPanel = document.getElementById('drillPanel');
     const drillTitle = document.getElementById('drillTitle');
@@ -1084,14 +1145,32 @@ def render_penn_html(
     function renderDrillTable(rows, platform, currentLevel) {{
       const totalSpend = rows.reduce((s, r) => s + (r.spend || 0), 0) || 1;
       const nestedRule = DRILL_MAP[platform + ':' + currentLevel];
+      const showCreative = currentLevel === 'ad';
+      const thead = document.querySelector('#drillTable thead tr');
+      if (thead) {{
+        thead.innerHTML = showCreative
+          ? '<th class="creative-col"></th><th>Name</th><th>Spend</th><th>Clicks</th><th>CTR</th><th>Conv.</th><th>Share</th>'
+          : '<th>Name</th><th>Spend</th><th>Clicks</th><th>CTR</th><th>Conv.</th><th>Share</th>';
+      }}
       drillTbody.innerHTML = rows.map(r => {{
         const share = 100 * (r.spend || 0) / totalSpend;
         const canNest = nestedRule && childRows(platform, currentLevel, r.id).length > 0;
         const nestAttrs = canNest
-          ? `class="drill-row-nested" data-platform="${{platform}}" data-level="${{currentLevel}}" data-id="${{r.id}}" data-name="${{r.name || ''}}" tabindex="0" role="button"`
+          ? `class="drill-row-nested" data-platform="${{platform}}" data-level="${{currentLevel}}" data-id="${{r.id}}" data-name="${{escHtml(r.name)}}" tabindex="0" role="button"`
           : '';
+        const thumbUrl = r.thumbnail_url || r.image_url || '';
+        const thumbHtml = thumbUrl
+          ? `<img class="ad-thumb" src="${{escHtml(thumbUrl)}}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none'">`
+          : '<span class="ad-thumb-placeholder"></span>';
+        const creativeSub = (r.creative_name && r.creative_name !== r.name)
+          ? `<span class="ad-creative-sub">${{escHtml(r.creative_name)}}</span>` : '';
+        const typeBadge = r.media_type
+          ? `<span class="ad-creative-sub">${{escHtml(r.media_type)}}</span>` : '';
+        const nameCell = showCreative
+          ? `<td class="creative-col">${{thumbHtml}}</td><td class="name"><div class="ad-name-text">${{escHtml(r.name || '—')}}${{creativeSub}}${{typeBadge}}</div></td>`
+          : `<td class="name">${{escHtml(r.name || '—')}}${{canNest ? ' <span style="color:var(--muted);font-size:0.75rem">›</span>' : ''}}</td>`;
         return `<tr ${{nestAttrs}}>
-          <td class="name">${{r.name || '—'}}${{canNest ? ' <span style="color:var(--muted);font-size:0.75rem">›</span>' : ''}}</td>
+          ${{nameCell}}
           <td class="num">${{fmtMoney(r.spend)}}</td>
           <td class="num">${{fmtInt(r.clicks)}}</td>
           <td class="num">${{fmtPct(r.clicks, r.impressions)}}</td>
