@@ -26,14 +26,29 @@ class PennDashboardConfig:
     ga4_client_key: str
 
 
+# Penn Community Bank — used when PENN_DASHBOARD / PENN_* env vars are unset.
+_PENN_DEFAULTS = {
+    "google_customer_id": "1549971930",
+    "linkedin_account_id": "507720820",
+    "meta_account_id": "506176584",
+    "ga4_client_key": "penn",
+}
+
+
+def _normalize_google_customer_id(val: str) -> str:
+    return val.replace("-", "").strip()
+
+
 def load_penn_config() -> PennDashboardConfig:
     """
     Load Penn dashboard targets from PENN_DASHBOARD JSON or individual env vars.
 
+    Falls back to built-in Penn account IDs (not GOOGLE_CUSTOMER_ID).
+
     PENN_DASHBOARD example:
     {
       "label": "Penn Community Bank",
-      "google_customer_id": "1234567890",
+      "google_customer_id": "1549971930",
       "linkedin_account_id": "507720820",
       "meta_account_id": "506176584",
       "ga4_client_key": "penn"
@@ -46,22 +61,24 @@ def load_penn_config() -> PennDashboardConfig:
         if isinstance(parsed, dict):
             data = parsed
 
-    google = _strip_env(str(data.get("google_customer_id") or "")) or _strip_env(
-        os.getenv("PENN_GOOGLE_CUSTOMER_ID")
-    ) or _strip_env(os.getenv("GOOGLE_CUSTOMER_ID"))
+    google = _normalize_google_customer_id(
+        _strip_env(str(data.get("google_customer_id") or ""))
+        or _strip_env(os.getenv("PENN_GOOGLE_CUSTOMER_ID"))
+        or _PENN_DEFAULTS["google_customer_id"]
+    )
 
     linkedin = _strip_env(str(data.get("linkedin_account_id") or "")) or _strip_env(
         os.getenv("PENN_LINKEDIN_ACCOUNT_ID")
-    )
+    ) or _PENN_DEFAULTS["linkedin_account_id"]
 
     meta = _strip_env(str(data.get("meta_account_id") or "")) or _strip_env(
         os.getenv("PENN_META_ACCOUNT_ID")
-    )
+    ) or _PENN_DEFAULTS["meta_account_id"]
 
     ga4_key = (
         _strip_env(str(data.get("ga4_client_key") or ""))
         or _strip_env(os.getenv("PENN_GA4_CLIENT_KEY"))
-        or "penn"
+        or _PENN_DEFAULTS["ga4_client_key"]
     )
 
     label = _strip_env(str(data.get("label") or "")) or "Penn Community Bank"
