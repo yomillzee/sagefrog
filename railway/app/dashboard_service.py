@@ -18,9 +18,9 @@ import warehouse
 from dates_util import resolve_date_range
 from penn_config import PennDashboardConfig, load_penn_config
 from penn_business_lines import (
+    active_business_line_catalog,
+    active_platform_catalog,
     build_business_line_campaigns,
-    business_line_catalog,
-    platform_catalog,
 )
 
 
@@ -735,8 +735,8 @@ def render_penn_html(
     breakdowns_json = _json_for_html_script(breakdowns)
     bl_campaigns = _business_line_campaigns_from_snapshot(snapshot)
     bl_campaigns_json = _json_for_html_script(bl_campaigns)
-    bl_catalog_json = _json_for_html_script(business_line_catalog())
-    platform_catalog_json = _json_for_html_script(platform_catalog())
+    bl_catalog_json = _json_for_html_script(active_business_line_catalog(bl_campaigns))
+    platform_catalog_json = _json_for_html_script(active_platform_catalog(bl_campaigns))
     ga4_note = "Sessions / page views / conversions (no ad spend)"
 
     return f"""<!DOCTYPE html>
@@ -993,50 +993,79 @@ def render_penn_html(
     .filter-panel {{
       background: var(--panel);
       border: 1px solid var(--border);
-      border-top: 3px solid #2e7d32;
       border-radius: var(--radius);
-      padding: 18px 20px;
+      padding: 16px 18px;
       margin-bottom: 20px;
       box-shadow: var(--shadow-sm);
     }}
-    .filter-group {{ margin-bottom: 14px; }}
-    .filter-group:last-child {{ margin-bottom: 0; }}
-    .filter-label {{
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: .06em;
-      text-transform: uppercase;
-      color: var(--muted);
-      margin-bottom: 8px;
+    .filter-toolbar {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 12px 20px;
     }}
-    .filter-chips {{ display: flex; flex-wrap: wrap; gap: 8px; }}
-    .filter-chip {{
-      display: inline-flex;
+    .filter-row {{
+      display: flex;
+      flex-wrap: wrap;
       align-items: center;
-      gap: 6px;
-      padding: 7px 12px;
-      border-radius: 999px;
+      gap: 8px 10px;
+      flex: 1;
+      min-width: 260px;
+    }}
+    .filter-label {{
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+      min-width: 88px;
+    }}
+    .filter-toggle {{
+      appearance: none;
       border: 1.5px solid var(--border);
       background: #fff;
+      color: var(--text);
+      padding: 7px 14px;
+      border-radius: 999px;
       font-size: 0.84rem;
+      font-weight: 500;
       cursor: pointer;
-      user-select: none;
-      transition: background 0.12s, border-color 0.12s;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
     }}
-    .filter-chip input {{ accent-color: var(--accent); cursor: pointer; }}
-    .filter-chip.checked {{
-      background: #eef4fb;
+    .filter-toggle:hover {{ border-color: #b8c4d4; background: #f8fafc; }}
+    .filter-toggle.active {{
+      background: var(--accent);
       border-color: var(--accent);
+      color: #fff;
       font-weight: 600;
     }}
-    .filter-chip.chip-google.checked {{ border-color: #4285f4; background: #eef4ff; }}
-    .filter-chip.chip-meta.checked {{ border-color: #1877f2; background: #eef3fc; }}
-    .filter-chip.chip-linkedin.checked {{ border-color: #e67e22; background: #fef6ee; }}
+    .filter-toggle.t-google.active {{ background: #4285f4; border-color: #4285f4; }}
+    .filter-toggle.t-meta.active {{ background: #1877f2; border-color: #1877f2; }}
+    .filter-toggle.t-linkedin.active {{ background: #e67e22; border-color: #e67e22; }}
+    .filter-actions {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }}
+    .filter-reset {{
+      appearance: none;
+      border: none;
+      background: none;
+      color: var(--accent);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 6px 4px;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }}
+    .filter-reset:hover {{ color: var(--navy); }}
     .filter-status {{
-      margin-top: 14px;
-      font-size: 0.8rem;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+      font-size: 0.82rem;
       color: var(--muted);
-      text-align: right;
     }}
     .bl-summary {{
       display: grid;
@@ -1118,13 +1147,20 @@ def render_penn_html(
 
       <div id="tab-business-line" class="tab-panel" role="tabpanel">
         <section class="filter-panel">
-          <div class="filter-group">
-            <div class="filter-label">Channel</div>
-            <div class="filter-chips" id="channelFilters"></div>
+          <div class="filter-toolbar">
+            <div class="filter-row">
+              <span class="filter-label">Business line</span>
+              <div id="blFilters" class="filter-row" style="flex:1;min-width:0"></div>
+            </div>
+            <div class="filter-actions">
+              <button type="button" class="filter-reset" id="resetFilters">Reset</button>
+            </div>
           </div>
-          <div class="filter-group">
-            <div class="filter-label">Business line</div>
-            <div class="filter-chips" id="businessLineFilters"></div>
+          <div class="filter-toolbar" style="margin-top:12px">
+            <div class="filter-row">
+              <span class="filter-label">Channel</span>
+              <div id="channelFilters" class="filter-row" style="flex:1;min-width:0"></div>
+            </div>
           </div>
           <div class="filter-status" id="filterStatus"></div>
         </section>
@@ -1136,7 +1172,7 @@ def render_penn_html(
             <h2>Campaign performance</h2>
             <span class="badge" id="blRowCount">0 rows</span>
           </div>
-          <p class="table-note">Campaigns grouped by business line from campaign naming. Select channels and lines above to filter.</p>
+          <p class="table-note">Toggle business lines and channels above — selected items are filled; click again to exclude.</p>
           <div class="table-wrap">
             <table class="data-table">
               <thead>
@@ -1203,72 +1239,51 @@ def render_penn_html(
 
     const channelState = new Set(platformCatalog.map(p => p.id));
     const blState = new Set(blCatalog.map(b => b.id));
-    const ALL_CHANNELS = '__all_channels__';
-    const ALL_BL = '__all_bl__';
 
-    function syncAllChip(group, allId, state, catalog) {{
-      const allOn = catalog.every(item => state.has(item.id));
-      return allOn;
-    }}
-
-    function renderFilterChips() {{
-      const chWrap = document.getElementById('channelFilters');
-      const blWrap = document.getElementById('businessLineFilters');
-      if (!chWrap || !blWrap) return;
-
-      chWrap.innerHTML = '';
-      const allCh = document.createElement('label');
-      allCh.className = 'filter-chip' + (syncAllChip('channel', ALL_CHANNELS, channelState, platformCatalog) ? ' checked' : '');
-      allCh.innerHTML = `<input type="checkbox" data-group="channel" data-all="1" ${{syncAllChip('channel', ALL_CHANNELS, channelState, platformCatalog) ? 'checked' : ''}}> All Channels`;
-      chWrap.appendChild(allCh);
-      for (const p of platformCatalog) {{
-        const chip = document.createElement('label');
-        const on = channelState.has(p.id);
-        chip.className = `filter-chip chip-${{p.id}}${{on ? ' checked' : ''}}`;
-        chip.innerHTML = `<input type="checkbox" data-group="channel" data-id="${{p.id}}" ${{on ? 'checked' : ''}}> ${{escHtml(p.label)}}`;
-        chWrap.appendChild(chip);
-      }}
-
-      blWrap.innerHTML = '';
-      const allBl = document.createElement('label');
-      allBl.className = 'filter-chip' + (syncAllChip('bl', ALL_BL, blState, blCatalog) ? ' checked' : '');
-      allBl.innerHTML = `<input type="checkbox" data-group="bl" data-all="1" ${{syncAllChip('bl', ALL_BL, blState, blCatalog) ? 'checked' : ''}}> All Business Lines`;
-      blWrap.appendChild(allBl);
-      for (const b of blCatalog) {{
-        const chip = document.createElement('label');
-        const on = blState.has(b.id);
-        chip.className = 'filter-chip' + (on ? ' checked' : '');
-        chip.innerHTML = `<input type="checkbox" data-group="bl" data-id="${{b.id}}" ${{on ? 'checked' : ''}}> ${{escHtml(b.label)}}`;
-        blWrap.appendChild(chip);
+    function initToggleGroup(wrapId, catalog, state, group, extraClassFor) {{
+      const wrap = document.getElementById(wrapId);
+      if (!wrap) return;
+      wrap.innerHTML = '';
+      for (const item of catalog) {{
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        const extra = extraClassFor ? extraClassFor(item.id) : '';
+        btn.className = 'filter-toggle' + (extra ? ' t-' + extra : '');
+        btn.classList.toggle('active', state.has(item.id));
+        btn.dataset.group = group;
+        btn.dataset.id = item.id;
+        btn.textContent = item.label;
+        wrap.appendChild(btn);
       }}
     }}
 
-    function onFilterChange(e) {{
-      const input = e.target;
-      if (!input.matches('input[type=checkbox]')) return;
-      const group = input.dataset.group;
-      const isAll = input.dataset.all === '1';
-      const id = input.dataset.id;
+    function syncToggleButtons() {{
+      document.querySelectorAll('.filter-toggle').forEach(btn => {{
+        const state = btn.dataset.group === 'channel' ? channelState : blState;
+        btn.classList.toggle('active', state.has(btn.dataset.id));
+      }});
+    }}
+
+    function resetFilters() {{
+      platformCatalog.forEach(p => channelState.add(p.id));
+      blCatalog.forEach(b => blState.add(b.id));
+      syncToggleButtons();
+      applyBlView();
+    }}
+
+    function onFilterClick(e) {{
+      const btn = e.target.closest('.filter-toggle');
+      if (!btn) return;
+      const group = btn.dataset.group;
+      const id = btn.dataset.id;
       const state = group === 'channel' ? channelState : blState;
-      const catalog = group === 'channel' ? platformCatalog : blCatalog;
-
-      if (isAll) {{
-        if (input.checked) {{
-          catalog.forEach(item => state.add(item.id));
-        }} else {{
-          state.clear();
-        }}
-      }} else if (input.checked) {{
-        state.add(id);
-      }} else {{
+      if (state.has(id)) {{
+        if (state.size <= 1) return;
         state.delete(id);
+      }} else {{
+        state.add(id);
       }}
-
-      if (state.size === 0) {{
-        catalog.forEach(item => state.add(item.id));
-      }}
-
-      renderFilterChips();
+      syncToggleButtons();
       applyBlView();
     }}
 
@@ -1295,7 +1310,7 @@ def render_penn_html(
       const tbody = document.getElementById('blTableBody');
       if (tbody) {{
         if (!filtered.length) {{
-          tbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">No campaigns match these filters.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">No campaigns match — try Reset or select another combination.</td></tr>';
         }} else {{
           tbody.innerHTML = filtered.map(r => {{
             const cpcVal = r.clicks ? fmtMoney(r.spend / r.clicks) : '—';
@@ -1321,15 +1336,19 @@ def render_penn_html(
       if (status) {{
         const chLabels = platformCatalog.filter(p => channelState.has(p.id)).map(p => p.label);
         const blLabels = blCatalog.filter(b => blState.has(b.id)).map(b => b.label);
-        const chText = chLabels.length === platformCatalog.length ? 'all channels' : chLabels.join(', ');
-        const blText = blLabels.length === blCatalog.length ? 'all business lines' : blLabels.join(', ');
-        status.textContent = `Showing ${{blText}} on ${{chText}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}`;
+        const allCh = chLabels.length === platformCatalog.length;
+        const allBl = blLabels.length === blCatalog.length;
+        const chText = allCh ? 'All channels' : chLabels.join(' · ');
+        const blText = allBl ? 'All business lines' : blLabels.join(' · ');
+        status.textContent = `${{blText}} · ${{chText}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}`;
       }}
     }}
 
-    document.getElementById('channelFilters')?.addEventListener('change', onFilterChange);
-    document.getElementById('businessLineFilters')?.addEventListener('change', onFilterChange);
-    renderFilterChips();
+    initToggleGroup('channelFilters', platformCatalog, channelState, 'channel', id => id);
+    initToggleGroup('blFilters', blCatalog, blState, 'bl', null);
+    document.getElementById('channelFilters')?.addEventListener('click', onFilterClick);
+    document.getElementById('blFilters')?.addEventListener('click', onFilterClick);
+    document.getElementById('resetFilters')?.addEventListener('click', resetFilters);
     applyBlView();
 
     const DRILL_MAP = {{

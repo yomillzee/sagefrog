@@ -34,12 +34,17 @@ def business_line_catalog() -> list[dict[str, str]]:
     return lines
 
 
-def platform_catalog() -> list[dict[str, str]]:
-    return [
-        {"id": "google", "label": "Google Ads"},
-        {"id": "meta", "label": "Meta"},
-        {"id": "linkedin", "label": "LinkedIn"},
-    ]
+def active_business_line_catalog(campaigns: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Return business lines that appear in campaign data, preserving catalog order."""
+    present = {str(c.get("business_line") or "") for c in campaigns}
+    catalog = business_line_catalog()
+    return [item for item in catalog if item["id"] in present]
+
+
+def active_platform_catalog(campaigns: list[dict[str, Any]]) -> list[dict[str, str]]:
+    present = {str(c.get("platform") or "") for c in campaigns}
+    catalog = platform_catalog()
+    return [item for item in catalog if item["id"] in present]
 
 
 def classify_business_line(name: str) -> tuple[str, str]:
