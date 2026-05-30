@@ -1173,9 +1173,10 @@ def dashboard_penn(key: str | None = None, synced: str | None = None) -> HTMLRes
     "/dashboard/penn/refresh",
     summary="Refresh Penn dashboard snapshot (rate-limited)",
     response_class=HTMLResponse,
+    response_model=None,
     include_in_schema=False,
 )
-def dashboard_penn_refresh(key: str | None = None, date_range: str = "LAST_30_DAYS") -> HTMLResponse | RedirectResponse:
+def dashboard_penn_refresh(key: str | None = None, date_range: str = "LAST_30_DAYS"):
     dashboard_service.verify_dashboard_key(key)
     snapshot = dashboard_snapshots.get_snapshot("penn")
     allowed, remaining = dashboard_service.refresh_cooldown_status(snapshot)
