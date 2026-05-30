@@ -338,6 +338,16 @@ def _esc(value: Any) -> str:
     return html.escape(str(value or ""))
 
 
+def _json_for_html_script(data: Any) -> str:
+    """Embed JSON in HTML without breaking out of a script tag."""
+    return (
+        json.dumps(data, ensure_ascii=False)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
+
+
 def _entity_level_label(level: str) -> str:
     labels = {
         "campaign": "campaign",
@@ -689,7 +699,7 @@ def render_penn_html(
         by_date = {str(r.get("metric_date") or "")[:10]: float(r.get("spend") or 0) for r in chart_data.get(source, [])}
         return [by_date.get(d, 0.0) for d in dates]
 
-    chart_json = json.dumps(
+    chart_json = _json_for_html_script(
         {
             "labels": dates,
             "datasets": [
@@ -703,7 +713,7 @@ def render_penn_html(
     breakdowns = _breakdowns_from_snapshot(snapshot)
     aggregated = snapshot.get("aggregated_paid_media") or _aggregated_paid_media(totals)
     breakdown_html = _platform_breakdown_html(breakdowns)
-    breakdowns_json = json.dumps(breakdowns)
+    breakdowns_json = _json_for_html_script(breakdowns)
     ga4_note = "Sessions / page views / conversions (no ad spend)"
 
     return f"""<!DOCTYPE html>
@@ -740,7 +750,6 @@ def render_penn_html(
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
     }}
-    body.drill-open {{ overflow: hidden; }}
     .hero {{
       background: linear-gradient(135deg, var(--navy) 0%, var(--navy-light) 100%);
       color: #fff;
@@ -892,43 +901,55 @@ def render_penn_html(
       position: fixed;
       inset: 0;
       z-index: 100;
-      background: rgba(10, 37, 64, 0.35);
-      backdrop-filter: blur(2px);
+      background: rgba(10, 37, 64, 0.4);
       display: flex;
-      justify-content: flex-end;
+      align-items: flex-end;
+      justify-content: center;
       opacity: 0;
       visibility: hidden;
-      transition: opacity 0.25s, visibility 0.25s;
+      pointer-events: none;
+      transition: opacity 0.2s, visibility 0.2s;
     }}
-    .drill-panel.open {{ opacity: 1; visibility: visible; }}
+    .drill-panel.open {{
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }}
     .drill-sheet {{
-      width: min(480px, 100vw);
-      height: 100%;
+      width: 100%;
+      max-width: 720px;
+      max-height: min(88vh, 820px);
+      min-height: 220px;
       background: var(--panel);
-      box-shadow: -8px 0 32px rgba(10, 37, 64, 0.15);
+      box-shadow: 0 -10px 40px rgba(10, 37, 64, 0.18);
       display: flex;
       flex-direction: column;
-      transform: translateX(100%);
-      transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 16px 16px 0 0;
+      transform: translateY(105%);
+      transition: transform 0.26s cubic-bezier(0.4, 0, 0.2, 1);
     }}
-    .drill-panel.open .drill-sheet {{ transform: translateX(0); }}
+    .drill-panel.open .drill-sheet {{ transform: translateY(0); }}
     @media (min-width: 1100px) {{
       .drill-panel {{
         position: sticky;
         top: 24px;
-        inset: auto;
+        inset: unset;
         background: none;
-        backdrop-filter: none;
+        align-items: stretch;
+        justify-content: stretch;
         opacity: 1;
         visibility: visible;
+        pointer-events: auto;
         height: fit-content;
         max-height: calc(100vh - 48px);
       }}
       .drill-panel:not(.open) {{ display: none; }}
-      .layout.has-drill .drill-panel {{ display: flex; }}
+      .layout.has-drill .drill-panel.open {{ display: flex; }}
       .drill-sheet {{
         width: 100%;
+        max-width: none;
         height: auto;
+        min-height: 280px;
         max-height: calc(100vh - 48px);
         border-radius: var(--radius);
         border: 1px solid var(--border);
@@ -1095,9 +1116,22 @@ def render_penn_html(
       </div>
     </aside>
   </div>
+  <script type="application/json" id="chart-data">{chart_json}</script>
+  <script type="application/json" id="breakdowns-data">{breakdowns_json}</script>
   <script>
-    const chartPayload = {chart_json};
-    const breakdowns = {breakdowns_json};
+    function readJson(id, fallback) {{
+      const el = document.getElementById(id);
+      if (!el) return fallback;
+      try {{
+        return JSON.parse(el.textContent || 'null') ?? fallback;
+      }} catch (err) {{
+        console.error('Failed to parse', id, err);
+        return fallback;
+      }}
+    }}
+
+    const chartPayload = readJson('chart-data', {{ labels: [], datasets: [] }});
+    const breakdowns = readJson('breakdowns-data', {{}});
 
     const DRILL_MAP = {{
       'linkedin:campaign_group': {{ childLevel: 'campaign', childLabel: 'Campaigns' }},
@@ -1119,6 +1153,7 @@ def render_penn_html(
     const drillSummary = document.getElementById('drillSummary');
     const drillBack = document.getElementById('drillBack');
     const drillClose = document.getElementById('drillClose');
+    const drillTable = document.getElementById('drillTable');
     const layout = document.getElementById('layout');
 
     let drillStack = [];
@@ -1128,11 +1163,13 @@ def render_penn_html(
       const rule = DRILL_MAP[platform + ':' + level];
       if (!rule) return [];
       const pool = (breakdowns[platform] || {{}})[rule.childLevel] || [];
-      return pool.filter(r => String(r.parent_id || '') === String(parentId))
+      const pid = String(parentId || '');
+      return pool.filter(r => String(r.parent_id || '') === pid)
         .sort((a, b) => (b.spend || 0) - (a.spend || 0));
     }}
 
     function renderDrillSummary(rows) {{
+      if (!drillSummary) return;
       const spend = rows.reduce((s, r) => s + (r.spend || 0), 0);
       const clicks = rows.reduce((s, r) => s + (r.clicks || 0), 0);
       const conv = rows.reduce((s, r) => s + (r.conversions || 0), 0);
@@ -1155,8 +1192,9 @@ def render_penn_html(
       drillTbody.innerHTML = rows.map(r => {{
         const share = 100 * (r.spend || 0) / totalSpend;
         const canNest = nestedRule && childRows(platform, currentLevel, r.id).length > 0;
+        const safeName = escHtml(r.name);
         const nestAttrs = canNest
-          ? `class="drill-row-nested" data-platform="${{platform}}" data-level="${{currentLevel}}" data-id="${{r.id}}" data-name="${{escHtml(r.name)}}" tabindex="0" role="button"`
+          ? `class="drill-row-nested" data-platform="${{platform}}" data-level="${{currentLevel}}" data-id="${{escHtml(r.id)}}" data-name="${{safeName}}" tabindex="0" role="button"`
           : '';
         const thumbUrl = r.thumbnail_url || r.image_url || '';
         const thumbHtml = thumbUrl
@@ -1167,8 +1205,8 @@ def render_penn_html(
         const typeBadge = r.media_type
           ? `<span class="ad-creative-sub">${{escHtml(r.media_type)}}</span>` : '';
         const nameCell = showCreative
-          ? `<td class="creative-col">${{thumbHtml}}</td><td class="name"><div class="ad-name-text">${{escHtml(r.name || '—')}}${{creativeSub}}${{typeBadge}}</div></td>`
-          : `<td class="name">${{escHtml(r.name || '—')}}${{canNest ? ' <span style="color:var(--muted);font-size:0.75rem">›</span>' : ''}}</td>`;
+          ? `<td class="creative-col">${{thumbHtml}}</td><td class="name"><div class="ad-name-text">${{safeName || '—'}}${{creativeSub}}${{typeBadge}}</div></td>`
+          : `<td class="name">${{safeName || '—'}}${{canNest ? ' <span style="color:var(--muted);font-size:0.75rem">›</span>' : ''}}</td>`;
         return `<tr ${{nestAttrs}}>
           ${{nameCell}}
           <td class="num">${{fmtMoney(r.spend)}}</td>
@@ -1178,20 +1216,48 @@ def render_penn_html(
           <td class="num"><div class="share-bar"><div class="share-bar-fill" style="width:${{Math.max(share, 2)}}%"></div></div>${{share.toFixed(0)}}%</td>
         </tr>`;
       }}).join('');
-      drillEmpty.hidden = rows.length > 0;
-      document.getElementById('drillTable').hidden = rows.length === 0;
+      if (drillEmpty) {{
+        drillEmpty.hidden = rows.length > 0;
+        drillEmpty.textContent = rows.length
+          ? ''
+          : 'No child rows for this selection. Try Refresh now if you recently updated the dashboard.';
+      }}
+      if (drillTable) drillTable.hidden = rows.length === 0;
       renderDrillSummary(rows);
+    }}
+
+    function openDrillPanel() {{
+      if (!drillPanel) return;
+      drillPanel.classList.add('open');
+      drillPanel.setAttribute('aria-hidden', 'false');
+      if (layout) layout.classList.add('has-drill');
+    }}
+
+    function showDrillError(message) {{
+      openDrillPanel();
+      if (drillTitle) drillTitle.textContent = 'Breakdown error';
+      if (drillParent) drillParent.textContent = message;
+      if (drillTbody) drillTbody.innerHTML = '';
+      if (drillSummary) drillSummary.innerHTML = '';
+      if (drillEmpty) {{
+        drillEmpty.textContent = message;
+        drillEmpty.hidden = false;
+      }}
+      if (drillTable) drillTable.hidden = true;
     }}
 
     function showCurrentDrill() {{
       const frame = drillStack[drillStack.length - 1];
       if (!frame) return;
       const rule = DRILL_MAP[frame.platform + ':' + frame.parentLevel];
-      if (!rule) return;
+      if (!rule) {{
+        showDrillError('No drill-down configured for this row.');
+        return;
+      }}
       const rows = childRows(frame.platform, frame.parentLevel, frame.parentId);
-      drillTitle.textContent = rule.childLabel;
-      drillParent.textContent = frame.breadcrumb;
-      drillBack.hidden = drillStack.length <= 1;
+      if (drillTitle) drillTitle.textContent = rule.childLabel;
+      if (drillParent) drillParent.textContent = frame.breadcrumb;
+      if (drillBack) drillBack.hidden = drillStack.length <= 1;
       renderDrillTable(rows, frame.platform, rule.childLevel);
     }}
 
@@ -1202,59 +1268,96 @@ def render_penn_html(
         ? drillStack[drillStack.length - 1].breadcrumb + ' → ' + parentName
         : parentName;
       drillStack.push({{ platform, parentLevel, parentId, parentName, breadcrumb }});
-      drillPanel.classList.add('open');
-      drillPanel.setAttribute('aria-hidden', 'false');
-      layout.classList.add('has-drill');
-      document.body.classList.add('drill-open');
+      openDrillPanel();
       showCurrentDrill();
     }}
 
-    function drillFromMainRow(row) {{
-      if (selectedRow) selectedRow.classList.remove('selected');
-      selectedRow = row;
-      row.classList.add('selected');
-      drillStack = [];
-      pushDrill(row.dataset.platform, row.dataset.level, row.dataset.id, row.dataset.name);
+    function drillFromMainRow(row, e) {{
+      if (e) {{ e.preventDefault(); e.stopPropagation(); }}
+      try {{
+        if (selectedRow) selectedRow.classList.remove('selected');
+        selectedRow = row;
+        row.classList.add('selected');
+        drillStack = [];
+        pushDrill(row.dataset.platform, row.dataset.level, row.dataset.id, row.dataset.name);
+      }} catch (err) {{
+        console.error(err);
+        showDrillError('Could not open breakdown. Try refreshing the page.');
+      }}
     }}
 
-    function drillFromNestedRow(row) {{
-      pushDrill(row.dataset.platform, row.dataset.level, row.dataset.id, row.dataset.name);
+    function drillFromNestedRow(row, e) {{
+      if (e) {{ e.preventDefault(); e.stopPropagation(); }}
+      try {{
+        pushDrill(row.dataset.platform, row.dataset.level, row.dataset.id, row.dataset.name);
+      }} catch (err) {{
+        console.error(err);
+        showDrillError('Could not open nested breakdown.');
+      }}
     }}
 
     function closeDrill() {{
-      drillPanel.classList.remove('open');
-      drillPanel.setAttribute('aria-hidden', 'true');
-      layout.classList.remove('has-drill');
-      document.body.classList.remove('drill-open');
+      if (drillPanel) {{
+        drillPanel.classList.remove('open');
+        drillPanel.setAttribute('aria-hidden', 'true');
+      }}
+      if (layout) layout.classList.remove('has-drill');
       drillStack = [];
       if (selectedRow) {{ selectedRow.classList.remove('selected'); selectedRow = null; }}
     }}
 
-    drillBack.addEventListener('click', () => {{
-      if (drillStack.length <= 1) {{ closeDrill(); return; }}
-      drillStack.pop();
-      showCurrentDrill();
-    }});
+    if (drillBack) {{
+      drillBack.addEventListener('click', e => {{
+        e.stopPropagation();
+        if (drillStack.length <= 1) {{ closeDrill(); return; }}
+        drillStack.pop();
+        showCurrentDrill();
+      }});
+    }}
 
-    drillClose.addEventListener('click', closeDrill);
-    drillPanel.addEventListener('click', e => {{ if (e.target === drillPanel) closeDrill(); }});
+    if (drillClose) {{
+      drillClose.addEventListener('click', e => {{
+        e.stopPropagation();
+        closeDrill();
+      }});
+    }}
+
+    if (drillPanel) {{
+      drillPanel.addEventListener('click', e => {{
+        if (e.target === drillPanel) closeDrill();
+      }});
+      const drillSheet = drillPanel.querySelector('.drill-sheet');
+      if (drillSheet) {{
+        drillSheet.addEventListener('click', e => e.stopPropagation());
+      }}
+    }}
 
     document.querySelectorAll('tr.drill-row').forEach(row => {{
-      row.addEventListener('click', () => drillFromMainRow(row));
-      row.addEventListener('keydown', e => {{ if (e.key === 'Enter' || e.key === ' ') {{ e.preventDefault(); drillFromMainRow(row); }} }});
+      row.addEventListener('click', e => drillFromMainRow(row, e));
+      row.addEventListener('keydown', e => {{
+        if (e.key === 'Enter' || e.key === ' ') {{
+          e.preventDefault();
+          drillFromMainRow(row, e);
+        }}
+      }});
     }});
 
-    drillTbody.addEventListener('click', e => {{
-      const row = e.target.closest('tr.drill-row-nested');
-      if (row) drillFromNestedRow(row);
-    }});
-    drillTbody.addEventListener('keydown', e => {{
-      const row = e.target.closest('tr.drill-row-nested');
-      if (row && (e.key === 'Enter' || e.key === ' ')) {{ e.preventDefault(); drillFromNestedRow(row); }}
-    }});
+    if (drillTbody) {{
+      drillTbody.addEventListener('click', e => {{
+        const row = e.target.closest('tr.drill-row-nested');
+        if (row) drillFromNestedRow(row, e);
+      }});
+      drillTbody.addEventListener('keydown', e => {{
+        const row = e.target.closest('tr.drill-row-nested');
+        if (row && (e.key === 'Enter' || e.key === ' ')) {{
+          e.preventDefault();
+          drillFromNestedRow(row, e);
+        }}
+      }});
+    }}
 
     const ctx = document.getElementById('spendChart');
-    if (ctx && chartPayload.labels.length) {{
+    if (ctx && chartPayload.labels && chartPayload.labels.length) {{
       new Chart(ctx, {{
         type: 'line',
         data: chartPayload,
