@@ -12,6 +12,11 @@ from urllib.parse import quote
 import dashboard_snapshots
 import ga4_warehouse_service
 import ga4_attribution_service
+from ga4_attribution_service import (
+    CONFIRMED_TIERS,
+    PLATFORM_TIER_LABELS,
+    match_ga4_campaigns_to_ads,
+)
 import google_ads_service
 import linkedin_service
 import meta_service
@@ -753,108 +758,44 @@ def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _merged_ads_ga4_campaign_rows(
-    ga4_by_campaign: list[dict[str, Any]],
-    google_campaigns: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Join GA4 linked-campaign sessions with Google Ads spend by campaign id."""
-    ads_by_id: dict[str, dict[str, Any]] = {
-        str(c.get("id") or ""): c for c in google_campaigns if c.get("id")
-    }
-    merged: dict[str, dict[str, Any]] = {}
-
-    for row in ga4_by_campaign:
-        cid = str(row.get("campaign_id") or "").strip()
-        if not cid:
-            continue
-        bucket = merged.setdefault(
-            cid,
-            {
-                "campaign_id": cid,
-                "campaign_name": str(row.get("campaign_name") or "—"),
-                "attribution_tier": str(row.get("attribution_tier") or ""),
-                "sessions": 0,
-                "engaged_sessions": 0,
-                "page_views": 0,
-                "key_events": 0,
-                "spend": 0.0,
-                "ad_clicks": 0,
-            },
-        )
-        bucket["sessions"] += int(row.get("sessions") or 0)
-        bucket["engaged_sessions"] += int(row.get("engaged_sessions") or 0)
-        bucket["page_views"] += int(row.get("page_views") or 0)
-        bucket["key_events"] += int(row.get("key_events") or 0)
-        if row.get("campaign_name") and row.get("campaign_name") != "—":
-            bucket["campaign_name"] = str(row.get("campaign_name"))
-
-    for cid, ads in ads_by_id.items():
-        bucket = merged.setdefault(
-            cid,
-            {
-                "campaign_id": cid,
-                "campaign_name": str(ads.get("name") or "—"),
-                "attribution_tier": "",
-                "sessions": 0,
-                "engaged_sessions": 0,
-                "page_views": 0,
-                "key_events": 0,
-                "spend": 0.0,
-                "ad_clicks": 0,
-            },
-        )
-        bucket["spend"] = float(ads.get("spend") or 0)
-        bucket["ad_clicks"] = int(ads.get("clicks") or 0)
-        if ads.get("name"):
-            bucket["campaign_name"] = str(ads.get("name"))
-
-    out: list[dict[str, Any]] = []
-    for row in merged.values():
-        sessions = int(row["sessions"])
-        engaged = int(row["engaged_sessions"])
-        row["engagement_rate"] = round(engaged / sessions, 4) if sessions else 0.0
-        out.append(row)
-    out.sort(key=lambda r: (r.get("spend", 0), r.get("sessions", 0)), reverse=True)
-    return out
-
-
-def _ga4_attribution_html(
-    ga4_attr: dict[str, Any] | None,
-    *,
-    google_totals: dict[str, Any] | None,
-    google_campaigns: list[dict[str, Any]],
-) -> str:
+def _ga4_platform_reports(ga4_attr: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     if not ga4_attr:
-        return """
-        <section class="panel">
-          <div class="panel-head"><h2>Google Ads → site (GA4)</h2></div>
-          <p class="muted">No GA4 attribution data yet. Click Refresh now (requires BigQuery GA4 export).</p>
-        </section>
-        """
+        return {}
+    platforms = ga4_attr.get("platforms")
+    if platforms:
+        return platforms
+    return {"google": ga4_attr}
 
-    totals = ga4_attr.get("totals") or {}
+
+def _render_platform_attribution_section(
+    platform: str,
+    label: str,
+    report: dict[str, Any],
+    *,
+    ad_totals: dict[str, Any] | None,
+    ad_campaigns: list[dict[str, Any]],
+    css_class: str,
+) -> str:
+    totals = report.get("totals") or {}
     by_tier = totals.get("by_tier") or {}
-    google_clicks = int((google_totals or {}).get("clicks") or 0)
+    tier_labels = PLATFORM_TIER_LABELS.get(platform) or {}
+    confirmed_tiers = CONFIRMED_TIERS.get(platform, ())
+    confirmed = sum(int((by_tier.get(t) or {}).get("sessions") or 0) for t in confirmed_tiers)
+    confirmed_engaged = sum(
+        int((by_tier.get(t) or {}).get("engaged_sessions") or 0) for t in confirmed_tiers
+    )
     ga_sessions = int(totals.get("sessions") or 0)
     ga_engaged = int(totals.get("engaged_sessions") or 0)
-    confirmed = int(totals.get("confirmed_sessions") or 0)
-    confirmed_engaged = int(
-        (by_tier.get("linked") or {}).get("engaged_sessions") or 0
-    ) + int((by_tier.get("gclid") or {}).get("engaged_sessions") or 0)
+    ad_clicks = int((ad_totals or {}).get("clicks") or 0)
 
     tier_rows = []
-    tier_labels = {
-        "linked": "Linked Google Ads campaign",
-        "gclid": "gclid (auto-tagging)",
-        "source_medium": "google / cpc fallback",
-    }
-    for key, label in tier_labels.items():
+    for key, tier_label in tier_labels.items():
         t = by_tier.get(key) or {}
         sessions = int(t.get("sessions") or 0)
         engaged = int(t.get("engaged_sessions") or 0)
         tier_rows.append(
             f"""<tr>
-              <td>{_esc(label)}</td>
+              <td>{_esc(tier_label)}</td>
               <td class="num">{_fmt_int(sessions)}</td>
               <td class="num">{_fmt_pct(engaged, sessions) if sessions else "—"}</td>
               <td class="num">{_fmt_int(t.get("page_views") or 0)}</td>
@@ -862,19 +803,10 @@ def _ga4_attribution_html(
             </tr>"""
         )
 
-    merged_campaigns = _merged_ads_ga4_campaign_rows(
-        ga4_attr.get("by_campaign") or [],
-        google_campaigns,
-    )
+    merged = match_ga4_campaigns_to_ads(report.get("by_campaign") or [], ad_campaigns)
     campaign_rows_html = []
-    for row in merged_campaigns:
-        if not any(
-            (
-                row.get("spend"),
-                row.get("sessions"),
-                row.get("ad_clicks"),
-            )
-        ):
+    for row in merged:
+        if not any((row.get("spend"), row.get("sessions"), row.get("ad_clicks"))):
             continue
         campaign_rows_html.append(
             f"""<tr>
@@ -888,87 +820,78 @@ def _ga4_attribution_html(
             </tr>"""
         )
 
-    top_events = ga4_attr.get("top_events") or []
+    top_events = report.get("top_events") or []
     event_rows = "".join(
         f"""<tr>
           <td class="name">{_esc(ev.get("event_name"))}</td>
           <td class="num">{_fmt_int(ev.get("event_count") or 0)}</td>
         </tr>"""
-        for ev in top_events[:15]
+        for ev in top_events[:10]
     )
 
-    click_session_note = ""
-    if google_clicks and ga_sessions:
-        ratio = ga_sessions / google_clicks if google_clicks else 0
-        click_session_note = (
-            f"Google Ads reported {_fmt_int(google_clicks)} clicks vs "
-            f"{_fmt_int(ga_sessions)} GA4 ad-attributed sessions ({ratio:.2f} sessions/click). "
-            "Large gaps often mean click-to-session timing, ITP, or users who bounce before GA4 fires."
+    click_note = ""
+    if ad_clicks and ga_sessions:
+        ratio = ga_sessions / ad_clicks
+        click_note = (
+            f"{label} reported {_fmt_int(ad_clicks)} clicks vs "
+            f"{_fmt_int(ga_sessions)} GA4 attributed sessions ({ratio:.2f} sessions/click)."
         )
 
+    methodology = report.get("methodology") or ""
+    empty_campaign_msg = {
+        "google": "No linked campaign rows — link GA4 to Google Ads account 1549971930.",
+        "linkedin": "No UTM-matched campaigns — add utm_source=linkedin&utm_medium=paid&utm_campaign=… to ad URLs.",
+        "meta": "No UTM-matched campaigns — ensure fbclid or utm_campaign is on Meta ad destination URLs.",
+    }.get(platform, "No campaign rows.")
+
     return f"""
-    <section class="panel">
-      <div class="panel-head"><h2>How we match ads to site behavior</h2></div>
-      <p class="table-note">{_esc(ga4_attr.get("methodology") or "")}</p>
-      <p class="table-note muted">Key events counted: {_esc(", ".join(ga4_attr.get("key_event_names") or []))}</p>
-    </section>
+    <section class="panel platform-panel platform-{css_class} attr-platform-section">
+      <div class="panel-head">
+        <h2>{_esc(label)} → site</h2>
+        <span class="badge">{_fmt_int(ga_sessions)} sessions</span>
+      </div>
+      <p class="table-note">{_esc(methodology)}</p>
+      {f'<p class="table-note muted">{_esc(click_note)}</p>' if click_note else ''}
 
-    <div class="bl-summary">
-      <div class="bl-stat">
-        <div class="bl-stat-val">{_fmt_int(ga_sessions)}</div>
-        <div class="bl-stat-lbl">GA4 ad-attributed sessions</div>
+      <div class="bl-summary attr-platform-summary">
+        <div class="bl-stat">
+          <div class="bl-stat-val">{_fmt_int(ga_sessions)}</div>
+          <div class="bl-stat-lbl">GA4 sessions</div>
+        </div>
+        <div class="bl-stat">
+          <div class="bl-stat-val">{_fmt_pct(ga_engaged, ga_sessions) if ga_sessions else "—"}</div>
+          <div class="bl-stat-lbl">Engagement rate</div>
+        </div>
+        <div class="bl-stat">
+          <div class="bl-stat-val">{_fmt_int(totals.get("key_events") or 0)}</div>
+          <div class="bl-stat-lbl">Key events</div>
+        </div>
+        <div class="bl-stat">
+          <div class="bl-stat-val">{_fmt_int(confirmed)}</div>
+          <div class="bl-stat-lbl">High-confidence sessions</div>
+        </div>
+        <div class="bl-stat">
+          <div class="bl-stat-val">{_fmt_pct(confirmed_engaged, confirmed) if confirmed else "—"}</div>
+          <div class="bl-stat-lbl">High-confidence eng. rate</div>
+        </div>
       </div>
-      <div class="bl-stat">
-        <div class="bl-stat-val">{_fmt_pct(ga_engaged, ga_sessions) if ga_sessions else "—"}</div>
-        <div class="bl-stat-lbl">Engagement rate (all tiers)</div>
-      </div>
-      <div class="bl-stat">
-        <div class="bl-stat-val">{_fmt_int(totals.get("key_events") or 0)}</div>
-        <div class="bl-stat-lbl">Key events on ad sessions</div>
-      </div>
-      <div class="bl-stat">
-        <div class="bl-stat-val">{_fmt_int(totals.get("page_views") or 0)}</div>
-        <div class="bl-stat-lbl">Page views on ad sessions</div>
-      </div>
-      <div class="bl-stat">
-        <div class="bl-stat-val">{_fmt_int(confirmed)}</div>
-        <div class="bl-stat-lbl">Confirmed (linked + gclid)</div>
-      </div>
-      <div class="bl-stat">
-        <div class="bl-stat-val">{_fmt_pct(confirmed_engaged, confirmed) if confirmed else "—"}</div>
-        <div class="bl-stat-lbl">Confirmed engagement rate</div>
-      </div>
-    </div>
 
-    {f'<p class="table-note">{_esc(click_session_note)}</p>' if click_session_note else ''}
-
-    <section class="panel">
-      <div class="panel-head"><h2>Daily ad-attributed site activity</h2></div>
-      <p class="table-note">Sessions and key events from GA4 for Google Ads–attributed traffic.</p>
-      <canvas id="ga4AttrChart"></canvas>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head"><h2>Attribution tier breakdown</h2></div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
             <tr>
-              <th>Tier</th>
+              <th>Attribution tier</th>
               <th>Sessions</th>
               <th>Engagement rate</th>
               <th>Page views</th>
               <th>Key events</th>
             </tr>
           </thead>
-          <tbody>{''.join(tier_rows)}</tbody>
+          <tbody>{''.join(tier_rows) if tier_rows else f'<tr><td colspan="5" class="muted">No {_esc(label)} sessions in range.</td></tr>'}</tbody>
         </table>
       </div>
-    </section>
 
-    <section class="panel">
-      <div class="panel-head"><h2>Google Ads campaign → site outcomes</h2></div>
-      <p class="table-note">Spend/clicks from Google Ads API; sessions and events from GA4 when campaign ID is linked or inferred.</p>
+      <h3 class="attr-subhead">Campaign → site outcomes</h3>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
@@ -983,14 +906,12 @@ def _ga4_attribution_html(
             </tr>
           </thead>
           <tbody>
-            {''.join(campaign_rows_html) if campaign_rows_html else '<tr><td colspan="7" class="muted">No linked campaign rows — ensure GA4 is linked to Google Ads account 1549971930.</td></tr>'}
+            {''.join(campaign_rows_html) if campaign_rows_html else f'<tr><td colspan="7" class="muted">{_esc(empty_campaign_msg)}</td></tr>'}
           </tbody>
         </table>
       </div>
-    </section>
 
-    <section class="panel">
-      <div class="panel-head"><h2>Top events on ad-attributed sessions</h2></div>
+      <h3 class="attr-subhead">Top events</h3>
       <div class="table-wrap">
         <table class="data-table">
           <thead><tr><th>Event</th><th>Count</th></tr></thead>
@@ -1000,6 +921,69 @@ def _ga4_attribution_html(
         </table>
       </div>
     </section>
+    """
+
+
+def _ga4_attribution_html(
+    ga4_attr: dict[str, Any] | None,
+    *,
+    platform_totals: dict[str, Any],
+    breakdowns: dict[str, Any],
+) -> str:
+    if not ga4_attr:
+        return """
+        <section class="panel">
+          <div class="panel-head"><h2>Ads → site (GA4)</h2></div>
+          <p class="muted">No GA4 attribution data yet. Click Refresh now (requires BigQuery GA4 export).</p>
+        </section>
+        """
+
+    platforms = _ga4_platform_reports(ga4_attr)
+    key_events = ga4_attr.get("key_event_names") or []
+
+    sections = [
+        _render_platform_attribution_section(
+            "google",
+            "Google Ads",
+            platforms.get("google") or {},
+            ad_totals=platform_totals.get("google"),
+            ad_campaigns=(breakdowns.get("google") or {}).get("campaign") or [],
+            css_class="google",
+        ),
+        _render_platform_attribution_section(
+            "linkedin",
+            "LinkedIn",
+            platforms.get("linkedin") or {},
+            ad_totals=platform_totals.get("linkedin"),
+            ad_campaigns=(breakdowns.get("linkedin") or {}).get("campaign") or [],
+            css_class="linkedin",
+        ),
+        _render_platform_attribution_section(
+            "meta",
+            "Meta",
+            platforms.get("meta") or {},
+            ad_totals=platform_totals.get("meta"),
+            ad_campaigns=(breakdowns.get("meta") or {}).get("campaign") or [],
+            css_class="meta",
+        ),
+    ]
+
+    return f"""
+    <section class="panel">
+      <div class="panel-head"><h2>How we match ads to site behavior</h2></div>
+      <p class="table-note">
+        Each platform uses click IDs (gclid, fbclid, li_fat_id) or UTM parameters when available,
+        with source/medium fallback. Campaign tables join GA4 UTM/linked IDs to ad platform campaign names.
+      </p>
+      <p class="table-note muted">Key events counted: {_esc(", ".join(key_events))}</p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Daily ad-attributed site activity (all platforms)</h2></div>
+      <canvas id="ga4AttrChart"></canvas>
+    </section>
+
+    {''.join(sections)}
     """
 
 
@@ -1080,28 +1064,48 @@ def render_penn_html(
     platform_catalog_json = _json_for_html_script(active_platform_catalog(bl_campaigns))
     ga4_note = "Sessions / page views / conversions (no ad spend)"
     ga4_attr = snapshot.get("ga4_attribution")
-    google_campaigns = (breakdowns.get("google") or {}).get("campaign") or []
     ga4_attr_html = _ga4_attribution_html(
         ga4_attr,
-        google_totals=totals.get("google"),
-        google_campaigns=google_campaigns,
+        platform_totals=totals,
+        breakdowns=breakdowns,
     )
-    ga4_daily = (ga4_attr or {}).get("daily") or []
+    combined_daily = (ga4_attr or {}).get("combined_daily") or []
+    if not combined_daily and (ga4_attr or {}).get("daily"):
+        combined_daily = [
+            {
+                "metric_date": d.get("metric_date"),
+                "google": int(d.get("sessions") or 0),
+                "linkedin": 0,
+                "meta": 0,
+                "key_events": int(d.get("key_events") or 0),
+            }
+            for d in ga4_attr.get("daily") or []
+        ]
     ga4_attr_chart_json = _json_for_html_script(
         {
-            "labels": [str(d.get("metric_date") or "")[:10] for d in ga4_daily],
+            "labels": [str(d.get("metric_date") or "")[:10] for d in combined_daily],
             "datasets": [
                 {
-                    "label": "Ad-attributed sessions",
-                    "data": [int(d.get("sessions") or 0) for d in ga4_daily],
+                    "label": "Google Ads sessions",
+                    "data": [int(d.get("google") or 0) for d in combined_daily],
                     "borderColor": "#4285f4",
-                    "backgroundColor": "rgba(66,133,244,0.08)",
-                    "fill": True,
                     "yAxisID": "y",
                 },
                 {
-                    "label": "Key events",
-                    "data": [int(d.get("key_events") or 0) for d in ga4_daily],
+                    "label": "LinkedIn sessions",
+                    "data": [int(d.get("linkedin") or 0) for d in combined_daily],
+                    "borderColor": "#e67e22",
+                    "yAxisID": "y",
+                },
+                {
+                    "label": "Meta sessions",
+                    "data": [int(d.get("meta") or 0) for d in combined_daily],
+                    "borderColor": "#1877f2",
+                    "yAxisID": "y",
+                },
+                {
+                    "label": "Key events (all)",
+                    "data": [int(d.get("key_events") or 0) for d in combined_daily],
                     "borderColor": "#b8922e",
                     "borderDash": [4, 4],
                     "yAxisID": "y1",
@@ -1651,6 +1655,14 @@ def render_penn_html(
     }}
     .bl-stat-val {{ font-size: 1.35rem; font-weight: 700; }}
     .bl-stat-lbl {{ font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-top: 4px; }}
+    .attr-platform-section {{ margin-top: 8px; }}
+    .attr-platform-summary {{ margin: 16px 0; }}
+    .attr-subhead {{
+      margin: 20px 0 10px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--navy);
+    }}
     .platform-pill {{
       display: inline-block;
       font-size: 0.68rem;
