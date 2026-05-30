@@ -76,25 +76,63 @@ def _platform_error(exc: Exception) -> str:
     return str(exc)[:500]
 
 
-def _normalize_campaign_row(row: dict[str, Any]) -> dict[str, Any]:
+def _normalize_entity_row(row: dict[str, Any]) -> dict[str, Any]:
+    entity = str(row.get("entity_level") or "campaign")
+    if entity == "adset":
+        parent_id = str(row.get("campaign_id") or "")
+        parent_name = str(row.get("campaign_name") or "")
+    elif entity == "campaign":
+        parent_id = str(row.get("campaign_group_id") or "")
+        parent_name = str(row.get("campaign_group_name") or "")
+    else:
+        parent_id = ""
+        parent_name = ""
     return {
-        "id": str(row.get("id") or row.get("campaign_id") or ""),
-        "name": str(row.get("name") or row.get("campaign_name") or "—"),
+        "id": str(row.get("id") or row.get("campaign_id") or row.get("adset_id") or ""),
+        "name": str(
+            row.get("name")
+            or row.get("campaign_name")
+            or row.get("adset_name")
+            or "—"
+        ),
+        "entity_level": entity,
         "spend": float(row.get("spend") or 0),
         "clicks": int(row.get("clicks") or 0),
         "impressions": int(row.get("impressions") or 0),
         "conversions": float(row.get("conversions") or 0),
-        "entity_level": str(row.get("entity_level") or "campaign"),
+        "parent_id": parent_id,
+        "parent_name": parent_name,
     }
 
 
-def _totals_from_campaigns(campaigns: list[dict[str, Any]]) -> dict[str, Any]:
+def _rows_for_display(rows: list[dict[str, Any]], *, min_spend: float = 0.01) -> list[dict[str, Any]]:
+    """Hide zero-spend rows so inactive Google campaigns do not clutter the table."""
+    visible = [r for r in rows if float(r.get("spend") or 0) >= min_spend]
+    return visible if visible else rows
+
+
+def _account_totals(perf: dict[str, Any]) -> dict[str, Any]:
+    totals = dict(perf.get("totals") or {})
+    totals.setdefault("spend", 0.0)
+    totals.setdefault("clicks", 0)
+    totals.setdefault("impressions", 0)
+    totals.setdefault("conversions", 0.0)
+    return totals
+
+
+def _aggregated_paid_media(platform_totals: dict[str, Any]) -> dict[str, Any]:
+    spend = clicks = impressions = conversions = 0.0
+    for key in ("google", "linkedin", "meta"):
+        t = platform_totals.get(key) or {}
+        spend += float(t.get("spend") or 0)
+        clicks += int(t.get("clicks") or 0)
+        impressions += int(t.get("impressions") or 0)
+        conversions += float(t.get("conversions") or 0)
     return {
-        "spend": sum(c["spend"] for c in campaigns),
-        "clicks": sum(c["clicks"] for c in campaigns),
-        "impressions": sum(c["impressions"] for c in campaigns),
-        "conversions": sum(c["conversions"] for c in campaigns),
-        "campaign_count": len(campaigns),
+        "spend": spend,
+        "clicks": int(clicks),
+        "impressions": int(impressions),
+        "conversions": conversions,
     }
 
 
@@ -114,10 +152,13 @@ def refresh_penn(*, date_range: str = "LAST_30_DAYS") -> dict[str, Any]:
         },
         "warehouse_sync": {},
         "daily_metrics": {},
-        "campaigns": {},
+        "breakdowns": {},
         "platform_totals": {},
+        "aggregated_paid_media": {},
         "errors": {},
     }
+
+    breakdowns: dict[str, dict[str, list[dict[str, Any]]]] = {}
 
     if cfg.google_customer_id:
         try:
@@ -129,9 +170,9 @@ def refresh_penn(*, date_range: str = "LAST_30_DAYS") -> dict[str, Any]:
             payload["errors"]["google_sync"] = _platform_error(exc)
         try:
             perf = google_ads_service.campaign_performance(cfg.google_customer_id, date_range=preset)
-            campaigns = [_normalize_campaign_row(c) for c in perf.get("campaigns") or []]
-            payload["campaigns"]["google"] = campaigns
-            payload["platform_totals"]["google"] = perf.get("totals") or _totals_from_campaigns(campaigns)
+            campaigns = [_normalize_entity_row(c) for c in perf.get("campaigns") or []]
+            breakdowns["google"] = {"campaign": campaigns}
+            payload["platform_totals"]["google"] = _account_totals(perf)
         except Exception as exc:
             payload["errors"]["google_campaigns"] = _platform_error(exc)
 
@@ -143,13 +184,31 @@ def refresh_penn(*, date_range: str = "LAST_30_DAYS") -> dict[str, Any]:
             )
         except Exception as exc:
             payload["errors"]["linkedin_sync"] = _platform_error(exc)
+        li_campaigns: list[dict[str, Any]] = []
+        li_groups: list[dict[str, Any]] = []
+        li_totals: dict[str, Any] | None = None
         try:
             perf = linkedin_service.account_performance(cfg.linkedin_account_id, date_range=preset)
-            campaigns = [_normalize_campaign_row(c) for c in perf.get("campaigns") or []]
-            payload["campaigns"]["linkedin"] = campaigns
-            payload["platform_totals"]["linkedin"] = perf.get("totals") or _totals_from_campaigns(campaigns)
+            li_campaigns = [_normalize_entity_row(c) for c in perf.get("campaigns") or []]
+            li_totals = _account_totals(perf)
         except Exception as exc:
             payload["errors"]["linkedin_campaigns"] = _platform_error(exc)
+        try:
+            groups_perf = linkedin_service.campaign_groups_performance(
+                cfg.linkedin_account_id, date_range=preset
+            )
+            li_groups = [_normalize_entity_row(g) for g in groups_perf.get("campaign_groups") or []]
+            if li_totals is None:
+                li_totals = _account_totals(groups_perf)
+        except Exception as exc:
+            payload["errors"]["linkedin_campaign_groups"] = _platform_error(exc)
+        if li_campaigns or li_groups:
+            breakdowns["linkedin"] = {
+                "campaign_group": li_groups,
+                "campaign": li_campaigns,
+            }
+        if li_totals:
+            payload["platform_totals"]["linkedin"] = li_totals
 
     if cfg.meta_account_id:
         try:
@@ -159,13 +218,29 @@ def refresh_penn(*, date_range: str = "LAST_30_DAYS") -> dict[str, Any]:
             )
         except Exception as exc:
             payload["errors"]["meta_sync"] = _platform_error(exc)
+        meta_campaigns: list[dict[str, Any]] = []
+        meta_adsets: list[dict[str, Any]] = []
+        meta_totals: dict[str, Any] | None = None
         try:
             perf = meta_service.account_performance(cfg.meta_account_id, date_range=preset)
-            campaigns = [_normalize_campaign_row(c) for c in perf.get("campaigns") or []]
-            payload["campaigns"]["meta"] = campaigns
-            payload["platform_totals"]["meta"] = perf.get("totals") or _totals_from_campaigns(campaigns)
+            meta_campaigns = [_normalize_entity_row(c) for c in perf.get("campaigns") or []]
+            meta_totals = _account_totals(perf)
         except Exception as exc:
             payload["errors"]["meta_campaigns"] = _platform_error(exc)
+        try:
+            adsets_perf = meta_service.adsets_performance(cfg.meta_account_id, date_range=preset)
+            meta_adsets = [_normalize_entity_row(a) for a in adsets_perf.get("adsets") or []]
+        except Exception as exc:
+            payload["errors"]["meta_adsets"] = _platform_error(exc)
+        if meta_campaigns or meta_adsets:
+            breakdowns["meta"] = {
+                "campaign": meta_campaigns,
+                "adset": meta_adsets,
+            }
+        if meta_totals:
+            payload["platform_totals"]["meta"] = meta_totals
+
+    payload["breakdowns"] = breakdowns
 
     if cfg.ga4_client_key:
         try:
@@ -207,6 +282,8 @@ def refresh_penn(*, date_range: str = "LAST_30_DAYS") -> dict[str, Any]:
             except Exception as exc:
                 payload["errors"][f"{source}_daily"] = _platform_error(exc)
 
+    payload["aggregated_paid_media"] = _aggregated_paid_media(payload["platform_totals"])
+
     dashboard_snapshots.save_snapshot(cfg.client_key, payload)
     return payload
 
@@ -229,19 +306,43 @@ def _esc(value: Any) -> str:
     return html.escape(str(value or ""))
 
 
-def _campaign_table(title: str, campaigns: list[dict[str, Any]]) -> str:
-    if not campaigns:
+def _entity_level_label(level: str) -> str:
+    labels = {
+        "campaign": "campaign",
+        "campaign_group": "campaign group",
+        "adset": "ad set",
+        "creative": "creative",
+    }
+    return labels.get(level, level.replace("_", " "))
+
+
+def _entity_table(
+    title: str,
+    rows: list[dict[str, Any]],
+    *,
+    entity_level: str,
+    parent_header: str | None = None,
+    note: str = "",
+) -> str:
+    rows = _rows_for_display(rows)
+    if not rows:
         return f"""
         <section class="panel">
           <h2>{_esc(title)}</h2>
-          <p class="muted">No campaign data for this period.</p>
+          <p class="muted">No {_esc(_entity_level_label(entity_level))} data for this period.</p>
         </section>
         """
+    level_badge = _entity_level_label(entity_level)
     rows_html = []
-    for row in sorted(campaigns, key=lambda c: c.get("spend", 0), reverse=True):
+    for row in sorted(rows, key=lambda c: c.get("spend", 0), reverse=True):
+        parent_cell = ""
+        if parent_header:
+            parent_cell = f'<td class="name">{_esc(row.get("parent_name") or "—")}</td>'
         rows_html.append(
             f"""<tr>
+              <td class="mono">{_esc(row.get("id"))}</td>
               <td class="name">{_esc(row.get("name"))}</td>
+              {parent_cell}
               <td class="num">{_fmt_money(float(row.get("spend") or 0))}</td>
               <td class="num">{_fmt_int(row.get("clicks") or 0)}</td>
               <td class="num">{_fmt_int(row.get("impressions") or 0)}</td>
@@ -249,14 +350,19 @@ def _campaign_table(title: str, campaigns: list[dict[str, Any]]) -> str:
               <td class="num">{_fmt_int(row.get("conversions") or 0)}</td>
             </tr>"""
         )
+    parent_th = f"<th>{_esc(parent_header)}</th>" if parent_header else ""
+    note_html = f'<p class="table-note">{_esc(note)}</p>' if note else ""
     return f"""
     <section class="panel">
-      <h2>{_esc(title)} <span class="badge">{len(campaigns)} campaigns</span></h2>
+      <h2>{_esc(title)} <span class="badge">{level_badge} · {len(rows)} rows</span></h2>
+      {note_html}
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Campaign</th>
+              <th>ID</th>
+              <th>Name</th>
+              {parent_th}
               <th>Spend</th>
               <th>Clicks</th>
               <th>Impressions</th>
@@ -286,7 +392,7 @@ def _summary_card(label: str, totals: dict[str, Any] | None, *, note: str = "") 
     clicks = int(totals.get("clicks") or 0)
     impressions = int(totals.get("impressions") or 0)
     conversions = float(totals.get("conversions") or 0)
-    count = int(totals.get("campaign_count") or 0)
+    default_note = note or "Account-level total (do not sum breakdown tables below)"
     return f"""
     <div class="card">
       <div class="card-label">{_esc(label)}</div>
@@ -295,9 +401,8 @@ def _summary_card(label: str, totals: dict[str, Any] | None, *, note: str = "") 
         <span>{_fmt_int(clicks)} clicks</span>
         <span>{_fmt_int(impressions)} impr.</span>
         <span>{_fmt_int(conversions)} conv.</span>
-        {f'<span>{count} campaigns</span>' if count else ''}
       </div>
-      {f'<div class="card-note">{_esc(note)}</div>' if note else ''}
+      <div class="card-note">{_esc(default_note)}</div>
     </div>
     """
 
@@ -329,6 +434,104 @@ def _refresh_toolbar(
     else:
         button = '<button type="button" class="refresh-btn" disabled>Refresh now</button>'
     return f'<div class="refresh-bar">{notice}{button}</div>'
+
+
+def _hierarchy_rules_html() -> str:
+    return """
+    <section class="panel hierarchy-rules">
+      <h2>Hierarchy rules</h2>
+      <p class="muted">Each platform uses different ad levels. Summary cards are <strong>account totals</strong>.
+      Breakdown tables are separate — never sum campaign groups + campaigns (LinkedIn) or campaigns + ad sets (Meta).</p>
+      <table class="hierarchy-table">
+        <thead><tr><th>Level</th><th>LinkedIn</th><th>Meta</th><th>Google Ads</th></tr></thead>
+        <tbody>
+          <tr><td>Group / folder</td><td>Campaign group</td><td>—</td><td>—</td></tr>
+          <tr><td>Campaign</td><td>Campaign</td><td>Campaign</td><td>Campaign</td></tr>
+          <tr><td>Sub-campaign</td><td>Creative (not ad set)</td><td>Ad set</td><td>Ad group</td></tr>
+        </tbody>
+      </table>
+    </section>
+    """
+
+
+def _aggregated_card(totals: dict[str, Any]) -> str:
+    if not totals:
+        return ""
+    return f"""
+    <section class="panel aggregated">
+      <h2>All paid media (aggregated)</h2>
+      <p class="muted">Sum of Google + LinkedIn + Meta account totals for this date range.</p>
+      <div class="aggregated-stats">
+        <span><strong>{_fmt_money(float(totals.get("spend") or 0))}</strong> spend</span>
+        <span>{_fmt_int(totals.get("clicks") or 0)} clicks</span>
+        <span>{_fmt_int(totals.get("impressions") or 0)} impressions</span>
+        <span>{_fmt_int(totals.get("conversions") or 0)} conversions</span>
+      </div>
+    </section>
+    """
+
+
+def _platform_breakdown_html(breakdowns: dict[str, Any]) -> str:
+    """Render per-platform tables at the correct entity levels."""
+    parts: list[str] = []
+    google = breakdowns.get("google") or {}
+    parts.append(
+        _entity_table(
+            "Google Ads",
+            google.get("campaign") or [],
+            entity_level="campaign",
+            note="entity_level=campaign only. Google has no separate ad-set level in this dashboard.",
+        )
+    )
+
+    linkedin = breakdowns.get("linkedin") or {}
+    if linkedin.get("campaign_group"):
+        parts.append(
+            _entity_table(
+                "LinkedIn — campaign groups",
+                linkedin.get("campaign_group") or [],
+                entity_level="campaign_group",
+                note="Folders above campaigns. Not comparable to Meta ad sets.",
+            )
+        )
+    parts.append(
+        _entity_table(
+            "LinkedIn — campaigns",
+            linkedin.get("campaign") or [],
+            entity_level="campaign",
+            parent_header="Campaign group",
+            note="entity_level=campaign. LinkedIn has no ad set level.",
+        )
+    )
+
+    meta = breakdowns.get("meta") or {}
+    parts.append(
+        _entity_table(
+            "Meta — campaigns",
+            meta.get("campaign") or [],
+            entity_level="campaign",
+            note="entity_level=campaign. Do not merge with ad set rows below.",
+        )
+    )
+    if meta.get("adset"):
+        parts.append(
+            _entity_table(
+                "Meta — ad sets",
+                meta.get("adset") or [],
+                entity_level="adset",
+                parent_header="Parent campaign",
+                note="entity_level=adset (sub-campaign). Not the same as LinkedIn campaign groups.",
+            )
+        )
+    return "\n".join(parts)
+
+
+def _breakdowns_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    breakdowns = snapshot.get("breakdowns")
+    if breakdowns:
+        return breakdowns
+    legacy = snapshot.get("campaigns") or {}
+    return {platform: {"campaign": rows} for platform, rows in legacy.items()}
 
 
 def render_penn_html(
@@ -383,7 +586,9 @@ def render_penn_html(
         }
     )
 
-    campaigns = snapshot.get("campaigns") or {}
+    breakdowns = _breakdowns_from_snapshot(snapshot)
+    aggregated = snapshot.get("aggregated_paid_media") or _aggregated_paid_media(totals)
+    breakdown_html = _platform_breakdown_html(breakdowns)
     ga4_note = "Sessions / page views / conversions (no ad spend)"
 
     return f"""<!DOCTYPE html>
@@ -456,6 +661,11 @@ def render_penn_html(
     th {{ color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: .03em; }}
     td.num {{ text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }}
     td.name {{ max-width: 360px; }}
+    td.mono {{ font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--muted); }}
+    .table-note {{ margin: 0 0 12px; font-size: 0.85rem; color: var(--muted); }}
+    .hierarchy-rules p {{ margin-top: 0; }}
+    .hierarchy-table {{ margin-top: 12px; font-size: 0.88rem; }}
+    .aggregated-stats {{ display: flex; flex-wrap: wrap; gap: 16px 24px; font-size: 1rem; margin-top: 8px; }}
     .errors {{
       background: #fff8e6;
       border: 1px solid #f0d080;
@@ -495,6 +705,10 @@ def render_penn_html(
 
     {error_html}
 
+    {_hierarchy_rules_html()}
+
+    {_aggregated_card(aggregated)}
+
     <div class="cards">
       {_summary_card("Google Ads", totals.get("google"))}
       {_summary_card("LinkedIn", totals.get("linkedin"))}
@@ -503,13 +717,12 @@ def render_penn_html(
     </div>
 
     <section class="panel">
-      <h2>Daily ad spend</h2>
+      <h2>Daily ad spend (account level)</h2>
+      <p class="table-note">One line per platform per day from warehouse — not campaign/ad set breakdown.</p>
       <canvas id="spendChart"></canvas>
     </section>
 
-    {_campaign_table("Google Ads — campaigns", campaigns.get("google") or [])}
-    {_campaign_table("LinkedIn — campaigns", campaigns.get("linkedin") or [])}
-    {_campaign_table("Meta — campaigns", campaigns.get("meta") or [])}
+    {breakdown_html}
   </div>
   <script>
     const chartPayload = {chart_json};
