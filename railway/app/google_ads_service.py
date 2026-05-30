@@ -452,6 +452,72 @@ def fetch_daily_metrics(
     return out
 
 
+def campaign_performance(
+    customer_id: str,
+    *,
+    date_range: str = "LAST_30_DAYS",
+    client: GoogleAdsClient | None = None,
+) -> dict[str, Any]:
+    """Account totals plus spend/clicks/impressions by campaign for a date range."""
+    start, end, preset = resolve_date_range(date_range)
+    customer_id_clean = str(customer_id).replace("-", "").strip()
+    start_key = start.isoformat()
+    end_key = end.isoformat()
+    query = f"""
+        SELECT
+          campaign.id,
+          campaign.name,
+          campaign.status,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.conversions,
+          metrics.conversions_value,
+          metrics.cost_micros
+        FROM campaign
+        WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
+    """
+    rows = search(customer_id_clean, query, client=client)
+    by_campaign: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        cid = str(_dig(row, "campaign", "id") or "").strip()
+        if not cid:
+            continue
+        if cid not in by_campaign:
+            by_campaign[cid] = {
+                "id": cid,
+                "entity_level": "campaign",
+                "name": _dig(row, "campaign", "name") or "",
+                "status": _dig(row, "campaign", "status") or "",
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+            }
+        rec = by_campaign[cid]
+        rec["spend"] += int(_dig(row, "metrics", "cost_micros") or 0) / 1_000_000
+        rec["clicks"] += int(_dig(row, "metrics", "clicks") or 0)
+        rec["impressions"] += int(_dig(row, "metrics", "impressions") or 0)
+        rec["conversions"] += float(_dig(row, "metrics", "conversions") or 0)
+        rec["conversion_value"] += float(_dig(row, "metrics", "conversions_value") or 0)
+
+    campaigns_out = sorted(by_campaign.values(), key=lambda item: item.get("spend", 0), reverse=True)
+    totals = {
+        "spend": sum(c["spend"] for c in campaigns_out),
+        "clicks": sum(c["clicks"] for c in campaigns_out),
+        "impressions": sum(c["impressions"] for c in campaigns_out),
+        "conversions": sum(c["conversions"] for c in campaigns_out),
+        "campaign_count": len(campaigns_out),
+    }
+    return {
+        "customer_id": customer_id_clean,
+        "entity_level": "account",
+        "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
+        "totals": totals,
+        "campaigns": campaigns_out,
+    }
+
+
 def sync_account_to_warehouse(
     customer_id: str,
     *,

@@ -1,0 +1,82 @@
+"""Penn Community Bank account IDs for dashboard sync."""
+
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
+
+
+def _strip_env(val: str | None) -> str:
+    if not val:
+        return ""
+    v = val.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
+        return v[1:-1].strip()
+    return v
+
+
+@dataclass(frozen=True)
+class PennDashboardConfig:
+    client_key: str
+    label: str
+    google_customer_id: str | None
+    linkedin_account_id: str | None
+    meta_account_id: str | None
+    ga4_client_key: str
+
+
+def load_penn_config() -> PennDashboardConfig:
+    """
+    Load Penn dashboard targets from PENN_DASHBOARD JSON or individual env vars.
+
+    PENN_DASHBOARD example:
+    {
+      "label": "Penn Community Bank",
+      "google_customer_id": "1234567890",
+      "linkedin_account_id": "507720820",
+      "meta_account_id": "506176584",
+      "ga4_client_key": "penn"
+    }
+    """
+    raw = _strip_env(os.getenv("PENN_DASHBOARD"))
+    data: dict = {}
+    if raw:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            data = parsed
+
+    google = _strip_env(str(data.get("google_customer_id") or "")) or _strip_env(
+        os.getenv("PENN_GOOGLE_CUSTOMER_ID")
+    ) or _strip_env(os.getenv("GOOGLE_CUSTOMER_ID"))
+
+    linkedin = _strip_env(str(data.get("linkedin_account_id") or "")) or _strip_env(
+        os.getenv("PENN_LINKEDIN_ACCOUNT_ID")
+    )
+
+    meta = _strip_env(str(data.get("meta_account_id") or "")) or _strip_env(
+        os.getenv("PENN_META_ACCOUNT_ID")
+    )
+
+    ga4_key = (
+        _strip_env(str(data.get("ga4_client_key") or ""))
+        or _strip_env(os.getenv("PENN_GA4_CLIENT_KEY"))
+        or "penn"
+    )
+
+    label = _strip_env(str(data.get("label") or "")) or "Penn Community Bank"
+
+    if not any((google, linkedin, meta, ga4_key)):
+        raise RuntimeError(
+            "Penn dashboard is not configured. Set PENN_DASHBOARD JSON or "
+            "PENN_GOOGLE_CUSTOMER_ID / PENN_LINKEDIN_ACCOUNT_ID / PENN_META_ACCOUNT_ID."
+        )
+
+    return PennDashboardConfig(
+        client_key="penn",
+        label=label,
+        google_customer_id=google or None,
+        linkedin_account_id=linkedin or None,
+        meta_account_id=meta or None,
+        ga4_client_key=ga4_key,
+    )

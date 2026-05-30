@@ -6,9 +6,11 @@ from datetime import date
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 import bigquery_service
+import dashboard_snapshots
+import dashboard_service
 import ga4_warehouse_service
 import google_ads_service
 import linkedin_service
@@ -19,6 +21,7 @@ from auth import creds_fingerprint, env_summary
 from linkedin_auth import env_summary as linkedin_env_summary
 from meta_auth import env_summary as meta_env_summary
 from openapi_gpt import build_chatgpt_openapi
+from cron_security import require_cron_secret
 from security import require_api_key
 from models import (
     AccountsResponse,
@@ -110,6 +113,7 @@ app = FastAPI(
 try:
     db_cache.ensure_schema()
     warehouse.ensure_schema()
+    dashboard_snapshots.ensure_schema()
 except Exception:
     # If Postgres isn't attached (or is temporarily unavailable), the service should still run.
     pass
@@ -201,6 +205,8 @@ def root() -> dict:
         "ga4_warehouse_sync": "/ga4/warehouse/sync",
         "warehouse_status": "/warehouse/status",
         "warehouse_metrics": "/warehouse/metrics",
+        "dashboard_penn": "/dashboard/penn?key=<CRON_SECRET>",
+        "internal_sync_penn": "POST /internal/sync-penn (header X-Cron-Secret)",
         "ga4_env": "/ga4/env",
     }
 
@@ -1125,6 +1131,51 @@ def warehouse_metrics(
         limit=limit,
     )
     return WarehouseMetricsResponse(count=len(rows), rows=rows)
+
+
+@app.post(
+    "/internal/sync-penn",
+    summary="Cron: sync Penn warehouse + refresh dashboard snapshot",
+    dependencies=[Depends(require_cron_secret)],
+)
+def internal_sync_penn(date_range: str = "LAST_30_DAYS") -> dict:
+    preset = (date_range or "LAST_30_DAYS").strip().upper().replace("-", "_")
+    if preset not in _WAREHOUSE_DATE_RANGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid date_range. Use one of: {', '.join(sorted(_WAREHOUSE_DATE_RANGES))}",
+        )
+    try:
+        return dashboard_service.refresh_penn(date_range=preset)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.get(
+    "/dashboard/penn",
+    summary="Penn ads performance dashboard (HTML)",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def dashboard_penn(key: str | None = None) -> HTMLResponse:
+    dashboard_service.verify_dashboard_key(key)
+    snapshot = dashboard_snapshots.get_snapshot("penn")
+    return HTMLResponse(dashboard_service.render_penn_html(snapshot))
+
+
+@app.get(
+    "/dashboard/penn.json",
+    summary="Penn dashboard snapshot JSON",
+    include_in_schema=False,
+)
+def dashboard_penn_json(key: str | None = None) -> dict:
+    dashboard_service.verify_dashboard_key(key)
+    snapshot = dashboard_snapshots.get_snapshot("penn")
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="No dashboard snapshot yet. Run POST /internal/sync-penn.")
+    return snapshot
 
 
 @app.get(
