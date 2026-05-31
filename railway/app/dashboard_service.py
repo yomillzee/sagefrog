@@ -1633,6 +1633,35 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       font-weight: 600;
       color: var(--navy);
     }}
+    .chart-period-toggle {{
+      display: inline-flex;
+      align-items: center;
+      gap: 0;
+      padding: 3px;
+      background: #eef3f9;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }}
+    .chart-period-btn {{
+      appearance: none;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+    }}
+    .chart-period-btn:hover {{
+      color: var(--navy);
+    }}
+    .chart-period-btn.active {{
+      background: #fff;
+      color: var(--navy);
+      box-shadow: 0 1px 3px rgba(10, 37, 64, 0.1);
+    }}
     .panel {{
       background: var(--panel);
       border: 1px solid var(--border);
@@ -2229,7 +2258,13 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
             </div>
 
             <section class="panel">
-              <div class="panel-head"><h2>Daily performance</h2></div>
+              <div class="panel-head">
+                <h2>Performance</h2>
+                <div class="chart-period-toggle" role="group" aria-label="Chart period">
+                  <button type="button" class="chart-period-btn active" data-period="daily" aria-pressed="true">Daily</button>
+                  <button type="button" class="chart-period-btn" data-period="weekly" aria-pressed="false">Weekly</button>
+                </div>
+              </div>
               <div class="chart-stack">
                 <div>
                   <p class="chart-subhead">Ad spend (account level)</p>
@@ -2335,7 +2370,6 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       }}
     }}
 
-    const chartPayload = readJson('chart-data', {{ labels: [], datasets: [] }});
     const breakdowns = readJson('breakdowns-data', {{}});
     const ga4CampaignMetrics = readJson('ga4-campaign-metrics', {{}});
     const blCampaigns = readJson('bl-campaigns-data', []);
@@ -2926,11 +2960,98 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       }},
     }};
 
+    const chartPayloadDaily = readJson('chart-data', {{ labels: [], datasets: [] }});
+    const ga4AttrChartPayloadDaily = readJson('ga4-attr-chart-data', {{ labels: [], datasets: [] }});
+
+    function weekStartKey(dateStr) {{
+      const d = new Date(String(dateStr).slice(0, 10) + 'T12:00:00');
+      if (Number.isNaN(d.getTime())) return String(dateStr).slice(0, 10);
+      const dow = d.getDay();
+      const offset = dow === 0 ? -6 : 1 - dow;
+      d.setDate(d.getDate() + offset);
+      return d.toISOString().slice(0, 10);
+    }}
+
+    function formatWeekLabel(weekStartStr) {{
+      const d = new Date(weekStartStr + 'T12:00:00');
+      return d.toLocaleDateString(undefined, {{ month: 'short', day: 'numeric' }});
+    }}
+
+    function aggregateWeekly(payload) {{
+      const labels = payload.labels || [];
+      const datasets = payload.datasets || [];
+      if (!labels.length) return {{ labels: [], datasets: datasets.map(ds => ({{ ...ds, data: [] }})) }};
+      const weekOrder = [];
+      const weekIndex = new Map();
+      labels.forEach(label => {{
+        const wk = weekStartKey(label);
+        if (!weekIndex.has(wk)) {{
+          weekIndex.set(wk, weekOrder.length);
+          weekOrder.push(wk);
+        }}
+      }});
+      const sums = datasets.map(() => weekOrder.map(() => 0));
+      labels.forEach((label, i) => {{
+        const idx = weekIndex.get(weekStartKey(label));
+        datasets.forEach((ds, dsi) => {{
+          sums[dsi][idx] += Number(ds.data?.[i] || 0);
+        }});
+      }});
+      return {{
+        labels: weekOrder.map(formatWeekLabel),
+        datasets: datasets.map((ds, dsi) => ({{ ...ds, data: sums[dsi] }})),
+      }};
+    }}
+
+    function chartDataForPeriod(payload, period) {{
+      return period === 'weekly' ? aggregateWeekly(payload) : payload;
+    }}
+
+    let chartPeriod = 'daily';
+    let spendChartInstance = null;
+    let siteSessionsChartInstance = null;
+
+    function setChartPeriod(period) {{
+      chartPeriod = period;
+      document.querySelectorAll('.chart-period-btn').forEach(btn => {{
+        const on = btn.dataset.period === period;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }});
+      const spendData = chartDataForPeriod(chartPayloadDaily, period);
+      if (spendChartInstance) {{
+        spendChartInstance.data.labels = spendData.labels;
+        spendData.datasets.forEach((ds, i) => {{
+          if (spendChartInstance.data.datasets[i]) {{
+            spendChartInstance.data.datasets[i].data = ds.data;
+          }}
+        }});
+        spendChartInstance.update();
+      }}
+      const siteData = chartDataForPeriod(ga4AttrChartPayloadDaily, period);
+      if (siteSessionsChartInstance) {{
+        siteSessionsChartInstance.data.labels = siteData.labels;
+        siteData.datasets.forEach((ds, i) => {{
+          if (siteSessionsChartInstance.data.datasets[i]) {{
+            siteSessionsChartInstance.data.datasets[i].data = ds.data;
+          }}
+        }});
+        siteSessionsChartInstance.update();
+      }}
+    }}
+
+    document.querySelectorAll('.chart-period-btn').forEach(btn => {{
+      btn.addEventListener('click', () => {{
+        if (btn.dataset.period !== chartPeriod) setChartPeriod(btn.dataset.period);
+      }});
+    }});
+
     const ctx = document.getElementById('spendChart');
-    if (ctx && chartPayload.labels && chartPayload.labels.length) {{
-      new Chart(ctx, {{
+    if (ctx && chartPayloadDaily.labels && chartPayloadDaily.labels.length) {{
+      const initialSpend = chartDataForPeriod(chartPayloadDaily, chartPeriod);
+      spendChartInstance = new Chart(ctx, {{
         type: 'line',
-        data: chartPayload,
+        data: initialSpend,
         options: {{
           responsive: true,
           interaction: {{ mode: 'index', intersect: false }},
@@ -2944,12 +3065,12 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       }});
     }}
 
-    const ga4AttrChartPayload = readJson('ga4-attr-chart-data', {{ labels: [], datasets: [] }});
     const siteCtx = document.getElementById('siteSessionsChart');
-    if (siteCtx && ga4AttrChartPayload.labels && ga4AttrChartPayload.labels.length) {{
-      new Chart(siteCtx, {{
+    if (siteCtx && ga4AttrChartPayloadDaily.labels && ga4AttrChartPayloadDaily.labels.length) {{
+      const initialSite = chartDataForPeriod(ga4AttrChartPayloadDaily, chartPeriod);
+      siteSessionsChartInstance = new Chart(siteCtx, {{
         type: 'line',
-        data: ga4AttrChartPayload,
+        data: initialSite,
         options: {{
           responsive: true,
           interaction: {{ mode: 'index', intersect: false }},
