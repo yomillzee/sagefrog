@@ -744,6 +744,33 @@ def _refresh_toolbar(
     return f'<div class="refresh-bar">{notice}{button}</div>'
 
 
+def _settings_panel_html(
+    *,
+    access_key: str | None,
+    snapshot: dict[str, Any] | None,
+    flash_message: str | None = None,
+) -> str:
+    """Refresh controls inside the sidebar settings popover."""
+    if not access_key:
+        return ""
+    toolbar = _refresh_toolbar(
+        access_key=access_key,
+        snapshot=snapshot,
+        flash_message=flash_message,
+    )
+    return f"""
+    <div class="settings-popover" id="settingsPopover" role="dialog" aria-label="Dashboard settings" hidden>
+      <div class="settings-popover__head">
+        <span class="settings-popover__title">Settings</span>
+        <button type="button" class="settings-popover__close" id="settingsClose" aria-label="Close settings">&times;</button>
+      </div>
+      <div class="settings-popover__body">
+        <p class="settings-popover__hint muted">Pull latest data from Google Ads, LinkedIn, Meta, and GA4.</p>
+        {toolbar}
+      </div>
+    </div>"""
+
+
 def _aggregated_card(totals: dict[str, Any]) -> str:
     if not totals:
         return ""
@@ -987,14 +1014,43 @@ def render_penn_html(
     flash_message: str | None = None,
 ) -> str:
     if not snapshot:
-        toolbar = _refresh_toolbar(access_key=access_key, snapshot=None, flash_message=flash_message)
+        settings = _settings_panel_html(
+            access_key=access_key, snapshot=None, flash_message=flash_message
+        )
         return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Penn Dashboard</title>
-<style>body{{font-family:system-ui,sans-serif;max-width:960px;margin:40px auto;padding:0 20px;color:#1a1a1a}}
-.muted{{color:#666}}.refresh-bar{{margin:16px 0}}.refresh-btn{{padding:8px 16px;border-radius:8px;border:1px solid #0b5cab;background:#0b5cab;color:#fff;cursor:pointer;font-size:0.95rem}}.refresh-btn:disabled{{opacity:0.5;cursor:not-allowed}}.notice{{margin-bottom:10px;font-size:0.9rem}}</style></head><body>
-<h1>Penn Community Bank — Ads Dashboard</h1>
-<p class="muted">No snapshot yet. Click refresh to pull data from ad platforms.</p>
-{toolbar}
+<style>
+:root{{--navy:#0a2540;--accent:#0b5cab;--border:#d8dee8;--muted:#5a6578}}
+*{{box-sizing:border-box}}body{{margin:0;font-family:system-ui,sans-serif;background:#eef1f5;color:#0f1c2e}}
+.app-shell{{display:flex;min-height:100vh}}
+.dash-sidebar{{width:248px;background:linear-gradient(180deg,#0a2540,#123456);color:#fff;display:flex;flex-direction:column;padding:16px 12px;flex-shrink:0}}
+.sidebar-footer{{margin-top:auto;padding-top:16px;border-top:1px solid rgba(255,255,255,.12)}}
+.client-name{{font-size:.88rem;font-weight:600}}
+.settings-btn{{margin-top:10px;width:100%;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;cursor:pointer;font-weight:600}}
+.dash-main{{flex:1;padding:32px 28px}}
+.muted{{color:var(--muted)}}.refresh-btn{{padding:9px 16px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-weight:600}}
+</style></head><body>
+<div class="app-shell">
+  <aside class="dash-sidebar">
+    <div class="sidebar-footer">
+      <div class="client-name">Penn Community Bank</div>
+      <button type="button" class="settings-btn" id="settingsOpen">Settings</button>
+    </div>
+  </aside>
+  <main class="dash-main">
+    <h1>Ads Dashboard</h1>
+    <p class="muted">No snapshot yet. Open Settings and click Refresh to pull data from ad platforms.</p>
+    {settings}
+  </main>
+</div>
+<script>
+document.getElementById('settingsOpen')?.addEventListener('click',()=>{{
+  const p=document.getElementById('settingsPopover');if(p)p.hidden=!p.hidden;
+}});
+document.getElementById('settingsClose')?.addEventListener('click',()=>{{
+  const p=document.getElementById('settingsPopover');if(p)p.hidden=true;
+}});
+</script>
 </body></html>"""
 
     label = snapshot.get("label") or "Penn Community Bank"
@@ -1101,6 +1157,12 @@ def render_penn_html(
             ],
         }
     )
+    settings_panel = _settings_panel_html(
+        access_key=access_key,
+        snapshot=snapshot,
+        flash_message=flash_message,
+    )
+    client_meta_tip = _esc(f"Date range: {range_label}\nLast refreshed: {refreshed} UTC")
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1136,28 +1198,335 @@ def render_penn_html(
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
     }}
-    .hero {{
-      background: linear-gradient(135deg, var(--navy) 0%, var(--navy-light) 100%);
+    body.sidebar-collapsed {{
+      --sidebar-w: 0px;
+    }}
+    .app-shell {{
+      display: flex;
+      min-height: 100vh;
+      --sidebar-w: 248px;
+    }}
+    .dash-sidebar {{
+      width: var(--sidebar-w);
+      flex-shrink: 0;
+      background: linear-gradient(180deg, var(--navy) 0%, #0d2f4a 100%);
       color: #fff;
-      padding: 28px 0 32px;
-      margin-bottom: 28px;
+      display: flex;
+      flex-direction: column;
+      padding: 14px 10px 16px;
+      border-right: 1px solid rgba(255,255,255,0.06);
+      box-shadow: 4px 0 24px rgba(10, 37, 64, 0.12);
+      overflow: hidden;
+      transition: width 0.22s ease, padding 0.22s ease, opacity 0.18s ease;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      z-index: 40;
+    }}
+    body.sidebar-collapsed .dash-sidebar {{
+      padding-left: 0;
+      padding-right: 0;
+      border-right: none;
+      opacity: 0;
+      pointer-events: none;
+    }}
+    .sidebar-top {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 18px;
+      min-height: 36px;
+    }}
+    .sidebar-brand {{
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.45);
+      white-space: nowrap;
+    }}
+    .sidebar-toggle {{
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.06);
+      color: rgba(255,255,255,0.9);
+      width: 34px;
+      height: 34px;
+      border-radius: 9px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }}
+    .sidebar-toggle:hover {{ background: rgba(255,255,255,0.12); }}
+    .sidebar-toggle svg {{ width: 18px; height: 18px; }}
+    .sidebar-nav {{
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }}
+    .sidebar-nav-btn {{
+      appearance: none;
+      border: none;
+      background: transparent;
+      color: rgba(255,255,255,0.72);
+      padding: 11px 12px;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-align: left;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background 0.15s, color 0.15s;
+      white-space: nowrap;
+    }}
+    .sidebar-nav-btn:hover {{
+      background: rgba(255,255,255,0.08);
+      color: #fff;
+    }}
+    .sidebar-nav-btn.active {{
+      background: rgba(255,255,255,0.14);
+      color: #fff;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1);
+    }}
+    .sidebar-nav-icon {{
+      width: 18px;
+      height: 18px;
+      opacity: 0.85;
+      flex-shrink: 0;
+    }}
+    .sidebar-filters {{
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }}
+    .sidebar-filters[hidden] {{ display: none; }}
+    .sidebar-filters .filter-panel {{
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: none;
+      padding: 14px 12px;
+    }}
+    .sidebar-filters .bl-filters h3 {{
+      color: rgba(255,255,255,0.92);
+      font-size: 0.82rem;
+    }}
+    .sidebar-filters .filter-label {{
+      color: rgba(255,255,255,0.55);
+    }}
+    .sidebar-filters .filter-check {{
+      color: rgba(255,255,255,0.88);
+    }}
+    .sidebar-filters .filter-check:hover {{ background: rgba(255,255,255,0.06); }}
+    .sidebar-filters .filter-link {{
+      color: #7eb8ff;
+    }}
+    .sidebar-filters .filter-link:hover {{ color: #fff; }}
+    .sidebar-filters .filter-zero-spend {{
+      color: rgba(255,255,255,0.65);
+      border-top-color: rgba(255,255,255,0.1);
+    }}
+    .sidebar-filters .filter-status {{
+      color: rgba(255,255,255,0.55);
+      border-top-color: rgba(255,255,255,0.1);
+    }}
+    .sidebar-filters .filter-group + .filter-group {{
+      border-top-color: rgba(255,255,255,0.1);
+    }}
+    .sidebar-footer {{
+      margin-top: auto;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      position: relative;
+    }}
+    .client-block {{
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }}
+    .client-name {{
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+      min-width: 0;
+    }}
+    .info-tip {{
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.22);
+      background: rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.85);
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      cursor: help;
+      flex-shrink: 0;
+      line-height: 1;
+      position: relative;
+    }}
+    .info-tip::after {{
+      content: attr(data-tip);
+      position: absolute;
+      left: 0;
+      bottom: calc(100% + 8px);
+      width: max-content;
+      max-width: 240px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+      font-size: 0.76rem;
+      font-weight: 500;
+      line-height: 1.45;
+      white-space: pre-line;
       box-shadow: var(--shadow);
+      border: 1px solid var(--border);
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(4px);
+      transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+      pointer-events: none;
+      z-index: 60;
     }}
-    .hero-inner {{ max-width: 1280px; margin: 0 auto; padding: 0 24px; }}
-    .hero h1 {{ margin: 0 0 6px; font-size: 1.85rem; font-weight: 700; letter-spacing: -0.02em; }}
-    .hero .meta {{ color: rgba(255,255,255,0.75); font-size: 0.92rem; }}
-    .hero .refresh-bar {{ margin-top: 16px; }}
-    .hero .notice {{ color: rgba(255,255,255,0.85); }}
-    .hero .refresh-btn {{
-      background: rgba(255,255,255,0.15);
-      border-color: rgba(255,255,255,0.35);
-      backdrop-filter: blur(4px);
+    .info-tip:hover::after,
+    .info-tip:focus-visible::after {{
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
     }}
-    .hero .refresh-btn:hover:not(:disabled) {{ background: rgba(255,255,255,0.25); }}
-    .layout {{
+    .settings-wrap {{ position: relative; }}
+    .settings-btn {{
+      appearance: none;
+      width: 100%;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.07);
+      color: #fff;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 0.86rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background 0.15s;
+    }}
+    .settings-btn:hover {{ background: rgba(255,255,255,0.12); }}
+    .settings-btn svg {{ width: 16px; height: 16px; opacity: 0.9; }}
+    .settings-popover {{
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: calc(100% + 10px);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      color: var(--text);
+      z-index: 50;
+      overflow: hidden;
+    }}
+    .settings-popover[hidden] {{ display: none; }}
+    .settings-popover__head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      background: #f8fafc;
+    }}
+    .settings-popover__title {{
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: var(--navy);
+    }}
+    .settings-popover__close {{
+      appearance: none;
+      border: none;
+      background: none;
+      font-size: 1.25rem;
+      line-height: 1;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 2px 6px;
+    }}
+    .settings-popover__body {{ padding: 14px; }}
+    .settings-popover__hint {{
+      margin: 0 0 12px;
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }}
+    .dash-main {{
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }}
+    .dash-topbar {{
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 16px 24px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }}
+    .sidebar-reopen {{
+      appearance: none;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--navy);
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }}
+    body.sidebar-collapsed .sidebar-reopen {{ display: inline-flex; }}
+    .sidebar-reopen svg {{ width: 18px; height: 18px; }}
+    .dash-topbar-text {{ min-width: 0; }}
+    .dash-title {{
+      margin: 0;
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--navy);
+    }}
+    .dash-subtitle {{
+      margin: 2px 0 0;
+      font-size: 0.84rem;
+      color: var(--muted);
+    }}
+    .dash-content {{
+      flex: 1;
       max-width: 1280px;
+      width: 100%;
       margin: 0 auto;
-      padding: 0 24px 48px;
+      padding: 24px 24px 48px;
     }}
     .wrap {{ min-width: 0; }}
     .cards {{
@@ -1487,33 +1856,6 @@ def render_penn_html(
     .refresh-btn:disabled {{ opacity: 0.45; cursor: not-allowed; background: #94a3b8; border-color: #94a3b8; }}
     .notice {{ font-size: 0.86rem; color: var(--muted); }}
 
-    .dash-tabs {{
-      display: flex;
-      gap: 4px;
-      margin-bottom: 20px;
-      border-bottom: 2px solid var(--border);
-      padding-bottom: 0;
-    }}
-    .dash-tab {{
-      appearance: none;
-      border: none;
-      background: transparent;
-      padding: 12px 20px;
-      font-size: 0.92rem;
-      font-weight: 600;
-      color: var(--muted);
-      cursor: pointer;
-      border-bottom: 3px solid transparent;
-      margin-bottom: -2px;
-      border-radius: 8px 8px 0 0;
-      transition: color 0.15s, border-color 0.15s, background 0.15s;
-    }}
-    .dash-tab:hover {{ color: var(--text); background: rgba(255,255,255,0.5); }}
-    .dash-tab.active {{
-      color: var(--accent);
-      border-bottom-color: var(--accent);
-      background: var(--panel);
-    }}
     .tab-panel {{ display: none; }}
     .tab-panel.active {{ display: block; }}
 
@@ -1525,32 +1867,9 @@ def render_penn_html(
       box-shadow: var(--shadow-sm);
     }}
     .bl-layout {{
-      display: grid;
-      grid-template-columns: 272px minmax(0, 1fr);
-      gap: 20px;
-      align-items: start;
-    }}
-    .bl-sidebar {{
-      position: sticky;
-      top: 16px;
-      align-self: start;
-    }}
-    .bl-filters h3 {{
-      margin: 0 0 14px;
-      font-size: 0.92rem;
-      font-weight: 700;
-      color: var(--navy);
-    }}
-    .bl-filters .filter-group + .filter-group {{
-      margin-top: 18px;
-      padding-top: 18px;
-      border-top: 1px solid var(--border);
+      display: block;
     }}
     .bl-main {{ min-width: 0; }}
-    @media (max-width: 960px) {{
-      .bl-layout {{ grid-template-columns: 1fr; }}
-      .bl-sidebar {{ position: static; }}
-    }}
     .filter-group-head {{
       display: flex;
       align-items: center;
@@ -1729,113 +2048,171 @@ def render_penn_html(
       border-radius: 6px;
       white-space: nowrap;
     }}
+    .bl-filters h3 {{
+      margin: 0 0 14px;
+      font-size: 0.92rem;
+      font-weight: 700;
+    }}
+    .bl-filters .filter-group + .filter-group {{
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+    }}
+    @media (max-width: 900px) {{
+      .app-shell {{ --sidebar-w: 248px; }}
+      body.sidebar-collapsed .dash-sidebar {{
+        position: fixed;
+        left: 0;
+        top: 0;
+        opacity: 1;
+        pointer-events: auto;
+        width: min(88vw, 280px);
+        z-index: 100;
+      }}
+      body.sidebar-collapsed.sidebar-mobile-hidden .dash-sidebar {{
+        transform: translateX(-105%);
+        opacity: 0;
+        pointer-events: none;
+      }}
+      .dash-content {{ padding: 18px 16px 40px; }}
+      .dash-topbar {{ padding: 14px 16px; }}
+    }}
   </style>
 </head>
 <body>
-  <div class="hero">
-    <div class="hero-inner">
-      <h1>{_esc(label)}</h1>
-      <div class="meta">
-        Paid media performance · {_esc(range_label)}<br>
-        Last refreshed: {_esc(refreshed)} UTC
+  <div class="app-shell">
+    <aside class="dash-sidebar" id="dashSidebar" aria-label="Dashboard navigation">
+      <div class="sidebar-top">
+        <span class="sidebar-brand">Dashboard</span>
+        <button type="button" class="sidebar-toggle" id="sidebarCollapse" aria-label="Hide sidebar" aria-expanded="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
       </div>
-      {_refresh_toolbar(access_key=access_key, snapshot=snapshot, flash_message=flash_message)}
-    </div>
-  </div>
-
-  <div class="layout">
-    <div class="wrap">
-      {error_html}
-
-      <nav class="dash-tabs" role="tablist">
-        <button type="button" class="dash-tab active" data-tab="platform" role="tab" aria-selected="true">By platform</button>
-        <button type="button" class="dash-tab" data-tab="business-line" role="tab" aria-selected="false">By business line</button>
+      <nav class="sidebar-nav" role="tablist" aria-label="Views">
+        <button type="button" class="sidebar-nav-btn active" data-tab="platform" role="tab" aria-selected="true">
+          <svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          By platform
+        </button>
+        <button type="button" class="sidebar-nav-btn" data-tab="business-line" role="tab" aria-selected="false">
+          <svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          By business line
+        </button>
       </nav>
-
-      <div id="tab-platform" class="tab-panel active" role="tabpanel">
-        {_aggregated_card(aggregated)}
-
-        <div class="cards">
-          {_summary_card("Google Ads", totals.get("google"), site_report=ga4_platforms.get("google"), note="Account total · expand campaigns below")}
-          {_summary_card("LinkedIn", totals.get("linkedin"), site_report=ga4_platforms.get("linkedin"), note="Account total · expand groups below")}
-          {_summary_card("Meta", totals.get("meta"), site_report=ga4_platforms.get("meta"), note="Account total · expand campaigns below")}
-          {_summary_card("GA4 (all site)", totals.get("ga4"), note=ga4_note)}
-        </div>
-
-        <section class="panel">
-          <div class="panel-head"><h2>Daily performance</h2></div>
-          <div class="chart-stack">
-            <div>
-              <p class="chart-subhead">Ad spend (account level)</p>
-              <canvas id="spendChart"></canvas>
+      <div class="sidebar-filters" id="sidebarBlFilters" hidden>
+        <section class="filter-panel bl-filters">
+          <h3>Filters</h3>
+          <div class="filter-group">
+            <div class="filter-group-head">
+              <span class="filter-label">Business line</span>
+              <button type="button" class="filter-link" id="blSelectAll">All</button>
+              <button type="button" class="filter-link" id="blClearAll">None</button>
             </div>
-            <div>
-              <p class="chart-subhead">On-site sessions attributed to ads (GA4)</p>
-              <canvas id="siteSessionsChart"></canvas>
-            </div>
+            <div id="blFilters" class="filter-checks"></div>
           </div>
+          <div class="filter-group">
+            <div class="filter-group-head">
+              <span class="filter-label">Channel</span>
+              <button type="button" class="filter-link" id="channelSelectAll">All</button>
+              <button type="button" class="filter-link" id="channelClearAll">None</button>
+            </div>
+            <div id="channelFilters" class="filter-checks"></div>
+          </div>
+          <label class="filter-zero-spend">
+            <input type="checkbox" id="showZeroSpend">
+            Show inactive / $0 spend
+          </label>
+          <div class="filter-status" id="filterStatus"></div>
         </section>
-
-        {breakdown_html}
       </div>
+      <div class="sidebar-footer">
+        <div class="client-block">
+          <span class="client-name">{_esc(label)}</span>
+          <button type="button" class="info-tip" data-tip="{client_meta_tip}" aria-label="Date range and last refresh">i</button>
+        </div>
+        <div class="settings-wrap">
+          <button type="button" class="settings-btn" id="settingsOpen" aria-expanded="false" aria-controls="settingsPopover">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            Settings
+          </button>
+          {settings_panel}
+        </div>
+      </div>
+    </aside>
 
-      <div id="tab-business-line" class="tab-panel" role="tabpanel">
-        <div class="bl-layout">
-          <aside class="bl-sidebar">
-            <section class="filter-panel bl-filters">
-              <h3>Filters</h3>
-              <div class="filter-group">
-                <div class="filter-group-head">
-                  <span class="filter-label">Business line</span>
-                  <button type="button" class="filter-link" id="blSelectAll">All</button>
-                  <button type="button" class="filter-link" id="blClearAll">None</button>
+    <div class="dash-main">
+      <header class="dash-topbar">
+        <button type="button" class="sidebar-reopen" id="sidebarReopen" aria-label="Show sidebar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
+        </button>
+        <div class="dash-topbar-text">
+          <h1 class="dash-title" id="dashViewTitle">By platform</h1>
+          <p class="dash-subtitle">{_esc(label)} · Paid media performance</p>
+        </div>
+      </header>
+
+      <div class="dash-content">
+        <div class="wrap">
+          {error_html}
+
+          <div id="tab-platform" class="tab-panel active" role="tabpanel">
+            {_aggregated_card(aggregated)}
+
+            <div class="cards">
+              {_summary_card("Google Ads", totals.get("google"), site_report=ga4_platforms.get("google"), note="Account total · expand campaigns below")}
+              {_summary_card("LinkedIn", totals.get("linkedin"), site_report=ga4_platforms.get("linkedin"), note="Account total · expand groups below")}
+              {_summary_card("Meta", totals.get("meta"), site_report=ga4_platforms.get("meta"), note="Account total · expand campaigns below")}
+              {_summary_card("GA4 (all site)", totals.get("ga4"), note=ga4_note)}
+            </div>
+
+            <section class="panel">
+              <div class="panel-head"><h2>Daily performance</h2></div>
+              <div class="chart-stack">
+                <div>
+                  <p class="chart-subhead">Ad spend (account level)</p>
+                  <canvas id="spendChart"></canvas>
                 </div>
-                <div id="blFilters" class="filter-checks"></div>
-              </div>
-              <div class="filter-group">
-                <div class="filter-group-head">
-                  <span class="filter-label">Channel</span>
-                  <button type="button" class="filter-link" id="channelSelectAll">All</button>
-                  <button type="button" class="filter-link" id="channelClearAll">None</button>
+                <div>
+                  <p class="chart-subhead">On-site sessions attributed to ads (GA4)</p>
+                  <canvas id="siteSessionsChart"></canvas>
                 </div>
-                <div id="channelFilters" class="filter-checks"></div>
-              </div>
-              <label class="filter-zero-spend">
-                <input type="checkbox" id="showZeroSpend">
-                Show inactive / $0 spend
-              </label>
-              <div class="filter-status" id="filterStatus"></div>
-            </section>
-          </aside>
-
-          <div class="bl-main">
-            <div class="bl-summary" id="blSummary"></div>
-
-            <section class="panel platform-panel">
-              <div class="panel-head">
-                <h2>Campaign performance</h2>
-                <span class="badge" id="blRowCount">0 rows</span>
-              </div>
-              <p class="table-note">Select business lines and channels in the sidebar. Nothing is selected by default — check items to populate the table.</p>
-              <div class="table-wrap">
-                <table class="data-table" id="blTable">
-                  <thead>
-                    <tr>
-                      <th class="sortable" data-sort="platform" scope="col" aria-sort="none">Platform<span class="sort-icon" aria-hidden="true"></span></th>
-                      <th class="sortable" data-sort="business_line" scope="col" aria-sort="none">Business line<span class="sort-icon" aria-hidden="true"></span></th>
-                      <th class="sortable" data-sort="name" scope="col" aria-sort="none">Campaign<span class="sort-icon" aria-hidden="true"></span></th>
-                      <th class="sortable" data-sort="spend" scope="col" aria-sort="none">Spend<span class="sort-icon" aria-hidden="true"></span></th>
-                      <th class="sortable" data-sort="clicks" scope="col" aria-sort="none">Clicks<span class="sort-icon" aria-hidden="true"></span></th>
-                      <th class="sortable" data-sort="impressions" scope="col" aria-sort="none">Impressions<span class="sort-icon" aria-hidden="true"></span></th>
-                      <th class="sortable" data-sort="ctr" scope="col" aria-sort="none">CTR<span class="sort-icon" aria-hidden="true"></span></th>
-                      <th class="sortable" data-sort="conversions" scope="col" aria-sort="none">Conv.<span class="sort-icon" aria-hidden="true"></span></th>
-                      <th class="sortable" data-sort="cpc" scope="col" aria-sort="none">CPC<span class="sort-icon" aria-hidden="true"></span></th>
-                    </tr>
-                  </thead>
-                  <tbody id="blTableBody"></tbody>
-                </table>
               </div>
             </section>
+
+            {breakdown_html}
+          </div>
+
+          <div id="tab-business-line" class="tab-panel" role="tabpanel">
+            <div class="bl-layout">
+              <div class="bl-main">
+                <div class="bl-summary" id="blSummary"></div>
+
+                <section class="panel platform-panel">
+                  <div class="panel-head">
+                    <h2>Campaign performance</h2>
+                    <span class="badge" id="blRowCount">0 rows</span>
+                  </div>
+                  <p class="table-note">Select business lines and channels in the sidebar. Nothing is selected by default — check items to populate the table.</p>
+                  <div class="table-wrap">
+                    <table class="data-table" id="blTable">
+                      <thead>
+                        <tr>
+                          <th class="sortable" data-sort="platform" scope="col" aria-sort="none">Platform<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="business_line" scope="col" aria-sort="none">Business line<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="name" scope="col" aria-sort="none">Campaign<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="spend" scope="col" aria-sort="none">Spend<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="clicks" scope="col" aria-sort="none">Clicks<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="impressions" scope="col" aria-sort="none">Impressions<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="ctr" scope="col" aria-sort="none">CTR<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="conversions" scope="col" aria-sort="none">Conv.<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="cpc" scope="col" aria-sort="none">CPC<span class="sort-icon" aria-hidden="true"></span></th>
+                        </tr>
+                      </thead>
+                      <tbody id="blTableBody"></tbody>
+                    </table>
+                  </div>
+                </section>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1880,18 +2257,70 @@ def render_penn_html(
     const fmtPct = (n, d) => d ? (100 * n / d).toFixed(2) + '%' : '—';
     const escHtml = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 
-    document.querySelectorAll('.dash-tab').forEach(btn => {{
-      btn.addEventListener('click', () => {{
-        const tab = btn.dataset.tab;
-        document.querySelectorAll('.dash-tab').forEach(b => {{
-          const on = b.dataset.tab === tab;
-          b.classList.toggle('active', on);
-          b.setAttribute('aria-selected', on ? 'true' : 'false');
-        }});
-        document.querySelectorAll('.tab-panel').forEach(p => {{
-          p.classList.toggle('active', p.id === 'tab-' + tab);
-        }});
+    document.querySelectorAll('.sidebar-nav-btn').forEach(btn => {{
+      btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
+    }});
+
+    const VIEW_TITLES = {{ platform: 'By platform', 'business-line': 'By business line' }};
+
+    function setActiveTab(tab) {{
+      document.querySelectorAll('.sidebar-nav-btn').forEach(b => {{
+        const on = b.dataset.tab === tab;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
       }});
+      document.querySelectorAll('.tab-panel').forEach(p => {{
+        p.classList.toggle('active', p.id === 'tab-' + tab);
+      }});
+      const filters = document.getElementById('sidebarBlFilters');
+      const title = document.getElementById('dashViewTitle');
+      if (filters) filters.hidden = tab !== 'business-line';
+      if (title) title.textContent = VIEW_TITLES[tab] || 'Dashboard';
+    }}
+
+    const SIDEBAR_KEY = 'penn-dashboard-sidebar';
+    function setSidebarCollapsed(collapsed) {{
+      document.body.classList.toggle('sidebar-collapsed', collapsed);
+      const btn = document.getElementById('sidebarCollapse');
+      if (btn) {{
+        btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        btn.setAttribute('aria-label', collapsed ? 'Show sidebar' : 'Hide sidebar');
+      }}
+      try {{ localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0'); }} catch (err) {{}}
+    }}
+    document.getElementById('sidebarCollapse')?.addEventListener('click', () => {{
+      setSidebarCollapsed(!document.body.classList.contains('sidebar-collapsed'));
+    }});
+    document.getElementById('sidebarReopen')?.addEventListener('click', () => {{
+      setSidebarCollapsed(false);
+    }});
+    try {{
+      if (localStorage.getItem(SIDEBAR_KEY) === '1') setSidebarCollapsed(true);
+    }} catch (err) {{}}
+
+    const settingsOpen = document.getElementById('settingsOpen');
+    const settingsPopover = document.getElementById('settingsPopover');
+    const settingsClose = document.getElementById('settingsClose');
+    function closeSettings() {{
+      if (!settingsPopover) return;
+      settingsPopover.hidden = true;
+      settingsOpen?.setAttribute('aria-expanded', 'false');
+    }}
+    function toggleSettings() {{
+      if (!settingsPopover) return;
+      const willOpen = settingsPopover.hidden;
+      settingsPopover.hidden = !willOpen;
+      settingsOpen?.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    }}
+    settingsOpen?.addEventListener('click', e => {{
+      e.stopPropagation();
+      toggleSettings();
+    }});
+    settingsClose?.addEventListener('click', closeSettings);
+    document.addEventListener('click', e => {{
+      if (!settingsPopover || settingsPopover.hidden) return;
+      if (e.target.closest('.settings-wrap')) return;
+      closeSettings();
     }});
 
     const channelState = new Set();
