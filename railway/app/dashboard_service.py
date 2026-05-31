@@ -2960,8 +2960,18 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       }},
     }};
 
-    const chartPayloadDaily = readJson('chart-data', {{ labels: [], datasets: [] }});
-    const ga4AttrChartPayloadDaily = readJson('ga4-attr-chart-data', {{ labels: [], datasets: [] }});
+    function cloneChartPayload(payload) {{
+      return {{
+        labels: [...(payload.labels || [])],
+        datasets: (payload.datasets || []).map(ds => ({{
+          ...ds,
+          data: [...(ds.data || [])],
+        }})),
+      }};
+    }}
+
+    const chartPayloadDaily = cloneChartPayload(readJson('chart-data', {{ labels: [], datasets: [] }}));
+    const ga4AttrChartPayloadDaily = cloneChartPayload(readJson('ga4-attr-chart-data', {{ labels: [], datasets: [] }}));
 
     function weekStartKey(dateStr) {{
       const d = new Date(String(dateStr).slice(0, 10) + 'T12:00:00');
@@ -3004,7 +3014,8 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
     }}
 
     function chartDataForPeriod(payload, period) {{
-      return period === 'weekly' ? aggregateWeekly(payload) : payload;
+      if (period === 'weekly') return aggregateWeekly(payload);
+      return cloneChartPayload(payload);
     }}
 
     let chartPeriod = 'daily';
