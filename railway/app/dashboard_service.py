@@ -429,6 +429,27 @@ def _esc(value: Any) -> str:
     return html.escape(str(value or ""))
 
 
+_PLATFORM_FAVICONS: dict[str, str] = {
+    "google": "https://www.google.com/s2/favicons?domain=google.com&sz=32",
+    "linkedin": "https://www.google.com/s2/favicons?domain=linkedin.com&sz=32",
+    "meta": "https://www.google.com/s2/favicons?domain=facebook.com&sz=32",
+}
+
+
+def _platform_title_html(platform: str, label: str) -> str:
+    icon = _PLATFORM_FAVICONS.get(platform, "")
+    icon_html = (
+        f'<img class="platform-favicon" src="{icon}" alt="" width="20" height="20" loading="lazy" />'
+        if icon
+        else ""
+    )
+    return (
+        f'<span class="platform-title">'
+        f"{icon_html}"
+        f'<span>{_esc(label)}</span></span>'
+    )
+
+
 def _json_for_html_script(data: Any) -> str:
     """Embed JSON in HTML without breaking out of a script tag."""
     return (
@@ -490,12 +511,10 @@ def _ga4_row_cells(
 
 def _drillable_table(
     platform: str,
-    title: str,
+    title_html: str,
     rows: list[dict[str, Any]],
     *,
     entity_level: str,
-    drill_hint: str = "",
-    note: str = "",
     site_footer: str = "",
     ga4_by_campaign: dict[str, dict[str, Any]] | None = None,
 ) -> str:
@@ -508,16 +527,11 @@ def _drillable_table(
             and entity_level in ("campaign_group", "campaign")
         )
     )
-    hint = drill_hint or (
-        "Click ▸ to expand and compare child rows inline"
-        if expandable
-        else ""
-    )
     if not rows:
         return f"""
         <section class="panel platform-panel platform-{platform}" data-platform="{platform}">
           <div class="panel-head">
-            <h2>{_esc(title)}</h2>
+            <h2>{title_html}</h2>
             <span class="badge">{level_badge} · 0 rows</span>
           </div>
           <p class="muted">No {_esc(level_badge)} data for this period.</p>
@@ -569,16 +583,12 @@ def _drillable_table(
         )
     chevron_th = '<th class="chevron-col"></th>'
     ga4_headers = _GA4_TABLE_HEADERS if ga4_by_campaign is not None else ""
-    note_html = f'<p class="table-note">{_esc(note)}</p>' if note else ""
-    hint_html = f'<p class="drill-hint">{_esc(hint)}</p>' if hint else ""
     return f"""
     <section class="panel platform-panel platform-{platform}" data-platform="{platform}">
       <div class="panel-head">
-        <h2>{_esc(title)}</h2>
+        <h2>{title_html}</h2>
         <span class="badge">{level_badge} · {len(rows)} rows</span>
       </div>
-      {note_html}
-      {hint_html}
       <div class="table-wrap">
         <table class="data-table">
           <thead>
@@ -673,44 +683,29 @@ def _summary_card(
     label: str,
     totals: dict[str, Any] | None,
     *,
-    note: str = "",
-    site_report: dict[str, Any] | None = None,
+    platform: str | None = None,
 ) -> str:
-    site_html = ""
-    if site_report:
-        ga_sessions = int((site_report.get("totals") or {}).get("sessions") or 0)
-        ga_engaged = int((site_report.get("totals") or {}).get("engaged_sessions") or 0)
-        key_events = int((site_report.get("totals") or {}).get("key_events") or 0)
-        if ga_sessions:
-            site_html = f"""
-      <div class="card-site">
-        On-site: {_fmt_int(ga_sessions)} sessions · {_fmt_pct(ga_engaged, ga_sessions)} engaged · {_fmt_int(key_events)} key events
-      </div>"""
+    label_html = _platform_title_html(platform, label) if platform else _esc(label)
     if not totals:
         return f"""
         <div class="card card-empty">
-          <div class="card-label">{_esc(label)}</div>
+          <div class="card-label">{label_html}</div>
           <div class="card-value muted">No data</div>
-          {site_html}
-          {f'<div class="card-note">{_esc(note)}</div>' if note else ''}
         </div>
         """
     spend = float(totals.get("spend") or 0)
     clicks = int(totals.get("clicks") or 0)
     impressions = int(totals.get("impressions") or 0)
     conversions = float(totals.get("conversions") or 0)
-    default_note = note or "Account-level total (do not sum breakdown tables below)"
     return f"""
     <div class="card">
-      <div class="card-label">{_esc(label)}</div>
-      <div class="card-value">{_fmt_money(spend) if label != "GA4 (site)" else "—"}</div>
+      <div class="card-label">{label_html}</div>
+      <div class="card-value">{_fmt_money(spend)}</div>
       <div class="card-stats">
         <span>{_fmt_int(clicks)} clicks</span>
         <span>{_fmt_int(impressions)} impr.</span>
         <span>{_fmt_int(conversions)} conv.</span>
       </div>
-      {site_html}
-      <div class="card-note">{_esc(default_note)}</div>
     </div>
     """
 
@@ -774,15 +769,30 @@ def _settings_panel_html(
 def _aggregated_card(totals: dict[str, Any]) -> str:
     if not totals:
         return ""
+    spend = float(totals.get("spend") or 0)
+    clicks = int(totals.get("clicks") or 0)
+    impressions = int(totals.get("impressions") or 0)
+    conversions = int(totals.get("conversions") or 0)
     return f"""
-    <section class="panel aggregated">
-      <h2>All paid media (aggregated)</h2>
-      <p class="muted">Sum of Google + LinkedIn + Meta account totals for this date range.</p>
-      <div class="aggregated-stats">
-        <span><strong>{_fmt_money(float(totals.get("spend") or 0))}</strong> spend</span>
-        <span>{_fmt_int(totals.get("clicks") or 0)} clicks</span>
-        <span>{_fmt_int(totals.get("impressions") or 0)} impressions</span>
-        <span>{_fmt_int(totals.get("conversions") or 0)} conversions</span>
+    <section class="panel total-spend-panel">
+      <div class="total-spend-head">
+        <h2 class="total-spend-title">Total Ad Spend</h2>
+        <button type="button" class="info-tip info-tip--light" data-tip="Sum of Google Ads, LinkedIn, and Meta account totals for this date range." aria-label="About total ad spend">i</button>
+      </div>
+      <div class="total-spend-hero">{_fmt_money(spend)}</div>
+      <div class="total-spend-metrics">
+        <div class="total-spend-metric">
+          <span class="total-spend-metric__val">{_fmt_int(clicks)}</span>
+          <span class="total-spend-metric__lbl">Clicks</span>
+        </div>
+        <div class="total-spend-metric">
+          <span class="total-spend-metric__val">{_fmt_int(impressions)}</span>
+          <span class="total-spend-metric__lbl">Impressions</span>
+        </div>
+        <div class="total-spend-metric">
+          <span class="total-spend-metric__val">{_fmt_int(conversions)}</span>
+          <span class="total-spend-metric__lbl">Conversions</span>
+        </div>
       </div>
     </section>
     """
@@ -815,19 +825,12 @@ def _platform_breakdown_html(
     parts: list[str] = []
     google = breakdowns.get("google") or {}
     google_campaigns = google.get("campaign") or []
-    google_ag_count = len(google.get("ad_group") or [])
-    google_ad_count = len(google.get("ad") or [])
     parts.append(
         _drillable_table(
             "google",
-            "Google Ads — campaigns",
+            _platform_title_html("google", "Google Ads"),
             google_campaigns,
             entity_level="campaign",
-            note=(
-                f"Drill down: {google_ag_count} ad groups → {google_ad_count} ads "
-                "with creative previews when available. "
-                "On-site columns are GA4 sessions matched to each campaign."
-            ),
             site_footer=site_block("google"),
             ga4_by_campaign=ga4_index("google"),
         )
@@ -839,14 +842,9 @@ def _platform_breakdown_html(
         parts.append(
             _drillable_table(
                 "linkedin",
-                "LinkedIn — campaign groups",
+                _platform_title_html("linkedin", "LinkedIn"),
                 groups,
                 entity_level="campaign_group",
-                note=(
-                    "Top-level groups from the Marketing API. "
-                    "Click ▸ to expand campaigns and creatives inline. "
-                    "On-site columns apply to LinkedIn campaigns when expanded."
-                ),
                 site_footer=site_block("linkedin"),
                 ga4_by_campaign=ga4_index("linkedin"),
             )
@@ -855,7 +853,7 @@ def _platform_breakdown_html(
         parts.append(
             f"""
         <section class="panel platform-panel platform-linkedin">
-          <div class="panel-head"><h2>LinkedIn — campaign groups</h2></div>
+          <div class="panel-head"><h2>{_platform_title_html("linkedin", "LinkedIn")}</h2></div>
           <p class="muted">No campaign group data — click Refresh now.</p>
           {site_block("linkedin")}
         </section>
@@ -864,19 +862,12 @@ def _platform_breakdown_html(
 
     meta = breakdowns.get("meta") or {}
     meta_campaigns = meta.get("campaign") or []
-    meta_adset_count = len(meta.get("adset") or [])
-    meta_ad_count = len(meta.get("ad") or [])
     parts.append(
         _drillable_table(
             "meta",
-            "Meta — campaigns",
+            _platform_title_html("meta", "Meta"),
             meta_campaigns,
             entity_level="campaign",
-            note=(
-                f"Same {len(meta_campaigns)} campaigns as metaPerformance in GPT. "
-                f"Drill down: {meta_adset_count} ad sets → {meta_ad_count} ads with creative previews."
-            ),
-            drill_hint="Click ▸ on a campaign to expand ad sets, then ads with thumbnails",
             site_footer=site_block("meta"),
             ga4_by_campaign=ga4_index("meta"),
         )
@@ -1112,7 +1103,6 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
     bl_campaigns_json = _json_for_html_script(bl_campaigns)
     bl_catalog_json = _json_for_html_script(active_business_line_catalog(bl_campaigns))
     platform_catalog_json = _json_for_html_script(active_platform_catalog(bl_campaigns))
-    ga4_note = "All-site total (not ad-attributed)"
     combined_daily = (ga4_attr or {}).get("combined_daily") or []
     if not combined_daily and (ga4_attr or {}).get("daily"):
         combined_daily = [
@@ -1198,16 +1188,12 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
     }}
-    body.sidebar-collapsed {{
-      --sidebar-w: 0px;
-    }}
     .app-shell {{
       display: flex;
       min-height: 100vh;
-      --sidebar-w: 248px;
     }}
     .dash-sidebar {{
-      width: var(--sidebar-w);
+      width: 248px;
       flex-shrink: 0;
       background: linear-gradient(180deg, var(--navy) 0%, #0d2f4a 100%);
       color: #fff;
@@ -1223,18 +1209,9 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       height: 100vh;
       z-index: 40;
     }}
-    body.sidebar-collapsed .dash-sidebar {{
-      padding-left: 0;
-      padding-right: 0;
-      border-right: none;
-      opacity: 0;
-      pointer-events: none;
-    }}
     .sidebar-top {{
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 8px;
       margin-bottom: 18px;
       min-height: 36px;
     }}
@@ -1246,23 +1223,6 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       color: rgba(255,255,255,0.45);
       white-space: nowrap;
     }}
-    .sidebar-toggle {{
-      appearance: none;
-      border: 1px solid rgba(255,255,255,0.18);
-      background: rgba(255,255,255,0.06);
-      color: rgba(255,255,255,0.9);
-      width: 34px;
-      height: 34px;
-      border-radius: 9px;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      transition: background 0.15s;
-    }}
-    .sidebar-toggle:hover {{ background: rgba(255,255,255,0.12); }}
-    .sidebar-toggle svg {{ width: 18px; height: 18px; }}
     .sidebar-nav {{
       display: flex;
       flex-direction: column;
@@ -1370,6 +1330,16 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       visibility: visible;
       transform: translateY(0);
     }}
+    .info-tip--light {{
+      border-color: var(--border);
+      background: #f8fafc;
+      color: var(--muted);
+    }}
+    .info-tip--light::after {{
+      left: auto;
+      right: 0;
+      bottom: calc(100% + 8px);
+    }}
     .settings-wrap {{ position: relative; }}
     .settings-btn {{
       appearance: none;
@@ -1450,22 +1420,6 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       top: 0;
       z-index: 20;
     }}
-    .sidebar-reopen {{
-      appearance: none;
-      border: 1px solid var(--border);
-      background: #fff;
-      color: var(--navy);
-      width: 38px;
-      height: 38px;
-      border-radius: 10px;
-      cursor: pointer;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }}
-    body.sidebar-collapsed .sidebar-reopen {{ display: inline-flex; }}
-    .sidebar-reopen svg {{ width: 18px; height: 18px; }}
     .dash-topbar-text {{ min-width: 0; }}
     .dash-title {{
       margin: 0;
@@ -1503,17 +1457,100 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
     }}
     .card:hover {{ box-shadow: var(--shadow); transform: translateY(-1px); }}
     .card-empty {{ opacity: 0.85; }}
-    .card-label {{ font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }}
+    .card-label {{
+      font-size: 0.78rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      font-weight: 600;
+    }}
+    .card-label .platform-title {{
+      text-transform: none;
+      letter-spacing: -0.01em;
+      font-size: 0.92rem;
+      font-weight: 650;
+      color: var(--navy);
+    }}
+    .platform-title {{
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }}
+    .platform-favicon {{
+      width: 20px;
+      height: 20px;
+      border-radius: 4px;
+      flex-shrink: 0;
+      object-fit: contain;
+    }}
+    .panel-head h2 .platform-title {{
+      font-size: 1.12rem;
+      font-weight: 650;
+      color: var(--navy);
+    }}
+    .total-spend-panel {{
+      background: linear-gradient(135deg, #fff 0%, #f8fbff 100%);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--gold);
+      padding: 24px 28px;
+    }}
+    .total-spend-head {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+    }}
+    .total-spend-title {{
+      margin: 0;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }}
+    .total-spend-hero {{
+      font-size: clamp(2.25rem, 4vw, 3rem);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      color: var(--navy);
+      line-height: 1.1;
+      margin: 8px 0 20px;
+      font-variant-numeric: tabular-nums;
+    }}
+    .total-spend-metrics {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 28px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+    }}
+    .total-spend-metric {{
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 88px;
+    }}
+    .total-spend-metric__val {{
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--navy);
+      font-variant-numeric: tabular-nums;
+    }}
+    .total-spend-metric__lbl {{
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }}
     .card-value {{ font-size: 1.75rem; font-weight: 700; margin: 8px 0 4px; letter-spacing: -0.02em; }}
     .card-stats {{ display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 0.84rem; color: var(--muted); }}
-    .card-note {{ margin-top: 10px; font-size: 0.78rem; color: var(--muted); line-height: 1.35; }}
-    .card-site {{
-      margin-top: 10px;
-      padding-top: 10px;
-      border-top: 1px solid var(--border);
+    .chart-stack {{ display: flex; flex-direction: column; gap: 24px; }}
+    .chart-legend-note {{
+      margin: 12px 0 0;
       font-size: 0.78rem;
-      color: var(--navy-light);
-      line-height: 1.4;
+      color: var(--muted);
     }}
     .site-impact {{
       margin-top: 16px;
@@ -2031,20 +2068,6 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
     }}
     @media (max-width: 900px) {{
       .app-shell {{ --sidebar-w: 248px; }}
-      body.sidebar-collapsed .dash-sidebar {{
-        position: fixed;
-        left: 0;
-        top: 0;
-        opacity: 1;
-        pointer-events: auto;
-        width: min(88vw, 280px);
-        z-index: 100;
-      }}
-      body.sidebar-collapsed.sidebar-mobile-hidden .dash-sidebar {{
-        transform: translateX(-105%);
-        opacity: 0;
-        pointer-events: none;
-      }}
       .dash-content {{ padding: 18px 16px 40px; }}
       .dash-topbar {{ padding: 14px 16px; }}
     }}
@@ -2055,14 +2078,11 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
     <aside class="dash-sidebar" id="dashSidebar" aria-label="Dashboard navigation">
       <div class="sidebar-top">
         <span class="sidebar-brand">Dashboard</span>
-        <button type="button" class="sidebar-toggle" id="sidebarCollapse" aria-label="Hide sidebar" aria-expanded="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
-        </button>
       </div>
       <nav class="sidebar-nav" role="tablist" aria-label="Views">
         <button type="button" class="sidebar-nav-btn active" data-tab="platform" role="tab" aria-selected="true">
           <svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-          By platform
+          Overview
         </button>
         <button type="button" class="sidebar-nav-btn" data-tab="business-line" role="tab" aria-selected="false">
           <svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
@@ -2086,11 +2106,8 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
 
     <div class="dash-main">
       <header class="dash-topbar">
-        <button type="button" class="sidebar-reopen" id="sidebarReopen" aria-label="Show sidebar">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
-        </button>
         <div class="dash-topbar-text">
-          <h1 class="dash-title" id="dashViewTitle">By platform</h1>
+          <h1 class="dash-title" id="dashViewTitle">Overview</h1>
           <p class="dash-subtitle">{_esc(label)} · Paid media performance</p>
         </div>
       </header>
@@ -2103,10 +2120,9 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
             {_aggregated_card(aggregated)}
 
             <div class="cards">
-              {_summary_card("Google Ads", totals.get("google"), site_report=ga4_platforms.get("google"), note="Account total · expand campaigns below")}
-              {_summary_card("LinkedIn", totals.get("linkedin"), site_report=ga4_platforms.get("linkedin"), note="Account total · expand groups below")}
-              {_summary_card("Meta", totals.get("meta"), site_report=ga4_platforms.get("meta"), note="Account total · expand campaigns below")}
-              {_summary_card("GA4 (all site)", totals.get("ga4"), note=ga4_note)}
+              {_summary_card("Google Ads", totals.get("google"), platform="google")}
+              {_summary_card("LinkedIn", totals.get("linkedin"), platform="linkedin")}
+              {_summary_card("Meta", totals.get("meta"), platform="meta")}
             </div>
 
             <section class="panel">
@@ -2231,7 +2247,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
     }});
 
-    const VIEW_TITLES = {{ platform: 'By platform', 'business-line': 'By business line' }};
+    const VIEW_TITLES = {{ platform: 'Overview', 'business-line': 'By business line' }};
 
     function setActiveTab(tab) {{
       document.querySelectorAll('.sidebar-nav-btn').forEach(b => {{
@@ -2245,26 +2261,6 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       const title = document.getElementById('dashViewTitle');
       if (title) title.textContent = VIEW_TITLES[tab] || 'Dashboard';
     }}
-
-    const SIDEBAR_KEY = 'penn-dashboard-sidebar';
-    function setSidebarCollapsed(collapsed) {{
-      document.body.classList.toggle('sidebar-collapsed', collapsed);
-      const btn = document.getElementById('sidebarCollapse');
-      if (btn) {{
-        btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-        btn.setAttribute('aria-label', collapsed ? 'Show sidebar' : 'Hide sidebar');
-      }}
-      try {{ localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0'); }} catch (err) {{}}
-    }}
-    document.getElementById('sidebarCollapse')?.addEventListener('click', () => {{
-      setSidebarCollapsed(!document.body.classList.contains('sidebar-collapsed'));
-    }});
-    document.getElementById('sidebarReopen')?.addEventListener('click', () => {{
-      setSidebarCollapsed(false);
-    }});
-    try {{
-      if (localStorage.getItem(SIDEBAR_KEY) === '1') setSidebarCollapsed(true);
-    }} catch (err) {{}}
 
     const settingsOpen = document.getElementById('settingsOpen');
     const settingsPopover = document.getElementById('settingsPopover');
@@ -2751,6 +2747,20 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       if (e.key === 'Escape') closeCreativePreview();
     }});
 
+    const chartLegend = {{
+      position: 'bottom',
+      align: 'start',
+      labels: {{
+        usePointStyle: true,
+        pointStyle: 'circle',
+        boxWidth: 8,
+        boxHeight: 8,
+        padding: 18,
+        color: '#64748b',
+        font: {{ size: 12, weight: '500', family: "'Segoe UI', system-ui, sans-serif" }},
+      }},
+    }};
+
     const ctx = document.getElementById('spendChart');
     if (ctx && chartPayload.labels && chartPayload.labels.length) {{
       new Chart(ctx, {{
@@ -2763,7 +2773,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
             y: {{ beginAtZero: true, ticks: {{ callback: v => '$' + v.toLocaleString() }} }},
             x: {{ grid: {{ display: false }} }}
           }},
-          plugins: {{ legend: {{ position: 'bottom' }} }},
+          plugins: {{ legend: chartLegend }},
           elements: {{ line: {{ tension: 0.3, borderWidth: 2 }}, point: {{ radius: 0, hitRadius: 8 }} }}
         }}
       }});
@@ -2794,7 +2804,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
             }},
             x: {{ grid: {{ display: false }} }},
           }},
-          plugins: {{ legend: {{ position: 'bottom' }} }},
+          plugins: {{ legend: chartLegend }},
           elements: {{ line: {{ tension: 0.3, borderWidth: 2 }}, point: {{ radius: 0, hitRadius: 8 }} }},
         }},
       }});
