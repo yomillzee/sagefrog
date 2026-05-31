@@ -1203,15 +1203,55 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       border-right: 1px solid rgba(255,255,255,0.06);
       box-shadow: 4px 0 24px rgba(10, 37, 64, 0.12);
       overflow: hidden;
-      transition: width 0.22s ease, padding 0.22s ease, opacity 0.18s ease;
+      transition: transform 0.24s ease, box-shadow 0.24s ease;
       position: sticky;
       top: 0;
       height: 100vh;
       z-index: 40;
     }}
+    .sidebar-backdrop {{
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(10, 37, 64, 0.45);
+      z-index: 39;
+      opacity: 0;
+      transition: opacity 0.24s ease;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+    }}
+    .sidebar-menu-btn,
+    .sidebar-close {{
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--navy);
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.15s, border-color 0.15s;
+    }}
+    .sidebar-menu-btn:hover,
+    .sidebar-close:hover {{
+      background: #f4f7fb;
+      border-color: #b8c4d4;
+    }}
+    .sidebar-menu-btn svg,
+    .sidebar-close svg {{
+      width: 20px;
+      height: 20px;
+    }}
     .sidebar-top {{
       display: flex;
       align-items: center;
+      justify-content: space-between;
+      gap: 8px;
       margin-bottom: 18px;
       min-height: 36px;
     }}
@@ -2066,18 +2106,72 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       padding-top: 18px;
       border-top: 1px solid var(--border);
     }}
+    .andre-toast {{
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%) translateY(12px);
+      background: var(--navy);
+      color: #fff;
+      padding: 12px 20px;
+      border-radius: 999px;
+      font-size: 0.92rem;
+      font-weight: 600;
+      box-shadow: 0 8px 32px rgba(10, 37, 64, 0.28);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.35s ease, transform 0.35s ease;
+      z-index: 200;
+    }}
+    .andre-toast.show {{
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }}
     @media (max-width: 900px) {{
-      .app-shell {{ --sidebar-w: 248px; }}
+      .app-shell {{ display: block; }}
+      .sidebar-menu-btn {{ display: flex; }}
+      .sidebar-close {{ display: flex; }}
+      .sidebar-backdrop {{
+        display: block;
+      }}
+      body.sidebar-open .sidebar-backdrop {{
+        opacity: 1;
+      }}
+      body.sidebar-open {{
+        overflow: hidden;
+      }}
+      .dash-sidebar {{
+        position: fixed;
+        left: 0;
+        top: 0;
+        height: 100%;
+        height: 100dvh;
+        width: min(88vw, 280px);
+        transform: translateX(-105%);
+        z-index: 100;
+        box-shadow: 8px 0 40px rgba(10, 37, 64, 0.25);
+      }}
+      body.sidebar-open .dash-sidebar {{
+        transform: translateX(0);
+      }}
+      .dash-main {{
+        width: 100%;
+        min-width: 0;
+      }}
       .dash-content {{ padding: 18px 16px 40px; }}
       .dash-topbar {{ padding: 14px 16px; }}
     }}
   </style>
 </head>
 <body>
+  <button type="button" class="sidebar-backdrop" id="sidebarBackdrop" aria-label="Close menu" tabindex="-1"></button>
   <div class="app-shell">
     <aside class="dash-sidebar" id="dashSidebar" aria-label="Dashboard navigation">
       <div class="sidebar-top">
-        <span class="sidebar-brand">Dashboard</span>
+        <span class="sidebar-brand" id="sidebarBrand" title="">Dashboard</span>
+        <button type="button" class="sidebar-close" id="sidebarClose" aria-label="Close menu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
       </div>
       <nav class="sidebar-nav" role="tablist" aria-label="Views">
         <button type="button" class="sidebar-nav-btn active" data-tab="platform" role="tab" aria-selected="true">
@@ -2106,6 +2200,9 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
 
     <div class="dash-main">
       <header class="dash-topbar">
+        <button type="button" class="sidebar-menu-btn" id="sidebarOpen" aria-label="Open menu" aria-expanded="false" aria-controls="dashSidebar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
         <div class="dash-topbar-text">
           <h1 class="dash-title" id="dashViewTitle">Overview</h1>
           <p class="dash-subtitle">{_esc(label)} · Paid media performance</p>
@@ -2212,6 +2309,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       <div class="creative-preview-caption" id="creativePreviewCaption"></div>
     </div>
   </div>
+  <div class="andre-toast" id="andreToast" role="status" aria-live="polite" hidden>Hello Andre</div>
   <script type="application/json" id="chart-data">{chart_json}</script>
   <script type="application/json" id="ga4-attr-chart-data">{ga4_attr_chart_json}</script>
   <script type="application/json" id="breakdowns-data">{breakdowns_json}</script>
@@ -2244,7 +2342,64 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
     const escHtml = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 
     document.querySelectorAll('.sidebar-nav-btn').forEach(btn => {{
-      btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
+      btn.addEventListener('click', () => {{
+        setActiveTab(btn.dataset.tab);
+        closeSidebar();
+      }});
+    }});
+
+    const MOBILE_SIDEBAR_MQ = window.matchMedia('(max-width: 900px)');
+    function isMobileSidebar() {{
+      return MOBILE_SIDEBAR_MQ.matches;
+    }}
+    function setSidebarOpen(open) {{
+      document.body.classList.toggle('sidebar-open', open);
+      document.getElementById('sidebarOpen')?.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }}
+    function openSidebar() {{
+      if (!isMobileSidebar()) return;
+      setSidebarOpen(true);
+    }}
+    function closeSidebar() {{
+      setSidebarOpen(false);
+    }}
+    function toggleSidebar() {{
+      if (!isMobileSidebar()) return;
+      setSidebarOpen(!document.body.classList.contains('sidebar-open'));
+    }}
+    document.getElementById('sidebarOpen')?.addEventListener('click', toggleSidebar);
+    document.getElementById('sidebarClose')?.addEventListener('click', closeSidebar);
+    document.getElementById('sidebarBackdrop')?.addEventListener('click', closeSidebar);
+    MOBILE_SIDEBAR_MQ.addEventListener('change', () => {{
+      if (!isMobileSidebar()) closeSidebar();
+    }});
+    document.addEventListener('keydown', e => {{
+      if (e.key === 'Escape' && document.body.classList.contains('sidebar-open')) {{
+        closeSidebar();
+      }}
+    }});
+
+    let andreClicks = 0;
+    let andreTimer = null;
+    function showAndreToast() {{
+      const toast = document.getElementById('andreToast');
+      if (!toast) return;
+      toast.hidden = false;
+      toast.classList.add('show');
+      clearTimeout(toast._hideTimer);
+      toast._hideTimer = setTimeout(() => {{
+        toast.classList.remove('show');
+        setTimeout(() => {{ toast.hidden = true; }}, 400);
+      }}, 2800);
+    }}
+    document.getElementById('sidebarBrand')?.addEventListener('click', () => {{
+      andreClicks += 1;
+      clearTimeout(andreTimer);
+      andreTimer = setTimeout(() => {{ andreClicks = 0; }}, 1600);
+      if (andreClicks >= 3) {{
+        andreClicks = 0;
+        showAndreToast();
+      }}
     }});
 
     const VIEW_TITLES = {{ platform: 'Overview', 'business-line': 'By business line' }};
