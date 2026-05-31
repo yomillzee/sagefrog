@@ -1,5 +1,6 @@
 fastapi
 uvicorn[standard]
+python-multipart
 google-ads
 pydantic
 python-dotenv
