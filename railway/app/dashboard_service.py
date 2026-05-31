@@ -1214,9 +1214,11 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       position: fixed;
       inset: 0;
       background: rgba(10, 37, 64, 0.45);
-      z-index: 39;
+      z-index: 90;
       opacity: 0;
-      transition: opacity 0.24s ease;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity 0.24s ease, visibility 0.24s ease;
       border: none;
       padding: 0;
       cursor: pointer;
@@ -1458,7 +1460,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       border-bottom: 1px solid var(--border);
       position: sticky;
       top: 0;
-      z-index: 20;
+      z-index: 50;
     }}
     .dash-topbar-text {{ min-width: 0; }}
     .dash-title {{
@@ -2136,6 +2138,8 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       }}
       body.sidebar-open .sidebar-backdrop {{
         opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
       }}
       body.sidebar-open {{
         overflow: hidden;
@@ -2148,11 +2152,13 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
         height: 100dvh;
         width: min(88vw, 280px);
         transform: translateX(-105%);
-        z-index: 100;
+        z-index: 110;
         box-shadow: 8px 0 40px rgba(10, 37, 64, 0.25);
+        pointer-events: none;
       }}
       body.sidebar-open .dash-sidebar {{
         transform: translateX(0);
+        pointer-events: auto;
       }}
       .dash-main {{
         width: 100%;
@@ -2363,7 +2369,11 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
     function closeSidebar() {{
       setSidebarOpen(false);
     }}
-    function toggleSidebar() {{
+    function toggleSidebar(e) {{
+      if (e) {{
+        e.preventDefault();
+        e.stopPropagation();
+      }}
       if (!isMobileSidebar()) return;
       setSidebarOpen(!document.body.classList.contains('sidebar-open'));
     }}
