@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import os
 from datetime import date
+from pathlib import Path
 from urllib.parse import quote
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 import bigquery_service
 import dashboard_snapshots
@@ -119,6 +121,10 @@ except Exception:
     # If Postgres isn't attached (or is temporarily unavailable), the service should still run.
     pass
 
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 
 def custom_openapi() -> dict:
     if app.openapi_schema:
@@ -215,6 +221,14 @@ def root() -> dict:
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse()
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon_ico() -> FileResponse:
+    path = STATIC_DIR / "favicon-32x32.png"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Favicon not found")
+    return FileResponse(path, media_type="image/png")
 
 
 @app.get(

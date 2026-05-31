@@ -36,6 +36,16 @@ def configured_dashboard_secret() -> str | None:
     return secret or None
 
 
+def _favicon_head_html() -> str:
+    return """
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+  <link rel="manifest" href="/static/site.webmanifest">
+  <meta name="theme-color" content="#0a2540">"""
+
+
 def min_refresh_seconds() -> int:
     """Minimum seconds between manual dashboard refreshes (default 15 min)."""
     raw = (os.getenv("DASHBOARD_MIN_REFRESH_SECONDS") or "900").strip()
@@ -1009,7 +1019,7 @@ def render_penn_html(
             access_key=access_key, snapshot=None, flash_message=flash_message
         )
         return f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Penn Dashboard</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Penn Dashboard</title>{_favicon_head_html()}
 <style>
 :root{{--navy:#0a2540;--accent:#0b5cab;--border:#d8dee8;--muted:#5a6578}}
 *{{box-sizing:border-box}}body{{margin:0;font-family:system-ui,sans-serif;background:#eef1f5;color:#0f1c2e}}
@@ -1159,7 +1169,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{_esc(label)} — Ads Dashboard</title>
+  <title>{_esc(label)} — Ads Dashboard</title>{_favicon_head_html()}
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     :root {{
