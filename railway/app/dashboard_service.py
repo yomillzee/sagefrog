@@ -45,6 +45,59 @@ def min_refresh_seconds() -> int:
         return 900
 
 
+DASHBOARD_DATE_PRESETS: tuple[tuple[str, str], ...] = (
+    ("LAST_7_DAYS", "Last 7 days"),
+    ("LAST_30_DAYS", "Last 30 days"),
+    ("LAST_90_DAYS", "Last 90 days"),
+    ("LAST_180_DAYS", "Last 180 days"),
+    ("THIS_MONTH", "This month"),
+    ("LAST_MONTH", "Last month"),
+)
+
+VALID_DASHBOARD_PRESETS = frozenset(p[0] for p in DASHBOARD_DATE_PRESETS)
+
+
+def normalize_date_preset(preset: str | None, *, default: str = "LAST_30_DAYS") -> str:
+    key = str(preset or default).strip().upper().replace("-", "_")
+    return key if key in VALID_DASHBOARD_PRESETS else default
+
+
+def preset_label(preset: str | None) -> str:
+    key = normalize_date_preset(preset)
+    for value, label in DASHBOARD_DATE_PRESETS:
+        if value == key:
+            return label
+    return key.replace("_", " ").title()
+
+
+def snapshot_loaded_preset(snapshot: dict[str, Any] | None) -> str | None:
+    if not snapshot:
+        return None
+    raw = (snapshot.get("date_range") or {}).get("preset")
+    return normalize_date_preset(raw) if raw else None
+
+
+def needs_data_pull_for_preset(
+    snapshot: dict[str, Any] | None,
+    requested: str,
+) -> tuple[bool, str]:
+    """Return (needs_pull, user_message)."""
+    if not snapshot:
+        return True, (
+            f"No dashboard data is loaded yet. Pull {preset_label(requested)} "
+            "from Google Ads, LinkedIn, Meta, and GA4 (~15–20s)?"
+        )
+    loaded = snapshot_loaded_preset(snapshot)
+    requested_norm = normalize_date_preset(requested)
+    if loaded == requested_norm:
+        return False, ""
+    return True, (
+        f"Campaign and spend data is loaded for {preset_label(loaded)}. "
+        f"To view {preset_label(requested_norm)}, a fresh pull from all platforms "
+        "is required (~15–20s)."
+    )
+
+
 def _parse_refreshed_at(snapshot: dict[str, Any] | None) -> datetime | None:
     raw = (snapshot or {}).get("refreshed_at")
     if not raw:
@@ -710,10 +763,34 @@ def _summary_card(
     """
 
 
+def _refresh_form_html(
+    *,
+    access_key: str,
+    date_range: str,
+    form_id: str = "refreshForm",
+    include_button: bool = False,
+    button_disabled: bool = False,
+) -> str:
+    refresh_url = f"/dashboard/penn/refresh?key={quote(access_key, safe='')}"
+    preset = normalize_date_preset(date_range)
+    disabled = " disabled" if button_disabled else ""
+    button = (
+        f'<button type="submit" class="refresh-btn"{disabled}>Refresh now</button>'
+        if include_button
+        else ""
+    )
+    return (
+        f'<form method="post" action="{refresh_url}" id="{_esc(form_id)}" class="refresh-form">'
+        f'<input type="hidden" name="date_range" id="refreshDateRange" value="{_esc(preset)}">'
+        f"{button}</form>"
+    )
+
+
 def _refresh_toolbar(
     *,
     access_key: str | None,
     snapshot: dict[str, Any] | None,
+    date_range: str,
     flash_message: str | None = None,
 ) -> str:
     if not access_key:
@@ -728,21 +805,56 @@ def _refresh_toolbar(
             f'<div class="notice muted">Refresh available in ~{mins} min '
             f"(pulls Google, LinkedIn, Meta + GA4 — takes ~15–20s).</div>"
         )
-    refresh_url = f"/dashboard/penn/refresh?key={quote(access_key, safe='')}"
-    if allowed:
-        button = (
-            f'<form method="post" action="{refresh_url}" class="refresh-form">'
-            f'<button type="submit" class="refresh-btn">Refresh now</button></form>'
-        )
-    else:
-        button = '<button type="button" class="refresh-btn" disabled>Refresh now</button>'
+    button = (
+        f'<button type="submit" form="refreshForm" class="refresh-btn">Refresh now</button>'
+        if allowed
+        else '<button type="button" class="refresh-btn" disabled>Refresh now</button>'
+    )
     return f'<div class="refresh-bar">{notice}{button}</div>'
+
+
+def _date_range_select_html(selected_preset: str) -> str:
+    selected = normalize_date_preset(selected_preset)
+    options = []
+    for value, label in DASHBOARD_DATE_PRESETS:
+        sel = ' selected' if value == selected else ""
+        options.append(f'<option value="{_esc(value)}"{sel}>{_esc(label)}</option>')
+    return f"""
+    <div class="date-range-wrap">
+      <label class="date-range-label" for="dateRangeSelect">Time frame</label>
+      <select id="dateRangeSelect" class="date-range-select" aria-label="Time frame">
+        {''.join(options)}
+      </select>
+    </div>"""
+
+
+def _data_pull_modal_html() -> str:
+    return """
+    <div id="dataPullModal" class="data-pull-modal" hidden>
+      <div class="data-pull-backdrop" data-close-data-pull></div>
+      <div class="data-pull-dialog" role="dialog" aria-modal="true" aria-labelledby="dataPullTitle">
+        <h3 id="dataPullTitle">Pull new data?</h3>
+        <p id="dataPullMessage" class="data-pull-message"></p>
+        <div class="data-pull-actions">
+          <button type="button" class="data-pull-btn data-pull-btn--ghost" id="dataPullCancel">Cancel</button>
+          <button type="button" class="data-pull-btn data-pull-btn--primary" id="dataPullConfirm">Pull data</button>
+        </div>
+      </div>
+    </div>
+    <div id="refreshLoading" class="refresh-loading" hidden aria-live="polite">
+      <div class="refresh-loading-card">
+        <div class="refresh-loading-spinner" aria-hidden="true"></div>
+        <p>Pulling data from Google Ads, LinkedIn, Meta, and GA4…</p>
+        <p class="muted">This usually takes 15–20 seconds.</p>
+      </div>
+    </div>"""
 
 
 def _settings_panel_html(
     *,
     access_key: str | None,
     snapshot: dict[str, Any] | None,
+    date_range: str,
     flash_message: str | None = None,
 ) -> str:
     """Refresh controls inside the sidebar settings popover."""
@@ -751,6 +863,7 @@ def _settings_panel_html(
     toolbar = _refresh_toolbar(
         access_key=access_key,
         snapshot=snapshot,
+        date_range=date_range,
         flash_message=flash_message,
     )
     return f"""
@@ -760,7 +873,7 @@ def _settings_panel_html(
         <button type="button" class="settings-popover__close" id="settingsClose" aria-label="Close settings">&times;</button>
       </div>
       <div class="settings-popover__body">
-        <p class="settings-popover__hint muted">Pull latest data from Google Ads, LinkedIn, Meta, and GA4.</p>
+        <p class="settings-popover__hint muted">Pull latest data for the selected time frame from Google Ads, LinkedIn, Meta, and GA4.</p>
         {toolbar}
       </div>
     </div>"""
@@ -1003,10 +1116,23 @@ def render_penn_html(
     *,
     access_key: str | None = None,
     flash_message: str | None = None,
+    selected_range: str | None = None,
 ) -> str:
+    loaded_preset = snapshot_loaded_preset(snapshot) or normalize_date_preset(selected_range)
+    display_preset = normalize_date_preset(selected_range or loaded_preset)
+    refresh_form = (
+        _refresh_form_html(access_key=access_key, date_range=display_preset)
+        if access_key
+        else ""
+    )
+    data_pull_modal = _data_pull_modal_html()
+    date_range_select = _date_range_select_html(display_preset)
     if not snapshot:
         settings = _settings_panel_html(
-            access_key=access_key, snapshot=None, flash_message=flash_message
+            access_key=access_key,
+            snapshot=None,
+            date_range=display_preset,
+            flash_message=flash_message,
         )
         return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Penn Dashboard</title>
@@ -1047,8 +1173,6 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
     label = snapshot.get("label") or "Penn Community Bank"
     dr = snapshot.get("date_range") or {}
     refreshed = snapshot.get("refreshed_at") or "—"
-    preset = dr.get("preset") or ""
-    range_label = f"{dr.get('start', '')} → {dr.get('end', '')} ({preset})"
 
     totals = snapshot.get("platform_totals") or {}
     errors = snapshot.get("errors") or {}
@@ -1150,9 +1274,28 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
     settings_panel = _settings_panel_html(
         access_key=access_key,
         snapshot=snapshot,
+        date_range=display_preset,
         flash_message=flash_message,
     )
-    client_meta_tip = _esc(f"Date range: {range_label}\nLast refreshed: {refreshed} UTC")
+    refresh_allowed, refresh_wait = refresh_cooldown_status(snapshot)
+    pull_messages: dict[str, str] = {}
+    for value, _label in DASHBOARD_DATE_PRESETS:
+        needs_pull, msg = needs_data_pull_for_preset(snapshot, value)
+        if needs_pull and msg:
+            pull_messages[value] = msg
+    date_range_meta_json = _json_for_html_script(
+        {
+            "loadedPreset": loaded_preset or display_preset,
+            "refreshAllowed": refresh_allowed,
+            "refreshWaitSeconds": refresh_wait,
+            "pullMessages": pull_messages,
+        }
+    )
+    client_meta_tip = _esc(
+        f"Time frame: {preset_label(loaded_preset)}\n"
+        f"Dates: {dr.get('start', '')} → {dr.get('end', '')}\n"
+        f"Last refreshed: {refreshed} UTC"
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1475,6 +1618,146 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       font-size: 0.84rem;
       color: var(--muted);
     }}
+    .dash-topbar-actions {{
+      margin-left: auto;
+      flex-shrink: 0;
+    }}
+    .date-range-wrap {{
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }}
+    .date-range-label {{
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }}
+    .date-range-select {{
+      appearance: none;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235a6578' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center;
+      padding: 8px 34px 8px 12px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--navy);
+      cursor: pointer;
+      min-width: 148px;
+      max-width: 100%;
+    }}
+    .date-range-select:hover {{
+      border-color: #b8c4d4;
+    }}
+    .date-range-select:focus-visible {{
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }}
+    .data-pull-modal {{
+      position: fixed;
+      inset: 0;
+      z-index: 180;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }}
+    .data-pull-modal[hidden] {{ display: none; }}
+    .data-pull-backdrop {{
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 37, 64, 0.45);
+      border: none;
+      padding: 0;
+      cursor: pointer;
+    }}
+    .data-pull-dialog {{
+      position: relative;
+      width: min(100%, 420px);
+      background: #fff;
+      border-radius: 16px;
+      padding: 22px 22px 18px;
+      box-shadow: 0 20px 60px rgba(10, 37, 64, 0.22);
+    }}
+    .data-pull-dialog h3 {{
+      margin: 0 0 10px;
+      font-size: 1.08rem;
+      color: var(--navy);
+    }}
+    .data-pull-message {{
+      margin: 0 0 18px;
+      font-size: 0.92rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }}
+    .data-pull-actions {{
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }}
+    .data-pull-btn {{
+      appearance: none;
+      border-radius: 10px;
+      padding: 9px 16px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--navy);
+    }}
+    .data-pull-btn--primary {{
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }}
+    .data-pull-btn--ghost:hover {{ background: #f4f7fb; }}
+    .data-pull-btn--primary:hover {{ filter: brightness(1.06); }}
+    .refresh-loading {{
+      position: fixed;
+      inset: 0;
+      z-index: 190;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(238, 241, 245, 0.82);
+      backdrop-filter: blur(2px);
+    }}
+    .refresh-loading[hidden] {{ display: none; }}
+    .refresh-loading-card {{
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px 32px;
+      text-align: center;
+      box-shadow: var(--shadow);
+      max-width: min(92vw, 360px);
+    }}
+    .refresh-loading-card p {{
+      margin: 12px 0 0;
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: var(--navy);
+    }}
+    .refresh-loading-card .muted {{
+      font-size: 0.82rem;
+      font-weight: 500;
+    }}
+    .refresh-loading-spinner {{
+      width: 36px;
+      height: 36px;
+      margin: 0 auto;
+      border: 3px solid #dbe3ee;
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: refresh-spin 0.8s linear infinite;
+    }}
+    @keyframes refresh-spin {{
+      to {{ transform: rotate(360deg); }}
+    }}
+    .refresh-form {{ margin: 0; }}
     .dash-content {{
       flex: 1;
       max-width: 1280px;
@@ -2194,7 +2477,13 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
         min-width: 0;
       }}
       .dash-content {{ padding: 18px 16px 40px; }}
-      .dash-topbar {{ padding: 14px 16px; }}
+      .dash-topbar {{ padding: 14px 16px; flex-wrap: wrap; }}
+      .dash-topbar-actions {{
+        width: 100%;
+        margin-left: 0;
+        margin-top: 4px;
+      }}
+      .date-range-select {{ width: 100%; }}
     }}
   </style>
 </head>
@@ -2241,6 +2530,9 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
         <div class="dash-topbar-text">
           <h1 class="dash-title" id="dashViewTitle">Overview</h1>
           <p class="dash-subtitle">{_esc(label)} · Paid media performance</p>
+        </div>
+        <div class="dash-topbar-actions">
+          {date_range_select}
         </div>
       </header>
 
@@ -2342,6 +2634,8 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       </div>
     </div>
   </div>
+  {refresh_form}
+  {data_pull_modal}
   <div id="creativePreview" class="creative-preview" hidden>
     <div class="creative-preview-backdrop" data-close-preview></div>
     <div class="creative-preview-dialog" role="dialog" aria-modal="true" aria-label="Creative preview">
@@ -2351,6 +2645,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
     </div>
   </div>
   <div class="andre-toast" id="andreToast" role="status" aria-live="polite" hidden>Hello Andre</div>
+  <script type="application/json" id="date-range-meta">{date_range_meta_json}</script>
   <script type="application/json" id="chart-data">{chart_json}</script>
   <script type="application/json" id="ga4-attr-chart-data">{ga4_attr_chart_json}</script>
   <script type="application/json" id="breakdowns-data">{breakdowns_json}</script>
@@ -2371,6 +2666,12 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
     }}
 
     const breakdowns = readJson('breakdowns-data', {{}});
+    const dateRangeMeta = readJson('date-range-meta', {{
+      loadedPreset: 'LAST_30_DAYS',
+      refreshAllowed: true,
+      refreshWaitSeconds: 0,
+      pullMessages: {{}},
+    }});
     const ga4CampaignMetrics = readJson('ga4-campaign-metrics', {{}});
     const blCampaigns = readJson('bl-campaigns-data', []);
     const blCatalog = readJson('bl-catalog-data', []);
@@ -2444,6 +2745,61 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
         andreClicks = 0;
         showAndreToast();
       }}
+    }});
+
+    let pendingDateRange = null;
+    const dateRangeSelect = document.getElementById('dateRangeSelect');
+    const dataPullModal = document.getElementById('dataPullModal');
+    const dataPullMessage = document.getElementById('dataPullMessage');
+    const refreshForm = document.getElementById('refreshForm');
+    const refreshDateRangeInput = document.getElementById('refreshDateRange');
+    const refreshLoading = document.getElementById('refreshLoading');
+    const loadedPreset = dateRangeMeta.loadedPreset || 'LAST_30_DAYS';
+
+    function openDataPullModal(message, preset) {{
+      pendingDateRange = preset;
+      if (dataPullMessage) dataPullMessage.textContent = message || 'Pull fresh data from all platforms?';
+      if (dataPullModal) dataPullModal.hidden = false;
+    }}
+
+    function closeDataPullModal() {{
+      pendingDateRange = null;
+      if (dataPullModal) dataPullModal.hidden = true;
+      if (dateRangeSelect) dateRangeSelect.value = loadedPreset;
+    }}
+
+    function submitDataPull() {{
+      if (!pendingDateRange || !refreshForm) return;
+      if (!dateRangeMeta.refreshAllowed) {{
+        const mins = Math.max(1, Math.ceil((dateRangeMeta.refreshWaitSeconds || 0) / 60));
+        if (dataPullMessage) {{
+          dataPullMessage.textContent = `Please wait ~${{mins}} minutes before pulling data again.`;
+        }}
+        return;
+      }}
+      if (refreshDateRangeInput) refreshDateRangeInput.value = pendingDateRange;
+      if (refreshLoading) refreshLoading.hidden = false;
+      refreshForm.submit();
+    }}
+
+    dateRangeSelect?.addEventListener('change', () => {{
+      const requested = dateRangeSelect.value;
+      if (requested === loadedPreset) return;
+      const message = dateRangeMeta.pullMessages?.[requested]
+        || `Pull ${{requested.replace(/_/g, ' ').toLowerCase()}} from Google Ads, LinkedIn, Meta, and GA4?`;
+      openDataPullModal(message, requested);
+    }});
+
+    document.getElementById('dataPullCancel')?.addEventListener('click', closeDataPullModal);
+    document.querySelectorAll('[data-close-data-pull]').forEach(el => {{
+      el.addEventListener('click', closeDataPullModal);
+    }});
+    document.getElementById('dataPullConfirm')?.addEventListener('click', submitDataPull);
+    refreshForm?.addEventListener('submit', () => {{
+      if (refreshLoading) refreshLoading.hidden = false;
+    }});
+    document.addEventListener('keydown', e => {{
+      if (e.key === 'Escape' && dataPullModal && !dataPullModal.hidden) closeDataPullModal();
     }});
 
     const VIEW_TITLES = {{ platform: 'Overview', 'business-line': 'By business line' }};

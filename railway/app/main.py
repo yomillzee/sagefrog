@@ -5,7 +5,7 @@ from datetime import date
 from urllib.parse import quote
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Form, HTTPException
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
@@ -1160,12 +1160,24 @@ def internal_sync_penn(date_range: str = "LAST_30_DAYS") -> dict:
     response_class=HTMLResponse,
     include_in_schema=False,
 )
-def dashboard_penn(key: str | None = None, synced: str | None = None) -> HTMLResponse:
+def dashboard_penn(
+    key: str | None = None,
+    synced: str | None = None,
+    range: str | None = None,
+) -> HTMLResponse:
     dashboard_service.verify_dashboard_key(key)
     snapshot = dashboard_snapshots.get_snapshot("penn")
     flash = "Dashboard refreshed." if synced else None
+    selected = dashboard_service.normalize_date_preset(
+        range or dashboard_service.snapshot_loaded_preset(snapshot)
+    )
     return HTMLResponse(
-        dashboard_service.render_penn_html(snapshot, access_key=key, flash_message=flash)
+        dashboard_service.render_penn_html(
+            snapshot,
+            access_key=key,
+            flash_message=flash,
+            selected_range=selected,
+        )
     )
 
 
@@ -1176,10 +1188,14 @@ def dashboard_penn(key: str | None = None, synced: str | None = None) -> HTMLRes
     response_model=None,
     include_in_schema=False,
 )
-def dashboard_penn_refresh(key: str | None = None, date_range: str = "LAST_30_DAYS"):
+def dashboard_penn_refresh(
+    key: str | None = None,
+    date_range: str = Form("LAST_30_DAYS"),
+):
     dashboard_service.verify_dashboard_key(key)
     snapshot = dashboard_snapshots.get_snapshot("penn")
     allowed, remaining = dashboard_service.refresh_cooldown_status(snapshot)
+    preset = dashboard_service.normalize_date_preset(date_range)
     if not allowed:
         mins = max(1, (remaining + 59) // 60)
         return HTMLResponse(
@@ -1187,10 +1203,10 @@ def dashboard_penn_refresh(key: str | None = None, date_range: str = "LAST_30_DA
                 snapshot,
                 access_key=key,
                 flash_message=f"Please wait ~{mins} minutes before refreshing again.",
+                selected_range=preset,
             ),
             status_code=429,
         )
-    preset = (date_range or "LAST_30_DAYS").strip().upper().replace("-", "_")
     if preset not in _WAREHOUSE_DATE_RANGES:
         preset = "LAST_30_DAYS"
     try:
@@ -1201,11 +1217,15 @@ def dashboard_penn_refresh(key: str | None = None, date_range: str = "LAST_30_DA
                 snapshot,
                 access_key=key,
                 flash_message=f"Refresh failed: {str(e)[:200]}",
+                selected_range=preset,
             ),
             status_code=400,
         )
     return RedirectResponse(
-        url=f"/dashboard/penn?key={quote(key or '', safe='')}&synced=1",
+        url=(
+            f"/dashboard/penn?key={quote(key or '', safe='')}"
+            f"&synced=1&range={quote(preset, safe='')}"
+        ),
         status_code=303,
     )
 
