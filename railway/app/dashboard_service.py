@@ -1300,48 +1300,6 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       opacity: 0.85;
       flex-shrink: 0;
     }}
-    .sidebar-filters {{
-      margin-top: 18px;
-      padding-top: 16px;
-      border-top: 1px solid rgba(255,255,255,0.1);
-      flex: 1;
-      min-height: 0;
-      overflow-y: auto;
-      overflow-x: hidden;
-    }}
-    .sidebar-filters[hidden] {{ display: none; }}
-    .sidebar-filters .filter-panel {{
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.1);
-      box-shadow: none;
-      padding: 14px 12px;
-    }}
-    .sidebar-filters .bl-filters h3 {{
-      color: rgba(255,255,255,0.92);
-      font-size: 0.82rem;
-    }}
-    .sidebar-filters .filter-label {{
-      color: rgba(255,255,255,0.55);
-    }}
-    .sidebar-filters .filter-check {{
-      color: rgba(255,255,255,0.88);
-    }}
-    .sidebar-filters .filter-check:hover {{ background: rgba(255,255,255,0.06); }}
-    .sidebar-filters .filter-link {{
-      color: #7eb8ff;
-    }}
-    .sidebar-filters .filter-link:hover {{ color: #fff; }}
-    .sidebar-filters .filter-zero-spend {{
-      color: rgba(255,255,255,0.65);
-      border-top-color: rgba(255,255,255,0.1);
-    }}
-    .sidebar-filters .filter-status {{
-      color: rgba(255,255,255,0.55);
-      border-top-color: rgba(255,255,255,0.1);
-    }}
-    .sidebar-filters .filter-group + .filter-group {{
-      border-top-color: rgba(255,255,255,0.1);
-    }}
     .sidebar-footer {{
       margin-top: auto;
       padding-top: 14px;
@@ -1867,9 +1825,21 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       box-shadow: var(--shadow-sm);
     }}
     .bl-layout {{
-      display: block;
+      display: grid;
+      grid-template-columns: 272px minmax(0, 1fr);
+      gap: 20px;
+      align-items: start;
+    }}
+    .bl-filters-col {{
+      position: sticky;
+      top: calc(72px + 16px);
+      align-self: start;
     }}
     .bl-main {{ min-width: 0; }}
+    @media (max-width: 960px) {{
+      .bl-layout {{ grid-template-columns: 1fr; }}
+      .bl-filters-col {{ position: static; }}
+    }}
     .filter-group-head {{
       display: flex;
       align-items: center;
@@ -2052,6 +2022,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       margin: 0 0 14px;
       font-size: 0.92rem;
       font-weight: 700;
+      color: var(--navy);
     }}
     .bl-filters .filter-group + .filter-group {{
       margin-top: 18px;
@@ -2098,32 +2069,6 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
           By business line
         </button>
       </nav>
-      <div class="sidebar-filters" id="sidebarBlFilters" hidden>
-        <section class="filter-panel bl-filters">
-          <h3>Filters</h3>
-          <div class="filter-group">
-            <div class="filter-group-head">
-              <span class="filter-label">Business line</span>
-              <button type="button" class="filter-link" id="blSelectAll">All</button>
-              <button type="button" class="filter-link" id="blClearAll">None</button>
-            </div>
-            <div id="blFilters" class="filter-checks"></div>
-          </div>
-          <div class="filter-group">
-            <div class="filter-group-head">
-              <span class="filter-label">Channel</span>
-              <button type="button" class="filter-link" id="channelSelectAll">All</button>
-              <button type="button" class="filter-link" id="channelClearAll">None</button>
-            </div>
-            <div id="channelFilters" class="filter-checks"></div>
-          </div>
-          <label class="filter-zero-spend">
-            <input type="checkbox" id="showZeroSpend">
-            Show inactive / $0 spend
-          </label>
-          <div class="filter-status" id="filterStatus"></div>
-        </section>
-      </div>
       <div class="sidebar-footer">
         <div class="client-block">
           <span class="client-name">{_esc(label)}</span>
@@ -2182,16 +2127,41 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
           </div>
 
           <div id="tab-business-line" class="tab-panel" role="tabpanel">
+            <div class="bl-summary" id="blSummary"></div>
             <div class="bl-layout">
+              <aside class="bl-filters-col">
+                <section class="filter-panel bl-filters">
+                  <h3>Filters</h3>
+                  <div class="filter-group">
+                    <div class="filter-group-head">
+                      <span class="filter-label">Business line</span>
+                      <button type="button" class="filter-link" id="blSelectAll">All</button>
+                      <button type="button" class="filter-link" id="blClearAll">None</button>
+                    </div>
+                    <div id="blFilters" class="filter-checks"></div>
+                  </div>
+                  <div class="filter-group">
+                    <div class="filter-group-head">
+                      <span class="filter-label">Channel</span>
+                      <button type="button" class="filter-link" id="channelSelectAll">All</button>
+                      <button type="button" class="filter-link" id="channelClearAll">None</button>
+                    </div>
+                    <div id="channelFilters" class="filter-checks"></div>
+                  </div>
+                  <label class="filter-zero-spend">
+                    <input type="checkbox" id="showZeroSpend">
+                    Show inactive / $0 spend
+                  </label>
+                  <div class="filter-status" id="filterStatus"></div>
+                </section>
+              </aside>
               <div class="bl-main">
-                <div class="bl-summary" id="blSummary"></div>
-
                 <section class="panel platform-panel">
                   <div class="panel-head">
                     <h2>Campaign performance</h2>
                     <span class="badge" id="blRowCount">0 rows</span>
                   </div>
-                  <p class="table-note">Select business lines and channels in the sidebar. Nothing is selected by default — check items to populate the table.</p>
+                  <p class="table-note">Select business lines and channels in the filters. Nothing is selected by default — check items to populate the table.</p>
                   <div class="table-wrap">
                     <table class="data-table" id="blTable">
                       <thead>
@@ -2272,9 +2242,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       document.querySelectorAll('.tab-panel').forEach(p => {{
         p.classList.toggle('active', p.id === 'tab-' + tab);
       }});
-      const filters = document.getElementById('sidebarBlFilters');
       const title = document.getElementById('dashViewTitle');
-      if (filters) filters.hidden = tab !== 'business-line';
       if (title) title.textContent = VIEW_TITLES[tab] || 'Dashboard';
     }}
 
@@ -2467,7 +2435,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       const tbody = document.getElementById('blTableBody');
       if (tbody) {{
         if (!hasSelection) {{
-          tbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">Select at least one business line and one channel in the sidebar.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">Select at least one business line and one channel in the filters.</td></tr>';
         }} else if (!filtered.length) {{
           tbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">No campaigns match — try other filters or enable $0 spend rows.</td></tr>';
         }} else {{
