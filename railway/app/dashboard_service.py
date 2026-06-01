@@ -758,6 +758,28 @@ def _refresh_toolbar(
     return f'<div class="refresh-bar">{notice}{button}</div>'
 
 
+def _session_account_html(*, email: str | None, is_admin: bool) -> str:
+    """Signed-in user: email, admin link, sign out (sidebar footer)."""
+    if not email:
+        return ""
+    admin_link = (
+        '<a class="account-link" href="/admin">Admin</a><span class="account-sep">·</span>'
+        if is_admin
+        else ""
+    )
+    return f"""
+    <div class="account-nav">
+      <span class="account-email" title="{_esc(email)}">{_esc(email)}</span>
+      <div class="account-actions">
+        {admin_link}
+        <form method="post" action="/logout" class="account-logout-form">
+          <button type="submit" class="account-link">Sign out</button>
+        </form>
+      </div>
+    </div>
+    """
+
+
 def _settings_panel_html(
     *,
     access_key: str | None,
@@ -1024,9 +1046,12 @@ def render_penn_html(
     *,
     access_key: str | None = None,
     use_session: bool = False,
+    session_email: str | None = None,
+    session_is_admin: bool = False,
     flash_message: str | None = None,
 ) -> str:
     """use_session: refresh forms omit ?key= (cookie auth). access_key: legacy shared secret."""
+    account_nav = _session_account_html(email=session_email, is_admin=session_is_admin)
     if not snapshot:
         settings = _settings_panel_html(
             access_key=access_key,
@@ -1050,6 +1075,7 @@ def render_penn_html(
 <div class="app-shell">
   <aside class="dash-sidebar">
     <div class="sidebar-footer">
+      {account_nav}
       <div class="client-name">Penn Community Bank</div>
       <button type="button" class="settings-btn" id="settingsOpen">Settings</button>
     </div>
@@ -1409,6 +1435,40 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       right: 0;
       bottom: calc(100% + 8px);
     }}
+    .account-nav {{
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding-bottom: 10px;
+      margin-bottom: 2px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }}
+    .account-email {{
+      font-size: 0.78rem;
+      color: rgba(255,255,255,0.72);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }}
+    .account-actions {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px 6px;
+      font-size: 0.8rem;
+    }}
+    .account-sep {{ color: rgba(255,255,255,0.35); }}
+    .account-link {{
+      color: rgba(255,255,255,0.92);
+      text-decoration: none;
+      background: none;
+      border: 0;
+      padding: 0;
+      font: inherit;
+      cursor: pointer;
+    }}
+    .account-link:hover {{ text-decoration: underline; color: #fff; }}
+    .account-logout-form {{ display: inline; margin: 0; }}
     .settings-wrap {{ position: relative; }}
     .settings-btn {{
       appearance: none;
@@ -2246,6 +2306,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
         </button>
       </nav>
       <div class="sidebar-footer">
+        {account_nav}
         <div class="client-block">
           <span class="client-name">{_esc(label)}</span>
           <button type="button" class="info-tip" data-tip="{client_meta_tip}" aria-label="Date range and last refresh">i</button>

@@ -1278,6 +1278,16 @@ def internal_sync_penn(date_range: str = "LAST_30_DAYS") -> dict:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
+def _penn_html_session_kwargs(auth: web_auth.DashboardAuth) -> dict:
+    user = auth.user
+    return {
+        "access_key": auth.access_key,
+        "use_session": auth.use_session,
+        "session_email": user.email if auth.use_session and user else None,
+        "session_is_admin": bool(user and user.role == "admin") if auth.use_session else False,
+    }
+
+
 @app.get(
     "/dashboard/penn",
     summary="Penn ads performance dashboard (HTML)",
@@ -1294,9 +1304,8 @@ def dashboard_penn(request: Request, key: str | None = None, synced: str | None 
         return HTMLResponse(
             dashboard_service.render_penn_html(
                 snapshot,
-                access_key=auth.access_key,
-                use_session=auth.use_session,
                 flash_message=flash,
+                **_penn_html_session_kwargs(auth),
             )
         )
     dashboard_service.verify_dashboard_key(key)
@@ -1328,14 +1337,18 @@ def dashboard_penn_refresh(request: Request, key: str | None = None, date_range:
 
     snapshot = dashboard_snapshots.get_snapshot("penn")
     allowed, remaining = dashboard_service.refresh_cooldown_status(snapshot)
+    penn_kw = (
+        _penn_html_session_kwargs(auth)
+        if web_users.enabled()
+        else {"access_key": access_key, "use_session": use_session}
+    )
     if not allowed:
         mins = max(1, (remaining + 59) // 60)
         return HTMLResponse(
             dashboard_service.render_penn_html(
                 snapshot,
-                access_key=access_key,
-                use_session=use_session,
                 flash_message=f"Please wait ~{mins} minutes before refreshing again.",
+                **penn_kw,
             ),
             status_code=429,
         )
@@ -1348,9 +1361,8 @@ def dashboard_penn_refresh(request: Request, key: str | None = None, date_range:
         return HTMLResponse(
             dashboard_service.render_penn_html(
                 snapshot,
-                access_key=access_key,
-                use_session=use_session,
                 flash_message=f"Refresh failed: {str(e)[:200]}",
+                **penn_kw,
             ),
             status_code=400,
         )
