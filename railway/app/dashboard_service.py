@@ -2325,11 +2325,12 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
                     <h2>Campaign performance</h2>
                     <span class="badge" id="blRowCount">0 rows</span>
                   </div>
-                  <p class="table-note">Select business lines and channels in the filters. Nothing is selected by default — check items to populate the table.</p>
+                  <p class="table-note">Select business lines and channels in the filters. Nothing is selected by default — check items to populate the table. Click a campaign row to drill into ad groups, ad sets, or ads.</p>
                   <div class="table-wrap">
                     <table class="data-table" id="blTable">
                       <thead>
                         <tr>
+                          <th class="chevron-col"></th>
                           <th class="sortable" data-sort="platform" scope="col" aria-sort="none">Platform<span class="sort-icon" aria-hidden="true"></span></th>
                           <th class="sortable" data-sort="business_line" scope="col" aria-sort="none">Business line<span class="sort-icon" aria-hidden="true"></span></th>
                           <th class="sortable" data-sort="name" scope="col" aria-sort="none">Campaign<span class="sort-icon" aria-hidden="true"></span></th>
@@ -2341,7 +2342,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
                           <th class="sortable" data-sort="cpc" scope="col" aria-sort="none">CPC<span class="sort-icon" aria-hidden="true"></span></th>
                         </tr>
                       </thead>
-                      <tbody id="blTableBody"></tbody>
+                      <tbody id="blTableBody" class="tree-table"></tbody>
                     </table>
                   </div>
                 </section>
@@ -2640,25 +2641,15 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       const tbody = document.getElementById('blTableBody');
       if (tbody) {{
         if (!hasSelection) {{
-          tbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">Select at least one business line and one channel in the filters.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="10" class="muted" style="padding:24px;text-align:center">Select at least one business line and one channel in the filters.</td></tr>';
         }} else if (!filtered.length) {{
-          tbody.innerHTML = '<tr><td colspan="9" class="muted" style="padding:24px;text-align:center">No campaigns match — try other filters or enable $0 spend rows.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="10" class="muted" style="padding:24px;text-align:center">No campaigns match — try other filters or enable $0 spend rows.</td></tr>';
         }} else {{
           const sorted = sortBlRows(filtered);
-          tbody.innerHTML = sorted.map(r => {{
-            const cpcVal = r.clicks ? fmtMoney(r.spend / r.clicks) : '—';
-            return `<tr>
-              <td><span class="platform-pill ${{escHtml(r.platform)}}">${{escHtml(r.platform_label)}}</span></td>
-              <td><span class="bl-tag">${{escHtml(r.business_line_label)}}</span></td>
-              <td class="name">${{escHtml(r.name)}}</td>
-              <td class="num">${{fmtMoney(r.spend)}}</td>
-              <td class="num">${{fmtInt(r.clicks)}}</td>
-              <td class="num">${{fmtInt(r.impressions)}}</td>
-              <td class="num">${{fmtPct(r.clicks, r.impressions)}}</td>
-              <td class="num">${{fmtInt(r.conversions)}}</td>
-              <td class="num">${{cpcVal}}</td>
-            </tr>`;
-          }}).join('');
+          tbody.innerHTML = '';
+          for (const r of sorted) {{
+            tbody.appendChild(buildBlCampaignRow(r));
+          }}
         }}
       }}
 
@@ -2838,7 +2829,19 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
         + `<td class="num ga4-col">${{fmtInt(keyEvents)}}</td>`;
     }}
 
-    function buildTreeRow(r, platform, level, depth) {{
+    function treeNameColIndex(table) {{
+      return table?.id === 'blTable' ? 3 : 1;
+    }}
+
+    function treeEmptyRowCells(table, depth) {{
+      const nameIdx = treeNameColIndex(table);
+      const cols = table?.querySelectorAll('thead th').length || 8;
+      const colspan = cols - nameIdx - 1;
+      const beforeName = '<td></td>'.repeat(nameIdx);
+      return `${{beforeName}}<td class="name muted" style="padding-left:${{8 + (depth + 1) * 20}}px">No child rows for this period</td><td colspan="${{colspan}}"></td>`;
+    }}
+
+    function buildTreeRow(r, platform, level, depth, prefixCellsHtml = '', includeGa4 = true) {{
       const spend = r.spend || 0;
       const clicks = r.clicks || 0;
       const impressions = r.impressions || 0;
@@ -2859,8 +2862,10 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
         tr.setAttribute('role', 'button');
         tr.setAttribute('aria-expanded', 'false');
       }}
+      const ga4Cells = includeGa4 ? buildGa4Cells(platform, level, r.id) : '';
       tr.innerHTML = `
         <td class="chevron-col">${{chevron}}</td>
+        ${{prefixCellsHtml}}
         ${{buildNameCell(r, level, depth)}}
         <td class="num">${{fmtMoney(spend)}}</td>
         <td class="num">${{fmtInt(clicks)}}</td>
@@ -2868,8 +2873,16 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
         <td class="num">${{fmtPct(clicks, impressions)}}</td>
         <td class="num">${{fmtInt(conv)}}</td>
         <td class="num">${{cpc}}</td>
-        ${{buildGa4Cells(platform, level, r.id)}}`;
+        ${{ga4Cells}}`;
       return tr;
+    }}
+
+    function buildBlCampaignRow(r) {{
+      const platform = r.platform;
+      const prefixCells = `
+        <td><span class="platform-pill ${{escHtml(platform)}}">${{escHtml(r.platform_label)}}</span></td>
+        <td><span class="bl-tag">${{escHtml(r.business_line_label)}}</span></td>`;
+      return buildTreeRow(r, platform, 'campaign', 0, prefixCells, false);
     }}
 
     function collapseDescendants(row) {{
@@ -2898,18 +2911,25 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       if (!rule) return;
       const children = childRows(platform, level, id);
       let insertAfter = row;
+      const table = row.closest('table');
+      const isBlTable = table?.id === 'blTable';
+      const childPrefix = isBlTable ? '<td></td><td></td>' : '';
       if (!children.length) {{
         const empty = document.createElement('tr');
         empty.className = 'tree-row tree-empty';
         empty.dataset.depth = String(depth + 1);
-        empty.innerHTML = `
-          <td></td>
-          <td class="name muted" style="padding-left:${{8 + (depth + 1) * 20}}px">No child rows for this period</td>
-          <td colspan="6"></td>`;
+        empty.innerHTML = treeEmptyRowCells(table, depth + 1);
         insertAfter.after(empty);
       }} else {{
         for (const child of children) {{
-          const childRow = buildTreeRow(child, platform, rule.childLevel, depth + 1);
+          const childRow = buildTreeRow(
+            child,
+            platform,
+            rule.childLevel,
+            depth + 1,
+            childPrefix,
+            !isBlTable
+          );
           insertAfter.after(childRow);
           insertAfter = childRow;
         }}
