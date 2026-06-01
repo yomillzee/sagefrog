@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +26,8 @@ from meta_auth import env_summary as meta_env_summary
 from openapi_gpt import build_chatgpt_openapi
 from cron_security import require_cron_secret
 from security import require_api_key
+import web_auth
+import web_users
 from models import (
     AccountsResponse,
     AccountRef,
@@ -117,9 +119,17 @@ try:
     db_cache.ensure_schema()
     warehouse.ensure_schema()
     dashboard_snapshots.ensure_schema()
+    web_users.ensure_schema()
+    web_users.bootstrap_admin_from_env()
 except Exception:
     # If Postgres isn't attached (or is temporarily unavailable), the service should still run.
     pass
+
+if web_users.enabled():
+    try:
+        web_auth.add_session_middleware(app)
+    except RuntimeError:
+        pass
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 if STATIC_DIR.is_dir():
@@ -212,7 +222,10 @@ def root() -> dict:
         "ga4_warehouse_sync": "/ga4/warehouse/sync",
         "warehouse_status": "/warehouse/status",
         "warehouse_metrics": "/warehouse/metrics",
-        "dashboard_penn": "/dashboard/penn?key=<CRON_SECRET>",
+        "login": "/login",
+        "admin": "/admin",
+        "dashboard_penn": "/dashboard/penn",
+        "dashboard_penn_legacy_key": "/dashboard/penn?key=<CRON_SECRET>",
         "internal_sync_penn": "POST /internal/sync-penn (header X-Cron-Secret)",
         "ga4_env": "/ga4/env",
     }
@@ -1148,6 +1161,103 @@ def warehouse_metrics(
     return WarehouseMetricsResponse(count=len(rows), rows=rows)
 
 
+@app.get("/login", include_in_schema=False, response_class=HTMLResponse)
+def login_page(request: Request, next: str | None = None, error: str | None = None) -> HTMLResponse:
+    if not web_users.enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="User login requires DATABASE_URL (Postgres).",
+        )
+    if web_auth.get_current_user(request):
+        target = (next or "/admin").strip() or "/admin"
+        return RedirectResponse(url=target, status_code=303)
+    target = (next or "/admin").strip() or "/admin"
+    return HTMLResponse(web_auth.render_login_page(error=error, next_path=target))
+
+
+@app.post("/login", include_in_schema=False)
+def login_submit(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    next: str = Form("/admin"),
+):
+    if not web_users.enabled():
+        raise HTTPException(status_code=503, detail="User login requires Postgres.")
+    user = web_users.authenticate(email, password)
+    if not user:
+        return HTMLResponse(
+            web_auth.render_login_page(error="Invalid email or password.", next_path=next),
+            status_code=401,
+        )
+    web_auth.login_user(request, user)
+    target = (next or "/admin").strip() or "/admin"
+    if not target.startswith("/"):
+        target = "/admin"
+    return RedirectResponse(url=target, status_code=303)
+
+
+@app.post("/logout", include_in_schema=False)
+def logout(request: Request) -> RedirectResponse:
+    web_auth.logout_user(request)
+    return RedirectResponse(url="/login", status_code=303)
+
+
+@app.get("/admin", include_in_schema=False, response_class=HTMLResponse)
+def admin_home(
+    request: Request,
+    msg: str | None = None,
+    err: str | None = None,
+):
+    user = web_auth.get_current_user(request)
+    if not user or user.role != "admin":
+        return web_auth.redirect_to_login(request, next_path="/admin")
+    users = web_users.list_users(include_inactive=False)
+    return HTMLResponse(
+        web_auth.render_admin_page(user=user, users=users, message=msg, error=err)
+    )
+
+
+@app.post("/admin/users", include_in_schema=False)
+def admin_create_user(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    role: str = Form("client"),
+    client_slug: str | None = Form(None),
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    try:
+        web_users.create_user(
+            email=email,
+            password=password,
+            role=role,
+            client_slug=client_slug,
+        )
+    except ValueError as e:
+        users = web_users.list_users(include_inactive=False)
+        return HTMLResponse(
+            web_auth.render_admin_page(user=user, users=users, error=str(e)),
+            status_code=400,
+        )
+    return RedirectResponse(url="/admin?msg=User+created", status_code=303)
+
+
+@app.post("/admin/users/{user_id}/deactivate", include_in_schema=False)
+def admin_deactivate_user(
+    user_id: int,
+    request: Request,
+    admin: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    if user_id == admin.id:
+        return RedirectResponse(url="/admin?err=Cannot+deactivate+your+own+account", status_code=303)
+    target = web_users.get_user_record(user_id)
+    if target and target.role == "admin" and web_users.count_admins() <= 1:
+        return RedirectResponse(url="/admin?err=Cannot+deactivate+the+only+admin", status_code=303)
+    web_users.deactivate_user(user_id)
+    return RedirectResponse(url="/admin?msg=User+deactivated", status_code=303)
+
+
 @app.post(
     "/internal/sync-penn",
     summary="Cron: sync Penn warehouse + refresh dashboard snapshot",
@@ -1174,7 +1284,21 @@ def internal_sync_penn(date_range: str = "LAST_30_DAYS") -> dict:
     response_class=HTMLResponse,
     include_in_schema=False,
 )
-def dashboard_penn(key: str | None = None, synced: str | None = None) -> HTMLResponse:
+def dashboard_penn(request: Request, key: str | None = None, synced: str | None = None):
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug="penn", key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        snapshot = dashboard_snapshots.get_snapshot("penn")
+        flash = "Dashboard refreshed." if synced else None
+        return HTMLResponse(
+            dashboard_service.render_penn_html(
+                snapshot,
+                access_key=auth.access_key,
+                use_session=auth.use_session,
+                flash_message=flash,
+            )
+        )
     dashboard_service.verify_dashboard_key(key)
     snapshot = dashboard_snapshots.get_snapshot("penn")
     flash = "Dashboard refreshed." if synced else None
@@ -1190,8 +1314,18 @@ def dashboard_penn(key: str | None = None, synced: str | None = None) -> HTMLRes
     response_model=None,
     include_in_schema=False,
 )
-def dashboard_penn_refresh(key: str | None = None, date_range: str = "LAST_30_DAYS"):
-    dashboard_service.verify_dashboard_key(key)
+def dashboard_penn_refresh(request: Request, key: str | None = None, date_range: str = "LAST_30_DAYS"):
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug="penn", key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        access_key = auth.access_key
+        use_session = auth.use_session
+    else:
+        dashboard_service.verify_dashboard_key(key)
+        access_key = key
+        use_session = False
+
     snapshot = dashboard_snapshots.get_snapshot("penn")
     allowed, remaining = dashboard_service.refresh_cooldown_status(snapshot)
     if not allowed:
@@ -1199,7 +1333,8 @@ def dashboard_penn_refresh(key: str | None = None, date_range: str = "LAST_30_DA
         return HTMLResponse(
             dashboard_service.render_penn_html(
                 snapshot,
-                access_key=key,
+                access_key=access_key,
+                use_session=use_session,
                 flash_message=f"Please wait ~{mins} minutes before refreshing again.",
             ),
             status_code=429,
@@ -1213,13 +1348,16 @@ def dashboard_penn_refresh(key: str | None = None, date_range: str = "LAST_30_DA
         return HTMLResponse(
             dashboard_service.render_penn_html(
                 snapshot,
-                access_key=key,
+                access_key=access_key,
+                use_session=use_session,
                 flash_message=f"Refresh failed: {str(e)[:200]}",
             ),
             status_code=400,
         )
+    if use_session:
+        return RedirectResponse(url="/dashboard/penn?synced=1", status_code=303)
     return RedirectResponse(
-        url=f"/dashboard/penn?key={quote(key or '', safe='')}&synced=1",
+        url=f"/dashboard/penn?key={quote(access_key or '', safe='')}&synced=1",
         status_code=303,
     )
 
@@ -1229,8 +1367,11 @@ def dashboard_penn_refresh(key: str | None = None, date_range: str = "LAST_30_DA
     summary="Penn dashboard snapshot JSON",
     include_in_schema=False,
 )
-def dashboard_penn_json(key: str | None = None) -> dict:
-    dashboard_service.verify_dashboard_key(key)
+def dashboard_penn_json(request: Request, key: str | None = None) -> dict:
+    if web_users.enabled():
+        web_auth.authenticate_dashboard_api(request, client_slug="penn", key=key)
+    else:
+        dashboard_service.verify_dashboard_key(key)
     snapshot = dashboard_snapshots.get_snapshot("penn")
     if not snapshot:
         raise HTTPException(status_code=404, detail="No dashboard snapshot yet. Run POST /internal/sync-penn.")

@@ -720,13 +720,23 @@ def _summary_card(
     """
 
 
+def _refresh_action_url(*, access_key: str | None, use_session: bool) -> str | None:
+    if use_session:
+        return "/dashboard/penn/refresh"
+    if access_key:
+        return f"/dashboard/penn/refresh?key={quote(access_key, safe='')}"
+    return None
+
+
 def _refresh_toolbar(
     *,
     access_key: str | None,
+    use_session: bool = False,
     snapshot: dict[str, Any] | None,
     flash_message: str | None = None,
 ) -> str:
-    if not access_key:
+    refresh_url = _refresh_action_url(access_key=access_key, use_session=use_session)
+    if not refresh_url:
         return ""
     allowed, remaining = refresh_cooldown_status(snapshot)
     notice = ""
@@ -738,7 +748,6 @@ def _refresh_toolbar(
             f'<div class="notice muted">Refresh available in ~{mins} min '
             f"(pulls Google, LinkedIn, Meta + GA4 — takes ~15–20s).</div>"
         )
-    refresh_url = f"/dashboard/penn/refresh?key={quote(access_key, safe='')}"
     if allowed:
         button = (
             f'<form method="post" action="{refresh_url}" class="refresh-form">'
@@ -752,14 +761,16 @@ def _refresh_toolbar(
 def _settings_panel_html(
     *,
     access_key: str | None,
+    use_session: bool = False,
     snapshot: dict[str, Any] | None,
     flash_message: str | None = None,
 ) -> str:
     """Refresh controls inside the sidebar settings popover."""
-    if not access_key:
+    if not _refresh_action_url(access_key=access_key, use_session=use_session):
         return ""
     toolbar = _refresh_toolbar(
         access_key=access_key,
+        use_session=use_session,
         snapshot=snapshot,
         flash_message=flash_message,
     )
@@ -1012,11 +1023,16 @@ def render_penn_html(
     snapshot: dict[str, Any] | None,
     *,
     access_key: str | None = None,
+    use_session: bool = False,
     flash_message: str | None = None,
 ) -> str:
+    """use_session: refresh forms omit ?key= (cookie auth). access_key: legacy shared secret."""
     if not snapshot:
         settings = _settings_panel_html(
-            access_key=access_key, snapshot=None, flash_message=flash_message
+            access_key=access_key,
+            use_session=use_session,
+            snapshot=None,
+            flash_message=flash_message,
         )
         return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Penn Dashboard</title>{_favicon_head_html()}
@@ -1159,6 +1175,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
     )
     settings_panel = _settings_panel_html(
         access_key=access_key,
+        use_session=use_session,
         snapshot=snapshot,
         flash_message=flash_message,
     )

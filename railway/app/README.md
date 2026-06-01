@@ -51,6 +51,30 @@ Each `linkedinPerformance` call also syncs LinkedIn for that window when Postgre
 
 **GA4 warehouse field mapping:** `clicks` = sessions, `impressions` = page views, `conversions` = key events, `spend` = 0.
 
+### Browser login (admin / client users)
+
+Requires **Postgres** (`DATABASE_URL`). The service creates a `web_users` table.
+
+| Variable | Purpose |
+|----------|---------|
+| `AUTH_SESSION_SECRET` | Signs session cookies (use a long random string; falls back to `CRON_SECRET` / `API_KEY` if unset) |
+| `AUTH_SESSION_HTTPS_ONLY` | Set `1` on Railway so cookies are HTTPS-only |
+| `AUTH_BOOTSTRAP_ADMIN_EMAIL` | Creates the **first** admin if no admin exists yet |
+| `AUTH_BOOTSTRAP_ADMIN_PASSWORD` | Password for bootstrap admin (min 10 characters) |
+
+**Routes:**
+
+- `GET /login` — sign in
+- `GET /admin` — admin hub (create users, open dashboards)
+- `GET /dashboard/penn` — Penn dashboard (admin or `client` user with `client_slug=penn`)
+
+**Roles:**
+
+- `admin` — all dashboards + `/admin`
+- `client` — only dashboards matching `client_slug` (e.g. `penn`)
+
+Create additional users at `/admin` after signing in as admin. The shared `?key=` link still works when `CRON_SECRET` / `DASHBOARD_SECRET` is set (legacy). **`API_KEY` is unchanged** — still used for `/google-ads/*`, ChatGPT, etc.
+
 ### Multiple GA4 clients (different GCP projects)
 
 Railway `BQ_PROJECT_ID` / `BQ_DATASET_ID` stay the **default** (e.g. Penn). Add other projects via **`GA4_CLIENTS`** (one-line JSON) or per-request overrides on sync.
@@ -187,6 +211,9 @@ Example response fields per row: `campaign_name`, `ad_name`, `youtube_video_id`,
 ## Endpoints
 
 - `GET /health` — deploy health check
+- `GET /login` — browser sign-in (Postgres users)
+- `GET /admin` — manage users (admin role)
+- `GET /dashboard/penn` — Penn HTML dashboard (session or legacy `?key=`)
 - `GET /google-ads/env` — which credentials are set (no secrets returned)
 - `GET /google-ads/test-token` — OAuth refresh only (debug `invalid_grant` before GAQL)
 - `POST /google-ads/search` — run a GAQL query (rows are structured JSON dicts)
