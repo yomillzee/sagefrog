@@ -27,6 +27,7 @@ from openapi_gpt import build_chatgpt_openapi
 from cron_security import require_cron_secret
 from security import require_api_key
 import audit_log
+import login_rate_limit
 import web_auth
 import web_users
 from models import (
@@ -106,6 +107,22 @@ _WAREHOUSE_DATE_RANGES = frozenset(
 
 load_dotenv()
 
+
+def _production_hide_api_docs() -> bool:
+    """Hide Swagger/OpenAPI UI on Railway unless DISABLE_API_DOCS=0."""
+    raw = (os.getenv("DISABLE_API_DOCS") or "").strip().lower()
+    if raw in ("1", "true", "yes"):
+        return True
+    if raw in ("0", "false", "no"):
+        return False
+    return bool(
+        (os.getenv("RAILWAY_ENVIRONMENT") or "").strip()
+        or (os.getenv("RAILWAY_PUBLIC_DOMAIN") or "").strip()
+    )
+
+
+_hide_api_docs = _production_hide_api_docs()
+
 app = FastAPI(
     title="EOS Ads + GA4 Service",
     version="0.2.0",
@@ -114,6 +131,9 @@ app = FastAPI(
         "routes require Authorization: Bearer (your API_KEY value) or header X-API-Key with the "
         "same value. GET /health stays public for load balancers."
     ),
+    docs_url=None if _hide_api_docs else "/docs",
+    redoc_url=None if _hide_api_docs else "/redoc",
+    openapi_url=None if _hide_api_docs else "/openapi.json",
 )
 
 try:
@@ -122,6 +142,7 @@ try:
     dashboard_snapshots.ensure_schema()
     web_users.ensure_schema()
     audit_log.ensure_schema()
+    login_rate_limit.ensure_schema()
     boot = web_users.bootstrap_admin_from_env()
     if boot:
         audit_log.record(
@@ -203,9 +224,8 @@ def openapi_for_chatgpt() -> JSONResponse:
 
 @app.get("/")
 def root() -> dict:
-    return {
+    out = {
         "service": "EOS Ads + GA4 Service",
-        "docs": "/docs",
         "health": "/health",
         "google_ads_test_token": "/google-ads/test-token",
         "youtube_videos": "/google-ads/youtube-videos",
@@ -237,6 +257,9 @@ def root() -> dict:
         "internal_sync_penn": "POST /internal/sync-penn (header X-Cron-Secret)",
         "ga4_env": "/ga4/env",
     }
+    if not _hide_api_docs:
+        out["docs"] = "/docs"
+    return out
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -1180,6 +1203,13 @@ def login_page(request: Request, next: str | None = None, error: str | None = No
         target = (next or "/admin").strip() or "/admin"
         return RedirectResponse(url=target, status_code=303)
     target = (next or "/admin").strip() or "/admin"
+    ctx = audit_log.request_context(request)
+    rl = login_rate_limit.check_login_allowed(ip=ctx.get("ip_address"))
+    if not rl.allowed:
+        return HTMLResponse(
+            web_auth.render_login_page(error=rl.message or error, next_path=target),
+            status_code=429,
+        )
     return HTMLResponse(web_auth.render_login_page(error=error, next_path=target))
 
 
@@ -1193,8 +1223,15 @@ def login_submit(
     if not web_users.enabled():
         raise HTTPException(status_code=503, detail="User login requires Postgres.")
     ctx = audit_log.request_context(request)
+    rl = login_rate_limit.check_login_allowed(ip=ctx.get("ip_address"), email=email)
+    if not rl.allowed:
+        return HTMLResponse(
+            web_auth.render_login_page(error=rl.message, next_path=next),
+            status_code=429,
+        )
     user = web_users.authenticate(email, password)
     if not user:
+        login_rate_limit.record_login_failure(ip=ctx.get("ip_address"), email=email)
         audit_log.record(
             action="login.failed",
             actor_email=email,
@@ -1206,6 +1243,7 @@ def login_submit(
             web_auth.render_login_page(error="Invalid email or password.", next_path=next),
             status_code=401,
         )
+    login_rate_limit.clear_login_limits(ip=ctx.get("ip_address"), email=email)
     web_auth.login_user(request, user)
     audit_log.record(
         action="login.success",

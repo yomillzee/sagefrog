@@ -77,6 +77,8 @@ Create additional users at `/admin` after signing in as admin. The **Audit log**
 
 The shared `?key=` link still works when `CRON_SECRET` / `DASHBOARD_SECRET` is set (legacy). **`API_KEY` is unchanged** — still used for `/google-ads/*`, ChatGPT, etc.
 
+**Production hardening:** On Railway, `/docs` and `/openapi.json` are disabled automatically (`DISABLE_API_DOCS=0` to re-enable). Failed logins are rate-limited per IP/email (`AUTH_LOGIN_MAX_FAILURES`, default 5 per 15 minutes, then 15-minute lockout).
+
 ### Multiple GA4 clients (different GCP projects)
 
 Railway `BQ_PROJECT_ID` / `BQ_DATASET_ID` stay the **default** (e.g. Penn). Add other projects via **`GA4_CLIENTS`** (one-line JSON) or per-request overrides on sync.
