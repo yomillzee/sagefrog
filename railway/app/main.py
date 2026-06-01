@@ -26,6 +26,7 @@ from meta_auth import env_summary as meta_env_summary
 from openapi_gpt import build_chatgpt_openapi
 from cron_security import require_cron_secret
 from security import require_api_key
+import audit_log
 import web_auth
 import web_users
 from models import (
@@ -120,7 +121,14 @@ try:
     warehouse.ensure_schema()
     dashboard_snapshots.ensure_schema()
     web_users.ensure_schema()
-    web_users.bootstrap_admin_from_env()
+    audit_log.ensure_schema()
+    boot = web_users.bootstrap_admin_from_env()
+    if boot:
+        audit_log.record(
+            action="user.bootstrap_admin",
+            subject_email=boot.email,
+            detail={"source": "AUTH_BOOTSTRAP_ADMIN_*"},
+        )
 except Exception:
     # If Postgres isn't attached (or is temporarily unavailable), the service should still run.
     pass
@@ -1184,13 +1192,28 @@ def login_submit(
 ):
     if not web_users.enabled():
         raise HTTPException(status_code=503, detail="User login requires Postgres.")
+    ctx = audit_log.request_context(request)
     user = web_users.authenticate(email, password)
     if not user:
+        audit_log.record(
+            action="login.failed",
+            actor_email=email,
+            subject_email=email,
+            detail={"reason": "invalid credentials"},
+            **ctx,
+        )
         return HTMLResponse(
             web_auth.render_login_page(error="Invalid email or password.", next_path=next),
             status_code=401,
         )
     web_auth.login_user(request, user)
+    audit_log.record(
+        action="login.success",
+        actor_user_id=user.id,
+        actor_email=user.email,
+        detail={"role": user.role, "client_slug": user.client_slug},
+        **ctx,
+    )
     target = (next or "/admin").strip() or "/admin"
     if not target.startswith("/"):
         target = "/admin"
@@ -1199,6 +1222,15 @@ def login_submit(
 
 @app.post("/logout", include_in_schema=False)
 def logout(request: Request) -> RedirectResponse:
+    user = web_auth.get_current_user(request)
+    ctx = audit_log.request_context(request)
+    if user:
+        audit_log.record(
+            action="logout",
+            actor_user_id=user.id,
+            actor_email=user.email,
+            **ctx,
+        )
     web_auth.logout_user(request)
     return RedirectResponse(url="/login", status_code=303)
 
@@ -1213,8 +1245,9 @@ def admin_home(
     if not user or user.role != "admin":
         return web_auth.redirect_to_login(request, next_path="/admin")
     users = web_users.list_users(include_inactive=False)
+    events = audit_log.list_recent(limit=150)
     return HTMLResponse(
-        web_auth.render_admin_page(user=user, users=users, message=msg, error=err)
+        web_auth.render_admin_page(user=user, users=users, audit_events=events, message=msg, error=err)
     )
 
 
@@ -1227,8 +1260,9 @@ def admin_create_user(
     client_slug: str | None = Form(None),
     user: web_users.WebUser = Depends(web_auth.require_admin),
 ):
+    ctx = audit_log.request_context(request)
     try:
-        web_users.create_user(
+        created = web_users.create_user(
             email=email,
             password=password,
             role=role,
@@ -1236,10 +1270,19 @@ def admin_create_user(
         )
     except ValueError as e:
         users = web_users.list_users(include_inactive=False)
+        events = audit_log.list_recent(limit=150)
         return HTMLResponse(
-            web_auth.render_admin_page(user=user, users=users, error=str(e)),
+            web_auth.render_admin_page(user=user, users=users, audit_events=events, error=str(e)),
             status_code=400,
         )
+    audit_log.record(
+        action="user.created",
+        actor_user_id=user.id,
+        actor_email=user.email,
+        subject_email=created.email,
+        detail={"role": created.role, "client_slug": created.client_slug},
+        **ctx,
+    )
     return RedirectResponse(url="/admin?msg=User+created", status_code=303)
 
 
@@ -1249,12 +1292,21 @@ def admin_deactivate_user(
     request: Request,
     admin: web_users.WebUser = Depends(web_auth.require_admin),
 ):
+    ctx = audit_log.request_context(request)
     if user_id == admin.id:
         return RedirectResponse(url="/admin?err=Cannot+deactivate+your+own+account", status_code=303)
     target = web_users.get_user_record(user_id)
     if target and target.role == "admin" and web_users.count_admins() <= 1:
         return RedirectResponse(url="/admin?err=Cannot+deactivate+the+only+admin", status_code=303)
-    web_users.deactivate_user(user_id)
+    if target and web_users.deactivate_user(user_id):
+        audit_log.record(
+            action="user.deactivated",
+            actor_user_id=admin.id,
+            actor_email=admin.email,
+            subject_email=target.email,
+            detail={"role": target.role, "client_slug": target.client_slug},
+            **ctx,
+        )
     return RedirectResponse(url="/admin?msg=User+deactivated", status_code=303)
 
 

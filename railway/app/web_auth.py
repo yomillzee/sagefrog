@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 from fastapi import HTTPException, Request
@@ -12,6 +13,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
 import web_users
+import audit_log
 from web_users import WebUser
 
 SESSION_USER_ID = "user_id"
@@ -226,10 +228,24 @@ def render_login_page(*, error: str | None = None, next_path: str = "/admin") ->
 </html>"""
 
 
+def _format_audit_time(iso: str | None) -> str:
+    if not iso:
+        return "—"
+    text = str(iso).strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    except ValueError:
+        return iso[:19] if iso else "—"
+
+
 def render_admin_page(
     *,
     user: WebUser,
     users: list[dict],
+    audit_events: list[dict] | None = None,
     message: str | None = None,
     error: str | None = None,
 ) -> str:
@@ -257,6 +273,22 @@ def render_admin_page(
         )
     user_rows = "\n".join(rows) or '<tr><td colspan="5" class="muted">No users yet.</td></tr>'
 
+    audit_rows = []
+    for ev in audit_events or []:
+        when = _format_audit_time(ev.get("created_at"))
+        label = _esc(ev.get("action_label") or ev.get("action") or "")
+        actor = _esc(ev.get("actor_email") or "—")
+        detail = _esc(audit_log.format_detail(ev))
+        ip = _esc(ev.get("ip_address") or "—")
+        audit_rows.append(
+            f"<tr><td>{when}</td><td>{label}</td><td>{actor}</td>"
+            f"<td>{detail}</td><td class=\"mono\">{ip}</td></tr>"
+        )
+    audit_table = (
+        "\n".join(audit_rows)
+        or '<tr><td colspan="5" class="muted">No events yet.</td></tr>'
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -280,6 +312,8 @@ def render_admin_page(
     table {{ width: 100%; border-collapse: collapse; font-size: .92rem; }}
     th, td {{ text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); }}
     th {{ color: var(--muted); font-weight: 600; font-size: .8rem; text-transform: uppercase; }}
+    td.mono, th.mono {{ font-family: ui-monospace, monospace; font-size: .82rem; }}
+    .audit-wrap {{ max-height: 420px; overflow: auto; }}
     label {{ display: block; font-size: .85rem; font-weight: 600; margin-bottom: 6px; }}
     input, select {{ width: 100%; max-width: 320px; padding: 8px 10px; border: 1px solid var(--border);
       border-radius: 8px; margin-bottom: 12px; }}
@@ -352,6 +386,16 @@ def render_admin_page(
         <thead><tr><th>Email</th><th>Role</th><th>Client</th><th>Active</th><th></th></tr></thead>
         <tbody>{user_rows}</tbody>
       </table>
+    </section>
+    <section>
+      <h2>Audit log</h2>
+      <p class="muted" style="margin:0 0 12px;font-size:.9rem">Sign-ins, sign-outs, and admin user changes (latest 150).</p>
+      <div class="audit-wrap">
+        <table>
+          <thead><tr><th>When</th><th>Event</th><th>Actor</th><th>Details</th><th class="mono">IP</th></tr></thead>
+          <tbody>{audit_table}</tbody>
+        </table>
+      </div>
     </section>
   </main>
 </body>

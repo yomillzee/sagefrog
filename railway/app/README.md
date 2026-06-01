@@ -73,7 +73,9 @@ Requires **Postgres** (`DATABASE_URL`). The service creates a `web_users` table.
 - `admin` — all dashboards + `/admin`
 - `client` — only dashboards matching `client_slug` (e.g. `penn`)
 
-Create additional users at `/admin` after signing in as admin. The shared `?key=` link still works when `CRON_SECRET` / `DASHBOARD_SECRET` is set (legacy). **`API_KEY` is unchanged** — still used for `/google-ads/*`, ChatGPT, etc.
+Create additional users at `/admin` after signing in as admin. The **Audit log** section on `/admin` records sign-ins, sign-outs, failed logins, and user create/deactivate actions (with actor, target, IP).
+
+The shared `?key=` link still works when `CRON_SECRET` / `DASHBOARD_SECRET` is set (legacy). **`API_KEY` is unchanged** — still used for `/google-ads/*`, ChatGPT, etc.
 
 ### Multiple GA4 clients (different GCP projects)
 
