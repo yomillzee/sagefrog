@@ -1255,12 +1255,12 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       padding: 14px 10px 16px;
       border-right: 1px solid rgba(255,255,255,0.06);
       box-shadow: 4px 0 24px rgba(10, 37, 64, 0.12);
-      overflow: hidden;
+      overflow: visible;
       transition: transform 0.24s ease, box-shadow 0.24s ease;
       position: sticky;
       top: 0;
       height: 100vh;
-      z-index: 40;
+      z-index: 55;
     }}
     .sidebar-backdrop {{
       display: none;
@@ -1363,6 +1363,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       flex-direction: column;
       gap: 10px;
       position: relative;
+      overflow: visible;
     }}
     .client-block {{
       display: flex;
@@ -1398,7 +1399,8 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
     .info-tip::after {{
       content: attr(data-tip);
       position: absolute;
-      left: 0;
+      right: 0;
+      left: auto;
       bottom: calc(100% + 8px);
       width: max-content;
       max-width: 240px;
