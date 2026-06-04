@@ -1361,7 +1361,7 @@ def internal_sync_penn(date_range: str = "LAST_30_DAYS") -> dict:
             detail=f"Invalid date_range. Use one of: {', '.join(sorted(_WAREHOUSE_DATE_RANGES))}",
         )
     try:
-        return dashboard_service.refresh_penn(date_range=preset)
+        return dashboard_service.refresh_penn(date_range=preset, sync_trigger="cron")
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
@@ -1384,13 +1384,23 @@ def _penn_html_session_kwargs(auth: web_auth.DashboardAuth) -> dict:
     response_class=HTMLResponse,
     include_in_schema=False,
 )
-def dashboard_penn(request: Request, key: str | None = None, synced: str | None = None):
+def dashboard_penn(
+    request: Request,
+    key: str | None = None,
+    synced: str | None = None,
+    insights_saved: str | None = None,
+):
+    if insights_saved:
+        flash = "Insights saved."
+    elif synced:
+        flash = "Dashboard refreshed."
+    else:
+        flash = None
     if web_users.enabled():
         auth = web_auth.authenticate_dashboard(request, client_slug="penn", key=key)
         if isinstance(auth, RedirectResponse):
             return auth
         snapshot = dashboard_snapshots.get_snapshot("penn")
-        flash = "Dashboard refreshed." if synced else None
         return HTMLResponse(
             dashboard_service.render_penn_html(
                 snapshot,
@@ -1400,7 +1410,6 @@ def dashboard_penn(request: Request, key: str | None = None, synced: str | None 
         )
     dashboard_service.verify_dashboard_key(key)
     snapshot = dashboard_snapshots.get_snapshot("penn")
-    flash = "Dashboard refreshed." if synced else None
     return HTMLResponse(
         dashboard_service.render_penn_html(snapshot, access_key=key, flash_message=flash)
     )
@@ -1413,7 +1422,12 @@ def dashboard_penn(request: Request, key: str | None = None, synced: str | None 
     response_model=None,
     include_in_schema=False,
 )
-def dashboard_penn_refresh(request: Request, key: str | None = None, date_range: str = "LAST_30_DAYS"):
+def dashboard_penn_refresh(
+    request: Request,
+    key: str | None = None,
+    date_range: str = "LAST_30_DAYS",
+    quick: str | None = Form(None),
+):
     if web_users.enabled():
         auth = web_auth.authenticate_dashboard(request, client_slug="penn", key=key)
         if isinstance(auth, RedirectResponse):
@@ -1426,7 +1440,8 @@ def dashboard_penn_refresh(request: Request, key: str | None = None, date_range:
         use_session = False
 
     snapshot = dashboard_snapshots.get_snapshot("penn")
-    allowed, remaining = dashboard_service.refresh_cooldown_status(snapshot)
+    is_quick = str(quick or "").strip().lower() in ("1", "true", "yes", "on")
+    allowed, remaining = dashboard_service.refresh_cooldown_status(snapshot, quick=is_quick)
     penn_kw = (
         _penn_html_session_kwargs(auth)
         if web_users.enabled()
@@ -1434,10 +1449,11 @@ def dashboard_penn_refresh(request: Request, key: str | None = None, date_range:
     )
     if not allowed:
         mins = max(1, (remaining + 59) // 60)
+        kind = "quick" if is_quick else "full"
         return HTMLResponse(
             dashboard_service.render_penn_html(
                 snapshot,
-                flash_message=f"Please wait ~{mins} minutes before refreshing again.",
+                flash_message=f"Please wait ~{mins} minutes before another {kind} refresh.",
                 **penn_kw,
             ),
             status_code=429,
@@ -1446,7 +1462,10 @@ def dashboard_penn_refresh(request: Request, key: str | None = None, date_range:
     if preset not in _WAREHOUSE_DATE_RANGES:
         preset = "LAST_30_DAYS"
     try:
-        dashboard_service.refresh_penn(date_range=preset)
+        if is_quick:
+            dashboard_service.refresh_penn_quick(date_range=preset, sync_trigger="manual_quick")
+        else:
+            dashboard_service.refresh_penn(date_range=preset, sync_trigger="manual_full")
     except Exception as e:
         return HTMLResponse(
             dashboard_service.render_penn_html(
@@ -1460,6 +1479,72 @@ def dashboard_penn_refresh(request: Request, key: str | None = None, date_range:
         return RedirectResponse(url="/dashboard/penn?synced=1", status_code=303)
     return RedirectResponse(
         url=f"/dashboard/penn?key={quote(access_key or '', safe='')}&synced=1",
+        status_code=303,
+    )
+
+
+@app.post(
+    "/dashboard/penn/insights",
+    summary="Save Penn dashboard insights text",
+    response_class=HTMLResponse,
+    response_model=None,
+    include_in_schema=False,
+)
+def dashboard_penn_insights(
+    request: Request,
+    body: str = Form(""),
+    key: str | None = None,
+):
+    auth = None
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug="penn", key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        access_key = auth.access_key
+        use_session = auth.use_session
+        user = auth.user
+        if not dashboard_service.can_edit_penn_insights(
+            session_is_admin=bool(user and user.role == "admin"),
+            access_key=access_key,
+        ):
+            snapshot = dashboard_snapshots.get_snapshot("penn")
+            return HTMLResponse(
+                dashboard_service.render_penn_html(
+                    snapshot,
+                    flash_message="Only admins can edit insights.",
+                    **_penn_html_session_kwargs(auth),
+                ),
+                status_code=403,
+            )
+        updated_by = user.email if user else None
+    else:
+        dashboard_service.verify_dashboard_key(key)
+        access_key = key
+        use_session = False
+        updated_by = "dashboard_key"
+
+    try:
+        dashboard_service.save_penn_insights(body, updated_by=updated_by)
+    except Exception as e:
+        snapshot = dashboard_snapshots.get_snapshot("penn")
+        penn_kw = (
+            _penn_html_session_kwargs(auth)
+            if web_users.enabled()
+            else {"access_key": access_key, "use_session": use_session}
+        )
+        return HTMLResponse(
+            dashboard_service.render_penn_html(
+                snapshot,
+                flash_message=f"Could not save insights: {str(e)[:200]}",
+                **penn_kw,
+            ),
+            status_code=400,
+        )
+
+    if use_session:
+        return RedirectResponse(url="/dashboard/penn?insights_saved=1", status_code=303)
+    return RedirectResponse(
+        url=f"/dashboard/penn?key={quote(access_key or '', safe='')}&insights_saved=1",
         status_code=303,
     )
 

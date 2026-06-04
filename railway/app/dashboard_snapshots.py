@@ -39,12 +39,37 @@ def ensure_schema() -> bool:
     return True
 
 
-def save_snapshot(client_key: str, payload: dict[str, Any]) -> None:
+def save_snapshot(
+    client_key: str,
+    payload: dict[str, Any],
+    *,
+    touch_refreshed_at: bool = True,
+) -> None:
     if not enabled():
         raise RuntimeError("DATABASE_URL is not set — dashboard snapshots require Postgres.")
     ensure_schema()
-    now = datetime.now(tz=UTC)
-    payload = {**payload, "refreshed_at": now.isoformat()}
+    existing = get_snapshot(client_key)
+    if touch_refreshed_at:
+        now = datetime.now(tz=UTC)
+        payload = {**payload, "refreshed_at": now.isoformat()}
+        refreshed_db = now
+    else:
+        prior = (existing or {}).get("refreshed_at")
+        if prior:
+            payload = {**payload, "refreshed_at": prior}
+        refreshed_db = None
+        if existing:
+            raw = existing.get("refreshed_at")
+            if raw:
+                try:
+                    text = str(raw).strip().replace("Z", "+00:00")
+                    refreshed_db = datetime.fromisoformat(text)
+                    if refreshed_db.tzinfo is None:
+                        refreshed_db = refreshed_db.replace(tzinfo=UTC)
+                except ValueError:
+                    refreshed_db = datetime.now(tz=UTC)
+        if refreshed_db is None:
+            refreshed_db = datetime.now(tz=UTC)
     with psycopg.connect(_get_db_url()) as conn:
         conn.execute(
             """
@@ -54,7 +79,7 @@ def save_snapshot(client_key: str, payload: dict[str, Any]) -> None:
               payload_json = EXCLUDED.payload_json,
               refreshed_at = EXCLUDED.refreshed_at
             """,
-            (client_key, json.dumps(payload), now),
+            (client_key, json.dumps(payload), refreshed_db),
         )
 
 
