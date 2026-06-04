@@ -1,0 +1,9 @@
+# Force Python provider when Railway/Nixpacks does not infer from an empty requirements.txt.
+[phases.setup]
+nixPkgs = ["python312"]
+
+[phases.install]
+cmds = ["true"]
+
+[start]
+cmd = "python run_sync_penn.py"
