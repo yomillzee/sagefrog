@@ -526,14 +526,158 @@ def _accumulate_metrics(rec: dict[str, Any], row: dict[str, Any]) -> None:
     rec["conversion_value"] += float(_dig(row, "metrics", "conversions_value") or 0)
 
 
+def _merge_ad_media(
+    index: dict[str, dict[str, str]],
+    ad_id: str,
+    media: dict[str, str],
+) -> None:
+    """Prefer entries that include a usable thumbnail or video embed."""
+    ad_id = str(ad_id or "").strip()
+    if not ad_id:
+        return
+    has_visual = bool(
+        str(media.get("thumbnail_url") or media.get("image_url") or "").strip()
+        or str(media.get("youtube_embed_url") or media.get("video_url") or "").strip()
+    )
+    if not has_visual:
+        return
+
+    def strength(m: dict[str, str]) -> tuple[int, int]:
+        visual = bool(str(m.get("thumbnail_url") or m.get("image_url") or "").strip())
+        video = bool(str(m.get("youtube_embed_url") or m.get("video_url") or "").strip())
+        return (1 if visual else 0, 1 if video else 0)
+
+    existing = index.get(ad_id)
+    if not existing or strength(media) >= strength(existing):
+        merged = dict(existing or {})
+        for key, val in media.items():
+            if val:
+                merged[key] = val
+        index[ad_id] = merged
+
+
+def _asset_ids_from_link_field(value: Any) -> list[str]:
+    """Parse asset resource names from responsive ad image/video link fields."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        aid = _asset_resource_tail(value)
+        return [aid] if aid else []
+    items = value if isinstance(value, list) else [value]
+    ids: list[str] = []
+    for item in items:
+        if isinstance(item, str):
+            aid = _asset_resource_tail(item)
+        elif isinstance(item, dict):
+            aid = _asset_resource_tail(str(item.get("asset") or item.get("resource_name") or ""))
+        else:
+            aid = None
+        if aid:
+            ids.append(aid)
+    return ids
+
+
+def _fetch_image_urls_for_assets(
+    customer_id: str,
+    asset_ids: set[str],
+    *,
+    client: GoogleAdsClient | None = None,
+) -> dict[str, str]:
+    """Map asset id -> image URL."""
+    out: dict[str, str] = {}
+    if not asset_ids:
+        return out
+    client = client or build_client()
+    ids = sorted(asset_ids)
+    for offset in range(0, len(ids), 200):
+        chunk = ids[offset : offset + 200]
+        id_list = ", ".join(chunk)
+        query = f"""
+            SELECT
+              asset.id,
+              asset.name,
+              asset.image_asset.full_size.url,
+              asset.image_asset.preview_image_url
+            FROM asset
+            WHERE asset.id IN ({id_list})
+        """
+        for raw in search(customer_id, query, client=client):
+            aid = str(_dig(raw, "asset", "id") or "")
+            url = str(
+                _dig(raw, "asset", "image_asset", "full_size", "url")
+                or _dig(raw, "asset", "image_asset", "preview_image_url")
+                or ""
+            )
+            if aid and url:
+                out[aid] = url
+    return out
+
+
+def _fetch_youtube_media_for_assets(
+    customer_id: str,
+    asset_ids: set[str],
+    *,
+    client: GoogleAdsClient | None = None,
+) -> dict[str, dict[str, str]]:
+    """Map asset id -> video preview fields."""
+    out: dict[str, dict[str, str]] = {}
+    if not asset_ids:
+        return out
+    client = client or build_client()
+    ids = sorted(asset_ids)
+    for offset in range(0, len(ids), 200):
+        chunk = ids[offset : offset + 200]
+        id_list = ", ".join(chunk)
+        query = f"""
+            SELECT
+              asset.id,
+              asset.name,
+              asset.youtube_video_asset.youtube_video_id,
+              asset.youtube_video_asset.youtube_video_title
+            FROM asset
+            WHERE asset.id IN ({id_list})
+              AND asset.youtube_video_asset.youtube_video_id != ''
+        """
+        for raw in search(customer_id, query, client=client):
+            aid = str(_dig(raw, "asset", "id") or "")
+            video_id = _normalize_youtube_id(
+                _dig(raw, "asset", "youtube_video_asset", "youtube_video_id")
+            )
+            if not aid or not video_id:
+                continue
+            urls = youtube_urls(video_id)
+            out[aid] = {
+                "thumbnail_url": urls["youtube_thumbnail_url"],
+                "image_url": "",
+                "media_type": "video",
+                "creative_name": str(
+                    _dig(raw, "asset", "youtube_video_asset", "youtube_video_title")
+                    or _dig(raw, "asset", "name")
+                    or ""
+                ),
+                "youtube_embed_url": urls["youtube_embed_url"],
+                "youtube_watch_url": urls["youtube_watch_url"],
+                "video_url": urls["youtube_embed_url"],
+            }
+    return out
+
+
 def fetch_ad_media_index(
     customer_id: str,
     *,
     client: GoogleAdsClient | None = None,
 ) -> dict[str, dict[str, str]]:
-    """Map Google ad id -> thumbnail / image metadata when available."""
+    """
+    Map Google ad id -> thumbnail / image / video metadata.
+
+    Uses multiple sources because Display image ads, responsive display ads, and
+    video ads are not all exposed through ad_group_ad_asset_view alone.
+    """
     customer_id_clean = str(customer_id).replace("-", "").strip()
+    client = client or build_client()
     index: dict[str, dict[str, str]] = {}
+    pending_image_assets: dict[str, list[str]] = {}
+    pending_video_assets: dict[str, list[str]] = {}
 
     try:
         for row in list_youtube_videos(
@@ -548,24 +692,32 @@ def fetch_ad_media_index(
             thumb = str(row.get("youtube_thumbnail_url") or "")
             embed = str(row.get("youtube_embed_url") or "")
             watch = str(row.get("youtube_watch_url") or "")
-            index[ad_id] = {
-                "thumbnail_url": thumb,
-                "image_url": "",
-                "media_type": "video",
-                "creative_name": str(
-                    row.get("youtube_video_title") or row.get("asset_name") or ""
-                ),
-                "youtube_embed_url": embed,
-                "youtube_watch_url": watch,
-                "video_url": embed or watch,
-            }
+            _merge_ad_media(
+                index,
+                ad_id,
+                {
+                    "thumbnail_url": thumb,
+                    "image_url": "",
+                    "media_type": "video",
+                    "creative_name": str(
+                        row.get("youtube_video_title") or row.get("asset_name") or ""
+                    ),
+                    "youtube_embed_url": embed,
+                    "youtube_watch_url": watch,
+                    "video_url": embed or watch,
+                },
+            )
     except Exception:
         pass
 
     image_query = """
         SELECT
           ad_group_ad.ad.id,
-          asset.image_asset.full_size.url
+          ad_group_ad_asset_view.field_type,
+          asset.id,
+          asset.name,
+          asset.image_asset.full_size.url,
+          asset.image_asset.preview_image_url
         FROM ad_group_ad_asset_view
         WHERE ad_group_ad.status != 'REMOVED'
           AND asset.image_asset.full_size.url != ''
@@ -573,17 +725,148 @@ def fetch_ad_media_index(
     try:
         for raw in search(customer_id_clean, image_query, client=client):
             ad_id = str(_dig(raw, "ad_group_ad", "ad", "id") or "")
-            url = str(_dig(raw, "asset", "image_asset", "full_size", "url") or "")
-            if not ad_id or not url or ad_id in index:
+            url = str(
+                _dig(raw, "asset", "image_asset", "full_size", "url")
+                or _dig(raw, "asset", "image_asset", "preview_image_url")
+                or ""
+            )
+            if not ad_id or not url:
                 continue
-            index[ad_id] = {
-                "thumbnail_url": url,
-                "image_url": url,
-                "media_type": "image",
-                "creative_name": "",
-            }
+            _merge_ad_media(
+                index,
+                ad_id,
+                {
+                    "thumbnail_url": url,
+                    "image_url": url,
+                    "media_type": "image",
+                    "creative_name": str(_dig(raw, "asset", "name") or ""),
+                },
+            )
     except Exception:
         pass
+
+    def _ingest_ad_creative_row(raw: dict[str, Any]) -> None:
+        ad_id = str(_dig(raw, "ad_group_ad", "ad", "id") or "")
+        if not ad_id:
+            return
+        image_url = str(
+            _dig(raw, "ad_group_ad", "ad", "image_ad", "image_url")
+            or _dig(raw, "ad_group_ad", "ad", "image_ad", "preview_image_url")
+            or ""
+        )
+        if image_url:
+            _merge_ad_media(
+                index,
+                ad_id,
+                {
+                    "thumbnail_url": image_url,
+                    "image_url": image_url,
+                    "media_type": "image",
+                    "creative_name": str(
+                        _dig(raw, "ad_group_ad", "ad", "image_ad", "name")
+                        or _dig(raw, "ad_group_ad", "ad", "name")
+                        or ""
+                    ),
+                },
+            )
+
+        rda = _dig(raw, "ad_group_ad", "ad", "responsive_display_ad")
+        if isinstance(rda, dict):
+            for key in (
+                "marketing_images",
+                "square_marketing_images",
+                "logo_images",
+            ):
+                pending_image_assets.setdefault(ad_id, []).extend(
+                    _asset_ids_from_link_field(rda.get(key))
+                )
+
+        bundle = _dig(raw, "ad_group_ad", "ad", "display_upload_ad", "media_bundle")
+        bundle_id = _asset_resource_tail(bundle if isinstance(bundle, str) else None)
+        if bundle_id:
+            pending_image_assets.setdefault(ad_id, []).append(bundle_id)
+
+        for video_key in ("video_responsive_ad", "demand_gen_video_responsive_ad"):
+            block = _dig(raw, "ad_group_ad", "ad", video_key)
+            if isinstance(block, dict):
+                pending_video_assets.setdefault(ad_id, []).extend(
+                    _asset_ids_from_link_field(block.get("videos"))
+                )
+
+    ad_creative_query = """
+        SELECT
+          ad_group_ad.ad.id,
+          ad_group_ad.ad.name,
+          ad_group_ad.ad.type,
+          ad_group_ad.ad.image_ad.image_url,
+          ad_group_ad.ad.image_ad.preview_image_url,
+          ad_group_ad.ad.image_ad.name,
+          ad_group_ad.ad.responsive_display_ad.marketing_images,
+          ad_group_ad.ad.responsive_display_ad.square_marketing_images,
+          ad_group_ad.ad.responsive_display_ad.logo_images,
+          ad_group_ad.ad.display_upload_ad.media_bundle,
+          ad_group_ad.ad.video_responsive_ad.videos,
+          ad_group_ad.ad.demand_gen_video_responsive_ad.videos
+        FROM ad_group_ad
+        WHERE ad_group_ad.status != 'REMOVED'
+    """
+    try:
+        for raw in search(customer_id_clean, ad_creative_query, client=client):
+            _ingest_ad_creative_row(raw)
+    except Exception:
+        pass
+
+    demand_gen_query = """
+        SELECT
+          ad_group_ad.ad.id,
+          ad_group_ad.ad.demand_gen_multi_asset_ad.marketing_images
+        FROM ad_group_ad
+        WHERE ad_group_ad.status != 'REMOVED'
+    """
+    try:
+        for raw in search(customer_id_clean, demand_gen_query, client=client):
+            ad_id = str(_dig(raw, "ad_group_ad", "ad", "id") or "")
+            if not ad_id:
+                continue
+            dg = _dig(raw, "ad_group_ad", "ad", "demand_gen_multi_asset_ad")
+            if isinstance(dg, dict):
+                pending_image_assets.setdefault(ad_id, []).extend(
+                    _asset_ids_from_link_field(dg.get("marketing_images"))
+                )
+    except Exception:
+        pass
+
+    all_image_ids = {aid for aids in pending_image_assets.values() for aid in aids}
+    image_urls = _fetch_image_urls_for_assets(
+        customer_id_clean, all_image_ids, client=client
+    )
+    for ad_id, asset_ids in pending_image_assets.items():
+        for aid in asset_ids:
+            url = image_urls.get(aid)
+            if not url:
+                continue
+            _merge_ad_media(
+                index,
+                ad_id,
+                {
+                    "thumbnail_url": url,
+                    "image_url": url,
+                    "media_type": "image",
+                    "creative_name": "",
+                },
+            )
+            break
+
+    all_video_ids = {aid for aids in pending_video_assets.values() for aid in aids}
+    video_by_asset = _fetch_youtube_media_for_assets(
+        customer_id_clean, all_video_ids, client=client
+    )
+    for ad_id, asset_ids in pending_video_assets.items():
+        for aid in asset_ids:
+            media = video_by_asset.get(aid)
+            if media:
+                _merge_ad_media(index, ad_id, media)
+                break
 
     return index
 
