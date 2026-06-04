@@ -8,6 +8,7 @@ Lightweight Railway **cron service** that triggers `POST /internal/sync-penn` on
 2. **Settings → Root Directory:** `railway/cron-sync-penn`
 3. **Settings → Config-as-code:** should pick up `railway.toml` (`cronSchedule = 0 11 * * *` = ~6am US Eastern).
 4. **Build:** includes `requirements.txt` + `nixpacks.toml` so Nixpacks detects Python (stdlib-only script).
+5. **No health check:** `healthcheckPath` is disabled in `railway.toml` / `railway.json`. Do **not** copy `/health` from the main `sagefrog` service — this worker has no web server.
 4. **Variables** (same project/environment as the API):
    - `CRON_SECRET` — same value as on the main API service
    - Optional: `SYNC_BASE_URL` (default `https://sagefrog-production.up.railway.app`)
