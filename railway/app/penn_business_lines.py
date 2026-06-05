@@ -115,10 +115,19 @@ def _classification_names(row: dict[str, Any]) -> tuple[str, ...]:
 
 
 def _campaign_rows_from_breakdowns(breakdowns: dict[str, Any]) -> list[dict[str, Any]]:
-    """Collect campaign-level rows from each paid platform (no LinkedIn group double-count)."""
+    """Collect campaign-level rows from each paid platform.
+
+    LinkedIn API ``campaign`` rows are ad sets (e.g. "St Rocco's Video"); business-line
+    rules match on campaign group names (e.g. "Commercial Retargeting - LinkedIn - 2026").
+    """
     rows: list[dict[str, Any]] = []
     for platform in ("google", "linkedin", "meta"):
-        for row in (breakdowns.get(platform) or {}).get("campaign") or []:
+        platform_data = breakdowns.get(platform) or {}
+        if platform == "linkedin":
+            source = platform_data.get("campaign_group") or []
+        else:
+            source = platform_data.get("campaign") or []
+        for row in source:
             rows.append({**row, "_platform": platform})
     return rows
 
@@ -141,8 +150,8 @@ def build_business_line_campaigns(
     for row in _campaign_rows_from_breakdowns(breakdowns):
         platform = str(row.get("_platform") or "")
         names = _classification_names(row)
-        primary = names[-1] if names else "—"
-        extras = names[:-1]
+        primary = names[0] if names else "—"
+        extras = names[1:]
         bid, blabel = classify_business_line(
             primary,
             extra_names=extras,
@@ -152,6 +161,7 @@ def build_business_line_campaigns(
             {
                 "platform": platform,
                 "platform_label": PLATFORM_LABELS.get(platform, platform),
+                "entity_level": str(row.get("entity_level") or "campaign"),
                 "id": str(row.get("id") or ""),
                 "name": primary,
                 "business_line": bid,

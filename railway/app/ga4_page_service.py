@@ -122,6 +122,84 @@ def fetch_page_metrics(
     return out
 
 
+def fetch_site_metrics_summary(
+    *,
+    start: date,
+    end: date,
+    target: Ga4ClientTarget | None = None,
+) -> dict[str, Any]:
+    """Site-wide GA4 session metrics for the dashboard summary bar."""
+    target = target or resolve_target()
+    _ensure_bq_ready()
+
+    suffix_start = start.strftime("%Y%m%d")
+    suffix_end = end.strftime("%Y%m%d")
+    table = _events_table(target)
+    key_events = _key_events_sql_list()
+
+    sql = f"""
+    WITH raw_events AS (
+      SELECT
+        user_pseudo_id,
+        (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS ga_session_id,
+        event_name,
+        event_timestamp,
+        (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'engagement_time_msec') AS engagement_time_msec
+      FROM {table}
+      WHERE _TABLE_SUFFIX BETWEEN '{suffix_start}' AND '{suffix_end}'
+        AND (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') IS NOT NULL
+    ),
+    session_rollups AS (
+      SELECT
+        user_pseudo_id,
+        ga_session_id,
+        COUNT(*) AS event_count,
+        COUNTIF(event_name = 'page_view') AS page_views,
+        SUM(IFNULL(engagement_time_msec, 0)) AS total_engagement_time_msec,
+        COALESCE(MAX(engagement_time_msec), 0) AS max_engagement_time_msec,
+        COUNTIF(event_name IN ({key_events})) AS key_events,
+        COUNTIF(event_name = 'user_engagement') AS user_engagement_events,
+        TIMESTAMP_MICROS(MIN(event_timestamp)) AS session_start_ts,
+        TIMESTAMP_MICROS(MAX(event_timestamp)) AS session_end_ts
+      FROM raw_events
+      GROUP BY user_pseudo_id, ga_session_id
+    ),
+    session_metrics AS (
+      SELECT
+        *,
+        TIMESTAMP_DIFF(session_end_ts, session_start_ts, SECOND) AS session_duration_sec,
+        (
+          max_engagement_time_msec >= 10000
+          OR page_views >= 2
+          OR key_events >= 1
+          OR user_engagement_events >= 1
+        ) AS is_engaged
+      FROM session_rollups
+    )
+    SELECT
+      COUNT(*) AS sessions,
+      COUNTIF(is_engaged) AS engaged_sessions,
+      SAFE_DIVIDE(COUNTIF(is_engaged), COUNT(*)) AS engagement_rate,
+      SAFE_DIVIDE(SUM(total_engagement_time_msec) / 1000.0, COUNT(*)) AS avg_engagement_time_sec,
+      SAFE_DIVIDE(AVG(session_duration_sec), 1) AS avg_session_duration_sec,
+      SAFE_DIVIDE(SUM(event_count), COUNT(*)) AS events_per_session,
+      SAFE_DIVIDE(SUM(page_views), COUNT(*)) AS views_per_session
+    FROM session_metrics
+    """
+    rows = run_query(sql, max_rows=1, project_id=target.bq_project_id)
+    row = rows[0] if rows else {}
+    sessions = int(row.get("sessions") or 0)
+    return {
+        "sessions": sessions,
+        "engaged_sessions": int(row.get("engaged_sessions") or 0),
+        "engagement_rate": round(float(row.get("engagement_rate") or 0), 4),
+        "avg_engagement_time_sec": round(float(row.get("avg_engagement_time_sec") or 0), 1),
+        "avg_session_duration_sec": round(float(row.get("avg_session_duration_sec") or 0), 1),
+        "events_per_session": round(float(row.get("events_per_session") or 0), 2),
+        "views_per_session": round(float(row.get("views_per_session") or 0), 2),
+    }
+
+
 def fetch_pages_for_dashboard(
     *,
     date_range: str = "LAST_30_DAYS",
@@ -131,6 +209,7 @@ def fetch_pages_for_dashboard(
     target = resolve_target(client_key=client_key)
     start, end, preset = resolve_date_range(date_range)
     pages = fetch_page_metrics(start=start, end=end, target=target, limit=limit)
+    summary = fetch_site_metrics_summary(start=start, end=end, target=target)
     return {
         "client_key": target.client_key,
         "account_id": target.account_id,
@@ -138,5 +217,6 @@ def fetch_pages_for_dashboard(
         "bq_dataset_id": target.bq_dataset_id,
         "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
         "row_count": len(pages),
+        "summary": summary,
         "pages": pages,
     }
