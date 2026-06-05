@@ -2023,18 +2023,23 @@ def render_penn_html(
             dates_set.add(str(row.get("metric_date") or "")[:10])
     dates = sorted(d for d in dates_set if d)
 
-    def series_for(source: str) -> list[float]:
-        by_date = {str(r.get("metric_date") or "")[:10]: float(r.get("spend") or 0) for r in chart_data.get(source, [])}
+    def platform_metric_series(source: str, field: str) -> list[float]:
+        by_date = {
+            str(r.get("metric_date") or "")[:10]: float(r.get(field) or 0)
+            for r in chart_data.get(source, [])
+        }
         return [by_date.get(d, 0.0) for d in dates]
 
-    chart_json = _json_for_html_script(
+    performance_chart_json = _json_for_html_script(
         {
             "labels": dates,
-            "datasets": [
-                {"label": "Google Ads", "data": series_for("google"), "borderColor": "#4285f4"},
-                {"label": "LinkedIn", "data": series_for("linkedin"), "borderColor": "#e67e22"},
-                {"label": "Meta", "data": series_for("meta"), "borderColor": "#1877f2"},
-            ],
+            "metrics": {
+                metric: {
+                    platform: platform_metric_series(platform, metric)
+                    for platform in ("google", "linkedin", "meta")
+                }
+                for metric in ("spend", "clicks", "impressions", "conversions")
+            },
         }
     )
 
@@ -2066,50 +2071,6 @@ def render_penn_html(
         present = {p for p in ("google", "linkedin", "meta") if totals.get(p)}
         platform_catalog_list = [item for item in platform_catalog() if item["id"] in present]
     platform_catalog_json = _json_for_html_script(platform_catalog_list)
-    combined_daily = (ga4_attr or {}).get("combined_daily") or []
-    if not combined_daily and (ga4_attr or {}).get("daily"):
-        combined_daily = [
-            {
-                "metric_date": d.get("metric_date"),
-                "google": int(d.get("sessions") or 0),
-                "linkedin": 0,
-                "meta": 0,
-                "key_events": int(d.get("key_events") or 0),
-            }
-            for d in ga4_attr.get("daily") or []
-        ]
-    ga4_attr_chart_json = _json_for_html_script(
-        {
-            "labels": [str(d.get("metric_date") or "")[:10] for d in combined_daily],
-            "datasets": [
-                {
-                    "label": "Google Ads sessions",
-                    "data": [int(d.get("google") or 0) for d in combined_daily],
-                    "borderColor": "#4285f4",
-                    "yAxisID": "y",
-                },
-                {
-                    "label": "LinkedIn sessions",
-                    "data": [int(d.get("linkedin") or 0) for d in combined_daily],
-                    "borderColor": "#e67e22",
-                    "yAxisID": "y",
-                },
-                {
-                    "label": "Meta sessions",
-                    "data": [int(d.get("meta") or 0) for d in combined_daily],
-                    "borderColor": "#1877f2",
-                    "yAxisID": "y",
-                },
-                {
-                    "label": "Key events (all)",
-                    "data": [int(d.get("key_events") or 0) for d in combined_daily],
-                    "borderColor": "#b8922e",
-                    "borderDash": [4, 4],
-                    "yAxisID": "y1",
-                },
-            ],
-        }
-    )
     sidebar_nav = _sidebar_nav_html(
         client_slug=client_slug,
         active="overview",
@@ -2983,6 +2944,95 @@ def render_penn_html(
     .site-impact-details .table-wrap {{ margin-top: 10px; }}
     .data-table.compact th, .data-table.compact td {{ padding: 8px 10px; font-size: 0.82rem; }}
     .chart-stack {{ display: flex; flex-direction: column; gap: 24px; }}
+    .performance-trend-panel {{
+      border-top: 3px solid #16a34a;
+    }}
+    .performance-trend-head {{
+      align-items: flex-start;
+      gap: 16px;
+    }}
+    .performance-trend-head .panel-head-text {{
+      flex: 1;
+      min-width: 200px;
+    }}
+    .performance-trend-head h2 {{
+      margin: 0 0 6px;
+    }}
+    .performance-trend-desc {{
+      margin: 0;
+      font-size: 0.84rem;
+      line-height: 1.45;
+      max-width: 640px;
+    }}
+    .performance-trend-controls {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px 12px;
+      flex-shrink: 0;
+    }}
+    .metric-toggle-group {{
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+    }}
+    .metric-toggle {{
+      appearance: none;
+      border: 1.5px solid var(--border);
+      background: #fff;
+      color: var(--muted);
+      padding: 7px 14px;
+      border-radius: 999px;
+      font-size: 0.84rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+      white-space: nowrap;
+    }}
+    .metric-toggle:hover {{
+      border-color: #b8c4d4;
+      color: var(--navy);
+    }}
+    .metric-toggle.active {{
+      font-weight: 600;
+      box-shadow: 0 1px 3px rgba(10, 37, 64, 0.1);
+    }}
+    .metric-toggle[data-metric="spend"].active {{
+      background: #eef4ff;
+      border-color: #4285f4;
+      color: #4285f4;
+    }}
+    .metric-toggle[data-metric="clicks"].active {{
+      background: #eef4ff;
+      border-color: #4285f4;
+      color: #4285f4;
+    }}
+    .metric-toggle[data-metric="impressions"].active {{
+      background: #fef6ee;
+      border-color: #e67e22;
+      color: #e67e22;
+    }}
+    .metric-toggle[data-metric="conversions"].active {{
+      background: #ecfdf3;
+      border-color: #16a34a;
+      color: #16a34a;
+    }}
+    .performance-trend-chart-wrap {{
+      position: relative;
+      min-height: 320px;
+    }}
+    .performance-trend-empty {{
+      display: none;
+      padding: 48px 16px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }}
+    .performance-trend-empty.show {{
+      display: block;
+    }}
     .chart-subhead {{
       margin: 0 0 8px;
       font-size: 0.88rem;
@@ -3817,23 +3867,28 @@ def render_penn_html(
               {_summary_card("Meta", totals.get("meta"), platform="meta")}
             </div>
 
-            <section class="panel">
-              <div class="panel-head">
-                <h2>Performance</h2>
-                <div class="chart-period-toggle" role="group" aria-label="Chart period">
-                  <button type="button" class="chart-period-btn active" data-period="daily" aria-pressed="true">Daily</button>
-                  <button type="button" class="chart-period-btn" data-period="weekly" aria-pressed="false">Weekly</button>
+            <section class="panel performance-trend-panel">
+              <div class="panel-head performance-trend-head">
+                <div class="panel-head-text">
+                  <h2>Daily Paid Performance Trend</h2>
+                  <p class="performance-trend-desc muted">Daily combined paid-media totals across selected channels. Toggle metrics on or off to compare trends.</p>
+                </div>
+                <div class="performance-trend-controls">
+                  <div class="metric-toggle-group" role="group" aria-label="Chart metrics">
+                    <button type="button" class="metric-toggle active" data-metric="spend" aria-pressed="true">Spend</button>
+                    <button type="button" class="metric-toggle active" data-metric="clicks" aria-pressed="true">Clicks</button>
+                    <button type="button" class="metric-toggle active" data-metric="impressions" aria-pressed="true">Impressions</button>
+                    <button type="button" class="metric-toggle active" data-metric="conversions" aria-pressed="true">Conversions</button>
+                  </div>
+                  <div class="chart-period-toggle" role="group" aria-label="Chart period">
+                    <button type="button" class="chart-period-btn active" data-period="daily" aria-pressed="true">Daily</button>
+                    <button type="button" class="chart-period-btn" data-period="weekly" aria-pressed="false">Weekly</button>
+                  </div>
                 </div>
               </div>
-              <div class="chart-stack">
-                <div>
-                  <p class="chart-subhead">Ad spend (account level)</p>
-                  <canvas id="spendChart"></canvas>
-                </div>
-                <div>
-                  <p class="chart-subhead">On-site sessions attributed to ads (GA4)</p>
-                  <canvas id="siteSessionsChart"></canvas>
-                </div>
+              <div class="performance-trend-chart-wrap">
+                <p class="performance-trend-empty" id="performanceTrendEmpty">Select at least one metric to display the chart.</p>
+                <canvas id="performanceTrendChart"></canvas>
               </div>
             </section>
           </div>
@@ -3856,8 +3911,7 @@ def render_penn_html(
     </div>
   </div>
   <div class="andre-toast" id="andreToast" role="status" aria-live="polite" hidden>Hello Andre</div>
-  <script type="application/json" id="chart-data">{chart_json}</script>
-  <script type="application/json" id="ga4-attr-chart-data">{ga4_attr_chart_json}</script>
+  <script type="application/json" id="performance-chart-data">{performance_chart_json}</script>
   <script type="application/json" id="breakdowns-data">{breakdowns_json}</script>
   <script type="application/json" id="ga4-campaign-metrics">{ga4_campaign_metrics_json}</script>
   <script type="application/json" id="bl-campaigns-data">{bl_campaigns_json}</script>
@@ -3887,10 +3941,22 @@ def render_penn_html(
 
     const channelState = new Set();
     const blState = new Set();
-    const CHART_PLATFORM_IDS = ['google', 'linkedin', 'meta'];
+    const CHART_PLATFORMS = ['google', 'linkedin', 'meta'];
+    const METRIC_DEFS = [
+      {{ id: 'spend', label: 'Spend', color: '#0a2540', fill: 'rgba(10, 37, 64, 0.08)', yAxisID: 'ySpend', format: 'money' }},
+      {{ id: 'clicks', label: 'Clicks', color: '#4285f4', yAxisID: 'yClicks', format: 'int' }},
+      {{ id: 'impressions', label: 'Impressions', color: '#e67e22', yAxisID: 'yImpressions', format: 'int' }},
+      {{ id: 'conversions', label: 'Conversions', color: '#16a34a', yAxisID: 'yConversions', format: 'int' }},
+    ];
+    const metricState = new Set(METRIC_DEFS.map(m => m.id));
 
     function channelFilterRestricts() {{
       return channelState.size > 0;
+    }}
+
+    function activeChartPlatforms() {{
+      if (!channelFilterRestricts()) return [...CHART_PLATFORMS];
+      return CHART_PLATFORMS.filter(p => channelState.has(p));
     }}
 
     const fmtMoney = n => '$' + Number(n || 0).toLocaleString(undefined, {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
@@ -3908,11 +3974,9 @@ def render_penn_html(
       }};
     }}
 
-    const chartPayloadDaily = cloneChartPayload(readJson('chart-data', {{ labels: [], datasets: [] }}));
-    const ga4AttrChartPayloadDaily = cloneChartPayload(readJson('ga4-attr-chart-data', {{ labels: [], datasets: [] }}));
+    const performanceChartRaw = readJson('performance-chart-data', {{ labels: [], metrics: {{}} }});
     let chartPeriod = 'daily';
-    let spendChartInstance = null;
-    let siteSessionsChartInstance = null;
+    let performanceChartInstance = null;
 
     function weekStartKey(dateStr) {{
       const d = new Date(String(dateStr).slice(0, 10) + 'T12:00:00');
@@ -3959,42 +4023,177 @@ def render_penn_html(
       return cloneChartPayload(payload);
     }}
 
-    function getFilteredChartPayload(basePayload) {{
-      const restrict = channelFilterRestricts();
-      return {{
-        labels: [...(basePayload.labels || [])],
-        datasets: (basePayload.datasets || []).map((ds, i) => {{
-          const platformId = CHART_PLATFORM_IDS[i];
-          const hidden = platformId && restrict && !channelState.has(platformId);
-          return {{ ...ds, hidden: !!hidden }};
-        }}),
+    function combineMetricSeries(metricId) {{
+      const platforms = activeChartPlatforms();
+      const byPlatform = performanceChartRaw.metrics?.[metricId] || {{}};
+      const len = performanceChartRaw.labels?.length || 0;
+      const out = new Array(len).fill(0);
+      for (const platform of platforms) {{
+        const series = byPlatform[platform] || [];
+        for (let i = 0; i < len; i += 1) {{
+          out[i] += Number(series[i] || 0);
+        }}
+      }}
+      return out;
+    }}
+
+    function buildPerformancePayload() {{
+      const labels = [...(performanceChartRaw.labels || [])];
+      const datasets = [];
+      for (const def of METRIC_DEFS) {{
+        if (!metricState.has(def.id)) continue;
+        datasets.push({{
+          label: def.label,
+          data: combineMetricSeries(def.id),
+          borderColor: def.color,
+          backgroundColor: def.fill || def.color,
+          fill: !!def.fill,
+          yAxisID: def.yAxisID,
+          tension: 0.35,
+          borderWidth: def.id === 'spend' ? 2.5 : 2,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+        }});
+      }}
+      return {{ labels, datasets }};
+    }}
+
+    function formatDailyLabel(dateStr) {{
+      const s = String(dateStr).slice(0, 10);
+      if (s.length < 10) return s;
+      return `${{s.slice(5, 7)}}-${{s.slice(8, 10)}}`;
+    }}
+
+    function performanceDataForPeriod() {{
+      const payload = chartDataForPeriod(buildPerformancePayload(), chartPeriod);
+      if (chartPeriod === 'daily') {{
+        payload.labels = payload.labels.map(formatDailyLabel);
+      }}
+      return payload;
+    }}
+
+    function performanceChartScales() {{
+      const scales = {{
+        x: {{ grid: {{ display: false }} }},
       }};
+      let rightAxisCount = 0;
+      for (const def of METRIC_DEFS) {{
+        if (!metricState.has(def.id)) continue;
+        if (def.id === 'spend') {{
+          scales.ySpend = {{
+            type: 'linear',
+            position: 'left',
+            beginAtZero: true,
+            ticks: {{ callback: v => '$' + Number(v).toLocaleString() }},
+            title: {{ display: true, text: 'Spend' }},
+          }};
+          continue;
+        }}
+        const offset = rightAxisCount > 0;
+        rightAxisCount += 1;
+        scales[def.yAxisID] = {{
+          type: 'linear',
+          position: 'right',
+          beginAtZero: true,
+          offset,
+          grid: {{ drawOnChartArea: false }},
+          ticks: {{ callback: v => Number(v).toLocaleString() }},
+          title: {{ display: true, text: def.label }},
+        }};
+      }}
+      return scales;
+    }}
+
+    function formatTooltipValue(def, raw) {{
+      if (def.format === 'money') return fmtMoney(raw);
+      if (def.id === 'conversions') {{
+        const n = Number(raw || 0);
+        return Number.isInteger(n) ? fmtInt(n) : n.toLocaleString(undefined, {{ maximumFractionDigits: 2 }});
+      }}
+      return fmtInt(raw);
     }}
 
     function refreshCharts() {{
-      const spendData = chartDataForPeriod(getFilteredChartPayload(chartPayloadDaily), chartPeriod);
-      if (spendChartInstance) {{
-        spendChartInstance.data.labels = spendData.labels;
-        spendData.datasets.forEach((ds, i) => {{
-          if (spendChartInstance.data.datasets[i]) {{
-            spendChartInstance.data.datasets[i].data = ds.data;
-            spendChartInstance.setDatasetVisibility(i, !ds.hidden);
-          }}
-        }});
-        spendChartInstance.update();
+      const emptyEl = document.getElementById('performanceTrendEmpty');
+      const canvas = document.getElementById('performanceTrendChart');
+      if (!canvas) return;
+
+      if (performanceChartInstance) {{
+        performanceChartInstance.destroy();
+        performanceChartInstance = null;
       }}
-      const siteData = chartDataForPeriod(getFilteredChartPayload(ga4AttrChartPayloadDaily), chartPeriod);
-      if (siteSessionsChartInstance) {{
-        siteSessionsChartInstance.data.labels = siteData.labels;
-        siteData.datasets.forEach((ds, i) => {{
-          if (siteSessionsChartInstance.data.datasets[i]) {{
-            siteSessionsChartInstance.data.datasets[i].data = ds.data;
-            siteSessionsChartInstance.setDatasetVisibility(i, !ds.hidden);
-          }}
-        }});
-        siteSessionsChartInstance.update();
+
+      const hasMetrics = metricState.size > 0;
+      const hasData = (performanceChartRaw.labels || []).length > 0;
+      if (emptyEl) {{
+        emptyEl.classList.toggle('show', !hasMetrics || !hasData);
+        emptyEl.textContent = !hasMetrics
+          ? 'Select at least one metric to display the chart.'
+          : 'No daily performance data for this period.';
       }}
+      canvas.hidden = !hasMetrics || !hasData;
+      if (!hasMetrics || !hasData) return;
+
+      const chartData = performanceDataForPeriod();
+      performanceChartInstance = new Chart(canvas, {{
+        type: 'line',
+        data: chartData,
+        options: {{
+          responsive: true,
+          maintainAspectRatio: true,
+          interaction: {{ mode: 'index', intersect: false }},
+          scales: performanceChartScales(),
+          plugins: {{
+            legend: {{
+              position: 'bottom',
+              align: 'start',
+              labels: {{
+                usePointStyle: true,
+                pointStyle: 'circle',
+                boxWidth: 8,
+                boxHeight: 8,
+                padding: 18,
+                color: '#64748b',
+                font: {{ size: 12, weight: '500', family: "'Segoe UI', system-ui, sans-serif" }},
+              }},
+            }},
+            tooltip: {{
+              callbacks: {{
+                label(context) {{
+                  const def = METRIC_DEFS.find(m => m.label === context.dataset.label);
+                  const value = formatTooltipValue(def || {{ format: 'int' }}, context.parsed.y);
+                  return `${{context.dataset.label}}: ${{value}}`;
+                }},
+              }},
+            }},
+          }},
+          elements: {{ line: {{ tension: 0.35, borderWidth: 2 }}, point: {{ radius: 2, hitRadius: 8 }} }},
+        }},
+      }});
     }}
+
+    function syncMetricToggleButtons() {{
+      document.querySelectorAll('.metric-toggle').forEach(btn => {{
+        const on = metricState.has(btn.dataset.metric);
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }});
+    }}
+
+    document.querySelectorAll('.metric-toggle').forEach(btn => {{
+      btn.addEventListener('click', () => {{
+        const metric = btn.dataset.metric;
+        if (!metric) return;
+        if (metricState.has(metric)) {{
+          metricState.delete(metric);
+        }} else {{
+          metricState.add(metric);
+        }}
+        syncMetricToggleButtons();
+        refreshCharts();
+      }});
+    }});
+    syncMetricToggleButtons();
 
     const MOBILE_SIDEBAR_MQ = window.matchMedia('(max-width: 900px)');
     function isMobileSidebar() {{
@@ -4818,20 +5017,6 @@ def render_penn_html(
       if (e.key === 'Escape') closeCreativePreview();
     }});
 
-    const chartLegend = {{
-      position: 'bottom',
-      align: 'start',
-      labels: {{
-        usePointStyle: true,
-        pointStyle: 'circle',
-        boxWidth: 8,
-        boxHeight: 8,
-        padding: 18,
-        color: '#64748b',
-        font: {{ size: 12, weight: '500', family: "'Segoe UI', system-ui, sans-serif" }},
-      }},
-    }};
-
     function setChartPeriod(period) {{
       chartPeriod = period;
       document.querySelectorAll('.chart-period-btn').forEach(btn => {{
@@ -4848,54 +5033,8 @@ def render_penn_html(
       }});
     }});
 
-    const ctx = document.getElementById('spendChart');
-    if (ctx && chartPayloadDaily.labels && chartPayloadDaily.labels.length) {{
-      const initialSpend = chartDataForPeriod(getFilteredChartPayload(chartPayloadDaily), chartPeriod);
-      spendChartInstance = new Chart(ctx, {{
-        type: 'line',
-        data: initialSpend,
-        options: {{
-          responsive: true,
-          interaction: {{ mode: 'index', intersect: false }},
-          scales: {{
-            y: {{ beginAtZero: true, ticks: {{ callback: v => '$' + v.toLocaleString() }} }},
-            x: {{ grid: {{ display: false }} }}
-          }},
-          plugins: {{ legend: chartLegend }},
-          elements: {{ line: {{ tension: 0.3, borderWidth: 2 }}, point: {{ radius: 0, hitRadius: 8 }} }}
-        }}
-      }});
-    }}
-
-    const siteCtx = document.getElementById('siteSessionsChart');
-    if (siteCtx && ga4AttrChartPayloadDaily.labels && ga4AttrChartPayloadDaily.labels.length) {{
-      const initialSite = chartDataForPeriod(getFilteredChartPayload(ga4AttrChartPayloadDaily), chartPeriod);
-      siteSessionsChartInstance = new Chart(siteCtx, {{
-        type: 'line',
-        data: initialSite,
-        options: {{
-          responsive: true,
-          interaction: {{ mode: 'index', intersect: false }},
-          scales: {{
-            y: {{
-              type: 'linear',
-              position: 'left',
-              beginAtZero: true,
-              title: {{ display: true, text: 'Sessions' }},
-            }},
-            y1: {{
-              type: 'linear',
-              position: 'right',
-              beginAtZero: true,
-              grid: {{ drawOnChartArea: false }},
-              title: {{ display: true, text: 'Key events' }},
-            }},
-            x: {{ grid: {{ display: false }} }},
-          }},
-          plugins: {{ legend: chartLegend }},
-          elements: {{ line: {{ tension: 0.3, borderWidth: 2 }}, point: {{ radius: 0, hitRadius: 8 }} }},
-        }},
-      }});
+    if ((performanceChartRaw.labels || []).length) {{
+      refreshCharts();
     }}
 
     applyGlobalFilters();
