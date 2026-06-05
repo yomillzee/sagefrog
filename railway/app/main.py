@@ -31,6 +31,8 @@ import client_config
 import client_dashboard_config
 import dashboard_settings
 import login_rate_limit
+import oauth_flows
+import oauth_store
 import web_auth
 import web_users
 from models import (
@@ -146,6 +148,7 @@ try:
     web_users.ensure_schema()
     audit_log.ensure_schema()
     client_dashboard_config.ensure_schema()
+    oauth_store.ensure_schema()
     login_rate_limit.ensure_schema()
     boot = web_users.bootstrap_admin_from_env()
     if boot:
@@ -1407,9 +1410,16 @@ def dashboard_client_settings(
     key: str | None = None,
     saved: str | None = None,
     tested: str | None = None,
+    oauth_connected: str | None = None,
+    oauth_error: str | None = None,
+    oauth_disconnected: str | None = None,
 ):
     slug = _validate_client_slug(client_slug)
     flash = "Settings saved." if saved else ("Connection test complete." if tested else None)
+    flash_err = (oauth_error or "").strip()[:300] or None
+    if oauth_disconnected and not flash:
+        labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta"}
+        flash = f"{labels.get(oauth_disconnected, oauth_disconnected)} disconnected."
     if web_users.enabled():
         auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
         if isinstance(auth, RedirectResponse):
@@ -1421,6 +1431,8 @@ def dashboard_client_settings(
                 client_slug=slug,
                 cfg=cfg,
                 flash_message=flash,
+                flash_error=flash_err,
+                oauth_connected=oauth_connected,
                 db_config_updated_at=db_row.updated_at if db_row else None,
                 **_dashboard_settings_session_kwargs(auth),
             )
@@ -1433,8 +1445,118 @@ def dashboard_client_settings(
             cfg=cfg,
             access_key=key,
             flash_message=flash,
+            flash_error=flash_err,
+            oauth_connected=oauth_connected,
         )
     )
+
+
+@app.get(
+    "/oauth/{platform}/connect",
+    summary="Start OAuth connect flow (admin)",
+    include_in_schema=False,
+)
+async def oauth_connect(platform: str, request: Request, return_to: str = "/admin"):
+    slug = platform.strip().lower()
+    if slug not in oauth_flows.PLATFORMS:
+        raise HTTPException(status_code=404, detail="Unknown OAuth platform.")
+    user = await web_auth.require_admin(request)
+    dest = oauth_flows.validate_return_to(return_to)
+    prereq = oauth_flows.connect_prerequisites(slug)
+    if not prereq.get("ready"):
+        missing = ", ".join(prereq.get("missing") or [])
+        raise HTTPException(
+            status_code=503,
+            detail=f"Set {missing} in Railway before connecting {slug}.",
+        )
+    if not oauth_store.enabled():
+        raise HTTPException(status_code=503, detail="DATABASE_URL is required to store OAuth tokens.")
+    state = oauth_flows.make_state()
+    oauth_flows.store_oauth_state(request, platform=slug, state=state, return_to=dest)
+    try:
+        url = oauth_flows.build_authorize_url(slug, state=state)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(url=url, status_code=303)
+
+
+@app.get(
+    "/oauth/{platform}/callback",
+    summary="OAuth provider callback",
+    include_in_schema=False,
+)
+async def oauth_callback(
+    platform: str,
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+):
+    slug = platform.strip().lower()
+    if slug not in oauth_flows.PLATFORMS:
+        raise HTTPException(status_code=404, detail="Unknown OAuth platform.")
+    expected_state, return_to = oauth_flows.pop_oauth_state(request, platform=slug)
+    dest = oauth_flows.validate_return_to(return_to)
+    sep = "&" if "?" in dest else "?"
+    if error:
+        msg = (error_description or error or "OAuth denied")[:200]
+        return RedirectResponse(url=f"{dest}{sep}oauth_error={quote(msg)}", status_code=303)
+    if not code or not state or not expected_state or state != expected_state:
+        return RedirectResponse(
+            url=f"{dest}{sep}oauth_error={quote('Invalid OAuth state. Try connecting again.')}",
+            status_code=303,
+        )
+    user = web_auth.get_current_user(request)
+    actor = user.email if user else None
+    try:
+        tokens = oauth_flows.exchange_code(slug, code=code.strip())
+        oauth_store.save_tokens(
+            slug,
+            refresh_token=tokens.get("refresh_token"),
+            access_token=tokens.get("access_token"),
+            token_expires_at=tokens.get("token_expires_at"),
+            scopes=tokens.get("scopes"),
+            connected_by=actor,
+        )
+        audit_log.record(
+            action="oauth.connected",
+            actor_email=actor,
+            detail={"platform": slug},
+            **audit_log.request_context(request),
+        )
+    except Exception as exc:
+        return RedirectResponse(
+            url=f"{dest}{sep}oauth_error={quote(str(exc)[:200])}",
+            status_code=303,
+        )
+    return RedirectResponse(url=f"{dest}{sep}oauth_connected={quote(slug)}", status_code=303)
+
+
+@app.post(
+    "/oauth/{platform}/disconnect",
+    summary="Remove stored OAuth token (admin)",
+    include_in_schema=False,
+)
+async def oauth_disconnect(
+    platform: str,
+    request: Request,
+    return_to: str = Form("/admin"),
+):
+    slug = platform.strip().lower()
+    if slug not in oauth_flows.PLATFORMS:
+        raise HTTPException(status_code=404, detail="Unknown OAuth platform.")
+    user = await web_auth.require_admin(request)
+    oauth_store.delete_platform(slug)
+    audit_log.record(
+        action="oauth.disconnected",
+        actor_email=user.email,
+        detail={"platform": slug},
+        **audit_log.request_context(request),
+    )
+    dest = oauth_flows.validate_return_to(return_to)
+    sep = "&" if "?" in dest else "?"
+    return RedirectResponse(url=f"{dest}{sep}oauth_disconnected={quote(slug)}", status_code=303)
 
 
 @app.post(
@@ -1453,6 +1575,7 @@ def dashboard_client_settings_post(
     linkedin_account_id: str = Form(""),
     meta_account_id: str = Form(""),
     ga4_client_key: str = Form(""),
+    meta_access_token: str = Form(""),
 ):
     slug = _validate_client_slug(client_slug)
     act = (action or "save").strip().lower()
@@ -1492,6 +1615,63 @@ def dashboard_client_settings_post(
                 db_config_updated_at=db_row.updated_at if db_row else None,
                 **session_kw,
             )
+        )
+
+    if act == "save_meta_token":
+        if web_users.enabled() and not session_is_admin:
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error="Only admins can save Meta tokens.",
+                    **session_kw,
+                ),
+                status_code=403,
+            )
+        if not oauth_store.enabled():
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error="DATABASE_URL is required to store OAuth tokens.",
+                    **session_kw,
+                ),
+                status_code=503,
+            )
+        token = (meta_access_token or "").strip()
+        if len(token) < 20:
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error="Meta access token looks too short.",
+                    **session_kw,
+                ),
+                status_code=400,
+            )
+        oauth_store.save_tokens(
+            "meta",
+            access_token=token,
+            scopes=oauth_flows.META_SCOPES,
+            connected_by=session_email or "admin",
+        )
+        audit_log.record(
+            action="oauth.connected",
+            actor_email=session_email,
+            detail={"platform": "meta", "method": "manual_paste"},
+            **audit_log.request_context(request),
+        )
+        if use_session:
+            return RedirectResponse(
+                url=f"/dashboard/{slug}/settings?oauth_connected=meta",
+                status_code=303,
+            )
+        return RedirectResponse(
+            url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&oauth_connected=meta",
+            status_code=303,
         )
 
     if act == "save":

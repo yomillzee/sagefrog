@@ -48,13 +48,43 @@ class GoogleAdsEnv:
 
 
 def load_google_ads_env() -> GoogleAdsEnv:
+    refresh = _resolve_refresh_token()
     return GoogleAdsEnv(
         developer_token=_get_required_env(*_ENV_ALIASES["developer_token"]),
         login_customer_id=_get_env(*_ENV_ALIASES["login_customer_id"]),
         client_id=_get_required_env(*_ENV_ALIASES["client_id"]),
         client_secret=_get_required_env(*_ENV_ALIASES["client_secret"]),
-        refresh_token=_get_required_env(*_ENV_ALIASES["refresh_token"]),
+        refresh_token=refresh,
     )
+
+
+def _resolve_refresh_token() -> str:
+    env_token = _get_env(*_ENV_ALIASES["refresh_token"])
+    if env_token:
+        return env_token
+    try:
+        import oauth_store
+
+        db_token = oauth_store.get_refresh_token("google_ads")
+        if db_token:
+            return db_token
+    except Exception:
+        pass
+    raise RuntimeError(
+        "Missing Google Ads refresh token. Connect Google Ads in dashboard settings or set "
+        "GOOGLE_ADS_REFRESH_TOKEN in Railway."
+    )
+
+
+def _has_refresh_token() -> bool:
+    if _get_env(*_ENV_ALIASES["refresh_token"]):
+        return True
+    try:
+        import oauth_store
+
+        return bool(oauth_store.get_refresh_token("google_ads"))
+    except Exception:
+        return False
 
 
 def env_summary() -> dict:
@@ -63,7 +93,7 @@ def env_summary() -> dict:
         "has_login_customer_id": bool(_get_env(*_ENV_ALIASES["login_customer_id"])),
         "has_client_id": bool(_get_env(*_ENV_ALIASES["client_id"])),
         "has_client_secret": bool(_get_env(*_ENV_ALIASES["client_secret"])),
-        "has_refresh_token": bool(_get_env(*_ENV_ALIASES["refresh_token"])),
+        "has_refresh_token": _has_refresh_token(),
     }
 
 

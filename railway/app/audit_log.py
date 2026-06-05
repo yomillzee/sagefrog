@@ -43,6 +43,8 @@ _ACTION_LABELS = {
     "user.deactivated": "Deactivated user",
     "user.bootstrap_admin": "Bootstrap admin created",
     "dashboard.config_saved": "Saved dashboard config",
+    "oauth.connected": "OAuth connected",
+    "oauth.disconnected": "OAuth disconnected",
 }
 
 
@@ -175,6 +177,10 @@ def format_detail(event: dict[str, Any]) -> str:
         slug = detail.get("client_slug")
         if slug:
             parts.append(f"client={slug}")
+    elif action in ("oauth.connected", "oauth.disconnected"):
+        plat = detail.get("platform")
+        if plat:
+            parts.append(str(plat))
     elif detail:
         parts.append(
             ", ".join(f"{k}={v}" for k, v in detail.items() if v is not None and k != "reason")

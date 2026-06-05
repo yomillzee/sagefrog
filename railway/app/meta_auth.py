@@ -50,21 +50,51 @@ def load_meta_env() -> MetaEnv:
     return MetaEnv(
         app_id=_get_required_env(*_ENV_ALIASES["app_id"]),
         app_secret=_get_required_env(*_ENV_ALIASES["app_secret"]),
-        access_token=_get_required_env(*_ENV_ALIASES["access_token"]),
+        access_token=_resolve_access_token(),
         business_id=_get_required_env(*_ENV_ALIASES["business_id"]),
         api_version=_get_env(*_ENV_ALIASES["api_version"]) or "v21.0",
     )
 
 
+def _resolve_access_token() -> str:
+    env_token = _get_env(*_ENV_ALIASES["access_token"])
+    if env_token:
+        return env_token
+    try:
+        import oauth_store
+
+        db_token = oauth_store.get_access_token("meta")
+        if db_token:
+            return db_token
+    except Exception:
+        pass
+    raise RuntimeError(
+        "Missing Meta access token. Connect Meta in dashboard settings or set "
+        "META_ACCESS_TOKEN in Railway."
+    )
+
+
+def _has_access_token() -> bool:
+    if _get_env(*_ENV_ALIASES["access_token"]):
+        return True
+    try:
+        import oauth_store
+
+        return bool(oauth_store.get_access_token("meta"))
+    except Exception:
+        return False
+
+
 def env_summary() -> dict:
     token = _get_env(*_ENV_ALIASES["access_token"])
+    has_token = _has_access_token()
     business_id = _get_env(*_ENV_ALIASES["business_id"])
     return {
         "has_app_id": bool(_get_env(*_ENV_ALIASES["app_id"])),
         "has_app_secret": bool(_get_env(*_ENV_ALIASES["app_secret"])),
-        "has_access_token": bool(token),
+        "has_access_token": has_token,
         "has_business_id": bool(business_id),
         "business_id": business_id,
         "meta_api_version": _get_env(*_ENV_ALIASES["api_version"]) or "v21.0",
-        "access_token_looks_valid": bool(token and len(token) > 20),
+        "access_token_looks_valid": bool(has_token and (not token or len(token) > 20)),
     }
