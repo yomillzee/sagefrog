@@ -14,6 +14,7 @@ import dashboard_snapshots
 import web_users
 import ga4_warehouse_service
 import ga4_attribution_service
+import ga4_page_service
 from ga4_attribution_service import (
     METHODOLOGY,
     PLATFORM_TIER_LABELS,
@@ -492,6 +493,13 @@ def refresh_client(
             )
         except Exception as exc:
             payload["errors"]["ga4_attribution"] = _platform_error(exc)
+        try:
+            payload["ga4_pages"] = ga4_page_service.fetch_pages_for_dashboard(
+                date_range=preset,
+                client_key=cfg.ga4_client_key,
+            )
+        except Exception as exc:
+            payload["errors"]["ga4_pages"] = _platform_error(exc)
 
     _penn_load_daily_metrics_from_warehouse(
         cfg,
@@ -550,6 +558,7 @@ def refresh_client_quick(
         "aggregated_paid_media": {},
         "errors": {},
         "ga4_attribution": existing.get("ga4_attribution"),
+        "ga4_pages": existing.get("ga4_pages"),
         "business_line_campaigns": existing.get("business_line_campaigns")
         or (build_business_line_campaigns(breakdowns) if cfg.client_key == "penn" else []),
         "refresh_mode": "warehouse",
@@ -1313,6 +1322,54 @@ def _client_insights_documents_html(
     </section>"""
 
 
+def _ga4_pages_panel_html(ga4_pages: dict[str, Any] | None) -> str:
+    pages = (ga4_pages or {}).get("pages") or []
+    dr = (ga4_pages or {}).get("date_range") or {}
+    range_label = ""
+    if dr.get("start") and dr.get("end"):
+        range_label = f"{dr.get('start')} → {dr.get('end')}"
+    if not pages:
+        body = (
+            '<p class="ga4-pages-empty muted">No page data yet. Run a <strong>full refresh</strong> '
+            "from Settings after GA4 BigQuery is connected.</p>"
+        )
+    else:
+        body = f"""
+        <div class="ga4-pages-toolbar">
+          <label class="ga4-pages-search-wrap">
+            <span class="visually-hidden">Search pages</span>
+            <input type="search" id="ga4PageSearch" class="ga4-pages-search"
+              placeholder="Search page path or title…" autocomplete="off">
+          </label>
+          <span class="badge" id="ga4PagesCount">{len(pages)} pages</span>
+        </div>
+        <p class="table-note muted">Site-wide GA4 metrics{f' for {range_label}' if range_label else ''}. Search filters the list below.</p>
+        <div class="table-wrap">
+          <table class="data-table ga4-pages-table" id="ga4PagesTable">
+            <thead>
+              <tr>
+                <th class="sortable" data-sort="page_path" scope="col" aria-sort="none">Page path<span class="sort-icon" aria-hidden="true"></span></th>
+                <th class="sortable" data-sort="page_title" scope="col" aria-sort="none">Page title<span class="sort-icon" aria-hidden="true"></span></th>
+                <th class="sortable num" data-sort="sessions" scope="col" aria-sort="descending">Sessions<span class="sort-icon" aria-hidden="true"></span></th>
+                <th class="sortable num" data-sort="page_views" scope="col" aria-sort="none">Page views<span class="sort-icon" aria-hidden="true"></span></th>
+                <th class="sortable num" data-sort="users" scope="col" aria-sort="none">Users<span class="sort-icon" aria-hidden="true"></span></th>
+                <th class="sortable num" data-sort="engaged_sessions" scope="col" aria-sort="none">Engaged<span class="sort-icon" aria-hidden="true"></span></th>
+                <th class="sortable num" data-sort="engagement_rate" scope="col" aria-sort="none">Eng. rate<span class="sort-icon" aria-hidden="true"></span></th>
+                <th class="sortable num" data-sort="key_events" scope="col" aria-sort="none">Key events<span class="sort-icon" aria-hidden="true"></span></th>
+              </tr>
+            </thead>
+            <tbody id="ga4PagesBody"></tbody>
+          </table>
+        </div>"""
+    return f"""
+    <section class="panel ga4-pages-panel" aria-label="GA4 pages">
+      <div class="panel-head">
+        <h2>GA4 Pages</h2>
+      </div>
+      {body}
+    </section>"""
+
+
 def _sidebar_nav_html(
     *,
     client_slug: str,
@@ -2027,6 +2084,11 @@ def render_penn_html(
     client_meta_tip = _esc(f"Date range: {range_label}\nLast refreshed: {refreshed} UTC")
     campaign_section_html = _business_line_merged_section_html() if show_business_line else ""
     platform_breakdown_html = "" if show_business_line else breakdown_html
+    ga4_pages_report = snapshot.get("ga4_pages")
+    accounts = snapshot.get("accounts") or {}
+    has_ga4 = bool(accounts.get("ga4_client_key") or (ga4_pages_report or {}).get("pages"))
+    ga4_pages_html = _ga4_pages_panel_html(ga4_pages_report) if has_ga4 else ""
+    ga4_pages_json = _json_for_html_script((ga4_pages_report or {}).get("pages") or [])
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -2694,6 +2756,70 @@ def render_penn_html(
       margin: 0;
       padding: 0 22px 22px;
       font-size: 0.9rem;
+    }}
+    .ga4-pages-panel {{
+      margin-bottom: 20px;
+    }}
+    .ga4-pages-toolbar {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 22px;
+      margin-bottom: 8px;
+    }}
+    .ga4-pages-search-wrap {{
+      flex: 1;
+      min-width: 220px;
+      max-width: 440px;
+    }}
+    .ga4-pages-search {{
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font: inherit;
+      background: #fff;
+    }}
+    .ga4-pages-search:focus {{
+      outline: 2px solid rgba(11, 92, 171, 0.25);
+      border-color: var(--accent);
+    }}
+    .ga4-pages-panel .table-note {{
+      padding: 0 22px;
+    }}
+    .ga4-pages-panel .table-wrap {{
+      padding: 0 22px 22px;
+    }}
+    .ga4-pages-table td.page-path {{
+      max-width: 300px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.8rem;
+    }}
+    .ga4-pages-table td.page-title {{
+      max-width: 260px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }}
+    .ga4-pages-empty {{
+      padding: 0 22px 22px;
+      margin: 0;
+    }}
+    .visually-hidden {{
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }}
     .total-spend-panel {{
       background: linear-gradient(135deg, #fff 0%, #f8fbff 100%);
@@ -3485,6 +3611,8 @@ def render_penn_html(
               </div>
             </section>
 
+            {ga4_pages_html}
+
             {campaign_section_html}
 
             {platform_breakdown_html}
@@ -3509,6 +3637,7 @@ def render_penn_html(
   <script type="application/json" id="bl-campaigns-data">{bl_campaigns_json}</script>
   <script type="application/json" id="bl-catalog-data">{bl_catalog_json}</script>
   <script type="application/json" id="platform-catalog-data">{platform_catalog_json}</script>
+  <script type="application/json" id="ga4-pages-data">{ga4_pages_json}</script>
   <script>
     function readJson(id, fallback) {{
       const el = document.getElementById(id);
@@ -3528,6 +3657,7 @@ def render_penn_html(
     const blCampaigns = readJson('bl-campaigns-data', []);
     const blCatalog = readJson('bl-catalog-data', []);
     const platformCatalog = readJson('platform-catalog-data', []);
+    const ga4Pages = readJson('ga4-pages-data', []);
 
     const fmtMoney = n => '$' + Number(n || 0).toLocaleString(undefined, {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
     const fmtInt = n => Number(n || 0).toLocaleString();
@@ -3806,6 +3936,107 @@ def render_penn_html(
       setGroupSelection('bl', [])
     );
     applyBlView();
+
+    const ga4PagesBody = document.getElementById('ga4PagesBody');
+    if (ga4PagesBody && ga4Pages.length) {{
+      const ga4PageSearch = document.getElementById('ga4PageSearch');
+      const ga4PagesCount = document.getElementById('ga4PagesCount');
+      const ga4PageSort = {{ key: 'sessions', dir: 'desc' }};
+      let ga4PageQuery = '';
+
+      function ga4PageSortValue(row, key) {{
+        if (key === 'page_path' || key === 'page_title') {{
+          return String(row[key] || '').toLowerCase();
+        }}
+        if (key === 'engagement_rate') {{
+          return Number(row.engagement_rate || 0);
+        }}
+        return Number(row[key] || 0);
+      }}
+
+      function sortGa4Pages(rows) {{
+        const {{ key, dir }} = ga4PageSort;
+        const mul = dir === 'asc' ? 1 : -1;
+        const textKeys = new Set(['page_path', 'page_title']);
+        return [...rows].sort((a, b) => {{
+          const av = ga4PageSortValue(a, key);
+          const bv = ga4PageSortValue(b, key);
+          if (textKeys.has(key)) return mul * String(av).localeCompare(String(bv));
+          return mul * (av - bv);
+        }});
+      }}
+
+      function filterGa4Pages(rows) {{
+        const q = ga4PageQuery.trim().toLowerCase();
+        if (!q) return rows;
+        return rows.filter(row => {{
+          const path = String(row.page_path || '').toLowerCase();
+          const title = String(row.page_title || '').toLowerCase();
+          return path.includes(q) || title.includes(q);
+        }});
+      }}
+
+      function updateGa4SortHeaders() {{
+        document.querySelectorAll('#ga4PagesTable thead th[data-sort]').forEach(th => {{
+          const active = th.dataset.sort === ga4PageSort.key;
+          th.classList.toggle('sort-active', active);
+          if (active) {{
+            th.dataset.sortDir = ga4PageSort.dir;
+            th.setAttribute('aria-sort', ga4PageSort.dir === 'asc' ? 'ascending' : 'descending');
+          }} else {{
+            delete th.dataset.sortDir;
+            th.setAttribute('aria-sort', 'none');
+          }}
+        }});
+      }}
+
+      function renderGa4Pages() {{
+        const filtered = filterGa4Pages(ga4Pages);
+        const sorted = sortGa4Pages(filtered);
+        if (ga4PagesCount) {{
+          ga4PagesCount.textContent = sorted.length + ' page' + (sorted.length === 1 ? '' : 's');
+        }}
+        if (!sorted.length) {{
+          ga4PagesBody.innerHTML = '<tr><td colspan="8" class="muted" style="padding:24px;text-align:center">No pages match your search.</td></tr>';
+          updateGa4SortHeaders();
+          return;
+        }}
+        ga4PagesBody.innerHTML = sorted.map(row => {{
+          const sessions = Number(row.sessions || 0);
+          const engaged = Number(row.engaged_sessions || 0);
+          const engRate = sessions ? (100 * engaged / sessions).toFixed(1) + '%' : '—';
+          return `<tr>
+            <td class="page-path" title="${{escHtml(row.page_path)}}">${{escHtml(row.page_path)}}</td>
+            <td class="page-title" title="${{escHtml(row.page_title)}}">${{escHtml(row.page_title)}}</td>
+            <td class="num">${{fmtInt(row.sessions)}}</td>
+            <td class="num">${{fmtInt(row.page_views)}}</td>
+            <td class="num">${{fmtInt(row.users)}}</td>
+            <td class="num">${{fmtInt(row.engaged_sessions)}}</td>
+            <td class="num">${{engRate}}</td>
+            <td class="num">${{fmtInt(row.key_events)}}</td>
+          </tr>`;
+        }}).join('');
+        updateGa4SortHeaders();
+      }}
+
+      ga4PageSearch?.addEventListener('input', e => {{
+        ga4PageQuery = e.target.value || '';
+        renderGa4Pages();
+      }});
+      document.querySelector('#ga4PagesTable thead')?.addEventListener('click', e => {{
+        const th = e.target.closest('th[data-sort]');
+        if (!th) return;
+        const key = th.dataset.sort;
+        if (ga4PageSort.key === key) {{
+          ga4PageSort.dir = ga4PageSort.dir === 'asc' ? 'desc' : 'asc';
+        }} else {{
+          ga4PageSort.key = key;
+          ga4PageSort.dir = (key === 'page_path' || key === 'page_title') ? 'asc' : 'desc';
+        }}
+        renderGa4Pages();
+      }});
+      renderGa4Pages();
+    }}
 
     const DRILL_MAP = {{
       'google:campaign': {{ childLevel: 'ad_group', childLabel: 'Ad group' }},
