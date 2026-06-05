@@ -114,17 +114,59 @@ def _classification_names(row: dict[str, Any]) -> tuple[str, ...]:
     return tuple(names)
 
 
+def _aggregate_linkedin_campaign_groups(platform_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Top-level LinkedIn rows for business-line matching (API campaign groups).
+
+    LinkedIn Campaign Manager (Oct 2025+) renamed entities in the UI:
+    API campaign_group → UI "Campaign"; API campaign → UI "Ad set"; creative → UI "Ad".
+    The Marketing API resource names are unchanged.
+    """
+    groups = platform_data.get("campaign_group") or []
+    if groups:
+        return groups
+
+    campaigns = platform_data.get("campaign") or []
+    if not campaigns:
+        return []
+
+    by_group: dict[str, dict[str, Any]] = {}
+    for row in campaigns:
+        gid = str(row.get("parent_id") or row.get("campaign_group_id") or "").strip()
+        if not gid:
+            continue
+        gname = str(row.get("parent_name") or row.get("campaign_group_name") or "").strip()
+        bucket = by_group.get(gid)
+        if not bucket:
+            bucket = {
+                "id": gid,
+                "name": gname or f"Campaign group {gid}",
+                "entity_level": "campaign_group",
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+            }
+            by_group[gid] = bucket
+        elif gname and bucket.get("name", "").startswith("Campaign group "):
+            bucket["name"] = gname
+        bucket["spend"] += float(row.get("spend") or 0)
+        bucket["clicks"] += int(row.get("clicks") or 0)
+        bucket["impressions"] += int(row.get("impressions") or 0)
+        bucket["conversions"] += float(row.get("conversions") or 0)
+    return list(by_group.values())
+
+
 def _campaign_rows_from_breakdowns(breakdowns: dict[str, Any]) -> list[dict[str, Any]]:
     """Collect campaign-level rows from each paid platform.
 
-    LinkedIn API ``campaign`` rows are ad sets (e.g. "St Rocco's Video"); business-line
-    rules match on campaign group names (e.g. "Commercial Retargeting - LinkedIn - 2026").
+    LinkedIn uses API campaign groups at the top (UI "Campaign"), not ad sets
+    (API campaigns, e.g. "St Rocco's Video").
     """
     rows: list[dict[str, Any]] = []
     for platform in ("google", "linkedin", "meta"):
         platform_data = breakdowns.get(platform) or {}
         if platform == "linkedin":
-            source = platform_data.get("campaign_group") or []
+            source = _aggregate_linkedin_campaign_groups(platform_data)
         else:
             source = platform_data.get("campaign") or []
         for row in source:

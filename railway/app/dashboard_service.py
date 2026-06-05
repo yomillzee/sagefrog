@@ -151,6 +151,15 @@ def _normalize_entity_row(row: dict[str, Any]) -> dict[str, Any]:
         "parent_id": parent_id,
         "parent_name": parent_name,
     }
+    for key in (
+        "campaign_group_id",
+        "campaign_group_name",
+        "campaign_id",
+        "campaign_name",
+    ):
+        val = row.get(key)
+        if val:
+            out[key] = str(val)
     for key in ("thumbnail_url", "image_url", "media_type", "creative_name", "video_url", "youtube_embed_url", "youtube_watch_url"):
         val = row.get(key)
         if val:
@@ -590,8 +599,7 @@ def refresh_client_quick(
         "errors": {},
         "ga4_attribution": existing.get("ga4_attribution"),
         "ga4_pages": existing.get("ga4_pages"),
-        "business_line_campaigns": existing.get("business_line_campaigns")
-        or (
+        "business_line_campaigns": (
             build_business_line_campaigns(breakdowns, client_slug=cfg.client_key)
             if cfg.client_key == "penn"
             else []
@@ -670,7 +678,16 @@ def _json_for_html_script(data: Any) -> str:
     )
 
 
-def _entity_level_label(level: str) -> str:
+def _entity_level_label(level: str, *, platform: str | None = None) -> str:
+    """Human label for an entity row; LinkedIn uses Campaign Manager UI names (2025+)."""
+    if platform == "linkedin":
+        linkedin_labels = {
+            "campaign_group": "campaign group",
+            "campaign": "ad set",
+            "creative": "ad",
+        }
+        if level in linkedin_labels:
+            return linkedin_labels[level]
     labels = {
         "campaign": "campaign",
         "campaign_group": "campaign group",
@@ -729,7 +746,7 @@ def _drillable_table(
     ga4_by_campaign: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     rows = _rows_for_display(rows)
-    level_badge = _entity_level_label(entity_level)
+    level_badge = _entity_level_label(entity_level, platform=platform)
     expandable = (
         (platform == "google" and entity_level in ("campaign", "ad_group"))
         or (
@@ -1923,10 +1940,10 @@ def _platform_site_impact_html(
 
 
 def _business_line_campaigns_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
-    stored = snapshot.get("business_line_campaigns")
-    if stored:
-        return stored
+    """Always derive business-line rows from breakdowns (LinkedIn hierarchy changes need fresh mapping)."""
     client_key = str(snapshot.get("client_key") or "penn")
+    if client_key != "penn":
+        return snapshot.get("business_line_campaigns") or []
     return build_business_line_campaigns(
         _breakdowns_from_snapshot(snapshot),
         client_slug=client_key,
@@ -1951,7 +1968,7 @@ def _campaign_explorer_content_html(*, show_business_line: bool, platform_breakd
                   <h2>Campaign performance</h2>
                   <span class="badge" id="blRowCount">0 rows</span>
                 </div>
-                <p class="table-note">Use the filters at the top to narrow business lines and channels — all are included by default. Click a campaign row to drill into ad groups, ad sets, or ads.</p>
+                <p class="table-note">Use the filters at the top to narrow business lines and channels — all are included by default. LinkedIn rows start at campaign group (Campaign Manager “Campaign”); drill down to ad sets and ads. Google and Meta drill to ad groups/ad sets and ads.</p>
                 <div class="table-wrap">
                   <table class="data-table" id="blTable">
                     <thead>
@@ -1959,7 +1976,7 @@ def _campaign_explorer_content_html(*, show_business_line: bool, platform_breakd
                         <th class="chevron-col"></th>
                         <th class="sortable" data-sort="platform" scope="col" aria-sort="none">Platform<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="business_line" scope="col" aria-sort="none">Business line<span class="sort-icon" aria-hidden="true"></span></th>
-                        <th class="sortable" data-sort="name" scope="col" aria-sort="none">Campaign<span class="sort-icon" aria-hidden="true"></span></th>
+                        <th class="sortable" data-sort="name" scope="col" aria-sort="none">Campaign / group<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="spend" scope="col" aria-sort="none">Spend<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="clicks" scope="col" aria-sort="none">Clicks<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="impressions" scope="col" aria-sort="none">Impressions<span class="sort-icon" aria-hidden="true"></span></th>
@@ -4997,18 +5014,27 @@ def render_penn_html(
       'google:campaign': {{ childLevel: 'ad_group', childLabel: 'Ad group' }},
       'google:ad_group': {{ childLevel: 'ad', childLabel: 'Ad' }},
       'linkedin:campaign_group': {{ childLevel: 'campaign', childLabel: 'Ad set' }},
-      'linkedin:campaign': {{ childLevel: 'creative', childLabel: 'Creative' }},
+      'linkedin:campaign': {{ childLevel: 'creative', childLabel: 'Ad' }},
       'meta:campaign': {{ childLevel: 'adset', childLabel: 'Ad set' }},
       'meta:adset': {{ childLevel: 'ad', childLabel: 'Ad' }},
     }};
     const LEVEL_LABELS = {{
-      campaign_group: 'Group',
+      campaign_group: 'Campaign group',
       campaign: 'Campaign',
       ad_group: 'Ad group',
       creative: 'Creative',
       adset: 'Ad set',
       ad: 'Ad',
     }};
+
+    function levelLabel(platform, level) {{
+      if (platform === 'linkedin') {{
+        if (level === 'campaign_group') return 'Campaign group';
+        if (level === 'campaign') return 'Ad set';
+        if (level === 'creative') return 'Ad';
+      }}
+      return LEVEL_LABELS[level] || String(level || '').replace(/_/g, ' ');
+    }}
 
     function childRows(platform, level, parentId) {{
       const rule = DRILL_MAP[platform + ':' + level];
@@ -5094,10 +5120,10 @@ def render_penn_html(
       modal.hidden = false;
     }}
 
-    function buildNameCell(r, level, depth) {{
+    function buildNameCell(r, platform, level, depth) {{
       const pad = 8 + depth * 20;
-      const tag = LEVEL_LABELS[level]
-        ? `<span class="entity-tag">${{escHtml(LEVEL_LABELS[level])}}</span>` : '';
+      const tag = levelLabel(platform, level)
+        ? `<span class="entity-tag">${{escHtml(levelLabel(platform, level))}}</span>` : '';
       let inner = `${{tag}}${{escHtml(r.name || '—')}}`;
       if (level === 'ad' || level === 'creative') {{
         const thumb = buildThumbButton(r);
@@ -5113,6 +5139,7 @@ def render_penn_html(
     function buildGa4Cells(platform, level, rowId) {{
       const platformMetrics = ga4CampaignMetrics[platform];
       if (!platformMetrics) return '';
+      // LinkedIn GA4 attribution matches API campaigns (UI ad sets), not campaign groups.
       if (level !== 'campaign') {{
         return '<td class="num ga4-col muted">—</td><td class="num ga4-col muted">—</td><td class="num ga4-col muted">—</td>';
       }}
@@ -5165,7 +5192,7 @@ def render_penn_html(
       tr.innerHTML = `
         <td class="chevron-col">${{chevron}}</td>
         ${{prefixCellsHtml}}
-        ${{buildNameCell(r, level, depth)}}
+        ${{buildNameCell(r, platform, level, depth)}}
         <td class="num">${{fmtMoney(spend)}}</td>
         <td class="num">${{fmtInt(clicks)}}</td>
         <td class="num">${{fmtInt(impressions)}}</td>
