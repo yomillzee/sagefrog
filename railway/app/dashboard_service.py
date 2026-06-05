@@ -1382,6 +1382,18 @@ def _ga4_website_search_html(*, has_pages: bool) -> str:
         </div>"""
 
 
+def _ga4_metrics_summary_html(*, has_summary: bool) -> str:
+    if not has_summary:
+        return ""
+    return """
+        <section class="ga4-metrics-section" id="ga4MetricsSection" aria-label="GA4 metrics summary">
+          <div class="ga4-metrics-heading">
+            <span class="ga4-metrics-pill">GA4 METRICS</span>
+          </div>
+          <div class="ga4-metrics-grid" id="ga4MetricsGrid"></div>
+        </section>"""
+
+
 def _ga4_website_content_html(ga4_pages: dict[str, Any] | None) -> str:
     pages = (ga4_pages or {}).get("pages") or []
     dr = (ga4_pages or {}).get("date_range") or {}
@@ -2159,6 +2171,7 @@ def render_penn_html(
     accounts = snapshot.get("accounts") or {}
     has_ga4 = bool(accounts.get("ga4_client_key") or (ga4_pages_report or {}).get("pages"))
     has_ga4_pages = bool((ga4_pages_report or {}).get("pages"))
+    has_ga4_summary = bool((ga4_pages_report or {}).get("summary"))
     view_tabs_html = _dashboard_view_tabs_html(show_website=has_ga4)
     filters_bar_html = _global_filters_bar_html(
         show_business_line=show_business_line,
@@ -2170,17 +2183,20 @@ def render_penn_html(
     )
     website_analytics_html = _ga4_website_content_html(ga4_pages_report if has_ga4 else None)
     website_search_html = _ga4_website_search_html(has_pages=has_ga4_pages)
+    ga4_metrics_html = _ga4_metrics_summary_html(has_summary=has_ga4_summary)
     website_tab_panel = ""
     if has_ga4:
         website_tab_panel = f"""
           <div id="view-website" class="view-panel" role="tabpanel" hidden>
             <section class="panel ga4-pages-panel" aria-label="Website analytics">
+              {ga4_metrics_html}
               <div class="panel-head"><h2>Page performance</h2></div>
               {website_search_html}
               {website_analytics_html}
             </section>
           </div>"""
     ga4_pages_json = _json_for_html_script((ga4_pages_report or {}).get("pages") or [])
+    ga4_summary_json = _json_for_html_script((ga4_pages_report or {}).get("summary") or {})
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -3512,6 +3528,73 @@ def render_penn_html(
       font: inherit;
       background: #fff;
     }}
+    .ga4-metrics-section {{
+      margin-bottom: 20px;
+    }}
+    .ga4-metrics-heading {{
+      margin-bottom: 12px;
+    }}
+    .ga4-metrics-pill {{
+      display: inline-flex;
+      align-items: center;
+      gap: 0;
+      background: var(--navy);
+      color: #fff;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      padding: 6px 14px 6px 0;
+      border-radius: 999px;
+      overflow: hidden;
+    }}
+    .ga4-metrics-pill::before {{
+      content: '';
+      display: inline-block;
+      width: 4px;
+      align-self: stretch;
+      background: #22c55e;
+      margin-right: 10px;
+      border-radius: 999px 0 0 999px;
+    }}
+    .ga4-metrics-grid {{
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 12px;
+    }}
+    @media (max-width: 1200px) {{
+      .ga4-metrics-grid {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+    }}
+    @media (max-width: 640px) {{
+      .ga4-metrics-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    }}
+    .ga4-metric-card {{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      box-shadow: var(--shadow-sm);
+      min-width: 0;
+    }}
+    .ga4-metric-label {{
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      margin-bottom: 8px;
+    }}
+    .ga4-metric-value {{
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--navy);
+      line-height: 1.15;
+    }}
+    .ga4-metric-sub {{
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 8px;
+    }}
 
     .filter-panel {{
       background: var(--panel);
@@ -3998,6 +4081,7 @@ def render_penn_html(
   <script type="application/json" id="bl-catalog-data">{bl_catalog_json}</script>
   <script type="application/json" id="platform-catalog-data">{platform_catalog_json}</script>
   <script type="application/json" id="ga4-pages-data">{ga4_pages_json}</script>
+  <script type="application/json" id="ga4-summary-data">{ga4_summary_json}</script>
   <script>
     function readJson(id, fallback) {{
       const el = document.getElementById(id);
@@ -4018,6 +4102,7 @@ def render_penn_html(
     const blCatalog = readJson('bl-catalog-data', []);
     const platformCatalog = readJson('platform-catalog-data', []);
     const ga4Pages = readJson('ga4-pages-data', []);
+    const ga4SiteSummary = readJson('ga4-summary-data', {{}});
 
     const channelState = new Set();
     const blState = new Set();
@@ -4731,6 +4816,79 @@ def render_penn_html(
     document.querySelector('#blTable thead')?.addEventListener('click', onBlSortClick);
 
     const ga4PagesBody = document.getElementById('ga4PagesBody');
+    const ga4MetricsGrid = document.getElementById('ga4MetricsGrid');
+
+    function fmtGa4Seconds(value) {{
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) return '—';
+      return n.toFixed(1) + 's';
+    }}
+
+    function fmtGa4Rate(value) {{
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0) return '—';
+      return (100 * n).toFixed(2) + '%';
+    }}
+
+    function fmtGa4Ratio(value) {{
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0) return '—';
+      return n.toFixed(2);
+    }}
+
+    function summaryFromPages(rows) {{
+      const sessions = rows.reduce((sum, row) => sum + Number(row.sessions || 0), 0);
+      const engaged = rows.reduce((sum, row) => sum + Number(row.engaged_sessions || 0), 0);
+      const pageViews = rows.reduce((sum, row) => sum + Number(row.page_views || 0), 0);
+      const keyEvents = rows.reduce((sum, row) => sum + Number(row.key_events || 0), 0);
+      return {{
+        sessions,
+        engagement_rate: sessions ? engaged / sessions : 0,
+        avg_engagement_time_sec: ga4SiteSummary.avg_engagement_time_sec,
+        avg_session_duration_sec: ga4SiteSummary.avg_session_duration_sec,
+        events_per_session: sessions ? keyEvents / sessions : 0,
+        views_per_session: sessions ? pageViews / sessions : 0,
+        filtered: true,
+      }};
+    }}
+
+    function renderGa4MetricsSummary(rows, isFiltered) {{
+      if (!ga4MetricsGrid || !ga4SiteSummary || !ga4SiteSummary.sessions) return;
+      const metrics = isFiltered ? summaryFromPages(rows) : {{ ...ga4SiteSummary, filtered: false }};
+      const sublabel = metrics.filtered ? 'GA4 filtered view' : 'Site-wide GA4';
+      ga4MetricsGrid.innerHTML = `
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">Sessions</div>
+          <div class="ga4-metric-value">${{fmtInt(metrics.sessions)}}</div>
+          <div class="ga4-metric-sub">${{sublabel}}</div>
+        </div>
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">Engagement rate</div>
+          <div class="ga4-metric-value">${{fmtGa4Rate(metrics.engagement_rate)}}</div>
+          <div class="ga4-metric-sub">${{sublabel}}</div>
+        </div>
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">Avg engagement time</div>
+          <div class="ga4-metric-value">${{fmtGa4Seconds(metrics.avg_engagement_time_sec)}}</div>
+          <div class="ga4-metric-sub">${{sublabel}}</div>
+        </div>
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">Avg session duration</div>
+          <div class="ga4-metric-value">${{fmtGa4Seconds(metrics.avg_session_duration_sec)}}</div>
+          <div class="ga4-metric-sub">${{sublabel}}</div>
+        </div>
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">Events / session</div>
+          <div class="ga4-metric-value">${{fmtGa4Ratio(metrics.events_per_session)}}</div>
+          <div class="ga4-metric-sub">${{sublabel}}</div>
+        </div>
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">Views / session</div>
+          <div class="ga4-metric-value">${{fmtGa4Ratio(metrics.views_per_session)}}</div>
+          <div class="ga4-metric-sub">${{sublabel}}</div>
+        </div>`;
+    }}
+
     if (ga4PagesBody && ga4Pages.length) {{
       const ga4PageSearch = document.getElementById('ga4PageSearch');
       const ga4PagesCount = document.getElementById('ga4PagesCount');
@@ -4786,6 +4944,8 @@ def render_penn_html(
       renderGa4Pages = function() {{
         const filtered = filterGa4Pages(ga4Pages);
         const sorted = sortGa4Pages(filtered);
+        const isFiltered = !!ga4PageQuery.trim();
+        renderGa4MetricsSummary(filtered, isFiltered);
         if (ga4PagesCount) {{
           ga4PagesCount.textContent = sorted.length + ' page' + (sorted.length === 1 ? '' : 's');
         }}
@@ -4829,12 +4989,14 @@ def render_penn_html(
         renderGa4Pages();
       }});
       renderGa4Pages();
+    }} else if (ga4MetricsGrid && ga4SiteSummary && ga4SiteSummary.sessions) {{
+      renderGa4MetricsSummary([], false);
     }}
 
     const DRILL_MAP = {{
       'google:campaign': {{ childLevel: 'ad_group', childLabel: 'Ad group' }},
       'google:ad_group': {{ childLevel: 'ad', childLabel: 'Ad' }},
-      'linkedin:campaign_group': {{ childLevel: 'campaign', childLabel: 'Campaign' }},
+      'linkedin:campaign_group': {{ childLevel: 'campaign', childLabel: 'Ad set' }},
       'linkedin:campaign': {{ childLevel: 'creative', childLabel: 'Creative' }},
       'meta:campaign': {{ childLevel: 'adset', childLabel: 'Ad set' }},
       'meta:adset': {{ childLevel: 'ad', childLabel: 'Ad' }},
@@ -5014,12 +5176,17 @@ def render_penn_html(
       return tr;
     }}
 
+    function blRootLevel(platform) {{
+      return platform === 'linkedin' ? 'campaign_group' : 'campaign';
+    }}
+
     function buildBlCampaignRow(r) {{
       const platform = r.platform;
       const prefixCells = `
         <td><span class="platform-pill ${{escHtml(platform)}}">${{escHtml(r.platform_label)}}</span></td>
         <td><span class="bl-tag">${{escHtml(r.business_line_label)}}</span></td>`;
-      return buildTreeRow(r, platform, 'campaign', 0, prefixCells, false);
+      const level = r.entity_level || blRootLevel(platform);
+      return buildTreeRow(r, platform, level, 0, prefixCells, false);
     }}
 
     function collapseDescendants(row) {{
