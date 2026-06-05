@@ -157,6 +157,11 @@ def _oauth_platform_card_html(
 
     callback = _esc(oauth_flows.callback_url(platform))
     note = _esc(prereq.get("note") or "")
+    dev_details = f"""
+      <details class="settings-fold settings-fold--inline">
+        <summary>Developer details</summary>
+        <p class="hint mono">Callback: {callback}</p>
+      </details>"""
     return f"""
     <div class="oauth-card">
       <div class="oauth-card-head">
@@ -165,8 +170,8 @@ def _oauth_platform_card_html(
       </div>
       {connected_meta}
       <p class="muted">{note}</p>
-      <p class="hint mono">Callback URL: {callback}</p>
       <div class="oauth-actions">{actions}</div>
+      {dev_details}
     </div>
     """
 
@@ -220,18 +225,84 @@ def _oauth_connect_section_html(
         </details>
         """
     return f"""
-    <section class="panel">
-      <h2>Connect platform OAuth</h2>
-      <p class="muted">OAuth app IDs and secrets stay in Railway. Connect stores refresh/access tokens encrypted in Postgres (agency-wide).</p>
-      <p class="hint">Register these callback URLs in each provider console: base <span class="mono">{_esc(base)}</span></p>
+    <section class="panel panel--primary">
+      <h2>1. Connect ad platforms</h2>
+      <p class="muted">Sign in as admin, then click Connect for each platform. App IDs stay in Railway; tokens save to Postgres.</p>
       <div class="oauth-grid">{"".join(cards)}</div>
       {meta_manual}
-      <ul class="checklist muted">
-        <li><strong>GA4:</strong> upload GCP_SERVICE_ACCOUNT_JSON and GA4_CLIENTS in Railway (service account, not OAuth).</li>
-        <li><strong>Google Ads:</strong> GOOGLE_ADS_DEVELOPER_TOKEN remains in Railway after Connect.</li>
-        <li><strong>Meta:</strong> META_BUSINESS_ID remains in Railway.</li>
-      </ul>
     </section>
+    """
+
+
+def _setup_checklist_html(*, api: dict[str, Any], cfg: PennDashboardConfig, ga4_ok: bool) -> str:
+    steps = [
+        ("Connect Google Ads", api["google"]["ok"]),
+        ("Connect LinkedIn", api["linkedin"]["ok"]),
+        ("Connect Meta", api["meta"]["ok"]),
+        ("Map client account IDs", bool(cfg.google_customer_id or cfg.linkedin_account_id or cfg.meta_account_id)),
+        ("Configure GA4 (Railway)", ga4_ok),
+    ]
+    items = []
+    for label, done in steps:
+        badge = _status_badge(done, ok_label="Done", fail_label="To do")
+        items.append(f"<li><span>{_esc(label)}</span> {badge}</li>")
+    return f'<ol class="setup-checklist">{"".join(items)}</ol>'
+
+
+def _settings_page_css() -> str:
+    return """
+    .panel { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+    .panel--primary { border-color: #b8cfe8; box-shadow: 0 2px 12px rgba(11, 92, 171, 0.08); }
+    .panel h2 { margin: 0 0 8px; font-size: 1.05rem; color: var(--navy); }
+    .panel h3 { margin: 0 0 8px; font-size: .95rem; color: var(--navy); }
+    p { margin: 0 0 10px; line-height: 1.45; }
+    .muted { color: var(--muted); font-size: .92rem; }
+    .hint { color: var(--muted); font-size: .82rem; margin: 4px 0 0; }
+    .notice { padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; font-size: .9rem; }
+    .notice.ok { background: var(--ok-bg); color: var(--ok); }
+    .notice.err { background: var(--err-bg); color: var(--err); }
+    .setup-checklist { margin: 12px 0 0; padding: 0; list-style: none; }
+    .setup-checklist li { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 10px 0; border-bottom: 1px solid var(--border); font-size: .92rem; }
+    .setup-checklist li:last-child { border-bottom: 0; }
+    .oauth-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
+    .oauth-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; background: #fafbfc; }
+    .oauth-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .oauth-card h3 { margin: 0; font-size: .95rem; }
+    .oauth-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: .78rem; font-weight: 600; }
+    .badge.ok { background: var(--ok-bg); color: var(--ok); }
+    .badge.err { background: var(--err-bg); color: var(--err); }
+    .btn { display: inline-block; padding: 9px 16px; border-radius: 8px; border: 0; font-weight: 600;
+      cursor: pointer; font-size: .88rem; text-decoration: none; }
+    .btn.primary { background: var(--accent); color: #fff; }
+    .btn.secondary { background: #fff; color: var(--accent); border: 1px solid var(--border); }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
+    .inline-form { display: inline; margin: 0; }
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin-bottom: 14px; }
+    label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 6px; }
+    input[type="text"], input[type="password"] { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+    .status-table { width: 100%; border-collapse: collapse; font-size: .88rem; margin-top: 8px; }
+    .status-table th, .status-table td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .status-table th { color: var(--muted); font-size: .75rem; text-transform: uppercase; }
+    .mono { font-family: ui-monospace, monospace; font-size: .85rem; }
+    .settings-fold { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 0 14px; background: #fafbfc; }
+    .settings-fold--inline { margin-top: 10px; padding: 8px 10px; }
+    .settings-fold summary { cursor: pointer; font-weight: 600; font-size: .9rem; color: var(--navy); padding: 12px 0; }
+    .settings-fold[open] summary { border-bottom: 1px solid var(--border); margin-bottom: 10px; }
+    .settings-fold .fold-body { padding-bottom: 14px; }
+    .checklist { margin: 8px 0 0; padding-left: 1.2rem; line-height: 1.55; font-size: .88rem; }
+    .error-list { margin: 8px 0 0; padding-left: 1.2rem; color: var(--err); font-size: .88rem; }
+    .refresh-bar { margin-top: 8px; }
+    .refresh-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .refresh-btn { padding: 9px 16px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent);
+      color: #fff; cursor: pointer; font-weight: 600; font-size: .88rem; }
+    .refresh-btn--secondary { background: #fff; color: var(--accent); }
+    .refresh-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .refresh-form { display: inline; margin: 0; }
+    .insights-editor { margin-top: 8px; }
+    .insights-textarea { width: 100%; min-height: 120px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font: inherit; }
+    .meta-manual { margin-top: 12px; }
     """
 
 
@@ -398,7 +469,6 @@ def render_settings_html(
 ) -> str:
     slug = client_slug.strip().lower()
     settings_url = _settings_url(client_slug=slug, access_key=access_key, use_session=use_session)
-    dashboard_url = _dashboard_url(client_slug=slug, access_key=access_key, use_session=use_session)
     snapshot = dashboard_snapshots.get_snapshot(slug)
     auth = build_auth_status()
     api = build_api_status()
@@ -463,29 +533,6 @@ def render_settings_html(
         ),
     ]
 
-    probe_block = ""
-    if probe_results:
-        probe_rows = []
-        for platform in ("google", "linkedin", "meta", "ga4"):
-            row = probe_results.get(platform) or {}
-            probe_rows.append(
-                _connection_row(
-                    platform.title(),
-                    bool(row.get("ok")),
-                    str(row.get("message") or "—"),
-                )
-            )
-        probe_block = f"""
-        <section class="panel">
-          <h2>Live connection test</h2>
-          <p class="muted">Checked configured account IDs for {_esc(cfg.label)} just now.</p>
-          <table class="status-table">
-            <thead><tr><th>Platform</th><th>Status</th><th>Detail</th></tr></thead>
-            <tbody>{"".join(probe_rows)}</tbody>
-          </table>
-        </section>
-        """
-
     ga4_detail = "—"
     if ga4_target.get("ok"):
         ga4_detail = (
@@ -507,11 +554,11 @@ def render_settings_html(
     if db_editable:
         meta = ""
         if db_config_updated_at:
-            meta = f'<p class="muted">Last saved in database: {_esc(db_config_updated_at[:19])} UTC</p>'
+            meta = f'<p class="muted">Last saved: {_esc(db_config_updated_at[:19])} UTC</p>'
         edit_form = f"""
-        <section class="panel">
-          <h2>Edit client data mapping</h2>
-          <p class="muted">OAuth tokens stay in Railway env or Postgres (via Connect). Map this client to the correct ad accounts and GA4 property.</p>
+        <section class="panel panel--primary">
+          <h2>2. Map client account IDs</h2>
+          <p class="muted">Point this dashboard at the correct Google, LinkedIn, Meta, and GA4 accounts.</p>
           {meta}
           <form method="post" action="{settings_url}">
             <input type="hidden" name="action" value="save">
@@ -539,41 +586,26 @@ def render_settings_html(
                 <label for="ga4_client_key">GA4 client key</label>
                 <input id="ga4_client_key" name="ga4_client_key" type="text"
                   value="{_esc(cfg.ga4_client_key or '')}" placeholder="penn">
-                <p class="hint">Must match a key in GA4_CLIENTS (Railway env).</p>
+                <p class="hint">Must match a key in GA4_CLIENTS (Railway).</p>
               </div>
             </div>
-            <button type="submit" class="btn primary">Save client mapping</button>
+            <button type="submit" class="btn primary">Save mapping</button>
           </form>
         </section>
         """
     elif use_session and not session_is_admin:
         edit_form = """
         <section class="panel">
-          <h2>Client data mapping</h2>
-          <p class="muted">Only admins can edit account IDs. Contact your agency admin to update connections.</p>
+          <h2>2. Map client account IDs</h2>
+          <p class="muted">Only admins can edit account IDs. Ask your agency admin to update connections.</p>
         </section>
         """
     else:
-        edit_form = """
+        edit_form = f"""
         <section class="panel">
-          <h2>Client data mapping</h2>
-          <p class="muted">Sign in as admin to edit account IDs, or set PENN_DASHBOARD / DASHBOARD_CLIENTS in Railway.</p>
+          <h2>2. Map client account IDs</h2>
+          <p class="muted">Current IDs: Google {_esc(cfg.google_customer_id or "—")}, LinkedIn {_esc(cfg.linkedin_account_id or "—")}, Meta {_esc(cfg.meta_account_id or "—")}.</p>
         </section>
-        """
-
-    account_nav = ""
-    if use_session and session_email:
-        admin_link = (
-            '<a href="/admin">Admin</a><span>·</span>' if session_is_admin else ""
-        )
-        account_nav = f"""
-        <div class="account-bar">
-          <span>{_esc(session_email)}</span>
-          {admin_link}
-          <form method="post" action="/logout" class="inline-form">
-            <button type="submit" class="link-btn">Sign out</button>
-          </form>
-        </div>
         """
 
     test_btn = ""
@@ -581,9 +613,17 @@ def render_settings_html(
         test_btn = f"""
         <form method="post" action="{settings_url}" class="inline-form">
           <input type="hidden" name="action" value="test">
-          <button type="submit" class="btn secondary">Test all connections</button>
+          <button type="submit" class="btn secondary">Test connections</button>
         </form>
         """
+
+    refresh_block = dashboard_service._refresh_toolbar(
+        client_slug=slug,
+        access_key=access_key,
+        use_session=use_session,
+        snapshot=snapshot,
+        flash_message=None,
+    )
 
     oauth_section = _oauth_connect_section_html(
         settings_url=settings_url,
@@ -592,147 +632,126 @@ def render_settings_html(
         api=api,
     )
 
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Settings · {_esc(cfg.label)}</title>
-  {_favicon_head_html()}
-  <style>
-    :root {{
-      --navy: #0a2540; --accent: #0b5cab; --border: #d8dee8; --muted: #5a6578;
-      --ok: #1b7f4a; --ok-bg: #e8f5ee; --err: #b42318; --err-bg: #fdecea;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{ margin: 0; font-family: system-ui, sans-serif; background: #eef1f5; color: #0f1c2e; }}
-    header {{
-      background: var(--navy); color: #fff; padding: 16px 24px;
-      display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-    }}
-    header h1 {{ margin: 0; font-size: 1.15rem; }}
-    header .sub {{ margin: 4px 0 0; font-size: .88rem; opacity: .85; }}
-    header nav {{ display: flex; align-items: center; gap: 12px; font-size: .9rem; }}
-    header a {{ color: #fff; text-decoration: none; opacity: .92; }}
-    header a:hover {{ opacity: 1; text-decoration: underline; }}
-    main {{ max-width: 920px; margin: 0 auto; padding: 24px 20px 48px; }}
-    .panel {{
-      background: #fff; border: 1px solid var(--border); border-radius: 12px;
-      padding: 20px; margin-bottom: 20px;
-    }}
-    .muted-panel {{ background: #f8fafc; }}
-    h2 {{ margin: 0 0 12px; font-size: 1.02rem; color: var(--navy); }}
-    p {{ margin: 0 0 10px; line-height: 1.45; }}
-    .muted {{ color: var(--muted); font-size: .92rem; }}
-    .hint {{ color: var(--muted); font-size: .82rem; margin: 4px 0 0; }}
-    .notice {{ padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; font-size: .9rem; }}
-    .notice.ok {{ background: var(--ok-bg); color: var(--ok); }}
-    .notice.err {{ background: var(--err-bg); color: var(--err); }}
-    .status-table {{ width: 100%; border-collapse: collapse; font-size: .92rem; }}
-    .status-table th, .status-table td {{
-      text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top;
-    }}
-    .status-table th {{ color: var(--muted); font-weight: 600; font-size: .78rem; text-transform: uppercase; }}
-    .status-table td.detail {{ color: var(--muted); font-size: .88rem; }}
-    .mono {{ font-family: ui-monospace, monospace; font-size: .88rem; }}
-    .badge {{
-      display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: .78rem; font-weight: 600;
-    }}
-    .badge.ok {{ background: var(--ok-bg); color: var(--ok); }}
-    .badge.err {{ background: var(--err-bg); color: var(--err); }}
-    .checklist {{ margin: 0; padding-left: 1.2rem; line-height: 1.55; }}
-    .form-grid {{
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; margin-bottom: 16px;
-    }}
-    label {{ display: block; font-size: .85rem; font-weight: 600; margin-bottom: 6px; }}
-    input[type="text"] {{
-      width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
-    }}
-    input[type="password"] {{
-      width: 100%; max-width: 480px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
-      margin-bottom: 10px;
-    }}
-    .oauth-grid {{
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; margin: 16px 0;
-    }}
-    .oauth-card {{
-      border: 1px solid var(--border); border-radius: 10px; padding: 14px; background: #fafbfc;
-    }}
-    .oauth-card-head {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }}
-    .oauth-card h3 {{ margin: 0; font-size: .95rem; color: var(--navy); }}
-    .oauth-actions {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }}
-    .meta-manual {{ margin-top: 12px; font-size: .9rem; }}
-    .meta-token-form {{ margin-top: 10px; }}
-    .btn {{
-      display: inline-block; padding: 10px 18px; border-radius: 8px; border: 0;
-      font-weight: 600; cursor: pointer; font-size: .92rem;
-    }}
-    .btn.primary {{ background: var(--accent); color: #fff; }}
-    .btn.secondary {{ background: #fff; color: var(--accent); border: 1px solid var(--border); }}
-    .toolbar {{ display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 16px; }}
-    .inline-form {{ display: inline; margin: 0; }}
-    .link-btn {{
-      background: none; border: 0; color: #fff; cursor: pointer; font: inherit; opacity: .9; padding: 0;
-    }}
-    .account-bar {{ display: flex; align-items: center; gap: 8px; font-size: .88rem; opacity: .9; }}
-    .account-bar span {{ opacity: .85; }}
-    .error-list {{ margin: 8px 0 0; padding-left: 1.2rem; color: var(--err); font-size: .88rem; }}
-  </style>
-</head>
-<body>
-  <header>
-    <div>
-      <h1>Dashboard settings</h1>
-      <p class="sub">{_esc(cfg.label)} · connect auth, API, and client data</p>
-    </div>
-    <nav>
-      <a href="{dashboard_url}">← Back to dashboard</a>
-      {account_nav}
-    </nav>
-  </header>
-  <main>
+    checklist = _setup_checklist_html(api=api, cfg=cfg, ga4_ok=api["ga4"]["ok"])
+
+    insights_fold = ""
+    if dashboard_service.can_edit_penn_insights(
+        session_is_admin=session_is_admin,
+        access_key=access_key,
+    ):
+        insights_fold = f"""
+        <details class="settings-fold">
+          <summary>Dashboard insights (admin notes)</summary>
+          <div class="fold-body">
+            {dashboard_service._insights_editor_html(client_slug=slug, access_key=access_key, use_session=use_session, snapshot=snapshot)}
+          </div>
+        </details>"""
+
+    probe_fold = ""
+    if probe_results:
+        probe_rows = []
+        for platform in ("google", "linkedin", "meta", "ga4"):
+            row = probe_results.get(platform) or {}
+            probe_rows.append(
+                _connection_row(
+                    platform.title(),
+                    bool(row.get("ok")),
+                    str(row.get("message") or "—"),
+                )
+            )
+        probe_fold = f"""
+        <section class="panel">
+          <h2>Connection test results</h2>
+          <table class="status-table">
+            <thead><tr><th>Platform</th><th>Status</th><th>Detail</th></tr></thead>
+            <tbody>{"".join(probe_rows)}</tbody>
+          </table>
+        </section>"""
+
+    base_url = _esc(oauth_flows.public_base_url())
+    advanced = f"""
+    <details class="settings-fold">
+      <summary>Auth &amp; API diagnostics</summary>
+      <div class="fold-body">
+        <table class="status-table">
+          <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
+          <tbody>{"".join(auth_rows)}</tbody>
+        </table>
+        <table class="status-table">
+          <thead><tr><th>Platform</th><th>Status</th><th>Notes</th></tr></thead>
+          <tbody>{"".join(api_rows)}</tbody>
+        </table>
+      </div>
+    </details>
+    <details class="settings-fold">
+      <summary>Sync status &amp; account details</summary>
+      <div class="fold-body">
+        <table class="status-table">
+          <thead><tr><th>Field</th><th>Value</th></tr></thead>
+          <tbody>{account_rows}</tbody>
+        </table>
+        {_sync_meta_html(snapshot)}
+      </div>
+    </details>
+    <details class="settings-fold">
+      <summary>Developer setup (Railway &amp; callbacks)</summary>
+      <div class="fold-body">
+        <p class="muted">Register OAuth callbacks in each provider console:</p>
+        <ul class="checklist mono">
+          <li>{base_url}/oauth/google_ads/callback</li>
+          <li>{base_url}/oauth/linkedin/callback</li>
+          <li>{base_url}/oauth/meta/callback</li>
+        </ul>
+        <ul class="checklist">
+          <li><strong>GA4:</strong> GCP_SERVICE_ACCOUNT_JSON + GA4_CLIENTS in Railway</li>
+          <li><strong>Google Ads:</strong> GOOGLE_ADS_DEVELOPER_TOKEN in Railway</li>
+          <li><strong>Meta:</strong> META_BUSINESS_ID in Railway</li>
+        </ul>
+      </div>
+    </details>
+    {insights_fold}"""
+
+    client_meta_tip = ""
+    if snapshot:
+        dr = snapshot.get("date_range") or {}
+        refreshed = snapshot.get("refreshed_at") or "—"
+        client_meta_tip = _esc(
+            f"Date range: {dr.get('start', '')} → {dr.get('end', '')}\nLast refreshed: {refreshed} UTC"
+        )
+
+    content = f"""
     {notice}
-    <div class="toolbar">
-      {test_btn}
-      {_status_badge(auth["overall_ok"] and api["overall_ok"], ok_label="Credentials configured", fail_label="Setup incomplete")}
-    </div>
-
+    <section class="panel">
+      <h2>Setup checklist</h2>
+      <p class="muted">Work top to bottom. Green badges mean that step is done.</p>
+      {checklist}
+    </section>
     {oauth_section}
-
-    <section class="panel">
-      <h2>Auth</h2>
-      <p class="muted">Browser login and API protection for this deployment.</p>
-      <table class="status-table">
-        <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
-        <tbody>{"".join(auth_rows)}</tbody>
-      </table>
-    </section>
-
-    <section class="panel">
-      <h2>Platform API credentials</h2>
-      <p class="muted">Agency-wide OAuth tokens shared across all client dashboards.</p>
-      <table class="status-table">
-        <thead><tr><th>Platform</th><th>Status</th><th>Notes</th></tr></thead>
-        <tbody>{"".join(api_rows)}</tbody>
-      </table>
-    </section>
-
-    <section class="panel">
-      <h2>Client data</h2>
-      <p class="muted">Account IDs used when refreshing {_esc(cfg.label)}.</p>
-      <table class="status-table">
-        <thead><tr><th>Field</th><th>Value</th></tr></thead>
-        <tbody>{account_rows}</tbody>
-      </table>
-      <h3 style="margin:20px 0 8px;font-size:.95rem;color:var(--navy)">Sync status</h3>
-      {_sync_meta_html(snapshot)}
-    </section>
-
     {edit_form}
-    {probe_block}
-  </main>
-</body>
-</html>"""
+    <section class="panel panel--primary">
+      <h2>3. Refresh &amp; verify</h2>
+      <p class="muted">Pull latest data after connecting. Quick refresh is cheaper; full refresh reloads campaign tables and GA4.</p>
+      {refresh_block}
+      <div class="toolbar">{test_btn}</div>
+    </section>
+    {probe_fold}
+    {advanced}
+    """
+
+    return dashboard_service.render_client_shell_page(
+        client_slug=slug,
+        label=cfg.label,
+        active_nav="settings",
+        page_title="Settings",
+        page_subtitle=f"{cfg.label} · connections & data",
+        content_html=content,
+        access_key=access_key,
+        use_session=use_session,
+        session_email=session_email,
+        session_is_admin=session_is_admin,
+        client_meta_tip=client_meta_tip,
+        extra_css=_settings_page_css(),
+    )
 
 
 def load_settings_config(client_slug: str) -> PennDashboardConfig:

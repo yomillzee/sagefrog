@@ -853,6 +853,24 @@ def _summary_card(
     """
 
 
+def _dashboard_page_url(
+    *,
+    client_slug: str = "penn",
+    access_key: str | None,
+    use_session: bool,
+    tab: str | None = None,
+) -> str:
+    base = f"/dashboard/{client_slug}"
+    if tab:
+        base = f"{base}?tab={quote(tab, safe='')}"
+    if use_session:
+        return base
+    if access_key:
+        sep = "&" if "?" in base else "?"
+        return f"{base}{sep}key={quote(access_key, safe='')}"
+    return base
+
+
 def _settings_page_url(
     *,
     client_slug: str = "penn",
@@ -867,22 +885,33 @@ def _settings_page_url(
     return base
 
 
-def _refresh_action_url(*, access_key: str | None, use_session: bool) -> str | None:
+def _refresh_action_url(
+    *,
+    client_slug: str = "penn",
+    access_key: str | None,
+    use_session: bool,
+) -> str | None:
+    base = f"/dashboard/{client_slug}/refresh"
     if use_session:
-        return "/dashboard/penn/refresh"
+        return base
     if access_key:
-        return f"/dashboard/penn/refresh?key={quote(access_key, safe='')}"
+        return f"{base}?key={quote(access_key, safe='')}"
     return None
 
 
 def _refresh_toolbar(
     *,
+    client_slug: str = "penn",
     access_key: str | None,
     use_session: bool = False,
     snapshot: dict[str, Any] | None,
     flash_message: str | None = None,
 ) -> str:
-    refresh_url = _refresh_action_url(access_key=access_key, use_session=use_session)
+    refresh_url = _refresh_action_url(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+    )
     if not refresh_url:
         return ""
     quick_allowed, quick_remaining = refresh_cooldown_status(snapshot, quick=True)
@@ -1013,21 +1042,32 @@ def save_penn_insights(
     return insights
 
 
-def _insights_action_url(*, access_key: str | None, use_session: bool) -> str | None:
+def _insights_action_url(
+    *,
+    client_slug: str = "penn",
+    access_key: str | None,
+    use_session: bool,
+) -> str | None:
+    base = f"/dashboard/{client_slug}/insights"
     if use_session:
-        return "/dashboard/penn/insights"
+        return base
     if access_key:
-        return f"/dashboard/penn/insights?key={quote(access_key, safe='')}"
+        return f"{base}?key={quote(access_key, safe='')}"
     return None
 
 
 def _insights_editor_html(
     *,
+    client_slug: str = "penn",
     access_key: str | None,
     use_session: bool,
     snapshot: dict[str, Any] | None,
 ) -> str:
-    action = _insights_action_url(access_key=access_key, use_session=use_session)
+    action = _insights_action_url(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+    )
     if not action:
         return ""
     insights = _insights_from_snapshot(snapshot)
@@ -1089,67 +1129,221 @@ def _overview_hero_row_html(
     return f'<div class="overview-hero-row">{spend_card}{insights_card}</div>'
 
 
-def _settings_panel_html(
+def _sidebar_nav_html(
     *,
+    client_slug: str,
+    active: str,
     access_key: str | None,
-    use_session: bool = False,
-    snapshot: dict[str, Any] | None,
-    flash_message: str | None = None,
-    can_edit_insights: bool = False,
-    client_slug: str = "penn",
+    use_session: bool,
 ) -> str:
-    """Refresh and insights controls inside the sidebar settings popover."""
-    if not _refresh_action_url(access_key=access_key, use_session=use_session):
-        return ""
-    settings_page = _settings_page_url(
+    """Sidebar nav: Overview, By business line, Settings."""
+    settings_url = _settings_page_url(
         client_slug=client_slug,
         access_key=access_key,
         use_session=use_session,
     )
-    settings_link = ""
-    if settings_page:
-        settings_link = (
-            f'<p class="settings-popover__hint">'
-            f'<a class="settings-page-link" href="{settings_page}">'
-            f"Connection &amp; data settings →</a></p>"
-        )
-    toolbar = _refresh_toolbar(
+    overview_url = _dashboard_page_url(
+        client_slug=client_slug,
         access_key=access_key,
         use_session=use_session,
-        snapshot=snapshot,
-        flash_message=flash_message,
     )
-    sync_status = ""
-    if snapshot:
-        sm = snapshot.get("sync_meta") or {}
-        trigger = sm.get("trigger") or snapshot.get("refresh_mode") or "—"
-        refreshed = snapshot.get("refreshed_at") or "—"
-        sync_status = (
-            f'<p class="settings-popover__hint muted sync-status">'
-            f"Last data pull: {_esc(str(refreshed)[:19])} UTC · source: {_esc(trigger)}. "
-            f"Nightly cron should show <code>cron</code> after 11:00 UTC.</p>"
-        )
-    insights_block = ""
-    if can_edit_insights:
-        insights_block = _insights_editor_html(
-            access_key=access_key,
-            use_session=use_session,
-            snapshot=snapshot,
-        )
+    bl_url = _dashboard_page_url(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+        tab="business-line",
+    )
+    icon_overview = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>'
+    icon_bl = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>'
+    icon_settings = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>'
+
+    if active == "settings":
+        overview_el = f'<a href="{overview_url}" class="sidebar-nav-btn sidebar-nav-link">{icon_overview}Overview</a>'
+        bl_el = f'<a href="{bl_url}" class="sidebar-nav-btn sidebar-nav-link">{icon_bl}By business line</a>'
+        settings_el = f'<span class="sidebar-nav-btn active" aria-current="page">{icon_settings}Settings</span>'
+    else:
+        overview_active = active == "overview"
+        bl_active = active == "business-line"
+        overview_el = f'<button type="button" class="sidebar-nav-btn{" active" if overview_active else ""}" data-tab="platform" role="tab" aria-selected="{"true" if overview_active else "false"}">{icon_overview}Overview</button>'
+        bl_el = f'<button type="button" class="sidebar-nav-btn{" active" if bl_active else ""}" data-tab="business-line" role="tab" aria-selected="{"true" if bl_active else "false"}">{icon_bl}By business line</button>'
+        settings_el = f'<a href="{settings_url or "#"}" class="sidebar-nav-btn sidebar-nav-link">{icon_settings}Settings</a>'
+
     return f"""
-    <div class="settings-popover" id="settingsPopover" role="dialog" aria-label="Dashboard settings" hidden>
-      <div class="settings-popover__head">
-        <span class="settings-popover__title">Settings</span>
-        <button type="button" class="settings-popover__close" id="settingsClose" aria-label="Close settings">&times;</button>
+      <nav class="sidebar-nav" role="navigation" aria-label="Dashboard views">
+        {overview_el}
+        {bl_el}
+        {settings_el}
+      </nav>"""
+
+
+def _dashboard_shell_sidebar_js() -> str:
+    return """
+    const MOBILE_SIDEBAR_MQ = window.matchMedia('(max-width: 960px)');
+    function isMobileSidebar() { return MOBILE_SIDEBAR_MQ.matches; }
+    function setSidebarOpen(open) {
+      document.body.classList.toggle('sidebar-open', open);
+      document.getElementById('sidebarOpen')?.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    function closeSidebar() { setSidebarOpen(false); }
+    function toggleSidebar() { setSidebarOpen(!document.body.classList.contains('sidebar-open')); }
+    document.getElementById('sidebarOpen')?.addEventListener('click', toggleSidebar);
+    document.getElementById('sidebarClose')?.addEventListener('click', closeSidebar);
+    document.getElementById('sidebarBackdrop')?.addEventListener('click', closeSidebar);
+    MOBILE_SIDEBAR_MQ.addEventListener('change', () => { if (!isMobileSidebar()) closeSidebar(); });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && document.body.classList.contains('sidebar-open')) closeSidebar();
+    });
+    """
+
+
+def render_client_shell_page(
+    *,
+    client_slug: str,
+    label: str,
+    active_nav: str,
+    page_title: str,
+    page_subtitle: str,
+    content_html: str,
+    access_key: str | None = None,
+    use_session: bool = False,
+    session_email: str | None = None,
+    session_is_admin: bool = False,
+    client_meta_tip: str = "",
+    extra_css: str = "",
+) -> str:
+    """Shared dashboard chrome for settings and other child pages."""
+    account_nav = _session_account_html(email=session_email, is_admin=session_is_admin)
+    sidebar_nav = _sidebar_nav_html(
+        client_slug=client_slug,
+        active=active_nav,
+        access_key=access_key,
+        use_session=use_session,
+    )
+    tip = client_meta_tip or _esc(label)
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{_esc(label)} — {_esc(page_title)}</title>
+  {_favicon_head_html()}
+  <style>
+    :root {{
+      --bg: #eef1f5; --panel: #fff; --text: #0f1c2e; --muted: #5a6578;
+      --border: #d8dee8; --accent: #0b5cab; --navy: #0a2540;
+      --shadow: 0 4px 24px rgba(10, 37, 64, 0.08);
+      --ok: #1b7f4a; --ok-bg: #e8f5ee; --err: #b42318; --err-bg: #fdecea;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }}
+    .app-shell {{ display: flex; min-height: 100vh; }}
+    .dash-sidebar {{
+      width: 248px; background: linear-gradient(180deg, #0a2540, #123456); color: #fff;
+      display: flex; flex-direction: column; padding: 16px 12px; flex-shrink: 0;
+    }}
+    .sidebar-top {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }}
+    .sidebar-brand {{ font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.45); }}
+    .sidebar-nav {{ display: flex; flex-direction: column; gap: 6px; }}
+    .sidebar-nav-btn, .sidebar-nav-link {{
+      appearance: none; border: none; background: transparent; color: rgba(255,255,255,0.72);
+      padding: 11px 12px; border-radius: 10px; font-size: 0.9rem; font-weight: 600; text-align: left;
+      cursor: pointer; display: flex; align-items: center; gap: 10px; text-decoration: none;
+      transition: background 0.15s, color 0.15s;
+    }}
+    .sidebar-nav-btn:hover, .sidebar-nav-link:hover {{ background: rgba(255,255,255,0.08); color: #fff; }}
+    .sidebar-nav-btn.active, .sidebar-nav-link.active {{
+      background: rgba(255,255,255,0.14); color: #fff; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1);
+    }}
+    .sidebar-nav-icon {{ width: 18px; height: 18px; opacity: 0.85; flex-shrink: 0; }}
+    .sidebar-footer {{ margin-top: auto; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.1); }}
+    .client-block {{ display: flex; align-items: center; gap: 6px; margin-top: 10px; }}
+    .client-name {{ font-size: 0.88rem; font-weight: 600; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+    .info-tip {{
+      appearance: none; border: 1px solid rgba(255,255,255,0.22); background: rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.85); width: 22px; height: 22px; border-radius: 999px; font-size: 0.72rem;
+      font-weight: 700; cursor: help; flex-shrink: 0; position: relative;
+    }}
+    .info-tip::after {{
+      content: attr(data-tip); position: absolute; right: 0; bottom: calc(100% + 8px); width: max-content;
+      max-width: 240px; padding: 10px 12px; border-radius: 10px; background: #fff; color: var(--text);
+      font-size: 0.76rem; font-weight: 500; line-height: 1.45; white-space: pre-line;
+      box-shadow: var(--shadow); border: 1px solid var(--border); opacity: 0; visibility: hidden;
+      transform: translateY(4px); transition: opacity 0.15s, transform 0.15s; pointer-events: none; z-index: 60;
+    }}
+    .info-tip:hover::after, .info-tip:focus-visible::after {{ opacity: 1; visibility: visible; transform: translateY(0); }}
+    .account-nav {{ display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; margin-bottom: 2px; border-bottom: 1px solid rgba(255,255,255,0.1); }}
+    .account-email {{ font-size: 0.78rem; color: rgba(255,255,255,0.72); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+    .account-actions {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 0.8rem; }}
+    .account-sep {{ color: rgba(255,255,255,0.35); }}
+    .account-link {{ color: rgba(255,255,255,0.92); text-decoration: none; background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }}
+    .account-logout-form {{ display: inline; margin: 0; }}
+    .account-link:hover {{ text-decoration: underline; }}
+    .dash-main {{ flex: 1; min-width: 0; display: flex; flex-direction: column; }}
+    .dash-topbar {{ display: flex; align-items: center; gap: 14px; padding: 18px 24px; background: var(--panel); border-bottom: 1px solid var(--border); }}
+    .dash-title {{ margin: 0; font-size: 1.25rem; color: var(--navy); }}
+    .dash-subtitle {{ margin: 4px 0 0; font-size: 0.88rem; color: var(--muted); }}
+    .dash-content {{ flex: 1; padding: 24px; overflow: auto; }}
+    .wrap {{ max-width: 920px; }}
+    .sidebar-menu-btn, .sidebar-close {{
+      appearance: none; border: 1px solid var(--border); background: var(--panel); color: var(--navy);
+      width: 40px; height: 40px; border-radius: 10px; cursor: pointer; display: none; align-items: center; justify-content: center;
+    }}
+    .sidebar-menu-btn svg, .sidebar-close svg {{ width: 20px; height: 20px; }}
+    .sidebar-backdrop {{
+      position: fixed; inset: 0; background: rgba(10, 37, 64, 0.45); z-index: 90; opacity: 0; visibility: hidden;
+      pointer-events: none; border: none; padding: 0; cursor: pointer;
+    }}
+    @media (max-width: 960px) {{
+      .dash-sidebar {{
+        position: fixed; left: 0; top: 0; bottom: 0; z-index: 100; transform: translateX(-100%);
+        transition: transform 0.24s ease;
+      }}
+      body.sidebar-open .dash-sidebar {{ transform: translateX(0); }}
+      body.sidebar-open .sidebar-backdrop {{ opacity: 1; visibility: visible; pointer-events: auto; }}
+      .sidebar-menu-btn, .sidebar-close {{ display: flex; }}
+    }}
+    {extra_css}
+  </style>
+</head>
+<body>
+  <button type="button" class="sidebar-backdrop" id="sidebarBackdrop" aria-label="Close menu" tabindex="-1"></button>
+  <div class="app-shell">
+    <aside class="dash-sidebar" id="dashSidebar" aria-label="Dashboard navigation">
+      <div class="sidebar-top">
+        <span class="sidebar-brand">Dashboard</span>
+        <button type="button" class="sidebar-close" id="sidebarClose" aria-label="Close menu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
       </div>
-      <div class="settings-popover__body">
-        {settings_link}
-        <p class="settings-popover__hint muted">Quick refresh updates spend charts and summary cards from the warehouse (cheaper). Full refresh also reloads campaign/ad tables and GA4 attribution.</p>
-        {sync_status}
-        {toolbar}
-        {insights_block}
+      {sidebar_nav}
+      <div class="sidebar-footer">
+        {account_nav}
+        <div class="client-block">
+          <span class="client-name">{_esc(label)}</span>
+          <button type="button" class="info-tip" data-tip="{tip}" aria-label="Client info">i</button>
+        </div>
       </div>
-    </div>"""
+    </aside>
+    <div class="dash-main">
+      <header class="dash-topbar">
+        <button type="button" class="sidebar-menu-btn" id="sidebarOpen" aria-label="Open menu" aria-controls="dashSidebar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+        <div class="dash-topbar-text">
+          <h1 class="dash-title">{_esc(page_title)}</h1>
+          <p class="dash-subtitle">{_esc(page_subtitle)}</p>
+        </div>
+      </header>
+      <div class="dash-content">
+        <div class="wrap">
+          {content_html}
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>{_dashboard_shell_sidebar_js()}</script>
+</body>
+</html>"""
 
 
 def _aggregated_card(totals: dict[str, Any]) -> str:
@@ -1395,65 +1589,35 @@ def render_penn_html(
 ) -> str:
     """use_session: refresh forms omit ?key= (cookie auth). access_key: legacy shared secret."""
     account_nav = _session_account_html(email=session_email, is_admin=session_is_admin)
-    edit_insights = can_edit_penn_insights(
-        session_is_admin=session_is_admin,
-        access_key=access_key,
-    )
     if not snapshot:
-        settings = _settings_panel_html(
-            access_key=access_key,
-            use_session=use_session,
-            snapshot=None,
-            flash_message=flash_message,
-            can_edit_insights=edit_insights,
-            client_slug="penn",
-        )
         settings_page = _settings_page_url(
             client_slug="penn", access_key=access_key, use_session=use_session
         )
-        settings_page_link = (
-            f'<p style="margin-top:16px"><a href="{settings_page}" style="color:var(--accent);font-weight:600">'
-            f"Open connection &amp; data settings →</a></p>"
-            if settings_page
-            else ""
+        empty_body = f"""
+        <section class="panel">
+          <h2>No data yet</h2>
+          <p class="muted">Connect your ad platforms and run a refresh from Settings.</p>
+          <p><a class="dash-link" href="{settings_page}">Go to Settings →</a></p>
+        </section>"""
+        return render_client_shell_page(
+            client_slug="penn",
+            label="Penn Community Bank",
+            active_nav="overview",
+            page_title="Overview",
+            page_subtitle="Penn Community Bank · Paid media performance",
+            content_html=empty_body,
+            access_key=access_key,
+            use_session=use_session,
+            session_email=session_email,
+            session_is_admin=session_is_admin,
+            extra_css="""
+    .panel { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    .panel h2 { margin: 0 0 10px; font-size: 1.05rem; color: var(--navy); }
+    .muted { color: var(--muted); }
+    .dash-link { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .dash-link:hover { text-decoration: underline; }
+            """,
         )
-        return f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Penn Dashboard</title>{_favicon_head_html()}
-<style>
-:root{{--navy:#0a2540;--accent:#0b5cab;--border:#d8dee8;--muted:#5a6578}}
-*{{box-sizing:border-box}}body{{margin:0;font-family:system-ui,sans-serif;background:#eef1f5;color:#0f1c2e}}
-.app-shell{{display:flex;min-height:100vh}}
-.dash-sidebar{{width:248px;background:linear-gradient(180deg,#0a2540,#123456);color:#fff;display:flex;flex-direction:column;padding:16px 12px;flex-shrink:0}}
-.sidebar-footer{{margin-top:auto;padding-top:16px;border-top:1px solid rgba(255,255,255,.12)}}
-.client-name{{font-size:.88rem;font-weight:600}}
-.settings-btn{{margin-top:10px;width:100%;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;cursor:pointer;font-weight:600}}
-.dash-main{{flex:1;padding:32px 28px}}
-.muted{{color:var(--muted)}}.refresh-btn{{padding:9px 16px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-weight:600}}
-</style></head><body>
-<div class="app-shell">
-  <aside class="dash-sidebar">
-    <div class="sidebar-footer">
-      {account_nav}
-      <div class="client-name">Penn Community Bank</div>
-      <button type="button" class="settings-btn" id="settingsOpen">Settings</button>
-    </div>
-  </aside>
-  <main class="dash-main">
-    <h1>Ads Dashboard</h1>
-    <p class="muted">No snapshot yet. Open Settings and click Refresh to pull data from ad platforms.</p>
-    {settings_page_link}
-    {settings}
-  </main>
-</div>
-<script>
-document.getElementById('settingsOpen')?.addEventListener('click',()=>{{
-  const p=document.getElementById('settingsPopover');if(p)p.hidden=!p.hidden;
-}});
-document.getElementById('settingsClose')?.addEventListener('click',()=>{{
-  const p=document.getElementById('settingsPopover');if(p)p.hidden=true;
-}});
-</script>
-</body></html>"""
 
     label = snapshot.get("label") or "Penn Community Bank"
     client_slug = str(snapshot.get("client_key") or "penn")
@@ -1559,13 +1723,11 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
             ],
         }
     )
-    settings_panel = _settings_panel_html(
+    sidebar_nav = _sidebar_nav_html(
+        client_slug=client_slug,
+        active="overview",
         access_key=access_key,
         use_session=use_session,
-        snapshot=snapshot,
-        flash_message=flash_message,
-        can_edit_insights=edit_insights,
-        client_slug=client_slug,
     )
     overview_hero = _overview_hero_row_html(aggregated, snapshot)
     client_meta_tip = _esc(f"Date range: {range_label}\nLast refreshed: {refreshed} UTC")
@@ -1702,7 +1864,9 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       gap: 10px;
       transition: background 0.15s, color 0.15s;
       white-space: nowrap;
+      text-decoration: none;
     }}
+    a.sidebar-nav-link {{ text-decoration: none; }}
     .sidebar-nav-btn:hover {{
       background: rgba(255,255,255,0.08);
       color: #fff;
@@ -2774,28 +2938,12 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
         </button>
       </div>
-      <nav class="sidebar-nav" role="tablist" aria-label="Views">
-        <button type="button" class="sidebar-nav-btn active" data-tab="platform" role="tab" aria-selected="true">
-          <svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-          Overview
-        </button>
-        <button type="button" class="sidebar-nav-btn" data-tab="business-line" role="tab" aria-selected="false">
-          <svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-          By business line
-        </button>
-      </nav>
+      {sidebar_nav}
       <div class="sidebar-footer">
         {account_nav}
         <div class="client-block">
           <span class="client-name">{_esc(label)}</span>
           <button type="button" class="info-tip" data-tip="{client_meta_tip}" aria-label="Date range and last refresh">i</button>
-        </div>
-        <div class="settings-wrap">
-          <button type="button" class="settings-btn" id="settingsOpen" aria-expanded="false" aria-controls="settingsPopover">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-            Settings
-          </button>
-          {settings_panel}
         </div>
       </div>
     </aside>
@@ -2949,7 +3097,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
     const fmtPct = (n, d) => d ? (100 * n / d).toFixed(2) + '%' : '—';
     const escHtml = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 
-    document.querySelectorAll('.sidebar-nav-btn').forEach(btn => {{
+    document.querySelectorAll('.sidebar-nav-btn[data-tab]').forEach(btn => {{
       btn.addEventListener('click', () => {{
         setActiveTab(btn.dataset.tab);
         closeSidebar();
@@ -3017,7 +3165,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
     const VIEW_TITLES = {{ platform: 'Overview', 'business-line': 'By business line' }};
 
     function setActiveTab(tab) {{
-      document.querySelectorAll('.sidebar-nav-btn').forEach(b => {{
+      document.querySelectorAll('.sidebar-nav-btn[data-tab]').forEach(b => {{
         const on = b.dataset.tab === tab;
         b.classList.toggle('active', on);
         b.setAttribute('aria-selected', on ? 'true' : 'false');
@@ -3029,30 +3177,8 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       if (title) title.textContent = VIEW_TITLES[tab] || 'Dashboard';
     }}
 
-    const settingsOpen = document.getElementById('settingsOpen');
-    const settingsPopover = document.getElementById('settingsPopover');
-    const settingsClose = document.getElementById('settingsClose');
-    function closeSettings() {{
-      if (!settingsPopover) return;
-      settingsPopover.hidden = true;
-      settingsOpen?.setAttribute('aria-expanded', 'false');
-    }}
-    function toggleSettings() {{
-      if (!settingsPopover) return;
-      const willOpen = settingsPopover.hidden;
-      settingsPopover.hidden = !willOpen;
-      settingsOpen?.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
-    }}
-    settingsOpen?.addEventListener('click', e => {{
-      e.stopPropagation();
-      toggleSettings();
-    }});
-    settingsClose?.addEventListener('click', closeSettings);
-    document.addEventListener('click', e => {{
-      if (!settingsPopover || settingsPopover.hidden) return;
-      if (e.target.closest('.settings-wrap')) return;
-      closeSettings();
-    }});
+    const initialTab = new URLSearchParams(window.location.search).get('tab');
+    if (initialTab === 'business-line') setActiveTab('business-line');
 
     const channelState = new Set();
     const blState = new Set();
