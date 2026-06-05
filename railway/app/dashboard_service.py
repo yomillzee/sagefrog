@@ -1151,6 +1151,168 @@ def _overview_hero_row_html(
     return f'<div class="overview-hero-row">{spend_card}{insights_card}</div>'
 
 
+def _fmt_file_size(num_bytes: int) -> str:
+    size = int(num_bytes or 0)
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{round(size / 1024)} KB"
+    return f"{round(size / (1024 * 1024), 1)} MB"
+
+
+def _insight_documents_action_url(
+    *,
+    client_slug: str,
+    access_key: str | None,
+    use_session: bool,
+) -> str | None:
+    base = f"/dashboard/{client_slug}/insight-documents"
+    if use_session:
+        return base
+    if access_key:
+        return f"{base}?key={quote(access_key, safe='')}"
+    return None
+
+
+def _insight_document_download_url(
+    *,
+    client_slug: str,
+    doc_id: int,
+    access_key: str | None,
+    use_session: bool,
+) -> str:
+    base = f"/dashboard/{client_slug}/insight-documents/{int(doc_id)}"
+    if use_session:
+        return base
+    if access_key:
+        return f"{base}?key={quote(access_key, safe='')}"
+    return base
+
+
+def _insight_document_delete_url(
+    *,
+    client_slug: str,
+    doc_id: int,
+    access_key: str | None,
+    use_session: bool,
+) -> str:
+    base = f"/dashboard/{client_slug}/insight-documents/{int(doc_id)}/delete"
+    if use_session:
+        return base
+    if access_key:
+        return f"{base}?key={quote(access_key, safe='')}"
+    return base
+
+
+def _client_insights_documents_html(
+    *,
+    client_slug: str,
+    access_key: str | None,
+    use_session: bool,
+    can_upload: bool,
+) -> str:
+    import client_insight_documents as docs
+
+    rows = docs.list_documents(client_slug)
+    upload_html = ""
+    upload_action = _insight_documents_action_url(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+    )
+    if can_upload and upload_action and docs.enabled():
+        upload_html = f"""
+        <form method="post" action="{upload_action}" enctype="multipart/form-data" class="client-insights-upload">
+          <div class="client-insights-upload-grid">
+            <div>
+              <label for="insightDocTitle">Title</label>
+              <input id="insightDocTitle" name="title" type="text" maxlength="200"
+                placeholder="May 2026 Paid Digital Reporting">
+            </div>
+            <div>
+              <label for="insightDocPeriod">Period</label>
+              <input id="insightDocPeriod" name="period" type="month" required>
+            </div>
+            <div>
+              <label for="insightDocFile">Word document</label>
+              <input id="insightDocFile" name="file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required>
+            </div>
+          </div>
+          <button type="submit" class="client-insights-upload-btn">Upload DOCX</button>
+        </form>"""
+
+    if rows:
+        body_rows = []
+        for row in rows:
+            download_url = _insight_document_download_url(
+                client_slug=client_slug,
+                doc_id=row.id,
+                access_key=access_key,
+                use_session=use_session,
+            )
+            delete_cell = ""
+            if can_upload:
+                delete_url = _insight_document_delete_url(
+                    client_slug=client_slug,
+                    doc_id=row.id,
+                    access_key=access_key,
+                    use_session=use_session,
+                )
+                delete_cell = f"""
+                <form method="post" action="{delete_url}" class="client-insights-delete-form"
+                  onsubmit="return confirm('Delete this document?');">
+                  <button type="submit" class="client-insights-delete-btn">Delete</button>
+                </form>"""
+            body_rows.append(
+                f"""
+                <tr>
+                  <td class="client-insights-file">
+                    <div class="client-insights-file-title">{_esc(row.title)}</div>
+                    <div class="client-insights-file-meta muted">Word document · {_esc(_fmt_file_size(row.file_size))}</div>
+                  </td>
+                  <td class="client-insights-period">{_esc(docs.period_label(row.period_year, row.period_month))}</td>
+                  <td class="client-insights-actions">
+                    <a class="client-insights-download-btn" href="{download_url}">Download DOCX</a>
+                    {delete_cell}
+                  </td>
+                </tr>"""
+            )
+        table_html = f"""
+        <div class="client-insights-table-wrap">
+          <table class="client-insights-table">
+            <thead>
+              <tr>
+                <th scope="col">File</th>
+                <th scope="col">Period</th>
+                <th scope="col">Download</th>
+              </tr>
+            </thead>
+            <tbody>
+              {''.join(body_rows)}
+            </tbody>
+          </table>
+        </div>"""
+    else:
+        empty_hint = (
+            "Upload a monthly Word document above."
+            if can_upload and docs.enabled()
+            else "Monthly insight documents will appear here when uploaded."
+        )
+        table_html = f'<p class="client-insights-empty muted">{_esc(empty_hint)}</p>'
+
+    return f"""
+    <section class="panel client-insights-panel" aria-label="Client Insights">
+      <div class="client-insights-head">
+        <div>
+          <h2 class="client-insights-title">Client Insights</h2>
+          <p class="client-insights-subtitle muted">Download monthly Word documents with client-ready insights.</p>
+        </div>
+      </div>
+      {upload_html}
+      {table_html}
+    </section>"""
+
+
 def _sidebar_nav_html(
     *,
     client_slug: str,
@@ -1698,7 +1860,22 @@ def render_penn_html(
         settings_page = _settings_page_url(
             client_slug=slug, access_key=access_key, use_session=use_session
         )
+        can_upload_docs = can_edit_penn_insights(
+            session_is_admin=session_is_admin,
+            access_key=access_key,
+        )
+        client_insights_html = _client_insights_documents_html(
+            client_slug=slug,
+            access_key=access_key,
+            use_session=use_session,
+            can_upload=can_upload_docs,
+        )
+        flash_html = ""
+        if flash_message:
+            flash_html = f'<div class="dash-flash">{_esc(flash_message)}</div>'
         empty_body = f"""
+        {flash_html}
+        {client_insights_html}
         <section class="panel">
           <h2>No data yet</h2>
           <p class="muted">Connect your ad platforms and run a refresh from Settings.</p>
@@ -1722,6 +1899,22 @@ def render_penn_html(
     .muted { color: var(--muted); }
     .dash-link { color: var(--accent); font-weight: 600; text-decoration: none; }
     .dash-link:hover { text-decoration: underline; }
+    .client-insights-panel { margin-bottom: 20px; padding: 0; overflow: hidden; border-top: 3px solid #1b7f4a; background: #fff; border: 1px solid var(--border); border-radius: 12px; }
+    .client-insights-head { padding: 20px 22px 0; }
+    .client-insights-title { margin: 0; font-size: 1.15rem; font-weight: 700; color: var(--navy); }
+    .client-insights-subtitle { margin: 6px 0 0; font-size: 0.9rem; line-height: 1.45; }
+    .client-insights-upload { margin: 16px 22px 0; padding: 16px; border: 1px dashed var(--border); border-radius: 12px; background: #f8fafc; }
+    .client-insights-upload-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+    .client-insights-upload label { display: block; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 6px; }
+    .client-insights-upload input { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; font: inherit; background: #fff; }
+    .client-insights-upload-btn { appearance: none; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 650; padding: 10px 16px; cursor: pointer; }
+    .client-insights-table-wrap { padding: 16px 22px 22px; overflow-x: auto; }
+    .client-insights-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+    .client-insights-table th { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+    .client-insights-table td { padding: 14px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    .client-insights-download-btn { display: inline-block; padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--navy); font-weight: 600; font-size: 0.86rem; text-decoration: none; }
+    .client-insights-empty { margin: 0; padding: 0 22px 22px; font-size: 0.9rem; }
+    .dash-flash { background: #e8f5ee; border: 1px solid #b8dfc8; border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; font-size: 0.9rem; color: #1b5e20; }
             """,
         )
 
@@ -1739,6 +1932,9 @@ def render_penn_html(
     if errors:
         items = "".join(f"<li><strong>{_esc(k)}</strong>: {_esc(v)}</li>" for k, v in errors.items())
         error_html = f'<div class="errors"><strong>Partial refresh warnings</strong><ul>{items}</ul></div>'
+    flash_html = ""
+    if flash_message:
+        flash_html = f'<div class="dash-flash">{_esc(flash_message)}</div>'
 
     chart_data = snapshot.get("daily_metrics") or {}
     dates_set: set[str] = set()
@@ -1838,6 +2034,16 @@ def render_penn_html(
         show_business_line=show_business_line,
     )
     overview_hero = _overview_hero_row_html(aggregated, snapshot)
+    can_upload_docs = can_edit_penn_insights(
+        session_is_admin=session_is_admin,
+        access_key=access_key,
+    )
+    client_insights_html = _client_insights_documents_html(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+        can_upload=can_upload_docs,
+    )
     client_meta_tip = _esc(f"Date range: {range_label}\nLast refreshed: {refreshed} UTC")
     business_line_tab_html = _business_line_tab_panel_html() if show_business_line else ""
 
@@ -2365,6 +2571,149 @@ def render_penn_html(
     .insights-save-btn {{
       width: 100%;
     }}
+    .client-insights-panel {{
+      margin-top: 8px;
+      margin-bottom: 20px;
+      padding: 0;
+      overflow: hidden;
+      border-top: 3px solid #1b7f4a;
+    }}
+    .client-insights-head {{
+      padding: 20px 22px 0;
+    }}
+    .client-insights-title {{
+      margin: 0;
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--navy);
+    }}
+    .client-insights-subtitle {{
+      margin: 6px 0 0;
+      font-size: 0.9rem;
+      line-height: 1.45;
+    }}
+    .client-insights-upload {{
+      margin: 16px 22px 0;
+      padding: 16px;
+      border: 1px dashed var(--border);
+      border-radius: 12px;
+      background: #f8fafc;
+    }}
+    .client-insights-upload-grid {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 12px;
+    }}
+    @media (max-width: 900px) {{
+      .client-insights-upload-grid {{ grid-template-columns: 1fr; }}
+    }}
+    .client-insights-upload label {{
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }}
+    .client-insights-upload input[type="text"],
+    .client-insights-upload input[type="month"],
+    .client-insights-upload input[type="file"] {{
+      width: 100%;
+      padding: 9px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font: inherit;
+      background: #fff;
+    }}
+    .client-insights-upload-btn {{
+      appearance: none;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 650;
+      padding: 10px 16px;
+      cursor: pointer;
+    }}
+    .client-insights-table-wrap {{
+      padding: 16px 22px 22px;
+      overflow-x: auto;
+    }}
+    .client-insights-table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+    }}
+    .client-insights-table th {{
+      text-align: left;
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }}
+    .client-insights-table td {{
+      padding: 14px 8px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }}
+    .client-insights-table tr:last-child td {{
+      border-bottom: 0;
+    }}
+    .client-insights-file-title {{
+      font-weight: 650;
+      color: var(--navy);
+      margin-bottom: 2px;
+    }}
+    .client-insights-file-meta {{
+      font-size: 0.82rem;
+    }}
+    .client-insights-period {{
+      white-space: nowrap;
+      color: var(--navy);
+      font-weight: 600;
+    }}
+    .client-insights-actions {{
+      white-space: nowrap;
+    }}
+    .client-insights-download-btn {{
+      display: inline-block;
+      padding: 8px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--navy);
+      font-weight: 600;
+      font-size: 0.86rem;
+      text-decoration: none;
+    }}
+    .client-insights-download-btn:hover {{
+      background: #f4f7fb;
+      border-color: #b8c4d4;
+    }}
+    .client-insights-delete-form {{
+      display: inline-block;
+      margin-left: 8px;
+    }}
+    .client-insights-delete-btn {{
+      appearance: none;
+      border: 0;
+      background: none;
+      color: #b42318;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 0;
+    }}
+    .client-insights-empty {{
+      margin: 0;
+      padding: 0 22px 22px;
+      font-size: 0.9rem;
+    }}
     .total-spend-panel {{
       background: linear-gradient(135deg, #fff 0%, #f8fbff 100%);
       border: 1px solid var(--border);
@@ -2737,6 +3086,15 @@ def render_penn_html(
       font-size: 0.88rem;
     }}
     .errors ul {{ margin: 8px 0 0; padding-left: 20px; }}
+    .dash-flash {{
+      background: #e8f5ee;
+      border: 1px solid #b8dfc8;
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      margin-bottom: 16px;
+      font-size: 0.9rem;
+      color: #1b5e20;
+    }}
     canvas {{ max-height: 280px; }}
     .muted {{ color: var(--muted); }}
     .refresh-bar {{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }}
@@ -3070,10 +3428,13 @@ def render_penn_html(
 
       <div class="dash-content">
         <div class="wrap">
+          {flash_html}
           {error_html}
 
           <div id="tab-platform" class="tab-panel active" role="tabpanel">
             {overview_hero}
+
+            {client_insights_html}
 
             <div class="cards">
               {_summary_card("Google Ads", totals.get("google"), platform="google")}

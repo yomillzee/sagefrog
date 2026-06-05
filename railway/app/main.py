@@ -6,9 +6,9 @@ from pathlib import Path
 from urllib.parse import quote
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import bigquery_service
@@ -29,6 +29,7 @@ from security import require_api_key
 import audit_log
 import client_config
 import client_dashboard_config
+import client_insight_documents
 import dashboard_settings
 import login_rate_limit
 import oauth_flows
@@ -148,6 +149,7 @@ try:
     web_users.ensure_schema()
     audit_log.ensure_schema()
     client_dashboard_config.ensure_schema()
+    client_insight_documents.ensure_schema()
     oauth_store.ensure_schema()
     login_rate_limit.ensure_schema()
     boot = web_users.bootstrap_admin_from_env()
@@ -1747,9 +1749,18 @@ def dashboard_client(
     key: str | None = None,
     synced: str | None = None,
     insights_saved: str | None = None,
+    doc_uploaded: str | None = None,
+    doc_deleted: str | None = None,
+    doc_error: str | None = None,
 ):
     slug = _validate_client_slug(client_slug)
-    if insights_saved:
+    if doc_error:
+        flash = str(doc_error).strip()[:300]
+    elif doc_uploaded:
+        flash = "Insight document uploaded."
+    elif doc_deleted:
+        flash = "Insight document deleted."
+    elif insights_saved:
         flash = "Insights saved."
     elif synced:
         flash = "Dashboard refreshed."
@@ -1920,6 +1931,190 @@ def dashboard_client_insights(
     return RedirectResponse(
         url=f"/dashboard/{slug}?key={quote(access_key or '', safe='')}&insights_saved=1",
         status_code=303,
+    )
+
+
+def _dashboard_flash_redirect(
+    *,
+    client_slug: str,
+    use_session: bool,
+    access_key: str | None,
+    **query: str,
+) -> RedirectResponse:
+    params = {k: v for k, v in query.items() if v}
+    if not use_session:
+        params["key"] = access_key or ""
+    dest = f"/dashboard/{client_slug}"
+    if params:
+        q = "&".join(
+            f"{quote(str(k), safe='')}={quote(str(v), safe='')}" for k, v in params.items()
+        )
+        dest = f"{dest}?{q}"
+    return RedirectResponse(url=dest, status_code=303)
+
+
+@app.post(
+    "/dashboard/{client_slug}/insight-documents",
+    summary="Upload client insight Word document",
+    include_in_schema=False,
+)
+async def dashboard_client_insight_document_upload(
+    client_slug: str,
+    request: Request,
+    key: str | None = None,
+    title: str = Form(""),
+    period: str = Form(...),
+    file: UploadFile = File(...),
+):
+    slug = _validate_client_slug(client_slug)
+    auth = None
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        access_key = auth.access_key
+        use_session = auth.use_session
+        user = auth.user
+        if not dashboard_service.can_edit_penn_insights(
+            session_is_admin=bool(user and user.role == "admin"),
+            access_key=access_key,
+        ):
+            raise HTTPException(status_code=403, detail="Only admins can upload insight documents.")
+        uploaded_by = user.email if user else None
+    else:
+        dashboard_service.verify_dashboard_key(key)
+        access_key = key
+        use_session = False
+        uploaded_by = "dashboard_key"
+
+    if not client_insight_documents.enabled():
+        return _dashboard_flash_redirect(
+            client_slug=slug,
+            use_session=use_session,
+            access_key=access_key,
+            doc_error="DATABASE_URL is required to store insight documents.",
+        )
+
+    try:
+        period_year, period_month = client_insight_documents.parse_period(period)
+        raw = await file.read()
+        saved = client_insight_documents.save_document(
+            slug,
+            title=title,
+            period_year=period_year,
+            period_month=period_month,
+            original_filename=file.filename or "report.docx",
+            content_type=file.content_type or "",
+            file_bytes=raw,
+            uploaded_by=uploaded_by,
+        )
+        audit_log.record(
+            action="insight_document.uploaded",
+            actor_email=uploaded_by,
+            detail={
+                "client_slug": slug,
+                "document_id": saved.id,
+                "title": saved.title,
+                "period": client_insight_documents.period_label(period_year, period_month),
+            },
+            **audit_log.request_context(request),
+        )
+    except Exception as exc:
+        return _dashboard_flash_redirect(
+            client_slug=slug,
+            use_session=use_session,
+            access_key=access_key,
+            doc_error=str(exc)[:300],
+        )
+
+    return _dashboard_flash_redirect(
+        client_slug=slug,
+        use_session=use_session,
+        access_key=access_key,
+        doc_uploaded="1",
+    )
+
+
+@app.get(
+    "/dashboard/{client_slug}/insight-documents/{doc_id}",
+    summary="Download client insight Word document",
+    include_in_schema=False,
+)
+def dashboard_client_insight_document_download(
+    client_slug: str,
+    doc_id: int,
+    request: Request,
+    key: str | None = None,
+):
+    slug = _validate_client_slug(client_slug)
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+    else:
+        dashboard_service.verify_dashboard_key(key)
+
+    payload = client_insight_documents.get_document_bytes(slug, doc_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    meta, file_bytes = payload
+    filename = meta.original_filename or f"{meta.title}.docx"
+    if not filename.lower().endswith(".docx"):
+        filename = f"{filename}.docx"
+    safe_name = "".join(c for c in filename if c.isalnum() or c in " ._-").strip() or "report.docx"
+    return Response(
+        content=file_bytes,
+        media_type=meta.content_type
+        or "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+    )
+
+
+@app.post(
+    "/dashboard/{client_slug}/insight-documents/{doc_id}/delete",
+    summary="Delete client insight Word document",
+    include_in_schema=False,
+)
+def dashboard_client_insight_document_delete(
+    client_slug: str,
+    doc_id: int,
+    request: Request,
+    key: str | None = None,
+):
+    slug = _validate_client_slug(client_slug)
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        access_key = auth.access_key
+        use_session = auth.use_session
+        user = auth.user
+        if not dashboard_service.can_edit_penn_insights(
+            session_is_admin=bool(user and user.role == "admin"),
+            access_key=access_key,
+        ):
+            raise HTTPException(status_code=403, detail="Only admins can delete insight documents.")
+        actor = user.email if user else None
+    else:
+        dashboard_service.verify_dashboard_key(key)
+        access_key = key
+        use_session = False
+        actor = "dashboard_key"
+
+    deleted = client_insight_documents.delete_document(slug, doc_id)
+    if deleted:
+        audit_log.record(
+            action="insight_document.deleted",
+            actor_email=actor,
+            detail={"client_slug": slug, "document_id": int(doc_id)},
+            **audit_log.request_context(request),
+        )
+    return _dashboard_flash_redirect(
+        client_slug=slug,
+        use_session=use_session,
+        access_key=access_key,
+        doc_deleted="1" if deleted else None,
+        doc_error=None if deleted else "Document not found.",
     )
 
 
