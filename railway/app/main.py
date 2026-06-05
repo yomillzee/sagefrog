@@ -27,6 +27,9 @@ from openapi_gpt import build_chatgpt_openapi
 from cron_security import require_cron_secret
 from security import require_api_key
 import audit_log
+import client_config
+import client_dashboard_config
+import dashboard_settings
 import login_rate_limit
 import web_auth
 import web_users
@@ -142,6 +145,7 @@ try:
     dashboard_snapshots.ensure_schema()
     web_users.ensure_schema()
     audit_log.ensure_schema()
+    client_dashboard_config.ensure_schema()
     login_rate_limit.ensure_schema()
     boot = web_users.bootstrap_admin_from_env()
     if boot:
@@ -253,6 +257,7 @@ def root() -> dict:
         "login": "/login",
         "admin": "/admin",
         "dashboard_penn": "/dashboard/penn",
+        "dashboard_penn_settings": "/dashboard/penn/settings",
         "dashboard_penn_legacy_key": "/dashboard/penn?key=<CRON_SECRET>",
         "internal_sync_penn": "POST /internal/sync-penn (header X-Cron-Secret)",
         "ga4_env": "/ga4/env",
@@ -1376,6 +1381,177 @@ def _penn_html_session_kwargs(auth: web_auth.DashboardAuth) -> dict:
         "session_email": user.email if auth.use_session and user else None,
         "session_is_admin": bool(user and user.role == "admin") if auth.use_session else False,
     }
+
+
+def _validate_client_slug(client_slug: str) -> str:
+    slug = (client_slug or "").strip().lower()
+    known = client_config.list_client_slugs()
+    if slug not in known:
+        raise HTTPException(status_code=404, detail=f"Unknown client dashboard '{client_slug}'.")
+    return slug
+
+
+def _dashboard_settings_session_kwargs(auth: web_auth.DashboardAuth) -> dict:
+    return _penn_html_session_kwargs(auth)
+
+
+@app.get(
+    "/dashboard/{client_slug}/settings",
+    summary="Client dashboard settings (HTML)",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def dashboard_client_settings(
+    client_slug: str,
+    request: Request,
+    key: str | None = None,
+    saved: str | None = None,
+    tested: str | None = None,
+):
+    slug = _validate_client_slug(client_slug)
+    flash = "Settings saved." if saved else ("Connection test complete." if tested else None)
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        cfg = dashboard_settings.load_settings_config(slug)
+        db_row = client_dashboard_config.get_config(slug)
+        return HTMLResponse(
+            dashboard_settings.render_settings_html(
+                client_slug=slug,
+                cfg=cfg,
+                flash_message=flash,
+                db_config_updated_at=db_row.updated_at if db_row else None,
+                **_dashboard_settings_session_kwargs(auth),
+            )
+        )
+    dashboard_service.verify_dashboard_key(key)
+    cfg = dashboard_settings.load_settings_config(slug)
+    return HTMLResponse(
+        dashboard_settings.render_settings_html(
+            client_slug=slug,
+            cfg=cfg,
+            access_key=key,
+            flash_message=flash,
+        )
+    )
+
+
+@app.post(
+    "/dashboard/{client_slug}/settings",
+    summary="Save or test client dashboard settings",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def dashboard_client_settings_post(
+    client_slug: str,
+    request: Request,
+    action: str = Form("save"),
+    key: str | None = None,
+    label: str = Form(""),
+    google_customer_id: str = Form(""),
+    linkedin_account_id: str = Form(""),
+    meta_account_id: str = Form(""),
+    ga4_client_key: str = Form(""),
+):
+    slug = _validate_client_slug(client_slug)
+    act = (action or "save").strip().lower()
+    auth = None
+    access_key = key
+    use_session = False
+    session_is_admin = False
+    session_email = None
+
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        access_key = auth.access_key
+        use_session = auth.use_session
+        user = auth.user
+        session_is_admin = bool(user and user.role == "admin")
+        session_email = user.email if user else None
+    else:
+        dashboard_service.verify_dashboard_key(key)
+
+    session_kw = (
+        _dashboard_settings_session_kwargs(auth)
+        if web_users.enabled() and auth
+        else {"access_key": access_key, "use_session": use_session}
+    )
+
+    if act == "test":
+        cfg = dashboard_settings.load_settings_config(slug)
+        probe = dashboard_settings.probe_client_connections(cfg)
+        db_row = client_dashboard_config.get_config(slug)
+        return HTMLResponse(
+            dashboard_settings.render_settings_html(
+                client_slug=slug,
+                cfg=cfg,
+                probe_results=probe,
+                db_config_updated_at=db_row.updated_at if db_row else None,
+                **session_kw,
+            )
+        )
+
+    if act == "save":
+        if web_users.enabled() and not session_is_admin:
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error="Only admins can save client mapping.",
+                    **session_kw,
+                ),
+                status_code=403,
+            )
+        if not client_dashboard_config.enabled():
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error="DATABASE_URL is required to save settings in the app.",
+                    **session_kw,
+                ),
+                status_code=503,
+            )
+        try:
+            saved = client_dashboard_config.save_config(
+                slug,
+                label=label,
+                google_customer_id=google_customer_id,
+                linkedin_account_id=linkedin_account_id,
+                meta_account_id=meta_account_id,
+                ga4_client_key=ga4_client_key,
+                updated_by=session_email or "dashboard_key",
+            )
+            audit_log.record(
+                action="dashboard.config_saved",
+                actor_email=session_email,
+                detail={"client_slug": slug, **client_dashboard_config.as_dict(saved)},
+                **audit_log.request_context(request),
+            )
+        except Exception as exc:
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error=str(exc)[:300],
+                    **session_kw,
+                ),
+                status_code=400,
+            )
+        if use_session:
+            return RedirectResponse(url=f"/dashboard/{slug}/settings?saved=1", status_code=303)
+        return RedirectResponse(
+            url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&saved=1",
+            status_code=303,
+        )
+
+    raise HTTPException(status_code=400, detail="Unknown action.")
 
 
 @app.get(

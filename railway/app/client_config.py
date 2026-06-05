@@ -1,0 +1,107 @@
+"""Client dashboard registry and config loading."""
+
+from __future__ import annotations
+
+import json
+import os
+from typing import Any
+
+from penn_config import PennDashboardConfig, load_penn_config
+
+
+def _strip_env(val: str | None) -> str:
+    if not val:
+        return ""
+    v = val.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
+        return v[1:-1].strip()
+    return v
+
+
+def _load_registry_from_env() -> dict[str, dict[str, Any]]:
+    raw = _strip_env(os.getenv("DASHBOARD_CLIENTS"))
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"DASHBOARD_CLIENTS is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("DASHBOARD_CLIENTS must be a JSON object keyed by client slug.")
+    out: dict[str, dict[str, Any]] = {}
+    for key, entry in data.items():
+        slug = str(key).strip().lower()
+        if slug and isinstance(entry, dict):
+            out[slug] = entry
+    return out
+
+
+def list_client_slugs() -> list[str]:
+    """Known dashboard client slugs (env registry + built-in penn)."""
+    registry = _load_registry_from_env()
+    slugs = set(registry.keys())
+    slugs.add("penn")
+    return sorted(slugs)
+
+
+def client_label(slug: str) -> str:
+    slug = slug.strip().lower()
+    registry = _load_registry_from_env()
+    if slug in registry:
+        label = _strip_env(str(registry[slug].get("label") or ""))
+        if label:
+            return label
+    if slug == "penn":
+        return load_penn_config().label
+    return slug.replace("-", " ").title()
+
+
+def load_client_config(client_slug: str) -> PennDashboardConfig:
+    """Load merged config for a client slug (env defaults + DB overrides)."""
+    slug = (client_slug or "").strip().lower()
+    known = list_client_slugs()
+    if slug not in known:
+        raise ValueError(f"Unknown client '{client_slug}'. Known clients: {', '.join(known)}")
+
+    if slug == "penn":
+        return load_penn_config()
+
+    registry = _load_registry_from_env()
+    entry = registry.get(slug) or {}
+    google = _strip_env(str(entry.get("google_customer_id") or "")).replace("-", "")
+    linkedin = _strip_env(str(entry.get("linkedin_account_id") or ""))
+    meta = _strip_env(str(entry.get("meta_account_id") or ""))
+    ga4_key = _strip_env(str(entry.get("ga4_client_key") or "")) or slug
+    label = _strip_env(str(entry.get("label") or "")) or client_label(slug)
+
+    try:
+        import client_dashboard_config as cdc
+
+        row = cdc.get_config(slug)
+        if row:
+            if row.label:
+                label = row.label
+            if row.google_customer_id:
+                google = row.google_customer_id.replace("-", "")
+            if row.linkedin_account_id:
+                linkedin = row.linkedin_account_id
+            if row.meta_account_id:
+                meta = row.meta_account_id
+            if row.ga4_client_key:
+                ga4_key = row.ga4_client_key
+    except Exception:
+        pass
+
+    if not any((google, linkedin, meta, ga4_key)):
+        raise RuntimeError(
+            f"Client '{slug}' is not configured. Set DASHBOARD_CLIENTS or save account IDs in settings."
+        )
+
+    return PennDashboardConfig(
+        client_key=slug,
+        label=label,
+        google_customer_id=google or None,
+        linkedin_account_id=linkedin or None,
+        meta_account_id=meta or None,
+        ga4_client_key=ga4_key,
+    )

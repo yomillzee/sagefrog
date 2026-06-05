@@ -87,6 +87,24 @@ def load_penn_config() -> PennDashboardConfig:
 
     label = _strip_env(str(data.get("label") or "")) or "Penn Community Bank"
 
+    try:
+        import client_dashboard_config as cdc
+
+        row = cdc.get_config("penn")
+        if row:
+            if row.label:
+                label = row.label
+            if row.google_customer_id:
+                google = _normalize_google_customer_id(row.google_customer_id)
+            if row.linkedin_account_id:
+                linkedin = row.linkedin_account_id
+            if row.meta_account_id:
+                meta = row.meta_account_id
+            if row.ga4_client_key:
+                ga4_key = row.ga4_client_key
+    except Exception:
+        pass
+
     if not any((google, linkedin, meta, ga4_key)):
         raise RuntimeError(
             "Penn dashboard is not configured. Set PENN_DASHBOARD JSON or "

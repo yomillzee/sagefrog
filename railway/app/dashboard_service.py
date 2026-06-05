@@ -853,6 +853,20 @@ def _summary_card(
     """
 
 
+def _settings_page_url(
+    *,
+    client_slug: str = "penn",
+    access_key: str | None,
+    use_session: bool,
+) -> str | None:
+    base = f"/dashboard/{client_slug}/settings"
+    if use_session:
+        return base
+    if access_key:
+        return f"{base}?key={quote(access_key, safe='')}"
+    return base
+
+
 def _refresh_action_url(*, access_key: str | None, use_session: bool) -> str | None:
     if use_session:
         return "/dashboard/penn/refresh"
@@ -1082,10 +1096,23 @@ def _settings_panel_html(
     snapshot: dict[str, Any] | None,
     flash_message: str | None = None,
     can_edit_insights: bool = False,
+    client_slug: str = "penn",
 ) -> str:
     """Refresh and insights controls inside the sidebar settings popover."""
     if not _refresh_action_url(access_key=access_key, use_session=use_session):
         return ""
+    settings_page = _settings_page_url(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+    )
+    settings_link = ""
+    if settings_page:
+        settings_link = (
+            f'<p class="settings-popover__hint">'
+            f'<a class="settings-page-link" href="{settings_page}">'
+            f"Connection &amp; data settings →</a></p>"
+        )
     toolbar = _refresh_toolbar(
         access_key=access_key,
         use_session=use_session,
@@ -1116,6 +1143,7 @@ def _settings_panel_html(
         <button type="button" class="settings-popover__close" id="settingsClose" aria-label="Close settings">&times;</button>
       </div>
       <div class="settings-popover__body">
+        {settings_link}
         <p class="settings-popover__hint muted">Quick refresh updates spend charts and summary cards from the warehouse (cheaper). Full refresh also reloads campaign/ad tables and GA4 attribution.</p>
         {sync_status}
         {toolbar}
@@ -1378,6 +1406,16 @@ def render_penn_html(
             snapshot=None,
             flash_message=flash_message,
             can_edit_insights=edit_insights,
+            client_slug="penn",
+        )
+        settings_page = _settings_page_url(
+            client_slug="penn", access_key=access_key, use_session=use_session
+        )
+        settings_page_link = (
+            f'<p style="margin-top:16px"><a href="{settings_page}" style="color:var(--accent);font-weight:600">'
+            f"Open connection &amp; data settings →</a></p>"
+            if settings_page
+            else ""
         )
         return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Penn Dashboard</title>{_favicon_head_html()}
@@ -1403,6 +1441,7 @@ def render_penn_html(
   <main class="dash-main">
     <h1>Ads Dashboard</h1>
     <p class="muted">No snapshot yet. Open Settings and click Refresh to pull data from ad platforms.</p>
+    {settings_page_link}
     {settings}
   </main>
 </div>
@@ -1417,6 +1456,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
 </body></html>"""
 
     label = snapshot.get("label") or "Penn Community Bank"
+    client_slug = str(snapshot.get("client_key") or "penn")
     dr = snapshot.get("date_range") or {}
     refreshed = snapshot.get("refreshed_at") or "—"
     preset = dr.get("preset") or ""
@@ -1525,6 +1565,7 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
         snapshot=snapshot,
         flash_message=flash_message,
         can_edit_insights=edit_insights,
+        client_slug=client_slug,
     )
     overview_hero = _overview_hero_row_html(aggregated, snapshot)
     client_meta_tip = _esc(f"Date range: {range_label}\nLast refreshed: {refreshed} UTC")
@@ -1858,6 +1899,12 @@ document.getElementById('settingsClose')?.addEventListener('click',()=>{{
       font-size: 0.82rem;
       line-height: 1.4;
     }}
+    .settings-page-link {{
+      color: var(--accent);
+      font-weight: 600;
+      text-decoration: none;
+    }}
+    .settings-page-link:hover {{ text-decoration: underline; }}
     .dash-main {{
       flex: 1;
       min-width: 0;

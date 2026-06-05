@@ -349,6 +349,7 @@ def render_admin_page(
       <h2>Dashboards</h2>
       <ul class="links">
         <li><a href="/dashboard/penn">Penn Community Bank</a></li>
+        <li><a href="/dashboard/penn/settings">Penn settings</a></li>
       </ul>
     </section>
     <section>
