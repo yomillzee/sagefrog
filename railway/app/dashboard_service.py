@@ -52,14 +52,13 @@ def _favicon_head_html() -> str:
 
 
 def min_refresh_seconds(*, quick: bool = False) -> int:
-    """Minimum seconds between manual dashboard refreshes (full default 15 min, quick 5 min)."""
+    """Minimum seconds between manual dashboard refreshes. Default 0 (no cooldown)."""
     env_key = "DASHBOARD_MIN_QUICK_REFRESH_SECONDS" if quick else "DASHBOARD_MIN_REFRESH_SECONDS"
-    default = "300" if quick else "900"
-    raw = (os.getenv(env_key) or default).strip()
+    raw = (os.getenv(env_key) or "0").strip()
     try:
-        return max(60, int(raw))
+        return max(0, int(raw))
     except ValueError:
-        return 300 if quick else 900
+        return 0
 
 
 def _parse_refreshed_at(snapshot: dict[str, Any] | None) -> datetime | None:
@@ -80,11 +79,13 @@ def refresh_cooldown_status(
     snapshot: dict[str, Any] | None, *, quick: bool = False
 ) -> tuple[bool, int]:
     """Return (allowed_now, seconds_remaining)."""
+    wait = min_refresh_seconds(quick=quick)
+    if wait <= 0:
+        return True, 0
     last = _parse_refreshed_at(snapshot)
     if not last:
         return True, 0
     elapsed = (datetime.now(tz=UTC) - last).total_seconds()
-    wait = min_refresh_seconds(quick=quick)
     if elapsed >= wait:
         return True, 0
     return False, int(wait - elapsed)
@@ -1029,7 +1030,7 @@ def _refresh_toolbar(
     notice = ""
     if flash_message:
         notice = f'<div class="notice">{_esc(flash_message)}</div>'
-    elif not quick_allowed and not full_allowed:
+    elif min_refresh_seconds(quick=False) > 0 and not quick_allowed and not full_allowed:
         mins = max(1, (min(quick_remaining, full_remaining) + 59) // 60)
         notice = f'<div class="notice muted">Refresh available in ~{mins} min.</div>'
     if quick_allowed:
@@ -1770,6 +1771,130 @@ def _global_filters_bar_html(
       </div>"""
 
 
+def _client_switch_target_url(
+    *,
+    client_slug: str,
+    active_nav: str,
+    access_key: str | None,
+    use_session: bool,
+) -> str:
+    slug = (client_slug or "penn").strip().lower()
+    nav = (active_nav or "overview").strip().lower()
+    if nav == "settings":
+        return _settings_page_url(
+            client_slug=slug, access_key=access_key, use_session=use_session
+        ) or f"/dashboard/{slug}/settings"
+    if nav == "insights-upload":
+        return _insights_upload_page_url(
+            client_slug=slug, access_key=access_key, use_session=use_session
+        ) or f"/dashboard/{slug}/insights-upload"
+    return _dashboard_page_url(
+        client_slug=slug, access_key=access_key, use_session=use_session
+    )
+
+
+def _sidebar_client_header_html(
+    *,
+    client_slug: str,
+    label: str,
+    active_nav: str,
+    access_key: str | None,
+    use_session: bool,
+    session_is_admin: bool,
+    client_meta_tip: str = "",
+) -> str:
+    tip = client_meta_tip or _esc(label)
+    tip_btn = (
+        f'<button type="button" class="info-tip" data-tip="{tip}" '
+        f'aria-label="Client info">i</button>'
+    )
+    if session_is_admin and use_session:
+        import client_config
+
+        options = []
+        current = (client_slug or "").strip().lower()
+        for slug, client_label in client_config.list_dashboard_clients():
+            selected = " selected" if slug == current else ""
+            dest = _client_switch_target_url(
+                client_slug=slug,
+                active_nav=active_nav,
+                access_key=access_key,
+                use_session=use_session,
+            )
+            options.append(
+                f'<option value="{_esc(dest)}"{selected}>{_esc(client_label)}</option>'
+            )
+        control = f"""
+          <label class="sr-only" for="clientSwitcher">Client dashboard</label>
+          <select id="clientSwitcher" class="client-switcher" aria-label="Switch client dashboard">
+            {"".join(options)}
+          </select>"""
+    else:
+        control = f'<span class="client-name" id="sidebarClientHead">{_esc(label)}</span>'
+    return f"""
+      <div class="sidebar-client-head">
+        {control}
+        {tip_btn}
+      </div>"""
+
+
+_SIDEBAR_CLIENT_CSS = """
+    .sidebar-client-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-width: 0;
+    }
+    .sidebar-client-head .client-name {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #fff;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      line-height: 1.25;
+    }
+    .client-switcher {
+      flex: 1;
+      min-width: 0;
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.22);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.1)
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")
+        no-repeat right 10px center;
+      color: #fff;
+      font: inherit;
+      font-size: 0.92rem;
+      font-weight: 650;
+      padding: 9px 32px 9px 11px;
+      cursor: pointer;
+    }
+    .client-switcher:hover,
+    .client-switcher:focus-visible {
+      border-color: rgba(255,255,255,0.38);
+      background-color: rgba(255,255,255,0.14);
+      outline: none;
+    }
+    .client-switcher option {
+      color: #0f172a;
+      background: #fff;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+"""
+
+
 def _sidebar_nav_html(
     *,
     client_slug: str,
@@ -1848,6 +1973,10 @@ def _dashboard_shell_sidebar_js() -> str:
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape' && document.body.classList.contains('sidebar-open')) closeSidebar();
     });
+    document.getElementById('clientSwitcher')?.addEventListener('change', (e) => {
+      const url = e.target.value;
+      if (url) window.location.href = url;
+    });
     """
 
 
@@ -1885,7 +2014,15 @@ def render_client_shell_page(
         show_business_line=show_business_line,
         show_insights_upload=show_insights_upload,
     )
-    tip = client_meta_tip or _esc(label)
+    client_header = _sidebar_client_header_html(
+        client_slug=client_slug,
+        label=label,
+        active_nav=active_nav,
+        access_key=access_key,
+        use_session=use_session,
+        session_is_admin=session_is_admin,
+        client_meta_tip=client_meta_tip,
+    )
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1910,8 +2047,8 @@ def render_client_shell_page(
       width: 248px; background: linear-gradient(180deg, #0a2540, #123456); color: #fff;
       display: flex; flex-direction: column; padding: 16px 12px; flex-shrink: 0;
     }}
-    .sidebar-top {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }}
-    .sidebar-brand {{ font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.45); }}
+    .sidebar-top {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 18px; min-height: 36px; }}
+    {_SIDEBAR_CLIENT_CSS}
     .sidebar-nav {{ display: flex; flex-direction: column; gap: 6px; }}
     .sidebar-nav-btn, .sidebar-nav-link {{
       appearance: none; border: none; background: transparent; color: rgba(255,255,255,0.72);
@@ -1925,8 +2062,6 @@ def render_client_shell_page(
     }}
     .sidebar-nav-icon {{ width: 18px; height: 18px; opacity: 0.85; flex-shrink: 0; }}
     .sidebar-footer {{ margin-top: auto; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.1); }}
-    .client-block {{ display: flex; align-items: center; gap: 6px; margin-top: 10px; }}
-    .client-name {{ font-size: 0.88rem; font-weight: 600; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
     .info-tip {{
       appearance: none; border: 1px solid rgba(255,255,255,0.22); background: rgba(255,255,255,0.08);
       color: rgba(255,255,255,0.85); width: 22px; height: 22px; border-radius: 999px; font-size: 0.72rem;
@@ -1985,7 +2120,7 @@ def render_client_shell_page(
   <div class="app-shell">
     <aside class="dash-sidebar" id="dashSidebar" aria-label="Dashboard navigation">
       <div class="sidebar-top">
-        <span class="sidebar-brand">Dashboard</span>
+        {client_header}
         <button type="button" class="sidebar-close" id="sidebarClose" aria-label="Close menu">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
         </button>
@@ -1993,10 +2128,6 @@ def render_client_shell_page(
       {sidebar_nav}
       <div class="sidebar-footer">
         {account_nav}
-        <div class="client-block">
-          <span class="client-name">{_esc(label)}</span>
-          <button type="button" class="info-tip" data-tip="{tip}" aria-label="Client info">i</button>
-        </div>
       </div>
     </aside>
     <div class="dash-main">
@@ -2441,6 +2572,16 @@ def render_penn_html(
             access_key=access_key,
         ),
     )
+    client_meta_tip = _esc(f"Date range: {range_label}\nLast refreshed: {refreshed} UTC")
+    client_header = _sidebar_client_header_html(
+        client_slug=client_slug,
+        label=label,
+        active_nav="overview",
+        access_key=access_key,
+        use_session=use_session,
+        session_is_admin=session_is_admin,
+        client_meta_tip=client_meta_tip,
+    )
     client_insights_html = _client_insights_list_html(
         client_slug=client_slug,
         access_key=access_key,
@@ -2450,7 +2591,6 @@ def render_penn_html(
     paid_overview_metrics_json = _json_for_html_script(
         _paid_ad_overview_metrics(aggregated, ga4_attr)
     )
-    client_meta_tip = _esc(f"Date range: {range_label}\nLast refreshed: {refreshed} UTC")
     ga4_pages_report = snapshot.get("ga4_pages")
     accounts = snapshot.get("accounts") or {}
     has_ga4 = bool(accounts.get("ga4_client_key") or (ga4_pages_report or {}).get("pages"))
@@ -2593,14 +2733,7 @@ def render_penn_html(
       margin-bottom: 18px;
       min-height: 36px;
     }}
-    .sidebar-brand {{
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: rgba(255,255,255,0.45);
-      white-space: nowrap;
-    }}
+    {_SIDEBAR_CLIENT_CSS}
     .sidebar-nav {{
       display: flex;
       flex-direction: column;
@@ -2649,22 +2782,6 @@ def render_penn_html(
       gap: 10px;
       position: relative;
       overflow: visible;
-    }}
-    .client-block {{
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      min-width: 0;
-    }}
-    .client-name {{
-      font-size: 0.88rem;
-      font-weight: 600;
-      color: #fff;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      flex: 1;
-      min-width: 0;
     }}
     .info-tip {{
       appearance: none;
@@ -4245,7 +4362,7 @@ def render_penn_html(
   <div class="app-shell">
     <aside class="dash-sidebar" id="dashSidebar" aria-label="Dashboard navigation">
       <div class="sidebar-top">
-        <span class="sidebar-brand" id="sidebarBrand" title="">Dashboard</span>
+        {client_header}
         <button type="button" class="sidebar-close" id="sidebarClose" aria-label="Close menu">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
         </button>
@@ -4253,10 +4370,6 @@ def render_penn_html(
       {sidebar_nav}
       <div class="sidebar-footer">
         {account_nav}
-        <div class="client-block">
-          <span class="client-name">{_esc(label)}</span>
-          <button type="button" class="info-tip" data-tip="{client_meta_tip}" aria-label="Date range and last refresh">i</button>
-        </div>
       </div>
     </aside>
 
@@ -4576,6 +4689,10 @@ def render_penn_html(
         closeSidebar();
       }}
     }});
+    document.getElementById('clientSwitcher')?.addEventListener('change', (e) => {{
+      const url = e.target.value;
+      if (url) window.location.href = url;
+    }});
 
     let andreClicks = 0;
     let andreTimer = null;
@@ -4590,7 +4707,7 @@ def render_penn_html(
         setTimeout(() => {{ toast.hidden = true; }}, 400);
       }}, 2800);
     }}
-    document.getElementById('sidebarBrand')?.addEventListener('click', () => {{
+    document.getElementById('sidebarClientHead')?.addEventListener('click', () => {{
       andreClicks += 1;
       clearTimeout(andreTimer);
       andreTimer = setTimeout(() => {{ andreClicks = 0; }}, 1600);
