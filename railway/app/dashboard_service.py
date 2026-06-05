@@ -1216,13 +1216,12 @@ def _insights_card_html(snapshot: dict[str, Any] | None) -> str:
 
 def _overview_hero_row_html(
     aggregated: dict[str, Any],
-    snapshot: dict[str, Any] | None,
+    client_insights_html: str = "",
 ) -> str:
     spend_card = _aggregated_card(aggregated)
-    insights_card = _insights_card_html(snapshot)
-    if not spend_card and not insights_card:
+    if not spend_card and not client_insights_html:
         return ""
-    return f'<div class="overview-hero-row">{spend_card}{insights_card}</div>'
+    return f'<div class="overview-hero-row">{spend_card}{client_insights_html}</div>'
 
 
 def _fmt_file_size(num_bytes: int) -> str:
@@ -1284,10 +1283,17 @@ def _client_insights_documents_html(
     access_key: str | None,
     use_session: bool,
     can_upload: bool,
+    compact: bool = False,
 ) -> str:
     import client_insight_documents as docs
 
     rows = docs.list_documents(client_slug)
+    panel_class = "client-insights-panel client-insights-panel--hero" if compact else "client-insights-panel"
+    subtitle = (
+        "Upload monthly Word documents with client-ready insights."
+        if compact
+        else "Download monthly Word documents with client-ready insights."
+    )
     upload_html = ""
     upload_action = _insight_documents_action_url(
         client_slug=client_slug,
@@ -1375,11 +1381,11 @@ def _client_insights_documents_html(
         table_html = f'<p class="client-insights-empty muted">{_esc(empty_hint)}</p>'
 
     return f"""
-    <section class="panel client-insights-panel" aria-label="Client Insights">
+    <section class="{panel_class}" aria-label="Client Insights">
       <div class="client-insights-head">
         <div>
           <h2 class="client-insights-title">Client Insights</h2>
-          <p class="client-insights-subtitle muted">Download monthly Word documents with client-ready insights.</p>
+          <p class="client-insights-subtitle muted">{subtitle}</p>
         </div>
       </div>
       {upload_html}
@@ -1440,7 +1446,8 @@ def _ga4_website_content_html(ga4_pages: dict[str, Any] | None) -> str:
             </thead>
             <tbody id="ga4PagesBody"></tbody>
           </table>
-        </div>"""
+        </div>
+        <div class="ga4-pages-pagination" id="ga4PagesPagination" hidden></div>"""
 
 
 def _ga4_pages_panel_html(ga4_pages: dict[str, Any] | None) -> str:
@@ -2172,17 +2179,18 @@ def render_penn_html(
         use_session=use_session,
         show_business_line=show_business_line,
     )
-    overview_hero = _overview_hero_row_html(aggregated, snapshot)
     can_upload_docs = can_edit_penn_insights(
         session_is_admin=session_is_admin,
         access_key=access_key,
     )
-    client_insights_html = _client_insights_documents_html(
+    client_insights_hero = _client_insights_documents_html(
         client_slug=client_slug,
         access_key=access_key,
         use_session=use_session,
         can_upload=can_upload_docs,
+        compact=True,
     )
+    overview_hero = _overview_hero_row_html(aggregated, client_insights_hero)
     client_meta_tip = _esc(f"Date range: {range_label}\nLast refreshed: {refreshed} UTC")
     ga4_pages_report = snapshot.get("ga4_pages")
     accounts = snapshot.get("accounts") or {}
@@ -2649,9 +2657,100 @@ def render_penn_html(
       .overview-hero-row {{ grid-template-columns: 1fr; }}
     }}
     .overview-hero-row .total-spend-panel,
-    .overview-hero-row .insights-panel {{
+    .overview-hero-row .client-insights-panel--hero {{
       margin: 0;
       height: 100%;
+    }}
+    .client-insights-panel--hero {{
+      background: #fff;
+      border: 1px solid var(--border);
+      border-left: 4px solid #1b7f4a;
+      border-radius: 12px;
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }}
+    .client-insights-panel--hero .client-insights-head {{
+      padding: 0;
+      margin-bottom: 10px;
+    }}
+    .client-insights-panel--hero .client-insights-title {{
+      font-size: 0.82rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }}
+    .client-insights-panel--hero .client-insights-subtitle {{
+      font-size: 0.82rem;
+      margin-top: 4px;
+    }}
+    .client-insights-panel--hero .client-insights-upload {{
+      margin: 0 0 12px;
+      padding: 12px;
+    }}
+    .client-insights-panel--hero .client-insights-upload-grid {{
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }}
+    .client-insights-panel--hero .client-insights-table-wrap {{
+      padding: 0;
+      max-height: 180px;
+      overflow: auto;
+    }}
+    .client-insights-panel--hero .client-insights-table th,
+    .client-insights-panel--hero .client-insights-table td {{
+      padding: 8px 6px;
+      font-size: 0.84rem;
+    }}
+    .client-insights-panel--hero .client-insights-empty {{
+      padding: 0;
+      margin: 0;
+      font-size: 0.84rem;
+    }}
+    .ga4-pages-pagination {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px 16px;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }}
+    .ga4-pages-pagination-info {{
+      font-size: 0.86rem;
+      color: var(--muted);
+    }}
+    .ga4-pages-pagination-controls {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }}
+    .ga4-pages-page-btn {{
+      appearance: none;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--navy);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font: inherit;
+      font-size: 0.84rem;
+      font-weight: 600;
+      cursor: pointer;
+    }}
+    .ga4-pages-page-btn:hover:not(:disabled) {{
+      border-color: var(--accent);
+      color: var(--accent);
+    }}
+    .ga4-pages-page-btn:disabled {{
+      opacity: 0.45;
+      cursor: not-allowed;
+    }}
+    .ga4-pages-page-btn.active {{
+      background: var(--navy);
+      border-color: var(--navy);
+      color: #fff;
     }}
     .insights-panel {{
       background: linear-gradient(135deg, #fff 0%, #fffbf5 100%);
@@ -4038,36 +4137,29 @@ def render_penn_html(
           <div id="view-overview" class="view-panel active" role="tabpanel">
             {overview_hero}
 
-            {client_insights_html}
-
             <div class="cards">
               {_summary_card("Google Ads", totals.get("google"), platform="google")}
               {_summary_card("LinkedIn", totals.get("linkedin"), platform="linkedin")}
               {_summary_card("Meta", totals.get("meta"), platform="meta")}
-              {(_summary_card("Organic", totals.get("organic"), platform="organic") if has_ga4_config else "")}
             </div>
 
             <section class="panel performance-trend-panel">
               <div class="panel-head performance-trend-head">
                 <div class="panel-head-text">
                   <h2>Daily Paid Performance Trend</h2>
-                  <p class="performance-trend-desc muted">Daily combined paid-media totals across selected channels. Toggle metrics on or off to compare trends.</p>
+                  <p class="performance-trend-desc muted">Daily combined paid-media totals across selected channels. Choose one metric at a time.</p>
                 </div>
                 <div class="performance-trend-controls">
-                  <div class="metric-toggle-group" role="group" aria-label="Chart metrics">
+                  <div class="metric-toggle-group" role="group" aria-label="Chart metric">
                     <button type="button" class="metric-toggle active" data-metric="spend" aria-pressed="true">Spend</button>
-                    <button type="button" class="metric-toggle active" data-metric="clicks" aria-pressed="true">Clicks</button>
-                    <button type="button" class="metric-toggle active" data-metric="impressions" aria-pressed="true">Impressions</button>
-                    <button type="button" class="metric-toggle active" data-metric="conversions" aria-pressed="true">Conversions</button>
-                  </div>
-                  <div class="chart-period-toggle" role="group" aria-label="Chart period">
-                    <button type="button" class="chart-period-btn active" data-period="daily" aria-pressed="true">Daily</button>
-                    <button type="button" class="chart-period-btn" data-period="weekly" aria-pressed="false">Weekly</button>
+                    <button type="button" class="metric-toggle" data-metric="clicks" aria-pressed="false">Clicks</button>
+                    <button type="button" class="metric-toggle" data-metric="impressions" aria-pressed="false">Impressions</button>
+                    <button type="button" class="metric-toggle" data-metric="conversions" aria-pressed="false">Conversions</button>
                   </div>
                 </div>
               </div>
               <div class="performance-trend-chart-wrap">
-                <p class="performance-trend-empty" id="performanceTrendEmpty">Select at least one metric to display the chart.</p>
+                <p class="performance-trend-empty" id="performanceTrendEmpty">Choose a metric to display the chart.</p>
                 <canvas id="performanceTrendChart"></canvas>
               </div>
             </section>
@@ -4147,75 +4239,25 @@ def render_penn_html(
     }}
 
     const METRIC_DEFS = [
-      {{ id: 'spend', label: 'Spend', color: '#0a2540', fill: 'rgba(10, 37, 64, 0.08)', yAxisID: 'ySpend', format: 'money' }},
-      {{ id: 'clicks', label: 'Clicks', color: '#4285f4', yAxisID: 'yClicks', format: 'int' }},
-      {{ id: 'impressions', label: 'Impressions', color: '#e67e22', yAxisID: 'yImpressions', format: 'int' }},
-      {{ id: 'conversions', label: 'Conversions', color: '#16a34a', yAxisID: 'yConversions', format: 'int' }},
+      {{ id: 'spend', label: 'Spend', color: '#0a2540', fill: 'rgba(10, 37, 64, 0.08)', yAxisID: 'y', format: 'money' }},
+      {{ id: 'clicks', label: 'Clicks', color: '#4285f4', fill: 'rgba(66, 133, 244, 0.08)', yAxisID: 'y', format: 'int' }},
+      {{ id: 'impressions', label: 'Impressions', color: '#e67e22', fill: 'rgba(230, 126, 34, 0.08)', yAxisID: 'y', format: 'int' }},
+      {{ id: 'conversions', label: 'Conversions', color: '#16a34a', fill: 'rgba(22, 163, 74, 0.08)', yAxisID: 'y', format: 'int' }},
     ];
-    const metricState = new Set(METRIC_DEFS.map(m => m.id));
+    let activeMetricId = 'spend';
 
     const fmtMoney = n => '$' + Number(n || 0).toLocaleString(undefined, {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
     const fmtInt = n => Number(n || 0).toLocaleString();
     const fmtPct = (n, d) => d ? (100 * n / d).toFixed(2) + '%' : '—';
     const escHtml = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 
-    function cloneChartPayload(payload) {{
-      return {{
-        labels: [...(payload.labels || [])],
-        datasets: (payload.datasets || []).map(ds => ({{
-          ...ds,
-          data: [...(ds.data || [])],
-        }})),
-      }};
-    }}
-
     const performanceChartRaw = readJson('performance-chart-data', {{ labels: [], metrics: {{}} }});
-    let chartPeriod = 'daily';
     let performanceChartInstance = null;
 
-    function weekStartKey(dateStr) {{
-      const d = new Date(String(dateStr).slice(0, 10) + 'T12:00:00');
-      if (Number.isNaN(d.getTime())) return String(dateStr).slice(0, 10);
-      const dow = d.getDay();
-      const offset = dow === 0 ? -6 : 1 - dow;
-      d.setDate(d.getDate() + offset);
-      return d.toISOString().slice(0, 10);
-    }}
-
-    function formatWeekLabel(weekStartStr) {{
-      const d = new Date(weekStartStr + 'T12:00:00');
-      return d.toLocaleDateString(undefined, {{ month: 'short', day: 'numeric' }});
-    }}
-
-    function aggregateWeekly(payload) {{
-      const labels = payload.labels || [];
-      const datasets = payload.datasets || [];
-      if (!labels.length) return {{ labels: [], datasets: datasets.map(ds => ({{ ...ds, data: [] }})) }};
-      const weekOrder = [];
-      const weekIndex = new Map();
-      labels.forEach(label => {{
-        const wk = weekStartKey(label);
-        if (!weekIndex.has(wk)) {{
-          weekIndex.set(wk, weekOrder.length);
-          weekOrder.push(wk);
-        }}
-      }});
-      const sums = datasets.map(() => weekOrder.map(() => 0));
-      labels.forEach((label, i) => {{
-        const idx = weekIndex.get(weekStartKey(label));
-        datasets.forEach((ds, dsi) => {{
-          sums[dsi][idx] += Number(ds.data?.[i] || 0);
-        }});
-      }});
-      return {{
-        labels: weekOrder.map(formatWeekLabel),
-        datasets: datasets.map((ds, dsi) => ({{ ...ds, data: sums[dsi] }})),
-      }};
-    }}
-
-    function chartDataForPeriod(payload, period) {{
-      if (period === 'weekly') return aggregateWeekly(payload);
-      return cloneChartPayload(payload);
+    function formatDailyLabel(dateStr) {{
+      const s = String(dateStr).slice(0, 10);
+      if (s.length < 10) return s;
+      return `${{s.slice(5, 7)}}-${{s.slice(8, 10)}}`;
     }}
 
     function combineMetricSeries(metricId) {{
@@ -4233,11 +4275,11 @@ def render_penn_html(
     }}
 
     function buildPerformancePayload() {{
-      const labels = [...(performanceChartRaw.labels || [])];
-      const datasets = [];
-      for (const def of METRIC_DEFS) {{
-        if (!metricState.has(def.id)) continue;
-        datasets.push({{
+      const def = METRIC_DEFS.find(m => m.id === activeMetricId) || METRIC_DEFS[0];
+      const labels = [...(performanceChartRaw.labels || [])].map(formatDailyLabel);
+      return {{
+        labels,
+        datasets: [{{
           label: def.label,
           data: combineMetricSeries(def.id),
           borderColor: def.color,
@@ -4245,58 +4287,28 @@ def render_penn_html(
           fill: !!def.fill,
           yAxisID: def.yAxisID,
           tension: 0.35,
-          borderWidth: def.id === 'spend' ? 2.5 : 2,
+          borderWidth: 2.5,
           pointRadius: 2,
           pointHoverRadius: 4,
-        }});
-      }}
-      return {{ labels, datasets }};
-    }}
-
-    function formatDailyLabel(dateStr) {{
-      const s = String(dateStr).slice(0, 10);
-      if (s.length < 10) return s;
-      return `${{s.slice(5, 7)}}-${{s.slice(8, 10)}}`;
-    }}
-
-    function performanceDataForPeriod() {{
-      const payload = chartDataForPeriod(buildPerformancePayload(), chartPeriod);
-      if (chartPeriod === 'daily') {{
-        payload.labels = payload.labels.map(formatDailyLabel);
-      }}
-      return payload;
+        }}],
+      }};
     }}
 
     function performanceChartScales() {{
-      const scales = {{
+      const def = METRIC_DEFS.find(m => m.id === activeMetricId) || METRIC_DEFS[0];
+      const ticks = def.format === 'money'
+        ? {{ callback: v => '$' + Number(v).toLocaleString() }}
+        : {{ callback: v => Number(v).toLocaleString() }};
+      return {{
         x: {{ grid: {{ display: false }} }},
-      }};
-      let rightAxisCount = 0;
-      for (const def of METRIC_DEFS) {{
-        if (!metricState.has(def.id)) continue;
-        if (def.id === 'spend') {{
-          scales.ySpend = {{
-            type: 'linear',
-            position: 'left',
-            beginAtZero: true,
-            ticks: {{ callback: v => '$' + Number(v).toLocaleString() }},
-            title: {{ display: true, text: 'Spend' }},
-          }};
-          continue;
-        }}
-        const offset = rightAxisCount > 0;
-        rightAxisCount += 1;
-        scales[def.yAxisID] = {{
+        y: {{
           type: 'linear',
-          position: 'right',
+          position: 'left',
           beginAtZero: true,
-          offset,
-          grid: {{ drawOnChartArea: false }},
-          ticks: {{ callback: v => Number(v).toLocaleString() }},
+          ticks,
           title: {{ display: true, text: def.label }},
-        }};
-      }}
-      return scales;
+        }},
+      }};
     }}
 
     function formatTooltipValue(def, raw) {{
@@ -4318,18 +4330,18 @@ def render_penn_html(
         performanceChartInstance = null;
       }}
 
-      const hasMetrics = metricState.size > 0;
+      const hasMetrics = !!activeMetricId;
       const hasData = (performanceChartRaw.labels || []).length > 0;
       if (emptyEl) {{
         emptyEl.classList.toggle('show', !hasMetrics || !hasData);
         emptyEl.textContent = !hasMetrics
-          ? 'Select at least one metric to display the chart.'
+          ? 'Choose a metric to display the chart.'
           : 'No daily performance data for this period.';
       }}
       canvas.hidden = !hasMetrics || !hasData;
       if (!hasMetrics || !hasData) return;
 
-      const chartData = performanceDataForPeriod();
+      const chartData = buildPerformancePayload();
       performanceChartInstance = new Chart(canvas, {{
         type: 'line',
         data: chartData,
@@ -4369,7 +4381,7 @@ def render_penn_html(
 
     function syncMetricToggleButtons() {{
       document.querySelectorAll('.metric-toggle').forEach(btn => {{
-        const on = metricState.has(btn.dataset.metric);
+        const on = btn.dataset.metric === activeMetricId;
         btn.classList.toggle('active', on);
         btn.setAttribute('aria-pressed', on ? 'true' : 'false');
       }});
@@ -4378,12 +4390,8 @@ def render_penn_html(
     document.querySelectorAll('.metric-toggle').forEach(btn => {{
       btn.addEventListener('click', () => {{
         const metric = btn.dataset.metric;
-        if (!metric) return;
-        if (metricState.has(metric)) {{
-          metricState.delete(metric);
-        }} else {{
-          metricState.add(metric);
-        }}
+        if (!metric || metric === activeMetricId) return;
+        activeMetricId = metric;
         syncMetricToggleButtons();
         refreshCharts();
       }});
@@ -4909,8 +4917,11 @@ def render_penn_html(
     if (ga4PagesBody && ga4Pages.length) {{
       const ga4PageSearch = document.getElementById('ga4PageSearch');
       const ga4PagesCount = document.getElementById('ga4PagesCount');
+      const ga4PagesPagination = document.getElementById('ga4PagesPagination');
       const ga4PageSort = {{ key: 'sessions', dir: 'desc' }};
       let ga4PageQuery = '';
+      let ga4PageNum = 1;
+      const GA4_PAGE_SIZE = 10;
 
       function ga4PageSortValue(row, key) {{
         if (key === 'page_path' || key === 'page_title') {{
@@ -4958,20 +4969,47 @@ def render_penn_html(
         }});
       }}
 
+      function renderGa4Pagination(totalRows, page, pageSize) {{
+        if (!ga4PagesPagination) return;
+        const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+        if (totalRows <= pageSize) {{
+          ga4PagesPagination.hidden = true;
+          ga4PagesPagination.innerHTML = '';
+          return;
+        }}
+        ga4PagesPagination.hidden = false;
+        const start = (page - 1) * pageSize + 1;
+        const end = Math.min(totalRows, page * pageSize);
+        const prevDisabled = page <= 1 ? ' disabled' : '';
+        const nextDisabled = page >= totalPages ? ' disabled' : '';
+        ga4PagesPagination.innerHTML = `
+          <span class="ga4-pages-pagination-info">Showing ${{start}}–${{end}} of ${{fmtInt(totalRows)}} pages</span>
+          <div class="ga4-pages-pagination-controls">
+            <button type="button" class="ga4-pages-page-btn" data-page="prev"${{prevDisabled}} aria-label="Previous page">Previous</button>
+            <span class="ga4-pages-pagination-info">Page ${{page}} of ${{totalPages}}</span>
+            <button type="button" class="ga4-pages-page-btn" data-page="next"${{nextDisabled}} aria-label="Next page">Next</button>
+          </div>`;
+      }}
+
       renderGa4Pages = function() {{
         const filtered = filterGa4Pages(ga4Pages);
         const sorted = sortGa4Pages(filtered);
         const isFiltered = !!ga4PageQuery.trim();
         renderGa4MetricsSummary(filtered, isFiltered);
+        const totalPages = Math.max(1, Math.ceil(sorted.length / GA4_PAGE_SIZE));
+        if (ga4PageNum > totalPages) ga4PageNum = totalPages;
+        if (ga4PageNum < 1) ga4PageNum = 1;
         if (ga4PagesCount) {{
           ga4PagesCount.textContent = sorted.length + ' page' + (sorted.length === 1 ? '' : 's');
         }}
         if (!sorted.length) {{
           ga4PagesBody.innerHTML = '<tr><td colspan="8" class="muted" style="padding:24px;text-align:center">No pages match your search.</td></tr>';
+          renderGa4Pagination(0, 1, GA4_PAGE_SIZE);
           updateGa4SortHeaders();
           return;
         }}
-        ga4PagesBody.innerHTML = sorted.map(row => {{
+        const pageRows = sorted.slice((ga4PageNum - 1) * GA4_PAGE_SIZE, ga4PageNum * GA4_PAGE_SIZE);
+        ga4PagesBody.innerHTML = pageRows.map(row => {{
           const sessions = Number(row.sessions || 0);
           const engaged = Number(row.engaged_sessions || 0);
           const engRate = sessions ? (100 * engaged / sessions).toFixed(1) + '%' : '—';
@@ -4986,11 +5024,27 @@ def render_penn_html(
             <td class="num">${{fmtInt(row.key_events)}}</td>
           </tr>`;
         }}).join('');
+        renderGa4Pagination(sorted.length, ga4PageNum, GA4_PAGE_SIZE);
         updateGa4SortHeaders();
       }};
 
+      ga4PagesPagination?.addEventListener('click', e => {{
+        const btn = e.target.closest('[data-page]');
+        if (!btn || btn.disabled) return;
+        const total = sortGa4Pages(filterGa4Pages(ga4Pages)).length;
+        const totalPages = Math.max(1, Math.ceil(total / GA4_PAGE_SIZE));
+        if (btn.dataset.page === 'prev' && ga4PageNum > 1) {{
+          ga4PageNum -= 1;
+          renderGa4Pages();
+        }} else if (btn.dataset.page === 'next' && ga4PageNum < totalPages) {{
+          ga4PageNum += 1;
+          renderGa4Pages();
+        }}
+      }});
+
       ga4PageSearch?.addEventListener('input', e => {{
         ga4PageQuery = e.target.value || '';
+        ga4PageNum = 1;
         renderGa4Pages();
       }});
       document.querySelector('#ga4PagesTable thead')?.addEventListener('click', e => {{
@@ -5003,6 +5057,7 @@ def render_penn_html(
           ga4PageSort.key = key;
           ga4PageSort.dir = (key === 'page_path' || key === 'page_title') ? 'asc' : 'desc';
         }}
+        ga4PageNum = 1;
         renderGa4Pages();
       }});
       renderGa4Pages();
@@ -5305,22 +5360,6 @@ def render_penn_html(
     }});
     document.addEventListener('keydown', e => {{
       if (e.key === 'Escape') closeCreativePreview();
-    }});
-
-    function setChartPeriod(period) {{
-      chartPeriod = period;
-      document.querySelectorAll('.chart-period-btn').forEach(btn => {{
-        const on = btn.dataset.period === period;
-        btn.classList.toggle('active', on);
-        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-      }});
-      refreshCharts();
-    }}
-
-    document.querySelectorAll('.chart-period-btn').forEach(btn => {{
-      btn.addEventListener('click', () => {{
-        if (btn.dataset.period !== chartPeriod) setChartPeriod(btn.dataset.period);
-      }});
     }});
 
     if ((performanceChartRaw.labels || []).length) {{
