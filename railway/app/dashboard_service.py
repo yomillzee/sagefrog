@@ -32,6 +32,7 @@ from penn_business_lines import (
     active_business_line_catalog,
     active_platform_catalog,
     build_business_line_campaigns,
+    platform_catalog,
 )
 
 
@@ -872,7 +873,7 @@ def _summary_card(
     impressions = int(totals.get("impressions") or 0)
     conversions = float(totals.get("conversions") or 0)
     return f"""
-    <div class="card">
+    <div class="card" data-platform="{_esc(platform or '')}">
       <div class="card-label">{label_html}</div>
       <div class="card-value">{_fmt_money(spend)}</div>
       <div class="card-stats">
@@ -1334,7 +1335,7 @@ def _ga4_website_content_html(ga4_pages: dict[str, Any] | None) -> str:
             "from Settings after GA4 BigQuery is connected.</p>"
         )
     return f"""
-        <p class="table-note muted">Site-wide GA4 metrics{f' for {range_label}' if range_label else ''}. Use the search bar above to filter paths and titles.</p>
+        <p class="table-note muted">Site-wide GA4 metrics{f' for {range_label}' if range_label else ''}. Use the page search in the filters at the top to narrow paths and titles.</p>
         <div class="table-wrap">
           <table class="data-table ga4-pages-table" id="ga4PagesTable">
             <thead>
@@ -1379,12 +1380,17 @@ def _dashboard_view_tabs_html(*, show_website: bool) -> str:
       </nav>"""
 
 
-def _campaign_filters_html(*, show_business_line: bool) -> str:
-    if not show_business_line:
+def _global_filters_bar_html(
+    *,
+    show_business_line: bool,
+    has_ga4_pages: bool,
+    show_channel_filters: bool,
+) -> str:
+    if not show_business_line and not has_ga4_pages and not show_channel_filters:
         return ""
-    return """
-        <section class="filter-panel bl-filters">
-          <div class="bl-filter-grid">
+    bl_block = ""
+    if show_business_line:
+        bl_block = """
             <div class="filter-group">
               <div class="filter-group-head">
                 <span class="filter-label">Business line</span>
@@ -1392,7 +1398,10 @@ def _campaign_filters_html(*, show_business_line: bool) -> str:
                 <button type="button" class="filter-link" id="blClearAll">None</button>
               </div>
               <div id="blFilters" class="filter-checks filter-checks--wrap"></div>
-            </div>
+            </div>"""
+    channel_block = ""
+    if show_channel_filters:
+        channel_block = """
             <div class="filter-group">
               <div class="filter-group-head">
                 <span class="filter-label">Channel</span>
@@ -1400,51 +1409,38 @@ def _campaign_filters_html(*, show_business_line: bool) -> str:
                 <button type="button" class="filter-link" id="channelClearAll">None</button>
               </div>
               <div id="channelFilters" class="filter-checks filter-checks--wrap"></div>
-            </div>
-          </div>
-          <div class="bl-filter-footer">
+            </div>"""
+    page_block = ""
+    if has_ga4_pages:
+        page_block = """
+            <div class="filter-group filter-group--pages">
+              <div class="website-filter-row">
+                <label for="ga4PageSearch" class="filter-label">Search pages</label>
+                <input type="search" id="ga4PageSearch" class="ga4-pages-search"
+                  placeholder="Filter by page path or title…" autocomplete="off">
+                <span class="badge" id="ga4PagesCount">0 pages</span>
+              </div>
+            </div>"""
+    zero_spend = ""
+    if show_business_line:
+        zero_spend = """
             <label class="filter-zero-spend">
               <input type="checkbox" id="showZeroSpend">
               Show inactive / $0 spend
-            </label>
+            </label>"""
+    return f"""
+      <div class="dash-filters-bar" id="dashFiltersBar">
+        <section class="filter-panel global-filters" aria-label="Dashboard filters">
+          <div class="global-filter-grid">
+            {bl_block}
+            {channel_block}
+            {page_block}
+          </div>
+          <div class="bl-filter-footer">
+            {zero_spend}
             <div class="filter-status" id="filterStatus"></div>
           </div>
-        </section>"""
-
-
-def _website_filters_html(*, has_pages: bool) -> str:
-    if not has_pages:
-        return ""
-    return """
-        <section class="filter-panel website-filters">
-          <div class="website-filter-row">
-            <label for="ga4PageSearch" class="filter-label">Search pages</label>
-            <input type="search" id="ga4PageSearch" class="ga4-pages-search"
-              placeholder="Filter by page path or title…" autocomplete="off">
-            <span class="badge" id="ga4PagesCount">0 pages</span>
-          </div>
-        </section>"""
-
-
-def _dashboard_filters_bar_html(
-    *,
-    show_business_line: bool,
-    show_website: bool,
-    has_ga4_pages: bool,
-) -> str:
-    campaign_filters = _campaign_filters_html(show_business_line=show_business_line)
-    website_filters = _website_filters_html(has_pages=has_ga4_pages) if show_website else ""
-    campaign_hidden = "" if campaign_filters else ' hidden aria-hidden="true"'
-    website_hidden = "" if website_filters else ' hidden aria-hidden="true"'
-    return f"""
-      <div class="dash-filters-bar" id="dashFiltersBar" hidden>
-        <div class="view-filters view-filters--overview active" data-for="overview"></div>
-        <div class="view-filters view-filters--campaigns{campaign_hidden}" data-for="campaigns">
-          {campaign_filters}
-        </div>
-        <div class="view-filters view-filters--website{website_hidden}" data-for="website">
-          {website_filters}
-        </div>
+        </section>
       </div>"""
 
 
@@ -1672,18 +1668,18 @@ def _aggregated_card(totals: dict[str, Any]) -> str:
         <h2 class="total-spend-title">Total Ad Spend</h2>
         <button type="button" class="info-tip info-tip--light" data-tip="Sum of Google Ads, LinkedIn, and Meta account totals for this date range." aria-label="About total ad spend">i</button>
       </div>
-      <div class="total-spend-hero">{_fmt_money(spend)}</div>
+      <div class="total-spend-hero" id="heroTotalSpend">{_fmt_money(spend)}</div>
       <div class="total-spend-metrics">
         <div class="total-spend-metric">
-          <span class="total-spend-metric__val">{_fmt_int(clicks)}</span>
+          <span class="total-spend-metric__val" id="heroTotalClicks">{_fmt_int(clicks)}</span>
           <span class="total-spend-metric__lbl">Clicks</span>
         </div>
         <div class="total-spend-metric">
-          <span class="total-spend-metric__val">{_fmt_int(impressions)}</span>
+          <span class="total-spend-metric__val" id="heroTotalImpressions">{_fmt_int(impressions)}</span>
           <span class="total-spend-metric__lbl">Impressions</span>
         </div>
         <div class="total-spend-metric">
-          <span class="total-spend-metric__val">{_fmt_int(conversions)}</span>
+          <span class="total-spend-metric__val" id="heroTotalConversions">{_fmt_int(conversions)}</span>
           <span class="total-spend-metric__lbl">Conversions</span>
         </div>
       </div>
@@ -1901,7 +1897,7 @@ def _campaign_explorer_content_html(*, show_business_line: bool, platform_breakd
                   <h2>Campaign performance</h2>
                   <span class="badge" id="blRowCount">0 rows</span>
                 </div>
-                <p class="table-note">Select business lines and channels in the filters above. Nothing is selected by default — check items to populate the table. Click a campaign row to drill into ad groups, ad sets, or ads.</p>
+                <p class="table-note">Use the filters at the top to choose business lines and channels. Nothing is selected by default — check items to populate the table. Click a campaign row to drill into ad groups, ad sets, or ads.</p>
                 <div class="table-wrap">
                   <table class="data-table" id="blTable">
                     <thead>
@@ -1927,7 +1923,7 @@ def _campaign_explorer_content_html(*, show_business_line: bool, platform_breakd
 
 
 def _business_line_merged_section_html() -> str:
-    """Deprecated — use _campaign_explorer_content_html with filters in _dashboard_filters_bar_html."""
+    """Deprecated — use _campaign_explorer_content_html with filters in _global_filters_bar_html."""
     return _campaign_explorer_content_html(show_business_line=True, platform_breakdown_html="")
 
 
@@ -2074,7 +2070,11 @@ def render_penn_html(
     bl_campaigns = _business_line_campaigns_from_snapshot(snapshot)
     bl_campaigns_json = _json_for_html_script(bl_campaigns)
     bl_catalog_json = _json_for_html_script(active_business_line_catalog(bl_campaigns))
-    platform_catalog_json = _json_for_html_script(active_platform_catalog(bl_campaigns))
+    platform_catalog_list = active_platform_catalog(bl_campaigns)
+    if not platform_catalog_list:
+        present = {p for p in ("google", "linkedin", "meta") if totals.get(p)}
+        platform_catalog_list = [item for item in platform_catalog() if item["id"] in present]
+    platform_catalog_json = _json_for_html_script(platform_catalog_list)
     combined_daily = (ga4_attr or {}).get("combined_daily") or []
     if not combined_daily and (ga4_attr or {}).get("daily"):
         combined_daily = [
@@ -2143,10 +2143,10 @@ def render_penn_html(
     has_ga4 = bool(accounts.get("ga4_client_key") or (ga4_pages_report or {}).get("pages"))
     has_ga4_pages = bool((ga4_pages_report or {}).get("pages"))
     view_tabs_html = _dashboard_view_tabs_html(show_website=has_ga4)
-    filters_bar_html = _dashboard_filters_bar_html(
+    filters_bar_html = _global_filters_bar_html(
         show_business_line=show_business_line,
-        show_website=has_ga4,
         has_ga4_pages=has_ga4_pages,
+        show_channel_filters=bool(platform_catalog_list),
     )
     campaign_explorer_html = _campaign_explorer_content_html(
         show_business_line=show_business_line,
@@ -3343,21 +3343,26 @@ def render_penn_html(
       background: var(--bg);
     }}
     .dash-filters-bar {{
-      padding: 12px 24px 14px;
-      background: var(--bg);
+      padding: 12px 24px 0;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
     }}
-    .dash-filters-bar[hidden] {{
-      display: none !important;
-    }}
-    .view-filters {{
+    .dash-filters-bar:empty {{
       display: none;
     }}
-    .view-filters.active {{
-      display: block;
+    .global-filter-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px 24px;
+      align-items: start;
     }}
-    .view-filters[hidden],
-    .view-filters[aria-hidden="true"] {{
-      display: none !important;
+    .filter-group--pages {{
+      grid-column: 1 / -1;
+    }}
+    @media (min-width: 1100px) {{
+      .filter-group--pages {{
+        grid-column: auto;
+      }}
     }}
     .website-filter-row {{
       display: flex;
@@ -3716,8 +3721,8 @@ def render_penn_html(
       </header>
 
       <div class="dash-sticky-chrome">
-        {view_tabs_html}
         {filters_bar_html}
+        {view_tabs_html}
       </div>
 
       <div class="dash-content">
@@ -3804,10 +3809,116 @@ def render_penn_html(
     const platformCatalog = readJson('platform-catalog-data', []);
     const ga4Pages = readJson('ga4-pages-data', []);
 
+    const channelState = new Set();
+    const blState = new Set();
+    const CHART_PLATFORM_IDS = ['google', 'linkedin', 'meta'];
+
+    function channelFilterRestricts() {{
+      return channelState.size > 0;
+    }}
+
     const fmtMoney = n => '$' + Number(n || 0).toLocaleString(undefined, {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
     const fmtInt = n => Number(n || 0).toLocaleString();
     const fmtPct = (n, d) => d ? (100 * n / d).toFixed(2) + '%' : '—';
     const escHtml = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+
+    function cloneChartPayload(payload) {{
+      return {{
+        labels: [...(payload.labels || [])],
+        datasets: (payload.datasets || []).map(ds => ({{
+          ...ds,
+          data: [...(ds.data || [])],
+        }})),
+      }};
+    }}
+
+    const chartPayloadDaily = cloneChartPayload(readJson('chart-data', {{ labels: [], datasets: [] }}));
+    const ga4AttrChartPayloadDaily = cloneChartPayload(readJson('ga4-attr-chart-data', {{ labels: [], datasets: [] }}));
+    let chartPeriod = 'daily';
+    let spendChartInstance = null;
+    let siteSessionsChartInstance = null;
+
+    function weekStartKey(dateStr) {{
+      const d = new Date(String(dateStr).slice(0, 10) + 'T12:00:00');
+      if (Number.isNaN(d.getTime())) return String(dateStr).slice(0, 10);
+      const dow = d.getDay();
+      const offset = dow === 0 ? -6 : 1 - dow;
+      d.setDate(d.getDate() + offset);
+      return d.toISOString().slice(0, 10);
+    }}
+
+    function formatWeekLabel(weekStartStr) {{
+      const d = new Date(weekStartStr + 'T12:00:00');
+      return d.toLocaleDateString(undefined, {{ month: 'short', day: 'numeric' }});
+    }}
+
+    function aggregateWeekly(payload) {{
+      const labels = payload.labels || [];
+      const datasets = payload.datasets || [];
+      if (!labels.length) return {{ labels: [], datasets: datasets.map(ds => ({{ ...ds, data: [] }})) }};
+      const weekOrder = [];
+      const weekIndex = new Map();
+      labels.forEach(label => {{
+        const wk = weekStartKey(label);
+        if (!weekIndex.has(wk)) {{
+          weekIndex.set(wk, weekOrder.length);
+          weekOrder.push(wk);
+        }}
+      }});
+      const sums = datasets.map(() => weekOrder.map(() => 0));
+      labels.forEach((label, i) => {{
+        const idx = weekIndex.get(weekStartKey(label));
+        datasets.forEach((ds, dsi) => {{
+          sums[dsi][idx] += Number(ds.data?.[i] || 0);
+        }});
+      }});
+      return {{
+        labels: weekOrder.map(formatWeekLabel),
+        datasets: datasets.map((ds, dsi) => ({{ ...ds, data: sums[dsi] }})),
+      }};
+    }}
+
+    function chartDataForPeriod(payload, period) {{
+      if (period === 'weekly') return aggregateWeekly(payload);
+      return cloneChartPayload(payload);
+    }}
+
+    function getFilteredChartPayload(basePayload) {{
+      const restrict = channelFilterRestricts();
+      return {{
+        labels: [...(basePayload.labels || [])],
+        datasets: (basePayload.datasets || []).map((ds, i) => {{
+          const platformId = CHART_PLATFORM_IDS[i];
+          const hidden = platformId && restrict && !channelState.has(platformId);
+          return {{ ...ds, hidden: !!hidden }};
+        }}),
+      }};
+    }}
+
+    function refreshCharts() {{
+      const spendData = chartDataForPeriod(getFilteredChartPayload(chartPayloadDaily), chartPeriod);
+      if (spendChartInstance) {{
+        spendChartInstance.data.labels = spendData.labels;
+        spendData.datasets.forEach((ds, i) => {{
+          if (spendChartInstance.data.datasets[i]) {{
+            spendChartInstance.data.datasets[i].data = ds.data;
+            spendChartInstance.setDatasetVisibility(i, !ds.hidden);
+          }}
+        }});
+        spendChartInstance.update();
+      }}
+      const siteData = chartDataForPeriod(getFilteredChartPayload(ga4AttrChartPayloadDaily), chartPeriod);
+      if (siteSessionsChartInstance) {{
+        siteSessionsChartInstance.data.labels = siteData.labels;
+        siteData.datasets.forEach((ds, i) => {{
+          if (siteSessionsChartInstance.data.datasets[i]) {{
+            siteSessionsChartInstance.data.datasets[i].data = ds.data;
+            siteSessionsChartInstance.setDatasetVisibility(i, !ds.hidden);
+          }}
+        }});
+        siteSessionsChartInstance.update();
+      }}
+    }}
 
     const MOBILE_SIDEBAR_MQ = window.matchMedia('(max-width: 900px)');
     function isMobileSidebar() {{
@@ -3873,14 +3984,6 @@ def render_penn_html(
       website: 'Website Analytics',
     }};
 
-    function updateFiltersBarVisibility(view) {{
-      const filtersBar = document.getElementById('dashFiltersBar');
-      if (!filtersBar) return;
-      const activeFilters = filtersBar.querySelector(`.view-filters[data-for="${{view}}"]`);
-      const hasPanel = activeFilters && activeFilters.querySelector('.filter-panel');
-      filtersBar.hidden = !hasPanel;
-    }}
-
     function setActiveView(view) {{
       const allowed = ['overview', 'campaigns', 'website'];
       if (!allowed.includes(view)) view = 'overview';
@@ -3897,10 +4000,6 @@ def render_penn_html(
         panel.classList.toggle('active', on);
         panel.hidden = !on;
       }});
-      document.querySelectorAll('.view-filters').forEach(filters => {{
-        filters.classList.toggle('active', filters.dataset.for === view);
-      }});
-      updateFiltersBarVisibility(view);
       const title = document.getElementById('dashViewTitle');
       if (title) title.textContent = VIEW_LABELS[view] || 'Dashboard';
       try {{
@@ -3924,13 +4023,132 @@ def render_penn_html(
     const initialView = new URLSearchParams(window.location.search).get('view');
     if (initialView && ['overview', 'campaigns', 'website'].includes(initialView)) {{
       setActiveView(initialView);
-    }} else {{
-      updateFiltersBarVisibility('overview');
     }}
 
-    const channelState = new Set();
-    const blState = new Set();
     const blSort = {{ key: 'spend', dir: 'desc' }};
+    const overviewCardDefaults = new Map();
+    document.querySelectorAll('.cards .card[data-platform]').forEach(card => {{
+      overviewCardDefaults.set(card.dataset.platform, {{
+        valueHtml: card.querySelector('.card-value')?.innerHTML || '',
+        statsHtml: card.querySelector('.card-stats')?.innerHTML || '',
+      }});
+    }});
+    const heroDefaults = {{
+      spend: document.getElementById('heroTotalSpend')?.textContent || '',
+      clicks: document.getElementById('heroTotalClicks')?.textContent || '',
+      impressions: document.getElementById('heroTotalImpressions')?.textContent || '',
+      conversions: document.getElementById('heroTotalConversions')?.textContent || '',
+    }};
+
+    function platformVisible(platformId) {{
+      return !channelFilterRestricts() || channelState.has(platformId);
+    }}
+
+    function filteredBlCampaigns() {{
+      const showZeroSpend = !!document.getElementById('showZeroSpend')?.checked;
+      const hasSelection = channelState.size > 0 && blState.size > 0;
+      if (!hasSelection) return [];
+      return blCampaigns.filter(r => {{
+        if (!channelState.has(r.platform) || !blState.has(r.business_line)) return false;
+        if (!showZeroSpend && (r.spend || 0) < 0.01) return false;
+        return true;
+      }});
+    }}
+
+    function aggregatePlatformTotals(platformId, rows) {{
+      const subset = rows.filter(r => r.platform === platformId);
+      if (!subset.length) return null;
+      return subset.reduce((acc, r) => ({{
+        spend: acc.spend + (r.spend || 0),
+        clicks: acc.clicks + (r.clicks || 0),
+        impressions: acc.impressions + (r.impressions || 0),
+        conversions: acc.conversions + (r.conversions || 0),
+      }}), {{ spend: 0, clicks: 0, impressions: 0, conversions: 0 }});
+    }}
+
+    function updateOverviewCard(platformId, totals) {{
+      const card = document.querySelector(`.cards .card[data-platform="${{platformId}}"]`);
+      if (!card) return;
+      const defaults = overviewCardDefaults.get(platformId);
+      const valueEl = card.querySelector('.card-value');
+      const statsEl = card.querySelector('.card-stats');
+      if (!valueEl || !statsEl || !defaults) return;
+      if (!totals) {{
+        valueEl.innerHTML = defaults.valueHtml;
+        statsEl.innerHTML = defaults.statsHtml;
+        return;
+      }}
+      valueEl.textContent = fmtMoney(totals.spend);
+      statsEl.innerHTML = `
+        <span>${{fmtInt(totals.clicks)}} clicks</span>
+        <span>${{fmtInt(totals.impressions)}} impr.</span>
+        <span>${{fmtInt(totals.conversions)}} conv.</span>`;
+    }}
+
+    function updateHeroTotals(totals) {{
+      const spendEl = document.getElementById('heroTotalSpend');
+      const clicksEl = document.getElementById('heroTotalClicks');
+      const impressionsEl = document.getElementById('heroTotalImpressions');
+      const conversionsEl = document.getElementById('heroTotalConversions');
+      if (!spendEl) return;
+      if (!totals) {{
+        spendEl.textContent = heroDefaults.spend;
+        if (clicksEl) clicksEl.textContent = heroDefaults.clicks;
+        if (impressionsEl) impressionsEl.textContent = heroDefaults.impressions;
+        if (conversionsEl) conversionsEl.textContent = heroDefaults.conversions;
+        return;
+      }}
+      spendEl.textContent = fmtMoney(totals.spend);
+      if (clicksEl) clicksEl.textContent = fmtInt(totals.clicks);
+      if (impressionsEl) impressionsEl.textContent = fmtInt(totals.impressions);
+      if (conversionsEl) conversionsEl.textContent = fmtInt(totals.conversions);
+    }}
+
+    function applyOverviewFilters() {{
+      const blFiltered = SHOW_BUSINESS_LINE && blState.size > 0 && channelState.size > 0
+        ? filteredBlCampaigns()
+        : null;
+      let heroTotals = null;
+
+      document.querySelectorAll('.cards .card[data-platform]').forEach(card => {{
+        const platformId = card.dataset.platform;
+        const visible = platformVisible(platformId);
+        card.hidden = !visible;
+        card.style.display = visible ? '' : 'none';
+        if (!visible) return;
+        if (blFiltered) {{
+          const totals = aggregatePlatformTotals(platformId, blFiltered);
+          updateOverviewCard(platformId, totals);
+        }} else {{
+          updateOverviewCard(platformId, null);
+        }}
+      }});
+
+      document.querySelectorAll('.platform-panel[data-platform]').forEach(panel => {{
+        const visible = platformVisible(panel.dataset.platform);
+        panel.hidden = !visible;
+        panel.style.display = visible ? '' : 'none';
+      }});
+
+      if (blFiltered) {{
+        heroTotals = blFiltered.reduce((acc, r) => ({{
+          spend: acc.spend + (r.spend || 0),
+          clicks: acc.clicks + (r.clicks || 0),
+          impressions: acc.impressions + (r.impressions || 0),
+          conversions: acc.conversions + (r.conversions || 0),
+        }}), {{ spend: 0, clicks: 0, impressions: 0, conversions: 0 }});
+      }}
+      updateHeroTotals(heroTotals);
+      refreshCharts();
+    }}
+
+    let renderGa4Pages = () => {{}};
+
+    function applyGlobalFilters() {{
+      applyBlView();
+      applyOverviewFilters();
+      renderGa4Pages();
+    }}
 
     function blSortValue(r, key) {{
       switch (key) {{
@@ -4028,7 +4246,7 @@ def render_penn_html(
       state.clear();
       ids.forEach(id => state.add(id));
       syncCheckboxInputs();
-      applyBlView();
+      applyGlobalFilters();
     }}
 
     function onFilterChange(e) {{
@@ -4042,17 +4260,13 @@ def render_penn_html(
       }} else {{
         state.delete(id);
       }}
-      applyBlView();
+      applyGlobalFilters();
     }}
 
     function applyBlView() {{
       const showZeroSpend = !!document.getElementById('showZeroSpend')?.checked;
       const hasSelection = channelState.size > 0 && blState.size > 0;
-      const filtered = hasSelection ? blCampaigns.filter(r => {{
-        if (!channelState.has(r.platform) || !blState.has(r.business_line)) return false;
-        if (!showZeroSpend && (r.spend || 0) < 0.01) return false;
-        return true;
-      }}) : [];
+      const filtered = hasSelection ? filteredBlCampaigns() : [];
       const spend = filtered.reduce((s, r) => s + (r.spend || 0), 0);
       const clicks = filtered.reduce((s, r) => s + (r.clicks || 0), 0);
       const impressions = filtered.reduce((s, r) => s + (r.impressions || 0), 0);
@@ -4094,13 +4308,19 @@ def render_penn_html(
         const allCh = chLabels.length === platformCatalog.length && platformCatalog.length > 0;
         const allBl = blLabels.length === blCatalog.length && blCatalog.length > 0;
         const chText = channelState.size === 0
-          ? 'No channels selected'
+          ? 'All channels'
           : (allCh ? 'All channels' : chLabels.join(', '));
-        const blText = blState.size === 0
-          ? 'No business lines selected'
-          : (allBl ? 'All business lines' : blLabels.join(', '));
-        const zeroNote = showZeroSpend ? ' · incl. $0 spend' : '';
-        status.textContent = `${{blText}} · ${{chText}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}${{zeroNote}}`;
+        const pageQuery = document.getElementById('ga4PageSearch')?.value?.trim() || '';
+        const pageNote = pageQuery ? ` · pages: “${{pageQuery}}”` : '';
+        if (SHOW_BUSINESS_LINE && blCatalog.length) {{
+          const blText = blState.size === 0
+            ? 'No business lines selected'
+            : (allBl ? 'All business lines' : blLabels.join(', '));
+          const zeroNote = showZeroSpend ? ' · incl. $0 spend' : '';
+          status.textContent = `${{blText}} · ${{chText}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}${{zeroNote}}${{pageNote}}`;
+        }} else {{
+          status.textContent = `${{chText}}${{pageNote}}`;
+        }}
       }}
       updateBlSortHeaders();
     }}
@@ -4109,7 +4329,7 @@ def render_penn_html(
     initCheckboxGroup('blFilters', blCatalog, blState, 'bl');
     document.getElementById('channelFilters')?.addEventListener('change', onFilterChange);
     document.getElementById('blFilters')?.addEventListener('change', onFilterChange);
-    document.getElementById('showZeroSpend')?.addEventListener('change', applyBlView);
+    document.getElementById('showZeroSpend')?.addEventListener('change', applyGlobalFilters);
     document.querySelector('#blTable thead')?.addEventListener('click', onBlSortClick);
     document.getElementById('channelSelectAll')?.addEventListener('click', () =>
       setGroupSelection('channel', platformCatalog.map(p => p.id))
@@ -4123,7 +4343,6 @@ def render_penn_html(
     document.getElementById('blClearAll')?.addEventListener('click', () =>
       setGroupSelection('bl', [])
     );
-    applyBlView();
 
     const ga4PagesBody = document.getElementById('ga4PagesBody');
     if (ga4PagesBody && ga4Pages.length) {{
@@ -4178,7 +4397,7 @@ def render_penn_html(
         }});
       }}
 
-      function renderGa4Pages() {{
+      renderGa4Pages = function() {{
         const filtered = filterGa4Pages(ga4Pages);
         const sorted = sortGa4Pages(filtered);
         if (ga4PagesCount) {{
@@ -4205,11 +4424,12 @@ def render_penn_html(
           </tr>`;
         }}).join('');
         updateGa4SortHeaders();
-      }}
+      }};
 
       ga4PageSearch?.addEventListener('input', e => {{
         ga4PageQuery = e.target.value || '';
         renderGa4Pages();
+        applyBlView();
       }});
       document.querySelector('#ga4PagesTable thead')?.addEventListener('click', e => {{
         const th = e.target.closest('th[data-sort]');
@@ -4522,68 +4742,6 @@ def render_penn_html(
       }},
     }};
 
-    function cloneChartPayload(payload) {{
-      return {{
-        labels: [...(payload.labels || [])],
-        datasets: (payload.datasets || []).map(ds => ({{
-          ...ds,
-          data: [...(ds.data || [])],
-        }})),
-      }};
-    }}
-
-    const chartPayloadDaily = cloneChartPayload(readJson('chart-data', {{ labels: [], datasets: [] }}));
-    const ga4AttrChartPayloadDaily = cloneChartPayload(readJson('ga4-attr-chart-data', {{ labels: [], datasets: [] }}));
-
-    function weekStartKey(dateStr) {{
-      const d = new Date(String(dateStr).slice(0, 10) + 'T12:00:00');
-      if (Number.isNaN(d.getTime())) return String(dateStr).slice(0, 10);
-      const dow = d.getDay();
-      const offset = dow === 0 ? -6 : 1 - dow;
-      d.setDate(d.getDate() + offset);
-      return d.toISOString().slice(0, 10);
-    }}
-
-    function formatWeekLabel(weekStartStr) {{
-      const d = new Date(weekStartStr + 'T12:00:00');
-      return d.toLocaleDateString(undefined, {{ month: 'short', day: 'numeric' }});
-    }}
-
-    function aggregateWeekly(payload) {{
-      const labels = payload.labels || [];
-      const datasets = payload.datasets || [];
-      if (!labels.length) return {{ labels: [], datasets: datasets.map(ds => ({{ ...ds, data: [] }})) }};
-      const weekOrder = [];
-      const weekIndex = new Map();
-      labels.forEach(label => {{
-        const wk = weekStartKey(label);
-        if (!weekIndex.has(wk)) {{
-          weekIndex.set(wk, weekOrder.length);
-          weekOrder.push(wk);
-        }}
-      }});
-      const sums = datasets.map(() => weekOrder.map(() => 0));
-      labels.forEach((label, i) => {{
-        const idx = weekIndex.get(weekStartKey(label));
-        datasets.forEach((ds, dsi) => {{
-          sums[dsi][idx] += Number(ds.data?.[i] || 0);
-        }});
-      }});
-      return {{
-        labels: weekOrder.map(formatWeekLabel),
-        datasets: datasets.map((ds, dsi) => ({{ ...ds, data: sums[dsi] }})),
-      }};
-    }}
-
-    function chartDataForPeriod(payload, period) {{
-      if (period === 'weekly') return aggregateWeekly(payload);
-      return cloneChartPayload(payload);
-    }}
-
-    let chartPeriod = 'daily';
-    let spendChartInstance = null;
-    let siteSessionsChartInstance = null;
-
     function setChartPeriod(period) {{
       chartPeriod = period;
       document.querySelectorAll('.chart-period-btn').forEach(btn => {{
@@ -4591,26 +4749,7 @@ def render_penn_html(
         btn.classList.toggle('active', on);
         btn.setAttribute('aria-pressed', on ? 'true' : 'false');
       }});
-      const spendData = chartDataForPeriod(chartPayloadDaily, period);
-      if (spendChartInstance) {{
-        spendChartInstance.data.labels = spendData.labels;
-        spendData.datasets.forEach((ds, i) => {{
-          if (spendChartInstance.data.datasets[i]) {{
-            spendChartInstance.data.datasets[i].data = ds.data;
-          }}
-        }});
-        spendChartInstance.update();
-      }}
-      const siteData = chartDataForPeriod(ga4AttrChartPayloadDaily, period);
-      if (siteSessionsChartInstance) {{
-        siteSessionsChartInstance.data.labels = siteData.labels;
-        siteData.datasets.forEach((ds, i) => {{
-          if (siteSessionsChartInstance.data.datasets[i]) {{
-            siteSessionsChartInstance.data.datasets[i].data = ds.data;
-          }}
-        }});
-        siteSessionsChartInstance.update();
-      }}
+      refreshCharts();
     }}
 
     document.querySelectorAll('.chart-period-btn').forEach(btn => {{
@@ -4621,7 +4760,7 @@ def render_penn_html(
 
     const ctx = document.getElementById('spendChart');
     if (ctx && chartPayloadDaily.labels && chartPayloadDaily.labels.length) {{
-      const initialSpend = chartDataForPeriod(chartPayloadDaily, chartPeriod);
+      const initialSpend = chartDataForPeriod(getFilteredChartPayload(chartPayloadDaily), chartPeriod);
       spendChartInstance = new Chart(ctx, {{
         type: 'line',
         data: initialSpend,
@@ -4640,7 +4779,7 @@ def render_penn_html(
 
     const siteCtx = document.getElementById('siteSessionsChart');
     if (siteCtx && ga4AttrChartPayloadDaily.labels && ga4AttrChartPayloadDaily.labels.length) {{
-      const initialSite = chartDataForPeriod(ga4AttrChartPayloadDaily, chartPeriod);
+      const initialSite = chartDataForPeriod(getFilteredChartPayload(ga4AttrChartPayloadDaily), chartPeriod);
       siteSessionsChartInstance = new Chart(siteCtx, {{
         type: 'line',
         data: initialSite,
@@ -4668,6 +4807,8 @@ def render_penn_html(
         }},
       }});
     }}
+
+    applyGlobalFilters();
   </script>
 </body>
 </html>"""
