@@ -1321,7 +1321,8 @@ def _sidebar_nav_html(
     use_session: bool,
     show_business_line: bool = True,
 ) -> str:
-    """Sidebar nav: Overview, By business line (Penn only), Settings."""
+    """Sidebar nav: Overview and Settings."""
+    del show_business_line  # business line filters live on the overview page
     settings_url = _settings_page_url(
         client_slug=client_slug,
         access_key=access_key,
@@ -1332,39 +1333,19 @@ def _sidebar_nav_html(
         access_key=access_key,
         use_session=use_session,
     )
-    bl_url = _dashboard_page_url(
-        client_slug=client_slug,
-        access_key=access_key,
-        use_session=use_session,
-        tab="business-line",
-    )
     icon_overview = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>'
-    icon_bl = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>'
     icon_settings = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>'
 
     if active == "settings":
         overview_el = f'<a href="{overview_url}" class="sidebar-nav-btn sidebar-nav-link">{icon_overview}Overview</a>'
-        bl_el = (
-            f'<a href="{bl_url}" class="sidebar-nav-btn sidebar-nav-link">{icon_bl}By business line</a>'
-            if show_business_line
-            else ""
-        )
         settings_el = f'<span class="sidebar-nav-btn active" aria-current="page">{icon_settings}Settings</span>'
     else:
-        overview_active = active == "overview"
-        bl_active = active == "business-line"
-        overview_el = f'<button type="button" class="sidebar-nav-btn{" active" if overview_active else ""}" data-tab="platform" role="tab" aria-selected="{"true" if overview_active else "false"}">{icon_overview}Overview</button>'
-        bl_el = (
-            f'<button type="button" class="sidebar-nav-btn{" active" if bl_active else ""}" data-tab="business-line" role="tab" aria-selected="{"true" if bl_active else "false"}">{icon_bl}By business line</button>'
-            if show_business_line
-            else ""
-        )
+        overview_el = f'<span class="sidebar-nav-btn active" aria-current="page">{icon_overview}Overview</span>'
         settings_el = f'<a href="{settings_url or "#"}" class="sidebar-nav-btn sidebar-nav-link">{icon_settings}Settings</a>'
 
     return f"""
       <nav class="sidebar-nav" role="navigation" aria-label="Dashboard views">
         {overview_el}
-        {bl_el}
         {settings_el}
       </nav>"""
 
@@ -1775,67 +1756,66 @@ def _breakdowns_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {platform: {"campaign": rows} for platform, rows in legacy.items()}
 
 
-def _business_line_tab_panel_html() -> str:
+def _business_line_merged_section_html() -> str:
     return """
-          <div id="tab-business-line" class="tab-panel" role="tabpanel">
-            <div class="bl-summary" id="blSummary"></div>
-            <div class="bl-layout">
-              <aside class="bl-filters-col">
+            <section class="bl-merged-section" aria-label="Campaign performance by business line">
+              <div class="bl-summary" id="blSummary"></div>
+              <div class="bl-sticky-filters" id="blStickyFilters">
                 <section class="filter-panel bl-filters">
-                  <h3>Filters</h3>
-                  <div class="filter-group">
-                    <div class="filter-group-head">
-                      <span class="filter-label">Business line</span>
-                      <button type="button" class="filter-link" id="blSelectAll">All</button>
-                      <button type="button" class="filter-link" id="blClearAll">None</button>
+                  <div class="bl-filter-grid">
+                    <div class="filter-group">
+                      <div class="filter-group-head">
+                        <span class="filter-label">Business line</span>
+                        <button type="button" class="filter-link" id="blSelectAll">All</button>
+                        <button type="button" class="filter-link" id="blClearAll">None</button>
+                      </div>
+                      <div id="blFilters" class="filter-checks filter-checks--wrap"></div>
                     </div>
-                    <div id="blFilters" class="filter-checks"></div>
-                  </div>
-                  <div class="filter-group">
-                    <div class="filter-group-head">
-                      <span class="filter-label">Channel</span>
-                      <button type="button" class="filter-link" id="channelSelectAll">All</button>
-                      <button type="button" class="filter-link" id="channelClearAll">None</button>
+                    <div class="filter-group">
+                      <div class="filter-group-head">
+                        <span class="filter-label">Channel</span>
+                        <button type="button" class="filter-link" id="channelSelectAll">All</button>
+                        <button type="button" class="filter-link" id="channelClearAll">None</button>
+                      </div>
+                      <div id="channelFilters" class="filter-checks filter-checks--wrap"></div>
                     </div>
-                    <div id="channelFilters" class="filter-checks"></div>
                   </div>
-                  <label class="filter-zero-spend">
-                    <input type="checkbox" id="showZeroSpend">
-                    Show inactive / $0 spend
-                  </label>
-                  <div class="filter-status" id="filterStatus"></div>
-                </section>
-              </aside>
-              <div class="bl-main">
-                <section class="panel platform-panel">
-                  <div class="panel-head">
-                    <h2>Campaign performance</h2>
-                    <span class="badge" id="blRowCount">0 rows</span>
-                  </div>
-                  <p class="table-note">Select business lines and channels in the filters. Nothing is selected by default — check items to populate the table. Click a campaign row to drill into ad groups, ad sets, or ads.</p>
-                  <div class="table-wrap">
-                    <table class="data-table" id="blTable">
-                      <thead>
-                        <tr>
-                          <th class="chevron-col"></th>
-                          <th class="sortable" data-sort="platform" scope="col" aria-sort="none">Platform<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="business_line" scope="col" aria-sort="none">Business line<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="name" scope="col" aria-sort="none">Campaign<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="spend" scope="col" aria-sort="none">Spend<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="clicks" scope="col" aria-sort="none">Clicks<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="impressions" scope="col" aria-sort="none">Impressions<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="ctr" scope="col" aria-sort="none">CTR<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="conversions" scope="col" aria-sort="none">Conv.<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="cpc" scope="col" aria-sort="none">CPC<span class="sort-icon" aria-hidden="true"></span></th>
-                        </tr>
-                      </thead>
-                      <tbody id="blTableBody" class="tree-table"></tbody>
-                    </table>
+                  <div class="bl-filter-footer">
+                    <label class="filter-zero-spend">
+                      <input type="checkbox" id="showZeroSpend">
+                      Show inactive / $0 spend
+                    </label>
+                    <div class="filter-status" id="filterStatus"></div>
                   </div>
                 </section>
               </div>
-            </div>
-          </div>"""
+              <section class="panel platform-panel">
+                <div class="panel-head">
+                  <h2>Campaign performance</h2>
+                  <span class="badge" id="blRowCount">0 rows</span>
+                </div>
+                <p class="table-note">Select business lines and channels in the filters above. Nothing is selected by default — check items to populate the table. Click a campaign row to drill into ad groups, ad sets, or ads.</p>
+                <div class="table-wrap">
+                  <table class="data-table" id="blTable">
+                    <thead>
+                      <tr>
+                        <th class="chevron-col"></th>
+                        <th class="sortable" data-sort="platform" scope="col" aria-sort="none">Platform<span class="sort-icon" aria-hidden="true"></span></th>
+                        <th class="sortable" data-sort="business_line" scope="col" aria-sort="none">Business line<span class="sort-icon" aria-hidden="true"></span></th>
+                        <th class="sortable" data-sort="name" scope="col" aria-sort="none">Campaign<span class="sort-icon" aria-hidden="true"></span></th>
+                        <th class="sortable" data-sort="spend" scope="col" aria-sort="none">Spend<span class="sort-icon" aria-hidden="true"></span></th>
+                        <th class="sortable" data-sort="clicks" scope="col" aria-sort="none">Clicks<span class="sort-icon" aria-hidden="true"></span></th>
+                        <th class="sortable" data-sort="impressions" scope="col" aria-sort="none">Impressions<span class="sort-icon" aria-hidden="true"></span></th>
+                        <th class="sortable" data-sort="ctr" scope="col" aria-sort="none">CTR<span class="sort-icon" aria-hidden="true"></span></th>
+                        <th class="sortable" data-sort="conversions" scope="col" aria-sort="none">Conv.<span class="sort-icon" aria-hidden="true"></span></th>
+                        <th class="sortable" data-sort="cpc" scope="col" aria-sort="none">CPC<span class="sort-icon" aria-hidden="true"></span></th>
+                      </tr>
+                    </thead>
+                    <tbody id="blTableBody" class="tree-table"></tbody>
+                  </table>
+                </div>
+              </section>
+            </section>"""
 
 
 def render_penn_html(
@@ -2045,7 +2025,8 @@ def render_penn_html(
         can_upload=can_upload_docs,
     )
     client_meta_tip = _esc(f"Date range: {range_label}\nLast refreshed: {refreshed} UTC")
-    business_line_tab_html = _business_line_tab_panel_html() if show_business_line else ""
+    campaign_section_html = _business_line_merged_section_html() if show_business_line else ""
+    platform_breakdown_html = "" if show_business_line else breakdown_html
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -3119,8 +3100,7 @@ def render_penn_html(
     .refresh-btn--secondary:hover:not(:disabled) {{ background: #f0f7ff; filter: none; }}
     .notice {{ font-size: 0.86rem; color: var(--muted); }}
 
-    .tab-panel {{ display: none; }}
-    .tab-panel.active {{ display: block; }}
+    .tab-panel {{ display: block; }}
 
     .filter-panel {{
       background: var(--panel);
@@ -3129,21 +3109,67 @@ def render_penn_html(
       padding: 16px 18px;
       box-shadow: var(--shadow-sm);
     }}
-    .bl-layout {{
-      display: grid;
-      grid-template-columns: 272px minmax(0, 1fr);
-      gap: 20px;
-      align-items: start;
+    .bl-sticky-sentinel {{
+      height: 1px;
+      width: 100%;
+      pointer-events: none;
     }}
-    .bl-filters-col {{
+    .bl-merged-section {{
+      margin-top: 8px;
+    }}
+    .bl-sticky-filters {{
       position: sticky;
-      top: calc(72px + 16px);
-      align-self: start;
+      top: 0;
+      z-index: 40;
+      margin: 0 0 16px;
+      padding: 10px 0 6px;
+      background: linear-gradient(180deg, var(--bg) 72%, rgba(238, 241, 245, 0));
     }}
-    .bl-main {{ min-width: 0; }}
+    .bl-sticky-filters.is-stuck .filter-panel {{
+      box-shadow: var(--shadow);
+      border-color: #c8d4e4;
+    }}
+    .bl-filter-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px 24px;
+    }}
     @media (max-width: 960px) {{
-      .bl-layout {{ grid-template-columns: 1fr; }}
-      .bl-filters-col {{ position: static; }}
+      .bl-filter-grid {{ grid-template-columns: 1fr; }}
+    }}
+    .bl-filter-footer {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px 16px;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }}
+    .bl-filter-footer .filter-zero-spend {{
+      margin-top: 0;
+      padding-top: 0;
+      border-top: 0;
+    }}
+    .bl-filter-footer .filter-status {{
+      margin-top: 0;
+      padding-top: 0;
+      border-top: 0;
+      flex: 1;
+      min-width: 200px;
+      text-align: right;
+    }}
+    @media (max-width: 720px) {{
+      .bl-filter-footer .filter-status {{ text-align: left; }}
+    }}
+    .filter-checks--wrap {{
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      max-height: 120px;
+      overflow-y: auto;
+      padding-right: 4px;
     }}
     .filter-group-head {{
       display: flex;
@@ -3273,9 +3299,6 @@ def render_penn_html(
     }}
     .filter-reset:hover {{ color: var(--navy); }}
     .filter-status {{
-      margin-top: 12px;
-      padding-top: 12px;
-      border-top: 1px solid var(--border);
       font-size: 0.82rem;
       color: var(--muted);
     }}
@@ -3462,10 +3485,10 @@ def render_penn_html(
               </div>
             </section>
 
-            {breakdown_html}
-          </div>
+            {campaign_section_html}
 
-          {business_line_tab_html}
+            {platform_breakdown_html}
+          </div>
         </div>
       </div>
     </div>
@@ -3510,13 +3533,6 @@ def render_penn_html(
     const fmtInt = n => Number(n || 0).toLocaleString();
     const fmtPct = (n, d) => d ? (100 * n / d).toFixed(2) + '%' : '—';
     const escHtml = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-
-    document.querySelectorAll('.sidebar-nav-btn[data-tab]').forEach(btn => {{
-      btn.addEventListener('click', () => {{
-        setActiveTab(btn.dataset.tab);
-        closeSidebar();
-      }});
-    }});
 
     const MOBILE_SIDEBAR_MQ = window.matchMedia('(max-width: 900px)');
     function isMobileSidebar() {{
@@ -3576,23 +3592,23 @@ def render_penn_html(
       }}
     }});
 
-    const VIEW_TITLES = {{ platform: 'Overview', 'business-line': 'By business line' }};
-
-    function setActiveTab(tab) {{
-      document.querySelectorAll('.sidebar-nav-btn[data-tab]').forEach(b => {{
-        const on = b.dataset.tab === tab;
-        b.classList.toggle('active', on);
-        b.setAttribute('aria-selected', on ? 'true' : 'false');
-      }});
-      document.querySelectorAll('.tab-panel').forEach(p => {{
-        p.classList.toggle('active', p.id === 'tab-' + tab);
-      }});
-      const title = document.getElementById('dashViewTitle');
-      if (title) title.textContent = VIEW_TITLES[tab] || 'Dashboard';
+    if (SHOW_BUSINESS_LINE) {{
+      const stickyFilters = document.getElementById('blStickyFilters');
+      const scrollRoot = document.querySelector('.dash-content');
+      if (stickyFilters && scrollRoot && 'IntersectionObserver' in window) {{
+        const stickySentinel = document.createElement('div');
+        stickySentinel.className = 'bl-sticky-sentinel';
+        stickySentinel.setAttribute('aria-hidden', 'true');
+        stickyFilters.parentNode?.insertBefore(stickySentinel, stickyFilters);
+        const stickyObserver = new IntersectionObserver(
+          ([entry]) => {{
+            stickyFilters.classList.toggle('is-stuck', !entry.isIntersecting);
+          }},
+          {{ root: scrollRoot, threshold: 1 }}
+        );
+        stickyObserver.observe(stickySentinel);
+      }}
     }}
-
-    const initialTab = new URLSearchParams(window.location.search).get('tab');
-    if (SHOW_BUSINESS_LINE && initialTab === 'business-line') setActiveTab('business-line');
 
     const channelState = new Set();
     const blState = new Set();
