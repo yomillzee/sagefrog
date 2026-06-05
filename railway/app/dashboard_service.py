@@ -1323,6 +1323,18 @@ def _client_insights_documents_html(
     </section>"""
 
 
+def _ga4_website_search_html(*, has_pages: bool) -> str:
+    if not has_pages:
+        return ""
+    return """
+        <div class="website-search-bar">
+          <label for="ga4PageSearch" class="filter-label">Search pages</label>
+          <input type="search" id="ga4PageSearch" class="ga4-pages-search"
+            placeholder="Filter by page path or title…" autocomplete="off">
+          <span class="badge" id="ga4PagesCount">0 pages</span>
+        </div>"""
+
+
 def _ga4_website_content_html(ga4_pages: dict[str, Any] | None) -> str:
     pages = (ga4_pages or {}).get("pages") or []
     dr = (ga4_pages or {}).get("date_range") or {}
@@ -1335,7 +1347,7 @@ def _ga4_website_content_html(ga4_pages: dict[str, Any] | None) -> str:
             "from Settings after GA4 BigQuery is connected.</p>"
         )
     return f"""
-        <p class="table-note muted">Site-wide GA4 metrics{f' for {range_label}' if range_label else ''}. Use the page search in the filters at the top to narrow paths and titles.</p>
+        <p class="table-note muted">Site-wide GA4 metrics{f' for {range_label}' if range_label else ''}. Use the search bar above to filter paths and titles.</p>
         <div class="table-wrap">
           <table class="data-table ga4-pages-table" id="ga4PagesTable">
             <thead>
@@ -1383,44 +1395,24 @@ def _dashboard_view_tabs_html(*, show_website: bool) -> str:
 def _global_filters_bar_html(
     *,
     show_business_line: bool,
-    has_ga4_pages: bool,
     show_channel_filters: bool,
 ) -> str:
-    if not show_business_line and not has_ga4_pages and not show_channel_filters:
+    if not show_business_line and not show_channel_filters:
         return ""
-    bl_block = ""
+    bl_row = ""
     if show_business_line:
-        bl_block = """
-            <div class="filter-group">
-              <div class="filter-group-head">
-                <span class="filter-label">Business line</span>
-                <button type="button" class="filter-link" id="blSelectAll">All</button>
-                <button type="button" class="filter-link" id="blClearAll">None</button>
-              </div>
-              <div id="blFilters" class="filter-checks filter-checks--wrap"></div>
-            </div>"""
-    channel_block = ""
+        bl_row = """
+          <div class="filter-row">
+            <span class="filter-label">Business line</span>
+            <div id="blFilters" class="filter-toggles" role="group" aria-label="Business line"></div>
+          </div>"""
+    channel_row = ""
     if show_channel_filters:
-        channel_block = """
-            <div class="filter-group">
-              <div class="filter-group-head">
-                <span class="filter-label">Channel</span>
-                <button type="button" class="filter-link" id="channelSelectAll">All</button>
-                <button type="button" class="filter-link" id="channelClearAll">None</button>
-              </div>
-              <div id="channelFilters" class="filter-checks filter-checks--wrap"></div>
-            </div>"""
-    page_block = ""
-    if has_ga4_pages:
-        page_block = """
-            <div class="filter-group filter-group--pages">
-              <div class="website-filter-row">
-                <label for="ga4PageSearch" class="filter-label">Search pages</label>
-                <input type="search" id="ga4PageSearch" class="ga4-pages-search"
-                  placeholder="Filter by page path or title…" autocomplete="off">
-                <span class="badge" id="ga4PagesCount">0 pages</span>
-              </div>
-            </div>"""
+        channel_row = """
+          <div class="filter-row">
+            <span class="filter-label">Channel</span>
+            <div id="channelFilters" class="filter-toggles" role="group" aria-label="Channel"></div>
+          </div>"""
     zero_spend = ""
     if show_business_line:
         zero_spend = """
@@ -1431,10 +1423,9 @@ def _global_filters_bar_html(
     return f"""
       <div class="dash-filters-bar" id="dashFiltersBar">
         <section class="filter-panel global-filters" aria-label="Dashboard filters">
-          <div class="global-filter-grid">
-            {bl_block}
-            {channel_block}
-            {page_block}
+          <div class="global-filter-rows">
+            {bl_row}
+            {channel_row}
           </div>
           <div class="bl-filter-footer">
             {zero_spend}
@@ -2041,7 +2032,7 @@ def render_penn_html(
             "labels": dates,
             "datasets": [
                 {"label": "Google Ads", "data": series_for("google"), "borderColor": "#4285f4"},
-                {"label": "LinkedIn", "data": series_for("linkedin"), "borderColor": "#0a66c2"},
+                {"label": "LinkedIn", "data": series_for("linkedin"), "borderColor": "#e67e22"},
                 {"label": "Meta", "data": series_for("meta"), "borderColor": "#1877f2"},
             ],
         }
@@ -2145,7 +2136,6 @@ def render_penn_html(
     view_tabs_html = _dashboard_view_tabs_html(show_website=has_ga4)
     filters_bar_html = _global_filters_bar_html(
         show_business_line=show_business_line,
-        has_ga4_pages=has_ga4_pages,
         show_channel_filters=bool(platform_catalog_list),
     )
     campaign_explorer_html = _campaign_explorer_content_html(
@@ -2153,12 +2143,14 @@ def render_penn_html(
         platform_breakdown_html=breakdown_html,
     )
     website_analytics_html = _ga4_website_content_html(ga4_pages_report if has_ga4 else None)
+    website_search_html = _ga4_website_search_html(has_pages=has_ga4_pages)
     website_tab_panel = ""
     if has_ga4:
         website_tab_panel = f"""
           <div id="view-website" class="view-panel" role="tabpanel" hidden>
             <section class="panel ga4-pages-panel" aria-label="Website analytics">
               <div class="panel-head"><h2>Page performance</h2></div>
+              {website_search_html}
               {website_analytics_html}
             </section>
           </div>"""
@@ -2186,7 +2178,7 @@ def render_penn_html(
       --shadow-sm: 0 1px 3px rgba(10, 37, 64, 0.06);
       --radius: 14px;
       --google: #4285f4;
-      --linkedin: #0a66c2;
+      --linkedin: #e67e22;
       --meta: #1877f2;
     }}
     * {{ box-sizing: border-box; }}
@@ -3343,41 +3335,62 @@ def render_penn_html(
       background: var(--bg);
     }}
     .dash-filters-bar {{
-      padding: 12px 24px 0;
+      padding: 10px 24px 0;
       background: var(--panel);
       border-bottom: 1px solid var(--border);
     }}
     .dash-filters-bar:empty {{
       display: none;
     }}
-    .global-filter-grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 16px 24px;
-      align-items: start;
+    .global-filters {{
+      padding: 12px 16px 10px;
+      border: none;
+      box-shadow: none;
+      background: transparent;
     }}
-    .filter-group--pages {{
-      grid-column: 1 / -1;
+    .global-filter-rows {{
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
     }}
-    @media (min-width: 1100px) {{
-      .filter-group--pages {{
-        grid-column: auto;
-      }}
+    .filter-row {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 14px;
     }}
-    .website-filter-row {{
+    .filter-row .filter-label {{
+      min-width: 92px;
+      margin: 0;
+      flex-shrink: 0;
+    }}
+    .filter-toggles {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      flex: 1;
+      min-width: 0;
+    }}
+    .website-search-bar {{
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       gap: 12px 16px;
+      margin-bottom: 16px;
+      padding: 12px 14px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 12px;
     }}
-    .website-filter-row .filter-label {{
+    .website-search-bar .filter-label {{
       min-width: auto;
       margin: 0;
     }}
-    .website-filter-row .ga4-pages-search {{
+    .website-search-bar .ga4-pages-search {{
       flex: 1;
       min-width: 220px;
-      max-width: 480px;
+      max-width: 520px;
       padding: 10px 12px;
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -3536,18 +3549,81 @@ def render_penn_html(
       font-size: 0.84rem;
       font-weight: 500;
       cursor: pointer;
-      transition: background 0.12s, border-color 0.12s, color 0.12s;
+      transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+      white-space: nowrap;
     }}
     .filter-toggle:hover {{ border-color: #b8c4d4; background: #f8fafc; }}
     .filter-toggle.active {{
-      background: var(--accent);
-      border-color: var(--accent);
       color: #fff;
       font-weight: 600;
+      box-shadow: 0 1px 3px rgba(10, 37, 64, 0.12);
     }}
-    .filter-toggle.t-google.active {{ background: #4285f4; border-color: #4285f4; }}
-    .filter-toggle.t-meta.active {{ background: #1877f2; border-color: #1877f2; }}
-    .filter-toggle.t-linkedin.active {{ background: #e67e22; border-color: #e67e22; }}
+    .filter-toggle--all {{
+      border-color: var(--navy);
+      color: var(--navy);
+      font-weight: 600;
+    }}
+    .filter-toggle--all:hover {{
+      background: #eef1f5;
+      border-color: var(--navy);
+    }}
+    .filter-toggle--all.active {{
+      background: var(--navy);
+      border-color: var(--navy);
+      color: #fff;
+    }}
+    .filter-toggle.t-google {{
+      border-color: color-mix(in srgb, var(--google) 55%, var(--border));
+      color: var(--google);
+    }}
+    .filter-toggle.t-google:hover {{
+      background: #eef4ff;
+      border-color: var(--google);
+    }}
+    .filter-toggle.t-google.active {{
+      background: var(--google);
+      border-color: var(--google);
+      color: #fff;
+    }}
+    .filter-toggle.t-linkedin {{
+      border-color: color-mix(in srgb, var(--linkedin) 55%, var(--border));
+      color: var(--linkedin);
+    }}
+    .filter-toggle.t-linkedin:hover {{
+      background: #fef6ee;
+      border-color: var(--linkedin);
+    }}
+    .filter-toggle.t-linkedin.active {{
+      background: var(--linkedin);
+      border-color: var(--linkedin);
+      color: #fff;
+    }}
+    .filter-toggle.t-meta {{
+      border-color: color-mix(in srgb, var(--meta) 55%, var(--border));
+      color: var(--meta);
+    }}
+    .filter-toggle.t-meta:hover {{
+      background: #eef3fc;
+      border-color: var(--meta);
+    }}
+    .filter-toggle.t-meta.active {{
+      background: var(--meta);
+      border-color: var(--meta);
+      color: #fff;
+    }}
+    .filter-toggle.t-bl {{
+      border-color: color-mix(in srgb, var(--gold) 50%, var(--border));
+      color: #8a7020;
+    }}
+    .filter-toggle.t-bl:hover {{
+      background: #faf6eb;
+      border-color: var(--gold);
+    }}
+    .filter-toggle.t-bl.active {{
+      background: var(--gold);
+      border-color: var(--gold);
+      color: #fff;
+    }}
     .filter-actions {{
       display: flex;
       align-items: center;
@@ -4216,28 +4292,73 @@ def render_penn_html(
       applyBlView();
     }}
 
-    function initCheckboxGroup(wrapId, catalog, state, group) {{
+    function initToggleGroup(wrapId, catalog, state, group) {{
       const wrap = document.getElementById(wrapId);
       if (!wrap) return;
       wrap.innerHTML = '';
+
+      const allBtn = document.createElement('button');
+      allBtn.type = 'button';
+      allBtn.className = 'filter-toggle filter-toggle--all';
+      allBtn.textContent = 'All';
+      allBtn.dataset.group = group;
+      allBtn.dataset.id = '__all__';
+      allBtn.setAttribute('aria-pressed', 'false');
+      allBtn.addEventListener('click', () => {{
+        const allOn = state.size === catalog.length;
+        state.clear();
+        if (!allOn) {{
+          catalog.forEach(item => state.add(item.id));
+        }}
+        syncToggleGroup(group);
+        applyGlobalFilters();
+      }});
+      wrap.appendChild(allBtn);
+
       for (const item of catalog) {{
-        const label = document.createElement('label');
-        label.className = 'filter-check';
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.checked = state.has(item.id);
-        input.dataset.group = group;
-        input.dataset.id = item.id;
-        label.appendChild(input);
-        label.appendChild(document.createTextNode(item.label));
-        wrap.appendChild(label);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'filter-toggle';
+        if (group === 'channel') {{
+          btn.classList.add(`t-${{item.id}}`);
+        }} else {{
+          btn.classList.add('t-bl');
+        }}
+        btn.textContent = item.label;
+        btn.dataset.group = group;
+        btn.dataset.id = item.id;
+        btn.setAttribute('aria-pressed', state.has(item.id) ? 'true' : 'false');
+        if (state.has(item.id)) btn.classList.add('active');
+        btn.addEventListener('click', () => {{
+          if (state.has(item.id)) {{
+            state.delete(item.id);
+          }} else {{
+            state.add(item.id);
+          }}
+          syncToggleGroup(group);
+          applyGlobalFilters();
+        }});
+        wrap.appendChild(btn);
       }}
+      syncToggleGroup(group);
     }}
 
-    function syncCheckboxInputs() {{
-      document.querySelectorAll('.filter-check input[type="checkbox"]').forEach(input => {{
-        const state = input.dataset.group === 'channel' ? channelState : blState;
-        input.checked = state.has(input.dataset.id);
+    function syncToggleGroup(group) {{
+      const state = group === 'channel' ? channelState : blState;
+      const catalog = group === 'channel' ? platformCatalog : blCatalog;
+      const wrapId = group === 'channel' ? 'channelFilters' : 'blFilters';
+      const wrap = document.getElementById(wrapId);
+      if (!wrap) return;
+      wrap.querySelectorAll('.filter-toggle').forEach(btn => {{
+        if (btn.dataset.id === '__all__') {{
+          const on = state.size === 0 || state.size === catalog.length;
+          btn.classList.toggle('active', on);
+          btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+          return;
+        }}
+        const on = state.has(btn.dataset.id);
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
       }});
     }}
 
@@ -4245,21 +4366,7 @@ def render_penn_html(
       const state = group === 'channel' ? channelState : blState;
       state.clear();
       ids.forEach(id => state.add(id));
-      syncCheckboxInputs();
-      applyGlobalFilters();
-    }}
-
-    function onFilterChange(e) {{
-      const input = e.target.closest('.filter-check input[type="checkbox"]');
-      if (!input) return;
-      const group = input.dataset.group;
-      const id = input.dataset.id;
-      const state = group === 'channel' ? channelState : blState;
-      if (input.checked) {{
-        state.add(id);
-      }} else {{
-        state.delete(id);
-      }}
+      syncToggleGroup(group);
       applyGlobalFilters();
     }}
 
@@ -4310,39 +4417,23 @@ def render_penn_html(
         const chText = channelState.size === 0
           ? 'All channels'
           : (allCh ? 'All channels' : chLabels.join(', '));
-        const pageQuery = document.getElementById('ga4PageSearch')?.value?.trim() || '';
-        const pageNote = pageQuery ? ` · pages: “${{pageQuery}}”` : '';
         if (SHOW_BUSINESS_LINE && blCatalog.length) {{
           const blText = blState.size === 0
             ? 'No business lines selected'
             : (allBl ? 'All business lines' : blLabels.join(', '));
           const zeroNote = showZeroSpend ? ' · incl. $0 spend' : '';
-          status.textContent = `${{blText}} · ${{chText}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}${{zeroNote}}${{pageNote}}`;
+          status.textContent = `${{blText}} · ${{chText}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}${{zeroNote}}`;
         }} else {{
-          status.textContent = `${{chText}}${{pageNote}}`;
+          status.textContent = chText;
         }}
       }}
       updateBlSortHeaders();
     }}
 
-    initCheckboxGroup('channelFilters', platformCatalog, channelState, 'channel');
-    initCheckboxGroup('blFilters', blCatalog, blState, 'bl');
-    document.getElementById('channelFilters')?.addEventListener('change', onFilterChange);
-    document.getElementById('blFilters')?.addEventListener('change', onFilterChange);
+    initToggleGroup('channelFilters', platformCatalog, channelState, 'channel');
+    initToggleGroup('blFilters', blCatalog, blState, 'bl');
     document.getElementById('showZeroSpend')?.addEventListener('change', applyGlobalFilters);
     document.querySelector('#blTable thead')?.addEventListener('click', onBlSortClick);
-    document.getElementById('channelSelectAll')?.addEventListener('click', () =>
-      setGroupSelection('channel', platformCatalog.map(p => p.id))
-    );
-    document.getElementById('blSelectAll')?.addEventListener('click', () =>
-      setGroupSelection('bl', blCatalog.map(b => b.id))
-    );
-    document.getElementById('channelClearAll')?.addEventListener('click', () =>
-      setGroupSelection('channel', [])
-    );
-    document.getElementById('blClearAll')?.addEventListener('click', () =>
-      setGroupSelection('bl', [])
-    );
 
     const ga4PagesBody = document.getElementById('ga4PagesBody');
     if (ga4PagesBody && ga4Pages.length) {{
@@ -4429,7 +4520,6 @@ def render_penn_html(
       ga4PageSearch?.addEventListener('input', e => {{
         ga4PageQuery = e.target.value || '';
         renderGa4Pages();
-        applyBlView();
       }});
       document.querySelector('#ga4PagesTable thead')?.addEventListener('click', e => {{
         const th = e.target.closest('th[data-sort]');
