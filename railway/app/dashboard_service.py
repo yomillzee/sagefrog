@@ -981,6 +981,20 @@ def _settings_page_url(
     return base
 
 
+def _insights_upload_page_url(
+    *,
+    client_slug: str = "penn",
+    access_key: str | None,
+    use_session: bool,
+) -> str | None:
+    base = f"/dashboard/{client_slug}/insights-upload"
+    if use_session:
+        return base
+    if access_key:
+        return f"{base}?key={quote(access_key, safe='')}"
+    return base
+
+
 def _refresh_action_url(
     *,
     client_slug: str = "penn",
@@ -1380,23 +1394,132 @@ def _insight_document_delete_url(
     return base
 
 
-def _client_insights_documents_html(
+def _client_insights_doc_rows_html(
+    *,
+    client_slug: str,
+    access_key: str | None,
+    use_session: bool,
+    can_manage: bool,
+) -> tuple[str, int]:
+    """Build document list rows; returns (html, count)."""
+    import client_insight_documents as docs
+
+    rows = docs.list_documents(client_slug)
+    if not rows:
+        return "", 0
+
+    body_rows = []
+    for row in rows:
+        download_url = _insight_document_download_url(
+            client_slug=client_slug,
+            doc_id=row.id,
+            access_key=access_key,
+            use_session=use_session,
+        )
+        delete_cell = ""
+        if can_manage:
+            delete_url = _insight_document_delete_url(
+                client_slug=client_slug,
+                doc_id=row.id,
+                access_key=access_key,
+                use_session=use_session,
+            )
+            delete_cell = f"""
+                <form method="post" action="{delete_url}" class="client-insights-delete-form"
+                  onsubmit="return confirm('Delete this document?');">
+                  <button type="submit" class="client-insights-delete-btn">Delete</button>
+                </form>"""
+        body_rows.append(
+            f"""
+                <tr>
+                  <td class="client-insights-file">
+                    <div class="client-insights-file-title">{_esc(row.title)}</div>
+                    <div class="client-insights-file-meta muted">Word document · {_esc(_fmt_file_size(row.file_size))}</div>
+                  </td>
+                  <td class="client-insights-period">{_esc(docs.period_label(row.period_year, row.period_month))}</td>
+                  <td class="client-insights-actions">
+                    <a class="client-insights-download-btn" href="{download_url}">Download DOCX</a>
+                    {delete_cell}
+                  </td>
+                </tr>"""
+        )
+    table_html = f"""
+        <div class="client-insights-table-wrap">
+          <table class="client-insights-table">
+            <thead>
+              <tr>
+                <th scope="col">File</th>
+                <th scope="col">Period</th>
+                <th scope="col">Download</th>
+              </tr>
+            </thead>
+            <tbody>
+              {''.join(body_rows)}
+            </tbody>
+          </table>
+        </div>"""
+    return table_html, len(rows)
+
+
+def _client_insights_list_html(
+    *,
+    client_slug: str,
+    access_key: str | None,
+    use_session: bool,
+) -> str:
+    """Overview: running list of uploaded insight documents (download only)."""
+    import client_insight_documents as docs
+
+    rows = docs.list_documents(client_slug)
+    if rows:
+        cards = []
+        for row in rows:
+            download_url = _insight_document_download_url(
+                client_slug=client_slug,
+                doc_id=row.id,
+                access_key=access_key,
+                use_session=use_session,
+            )
+            period = docs.period_label(row.period_year, row.period_month)
+            cards.append(
+                f"""
+        <a class="client-insights-doc-card" href="{download_url}">
+          <div class="client-insights-doc-period">{_esc(period)}</div>
+          <div class="client-insights-doc-title">{_esc(row.title)}</div>
+          <div class="client-insights-doc-meta">Word · {_esc(_fmt_file_size(row.file_size))}</div>
+        </a>"""
+            )
+        list_html = f'<div class="client-insights-doc-grid">{"".join(cards)}</div>'
+    else:
+        list_html = (
+            '<p class="client-insights-empty muted">'
+            "Monthly insight documents will appear here when uploaded."
+            "</p>"
+        )
+
+    count_badge = ""
+    if rows:
+        count_badge = f'<span class="client-insights-count">{len(rows)}</span>'
+
+    return f"""
+    <section class="client-insights-section" aria-label="Client Insights">
+      <div class="paid-ad-overview-heading client-insights-heading">
+        <span class="paid-ad-overview-pill client-insights-pill">Client Insights{count_badge}</span>
+      </div>
+      {list_html}
+    </section>"""
+
+
+def _client_insights_upload_page_html(
     *,
     client_slug: str,
     access_key: str | None,
     use_session: bool,
     can_upload: bool,
-    compact: bool = False,
 ) -> str:
+    """Admin upload page: form + full document table with delete."""
     import client_insight_documents as docs
 
-    rows = docs.list_documents(client_slug)
-    panel_class = "client-insights-panel client-insights-panel--hero" if compact else "client-insights-panel"
-    subtitle = (
-        "Upload monthly Word documents with client-ready insights."
-        if compact
-        else "Download monthly Word documents with client-ready insights."
-    )
     upload_html = ""
     upload_action = _insight_documents_action_url(
         client_slug=client_slug,
@@ -1423,77 +1546,103 @@ def _client_insights_documents_html(
           </div>
           <button type="submit" class="client-insights-upload-btn">Upload DOCX</button>
         </form>"""
-
-    if rows:
-        body_rows = []
-        for row in rows:
-            download_url = _insight_document_download_url(
-                client_slug=client_slug,
-                doc_id=row.id,
-                access_key=access_key,
-                use_session=use_session,
-            )
-            delete_cell = ""
-            if can_upload:
-                delete_url = _insight_document_delete_url(
-                    client_slug=client_slug,
-                    doc_id=row.id,
-                    access_key=access_key,
-                    use_session=use_session,
-                )
-                delete_cell = f"""
-                <form method="post" action="{delete_url}" class="client-insights-delete-form"
-                  onsubmit="return confirm('Delete this document?');">
-                  <button type="submit" class="client-insights-delete-btn">Delete</button>
-                </form>"""
-            body_rows.append(
-                f"""
-                <tr>
-                  <td class="client-insights-file">
-                    <div class="client-insights-file-title">{_esc(row.title)}</div>
-                    <div class="client-insights-file-meta muted">Word document · {_esc(_fmt_file_size(row.file_size))}</div>
-                  </td>
-                  <td class="client-insights-period">{_esc(docs.period_label(row.period_year, row.period_month))}</td>
-                  <td class="client-insights-actions">
-                    <a class="client-insights-download-btn" href="{download_url}">Download DOCX</a>
-                    {delete_cell}
-                  </td>
-                </tr>"""
-            )
-        table_html = f"""
-        <div class="client-insights-table-wrap">
-          <table class="client-insights-table">
-            <thead>
-              <tr>
-                <th scope="col">File</th>
-                <th scope="col">Period</th>
-                <th scope="col">Download</th>
-              </tr>
-            </thead>
-            <tbody>
-              {''.join(body_rows)}
-            </tbody>
-          </table>
-        </div>"""
-    else:
-        empty_hint = (
-            "Upload a monthly Word document above."
-            if can_upload and docs.enabled()
-            else "Monthly insight documents will appear here when uploaded."
+    elif not docs.enabled():
+        upload_html = (
+            '<p class="client-insights-empty muted">'
+            "DATABASE_URL is required to store insight documents."
+            "</p>"
         )
-        table_html = f'<p class="client-insights-empty muted">{_esc(empty_hint)}</p>'
+
+    table_html, _ = _client_insights_doc_rows_html(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+        can_manage=can_upload,
+    )
+    if not table_html:
+        table_html = (
+            '<p class="client-insights-empty muted">No insight documents uploaded yet.</p>'
+        )
 
     return f"""
-    <section class="{panel_class}" aria-label="Client Insights">
+    <section class="client-insights-panel client-insights-panel--upload" aria-label="Insights upload">
       <div class="client-insights-head">
         <div>
-          <h2 class="client-insights-title">Client Insights</h2>
-          <p class="client-insights-subtitle muted">{subtitle}</p>
+          <h2 class="client-insights-title">Upload insight documents</h2>
+          <p class="client-insights-subtitle muted">
+            Upload monthly Word documents with client-ready insights. Clients see downloads on the Overview.
+          </p>
         </div>
       </div>
       {upload_html}
       {table_html}
     </section>"""
+
+
+def render_insights_upload_page(
+    *,
+    client_slug: str,
+    label: str,
+    access_key: str | None = None,
+    use_session: bool = False,
+    session_email: str | None = None,
+    session_is_admin: bool = False,
+    flash_message: str | None = None,
+) -> str:
+    slug = (client_slug or "penn").strip().lower()
+    can_upload = can_edit_penn_insights(
+        session_is_admin=session_is_admin,
+        access_key=access_key,
+    )
+    flash_html = ""
+    if flash_message:
+        flash_html = f'<div class="dash-flash">{_esc(flash_message)}</div>'
+    body = flash_html + _client_insights_upload_page_html(
+        client_slug=slug,
+        access_key=access_key,
+        use_session=use_session,
+        can_upload=can_upload,
+    )
+    return render_client_shell_page(
+        client_slug=slug,
+        label=label,
+        active_nav="insights-upload",
+        page_title="Insights Upload",
+        page_subtitle=f"{label} · Manage insight documents",
+        content_html=body,
+        access_key=access_key,
+        use_session=use_session,
+        session_email=session_email,
+        session_is_admin=session_is_admin,
+        show_insights_upload=can_upload,
+        extra_css="""
+    .dash-flash { background: var(--ok-bg); border: 1px solid #b8dfc8; border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; font-size: 0.9rem; color: var(--ok); }
+    .dash-flash--error { background: var(--err-bg); border-color: #f5c2c0; color: var(--err); }
+    .client-insights-panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 0; overflow: hidden; box-shadow: var(--shadow-sm); }
+    .client-insights-head { padding: 22px 24px 0; }
+    .client-insights-title { margin: 0; font-size: 1.15rem; font-weight: 700; color: var(--navy); }
+    .client-insights-subtitle { margin: 6px 0 0; font-size: 0.9rem; line-height: 1.45; }
+    .client-insights-upload { margin: 18px 24px 0; padding: 18px; border: 1px dashed var(--border); border-radius: 12px; background: var(--surface); }
+    .client-insights-upload-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+    @media (max-width: 900px) { .client-insights-upload-grid { grid-template-columns: 1fr; } }
+    .client-insights-upload label { display: block; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 6px; }
+    .client-insights-upload input { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; font: inherit; background: #fff; }
+    .client-insights-upload-btn { appearance: none; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 650; padding: 10px 16px; cursor: pointer; }
+    .client-insights-table-wrap { padding: 18px 24px 24px; overflow-x: auto; }
+    .client-insights-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+    .client-insights-table th { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+    .client-insights-table td { padding: 14px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    .client-insights-table tr:last-child td { border-bottom: 0; }
+    .client-insights-file-title { font-weight: 650; color: var(--navy); margin-bottom: 2px; }
+    .client-insights-file-meta { font-size: 0.82rem; }
+    .client-insights-period { white-space: nowrap; color: var(--navy); font-weight: 600; }
+    .client-insights-download-btn { display: inline-block; padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--navy); font-weight: 600; font-size: 0.86rem; text-decoration: none; }
+    .client-insights-download-btn:hover { background: var(--surface); border-color: #b8c4d4; }
+    .client-insights-delete-form { display: inline-block; margin-left: 8px; }
+    .client-insights-delete-btn { appearance: none; border: 0; background: none; color: var(--err); font-size: 0.82rem; font-weight: 600; cursor: pointer; padding: 0; }
+    .client-insights-empty { margin: 0; padding: 0 24px 24px; font-size: 0.9rem; }
+        """,
+    )
 
 
 def _ga4_website_search_html(*, has_pages: bool) -> str:
@@ -1628,8 +1777,9 @@ def _sidebar_nav_html(
     access_key: str | None,
     use_session: bool,
     show_business_line: bool = True,
+    show_insights_upload: bool = False,
 ) -> str:
-    """Sidebar nav: Overview and Settings."""
+    """Sidebar nav: Overview, optional Insights Upload (admin), and Settings."""
     del show_business_line  # business line filters live on the overview page
     settings_url = _settings_page_url(
         client_slug=client_slug,
@@ -1641,19 +1791,42 @@ def _sidebar_nav_html(
         access_key=access_key,
         use_session=use_session,
     )
+    insights_upload_url = _insights_upload_page_url(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+    )
     icon_overview = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>'
+    icon_upload = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M4 20h16"/></svg>'
     icon_settings = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>'
 
-    if active == "settings":
+    if active == "overview":
+        overview_el = f'<span class="sidebar-nav-btn active" aria-current="page">{icon_overview}Overview</span>'
+    else:
         overview_el = f'<a href="{overview_url}" class="sidebar-nav-btn sidebar-nav-link">{icon_overview}Overview</a>'
+
+    insights_el = ""
+    if show_insights_upload:
+        if active == "insights-upload":
+            insights_el = (
+                f'<span class="sidebar-nav-btn active" aria-current="page">'
+                f"{icon_upload}Insights Upload</span>"
+            )
+        else:
+            insights_el = (
+                f'<a href="{insights_upload_url or "#"}" class="sidebar-nav-btn sidebar-nav-link">'
+                f"{icon_upload}Insights Upload</a>"
+            )
+
+    if active == "settings":
         settings_el = f'<span class="sidebar-nav-btn active" aria-current="page">{icon_settings}Settings</span>'
     else:
-        overview_el = f'<span class="sidebar-nav-btn active" aria-current="page">{icon_overview}Overview</span>'
         settings_el = f'<a href="{settings_url or "#"}" class="sidebar-nav-btn sidebar-nav-link">{icon_settings}Settings</a>'
 
     return f"""
       <nav class="sidebar-nav" role="navigation" aria-label="Dashboard views">
         {overview_el}
+        {insights_el}
         {settings_el}
       </nav>"""
 
@@ -1693,17 +1866,24 @@ def render_client_shell_page(
     client_meta_tip: str = "",
     extra_css: str = "",
     show_business_line: bool | None = None,
+    show_insights_upload: bool | None = None,
 ) -> str:
     """Shared dashboard chrome for settings and other child pages."""
     account_nav = _session_account_html(email=session_email, is_admin=session_is_admin)
     if show_business_line is None:
         show_business_line = client_slug.strip().lower() == "penn"
+    if show_insights_upload is None:
+        show_insights_upload = can_edit_penn_insights(
+            session_is_admin=session_is_admin,
+            access_key=access_key,
+        )
     sidebar_nav = _sidebar_nav_html(
         client_slug=client_slug,
         active=active_nav,
         access_key=access_key,
         use_session=use_session,
         show_business_line=show_business_line,
+        show_insights_upload=show_insights_upload,
     )
     tip = client_meta_tip or _esc(label)
     return f"""<!DOCTYPE html>
@@ -1715,10 +1895,13 @@ def render_client_shell_page(
   {_favicon_head_html()}
   <style>
     :root {{
-      --bg: #eef1f5; --panel: #fff; --text: #0f1c2e; --muted: #5a6578;
-      --border: #d8dee8; --accent: #0b5cab; --navy: #0a2540;
-      --shadow: 0 4px 24px rgba(10, 37, 64, 0.08);
-      --ok: #1b7f4a; --ok-bg: #e8f5ee; --err: #b42318; --err-bg: #fdecea;
+      --bg: #f4f6f9; --panel: #fff; --surface: #f8fafc; --text: #0f172a; --muted: #64748b;
+      --border: #e2e8f0; --accent: #0b5cab; --navy: #0a2540; --navy-light: #123456;
+      --gold: #c9a227; --shadow: 0 4px 24px rgba(10, 37, 64, 0.08); --shadow-sm: 0 1px 3px rgba(10, 37, 64, 0.06);
+      --radius: 14px; --ok: #15803d; --ok-bg: #ecfdf3; --err: #b42318; --err-bg: #fef2f2;
+      --google: #4285f4; --google-bg: #eef4ff;
+      --meta: #9333ea; --meta-bg: #f5f3ff;
+      --linkedin: #0a66c2; --linkedin-bg: #eff6ff;
     }}
     * {{ box-sizing: border-box; }}
     body {{ margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }}
@@ -1765,9 +1948,14 @@ def render_client_shell_page(
     .account-logout-form {{ display: inline; margin: 0; }}
     .account-link:hover {{ text-decoration: underline; }}
     .dash-main {{ flex: 1; min-width: 0; display: flex; flex-direction: column; }}
-    .dash-topbar {{ display: flex; align-items: center; gap: 14px; padding: 18px 24px; background: var(--panel); border-bottom: 1px solid var(--border); }}
-    .dash-title {{ margin: 0; font-size: 1.25rem; color: var(--navy); }}
-    .dash-subtitle {{ margin: 4px 0 0; font-size: 0.88rem; color: var(--muted); }}
+    .dash-chrome-bar {{
+      display: none;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 20px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+    }}
     .dash-content {{ flex: 1; padding: 24px; overflow: auto; }}
     .wrap {{ max-width: 920px; }}
     .sidebar-menu-btn, .sidebar-close {{
@@ -1780,6 +1968,7 @@ def render_client_shell_page(
       pointer-events: none; border: none; padding: 0; cursor: pointer;
     }}
     @media (max-width: 960px) {{
+      .dash-chrome-bar {{ display: flex; }}
       .dash-sidebar {{
         position: fixed; left: 0; top: 0; bottom: 0; z-index: 100; transform: translateX(-100%);
         transition: transform 0.24s ease;
@@ -1811,15 +2000,11 @@ def render_client_shell_page(
       </div>
     </aside>
     <div class="dash-main">
-      <header class="dash-topbar">
+      <div class="dash-chrome-bar">
         <button type="button" class="sidebar-menu-btn" id="sidebarOpen" aria-label="Open menu" aria-controls="dashSidebar">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         </button>
-        <div class="dash-topbar-text">
-          <h1 class="dash-title">{_esc(page_title)}</h1>
-          <p class="dash-subtitle">{_esc(page_subtitle)}</p>
-        </div>
-      </header>
+      </div>
       <div class="dash-content">
         <div class="wrap">
           {content_html}
@@ -2107,11 +2292,10 @@ def render_penn_html(
             session_is_admin=session_is_admin,
             access_key=access_key,
         )
-        client_insights_html = _client_insights_documents_html(
+        client_insights_html = _client_insights_list_html(
             client_slug=slug,
             access_key=access_key,
             use_session=use_session,
-            can_upload=can_upload_docs,
         )
         flash_html = ""
         if flash_message:
@@ -2136,28 +2320,26 @@ def render_penn_html(
             session_email=session_email,
             session_is_admin=session_is_admin,
             show_business_line=show_business_line,
+            show_insights_upload=can_upload_docs,
             extra_css="""
-    .panel { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow-sm); }
     .panel h2 { margin: 0 0 10px; font-size: 1.05rem; color: var(--navy); }
     .muted { color: var(--muted); }
     .dash-link { color: var(--accent); font-weight: 600; text-decoration: none; }
     .dash-link:hover { text-decoration: underline; }
-    .client-insights-panel { margin-bottom: 20px; padding: 0; overflow: hidden; border-top: 3px solid #1b7f4a; background: #fff; border: 1px solid var(--border); border-radius: 12px; }
-    .client-insights-head { padding: 20px 22px 0; }
-    .client-insights-title { margin: 0; font-size: 1.15rem; font-weight: 700; color: var(--navy); }
-    .client-insights-subtitle { margin: 6px 0 0; font-size: 0.9rem; line-height: 1.45; }
-    .client-insights-upload { margin: 16px 22px 0; padding: 16px; border: 1px dashed var(--border); border-radius: 12px; background: #f8fafc; }
-    .client-insights-upload-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
-    .client-insights-upload label { display: block; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 6px; }
-    .client-insights-upload input { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; font: inherit; background: #fff; }
-    .client-insights-upload-btn { appearance: none; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 650; padding: 10px 16px; cursor: pointer; }
-    .client-insights-table-wrap { padding: 16px 22px 22px; overflow-x: auto; }
-    .client-insights-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
-    .client-insights-table th { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-    .client-insights-table td { padding: 14px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-    .client-insights-download-btn { display: inline-block; padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--navy); font-weight: 600; font-size: 0.86rem; text-decoration: none; }
-    .client-insights-empty { margin: 0; padding: 0 22px 22px; font-size: 0.9rem; }
-    .dash-flash { background: #e8f5ee; border: 1px solid #b8dfc8; border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; font-size: 0.9rem; color: #1b5e20; }
+    .client-insights-section { margin-bottom: 20px; }
+    .client-insights-doc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+    .client-insights-doc-card { display: block; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; text-decoration: none; color: inherit; box-shadow: var(--shadow-sm); transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s; }
+    .client-insights-doc-card:hover { border-color: var(--accent); box-shadow: var(--shadow); transform: translateY(-1px); }
+    .client-insights-doc-period { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+    .client-insights-doc-title { font-size: 0.92rem; font-weight: 650; color: var(--navy); line-height: 1.35; margin-bottom: 6px; }
+    .client-insights-doc-meta { font-size: 0.78rem; color: var(--muted); }
+    .client-insights-empty { margin: 0; font-size: 0.9rem; }
+    .paid-ad-overview-pill { display: inline-flex; align-items: center; gap: 0; background: var(--navy); color: #fff; font-size: 0.68rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 6px 14px 6px 0; border-radius: 999px; overflow: hidden; }
+    .paid-ad-overview-pill::before { content: ''; display: inline-block; width: 4px; align-self: stretch; background: var(--gold); margin-right: 10px; border-radius: 999px 0 0 999px; }
+    .client-insights-pill::before { background: #22c55e; }
+    .client-insights-count { margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: rgba(255,255,255,0.16); font-size: 0.62rem; letter-spacing: 0.04em; }
+    .dash-flash { background: var(--ok-bg); border: 1px solid #b8dfc8; border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; font-size: 0.9rem; color: var(--ok); }
             """,
         )
 
@@ -2254,20 +2436,17 @@ def render_penn_html(
         access_key=access_key,
         use_session=use_session,
         show_business_line=show_business_line,
+        show_insights_upload=can_edit_penn_insights(
+            session_is_admin=session_is_admin,
+            access_key=access_key,
+        ),
     )
-    can_upload_docs = can_edit_penn_insights(
-        session_is_admin=session_is_admin,
-        access_key=access_key,
-    )
-    client_insights_hero = _client_insights_documents_html(
+    client_insights_html = _client_insights_list_html(
         client_slug=client_slug,
         access_key=access_key,
         use_session=use_session,
-        can_upload=can_upload_docs,
-        compact=True,
     )
     overview_paid_html = _paid_ad_overview_html(aggregated, ga4_attr)
-    overview_hero = _overview_hero_row_html(client_insights_hero)
     paid_overview_metrics_json = _json_for_html_script(
         _paid_ad_overview_metrics(aggregated, ga4_attr)
     )
@@ -2312,21 +2491,29 @@ def render_penn_html(
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     :root {{
-      --bg: #eef1f5;
+      --bg: #f4f6f9;
       --panel: #fff;
-      --text: #0f1c2e;
-      --muted: #5a6578;
-      --border: #d8dee8;
+      --surface: #f8fafc;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
       --accent: #0b5cab;
       --navy: #0a2540;
       --navy-light: #123456;
-      --gold: #b8922e;
+      --gold: #c9a227;
       --shadow: 0 4px 24px rgba(10, 37, 64, 0.08);
       --shadow-sm: 0 1px 3px rgba(10, 37, 64, 0.06);
       --radius: 14px;
+      --ok: #15803d;
+      --ok-bg: #ecfdf3;
+      --err: #b42318;
+      --err-bg: #fef2f2;
       --google: #4285f4;
-      --linkedin: #e67e22;
-      --meta: #1877f2;
+      --google-bg: #eef4ff;
+      --linkedin: #0a66c2;
+      --linkedin-bg: #eff6ff;
+      --meta: #9333ea;
+      --meta-bg: #f5f3ff;
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -2646,29 +2833,12 @@ def render_penn_html(
       display: flex;
       flex-direction: column;
     }}
-    .dash-topbar {{
-      display: flex;
+    .dash-chrome-bar {{
+      display: none;
       align-items: center;
-      gap: 14px;
-      padding: 16px 24px;
+      gap: 12px;
+      padding: 10px 16px 0;
       background: var(--panel);
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      z-index: 50;
-    }}
-    .dash-topbar-text {{ min-width: 0; }}
-    .dash-title {{
-      margin: 0;
-      font-size: 1.35rem;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      color: var(--navy);
-    }}
-    .dash-subtitle {{
-      margin: 2px 0 0;
-      font-size: 0.84rem;
-      color: var(--muted);
     }}
     .dash-content {{
       flex: 1;
@@ -2726,23 +2896,6 @@ def render_penn_html(
       font-weight: 650;
       color: var(--navy);
     }}
-    .overview-hero-row {{
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
-      gap: 16px;
-      align-items: stretch;
-      margin-bottom: 4px;
-    }}
-    .overview-hero-row--insights {{
-      margin-top: 16px;
-    }}
-    @media (max-width: 960px) {{
-      .overview-hero-row {{ grid-template-columns: 1fr; }}
-    }}
-    .overview-hero-row .client-insights-panel--hero {{
-      margin: 0;
-      height: 100%;
-    }}
     .paid-ad-overview {{
       margin-bottom: 16px;
     }}
@@ -2783,52 +2936,67 @@ def render_penn_html(
     @media (max-width: 900px) {{
       .paid-ad-metrics-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
     }}
-    .client-insights-panel--hero {{
-      background: #fff;
+    .client-insights-section {{
+      margin-top: 16px;
+      margin-bottom: 16px;
+    }}
+    .client-insights-heading {{
+      margin-bottom: 12px;
+    }}
+    .client-insights-pill::before {{
+      background: #22c55e;
+    }}
+    .client-insights-count {{
+      margin-left: 8px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.16);
+      font-size: 0.62rem;
+      letter-spacing: 0.04em;
+    }}
+    .client-insights-doc-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+    }}
+    .client-insights-doc-card {{
+      display: block;
+      background: var(--panel);
       border: 1px solid var(--border);
-      border-left: 4px solid #1b7f4a;
       border-radius: 12px;
-      padding: 18px 20px;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
+      padding: 14px 16px;
+      text-decoration: none;
+      color: inherit;
+      box-shadow: var(--shadow-sm);
+      transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
     }}
-    .client-insights-panel--hero .client-insights-head {{
-      padding: 0;
-      margin-bottom: 10px;
+    .client-insights-doc-card:hover {{
+      border-color: var(--accent);
+      box-shadow: var(--shadow);
+      transform: translateY(-1px);
     }}
-    .client-insights-panel--hero .client-insights-title {{
-      font-size: 0.82rem;
+    .client-insights-doc-period {{
+      font-size: 0.68rem;
+      font-weight: 700;
       letter-spacing: 0.06em;
       text-transform: uppercase;
       color: var(--muted);
+      margin-bottom: 6px;
     }}
-    .client-insights-panel--hero .client-insights-subtitle {{
-      font-size: 0.82rem;
-      margin-top: 4px;
+    .client-insights-doc-title {{
+      font-size: 0.92rem;
+      font-weight: 650;
+      color: var(--navy);
+      line-height: 1.35;
+      margin-bottom: 6px;
     }}
-    .client-insights-panel--hero .client-insights-upload {{
-      margin: 0 0 12px;
-      padding: 12px;
+    .client-insights-doc-meta {{
+      font-size: 0.78rem;
+      color: var(--muted);
     }}
-    .client-insights-panel--hero .client-insights-upload-grid {{
-      grid-template-columns: 1fr;
-      gap: 10px;
-    }}
-    .client-insights-panel--hero .client-insights-table-wrap {{
-      padding: 0;
-      max-height: 180px;
-      overflow: auto;
-    }}
-    .client-insights-panel--hero .client-insights-table th,
-    .client-insights-panel--hero .client-insights-table td {{
-      padding: 8px 6px;
-      font-size: 0.84rem;
-    }}
-    .client-insights-panel--hero .client-insights-empty {{
-      padding: 0;
+    .client-insights-empty {{
       margin: 0;
-      font-size: 0.84rem;
+      font-size: 0.9rem;
     }}
     .ga4-pages-pagination {{
       display: flex;
@@ -2959,149 +3127,6 @@ def render_penn_html(
     }}
     .insights-save-btn {{
       width: 100%;
-    }}
-    .client-insights-panel {{
-      margin-top: 8px;
-      margin-bottom: 20px;
-      padding: 0;
-      overflow: hidden;
-      border-top: 3px solid #1b7f4a;
-    }}
-    .client-insights-head {{
-      padding: 20px 22px 0;
-    }}
-    .client-insights-title {{
-      margin: 0;
-      font-size: 1.15rem;
-      font-weight: 700;
-      color: var(--navy);
-    }}
-    .client-insights-subtitle {{
-      margin: 6px 0 0;
-      font-size: 0.9rem;
-      line-height: 1.45;
-    }}
-    .client-insights-upload {{
-      margin: 16px 22px 0;
-      padding: 16px;
-      border: 1px dashed var(--border);
-      border-radius: 12px;
-      background: #f8fafc;
-    }}
-    .client-insights-upload-grid {{
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 12px;
-    }}
-    @media (max-width: 900px) {{
-      .client-insights-upload-grid {{ grid-template-columns: 1fr; }}
-    }}
-    .client-insights-upload label {{
-      display: block;
-      font-size: 0.78rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: var(--muted);
-      margin-bottom: 6px;
-    }}
-    .client-insights-upload input[type="text"],
-    .client-insights-upload input[type="month"],
-    .client-insights-upload input[type="file"] {{
-      width: 100%;
-      padding: 9px 10px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      font: inherit;
-      background: #fff;
-    }}
-    .client-insights-upload-btn {{
-      appearance: none;
-      border: 0;
-      border-radius: 8px;
-      background: var(--accent);
-      color: #fff;
-      font-weight: 650;
-      padding: 10px 16px;
-      cursor: pointer;
-    }}
-    .client-insights-table-wrap {{
-      padding: 16px 22px 22px;
-      overflow-x: auto;
-    }}
-    .client-insights-table {{
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.92rem;
-    }}
-    .client-insights-table th {{
-      text-align: left;
-      padding: 10px 8px;
-      border-bottom: 1px solid var(--border);
-      color: var(--muted);
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-    }}
-    .client-insights-table td {{
-      padding: 14px 8px;
-      border-bottom: 1px solid var(--border);
-      vertical-align: middle;
-    }}
-    .client-insights-table tr:last-child td {{
-      border-bottom: 0;
-    }}
-    .client-insights-file-title {{
-      font-weight: 650;
-      color: var(--navy);
-      margin-bottom: 2px;
-    }}
-    .client-insights-file-meta {{
-      font-size: 0.82rem;
-    }}
-    .client-insights-period {{
-      white-space: nowrap;
-      color: var(--navy);
-      font-weight: 600;
-    }}
-    .client-insights-actions {{
-      white-space: nowrap;
-    }}
-    .client-insights-download-btn {{
-      display: inline-block;
-      padding: 8px 14px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: #fff;
-      color: var(--navy);
-      font-weight: 600;
-      font-size: 0.86rem;
-      text-decoration: none;
-    }}
-    .client-insights-download-btn:hover {{
-      background: #f4f7fb;
-      border-color: #b8c4d4;
-    }}
-    .client-insights-delete-form {{
-      display: inline-block;
-      margin-left: 8px;
-    }}
-    .client-insights-delete-btn {{
-      appearance: none;
-      border: 0;
-      background: none;
-      color: #b42318;
-      font-size: 0.82rem;
-      font-weight: 600;
-      cursor: pointer;
-      padding: 0;
-    }}
-    .client-insights-empty {{
-      margin: 0;
-      padding: 0 22px 22px;
-      font-size: 0.9rem;
     }}
     .ga4-pages-panel {{
       margin-bottom: 20px;
@@ -3319,19 +3344,19 @@ def render_penn_html(
       box-shadow: 0 1px 3px rgba(10, 37, 64, 0.1);
     }}
     .metric-toggle[data-metric="spend"].active {{
-      background: #eef4ff;
-      border-color: #4285f4;
-      color: #4285f4;
+      background: #eef1f5;
+      border-color: var(--navy);
+      color: var(--navy);
     }}
     .metric-toggle[data-metric="clicks"].active {{
-      background: #eef4ff;
-      border-color: #4285f4;
-      color: #4285f4;
+      background: var(--google-bg);
+      border-color: var(--google);
+      color: var(--google);
     }}
     .metric-toggle[data-metric="impressions"].active {{
-      background: #fef6ee;
-      border-color: #e67e22;
-      color: #e67e22;
+      background: var(--linkedin-bg);
+      border-color: var(--linkedin);
+      color: var(--linkedin);
     }}
     .metric-toggle[data-metric="conversions"].active {{
       background: #ecfdf3;
@@ -3629,13 +3654,13 @@ def render_penn_html(
     }}
     .errors ul {{ margin: 8px 0 0; padding-left: 20px; }}
     .dash-flash {{
-      background: #e8f5ee;
+      background: var(--ok-bg);
       border: 1px solid #b8dfc8;
       border-radius: var(--radius);
       padding: 12px 14px;
       margin-bottom: 16px;
       font-size: 0.9rem;
-      color: #1b5e20;
+      color: var(--ok);
     }}
     canvas {{ max-height: 280px; }}
     .muted {{ color: var(--muted); }}
@@ -4026,7 +4051,7 @@ def render_penn_html(
       color: var(--linkedin);
     }}
     .filter-toggle.t-linkedin:hover {{
-      background: #fef6ee;
+      background: var(--linkedin-bg);
       border-color: var(--linkedin);
     }}
     .filter-toggle.t-linkedin.active {{
@@ -4039,7 +4064,7 @@ def render_penn_html(
       color: var(--meta);
     }}
     .filter-toggle.t-meta:hover {{
-      background: #eef3fc;
+      background: var(--meta-bg);
       border-color: var(--meta);
     }}
     .filter-toggle.t-meta.active {{
@@ -4128,9 +4153,9 @@ def render_penn_html(
       text-transform: uppercase;
       letter-spacing: .03em;
     }}
-    .platform-pill.google {{ background: #eef4ff; color: #4285f4; }}
-    .platform-pill.meta {{ background: #eef3fc; color: #1877f2; }}
-    .platform-pill.linkedin {{ background: #fef6ee; color: #e67e22; }}
+    .platform-pill.google {{ background: var(--google-bg); color: var(--google); }}
+    .platform-pill.meta {{ background: var(--meta-bg); color: var(--meta); }}
+    .platform-pill.linkedin {{ background: var(--linkedin-bg); color: var(--linkedin); }}
     .platform-pill.organic {{ background: #ecfdf3; color: #16a34a; }}
     .bl-tag {{
       font-size: 0.72rem;
@@ -4211,7 +4236,7 @@ def render_penn_html(
         min-width: 0;
       }}
       .dash-content {{ padding: 18px 16px 40px; }}
-      .dash-topbar {{ padding: 14px 16px; }}
+      .dash-chrome-bar {{ display: flex; }}
     }}
   </style>
 </head>
@@ -4236,17 +4261,12 @@ def render_penn_html(
     </aside>
 
     <div class="dash-main">
-      <header class="dash-topbar">
-        <button type="button" class="sidebar-menu-btn" id="sidebarOpen" aria-label="Open menu" aria-expanded="false" aria-controls="dashSidebar">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-        </button>
-        <div class="dash-topbar-text">
-          <h1 class="dash-title" id="dashViewTitle">Overview</h1>
-          <p class="dash-subtitle">{_esc(label)} · Paid media performance</p>
-        </div>
-      </header>
-
       <div class="dash-sticky-chrome">
+        <div class="dash-chrome-bar">
+          <button type="button" class="sidebar-menu-btn" id="sidebarOpen" aria-label="Open menu" aria-expanded="false" aria-controls="dashSidebar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+          </button>
+        </div>
         {filters_bar_html}
         {view_tabs_html}
       </div>
@@ -4258,7 +4278,7 @@ def render_penn_html(
 
           <div id="view-overview" class="view-panel active" role="tabpanel">
             {overview_paid_html}
-            {overview_hero}
+            {client_insights_html}
 
             <div class="cards">
               {_summary_card("Google Ads", totals.get("google"), platform="google")}
@@ -4365,7 +4385,7 @@ def render_penn_html(
     const METRIC_DEFS = [
       {{ id: 'spend', label: 'Spend', color: '#0a2540', fill: 'rgba(10, 37, 64, 0.08)', yAxisID: 'y', format: 'money' }},
       {{ id: 'clicks', label: 'Clicks', color: '#4285f4', fill: 'rgba(66, 133, 244, 0.08)', yAxisID: 'y', format: 'int' }},
-      {{ id: 'impressions', label: 'Impressions', color: '#e67e22', fill: 'rgba(230, 126, 34, 0.08)', yAxisID: 'y', format: 'int' }},
+      {{ id: 'impressions', label: 'Impressions', color: '#0a66c2', fill: 'rgba(10, 102, 194, 0.08)', yAxisID: 'y', format: 'int' }},
       {{ id: 'conversions', label: 'Conversions', color: '#16a34a', fill: 'rgba(22, 163, 74, 0.08)', yAxisID: 'y', format: 'int' }},
     ];
     let activeMetricId = 'spend';
@@ -4602,8 +4622,8 @@ def render_penn_html(
         panel.classList.toggle('active', on);
         panel.hidden = !on;
       }});
-      const title = document.getElementById('dashViewTitle');
-      if (title) title.textContent = VIEW_LABELS[view] || 'Dashboard';
+      const titleSuffix = VIEW_LABELS[view] || 'Dashboard';
+      document.title = `${{document.title.split(' — ')[0]}} — ${{titleSuffix}}`;
       try {{
         const url = new URL(window.location.href);
         if (view === 'overview') {{
