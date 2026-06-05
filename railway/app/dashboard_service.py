@@ -1322,28 +1322,19 @@ def _client_insights_documents_html(
     </section>"""
 
 
-def _ga4_pages_panel_html(ga4_pages: dict[str, Any] | None) -> str:
+def _ga4_website_content_html(ga4_pages: dict[str, Any] | None) -> str:
     pages = (ga4_pages or {}).get("pages") or []
     dr = (ga4_pages or {}).get("date_range") or {}
     range_label = ""
     if dr.get("start") and dr.get("end"):
         range_label = f"{dr.get('start')} → {dr.get('end')}"
     if not pages:
-        body = (
+        return (
             '<p class="ga4-pages-empty muted">No page data yet. Run a <strong>full refresh</strong> '
             "from Settings after GA4 BigQuery is connected.</p>"
         )
-    else:
-        body = f"""
-        <div class="ga4-pages-toolbar">
-          <label class="ga4-pages-search-wrap">
-            <span class="visually-hidden">Search pages</span>
-            <input type="search" id="ga4PageSearch" class="ga4-pages-search"
-              placeholder="Search page path or title…" autocomplete="off">
-          </label>
-          <span class="badge" id="ga4PagesCount">{len(pages)} pages</span>
-        </div>
-        <p class="table-note muted">Site-wide GA4 metrics{f' for {range_label}' if range_label else ''}. Search filters the list below.</p>
+    return f"""
+        <p class="table-note muted">Site-wide GA4 metrics{f' for {range_label}' if range_label else ''}. Use the search bar above to filter paths and titles.</p>
         <div class="table-wrap">
           <table class="data-table ga4-pages-table" id="ga4PagesTable">
             <thead>
@@ -1361,13 +1352,100 @@ def _ga4_pages_panel_html(ga4_pages: dict[str, Any] | None) -> str:
             <tbody id="ga4PagesBody"></tbody>
           </table>
         </div>"""
+
+
+def _ga4_pages_panel_html(ga4_pages: dict[str, Any] | None) -> str:
+    """Legacy wrapper — website content lives on the Website Analytics view."""
+    body = _ga4_website_content_html(ga4_pages)
     return f"""
     <section class="panel ga4-pages-panel" aria-label="GA4 pages">
-      <div class="panel-head">
-        <h2>GA4 Pages</h2>
-      </div>
+      <div class="panel-head"><h2>GA4 Pages</h2></div>
       {body}
     </section>"""
+
+
+def _dashboard_view_tabs_html(*, show_website: bool) -> str:
+    website_tab = ""
+    if show_website:
+        website_tab = (
+            '<button type="button" class="dash-view-btn" data-view="website" role="tab" '
+            'aria-selected="false">Website Analytics</button>'
+        )
+    return f"""
+      <nav class="dash-view-nav" role="tablist" aria-label="Dashboard views">
+        <button type="button" class="dash-view-btn active" data-view="overview" role="tab" aria-selected="true">Overview</button>
+        <button type="button" class="dash-view-btn" data-view="campaigns" role="tab" aria-selected="false">Campaign Explorer</button>
+        {website_tab}
+      </nav>"""
+
+
+def _campaign_filters_html(*, show_business_line: bool) -> str:
+    if not show_business_line:
+        return ""
+    return """
+        <section class="filter-panel bl-filters">
+          <div class="bl-filter-grid">
+            <div class="filter-group">
+              <div class="filter-group-head">
+                <span class="filter-label">Business line</span>
+                <button type="button" class="filter-link" id="blSelectAll">All</button>
+                <button type="button" class="filter-link" id="blClearAll">None</button>
+              </div>
+              <div id="blFilters" class="filter-checks filter-checks--wrap"></div>
+            </div>
+            <div class="filter-group">
+              <div class="filter-group-head">
+                <span class="filter-label">Channel</span>
+                <button type="button" class="filter-link" id="channelSelectAll">All</button>
+                <button type="button" class="filter-link" id="channelClearAll">None</button>
+              </div>
+              <div id="channelFilters" class="filter-checks filter-checks--wrap"></div>
+            </div>
+          </div>
+          <div class="bl-filter-footer">
+            <label class="filter-zero-spend">
+              <input type="checkbox" id="showZeroSpend">
+              Show inactive / $0 spend
+            </label>
+            <div class="filter-status" id="filterStatus"></div>
+          </div>
+        </section>"""
+
+
+def _website_filters_html(*, has_pages: bool) -> str:
+    if not has_pages:
+        return ""
+    return """
+        <section class="filter-panel website-filters">
+          <div class="website-filter-row">
+            <label for="ga4PageSearch" class="filter-label">Search pages</label>
+            <input type="search" id="ga4PageSearch" class="ga4-pages-search"
+              placeholder="Filter by page path or title…" autocomplete="off">
+            <span class="badge" id="ga4PagesCount">0 pages</span>
+          </div>
+        </section>"""
+
+
+def _dashboard_filters_bar_html(
+    *,
+    show_business_line: bool,
+    show_website: bool,
+    has_ga4_pages: bool,
+) -> str:
+    campaign_filters = _campaign_filters_html(show_business_line=show_business_line)
+    website_filters = _website_filters_html(has_pages=has_ga4_pages) if show_website else ""
+    campaign_hidden = "" if campaign_filters else ' hidden aria-hidden="true"'
+    website_hidden = "" if website_filters else ' hidden aria-hidden="true"'
+    return f"""
+      <div class="dash-filters-bar" id="dashFiltersBar" hidden>
+        <div class="view-filters view-filters--overview active" data-for="overview"></div>
+        <div class="view-filters view-filters--campaigns{campaign_hidden}" data-for="campaigns">
+          {campaign_filters}
+        </div>
+        <div class="view-filters view-filters--website{website_hidden}" data-for="website">
+          {website_filters}
+        </div>
+      </div>"""
 
 
 def _sidebar_nav_html(
@@ -1813,39 +1891,11 @@ def _breakdowns_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {platform: {"campaign": rows} for platform, rows in legacy.items()}
 
 
-def _business_line_merged_section_html() -> str:
-    return """
-            <section class="bl-merged-section" aria-label="Campaign performance by business line">
+def _campaign_explorer_content_html(*, show_business_line: bool, platform_breakdown_html: str) -> str:
+    if show_business_line:
+        return """
+            <section class="campaign-explorer-section" aria-label="Campaign performance">
               <div class="bl-summary" id="blSummary"></div>
-              <div class="bl-sticky-filters" id="blStickyFilters">
-                <section class="filter-panel bl-filters">
-                  <div class="bl-filter-grid">
-                    <div class="filter-group">
-                      <div class="filter-group-head">
-                        <span class="filter-label">Business line</span>
-                        <button type="button" class="filter-link" id="blSelectAll">All</button>
-                        <button type="button" class="filter-link" id="blClearAll">None</button>
-                      </div>
-                      <div id="blFilters" class="filter-checks filter-checks--wrap"></div>
-                    </div>
-                    <div class="filter-group">
-                      <div class="filter-group-head">
-                        <span class="filter-label">Channel</span>
-                        <button type="button" class="filter-link" id="channelSelectAll">All</button>
-                        <button type="button" class="filter-link" id="channelClearAll">None</button>
-                      </div>
-                      <div id="channelFilters" class="filter-checks filter-checks--wrap"></div>
-                    </div>
-                  </div>
-                  <div class="bl-filter-footer">
-                    <label class="filter-zero-spend">
-                      <input type="checkbox" id="showZeroSpend">
-                      Show inactive / $0 spend
-                    </label>
-                    <div class="filter-status" id="filterStatus"></div>
-                  </div>
-                </section>
-              </div>
               <section class="panel platform-panel">
                 <div class="panel-head">
                   <h2>Campaign performance</h2>
@@ -1873,6 +1923,12 @@ def _business_line_merged_section_html() -> str:
                 </div>
               </section>
             </section>"""
+    return platform_breakdown_html or '<p class="muted">No campaign data for this period.</p>'
+
+
+def _business_line_merged_section_html() -> str:
+    """Deprecated — use _campaign_explorer_content_html with filters in _dashboard_filters_bar_html."""
+    return _campaign_explorer_content_html(show_business_line=True, platform_breakdown_html="")
 
 
 def render_penn_html(
@@ -2082,12 +2138,30 @@ def render_penn_html(
         can_upload=can_upload_docs,
     )
     client_meta_tip = _esc(f"Date range: {range_label}\nLast refreshed: {refreshed} UTC")
-    campaign_section_html = _business_line_merged_section_html() if show_business_line else ""
-    platform_breakdown_html = "" if show_business_line else breakdown_html
     ga4_pages_report = snapshot.get("ga4_pages")
     accounts = snapshot.get("accounts") or {}
     has_ga4 = bool(accounts.get("ga4_client_key") or (ga4_pages_report or {}).get("pages"))
-    ga4_pages_html = _ga4_pages_panel_html(ga4_pages_report) if has_ga4 else ""
+    has_ga4_pages = bool((ga4_pages_report or {}).get("pages"))
+    view_tabs_html = _dashboard_view_tabs_html(show_website=has_ga4)
+    filters_bar_html = _dashboard_filters_bar_html(
+        show_business_line=show_business_line,
+        show_website=has_ga4,
+        has_ga4_pages=has_ga4_pages,
+    )
+    campaign_explorer_html = _campaign_explorer_content_html(
+        show_business_line=show_business_line,
+        platform_breakdown_html=breakdown_html,
+    )
+    website_analytics_html = _ga4_website_content_html(ga4_pages_report if has_ga4 else None)
+    website_tab_panel = ""
+    if has_ga4:
+        website_tab_panel = f"""
+          <div id="view-website" class="view-panel" role="tabpanel" hidden>
+            <section class="panel ga4-pages-panel" aria-label="Website analytics">
+              <div class="panel-head"><h2>Page performance</h2></div>
+              {website_analytics_html}
+            </section>
+          </div>"""
     ga4_pages_json = _json_for_html_script((ga4_pages_report or {}).get("pages") or [])
 
     return f"""<!DOCTYPE html>
@@ -3226,7 +3300,85 @@ def render_penn_html(
     .refresh-btn--secondary:hover:not(:disabled) {{ background: #f0f7ff; filter: none; }}
     .notice {{ font-size: 0.86rem; color: var(--muted); }}
 
-    .tab-panel {{ display: block; }}
+    .tab-panel {{ display: none; }}
+    .tab-panel.active {{ display: block; }}
+    .view-panel {{ display: none; }}
+    .view-panel.active {{ display: block; }}
+    .dash-sticky-chrome {{
+      position: sticky;
+      top: 0;
+      z-index: 45;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 rgba(255,255,255,0.6);
+    }}
+    .dash-view-nav {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 10px 24px 0;
+      background: var(--panel);
+    }}
+    .dash-view-btn {{
+      appearance: none;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.9rem;
+      font-weight: 650;
+      padding: 12px 16px;
+      border-radius: 10px 10px 0 0;
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -1px;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
+    }}
+    .dash-view-btn:hover {{
+      color: var(--navy);
+      background: #f4f7fb;
+    }}
+    .dash-view-btn.active {{
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      background: var(--bg);
+    }}
+    .dash-filters-bar {{
+      padding: 12px 24px 14px;
+      background: var(--bg);
+    }}
+    .dash-filters-bar[hidden] {{
+      display: none !important;
+    }}
+    .view-filters {{
+      display: none;
+    }}
+    .view-filters.active {{
+      display: block;
+    }}
+    .view-filters[hidden],
+    .view-filters[aria-hidden="true"] {{
+      display: none !important;
+    }}
+    .website-filter-row {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px 16px;
+    }}
+    .website-filter-row .filter-label {{
+      min-width: auto;
+      margin: 0;
+    }}
+    .website-filter-row .ga4-pages-search {{
+      flex: 1;
+      min-width: 220px;
+      max-width: 480px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font: inherit;
+      background: #fff;
+    }}
 
     .filter-panel {{
       background: var(--panel);
@@ -3235,25 +3387,11 @@ def render_penn_html(
       padding: 16px 18px;
       box-shadow: var(--shadow-sm);
     }}
-    .bl-sticky-sentinel {{
-      height: 1px;
-      width: 100%;
-      pointer-events: none;
-    }}
     .bl-merged-section {{
-      margin-top: 8px;
+      margin-top: 0;
     }}
-    .bl-sticky-filters {{
-      position: sticky;
-      top: 0;
-      z-index: 40;
-      margin: 0 0 16px;
-      padding: 10px 0 6px;
-      background: linear-gradient(180deg, var(--bg) 72%, rgba(238, 241, 245, 0));
-    }}
-    .bl-sticky-filters.is-stuck .filter-panel {{
-      box-shadow: var(--shadow);
-      border-color: #c8d4e4;
+    .campaign-explorer-section {{
+      margin-top: 0;
     }}
     .bl-filter-grid {{
       display: grid;
@@ -3506,6 +3644,8 @@ def render_penn_html(
     }}
     @media (max-width: 900px) {{
       .app-shell {{ display: block; }}
+      .dash-view-nav {{ padding: 8px 16px 0; }}
+      .dash-filters-bar {{ padding: 10px 16px 12px; }}
       .sidebar-menu-btn {{ display: flex; }}
       .sidebar-close {{ display: flex; }}
       .sidebar-backdrop {{
@@ -3575,12 +3715,17 @@ def render_penn_html(
         </div>
       </header>
 
+      <div class="dash-sticky-chrome">
+        {view_tabs_html}
+        {filters_bar_html}
+      </div>
+
       <div class="dash-content">
         <div class="wrap">
           {flash_html}
           {error_html}
 
-          <div id="tab-platform" class="tab-panel active" role="tabpanel">
+          <div id="view-overview" class="view-panel active" role="tabpanel">
             {overview_hero}
 
             {client_insights_html}
@@ -3610,13 +3755,13 @@ def render_penn_html(
                 </div>
               </div>
             </section>
-
-            {ga4_pages_html}
-
-            {campaign_section_html}
-
-            {platform_breakdown_html}
           </div>
+
+          <div id="view-campaigns" class="view-panel" role="tabpanel" hidden>
+            {campaign_explorer_html}
+          </div>
+
+          {website_tab_panel}
         </div>
       </div>
     </div>
@@ -3722,22 +3867,65 @@ def render_penn_html(
       }}
     }});
 
-    if (SHOW_BUSINESS_LINE) {{
-      const stickyFilters = document.getElementById('blStickyFilters');
-      const scrollRoot = document.querySelector('.dash-content');
-      if (stickyFilters && scrollRoot && 'IntersectionObserver' in window) {{
-        const stickySentinel = document.createElement('div');
-        stickySentinel.className = 'bl-sticky-sentinel';
-        stickySentinel.setAttribute('aria-hidden', 'true');
-        stickyFilters.parentNode?.insertBefore(stickySentinel, stickyFilters);
-        const stickyObserver = new IntersectionObserver(
-          ([entry]) => {{
-            stickyFilters.classList.toggle('is-stuck', !entry.isIntersecting);
-          }},
-          {{ root: scrollRoot, threshold: 1 }}
-        );
-        stickyObserver.observe(stickySentinel);
+    const VIEW_LABELS = {{
+      overview: 'Overview',
+      campaigns: 'Campaign Explorer',
+      website: 'Website Analytics',
+    }};
+
+    function updateFiltersBarVisibility(view) {{
+      const filtersBar = document.getElementById('dashFiltersBar');
+      if (!filtersBar) return;
+      const activeFilters = filtersBar.querySelector(`.view-filters[data-for="${{view}}"]`);
+      const hasPanel = activeFilters && activeFilters.querySelector('.filter-panel');
+      filtersBar.hidden = !hasPanel;
+    }}
+
+    function setActiveView(view) {{
+      const allowed = ['overview', 'campaigns', 'website'];
+      if (!allowed.includes(view)) view = 'overview';
+      if (view === 'website' && !document.querySelector('.dash-view-btn[data-view="website"]')) {{
+        view = 'overview';
       }}
+      document.querySelectorAll('.dash-view-btn').forEach(btn => {{
+        const on = btn.dataset.view === view;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      }});
+      document.querySelectorAll('.view-panel').forEach(panel => {{
+        const on = panel.id === 'view-' + view;
+        panel.classList.toggle('active', on);
+        panel.hidden = !on;
+      }});
+      document.querySelectorAll('.view-filters').forEach(filters => {{
+        filters.classList.toggle('active', filters.dataset.for === view);
+      }});
+      updateFiltersBarVisibility(view);
+      const title = document.getElementById('dashViewTitle');
+      if (title) title.textContent = VIEW_LABELS[view] || 'Dashboard';
+      try {{
+        const url = new URL(window.location.href);
+        if (view === 'overview') {{
+          url.searchParams.delete('view');
+        }} else {{
+          url.searchParams.set('view', view);
+        }}
+        history.replaceState(null, '', url);
+      }} catch (err) {{
+        /* ignore */
+      }}
+      closeSidebar();
+    }}
+
+    document.querySelectorAll('.dash-view-btn').forEach(btn => {{
+      btn.addEventListener('click', () => setActiveView(btn.dataset.view || 'overview'));
+    }});
+
+    const initialView = new URLSearchParams(window.location.search).get('view');
+    if (initialView && ['overview', 'campaigns', 'website'].includes(initialView)) {{
+      setActiveView(initialView);
+    }} else {{
+      updateFiltersBarVisibility('overview');
     }}
 
     const channelState = new Set();
