@@ -1214,14 +1214,117 @@ def _insights_card_html(snapshot: dict[str, Any] | None) -> str:
     </section>"""
 
 
-def _overview_hero_row_html(
+def _ga4_paid_key_events(ga4_attr: dict[str, Any] | None) -> int:
+    """Sum GA4 key events attributed to paid platforms (for verified CPA)."""
+    if not ga4_attr:
+        return 0
+    platforms = ga4_attr.get("platforms")
+    if platforms:
+        total = 0
+        for platform in ("google", "linkedin", "meta"):
+            platform_totals = (platforms.get(platform) or {}).get("totals") or {}
+            total += int(platform_totals.get("key_events") or 0)
+        return total
+    return int((ga4_attr.get("totals") or {}).get("key_events") or 0)
+
+
+def _paid_ad_overview_metrics(
     aggregated: dict[str, Any],
+    ga4_attr: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    spend = float(aggregated.get("spend") or 0)
+    clicks = int(aggregated.get("clicks") or 0)
+    impressions = int(aggregated.get("impressions") or 0)
+    conversions = float(aggregated.get("conversions") or 0)
+    ga4_key_events = _ga4_paid_key_events(ga4_attr)
+    return {
+        "spend": spend,
+        "clicks": clicks,
+        "impressions": impressions,
+        "conversions": conversions,
+        "ctr": (clicks / impressions) if impressions else None,
+        "cpc": (spend / clicks) if clicks else None,
+        "reported_cpa": (spend / conversions) if conversions else None,
+        "verified_cpa": (spend / ga4_key_events) if ga4_key_events else None,
+        "ga4_key_events": ga4_key_events,
+    }
+
+
+def _fmt_cpa(spend: float, count: float | int) -> str:
+    if not count:
+        return "—"
+    return _fmt_money(spend / float(count))
+
+
+def _paid_ad_overview_html(
+    aggregated: dict[str, Any],
+    ga4_attr: dict[str, Any] | None = None,
+) -> str:
+    if not aggregated:
+        return ""
+    m = _paid_ad_overview_metrics(aggregated, ga4_attr)
+    ga4_events = int(m["ga4_key_events"] or 0)
+    verified_sub = (
+        f"Using {_fmt_int(ga4_events)} paid GA4 TY event{'s' if ga4_events != 1 else ''}"
+        if ga4_events
+        else "No paid GA4 TY events in range"
+    )
+    return f"""
+    <section class="paid-ad-overview" aria-label="Paid Ad Overview">
+      <div class="paid-ad-overview-heading">
+        <span class="paid-ad-overview-pill">Paid Ad Overview</span>
+      </div>
+      <div class="paid-ad-metrics-grid">
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">Spend</div>
+          <div class="ga4-metric-value" id="heroSpend">{_fmt_money(m["spend"])}</div>
+          <div class="ga4-metric-sub">Platform spend</div>
+        </div>
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">Impressions</div>
+          <div class="ga4-metric-value" id="heroImpressions">{_fmt_int(m["impressions"])}</div>
+          <div class="ga4-metric-sub">Paid delivery</div>
+        </div>
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">Clicks</div>
+          <div class="ga4-metric-value" id="heroClicks">{_fmt_int(m["clicks"])}</div>
+          <div class="ga4-metric-sub">Platform clicks</div>
+        </div>
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">CTR</div>
+          <div class="ga4-metric-value" id="heroCtr">{_fmt_pct(m["clicks"], m["impressions"]) if m["impressions"] else "—"}</div>
+          <div class="ga4-metric-sub">Clicks ÷ impressions</div>
+        </div>
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">CPC</div>
+          <div class="ga4-metric-value" id="heroCpc">{_fmt_cpa(m["spend"], m["clicks"]) if m["clicks"] else "—"}</div>
+          <div class="ga4-metric-sub">Spend ÷ clicks</div>
+        </div>
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">Reported conversions</div>
+          <div class="ga4-metric-value" id="heroConversions">{_fmt_int(m["conversions"])}</div>
+          <div class="ga4-metric-sub">Platform-defined</div>
+        </div>
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">Reported CPA</div>
+          <div class="ga4-metric-value" id="heroReportedCpa">{_fmt_cpa(m["spend"], m["conversions"]) if m["conversions"] else "—"}</div>
+          <div class="ga4-metric-sub">Platform basis</div>
+        </div>
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">Verified CPA</div>
+          <div class="ga4-metric-value" id="heroVerifiedCpa">{_fmt_cpa(m["spend"], ga4_events) if ga4_events else "—"}</div>
+          <div class="ga4-metric-sub" id="heroVerifiedCpaSub">{verified_sub}</div>
+        </div>
+      </div>
+    </section>"""
+
+
+def _overview_hero_row_html(
     client_insights_html: str = "",
 ) -> str:
-    spend_card = _aggregated_card(aggregated)
-    if not spend_card and not client_insights_html:
+    if not client_insights_html:
         return ""
-    return f'<div class="overview-hero-row">{spend_card}{client_insights_html}</div>'
+    return f'<div class="overview-hero-row overview-hero-row--insights">{client_insights_html}</div>'
 
 
 def _fmt_file_size(num_bytes: int) -> str:
@@ -1730,35 +1833,8 @@ def render_client_shell_page(
 
 
 def _aggregated_card(totals: dict[str, Any]) -> str:
-    if not totals:
-        return ""
-    spend = float(totals.get("spend") or 0)
-    clicks = int(totals.get("clicks") or 0)
-    impressions = int(totals.get("impressions") or 0)
-    conversions = int(totals.get("conversions") or 0)
-    return f"""
-    <section class="panel total-spend-panel">
-      <div class="total-spend-head">
-        <h2 class="total-spend-title">Total Ad Spend</h2>
-        <button type="button" class="info-tip info-tip--light" data-tip="Sum of Google Ads, LinkedIn, and Meta account totals for this date range." aria-label="About total ad spend">i</button>
-      </div>
-      <div class="total-spend-hero" id="heroTotalSpend">{_fmt_money(spend)}</div>
-      <div class="total-spend-metrics">
-        <div class="total-spend-metric">
-          <span class="total-spend-metric__val" id="heroTotalClicks">{_fmt_int(clicks)}</span>
-          <span class="total-spend-metric__lbl">Clicks</span>
-        </div>
-        <div class="total-spend-metric">
-          <span class="total-spend-metric__val" id="heroTotalImpressions">{_fmt_int(impressions)}</span>
-          <span class="total-spend-metric__lbl">Impressions</span>
-        </div>
-        <div class="total-spend-metric">
-          <span class="total-spend-metric__val" id="heroTotalConversions">{_fmt_int(conversions)}</span>
-          <span class="total-spend-metric__lbl">Conversions</span>
-        </div>
-      </div>
-    </section>
-    """
+    """Deprecated — use _paid_ad_overview_html."""
+    return _paid_ad_overview_html(totals)
 
 
 def _platform_breakdown_html(
@@ -2190,7 +2266,11 @@ def render_penn_html(
         can_upload=can_upload_docs,
         compact=True,
     )
-    overview_hero = _overview_hero_row_html(aggregated, client_insights_hero)
+    overview_paid_html = _paid_ad_overview_html(aggregated, ga4_attr)
+    overview_hero = _overview_hero_row_html(client_insights_hero)
+    paid_overview_metrics_json = _json_for_html_script(
+        _paid_ad_overview_metrics(aggregated, ga4_attr)
+    )
     client_meta_tip = _esc(f"Date range: {range_label}\nLast refreshed: {refreshed} UTC")
     ga4_pages_report = snapshot.get("ga4_pages")
     accounts = snapshot.get("accounts") or {}
@@ -2648,18 +2728,60 @@ def render_penn_html(
     }}
     .overview-hero-row {{
       display: grid;
-      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+      grid-template-columns: minmax(0, 1fr);
       gap: 16px;
       align-items: stretch;
       margin-bottom: 4px;
     }}
+    .overview-hero-row--insights {{
+      margin-top: 16px;
+    }}
     @media (max-width: 960px) {{
       .overview-hero-row {{ grid-template-columns: 1fr; }}
     }}
-    .overview-hero-row .total-spend-panel,
     .overview-hero-row .client-insights-panel--hero {{
       margin: 0;
       height: 100%;
+    }}
+    .paid-ad-overview {{
+      margin-bottom: 16px;
+    }}
+    .paid-ad-overview-heading {{
+      margin-bottom: 12px;
+    }}
+    .paid-ad-overview-pill {{
+      display: inline-flex;
+      align-items: center;
+      gap: 0;
+      background: var(--navy);
+      color: #fff;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      padding: 6px 14px 6px 0;
+      border-radius: 999px;
+      overflow: hidden;
+    }}
+    .paid-ad-overview-pill::before {{
+      content: '';
+      display: inline-block;
+      width: 4px;
+      align-self: stretch;
+      background: var(--gold);
+      margin-right: 10px;
+      border-radius: 999px 0 0 999px;
+    }}
+    .paid-ad-metrics-grid {{
+      display: grid;
+      grid-template-columns: repeat(8, minmax(0, 1fr));
+      gap: 12px;
+    }}
+    @media (max-width: 1400px) {{
+      .paid-ad-metrics-grid {{ grid-template-columns: repeat(4, minmax(0, 1fr)); }}
+    }}
+    @media (max-width: 900px) {{
+      .paid-ad-metrics-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
     }}
     .client-insights-panel--hero {{
       background: #fff;
@@ -4135,6 +4257,7 @@ def render_penn_html(
           {error_html}
 
           <div id="view-overview" class="view-panel active" role="tabpanel">
+            {overview_paid_html}
             {overview_hero}
 
             <div class="cards">
@@ -4184,6 +4307,7 @@ def render_penn_html(
   </div>
   <div class="andre-toast" id="andreToast" role="status" aria-live="polite" hidden>Hello Andre</div>
   <script type="application/json" id="performance-chart-data">{performance_chart_json}</script>
+  <script type="application/json" id="paid-overview-metrics-data">{paid_overview_metrics_json}</script>
   <script type="application/json" id="breakdowns-data">{breakdowns_json}</script>
   <script type="application/json" id="ga4-campaign-metrics">{ga4_campaign_metrics_json}</script>
   <script type="application/json" id="bl-campaigns-data">{bl_campaigns_json}</script>
@@ -4511,12 +4635,41 @@ def render_penn_html(
         statsHtml: card.querySelector('.card-stats')?.innerHTML || '',
       }});
     }});
-    const heroDefaults = {{
-      spend: document.getElementById('heroTotalSpend')?.textContent || '',
-      clicks: document.getElementById('heroTotalClicks')?.textContent || '',
-      impressions: document.getElementById('heroTotalImpressions')?.textContent || '',
-      conversions: document.getElementById('heroTotalConversions')?.textContent || '',
-    }};
+    const paidOverviewDefaults = readJson('paid-overview-metrics-data', {{}});
+    const ga4PaidKeyEvents = Number(paidOverviewDefaults.ga4_key_events || 0);
+
+    function fmtCpa(spend, count) {{
+      const n = Number(count || 0);
+      if (!n) return '—';
+      return fmtMoney(Number(spend || 0) / n);
+    }}
+
+    function updatePaidOverviewMetrics(totals) {{
+      const spendEl = document.getElementById('heroSpend');
+      if (!spendEl) return;
+      const m = totals || paidOverviewDefaults;
+      const spend = Number(m.spend || 0);
+      const clicks = Number(m.clicks || 0);
+      const impressions = Number(m.impressions || 0);
+      const conversions = Number(m.conversions || 0);
+      const ga4Events = totals ? ga4PaidKeyEvents : Number(m.ga4_key_events || ga4PaidKeyEvents);
+
+      spendEl.textContent = fmtMoney(spend);
+      const impEl = document.getElementById('heroImpressions');
+      const clkEl = document.getElementById('heroClicks');
+      const ctrEl = document.getElementById('heroCtr');
+      const cpcEl = document.getElementById('heroCpc');
+      const convEl = document.getElementById('heroConversions');
+      const repCpaEl = document.getElementById('heroReportedCpa');
+      const verCpaEl = document.getElementById('heroVerifiedCpa');
+      if (impEl) impEl.textContent = fmtInt(impressions);
+      if (clkEl) clkEl.textContent = fmtInt(clicks);
+      if (ctrEl) ctrEl.textContent = impressions ? fmtPct(clicks, impressions) : '—';
+      if (cpcEl) cpcEl.textContent = clicks ? fmtCpa(spend, clicks) : '—';
+      if (convEl) convEl.textContent = fmtInt(conversions);
+      if (repCpaEl) repCpaEl.textContent = conversions ? fmtCpa(spend, conversions) : '—';
+      if (verCpaEl) verCpaEl.textContent = ga4Events ? fmtCpa(spend, ga4Events) : '—';
+    }}
 
     function platformVisible(platformId) {{
       if (platformId === 'organic') {{
@@ -4568,22 +4721,7 @@ def render_penn_html(
     }}
 
     function updateHeroTotals(totals) {{
-      const spendEl = document.getElementById('heroTotalSpend');
-      const clicksEl = document.getElementById('heroTotalClicks');
-      const impressionsEl = document.getElementById('heroTotalImpressions');
-      const conversionsEl = document.getElementById('heroTotalConversions');
-      if (!spendEl) return;
-      if (!totals) {{
-        spendEl.textContent = heroDefaults.spend;
-        if (clicksEl) clicksEl.textContent = heroDefaults.clicks;
-        if (impressionsEl) impressionsEl.textContent = heroDefaults.impressions;
-        if (conversionsEl) conversionsEl.textContent = heroDefaults.conversions;
-        return;
-      }}
-      spendEl.textContent = fmtMoney(totals.spend);
-      if (clicksEl) clicksEl.textContent = fmtInt(totals.clicks);
-      if (impressionsEl) impressionsEl.textContent = fmtInt(totals.impressions);
-      if (conversionsEl) conversionsEl.textContent = fmtInt(totals.conversions);
+      updatePaidOverviewMetrics(totals);
     }}
 
     function applyOverviewFilters() {{
