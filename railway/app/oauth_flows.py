@@ -24,7 +24,7 @@ LINKEDIN_AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization"
 LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 LINKEDIN_SCOPES = "r_ads r_ads_reporting"
 
-META_SCOPES = "ads_read,read_insights,business_management"
+META_SCOPES = "ads_read,business_management"
 
 
 def public_base_url() -> str:

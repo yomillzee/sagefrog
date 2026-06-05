@@ -225,7 +225,7 @@ def test_access_token(env: MetaEnv | None = None) -> dict[str, Any]:
     except Exception as exc:
         err = str(exc)
         hint = (
-            "Usually: expired token, missing ads_read/read_insights/business_management scopes, "
+            "Usually: expired token, missing ads_read/business_management scopes, "
             "or system user not assigned to ad accounts in Business Manager."
         )
         return {
