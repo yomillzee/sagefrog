@@ -8,6 +8,17 @@ from typing import Any
 
 from penn_config import PennDashboardConfig, load_penn_config
 
+# Built-in clients besides Penn (account IDs optional — set in Settings or DASHBOARD_CLIENTS).
+_BUILTIN_CLIENTS: dict[str, dict[str, Any]] = {
+    "demo": {
+        "label": "Demo Client",
+        "google_customer_id": "",
+        "linkedin_account_id": "",
+        "meta_account_id": "",
+        "ga4_client_key": "",
+    },
+}
+
 
 def _strip_env(val: str | None) -> str:
     if not val:
@@ -37,15 +48,25 @@ def _load_registry_from_env() -> dict[str, dict[str, Any]]:
 
 
 def list_client_slugs() -> list[str]:
-    """Known dashboard client slugs (env registry + built-in penn)."""
+    """Known dashboard client slugs (env registry + built-in clients)."""
     registry = _load_registry_from_env()
     slugs = set(registry.keys())
+    slugs.update(_BUILTIN_CLIENTS.keys())
     slugs.add("penn")
     return sorted(slugs)
 
 
+def list_dashboard_clients() -> list[tuple[str, str]]:
+    """(slug, label) pairs for admin dashboard links."""
+    return [(slug, client_label(slug)) for slug in list_client_slugs()]
+
+
 def client_label(slug: str) -> str:
     slug = slug.strip().lower()
+    if slug in _BUILTIN_CLIENTS:
+        label = _strip_env(str(_BUILTIN_CLIENTS[slug].get("label") or ""))
+        if label:
+            return label
     registry = _load_registry_from_env()
     if slug in registry:
         label = _strip_env(str(registry[slug].get("label") or ""))
@@ -67,11 +88,11 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
         return load_penn_config()
 
     registry = _load_registry_from_env()
-    entry = registry.get(slug) or {}
+    entry: dict[str, Any] = dict(registry.get(slug) or _BUILTIN_CLIENTS.get(slug) or {})
     google = _strip_env(str(entry.get("google_customer_id") or "")).replace("-", "")
     linkedin = _strip_env(str(entry.get("linkedin_account_id") or ""))
     meta = _strip_env(str(entry.get("meta_account_id") or ""))
-    ga4_key = _strip_env(str(entry.get("ga4_client_key") or "")) or slug
+    ga4_key = _strip_env(str(entry.get("ga4_client_key") or "")) or (slug if slug in _BUILTIN_CLIENTS else "")
     label = _strip_env(str(entry.get("label") or "")) or client_label(slug)
 
     try:
@@ -92,7 +113,7 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
     except Exception:
         pass
 
-    if not any((google, linkedin, meta, ga4_key)):
+    if slug not in _BUILTIN_CLIENTS and not any((google, linkedin, meta, ga4_key)):
         raise RuntimeError(
             f"Client '{slug}' is not configured. Set DASHBOARD_CLIENTS or save account IDs in settings."
         )
@@ -103,5 +124,5 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
         google_customer_id=google or None,
         linkedin_account_id=linkedin or None,
         meta_account_id=meta or None,
-        ga4_client_key=ga4_key,
+        ga4_client_key=ga4_key or slug,
     )
