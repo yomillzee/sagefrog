@@ -132,7 +132,7 @@ One Business Manager token lists **all client ad accounts** under that BM. Set i
 
 - `META_APP_ID` — Meta app ID
 - `META_APP_SECRET` — Meta app secret
-- `META_ACCESS_TOKEN` — system user token with `ads_read`, `read_insights`, `business_management`
+- Connect Meta in Settings stores a long-lived token with `ads_read` and `business_management`
 - `META_BUSINESS_ID` — e.g. `1064007753695517`
 - `META_API_VERSION` (optional, default `v21.0`)
 
