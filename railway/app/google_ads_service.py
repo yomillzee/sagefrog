@@ -23,8 +23,9 @@ def build_client(env: GoogleAdsEnv | None = None) -> GoogleAdsClient:
     - GOOGLE_ADS_DEVELOPER_TOKEN
     - GOOGLE_ADS_CLIENT_ID
     - GOOGLE_ADS_CLIENT_SECRET
-    - GOOGLE_ADS_REFRESH_TOKEN
     - GOOGLE_ADS_LOGIN_CUSTOMER_ID (optional)
+
+    Refresh token comes from OAuth Connect (Postgres), not Railway env.
     """
     env = env or load_google_ads_env()
     cfg: dict[str, Any] = {
@@ -69,8 +70,8 @@ def test_refresh_token(env: GoogleAdsEnv | None = None) -> dict[str, Any]:
         )
         if "invalid_grant" in err.lower():
             hint = (
-                "invalid_grant: regenerate refresh token with the same GOOGLE_CLIENT_ID / "
-                "GOOGLE_CLIENT_SECRET in Railway, using scope adwords."
+                "invalid_grant: Disconnect and reconnect Google Ads in dashboard Settings "
+                "(same GOOGLE_ADS_CLIENT_ID / GOOGLE_ADS_CLIENT_SECRET in Railway)."
             )
         return {
             "ok": False,

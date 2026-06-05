@@ -1581,7 +1581,6 @@ def dashboard_client_settings_post(
     linkedin_account_id: str = Form(""),
     meta_account_id: str = Form(""),
     ga4_client_key: str = Form(""),
-    meta_access_token: str = Form(""),
     business_line_rules_text: str = Form("", alias="business_line_rules"),
 ):
     slug = _validate_client_slug(client_slug)
@@ -1622,63 +1621,6 @@ def dashboard_client_settings_post(
                 db_config_updated_at=db_row.updated_at if db_row else None,
                 **session_kw,
             )
-        )
-
-    if act == "save_meta_token":
-        if web_users.enabled() and not session_is_admin:
-            cfg = dashboard_settings.load_settings_config(slug)
-            return HTMLResponse(
-                dashboard_settings.render_settings_html(
-                    client_slug=slug,
-                    cfg=cfg,
-                    flash_error="Only admins can save Meta tokens.",
-                    **session_kw,
-                ),
-                status_code=403,
-            )
-        if not oauth_store.enabled():
-            cfg = dashboard_settings.load_settings_config(slug)
-            return HTMLResponse(
-                dashboard_settings.render_settings_html(
-                    client_slug=slug,
-                    cfg=cfg,
-                    flash_error="DATABASE_URL is required to store OAuth tokens.",
-                    **session_kw,
-                ),
-                status_code=503,
-            )
-        token = (meta_access_token or "").strip()
-        if len(token) < 20:
-            cfg = dashboard_settings.load_settings_config(slug)
-            return HTMLResponse(
-                dashboard_settings.render_settings_html(
-                    client_slug=slug,
-                    cfg=cfg,
-                    flash_error="Meta access token looks too short.",
-                    **session_kw,
-                ),
-                status_code=400,
-            )
-        oauth_store.save_tokens(
-            "meta",
-            access_token=token,
-            scopes=oauth_flows.META_SCOPES,
-            connected_by=session_email or "admin",
-        )
-        audit_log.record(
-            action="oauth.connected",
-            actor_email=session_email,
-            detail={"platform": "meta", "method": "manual_paste"},
-            **audit_log.request_context(request),
-        )
-        if use_session:
-            return RedirectResponse(
-                url=f"/dashboard/{slug}/settings?oauth_connected=meta",
-                status_code=303,
-            )
-        return RedirectResponse(
-            url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&oauth_connected=meta",
-            status_code=303,
         )
 
     if act == "save":

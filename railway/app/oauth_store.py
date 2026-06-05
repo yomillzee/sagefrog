@@ -222,7 +222,7 @@ def delete_platform(platform: str) -> bool:
         return bool(getattr(cur, "rowcount", 0))
 
 
-def public_status(platform: str, *, env_has_token: bool) -> OAuthCredentialPublic:
+def public_status(platform: str) -> OAuthCredentialPublic:
     slug = _normalize_platform(platform)
     row = _get_row(slug)
     db_connected = bool(
@@ -232,15 +232,8 @@ def public_status(platform: str, *, env_has_token: bool) -> OAuthCredentialPubli
             or (row.get("access_token_enc") and _decrypt(row.get("access_token_enc")))
         )
     )
-    if env_has_token and db_connected:
-        source = "env+database"
-    elif env_has_token:
-        source = "env"
-    elif db_connected:
-        source = "database"
-    else:
-        source = "none"
-    connected = env_has_token or db_connected
+    source = "database" if db_connected else "none"
+    connected = db_connected
     connected_at = row.get("connected_at") if row else None
     updated_at = row.get("updated_at") if row else None
     return OAuthCredentialPublic(

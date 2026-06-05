@@ -105,16 +105,6 @@ def build_api_status() -> dict[str, Any]:
     }
 
 
-def _oauth_env_has_token(platform: str) -> bool:
-    if platform == "google_ads":
-        return bool(google_auth._get_env(*google_auth._ENV_ALIASES["refresh_token"]))
-    if platform == "linkedin":
-        return bool(linkedin_auth._get_env(*linkedin_auth._ENV_ALIASES["refresh_token"]))
-    if platform == "meta":
-        return bool(meta_auth._get_env(*meta_auth._ENV_ALIASES["access_token"]))
-    return False
-
-
 def _oauth_platform_card_html(
     *,
     platform: str,
@@ -125,8 +115,7 @@ def _oauth_platform_card_html(
     env_summary: dict[str, Any],
 ) -> str:
     prereq = oauth_flows.connect_prerequisites(platform)
-    env_has = _oauth_env_has_token(platform)
-    pub = oauth_store.public_status(platform, env_has_token=env_has)
+    pub = oauth_store.public_status(platform)
     return_to = quote(settings_url, safe="")
     status_badge = _status_badge(pub.connected, ok_label="Connected", fail_label="Not connected")
     source = _esc(pub.source)
@@ -210,26 +199,11 @@ def _oauth_connect_section_html(
             env_summary=api["meta"]["env"],
         ),
     ]
-    meta_manual = ""
-    if can_manage_oauth and oauth_store.enabled():
-        meta_manual = f"""
-        <details class="meta-manual">
-          <summary>Or paste a Meta system-user token manually</summary>
-          <form method="post" action="{settings_url}" class="meta-token-form">
-            <input type="hidden" name="action" value="save_meta_token">
-            <label for="meta_access_token">META_ACCESS_TOKEN</label>
-            <input id="meta_access_token" name="meta_access_token" type="password"
-              autocomplete="off" placeholder="Long-lived token from Business Manager">
-            <button type="submit" class="btn secondary">Save Meta token</button>
-          </form>
-        </details>
-        """
     return f"""
     <section class="panel panel--primary">
       <h2>1. Connect ad platforms</h2>
-      <p class="muted">Sign in as admin, then click Connect for each platform. App IDs stay in Railway; tokens save to Postgres.</p>
+      <p class="muted">Sign in as admin, then click Connect for each platform. App IDs stay in Railway; tokens save to Postgres only.</p>
       <div class="oauth-grid">{"".join(cards)}</div>
-      {meta_manual}
     </section>
     """
 
