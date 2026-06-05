@@ -12,8 +12,9 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
-import web_users
 import audit_log
+import client_config
+import web_users
 from web_users import WebUser
 
 SESSION_USER_ID = "user_id"
@@ -289,6 +290,11 @@ def render_admin_page(
         or '<tr><td colspan="5" class="muted">No events yet.</td></tr>'
     )
 
+    dashboard_links = "\n".join(
+        f'        <li><a href="/dashboard/{_esc(slug)}">{_esc(label)}</a></li>'
+        for slug, label in client_config.list_dashboard_clients()
+    ) or '        <li class="muted">No dashboards configured.</li>'
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -338,8 +344,6 @@ def render_admin_page(
       <span class="who">Signed in as {_esc(user.email)}</span>
     </div>
     <div>
-      <a href="/dashboard/penn">Penn dashboard</a>
-      ·
       <form method="post" action="/logout" style="display:inline"><button type="submit" class="link">Sign out</button></form>
     </div>
   </header>
@@ -348,8 +352,7 @@ def render_admin_page(
     <section>
       <h2>Dashboards</h2>
       <ul class="links">
-        <li><a href="/dashboard/penn">Penn Community Bank</a></li>
-        <li><a href="/dashboard/penn/settings">Penn settings</a></li>
+{dashboard_links}
       </ul>
     </section>
     <section>

@@ -26,6 +26,7 @@ import meta_service
 import warehouse
 from dates_util import resolve_date_range
 from penn_config import PennDashboardConfig, load_penn_config
+import client_config
 from penn_business_lines import (
     active_business_line_catalog,
     active_platform_catalog,
@@ -347,8 +348,13 @@ def _sync_meta(trigger: str) -> dict[str, str]:
     }
 
 
-def refresh_penn(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = "manual_full") -> dict[str, Any]:
-    cfg = load_penn_config()
+def refresh_client(
+    *,
+    client_slug: str,
+    date_range: str = "LAST_30_DAYS",
+    sync_trigger: str = "manual_full",
+) -> dict[str, Any]:
+    cfg = client_config.load_client_config(client_slug)
     start, end, preset = resolve_date_range(date_range)
 
     payload: dict[str, Any] = {
@@ -473,7 +479,10 @@ def refresh_penn(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = "manua
             payload["platform_totals"]["meta"] = meta_totals
 
     payload["breakdowns"] = breakdowns
-    payload["business_line_campaigns"] = build_business_line_campaigns(breakdowns)
+    if cfg.client_key == "penn":
+        payload["business_line_campaigns"] = build_business_line_campaigns(breakdowns)
+    else:
+        payload["business_line_campaigns"] = []
 
     if cfg.ga4_client_key:
         try:
@@ -504,12 +513,21 @@ def refresh_penn(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = "manua
     return payload
 
 
-def refresh_penn_quick(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = "manual_quick") -> dict[str, Any]:
+def refresh_penn(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = "manual_full") -> dict[str, Any]:
+    return refresh_client(client_slug="penn", date_range=date_range, sync_trigger=sync_trigger)
+
+
+def refresh_client_quick(
+    *,
+    client_slug: str,
+    date_range: str = "LAST_30_DAYS",
+    sync_trigger: str = "manual_quick",
+) -> dict[str, Any]:
     """
     Warehouse-only refresh: sync metrics_daily from ad APIs + GA4 BQ, update charts and summary cards.
     Keeps campaign/ad breakdowns and GA4 attribution from the last full refresh.
     """
-    cfg = load_penn_config()
+    cfg = client_config.load_client_config(client_slug)
     start, end, preset = resolve_date_range(date_range)
     existing = dashboard_snapshots.get_snapshot(cfg.client_key) or {}
     breakdowns = existing.get("breakdowns") or {}
@@ -533,7 +551,7 @@ def refresh_penn_quick(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = 
         "errors": {},
         "ga4_attribution": existing.get("ga4_attribution"),
         "business_line_campaigns": existing.get("business_line_campaigns")
-        or build_business_line_campaigns(breakdowns),
+        or (build_business_line_campaigns(breakdowns) if cfg.client_key == "penn" else []),
         "refresh_mode": "warehouse",
     }
     if existing.get("insights"):
@@ -552,6 +570,10 @@ def refresh_penn_quick(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = 
 
     dashboard_snapshots.save_snapshot(cfg.client_key, payload)
     return payload
+
+
+def refresh_penn_quick(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = "manual_quick") -> dict[str, Any]:
+    return refresh_client_quick(client_slug="penn", date_range=date_range, sync_trigger=sync_trigger)
 
 
 def _fmt_money(value: float) -> str:
@@ -1026,8 +1048,8 @@ def save_penn_insights(
     client_key: str = "penn",
 ) -> dict[str, Any]:
     """Persist insights on the dashboard snapshot without bumping data refresh time."""
-    cfg = load_penn_config()
-    key = client_key or cfg.client_key
+    key = (client_key or "penn").strip().lower()
+    cfg = client_config.load_client_config(key)
     existing = dashboard_snapshots.get_snapshot(key) or {
         "client_key": key,
         "label": cfg.label,
@@ -1135,8 +1157,9 @@ def _sidebar_nav_html(
     active: str,
     access_key: str | None,
     use_session: bool,
+    show_business_line: bool = True,
 ) -> str:
-    """Sidebar nav: Overview, By business line, Settings."""
+    """Sidebar nav: Overview, By business line (Penn only), Settings."""
     settings_url = _settings_page_url(
         client_slug=client_slug,
         access_key=access_key,
@@ -1159,13 +1182,21 @@ def _sidebar_nav_html(
 
     if active == "settings":
         overview_el = f'<a href="{overview_url}" class="sidebar-nav-btn sidebar-nav-link">{icon_overview}Overview</a>'
-        bl_el = f'<a href="{bl_url}" class="sidebar-nav-btn sidebar-nav-link">{icon_bl}By business line</a>'
+        bl_el = (
+            f'<a href="{bl_url}" class="sidebar-nav-btn sidebar-nav-link">{icon_bl}By business line</a>'
+            if show_business_line
+            else ""
+        )
         settings_el = f'<span class="sidebar-nav-btn active" aria-current="page">{icon_settings}Settings</span>'
     else:
         overview_active = active == "overview"
         bl_active = active == "business-line"
         overview_el = f'<button type="button" class="sidebar-nav-btn{" active" if overview_active else ""}" data-tab="platform" role="tab" aria-selected="{"true" if overview_active else "false"}">{icon_overview}Overview</button>'
-        bl_el = f'<button type="button" class="sidebar-nav-btn{" active" if bl_active else ""}" data-tab="business-line" role="tab" aria-selected="{"true" if bl_active else "false"}">{icon_bl}By business line</button>'
+        bl_el = (
+            f'<button type="button" class="sidebar-nav-btn{" active" if bl_active else ""}" data-tab="business-line" role="tab" aria-selected="{"true" if bl_active else "false"}">{icon_bl}By business line</button>'
+            if show_business_line
+            else ""
+        )
         settings_el = f'<a href="{settings_url or "#"}" class="sidebar-nav-btn sidebar-nav-link">{icon_settings}Settings</a>'
 
     return f"""
@@ -1210,14 +1241,18 @@ def render_client_shell_page(
     session_is_admin: bool = False,
     client_meta_tip: str = "",
     extra_css: str = "",
+    show_business_line: bool | None = None,
 ) -> str:
     """Shared dashboard chrome for settings and other child pages."""
     account_nav = _session_account_html(email=session_email, is_admin=session_is_admin)
+    if show_business_line is None:
+        show_business_line = client_slug.strip().lower() == "penn"
     sidebar_nav = _sidebar_nav_html(
         client_slug=client_slug,
         active=active_nav,
         access_key=access_key,
         use_session=use_session,
+        show_business_line=show_business_line,
     )
     tip = client_meta_tip or _esc(label)
     return f"""<!DOCTYPE html>
@@ -1578,9 +1613,73 @@ def _breakdowns_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {platform: {"campaign": rows} for platform, rows in legacy.items()}
 
 
+def _business_line_tab_panel_html() -> str:
+    return """
+          <div id="tab-business-line" class="tab-panel" role="tabpanel">
+            <div class="bl-summary" id="blSummary"></div>
+            <div class="bl-layout">
+              <aside class="bl-filters-col">
+                <section class="filter-panel bl-filters">
+                  <h3>Filters</h3>
+                  <div class="filter-group">
+                    <div class="filter-group-head">
+                      <span class="filter-label">Business line</span>
+                      <button type="button" class="filter-link" id="blSelectAll">All</button>
+                      <button type="button" class="filter-link" id="blClearAll">None</button>
+                    </div>
+                    <div id="blFilters" class="filter-checks"></div>
+                  </div>
+                  <div class="filter-group">
+                    <div class="filter-group-head">
+                      <span class="filter-label">Channel</span>
+                      <button type="button" class="filter-link" id="channelSelectAll">All</button>
+                      <button type="button" class="filter-link" id="channelClearAll">None</button>
+                    </div>
+                    <div id="channelFilters" class="filter-checks"></div>
+                  </div>
+                  <label class="filter-zero-spend">
+                    <input type="checkbox" id="showZeroSpend">
+                    Show inactive / $0 spend
+                  </label>
+                  <div class="filter-status" id="filterStatus"></div>
+                </section>
+              </aside>
+              <div class="bl-main">
+                <section class="panel platform-panel">
+                  <div class="panel-head">
+                    <h2>Campaign performance</h2>
+                    <span class="badge" id="blRowCount">0 rows</span>
+                  </div>
+                  <p class="table-note">Select business lines and channels in the filters. Nothing is selected by default — check items to populate the table. Click a campaign row to drill into ad groups, ad sets, or ads.</p>
+                  <div class="table-wrap">
+                    <table class="data-table" id="blTable">
+                      <thead>
+                        <tr>
+                          <th class="chevron-col"></th>
+                          <th class="sortable" data-sort="platform" scope="col" aria-sort="none">Platform<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="business_line" scope="col" aria-sort="none">Business line<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="name" scope="col" aria-sort="none">Campaign<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="spend" scope="col" aria-sort="none">Spend<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="clicks" scope="col" aria-sort="none">Clicks<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="impressions" scope="col" aria-sort="none">Impressions<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="ctr" scope="col" aria-sort="none">CTR<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="conversions" scope="col" aria-sort="none">Conv.<span class="sort-icon" aria-hidden="true"></span></th>
+                          <th class="sortable" data-sort="cpc" scope="col" aria-sort="none">CPC<span class="sort-icon" aria-hidden="true"></span></th>
+                        </tr>
+                      </thead>
+                      <tbody id="blTableBody" class="tree-table"></tbody>
+                    </table>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>"""
+
+
 def render_penn_html(
     snapshot: dict[str, Any] | None,
     *,
+    client_slug: str = "penn",
     access_key: str | None = None,
     use_session: bool = False,
     session_email: str | None = None,
@@ -1588,10 +1687,16 @@ def render_penn_html(
     flash_message: str | None = None,
 ) -> str:
     """use_session: refresh forms omit ?key= (cookie auth). access_key: legacy shared secret."""
+    slug = (client_slug or "penn").strip().lower()
+    show_business_line = slug == "penn"
     account_nav = _session_account_html(email=session_email, is_admin=session_is_admin)
     if not snapshot:
+        try:
+            label = client_config.client_label(slug)
+        except ValueError:
+            label = slug.replace("-", " ").title()
         settings_page = _settings_page_url(
-            client_slug="penn", access_key=access_key, use_session=use_session
+            client_slug=slug, access_key=access_key, use_session=use_session
         )
         empty_body = f"""
         <section class="panel">
@@ -1600,16 +1705,17 @@ def render_penn_html(
           <p><a class="dash-link" href="{settings_page}">Go to Settings →</a></p>
         </section>"""
         return render_client_shell_page(
-            client_slug="penn",
-            label="Penn Community Bank",
+            client_slug=slug,
+            label=label,
             active_nav="overview",
             page_title="Overview",
-            page_subtitle="Penn Community Bank · Paid media performance",
+            page_subtitle=f"{label} · Paid media performance",
             content_html=empty_body,
             access_key=access_key,
             use_session=use_session,
             session_email=session_email,
             session_is_admin=session_is_admin,
+            show_business_line=show_business_line,
             extra_css="""
     .panel { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
     .panel h2 { margin: 0 0 10px; font-size: 1.05rem; color: var(--navy); }
@@ -1619,8 +1725,9 @@ def render_penn_html(
             """,
         )
 
-    label = snapshot.get("label") or "Penn Community Bank"
-    client_slug = str(snapshot.get("client_key") or "penn")
+    label = snapshot.get("label") or client_config.client_label(slug)
+    client_slug = str(snapshot.get("client_key") or slug)
+    show_business_line = client_slug == "penn"
     dr = snapshot.get("date_range") or {}
     refreshed = snapshot.get("refreshed_at") or "—"
     preset = dr.get("preset") or ""
@@ -1728,9 +1835,11 @@ def render_penn_html(
         active="overview",
         access_key=access_key,
         use_session=use_session,
+        show_business_line=show_business_line,
     )
     overview_hero = _overview_hero_row_html(aggregated, snapshot)
     client_meta_tip = _esc(f"Date range: {range_label}\nLast refreshed: {refreshed} UTC")
+    business_line_tab_html = _business_line_tab_panel_html() if show_business_line else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -2995,65 +3104,7 @@ def render_penn_html(
             {breakdown_html}
           </div>
 
-          <div id="tab-business-line" class="tab-panel" role="tabpanel">
-            <div class="bl-summary" id="blSummary"></div>
-            <div class="bl-layout">
-              <aside class="bl-filters-col">
-                <section class="filter-panel bl-filters">
-                  <h3>Filters</h3>
-                  <div class="filter-group">
-                    <div class="filter-group-head">
-                      <span class="filter-label">Business line</span>
-                      <button type="button" class="filter-link" id="blSelectAll">All</button>
-                      <button type="button" class="filter-link" id="blClearAll">None</button>
-                    </div>
-                    <div id="blFilters" class="filter-checks"></div>
-                  </div>
-                  <div class="filter-group">
-                    <div class="filter-group-head">
-                      <span class="filter-label">Channel</span>
-                      <button type="button" class="filter-link" id="channelSelectAll">All</button>
-                      <button type="button" class="filter-link" id="channelClearAll">None</button>
-                    </div>
-                    <div id="channelFilters" class="filter-checks"></div>
-                  </div>
-                  <label class="filter-zero-spend">
-                    <input type="checkbox" id="showZeroSpend">
-                    Show inactive / $0 spend
-                  </label>
-                  <div class="filter-status" id="filterStatus"></div>
-                </section>
-              </aside>
-              <div class="bl-main">
-                <section class="panel platform-panel">
-                  <div class="panel-head">
-                    <h2>Campaign performance</h2>
-                    <span class="badge" id="blRowCount">0 rows</span>
-                  </div>
-                  <p class="table-note">Select business lines and channels in the filters. Nothing is selected by default — check items to populate the table. Click a campaign row to drill into ad groups, ad sets, or ads.</p>
-                  <div class="table-wrap">
-                    <table class="data-table" id="blTable">
-                      <thead>
-                        <tr>
-                          <th class="chevron-col"></th>
-                          <th class="sortable" data-sort="platform" scope="col" aria-sort="none">Platform<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="business_line" scope="col" aria-sort="none">Business line<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="name" scope="col" aria-sort="none">Campaign<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="spend" scope="col" aria-sort="none">Spend<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="clicks" scope="col" aria-sort="none">Clicks<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="impressions" scope="col" aria-sort="none">Impressions<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="ctr" scope="col" aria-sort="none">CTR<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="conversions" scope="col" aria-sort="none">Conv.<span class="sort-icon" aria-hidden="true"></span></th>
-                          <th class="sortable" data-sort="cpc" scope="col" aria-sort="none">CPC<span class="sort-icon" aria-hidden="true"></span></th>
-                        </tr>
-                      </thead>
-                      <tbody id="blTableBody" class="tree-table"></tbody>
-                    </table>
-                  </div>
-                </section>
-              </div>
-            </div>
-          </div>
+          {business_line_tab_html}
         </div>
       </div>
     </div>
@@ -3085,6 +3136,8 @@ def render_penn_html(
         return fallback;
       }}
     }}
+
+    const SHOW_BUSINESS_LINE = {'true' if show_business_line else 'false'};
 
     const breakdowns = readJson('breakdowns-data', {{}});
     const ga4CampaignMetrics = readJson('ga4-campaign-metrics', {{}});
@@ -3178,7 +3231,7 @@ def render_penn_html(
     }}
 
     const initialTab = new URLSearchParams(window.location.search).get('tab');
-    if (initialTab === 'business-line') setActiveTab('business-line');
+    if (SHOW_BUSINESS_LINE && initialTab === 'business-line') setActiveTab('business-line');
 
     const channelState = new Set();
     const blState = new Set();

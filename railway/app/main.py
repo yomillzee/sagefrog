@@ -260,7 +260,8 @@ def root() -> dict:
         "login": "/login",
         "admin": "/admin",
         "dashboard_penn": "/dashboard/penn",
-        "dashboard_penn_settings": "/dashboard/penn/settings",
+        "dashboard_demo": "/dashboard/demo",
+        "dashboard_client_settings": "/dashboard/{client_slug}/settings",
         "dashboard_penn_legacy_key": "/dashboard/penn?key=<CRON_SECRET>",
         "internal_sync_penn": "POST /internal/sync-penn (header X-Cron-Secret)",
         "ga4_env": "/ga4/env",
@@ -1735,17 +1736,19 @@ def dashboard_client_settings_post(
 
 
 @app.get(
-    "/dashboard/penn",
-    summary="Penn ads performance dashboard (HTML)",
+    "/dashboard/{client_slug}",
+    summary="Client ads performance dashboard (HTML)",
     response_class=HTMLResponse,
     include_in_schema=False,
 )
-def dashboard_penn(
+def dashboard_client(
+    client_slug: str,
     request: Request,
     key: str | None = None,
     synced: str | None = None,
     insights_saved: str | None = None,
 ):
+    slug = _validate_client_slug(client_slug)
     if insights_saved:
         flash = "Insights saved."
     elif synced:
@@ -1753,39 +1756,44 @@ def dashboard_penn(
     else:
         flash = None
     if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug="penn", key=key)
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
         if isinstance(auth, RedirectResponse):
             return auth
-        snapshot = dashboard_snapshots.get_snapshot("penn")
+        snapshot = dashboard_snapshots.get_snapshot(slug)
         return HTMLResponse(
             dashboard_service.render_penn_html(
                 snapshot,
+                client_slug=slug,
                 flash_message=flash,
                 **_penn_html_session_kwargs(auth),
             )
         )
     dashboard_service.verify_dashboard_key(key)
-    snapshot = dashboard_snapshots.get_snapshot("penn")
+    snapshot = dashboard_snapshots.get_snapshot(slug)
     return HTMLResponse(
-        dashboard_service.render_penn_html(snapshot, access_key=key, flash_message=flash)
+        dashboard_service.render_penn_html(
+            snapshot, client_slug=slug, access_key=key, flash_message=flash
+        )
     )
 
 
 @app.post(
-    "/dashboard/penn/refresh",
-    summary="Refresh Penn dashboard snapshot (rate-limited)",
+    "/dashboard/{client_slug}/refresh",
+    summary="Refresh client dashboard snapshot (rate-limited)",
     response_class=HTMLResponse,
     response_model=None,
     include_in_schema=False,
 )
-def dashboard_penn_refresh(
+def dashboard_client_refresh(
+    client_slug: str,
     request: Request,
     key: str | None = None,
     date_range: str = "LAST_30_DAYS",
     quick: str | None = Form(None),
 ):
+    slug = _validate_client_slug(client_slug)
     if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug="penn", key=key)
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
         if isinstance(auth, RedirectResponse):
             return auth
         access_key = auth.access_key
@@ -1795,10 +1803,10 @@ def dashboard_penn_refresh(
         access_key = key
         use_session = False
 
-    snapshot = dashboard_snapshots.get_snapshot("penn")
+    snapshot = dashboard_snapshots.get_snapshot(slug)
     is_quick = str(quick or "").strip().lower() in ("1", "true", "yes", "on")
     allowed, remaining = dashboard_service.refresh_cooldown_status(snapshot, quick=is_quick)
-    penn_kw = (
+    html_kw = (
         _penn_html_session_kwargs(auth)
         if web_users.enabled()
         else {"access_key": access_key, "use_session": use_session}
@@ -1809,8 +1817,9 @@ def dashboard_penn_refresh(
         return HTMLResponse(
             dashboard_service.render_penn_html(
                 snapshot,
+                client_slug=slug,
                 flash_message=f"Please wait ~{mins} minutes before another {kind} refresh.",
-                **penn_kw,
+                **html_kw,
             ),
             status_code=429,
         )
@@ -1819,41 +1828,48 @@ def dashboard_penn_refresh(
         preset = "LAST_30_DAYS"
     try:
         if is_quick:
-            dashboard_service.refresh_penn_quick(date_range=preset, sync_trigger="manual_quick")
+            dashboard_service.refresh_client_quick(
+                client_slug=slug, date_range=preset, sync_trigger="manual_quick"
+            )
         else:
-            dashboard_service.refresh_penn(date_range=preset, sync_trigger="manual_full")
+            dashboard_service.refresh_client(
+                client_slug=slug, date_range=preset, sync_trigger="manual_full"
+            )
     except Exception as e:
         return HTMLResponse(
             dashboard_service.render_penn_html(
                 snapshot,
+                client_slug=slug,
                 flash_message=f"Refresh failed: {str(e)[:200]}",
-                **penn_kw,
+                **html_kw,
             ),
             status_code=400,
         )
     if use_session:
-        return RedirectResponse(url="/dashboard/penn?synced=1", status_code=303)
+        return RedirectResponse(url=f"/dashboard/{slug}?synced=1", status_code=303)
     return RedirectResponse(
-        url=f"/dashboard/penn?key={quote(access_key or '', safe='')}&synced=1",
+        url=f"/dashboard/{slug}?key={quote(access_key or '', safe='')}&synced=1",
         status_code=303,
     )
 
 
 @app.post(
-    "/dashboard/penn/insights",
-    summary="Save Penn dashboard insights text",
+    "/dashboard/{client_slug}/insights",
+    summary="Save client dashboard insights text",
     response_class=HTMLResponse,
     response_model=None,
     include_in_schema=False,
 )
-def dashboard_penn_insights(
+def dashboard_client_insights(
+    client_slug: str,
     request: Request,
     body: str = Form(""),
     key: str | None = None,
 ):
+    slug = _validate_client_slug(client_slug)
     auth = None
     if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug="penn", key=key)
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
         if isinstance(auth, RedirectResponse):
             return auth
         access_key = auth.access_key
@@ -1863,10 +1879,11 @@ def dashboard_penn_insights(
             session_is_admin=bool(user and user.role == "admin"),
             access_key=access_key,
         ):
-            snapshot = dashboard_snapshots.get_snapshot("penn")
+            snapshot = dashboard_snapshots.get_snapshot(slug)
             return HTMLResponse(
                 dashboard_service.render_penn_html(
                     snapshot,
+                    client_slug=slug,
                     flash_message="Only admins can edit insights.",
                     **_penn_html_session_kwargs(auth),
                 ),
@@ -1880,10 +1897,10 @@ def dashboard_penn_insights(
         updated_by = "dashboard_key"
 
     try:
-        dashboard_service.save_penn_insights(body, updated_by=updated_by)
+        dashboard_service.save_penn_insights(body, updated_by=updated_by, client_key=slug)
     except Exception as e:
-        snapshot = dashboard_snapshots.get_snapshot("penn")
-        penn_kw = (
+        snapshot = dashboard_snapshots.get_snapshot(slug)
+        html_kw = (
             _penn_html_session_kwargs(auth)
             if web_users.enabled()
             else {"access_key": access_key, "use_session": use_session}
@@ -1891,34 +1908,60 @@ def dashboard_penn_insights(
         return HTMLResponse(
             dashboard_service.render_penn_html(
                 snapshot,
+                client_slug=slug,
                 flash_message=f"Could not save insights: {str(e)[:200]}",
-                **penn_kw,
+                **html_kw,
             ),
             status_code=400,
         )
 
     if use_session:
-        return RedirectResponse(url="/dashboard/penn?insights_saved=1", status_code=303)
+        return RedirectResponse(url=f"/dashboard/{slug}?insights_saved=1", status_code=303)
     return RedirectResponse(
-        url=f"/dashboard/penn?key={quote(access_key or '', safe='')}&insights_saved=1",
+        url=f"/dashboard/{slug}?key={quote(access_key or '', safe='')}&insights_saved=1",
         status_code=303,
     )
 
 
 @app.get(
-    "/dashboard/penn.json",
-    summary="Penn dashboard snapshot JSON",
+    "/dashboard/{client_slug}.json",
+    summary="Client dashboard snapshot JSON",
     include_in_schema=False,
 )
-def dashboard_penn_json(request: Request, key: str | None = None) -> dict:
+def dashboard_client_json(client_slug: str, request: Request, key: str | None = None) -> dict:
+    slug = _validate_client_slug(client_slug)
     if web_users.enabled():
-        web_auth.authenticate_dashboard_api(request, client_slug="penn", key=key)
+        web_auth.authenticate_dashboard_api(request, client_slug=slug, key=key)
     else:
         dashboard_service.verify_dashboard_key(key)
-    snapshot = dashboard_snapshots.get_snapshot("penn")
+    snapshot = dashboard_snapshots.get_snapshot(slug)
     if not snapshot:
-        raise HTTPException(status_code=404, detail="No dashboard snapshot yet. Run POST /internal/sync-penn.")
+        raise HTTPException(
+            status_code=404,
+            detail=f"No dashboard snapshot yet for '{slug}'. Run a refresh from Settings.",
+        )
     return snapshot
+
+
+@app.get(
+    "/dashboard/penn",
+    summary="Penn ads performance dashboard (HTML, legacy alias)",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def dashboard_penn_legacy(
+    request: Request,
+    key: str | None = None,
+    synced: str | None = None,
+    insights_saved: str | None = None,
+):
+    return dashboard_client(
+        client_slug="penn",
+        request=request,
+        key=key,
+        synced=synced,
+        insights_saved=insights_saved,
+    )
 
 
 @app.get(
