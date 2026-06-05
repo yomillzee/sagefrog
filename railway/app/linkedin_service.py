@@ -207,8 +207,8 @@ def test_refresh_token(env: LinkedInEnv | None = None) -> dict[str, Any]:
         )
         if "invalid_grant" in err.lower():
             hint = (
-                "invalid_grant: regenerate refresh token with the same LINKEDIN_CLIENT_ID / "
-                "LINKEDIN_CLIENT_SECRET in Railway."
+                "invalid_grant: Disconnect and reconnect LinkedIn in dashboard Settings "
+                "(same LINKEDIN_CLIENT_ID / LINKEDIN_CLIENT_SECRET in Railway)."
             )
         return {
             "ok": False,

@@ -9,7 +9,6 @@ _ENV_ALIASES: dict[str, tuple[str, ...]] = {
     "login_customer_id": ("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "GOOGLE_LOGIN_CUSTOMER_ID"),
     "client_id": ("GOOGLE_ADS_CLIENT_ID", "GOOGLE_CLIENT_ID"),
     "client_secret": ("GOOGLE_ADS_CLIENT_SECRET", "GOOGLE_CLIENT_SECRET"),
-    "refresh_token": ("GOOGLE_ADS_REFRESH_TOKEN", "GOOGLE_REFRESH_TOKEN"),
 }
 
 
@@ -59,9 +58,6 @@ def load_google_ads_env() -> GoogleAdsEnv:
 
 
 def _resolve_refresh_token() -> str:
-    env_token = _get_env(*_ENV_ALIASES["refresh_token"])
-    if env_token:
-        return env_token
     try:
         import oauth_store
 
@@ -71,14 +67,12 @@ def _resolve_refresh_token() -> str:
     except Exception:
         pass
     raise RuntimeError(
-        "Missing Google Ads refresh token. Connect Google Ads in dashboard settings or set "
-        "GOOGLE_ADS_REFRESH_TOKEN in Railway."
+        "Missing Google Ads refresh token. Connect Google Ads in dashboard settings "
+        "(Settings → Connect Google Ads)."
     )
 
 
 def _has_refresh_token() -> bool:
-    if _get_env(*_ENV_ALIASES["refresh_token"]):
-        return True
     try:
         import oauth_store
 
@@ -101,7 +95,6 @@ def creds_fingerprint() -> dict:
     """Safe hints to verify Railway values match what you minted (no full secrets)."""
     cid = _get_env(*_ENV_ALIASES["client_id"])
     secret = _get_env(*_ENV_ALIASES["client_secret"])
-    refresh = _get_env(*_ENV_ALIASES["refresh_token"])
 
     def token_hint(value: str | None, head: int = 10) -> dict | None:
         if not value:
@@ -119,6 +112,5 @@ def creds_fingerprint() -> dict:
             "length": len(secret) if secret else 0,
             "looks_like_gocspx": bool(secret and secret.startswith("GOCSPX-")),
         },
-        "refresh_token": token_hint(refresh, 12),
-        "refresh_token_looks_valid": bool(refresh and refresh.startswith("1//")),
+        "refresh_token_stored": _has_refresh_token(),
     }

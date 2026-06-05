@@ -6,7 +6,6 @@ from dataclasses import dataclass
 _ENV_ALIASES: dict[str, tuple[str, ...]] = {
     "client_id": ("LINKEDIN_CLIENT_ID",),
     "client_secret": ("LINKEDIN_CLIENT_SECRET",),
-    "refresh_token": ("LINKEDIN_REFRESH_TOKEN",),
     "version": ("LINKEDIN_VERSION",),
 }
 
@@ -54,9 +53,6 @@ def load_linkedin_env() -> LinkedInEnv:
 
 
 def _resolve_refresh_token() -> str:
-    env_token = _get_env(*_ENV_ALIASES["refresh_token"])
-    if env_token:
-        return env_token
     try:
         import oauth_store
 
@@ -66,15 +62,12 @@ def _resolve_refresh_token() -> str:
     except Exception:
         pass
     raise RuntimeError(
-        "Missing LinkedIn refresh token. Connect LinkedIn in dashboard settings or set "
-        "LINKEDIN_REFRESH_TOKEN in Railway."
+        "Missing LinkedIn refresh token. Connect LinkedIn in dashboard settings "
+        "(Settings → Connect LinkedIn)."
     )
 
 
 def _has_refresh_token() -> bool:
-    refresh = _get_env(*_ENV_ALIASES["refresh_token"])
-    if refresh:
-        return True
     try:
         import oauth_store
 
@@ -84,12 +77,11 @@ def _has_refresh_token() -> bool:
 
 
 def env_summary() -> dict:
-    refresh = _get_env(*_ENV_ALIASES["refresh_token"])
     has_refresh = _has_refresh_token()
     return {
         "has_client_id": bool(_get_env(*_ENV_ALIASES["client_id"])),
         "has_client_secret": bool(_get_env(*_ENV_ALIASES["client_secret"])),
         "has_refresh_token": has_refresh,
         "linkedin_version": _get_env(*_ENV_ALIASES["version"]) or "202509",
-        "refresh_token_looks_valid": bool(has_refresh and (not refresh or len(refresh) > 20)),
+        "refresh_token_stored": has_refresh,
     }

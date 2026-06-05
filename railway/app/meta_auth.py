@@ -6,7 +6,6 @@ from dataclasses import dataclass
 _ENV_ALIASES: dict[str, tuple[str, ...]] = {
     "app_id": ("META_APP_ID", "FACEBOOK_APP_ID"),
     "app_secret": ("META_APP_SECRET", "FACEBOOK_APP_SECRET"),
-    "access_token": ("META_ACCESS_TOKEN", "FACEBOOK_ACCESS_TOKEN"),
     "business_id": ("META_BUSINESS_ID", "FACEBOOK_BUSINESS_ID"),
     "api_version": ("META_API_VERSION", "FACEBOOK_API_VERSION"),
 }
@@ -57,9 +56,6 @@ def load_meta_env() -> MetaEnv:
 
 
 def _resolve_access_token() -> str:
-    env_token = _get_env(*_ENV_ALIASES["access_token"])
-    if env_token:
-        return env_token
     try:
         import oauth_store
 
@@ -69,14 +65,12 @@ def _resolve_access_token() -> str:
     except Exception:
         pass
     raise RuntimeError(
-        "Missing Meta access token. Connect Meta in dashboard settings or set "
-        "META_ACCESS_TOKEN in Railway."
+        "Missing Meta access token. Connect Meta in dashboard settings "
+        "(Settings → Connect Meta)."
     )
 
 
 def _has_access_token() -> bool:
-    if _get_env(*_ENV_ALIASES["access_token"]):
-        return True
     try:
         import oauth_store
 
@@ -86,7 +80,6 @@ def _has_access_token() -> bool:
 
 
 def env_summary() -> dict:
-    token = _get_env(*_ENV_ALIASES["access_token"])
     has_token = _has_access_token()
     business_id = _get_env(*_ENV_ALIASES["business_id"])
     return {
@@ -96,5 +89,5 @@ def env_summary() -> dict:
         "has_business_id": bool(business_id),
         "business_id": business_id,
         "meta_api_version": _get_env(*_ENV_ALIASES["api_version"]) or "v21.0",
-        "access_token_looks_valid": bool(has_token and (not token or len(token) > 20)),
+        "access_token_stored": has_token,
     }

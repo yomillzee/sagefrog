@@ -148,8 +148,7 @@ class CredsFingerprintResponse(BaseModel):
     client_id: dict | None = None
     client_id_looks_valid: bool = False
     client_secret: dict | None = None
-    refresh_token: dict | None = None
-    refresh_token_looks_valid: bool = False
+    refresh_token_stored: bool = False
 
 
 class YoutubeVideosRequest(BaseModel):
@@ -252,7 +251,7 @@ class LinkedInEnvSummary(BaseModel):
     has_client_secret: bool
     has_refresh_token: bool
     linkedin_version: str = "202604"
-    refresh_token_looks_valid: bool = False
+    refresh_token_stored: bool = False
 
 
 class LinkedInTestTokenResponse(BaseModel):
@@ -401,7 +400,7 @@ class MetaEnvSummary(BaseModel):
     has_business_id: bool
     business_id: str | None = None
     meta_api_version: str = "v21.0"
-    access_token_looks_valid: bool = False
+    access_token_stored: bool = False
 
 
 class MetaTestTokenResponse(BaseModel):
