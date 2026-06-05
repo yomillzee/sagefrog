@@ -302,6 +302,32 @@ def _penn_load_daily_metrics_from_warehouse(
         payload["platform_totals"] = platform_totals
 
 
+def _load_organic_daily_metrics(
+    cfg: PennDashboardConfig,
+    *,
+    start: date,
+    end: date,
+    payload: dict[str, Any],
+) -> None:
+    """Fetch GA4 organic sessions from BigQuery into daily_metrics / platform_totals."""
+    if not cfg.ga4_client_key:
+        return
+    try:
+        rows = ga4_warehouse_service.fetch_organic_daily_metrics(
+            start=start,
+            end=end,
+            client_key=cfg.ga4_client_key,
+        )
+        payload.setdefault("daily_metrics", {})["organic"] = rows
+        totals = _totals_from_daily_rows(rows)
+        totals["campaign_count"] = 0
+        platform_totals = dict(payload.get("platform_totals") or {})
+        platform_totals["organic"] = totals
+        payload["platform_totals"] = platform_totals
+    except Exception as exc:
+        payload.setdefault("errors", {})["organic_daily"] = _platform_error(exc)
+
+
 def _merge_linkedin_creative_media(
     creatives: list[dict[str, Any]], account_id: str
 ) -> None:
@@ -482,7 +508,10 @@ def refresh_client(
 
     payload["breakdowns"] = breakdowns
     if cfg.client_key == "penn":
-        payload["business_line_campaigns"] = build_business_line_campaigns(breakdowns)
+        payload["business_line_campaigns"] = build_business_line_campaigns(
+            breakdowns,
+            client_slug=cfg.client_key,
+        )
     else:
         payload["business_line_campaigns"] = []
 
@@ -510,6 +539,7 @@ def refresh_client(
         ga4_account=ga4_account or payload["accounts"].get("ga4"),
         update_platform_totals=False,
     )
+    _load_organic_daily_metrics(cfg, start=start, end=end, payload=payload)
     payload["aggregated_paid_media"] = _aggregated_paid_media(payload["platform_totals"])
     payload["refresh_mode"] = "full"
     payload["sync_meta"] = _sync_meta(sync_trigger)
@@ -561,7 +591,11 @@ def refresh_client_quick(
         "ga4_attribution": existing.get("ga4_attribution"),
         "ga4_pages": existing.get("ga4_pages"),
         "business_line_campaigns": existing.get("business_line_campaigns")
-        or (build_business_line_campaigns(breakdowns) if cfg.client_key == "penn" else []),
+        or (
+            build_business_line_campaigns(breakdowns, client_slug=cfg.client_key)
+            if cfg.client_key == "penn"
+            else []
+        ),
         "refresh_mode": "warehouse",
     }
     if existing.get("insights"):
@@ -576,6 +610,7 @@ def refresh_client_quick(
         ga4_account=ga4_account or payload["accounts"].get("ga4"),
         update_platform_totals=True,
     )
+    _load_organic_daily_metrics(cfg, start=start, end=end, payload=payload)
     payload["sync_meta"] = _sync_meta(sync_trigger)
 
     dashboard_snapshots.save_snapshot(cfg.client_key, payload)
@@ -872,6 +907,18 @@ def _summary_card(
     clicks = int(totals.get("clicks") or 0)
     impressions = int(totals.get("impressions") or 0)
     conversions = float(totals.get("conversions") or 0)
+    if platform == "organic":
+        return f"""
+    <div class="card" data-platform="organic">
+      <div class="card-label">{label_html}</div>
+      <div class="card-value">{_fmt_int(clicks)}</div>
+      <div class="card-stats">
+        <span>{_fmt_int(impressions)} page views</span>
+        <span>{_fmt_int(conversions)} key events</span>
+        <span class="muted">GA4 organic search</span>
+      </div>
+    </div>
+    """
     return f"""
     <div class="card" data-platform="{_esc(platform or '')}">
       <div class="card-label">{label_html}</div>
@@ -1867,7 +1914,11 @@ def _business_line_campaigns_from_snapshot(snapshot: dict[str, Any]) -> list[dic
     stored = snapshot.get("business_line_campaigns")
     if stored:
         return stored
-    return build_business_line_campaigns(_breakdowns_from_snapshot(snapshot))
+    client_key = str(snapshot.get("client_key") or "penn")
+    return build_business_line_campaigns(
+        _breakdowns_from_snapshot(snapshot),
+        client_slug=client_key,
+    )
 
 
 def _breakdowns_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -1888,7 +1939,7 @@ def _campaign_explorer_content_html(*, show_business_line: bool, platform_breakd
                   <h2>Campaign performance</h2>
                   <span class="badge" id="blRowCount">0 rows</span>
                 </div>
-                <p class="table-note">Use the filters at the top to choose business lines and channels. Nothing is selected by default — check items to populate the table. Click a campaign row to drill into ad groups, ad sets, or ads.</p>
+                <p class="table-note">Use the filters at the top to narrow business lines and channels — all are included by default. Click a campaign row to drill into ad groups, ad sets, or ads.</p>
                 <div class="table-wrap">
                   <table class="data-table" id="blTable">
                     <thead>
@@ -2030,13 +2081,19 @@ def render_penn_html(
         }
         return [by_date.get(d, 0.0) for d in dates]
 
+    accounts_early = snapshot.get("accounts") or {}
+    has_ga4_config = bool(accounts_early.get("ga4_client_key") or totals.get("organic"))
+    chart_platform_ids = ("google", "linkedin", "meta") + (
+        ("organic",) if has_ga4_config else ()
+    )
+
     performance_chart_json = _json_for_html_script(
         {
             "labels": dates,
             "metrics": {
                 metric: {
                     platform: platform_metric_series(platform, metric)
-                    for platform in ("google", "linkedin", "meta")
+                    for platform in chart_platform_ids
                 }
                 for metric in ("spend", "clicks", "impressions", "conversions")
             },
@@ -2044,6 +2101,7 @@ def render_penn_html(
     )
 
     breakdowns = _breakdowns_from_snapshot(snapshot)
+    accounts = accounts_early
     ga4_attr = snapshot.get("ga4_attribution")
     ga4_platforms = _ga4_platform_reports(ga4_attr)
     aggregated = snapshot.get("aggregated_paid_media") or _aggregated_paid_media(totals)
@@ -2066,10 +2124,17 @@ def render_penn_html(
     bl_campaigns = _business_line_campaigns_from_snapshot(snapshot)
     bl_campaigns_json = _json_for_html_script(bl_campaigns)
     bl_catalog_json = _json_for_html_script(active_business_line_catalog(bl_campaigns))
-    platform_catalog_list = active_platform_catalog(bl_campaigns)
+    platform_catalog_list = active_platform_catalog(
+        bl_campaigns,
+        include_organic=has_ga4_config,
+    )
     if not platform_catalog_list:
         present = {p for p in ("google", "linkedin", "meta") if totals.get(p)}
-        platform_catalog_list = [item for item in platform_catalog() if item["id"] in present]
+        platform_catalog_list = [
+            item for item in platform_catalog(include_organic=has_ga4_config) if item["id"] in present
+        ]
+        if has_ga4_config and not any(p["id"] == "organic" for p in platform_catalog_list):
+            platform_catalog_list.append({"id": "organic", "label": "Organic"})
     platform_catalog_json = _json_for_html_script(platform_catalog_list)
     sidebar_nav = _sidebar_nav_html(
         client_slug=client_slug,
@@ -3661,6 +3726,19 @@ def render_penn_html(
       border-color: var(--meta);
       color: #fff;
     }}
+    .filter-toggle.t-organic {{
+      border-color: color-mix(in srgb, #16a34a 55%, var(--border));
+      color: #16a34a;
+    }}
+    .filter-toggle.t-organic:hover {{
+      background: #ecfdf3;
+      border-color: #16a34a;
+    }}
+    .filter-toggle.t-organic.active {{
+      background: #16a34a;
+      border-color: #16a34a;
+      color: #fff;
+    }}
     .filter-toggle.t-bl {{
       border-color: color-mix(in srgb, var(--gold) 50%, var(--border));
       color: #8a7020;
@@ -3732,6 +3810,7 @@ def render_penn_html(
     .platform-pill.google {{ background: #eef4ff; color: #4285f4; }}
     .platform-pill.meta {{ background: #eef3fc; color: #1877f2; }}
     .platform-pill.linkedin {{ background: #fef6ee; color: #e67e22; }}
+    .platform-pill.organic {{ background: #ecfdf3; color: #16a34a; }}
     .bl-tag {{
       font-size: 0.72rem;
       font-weight: 600;
@@ -3865,6 +3944,7 @@ def render_penn_html(
               {_summary_card("Google Ads", totals.get("google"), platform="google")}
               {_summary_card("LinkedIn", totals.get("linkedin"), platform="linkedin")}
               {_summary_card("Meta", totals.get("meta"), platform="meta")}
+              {(_summary_card("Organic", totals.get("organic"), platform="organic") if has_ga4_config else "")}
             </div>
 
             <section class="panel performance-trend-panel">
@@ -3941,7 +4021,29 @@ def render_penn_html(
 
     const channelState = new Set();
     const blState = new Set();
-    const CHART_PLATFORMS = ['google', 'linkedin', 'meta'];
+
+    function isAllSelected(state, catalog) {{
+      return !catalog.length || state.size === 0 || state.size === catalog.length;
+    }}
+
+    function effectiveFilterIds(state, catalog) {{
+      if (isAllSelected(state, catalog)) return catalog.map(item => item.id);
+      return [...state];
+    }}
+
+    function channelFilterRestricts() {{
+      return channelState.size > 0 && channelState.size < platformCatalog.length;
+    }}
+
+    function activeChartPlatforms() {{
+      const ids = effectiveFilterIds(channelState, platformCatalog);
+      const fromMetrics = performanceChartRaw.metrics?.clicks
+        ? Object.keys(performanceChartRaw.metrics.clicks)
+        : [];
+      if (!fromMetrics.length) return ids;
+      return ids.filter(id => fromMetrics.includes(id));
+    }}
+
     const METRIC_DEFS = [
       {{ id: 'spend', label: 'Spend', color: '#0a2540', fill: 'rgba(10, 37, 64, 0.08)', yAxisID: 'ySpend', format: 'money' }},
       {{ id: 'clicks', label: 'Clicks', color: '#4285f4', yAxisID: 'yClicks', format: 'int' }},
@@ -3949,15 +4051,6 @@ def render_penn_html(
       {{ id: 'conversions', label: 'Conversions', color: '#16a34a', yAxisID: 'yConversions', format: 'int' }},
     ];
     const metricState = new Set(METRIC_DEFS.map(m => m.id));
-
-    function channelFilterRestricts() {{
-      return channelState.size > 0;
-    }}
-
-    function activeChartPlatforms() {{
-      if (!channelFilterRestricts()) return [...CHART_PLATFORMS];
-      return CHART_PLATFORMS.filter(p => channelState.has(p));
-    }}
 
     const fmtMoney = n => '$' + Number(n || 0).toLocaleString(undefined, {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
     const fmtInt = n => Number(n || 0).toLocaleString();
@@ -4316,15 +4409,19 @@ def render_penn_html(
     }};
 
     function platformVisible(platformId) {{
-      return !channelFilterRestricts() || channelState.has(platformId);
+      if (platformId === 'organic') {{
+        return effectiveFilterIds(channelState, platformCatalog).includes('organic');
+      }}
+      return effectiveFilterIds(channelState, platformCatalog).includes(platformId);
     }}
 
     function filteredBlCampaigns() {{
       const showZeroSpend = !!document.getElementById('showZeroSpend')?.checked;
-      const hasSelection = channelState.size > 0 && blState.size > 0;
-      if (!hasSelection) return [];
+      const channels = effectiveFilterIds(channelState, platformCatalog).filter(p => p !== 'organic');
+      const bls = effectiveFilterIds(blState, blCatalog);
+      if (!blCatalog.length || !channels.length || !bls.length) return [];
       return blCampaigns.filter(r => {{
-        if (!channelState.has(r.platform) || !blState.has(r.business_line)) return false;
+        if (!channels.includes(r.platform) || !bls.includes(r.business_line)) return false;
         if (!showZeroSpend && (r.spend || 0) < 0.01) return false;
         return true;
       }});
@@ -4380,7 +4477,9 @@ def render_penn_html(
     }}
 
     function applyOverviewFilters() {{
-      const blFiltered = SHOW_BUSINESS_LINE && blState.size > 0 && channelState.size > 0
+      const partialBl = SHOW_BUSINESS_LINE && blCatalog.length && !isAllSelected(blState, blCatalog);
+      const partialCh = platformCatalog.length && !isAllSelected(channelState, platformCatalog);
+      const blFiltered = SHOW_BUSINESS_LINE && (partialBl || partialCh)
         ? filteredBlCampaigns()
         : null;
       let heroTotals = null;
@@ -4550,7 +4649,7 @@ def render_penn_html(
       if (!wrap) return;
       wrap.querySelectorAll('.filter-toggle').forEach(btn => {{
         if (btn.dataset.id === '__all__') {{
-          const on = state.size === 0 || state.size === catalog.length;
+          const on = isAllSelected(state, catalog);
           btn.classList.toggle('active', on);
           btn.setAttribute('aria-pressed', on ? 'true' : 'false');
           return;
@@ -4571,8 +4670,7 @@ def render_penn_html(
 
     function applyBlView() {{
       const showZeroSpend = !!document.getElementById('showZeroSpend')?.checked;
-      const hasSelection = channelState.size > 0 && blState.size > 0;
-      const filtered = hasSelection ? filteredBlCampaigns() : [];
+      const filtered = filteredBlCampaigns();
       const spend = filtered.reduce((s, r) => s + (r.spend || 0), 0);
       const clicks = filtered.reduce((s, r) => s + (r.clicks || 0), 0);
       const impressions = filtered.reduce((s, r) => s + (r.impressions || 0), 0);
@@ -4591,9 +4689,7 @@ def render_penn_html(
 
       const tbody = document.getElementById('blTableBody');
       if (tbody) {{
-        if (!hasSelection) {{
-          tbody.innerHTML = '<tr><td colspan="10" class="muted" style="padding:24px;text-align:center">Select at least one business line and one channel in the filters.</td></tr>';
-        }} else if (!filtered.length) {{
+        if (!filtered.length) {{
           tbody.innerHTML = '<tr><td colspan="10" class="muted" style="padding:24px;text-align:center">No campaigns match — try other filters or enable $0 spend rows.</td></tr>';
         }} else {{
           const sorted = sortBlRows(filtered);
@@ -4613,12 +4709,12 @@ def render_penn_html(
         const blLabels = blCatalog.filter(b => blState.has(b.id)).map(b => b.label);
         const allCh = chLabels.length === platformCatalog.length && platformCatalog.length > 0;
         const allBl = blLabels.length === blCatalog.length && blCatalog.length > 0;
-        const chText = channelState.size === 0
+        const chText = isAllSelected(channelState, platformCatalog)
           ? 'All channels'
           : (allCh ? 'All channels' : chLabels.join(', '));
         if (SHOW_BUSINESS_LINE && blCatalog.length) {{
-          const blText = blState.size === 0
-            ? 'No business lines selected'
+          const blText = isAllSelected(blState, blCatalog)
+            ? 'All business lines'
             : (allBl ? 'All business lines' : blLabels.join(', '));
           const zeroNote = showZeroSpend ? ' · incl. $0 spend' : '';
           status.textContent = `${{blText}} · ${{chText}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}${{zeroNote}}`;

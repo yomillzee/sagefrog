@@ -282,6 +282,8 @@ def _settings_page_css() -> str:
     .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin-bottom: 14px; }
     label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 6px; }
     input[type="text"], input[type="password"] { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+    textarea.rules-textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+      font-family: ui-monospace, monospace; font-size: .84rem; line-height: 1.45; min-height: 160px; margin-bottom: 12px; }
     .status-table { width: 100%; border-collapse: collapse; font-size: .88rem; margin-top: 8px; }
     .status-table th, .status-table td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
     .status-table th { color: var(--muted); font-size: .75rem; text-transform: uppercase; }
@@ -634,6 +636,25 @@ def render_settings_html(
 
     checklist = _setup_checklist_html(api=api, cfg=cfg, ga4_ok=api["ga4"]["ok"])
 
+    bl_rules_section = ""
+    if slug == "penn" and db_editable:
+        import business_line_rules as bl_rules
+
+        rules_text = bl_rules.rules_to_text(bl_rules.get_rules(slug))
+        bl_rules_section = f"""
+        <section class="panel">
+          <h2>Business line matching</h2>
+          <p class="muted">Campaigns are categorized by keyword substring match. Custom rules run <strong>before</strong> built-in Penn defaults (Home Equity, Cash Bonus, HYS, CD / Certificate, Commercial). LinkedIn campaign group names are included when matching.</p>
+          <p class="hint">One rule per line: <code>Business line name | keyword, keyword, keyword</code></p>
+          <form method="post" action="{settings_url}">
+            <input type="hidden" name="action" value="save_business_line_rules">
+            <label for="business_line_rules">Custom keyword rules</label>
+            <textarea id="business_line_rules" name="business_line_rules" rows="10" class="rules-textarea">{_esc(rules_text)}</textarea>
+            <p class="hint">Example: <code>Spring Promo | spring promo, sp2026</code>. After saving, run a <strong>full refresh</strong> to re-classify campaigns.</p>
+            <button type="submit" class="btn primary">Save business line rules</button>
+          </form>
+        </section>"""
+
     insights_fold = ""
     if dashboard_service.can_edit_penn_insights(
         session_is_admin=session_is_admin,
@@ -728,6 +749,7 @@ def render_settings_html(
     </section>
     {oauth_section}
     {edit_form}
+    {bl_rules_section}
     <section class="panel panel--primary">
       <h2>3. Refresh &amp; verify</h2>
       <p class="muted">Pull latest data after connecting. Quick refresh is cheaper; full refresh reloads campaign tables and GA4.</p>

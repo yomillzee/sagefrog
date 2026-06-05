@@ -29,6 +29,7 @@ from security import require_api_key
 import audit_log
 import client_config
 import client_dashboard_config
+import business_line_rules
 import client_insight_documents
 import dashboard_settings
 import login_rate_limit
@@ -149,6 +150,7 @@ try:
     web_users.ensure_schema()
     audit_log.ensure_schema()
     client_dashboard_config.ensure_schema()
+    business_line_rules.ensure_schema()
     client_insight_documents.ensure_schema()
     oauth_store.ensure_schema()
     login_rate_limit.ensure_schema()
@@ -1412,13 +1414,14 @@ def dashboard_client_settings(
     request: Request,
     key: str | None = None,
     saved: str | None = None,
+    bl_rules_saved: str | None = None,
     tested: str | None = None,
     oauth_connected: str | None = None,
     oauth_error: str | None = None,
     oauth_disconnected: str | None = None,
 ):
     slug = _validate_client_slug(client_slug)
-    flash = "Settings saved." if saved else ("Connection test complete." if tested else None)
+    flash = "Settings saved." if saved else ("Business line rules saved. Run a full refresh to re-classify campaigns." if bl_rules_saved else ("Connection test complete." if tested else None))
     flash_err = (oauth_error or "").strip()[:300] or None
     if oauth_disconnected and not flash:
         labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta"}
@@ -1579,6 +1582,7 @@ def dashboard_client_settings_post(
     meta_account_id: str = Form(""),
     ga4_client_key: str = Form(""),
     meta_access_token: str = Form(""),
+    business_line_rules_text: str = Form("", alias="business_line_rules"),
 ):
     slug = _validate_client_slug(client_slug)
     act = (action or "save").strip().lower()
@@ -1731,6 +1735,64 @@ def dashboard_client_settings_post(
             return RedirectResponse(url=f"/dashboard/{slug}/settings?saved=1", status_code=303)
         return RedirectResponse(
             url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&saved=1",
+            status_code=303,
+        )
+
+    if act == "save_business_line_rules":
+        if slug != "penn":
+            raise HTTPException(status_code=400, detail="Business line rules are only available for Penn.")
+        if web_users.enabled() and not session_is_admin:
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error="Only admins can save business line rules.",
+                    **session_kw,
+                ),
+                status_code=403,
+            )
+        if not business_line_rules.enabled():
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error="DATABASE_URL is required to save business line rules.",
+                    **session_kw,
+                ),
+                status_code=503,
+            )
+        try:
+            business_line_rules.save_rules(
+                slug,
+                business_line_rules_text,
+                updated_by=session_email or "dashboard_key",
+            )
+            audit_log.record(
+                action="dashboard.business_line_rules_saved",
+                actor_email=session_email,
+                detail={"client_slug": slug},
+                **audit_log.request_context(request),
+            )
+        except Exception as exc:
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error=str(exc)[:300],
+                    **session_kw,
+                ),
+                status_code=400,
+            )
+        if use_session:
+            return RedirectResponse(
+                url=f"/dashboard/{slug}/settings?bl_rules_saved=1",
+                status_code=303,
+            )
+        return RedirectResponse(
+            url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&bl_rules_saved=1",
             status_code=303,
         )
 
