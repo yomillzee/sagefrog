@@ -85,6 +85,87 @@ def fetch_daily_metrics(
     return out
 
 
+def fetch_organic_daily_metrics(
+    *,
+    start: date,
+    end: date,
+    target: Ga4ClientTarget | None = None,
+    client_key: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    GA4 organic search sessions per day (traffic_source.medium = organic).
+
+    Warehouse-style mapping: clicks=sessions, impressions=page_views, spend=0.
+    """
+    target = target or resolve_target(client_key=client_key)
+    summ = env_summary()
+    if not summ.get("gcp_service_account_json_parse_ok"):
+        raise RuntimeError(
+            summ.get("gcp_service_account_json_parse_error")
+            or "GCP_SERVICE_ACCOUNT_JSON did not parse."
+        )
+
+    suffix_start = start.strftime("%Y%m%d")
+    suffix_end = end.strftime("%Y%m%d")
+    table = f"`{target.bq_project_id}.{target.bq_dataset_id}.events_*`"
+    sql = f"""
+        SELECT
+          PARSE_DATE('%Y%m%d', event_date) AS metric_date,
+          COUNTIF(
+            event_name = 'session_start'
+            AND LOWER(COALESCE(traffic_source.medium, '')) = 'organic'
+          ) AS sessions,
+          COUNTIF(
+            event_name = 'page_view'
+            AND LOWER(COALESCE(traffic_source.medium, '')) = 'organic'
+          ) AS page_views,
+          COUNTIF(
+            event_name IN ('purchase', 'generate_lead', 'sign_up', 'form_submit')
+            AND LOWER(COALESCE(traffic_source.medium, '')) = 'organic'
+          ) AS conversions
+        FROM {table}
+        WHERE _TABLE_SUFFIX BETWEEN '{suffix_start}' AND '{suffix_end}'
+        GROUP BY metric_date
+        ORDER BY metric_date
+    """
+    rows = run_query(sql, max_rows=2000, project_id=target.bq_project_id)
+    by_day: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        raw_date = row.get("metric_date") or row.get("event_date")
+        if hasattr(raw_date, "isoformat"):
+            key = raw_date.isoformat()
+        else:
+            key = str(raw_date).strip()[:10]
+        if not key:
+            continue
+        by_day[key] = {
+            "metric_date": key,
+            "spend": 0.0,
+            "clicks": int(row.get("sessions") or 0),
+            "impressions": int(row.get("page_views") or 0),
+            "conversions": float(row.get("conversions") or 0),
+            "conversion_value": 0.0,
+        }
+
+    out: list[dict[str, Any]] = []
+    cursor = start
+    while cursor <= end:
+        key = cursor.isoformat()
+        out.append(
+            by_day.get(key)
+            or {
+                "metric_date": key,
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+            }
+        )
+        cursor += timedelta(days=1)
+    return out
+
+
 def sync_to_warehouse(
     *,
     date_range: str = "LAST_30_DAYS",

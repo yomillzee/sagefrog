@@ -25,11 +25,13 @@ PLATFORM_LABELS: dict[str, str] = {
     "google": "Google Ads",
     "linkedin": "LinkedIn",
     "meta": "Meta",
+    "organic": "Organic",
 }
 
 
-def platform_catalog() -> list[dict[str, str]]:
-    return [{"id": pid, "label": label} for pid, label in PLATFORM_LABELS.items()]
+def platform_catalog(*, include_organic: bool = False) -> list[dict[str, str]]:
+    ids = ("google", "linkedin", "meta") + (("organic",) if include_organic else ())
+    return [{"id": pid, "label": PLATFORM_LABELS[pid]} for pid in ids if pid in PLATFORM_LABELS]
 
 
 def business_line_catalog() -> list[dict[str, str]]:
@@ -45,18 +47,71 @@ def active_business_line_catalog(campaigns: list[dict[str, Any]]) -> list[dict[s
     return [item for item in catalog if item["id"] in present]
 
 
-def active_platform_catalog(campaigns: list[dict[str, Any]]) -> list[dict[str, str]]:
+def active_platform_catalog(
+    campaigns: list[dict[str, Any]],
+    *,
+    include_organic: bool = False,
+) -> list[dict[str, str]]:
     present = {str(c.get("platform") or "") for c in campaigns}
-    catalog = platform_catalog()
-    return [item for item in catalog if item["id"] in present]
+    catalog = platform_catalog(include_organic=include_organic)
+    out = [item for item in catalog if item["id"] in present]
+    if include_organic and "organic" not in present:
+        out.append({"id": "organic", "label": PLATFORM_LABELS["organic"]})
+    return out
 
 
-def classify_business_line(name: str) -> tuple[str, str]:
-    lowered = (name or "").lower()
-    for bid, label, keywords in BUSINESS_LINE_RULES:
-        if any(kw in lowered for kw in keywords):
-            return bid, label
+def _effective_rules(
+    custom_rules: list[tuple[str, str, tuple[str, ...]]] | None,
+) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    merged: list[tuple[str, str, tuple[str, ...]]] = []
+    if custom_rules:
+        merged.extend(custom_rules)
+    merged.extend(BUSINESS_LINE_RULES)
+    return tuple(merged)
+
+
+def classify_business_line(
+    name: str,
+    *,
+    extra_names: tuple[str, ...] = (),
+    custom_rules: list[tuple[str, str, tuple[str, ...]]] | None = None,
+) -> tuple[str, str]:
+    """Match business line from campaign / group names (custom rules first)."""
+    candidates: list[str] = []
+    for text in (*extra_names, name):
+        cleaned = (text or "").strip()
+        if cleaned and cleaned not in candidates:
+            candidates.append(cleaned)
+    if len(candidates) > 1:
+        combined = " | ".join(candidates)
+        if combined not in candidates:
+            candidates.insert(0, combined)
+
+    rules = _effective_rules(custom_rules)
+    for text in candidates:
+        lowered = text.lower()
+        for bid, label, keywords in rules:
+            if any(kw in lowered for kw in keywords):
+                return bid, label
     return "other", "Other"
+
+
+def _classification_names(row: dict[str, Any]) -> tuple[str, ...]:
+    """Names to try for business-line matching (group/parent before campaign)."""
+    ordered_keys = (
+        "campaign_group_name",
+        "parent_name",
+        "campaign_name",
+        "adset_name",
+        "ad_group_name",
+        "name",
+    )
+    names: list[str] = []
+    for key in ordered_keys:
+        val = str(row.get(key) or "").strip()
+        if val and val not in names:
+            names.append(val)
+    return tuple(names)
 
 
 def _campaign_rows_from_breakdowns(breakdowns: dict[str, Any]) -> list[dict[str, Any]]:
@@ -68,18 +123,37 @@ def _campaign_rows_from_breakdowns(breakdowns: dict[str, Any]) -> list[dict[str,
     return rows
 
 
-def build_business_line_campaigns(breakdowns: dict[str, Any]) -> list[dict[str, Any]]:
+def build_business_line_campaigns(
+    breakdowns: dict[str, Any],
+    *,
+    client_slug: str = "penn",
+) -> list[dict[str, Any]]:
+    custom_rules: list[tuple[str, str, tuple[str, ...]]] | None = None
+    if (client_slug or "").strip().lower() == "penn":
+        try:
+            import business_line_rules as bl_rules
+
+            custom_rules = bl_rules.rules_as_tuples(client_slug)
+        except Exception:
+            custom_rules = None
+
     out: list[dict[str, Any]] = []
     for row in _campaign_rows_from_breakdowns(breakdowns):
         platform = str(row.get("_platform") or "")
-        name = str(row.get("name") or "—")
-        bid, blabel = classify_business_line(name)
+        names = _classification_names(row)
+        primary = names[-1] if names else "—"
+        extras = names[:-1]
+        bid, blabel = classify_business_line(
+            primary,
+            extra_names=extras,
+            custom_rules=custom_rules,
+        )
         out.append(
             {
                 "platform": platform,
                 "platform_label": PLATFORM_LABELS.get(platform, platform),
                 "id": str(row.get("id") or ""),
-                "name": name,
+                "name": primary,
                 "business_line": bid,
                 "business_line_label": blabel,
                 "spend": float(row.get("spend") or 0),
