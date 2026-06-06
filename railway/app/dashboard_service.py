@@ -2565,6 +2565,9 @@ def render_penn_html(
         client_meta_tip=client_meta_tip,
     )
     overview_paid_html = _paid_ad_overview_html(aggregated, ga4_attr)
+    paid_overview_metrics_json = _json_for_html_script(
+        _paid_ad_overview_metrics(aggregated, ga4_attr)
+    )
     import client_insight_documents as docs
 
     sidebar_nav = _sidebar_nav_html(
