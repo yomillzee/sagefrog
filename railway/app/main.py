@@ -2134,7 +2134,7 @@ def _insights_upload_flash_redirect(
 
 @app.post(
     "/dashboard/{client_slug}/insight-documents",
-    summary="Upload client insight Word document",
+    summary="Upload client insight document",
     include_in_schema=False,
 )
 async def dashboard_client_insight_document_upload(
@@ -2216,7 +2216,7 @@ async def dashboard_client_insight_document_upload(
 
 @app.get(
     "/dashboard/{client_slug}/insight-documents/{doc_id}",
-    summary="Download client insight Word document",
+    summary="Download client insight document",
     include_in_schema=False,
 )
 def dashboard_client_insight_document_download(
@@ -2233,25 +2233,27 @@ def dashboard_client_insight_document_download(
     else:
         dashboard_service.verify_dashboard_key(key)
 
-    payload = client_insight_documents.get_document_bytes(slug, doc_id)
-    if not payload:
+    try:
+        resolved = client_insight_documents.resolve_download(slug, doc_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)[:300]) from exc
+    if not resolved:
         raise HTTPException(status_code=404, detail="Document not found.")
-    meta, file_bytes = payload
-    filename = meta.original_filename or f"{meta.title}.docx"
-    if not filename.lower().endswith(".docx"):
-        filename = f"{filename}.docx"
-    safe_name = "".join(c for c in filename if c.isalnum() or c in " ._-").strip() or "report.docx"
+    meta = resolved.meta
+    if resolved.kind == "redirect":
+        return RedirectResponse(str(resolved.payload), status_code=302)
+    filename = meta.original_filename or meta.title or "document"
+    safe_name = "".join(c for c in filename if c.isalnum() or c in " ._-").strip() or "document"
     return Response(
-        content=file_bytes,
-        media_type=meta.content_type
-        or "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        content=resolved.payload,
+        media_type=meta.content_type or "application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
     )
 
 
 @app.post(
     "/dashboard/{client_slug}/insight-documents/{doc_id}/delete",
-    summary="Delete client insight Word document",
+    summary="Delete client insight document",
     include_in_schema=False,
 )
 def dashboard_client_insight_document_delete(
