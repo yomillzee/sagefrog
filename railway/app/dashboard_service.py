@@ -1436,11 +1436,11 @@ def _client_insights_doc_rows_html(
                 <tr>
                   <td class="client-insights-file">
                     <div class="client-insights-file-title">{_esc(row.title)}</div>
-                    <div class="client-insights-file-meta muted">Word document · {_esc(_fmt_file_size(row.file_size))}</div>
+                    <div class="client-insights-file-meta muted">{_esc(docs.file_type_label(row.original_filename))} · {_esc(_fmt_file_size(row.file_size))}</div>
                   </td>
                   <td class="client-insights-period">{_esc(docs.period_label(row.period_year, row.period_month))}</td>
                   <td class="client-insights-actions">
-                    <a class="client-insights-download-btn" href="{download_url}">Download DOCX</a>
+                    <a class="client-insights-download-btn" href="{download_url}">Download</a>
                     {delete_cell}
                   </td>
                 </tr>"""
@@ -1488,7 +1488,7 @@ def _client_insights_list_html(
         <a class="client-insights-doc-card" href="{download_url}">
           <div class="client-insights-doc-period">{_esc(period)}</div>
           <div class="client-insights-doc-title">{_esc(row.title)}</div>
-          <div class="client-insights-doc-meta">Word · {_esc(_fmt_file_size(row.file_size))}</div>
+          <div class="client-insights-doc-meta">{_esc(docs.file_type_label(row.original_filename))} · {_esc(_fmt_file_size(row.file_size))}</div>
         </a>"""
             )
         list_html = f'<div class="client-insights-doc-grid">{"".join(cards)}</div>'
@@ -1529,6 +1529,12 @@ def _client_insights_upload_page_html(
         use_session=use_session,
     )
     if can_upload and upload_action and docs.enabled():
+        storage_note = ""
+        if docs.uses_object_storage():
+            storage_note = (
+                '<p class="hint">Files are stored in Cloudflare R2. '
+                "Clients download through authenticated links — the bucket stays private.</p>"
+            )
         upload_html = f"""
         <form method="post" action="{upload_action}" enctype="multipart/form-data" class="client-insights-upload">
           <div class="client-insights-upload-grid">
@@ -1542,11 +1548,14 @@ def _client_insights_upload_page_html(
               <input id="insightDocPeriod" name="period" type="month" required>
             </div>
             <div>
-              <label for="insightDocFile">Word document</label>
-              <input id="insightDocFile" name="file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required>
+              <label for="insightDocFile">Document</label>
+              <input id="insightDocFile" name="file" type="file"
+                accept=".docx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" required>
+              <p class="hint">Word (.docx) or PDF, up to 25 MB.</p>
             </div>
           </div>
-          <button type="submit" class="client-insights-upload-btn">Upload DOCX</button>
+          {storage_note}
+          <button type="submit" class="client-insights-upload-btn">Upload document</button>
         </form>"""
     elif not docs.enabled():
         upload_html = (
@@ -1570,9 +1579,9 @@ def _client_insights_upload_page_html(
     <section class="client-insights-panel client-insights-panel--upload" aria-label="Insights upload">
       <div class="client-insights-head">
         <div>
-          <h2 class="client-insights-title">Upload insight documents</h2>
+          <h2 class="client-insights-title">Share client documents</h2>
           <p class="client-insights-subtitle muted">
-            Upload monthly Word documents with client-ready insights. Clients see downloads on the Overview.
+            Upload monthly reports and insight documents. Authenticated clients download them from the Overview.
           </p>
         </div>
       </div>
@@ -1629,6 +1638,7 @@ def render_insights_upload_page(
     @media (max-width: 900px) { .client-insights-upload-grid { grid-template-columns: 1fr; } }
     .client-insights-upload label { display: block; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 6px; }
     .client-insights-upload input { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; font: inherit; background: #fff; }
+    .client-insights-upload .hint { margin: 6px 0 0; font-size: 0.82rem; color: var(--muted); line-height: 1.4; }
     .client-insights-upload-btn { appearance: none; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 650; padding: 10px 16px; cursor: pointer; }
     .client-insights-table-wrap { padding: 18px 24px 24px; overflow-x: auto; }
     .client-insights-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
