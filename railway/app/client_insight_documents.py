@@ -536,6 +536,48 @@ def save_document(
     return _row_from_db(row)
 
 
+def move_document(
+    client_slug: str,
+    doc_id: int,
+    *,
+    folder_id: int | None,
+) -> InsightDocumentRow:
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to store insight documents.")
+
+    ensure_schema()
+    with psycopg.connect(_get_db_url()) as conn:
+        existing = conn.execute(
+            """
+            SELECT id FROM client_insight_documents
+            WHERE client_slug = %s AND id = %s
+            """,
+            (slug, int(doc_id)),
+        ).fetchone()
+        if not existing:
+            raise ValueError("Document not found.")
+
+        resolved_folder_id = (
+            _resolve_folder_id(slug, folder_id, conn=conn) if folder_id is not None else None
+        )
+        row = conn.execute(
+            """
+            UPDATE client_insight_documents
+            SET folder_id = %s
+            WHERE client_slug = %s AND id = %s
+            RETURNING id, client_slug, title, period_year, period_month, original_filename,
+                      content_type, file_size, uploaded_at, uploaded_by, folder_id
+            """,
+            (resolved_folder_id, slug, int(doc_id)),
+        ).fetchone()
+    if not row:
+        raise RuntimeError("Failed to move document.")
+    return _row_from_db(row)
+
+
 def delete_document(client_slug: str, doc_id: int) -> bool:
     slug = (client_slug or "").strip().lower()
     if not slug or not enabled():
