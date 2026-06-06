@@ -32,6 +32,7 @@ import client_dashboard_config
 import business_line_rules
 import client_insight_documents
 import dashboard_settings
+import dashboard_theme
 import login_rate_limit
 import oauth_flows
 import oauth_store
@@ -1415,13 +1416,22 @@ def dashboard_client_settings(
     key: str | None = None,
     saved: str | None = None,
     bl_rules_saved: str | None = None,
+    theme_saved: str | None = None,
     tested: str | None = None,
     oauth_connected: str | None = None,
     oauth_error: str | None = None,
     oauth_disconnected: str | None = None,
 ):
     slug = _validate_client_slug(client_slug)
-    flash = "Settings saved." if saved else ("Business line rules saved. Run a full refresh to re-classify campaigns." if bl_rules_saved else ("Connection test complete." if tested else None))
+    flash = "Settings saved." if saved else (
+        "Brand colors saved."
+        if theme_saved
+        else (
+            "Business line rules saved. Run a full refresh to re-classify campaigns."
+            if bl_rules_saved
+            else ("Connection test complete." if tested else None)
+        )
+    )
     flash_err = (oauth_error or "").strip()[:300] or None
     if oauth_disconnected and not flash:
         labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta"}
@@ -1582,6 +1592,14 @@ def dashboard_client_settings_post(
     meta_account_id: str = Form(""),
     ga4_client_key: str = Form(""),
     business_line_rules_text: str = Form("", alias="business_line_rules"),
+    sidebar_from: str = Form(""),
+    sidebar_to: str = Form(""),
+    google: str = Form(""),
+    google_bg: str = Form(""),
+    linkedin: str = Form(""),
+    linkedin_bg: str = Form(""),
+    meta: str = Form(""),
+    meta_bg: str = Form(""),
 ):
     slug = _validate_client_slug(client_slug)
     act = (action or "save").strip().lower()
@@ -1735,6 +1753,74 @@ def dashboard_client_settings_post(
             )
         return RedirectResponse(
             url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&bl_rules_saved=1",
+            status_code=303,
+        )
+
+    if act == "save_theme":
+        if slug != "penn":
+            raise HTTPException(status_code=400, detail="Brand colors are only available for Penn.")
+        if web_users.enabled() and not session_is_admin:
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error="Only admins can save brand colors.",
+                    **session_kw,
+                ),
+                status_code=403,
+            )
+        if not client_dashboard_config.enabled():
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error="DATABASE_URL is required to save brand colors in the app.",
+                    **session_kw,
+                ),
+                status_code=503,
+            )
+        try:
+            theme = dashboard_theme.parse_theme_form(
+                sidebar_from=sidebar_from,
+                sidebar_to=sidebar_to,
+                google=google,
+                google_bg=google_bg,
+                linkedin=linkedin,
+                linkedin_bg=linkedin_bg,
+                meta=meta,
+                meta_bg=meta_bg,
+            )
+            saved_theme = client_dashboard_config.save_theme(
+                slug,
+                theme,
+                updated_by=session_email or "dashboard_key",
+            )
+            audit_log.record(
+                action="dashboard.theme_saved",
+                actor_email=session_email,
+                detail={"client_slug": slug, "theme": saved_theme},
+                **audit_log.request_context(request),
+            )
+        except Exception as exc:
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error=str(exc)[:300],
+                    **session_kw,
+                ),
+                status_code=400,
+            )
+        if use_session:
+            return RedirectResponse(
+                url=f"/dashboard/{slug}/settings?theme_saved=1",
+                status_code=303,
+            )
+        return RedirectResponse(
+            url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&theme_saved=1",
             status_code=303,
         )
 

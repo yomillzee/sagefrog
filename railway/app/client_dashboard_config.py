@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -23,6 +24,10 @@ SCHEMA_SQL_STATEMENTS = [
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_by TEXT
     )
+    """,
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS theme_json JSONB
     """,
 ]
 
@@ -142,6 +147,69 @@ def save_config(
     saved = get_config(slug)
     if not saved:
         raise RuntimeError("Failed to load saved client config.")
+    return saved
+
+
+def get_theme(client_slug: str) -> dict[str, Any] | None:
+    slug = (client_slug or "").strip().lower()
+    if not slug or not enabled():
+        return None
+    ensure_schema()
+    with psycopg.connect(_get_db_url()) as conn:
+        row = conn.execute(
+            "SELECT theme_json FROM client_dashboard_config WHERE client_slug = %s",
+            (slug,),
+        ).fetchone()
+    if not row or row[0] is None:
+        return None
+    payload = row[0]
+    if isinstance(payload, str):
+        return json.loads(payload)
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def save_theme(
+    client_slug: str,
+    theme: dict[str, Any],
+    *,
+    updated_by: str | None = None,
+) -> dict[str, Any]:
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save client dashboard theme.")
+
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    existing = get_config(slug)
+    label = existing.label if existing else slug
+    with psycopg.connect(_get_db_url()) as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, theme_json, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              theme_json = EXCLUDED.theme_json,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (
+                slug,
+                label,
+                json.dumps(theme),
+                now,
+                (updated_by or "").strip() or None,
+            ),
+        )
+    saved = get_theme(slug)
+    if not saved:
+        raise RuntimeError("Failed to load saved client theme.")
     return saved
 
 
