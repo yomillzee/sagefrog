@@ -1839,6 +1839,7 @@ def _files_page_flash_message(
     *,
     doc_uploaded: str | None,
     doc_deleted: str | None,
+    doc_moved: str | None,
     folder_created: str | None,
     folder_deleted: str | None,
     doc_error: str | None,
@@ -1849,11 +1850,30 @@ def _files_page_flash_message(
         return "File uploaded."
     if doc_deleted:
         return "File deleted."
+    if doc_moved:
+        return "File moved."
     if folder_created:
         return "Folder created."
     if folder_deleted:
         return "Folder deleted."
     return None
+
+
+def _files_api_request(request: Request) -> bool:
+    return (
+        request.headers.get("X-Files-Api") == "1"
+        or "application/json" in (request.headers.get("accept") or "").lower()
+    )
+
+
+def _files_api_ok(**payload: object) -> JSONResponse:
+    body: dict[str, object] = {"ok": True}
+    body.update(payload)
+    return JSONResponse(body)
+
+
+def _files_api_error(message: str, *, status_code: int = 400) -> JSONResponse:
+    return JSONResponse({"ok": False, "error": str(message).strip()[:300]}, status_code=status_code)
 
 
 def _files_page_query_params(
@@ -1862,6 +1882,7 @@ def _files_page_query_params(
     folder: str | None = None,
     doc_uploaded: str | None = None,
     doc_deleted: str | None = None,
+    doc_moved: str | None = None,
     folder_created: str | None = None,
     folder_deleted: str | None = None,
     doc_error: str | None = None,
@@ -1877,6 +1898,8 @@ def _files_page_query_params(
         params["doc_uploaded"] = "1"
     elif doc_deleted:
         params["doc_deleted"] = "1"
+    elif doc_moved:
+        params["doc_moved"] = "1"
     elif folder_created:
         params["folder_created"] = "1"
     elif folder_deleted:
@@ -1910,6 +1933,7 @@ def dashboard_client_files_page(
     folder: str | None = None,
     doc_uploaded: str | None = None,
     doc_deleted: str | None = None,
+    doc_moved: str | None = None,
     folder_created: str | None = None,
     folder_deleted: str | None = None,
     doc_error: str | None = None,
@@ -1919,6 +1943,7 @@ def dashboard_client_files_page(
     flash = _files_page_flash_message(
         doc_uploaded=doc_uploaded,
         doc_deleted=doc_deleted,
+        doc_moved=doc_moved,
         folder_created=folder_created,
         folder_deleted=folder_deleted,
         doc_error=doc_error,
@@ -1969,6 +1994,7 @@ def dashboard_client_insights_upload_page(
     folder: str | None = None,
     doc_uploaded: str | None = None,
     doc_deleted: str | None = None,
+    doc_moved: str | None = None,
     folder_created: str | None = None,
     folder_deleted: str | None = None,
     doc_error: str | None = None,
@@ -2244,11 +2270,14 @@ async def dashboard_client_insight_document_upload(
     folder_id: str = Form(""),
     file: UploadFile = File(...),
 ):
+    wants_json = _files_api_request(request)
     slug = _validate_client_slug(client_slug)
     auth = None
     if web_users.enabled():
         auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
         if isinstance(auth, RedirectResponse):
+            if wants_json:
+                return _files_api_error("Sign in required.", status_code=401)
             return auth
         access_key = auth.access_key
         use_session = auth.use_session
@@ -2257,6 +2286,8 @@ async def dashboard_client_insight_document_upload(
             session_is_admin=bool(user and user.role == "admin"),
             access_key=access_key,
         ):
+            if wants_json:
+                return _files_api_error("Only admins can upload files.", status_code=403)
             raise HTTPException(status_code=403, detail="Only admins can upload insight documents.")
         uploaded_by = user.email if user else None
     else:
@@ -2274,6 +2305,8 @@ async def dashboard_client_insight_document_upload(
             redirect_folder_id = None
 
     if not client_insight_documents.enabled():
+        if wants_json:
+            return _files_api_error("DATABASE_URL is required to store insight documents.")
         return _files_flash_redirect(
             client_slug=slug,
             use_session=use_session,
@@ -2312,12 +2345,21 @@ async def dashboard_client_insight_document_upload(
             **audit_log.request_context(request),
         )
     except Exception as exc:
+        if wants_json:
+            return _files_api_error(str(exc))
         return _files_flash_redirect(
             client_slug=slug,
             use_session=use_session,
             access_key=access_key,
             folder_id=redirect_folder_id,
             doc_error=str(exc)[:300],
+        )
+
+    if wants_json:
+        return _files_api_ok(
+            document_id=saved.id,
+            folder_id=saved.folder_id,
+            message="File uploaded.",
         )
 
     return _files_flash_redirect(
@@ -2419,6 +2461,104 @@ def dashboard_client_insight_document_delete(
         folder_id=redirect_folder_id,
         doc_deleted="1" if deleted else None,
         doc_error=None if deleted else "Document not found.",
+    )
+
+
+@app.post(
+    "/dashboard/{client_slug}/insight-documents/{doc_id}/move",
+    summary="Move client insight document to a folder",
+    include_in_schema=False,
+)
+def dashboard_client_insight_document_move(
+    client_slug: str,
+    doc_id: int,
+    request: Request,
+    key: str | None = None,
+    folder_id: str = Form(""),
+):
+    wants_json = _files_api_request(request)
+    slug = _validate_client_slug(client_slug)
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        if isinstance(auth, RedirectResponse):
+            if wants_json:
+                return _files_api_error("Sign in required.", status_code=401)
+            return auth
+        access_key = auth.access_key
+        use_session = auth.use_session
+        user = auth.user
+        if not dashboard_service.can_edit_penn_insights(
+            session_is_admin=bool(user and user.role == "admin"),
+            access_key=access_key,
+        ):
+            if wants_json:
+                return _files_api_error("Only admins can move files.", status_code=403)
+            raise HTTPException(status_code=403, detail="Only admins can move insight documents.")
+        actor = user.email if user else None
+    else:
+        dashboard_service.verify_dashboard_key(key)
+        access_key = key
+        use_session = False
+        actor = "dashboard_key"
+
+    target_folder_id: int | None = None
+    folder_raw = (folder_id or "").strip()
+    if folder_raw:
+        try:
+            target_folder_id = int(folder_raw)
+        except ValueError:
+            if wants_json:
+                return _files_api_error("Invalid folder id.")
+            return _files_flash_redirect(
+                client_slug=slug,
+                use_session=use_session,
+                access_key=access_key,
+                doc_error="Invalid folder id.",
+            )
+
+    existing = client_insight_documents.get_document(slug, doc_id)
+    redirect_folder_id = existing.folder_id if existing else None
+
+    try:
+        moved = client_insight_documents.move_document(
+            slug,
+            doc_id,
+            folder_id=target_folder_id,
+        )
+        audit_log.record(
+            action="insight_document.moved",
+            actor_email=actor,
+            detail={
+                "client_slug": slug,
+                "document_id": int(doc_id),
+                "folder_id": moved.folder_id,
+            },
+            **audit_log.request_context(request),
+        )
+    except Exception as exc:
+        if wants_json:
+            return _files_api_error(str(exc))
+        return _files_flash_redirect(
+            client_slug=slug,
+            use_session=use_session,
+            access_key=access_key,
+            folder_id=redirect_folder_id,
+            doc_error=str(exc)[:300],
+        )
+
+    if wants_json:
+        return _files_api_ok(
+            document_id=moved.id,
+            folder_id=moved.folder_id,
+            message="File moved.",
+        )
+
+    return _files_flash_redirect(
+        client_slug=slug,
+        use_session=use_session,
+        access_key=access_key,
+        folder_id=redirect_folder_id,
+        doc_moved="1",
     )
 
 

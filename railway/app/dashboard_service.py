@@ -1445,6 +1445,21 @@ def _insight_document_delete_url(
     return base
 
 
+def _insight_document_move_url(
+    *,
+    client_slug: str,
+    doc_id: int,
+    access_key: str | None,
+    use_session: bool,
+) -> str:
+    base = f"/dashboard/{client_slug}/insight-documents/{int(doc_id)}/move"
+    if use_session:
+        return base
+    if access_key:
+        return f"{base}?key={quote(access_key, safe='')}"
+    return base
+
+
 def _insight_folder_action_url(
     *,
     client_slug: str,
@@ -1487,7 +1502,7 @@ def _files_breadcrumb_html(
         use_session=use_session,
     ) or "#"
     parts = [
-        f'<a href="{root_url}" class="files-crumb-link">All files</a>',
+        f'<a href="{root_url}" class="files-crumb-link" data-drop-target="root">All files</a>',
     ]
     for folder in breadcrumb:
         url = _files_page_url(
@@ -1651,15 +1666,21 @@ def _client_files_browser_html(
                 <button type="submit" class="files-row-action files-row-action--danger" title="Delete file">Delete</button>
               </form>"""
         display_name = row.title or row.original_filename
+        drag_attrs = ""
+        if can_manage:
+            drag_attrs = (
+                f' draggable="true" data-doc-id="{int(row.id)}"'
+                f' data-move-url="{_esc(_insight_document_move_url(client_slug=client_slug, doc_id=row.id, access_key=access_key, use_session=use_session))}"'
+            )
         rows.append(
             f"""
-            <tr class="files-row files-row--file">
+            <tr class="files-row files-row--file"{drag_attrs}>
               <td class="files-col-name">
-                <a href="{download_url}" class="files-name-link">
+                <div class="files-name-link files-name-link--static">
                   {_file_type_icon_html(row.original_filename)}
                   <span class="files-name-text">{_esc(display_name)}</span>
                   <span class="files-name-sub muted">{_esc(docs.file_type_label(row.original_filename))}</span>
-                </a>
+                </div>
               </td>
               <td class="files-col-modified">{_fmt_short_date(row.uploaded_at)}</td>
               <td class="files-col-size">{_esc(_fmt_file_size(row.file_size))}</td>
@@ -1673,7 +1694,7 @@ def _client_files_browser_html(
     if not rows:
         empty_msg = "This folder is empty."
         if can_manage:
-            empty_msg = "This folder is empty. Drag files here, create a folder, or use Upload."
+            empty_msg = "Drag files here to upload, drag file rows into folders to move them, or use Upload."
         table_body = f'<tr><td colspan="4" class="files-empty-cell muted">{empty_msg}</td></tr>'
     else:
         table_body = "".join(rows)
@@ -1692,7 +1713,7 @@ def _client_files_browser_html(
         browser_attrs = (
             f' data-upload-url="{_esc(upload_action)}"'
             f' data-folder-id="{folder_attr}"'
-            ' data-can-upload="1"'
+            ' data-can-upload="1" data-can-move="1"'
         )
 
     drop_overlay = ""
@@ -1747,6 +1768,10 @@ def _files_page_css() -> str:
     .files-drop-sub { margin: 0; font-size: 0.88rem; color: var(--muted); }
     .files-row--folder.files-drop-target { background: rgba(59, 130, 246, 0.08); outline: 2px solid var(--accent); outline-offset: -2px; }
     .files-row--folder.files-drop-target .files-name-text { color: var(--accent); }
+    .files-crumb-link.files-drop-target { background: rgba(59, 130, 246, 0.12); border-radius: 6px; padding: 2px 6px; }
+    .files-row--file[draggable="true"] { cursor: grab; }
+    .files-row--file.files-row--dragging { opacity: 0.45; cursor: grabbing; }
+    .files-name-link--static { display: flex; align-items: center; gap: 12px; min-width: 0; }
     .files-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 16px 20px; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, #fff 0%, var(--surface) 100%); }
     .files-breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: 0.92rem; min-width: 0; }
     .files-crumb-link { color: var(--accent); text-decoration: none; font-weight: 600; }
@@ -1824,10 +1849,12 @@ def _files_page_js() -> str:
 
       const uploadUrl = browser.dataset.uploadUrl;
       const defaultFolderId = browser.dataset.folderId || '';
-      const dropZone = document.getElementById('filesDropZone');
       const overlay = document.getElementById('filesDropOverlay');
+      const apiHeaders = { 'Accept': 'application/json', 'X-Files-Api': '1' };
       let dragDepth = 0;
-      let activeFolderRow = null;
+      let activeDropTarget = null;
+      let draggingDocId = null;
+      let draggingMoveUrl = null;
 
       function allowedFile(file) {
         const name = (file.name || '').toLowerCase();
@@ -1838,34 +1865,49 @@ def _files_page_js() -> str:
         return Array.from(dataTransfer?.files || []).filter(allowedFile);
       }
 
-      function setFolderTarget(row) {
-        if (activeFolderRow === row) return;
-        activeFolderRow?.classList.remove('files-drop-target');
-        activeFolderRow = row;
-        activeFolderRow?.classList.add('files-drop-target');
+      function isInternalDrag(dataTransfer) {
+        if (!dataTransfer) return false;
+        return Boolean(draggingDocId) || dataTransfer.types.includes('application/x-files-doc-id');
       }
 
-      function clearFolderTarget() {
-        activeFolderRow?.classList.remove('files-drop-target');
-        activeFolderRow = null;
+      function clearDropTarget() {
+        activeDropTarget?.classList.remove('files-drop-target');
+        activeDropTarget = null;
       }
 
-      function showOverlay() {
+      function setDropTarget(el) {
+        if (activeDropTarget === el) return;
+        clearDropTarget();
+        activeDropTarget = el;
+        activeDropTarget?.classList.add('files-drop-target');
+      }
+
+      function showUploadOverlay(title, sub) {
         browser.classList.add('files-drag-active');
-        if (overlay) {
-          overlay.hidden = false;
-          overlay.setAttribute('aria-hidden', 'false');
-        }
+        if (!overlay) return;
+        overlay.hidden = false;
+        overlay.setAttribute('aria-hidden', 'false');
+        overlay.querySelector('.files-drop-title').textContent = title;
+        overlay.querySelector('.files-drop-sub').textContent = sub || '.docx and .pdf up to 25 MB';
       }
 
-      function hideOverlay() {
+      function hideUploadOverlay() {
         dragDepth = 0;
         browser.classList.remove('files-drag-active');
-        clearFolderTarget();
-        if (overlay) {
-          overlay.hidden = true;
-          overlay.setAttribute('aria-hidden', 'true');
+        clearDropTarget();
+        if (!overlay) return;
+        overlay.hidden = true;
+        overlay.setAttribute('aria-hidden', 'true');
+        overlay.querySelector('.files-drop-title').textContent = 'Drop files to upload';
+        overlay.querySelector('.files-drop-sub').textContent = '.docx and .pdf up to 25 MB';
+      }
+
+      async function readJsonResponse(resp) {
+        const contentType = resp.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          return resp.json();
         }
+        throw new Error('Unexpected server response.');
       }
 
       async function uploadFiles(files, folderId) {
@@ -1873,12 +1915,10 @@ def _files_page_js() -> str:
           alert('Only .docx and .pdf files can be uploaded.');
           return;
         }
-        if (overlay) {
-          overlay.querySelector('.files-drop-title').textContent =
-            files.length === 1 ? 'Uploading…' : `Uploading ${files.length} files…`;
-          overlay.querySelector('.files-drop-sub').textContent = 'Please wait';
-        }
-        let lastLocation = window.location.href;
+        showUploadOverlay(
+          files.length === 1 ? 'Uploading…' : `Uploading ${files.length} files…`,
+          'Please wait'
+        );
         for (const file of files) {
           const formData = new FormData();
           formData.append('file', file);
@@ -1887,71 +1927,138 @@ def _files_page_js() -> str:
             method: 'POST',
             body: formData,
             credentials: 'same-origin',
-            redirect: 'manual',
+            headers: apiHeaders,
           });
-          if (resp.status >= 300 && resp.status < 400) {
-            const loc = resp.headers.get('Location');
-            if (loc) {
-              if (loc.includes('doc_error=')) {
-                window.location.href = loc;
-                return;
-              }
-              lastLocation = loc;
-            }
-          } else if (!resp.ok) {
-            alert('Upload failed for ' + file.name + '.');
-            hideOverlay();
+          const data = await readJsonResponse(resp);
+          if (!data.ok) {
+            alert(data.error || ('Upload failed for ' + file.name + '.'));
+            hideUploadOverlay();
             return;
           }
         }
-        window.location.href = lastLocation;
+        window.location.reload();
       }
 
-      function folderRowFromEvent(event) {
+      async function moveDocument(moveUrl, folderId) {
+        const formData = new FormData();
+        if (folderId) formData.append('folder_id', folderId);
+        const resp = await fetch(moveUrl, {
+          method: 'POST',
+          body: formData,
+          credentials: 'same-origin',
+          headers: apiHeaders,
+        });
+        const data = await readJsonResponse(resp);
+        if (!data.ok) {
+          alert(data.error || 'Move failed.');
+          return;
+        }
+        window.location.reload();
+      }
+
+      function dropTargetFromEvent(event) {
         const target = event.target;
         if (!(target instanceof Element)) return null;
-        return target.closest('tr[data-drop-target="folder"]');
+        return target.closest('[data-drop-target="folder"], [data-drop-target="root"]');
       }
 
-      ['dragenter', 'dragover'].forEach((type) => {
-        browser.addEventListener(type, (event) => {
-          event.preventDefault();
-          if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
-          if (type === 'dragenter') {
-            dragDepth += 1;
-            showOverlay();
+      document.querySelectorAll('.files-row--file[draggable="true"]').forEach((row) => {
+        row.addEventListener('dragstart', (event) => {
+          draggingDocId = row.dataset.docId || null;
+          draggingMoveUrl = row.dataset.moveUrl || null;
+          row.classList.add('files-row--dragging');
+          if (event.dataTransfer) {
+            event.dataTransfer.setData('application/x-files-doc-id', draggingDocId || '');
+            event.dataTransfer.effectAllowed = 'move';
           }
-          const folderRow = folderRowFromEvent(event);
-          if (folderRow) {
-            setFolderTarget(folderRow);
-            if (overlay) {
-              const name = folderRow.querySelector('.files-name-text')?.textContent?.trim();
-              overlay.querySelector('.files-drop-title').textContent =
-                name ? `Drop into ${name}` : 'Drop into folder';
-            }
-          } else {
-            clearFolderTarget();
-            if (overlay) overlay.querySelector('.files-drop-title').textContent = 'Drop files to upload';
-          }
+        });
+        row.addEventListener('dragend', () => {
+          draggingDocId = null;
+          draggingMoveUrl = null;
+          row.classList.remove('files-row--dragging');
+          hideUploadOverlay();
         });
       });
 
+      browser.addEventListener('dragenter', (event) => {
+        if (isInternalDrag(event.dataTransfer)) return;
+        event.preventDefault();
+        dragDepth += 1;
+        showUploadOverlay('Drop files to upload');
+      });
+
+      browser.addEventListener('dragover', (event) => {
+        event.preventDefault();
+        const internal = isInternalDrag(event.dataTransfer);
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect = internal ? 'move' : 'copy';
+        }
+
+        const dropTarget = dropTargetFromEvent(event);
+        if (internal) {
+          if (dropTarget) {
+            setDropTarget(dropTarget);
+            const label = dropTarget.dataset.dropTarget === 'root'
+              ? 'All files'
+              : dropTarget.querySelector('.files-name-text')?.textContent?.trim();
+            if (overlay) {
+              overlay.hidden = false;
+              overlay.setAttribute('aria-hidden', 'false');
+              browser.classList.add('files-drag-active');
+              overlay.querySelector('.files-drop-title').textContent =
+                label ? `Move to ${label}` : 'Move to folder';
+              overlay.querySelector('.files-drop-sub').textContent = 'Release to move file';
+            }
+          } else {
+            clearDropTarget();
+          }
+          return;
+        }
+
+        const folderRow = dropTargetFromEvent(event);
+        if (folderRow?.dataset.dropTarget === 'folder') {
+          setDropTarget(folderRow);
+          const name = folderRow.querySelector('.files-name-text')?.textContent?.trim();
+          showUploadOverlay(name ? `Drop into ${name}` : 'Drop into folder');
+        } else {
+          clearDropTarget();
+          showUploadOverlay('Drop files to upload');
+        }
+      });
+
       browser.addEventListener('dragleave', (event) => {
+        if (isInternalDrag(event.dataTransfer)) return;
         event.preventDefault();
         dragDepth = Math.max(0, dragDepth - 1);
-        if (dragDepth === 0) hideOverlay();
+        if (dragDepth === 0) hideUploadOverlay();
       });
 
       browser.addEventListener('drop', async (event) => {
         event.preventDefault();
-        const folderRow = folderRowFromEvent(event);
-        const folderId = folderRow?.dataset.folderId || defaultFolderId;
+        const dropTarget = dropTargetFromEvent(event);
+        const internal = isInternalDrag(event.dataTransfer);
+        const docId = draggingDocId || event.dataTransfer?.getData('application/x-files-doc-id');
+        const moveUrl = draggingMoveUrl;
+
+        hideUploadOverlay();
+
+        if (internal && docId && moveUrl) {
+          if (!dropTarget) return;
+          const folderId = dropTarget.dataset.dropTarget === 'root'
+            ? ''
+            : (dropTarget.dataset.folderId || '');
+          await moveDocument(moveUrl, folderId);
+          return;
+        }
+
+        const folderId = dropTarget?.dataset.dropTarget === 'folder'
+          ? (dropTarget.dataset.folderId || '')
+          : defaultFolderId;
         const files = collectFiles(event.dataTransfer);
-        hideOverlay();
         await uploadFiles(files, folderId);
       });
 
-      window.addEventListener('dragend', hideOverlay);
+      window.addEventListener('dragend', hideUploadOverlay);
     })();
     """
 
