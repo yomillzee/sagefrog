@@ -1839,6 +1839,8 @@ def _files_page_flash_message(
     *,
     doc_uploaded: str | None,
     doc_deleted: str | None,
+    folder_created: str | None,
+    folder_deleted: str | None,
     doc_error: str | None,
 ) -> str | None:
     if doc_error:
@@ -1847,26 +1849,52 @@ def _files_page_flash_message(
         return "File uploaded."
     if doc_deleted:
         return "File deleted."
+    if folder_created:
+        return "Folder created."
+    if folder_deleted:
+        return "Folder deleted."
     return None
 
 
 def _files_page_query_params(
     *,
     key: str | None,
+    folder: str | None = None,
     doc_uploaded: str | None = None,
     doc_deleted: str | None = None,
+    folder_created: str | None = None,
+    folder_deleted: str | None = None,
     doc_error: str | None = None,
 ) -> dict[str, str]:
     params: dict[str, str] = {}
     if key:
         params["key"] = key
+    if folder:
+        params["folder"] = str(folder).strip()
     if doc_error:
         params["doc_error"] = str(doc_error).strip()[:300]
     elif doc_uploaded:
         params["doc_uploaded"] = "1"
     elif doc_deleted:
         params["doc_deleted"] = "1"
+    elif folder_created:
+        params["folder_created"] = "1"
+    elif folder_deleted:
+        params["folder_deleted"] = "1"
     return params
+
+
+def _parse_folder_id(value: str | None) -> int | None:
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        folder_id = int(text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid folder id.") from exc
+    if folder_id < 1:
+        raise HTTPException(status_code=400, detail="Invalid folder id.")
+    return folder_id
 
 
 @app.get(
@@ -1879,14 +1907,20 @@ def dashboard_client_files_page(
     client_slug: str,
     request: Request,
     key: str | None = None,
+    folder: str | None = None,
     doc_uploaded: str | None = None,
     doc_deleted: str | None = None,
+    folder_created: str | None = None,
+    folder_deleted: str | None = None,
     doc_error: str | None = None,
 ):
     slug = _validate_client_slug(client_slug)
+    folder_id = _parse_folder_id(folder)
     flash = _files_page_flash_message(
         doc_uploaded=doc_uploaded,
         doc_deleted=doc_deleted,
+        folder_created=folder_created,
+        folder_deleted=folder_deleted,
         doc_error=doc_error,
     )
 
@@ -1903,6 +1937,7 @@ def dashboard_client_files_page(
                 client_slug=slug,
                 label=label,
                 flash_message=flash,
+                folder_id=folder_id,
                 **_penn_html_session_kwargs(auth),
             )
         )
@@ -1918,6 +1953,7 @@ def dashboard_client_files_page(
             label=label,
             access_key=key,
             flash_message=flash,
+            folder_id=folder_id,
         )
     )
 
@@ -1930,15 +1966,21 @@ def dashboard_client_files_page(
 def dashboard_client_insights_upload_page(
     client_slug: str,
     key: str | None = None,
+    folder: str | None = None,
     doc_uploaded: str | None = None,
     doc_deleted: str | None = None,
+    folder_created: str | None = None,
+    folder_deleted: str | None = None,
     doc_error: str | None = None,
 ):
     slug = _validate_client_slug(client_slug)
     params = _files_page_query_params(
         key=key,
+        folder=folder,
         doc_uploaded=doc_uploaded,
         doc_deleted=doc_deleted,
+        folder_created=folder_created,
+        folder_deleted=folder_deleted,
         doc_error=doc_error,
     )
     dest = f"/dashboard/{slug}/files"
@@ -2171,9 +2213,12 @@ def _files_flash_redirect(
     client_slug: str,
     use_session: bool,
     access_key: str | None,
+    folder_id: int | None = None,
     **query: str,
 ) -> RedirectResponse:
     params = {k: v for k, v in query.items() if v}
+    if folder_id is not None:
+        params["folder"] = str(int(folder_id))
     if not use_session:
         params["key"] = access_key or ""
     dest = f"/dashboard/{client_slug}/files"
@@ -2195,7 +2240,8 @@ async def dashboard_client_insight_document_upload(
     request: Request,
     key: str | None = None,
     title: str = Form(""),
-    period: str = Form(...),
+    period: str = Form(""),
+    folder_id: str = Form(""),
     file: UploadFile = File(...),
 ):
     slug = _validate_client_slug(client_slug)
@@ -2219,16 +2265,28 @@ async def dashboard_client_insight_document_upload(
         use_session = False
         uploaded_by = "dashboard_key"
 
+    redirect_folder_id: int | None = None
+    folder_raw = (folder_id or "").strip()
+    if folder_raw:
+        try:
+            redirect_folder_id = int(folder_raw)
+        except ValueError:
+            redirect_folder_id = None
+
     if not client_insight_documents.enabled():
         return _files_flash_redirect(
             client_slug=slug,
             use_session=use_session,
             access_key=access_key,
+            folder_id=redirect_folder_id,
             doc_error="DATABASE_URL is required to store insight documents.",
         )
 
     try:
-        period_year, period_month = client_insight_documents.parse_period(period)
+        if (period or "").strip():
+            period_year, period_month = client_insight_documents.parse_period(period)
+        else:
+            period_year, period_month = client_insight_documents.current_period()
         raw = await file.read()
         saved = client_insight_documents.save_document(
             slug,
@@ -2239,6 +2297,7 @@ async def dashboard_client_insight_document_upload(
             content_type=file.content_type or "",
             file_bytes=raw,
             uploaded_by=uploaded_by,
+            folder_id=redirect_folder_id,
         )
         audit_log.record(
             action="insight_document.uploaded",
@@ -2247,6 +2306,7 @@ async def dashboard_client_insight_document_upload(
                 "client_slug": slug,
                 "document_id": saved.id,
                 "title": saved.title,
+                "folder_id": saved.folder_id,
                 "period": client_insight_documents.period_label(period_year, period_month),
             },
             **audit_log.request_context(request),
@@ -2256,6 +2316,7 @@ async def dashboard_client_insight_document_upload(
             client_slug=slug,
             use_session=use_session,
             access_key=access_key,
+            folder_id=redirect_folder_id,
             doc_error=str(exc)[:300],
         )
 
@@ -2263,6 +2324,7 @@ async def dashboard_client_insight_document_upload(
         client_slug=slug,
         use_session=use_session,
         access_key=access_key,
+        folder_id=redirect_folder_id,
         doc_uploaded="1",
     )
 
@@ -2309,6 +2371,7 @@ def dashboard_client_insight_document_delete(
     doc_id: int,
     request: Request,
     key: str | None = None,
+    folder_id: str = Form(""),
 ):
     slug = _validate_client_slug(client_slug)
     if web_users.enabled():
@@ -2330,6 +2393,17 @@ def dashboard_client_insight_document_delete(
         use_session = False
         actor = "dashboard_key"
 
+    redirect_folder_id: int | None = None
+    folder_raw = (folder_id or "").strip()
+    if folder_raw:
+        try:
+            redirect_folder_id = int(folder_raw)
+        except ValueError:
+            redirect_folder_id = None
+    if redirect_folder_id is None:
+        existing = client_insight_documents.get_document(slug, doc_id)
+        redirect_folder_id = existing.folder_id if existing else None
+
     deleted = client_insight_documents.delete_document(slug, doc_id)
     if deleted:
         audit_log.record(
@@ -2342,8 +2416,156 @@ def dashboard_client_insight_document_delete(
         client_slug=slug,
         use_session=use_session,
         access_key=access_key,
+        folder_id=redirect_folder_id,
         doc_deleted="1" if deleted else None,
         doc_error=None if deleted else "Document not found.",
+    )
+
+
+@app.post(
+    "/dashboard/{client_slug}/insight-folders",
+    summary="Create client insight folder",
+    include_in_schema=False,
+)
+def dashboard_client_insight_folder_create(
+    client_slug: str,
+    request: Request,
+    key: str | None = None,
+    name: str = Form(...),
+    parent_id: str = Form(""),
+):
+    slug = _validate_client_slug(client_slug)
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        access_key = auth.access_key
+        use_session = auth.use_session
+        user = auth.user
+        if not dashboard_service.can_edit_penn_insights(
+            session_is_admin=bool(user and user.role == "admin"),
+            access_key=access_key,
+        ):
+            raise HTTPException(status_code=403, detail="Only admins can create folders.")
+        actor = user.email if user else None
+    else:
+        dashboard_service.verify_dashboard_key(key)
+        access_key = key
+        use_session = False
+        actor = "dashboard_key"
+
+    parent_folder_id: int | None = None
+    parent_raw = (parent_id or "").strip()
+    if parent_raw:
+        try:
+            parent_folder_id = int(parent_raw)
+        except ValueError:
+            parent_folder_id = None
+
+    if not client_insight_documents.enabled():
+        return _files_flash_redirect(
+            client_slug=slug,
+            use_session=use_session,
+            access_key=access_key,
+            folder_id=parent_folder_id,
+            doc_error="DATABASE_URL is required to store folders.",
+        )
+
+    try:
+        saved = client_insight_documents.create_folder(
+            slug,
+            name=name,
+            parent_id=parent_folder_id,
+            created_by=actor,
+        )
+        audit_log.record(
+            action="insight_folder.created",
+            actor_email=actor,
+            detail={
+                "client_slug": slug,
+                "folder_id": saved.id,
+                "name": saved.name,
+                "parent_id": saved.parent_id,
+            },
+            **audit_log.request_context(request),
+        )
+    except Exception as exc:
+        return _files_flash_redirect(
+            client_slug=slug,
+            use_session=use_session,
+            access_key=access_key,
+            folder_id=parent_folder_id,
+            doc_error=str(exc)[:300],
+        )
+
+    return _files_flash_redirect(
+        client_slug=slug,
+        use_session=use_session,
+        access_key=access_key,
+        folder_id=saved.id,
+        folder_created="1",
+    )
+
+
+@app.post(
+    "/dashboard/{client_slug}/insight-folders/{folder_id}/delete",
+    summary="Delete client insight folder",
+    include_in_schema=False,
+)
+def dashboard_client_insight_folder_delete(
+    client_slug: str,
+    folder_id: int,
+    request: Request,
+    key: str | None = None,
+):
+    slug = _validate_client_slug(client_slug)
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        access_key = auth.access_key
+        use_session = auth.use_session
+        user = auth.user
+        if not dashboard_service.can_edit_penn_insights(
+            session_is_admin=bool(user and user.role == "admin"),
+            access_key=access_key,
+        ):
+            raise HTTPException(status_code=403, detail="Only admins can delete folders.")
+        actor = user.email if user else None
+    else:
+        dashboard_service.verify_dashboard_key(key)
+        access_key = key
+        use_session = False
+        actor = "dashboard_key"
+
+    existing = client_insight_documents.get_folder(slug, folder_id)
+    redirect_folder_id = existing.parent_id if existing else None
+
+    try:
+        deleted = client_insight_documents.delete_folder(slug, folder_id)
+    except ValueError as exc:
+        return _files_flash_redirect(
+            client_slug=slug,
+            use_session=use_session,
+            access_key=access_key,
+            folder_id=redirect_folder_id,
+            doc_error=str(exc)[:300],
+        )
+
+    if deleted:
+        audit_log.record(
+            action="insight_folder.deleted",
+            actor_email=actor,
+            detail={"client_slug": slug, "folder_id": int(folder_id)},
+            **audit_log.request_context(request),
+        )
+    return _files_flash_redirect(
+        client_slug=slug,
+        use_session=use_session,
+        access_key=access_key,
+        folder_id=redirect_folder_id,
+        folder_deleted="1" if deleted else None,
+        doc_error=None if deleted else "Folder not found.",
     )
 
 
