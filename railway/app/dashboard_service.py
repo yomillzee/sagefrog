@@ -1529,12 +1529,6 @@ def _client_insights_upload_page_html(
         use_session=use_session,
     )
     if can_upload and upload_action and docs.enabled():
-        storage_note = ""
-        if docs.uses_object_storage():
-            storage_note = (
-                '<p class="hint">Files are stored in Cloudflare R2. '
-                "Clients download through authenticated links — the bucket stays private.</p>"
-            )
         upload_html = f"""
         <form method="post" action="{upload_action}" enctype="multipart/form-data" class="client-insights-upload">
           <div class="client-insights-upload-grid">
@@ -1554,7 +1548,6 @@ def _client_insights_upload_page_html(
               <p class="hint">Word (.docx) or PDF, up to 25 MB.</p>
             </div>
           </div>
-          {storage_note}
           <button type="submit" class="client-insights-upload-btn">Upload document</button>
         </form>"""
     elif not docs.enabled():

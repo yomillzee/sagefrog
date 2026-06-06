@@ -2233,19 +2233,14 @@ def dashboard_client_insight_document_download(
     else:
         dashboard_service.verify_dashboard_key(key)
 
-    try:
-        resolved = client_insight_documents.resolve_download(slug, doc_id)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)[:300]) from exc
-    if not resolved:
+    payload = client_insight_documents.get_document_bytes(slug, doc_id)
+    if not payload:
         raise HTTPException(status_code=404, detail="Document not found.")
-    meta = resolved.meta
-    if resolved.kind == "redirect":
-        return RedirectResponse(str(resolved.payload), status_code=302)
+    meta, file_bytes = payload
     filename = meta.original_filename or meta.title or "document"
     safe_name = "".join(c for c in filename if c.isalnum() or c in " ._-").strip() or "document"
     return Response(
-        content=resolved.payload,
+        content=file_bytes,
         media_type=meta.content_type or "application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
     )
