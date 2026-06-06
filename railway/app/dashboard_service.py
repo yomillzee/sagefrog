@@ -1746,37 +1746,52 @@ def _global_filters_bar_html(
 ) -> str:
     if not show_business_line and not show_channel_filters:
         return ""
-    bl_row = ""
+    bl_column = ""
     if show_business_line:
-        bl_row = """
-          <div class="filter-row">
-            <span class="filter-label">Business line</span>
-            <div id="blFilters" class="filter-toggles" role="group" aria-label="Business line"></div>
-          </div>"""
-    channel_row = ""
+        bl_column = """
+            <div class="filter-column">
+              <span class="filter-column-label">Business line</span>
+              <div id="blFilters" class="filter-toggles" role="group" aria-label="Business line"></div>
+            </div>"""
+    channel_column = ""
     if show_channel_filters:
-        channel_row = """
-          <div class="filter-row">
-            <span class="filter-label">Channel</span>
-            <div id="channelFilters" class="filter-toggles" role="group" aria-label="Channel"></div>
-          </div>"""
-    zero_spend = ""
+        channel_column = """
+            <div class="filter-column">
+              <span class="filter-column-label">Channel</span>
+              <div id="channelFilters" class="filter-toggles" role="group" aria-label="Channel"></div>
+            </div>"""
+    grid_class = "global-filter-grid"
+    if not show_business_line or not show_channel_filters:
+        grid_class = "global-filter-grid global-filter-grid--single"
+    more_options = ""
     if show_business_line:
-        zero_spend = """
-            <label class="filter-zero-spend">
-              <input type="checkbox" id="showZeroSpend">
-              Show inactive / $0 spend
-            </label>"""
+        more_options = """
+            <details class="filter-more-options">
+              <summary>More filter options</summary>
+              <label class="filter-zero-spend">
+                <input type="checkbox" id="showZeroSpend">
+                Show inactive / $0 spend
+              </label>
+            </details>"""
     return f"""
       <div class="dash-filters-bar" id="dashFiltersBar">
-        <section class="filter-panel global-filters" aria-label="Dashboard filters">
-          <div class="global-filter-rows">
-            {bl_row}
-            {channel_row}
-          </div>
-          <div class="bl-filter-footer">
-            {zero_spend}
+        <section class="filter-panel global-filters" id="globalFiltersPanel" aria-label="Dashboard filters">
+          <div class="global-filters-head">
+            <button type="button" class="filters-collapse-btn" id="filtersCollapseBtn"
+              aria-expanded="true" aria-controls="globalFiltersBody">
+              <svg class="filters-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M6 9l6 6 6-6"/>
+              </svg>
+              <span>Filters</span>
+            </button>
             <div class="filter-status" id="filterStatus"></div>
+          </div>
+          <div class="global-filters-body" id="globalFiltersBody">
+            <div class="{grid_class}">
+              {bl_column}
+              {channel_column}
+            </div>
+            {more_options}
           </div>
         </section>
       </div>"""
@@ -3845,11 +3860,114 @@ def render_penn_html(
       display: none;
     }}
     .global-filters {{
-      padding: 14px 16px;
+      padding: 12px 16px 14px;
       border: 1px solid var(--border);
       border-radius: 12px;
       box-shadow: none;
       background: var(--surface);
+    }}
+    .global-filters.is-collapsed {{
+      padding-bottom: 10px;
+    }}
+    .global-filters-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }}
+    .global-filters.is-collapsed .global-filters-head {{
+      margin-bottom: 0;
+    }}
+    .global-filters.is-collapsed .global-filters-body {{
+      display: none;
+    }}
+    .filters-collapse-btn {{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      appearance: none;
+      border: none;
+      background: none;
+      font: inherit;
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--navy);
+      cursor: pointer;
+      padding: 2px 0;
+    }}
+    .filters-collapse-btn:hover {{
+      color: var(--accent);
+    }}
+    .filters-chevron {{
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
+      transition: transform 0.2s ease;
+    }}
+    .global-filters.is-collapsed .filters-chevron {{
+      transform: rotate(-90deg);
+    }}
+    .global-filter-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px 28px;
+      align-items: start;
+    }}
+    .global-filter-grid--single {{
+      grid-template-columns: 1fr;
+    }}
+    .filter-column {{
+      min-width: 0;
+    }}
+    .filter-column-label {{
+      display: block;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }}
+    .global-filters-head .filter-status {{
+      font-size: 0.78rem;
+      color: var(--muted);
+      text-align: right;
+      flex: 1;
+      min-width: 0;
+      line-height: 1.35;
+    }}
+    .filter-more-options {{
+      margin-top: 12px;
+      border-top: 1px solid var(--border);
+    }}
+    .filter-more-options summary {{
+      font-size: 0.76rem;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 8px 0 6px;
+      user-select: none;
+      list-style: none;
+    }}
+    .filter-more-options summary::-webkit-details-marker {{
+      display: none;
+    }}
+    .filter-more-options summary::before {{
+      content: '+';
+      display: inline-block;
+      width: 14px;
+      margin-right: 4px;
+      font-weight: 700;
+    }}
+    .filter-more-options[open] summary::before {{
+      content: '−';
+    }}
+    .filter-more-options .filter-zero-spend {{
+      margin: 0 0 4px;
+      padding: 0;
+      border-top: 0;
+      font-size: 0.8rem;
     }}
     .global-filter-rows {{
       display: flex;
@@ -4312,6 +4430,8 @@ def render_penn_html(
       .dash-page-header {{ padding: 0 16px; }}
       .dash-view-nav {{ padding-top: 6px; }}
       .dash-filters-bar {{ padding: 14px 0 16px; }}
+      .global-filter-grid {{ grid-template-columns: 1fr; gap: 14px; }}
+      .global-filters-head .filter-status {{ text-align: left; }}
       .sidebar-menu-btn {{ display: flex; }}
       .sidebar-close {{ display: flex; }}
       .sidebar-backdrop {{
@@ -5104,6 +5224,15 @@ def render_penn_html(
     initToggleGroup('channelFilters', platformCatalog, channelState, 'channel');
     initToggleGroup('blFilters', blCatalog, blState, 'bl');
     document.getElementById('showZeroSpend')?.addEventListener('change', applyGlobalFilters);
+
+    const filtersPanel = document.getElementById('globalFiltersPanel');
+    const filtersCollapseBtn = document.getElementById('filtersCollapseBtn');
+    filtersCollapseBtn?.addEventListener('click', () => {{
+      if (!filtersPanel) return;
+      const collapsed = filtersPanel.classList.toggle('is-collapsed');
+      filtersCollapseBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }});
+
     document.querySelector('#blTable thead')?.addEventListener('click', onBlSortClick);
 
     const ga4PagesBody = document.getElementById('ga4PagesBody');
