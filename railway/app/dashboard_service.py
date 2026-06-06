@@ -988,12 +988,16 @@ def _files_page_url(
     client_slug: str = "penn",
     access_key: str | None,
     use_session: bool,
+    folder_id: int | None = None,
 ) -> str | None:
     base = f"/dashboard/{client_slug}/files"
-    if use_session:
-        return base
-    if access_key:
-        return f"{base}?key={quote(access_key, safe='')}"
+    params: list[str] = []
+    if folder_id is not None:
+        params.append(f"folder={int(folder_id)}")
+    if not use_session and access_key:
+        params.append(f"key={quote(access_key, safe='')}")
+    if params:
+        return f"{base}?{'&'.join(params)}"
     return base
 
 
@@ -1358,6 +1362,45 @@ def _fmt_file_size(num_bytes: int) -> str:
     return f"{round(size / (1024 * 1024), 1)} MB"
 
 
+def _fmt_short_date(iso_value: str | None) -> str:
+    text = (iso_value or "").strip()
+    if not text:
+        return "—"
+    return text[:10] if len(text) >= 10 else text
+
+
+def _file_type_icon_html(filename: str) -> str:
+    ext = os.path.splitext(filename or "")[1].lower()
+    if ext == ".pdf":
+        return (
+            '<svg class="files-item-icon files-item-icon--pdf" viewBox="0 0 24 24" fill="none" '
+            'stroke="currentColor" stroke-width="1.5" aria-hidden="true">'
+            '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>'
+            '<path d="M14 2v6h6"/><text x="7" y="17" font-size="6" fill="currentColor" stroke="none">PDF</text></svg>'
+        )
+    if ext == ".docx":
+        return (
+            '<svg class="files-item-icon files-item-icon--doc" viewBox="0 0 24 24" fill="none" '
+            'stroke="currentColor" stroke-width="1.5" aria-hidden="true">'
+            '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>'
+            '<path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>'
+        )
+    return (
+        '<svg class="files-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="1.5" aria-hidden="true">'
+        '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>'
+    )
+
+
+def _folder_icon_html() -> str:
+    return (
+        '<svg class="files-item-icon files-item-icon--folder" viewBox="0 0 24 24" fill="currentColor" '
+        'stroke="none" aria-hidden="true">'
+        '<path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/>'
+        '</svg>'
+    )
+
+
 def _insight_documents_action_url(
     *,
     client_slug: str,
@@ -1402,22 +1445,186 @@ def _insight_document_delete_url(
     return base
 
 
-def _client_insights_doc_rows_html(
+def _insight_folder_action_url(
+    *,
+    client_slug: str,
+    access_key: str | None,
+    use_session: bool,
+) -> str | None:
+    base = f"/dashboard/{client_slug}/insight-folders"
+    if use_session:
+        return base
+    if access_key:
+        return f"{base}?key={quote(access_key, safe='')}"
+    return None
+
+
+def _insight_folder_delete_url(
+    *,
+    client_slug: str,
+    folder_id: int,
+    access_key: str | None,
+    use_session: bool,
+) -> str:
+    base = f"/dashboard/{client_slug}/insight-folders/{int(folder_id)}/delete"
+    if use_session:
+        return base
+    if access_key:
+        return f"{base}?key={quote(access_key, safe='')}"
+    return base
+
+
+def _files_breadcrumb_html(
+    *,
+    client_slug: str,
+    access_key: str | None,
+    use_session: bool,
+    breadcrumb: list[Any],
+) -> str:
+    root_url = _files_page_url(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+    ) or "#"
+    parts = [
+        f'<a href="{root_url}" class="files-crumb-link">All files</a>',
+    ]
+    for folder in breadcrumb:
+        url = _files_page_url(
+            client_slug=client_slug,
+            access_key=access_key,
+            use_session=use_session,
+            folder_id=folder.id,
+        ) or "#"
+        parts.append('<span class="files-crumb-sep" aria-hidden="true">/</span>')
+        if folder.id == breadcrumb[-1].id:
+            parts.append(f'<span class="files-crumb-current">{_esc(folder.name)}</span>')
+        else:
+            parts.append(f'<a href="{url}" class="files-crumb-link">{_esc(folder.name)}</a>')
+    return f'<nav class="files-breadcrumb" aria-label="Folder path">{"".join(parts)}</nav>'
+
+
+def _client_files_browser_html(
     *,
     client_slug: str,
     access_key: str | None,
     use_session: bool,
     can_manage: bool,
-) -> tuple[str, int]:
-    """Build document list rows; returns (html, count)."""
+    folder_id: int | None = None,
+) -> str:
+    """Dropbox-style folder browser with upload and folder creation."""
     import client_insight_documents as docs
 
-    rows = docs.list_documents(client_slug)
-    if not rows:
-        return "", 0
+    if not docs.enabled():
+        return (
+            '<p class="files-empty muted">DATABASE_URL is required to store shared files.</p>'
+        )
 
-    body_rows = []
-    for row in rows:
+    breadcrumb = docs.folder_breadcrumb(client_slug, folder_id)
+    if folder_id is not None and not breadcrumb:
+        return (
+            '<p class="files-empty muted">Folder not found. '
+            f'<a class="dash-link" href="{_files_page_url(client_slug=client_slug, access_key=access_key, use_session=use_session) or "#"}">'
+            "Go to All files</a></p>"
+        )
+
+    folders = docs.list_folders(client_slug, parent_id=folder_id)
+    files = docs.list_documents(client_slug, folder_id=folder_id)
+    breadcrumb_html = _files_breadcrumb_html(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+        breadcrumb=breadcrumb,
+    )
+
+    toolbar_actions = ""
+    if can_manage:
+        upload_action = _insight_documents_action_url(
+            client_slug=client_slug,
+            access_key=access_key,
+            use_session=use_session,
+        )
+        folder_action = _insight_folder_action_url(
+            client_slug=client_slug,
+            access_key=access_key,
+            use_session=use_session,
+        )
+        folder_field = (
+            f'<input type="hidden" name="parent_id" value="{int(folder_id)}">'
+            if folder_id is not None
+            else ""
+        )
+        upload_folder_field = (
+            f'<input type="hidden" name="folder_id" value="{int(folder_id)}">'
+            if folder_id is not None
+            else ""
+        )
+        toolbar_actions = f"""
+        <div class="files-toolbar-actions">
+          <button type="button" class="files-btn files-btn--secondary" id="newFolderBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            New folder
+          </button>
+          <form method="post" action="{upload_action or "#"}" enctype="multipart/form-data" class="files-upload-form">
+            {upload_folder_field}
+            <label class="files-btn files-btn--primary files-upload-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 16V4m0 0l-4 4m4-4l4 4M4 20h16"/></svg>
+              Upload
+              <input type="file" name="file" class="files-upload-input" accept=".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required>
+            </label>
+          </form>
+        </div>
+        <dialog class="files-dialog" id="newFolderDialog">
+          <form method="post" action="{folder_action or "#"}" class="files-dialog-form">
+            {folder_field}
+            <h3 class="files-dialog-title">Create a folder</h3>
+            <label for="newFolderName" class="files-dialog-label">Folder name</label>
+            <input id="newFolderName" name="name" type="text" maxlength="200" required
+              placeholder="e.g. Monthly reports" class="files-dialog-input" autocomplete="off">
+            <div class="files-dialog-actions">
+              <button type="button" class="files-btn files-btn--secondary" id="newFolderCancel">Cancel</button>
+              <button type="submit" class="files-btn files-btn--primary">Create</button>
+            </div>
+          </form>
+        </dialog>"""
+
+    rows: list[str] = []
+    for folder in folders:
+        folder_url = _files_page_url(
+            client_slug=client_slug,
+            access_key=access_key,
+            use_session=use_session,
+            folder_id=folder.id,
+        ) or "#"
+        delete_cell = ""
+        if can_manage:
+            delete_url = _insight_folder_delete_url(
+                client_slug=client_slug,
+                folder_id=folder.id,
+                access_key=access_key,
+                use_session=use_session,
+            )
+            delete_cell = f"""
+              <form method="post" action="{delete_url}" class="files-row-action-form"
+                onsubmit="return confirm('Delete this empty folder?');">
+                <button type="submit" class="files-row-action files-row-action--danger" title="Delete folder">Delete</button>
+              </form>"""
+        rows.append(
+            f"""
+            <tr class="files-row files-row--folder">
+              <td class="files-col-name">
+                <a href="{folder_url}" class="files-name-link">
+                  {_folder_icon_html()}
+                  <span class="files-name-text">{_esc(folder.name)}</span>
+                </a>
+              </td>
+              <td class="files-col-modified">{_fmt_short_date(folder.created_at)}</td>
+              <td class="files-col-size muted">—</td>
+              <td class="files-col-actions">{delete_cell}</td>
+            </tr>"""
+        )
+
+    for row in files:
         download_url = _insight_document_download_url(
             client_slug=client_slug,
             doc_id=row.id,
@@ -1432,157 +1639,146 @@ def _client_insights_doc_rows_html(
                 access_key=access_key,
                 use_session=use_session,
             )
+            redirect_folder = (
+                f'<input type="hidden" name="folder_id" value="{int(folder_id)}">'
+                if folder_id is not None
+                else ""
+            )
             delete_cell = f"""
-                <form method="post" action="{delete_url}" class="client-insights-delete-form"
-                  onsubmit="return confirm('Delete this document?');">
-                  <button type="submit" class="client-insights-delete-btn">Delete</button>
-                </form>"""
-        body_rows.append(
+              <form method="post" action="{delete_url}" class="files-row-action-form"
+                onsubmit="return confirm('Delete this file?');">
+                {redirect_folder}
+                <button type="submit" class="files-row-action files-row-action--danger" title="Delete file">Delete</button>
+              </form>"""
+        display_name = row.title or row.original_filename
+        rows.append(
             f"""
-                <tr>
-                  <td class="client-insights-file">
-                    <div class="client-insights-file-title">{_esc(row.title)}</div>
-                    <div class="client-insights-file-meta muted">{_esc(docs.file_type_label(row.original_filename))} · {_esc(_fmt_file_size(row.file_size))}</div>
-                  </td>
-                  <td class="client-insights-period">{_esc(docs.period_label(row.period_year, row.period_month))}</td>
-                  <td class="client-insights-actions">
-                    <a class="client-insights-download-btn" href="{download_url}">Download</a>
-                    {delete_cell}
-                  </td>
-                </tr>"""
-        )
-    table_html = f"""
-        <div class="client-insights-table-wrap">
-          <table class="client-insights-table">
-            <thead>
-              <tr>
-                <th scope="col">File</th>
-                <th scope="col">Period</th>
-                <th scope="col">Download</th>
-              </tr>
-            </thead>
-            <tbody>
-              {''.join(body_rows)}
-            </tbody>
-          </table>
-        </div>"""
-    return table_html, len(rows)
-
-
-def _client_files_page_html(
-    *,
-    client_slug: str,
-    access_key: str | None,
-    use_session: bool,
-    can_manage: bool,
-) -> str:
-    """File sharing page: downloads for all users; upload/delete for admins."""
-    import client_insight_documents as docs
-
-    upload_html = ""
-    upload_action = _insight_documents_action_url(
-        client_slug=client_slug,
-        access_key=access_key,
-        use_session=use_session,
-    )
-    if can_manage and upload_action and docs.enabled():
-        upload_html = f"""
-        <section class="files-upload-panel" aria-label="Upload files">
-          <h3 class="files-section-title">Upload a file</h3>
-          <form method="post" action="{upload_action}" enctype="multipart/form-data" class="client-insights-upload">
-            <div class="client-insights-upload-grid">
-              <div>
-                <label for="insightDocTitle">Title</label>
-                <input id="insightDocTitle" name="title" type="text" maxlength="200"
-                  placeholder="May 2026 Paid Digital Reporting">
-              </div>
-              <div>
-                <label for="insightDocPeriod">Period</label>
-                <input id="insightDocPeriod" name="period" type="month" required>
-              </div>
-              <div>
-                <label for="insightDocFile">Document</label>
-                <input id="insightDocFile" name="file" type="file"
-                  accept=".docx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" required>
-                <p class="hint">Word (.docx) or PDF, up to 25 MB.</p>
-              </div>
-            </div>
-            <button type="submit" class="client-insights-upload-btn">Upload file</button>
-          </form>
-        </section>"""
-    elif not docs.enabled():
-        upload_html = (
-            '<p class="client-insights-empty muted">'
-            "DATABASE_URL is required to store shared files."
-            "</p>"
+            <tr class="files-row files-row--file">
+              <td class="files-col-name">
+                <a href="{download_url}" class="files-name-link">
+                  {_file_type_icon_html(row.original_filename)}
+                  <span class="files-name-text">{_esc(display_name)}</span>
+                  <span class="files-name-sub muted">{_esc(docs.file_type_label(row.original_filename))}</span>
+                </a>
+              </td>
+              <td class="files-col-modified">{_fmt_short_date(row.uploaded_at)}</td>
+              <td class="files-col-size">{_esc(_fmt_file_size(row.file_size))}</td>
+              <td class="files-col-actions">
+                <a href="{download_url}" class="files-row-action">Download</a>
+                {delete_cell}
+              </td>
+            </tr>"""
         )
 
-    table_html, doc_count = _client_insights_doc_rows_html(
-        client_slug=client_slug,
-        access_key=access_key,
-        use_session=use_session,
-        can_manage=can_manage,
-    )
-    if not table_html:
-        empty_msg = "No files shared yet."
+    if not rows:
+        empty_msg = "This folder is empty."
         if can_manage:
-            empty_msg = "No files shared yet. Upload a document above."
-        table_html = f'<p class="client-insights-empty muted">{empty_msg}</p>'
-
-    manage_note = ""
-    if can_manage and doc_count:
-        manage_note = '<p class="hint files-manage-note">You can delete files from the list below.</p>'
+            empty_msg = "This folder is empty. Create a folder or upload a file to get started."
+        table_body = f'<tr><td colspan="4" class="files-empty-cell muted">{empty_msg}</td></tr>'
+    else:
+        table_body = "".join(rows)
 
     return f"""
-    <section class="client-insights-panel files-page-panel" aria-label="Shared files">
-      <div class="client-insights-head">
-        <div>
-          <h2 class="client-insights-title">Shared files</h2>
-          <p class="client-insights-subtitle muted">
-            Reports and documents shared with this client. Only signed-in users can download files.
-          </p>
-        </div>
+    <div class="files-browser">
+      <div class="files-toolbar">
+        {breadcrumb_html}
+        {toolbar_actions}
       </div>
-      {upload_html}
-      <section class="files-list-panel" aria-label="File list">
-        <h3 class="files-section-title">Available files</h3>
-        {manage_note}
-        {table_html}
-      </section>
-    </section>"""
+      <div class="files-table-wrap">
+        <table class="files-table">
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Modified</th>
+              <th scope="col">Size</th>
+              <th scope="col"><span class="visually-hidden">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {table_body}
+          </tbody>
+        </table>
+      </div>
+    </div>"""
 
 
 def _files_page_css() -> str:
     return """
     .dash-flash { background: var(--ok-bg); border: 1px solid #b8dfc8; border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; font-size: 0.9rem; color: var(--ok); }
-    .dash-flash--error { background: var(--err-bg); border-color: #f5c2c0; color: var(--err); }
-    .files-page-panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 0; overflow: hidden; box-shadow: var(--shadow-sm); }
-    .client-insights-head { padding: 22px 24px 0; }
-    .client-insights-title { margin: 0; font-size: 1.15rem; font-weight: 700; color: var(--navy); }
-    .client-insights-subtitle { margin: 6px 0 0; font-size: 0.9rem; line-height: 1.45; }
-    .files-section-title { margin: 0 0 12px; font-size: 0.88rem; font-weight: 700; color: var(--navy); text-transform: uppercase; letter-spacing: 0.04em; }
-    .files-upload-panel { margin: 18px 24px 0; padding: 18px; border: 1px dashed var(--border); border-radius: 12px; background: var(--surface); }
-    .files-list-panel { padding: 18px 24px 24px; }
-    .files-manage-note { margin: 0 0 10px; }
-    .client-insights-upload-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
-    @media (max-width: 900px) { .client-insights-upload-grid { grid-template-columns: 1fr; } }
-    .client-insights-upload label { display: block; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 6px; }
-    .client-insights-upload input { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; font: inherit; background: #fff; }
-    .client-insights-upload .hint { margin: 6px 0 0; font-size: 0.82rem; color: var(--muted); line-height: 1.4; }
-    .client-insights-upload-btn { appearance: none; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 650; padding: 10px 16px; cursor: pointer; }
-    .client-insights-table-wrap { overflow-x: auto; }
-    .client-insights-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
-    .client-insights-table th { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-    .client-insights-table td { padding: 14px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-    .client-insights-table tr:last-child td { border-bottom: 0; }
-    .client-insights-file-title { font-weight: 650; color: var(--navy); margin-bottom: 2px; }
-    .client-insights-file-meta { font-size: 0.82rem; }
-    .client-insights-period { white-space: nowrap; color: var(--navy); font-weight: 600; }
-    .client-insights-download-btn { display: inline-block; padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--navy); font-weight: 600; font-size: 0.86rem; text-decoration: none; }
-    .client-insights-download-btn:hover { background: var(--surface); border-color: #b8c4d4; }
-    .client-insights-delete-form { display: inline-block; margin-left: 8px; }
-    .client-insights-delete-btn { appearance: none; border: 0; background: none; color: var(--err); font-size: 0.82rem; font-weight: 600; cursor: pointer; padding: 0; }
-    .client-insights-empty { margin: 0; font-size: 0.9rem; }
+    .files-browser { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; }
+    .files-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 16px 20px; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, #fff 0%, var(--surface) 100%); }
+    .files-breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: 0.92rem; min-width: 0; }
+    .files-crumb-link { color: var(--accent); text-decoration: none; font-weight: 600; }
+    .files-crumb-link:hover { text-decoration: underline; }
+    .files-crumb-sep { color: var(--muted); padding: 0 2px; }
+    .files-crumb-current { color: var(--navy); font-weight: 650; }
+    .files-toolbar-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    .files-btn { appearance: none; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--navy); font: inherit; font-size: 0.88rem; font-weight: 650; padding: 9px 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; transition: background 0.15s, border-color 0.15s, box-shadow 0.15s; }
+    .files-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+    .files-btn:hover { background: #f4f7fb; border-color: #b8c4d4; }
+    .files-btn--primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .files-btn--primary:hover { filter: brightness(1.05); background: var(--accent); border-color: var(--accent); }
+    .files-btn--secondary { background: #fff; }
+    .files-upload-label { margin: 0; }
+    .files-upload-form { display: inline-flex; margin: 0; }
+    .files-upload-input { display: none; }
+    .files-table-wrap { overflow-x: auto; }
+    .files-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+    .files-table thead th { text-align: left; padding: 10px 16px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); background: var(--surface); }
+    .files-table tbody tr { border-bottom: 1px solid var(--border); transition: background 0.12s; }
+    .files-table tbody tr:last-child { border-bottom: none; }
+    .files-table tbody tr:hover { background: rgba(10, 37, 64, 0.03); }
+    .files-col-name { padding: 12px 16px; min-width: 220px; }
+    .files-col-modified, .files-col-size { padding: 12px 16px; white-space: nowrap; color: var(--muted); width: 120px; }
+    .files-col-actions { padding: 12px 16px; text-align: right; white-space: nowrap; width: 140px; }
+    .files-name-link { display: flex; align-items: center; gap: 12px; color: inherit; text-decoration: none; min-width: 0; }
+    .files-name-link:hover .files-name-text { color: var(--accent); text-decoration: underline; }
+    .files-name-text { font-weight: 600; color: var(--navy); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .files-name-sub { font-size: 0.78rem; margin-left: 6px; flex-shrink: 0; }
+    .files-item-icon { width: 28px; height: 28px; flex-shrink: 0; color: var(--muted); }
+    .files-item-icon--folder { color: #f5b942; }
+    .files-item-icon--pdf { color: #e25555; }
+    .files-item-icon--doc { color: #2b6cb0; }
+    .files-row-action { appearance: none; border: 0; background: none; color: var(--accent); font-size: 0.82rem; font-weight: 600; cursor: pointer; padding: 0; text-decoration: none; }
+    .files-row-action:hover { text-decoration: underline; }
+    .files-row-action--danger { color: var(--err); margin-left: 10px; }
+    .files-row-action-form { display: inline; }
+    .files-empty-cell { padding: 48px 16px; text-align: center; }
+    .files-empty { padding: 24px; text-align: center; }
+    .files-dialog { border: 0; border-radius: 14px; padding: 0; box-shadow: 0 20px 50px rgba(10, 37, 64, 0.22); max-width: calc(100vw - 32px); width: 420px; }
+    .files-dialog::backdrop { background: rgba(10, 37, 64, 0.45); }
+    .files-dialog-form { padding: 22px 22px 18px; }
+    .files-dialog-title { margin: 0 0 14px; font-size: 1.05rem; color: var(--navy); }
+    .files-dialog-label { display: block; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 6px; }
+    .files-dialog-input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font: inherit; margin-bottom: 16px; }
+    .files-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
+    .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    @media (max-width: 720px) {
+      .files-col-modified, .files-col-size { display: none; }
+      .files-toolbar { flex-direction: column; align-items: stretch; }
+      .files-toolbar-actions { justify-content: flex-end; }
+    }
+    """
+
+
+def _files_page_js() -> str:
+    return """
+    (function () {
+      const dialog = document.getElementById('newFolderDialog');
+      const openBtn = document.getElementById('newFolderBtn');
+      const cancelBtn = document.getElementById('newFolderCancel');
+      openBtn?.addEventListener('click', () => {
+        dialog?.showModal();
+        document.getElementById('newFolderName')?.focus();
+      });
+      cancelBtn?.addEventListener('click', () => dialog?.close());
+      document.querySelectorAll('.files-upload-input').forEach((input) => {
+        input.addEventListener('change', () => {
+          const form = input.closest('form');
+          if (input.files?.length) form?.submit();
+        });
+      });
+    })();
     """
 
 
@@ -1595,6 +1791,7 @@ def render_files_page(
     session_email: str | None = None,
     session_is_admin: bool = False,
     flash_message: str | None = None,
+    folder_id: int | None = None,
 ) -> str:
     slug = (client_slug or "penn").strip().lower()
     can_manage = can_edit_penn_insights(
@@ -1604,11 +1801,12 @@ def render_files_page(
     flash_html = ""
     if flash_message:
         flash_html = f'<div class="dash-flash">{_esc(flash_message)}</div>'
-    body = flash_html + _client_files_page_html(
+    body = flash_html + _client_files_browser_html(
         client_slug=slug,
         access_key=access_key,
         use_session=use_session,
         can_manage=can_manage,
+        folder_id=folder_id,
     )
     import client_insight_documents as docs
 
@@ -1618,7 +1816,7 @@ def render_files_page(
         active_nav="files",
         page_title="Files",
         page_subtitle=f"{label} · Shared documents",
-        content_html=body,
+        content_html=body + f"<script>{_files_page_js()}</script>",
         access_key=access_key,
         use_session=use_session,
         session_email=session_email,
@@ -1637,6 +1835,7 @@ def render_insights_upload_page(
     session_email: str | None = None,
     session_is_admin: bool = False,
     flash_message: str | None = None,
+    folder_id: int | None = None,
 ) -> str:
     return render_files_page(
         client_slug=client_slug,
@@ -1646,6 +1845,7 @@ def render_insights_upload_page(
         session_email=session_email,
         session_is_admin=session_is_admin,
         flash_message=flash_message,
+        folder_id=folder_id,
     )
 
 

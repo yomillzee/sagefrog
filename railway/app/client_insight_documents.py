@@ -1,4 +1,4 @@
-"""Per-client insight documents stored in Postgres."""
+"""Per-client insight documents and folders stored in Postgres."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import psycopg
 import web_users
 
 MAX_FILE_BYTES = 25 * 1024 * 1024
+MAX_FOLDER_NAME_LEN = 200
 ALLOWED_EXTENSIONS = frozenset({".docx", ".pdf"})
 ALLOWED_CONTENT_TYPES = frozenset(
     {
@@ -30,6 +31,16 @@ EXTENSION_CONTENT_TYPES = {
 
 SCHEMA_SQL_STATEMENTS = [
     """
+    CREATE TABLE IF NOT EXISTS client_insight_folders (
+      id BIGSERIAL PRIMARY KEY,
+      client_slug TEXT NOT NULL,
+      parent_id BIGINT REFERENCES client_insight_folders(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_by TEXT
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS client_insight_documents (
       id BIGSERIAL PRIMARY KEY,
       client_slug TEXT NOT NULL,
@@ -45,10 +56,32 @@ SCHEMA_SQL_STATEMENTS = [
     )
     """,
     """
+    ALTER TABLE client_insight_documents
+      ADD COLUMN IF NOT EXISTS folder_id BIGINT REFERENCES client_insight_folders(id) ON DELETE SET NULL
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_client_insight_folders_slug_parent
+      ON client_insight_folders (client_slug, parent_id NULLS FIRST, name ASC)
+    """,
+    """
     CREATE INDEX IF NOT EXISTS idx_client_insight_documents_slug_period
       ON client_insight_documents (client_slug, period_year DESC, period_month DESC, uploaded_at DESC)
     """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_client_insight_documents_slug_folder
+      ON client_insight_documents (client_slug, folder_id NULLS FIRST, uploaded_at DESC)
+    """,
 ]
+
+
+@dataclass(frozen=True)
+class InsightFolderRow:
+    id: int
+    client_slug: str
+    parent_id: int | None
+    name: str
+    created_at: str | None
+    created_by: str | None
 
 
 @dataclass(frozen=True)
@@ -63,6 +96,7 @@ class InsightDocumentRow:
     file_size: int
     uploaded_at: str | None
     uploaded_by: str | None
+    folder_id: int | None = None
 
 
 def _get_db_url() -> str | None:
@@ -84,8 +118,22 @@ def ensure_schema() -> bool:
     return True
 
 
+def _folder_from_db(row: tuple[Any, ...]) -> InsightFolderRow:
+    created = row[4]
+    parent = row[2]
+    return InsightFolderRow(
+        id=int(row[0]),
+        client_slug=str(row[1]),
+        parent_id=int(parent) if parent is not None else None,
+        name=str(row[3] or ""),
+        created_at=created.isoformat() if created else None,
+        created_by=str(row[5]).strip() if row[5] else None,
+    )
+
+
 def _row_from_db(row: tuple[Any, ...]) -> InsightDocumentRow:
     uploaded = row[8]
+    folder_id = row[10] if len(row) > 10 else None
     return InsightDocumentRow(
         id=int(row[0]),
         client_slug=str(row[1]),
@@ -97,6 +145,7 @@ def _row_from_db(row: tuple[Any, ...]) -> InsightDocumentRow:
         file_size=int(row[7] or 0),
         uploaded_at=uploaded.isoformat() if uploaded else None,
         uploaded_by=str(row[9]).strip() if row[9] else None,
+        folder_id=int(folder_id) if folder_id is not None else None,
     )
 
 
@@ -127,6 +176,22 @@ def parse_period(value: str) -> tuple[int, int]:
     return year, month
 
 
+def current_period() -> tuple[int, int]:
+    now = datetime.now(tz=UTC)
+    return now.year, now.month
+
+
+def validate_folder_name(name: str) -> str:
+    clean = (name or "").strip()
+    if not clean:
+        raise ValueError("Folder name is required.")
+    if len(clean) > MAX_FOLDER_NAME_LEN:
+        raise ValueError(f"Folder name must be {MAX_FOLDER_NAME_LEN} characters or fewer.")
+    if re.search(r"[/\\]", clean):
+        raise ValueError("Folder name cannot contain / or \\.")
+    return clean
+
+
 def _normalize_content_type(filename: str, content_type: str | None) -> str:
     ext = os.path.splitext(filename or "")[1].lower()
     ctype = (content_type or "").split(";", 1)[0].strip().lower()
@@ -151,22 +216,218 @@ def validate_upload(*, filename: str, content_type: str | None, file_bytes: byte
         raise ValueError("Upload must be a .docx or .pdf document.")
 
 
-def list_documents(client_slug: str) -> list[InsightDocumentRow]:
+def _resolve_folder_id(
+    client_slug: str,
+    folder_id: int | None,
+    *,
+    conn: psycopg.Connection,
+) -> int | None:
+    if folder_id is None:
+        return None
+    row = conn.execute(
+        """
+        SELECT id FROM client_insight_folders
+        WHERE client_slug = %s AND id = %s
+        """,
+        (client_slug, int(folder_id)),
+    ).fetchone()
+    if not row:
+        raise ValueError("Folder not found.")
+    return int(row[0])
+
+
+def list_folders(client_slug: str, *, parent_id: int | None = None) -> list[InsightFolderRow]:
     slug = (client_slug or "").strip().lower()
     if not slug or not enabled():
         return []
     ensure_schema()
     with psycopg.connect(_get_db_url()) as conn:
-        rows = conn.execute(
+        if parent_id is None:
+            rows = conn.execute(
+                """
+                SELECT id, client_slug, parent_id, name, created_at, created_by
+                FROM client_insight_folders
+                WHERE client_slug = %s AND parent_id IS NULL
+                ORDER BY name ASC
+                """,
+                (slug,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, client_slug, parent_id, name, created_at, created_by
+                FROM client_insight_folders
+                WHERE client_slug = %s AND parent_id = %s
+                ORDER BY name ASC
+                """,
+                (slug, int(parent_id)),
+            ).fetchall()
+    return [_folder_from_db(row) for row in rows]
+
+
+def get_folder(client_slug: str, folder_id: int) -> InsightFolderRow | None:
+    slug = (client_slug or "").strip().lower()
+    if not slug or not enabled():
+        return None
+    ensure_schema()
+    with psycopg.connect(_get_db_url()) as conn:
+        row = conn.execute(
             """
-            SELECT id, client_slug, title, period_year, period_month, original_filename,
-                   content_type, file_size, uploaded_at, uploaded_by
-            FROM client_insight_documents
-            WHERE client_slug = %s
-            ORDER BY period_year DESC, period_month DESC, uploaded_at DESC
+            SELECT id, client_slug, parent_id, name, created_at, created_by
+            FROM client_insight_folders
+            WHERE client_slug = %s AND id = %s
             """,
-            (slug,),
-        ).fetchall()
+            (slug, int(folder_id)),
+        ).fetchone()
+    return _folder_from_db(row) if row else None
+
+
+def folder_breadcrumb(client_slug: str, folder_id: int | None) -> list[InsightFolderRow]:
+    """Return ancestors from root to folder (inclusive)."""
+    slug = (client_slug or "").strip().lower()
+    if not slug or not enabled() or folder_id is None:
+        return []
+    ensure_schema()
+    trail: list[InsightFolderRow] = []
+    current_id: int | None = int(folder_id)
+    seen: set[int] = set()
+    with psycopg.connect(_get_db_url()) as conn:
+        while current_id is not None:
+            if current_id in seen:
+                break
+            seen.add(current_id)
+            row = conn.execute(
+                """
+                SELECT id, client_slug, parent_id, name, created_at, created_by
+                FROM client_insight_folders
+                WHERE client_slug = %s AND id = %s
+                """,
+                (slug, current_id),
+            ).fetchone()
+            if not row:
+                break
+            folder = _folder_from_db(row)
+            trail.append(folder)
+            current_id = folder.parent_id
+    trail.reverse()
+    return trail
+
+
+def folder_is_empty(client_slug: str, folder_id: int) -> bool:
+    slug = (client_slug or "").strip().lower()
+    if not slug or not enabled():
+        return True
+    ensure_schema()
+    with psycopg.connect(_get_db_url()) as conn:
+        child_folder = conn.execute(
+            """
+            SELECT 1 FROM client_insight_folders
+            WHERE client_slug = %s AND parent_id = %s
+            LIMIT 1
+            """,
+            (slug, int(folder_id)),
+        ).fetchone()
+        if child_folder:
+            return False
+        child_doc = conn.execute(
+            """
+            SELECT 1 FROM client_insight_documents
+            WHERE client_slug = %s AND folder_id = %s
+            LIMIT 1
+            """,
+            (slug, int(folder_id)),
+        ).fetchone()
+        return child_doc is None
+
+
+def create_folder(
+    client_slug: str,
+    *,
+    name: str,
+    parent_id: int | None = None,
+    created_by: str | None = None,
+) -> InsightFolderRow:
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to store folders.")
+
+    clean_name = validate_folder_name(name)
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    with psycopg.connect(_get_db_url()) as conn:
+        if parent_id is not None:
+            _resolve_folder_id(slug, int(parent_id), conn=conn)
+        row = conn.execute(
+            """
+            INSERT INTO client_insight_folders (client_slug, parent_id, name, created_at, created_by)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id, client_slug, parent_id, name, created_at, created_by
+            """,
+            (
+                slug,
+                int(parent_id) if parent_id is not None else None,
+                clean_name,
+                now,
+                (created_by or "").strip() or None,
+            ),
+        ).fetchone()
+    if not row:
+        raise RuntimeError("Failed to create folder.")
+    return _folder_from_db(row)
+
+
+def delete_folder(client_slug: str, folder_id: int) -> bool:
+    slug = (client_slug or "").strip().lower()
+    if not slug or not enabled():
+        return False
+    if not folder_is_empty(slug, int(folder_id)):
+        raise ValueError("Delete files and subfolders before removing this folder.")
+    ensure_schema()
+    with psycopg.connect(_get_db_url()) as conn:
+        cur = conn.execute(
+            """
+            DELETE FROM client_insight_folders
+            WHERE client_slug = %s AND id = %s
+            """,
+            (slug, int(folder_id)),
+        )
+    return bool(cur.rowcount)
+
+
+def list_documents(
+    client_slug: str,
+    *,
+    folder_id: int | None = None,
+) -> list[InsightDocumentRow]:
+    slug = (client_slug or "").strip().lower()
+    if not slug or not enabled():
+        return []
+    ensure_schema()
+    with psycopg.connect(_get_db_url()) as conn:
+        if folder_id is None:
+            rows = conn.execute(
+                """
+                SELECT id, client_slug, title, period_year, period_month, original_filename,
+                       content_type, file_size, uploaded_at, uploaded_by, folder_id
+                FROM client_insight_documents
+                WHERE client_slug = %s AND folder_id IS NULL
+                ORDER BY uploaded_at DESC
+                """,
+                (slug,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, client_slug, title, period_year, period_month, original_filename,
+                       content_type, file_size, uploaded_at, uploaded_by, folder_id
+                FROM client_insight_documents
+                WHERE client_slug = %s AND folder_id = %s
+                ORDER BY uploaded_at DESC
+                """,
+                (slug, int(folder_id)),
+            ).fetchall()
     return [_row_from_db(row) for row in rows]
 
 
@@ -179,7 +440,7 @@ def get_document(client_slug: str, doc_id: int) -> InsightDocumentRow | None:
         row = conn.execute(
             """
             SELECT id, client_slug, title, period_year, period_month, original_filename,
-                   content_type, file_size, uploaded_at, uploaded_by
+                   content_type, file_size, uploaded_at, uploaded_by, folder_id
             FROM client_insight_documents
             WHERE client_slug = %s AND id = %s
             """,
@@ -197,7 +458,7 @@ def get_document_bytes(client_slug: str, doc_id: int) -> tuple[InsightDocumentRo
         row = conn.execute(
             """
             SELECT id, client_slug, title, period_year, period_month, original_filename,
-                   content_type, file_size, uploaded_at, uploaded_by, file_bytes
+                   content_type, file_size, uploaded_at, uploaded_by, folder_id, file_bytes
             FROM client_insight_documents
             WHERE client_slug = %s AND id = %s
             """,
@@ -205,8 +466,8 @@ def get_document_bytes(client_slug: str, doc_id: int) -> tuple[InsightDocumentRo
         ).fetchone()
     if not row:
         return None
-    meta = _row_from_db(row[:10])
-    file_bytes = row[10]
+    meta = _row_from_db(row[:11])
+    file_bytes = row[11]
     if file_bytes is None:
         raise RuntimeError("Document file data is missing. Re-upload this document.")
     return meta, bytes(file_bytes)
@@ -222,6 +483,7 @@ def save_document(
     content_type: str,
     file_bytes: bytes,
     uploaded_by: str | None = None,
+    folder_id: int | None = None,
 ) -> InsightDocumentRow:
     slug = (client_slug or "").strip().lower()
     if not slug:
@@ -244,15 +506,16 @@ def save_document(
     ensure_schema()
     now = datetime.now(tz=UTC)
     with psycopg.connect(_get_db_url()) as conn:
+        resolved_folder_id = _resolve_folder_id(slug, folder_id, conn=conn) if folder_id else None
         row = conn.execute(
             """
             INSERT INTO client_insight_documents (
               client_slug, title, period_year, period_month, original_filename,
-              content_type, file_bytes, file_size, uploaded_at, uploaded_by
+              content_type, file_bytes, file_size, uploaded_at, uploaded_by, folder_id
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, client_slug, title, period_year, period_month, original_filename,
-                      content_type, file_size, uploaded_at, uploaded_by
+                      content_type, file_size, uploaded_at, uploaded_by, folder_id
             """,
             (
                 slug,
@@ -265,6 +528,7 @@ def save_document(
                 len(file_bytes),
                 now,
                 (uploaded_by or "").strip() or None,
+                resolved_folder_id,
             ),
         ).fetchone()
     if not row:
