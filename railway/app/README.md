@@ -73,29 +73,9 @@ Requires **Postgres** (`DATABASE_URL`). The service creates a `web_users` table.
 - `admin` — all dashboards + `/admin`
 - `client` — only dashboards matching `client_slug` (e.g. `penn`)
 
-### Client document sharing (Cloudflare R2)
+### Client document sharing
 
-Requires **Postgres** (`DATABASE_URL`) for document metadata and access control. File bytes go to **Cloudflare R2** when R2 env vars are set; otherwise they are stored inline in Postgres (`BYTEA`).
-
-| Variable | Purpose |
-|----------|---------|
-| `R2_ACCOUNT_ID` | Cloudflare account ID |
-| `R2_ACCESS_KEY_ID` | R2 API token access key |
-| `R2_SECRET_ACCESS_KEY` | R2 API token secret |
-| `R2_BUCKET_NAME` | Private bucket for client documents |
-| `R2_KEY_PREFIX` | Optional object key prefix (default `client-documents`) |
-| `R2_DOWNLOAD_URL_TTL_SECONDS` | Presigned download link TTL (default 300) |
-| `R2_DOCUMENTS_ENABLED` | Set `0` to disable R2 and use Postgres bytes |
-
-**Setup:**
-
-1. In Cloudflare → R2, create a **private** bucket (no public access).
-2. Create an API token scoped to that bucket (Object Read & Write).
-3. Add the variables above to Railway.
-4. Admins upload at `/dashboard/{client}/insights-upload` (.docx or .pdf, up to 25 MB).
-5. Clients download from the Overview **Client Insights** section — the app checks dashboard auth, then redirects to a short-lived presigned R2 URL.
-
-Existing Postgres-stored documents continue to work; new uploads use R2 when configured.
+Requires **Postgres** (`DATABASE_URL`). Uploaded `.docx` and `.pdf` files (up to 25 MB) are stored in the `client_insight_documents` table. Admins upload at `/dashboard/{client}/insights-upload`; clients download from the Overview **Client Insights** section after dashboard auth.
 
 Create additional users at `/admin` after signing in as admin. The **Audit log** section on `/admin` records sign-ins, sign-outs, failed logins, and user create/deactivate actions (with actor, target, IP).
 

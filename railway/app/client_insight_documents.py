@@ -1,4 +1,4 @@
-"""Per-client insight documents — metadata in Postgres, bytes in R2 or Postgres."""
+"""Per-client insight documents stored in Postgres."""
 
 from __future__ import annotations
 
@@ -7,11 +7,10 @@ import re
 from calendar import month_name
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any
 
 import psycopg
 
-import r2_storage
 import web_users
 
 MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -49,18 +48,6 @@ SCHEMA_SQL_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_client_insight_documents_slug_period
       ON client_insight_documents (client_slug, period_year DESC, period_month DESC, uploaded_at DESC)
     """,
-    """
-    ALTER TABLE client_insight_documents
-      ADD COLUMN IF NOT EXISTS storage_backend TEXT NOT NULL DEFAULT 'postgres'
-    """,
-    """
-    ALTER TABLE client_insight_documents
-      ADD COLUMN IF NOT EXISTS object_key TEXT
-    """,
-    """
-    ALTER TABLE client_insight_documents
-      ALTER COLUMN file_bytes DROP NOT NULL
-    """,
 ]
 
 
@@ -76,15 +63,6 @@ class InsightDocumentRow:
     file_size: int
     uploaded_at: str | None
     uploaded_by: str | None
-    storage_backend: str = "postgres"
-    object_key: str | None = None
-
-
-@dataclass(frozen=True)
-class DocumentDownload:
-    meta: InsightDocumentRow
-    kind: Literal["bytes", "redirect"]
-    payload: bytes | str
 
 
 def _get_db_url() -> str | None:
@@ -94,18 +72,6 @@ def _get_db_url() -> str | None:
 
 def enabled() -> bool:
     return web_users.enabled()
-
-
-def uses_object_storage() -> bool:
-    return r2_storage.enabled()
-
-
-def storage_status() -> dict[str, Any]:
-    return {
-        "database": enabled(),
-        "object_storage": r2_storage.status(),
-        "preferred_backend": "r2" if uses_object_storage() else "postgres",
-    }
 
 
 def ensure_schema() -> bool:
@@ -120,8 +86,6 @@ def ensure_schema() -> bool:
 
 def _row_from_db(row: tuple[Any, ...]) -> InsightDocumentRow:
     uploaded = row[8]
-    storage_backend = str(row[10]).strip() if len(row) > 10 and row[10] else "postgres"
-    object_key = str(row[11]).strip() if len(row) > 11 and row[11] else None
     return InsightDocumentRow(
         id=int(row[0]),
         client_slug=str(row[1]),
@@ -133,8 +97,6 @@ def _row_from_db(row: tuple[Any, ...]) -> InsightDocumentRow:
         file_size=int(row[7] or 0),
         uploaded_at=uploaded.isoformat() if uploaded else None,
         uploaded_by=str(row[9]).strip() if row[9] else None,
-        storage_backend=storage_backend or "postgres",
-        object_key=object_key or None,
     )
 
 
@@ -189,15 +151,6 @@ def validate_upload(*, filename: str, content_type: str | None, file_bytes: byte
         raise ValueError("Upload must be a .docx or .pdf document.")
 
 
-def _select_columns(include_storage: bool = True) -> str:
-    base = """
-            id, client_slug, title, period_year, period_month, original_filename,
-            content_type, file_size, uploaded_at, uploaded_by"""
-    if include_storage:
-        return f"{base}, storage_backend, object_key"
-    return base
-
-
 def list_documents(client_slug: str) -> list[InsightDocumentRow]:
     slug = (client_slug or "").strip().lower()
     if not slug or not enabled():
@@ -205,8 +158,9 @@ def list_documents(client_slug: str) -> list[InsightDocumentRow]:
     ensure_schema()
     with psycopg.connect(_get_db_url()) as conn:
         rows = conn.execute(
-            f"""
-            SELECT {_select_columns()}
+            """
+            SELECT id, client_slug, title, period_year, period_month, original_filename,
+                   content_type, file_size, uploaded_at, uploaded_by
             FROM client_insight_documents
             WHERE client_slug = %s
             ORDER BY period_year DESC, period_month DESC, uploaded_at DESC
@@ -223,8 +177,9 @@ def get_document(client_slug: str, doc_id: int) -> InsightDocumentRow | None:
     ensure_schema()
     with psycopg.connect(_get_db_url()) as conn:
         row = conn.execute(
-            f"""
-            SELECT {_select_columns()}
+            """
+            SELECT id, client_slug, title, period_year, period_month, original_filename,
+                   content_type, file_size, uploaded_at, uploaded_by
             FROM client_insight_documents
             WHERE client_slug = %s AND id = %s
             """,
@@ -233,15 +188,16 @@ def get_document(client_slug: str, doc_id: int) -> InsightDocumentRow | None:
     return _row_from_db(row) if row else None
 
 
-def resolve_download(client_slug: str, doc_id: int) -> DocumentDownload | None:
+def get_document_bytes(client_slug: str, doc_id: int) -> tuple[InsightDocumentRow, bytes] | None:
     slug = (client_slug or "").strip().lower()
     if not slug or not enabled():
         return None
     ensure_schema()
     with psycopg.connect(_get_db_url()) as conn:
         row = conn.execute(
-            f"""
-            SELECT {_select_columns()}, file_bytes
+            """
+            SELECT id, client_slug, title, period_year, period_month, original_filename,
+                   content_type, file_size, uploaded_at, uploaded_by, file_bytes
             FROM client_insight_documents
             WHERE client_slug = %s AND id = %s
             """,
@@ -249,30 +205,11 @@ def resolve_download(client_slug: str, doc_id: int) -> DocumentDownload | None:
         ).fetchone()
     if not row:
         return None
-    meta = _row_from_db(row[:12])
-    file_bytes = row[12]
-    if meta.object_key and meta.storage_backend == "r2":
-        if not r2_storage.enabled():
-            raise RuntimeError("Document is stored in R2 but R2 is not configured.")
-        url = r2_storage.presigned_get_url(
-            meta.object_key,
-            filename=meta.original_filename,
-        )
-        return DocumentDownload(meta=meta, kind="redirect", payload=url)
+    meta = _row_from_db(row[:10])
+    file_bytes = row[10]
     if file_bytes is None:
-        raise RuntimeError("Document bytes are missing.")
-    return DocumentDownload(meta=meta, kind="bytes", payload=bytes(file_bytes))
-
-
-def get_document_bytes(client_slug: str, doc_id: int) -> tuple[InsightDocumentRow, bytes] | None:
-    """Legacy helper — loads file bytes (fetches from R2 when needed)."""
-    resolved = resolve_download(client_slug, doc_id)
-    if not resolved:
-        return None
-    if resolved.kind == "redirect":
-        data = r2_storage.get_object(resolved.meta.object_key or "")
-        return resolved.meta, data
-    return resolved.meta, resolved.payload
+        raise RuntimeError("Document file data is missing. Re-upload this document.")
+    return meta, bytes(file_bytes)
 
 
 def save_document(
@@ -303,77 +240,19 @@ def save_document(
         file_bytes=file_bytes,
     )
     normalized_type = _normalize_content_type(original_filename, content_type)
-    use_r2 = r2_storage.enabled()
 
     ensure_schema()
     now = datetime.now(tz=UTC)
     with psycopg.connect(_get_db_url()) as conn:
-        if use_r2:
-            row = conn.execute(
-                f"""
-                INSERT INTO client_insight_documents (
-                  client_slug, title, period_year, period_month, original_filename,
-                  content_type, file_bytes, file_size, uploaded_at, uploaded_by,
-                  storage_backend, object_key
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, NULL, %s, %s, %s, 'r2', NULL)
-                RETURNING {_select_columns()}
-                """,
-                (
-                    slug,
-                    clean_title,
-                    int(period_year),
-                    int(period_month),
-                    original_filename.strip(),
-                    normalized_type,
-                    len(file_bytes),
-                    now,
-                    (uploaded_by or "").strip() or None,
-                ),
-            ).fetchone()
-            if not row:
-                raise RuntimeError("Failed to save insight document.")
-            meta = _row_from_db(row)
-            object_key = r2_storage.document_object_key(
-                client_slug=slug,
-                doc_id=meta.id,
-                filename=original_filename,
-            )
-            try:
-                r2_storage.put_object(
-                    key=object_key,
-                    body=file_bytes,
-                    content_type=normalized_type,
-                )
-            except Exception:
-                conn.execute(
-                    "DELETE FROM client_insight_documents WHERE client_slug = %s AND id = %s",
-                    (slug, meta.id),
-                )
-                raise
-            updated = conn.execute(
-                f"""
-                UPDATE client_insight_documents
-                SET object_key = %s
-                WHERE client_slug = %s AND id = %s
-                RETURNING {_select_columns()}
-                """,
-                (object_key, slug, meta.id),
-            ).fetchone()
-            if not updated:
-                r2_storage.delete_object(object_key)
-                raise RuntimeError("Failed to finalize insight document storage.")
-            return _row_from_db(updated)
-
         row = conn.execute(
-            f"""
+            """
             INSERT INTO client_insight_documents (
               client_slug, title, period_year, period_month, original_filename,
-              content_type, file_bytes, file_size, uploaded_at, uploaded_by,
-              storage_backend, object_key
+              content_type, file_bytes, file_size, uploaded_at, uploaded_by
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'postgres', NULL)
-            RETURNING {_select_columns()}
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, client_slug, title, period_year, period_month, original_filename,
+                      content_type, file_size, uploaded_at, uploaded_by
             """,
             (
                 slug,
@@ -398,18 +277,7 @@ def delete_document(client_slug: str, doc_id: int) -> bool:
     if not slug or not enabled():
         return False
     ensure_schema()
-    object_key: str | None = None
     with psycopg.connect(_get_db_url()) as conn:
-        row = conn.execute(
-            """
-            SELECT object_key, storage_backend
-            FROM client_insight_documents
-            WHERE client_slug = %s AND id = %s
-            """,
-            (slug, int(doc_id)),
-        ).fetchone()
-        if row and row[0] and str(row[1] or "") == "r2":
-            object_key = str(row[0])
         cur = conn.execute(
             """
             DELETE FROM client_insight_documents
@@ -417,10 +285,4 @@ def delete_document(client_slug: str, doc_id: int) -> bool:
             """,
             (slug, int(doc_id)),
         )
-        deleted = bool(cur.rowcount)
-    if deleted and object_key:
-        try:
-            r2_storage.delete_object(object_key)
-        except Exception:
-            pass
-    return deleted
+    return bool(cur.rowcount)

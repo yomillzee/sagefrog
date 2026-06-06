@@ -11,4 +11,3 @@ bcrypt
 python-multipart
 itsdangerous
 cryptography
-boto3
