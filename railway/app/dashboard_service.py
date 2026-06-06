@@ -983,18 +983,32 @@ def _settings_page_url(
     return base
 
 
+def _files_page_url(
+    *,
+    client_slug: str = "penn",
+    access_key: str | None,
+    use_session: bool,
+) -> str | None:
+    base = f"/dashboard/{client_slug}/files"
+    if use_session:
+        return base
+    if access_key:
+        return f"{base}?key={quote(access_key, safe='')}"
+    return base
+
+
 def _insights_upload_page_url(
     *,
     client_slug: str = "penn",
     access_key: str | None,
     use_session: bool,
 ) -> str | None:
-    base = f"/dashboard/{client_slug}/insights-upload"
-    if use_session:
-        return base
-    if access_key:
-        return f"{base}?key={quote(access_key, safe='')}"
-    return base
+    """Deprecated — use _files_page_url."""
+    return _files_page_url(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+    )
 
 
 def _refresh_action_url(
@@ -1335,14 +1349,6 @@ def _paid_ad_overview_html(
     </section>"""
 
 
-def _overview_hero_row_html(
-    client_insights_html: str = "",
-) -> str:
-    if not client_insights_html:
-        return ""
-    return f'<div class="overview-hero-row overview-hero-row--insights">{client_insights_html}</div>'
-
-
 def _fmt_file_size(num_bytes: int) -> str:
     size = int(num_bytes or 0)
     if size < 1024:
@@ -1463,63 +1469,14 @@ def _client_insights_doc_rows_html(
     return table_html, len(rows)
 
 
-def _client_insights_list_html(
+def _client_files_page_html(
     *,
     client_slug: str,
     access_key: str | None,
     use_session: bool,
+    can_manage: bool,
 ) -> str:
-    """Overview: running list of uploaded insight documents (download only)."""
-    import client_insight_documents as docs
-
-    rows = docs.list_documents(client_slug)
-    if rows:
-        cards = []
-        for row in rows:
-            download_url = _insight_document_download_url(
-                client_slug=client_slug,
-                doc_id=row.id,
-                access_key=access_key,
-                use_session=use_session,
-            )
-            period = docs.period_label(row.period_year, row.period_month)
-            cards.append(
-                f"""
-        <a class="client-insights-doc-card" href="{download_url}">
-          <div class="client-insights-doc-period">{_esc(period)}</div>
-          <div class="client-insights-doc-title">{_esc(row.title)}</div>
-          <div class="client-insights-doc-meta">{_esc(docs.file_type_label(row.original_filename))} · {_esc(_fmt_file_size(row.file_size))}</div>
-        </a>"""
-            )
-        list_html = f'<div class="client-insights-doc-grid">{"".join(cards)}</div>'
-    else:
-        list_html = (
-            '<p class="client-insights-empty muted">'
-            "Monthly insight documents will appear here when uploaded."
-            "</p>"
-        )
-
-    count_badge = ""
-    if rows:
-        count_badge = f'<span class="client-insights-count">{len(rows)}</span>'
-
-    return f"""
-    <section class="client-insights-section" aria-label="Client Insights">
-      <div class="paid-ad-overview-heading client-insights-heading">
-        <span class="paid-ad-overview-pill client-insights-pill">Client Insights{count_badge}</span>
-      </div>
-      {list_html}
-    </section>"""
-
-
-def _client_insights_upload_page_html(
-    *,
-    client_slug: str,
-    access_key: str | None,
-    use_session: bool,
-    can_upload: bool,
-) -> str:
-    """Admin upload page: form + full document table with delete."""
+    """File sharing page: downloads for all users; upload/delete for admins."""
     import client_insight_documents as docs
 
     upload_html = ""
@@ -1528,59 +1485,147 @@ def _client_insights_upload_page_html(
         access_key=access_key,
         use_session=use_session,
     )
-    if can_upload and upload_action and docs.enabled():
+    if can_manage and upload_action and docs.enabled():
         upload_html = f"""
-        <form method="post" action="{upload_action}" enctype="multipart/form-data" class="client-insights-upload">
-          <div class="client-insights-upload-grid">
-            <div>
-              <label for="insightDocTitle">Title</label>
-              <input id="insightDocTitle" name="title" type="text" maxlength="200"
-                placeholder="May 2026 Paid Digital Reporting">
+        <section class="files-upload-panel" aria-label="Upload files">
+          <h3 class="files-section-title">Upload a file</h3>
+          <form method="post" action="{upload_action}" enctype="multipart/form-data" class="client-insights-upload">
+            <div class="client-insights-upload-grid">
+              <div>
+                <label for="insightDocTitle">Title</label>
+                <input id="insightDocTitle" name="title" type="text" maxlength="200"
+                  placeholder="May 2026 Paid Digital Reporting">
+              </div>
+              <div>
+                <label for="insightDocPeriod">Period</label>
+                <input id="insightDocPeriod" name="period" type="month" required>
+              </div>
+              <div>
+                <label for="insightDocFile">Document</label>
+                <input id="insightDocFile" name="file" type="file"
+                  accept=".docx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" required>
+                <p class="hint">Word (.docx) or PDF, up to 25 MB.</p>
+              </div>
             </div>
-            <div>
-              <label for="insightDocPeriod">Period</label>
-              <input id="insightDocPeriod" name="period" type="month" required>
-            </div>
-            <div>
-              <label for="insightDocFile">Document</label>
-              <input id="insightDocFile" name="file" type="file"
-                accept=".docx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" required>
-              <p class="hint">Word (.docx) or PDF, up to 25 MB.</p>
-            </div>
-          </div>
-          <button type="submit" class="client-insights-upload-btn">Upload document</button>
-        </form>"""
+            <button type="submit" class="client-insights-upload-btn">Upload file</button>
+          </form>
+        </section>"""
     elif not docs.enabled():
         upload_html = (
             '<p class="client-insights-empty muted">'
-            "DATABASE_URL is required to store insight documents."
+            "DATABASE_URL is required to store shared files."
             "</p>"
         )
 
-    table_html, _ = _client_insights_doc_rows_html(
+    table_html, doc_count = _client_insights_doc_rows_html(
         client_slug=client_slug,
         access_key=access_key,
         use_session=use_session,
-        can_manage=can_upload,
+        can_manage=can_manage,
     )
     if not table_html:
-        table_html = (
-            '<p class="client-insights-empty muted">No insight documents uploaded yet.</p>'
-        )
+        empty_msg = "No files shared yet."
+        if can_manage:
+            empty_msg = "No files shared yet. Upload a document above."
+        table_html = f'<p class="client-insights-empty muted">{empty_msg}</p>'
+
+    manage_note = ""
+    if can_manage and doc_count:
+        manage_note = '<p class="hint files-manage-note">You can delete files from the list below.</p>'
 
     return f"""
-    <section class="client-insights-panel client-insights-panel--upload" aria-label="Insights upload">
+    <section class="client-insights-panel files-page-panel" aria-label="Shared files">
       <div class="client-insights-head">
         <div>
-          <h2 class="client-insights-title">Share client documents</h2>
+          <h2 class="client-insights-title">Shared files</h2>
           <p class="client-insights-subtitle muted">
-            Upload monthly reports and insight documents. Authenticated clients download them from the Overview.
+            Reports and documents shared with this client. Only signed-in users can download files.
           </p>
         </div>
       </div>
       {upload_html}
-      {table_html}
+      <section class="files-list-panel" aria-label="File list">
+        <h3 class="files-section-title">Available files</h3>
+        {manage_note}
+        {table_html}
+      </section>
     </section>"""
+
+
+def _files_page_css() -> str:
+    return """
+    .dash-flash { background: var(--ok-bg); border: 1px solid #b8dfc8; border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; font-size: 0.9rem; color: var(--ok); }
+    .dash-flash--error { background: var(--err-bg); border-color: #f5c2c0; color: var(--err); }
+    .files-page-panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 0; overflow: hidden; box-shadow: var(--shadow-sm); }
+    .client-insights-head { padding: 22px 24px 0; }
+    .client-insights-title { margin: 0; font-size: 1.15rem; font-weight: 700; color: var(--navy); }
+    .client-insights-subtitle { margin: 6px 0 0; font-size: 0.9rem; line-height: 1.45; }
+    .files-section-title { margin: 0 0 12px; font-size: 0.88rem; font-weight: 700; color: var(--navy); text-transform: uppercase; letter-spacing: 0.04em; }
+    .files-upload-panel { margin: 18px 24px 0; padding: 18px; border: 1px dashed var(--border); border-radius: 12px; background: var(--surface); }
+    .files-list-panel { padding: 18px 24px 24px; }
+    .files-manage-note { margin: 0 0 10px; }
+    .client-insights-upload-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+    @media (max-width: 900px) { .client-insights-upload-grid { grid-template-columns: 1fr; } }
+    .client-insights-upload label { display: block; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 6px; }
+    .client-insights-upload input { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; font: inherit; background: #fff; }
+    .client-insights-upload .hint { margin: 6px 0 0; font-size: 0.82rem; color: var(--muted); line-height: 1.4; }
+    .client-insights-upload-btn { appearance: none; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 650; padding: 10px 16px; cursor: pointer; }
+    .client-insights-table-wrap { overflow-x: auto; }
+    .client-insights-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+    .client-insights-table th { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+    .client-insights-table td { padding: 14px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    .client-insights-table tr:last-child td { border-bottom: 0; }
+    .client-insights-file-title { font-weight: 650; color: var(--navy); margin-bottom: 2px; }
+    .client-insights-file-meta { font-size: 0.82rem; }
+    .client-insights-period { white-space: nowrap; color: var(--navy); font-weight: 600; }
+    .client-insights-download-btn { display: inline-block; padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--navy); font-weight: 600; font-size: 0.86rem; text-decoration: none; }
+    .client-insights-download-btn:hover { background: var(--surface); border-color: #b8c4d4; }
+    .client-insights-delete-form { display: inline-block; margin-left: 8px; }
+    .client-insights-delete-btn { appearance: none; border: 0; background: none; color: var(--err); font-size: 0.82rem; font-weight: 600; cursor: pointer; padding: 0; }
+    .client-insights-empty { margin: 0; font-size: 0.9rem; }
+    """
+
+
+def render_files_page(
+    *,
+    client_slug: str,
+    label: str,
+    access_key: str | None = None,
+    use_session: bool = False,
+    session_email: str | None = None,
+    session_is_admin: bool = False,
+    flash_message: str | None = None,
+) -> str:
+    slug = (client_slug or "penn").strip().lower()
+    can_manage = can_edit_penn_insights(
+        session_is_admin=session_is_admin,
+        access_key=access_key,
+    )
+    flash_html = ""
+    if flash_message:
+        flash_html = f'<div class="dash-flash">{_esc(flash_message)}</div>'
+    body = flash_html + _client_files_page_html(
+        client_slug=slug,
+        access_key=access_key,
+        use_session=use_session,
+        can_manage=can_manage,
+    )
+    import client_insight_documents as docs
+
+    return render_client_shell_page(
+        client_slug=slug,
+        label=label,
+        active_nav="files",
+        page_title="Files",
+        page_subtitle=f"{label} · Shared documents",
+        content_html=body,
+        access_key=access_key,
+        use_session=use_session,
+        session_email=session_email,
+        session_is_admin=session_is_admin,
+        show_files=docs.enabled(),
+        extra_css=_files_page_css(),
+    )
 
 
 def render_insights_upload_page(
@@ -1593,60 +1638,14 @@ def render_insights_upload_page(
     session_is_admin: bool = False,
     flash_message: str | None = None,
 ) -> str:
-    slug = (client_slug or "penn").strip().lower()
-    can_upload = can_edit_penn_insights(
-        session_is_admin=session_is_admin,
-        access_key=access_key,
-    )
-    flash_html = ""
-    if flash_message:
-        flash_html = f'<div class="dash-flash">{_esc(flash_message)}</div>'
-    body = flash_html + _client_insights_upload_page_html(
-        client_slug=slug,
-        access_key=access_key,
-        use_session=use_session,
-        can_upload=can_upload,
-    )
-    return render_client_shell_page(
-        client_slug=slug,
+    return render_files_page(
+        client_slug=client_slug,
         label=label,
-        active_nav="insights-upload",
-        page_title="Insights Upload",
-        page_subtitle=f"{label} · Manage insight documents",
-        content_html=body,
         access_key=access_key,
         use_session=use_session,
         session_email=session_email,
         session_is_admin=session_is_admin,
-        show_insights_upload=can_upload,
-        extra_css="""
-    .dash-flash { background: var(--ok-bg); border: 1px solid #b8dfc8; border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; font-size: 0.9rem; color: var(--ok); }
-    .dash-flash--error { background: var(--err-bg); border-color: #f5c2c0; color: var(--err); }
-    .client-insights-panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 0; overflow: hidden; box-shadow: var(--shadow-sm); }
-    .client-insights-head { padding: 22px 24px 0; }
-    .client-insights-title { margin: 0; font-size: 1.15rem; font-weight: 700; color: var(--navy); }
-    .client-insights-subtitle { margin: 6px 0 0; font-size: 0.9rem; line-height: 1.45; }
-    .client-insights-upload { margin: 18px 24px 0; padding: 18px; border: 1px dashed var(--border); border-radius: 12px; background: var(--surface); }
-    .client-insights-upload-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
-    @media (max-width: 900px) { .client-insights-upload-grid { grid-template-columns: 1fr; } }
-    .client-insights-upload label { display: block; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 6px; }
-    .client-insights-upload input { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; font: inherit; background: #fff; }
-    .client-insights-upload .hint { margin: 6px 0 0; font-size: 0.82rem; color: var(--muted); line-height: 1.4; }
-    .client-insights-upload-btn { appearance: none; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 650; padding: 10px 16px; cursor: pointer; }
-    .client-insights-table-wrap { padding: 18px 24px 24px; overflow-x: auto; }
-    .client-insights-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
-    .client-insights-table th { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-    .client-insights-table td { padding: 14px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-    .client-insights-table tr:last-child td { border-bottom: 0; }
-    .client-insights-file-title { font-weight: 650; color: var(--navy); margin-bottom: 2px; }
-    .client-insights-file-meta { font-size: 0.82rem; }
-    .client-insights-period { white-space: nowrap; color: var(--navy); font-weight: 600; }
-    .client-insights-download-btn { display: inline-block; padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--navy); font-weight: 600; font-size: 0.86rem; text-decoration: none; }
-    .client-insights-download-btn:hover { background: var(--surface); border-color: #b8c4d4; }
-    .client-insights-delete-form { display: inline-block; margin-left: 8px; }
-    .client-insights-delete-btn { appearance: none; border: 0; background: none; color: var(--err); font-size: 0.82rem; font-weight: 600; cursor: pointer; padding: 0; }
-    .client-insights-empty { margin: 0; padding: 0 24px 24px; font-size: 0.9rem; }
-        """,
+        flash_message=flash_message,
     )
 
 
@@ -1803,10 +1802,14 @@ def _client_switch_target_url(
         return _settings_page_url(
             client_slug=slug, access_key=access_key, use_session=use_session
         ) or f"/dashboard/{slug}/settings"
-    if nav == "insights-upload":
-        return _insights_upload_page_url(
+    if nav == "files":
+        return _files_page_url(
             client_slug=slug, access_key=access_key, use_session=use_session
-        ) or f"/dashboard/{slug}/insights-upload"
+        ) or f"/dashboard/{slug}/files"
+    if nav == "insights-upload":
+        return _files_page_url(
+            client_slug=slug, access_key=access_key, use_session=use_session
+        ) or f"/dashboard/{slug}/files"
     return _dashboard_page_url(
         client_slug=slug, access_key=access_key, use_session=use_session
     )
@@ -1921,9 +1924,9 @@ def _sidebar_nav_html(
     access_key: str | None,
     use_session: bool,
     show_business_line: bool = True,
-    show_insights_upload: bool = False,
+    show_files: bool = True,
 ) -> str:
-    """Sidebar nav: Overview, optional Insights Upload (admin), and Settings."""
+    """Sidebar nav: Overview, Files, and Settings."""
     del show_business_line  # business line filters live on the overview page
     settings_url = _settings_page_url(
         client_slug=client_slug,
@@ -1935,13 +1938,13 @@ def _sidebar_nav_html(
         access_key=access_key,
         use_session=use_session,
     )
-    insights_upload_url = _insights_upload_page_url(
+    files_url = _files_page_url(
         client_slug=client_slug,
         access_key=access_key,
         use_session=use_session,
     )
     icon_overview = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>'
-    icon_upload = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M4 20h16"/></svg>'
+    icon_files = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M12 18v-6M9 15h6"/></svg>'
     icon_settings = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>'
 
     if active == "overview":
@@ -1949,17 +1952,18 @@ def _sidebar_nav_html(
     else:
         overview_el = f'<a href="{overview_url}" class="sidebar-nav-btn sidebar-nav-link">{icon_overview}Overview</a>'
 
-    insights_el = ""
-    if show_insights_upload:
-        if active == "insights-upload":
-            insights_el = (
+    files_el = ""
+    if show_files:
+        files_active = active in ("files", "insights-upload")
+        if files_active:
+            files_el = (
                 f'<span class="sidebar-nav-btn active" aria-current="page">'
-                f"{icon_upload}Insights Upload</span>"
+                f"{icon_files}Files</span>"
             )
         else:
-            insights_el = (
-                f'<a href="{insights_upload_url or "#"}" class="sidebar-nav-btn sidebar-nav-link">'
-                f"{icon_upload}Insights Upload</a>"
+            files_el = (
+                f'<a href="{files_url or "#"}" class="sidebar-nav-btn sidebar-nav-link">'
+                f"{icon_files}Files</a>"
             )
 
     if active == "settings":
@@ -1970,7 +1974,7 @@ def _sidebar_nav_html(
     return f"""
       <nav class="sidebar-nav" role="navigation" aria-label="Dashboard views">
         {overview_el}
-        {insights_el}
+        {files_el}
         {settings_el}
       </nav>"""
 
@@ -2014,25 +2018,24 @@ def render_client_shell_page(
     client_meta_tip: str = "",
     extra_css: str = "",
     show_business_line: bool | None = None,
-    show_insights_upload: bool | None = None,
+    show_files: bool | None = None,
 ) -> str:
     """Shared dashboard chrome for settings and other child pages."""
     theme = dashboard_theme.load_client_theme(client_slug)
     account_nav = _session_account_html(email=session_email, is_admin=session_is_admin)
     if show_business_line is None:
         show_business_line = client_slug.strip().lower() == "penn"
-    if show_insights_upload is None:
-        show_insights_upload = can_edit_penn_insights(
-            session_is_admin=session_is_admin,
-            access_key=access_key,
-        )
+    if show_files is None:
+        import client_insight_documents as docs
+
+        show_files = docs.enabled()
     sidebar_nav = _sidebar_nav_html(
         client_slug=client_slug,
         active=active_nav,
         access_key=access_key,
         use_session=use_session,
         show_business_line=show_business_line,
-        show_insights_upload=show_insights_upload,
+        show_files=show_files,
     )
     client_header = _sidebar_client_header_html(
         client_slug=client_slug,
@@ -2432,21 +2435,11 @@ def render_penn_html(
         settings_page = _settings_page_url(
             client_slug=slug, access_key=access_key, use_session=use_session
         )
-        can_upload_docs = can_edit_penn_insights(
-            session_is_admin=session_is_admin,
-            access_key=access_key,
-        )
-        client_insights_html = _client_insights_list_html(
-            client_slug=slug,
-            access_key=access_key,
-            use_session=use_session,
-        )
         flash_html = ""
         if flash_message:
             flash_html = f'<div class="dash-flash">{_esc(flash_message)}</div>'
         empty_body = f"""
         {flash_html}
-        {client_insights_html}
         <section class="panel">
           <h2>No data yet</h2>
           <p class="muted">Connect your ad platforms and run a refresh from Settings.</p>
@@ -2464,25 +2457,12 @@ def render_penn_html(
             session_email=session_email,
             session_is_admin=session_is_admin,
             show_business_line=show_business_line,
-            show_insights_upload=can_upload_docs,
             extra_css="""
     .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow-sm); }
     .panel h2 { margin: 0 0 10px; font-size: 1.05rem; color: var(--navy); }
     .muted { color: var(--muted); }
     .dash-link { color: var(--accent); font-weight: 600; text-decoration: none; }
     .dash-link:hover { text-decoration: underline; }
-    .client-insights-section { margin-bottom: 20px; }
-    .client-insights-doc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
-    .client-insights-doc-card { display: block; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; text-decoration: none; color: inherit; box-shadow: var(--shadow-sm); transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s; }
-    .client-insights-doc-card:hover { border-color: var(--accent); box-shadow: var(--shadow); transform: translateY(-1px); }
-    .client-insights-doc-period { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
-    .client-insights-doc-title { font-size: 0.92rem; font-weight: 650; color: var(--navy); line-height: 1.35; margin-bottom: 6px; }
-    .client-insights-doc-meta { font-size: 0.78rem; color: var(--muted); }
-    .client-insights-empty { margin: 0; font-size: 0.9rem; }
-    .paid-ad-overview-pill { display: inline-flex; align-items: center; gap: 0; background: var(--navy); color: #fff; font-size: 0.68rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 6px 14px 6px 0; border-radius: 999px; overflow: hidden; }
-    .paid-ad-overview-pill::before { content: ''; display: inline-block; width: 4px; align-self: stretch; background: var(--gold); margin-right: 10px; border-radius: 999px 0 0 999px; }
-    .client-insights-pill::before { background: #22c55e; }
-    .client-insights-count { margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: rgba(255,255,255,0.16); font-size: 0.62rem; letter-spacing: 0.04em; }
     .dash-flash { background: var(--ok-bg); border: 1px solid #b8dfc8; border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; font-size: 0.9rem; color: var(--ok); }
             """,
         )
@@ -2574,17 +2554,6 @@ def render_penn_html(
         if has_ga4_config and not any(p["id"] == "organic" for p in platform_catalog_list):
             platform_catalog_list.append({"id": "organic", "label": "Organic"})
     platform_catalog_json = _json_for_html_script(platform_catalog_list)
-    sidebar_nav = _sidebar_nav_html(
-        client_slug=client_slug,
-        active="overview",
-        access_key=access_key,
-        use_session=use_session,
-        show_business_line=show_business_line,
-        show_insights_upload=can_edit_penn_insights(
-            session_is_admin=session_is_admin,
-            access_key=access_key,
-        ),
-    )
     client_meta_tip = _esc(f"Date range: {range_label}\nLast refreshed: {refreshed} UTC")
     client_header = _sidebar_client_header_html(
         client_slug=client_slug,
@@ -2595,14 +2564,16 @@ def render_penn_html(
         session_is_admin=session_is_admin,
         client_meta_tip=client_meta_tip,
     )
-    client_insights_html = _client_insights_list_html(
+    overview_paid_html = _paid_ad_overview_html(aggregated, ga4_attr)
+    import client_insight_documents as docs
+
+    sidebar_nav = _sidebar_nav_html(
         client_slug=client_slug,
+        active="overview",
         access_key=access_key,
         use_session=use_session,
-    )
-    overview_paid_html = _paid_ad_overview_html(aggregated, ga4_attr)
-    paid_overview_metrics_json = _json_for_html_script(
-        _paid_ad_overview_metrics(aggregated, ga4_attr)
+        show_business_line=show_business_line,
+        show_files=docs.enabled(),
     )
     ga4_pages_report = snapshot.get("ga4_pages")
     accounts = snapshot.get("accounts") or {}
@@ -4499,7 +4470,6 @@ def render_penn_html(
 
           <div id="view-overview" class="view-panel active" role="tabpanel">
             {overview_paid_html}
-            {client_insights_html}
 
             <div class="cards">
               {_summary_card("Google Ads", totals.get("google"), platform="google")}

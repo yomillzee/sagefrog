@@ -1835,13 +1835,47 @@ def dashboard_client_settings_post(
     raise HTTPException(status_code=400, detail="Unknown action.")
 
 
+def _files_page_flash_message(
+    *,
+    doc_uploaded: str | None,
+    doc_deleted: str | None,
+    doc_error: str | None,
+) -> str | None:
+    if doc_error:
+        return str(doc_error).strip()[:300]
+    if doc_uploaded:
+        return "File uploaded."
+    if doc_deleted:
+        return "File deleted."
+    return None
+
+
+def _files_page_query_params(
+    *,
+    key: str | None,
+    doc_uploaded: str | None = None,
+    doc_deleted: str | None = None,
+    doc_error: str | None = None,
+) -> dict[str, str]:
+    params: dict[str, str] = {}
+    if key:
+        params["key"] = key
+    if doc_error:
+        params["doc_error"] = str(doc_error).strip()[:300]
+    elif doc_uploaded:
+        params["doc_uploaded"] = "1"
+    elif doc_deleted:
+        params["doc_deleted"] = "1"
+    return params
+
+
 @app.get(
-    "/dashboard/{client_slug}/insights-upload",
-    summary="Admin insight document upload page",
+    "/dashboard/{client_slug}/files",
+    summary="Client file sharing page",
     response_class=HTMLResponse,
     include_in_schema=False,
 )
-def dashboard_client_insights_upload_page(
+def dashboard_client_files_page(
     client_slug: str,
     request: Request,
     key: str | None = None,
@@ -1850,31 +1884,22 @@ def dashboard_client_insights_upload_page(
     doc_error: str | None = None,
 ):
     slug = _validate_client_slug(client_slug)
-    if doc_error:
-        flash = str(doc_error).strip()[:300]
-    elif doc_uploaded:
-        flash = "Insight document uploaded."
-    elif doc_deleted:
-        flash = "Insight document deleted."
-    else:
-        flash = None
+    flash = _files_page_flash_message(
+        doc_uploaded=doc_uploaded,
+        doc_deleted=doc_deleted,
+        doc_error=doc_error,
+    )
 
     if web_users.enabled():
         auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
         if isinstance(auth, RedirectResponse):
             return auth
-        user = auth.user
-        if not dashboard_service.can_edit_penn_insights(
-            session_is_admin=bool(user and user.role == "admin"),
-            access_key=auth.access_key,
-        ):
-            raise HTTPException(status_code=403, detail="Only admins can upload insight documents.")
         try:
             label = client_config.client_label(slug)
         except ValueError:
             label = slug.replace("-", " ").title()
         return HTMLResponse(
-            dashboard_service.render_insights_upload_page(
+            dashboard_service.render_files_page(
                 client_slug=slug,
                 label=label,
                 flash_message=flash,
@@ -1888,13 +1913,41 @@ def dashboard_client_insights_upload_page(
     except ValueError:
         label = slug.replace("-", " ").title()
     return HTMLResponse(
-        dashboard_service.render_insights_upload_page(
+        dashboard_service.render_files_page(
             client_slug=slug,
             label=label,
             access_key=key,
             flash_message=flash,
         )
     )
+
+
+@app.get(
+    "/dashboard/{client_slug}/insights-upload",
+    summary="Legacy redirect to Files page",
+    include_in_schema=False,
+)
+def dashboard_client_insights_upload_page(
+    client_slug: str,
+    key: str | None = None,
+    doc_uploaded: str | None = None,
+    doc_deleted: str | None = None,
+    doc_error: str | None = None,
+):
+    slug = _validate_client_slug(client_slug)
+    params = _files_page_query_params(
+        key=key,
+        doc_uploaded=doc_uploaded,
+        doc_deleted=doc_deleted,
+        doc_error=doc_error,
+    )
+    dest = f"/dashboard/{slug}/files"
+    if params:
+        q = "&".join(
+            f"{quote(str(k), safe='')}={quote(str(v), safe='')}" for k, v in params.items()
+        )
+        dest = f"{dest}?{q}"
+    return RedirectResponse(url=dest, status_code=301)
 
 
 @app.get(
@@ -2113,7 +2166,7 @@ def _dashboard_flash_redirect(
     return RedirectResponse(url=dest, status_code=303)
 
 
-def _insights_upload_flash_redirect(
+def _files_flash_redirect(
     *,
     client_slug: str,
     use_session: bool,
@@ -2123,7 +2176,7 @@ def _insights_upload_flash_redirect(
     params = {k: v for k, v in query.items() if v}
     if not use_session:
         params["key"] = access_key or ""
-    dest = f"/dashboard/{client_slug}/insights-upload"
+    dest = f"/dashboard/{client_slug}/files"
     if params:
         q = "&".join(
             f"{quote(str(k), safe='')}={quote(str(v), safe='')}" for k, v in params.items()
@@ -2167,7 +2220,7 @@ async def dashboard_client_insight_document_upload(
         uploaded_by = "dashboard_key"
 
     if not client_insight_documents.enabled():
-        return _insights_upload_flash_redirect(
+        return _files_flash_redirect(
             client_slug=slug,
             use_session=use_session,
             access_key=access_key,
@@ -2199,14 +2252,14 @@ async def dashboard_client_insight_document_upload(
             **audit_log.request_context(request),
         )
     except Exception as exc:
-        return _insights_upload_flash_redirect(
+        return _files_flash_redirect(
             client_slug=slug,
             use_session=use_session,
             access_key=access_key,
             doc_error=str(exc)[:300],
         )
 
-    return _insights_upload_flash_redirect(
+    return _files_flash_redirect(
         client_slug=slug,
         use_session=use_session,
         access_key=access_key,
@@ -2285,7 +2338,7 @@ def dashboard_client_insight_document_delete(
             detail={"client_slug": slug, "document_id": int(doc_id)},
             **audit_log.request_context(request),
         )
-    return _insights_upload_flash_redirect(
+    return _files_flash_redirect(
         client_slug=slug,
         use_session=use_session,
         access_key=access_key,
