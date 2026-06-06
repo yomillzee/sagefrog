@@ -474,6 +474,17 @@ def _brand_colors_section_html(
           {_theme_color_input("meta", "Filter color", theme["meta"])}
           {_theme_color_input("meta_bg", "Background tint", theme["meta_bg"])}
         </div>
+        <p class="theme-group-title">Organic</p>
+        <div class="color-grid">
+          {_theme_color_input("organic", "Filter color", theme["organic"])}
+          {_theme_color_input("organic_bg", "Background tint", theme["organic_bg"])}
+        </div>
+        <p class="theme-group-title">Business lines</p>
+        <p class="hint">One color for all business line filters (Home Equity, Cash Bonus, etc.).</p>
+        <div class="color-grid">
+          {_theme_color_input("business_line", "Filter color", theme["business_line"])}
+          {_theme_color_input("business_line_bg", "Background tint", theme["business_line_bg"])}
+        </div>
         <button type="submit" class="btn primary">Save brand colors</button>
       </form>
     </section>"""

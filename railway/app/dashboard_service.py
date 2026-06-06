@@ -3378,7 +3378,7 @@ def render_penn_html(
     .data-table.compact th, .data-table.compact td {{ padding: 8px 10px; font-size: 0.82rem; }}
     .chart-stack {{ display: flex; flex-direction: column; gap: 24px; }}
     .performance-trend-panel {{
-      border-top: 3px solid #16a34a;
+      border-top: 3px solid var(--organic);
     }}
     .performance-trend-head {{
       align-items: flex-start;
@@ -3448,9 +3448,9 @@ def render_penn_html(
       color: var(--linkedin);
     }}
     .metric-toggle[data-metric="conversions"].active {{
-      background: #ecfdf3;
-      border-color: #16a34a;
-      color: #16a34a;
+      background: var(--organic-bg);
+      border-color: var(--organic);
+      color: var(--organic);
     }}
     .performance-trend-chart-wrap {{
       position: relative;
@@ -4162,29 +4162,29 @@ def render_penn_html(
       color: #fff;
     }}
     .filter-toggle.t-organic {{
-      border-color: color-mix(in srgb, #16a34a 55%, var(--border));
-      color: #16a34a;
+      border-color: color-mix(in srgb, var(--organic) 55%, var(--border));
+      color: var(--organic);
     }}
     .filter-toggle.t-organic:hover {{
-      background: #ecfdf3;
-      border-color: #16a34a;
+      background: var(--organic-bg);
+      border-color: var(--organic);
     }}
     .filter-toggle.t-organic.active {{
-      background: #16a34a;
-      border-color: #16a34a;
+      background: var(--organic);
+      border-color: var(--organic);
       color: #fff;
     }}
     .filter-toggle.t-bl {{
-      border-color: color-mix(in srgb, var(--gold) 50%, var(--border));
-      color: #8a7020;
+      border-color: color-mix(in srgb, var(--business-line) 50%, var(--border));
+      color: var(--business-line);
     }}
     .filter-toggle.t-bl:hover {{
-      background: #faf6eb;
-      border-color: var(--gold);
+      background: var(--business-line-bg);
+      border-color: var(--business-line);
     }}
     .filter-toggle.t-bl.active {{
-      background: var(--gold);
-      border-color: var(--gold);
+      background: var(--business-line);
+      border-color: var(--business-line);
       color: #fff;
     }}
     .filter-actions {{
@@ -4245,12 +4245,12 @@ def render_penn_html(
     .platform-pill.google {{ background: var(--google-bg); color: var(--google); }}
     .platform-pill.meta {{ background: var(--meta-bg); color: var(--meta); }}
     .platform-pill.linkedin {{ background: var(--linkedin-bg); color: var(--linkedin); }}
-    .platform-pill.organic {{ background: #ecfdf3; color: #16a34a; }}
+    .platform-pill.organic {{ background: var(--organic-bg); color: var(--organic); }}
     .bl-tag {{
       font-size: 0.72rem;
       font-weight: 600;
-      color: var(--muted);
-      background: #f0f4f8;
+      color: var(--business-line);
+      background: var(--business-line-bg);
       padding: 2px 8px;
       border-radius: 6px;
       white-space: nowrap;
