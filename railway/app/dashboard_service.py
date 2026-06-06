@@ -1766,9 +1766,21 @@ def _files_page_css() -> str:
     .files-drop-overlay-inner svg { width: 48px; height: 48px; color: var(--accent); margin-bottom: 12px; }
     .files-drop-title { margin: 0 0 6px; font-size: 1.05rem; font-weight: 700; }
     .files-drop-sub { margin: 0; font-size: 0.88rem; color: var(--muted); }
-    .files-row--folder.files-drop-target { background: rgba(59, 130, 246, 0.08); outline: 2px solid var(--accent); outline-offset: -2px; }
-    .files-row--folder.files-drop-target .files-name-text { color: var(--accent); }
-    .files-crumb-link.files-drop-target { background: rgba(59, 130, 246, 0.12); border-radius: 6px; padding: 2px 6px; }
+    .files-row--folder.files-drop-target { background: rgba(59, 130, 246, 0.12); box-shadow: inset 0 0 0 2px var(--accent); }
+    .files-row--folder.files-drop-target .files-name-text { color: var(--accent); font-weight: 700; }
+    .files-row--folder .files-name-link { display: flex; align-items: center; gap: 12px; width: 100%; text-decoration: none; color: inherit; }
+    .files-row--folder.files-drop-target .files-name-link::after {
+      content: 'Drop here';
+      margin-left: auto;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.72rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .files-crumb-link.files-drop-target { background: var(--accent); color: #fff !important; border-radius: 6px; padding: 2px 8px; text-decoration: none; }
     .files-row--file[draggable="true"] { cursor: grab; }
     .files-row--file.files-row--dragging { opacity: 0.45; cursor: grabbing; }
     .files-name-link--static { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -1891,15 +1903,28 @@ def _files_page_js() -> str:
         overlay.querySelector('.files-drop-sub').textContent = sub || '.docx and .pdf up to 25 MB';
       }
 
-      function hideUploadOverlay() {
-        dragDepth = 0;
+      function hideOverlayOnly() {
         browser.classList.remove('files-drag-active');
-        clearDropTarget();
         if (!overlay) return;
         overlay.hidden = true;
         overlay.setAttribute('aria-hidden', 'true');
         overlay.querySelector('.files-drop-title').textContent = 'Drop files to upload';
         overlay.querySelector('.files-drop-sub').textContent = '.docx and .pdf up to 25 MB';
+      }
+
+      function hideUploadOverlay() {
+        dragDepth = 0;
+        hideOverlayOnly();
+        clearDropTarget();
+      }
+
+      function highlightDropTarget(dropTarget) {
+        hideOverlayOnly();
+        if (dropTarget) {
+          setDropTarget(dropTarget);
+        } else {
+          clearDropTarget();
+        }
       }
 
       async function readJsonResponse(resp) {
@@ -1996,34 +2021,17 @@ def _files_page_js() -> str:
 
         const dropTarget = dropTargetFromEvent(event);
         if (internal) {
-          if (dropTarget) {
-            setDropTarget(dropTarget);
-            const label = dropTarget.dataset.dropTarget === 'root'
-              ? 'All files'
-              : dropTarget.querySelector('.files-name-text')?.textContent?.trim();
-            if (overlay) {
-              overlay.hidden = false;
-              overlay.setAttribute('aria-hidden', 'false');
-              browser.classList.add('files-drag-active');
-              overlay.querySelector('.files-drop-title').textContent =
-                label ? `Move to ${label}` : 'Move to folder';
-              overlay.querySelector('.files-drop-sub').textContent = 'Release to move file';
-            }
-          } else {
-            clearDropTarget();
-          }
+          highlightDropTarget(dropTarget);
           return;
         }
 
-        const folderRow = dropTargetFromEvent(event);
-        if (folderRow?.dataset.dropTarget === 'folder') {
-          setDropTarget(folderRow);
-          const name = folderRow.querySelector('.files-name-text')?.textContent?.trim();
-          showUploadOverlay(name ? `Drop into ${name}` : 'Drop into folder');
-        } else {
-          clearDropTarget();
-          showUploadOverlay('Drop files to upload');
+        if (dropTarget) {
+          highlightDropTarget(dropTarget);
+          return;
         }
+
+        clearDropTarget();
+        showUploadOverlay('Drop files to upload');
       });
 
       browser.addEventListener('dragleave', (event) => {
