@@ -75,7 +75,7 @@ Requires **Postgres** (`DATABASE_URL`). The service creates a `web_users` table.
 
 ### Client document sharing
 
-Requires **Postgres** (`DATABASE_URL`). Uploaded `.docx` and `.pdf` files (up to 25 MB) are stored in the `client_insight_documents` table. Admins upload at `/dashboard/{client}/insights-upload`; clients download from the Overview **Client Insights** section after dashboard auth.
+Requires **Postgres** (`DATABASE_URL`). Uploaded `.docx` and `.pdf` files (up to 25 MB) are stored in the `client_insight_documents` table. Admins upload and delete at `/dashboard/{client}/files`; all authenticated dashboard users can download from the same page. The legacy `/dashboard/{client}/insights-upload` URL redirects to Files.
 
 Create additional users at `/admin` after signing in as admin. The **Audit log** section on `/admin` records sign-ins, sign-outs, failed logins, and user create/deactivate actions (with actor, target, IP).
 
