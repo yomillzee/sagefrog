@@ -1611,7 +1611,7 @@ def _client_files_browser_html(
               </form>"""
         rows.append(
             f"""
-            <tr class="files-row files-row--folder">
+            <tr class="files-row files-row--folder" data-folder-id="{int(folder.id)}" data-drop-target="folder">
               <td class="files-col-name">
                 <a href="{folder_url}" class="files-name-link">
                   {_folder_icon_html()}
@@ -1673,18 +1673,49 @@ def _client_files_browser_html(
     if not rows:
         empty_msg = "This folder is empty."
         if can_manage:
-            empty_msg = "This folder is empty. Create a folder or upload a file to get started."
+            empty_msg = "This folder is empty. Drag files here, create a folder, or use Upload."
         table_body = f'<tr><td colspan="4" class="files-empty-cell muted">{empty_msg}</td></tr>'
     else:
         table_body = "".join(rows)
 
+    upload_action = ""
+    if can_manage:
+        upload_action = _insight_documents_action_url(
+            client_slug=client_slug,
+            access_key=access_key,
+            use_session=use_session,
+        ) or ""
+
+    browser_attrs = ""
+    if can_manage and upload_action:
+        folder_attr = str(int(folder_id)) if folder_id is not None else ""
+        browser_attrs = (
+            f' data-upload-url="{_esc(upload_action)}"'
+            f' data-folder-id="{folder_attr}"'
+            ' data-can-upload="1"'
+        )
+
+    drop_overlay = ""
+    if can_manage and upload_action:
+        drop_overlay = """
+      <div class="files-drop-overlay" id="filesDropOverlay" hidden aria-hidden="true">
+        <div class="files-drop-overlay-inner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <path d="M12 16V4m0 0l-4 4m4-4l4 4M4 20h16"/>
+          </svg>
+          <p class="files-drop-title">Drop files to upload</p>
+          <p class="files-drop-sub">.docx and .pdf up to 25 MB</p>
+        </div>
+      </div>"""
+
     return f"""
-    <div class="files-browser">
+    <div class="files-browser"{browser_attrs}>
       <div class="files-toolbar">
         {breadcrumb_html}
         {toolbar_actions}
       </div>
-      <div class="files-table-wrap">
+      <div class="files-table-wrap" id="filesDropZone">
+        {drop_overlay}
         <table class="files-table">
           <thead>
             <tr>
@@ -1705,7 +1736,17 @@ def _client_files_browser_html(
 def _files_page_css() -> str:
     return """
     .dash-flash { background: var(--ok-bg); border: 1px solid #b8dfc8; border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; font-size: 0.9rem; color: var(--ok); }
-    .files-browser { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; }
+    .files-browser { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; position: relative; }
+    .files-browser.files-drag-active { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15), var(--shadow-sm); }
+    .files-table-wrap { overflow-x: auto; position: relative; min-height: 200px; }
+    .files-drop-overlay { position: absolute; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.92); border: 2px dashed var(--accent); border-radius: 0 0 var(--radius) var(--radius); pointer-events: none; }
+    .files-drop-overlay[hidden] { display: none !important; }
+    .files-drop-overlay-inner { text-align: center; color: var(--navy); padding: 24px; }
+    .files-drop-overlay-inner svg { width: 48px; height: 48px; color: var(--accent); margin-bottom: 12px; }
+    .files-drop-title { margin: 0 0 6px; font-size: 1.05rem; font-weight: 700; }
+    .files-drop-sub { margin: 0; font-size: 0.88rem; color: var(--muted); }
+    .files-row--folder.files-drop-target { background: rgba(59, 130, 246, 0.08); outline: 2px solid var(--accent); outline-offset: -2px; }
+    .files-row--folder.files-drop-target .files-name-text { color: var(--accent); }
     .files-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 16px 20px; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, #fff 0%, var(--surface) 100%); }
     .files-breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: 0.92rem; min-width: 0; }
     .files-crumb-link { color: var(--accent); text-decoration: none; font-weight: 600; }
@@ -1722,7 +1763,6 @@ def _files_page_css() -> str:
     .files-upload-label { margin: 0; }
     .files-upload-form { display: inline-flex; margin: 0; }
     .files-upload-input { display: none; }
-    .files-table-wrap { overflow-x: auto; }
     .files-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
     .files-table thead th { text-align: left; padding: 10px 16px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); background: var(--surface); }
     .files-table tbody tr { border-bottom: 1px solid var(--border); transition: background 0.12s; }
@@ -1778,6 +1818,140 @@ def _files_page_js() -> str:
           if (input.files?.length) form?.submit();
         });
       });
+
+      const browser = document.querySelector('.files-browser[data-can-upload]');
+      if (!browser) return;
+
+      const uploadUrl = browser.dataset.uploadUrl;
+      const defaultFolderId = browser.dataset.folderId || '';
+      const dropZone = document.getElementById('filesDropZone');
+      const overlay = document.getElementById('filesDropOverlay');
+      let dragDepth = 0;
+      let activeFolderRow = null;
+
+      function allowedFile(file) {
+        const name = (file.name || '').toLowerCase();
+        return name.endsWith('.pdf') || name.endsWith('.docx');
+      }
+
+      function collectFiles(dataTransfer) {
+        return Array.from(dataTransfer?.files || []).filter(allowedFile);
+      }
+
+      function setFolderTarget(row) {
+        if (activeFolderRow === row) return;
+        activeFolderRow?.classList.remove('files-drop-target');
+        activeFolderRow = row;
+        activeFolderRow?.classList.add('files-drop-target');
+      }
+
+      function clearFolderTarget() {
+        activeFolderRow?.classList.remove('files-drop-target');
+        activeFolderRow = null;
+      }
+
+      function showOverlay() {
+        browser.classList.add('files-drag-active');
+        if (overlay) {
+          overlay.hidden = false;
+          overlay.setAttribute('aria-hidden', 'false');
+        }
+      }
+
+      function hideOverlay() {
+        dragDepth = 0;
+        browser.classList.remove('files-drag-active');
+        clearFolderTarget();
+        if (overlay) {
+          overlay.hidden = true;
+          overlay.setAttribute('aria-hidden', 'true');
+        }
+      }
+
+      async function uploadFiles(files, folderId) {
+        if (!files.length) {
+          alert('Only .docx and .pdf files can be uploaded.');
+          return;
+        }
+        if (overlay) {
+          overlay.querySelector('.files-drop-title').textContent =
+            files.length === 1 ? 'Uploading…' : `Uploading ${files.length} files…`;
+          overlay.querySelector('.files-drop-sub').textContent = 'Please wait';
+        }
+        let lastLocation = window.location.href;
+        for (const file of files) {
+          const formData = new FormData();
+          formData.append('file', file);
+          if (folderId) formData.append('folder_id', folderId);
+          const resp = await fetch(uploadUrl, {
+            method: 'POST',
+            body: formData,
+            credentials: 'same-origin',
+            redirect: 'manual',
+          });
+          if (resp.status >= 300 && resp.status < 400) {
+            const loc = resp.headers.get('Location');
+            if (loc) {
+              if (loc.includes('doc_error=')) {
+                window.location.href = loc;
+                return;
+              }
+              lastLocation = loc;
+            }
+          } else if (!resp.ok) {
+            alert('Upload failed for ' + file.name + '.');
+            hideOverlay();
+            return;
+          }
+        }
+        window.location.href = lastLocation;
+      }
+
+      function folderRowFromEvent(event) {
+        const target = event.target;
+        if (!(target instanceof Element)) return null;
+        return target.closest('tr[data-drop-target="folder"]');
+      }
+
+      ['dragenter', 'dragover'].forEach((type) => {
+        browser.addEventListener(type, (event) => {
+          event.preventDefault();
+          if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+          if (type === 'dragenter') {
+            dragDepth += 1;
+            showOverlay();
+          }
+          const folderRow = folderRowFromEvent(event);
+          if (folderRow) {
+            setFolderTarget(folderRow);
+            if (overlay) {
+              const name = folderRow.querySelector('.files-name-text')?.textContent?.trim();
+              overlay.querySelector('.files-drop-title').textContent =
+                name ? `Drop into ${name}` : 'Drop into folder';
+            }
+          } else {
+            clearFolderTarget();
+            if (overlay) overlay.querySelector('.files-drop-title').textContent = 'Drop files to upload';
+          }
+        });
+      });
+
+      browser.addEventListener('dragleave', (event) => {
+        event.preventDefault();
+        dragDepth = Math.max(0, dragDepth - 1);
+        if (dragDepth === 0) hideOverlay();
+      });
+
+      browser.addEventListener('drop', async (event) => {
+        event.preventDefault();
+        const folderRow = folderRowFromEvent(event);
+        const folderId = folderRow?.dataset.folderId || defaultFolderId;
+        const files = collectFiles(event.dataTransfer);
+        hideOverlay();
+        await uploadFiles(files, folderId);
+      });
+
+      window.addEventListener('dragend', hideOverlay);
     })();
     """
 
