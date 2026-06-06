@@ -16,6 +16,10 @@ DEFAULT_THEME: dict[str, str] = {
     "linkedin_bg": "#eff6ff",
     "meta": "#9333ea",
     "meta_bg": "#f5f3ff",
+    "organic": "#16a34a",
+    "organic_bg": "#ecfdf3",
+    "business_line": "#c9a227",
+    "business_line_bg": "#faf6e8",
 }
 
 THEME_KEYS: tuple[str, ...] = tuple(DEFAULT_THEME.keys())
@@ -85,7 +89,9 @@ def root_css_block(theme: dict[str, str] | None = None) -> str:
       --navy-light: {t["sidebar_to"]};
       --sidebar-from: {t["sidebar_from"]};
       --sidebar-to: {t["sidebar_to"]};
-      --gold: #c9a227;
+      --gold: {t["business_line"]};
+      --business-line: {t["business_line"]};
+      --business-line-bg: {t["business_line_bg"]};
       --shadow: 0 4px 24px rgba(10, 37, 64, 0.08);
       --shadow-sm: 0 1px 3px rgba(10, 37, 64, 0.06);
       --radius: 14px;
@@ -99,6 +105,8 @@ def root_css_block(theme: dict[str, str] | None = None) -> str:
       --linkedin-bg: {t["linkedin_bg"]};
       --meta: {t["meta"]};
       --meta-bg: {t["meta_bg"]};
+      --organic: {t["organic"]};
+      --organic-bg: {t["organic_bg"]};
     }}"""
 
 
@@ -132,8 +140,8 @@ def chart_metric_defs(theme: dict[str, str] | None = None) -> list[dict[str, str
         {
             "id": "conversions",
             "label": "Conversions",
-            "color": "#16a34a",
-            "fill": "rgba(22, 163, 74, 0.08)",
+            "color": t["organic"],
+            "fill": hex_to_rgba(t["organic"], 0.08),
             "yAxisID": "y",
             "format": "int",
         },

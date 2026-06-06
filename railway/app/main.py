@@ -1600,6 +1600,10 @@ def dashboard_client_settings_post(
     linkedin_bg: str = Form(""),
     meta: str = Form(""),
     meta_bg: str = Form(""),
+    organic: str = Form(""),
+    organic_bg: str = Form(""),
+    business_line: str = Form(""),
+    business_line_bg: str = Form(""),
 ):
     slug = _validate_client_slug(client_slug)
     act = (action or "save").strip().lower()
@@ -1791,6 +1795,10 @@ def dashboard_client_settings_post(
                 linkedin_bg=linkedin_bg,
                 meta=meta,
                 meta_bg=meta_bg,
+                organic=organic,
+                organic_bg=organic_bg,
+                business_line=business_line,
+                business_line_bg=business_line_bg,
             )
             saved_theme = client_dashboard_config.save_theme(
                 slug,
