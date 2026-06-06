@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import quote
 
 import dashboard_snapshots
+import dashboard_theme
 import web_users
 import ga4_warehouse_service
 import ga4_attribution_service
@@ -1998,6 +1999,7 @@ def render_client_shell_page(
     show_insights_upload: bool | None = None,
 ) -> str:
     """Shared dashboard chrome for settings and other child pages."""
+    theme = dashboard_theme.load_client_theme(client_slug)
     account_nav = _session_account_html(email=session_email, is_admin=session_is_admin)
     if show_business_line is None:
         show_business_line = client_slug.strip().lower() == "penn"
@@ -2031,20 +2033,12 @@ def render_client_shell_page(
   <title>{_esc(label)} — {_esc(page_title)}</title>
   {_favicon_head_html()}
   <style>
-    :root {{
-      --bg: #f4f6f9; --panel: #fff; --surface: #f8fafc; --text: #0f172a; --muted: #64748b;
-      --border: #e2e8f0; --accent: #0b5cab; --navy: #0a2540; --navy-light: #123456;
-      --gold: #c9a227; --shadow: 0 4px 24px rgba(10, 37, 64, 0.08); --shadow-sm: 0 1px 3px rgba(10, 37, 64, 0.06);
-      --radius: 14px; --ok: #15803d; --ok-bg: #ecfdf3; --err: #b42318; --err-bg: #fef2f2;
-      --google: #4285f4; --google-bg: #eef4ff;
-      --meta: #9333ea; --meta-bg: #f5f3ff;
-      --linkedin: #0a66c2; --linkedin-bg: #eff6ff;
-    }}
+    {dashboard_theme.root_css_block(theme)}
     * {{ box-sizing: border-box; }}
     body {{ margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }}
     .app-shell {{ display: flex; min-height: 100vh; }}
     .dash-sidebar {{
-      width: 248px; background: linear-gradient(180deg, #0a2540, #123456); color: #fff;
+      width: 248px; background: linear-gradient(180deg, var(--sidebar-from), var(--sidebar-to)); color: #fff;
       display: flex; flex-direction: column; padding: 16px 12px; flex-shrink: 0;
     }}
     .sidebar-top {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 18px; min-height: 36px; }}
@@ -2409,6 +2403,7 @@ def render_penn_html(
 ) -> str:
     """use_session: refresh forms omit ?key= (cookie auth). access_key: legacy shared secret."""
     slug = (client_slug or "penn").strip().lower()
+    theme = dashboard_theme.load_client_theme(slug)
     show_business_line = slug == "penn"
     account_nav = _session_account_html(email=session_email, is_admin=session_is_admin)
     if not snapshot:
@@ -2621,6 +2616,7 @@ def render_penn_html(
           </div>"""
     ga4_pages_json = _json_for_html_script((ga4_pages_report or {}).get("pages") or [])
     ga4_summary_json = _json_for_html_script((ga4_pages_report or {}).get("summary") or {})
+    metric_defs_json = _json_for_html_script(dashboard_theme.chart_metric_defs(theme))
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -2630,31 +2626,7 @@ def render_penn_html(
   <title>{_esc(label)} — Ads Dashboard</title>{_favicon_head_html()}
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
-    :root {{
-      --bg: #f4f6f9;
-      --panel: #fff;
-      --surface: #f8fafc;
-      --text: #0f172a;
-      --muted: #64748b;
-      --border: #e2e8f0;
-      --accent: #0b5cab;
-      --navy: #0a2540;
-      --navy-light: #123456;
-      --gold: #c9a227;
-      --shadow: 0 4px 24px rgba(10, 37, 64, 0.08);
-      --shadow-sm: 0 1px 3px rgba(10, 37, 64, 0.06);
-      --radius: 14px;
-      --ok: #15803d;
-      --ok-bg: #ecfdf3;
-      --err: #b42318;
-      --err-bg: #fef2f2;
-      --google: #4285f4;
-      --google-bg: #eef4ff;
-      --linkedin: #0a66c2;
-      --linkedin-bg: #eff6ff;
-      --meta: #9333ea;
-      --meta-bg: #f5f3ff;
-    }}
+    {dashboard_theme.root_css_block(theme)}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
@@ -2671,7 +2643,7 @@ def render_penn_html(
     .dash-sidebar {{
       width: 248px;
       flex-shrink: 0;
-      background: linear-gradient(180deg, var(--navy) 0%, #0d2f4a 100%);
+      background: linear-gradient(180deg, var(--sidebar-from) 0%, var(--sidebar-to) 100%);
       color: #fff;
       display: flex;
       flex-direction: column;
@@ -4440,6 +4412,7 @@ def render_penn_html(
   </div>
   <div class="andre-toast" id="andreToast" role="status" aria-live="polite" hidden>Hello Andre</div>
   <script type="application/json" id="performance-chart-data">{performance_chart_json}</script>
+  <script type="application/json" id="metric-defs-data">{metric_defs_json}</script>
   <script type="application/json" id="paid-overview-metrics-data">{paid_overview_metrics_json}</script>
   <script type="application/json" id="breakdowns-data">{breakdowns_json}</script>
   <script type="application/json" id="ga4-campaign-metrics">{ga4_campaign_metrics_json}</script>
@@ -4495,12 +4468,7 @@ def render_penn_html(
       return ids.filter(id => fromMetrics.includes(id));
     }}
 
-    const METRIC_DEFS = [
-      {{ id: 'spend', label: 'Spend', color: '#0a2540', fill: 'rgba(10, 37, 64, 0.08)', yAxisID: 'y', format: 'money' }},
-      {{ id: 'clicks', label: 'Clicks', color: '#4285f4', fill: 'rgba(66, 133, 244, 0.08)', yAxisID: 'y', format: 'int' }},
-      {{ id: 'impressions', label: 'Impressions', color: '#0a66c2', fill: 'rgba(10, 102, 194, 0.08)', yAxisID: 'y', format: 'int' }},
-      {{ id: 'conversions', label: 'Conversions', color: '#16a34a', fill: 'rgba(22, 163, 74, 0.08)', yAxisID: 'y', format: 'int' }},
-    ];
+    const METRIC_DEFS = readJson('metric-defs-data', []);
     let activeMetricId = 'spend';
 
     const fmtMoney = n => '$' + Number(n || 0).toLocaleString(undefined, {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});

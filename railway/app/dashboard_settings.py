@@ -12,6 +12,7 @@ import bigquery_service
 import client_config
 import dashboard_service
 import dashboard_snapshots
+import dashboard_theme
 import ga4_clients
 import linkedin_auth
 import meta_auth
@@ -256,6 +257,11 @@ def _settings_page_css() -> str:
     .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin-bottom: 14px; }
     label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 6px; }
     input[type="text"], input[type="password"] { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+    input[type="color"] { width: 100%; height: 42px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: #fff; }
+    .color-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin-bottom: 16px; }
+    .color-field label { margin-bottom: 6px; }
+    .theme-group-title { margin: 16px 0 10px; font-size: .88rem; font-weight: 700; color: var(--navy); text-transform: uppercase; letter-spacing: .04em; }
+    .theme-group-title:first-of-type { margin-top: 0; }
     textarea.rules-textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
       font-family: ui-monospace, monospace; font-size: .84rem; line-height: 1.45; min-height: 160px; margin-bottom: 12px; }
     .status-table { width: 100%; border-collapse: collapse; font-size: .88rem; margin-top: 8px; }
@@ -427,6 +433,50 @@ def _connection_row(label: str, ok: bool, detail: str) -> str:
       <td>{_status_badge(ok)}</td>
       <td class="detail">{_esc(detail)}</td>
     </tr>"""
+
+
+def _theme_color_input(name: str, label: str, value: str) -> str:
+    return f"""
+    <div class="color-field">
+      <label for="theme_{_esc(name)}">{_esc(label)}</label>
+      <input type="color" id="theme_{_esc(name)}" name="{_esc(name)}" value="{_esc(value)}">
+    </div>"""
+
+
+def _brand_colors_section_html(
+    *,
+    settings_url: str,
+    theme: dict[str, str],
+) -> str:
+    return f"""
+    <section class="panel">
+      <h2>Brand colors</h2>
+      <p class="muted">Customize the sidebar gradient and channel filter colors for this dashboard.</p>
+      <form method="post" action="{settings_url}">
+        <input type="hidden" name="action" value="save_theme">
+        <p class="theme-group-title">Sidebar</p>
+        <div class="color-grid">
+          {_theme_color_input("sidebar_from", "Top color", theme["sidebar_from"])}
+          {_theme_color_input("sidebar_to", "Bottom color", theme["sidebar_to"])}
+        </div>
+        <p class="theme-group-title">Google</p>
+        <div class="color-grid">
+          {_theme_color_input("google", "Filter color", theme["google"])}
+          {_theme_color_input("google_bg", "Background tint", theme["google_bg"])}
+        </div>
+        <p class="theme-group-title">LinkedIn</p>
+        <div class="color-grid">
+          {_theme_color_input("linkedin", "Filter color", theme["linkedin"])}
+          {_theme_color_input("linkedin_bg", "Background tint", theme["linkedin_bg"])}
+        </div>
+        <p class="theme-group-title">Meta</p>
+        <div class="color-grid">
+          {_theme_color_input("meta", "Filter color", theme["meta"])}
+          {_theme_color_input("meta_bg", "Background tint", theme["meta_bg"])}
+        </div>
+        <button type="submit" class="btn primary">Save brand colors</button>
+      </form>
+    </section>"""
 
 
 def render_settings_html(
@@ -629,6 +679,13 @@ def render_settings_html(
           </form>
         </section>"""
 
+    theme_section = ""
+    if slug == "penn" and db_editable:
+        theme_section = _brand_colors_section_html(
+            settings_url=settings_url,
+            theme=dashboard_theme.load_client_theme(slug),
+        )
+
     insights_fold = ""
     if dashboard_service.can_edit_penn_insights(
         session_is_admin=session_is_admin,
@@ -724,6 +781,7 @@ def render_settings_html(
     {oauth_section}
     {edit_form}
     {bl_rules_section}
+    {theme_section}
     <section class="panel panel--primary">
       <h2>3. Refresh &amp; verify</h2>
       <p class="muted">Pull latest data after connecting. Quick refresh is cheaper; full refresh reloads campaign tables and GA4.</p>
