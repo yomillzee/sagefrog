@@ -2926,8 +2926,11 @@ def render_penn_html(
       display: none;
       align-items: center;
       gap: 12px;
-      padding: 10px 16px 0;
-      background: var(--panel);
+      max-width: 1280px;
+      margin: 0 auto;
+      width: 100%;
+      padding: 10px 24px 0;
+      background: transparent;
     }}
     .dash-content {{
       flex: 1;
@@ -3783,16 +3786,23 @@ def render_penn_html(
       position: sticky;
       top: 0;
       z-index: 45;
-      background: var(--bg);
+      background: var(--panel);
       border-bottom: 1px solid var(--border);
-      box-shadow: 0 1px 0 rgba(255,255,255,0.6);
+      box-shadow: 0 2px 12px rgba(10, 37, 64, 0.04);
+    }}
+    .dash-page-header {{
+      max-width: 1280px;
+      margin: 0 auto;
+      width: 100%;
+      padding: 0 24px;
     }}
     .dash-view-nav {{
       display: flex;
       flex-wrap: wrap;
-      gap: 6px;
-      padding: 10px 24px 0;
-      background: var(--panel);
+      gap: 4px;
+      padding: 8px 0 0;
+      background: transparent;
+      border-bottom: 1px solid var(--border);
     }}
     .dash-view-btn {{
       appearance: none;
@@ -3801,8 +3811,8 @@ def render_penn_html(
       color: var(--muted);
       font-size: 0.9rem;
       font-weight: 650;
-      padding: 12px 16px;
-      border-radius: 10px 10px 0 0;
+      padding: 10px 14px 12px;
+      border-radius: 8px 8px 0 0;
       cursor: pointer;
       border-bottom: 3px solid transparent;
       margin-bottom: -1px;
@@ -3810,26 +3820,26 @@ def render_penn_html(
     }}
     .dash-view-btn:hover {{
       color: var(--navy);
-      background: #f4f7fb;
+      background: var(--surface);
     }}
     .dash-view-btn.active {{
       color: var(--accent);
       border-bottom-color: var(--accent);
-      background: var(--bg);
+      background: transparent;
     }}
     .dash-filters-bar {{
-      padding: 10px 24px 0;
-      background: var(--panel);
-      border-bottom: 1px solid var(--border);
+      padding: 16px 0 18px;
+      background: transparent;
     }}
     .dash-filters-bar:empty {{
       display: none;
     }}
     .global-filters {{
-      padding: 12px 16px 10px;
-      border: none;
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
       box-shadow: none;
-      background: transparent;
+      background: var(--surface);
     }}
     .global-filter-rows {{
       display: flex;
@@ -3975,8 +3985,8 @@ def render_penn_html(
       align-items: center;
       justify-content: space-between;
       gap: 10px 16px;
-      margin-top: 14px;
-      padding-top: 14px;
+      margin-top: 12px;
+      padding-top: 12px;
       border-top: 1px solid var(--border);
     }}
     .bl-filter-footer .filter-zero-spend {{
@@ -4289,8 +4299,9 @@ def render_penn_html(
     }}
     @media (max-width: 900px) {{
       .app-shell {{ display: block; }}
-      .dash-view-nav {{ padding: 8px 16px 0; }}
-      .dash-filters-bar {{ padding: 10px 16px 12px; }}
+      .dash-page-header {{ padding: 0 16px; }}
+      .dash-view-nav {{ padding-top: 6px; }}
+      .dash-filters-bar {{ padding: 14px 0 16px; }}
       .sidebar-menu-btn {{ display: flex; }}
       .sidebar-close {{ display: flex; }}
       .sidebar-backdrop {{
@@ -4352,8 +4363,10 @@ def render_penn_html(
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
           </button>
         </div>
-        {filters_bar_html}
-        {view_tabs_html}
+        <div class="dash-page-header">
+          {view_tabs_html}
+          {filters_bar_html}
+        </div>
       </div>
 
       <div class="dash-content">
