@@ -125,6 +125,7 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
     meta = _strip_env(str(entry.get("meta_account_id") or ""))
     ga4_key = _strip_env(str(entry.get("ga4_client_key") or "")) or (slug if slug in _BUILTIN_CLIENTS else "")
     label = _strip_env(str(entry.get("label") or "")) or _default_label(slug)
+    harvest_project_id = _strip_env(str(entry.get("harvest_project_id") or "")) or None
 
     row = _get_db_row(slug)
     if row:
@@ -138,6 +139,8 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
             meta = row.meta_account_id
         if row.ga4_client_key:
             ga4_key = row.ga4_client_key
+        if row.harvest_project_id:
+            harvest_project_id = row.harvest_project_id
 
     if slug not in _BUILTIN_CLIENTS and not any((google, linkedin, meta, ga4_key)):
         raise RuntimeError(
@@ -151,4 +154,5 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
         linkedin_account_id=linkedin or None,
         meta_account_id=meta or None,
         ga4_client_key=ga4_key or slug,
+        harvest_project_id=harvest_project_id,
     )
