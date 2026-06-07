@@ -30,10 +30,14 @@ from dates_util import resolve_date_range
 from penn_config import PennDashboardConfig, load_penn_config
 import client_config
 from penn_business_lines import (
+    PLATFORM_LABELS,
     active_business_line_catalog,
     active_platform_catalog,
     build_business_line_campaigns,
     platform_catalog,
+    platforms_present_in_snapshot,
+    _breakdown_has_platform_data,
+    _totals_have_metrics,
 )
 
 
@@ -182,6 +186,46 @@ def _account_totals(perf: dict[str, Any]) -> dict[str, Any]:
     totals.setdefault("impressions", 0)
     totals.setdefault("conversions", 0.0)
     return totals
+
+
+def _hydrate_platform_totals(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Fill missing per-platform totals from daily_metrics warehouse rows."""
+    totals = dict(snapshot.get("platform_totals") or {})
+    daily = snapshot.get("daily_metrics") or {}
+    for platform in ("google", "linkedin", "meta", "organic"):
+        if totals.get(platform):
+            continue
+        rows = daily.get(platform) or []
+        if rows:
+            totals[platform] = _totals_from_daily_rows(rows)
+    return totals
+
+
+def _platforms_with_summary_data(
+    totals: dict[str, Any],
+    daily_metrics: dict[str, Any],
+    breakdowns: dict[str, Any],
+) -> list[str]:
+    """Platforms that should render a summary card (data present, not config-only)."""
+    present: list[str] = []
+    for platform in ("google", "linkedin", "meta"):
+        if _totals_have_metrics(totals.get(platform)):
+            present.append(platform)
+        elif daily_metrics.get(platform):
+            present.append(platform)
+        elif _breakdown_has_platform_data(breakdowns.get(platform)):
+            present.append(platform)
+    return present
+
+
+def _summary_cards_html(totals: dict[str, Any], platform_ids: list[str]) -> str:
+    if not platform_ids:
+        return ""
+    cards = [
+        _summary_card(PLATFORM_LABELS.get(platform, platform), totals.get(platform), platform=platform)
+        for platform in platform_ids
+    ]
+    return "\n".join(cards)
 
 
 def _aggregated_paid_media(platform_totals: dict[str, Any]) -> dict[str, Any]:
@@ -518,13 +562,10 @@ def refresh_client(
             payload["platform_totals"]["meta"] = meta_totals
 
     payload["breakdowns"] = breakdowns
-    if cfg.client_key == "penn":
-        payload["business_line_campaigns"] = build_business_line_campaigns(
-            breakdowns,
-            client_slug=cfg.client_key,
-        )
-    else:
-        payload["business_line_campaigns"] = []
+    payload["business_line_campaigns"] = build_business_line_campaigns(
+        breakdowns,
+        client_slug=cfg.client_key,
+    )
 
     if cfg.ga4_client_key:
         try:
@@ -625,10 +666,8 @@ def refresh_client_quick(
         "errors": {},
         "ga4_attribution": existing.get("ga4_attribution"),
         "ga4_pages": existing.get("ga4_pages"),
-        "business_line_campaigns": (
-            build_business_line_campaigns(breakdowns, client_slug=cfg.client_key)
-            if cfg.client_key == "penn"
-            else []
+        "business_line_campaigns": build_business_line_campaigns(
+            breakdowns, client_slug=cfg.client_key
         ),
         "refresh_mode": "warehouse",
     }
@@ -2924,14 +2963,15 @@ def _platform_site_impact_html(
 
 
 def _business_line_campaigns_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
-    """Always derive business-line rows from breakdowns (LinkedIn hierarchy changes need fresh mapping)."""
+    """Derive campaign rows from breakdowns (Penn always; other clients when not stored)."""
     client_key = str(snapshot.get("client_key") or "penn")
-    if client_key != "penn":
-        return snapshot.get("business_line_campaigns") or []
-    return build_business_line_campaigns(
-        _breakdowns_from_snapshot(snapshot),
-        client_slug=client_key,
-    )
+    breakdowns = _breakdowns_from_snapshot(snapshot)
+    if client_key == "penn":
+        return build_business_line_campaigns(breakdowns, client_slug=client_key)
+    stored = snapshot.get("business_line_campaigns") or []
+    if stored:
+        return stored
+    return build_business_line_campaigns(breakdowns, client_slug=client_key)
 
 
 def _breakdowns_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -3044,7 +3084,7 @@ def render_penn_html(
     preset = dr.get("preset") or ""
     range_label = f"{dr.get('start', '')} → {dr.get('end', '')} ({preset})"
 
-    totals = snapshot.get("platform_totals") or {}
+    totals = _hydrate_platform_totals(snapshot)
     errors = snapshot.get("errors") or {}
     error_html = ""
     if errors:
@@ -3111,33 +3151,25 @@ def render_penn_html(
     bl_campaigns = _business_line_campaigns_from_snapshot(snapshot)
     bl_campaigns_json = _json_for_html_script(bl_campaigns)
     bl_catalog_json = _json_for_html_script(active_business_line_catalog(bl_campaigns))
+    try:
+        client_cfg = client_config.load_client_config(slug)
+    except Exception:
+        client_cfg = None
     platform_catalog_list = active_platform_catalog(
         bl_campaigns,
         include_organic=has_ga4_config,
     )
     if not platform_catalog_list:
-        snap_accounts = snapshot.get("accounts") or {}
-        present: set[str] = set()
-        for platform in ("google", "linkedin", "meta"):
-            if totals.get(platform) or snap_accounts.get(platform):
-                present.add(platform)
-        if not present:
-            try:
-                cfg = client_config.load_client_config(slug)
-                for platform, attr in (
-                    ("google", "google_customer_id"),
-                    ("linkedin", "linkedin_account_id"),
-                    ("meta", "meta_account_id"),
-                ):
-                    if getattr(cfg, attr, None):
-                        present.add(platform)
-            except Exception:
-                pass
+        present = platforms_present_in_snapshot(
+            snapshot,
+            cfg=client_cfg,
+            include_configured=True,
+            include_organic=has_ga4_config,
+        )
         platform_catalog_list = [
             item for item in platform_catalog(include_organic=has_ga4_config) if item["id"] in present
         ]
-        if has_ga4_config and not any(p["id"] == "organic" for p in platform_catalog_list):
-            platform_catalog_list.append({"id": "organic", "label": "Organic"})
+    summary_platform_ids = _platforms_with_summary_data(totals, chart_data, breakdowns)
     platform_catalog_json = _json_for_html_script(platform_catalog_list)
     overview_paid_html = _paid_ad_overview_html(aggregated, ga4_attr)
     paid_overview_metrics_json = _json_for_html_script(
@@ -4739,9 +4771,7 @@ def render_penn_html(
             {overview_paid_html}
 
             <div class="cards">
-              {_summary_card("Google Ads", totals.get("google"), platform="google")}
-              {_summary_card("LinkedIn", totals.get("linkedin"), platform="linkedin")}
-              {_summary_card("Meta", totals.get("meta"), platform="meta")}
+              {_summary_cards_html(totals, summary_platform_ids)}
             </div>
 
             <section class="panel performance-trend-panel">

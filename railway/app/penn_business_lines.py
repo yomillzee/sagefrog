@@ -60,6 +60,70 @@ def active_platform_catalog(
     return out
 
 
+def _breakdown_has_platform_data(platform_data: dict[str, Any] | None) -> bool:
+    if not platform_data:
+        return False
+    return any(bool(v) for v in platform_data.values())
+
+
+def _totals_have_metrics(totals: dict[str, Any] | None) -> bool:
+    if not totals:
+        return False
+    return any(
+        float(totals.get(key) or 0) for key in ("spend", "clicks", "impressions", "conversions")
+    )
+
+
+def platforms_present_in_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    cfg: Any | None = None,
+    include_configured: bool = True,
+    include_organic: bool = False,
+) -> set[str]:
+    """Detect paid platforms from snapshot data, mapped accounts, and optional config."""
+    present: set[str] = set()
+    totals = snapshot.get("platform_totals") or {}
+    daily = snapshot.get("daily_metrics") or {}
+    breakdowns = snapshot.get("breakdowns") or {}
+    if not breakdowns:
+        legacy = snapshot.get("campaigns") or {}
+        if isinstance(legacy, dict):
+            breakdowns = {platform: {"campaign": rows} for platform, rows in legacy.items()}
+    accounts = snapshot.get("accounts") or {}
+
+    for platform in ("google", "linkedin", "meta"):
+        if _totals_have_metrics(totals.get(platform)):
+            present.add(platform)
+            continue
+        if daily.get(platform):
+            present.add(platform)
+            continue
+        if _breakdown_has_platform_data(breakdowns.get(platform)):
+            present.add(platform)
+            continue
+        if accounts.get(platform):
+            present.add(platform)
+
+    if include_configured and cfg is not None:
+        for platform, attr in (
+            ("google", "google_customer_id"),
+            ("linkedin", "linkedin_account_id"),
+            ("meta", "meta_account_id"),
+        ):
+            if getattr(cfg, attr, None):
+                present.add(platform)
+
+    if include_organic:
+        organic_totals = totals.get("organic")
+        if _totals_have_metrics(organic_totals) or daily.get("organic") or daily.get("ga4"):
+            present.add("organic")
+        elif accounts.get("ga4_client_key") or accounts.get("ga4"):
+            present.add("organic")
+
+    return present
+
+
 def _effective_rules(
     custom_rules: list[tuple[str, str, tuple[str, ...]]] | None,
 ) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
