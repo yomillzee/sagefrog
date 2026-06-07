@@ -114,9 +114,10 @@ def _oauth_platform_card_html(
     can_manage_oauth: bool = True,
     connection_details: list[str] | None = None,
     status_message: str | None = None,
+    pub: oauth_store.OAuthCredentialPublic | None = None,
 ) -> str:
     prereq = oauth_flows.connect_prerequisites(platform)
-    pub = oauth_store.public_status(platform)
+    pub = pub or oauth_store.public_status(platform)
     return_to = quote(return_url, safe="")
     status_badge = _status_badge(pub.connected, ok_label="Connected", fail_label="Not connected")
     source = _esc(pub.source)
@@ -203,7 +204,7 @@ def probe_agency_oauth_platform(platform: str) -> dict[str, Any]:
         try:
             ids = google_ads_service.list_accessible_customer_ids()
             details: list[str] = []
-            for cid in ids[:12]:
+            for cid in ids[:3]:
                 try:
                     meta = google_ads_service.get_account_metadata(cid)
                     name = meta.get("descriptive_name") or cid
@@ -213,7 +214,7 @@ def probe_agency_oauth_platform(platform: str) -> dict[str, Any]:
                     )
                 except Exception:
                     details.append(f"Customer ID {cid}")
-            extra = f" (+{len(ids) - 12} more)" if len(ids) > 12 else ""
+            extra = f" (+{len(ids) - 3} more)" if len(ids) > 3 else ""
             return {
                 "ok": True,
                 "connected": True,
@@ -293,11 +294,21 @@ def probe_agency_oauth_platform(platform: str) -> dict[str, Any]:
     return {"ok": False, "connected": False, "message": "Unknown platform.", "details": []}
 
 
+def cached_agency_oauth_message(platform: str, pub: oauth_store.OAuthCredentialPublic) -> str:
+    """Fast status line from stored credentials — no live API calls."""
+    if not pub.connected:
+        return "Not connected — click Connect to authorize this platform for the agency."
+    who = pub.connected_by or "admin"
+    when = (pub.connected_at or pub.updated_at or "")[:19] or "—"
+    return f"Connected by {who} · {when} UTC · click Refresh status for live account list"
+
+
 def render_admin_oauth_section(
     *,
     return_url: str = "/admin",
     oauth_connected: str | None = None,
     oauth_error: str | None = None,
+    live_probe: bool = False,
 ) -> str:
     notice = ""
     if oauth_connected:
@@ -309,21 +320,43 @@ def render_admin_oauth_section(
     if oauth_error:
         notice += f'<div class="notice err">{_esc(oauth_error)}</div>'
 
+    oauth_status = oauth_store.all_public_status()
+    live_results: dict[str, dict[str, Any]] = {}
+    if live_probe:
+        live_results = {
+            platform: probe_agency_oauth_platform(platform)
+            for platform in ("google_ads", "linkedin", "meta")
+        }
+
+    refresh_href = _esc(f"{return_url}?oauth_refresh=1")
+    refresh_bar = (
+        f'<div class="toolbar">'
+        f'<a class="btn secondary" href="{refresh_href}">Refresh connection status</a>'
+        f'<span class="muted">Live account lists load on demand — page opens instantly.</span>'
+        f"</div>"
+        if not live_probe
+        else '<p class="muted">Showing live connection status (refreshed just now).</p>'
+    )
+
     cards = []
     for platform, label in (
         ("google_ads", "Google Ads"),
         ("linkedin", "LinkedIn"),
         ("meta", "Meta"),
     ):
-        probe = probe_agency_oauth_platform(platform)
+        pub = oauth_status[platform]
+        probe = live_results.get(platform) if live_probe else None
         cards.append(
             _oauth_platform_card_html(
                 platform=platform,
                 label=label,
                 return_url=return_url,
                 can_manage_oauth=True,
-                connection_details=probe.get("details") or None,
-                status_message=str(probe.get("message") or ""),
+                pub=pub,
+                connection_details=(probe.get("details") if probe else None) or None,
+                status_message=str(
+                    (probe or {}).get("message") or cached_agency_oauth_message(platform, pub)
+                ),
             )
         )
 
@@ -333,6 +366,7 @@ def render_admin_oauth_section(
     <section class="admin-oauth-section">
       <h2>Ad platform connections</h2>
       <p class="muted">Connect once here for the whole agency. Each client dashboard then maps its own account IDs.</p>
+      {refresh_bar}
       <div class="oauth-grid">{"".join(cards)}</div>
       <details class="admin-fold">
         <summary>OAuth callback URLs (developer setup)</summary>
@@ -345,20 +379,24 @@ def render_admin_oauth_section(
     </section>"""
 
 
-def _agency_oauth_status_html(*, api: dict[str, Any]) -> str:
+def _agency_oauth_status_html(
+    *,
+    api: dict[str, Any],
+    oauth_status: dict[str, oauth_store.OAuthCredentialPublic] | None = None,
+) -> str:
+    oauth_status = oauth_status or oauth_store.all_public_status()
     rows = []
     for platform, label in (
         ("google_ads", "Google Ads"),
         ("linkedin", "LinkedIn"),
         ("meta", "Meta"),
     ):
-        pub = oauth_store.public_status(platform)
-        probe = probe_agency_oauth_platform(platform) if pub.connected else None
-        detail = "Not connected — ask an admin to connect in Admin."
-        if pub.connected and probe:
-            detail = str(probe.get("message") or "Connected")
-        elif pub.connected:
-            detail = "Connected"
+        pub = oauth_status[platform]
+        detail = (
+            cached_agency_oauth_message(platform, pub)
+            if pub.connected
+            else "Not connected — ask an admin to connect in Admin."
+        )
         rows.append(_connection_row(label, pub.connected, detail))
 
     ga4_ok = api["ga4"]["ok"]
@@ -379,11 +417,15 @@ def _agency_oauth_status_html(*, api: dict[str, Any]) -> str:
     </section>"""
 
 
-def _setup_checklist_html(*, api: dict[str, Any], cfg: PennDashboardConfig, ga4_ok: bool) -> str:
-    agency_connected = all(
-        oauth_store.public_status(platform).connected
-        for platform in ("google_ads", "linkedin", "meta")
-    )
+def _setup_checklist_html(
+    *,
+    api: dict[str, Any],
+    cfg: PennDashboardConfig,
+    ga4_ok: bool,
+    oauth_status: dict[str, oauth_store.OAuthCredentialPublic] | None = None,
+) -> str:
+    oauth_status = oauth_status or oauth_store.all_public_status()
+    agency_connected = all(oauth_status[p].connected for p in ("google_ads", "linkedin", "meta"))
     mapped = bool(cfg.google_customer_id or cfg.linkedin_account_id or cfg.meta_account_id)
     steps = [
         ("Agency platforms connected (Admin)", agency_connected),
@@ -719,7 +761,8 @@ def render_settings_html(
 ) -> str:
     slug = client_slug.strip().lower()
     settings_url = _settings_url(client_slug=slug, access_key=access_key, use_session=use_session)
-    snapshot = dashboard_snapshots.get_snapshot(slug)
+    snapshot = dashboard_snapshots.get_snapshot_settings_context(slug)
+    oauth_status = oauth_store.all_public_status()
     auth = build_auth_status()
     api = build_api_status()
     ga4_target = _ga4_target_summary(cfg)
@@ -881,9 +924,11 @@ def render_settings_html(
         flash_message=None,
     )
 
-    agency_status = _agency_oauth_status_html(api=api)
+    agency_status = _agency_oauth_status_html(api=api, oauth_status=oauth_status)
 
-    checklist = _setup_checklist_html(api=api, cfg=cfg, ga4_ok=api["ga4"]["ok"])
+    checklist = _setup_checklist_html(
+        api=api, cfg=cfg, ga4_ok=api["ga4"]["ok"], oauth_status=oauth_status
+    )
 
     bl_rules_section = ""
     if slug == "penn" and db_editable:

@@ -98,3 +98,33 @@ def get_snapshot(client_key: str) -> dict[str, Any] | None:
     if isinstance(payload, str):
         return json.loads(payload)
     return payload
+
+
+def get_snapshot_settings_context(client_key: str) -> dict[str, Any] | None:
+    """Lightweight snapshot fields for settings (skip campaign/metrics payloads)."""
+    if not enabled():
+        return None
+    ensure_schema()
+    with psycopg.connect(_get_db_url()) as conn:
+        row = conn.execute(
+            """
+            SELECT jsonb_build_object(
+              'refreshed_at', payload_json->'refreshed_at',
+              'date_range', payload_json->'date_range',
+              'sync_meta', payload_json->'sync_meta',
+              'errors', payload_json->'errors',
+              'warehouse_sync', payload_json->'warehouse_sync',
+              'refresh_mode', payload_json->'refresh_mode',
+              'insights', payload_json->'insights'
+            )
+            FROM dashboard_snapshots
+            WHERE client_key = %s
+            """,
+            (client_key,),
+        ).fetchone()
+    if not row or not row[0]:
+        return None
+    payload = row[0]
+    if isinstance(payload, str):
+        return json.loads(payload)
+    return payload

@@ -58,7 +58,22 @@ def list_client_slugs() -> list[str]:
 
 def list_dashboard_clients() -> list[tuple[str, str]]:
     """(slug, label) pairs for admin dashboard links."""
-    return [(slug, client_label(slug)) for slug in list_client_slugs()]
+    slugs = list_client_slugs()
+    labels = _labels_for_slugs(slugs)
+    return [(slug, labels.get(slug) or _default_label(slug)) for slug in slugs]
+
+
+def _labels_for_slugs(slugs: list[str]) -> dict[str, str]:
+    """Batch-load display labels from Postgres when available."""
+    try:
+        import client_dashboard_config as cdc
+
+        if not cdc.enabled():
+            return {}
+        rows = cdc.list_config_labels()
+        return {slug: label for slug, label in rows.items() if label}
+    except Exception:
+        return {}
 
 
 def _get_db_row(slug: str):

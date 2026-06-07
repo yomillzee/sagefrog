@@ -225,6 +225,10 @@ def delete_platform(platform: str) -> bool:
 def public_status(platform: str) -> OAuthCredentialPublic:
     slug = _normalize_platform(platform)
     row = _get_row(slug)
+    return _public_status_from_row(slug, row)
+
+
+def _public_status_from_row(slug: str, row: dict[str, Any] | None) -> OAuthCredentialPublic:
     db_connected = bool(
         row
         and (
@@ -233,12 +237,11 @@ def public_status(platform: str) -> OAuthCredentialPublic:
         )
     )
     source = "database" if db_connected else "none"
-    connected = db_connected
     connected_at = row.get("connected_at") if row else None
     updated_at = row.get("updated_at") if row else None
     return OAuthCredentialPublic(
         platform=slug,
-        connected=connected,
+        connected=db_connected,
         source=source,
         connected_by=str(row.get("connected_by")) if row and row.get("connected_by") else None,
         connected_at=connected_at.isoformat() if connected_at else None,
@@ -246,3 +249,47 @@ def public_status(platform: str) -> OAuthCredentialPublic:
         scopes=str(row.get("scopes")) if row and row.get("scopes") else None,
         metadata=dict(row.get("metadata_json") or {}) if row else {},
     )
+
+
+def all_public_status() -> dict[str, OAuthCredentialPublic]:
+    """Load connected/disconnected state for all platforms in one query."""
+    out: dict[str, OAuthCredentialPublic] = {}
+    for platform in sorted(PLATFORMS):
+        out[platform] = _public_status_from_row(platform, None)
+    if not enabled():
+        return out
+    ensure_schema()
+    with psycopg.connect(_get_db_url()) as conn:
+        rows = conn.execute(
+            """
+            SELECT platform, refresh_token_enc, access_token_enc, token_expires_at,
+                   scopes, metadata_json, connected_by, connected_at, updated_at
+            FROM oauth_credentials
+            WHERE platform = ANY(%s)
+            """,
+            (list(PLATFORMS),),
+        ).fetchall()
+    by_platform: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        slug = str(row[0])
+        meta = row[5]
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except json.JSONDecodeError:
+                meta = {}
+        elif meta is None:
+            meta = {}
+        by_platform[slug] = {
+            "refresh_token_enc": row[1],
+            "access_token_enc": row[2],
+            "token_expires_at": row[3],
+            "scopes": row[4],
+            "metadata_json": meta if isinstance(meta, dict) else {},
+            "connected_by": row[6],
+            "connected_at": row[7],
+            "updated_at": row[8],
+        }
+    for platform in PLATFORMS:
+        out[platform] = _public_status_from_row(platform, by_platform.get(platform))
+    return out
