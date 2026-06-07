@@ -618,6 +618,7 @@ def patch_snapshot_from_config(cfg: PennDashboardConfig) -> None:
             "linkedin": cfg.linkedin_account_id,
             "meta": cfg.meta_account_id,
             "ga4_client_key": cfg.ga4_client_key,
+            "harvest_project_id": cfg.harvest_project_id,
         }
     )
     existing["label"] = cfg.label
@@ -650,6 +651,7 @@ def refresh_client_quick(
             "linkedin": cfg.linkedin_account_id,
             "meta": cfg.meta_account_id,
             "ga4_client_key": cfg.ga4_client_key,
+            "harvest_project_id": cfg.harvest_project_id,
         }
     )
 
@@ -1061,6 +1063,20 @@ def _files_page_url(
         params.append(f"key={quote(access_key, safe='')}")
     if params:
         return f"{base}?{'&'.join(params)}"
+    return base
+
+
+def _time_tracking_page_url(
+    *,
+    client_slug: str = "penn",
+    access_key: str | None,
+    use_session: bool,
+) -> str | None:
+    base = f"/dashboard/{client_slug}/time-tracking"
+    if use_session:
+        return base
+    if access_key:
+        return f"{base}?key={quote(access_key, safe='')}"
     return base
 
 
@@ -2198,6 +2214,213 @@ def render_insights_upload_page(
     )
 
 
+def _time_tracking_page_css() -> str:
+    return """
+    .time-page-head { margin-bottom: 20px; }
+    .time-page-head h1 { margin: 0 0 6px; font-size: 1.45rem; color: var(--navy); }
+    .time-page-head p { margin: 0; color: var(--muted); font-size: .92rem; }
+    .time-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 20px; }
+    .time-kpi { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+    .time-kpi-label { font-size: .78rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+    .time-kpi-value { font-size: 1.75rem; font-weight: 700; color: var(--navy); line-height: 1.1; }
+    .time-kpi-sub { margin-top: 6px; font-size: .82rem; color: var(--muted); }
+    .time-panel { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px 22px; }
+    .time-panel h2 { margin: 0 0 4px; font-size: 1.05rem; color: var(--navy); }
+    .time-panel .muted { margin-bottom: 14px; }
+    .time-chart-wrap { position: relative; height: 320px; }
+    .time-empty, .time-error { padding: 18px; border-radius: 10px; background: #f8fafc; border: 1px dashed var(--border); color: var(--muted); }
+    .time-error { background: var(--err-bg); color: var(--err); border-color: #f3c3c3; }
+    """
+
+
+def _time_tracking_page_js(*, chart_labels: list[str], chart_hours: list[float]) -> str:
+    labels_json = _json_for_html_script(chart_labels)
+    hours_json = _json_for_html_script(chart_hours)
+    return f"""
+    (function() {{
+      const canvas = document.getElementById('harvestHoursChart');
+      if (!canvas || typeof Chart === 'undefined') return;
+      const labels = {labels_json};
+      const hours = {hours_json};
+      new Chart(canvas, {{
+        type: 'bar',
+        data: {{
+          labels,
+          datasets: [{{
+            label: 'Billable hours',
+            data: hours,
+            backgroundColor: 'rgba(11, 92, 171, 0.72)',
+            borderColor: 'rgba(11, 92, 171, 1)',
+            borderWidth: 1,
+            borderRadius: 4,
+          }}],
+        }},
+        options: {{
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {{
+            legend: {{ display: false }},
+            tooltip: {{
+              callbacks: {{
+                label: (ctx) => `${{ctx.parsed.y.toFixed(2)}} billable hrs`,
+              }},
+            }},
+          }},
+          scales: {{
+            x: {{
+              grid: {{ display: false }},
+              ticks: {{
+                maxRotation: 0,
+                autoSkip: true,
+                maxTicksLimit: 12,
+              }},
+            }},
+            y: {{
+              beginAtZero: true,
+              title: {{ display: true, text: 'Hours' }},
+            }},
+          }},
+        }},
+      }});
+    }})();
+    """
+
+
+def render_time_tracking_page(
+    *,
+    client_slug: str,
+    label: str,
+    access_key: str | None = None,
+    use_session: bool = False,
+    session_email: str | None = None,
+    session_is_admin: bool = False,
+) -> str:
+    slug = (client_slug or "penn").strip().lower()
+    settings_url = _settings_page_url(
+        client_slug=slug, access_key=access_key, use_session=use_session
+    ) or f"/dashboard/{slug}/settings"
+
+    report: dict[str, Any] | None = None
+    error_message: str | None = None
+    try:
+        cfg = client_config.load_client_config(slug)
+    except Exception as exc:
+        cfg = None
+        error_message = str(exc)[:500]
+
+    if cfg and not error_message:
+        if not cfg.harvest_project_id:
+            error_message = f"No Harvest project mapped for {label}. Choose one in Settings."
+        else:
+            try:
+                import harvest_service
+
+                report = harvest_service.fetch_billable_mtd_report(cfg.harvest_project_id)
+            except Exception as exc:
+                error_message = str(exc)[:500]
+
+    body_parts: list[str] = [
+        '<div class="time-page-head">',
+        '<h1>Time Tracking</h1>',
+        f'<p>{_esc(label)} · Billable hours month to date from Harvest</p>',
+        '</div>',
+    ]
+
+    if error_message:
+        body_parts.append(
+            f'<div class="time-error">{_esc(error_message)} '
+            f'<a href="{_esc(settings_url)}">Open Settings</a></div>'
+        )
+    elif report:
+        dr = report.get("date_range") or {}
+        range_label = f"{dr.get('start', '')} → {dr.get('end', '')}"
+        total = float(report.get("total_billable_hours") or 0)
+        entry_count = int(report.get("entry_count") or 0)
+        project_name = str(report.get("project_name") or "Project")
+        body_parts.extend(
+            [
+                '<div class="time-kpi-grid">',
+                '<div class="time-kpi">',
+                '<div class="time-kpi-label">Billable hours (MTD)</div>',
+                f'<div class="time-kpi-value">{total:.2f}</div>',
+                f'<div class="time-kpi-sub">{_esc(range_label)}</div>',
+                '</div>',
+                '<div class="time-kpi">',
+                '<div class="time-kpi-label">Project</div>',
+                f'<div class="time-kpi-value" style="font-size:1.15rem">{_esc(project_name)}</div>',
+                f'<div class="time-kpi-sub">{entry_count} time {"entry" if entry_count == 1 else "entries"}</div>',
+                '</div>',
+                '</div>',
+                '<section class="time-panel">',
+                '<h2>Daily billable hours</h2>',
+                f'<p class="muted">Each bar is billable time logged to this project · {_esc(range_label)}</p>',
+                '<div class="time-chart-wrap"><canvas id="harvestHoursChart" aria-label="Daily billable hours chart"></canvas></div>',
+                '</section>',
+            ]
+        )
+    else:
+        body_parts.append('<div class="time-empty">No time tracking data available yet.</div>')
+
+    chart_labels: list[str] = []
+    chart_hours: list[float] = []
+    if report:
+        for row in report.get("by_date") or []:
+            date_text = str(row.get("date") or "")
+            chart_labels.append(date_text[5:] if len(date_text) >= 10 else date_text)
+            chart_hours.append(float(row.get("hours") or 0))
+
+    chart_script = ""
+    if report and chart_labels:
+        chart_script = f"<script>{_time_tracking_page_js(chart_labels=chart_labels, chart_hours=chart_hours)}</script>"
+
+    import client_insight_documents as docs
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{_esc(label)} — Time Tracking</title>
+  {_favicon_head_html()}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    {dashboard_theme.root_css_block(dashboard_theme.load_client_theme(slug))}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }}
+    .app-shell {{ display: flex; flex-direction: column; min-height: 100vh; }}
+    .dash-main {{ flex: 1; min-width: 0; display: flex; flex-direction: column; width: 100%; }}
+    .dash-content {{ flex: 1; width: 100%; padding: 28px 32px 48px; }}
+    .wrap {{ width: 100%; max-width: 960px; min-width: 0; }}
+    {_DASH_TOPBAR_CSS}
+    {_time_tracking_page_css()}
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    {_dash_top_header_html(
+        client_slug=slug,
+        label=label,
+        active_nav="time-tracking",
+        access_key=access_key,
+        use_session=use_session,
+        session_is_admin=session_is_admin,
+        session_email=session_email,
+        show_files=docs.enabled(),
+    )}
+    <div class="dash-main">
+      <div class="dash-content">
+        <div class="wrap">
+          {"".join(body_parts)}
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>{_dashboard_topbar_js()}</script>
+  {chart_script}
+</body>
+</html>"""
+
+
 def _ga4_website_search_html(*, has_pages: bool) -> str:
     if not has_pages:
         return ""
@@ -2359,6 +2582,10 @@ def _client_switch_target_url(
         return _files_page_url(
             client_slug=slug, access_key=access_key, use_session=use_session
         ) or f"/dashboard/{slug}/files"
+    if nav == "time-tracking":
+        return _time_tracking_page_url(
+            client_slug=slug, access_key=access_key, use_session=use_session
+        ) or f"/dashboard/{slug}/time-tracking"
     return _dashboard_page_url(
         client_slug=slug, access_key=access_key, use_session=use_session
     )
@@ -2423,6 +2650,18 @@ def _dash_top_header_html(
         access_key=access_key,
         use_session=use_session,
     ) or "#"
+    time_tracking_url = _time_tracking_page_url(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+    ) or "#"
+
+    try:
+        import oauth_store
+
+        show_time_tracking = oauth_store.public_status("harvest").connected
+    except Exception:
+        show_time_tracking = False
 
     client_selector = _topbar_client_selector_html(
         client_slug=client_slug,
@@ -2445,6 +2684,12 @@ def _dash_top_header_html(
         '<circle cx="12" cy="12" r="3"/>'
         '</svg>'
     )
+    icon_time = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">'
+        '<circle cx="12" cy="12" r="9"/>'
+        '<path d="M12 7v5l3 2"/>'
+        '</svg>'
+    )
 
     files_btn = ""
     if show_files:
@@ -2455,6 +2700,15 @@ def _dash_top_header_html(
             )
         else:
             files_btn = f'<a href="{files_url}" class="dash-top-btn" title="Files">{icon_files}</a>'
+
+    time_btn = ""
+    if show_time_tracking:
+        if active_nav == "time-tracking":
+            time_btn = (
+                f'<span class="dash-top-btn active" aria-current="page" title="Time Tracking">{icon_time}</span>'
+            )
+        else:
+            time_btn = f'<a href="{time_tracking_url}" class="dash-top-btn" title="Time Tracking">{icon_time}</a>'
 
     if active_nav == "settings":
         settings_btn = (
@@ -2495,6 +2749,7 @@ def _dash_top_header_html(
         </div>
         <div class="dash-top-right">
           {client_selector}
+          {time_btn}
           {files_btn}
           {settings_btn}
           {account_html}

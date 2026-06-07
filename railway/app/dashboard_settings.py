@@ -14,6 +14,7 @@ import dashboard_service
 import dashboard_snapshots
 import dashboard_theme
 import ga4_clients
+import harvest_auth
 import linkedin_auth
 import meta_auth
 import oauth_flows
@@ -80,6 +81,7 @@ def build_api_status() -> dict[str, Any]:
     google = google_auth.env_summary()
     linkedin = linkedin_auth.env_summary()
     meta = meta_auth.env_summary()
+    harvest = harvest_auth.env_summary()
     ga4 = bigquery_service.env_summary()
     ga4_registry = ga4_clients.list_clients_public()
 
@@ -91,6 +93,9 @@ def build_api_status() -> dict[str, Any]:
         linkedin.get(k) for k in ("has_client_id", "has_client_secret", "has_refresh_token")
     )
     meta_ok = all(meta.get(k) for k in ("has_app_id", "has_app_secret", "has_access_token", "has_business_id"))
+    harvest_ok = all(
+        harvest.get(k) for k in ("has_client_id", "has_client_secret", "has_refresh_token")
+    )
     ga4_ok = bool(
         ga4.get("has_gcp_service_account_json")
         and ga4.get("gcp_service_account_json_parse_ok")
@@ -101,9 +106,22 @@ def build_api_status() -> dict[str, Any]:
         "google": {"env": google, "ok": google_ok},
         "linkedin": {"env": linkedin, "ok": linkedin_ok},
         "meta": {"env": meta, "ok": meta_ok},
+        "harvest": {"env": harvest, "ok": harvest_ok},
         "ga4": {"env": ga4, "registry_count": len(ga4_registry), "ok": ga4_ok},
         "overall_ok": google_ok and linkedin_ok and meta_ok and ga4_ok,
     }
+
+
+def list_harvest_projects_for_settings() -> list[dict[str, Any]]:
+    """Active Harvest projects for the settings dropdown (empty if not connected)."""
+    try:
+        import harvest_service
+
+        if not oauth_store.public_status("harvest").connected:
+            return []
+        return harvest_service.list_projects()
+    except Exception:
+        return []
 
 
 def _oauth_platform_card_html(
@@ -291,6 +309,38 @@ def probe_agency_oauth_platform(platform: str) -> dict[str, Any]:
                 "details": [],
             }
 
+    if platform == "harvest":
+        import harvest_service
+
+        token = harvest_service.test_refresh_token()
+        if not token.get("ok"):
+            return {
+                "ok": False,
+                "connected": True,
+                "message": str(token.get("error") or token.get("message") or "OAuth refresh failed.")[:300],
+                "details": [],
+            }
+        try:
+            projects = harvest_service.list_projects()
+            details = [
+                f"{row.get('client_name') or 'Client'} · {row.get('name') or 'Project'} · ID {row.get('id')}"
+                for row in projects[:12]
+            ]
+            extra = f" (+{len(projects) - 12} more)" if len(projects) > 12 else ""
+            return {
+                "ok": True,
+                "connected": True,
+                "message": f"OAuth active · {len(projects)} active Harvest project(s){extra}",
+                "details": details or ["No active projects returned for this token."],
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "connected": True,
+                "message": str(exc)[:300],
+                "details": [],
+            }
+
     return {"ok": False, "connected": False, "message": "Unknown platform.", "details": []}
 
 
@@ -312,7 +362,12 @@ def render_admin_oauth_section(
 ) -> str:
     notice = ""
     if oauth_connected:
-        labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta"}
+        labels = {
+            "google_ads": "Google Ads",
+            "linkedin": "LinkedIn",
+            "meta": "Meta",
+            "harvest": "Harvest",
+        }
         notice += (
             f'<div class="notice ok">{_esc(labels.get(oauth_connected, oauth_connected))} '
             f"connected successfully.</div>"
@@ -325,7 +380,7 @@ def render_admin_oauth_section(
     if live_probe:
         live_results = {
             platform: probe_agency_oauth_platform(platform)
-            for platform in ("google_ads", "linkedin", "meta")
+            for platform in ("google_ads", "linkedin", "meta", "harvest")
         }
 
     refresh_href = _esc(f"{return_url}?oauth_refresh=1")
@@ -343,6 +398,7 @@ def render_admin_oauth_section(
         ("google_ads", "Google Ads"),
         ("linkedin", "LinkedIn"),
         ("meta", "Meta"),
+        ("harvest", "Harvest"),
     ):
         pub = oauth_status[platform]
         probe = live_results.get(platform) if live_probe else None
@@ -364,8 +420,8 @@ def render_admin_oauth_section(
     return f"""
     {notice}
     <section class="admin-oauth-section">
-      <h2>Ad platform connections</h2>
-      <p class="muted">Connect once here for the whole agency. Each client dashboard then maps its own account IDs.</p>
+      <h2>Platform connections</h2>
+      <p class="muted">Connect once here for the whole agency. Each client dashboard then maps its own account IDs or Harvest project.</p>
       {refresh_bar}
       <div class="oauth-grid">{"".join(cards)}</div>
       <details class="admin-fold">
@@ -374,6 +430,7 @@ def render_admin_oauth_section(
           <li>{base}/oauth/google_ads/callback</li>
           <li>{base}/oauth/linkedin/callback</li>
           <li>{base}/oauth/meta/callback</li>
+          <li>{base}/oauth/harvest/callback</li>
         </ul>
       </details>
     </section>"""
@@ -390,6 +447,7 @@ def _agency_oauth_status_html(
         ("google_ads", "Google Ads"),
         ("linkedin", "LinkedIn"),
         ("meta", "Meta"),
+        ("harvest", "Harvest"),
     ):
         pub = oauth_status[platform]
         detail = (
@@ -408,7 +466,7 @@ def _agency_oauth_status_html(
     return f"""
     <section class="panel">
       <h2>Agency platform access</h2>
-      <p class="muted">Google, LinkedIn, and Meta authenticate once for the whole agency in <a href="/admin">Admin</a>.
+      <p class="muted">Google, LinkedIn, Meta, and Harvest authenticate once for the whole agency in <a href="/admin">Admin</a>.
       This page maps which accounts belong to this client.</p>
       <table class="status-table">
         <thead><tr><th>Platform</th><th>Status</th><th>Details</th></tr></thead>
@@ -474,7 +532,7 @@ def _settings_page_css() -> str:
     .inline-form { display: inline; margin: 0; }
     .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin-bottom: 14px; }
     label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 6px; }
-    input[type="text"], input[type="password"] { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+    input[type="text"], input[type="password"], select { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
     input[type="color"] { width: 100%; height: 42px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: #fff; }
     .color-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin-bottom: 16px; }
     .color-field label { margin-bottom: 6px; }
@@ -632,6 +690,44 @@ def probe_client_connections(cfg: PennDashboardConfig) -> dict[str, Any]:
             results["ga4"] = {"ok": False, "message": str(exc)[:300]}
     else:
         _skip("ga4", "No GA4 client key mapped for this client.")
+
+    if cfg.harvest_project_id:
+        configured.append("harvest")
+        try:
+            import harvest_service
+
+            token = harvest_service.test_refresh_token()
+            if not token.get("ok"):
+                results["harvest"] = {
+                    "ok": False,
+                    "message": str(token.get("error") or token.get("message") or "Harvest OAuth failed.")[:300],
+                }
+            else:
+                projects = harvest_service.list_projects()
+                match = next(
+                    (row for row in projects if str(row.get("id") or "") == str(cfg.harvest_project_id)),
+                    None,
+                )
+                if match:
+                    client_name = match.get("client_name") or "Client"
+                    project_name = match.get("name") or cfg.harvest_project_id
+                    results["harvest"] = {
+                        "ok": True,
+                        "message": f"{client_name} · {project_name} · project ID {cfg.harvest_project_id}",
+                    }
+                else:
+                    sample = ", ".join(str(row.get("id") or "") for row in projects[:6])
+                    results["harvest"] = {
+                        "ok": False,
+                        "message": (
+                            f"Harvest project ID {cfg.harvest_project_id} was not found under the connected agency token. "
+                            f"Accessible IDs include: {sample or 'none'}."
+                        ),
+                    }
+        except Exception as exc:
+            results["harvest"] = {"ok": False, "message": str(exc)[:300]}
+    else:
+        _skip("harvest", "No Harvest project mapped for this client.")
 
     results["overall_ok"] = bool(configured) and all(
         results[p]["ok"] for p in configured if results.get(p, {}).get("ok") is not None
@@ -815,6 +911,11 @@ def render_settings_html(
             "META_* access token in Railway",
         ),
         _connection_row(
+            "Harvest OAuth",
+            api["harvest"]["ok"],
+            "HARVEST_* credentials + Admin connect",
+        ),
+        _connection_row(
             "GA4 / BigQuery",
             api["ga4"]["ok"],
             f"GCP service account + {api['ga4']['registry_count']} GA4_CLIENTS entries",
@@ -830,13 +931,58 @@ def render_settings_html(
     elif ga4_target.get("error"):
         ga4_detail = str(ga4_target.get("error"))
 
+    harvest_projects = list_harvest_projects_for_settings()
+    harvest_project_label = cfg.harvest_project_id or "—"
+    if cfg.harvest_project_id and harvest_projects:
+        for proj in harvest_projects:
+            if str(proj.get("id") or "") == str(cfg.harvest_project_id):
+                harvest_project_label = (
+                    f"{proj.get('client_name') or 'Client'} · {proj.get('name') or cfg.harvest_project_id} "
+                    f"(ID {cfg.harvest_project_id})"
+                )
+                break
+
     account_rows = f"""
     <tr><td>Google Ads customer ID</td><td class="mono">{_esc(cfg.google_customer_id or "—")}</td></tr>
     <tr><td>LinkedIn account ID</td><td class="mono">{_esc(cfg.linkedin_account_id or "—")}</td></tr>
     <tr><td>Meta ad account ID</td><td class="mono">{_esc(cfg.meta_account_id or "—")}</td></tr>
     <tr><td>GA4 client key</td><td class="mono">{_esc(cfg.ga4_client_key or "—")}</td></tr>
+    <tr><td>Harvest project</td><td class="mono">{_esc(harvest_project_label)}</td></tr>
     <tr><td>GA4 BigQuery target</td><td class="mono">{_esc(ga4_detail)}</td></tr>
     """
+
+    harvest_field = ""
+    if harvest_projects:
+        options = ['<option value="">— None —</option>']
+        selected_id = str(cfg.harvest_project_id or "")
+        for proj in harvest_projects:
+            pid = str(proj.get("id") or "")
+            label_text = f"{proj.get('client_name') or 'Client'} · {proj.get('name') or pid}"
+            if proj.get("code"):
+                label_text += f" ({proj.get('code')})"
+            selected = " selected" if pid == selected_id else ""
+            options.append(f'<option value="{_esc(pid)}"{selected}>{_esc(label_text)}</option>')
+        harvest_field = f"""
+              <div>
+                <label for="harvest_project_id">Harvest project</label>
+                <select id="harvest_project_id" name="harvest_project_id">
+                  {"".join(options)}
+                </select>
+                <p class="hint">Billable hours on the Time Tracking page come from this project.</p>
+              </div>"""
+    else:
+        harvest_hint = (
+            "Connect Harvest in Admin and set HARVEST_CLIENT_ID / HARVEST_CLIENT_SECRET to load projects."
+            if not oauth_status["harvest"].connected
+            else "Could not load projects — enter a project ID manually or re-verify the Harvest connection."
+        )
+        harvest_field = f"""
+              <div>
+                <label for="harvest_project_id">Harvest project ID</label>
+                <input id="harvest_project_id" name="harvest_project_id" type="text"
+                  value="{_esc(cfg.harvest_project_id or '')}" placeholder="12345678">
+                <p class="hint">{_esc(harvest_hint)}</p>
+              </div>"""
 
     edit_form = ""
     if db_editable:
@@ -846,7 +992,7 @@ def render_settings_html(
         edit_form = f"""
         <section class="panel panel--primary">
           <h2>1. Map client account IDs</h2>
-          <p class="muted">Enter the Google, LinkedIn, Meta, and GA4 identifiers for <strong>{_esc(cfg.label)}</strong>.
+          <p class="muted">Enter the Google, LinkedIn, Meta, GA4, and Harvest identifiers for <strong>{_esc(cfg.label)}</strong>.
           After saving, we verify each ID against the agency connection and show account details below.</p>
           {meta}
           <form method="post" action="{settings_url}">
@@ -880,6 +1026,7 @@ def render_settings_html(
                   value="{_esc(cfg.ga4_client_key or '')}" placeholder="penn">
                 <p class="hint">Must match a key in GA4_CLIENTS (Railway).</p>
               </div>
+              {harvest_field}
             </div>
             <button type="submit" class="btn primary">Save &amp; verify mapping</button>
           </form>
@@ -972,8 +1119,8 @@ def render_settings_html(
     probe_fold = ""
     if probe_results:
         probe_rows = []
-        labels = {"google": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta", "ga4": "GA4"}
-        for platform in ("google", "linkedin", "meta", "ga4"):
+        labels = {"google": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta", "ga4": "GA4", "harvest": "Harvest"}
+        for platform in ("google", "linkedin", "meta", "ga4", "harvest"):
             row = probe_results.get(platform) or {}
             if row.get("skipped"):
                 probe_rows.append(

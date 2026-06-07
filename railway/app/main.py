@@ -1348,7 +1348,7 @@ def admin_home(
     )
     flash = msg
     if oauth_disconnected and not flash:
-        labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta"}
+        labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta", "harvest": "Harvest"}
         flash = f"{labels.get(oauth_disconnected, oauth_disconnected)} disconnected."
     return HTMLResponse(
         web_auth.render_admin_page(
@@ -1597,6 +1597,7 @@ async def oauth_callback(
             access_token=tokens.get("access_token"),
             token_expires_at=tokens.get("token_expires_at"),
             scopes=tokens.get("scopes"),
+            metadata=tokens.get("metadata"),
             connected_by=actor,
         )
         audit_log.record(
@@ -1655,6 +1656,7 @@ def dashboard_client_settings_post(
     linkedin_account_id: str = Form(""),
     meta_account_id: str = Form(""),
     ga4_client_key: str = Form(""),
+    harvest_project_id: str = Form(""),
     business_line_rules_text: str = Form("", alias="business_line_rules"),
     sidebar_from: str = Form(""),
     sidebar_to: str = Form(""),
@@ -1740,6 +1742,7 @@ def dashboard_client_settings_post(
                 linkedin_account_id=linkedin_account_id,
                 meta_account_id=meta_account_id,
                 ga4_client_key=ga4_client_key,
+                harvest_project_id=harvest_project_id,
                 updated_by=session_email or "dashboard_key",
             )
             cfg = client_config.load_client_config(slug)
@@ -1990,6 +1993,49 @@ def _parse_folder_id(value: str | None) -> int | None:
     if folder_id < 1:
         raise HTTPException(status_code=400, detail="Invalid folder id.")
     return folder_id
+
+
+@app.get(
+    "/dashboard/{client_slug}/time-tracking",
+    summary="Client Harvest time tracking page",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def dashboard_client_time_tracking_page(
+    client_slug: str,
+    request: Request,
+    key: str | None = None,
+):
+    slug = _validate_client_slug(client_slug)
+
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        try:
+            label = client_config.client_label(slug)
+        except ValueError:
+            label = slug.replace("-", " ").title()
+        return HTMLResponse(
+            dashboard_service.render_time_tracking_page(
+                client_slug=slug,
+                label=label,
+                **_penn_html_session_kwargs(auth),
+            )
+        )
+
+    dashboard_service.verify_dashboard_key(key)
+    try:
+        label = client_config.client_label(slug)
+    except ValueError:
+        label = slug.replace("-", " ").title()
+    return HTMLResponse(
+        dashboard_service.render_time_tracking_page(
+            client_slug=slug,
+            label=label,
+            access_key=key,
+        )
+    )
 
 
 @app.get(
