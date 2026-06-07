@@ -150,7 +150,16 @@ def save_config(
     return saved
 
 
-def get_theme(client_slug: str) -> dict[str, Any] | None:
+def list_config_labels() -> dict[str, str]:
+    """Return {client_slug: label} for all rows with a non-empty label."""
+    if not enabled():
+        return {}
+    ensure_schema()
+    with psycopg.connect(_get_db_url()) as conn:
+        rows = conn.execute(
+            "SELECT client_slug, label FROM client_dashboard_config WHERE label <> ''"
+        ).fetchall()
+    return {str(row[0]): str(row[1]) for row in rows if row[1]}
     slug = (client_slug or "").strip().lower()
     if not slug or not enabled():
         return None

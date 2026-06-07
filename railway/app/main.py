@@ -1333,16 +1333,18 @@ def admin_home(
     oauth_connected: str | None = None,
     oauth_error: str | None = None,
     oauth_disconnected: str | None = None,
+    oauth_refresh: str | None = None,
 ):
     user = web_auth.get_current_user(request)
     if not user or user.role != "admin":
         return web_auth.redirect_to_login(request, next_path="/admin")
     users = web_users.list_users(include_inactive=False)
-    events = audit_log.list_recent(limit=150)
+    events = audit_log.list_recent(limit=40)
     oauth_html = dashboard_settings.render_admin_oauth_section(
         return_url="/admin",
         oauth_connected=oauth_connected,
         oauth_error=(oauth_error or "").strip()[:300] or None,
+        live_probe=bool(oauth_refresh),
     )
     flash = msg
     if oauth_disconnected and not flash:
@@ -1478,7 +1480,7 @@ def dashboard_client_settings(
 ):
     slug = _validate_client_slug(client_slug)
     flash = (
-        "Settings saved and mapped accounts verified below."
+        "Settings saved."
         if saved
         else "Brand colors saved."
         if theme_saved
@@ -1490,7 +1492,7 @@ def dashboard_client_settings(
     )
     flash_err = None
     probe_results = None
-    if saved or tested:
+    if tested:
         try:
             cfg_for_probe = dashboard_settings.load_settings_config(slug)
             probe_results = dashboard_settings.probe_client_connections(cfg_for_probe)
@@ -1515,6 +1517,7 @@ def dashboard_client_settings(
         )
     dashboard_service.verify_dashboard_key(key)
     cfg = dashboard_settings.load_settings_config(slug)
+    db_row = client_dashboard_config.get_config(slug)
     return HTMLResponse(
         dashboard_settings.render_settings_html(
             client_slug=slug,
@@ -1523,6 +1526,7 @@ def dashboard_client_settings(
             flash_message=flash,
             flash_error=flash_err,
             probe_results=probe_results,
+            db_config_updated_at=db_row.updated_at if db_row else None,
         )
     )
 
@@ -1757,11 +1761,17 @@ def dashboard_client_settings_post(
                 ),
                 status_code=400,
             )
-        if use_session:
-            return RedirectResponse(url=f"/dashboard/{slug}/settings?saved=1", status_code=303)
-        return RedirectResponse(
-            url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&saved=1",
-            status_code=303,
+        probe = dashboard_settings.probe_client_connections(cfg)
+        db_row = saved
+        return HTMLResponse(
+            dashboard_settings.render_settings_html(
+                client_slug=slug,
+                cfg=cfg,
+                flash_message="Settings saved and mapped accounts verified below.",
+                probe_results=probe,
+                db_config_updated_at=db_row.updated_at if db_row else None,
+                **session_kw,
+            )
         )
 
     if act == "save_business_line_rules":
