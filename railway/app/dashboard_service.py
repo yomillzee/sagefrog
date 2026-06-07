@@ -2230,6 +2230,12 @@ def _time_tracking_page_css() -> str:
     .time-chart-wrap { position: relative; height: 320px; }
     .time-empty, .time-error { padding: 18px; border-radius: 10px; background: #f8fafc; border: 1px dashed var(--border); color: var(--muted); }
     .time-error { background: var(--err-bg); color: var(--err); border-color: #f3c3c3; }
+    .time-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
+    .time-toolbar .btn { display: inline-block; padding: 8px 14px; border-radius: 8px; font-weight: 600; font-size: .86rem; text-decoration: none; border: 1px solid var(--border); background: #fff; color: var(--accent); }
+    .time-toolbar .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .time-cache-note { font-size: .82rem; color: var(--muted); }
+    .notice { padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; font-size: .9rem; }
+    .notice.ok { background: var(--ok-bg); color: var(--ok); }
     """
 
 
@@ -2294,11 +2300,19 @@ def render_time_tracking_page(
     use_session: bool = False,
     session_email: str | None = None,
     session_is_admin: bool = False,
+    force_refresh: bool = False,
+    flash_message: str | None = None,
 ) -> str:
     slug = (client_slug or "penn").strip().lower()
     settings_url = _settings_page_url(
         client_slug=slug, access_key=access_key, use_session=use_session
     ) or f"/dashboard/{slug}/settings"
+    page_url = _time_tracking_page_url(
+        client_slug=slug, access_key=access_key, use_session=use_session
+    ) or f"/dashboard/{slug}/time-tracking"
+    refresh_url = page_url
+    sep = "&" if "?" in refresh_url else "?"
+    refresh_url = f"{refresh_url}{sep}refresh=1"
 
     report: dict[str, Any] | None = None
     error_message: str | None = None
@@ -2315,16 +2329,40 @@ def render_time_tracking_page(
             try:
                 import harvest_service
 
-                report = harvest_service.fetch_billable_mtd_report(cfg.harvest_project_id)
+                report = harvest_service.get_billable_mtd_report(
+                    cfg.harvest_project_id,
+                    force_refresh=force_refresh,
+                )
             except Exception as exc:
                 error_message = str(exc)[:500]
 
-    body_parts: list[str] = [
-        '<div class="time-page-head">',
-        '<h1>Time Tracking</h1>',
-        f'<p>{_esc(label)} · Billable hours month to date from Harvest</p>',
-        '</div>',
-    ]
+    body_parts: list[str] = []
+    if flash_message:
+        body_parts.append(f'<div class="notice ok">{_esc(flash_message)}</div>')
+    body_parts.extend(
+        [
+            '<div class="time-page-head">',
+            '<h1>Time Tracking</h1>',
+            f'<p>{_esc(label)} · Billable hours month to date from Harvest</p>',
+            '</div>',
+        ]
+    )
+
+    if cfg and cfg.harvest_project_id and not error_message:
+        cache_note = ""
+        if report:
+            cached_at = str(report.get("cached_at") or "")[:19]
+            if cached_at:
+                cache_note = (
+                    f"Data as of {cached_at} UTC"
+                    + (" (cached)" if report.get("from_cache") else " (live)")
+                )
+        body_parts.append(
+            f'<div class="time-toolbar">'
+            f'<a class="btn primary" href="{_esc(refresh_url)}">Refresh from Harvest</a>'
+            f'<span class="time-cache-note">{_esc(cache_note)}</span>'
+            f"</div>"
+        )
 
     if error_message:
         body_parts.append(

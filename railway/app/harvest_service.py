@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+import os
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -13,6 +14,7 @@ HARVEST_ID_BASE = "https://id.getharvest.com"
 HARVEST_TOKEN_URL = f"{HARVEST_ID_BASE}/api/v2/oauth2/token"
 HARVEST_API_BASE = "https://api.harvestapp.com/v2"
 HARVEST_USER_AGENT = "Sagefrog Dashboard (sagefrog-production.up.railway.app)"
+HARVEST_MTD_CACHE_SOURCE = "harvest.mtd_report"
 
 
 def _platform_error(exc: Exception) -> str:
@@ -237,13 +239,38 @@ def month_to_date_range(*, today: date | None = None) -> tuple[date, date]:
     return start, today
 
 
+def harvest_cache_ttl_seconds() -> int:
+    raw = (os.getenv("HARVEST_CACHE_TTL_SECONDS") or "900").strip()
+    try:
+        return max(60, int(raw))
+    except ValueError:
+        return 900
+
+
+def _project_name(
+    project_id: str,
+    *,
+    access_token: str,
+    account_id: str,
+) -> str:
+    try:
+        payload = _harvest_get(
+            f"/projects/{int(project_id)}",
+            access_token=access_token,
+            account_id=account_id,
+        )
+        return str(payload.get("name") or f"Project {project_id}")
+    except Exception:
+        return f"Project {project_id}"
+
+
 def fetch_billable_mtd_report(project_id: str, *, env: HarvestEnv | None = None) -> dict[str, Any]:
     start, end = month_to_date_range()
     access_token, account_id = resolve_auth_context(env)
-    projects = list_projects(access_token=access_token, account_id=account_id, env=env)
-    project_name = next(
-        (p.get("name") for p in projects if str(p.get("id")) == str(project_id)),
-        f"Project {project_id}",
+    project_name = _project_name(
+        project_id,
+        access_token=access_token,
+        account_id=account_id,
     )
     entries = fetch_time_entries(
         project_id=project_id,
@@ -279,6 +306,51 @@ def fetch_billable_mtd_report(project_id: str, *, env: HarvestEnv | None = None)
         "date_range": {"start": start.isoformat(), "end": end.isoformat()},
         "by_date": series,
     }
+
+
+def get_billable_mtd_report(
+    project_id: str,
+    *,
+    force_refresh: bool = False,
+    env: HarvestEnv | None = None,
+) -> dict[str, Any]:
+    """MTD billable hours with Postgres cache (default 15 min TTL)."""
+    start, end = month_to_date_range()
+    cache_payload = {
+        "project_id": str(project_id),
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+    }
+    if not force_refresh:
+        try:
+            import db_cache
+
+            hit = db_cache.get_cached(HARVEST_MTD_CACHE_SOURCE, cache_payload)
+            if hit and isinstance(hit.response_json, dict):
+                out = dict(hit.response_json)
+                out["from_cache"] = True
+                out["cached_at"] = hit.created_at.isoformat()
+                out["cache_expires_at"] = hit.expires_at.isoformat()
+                return out
+        except Exception:
+            pass
+
+    report = fetch_billable_mtd_report(project_id, env=env)
+    report["from_cache"] = False
+    report["cached_at"] = datetime.now(tz=UTC).isoformat()
+    try:
+        import db_cache
+
+        db_cache.put_cached(
+            HARVEST_MTD_CACHE_SOURCE,
+            cache_payload,
+            response_json=report,
+            row_count=int(report.get("entry_count") or 0),
+            ttl_seconds=harvest_cache_ttl_seconds(),
+        )
+    except Exception:
+        pass
+    return report
 
 
 def fetch_accounts_for_oauth_metadata(access_token: str) -> dict[str, Any]:

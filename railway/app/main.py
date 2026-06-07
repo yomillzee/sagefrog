@@ -2005,8 +2005,11 @@ def dashboard_client_time_tracking_page(
     client_slug: str,
     request: Request,
     key: str | None = None,
+    refresh: str | None = None,
 ):
     slug = _validate_client_slug(client_slug)
+    force_refresh = (refresh or "").strip().lower() in ("1", "true", "yes")
+    flash = "Harvest data refreshed." if force_refresh else None
 
     if web_users.enabled():
         auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
@@ -2020,6 +2023,8 @@ def dashboard_client_time_tracking_page(
             dashboard_service.render_time_tracking_page(
                 client_slug=slug,
                 label=label,
+                force_refresh=force_refresh,
+                flash_message=flash,
                 **_penn_html_session_kwargs(auth),
             )
         )
@@ -2034,6 +2039,8 @@ def dashboard_client_time_tracking_page(
             client_slug=slug,
             label=label,
             access_key=key,
+            force_refresh=force_refresh,
+            flash_message=flash,
         )
     )
 
