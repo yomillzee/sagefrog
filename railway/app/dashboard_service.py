@@ -2305,7 +2305,7 @@ def _global_filters_bar_html(
     if not show_business_line or not show_channel_filters:
         grid_class = "global-filter-grid global-filter-grid--single"
     more_options = ""
-    if show_business_line:
+    if show_business_line or show_channel_filters:
         more_options = """
             <details class="filter-more-options">
               <summary>More filter options</summary>
@@ -2982,9 +2982,20 @@ def _breakdowns_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {platform: {"campaign": rows} for platform, rows in legacy.items()}
 
 
-def _campaign_explorer_content_html(*, show_business_line: bool, platform_breakdown_html: str) -> str:
-    if show_business_line:
-        return """
+def _campaign_explorer_content_html(*, show_business_line: bool) -> str:
+    bl_header = (
+        """
+                        <th class="sortable" data-sort="business_line" scope="col" aria-sort="none">Business line<span class="sort-icon" aria-hidden="true"></span></th>"""
+        if show_business_line
+        else ""
+    )
+    filter_note = (
+        "Use the filters at the top to narrow business lines and channels — all are included by default."
+        if show_business_line
+        else "Use the channel filters at the top to narrow platforms — all are included by default."
+    )
+    empty_colspan = 10 if show_business_line else 9
+    return f"""
             <section class="campaign-explorer-section" aria-label="Campaign performance">
               <div class="bl-summary" id="blSummary"></div>
               <section class="panel platform-panel">
@@ -2992,14 +3003,13 @@ def _campaign_explorer_content_html(*, show_business_line: bool, platform_breakd
                   <h2>Campaign performance</h2>
                   <span class="badge" id="blRowCount">0 rows</span>
                 </div>
-                <p class="table-note">Use the filters at the top to narrow business lines and channels — all are included by default. LinkedIn rows start at campaign group (Campaign Manager “Campaign”); drill down to ad sets and ads. Google and Meta drill to ad groups/ad sets and ads.</p>
+                <p class="table-note">{filter_note} LinkedIn rows start at campaign group (Campaign Manager “Campaign”); drill down to ad sets and ads. Google and Meta drill to ad groups/ad sets and ads.</p>
                 <div class="table-wrap">
-                  <table class="data-table" id="blTable">
+                  <table class="data-table" id="blTable" data-show-business-line="{'true' if show_business_line else 'false'}" data-empty-colspan="{empty_colspan}">
                     <thead>
                       <tr>
                         <th class="chevron-col"></th>
-                        <th class="sortable" data-sort="platform" scope="col" aria-sort="none">Platform<span class="sort-icon" aria-hidden="true"></span></th>
-                        <th class="sortable" data-sort="business_line" scope="col" aria-sort="none">Business line<span class="sort-icon" aria-hidden="true"></span></th>
+                        <th class="sortable" data-sort="platform" scope="col" aria-sort="none">Platform<span class="sort-icon" aria-hidden="true"></span></th>{bl_header}
                         <th class="sortable" data-sort="name" scope="col" aria-sort="none">Campaign / group<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="spend" scope="col" aria-sort="none">Spend<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="clicks" scope="col" aria-sort="none">Clicks<span class="sort-icon" aria-hidden="true"></span></th>
@@ -3014,12 +3024,11 @@ def _campaign_explorer_content_html(*, show_business_line: bool, platform_breakd
                 </div>
               </section>
             </section>"""
-    return platform_breakdown_html or '<p class="muted">No campaign data for this period.</p>'
 
 
 def _business_line_merged_section_html() -> str:
     """Deprecated — use _campaign_explorer_content_html with filters in _global_filters_bar_html."""
-    return _campaign_explorer_content_html(show_business_line=True, platform_breakdown_html="")
+    return _campaign_explorer_content_html(show_business_line=True)
 
 
 def render_penn_html(
@@ -3132,11 +3141,6 @@ def render_penn_html(
     ga4_attr = snapshot.get("ga4_attribution")
     ga4_platforms = _ga4_platform_reports(ga4_attr)
     aggregated = snapshot.get("aggregated_paid_media") or _aggregated_paid_media(totals)
-    breakdown_html = _platform_breakdown_html(
-        breakdowns,
-        ga4_attr=ga4_attr,
-        platform_totals=totals,
-    )
     breakdowns_json = _json_for_html_script(breakdowns)
     ga4_campaign_metrics: dict[str, dict[str, dict[str, Any]]] = {}
     for platform in ("google", "linkedin", "meta"):
@@ -3197,10 +3201,7 @@ def render_penn_html(
         show_business_line=show_business_line,
         show_channel_filters=bool(platform_catalog_list),
     )
-    campaign_explorer_html = _campaign_explorer_content_html(
-        show_business_line=show_business_line,
-        platform_breakdown_html=breakdown_html,
-    )
+    campaign_explorer_html = _campaign_explorer_content_html(show_business_line=show_business_line)
     website_analytics_html = _ga4_website_content_html(ga4_pages_report if has_ga4 else None)
     website_search_html = _ga4_website_search_html(has_pages=has_ga4_pages)
     ga4_metrics_html = _ga4_metrics_summary_html(has_summary=has_ga4_summary)
@@ -5138,10 +5139,18 @@ def render_penn_html(
     function filteredBlCampaigns() {{
       const showZeroSpend = !!document.getElementById('showZeroSpend')?.checked;
       const channels = effectiveFilterIds(channelState, platformCatalog).filter(p => p !== 'organic');
-      const bls = effectiveFilterIds(blState, blCatalog);
-      if (!blCatalog.length || !channels.length || !bls.length) return [];
+      if (!channels.length) return [];
+      if (SHOW_BUSINESS_LINE) {{
+        const bls = effectiveFilterIds(blState, blCatalog);
+        if (!blCatalog.length || !bls.length) return [];
+        return blCampaigns.filter(r => {{
+          if (!channels.includes(r.platform) || !bls.includes(r.business_line)) return false;
+          if (!showZeroSpend && (r.spend || 0) < 0.01) return false;
+          return true;
+        }});
+      }}
       return blCampaigns.filter(r => {{
-        if (!channels.includes(r.platform) || !bls.includes(r.business_line)) return false;
+        if (!channels.includes(r.platform)) return false;
         if (!showZeroSpend && (r.spend || 0) < 0.01) return false;
         return true;
       }});
@@ -5184,7 +5193,7 @@ def render_penn_html(
     function applyOverviewFilters() {{
       const partialBl = SHOW_BUSINESS_LINE && blCatalog.length && !isAllSelected(blState, blCatalog);
       const partialCh = platformCatalog.length && !isAllSelected(channelState, platformCatalog);
-      const blFiltered = SHOW_BUSINESS_LINE && (partialBl || partialCh)
+      const blFiltered = (partialBl || partialCh)
         ? filteredBlCampaigns()
         : null;
       let heroTotals = null;
@@ -5393,9 +5402,11 @@ def render_penn_html(
       }}
 
       const tbody = document.getElementById('blTableBody');
+      const blTable = document.getElementById('blTable');
+      const emptyColspan = Number(blTable?.dataset.emptyColspan || (SHOW_BUSINESS_LINE ? 10 : 9));
       if (tbody) {{
         if (!filtered.length) {{
-          tbody.innerHTML = '<tr><td colspan="10" class="muted" style="padding:24px;text-align:center">No campaigns match — try other filters or enable $0 spend rows.</td></tr>';
+          tbody.innerHTML = `<tr><td colspan="${{emptyColspan}}" class="muted" style="padding:24px;text-align:center">No campaigns match — try other filters or enable $0 spend rows.</td></tr>`;
         }} else {{
           const sorted = sortBlRows(filtered);
           tbody.innerHTML = '';
@@ -5815,7 +5826,8 @@ def render_penn_html(
     }}
 
     function treeNameColIndex(table) {{
-      return table?.id === 'blTable' ? 3 : 1;
+      if (table?.id === 'blTable') return SHOW_BUSINESS_LINE ? 3 : 2;
+      return 1;
     }}
 
     function treeEmptyRowCells(table, depth) {{
@@ -5868,9 +5880,11 @@ def render_penn_html(
 
     function buildBlCampaignRow(r) {{
       const platform = r.platform;
+      const blCell = SHOW_BUSINESS_LINE
+        ? `<td><span class="bl-tag">${{escHtml(r.business_line_label)}}</span></td>`
+        : '';
       const prefixCells = `
-        <td><span class="platform-pill ${{escHtml(platform)}}">${{escHtml(r.platform_label)}}</span></td>
-        <td><span class="bl-tag">${{escHtml(r.business_line_label)}}</span></td>`;
+        <td><span class="platform-pill ${{escHtml(platform)}}">${{escHtml(r.platform_label)}}</span></td>${{blCell}}`;
       const level = r.entity_level || blRootLevel(platform);
       return buildTreeRow(r, platform, level, 0, prefixCells, false);
     }}
@@ -5903,7 +5917,7 @@ def render_penn_html(
       let insertAfter = row;
       const table = row.closest('table');
       const isBlTable = table?.id === 'blTable';
-      const childPrefix = isBlTable ? '<td></td><td></td>' : '';
+      const childPrefix = isBlTable ? (SHOW_BUSINESS_LINE ? '<td></td><td></td>' : '<td></td>') : '';
       if (!children.length) {{
         const empty = document.createElement('tr');
         empty.className = 'tree-row tree-empty';
