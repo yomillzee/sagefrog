@@ -160,6 +160,9 @@ def list_config_labels() -> dict[str, str]:
             "SELECT client_slug, label FROM client_dashboard_config WHERE label <> ''"
         ).fetchall()
     return {str(row[0]): str(row[1]) for row in rows if row[1]}
+
+
+def get_theme(client_slug: str) -> dict[str, Any] | None:
     slug = (client_slug or "").strip().lower()
     if not slug or not enabled():
         return None
