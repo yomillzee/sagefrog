@@ -66,7 +66,7 @@ def _resolve_account_id(access_token: str) -> str:
 def list_accessible_accounts(*, access_token: str) -> list[dict[str, Any]]:
     with httpx.Client(timeout=60.0) as client:
         response = client.get(
-            f"{HARVEST_ID_BASE}/v2/accounts",
+            f"{HARVEST_ID_BASE}/api/v2/accounts",
             headers={
                 "Authorization": f"Bearer {access_token}",
                 "User-Agent": HARVEST_USER_AGENT,
@@ -80,7 +80,10 @@ def list_accessible_accounts(*, access_token: str) -> list[dict[str, Any]]:
     accounts = payload.get("accounts") if isinstance(payload, dict) else payload
     if not isinstance(accounts, list):
         return []
-    return accounts
+    harvest_accounts = [
+        row for row in accounts if str(row.get("product") or "harvest").lower() == "harvest"
+    ]
+    return harvest_accounts or accounts
 
 
 def resolve_auth_context(env: HarvestEnv | None = None) -> tuple[str, str]:
