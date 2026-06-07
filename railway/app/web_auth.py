@@ -249,6 +249,7 @@ def render_admin_page(
     audit_events: list[dict] | None = None,
     message: str | None = None,
     error: str | None = None,
+    oauth_section_html: str = "",
 ) -> str:
     notice = ""
     if message:
@@ -335,6 +336,33 @@ def render_admin_page(
     .muted {{ color: var(--muted); }}
     ul.links {{ margin: 0; padding-left: 1.2rem; }}
     ul.links a {{ color: var(--accent); }}
+    .admin-oauth-section {{ background: #fff; border: 1px solid #b8cfe8; border-radius: 12px;
+      padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 12px rgba(11, 92, 171, 0.08); }}
+    .admin-oauth-section h2 {{ margin: 0 0 8px; font-size: 1.05rem; color: var(--navy); }}
+    .oauth-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }}
+    .oauth-card {{ border: 1px solid var(--border); border-radius: 10px; padding: 14px; background: #fafbfc; }}
+    .oauth-card-head {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }}
+    .oauth-card h3 {{ margin: 0; font-size: .95rem; color: var(--navy); }}
+    .oauth-actions {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }}
+    .oauth-details {{ margin: 8px 0 0; padding-left: 1.1rem; font-size: .82rem; color: var(--navy); }}
+    .oauth-details li {{ margin: 4px 0; }}
+    .oauth-status-msg {{ margin: 8px 0 0; font-size: .88rem; color: var(--navy); font-weight: 600; }}
+    .badge {{ display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: .78rem; font-weight: 600; }}
+    .badge.ok {{ background: #e8f5e9; color: #1b5e20; }}
+    .badge.err {{ background: #fdecea; color: #b42318; }}
+    .btn {{ display: inline-block; padding: 9px 16px; border-radius: 8px; border: 0; font-weight: 600;
+      cursor: pointer; font-size: .88rem; text-decoration: none; }}
+    .btn.primary {{ background: var(--accent); color: #fff; }}
+    .btn.secondary {{ background: #fff; color: var(--accent); border: 1px solid var(--border); }}
+    .inline-form {{ display: inline; margin: 0; }}
+    .admin-fold {{ margin-top: 14px; font-size: .88rem; }}
+    .admin-fold summary {{ cursor: pointer; font-weight: 600; color: var(--navy); }}
+    ul.checklist {{ margin: 8px 0 0; padding-left: 1.2rem; }}
+    ul.checklist.mono {{ font-family: ui-monospace, monospace; font-size: .82rem; }}
+    .settings-fold {{ margin-top: 8px; font-size: .82rem; }}
+    .settings-fold summary {{ cursor: pointer; color: var(--muted); }}
+    .hint {{ color: var(--muted); font-size: .82rem; margin: 4px 0 0; }}
+    .hint.mono {{ font-family: ui-monospace, monospace; }}
   </style>
 </head>
 <body>
@@ -349,6 +377,7 @@ def render_admin_page(
   </header>
   <main>
     {notice}
+    {oauth_section_html}
     <section>
       <h2>Dashboards</h2>
       <ul class="links">

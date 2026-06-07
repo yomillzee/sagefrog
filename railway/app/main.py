@@ -1292,14 +1292,33 @@ def admin_home(
     request: Request,
     msg: str | None = None,
     err: str | None = None,
+    oauth_connected: str | None = None,
+    oauth_error: str | None = None,
+    oauth_disconnected: str | None = None,
 ):
     user = web_auth.get_current_user(request)
     if not user or user.role != "admin":
         return web_auth.redirect_to_login(request, next_path="/admin")
     users = web_users.list_users(include_inactive=False)
     events = audit_log.list_recent(limit=150)
+    oauth_html = dashboard_settings.render_admin_oauth_section(
+        return_url="/admin",
+        oauth_connected=oauth_connected,
+        oauth_error=(oauth_error or "").strip()[:300] or None,
+    )
+    flash = msg
+    if oauth_disconnected and not flash:
+        labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta"}
+        flash = f"{labels.get(oauth_disconnected, oauth_disconnected)} disconnected."
     return HTMLResponse(
-        web_auth.render_admin_page(user=user, users=users, audit_events=events, message=msg, error=err)
+        web_auth.render_admin_page(
+            user=user,
+            users=users,
+            audit_events=events,
+            message=flash,
+            error=err,
+            oauth_section_html=oauth_html,
+        )
     )
 
 
@@ -1418,13 +1437,10 @@ def dashboard_client_settings(
     bl_rules_saved: str | None = None,
     theme_saved: str | None = None,
     tested: str | None = None,
-    oauth_connected: str | None = None,
-    oauth_error: str | None = None,
-    oauth_disconnected: str | None = None,
 ):
     slug = _validate_client_slug(client_slug)
     flash = (
-        "Settings saved. Run a full refresh to pull data for the mapped accounts."
+        "Settings saved and mapped accounts verified below."
         if saved
         else "Brand colors saved."
         if theme_saved
@@ -1434,10 +1450,14 @@ def dashboard_client_settings(
             else ("Connection test complete." if tested else None)
         )
     )
-    flash_err = (oauth_error or "").strip()[:300] or None
-    if oauth_disconnected and not flash:
-        labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta"}
-        flash = f"{labels.get(oauth_disconnected, oauth_disconnected)} disconnected."
+    flash_err = None
+    probe_results = None
+    if saved or tested:
+        try:
+            cfg_for_probe = dashboard_settings.load_settings_config(slug)
+            probe_results = dashboard_settings.probe_client_connections(cfg_for_probe)
+        except Exception:
+            probe_results = None
     if web_users.enabled():
         auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
         if isinstance(auth, RedirectResponse):
@@ -1450,7 +1470,7 @@ def dashboard_client_settings(
                 cfg=cfg,
                 flash_message=flash,
                 flash_error=flash_err,
-                oauth_connected=oauth_connected,
+                probe_results=probe_results,
                 db_config_updated_at=db_row.updated_at if db_row else None,
                 **_dashboard_settings_session_kwargs(auth),
             )
@@ -1464,7 +1484,7 @@ def dashboard_client_settings(
             access_key=key,
             flash_message=flash,
             flash_error=flash_err,
-            oauth_connected=oauth_connected,
+            probe_results=probe_results,
         )
     )
 
