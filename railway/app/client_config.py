@@ -61,8 +61,16 @@ def list_dashboard_clients() -> list[tuple[str, str]]:
     return [(slug, client_label(slug)) for slug in list_client_slugs()]
 
 
-def client_label(slug: str) -> str:
-    slug = slug.strip().lower()
+def _get_db_row(slug: str):
+    try:
+        import client_dashboard_config as cdc
+
+        return cdc.get_config(slug)
+    except Exception:
+        return None
+
+
+def _default_label(slug: str) -> str:
     if slug in _BUILTIN_CLIENTS:
         label = _strip_env(str(_BUILTIN_CLIENTS[slug].get("label") or ""))
         if label:
@@ -75,6 +83,14 @@ def client_label(slug: str) -> str:
     if slug == "penn":
         return load_penn_config().label
     return slug.replace("-", " ").title()
+
+
+def client_label(slug: str) -> str:
+    slug = slug.strip().lower()
+    row = _get_db_row(slug)
+    if row and row.label:
+        return row.label
+    return _default_label(slug)
 
 
 def load_client_config(client_slug: str) -> PennDashboardConfig:
@@ -93,25 +109,20 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
     linkedin = _strip_env(str(entry.get("linkedin_account_id") or ""))
     meta = _strip_env(str(entry.get("meta_account_id") or ""))
     ga4_key = _strip_env(str(entry.get("ga4_client_key") or "")) or (slug if slug in _BUILTIN_CLIENTS else "")
-    label = _strip_env(str(entry.get("label") or "")) or client_label(slug)
+    label = _strip_env(str(entry.get("label") or "")) or _default_label(slug)
 
-    try:
-        import client_dashboard_config as cdc
-
-        row = cdc.get_config(slug)
-        if row:
-            if row.label:
-                label = row.label
-            if row.google_customer_id:
-                google = row.google_customer_id.replace("-", "")
-            if row.linkedin_account_id:
-                linkedin = row.linkedin_account_id
-            if row.meta_account_id:
-                meta = row.meta_account_id
-            if row.ga4_client_key:
-                ga4_key = row.ga4_client_key
-    except Exception:
-        pass
+    row = _get_db_row(slug)
+    if row:
+        if row.label:
+            label = row.label
+        if row.google_customer_id:
+            google = row.google_customer_id.replace("-", "")
+        if row.linkedin_account_id:
+            linkedin = row.linkedin_account_id
+        if row.meta_account_id:
+            meta = row.meta_account_id
+        if row.ga4_client_key:
+            ga4_key = row.ga4_client_key
 
     if slug not in _BUILTIN_CLIENTS and not any((google, linkedin, meta, ga4_key)):
         raise RuntimeError(

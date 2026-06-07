@@ -563,6 +563,27 @@ def refresh_client(
     return payload
 
 
+def patch_snapshot_from_config(cfg: PennDashboardConfig) -> None:
+    """Sync label and account IDs onto an existing snapshot after settings save."""
+    if not dashboard_snapshots.enabled():
+        return
+    existing = dashboard_snapshots.get_snapshot(cfg.client_key)
+    if not existing:
+        return
+    accounts = dict(existing.get("accounts") or {})
+    accounts.update(
+        {
+            "google": cfg.google_customer_id,
+            "linkedin": cfg.linkedin_account_id,
+            "meta": cfg.meta_account_id,
+            "ga4_client_key": cfg.ga4_client_key,
+        }
+    )
+    existing["label"] = cfg.label
+    existing["accounts"] = accounts
+    dashboard_snapshots.save_snapshot(cfg.client_key, existing, touch_refreshed_at=False)
+
+
 def refresh_penn(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = "manual_full") -> dict[str, Any]:
     return refresh_client(client_slug="penn", date_range=date_range, sync_trigger=sync_trigger)
 
@@ -581,18 +602,21 @@ def refresh_client_quick(
     start, end, preset = resolve_date_range(date_range)
     existing = dashboard_snapshots.get_snapshot(cfg.client_key) or {}
     breakdowns = existing.get("breakdowns") or {}
-
-    payload: dict[str, Any] = {
-        "client_key": cfg.client_key,
-        "label": existing.get("label") or cfg.label,
-        "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
-        "accounts": existing.get("accounts")
-        or {
+    accounts = dict(existing.get("accounts") or {})
+    accounts.update(
+        {
             "google": cfg.google_customer_id,
             "linkedin": cfg.linkedin_account_id,
             "meta": cfg.meta_account_id,
             "ga4_client_key": cfg.ga4_client_key,
-        },
+        }
+    )
+
+    payload: dict[str, Any] = {
+        "client_key": cfg.client_key,
+        "label": cfg.label,
+        "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
+        "accounts": accounts,
         "warehouse_sync": {},
         "daily_metrics": {},
         "breakdowns": breakdowns,
@@ -3092,7 +3116,23 @@ def render_penn_html(
         include_organic=has_ga4_config,
     )
     if not platform_catalog_list:
-        present = {p for p in ("google", "linkedin", "meta") if totals.get(p)}
+        snap_accounts = snapshot.get("accounts") or {}
+        present: set[str] = set()
+        for platform in ("google", "linkedin", "meta"):
+            if totals.get(platform) or snap_accounts.get(platform):
+                present.add(platform)
+        if not present:
+            try:
+                cfg = client_config.load_client_config(slug)
+                for platform, attr in (
+                    ("google", "google_customer_id"),
+                    ("linkedin", "linkedin_account_id"),
+                    ("meta", "meta_account_id"),
+                ):
+                    if getattr(cfg, attr, None):
+                        present.add(platform)
+            except Exception:
+                pass
         platform_catalog_list = [
             item for item in platform_catalog(include_organic=has_ga4_config) if item["id"] in present
         ]
