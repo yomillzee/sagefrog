@@ -148,7 +148,7 @@ def render_not_found_page(*, path: str | None = None) -> str:
       let score = 0;
       let lives = 3;
       let player = {{ ...START }};
-      let onLog = null;
+      let riding = null;
       let reachedGoals = new Set();
       let gameOver = false;
       let wonPulse = 0;
@@ -202,7 +202,43 @@ def render_not_found_page(*, path: str | None = None) -> str:
 
       function resetPlayer() {{
         player = {{ ...START }};
-        onLog = null;
+        riding = null;
+      }}
+
+      function isWaterRow(row) {{
+        return row === 2 || row === 3;
+      }}
+
+      function playerCenterX() {{
+        if (riding) return riding.log.x + riding.offsetX;
+        return player.col * CELL + CELL / 2;
+      }}
+
+      function syncColFromCenter() {{
+        player.col = playerCenterX() / CELL;
+      }}
+
+      function attachToLogAt(centerX, row) {{
+        for (const log of logs) {{
+          if (log.row !== row) continue;
+          if (centerX >= log.x + 4 && centerX <= log.x + log.w - 4) {{
+            riding = {{ log, offsetX: centerX - log.x }};
+            syncColFromCenter();
+            return true;
+          }}
+        }}
+        return false;
+      }}
+
+      function tryAttachOnWater() {{
+        if (!isWaterRow(player.row)) {{
+          riding = null;
+          return;
+        }}
+        const centerX = player.col * CELL + CELL / 2;
+        if (!attachToLogAt(centerX, player.row)) {{
+          die();
+        }}
       }}
 
       function resetRound() {{
@@ -228,10 +264,14 @@ def render_not_found_page(*, path: str | None = None) -> str:
 
       function playerBox() {{
         const pad = CELL * 0.18;
-        const x = player.col * CELL + pad;
-        const y = rowY(player.row) + pad;
         const size = CELL - pad * 2;
-        return {{ x, y, w: size, h: size }};
+        const cx = playerCenterX();
+        return {{
+          x: cx - size / 2,
+          y: rowY(player.row) + pad,
+          w: size,
+          h: size,
+        }};
       }}
 
       function rectsOverlap(a, b) {{
@@ -269,15 +309,33 @@ def render_not_found_page(*, path: str | None = None) -> str:
 
       function tryMove(dc, dr) {{
         if (gameOver) return;
+
+        if (riding && isWaterRow(player.row) && dc !== 0 && dr === 0) {{
+          const nextOffset = riding.offsetX + dc * CELL;
+          const centerX = riding.log.x + nextOffset;
+          if (centerX < riding.log.x + CELL * 0.2 || centerX > riding.log.x + riding.log.w - CELL * 0.2) {{
+            die();
+            return;
+          }}
+          riding.offsetX = nextOffset;
+          syncColFromCenter();
+          return;
+        }}
+
         const next = {{
-          col: Math.max(0, Math.min(COLS - 1, player.col + dc)),
+          col: Math.max(0, Math.min(COLS - 1, Math.round(player.col) + dc)),
           row: Math.max(0, Math.min(ROWS - 1, player.row + dr)),
         }};
         player = next;
-        onLog = null;
+        riding = null;
+
+        if (isWaterRow(player.row)) {{
+          tryAttachOnWater();
+          if (gameOver) return;
+        }}
 
         if (player.row === 0) {{
-          const col = player.col;
+          const col = Math.round(player.col);
           if (GOALS.includes(col)) {{
             winGoal(col);
           }} else {{
@@ -393,33 +451,23 @@ def render_not_found_page(*, path: str | None = None) -> str:
           if (log.dir < 0 && log.x < -log.w - 20) log.x = canvas.width + 20;
         }}
 
-        const pb = playerBox();
-        onLog = null;
-        if (player.row === 2 || player.row === 3) {{
-          let safe = false;
-          for (const log of logs) {{
-            if (log.row !== player.row) continue;
-            const lb = {{
-              x: log.x,
-              y: rowY(log.row) + (canvas.height / ROWS - log.h) / 2,
-              w: log.w,
-              h: log.h,
-            }};
-            if (rectsOverlap(pb, lb)) {{
-              safe = true;
-              onLog = log;
-              player.col = Math.max(0, Math.min(COLS - 1, (pb.x + pb.w / 2) / CELL));
-              break;
+        if (riding) {{
+          if (!logs.includes(riding.log) || player.row !== riding.log.row) {{
+            riding = null;
+          }} else {{
+            const centerX = riding.log.x + riding.offsetX;
+            if (centerX < 8 || centerX > canvas.width - 8) {{
+              die();
+              return;
             }}
+            syncColFromCenter();
           }}
-          if (!safe) die();
+        }} else if (isWaterRow(player.row)) {{
+          die();
+          return;
         }}
 
-        if (onLog) {{
-          const shift = (onLog.speed * onLog.dir) / CELL;
-          player.col = Math.max(0, Math.min(COLS - 1, player.col + shift));
-          if (player.col <= 0 || player.col >= COLS - 1) die();
-        }}
+        const pb = playerBox();
 
         for (const car of cars) {{
           if (car.row !== player.row) continue;
