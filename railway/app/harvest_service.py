@@ -210,7 +210,7 @@ def fetch_time_entries(
     project_id: str,
     from_date: date,
     to_date: date,
-    billable: bool | None = True,
+    billable_only: bool = False,
     access_token: str | None = None,
     account_id: str | None = None,
     env: HarvestEnv | None = None,
@@ -222,15 +222,16 @@ def fetch_time_entries(
         "from": from_date.isoformat(),
         "to": to_date.isoformat(),
     }
-    if billable is not None:
-        params["billable"] = "true" if billable else "false"
-    return _paginate(
+    rows = _paginate(
         "/time_entries",
         access_token=access_token,
         account_id=account_id,
         params=params,
         key="time_entries",
     )
+    if not billable_only:
+        return rows
+    return [row for row in rows if bool(row.get("billable"))]
 
 
 def month_to_date_range(*, today: date | None = None) -> tuple[date, date]:
@@ -276,7 +277,7 @@ def fetch_billable_mtd_report(project_id: str, *, env: HarvestEnv | None = None)
         project_id=project_id,
         from_date=start,
         to_date=end,
-        billable=True,
+        billable_only=True,
         access_token=access_token,
         account_id=account_id,
         env=env,
@@ -320,6 +321,7 @@ def get_billable_mtd_report(
         "project_id": str(project_id),
         "start": start.isoformat(),
         "end": end.isoformat(),
+        "billable_only": True,
     }
     if not force_refresh:
         try:
