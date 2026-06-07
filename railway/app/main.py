@@ -1423,8 +1423,10 @@ def dashboard_client_settings(
     oauth_disconnected: str | None = None,
 ):
     slug = _validate_client_slug(client_slug)
-    flash = "Settings saved." if saved else (
-        "Brand colors saved."
+    flash = (
+        "Settings saved. Run a full refresh to pull data for the mapped accounts."
+        if saved
+        else "Brand colors saved."
         if theme_saved
         else (
             "Business line rules saved. Run a full refresh to re-classify campaigns."
@@ -1678,6 +1680,8 @@ def dashboard_client_settings_post(
                 ga4_client_key=ga4_client_key,
                 updated_by=session_email or "dashboard_key",
             )
+            cfg = client_config.load_client_config(slug)
+            dashboard_service.patch_snapshot_from_config(cfg)
             audit_log.record(
                 action="dashboard.config_saved",
                 actor_email=session_email,
