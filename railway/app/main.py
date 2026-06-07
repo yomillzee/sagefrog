@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import bigquery_service
 import dashboard_snapshots
@@ -34,6 +35,7 @@ import client_insight_documents
 import dashboard_settings
 import dashboard_theme
 import login_rate_limit
+import not_found_page
 import oauth_flows
 import oauth_store
 import web_auth
@@ -175,6 +177,42 @@ if web_users.enabled():
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 if STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+_HTML_404_API_PREFIXES = (
+    "/google-ads",
+    "/linkedin",
+    "/meta",
+    "/ga4",
+    "/warehouse",
+    "/openapi",
+    "/health",
+    "/cron",
+)
+
+
+def _request_wants_html_404(request: Request) -> bool:
+    path = request.url.path
+    if any(path.startswith(prefix) for prefix in _HTML_404_API_PREFIXES):
+        return False
+    accept = (request.headers.get("accept") or "").lower()
+    if "application/json" in accept and "text/html" not in accept:
+        return False
+    return True
+
+
+@app.exception_handler(StarletteHTTPException)
+async def custom_http_exception_handler(
+    request: Request, exc: StarletteHTTPException
+) -> HTMLResponse | JSONResponse:
+    if exc.status_code == 404 and _request_wants_html_404(request):
+        return HTMLResponse(
+            not_found_page.render_not_found_page(path=request.url.path),
+            status_code=404,
+        )
+    detail = exc.detail
+    if not isinstance(detail, str):
+        detail = str(detail)
+    return JSONResponse({"detail": detail}, status_code=exc.status_code)
 
 
 def custom_openapi() -> dict:
