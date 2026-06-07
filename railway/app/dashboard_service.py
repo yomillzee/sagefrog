@@ -2425,9 +2425,13 @@ def _dash_top_header_html(
     <header class="dash-top-header" role="banner">
       <div class="dash-top-inner">
         <div class="dash-top-left">
-          <a href="{overview_url}" class="dash-logo" aria-label="Sagefrog home">
-            <img class="dash-logo-img" src="/static/sagefrog-logo.svg" alt="Sagefrog" width="136" height="30" />
-          </a>
+          <div class="dash-logo-lockup">
+            <a href="{overview_url}" class="dash-logo" aria-label="Sagefrog home">
+              <img class="dash-logo-img" src="/static/sagefrog-logo.png" alt="Sagefrog" width="136" height="46" />
+            </a>
+            <span class="dash-logo-divider" aria-hidden="true"></span>
+            <span class="dash-beta-tag">Beta</span>
+          </div>
         </div>
         <div class="dash-top-right">
           {client_selector}
@@ -2466,6 +2470,12 @@ _DASH_TOPBAR_CSS = """
       flex-wrap: wrap;
       justify-content: flex-end;
     }
+    .dash-logo-lockup {
+      display: inline-flex;
+      align-items: center;
+      min-width: 0;
+      flex-shrink: 0;
+    }
     .dash-logo {
       display: inline-flex;
       align-items: center;
@@ -2474,9 +2484,30 @@ _DASH_TOPBAR_CSS = """
     }
     .dash-logo-img {
       display: block;
-      height: 30px;
+      height: 28px;
       width: auto;
-      max-width: min(180px, 42vw);
+      max-width: min(160px, 36vw);
+    }
+    .dash-logo-divider {
+      width: 1px;
+      height: 22px;
+      margin: 0 12px;
+      background: #d1d5db;
+      flex-shrink: 0;
+    }
+    .dash-beta-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 10px;
+      border-radius: 8px;
+      background: #fef3e7;
+      color: #b45309;
+      font-size: 0.72rem;
+      font-weight: 650;
+      letter-spacing: 0.02em;
+      line-height: 1;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     .topbar-client-switcher {
       min-width: 160px;
@@ -2583,7 +2614,9 @@ _DASH_TOPBAR_CSS = """
     }
     @media (max-width: 720px) {
       .dash-top-inner { padding: 12px 16px; gap: 12px; }
-      .dash-logo-img { height: 24px; max-width: 120px; }
+      .dash-logo-img { height: 22px; max-width: 110px; }
+      .dash-logo-divider { margin: 0 8px; height: 18px; }
+      .dash-beta-tag { padding: 4px 8px; font-size: 0.68rem; }
       .topbar-client-switcher { min-width: 120px; max-width: 160px; }
       .dash-top-account { display: none; }
     }
