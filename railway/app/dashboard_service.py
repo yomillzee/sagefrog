@@ -1305,9 +1305,6 @@ def _paid_ad_overview_html(
     )
     return f"""
     <section class="paid-ad-overview" aria-label="Paid Ad Overview">
-      <div class="paid-ad-overview-heading">
-        <span class="paid-ad-overview-pill">Paid Ad Overview</span>
-      </div>
       <div class="paid-ad-metrics-grid">
         <div class="ga4-metric-card">
           <div class="ga4-metric-label">Spend</div>
@@ -3292,32 +3289,6 @@ def render_penn_html(
     }}
     .paid-ad-overview {{
       margin-bottom: 16px;
-    }}
-    .paid-ad-overview-heading {{
-      margin-bottom: 12px;
-    }}
-    .paid-ad-overview-pill {{
-      display: inline-flex;
-      align-items: center;
-      gap: 0;
-      background: var(--navy);
-      color: #fff;
-      font-size: 0.68rem;
-      font-weight: 700;
-      letter-spacing: .06em;
-      text-transform: uppercase;
-      padding: 6px 14px 6px 0;
-      border-radius: 999px;
-      overflow: hidden;
-    }}
-    .paid-ad-overview-pill::before {{
-      content: '';
-      display: inline-block;
-      width: 4px;
-      align-self: stretch;
-      background: var(--gold);
-      margin-right: 10px;
-      border-radius: 999px 0 0 999px;
     }}
     .paid-ad-metrics-grid {{
       display: grid;
