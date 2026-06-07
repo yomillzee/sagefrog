@@ -2304,7 +2304,7 @@ def _client_switch_target_url(
     )
 
 
-def _sidebar_client_header_html(
+def _topbar_client_selector_html(
     *,
     client_slug: str,
     label: str,
@@ -2312,13 +2312,7 @@ def _sidebar_client_header_html(
     access_key: str | None,
     use_session: bool,
     session_is_admin: bool,
-    client_meta_tip: str = "",
 ) -> str:
-    tip = client_meta_tip or _esc(label)
-    tip_btn = (
-        f'<button type="button" class="info-tip" data-tip="{tip}" '
-        f'aria-label="Client info">i</button>'
-    )
     if session_is_admin and use_session:
         import client_config
 
@@ -2335,63 +2329,270 @@ def _sidebar_client_header_html(
             options.append(
                 f'<option value="{_esc(dest)}"{selected}>{_esc(client_label)}</option>'
             )
-        control = f"""
-          <label class="sr-only" for="clientSwitcher">Client dashboard</label>
-          <select id="clientSwitcher" class="client-switcher" aria-label="Switch client dashboard">
+        return f"""
+          <label class="sr-only" for="clientSwitcher">Client</label>
+          <select id="clientSwitcher" class="topbar-client-switcher" aria-label="Switch client">
             {"".join(options)}
           </select>"""
+    return f'<span class="topbar-client-label" id="topbarClientLabel">{_esc(label)}</span>'
+
+
+def _dash_top_header_html(
+    *,
+    client_slug: str,
+    label: str,
+    active_nav: str,
+    access_key: str | None,
+    use_session: bool,
+    session_is_admin: bool,
+    session_email: str | None,
+    show_files: bool,
+) -> str:
+    overview_url = _dashboard_page_url(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+    ) or "#"
+    settings_url = _settings_page_url(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+    ) or "#"
+    files_url = _files_page_url(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+    ) or "#"
+
+    client_selector = _topbar_client_selector_html(
+        client_slug=client_slug,
+        label=label,
+        active_nav=active_nav,
+        access_key=access_key,
+        use_session=use_session,
+        session_is_admin=session_is_admin,
+    )
+
+    icon_files = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">'
+        '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>'
+        '<path d="M14 2v6h6"/></svg>'
+    )
+    icon_settings = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">'
+        '<circle cx="12" cy="12" r="3"/>'
+        '<path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>'
+        '</svg>'
+    )
+
+    files_btn = ""
+    if show_files:
+        files_active = active_nav in ("files", "insights-upload")
+        if files_active:
+            files_btn = (
+                f'<span class="dash-top-btn active" aria-current="page" title="Files">{icon_files}</span>'
+            )
+        else:
+            files_btn = f'<a href="{files_url}" class="dash-top-btn" title="Files">{icon_files}</a>'
+
+    if active_nav == "settings":
+        settings_btn = (
+            f'<span class="dash-top-btn active" aria-current="page" title="Settings">{icon_settings}</span>'
+        )
     else:
-        control = f'<span class="client-name" id="sidebarClientHead">{_esc(label)}</span>'
+        settings_btn = f'<a href="{settings_url}" class="dash-top-btn" title="Settings">{icon_settings}</a>'
+
+    account_html = ""
+    if session_email:
+        admin_link = (
+            '<a class="dash-top-account-link" href="/admin">Admin</a><span class="dash-top-account-sep">·</span>'
+            if session_is_admin
+            else ""
+        )
+        account_html = f"""
+        <div class="dash-top-account">
+          <span class="dash-top-account-email" title="{_esc(session_email)}">{_esc(session_email)}</span>
+          <div class="dash-top-account-actions">
+            {admin_link}
+            <form method="post" action="/logout" class="dash-top-logout-form">
+              <button type="submit" class="dash-top-account-link">Sign out</button>
+            </form>
+          </div>
+        </div>"""
+
     return f"""
-      <div class="sidebar-client-head">
-        {control}
-        {tip_btn}
-      </div>"""
+    <header class="dash-top-header" role="banner">
+      <div class="dash-top-inner">
+        <div class="dash-top-left">
+          <a href="{overview_url}" class="dash-logo" aria-label="Dashboard home">
+            <span class="dash-logo-mark" aria-hidden="true">
+              <span class="dash-logo-pill">.</span>
+              <span class="dash-logo-pill">/</span>
+              <span class="dash-logo-pill dash-logo-pill--word">reown</span>
+            </span>
+          </a>
+        </div>
+        <div class="dash-top-right">
+          {client_selector}
+          {files_btn}
+          {settings_btn}
+          {account_html}
+        </div>
+      </div>
+    </header>"""
 
 
-_SIDEBAR_CLIENT_CSS = """
-    .sidebar-client-head {
+_DASH_TOPBAR_CSS = """
+    .dash-top-header {
+      position: sticky;
+      top: 0;
+      z-index: 80;
+      background: #fff;
+      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 rgba(10, 37, 64, 0.04);
+    }
+    .dash-top-inner {
+      width: 100%;
+      margin: 0 auto;
+      padding: 14px 32px;
       display: flex;
       align-items: center;
-      gap: 8px;
-      flex: 1;
-      min-width: 0;
+      justify-content: space-between;
+      gap: 20px;
     }
-    .sidebar-client-head .client-name {
-      font-size: 0.95rem;
-      font-weight: 700;
+    .dash-top-left { display: flex; align-items: center; min-width: 0; flex-shrink: 0; }
+    .dash-top-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .dash-logo {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: var(--navy);
+    }
+    .dash-logo-mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .dash-logo-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 28px;
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: #111827;
       color: #fff;
+      font-size: 0.82rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .dash-logo-pill--word {
+      padding: 0 12px;
+      font-size: 0.78rem;
+      font-weight: 650;
+      letter-spacing: -0.01em;
+    }
+    .topbar-client-switcher {
+      min-width: 160px;
+      max-width: 240px;
+      appearance: none;
+      border: 1px solid #bae6fd;
+      border-radius: 999px;
+      background: #f0f9ff
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%231e40af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")
+        no-repeat right 14px center;
+      color: var(--navy);
+      font: inherit;
+      font-size: 0.9rem;
+      font-weight: 650;
+      padding: 10px 36px 10px 16px;
+      cursor: pointer;
+    }
+    .topbar-client-switcher:hover,
+    .topbar-client-switcher:focus-visible {
+      border-color: #7dd3fc;
+      background-color: #e0f2fe;
+      outline: none;
+    }
+    .topbar-client-label {
+      font-size: 0.92rem;
+      font-weight: 650;
+      color: var(--navy);
+      padding: 10px 16px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface);
+    }
+    .dash-top-btn {
+      appearance: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 42px;
+      height: 42px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--navy);
+      text-decoration: none;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .dash-top-btn svg { width: 18px; height: 18px; }
+    .dash-top-btn:hover {
+      background: #f4f7fb;
+      border-color: #b8c4d4;
+    }
+    .dash-top-btn.active {
+      background: #f0f9ff;
+      border-color: #93c5fd;
+      color: var(--accent);
+    }
+    .dash-top-account {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 2px;
+      margin-left: 4px;
+      max-width: 200px;
+    }
+    .dash-top-account-email {
+      font-size: 0.78rem;
+      color: var(--muted);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      line-height: 1.25;
+      max-width: 100%;
     }
-    .client-switcher {
-      flex: 1;
-      min-width: 0;
+    .dash-top-account-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.78rem;
+    }
+    .dash-top-account-link {
       appearance: none;
-      border: 1px solid rgba(255,255,255,0.22);
-      border-radius: 10px;
-      background: rgba(255,255,255,0.1)
-        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")
-        no-repeat right 10px center;
-      color: #fff;
+      border: 0;
+      background: none;
+      padding: 0;
       font: inherit;
-      font-size: 0.92rem;
-      font-weight: 650;
-      padding: 9px 32px 9px 11px;
+      color: var(--accent);
+      text-decoration: none;
       cursor: pointer;
     }
-    .client-switcher:hover,
-    .client-switcher:focus-visible {
-      border-color: rgba(255,255,255,0.38);
-      background-color: rgba(255,255,255,0.14);
-      outline: none;
-    }
-    .client-switcher option {
-      color: #0f172a;
-      background: #fff;
-    }
+    .dash-top-account-link:hover { text-decoration: underline; }
+    .dash-top-account-sep { color: var(--muted); }
+    .dash-top-logout-form { display: inline; margin: 0; }
     .sr-only {
       position: absolute;
       width: 1px;
@@ -2403,91 +2604,31 @@ _SIDEBAR_CLIENT_CSS = """
       white-space: nowrap;
       border: 0;
     }
+    @media (max-width: 720px) {
+      .dash-top-inner { padding: 12px 16px; gap: 12px; }
+      .dash-logo-pill--word { display: none; }
+      .topbar-client-switcher { min-width: 120px; max-width: 160px; }
+      .dash-top-account { display: none; }
+    }
 """
 
 
-def _sidebar_nav_html(
-    *,
-    client_slug: str,
-    active: str,
-    access_key: str | None,
-    use_session: bool,
-    show_business_line: bool = True,
-    show_files: bool = True,
-) -> str:
-    """Sidebar nav: Overview, Files, and Settings."""
-    del show_business_line  # business line filters live on the overview page
-    settings_url = _settings_page_url(
-        client_slug=client_slug,
-        access_key=access_key,
-        use_session=use_session,
-    )
-    overview_url = _dashboard_page_url(
-        client_slug=client_slug,
-        access_key=access_key,
-        use_session=use_session,
-    )
-    files_url = _files_page_url(
-        client_slug=client_slug,
-        access_key=access_key,
-        use_session=use_session,
-    )
-    icon_overview = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>'
-    icon_files = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M12 18v-6M9 15h6"/></svg>'
-    icon_settings = '<svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>'
-
-    if active == "overview":
-        overview_el = f'<span class="sidebar-nav-btn active" aria-current="page">{icon_overview}Overview</span>'
-    else:
-        overview_el = f'<a href="{overview_url}" class="sidebar-nav-btn sidebar-nav-link">{icon_overview}Overview</a>'
-
-    files_el = ""
-    if show_files:
-        files_active = active in ("files", "insights-upload")
-        if files_active:
-            files_el = (
-                f'<span class="sidebar-nav-btn active" aria-current="page">'
-                f"{icon_files}Files</span>"
-            )
-        else:
-            files_el = (
-                f'<a href="{files_url or "#"}" class="sidebar-nav-btn sidebar-nav-link">'
-                f"{icon_files}Files</a>"
-            )
-
-    if active == "settings":
-        settings_el = f'<span class="sidebar-nav-btn active" aria-current="page">{icon_settings}Settings</span>'
-    else:
-        settings_el = f'<a href="{settings_url or "#"}" class="sidebar-nav-btn sidebar-nav-link">{icon_settings}Settings</a>'
-
-    return f"""
-      <nav class="sidebar-nav" role="navigation" aria-label="Dashboard views">
-        {overview_el}
-        {files_el}
-        {settings_el}
-      </nav>"""
-
-
-def _dashboard_shell_sidebar_js() -> str:
+def _dashboard_topbar_js() -> str:
     return """
-    const MOBILE_SIDEBAR_MQ = window.matchMedia('(max-width: 960px)');
-    function isMobileSidebar() { return MOBILE_SIDEBAR_MQ.matches; }
-    function setSidebarOpen(open) {
-      document.body.classList.toggle('sidebar-open', open);
-      document.getElementById('sidebarOpen')?.setAttribute('aria-expanded', open ? 'true' : 'false');
-    }
-    function closeSidebar() { setSidebarOpen(false); }
-    function toggleSidebar() { setSidebarOpen(!document.body.classList.contains('sidebar-open')); }
-    document.getElementById('sidebarOpen')?.addEventListener('click', toggleSidebar);
-    document.getElementById('sidebarClose')?.addEventListener('click', closeSidebar);
-    document.getElementById('sidebarBackdrop')?.addEventListener('click', closeSidebar);
-    MOBILE_SIDEBAR_MQ.addEventListener('change', () => { if (!isMobileSidebar()) closeSidebar(); });
-    document.addEventListener('keydown', e => {
-      if (e.key === 'Escape' && document.body.classList.contains('sidebar-open')) closeSidebar();
-    });
     document.getElementById('clientSwitcher')?.addEventListener('change', (e) => {
       const url = e.target.value;
       if (url) window.location.href = url;
+    });
+    let andreClicks = 0;
+    let andreTimer = null;
+    document.getElementById('topbarClientLabel')?.addEventListener('click', () => {
+      andreClicks += 1;
+      clearTimeout(andreTimer);
+      andreTimer = setTimeout(() => { andreClicks = 0; }, 1600);
+      if (andreClicks >= 3) {
+        andreClicks = 0;
+        if (typeof showAndreToast === 'function') showAndreToast();
+      }
     });
     """
 
@@ -2509,31 +2650,22 @@ def render_client_shell_page(
     show_business_line: bool | None = None,
     show_files: bool | None = None,
 ) -> str:
-    """Shared dashboard chrome for settings and other child pages."""
+    """Shared dashboard chrome for settings, files, and other child pages."""
+    del page_subtitle, client_meta_tip, show_business_line
     theme = dashboard_theme.load_client_theme(client_slug)
-    account_nav = _session_account_html(email=session_email, is_admin=session_is_admin)
-    if show_business_line is None:
-        show_business_line = client_slug.strip().lower() == "penn"
     if show_files is None:
         import client_insight_documents as docs
 
         show_files = docs.enabled()
-    sidebar_nav = _sidebar_nav_html(
-        client_slug=client_slug,
-        active=active_nav,
-        access_key=access_key,
-        use_session=use_session,
-        show_business_line=show_business_line,
-        show_files=show_files,
-    )
-    client_header = _sidebar_client_header_html(
+    top_header = _dash_top_header_html(
         client_slug=client_slug,
         label=label,
         active_nav=active_nav,
         access_key=access_key,
         use_session=use_session,
         session_is_admin=session_is_admin,
-        client_meta_tip=client_meta_tip,
+        session_email=session_email,
+        show_files=show_files,
     )
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -2545,101 +2677,19 @@ def render_client_shell_page(
   <style>
     {dashboard_theme.root_css_block(theme)}
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }}
-    .app-shell {{ display: flex; min-height: 100vh; }}
-    .dash-sidebar {{
-      width: 248px; background: linear-gradient(180deg, var(--sidebar-from), var(--sidebar-to)); color: #fff;
-      display: flex; flex-direction: column; padding: 16px 12px; flex-shrink: 0;
-    }}
-    .sidebar-top {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 18px; min-height: 36px; }}
-    {_SIDEBAR_CLIENT_CSS}
-    .sidebar-nav {{ display: flex; flex-direction: column; gap: 6px; }}
-    .sidebar-nav-btn, .sidebar-nav-link {{
-      appearance: none; border: none; background: transparent; color: rgba(255,255,255,0.72);
-      padding: 11px 12px; border-radius: 10px; font-size: 0.9rem; font-weight: 600; text-align: left;
-      cursor: pointer; display: flex; align-items: center; gap: 10px; text-decoration: none;
-      transition: background 0.15s, color 0.15s;
-    }}
-    .sidebar-nav-btn:hover, .sidebar-nav-link:hover {{ background: rgba(255,255,255,0.08); color: #fff; }}
-    .sidebar-nav-btn.active, .sidebar-nav-link.active {{
-      background: rgba(255,255,255,0.14); color: #fff; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1);
-    }}
-    .sidebar-nav-icon {{ width: 18px; height: 18px; opacity: 0.85; flex-shrink: 0; }}
-    .sidebar-footer {{ margin-top: auto; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.1); }}
-    .info-tip {{
-      appearance: none; border: 1px solid rgba(255,255,255,0.22); background: rgba(255,255,255,0.08);
-      color: rgba(255,255,255,0.85); width: 22px; height: 22px; border-radius: 999px; font-size: 0.72rem;
-      font-weight: 700; cursor: help; flex-shrink: 0; position: relative;
-    }}
-    .info-tip::after {{
-      content: attr(data-tip); position: absolute; right: 0; bottom: calc(100% + 8px); width: max-content;
-      max-width: 240px; padding: 10px 12px; border-radius: 10px; background: #fff; color: var(--text);
-      font-size: 0.76rem; font-weight: 500; line-height: 1.45; white-space: pre-line;
-      box-shadow: var(--shadow); border: 1px solid var(--border); opacity: 0; visibility: hidden;
-      transform: translateY(4px); transition: opacity 0.15s, transform 0.15s; pointer-events: none; z-index: 60;
-    }}
-    .info-tip:hover::after, .info-tip:focus-visible::after {{ opacity: 1; visibility: visible; transform: translateY(0); }}
-    .account-nav {{ display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; margin-bottom: 2px; border-bottom: 1px solid rgba(255,255,255,0.1); }}
-    .account-email {{ font-size: 0.78rem; color: rgba(255,255,255,0.72); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-    .account-actions {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 0.8rem; }}
-    .account-sep {{ color: rgba(255,255,255,0.35); }}
-    .account-link {{ color: rgba(255,255,255,0.92); text-decoration: none; background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }}
-    .account-logout-form {{ display: inline; margin: 0; }}
-    .account-link:hover {{ text-decoration: underline; }}
-    .dash-main {{ flex: 1; min-width: 0; display: flex; flex-direction: column; }}
-    .dash-chrome-bar {{
-      display: none;
-      align-items: center;
-      gap: 12px;
-      padding: 12px 20px;
-      background: var(--panel);
-      border-bottom: 1px solid var(--border);
-    }}
-    .dash-content {{ flex: 1; padding: 24px; overflow: auto; }}
-    .wrap {{ max-width: 920px; }}
-    .sidebar-menu-btn, .sidebar-close {{
-      appearance: none; border: 1px solid var(--border); background: var(--panel); color: var(--navy);
-      width: 40px; height: 40px; border-radius: 10px; cursor: pointer; display: none; align-items: center; justify-content: center;
-    }}
-    .sidebar-menu-btn svg, .sidebar-close svg {{ width: 20px; height: 20px; }}
-    .sidebar-backdrop {{
-      position: fixed; inset: 0; background: rgba(10, 37, 64, 0.45); z-index: 90; opacity: 0; visibility: hidden;
-      pointer-events: none; border: none; padding: 0; cursor: pointer;
-    }}
-    @media (max-width: 960px) {{
-      .dash-chrome-bar {{ display: flex; }}
-      .dash-sidebar {{
-        position: fixed; left: 0; top: 0; bottom: 0; z-index: 100; transform: translateX(-100%);
-        transition: transform 0.24s ease;
-      }}
-      body.sidebar-open .dash-sidebar {{ transform: translateX(0); }}
-      body.sidebar-open .sidebar-backdrop {{ opacity: 1; visibility: visible; pointer-events: auto; }}
-      .sidebar-menu-btn, .sidebar-close {{ display: flex; }}
-    }}
+    body {{ margin: 0; font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }}
+    .app-shell {{ display: flex; flex-direction: column; min-height: 100vh; }}
+    .dash-main {{ flex: 1; min-width: 0; display: flex; flex-direction: column; width: 100%; }}
+    .dash-content {{ flex: 1; width: 100%; padding: 28px 32px 48px; }}
+    .wrap {{ width: 100%; max-width: none; min-width: 0; }}
+    {_DASH_TOPBAR_CSS}
     {extra_css}
   </style>
 </head>
 <body>
-  <button type="button" class="sidebar-backdrop" id="sidebarBackdrop" aria-label="Close menu" tabindex="-1"></button>
   <div class="app-shell">
-    <aside class="dash-sidebar" id="dashSidebar" aria-label="Dashboard navigation">
-      <div class="sidebar-top">
-        {client_header}
-        <button type="button" class="sidebar-close" id="sidebarClose" aria-label="Close menu">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        </button>
-      </div>
-      {sidebar_nav}
-      <div class="sidebar-footer">
-        {account_nav}
-      </div>
-    </aside>
+    {top_header}
     <div class="dash-main">
-      <div class="dash-chrome-bar">
-        <button type="button" class="sidebar-menu-btn" id="sidebarOpen" aria-label="Open menu" aria-controls="dashSidebar">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-        </button>
-      </div>
       <div class="dash-content">
         <div class="wrap">
           {content_html}
@@ -2647,7 +2697,7 @@ def render_client_shell_page(
       </div>
     </div>
   </div>
-  <script>{_dashboard_shell_sidebar_js()}</script>
+  <script>{_dashboard_topbar_js()}</script>
 </body>
 </html>"""
 
@@ -2915,7 +2965,6 @@ def render_penn_html(
     slug = (client_slug or "penn").strip().lower()
     theme = dashboard_theme.load_client_theme(slug)
     show_business_line = slug == "penn"
-    account_nav = _session_account_html(email=session_email, is_admin=session_is_admin)
     if not snapshot:
         try:
             label = client_config.client_label(slug)
@@ -3043,28 +3092,20 @@ def render_penn_html(
         if has_ga4_config and not any(p["id"] == "organic" for p in platform_catalog_list):
             platform_catalog_list.append({"id": "organic", "label": "Organic"})
     platform_catalog_json = _json_for_html_script(platform_catalog_list)
-    client_meta_tip = _esc(f"Date range: {range_label}\nLast refreshed: {refreshed} UTC")
-    client_header = _sidebar_client_header_html(
-        client_slug=client_slug,
-        label=label,
-        active_nav="overview",
-        access_key=access_key,
-        use_session=use_session,
-        session_is_admin=session_is_admin,
-        client_meta_tip=client_meta_tip,
-    )
     overview_paid_html = _paid_ad_overview_html(aggregated, ga4_attr)
     paid_overview_metrics_json = _json_for_html_script(
         _paid_ad_overview_metrics(aggregated, ga4_attr)
     )
     import client_insight_documents as docs
 
-    sidebar_nav = _sidebar_nav_html(
+    top_header = _dash_top_header_html(
         client_slug=client_slug,
-        active="overview",
+        label=label,
+        active_nav="overview",
         access_key=access_key,
         use_session=use_session,
-        show_business_line=show_business_line,
+        session_is_admin=session_is_admin,
+        session_email=session_email,
         show_files=docs.enabled(),
     )
     ga4_pages_report = snapshot.get("ga4_pages")
@@ -3119,128 +3160,15 @@ def render_penn_html(
     }}
     .app-shell {{
       display: flex;
+      flex-direction: column;
       min-height: 100vh;
     }}
-    .dash-sidebar {{
-      width: 248px;
-      flex-shrink: 0;
-      background: linear-gradient(180deg, var(--sidebar-from) 0%, var(--sidebar-to) 100%);
-      color: #fff;
-      display: flex;
-      flex-direction: column;
-      padding: 14px 10px 16px;
-      border-right: 1px solid rgba(255,255,255,0.06);
-      box-shadow: 4px 0 24px rgba(10, 37, 64, 0.12);
-      overflow: visible;
-      transition: transform 0.24s ease, box-shadow 0.24s ease;
-      position: sticky;
-      top: 0;
-      height: 100vh;
-      z-index: 55;
-    }}
-    .sidebar-backdrop {{
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(10, 37, 64, 0.45);
-      z-index: 90;
-      opacity: 0;
-      visibility: hidden;
-      pointer-events: none;
-      transition: opacity 0.24s ease, visibility 0.24s ease;
-      border: none;
-      padding: 0;
-      cursor: pointer;
-    }}
-    .sidebar-menu-btn,
-    .sidebar-close {{
-      appearance: none;
-      border: 1px solid var(--border);
-      background: var(--panel);
-      color: var(--navy);
-      width: 40px;
-      height: 40px;
-      border-radius: 10px;
-      cursor: pointer;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      transition: background 0.15s, border-color 0.15s;
-    }}
-    .sidebar-menu-btn:hover,
-    .sidebar-close:hover {{
-      background: #f4f7fb;
-      border-color: #b8c4d4;
-    }}
-    .sidebar-menu-btn svg,
-    .sidebar-close svg {{
-      width: 20px;
-      height: 20px;
-    }}
-    .sidebar-top {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      margin-bottom: 18px;
-      min-height: 36px;
-    }}
-    {_SIDEBAR_CLIENT_CSS}
-    .sidebar-nav {{
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }}
-    .sidebar-nav-btn {{
-      appearance: none;
-      border: none;
-      background: transparent;
-      color: rgba(255,255,255,0.72);
-      padding: 11px 12px;
-      border-radius: 10px;
-      font-size: 0.9rem;
-      font-weight: 600;
-      text-align: left;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      transition: background 0.15s, color 0.15s;
-      white-space: nowrap;
-      text-decoration: none;
-    }}
-    a.sidebar-nav-link {{ text-decoration: none; }}
-    .sidebar-nav-btn:hover {{
-      background: rgba(255,255,255,0.08);
-      color: #fff;
-    }}
-    .sidebar-nav-btn.active {{
-      background: rgba(255,255,255,0.14);
-      color: #fff;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1);
-    }}
-    .sidebar-nav-icon {{
-      width: 18px;
-      height: 18px;
-      opacity: 0.85;
-      flex-shrink: 0;
-    }}
-    .sidebar-footer {{
-      margin-top: auto;
-      padding-top: 14px;
-      border-top: 1px solid rgba(255,255,255,0.1);
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      position: relative;
-      overflow: visible;
-    }}
+    {_DASH_TOPBAR_CSS}
     .info-tip {{
       appearance: none;
-      border: 1px solid rgba(255,255,255,0.22);
-      background: rgba(255,255,255,0.08);
-      color: rgba(255,255,255,0.85);
+      border: 1px solid var(--border);
+      background: #f8fafc;
+      color: var(--muted);
       width: 22px;
       height: 22px;
       border-radius: 999px;
@@ -3282,121 +3210,11 @@ def render_penn_html(
       visibility: visible;
       transform: translateY(0);
     }}
-    .info-tip--light {{
-      border-color: var(--border);
-      background: #f8fafc;
-      color: var(--muted);
-    }}
     .info-tip--light::after {{
       left: auto;
       right: 0;
       bottom: calc(100% + 8px);
     }}
-    .account-nav {{
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      padding-bottom: 10px;
-      margin-bottom: 2px;
-      border-bottom: 1px solid rgba(255,255,255,0.1);
-    }}
-    .account-email {{
-      font-size: 0.78rem;
-      color: rgba(255,255,255,0.72);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }}
-    .account-actions {{
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 4px 6px;
-      font-size: 0.8rem;
-    }}
-    .account-sep {{ color: rgba(255,255,255,0.35); }}
-    .account-link {{
-      color: rgba(255,255,255,0.92);
-      text-decoration: none;
-      background: none;
-      border: 0;
-      padding: 0;
-      font: inherit;
-      cursor: pointer;
-    }}
-    .account-link:hover {{ text-decoration: underline; color: #fff; }}
-    .account-logout-form {{ display: inline; margin: 0; }}
-    .settings-wrap {{ position: relative; }}
-    .settings-btn {{
-      appearance: none;
-      width: 100%;
-      border: 1px solid rgba(255,255,255,0.18);
-      background: rgba(255,255,255,0.07);
-      color: #fff;
-      border-radius: 10px;
-      padding: 10px 12px;
-      font-size: 0.86rem;
-      font-weight: 600;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      transition: background 0.15s;
-    }}
-    .settings-btn:hover {{ background: rgba(255,255,255,0.12); }}
-    .settings-btn svg {{ width: 16px; height: 16px; opacity: 0.9; }}
-    .settings-popover {{
-      position: absolute;
-      left: 0;
-      right: 0;
-      bottom: calc(100% + 10px);
-      min-width: 280px;
-      max-height: min(85vh, 520px);
-      overflow-y: auto;
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      box-shadow: var(--shadow);
-      color: var(--text);
-      z-index: 50;
-    }}
-    .settings-popover[hidden] {{ display: none; }}
-    .settings-popover__head {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px 14px;
-      border-bottom: 1px solid var(--border);
-      background: #f8fafc;
-    }}
-    .settings-popover__title {{
-      font-size: 0.88rem;
-      font-weight: 700;
-      color: var(--navy);
-    }}
-    .settings-popover__close {{
-      appearance: none;
-      border: none;
-      background: none;
-      font-size: 1.25rem;
-      line-height: 1;
-      color: var(--muted);
-      cursor: pointer;
-      padding: 2px 6px;
-    }}
-    .settings-popover__body {{ padding: 14px; }}
-    .settings-popover__hint {{
-      margin: 0 0 12px;
-      font-size: 0.82rem;
-      line-height: 1.4;
-    }}
-    .settings-page-link {{
-      color: var(--accent);
-      font-weight: 600;
-      text-decoration: none;
-    }}
-    .settings-page-link:hover {{ text-decoration: underline; }}
     .dash-main {{
       flex: 1;
       min-width: 0;
@@ -3405,22 +3223,15 @@ def render_penn_html(
     }}
     .dash-chrome-bar {{
       display: none;
-      align-items: center;
-      gap: 12px;
-      max-width: 1280px;
-      margin: 0 auto;
-      width: 100%;
-      padding: 10px 24px 0;
-      background: transparent;
     }}
     .dash-content {{
       flex: 1;
-      max-width: 1280px;
       width: 100%;
-      margin: 0 auto;
-      padding: 24px 24px 48px;
+      max-width: none;
+      margin: 0;
+      padding: 24px 32px 48px;
     }}
-    .wrap {{ min-width: 0; }}
+    .wrap {{ min-width: 0; width: 100%; max-width: none; }}
     .cards {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -4264,49 +4075,44 @@ def render_penn_html(
     .view-panel {{ display: none; }}
     .view-panel.active {{ display: block; }}
     .dash-sticky-chrome {{
-      position: sticky;
-      top: 0;
-      z-index: 45;
-      background: var(--panel);
-      border-bottom: 1px solid var(--border);
-      box-shadow: 0 2px 12px rgba(10, 37, 64, 0.04);
+      background: var(--bg);
+      padding: 20px 0 0;
     }}
     .dash-page-header {{
-      max-width: 1280px;
-      margin: 0 auto;
       width: 100%;
-      padding: 0 24px;
+      max-width: none;
+      margin: 0 auto;
+      padding: 0 32px;
     }}
     .dash-view-nav {{
       display: flex;
       flex-wrap: wrap;
-      gap: 4px;
-      padding: 8px 0 0;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 0 20px;
       background: transparent;
-      border-bottom: 1px solid var(--border);
+      border-bottom: none;
     }}
     .dash-view-btn {{
       appearance: none;
-      border: none;
-      background: transparent;
+      border: 1px solid transparent;
+      background: #f3f4f6;
       color: var(--muted);
-      font-size: 0.9rem;
+      font-size: 0.88rem;
       font-weight: 650;
-      padding: 10px 14px 12px;
-      border-radius: 8px 8px 0 0;
+      padding: 10px 18px;
+      border-radius: 999px;
       cursor: pointer;
-      border-bottom: 3px solid transparent;
-      margin-bottom: -1px;
       transition: color 0.15s, border-color 0.15s, background 0.15s;
     }}
     .dash-view-btn:hover {{
       color: var(--navy);
-      background: var(--surface);
+      background: #e5e7eb;
     }}
     .dash-view-btn.active {{
-      color: var(--accent);
-      border-bottom-color: var(--accent);
-      background: transparent;
+      color: var(--navy);
+      background: #f0f9ff;
+      border-color: #93c5fd;
     }}
     .dash-filters-bar {{
       padding: 16px 0 18px;
@@ -4882,73 +4688,21 @@ def render_penn_html(
       transform: translateX(-50%) translateY(0);
     }}
     @media (max-width: 900px) {{
-      .app-shell {{ display: block; }}
       .dash-page-header {{ padding: 0 16px; }}
-      .dash-view-nav {{ padding-top: 6px; }}
+      .dash-view-nav {{ gap: 6px; padding-bottom: 16px; }}
+      .dash-view-btn {{ padding: 9px 14px; font-size: 0.84rem; }}
       .dash-filters-bar {{ padding: 14px 0 16px; }}
       .global-filter-grid {{ grid-template-columns: 1fr; gap: 14px; }}
       .global-filters-head .filter-status {{ text-align: left; }}
-      .sidebar-menu-btn {{ display: flex; }}
-      .sidebar-close {{ display: flex; }}
-      .sidebar-backdrop {{
-        display: block;
-      }}
-      body.sidebar-open .sidebar-backdrop {{
-        opacity: 1;
-        visibility: visible;
-        pointer-events: auto;
-      }}
-      body.sidebar-open {{
-        overflow: hidden;
-      }}
-      .dash-sidebar {{
-        position: fixed;
-        left: 0;
-        top: 0;
-        height: 100%;
-        height: 100dvh;
-        width: min(88vw, 280px);
-        transform: translateX(-105%);
-        z-index: 110;
-        box-shadow: 8px 0 40px rgba(10, 37, 64, 0.25);
-        pointer-events: none;
-      }}
-      body.sidebar-open .dash-sidebar {{
-        transform: translateX(0);
-        pointer-events: auto;
-      }}
-      .dash-main {{
-        width: 100%;
-        min-width: 0;
-      }}
       .dash-content {{ padding: 18px 16px 40px; }}
-      .dash-chrome-bar {{ display: flex; }}
     }}
   </style>
 </head>
 <body>
-  <button type="button" class="sidebar-backdrop" id="sidebarBackdrop" aria-label="Close menu" tabindex="-1"></button>
   <div class="app-shell">
-    <aside class="dash-sidebar" id="dashSidebar" aria-label="Dashboard navigation">
-      <div class="sidebar-top">
-        {client_header}
-        <button type="button" class="sidebar-close" id="sidebarClose" aria-label="Close menu">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        </button>
-      </div>
-      {sidebar_nav}
-      <div class="sidebar-footer">
-        {account_nav}
-      </div>
-    </aside>
-
+    {top_header}
     <div class="dash-main">
       <div class="dash-sticky-chrome">
-        <div class="dash-chrome-bar">
-          <button type="button" class="sidebar-menu-btn" id="sidebarOpen" aria-label="Open menu" aria-expanded="false" aria-controls="dashSidebar">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-          </button>
-        </div>
         <div class="dash-page-header">
           {view_tabs_html}
           {filters_bar_html}
@@ -5221,47 +4975,6 @@ def render_penn_html(
     }});
     syncMetricToggleButtons();
 
-    const MOBILE_SIDEBAR_MQ = window.matchMedia('(max-width: 900px)');
-    function isMobileSidebar() {{
-      return MOBILE_SIDEBAR_MQ.matches;
-    }}
-    function setSidebarOpen(open) {{
-      document.body.classList.toggle('sidebar-open', open);
-      document.getElementById('sidebarOpen')?.setAttribute('aria-expanded', open ? 'true' : 'false');
-    }}
-    function openSidebar() {{
-      if (!isMobileSidebar()) return;
-      setSidebarOpen(true);
-    }}
-    function closeSidebar() {{
-      setSidebarOpen(false);
-    }}
-    function toggleSidebar(e) {{
-      if (e) {{
-        e.preventDefault();
-        e.stopPropagation();
-      }}
-      if (!isMobileSidebar()) return;
-      setSidebarOpen(!document.body.classList.contains('sidebar-open'));
-    }}
-    document.getElementById('sidebarOpen')?.addEventListener('click', toggleSidebar);
-    document.getElementById('sidebarClose')?.addEventListener('click', closeSidebar);
-    document.getElementById('sidebarBackdrop')?.addEventListener('click', closeSidebar);
-    MOBILE_SIDEBAR_MQ.addEventListener('change', () => {{
-      if (!isMobileSidebar()) closeSidebar();
-    }});
-    document.addEventListener('keydown', e => {{
-      if (e.key === 'Escape' && document.body.classList.contains('sidebar-open')) {{
-        closeSidebar();
-      }}
-    }});
-    document.getElementById('clientSwitcher')?.addEventListener('change', (e) => {{
-      const url = e.target.value;
-      if (url) window.location.href = url;
-    }});
-
-    let andreClicks = 0;
-    let andreTimer = null;
     function showAndreToast() {{
       const toast = document.getElementById('andreToast');
       if (!toast) return;
@@ -5273,15 +4986,6 @@ def render_penn_html(
         setTimeout(() => {{ toast.hidden = true; }}, 400);
       }}, 2800);
     }}
-    document.getElementById('sidebarClientHead')?.addEventListener('click', () => {{
-      andreClicks += 1;
-      clearTimeout(andreTimer);
-      andreTimer = setTimeout(() => {{ andreClicks = 0; }}, 1600);
-      if (andreClicks >= 3) {{
-        andreClicks = 0;
-        showAndreToast();
-      }}
-    }});
 
     const VIEW_LABELS = {{
       overview: 'Overview',
@@ -5318,7 +5022,6 @@ def render_penn_html(
       }} catch (err) {{
         /* ignore */
       }}
-      closeSidebar();
     }}
 
     document.querySelectorAll('.dash-view-btn').forEach(btn => {{
@@ -6217,6 +5920,7 @@ def render_penn_html(
     }}
 
     applyGlobalFilters();
+    {_dashboard_topbar_js()}
   </script>
 </body>
 </html>"""
