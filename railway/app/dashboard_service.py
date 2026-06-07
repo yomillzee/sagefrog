@@ -2780,6 +2780,7 @@ def _dash_top_header_html(
           <div class="dash-logo-lockup">
             <a href="{overview_url}" class="dash-logo" aria-label="Sagefrog home">
               <img class="dash-logo-img" src="/static/sagefrog-logo.png" alt="Sagefrog" width="272" height="92" />
+              <img class="dash-logo-icon" src="/static/apple-touch-icon.png" alt="" width="180" height="180" aria-hidden="true" />
             </a>
             <span class="dash-logo-divider" aria-hidden="true"></span>
             <span class="dash-beta-tag">Beta</span>
@@ -2840,6 +2841,13 @@ _DASH_TOPBAR_CSS = """
       height: 56px;
       width: auto;
       max-width: min(320px, 52vw);
+    }
+    .dash-logo-icon {
+      display: none;
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      flex-shrink: 0;
     }
     .dash-logo-divider {
       width: 1px;
@@ -2966,12 +2974,44 @@ _DASH_TOPBAR_CSS = """
       border: 0;
     }
     @media (max-width: 720px) {
-      .dash-top-inner { padding: 12px 16px; gap: 12px; }
-      .dash-logo-img { height: 44px; max-width: 220px; }
-      .dash-logo-divider { margin: 0 10px; height: 36px; }
-      .dash-beta-tag { padding: 5px 10px; font-size: 0.74rem; }
-      .topbar-client-switcher { min-width: 120px; max-width: 160px; }
+      .dash-top-inner { padding: 10px 12px; gap: 8px; flex-wrap: nowrap; }
+      .dash-top-left { flex: 0 0 auto; }
+      .dash-top-right { flex: 1 1 auto; flex-wrap: nowrap; gap: 6px; }
+      .dash-logo-lockup { gap: 6px; }
+      .dash-logo-img { display: none; }
+      .dash-logo-icon { display: block; width: 30px; height: 30px; }
+      .dash-logo-divider { display: none; }
+      .dash-beta-tag { padding: 5px 8px; font-size: 0.7rem; border-radius: 999px; }
+      .topbar-client-switcher {
+        min-width: 0;
+        width: clamp(82px, 28vw, 128px);
+        max-width: 128px;
+        padding: 8px 28px 8px 10px;
+        background-position: right 10px center;
+        font-size: 0.82rem;
+      }
+      .topbar-client-label {
+        min-width: 0;
+        max-width: 116px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        padding: 8px 10px;
+        font-size: 0.82rem;
+      }
+      .dash-top-btn { width: 36px; height: 36px; }
+      .dash-top-btn svg { width: 16px; height: 16px; }
       .dash-top-account { display: none; }
+    }
+    @media (max-width: 380px) {
+      .dash-top-inner { padding-left: 8px; padding-right: 8px; gap: 6px; }
+      .dash-logo-lockup { gap: 4px; }
+      .dash-logo-icon { width: 28px; height: 28px; }
+      .dash-beta-tag { padding: 4px 6px; font-size: 0.66rem; }
+      .dash-top-right { gap: 4px; }
+      .topbar-client-switcher { width: clamp(72px, 25vw, 104px); max-width: 104px; }
+      .topbar-client-label { max-width: 96px; }
+      .dash-top-btn { width: 34px; height: 34px; }
     }
 """
 
