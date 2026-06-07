@@ -110,26 +110,35 @@ def _oauth_platform_card_html(
     *,
     platform: str,
     label: str,
-    settings_url: str,
-    session_is_admin: bool,
-    can_manage_oauth: bool = False,
-    env_summary: dict[str, Any],
+    return_url: str,
+    can_manage_oauth: bool = True,
+    connection_details: list[str] | None = None,
+    status_message: str | None = None,
 ) -> str:
     prereq = oauth_flows.connect_prerequisites(platform)
     pub = oauth_store.public_status(platform)
-    return_to = quote(settings_url, safe="")
+    return_to = quote(return_url, safe="")
     status_badge = _status_badge(pub.connected, ok_label="Connected", fail_label="Not connected")
     source = _esc(pub.source)
     connected_meta = ""
     if pub.connected_by or pub.connected_at:
         who = _esc(pub.connected_by or "—")
         when = _esc((pub.connected_at or "")[:19])
-        connected_meta = f'<p class="muted">Token source: {source} · connected by {who} · {when} UTC</p>'
+        connected_meta = f'<p class="muted">Connected by {who} · {when} UTC · source {source}</p>'
+
+    details_html = ""
+    if status_message:
+        details_html += f'<p class="oauth-status-msg">{_esc(status_message)}</p>'
+    if connection_details:
+        items = "".join(f"<li>{_esc(line)}</li>" for line in connection_details)
+        details_html += f'<ul class="oauth-details">{items}</ul>'
 
     actions = ""
     if can_manage_oauth and oauth_store.enabled():
         connect_url = f"/oauth/{platform}/connect?return_to={return_to}"
-        if prereq.get("ready"):
+        if pub.connected:
+            actions += f'<a class="btn secondary" href="{connect_url}">Reconnect {label}</a> '
+        elif prereq.get("ready"):
             actions += f'<a class="btn primary" href="{connect_url}">Connect {label}</a> '
         else:
             missing = ", ".join(prereq.get("missing") or [])
@@ -137,16 +146,16 @@ def _oauth_platform_card_html(
         if pub.source == "database":
             actions += f"""
             <form method="post" action="/oauth/{platform}/disconnect" class="inline-form"
-              onsubmit="return confirm('Disconnect {label}? Database token will be removed.');">
-              <input type="hidden" name="return_to" value="{_esc(settings_url)}">
+              onsubmit="return confirm('Disconnect {label}? The stored token will be removed.');">
+              <input type="hidden" name="return_to" value="{_esc(return_url)}">
               <button type="submit" class="btn secondary">Disconnect</button>
             </form>
             """
     elif can_manage_oauth and not oauth_store.enabled():
-        actions = '<p class="muted">Attach Postgres (DATABASE_URL) to store OAuth tokens from Connect.</p>'
+        actions = '<p class="muted">Attach Postgres (DATABASE_URL) to store OAuth tokens.</p>'
 
-    callback = _esc(oauth_flows.callback_url(platform))
     note = _esc(prereq.get("note") or "")
+    callback = _esc(oauth_flows.callback_url(platform))
     dev_details = f"""
       <details class="settings-fold settings-fold--inline">
         <summary>Developer details</summary>
@@ -159,6 +168,7 @@ def _oauth_platform_card_html(
         {status_badge}
       </div>
       {connected_meta}
+      {details_html}
       <p class="muted">{note}</p>
       <div class="oauth-actions">{actions}</div>
       {dev_details}
@@ -166,56 +176,219 @@ def _oauth_platform_card_html(
     """
 
 
-def _oauth_connect_section_html(
+def probe_agency_oauth_platform(platform: str) -> dict[str, Any]:
+    """Live agency-wide OAuth status for the admin page."""
+    import google_ads_service
+    import linkedin_service
+    import meta_service
+
+    pub = oauth_store.public_status(platform)
+    if not pub.connected:
+        return {
+            "ok": False,
+            "connected": False,
+            "message": "Not connected — click Connect to authorize this platform for the agency.",
+            "details": [],
+        }
+
+    if platform == "google_ads":
+        token = google_ads_service.test_refresh_token()
+        if not token.get("ok"):
+            return {
+                "ok": False,
+                "connected": True,
+                "message": str(token.get("error") or token.get("message") or "OAuth refresh failed.")[:300],
+                "details": [],
+            }
+        try:
+            ids = google_ads_service.list_accessible_customer_ids()
+            details: list[str] = []
+            for cid in ids[:12]:
+                try:
+                    meta = google_ads_service.get_account_metadata(cid)
+                    name = meta.get("descriptive_name") or cid
+                    details.append(
+                        f"{name} · ID {meta.get('customer_id') or cid} · "
+                        f"{meta.get('currency_code') or '—'} · {meta.get('time_zone') or '—'}"
+                    )
+                except Exception:
+                    details.append(f"Customer ID {cid}")
+            extra = f" (+{len(ids) - 12} more)" if len(ids) > 12 else ""
+            return {
+                "ok": True,
+                "connected": True,
+                "message": f"OAuth active · {len(ids)} accessible Google Ads account(s){extra}",
+                "details": details or [f"{len(ids)} accessible account(s)"],
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "connected": True,
+                "message": str(exc)[:300],
+                "details": [],
+            }
+
+    if platform == "linkedin":
+        token = linkedin_service.test_refresh_token()
+        if not token.get("ok"):
+            return {
+                "ok": False,
+                "connected": True,
+                "message": str(token.get("error") or token.get("message") or "OAuth refresh failed.")[:300],
+                "details": [],
+            }
+        try:
+            accounts = linkedin_service.list_ad_accounts()
+            details = [
+                f"{row.get('name') or 'Account'} · ID {row.get('id')} · "
+                f"{row.get('currency') or '—'} · {row.get('status') or '—'}"
+                for row in accounts[:12]
+            ]
+            extra = f" (+{len(accounts) - 12} more)" if len(accounts) > 12 else ""
+            return {
+                "ok": True,
+                "connected": True,
+                "message": f"OAuth active · {len(accounts)} accessible LinkedIn ad account(s){extra}",
+                "details": details or ["No ad accounts returned for this token."],
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "connected": True,
+                "message": str(exc)[:300],
+                "details": [],
+            }
+
+    if platform == "meta":
+        token = meta_service.test_access_token()
+        if not token.get("ok"):
+            return {
+                "ok": False,
+                "connected": True,
+                "message": str(token.get("error") or token.get("message") or "Token check failed.")[:300],
+                "details": [],
+            }
+        try:
+            accounts = meta_service.list_ad_accounts()
+            details = [
+                f"{row.get('name') or 'Account'} · ID {row.get('id')} · "
+                f"{row.get('currency') or '—'} · {row.get('account_status') or row.get('status') or '—'}"
+                for row in accounts[:12]
+            ]
+            extra = f" (+{len(accounts) - 12} more)" if len(accounts) > 12 else ""
+            return {
+                "ok": True,
+                "connected": True,
+                "message": f"Token active · {len(accounts)} Meta ad account(s) under Business Manager{extra}",
+                "details": details or ["No ad accounts returned for this Business Manager."],
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "connected": True,
+                "message": str(exc)[:300],
+                "details": [],
+            }
+
+    return {"ok": False, "connected": False, "message": "Unknown platform.", "details": []}
+
+
+def render_admin_oauth_section(
     *,
-    settings_url: str,
-    session_is_admin: bool,
-    can_manage_oauth: bool = False,
-    api: dict[str, Any],
+    return_url: str = "/admin",
+    oauth_connected: str | None = None,
+    oauth_error: str | None = None,
 ) -> str:
-    base = oauth_flows.public_base_url()
-    cards = [
-        _oauth_platform_card_html(
-            platform="google_ads",
-            label="Google Ads",
-            settings_url=settings_url,
-            session_is_admin=session_is_admin,
-            can_manage_oauth=can_manage_oauth,
-            env_summary=api["google"]["env"],
-        ),
-        _oauth_platform_card_html(
-            platform="linkedin",
-            label="LinkedIn",
-            settings_url=settings_url,
-            session_is_admin=session_is_admin,
-            can_manage_oauth=can_manage_oauth,
-            env_summary=api["linkedin"]["env"],
-        ),
-        _oauth_platform_card_html(
-            platform="meta",
-            label="Meta",
-            settings_url=settings_url,
-            session_is_admin=session_is_admin,
-            can_manage_oauth=can_manage_oauth,
-            env_summary=api["meta"]["env"],
-        ),
-    ]
+    notice = ""
+    if oauth_connected:
+        labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta"}
+        notice += (
+            f'<div class="notice ok">{_esc(labels.get(oauth_connected, oauth_connected))} '
+            f"connected successfully.</div>"
+        )
+    if oauth_error:
+        notice += f'<div class="notice err">{_esc(oauth_error)}</div>'
+
+    cards = []
+    for platform, label in (
+        ("google_ads", "Google Ads"),
+        ("linkedin", "LinkedIn"),
+        ("meta", "Meta"),
+    ):
+        probe = probe_agency_oauth_platform(platform)
+        cards.append(
+            _oauth_platform_card_html(
+                platform=platform,
+                label=label,
+                return_url=return_url,
+                can_manage_oauth=True,
+                connection_details=probe.get("details") or None,
+                status_message=str(probe.get("message") or ""),
+            )
+        )
+
+    base = _esc(oauth_flows.public_base_url())
     return f"""
-    <section class="panel panel--primary">
-      <h2>1. Connect ad platforms</h2>
-      <p class="muted">Sign in as admin, then click Connect for each platform. App IDs stay in Railway; tokens save to Postgres only.</p>
+    {notice}
+    <section class="admin-oauth-section">
+      <h2>Ad platform connections</h2>
+      <p class="muted">Connect once here for the whole agency. Each client dashboard then maps its own account IDs.</p>
       <div class="oauth-grid">{"".join(cards)}</div>
-    </section>
-    """
+      <details class="admin-fold">
+        <summary>OAuth callback URLs (developer setup)</summary>
+        <ul class="checklist mono">
+          <li>{base}/oauth/google_ads/callback</li>
+          <li>{base}/oauth/linkedin/callback</li>
+          <li>{base}/oauth/meta/callback</li>
+        </ul>
+      </details>
+    </section>"""
+
+
+def _agency_oauth_status_html(*, api: dict[str, Any]) -> str:
+    rows = []
+    for platform, label in (
+        ("google_ads", "Google Ads"),
+        ("linkedin", "LinkedIn"),
+        ("meta", "Meta"),
+    ):
+        pub = oauth_store.public_status(platform)
+        probe = probe_agency_oauth_platform(platform) if pub.connected else None
+        detail = "Not connected — ask an admin to connect in Admin."
+        if pub.connected and probe:
+            detail = str(probe.get("message") or "Connected")
+        elif pub.connected:
+            detail = "Connected"
+        rows.append(_connection_row(label, pub.connected, detail))
+
+    ga4_ok = api["ga4"]["ok"]
+    ga4_detail = f"{api['ga4']['registry_count']} GA4_CLIENTS entries in Railway"
+    if not ga4_ok:
+        ga4_detail = "Set GCP_SERVICE_ACCOUNT_JSON + GA4_CLIENTS in Railway"
+    rows.append(_connection_row("GA4 / BigQuery", ga4_ok, ga4_detail))
+
+    return f"""
+    <section class="panel">
+      <h2>Agency platform access</h2>
+      <p class="muted">Google, LinkedIn, and Meta authenticate once for the whole agency in <a href="/admin">Admin</a>.
+      This page maps which accounts belong to this client.</p>
+      <table class="status-table">
+        <thead><tr><th>Platform</th><th>Status</th><th>Details</th></tr></thead>
+        <tbody>{"".join(rows)}</tbody>
+      </table>
+    </section>"""
 
 
 def _setup_checklist_html(*, api: dict[str, Any], cfg: PennDashboardConfig, ga4_ok: bool) -> str:
+    agency_connected = all(
+        oauth_store.public_status(platform).connected
+        for platform in ("google_ads", "linkedin", "meta")
+    )
+    mapped = bool(cfg.google_customer_id or cfg.linkedin_account_id or cfg.meta_account_id)
     steps = [
-        ("Connect Google Ads", api["google"]["ok"]),
-        ("Connect LinkedIn", api["linkedin"]["ok"]),
-        ("Connect Meta", api["meta"]["ok"]),
-        ("Map client account IDs", bool(cfg.google_customer_id or cfg.linkedin_account_id or cfg.meta_account_id)),
-        ("Configure GA4 (Railway)", ga4_ok),
+        ("Agency platforms connected (Admin)", agency_connected),
+        ("Client account IDs mapped", mapped),
+        ("GA4 configured (Railway)", ga4_ok),
     ]
     items = []
     for label, done in steps:
@@ -241,6 +414,9 @@ def _settings_page_css() -> str:
       padding: 10px 0; border-bottom: 1px solid var(--border); font-size: .92rem; }
     .setup-checklist li:last-child { border-bottom: 0; }
     .oauth-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
+    .oauth-details { margin: 8px 0 0; padding-left: 1.1rem; font-size: .82rem; color: var(--navy); }
+    .oauth-details li { margin: 4px 0; }
+    .oauth-status-msg { margin: 8px 0 0; font-size: .88rem; color: var(--navy); font-weight: 600; }
     .oauth-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; background: #fafbfc; }
     .oauth-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
     .oauth-card h3 { margin: 0; font-size: .95rem; }
@@ -289,76 +465,114 @@ def _settings_page_css() -> str:
 
 
 def probe_client_connections(cfg: PennDashboardConfig) -> dict[str, Any]:
-    """Live connection tests for the configured client account IDs."""
+    """Live validation of this client's mapped account IDs against agency tokens."""
     import google_ads_service
     import linkedin_service
     import meta_service
 
     results: dict[str, Any] = {}
+    configured: list[str] = []
+
+    def _skip(platform: str, message: str) -> None:
+        results[platform] = {"ok": None, "skipped": True, "message": message}
 
     if cfg.google_customer_id:
+        configured.append("google")
         try:
             token = google_ads_service.test_refresh_token()
-            if token.get("ok"):
-                meta_row = google_ads_service.get_account_metadata(customer_id=cfg.google_customer_id)
-                results["google"] = {
-                    "ok": True,
-                    "message": f"OAuth OK · account {meta_row.get('descriptive_name') or cfg.google_customer_id}",
-                }
-            else:
+            if not token.get("ok"):
                 results["google"] = {
                     "ok": False,
-                    "message": token.get("error") or token.get("message") or "OAuth failed",
+                    "message": str(token.get("error") or token.get("message") or "Google OAuth failed.")[:300],
+                }
+            else:
+                meta_row = google_ads_service.get_account_metadata(customer_id=cfg.google_customer_id)
+                name = meta_row.get("descriptive_name") or cfg.google_customer_id
+                results["google"] = {
+                    "ok": True,
+                    "message": (
+                        f"{name} · customer ID {meta_row.get('customer_id') or cfg.google_customer_id} · "
+                        f"{meta_row.get('currency_code') or '—'} · {meta_row.get('time_zone') or '—'}"
+                    ),
                 }
         except Exception as exc:
             results["google"] = {"ok": False, "message": str(exc)[:300]}
     else:
-        results["google"] = {"ok": False, "message": "No Google customer ID configured."}
+        _skip("google", "No Google Ads customer ID mapped for this client.")
 
     if cfg.linkedin_account_id:
+        configured.append("linkedin")
+        target_id = linkedin_service._normalize_account_id(cfg.linkedin_account_id)
         try:
             token = linkedin_service.test_refresh_token()
-            if token.get("ok"):
-                results["linkedin"] = {
-                    "ok": True,
-                    "message": f"OAuth OK · account {cfg.linkedin_account_id}",
-                }
-            else:
+            if not token.get("ok"):
                 results["linkedin"] = {
                     "ok": False,
-                    "message": token.get("error") or token.get("message") or "OAuth failed",
+                    "message": str(token.get("error") or token.get("message") or "LinkedIn OAuth failed.")[:300],
                 }
+            else:
+                accounts = linkedin_service.list_ad_accounts()
+                match = next(
+                    (row for row in accounts if linkedin_service._normalize_account_id(str(row.get("id") or "")) == target_id),
+                    None,
+                )
+                if match:
+                    results["linkedin"] = {
+                        "ok": True,
+                        "message": (
+                            f"{match.get('name') or 'Account'} · ID {match.get('id')} · "
+                            f"{match.get('currency') or '—'} · {match.get('status') or '—'}"
+                        ),
+                    }
+                else:
+                    sample = ", ".join(str(row.get("id") or "") for row in accounts[:6])
+                    results["linkedin"] = {
+                        "ok": False,
+                        "message": (
+                            f"Account ID {cfg.linkedin_account_id} was not found under the connected agency token. "
+                            f"Accessible IDs include: {sample or 'none'}."
+                        ),
+                    }
         except Exception as exc:
             results["linkedin"] = {"ok": False, "message": str(exc)[:300]}
     else:
-        results["linkedin"] = {"ok": False, "message": "No LinkedIn account ID configured."}
+        _skip("linkedin", "No LinkedIn account ID mapped for this client.")
 
     if cfg.meta_account_id:
+        configured.append("meta")
+        target_id = meta_service._normalize_account_id(cfg.meta_account_id)
         try:
             token = meta_service.test_access_token()
-            if token.get("ok"):
+            if not token.get("ok"):
+                results["meta"] = {
+                    "ok": False,
+                    "message": str(token.get("error") or token.get("message") or "Meta token check failed.")[:300],
+                }
+            else:
                 access = meta_service.test_ads_read_access(cfg.meta_account_id)
+                match = None
+                for row in meta_service.list_ad_accounts():
+                    if meta_service._normalize_account_id(str(row.get("id") or "")) == target_id:
+                        match = row
+                        break
+                name = (match or {}).get("name") or cfg.meta_account_id
                 if access.get("ok"):
                     results["meta"] = {
                         "ok": True,
-                        "message": f"Token OK · ads_read verified for {cfg.meta_account_id}",
+                        "message": f"{name} · account ID {target_id} · ads_read verified",
                     }
                 else:
                     results["meta"] = {
                         "ok": False,
-                        "message": access.get("error") or "ads_read check failed",
+                        "message": str(access.get("message") or access.get("error") or "Meta ads_read failed.")[:300],
                     }
-            else:
-                results["meta"] = {
-                    "ok": False,
-                    "message": token.get("error") or token.get("message") or "Token failed",
-                }
         except Exception as exc:
             results["meta"] = {"ok": False, "message": str(exc)[:300]}
     else:
-        results["meta"] = {"ok": False, "message": "No Meta account ID configured."}
+        _skip("meta", "No Meta ad account ID mapped for this client.")
 
     if cfg.ga4_client_key:
+        configured.append("ga4")
         try:
             target = ga4_clients.resolve_target(client_key=cfg.ga4_client_key)
             client = bigquery_service.build_client(project_id=target.bq_project_id)
@@ -368,17 +582,17 @@ def probe_client_connections(cfg: PennDashboardConfig) -> dict[str, Any]:
             results["ga4"] = {
                 "ok": True,
                 "message": (
-                    f"BigQuery OK · {target.bq_project_id}/{target.bq_dataset_id} "
-                    f"(property {target.account_id})"
+                    f"{target.label or cfg.ga4_client_key} · {target.bq_project_id}/"
+                    f"{target.bq_dataset_id} · property {target.account_id}"
                 ),
             }
         except Exception as exc:
             results["ga4"] = {"ok": False, "message": str(exc)[:300]}
     else:
-        results["ga4"] = {"ok": False, "message": "No GA4 client key configured."}
+        _skip("ga4", "No GA4 client key mapped for this client.")
 
-    results["overall_ok"] = all(
-        results.get(p, {}).get("ok") for p in ("google", "linkedin", "meta", "ga4")
+    results["overall_ok"] = bool(configured) and all(
+        results[p]["ok"] for p in configured if results.get(p, {}).get("ok") is not None
     )
     return results
 
@@ -502,7 +716,6 @@ def render_settings_html(
     flash_error: str | None = None,
     probe_results: dict[str, Any] | None = None,
     db_config_updated_at: str | None = None,
-    oauth_connected: str | None = None,
 ) -> str:
     slug = client_slug.strip().lower()
     settings_url = _settings_url(client_slug=slug, access_key=access_key, use_session=use_session)
@@ -511,14 +724,9 @@ def render_settings_html(
     api = build_api_status()
     ga4_target = _ga4_target_summary(cfg)
     can_edit = session_is_admin if use_session else bool(access_key)
-    can_manage_oauth = session_is_admin and use_session
     db_editable = web_users.enabled() and session_is_admin
 
     notice = ""
-    if oauth_connected:
-        labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta"}
-        label = labels.get(oauth_connected, oauth_connected)
-        notice += f'<div class="notice ok">{_esc(label)} connected successfully.</div>'
     if flash_message:
         notice += f'<div class="notice ok">{_esc(flash_message)}</div>'
     if flash_error:
@@ -594,8 +802,9 @@ def render_settings_html(
             meta = f'<p class="muted">Last saved: {_esc(db_config_updated_at[:19])} UTC</p>'
         edit_form = f"""
         <section class="panel panel--primary">
-          <h2>2. Map client account IDs</h2>
-          <p class="muted">Point this dashboard at the correct Google, LinkedIn, Meta, and GA4 accounts.</p>
+          <h2>1. Map client account IDs</h2>
+          <p class="muted">Enter the Google, LinkedIn, Meta, and GA4 identifiers for <strong>{_esc(cfg.label)}</strong>.
+          After saving, we verify each ID against the agency connection and show account details below.</p>
           {meta}
           <form method="post" action="{settings_url}">
             <input type="hidden" name="action" value="save">
@@ -608,16 +817,19 @@ def render_settings_html(
                 <label for="google_customer_id">Google Ads customer ID</label>
                 <input id="google_customer_id" name="google_customer_id" type="text"
                   value="{_esc(cfg.google_customer_id or '')}" placeholder="1549971930">
+                <p class="hint">Find IDs in Admin → Google Ads → accessible accounts list.</p>
               </div>
               <div>
                 <label for="linkedin_account_id">LinkedIn account ID</label>
                 <input id="linkedin_account_id" name="linkedin_account_id" type="text"
                   value="{_esc(cfg.linkedin_account_id or '')}" placeholder="508590994">
+                <p class="hint">Find IDs in Admin → LinkedIn → accessible accounts list.</p>
               </div>
               <div>
                 <label for="meta_account_id">Meta ad account ID</label>
                 <input id="meta_account_id" name="meta_account_id" type="text"
                   value="{_esc(cfg.meta_account_id or '')}" placeholder="2581574002135957">
+                <p class="hint">Find IDs in Admin → Meta → accessible accounts list.</p>
               </div>
               <div>
                 <label for="ga4_client_key">GA4 client key</label>
@@ -626,15 +838,15 @@ def render_settings_html(
                 <p class="hint">Must match a key in GA4_CLIENTS (Railway).</p>
               </div>
             </div>
-            <button type="submit" class="btn primary">Save mapping</button>
+            <button type="submit" class="btn primary">Save &amp; verify mapping</button>
           </form>
         </section>
         """
     elif use_session and not session_is_admin:
         edit_form = """
         <section class="panel">
-          <h2>2. Map client account IDs</h2>
-          <p class="muted">Only admins can edit account IDs. Ask your agency admin to update connections.</p>
+          <h2>1. Map client account IDs</h2>
+          <p class="muted">Only admins can edit account IDs. Ask your agency admin to update this client's mapping in Settings.</p>
         </section>
         """
     else:
@@ -645,12 +857,19 @@ def render_settings_html(
         </section>
         """
 
+        edit_form = f"""
+        <section class="panel">
+          <h2>1. Map client account IDs</h2>
+          <p class="muted">Current IDs: Google {_esc(cfg.google_customer_id or "—")}, LinkedIn {_esc(cfg.linkedin_account_id or "—")}, Meta {_esc(cfg.meta_account_id or "—")}.</p>
+        </section>
+        """
+
     test_btn = ""
     if can_edit:
         test_btn = f"""
         <form method="post" action="{settings_url}" class="inline-form">
           <input type="hidden" name="action" value="test">
-          <button type="submit" class="btn secondary">Test connections</button>
+          <button type="submit" class="btn secondary">Re-verify mapped accounts</button>
         </form>
         """
 
@@ -662,12 +881,7 @@ def render_settings_html(
         flash_message=None,
     )
 
-    oauth_section = _oauth_connect_section_html(
-        settings_url=settings_url,
-        session_is_admin=session_is_admin if use_session else False,
-        can_manage_oauth=can_manage_oauth,
-        api=api,
-    )
+    agency_status = _agency_oauth_status_html(api=api)
 
     checklist = _setup_checklist_html(api=api, cfg=cfg, ga4_ok=api["ga4"]["ok"])
 
@@ -713,25 +927,34 @@ def render_settings_html(
     probe_fold = ""
     if probe_results:
         probe_rows = []
+        labels = {"google": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta", "ga4": "GA4"}
         for platform in ("google", "linkedin", "meta", "ga4"):
             row = probe_results.get(platform) or {}
+            if row.get("skipped"):
+                probe_rows.append(
+                    f"<tr><td>{_esc(labels[platform])}</td>"
+                    f'<td><span class="badge err">Not mapped</span></td>'
+                    f'<td class="detail">{_esc(str(row.get("message") or "—"))}</td></tr>'
+                )
+                continue
             probe_rows.append(
                 _connection_row(
-                    platform.title(),
+                    labels[platform],
                     bool(row.get("ok")),
                     str(row.get("message") or "—"),
                 )
             )
+        summary = "All mapped accounts verified." if probe_results.get("overall_ok") else "Some mapped accounts need attention."
         probe_fold = f"""
-        <section class="panel">
-          <h2>Connection test results</h2>
+        <section class="panel panel--primary">
+          <h2>Account verification</h2>
+          <p class="muted">{_esc(summary)} Details come from the agency connection in Admin.</p>
           <table class="status-table">
-            <thead><tr><th>Platform</th><th>Status</th><th>Detail</th></tr></thead>
+            <thead><tr><th>Platform</th><th>Status</th><th>Account details</th></tr></thead>
             <tbody>{"".join(probe_rows)}</tbody>
           </table>
         </section>"""
 
-    base_url = _esc(oauth_flows.public_base_url())
     advanced = f"""
     <details class="settings-fold">
       <summary>Auth &amp; API diagnostics</summary>
@@ -756,22 +979,6 @@ def render_settings_html(
         {_sync_meta_html(snapshot)}
       </div>
     </details>
-    <details class="settings-fold">
-      <summary>Developer setup (Railway &amp; callbacks)</summary>
-      <div class="fold-body">
-        <p class="muted">Register OAuth callbacks in each provider console:</p>
-        <ul class="checklist mono">
-          <li>{base_url}/oauth/google_ads/callback</li>
-          <li>{base_url}/oauth/linkedin/callback</li>
-          <li>{base_url}/oauth/meta/callback</li>
-        </ul>
-        <ul class="checklist">
-          <li><strong>GA4:</strong> GCP_SERVICE_ACCOUNT_JSON + GA4_CLIENTS in Railway</li>
-          <li><strong>Google Ads:</strong> GOOGLE_ADS_DEVELOPER_TOKEN in Railway</li>
-          <li><strong>Meta:</strong> META_BUSINESS_ID in Railway</li>
-        </ul>
-      </div>
-    </details>
     {insights_fold}"""
 
     client_meta_tip = ""
@@ -786,20 +993,20 @@ def render_settings_html(
     {notice}
     <section class="panel">
       <h2>Setup checklist</h2>
-      <p class="muted">Work top to bottom. Green badges mean that step is done.</p>
+      <p class="muted">Connect platforms in <a href="/admin">Admin</a>, map this client's account IDs below, then refresh data.</p>
       {checklist}
     </section>
-    {oauth_section}
+    {agency_status}
     {edit_form}
     {bl_rules_section}
     {theme_section}
+    {probe_fold}
     <section class="panel panel--primary">
-      <h2>3. Refresh &amp; verify</h2>
-      <p class="muted">Pull latest data after connecting. Quick refresh is cheaper; full refresh reloads campaign tables and GA4.</p>
+      <h2>2. Refresh data</h2>
+      <p class="muted">After mapping account IDs, run a full refresh to pull campaign data into this dashboard.</p>
       {refresh_block}
       <div class="toolbar">{test_btn}</div>
     </section>
-    {probe_fold}
     {advanced}
     """
 
