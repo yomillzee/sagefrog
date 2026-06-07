@@ -2379,9 +2379,10 @@ def _dash_top_header_html(
         '<path d="M14 2v6h6"/></svg>'
     )
     icon_settings = (
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">'
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/>'
         '<circle cx="12" cy="12" r="3"/>'
-        '<path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>'
         '</svg>'
     )
 
@@ -2424,12 +2425,8 @@ def _dash_top_header_html(
     <header class="dash-top-header" role="banner">
       <div class="dash-top-inner">
         <div class="dash-top-left">
-          <a href="{overview_url}" class="dash-logo" aria-label="Dashboard home">
-            <span class="dash-logo-mark" aria-hidden="true">
-              <span class="dash-logo-pill">.</span>
-              <span class="dash-logo-pill">/</span>
-              <span class="dash-logo-pill dash-logo-pill--word">reown</span>
-            </span>
+          <a href="{overview_url}" class="dash-logo" aria-label="Sagefrog home">
+            <img class="dash-logo-img" src="/static/sagefrog-logo.svg" alt="Sagefrog" width="136" height="30" />
           </a>
         </div>
         <div class="dash-top-right">
@@ -2472,34 +2469,14 @@ _DASH_TOPBAR_CSS = """
     .dash-logo {
       display: inline-flex;
       align-items: center;
-      gap: 10px;
       text-decoration: none;
-      color: var(--navy);
+      flex-shrink: 0;
     }
-    .dash-logo-mark {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-    }
-    .dash-logo-pill {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 28px;
-      height: 28px;
-      padding: 0 10px;
-      border-radius: 999px;
-      background: #111827;
-      color: #fff;
-      font-size: 0.82rem;
-      font-weight: 700;
-      line-height: 1;
-    }
-    .dash-logo-pill--word {
-      padding: 0 12px;
-      font-size: 0.78rem;
-      font-weight: 650;
-      letter-spacing: -0.01em;
+    .dash-logo-img {
+      display: block;
+      height: 30px;
+      width: auto;
+      max-width: min(180px, 42vw);
     }
     .topbar-client-switcher {
       min-width: 160px;
@@ -2606,7 +2583,7 @@ _DASH_TOPBAR_CSS = """
     }
     @media (max-width: 720px) {
       .dash-top-inner { padding: 12px 16px; gap: 12px; }
-      .dash-logo-pill--word { display: none; }
+      .dash-logo-img { height: 24px; max-width: 120px; }
       .topbar-client-switcher { min-width: 120px; max-width: 160px; }
       .dash-top-account { display: none; }
     }
