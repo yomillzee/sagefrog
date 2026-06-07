@@ -144,6 +144,9 @@ def render_not_found_page(*, path: str | None = None) -> str:
       const CELL = canvas.width / COLS;
       const GOALS = [1, 4, 7];
       const START = {{ col: 4, row: ROWS - 1 }};
+      const RIVER_ROWS = [2, 3];
+      const SAFE_MID_ROW = 4;
+      const ROAD_ROWS = [5, 6, 7];
 
       let score = 0;
       let lives = 3;
@@ -155,9 +158,9 @@ def render_not_found_page(*, path: str | None = None) -> str:
 
       function makeCars() {{
         const lanes = [
-          {{ row: 7, speed: 1.4, dir: 1, color: '#ef4444' }},
-          {{ row: 8, speed: 2.1, dir: -1, color: '#f59e0b' }},
-          {{ row: 9, speed: 1.7, dir: 1, color: '#8b5cf6' }},
+          {{ row: ROAD_ROWS[0], speed: 1.4, dir: 1, color: '#ef4444' }},
+          {{ row: ROAD_ROWS[1], speed: 2.1, dir: -1, color: '#f59e0b' }},
+          {{ row: ROAD_ROWS[2], speed: 1.7, dir: 1, color: '#8b5cf6' }},
         ];
         const cars = [];
         for (const lane of lanes) {{
@@ -178,8 +181,8 @@ def render_not_found_page(*, path: str | None = None) -> str:
 
       function makeLogs() {{
         const lanes = [
-          {{ row: 2, speed: 1.2, dir: 1 }},
-          {{ row: 3, speed: 1.8, dir: -1 }},
+          {{ row: RIVER_ROWS[0], speed: 1.2, dir: 1 }},
+          {{ row: RIVER_ROWS[1], speed: 1.8, dir: -1 }},
         ];
         const logs = [];
         for (const lane of lanes) {{
@@ -206,7 +209,11 @@ def render_not_found_page(*, path: str | None = None) -> str:
       }}
 
       function isWaterRow(row) {{
-        return row === 2 || row === 3;
+        return RIVER_ROWS.includes(row);
+      }}
+
+      function isRoadRow(row) {{
+        return ROAD_ROWS.includes(row);
       }}
 
       function playerCenterX() {{
@@ -366,8 +373,9 @@ def render_not_found_page(*, path: str | None = None) -> str:
           const y = rowY(row);
           const h = canvas.height / ROWS;
           if (row === 0) ctx.fillStyle = '#166534';
-          else if (row <= 3) ctx.fillStyle = row <= 1 ? '#14532d' : '#1d4ed8';
-          else if (row <= 6) ctx.fillStyle = '#374151';
+          else if (RIVER_ROWS.includes(row)) ctx.fillStyle = '#1d4ed8';
+          else if (row === 1 || row === SAFE_MID_ROW) ctx.fillStyle = '#14532d';
+          else if (isRoadRow(row)) ctx.fillStyle = '#374151';
           else ctx.fillStyle = '#15803d';
           ctx.fillRect(0, y, canvas.width, h + 1);
 
@@ -383,7 +391,7 @@ def render_not_found_page(*, path: str | None = None) -> str:
             }}
           }}
 
-          if (row >= 7 && row <= 9) {{
+          if (isRoadRow(row)) {{
             ctx.strokeStyle = 'rgba(255,255,255,0.12)';
             ctx.lineWidth = 1;
             ctx.beginPath();
