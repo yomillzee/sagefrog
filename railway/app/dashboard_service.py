@@ -469,11 +469,26 @@ def _build_budget_pacing_payload(
     pct_month = round(100 * len(labels) / days_in_month, 1)
     pct_budget = round(100 * mtd_spend / budget, 1) if budget > 0 else None
 
+    pacing_platforms = [
+        {"id": pid, "label": PLATFORM_LABELS[pid]}
+        for pid in ("google", "linkedin", "meta")
+        if daily_spend_by_platform.get(pid)
+        or (
+            pid == "google"
+            and cfg.google_customer_id
+            or pid == "linkedin"
+            and cfg.linkedin_account_id
+            or pid == "meta"
+            and cfg.meta_account_id
+        )
+    ]
+
     return {
         "labels": labels,
         "cumulative_spend": cumulative,
         "pace_line": pace_line,
         "daily_spend_by_platform": daily_spend_by_platform,
+        "platforms": pacing_platforms,
         "monthly_budget": budget,
         "month_label": month_start.strftime("%B %Y"),
         "days_in_month": days_in_month,
@@ -528,6 +543,10 @@ def _budget_pacing_panel_html(
                     {save_form}
                   </div>
                 </div>
+              </div>
+              <div class="budget-pacing-slicers">
+                <span class="filter-column-label">Platforms</span>
+                <div id="budgetPacingPlatformSlicers" class="filter-toggles" role="group" aria-label="Budget pacing platforms"></div>
               </div>
               <div class="budget-pacing-stats" id="budgetPacingStats">
                 <div class="budget-pacing-stat">
@@ -4500,6 +4519,16 @@ def render_penn_html(
     .budget-pacing-save-form {{
       margin: 0;
     }}
+    .budget-pacing-slicers {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 16px;
+      padding: 0 22px 14px;
+    }}
+    .budget-pacing-slicers .filter-column-label {{
+      margin-bottom: 0;
+    }}
     .budget-pacing-stats {{
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -5618,6 +5647,7 @@ def render_penn_html(
       cumulative_spend: [],
       pace_line: [],
       daily_spend_by_platform: {{}},
+      platforms: [],
       monthly_budget: 0,
       days_in_month: 30,
       pct_month_elapsed: 0,
@@ -5625,6 +5655,8 @@ def render_penn_html(
     let performanceChartInstance = null;
     let budgetPacingChartInstance = null;
     let budgetPacingBudget = Number(budgetPacingRaw.monthly_budget || 0);
+    const budgetPacingPlatformCatalog = budgetPacingRaw.platforms || [];
+    const budgetPacingPlatformState = new Set(budgetPacingPlatformCatalog.map(item => item.id));
 
     function formatDailyLabel(dateStr) {{
       const s = String(dateStr).slice(0, 10);
@@ -5770,14 +5802,60 @@ def render_penn_html(
     }});
     syncMetricToggleButtons();
 
-    function paidChartPlatforms() {{
-      return activeChartPlatforms().filter(id => id !== 'organic');
+    function budgetPacingActivePlatforms() {{
+      if (!budgetPacingPlatformCatalog.length) {{
+        return ['google', 'linkedin', 'meta'];
+      }}
+      return budgetPacingPlatformCatalog
+        .filter(item => budgetPacingPlatformState.has(item.id))
+        .map(item => item.id);
+    }}
+
+    function syncBudgetPacingPlatformSlicers() {{
+      const wrap = document.getElementById('budgetPacingPlatformSlicers');
+      if (!wrap) return;
+      wrap.querySelectorAll('.filter-toggle').forEach(btn => {{
+        const on = budgetPacingPlatformState.has(btn.dataset.id);
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }});
+    }}
+
+    function initBudgetPacingPlatformSlicers() {{
+      const wrap = document.getElementById('budgetPacingPlatformSlicers');
+      if (!wrap) return;
+      wrap.innerHTML = '';
+      if (!budgetPacingPlatformCatalog.length) {{
+        wrap.innerHTML = '<span class="muted">No paid platform spend this month yet.</span>';
+        return;
+      }}
+      for (const item of budgetPacingPlatformCatalog) {{
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `filter-toggle t-${{item.id}}`;
+        btn.textContent = item.label;
+        btn.dataset.id = item.id;
+        btn.setAttribute('aria-pressed', budgetPacingPlatformState.has(item.id) ? 'true' : 'false');
+        if (budgetPacingPlatformState.has(item.id)) btn.classList.add('active');
+        btn.addEventListener('click', () => {{
+          if (budgetPacingPlatformState.has(item.id)) {{
+            if (budgetPacingPlatformState.size <= 1) return;
+            budgetPacingPlatformState.delete(item.id);
+          }} else {{
+            budgetPacingPlatformState.add(item.id);
+          }}
+          syncBudgetPacingPlatformSlicers();
+          refreshBudgetPacingChart();
+        }});
+        wrap.appendChild(btn);
+      }}
+      syncBudgetPacingPlatformSlicers();
     }}
 
     function buildBudgetPacingSeries() {{
       const labels = budgetPacingRaw.labels || [];
       const byPlatform = budgetPacingRaw.daily_spend_by_platform || {{}};
-      const platforms = paidChartPlatforms();
+      const platforms = budgetPacingActivePlatforms();
       let running = 0;
       const cumulative = labels.map(dayKey => {{
         const daySpend = platforms.reduce(
@@ -5903,6 +5981,7 @@ def render_penn_html(
       budgetPacingBudget = Math.max(0, Number(budgetPacingInput.value || 0));
       refreshBudgetPacingChart();
     }});
+    initBudgetPacingPlatformSlicers();
     refreshBudgetPacingChart();
 
     function showAndreToast() {{
@@ -6133,7 +6212,6 @@ def render_penn_html(
     function applyGlobalFilters() {{
       applyBlView();
       applyOverviewFilters();
-      refreshBudgetPacingChart();
       renderGa4Pages();
     }}
 
