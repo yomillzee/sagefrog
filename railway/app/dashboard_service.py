@@ -831,6 +831,7 @@ def refresh_client(
             payload["ga4_pages"] = ga4_page_service.fetch_pages_for_dashboard(
                 date_range=preset,
                 client_key=cfg.ga4_client_key,
+                client_slug=cfg.client_key,
             )
         except Exception as exc:
             payload["errors"]["ga4_pages"] = _platform_error(exc)
@@ -2713,10 +2714,22 @@ def render_time_tracking_page(
 </html>"""
 
 
-def _ga4_website_search_html(*, has_pages: bool) -> str:
+def _ga4_website_search_html(
+    *,
+    has_pages: bool,
+    show_segment_filters: bool = False,
+    segment_filter_label: str = "Business line",
+) -> str:
     if not has_pages:
         return ""
-    return """
+    segment_filters = ""
+    if show_segment_filters:
+        segment_filters = f"""
+          <div class="website-segment-filters">
+            <span class="filter-label">{_esc(segment_filter_label)}</span>
+            <div class="filter-toggles" id="ga4BlFilters" role="group" aria-label="{_esc(segment_filter_label)}"></div>
+          </div>"""
+    return f"""
         <div class="website-search-bar">
           <div class="website-traffic-filters">
             <span class="filter-label">Traffic</span>
@@ -2726,7 +2739,7 @@ def _ga4_website_search_html(*, has_pages: bool) -> str:
               <button type="button" class="filter-toggle t-linkedin" data-source="linkedin" aria-pressed="false">LinkedIn</button>
               <button type="button" class="filter-toggle t-meta" data-source="meta" aria-pressed="false">Meta</button>
             </div>
-          </div>
+          </div>{segment_filters}
           <label for="ga4PageSearch" class="filter-label">Search pages</label>
           <input type="search" id="ga4PageSearch" class="ga4-pages-search"
             placeholder="Filter by page path or title…" autocomplete="off">
@@ -2759,7 +2772,7 @@ def _ga4_website_content_html(ga4_pages: dict[str, Any] | None) -> str:
             "from Settings after GA4 BigQuery is connected.</p>"
         )
     return f"""
-        <p class="table-note muted" id="ga4PagesTableNote">Site-wide GA4 metrics{f' for {range_label}' if range_label else ''}. Filter by paid traffic source to see click-ID landing pages (gclid, li_fat_id, fbclid).</p>
+        <p class="table-note muted" id="ga4PagesTableNote">Site-wide GA4 metrics{f' for {range_label}' if range_label else ''}. Filter by paid traffic source to see click-ID landing pages (gclid, li_fat_id, fbclid). Use business line filters to match campaign, path, and title keywords.</p>
         <div class="table-wrap">
           <table class="data-table ga4-pages-table" id="ga4PagesTable">
             <thead>
@@ -3889,7 +3902,11 @@ def render_penn_html(
         show_product_line_column=show_product_line_filters,
     )
     website_analytics_html = _ga4_website_content_html(ga4_pages_report if has_ga4 else None)
-    website_search_html = _ga4_website_search_html(has_pages=has_ga4_pages)
+    website_search_html = _ga4_website_search_html(
+        has_pages=has_ga4_pages,
+        show_segment_filters=show_segment_filters,
+        segment_filter_label=seg_filter_label,
+    )
     ga4_metrics_html = _ga4_metrics_summary_html(has_summary=has_ga4_summary)
     website_tab_panel = ""
     if has_ga4:
@@ -5156,6 +5173,14 @@ def render_penn_html(
       flex: 1 1 100%;
       min-width: 0;
     }}
+    .website-segment-filters {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 14px;
+      flex: 1 1 100%;
+      min-width: 0;
+    }}
     .ga4-traffic-filter-note {{
       margin: 0 0 14px;
       font-size: 0.86rem;
@@ -5685,6 +5710,7 @@ def render_penn_html(
 
     const SHOW_SEGMENT_FILTERS = {'true' if show_segment_filters else 'false'};
     const SHOW_PRODUCT_LINE_FILTERS = {'true' if show_product_line_filters else 'false'};
+    const GA4_SEGMENT_FILTER_LABEL = {_json_for_html_script(seg_filter_label)};
     const SHOW_BUDGET_PACING = {'true' if show_budget_pacing else 'false'};
     const PAID_PLATFORM_IDS = new Set(['google', 'linkedin', 'meta']);
     const SEGMENT_FILTER_ALL_LABEL = {_json_for_html_script(seg_filter_all_label)};
@@ -6785,7 +6811,87 @@ def render_penn_html(
       let ga4PageQuery = '';
       let ga4PageNum = 1;
       let ga4TrafficSource = 'all';
+      const ga4BlState = new Set();
       const GA4_PAGE_SIZE = 10;
+
+      function rowMatchesGa4SegmentFilter(row) {{
+        if (!SHOW_SEGMENT_FILTERS || !blCatalog.length) return true;
+        if (isAllSelected(ga4BlState, blCatalog)) return true;
+        const selected = effectiveFilterIds(ga4BlState, blCatalog);
+        const ids = Array.isArray(row.region_ids) && row.region_ids.length
+          ? row.region_ids
+          : [row.business_line];
+        return ids.some(id => selected.includes(id));
+      }}
+
+      function filterGa4PagesBySegment(rows) {{
+        if (!SHOW_SEGMENT_FILTERS || !blCatalog.length) return rows;
+        if (isAllSelected(ga4BlState, blCatalog)) return rows;
+        return rows.filter(rowMatchesGa4SegmentFilter);
+      }}
+
+      function syncGa4BlFilterButtons() {{
+        const wrap = document.getElementById('ga4BlFilters');
+        if (!wrap) return;
+        wrap.querySelectorAll('.filter-toggle').forEach(btn => {{
+          if (btn.dataset.id === '__all__') {{
+            const on = isAllSelected(ga4BlState, blCatalog);
+            btn.classList.toggle('active', on);
+            btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+            return;
+          }}
+          const on = ga4BlState.has(btn.dataset.id);
+          btn.classList.toggle('active', on);
+          btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }});
+      }}
+
+      function initGa4BlFilters() {{
+        const wrap = document.getElementById('ga4BlFilters');
+        if (!wrap || !SHOW_SEGMENT_FILTERS || !blCatalog.length) return;
+        wrap.innerHTML = '';
+
+        const allBtn = document.createElement('button');
+        allBtn.type = 'button';
+        allBtn.className = 'filter-toggle filter-toggle--all';
+        allBtn.textContent = 'All';
+        allBtn.dataset.id = '__all__';
+        allBtn.setAttribute('aria-pressed', 'false');
+        allBtn.addEventListener('click', () => {{
+          const allOn = ga4BlState.size === blCatalog.length;
+          ga4BlState.clear();
+          if (!allOn) {{
+            blCatalog.forEach(item => ga4BlState.add(item.id));
+          }}
+          syncGa4BlFilterButtons();
+          ga4PageNum = 1;
+          renderGa4Pages();
+        }});
+        wrap.appendChild(allBtn);
+
+        for (const item of blCatalog) {{
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'filter-toggle t-bl';
+          btn.textContent = item.label;
+          btn.dataset.id = item.id;
+          btn.setAttribute('aria-pressed', 'false');
+          btn.addEventListener('click', () => {{
+            if (ga4BlState.has(item.id)) {{
+              ga4BlState.delete(item.id);
+            }} else {{
+              ga4BlState.add(item.id);
+            }}
+            syncGa4BlFilterButtons();
+            ga4PageNum = 1;
+            renderGa4Pages();
+          }});
+          wrap.appendChild(btn);
+        }}
+        syncGa4BlFilterButtons();
+      }}
+
+      initGa4BlFilters();
 
       function ga4ActivePages() {{
         if (ga4TrafficSource === 'all') return ga4Pages;
@@ -6901,9 +7007,13 @@ def render_penn_html(
 
       renderGa4Pages = function() {{
         const sourcePages = ga4ActivePages();
-        const filtered = filterGa4Pages(sourcePages);
+        const bySegment = filterGa4PagesBySegment(sourcePages);
+        const filtered = filterGa4Pages(bySegment);
         const sorted = sortGa4Pages(filtered);
-        const isFiltered = !!ga4PageQuery.trim() || ga4TrafficSource !== 'all';
+        const segmentFiltered = SHOW_SEGMENT_FILTERS
+          && blCatalog.length
+          && !isAllSelected(ga4BlState, blCatalog);
+        const isFiltered = !!ga4PageQuery.trim() || ga4TrafficSource !== 'all' || segmentFiltered;
         renderGa4MetricsSummary(filtered, isFiltered);
         const totalPages = Math.max(1, Math.ceil(sorted.length / GA4_PAGE_SIZE));
         if (ga4PageNum > totalPages) ga4PageNum = totalPages;
@@ -6914,7 +7024,9 @@ def render_penn_html(
         if (!sorted.length) {{
           const emptyMsg = ga4TrafficSource !== 'all' && !sourcePages.length
             ? 'No landing pages for this traffic source yet. Run a full refresh after GA4 BigQuery is connected.'
-            : 'No pages match your search.';
+            : segmentFiltered
+              ? `No pages match the selected ${{GA4_SEGMENT_FILTER_LABEL.toLowerCase()}} filters.`
+              : 'No pages match your search.';
           ga4PagesBody.innerHTML = `<tr><td colspan="8" class="muted" style="padding:24px;text-align:center">${{escHtml(emptyMsg)}}</td></tr>`;
           renderGa4Pagination(0, 1, GA4_PAGE_SIZE);
           updateGa4SortHeaders();
@@ -6943,7 +7055,7 @@ def render_penn_html(
       ga4PagesPagination?.addEventListener('click', e => {{
         const btn = e.target.closest('[data-page]');
         if (!btn || btn.disabled) return;
-        const total = sortGa4Pages(filterGa4Pages(ga4ActivePages())).length;
+        const total = sortGa4Pages(filterGa4Pages(filterGa4PagesBySegment(ga4ActivePages()))).length;
         const totalPages = Math.max(1, Math.ceil(total / GA4_PAGE_SIZE));
         if (btn.dataset.page === 'prev' && ga4PageNum > 1) {{
           ga4PageNum -= 1;

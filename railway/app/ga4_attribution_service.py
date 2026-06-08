@@ -731,6 +731,7 @@ def _landing_pages_sql_suffix(
       SELECT
         s.platform,
         s.attribution_tier,
+        s.campaign_name,
         fl.page_path,
         fl.page_title,
         s.user_pseudo_id,
@@ -752,6 +753,7 @@ def _landing_pages_sql_suffix(
       GROUP BY
         s.platform,
         s.attribution_tier,
+        s.campaign_name,
         fl.page_path,
         fl.page_title,
         s.user_pseudo_id,
@@ -760,6 +762,7 @@ def _landing_pages_sql_suffix(
     )
     SELECT
       platform,
+      campaign_name,
       page_path,
       page_title,
       COUNT(*) AS sessions,
@@ -773,63 +776,33 @@ def _landing_pages_sql_suffix(
       SUM(page_views) AS page_views,
       SUM(key_events) AS key_events
     FROM landing_session_metrics
-    GROUP BY platform, page_path, page_title
+    GROUP BY platform, campaign_name, page_path, page_title
     ORDER BY platform, sessions DESC
     LIMIT {row_limit}
     """
 
 
-def fetch_landing_pages_by_platform(
+def fetch_landing_page_rows(
     *,
     start: date,
     end: date,
     target: Ga4ClientTarget | None = None,
     limit: int = 500,
-) -> dict[str, list[dict[str, Any]]]:
-    """Landing page metrics for paid sessions, split by platform (gclid, li_fat_id, fbclid, etc.)."""
+) -> list[dict[str, Any]]:
+    """Granular paid landing page rows (platform, campaign, path) from BigQuery."""
     _ensure_bq_ready()
     target = target or resolve_target()
     suffix_start = start.strftime("%Y%m%d")
     suffix_end = end.strftime("%Y%m%d")
     table = _events_table(target)
-    row_limit = max(1, min(int(limit) * 3, 6000))
+    row_limit = max(1, min(int(limit) * 6, 12000))
     sql = _attribution_base_sql(table, suffix_start, suffix_end) + _landing_pages_sql_suffix(
         table=table,
         suffix_start=suffix_start,
         suffix_end=suffix_end,
         row_limit=row_limit,
     )
-    rows = run_query(sql, max_rows=row_limit, project_id=target.bq_project_id)
-    per_platform: dict[str, list[dict[str, Any]]] = {
-        "google": [],
-        "linkedin": [],
-        "meta": [],
-    }
-    per_limit = max(1, min(int(limit), 2000))
-    for row in rows:
-        platform = str(row.get("platform") or "").strip().lower()
-        if platform not in per_platform:
-            continue
-        if len(per_platform[platform]) >= per_limit:
-            continue
-        path = str(row.get("page_path") or "").strip()
-        if not path:
-            continue
-        sessions = int(row.get("sessions") or 0)
-        engaged = int(row.get("engaged_sessions") or 0)
-        per_platform[platform].append(
-            {
-                "page_path": path,
-                "page_title": str(row.get("page_title") or "(not set)").strip() or "(not set)",
-                "page_views": int(row.get("page_views") or 0),
-                "sessions": sessions,
-                "users": int(row.get("users") or 0),
-                "engaged_sessions": engaged,
-                "engagement_rate": round(engaged / sessions, 4) if sessions else 0.0,
-                "key_events": int(row.get("key_events") or 0),
-            }
-        )
-    return per_platform
+    return run_query(sql, max_rows=row_limit, project_id=target.bq_project_id)
 
 
 LANDING_PAGE_ATTRIBUTION_LABELS: dict[str, str] = {
