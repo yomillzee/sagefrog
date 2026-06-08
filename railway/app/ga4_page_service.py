@@ -9,6 +9,152 @@ from bigquery_service import env_summary, run_query
 from dates_util import resolve_date_range
 from ga4_attribution_service import KEY_EVENT_NAMES
 from ga4_clients import Ga4ClientTarget, resolve_target
+from penn_business_lines import classify_business_line, client_filter_profile
+
+
+def _load_custom_business_line_rules(client_slug: str) -> list[tuple[str, str, tuple[str, ...]]] | None:
+    slug = (client_slug or "").strip().lower()
+    if slug != "penn":
+        return None
+    try:
+        import business_line_rules as bl_rules
+
+        return bl_rules.rules_as_tuples(slug)
+    except Exception:
+        return None
+
+
+def classify_page_segment(
+    *,
+    page_path: str,
+    page_title: str,
+    campaign_name: str = "",
+    client_slug: str,
+) -> dict[str, Any]:
+    """Keyword-based segment tag for a page (business line or Nixon region)."""
+    texts = tuple(
+        t.strip()
+        for t in (campaign_name, page_path, page_title)
+        if (t or "").strip()
+    )
+    primary = texts[0] if texts else (page_path or page_title or "—")
+    extras = texts[1:]
+    profile = client_filter_profile(client_slug)
+    custom_rules = _load_custom_business_line_rules(client_slug)
+
+    if profile == "nixon":
+        from nixon_regions import classify_regions
+
+        region_ids, label = classify_regions(primary, extra_names=extras)
+        primary_id = region_ids[0] if region_ids else "other"
+        return {
+            "business_line": primary_id,
+            "business_line_label": label,
+            "region_ids": region_ids,
+        }
+
+    bid, label = classify_business_line(
+        primary,
+        extra_names=extras,
+        custom_rules=custom_rules,
+    )
+    return {
+        "business_line": bid,
+        "business_line_label": label,
+        "region_ids": [bid],
+    }
+
+
+def _merge_page_metrics(existing: dict[str, Any], row: dict[str, Any]) -> None:
+    existing["page_views"] += int(row.get("page_views") or 0)
+    existing["sessions"] += int(row.get("sessions") or 0)
+    existing["users"] += int(row.get("users") or 0)
+    existing["engaged_sessions"] += int(row.get("engaged_sessions") or 0)
+    existing["key_events"] += int(row.get("key_events") or 0)
+    sessions = int(existing["sessions"])
+    engaged = int(existing["engaged_sessions"])
+    existing["engagement_rate"] = round(engaged / sessions, 4) if sessions else 0.0
+
+
+def aggregate_landing_rows_by_platform(
+    rows: list[dict[str, Any]],
+    *,
+    client_slug: str,
+    limit: int = 500,
+) -> dict[str, list[dict[str, Any]]]:
+    per_platform: dict[str, dict[tuple[str, str, str], dict[str, Any]]] = {
+        "google": {},
+        "linkedin": {},
+        "meta": {},
+    }
+    for row in rows:
+        platform = str(row.get("platform") or "").strip().lower()
+        if platform not in per_platform:
+            continue
+        path = str(row.get("page_path") or "").strip()
+        if not path:
+            continue
+        title = str(row.get("page_title") or "(not set)").strip() or "(not set)"
+        campaign_name = str(row.get("campaign_name") or "").strip()
+        segment = classify_page_segment(
+            page_path=path,
+            page_title=title,
+            campaign_name=campaign_name,
+            client_slug=client_slug,
+        )
+        seg_id = str(segment["business_line"])
+        bucket_key = (seg_id, path, title)
+        buckets = per_platform[platform]
+        sessions = int(row.get("sessions") or 0)
+        engaged = int(row.get("engaged_sessions") or 0)
+        if bucket_key not in buckets:
+            buckets[bucket_key] = {
+                "page_path": path,
+                "page_title": title,
+                "page_views": int(row.get("page_views") or 0),
+                "sessions": sessions,
+                "users": int(row.get("users") or 0),
+                "engaged_sessions": engaged,
+                "engagement_rate": round(engaged / sessions, 4) if sessions else 0.0,
+                "key_events": int(row.get("key_events") or 0),
+                "business_line": seg_id,
+                "business_line_label": segment["business_line_label"],
+                "region_ids": list(segment.get("region_ids") or [seg_id]),
+            }
+        else:
+            _merge_page_metrics(buckets[bucket_key], row)
+
+    per_limit = max(1, min(int(limit), 2000))
+    out: dict[str, list[dict[str, Any]]] = {"google": [], "linkedin": [], "meta": []}
+    for platform, buckets in per_platform.items():
+        sorted_rows = sorted(
+            buckets.values(),
+            key=lambda item: (item.get("sessions") or 0, item.get("page_views") or 0),
+            reverse=True,
+        )
+        out[platform] = sorted_rows[:per_limit]
+    return out
+
+
+def annotate_site_pages_with_segment(
+    pages: list[dict[str, Any]],
+    *,
+    client_slug: str,
+) -> list[dict[str, Any]]:
+    profile = client_filter_profile(client_slug)
+    if not profile:
+        return pages
+    annotated: list[dict[str, Any]] = []
+    for page in pages:
+        item = dict(page)
+        segment = classify_page_segment(
+            page_path=str(item.get("page_path") or ""),
+            page_title=str(item.get("page_title") or ""),
+            client_slug=client_slug,
+        )
+        item.update(segment)
+        annotated.append(item)
+    return annotated
 
 
 def _events_table(target: Ga4ClientTarget) -> str:
@@ -204,21 +350,24 @@ def fetch_pages_for_dashboard(
     *,
     date_range: str = "LAST_30_DAYS",
     client_key: str | None = None,
+    client_slug: str | None = None,
     limit: int = 500,
 ) -> dict[str, Any]:
     from ga4_attribution_service import (
         LANDING_PAGE_ATTRIBUTION_LABELS,
-        fetch_landing_pages_by_platform,
+        fetch_landing_page_rows,
     )
 
     target = resolve_target(client_key=client_key)
+    slug = (client_slug or client_key or target.client_key or "").strip().lower()
     start, end, preset = resolve_date_range(date_range)
     pages = fetch_page_metrics(start=start, end=end, target=target, limit=limit)
+    pages = annotate_site_pages_with_segment(pages, client_slug=slug)
     summary = fetch_site_metrics_summary(start=start, end=end, target=target)
-    pages_by_platform = fetch_landing_pages_by_platform(
-        start=start,
-        end=end,
-        target=target,
+    raw_landing_rows = fetch_landing_page_rows(start=start, end=end, target=target, limit=limit)
+    pages_by_platform = aggregate_landing_rows_by_platform(
+        raw_landing_rows,
+        client_slug=slug,
         limit=limit,
     )
     return {
