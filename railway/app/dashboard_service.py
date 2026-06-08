@@ -35,6 +35,7 @@ from penn_business_lines import (
     active_client_segment_catalog,
     active_platform_catalog,
     build_client_segment_campaigns,
+    client_filter_profile,
     client_has_product_line_filters,
     client_has_segment_filters,
     platform_catalog,
@@ -570,6 +571,7 @@ def refresh_client(
     payload["business_line_campaigns"] = build_client_segment_campaigns(
         breakdowns,
         client_slug=cfg.client_key,
+        filter_profile=client_filter_profile(cfg.client_key, cfg=cfg),
     )
 
     if cfg.ga4_client_key:
@@ -674,7 +676,9 @@ def refresh_client_quick(
         "ga4_attribution": existing.get("ga4_attribution"),
         "ga4_pages": existing.get("ga4_pages"),
         "business_line_campaigns": build_client_segment_campaigns(
-            breakdowns, client_slug=cfg.client_key
+            breakdowns,
+            client_slug=cfg.client_key,
+            filter_profile=client_filter_profile(cfg.client_key, cfg=cfg),
         ),
         "refresh_mode": "warehouse",
     }
@@ -3319,8 +3323,18 @@ def _business_line_campaigns_from_snapshot(snapshot: dict[str, Any]) -> list[dic
     """Derive campaign rows from breakdowns when not stored on the snapshot."""
     client_key = str(snapshot.get("client_key") or "penn")
     breakdowns = _breakdowns_from_snapshot(snapshot)
-    if client_has_segment_filters(client_key):
-        return build_client_segment_campaigns(breakdowns, client_slug=client_key)
+    accounts = snapshot.get("accounts") or {}
+    filter_profile = client_filter_profile(
+        client_key,
+        label=str(snapshot.get("label") or ""),
+        ga4_client_key=str(accounts.get("ga4_client_key") or ""),
+    )
+    if filter_profile:
+        return build_client_segment_campaigns(
+            breakdowns,
+            client_slug=client_key,
+            filter_profile=filter_profile,
+        )
     stored = snapshot.get("business_line_campaigns") or []
     if stored:
         return stored
@@ -3415,14 +3429,21 @@ def render_penn_html(
     """use_session: refresh forms omit ?key= (cookie auth). access_key: legacy shared secret."""
     slug = (client_slug or "penn").strip().lower()
     theme = dashboard_theme.load_client_theme(slug)
-    show_segment_filters = client_has_segment_filters(slug)
-    seg_filter_label = segment_filter_label(slug)
-    seg_column_label = segment_column_label(slug)
+    try:
+        empty_cfg = client_config.load_client_config(slug)
+    except Exception:
+        empty_cfg = None
+    try:
+        empty_label = client_config.client_label(slug)
+    except ValueError:
+        empty_label = slug.replace("-", " ").title()
+    filter_kwargs = {"cfg": empty_cfg, "label": empty_label}
+    show_segment_filters = client_has_segment_filters(slug, **filter_kwargs)
+    show_product_line_filters = client_has_product_line_filters(slug, **filter_kwargs)
+    seg_filter_label = segment_filter_label(slug, **filter_kwargs)
+    seg_column_label = segment_column_label(slug, **filter_kwargs)
     if not snapshot:
-        try:
-            label = client_config.client_label(slug)
-        except ValueError:
-            label = slug.replace("-", " ").title()
+        label = empty_label
         settings_page = _settings_page_url(
             client_slug=slug, access_key=access_key, use_session=use_session
         )
@@ -3460,10 +3481,20 @@ def render_penn_html(
 
     label = snapshot.get("label") or client_config.client_label(slug)
     client_slug = str(snapshot.get("client_key") or slug)
-    show_segment_filters = client_has_segment_filters(client_slug)
-    show_product_line_filters = client_has_product_line_filters(client_slug)
-    seg_filter_label = segment_filter_label(client_slug)
-    seg_column_label = segment_column_label(client_slug)
+    try:
+        client_cfg = client_config.load_client_config(slug)
+    except Exception:
+        client_cfg = None
+    filter_kwargs = {
+        "cfg": client_cfg,
+        "label": str(label or ""),
+        "ga4_client_key": str((snapshot.get("accounts") or {}).get("ga4_client_key") or ""),
+    }
+    filter_profile = client_filter_profile(client_slug, **filter_kwargs)
+    show_segment_filters = client_has_segment_filters(client_slug, **filter_kwargs)
+    show_product_line_filters = client_has_product_line_filters(client_slug, **filter_kwargs)
+    seg_filter_label = segment_filter_label(client_slug, **filter_kwargs)
+    seg_column_label = segment_column_label(client_slug, **filter_kwargs)
     seg_filter_all_label = f"All {seg_filter_label.lower()}s"
     dr = snapshot.get("date_range") or {}
     refreshed = snapshot.get("refreshed_at") or "—"
@@ -3532,13 +3563,22 @@ def render_penn_html(
     bl_campaigns = _business_line_campaigns_from_snapshot(snapshot)
     bl_campaigns_json = _json_for_html_script(bl_campaigns)
     bl_catalog_json = _json_for_html_script(
-        active_client_segment_catalog(bl_campaigns, client_slug=client_slug)
+        active_client_segment_catalog(
+            bl_campaigns,
+            client_slug=client_slug,
+            filter_profile=filter_profile,
+        )
     )
     product_line_catalog_json = _json_for_html_script(
-        active_client_product_line_catalog(bl_campaigns, client_slug=client_slug)
+        active_client_product_line_catalog(
+            bl_campaigns,
+            client_slug=client_slug,
+            filter_profile=filter_profile,
+        )
     )
     try:
-        client_cfg = client_config.load_client_config(slug)
+        if client_cfg is None:
+            client_cfg = client_config.load_client_config(slug)
     except Exception:
         client_cfg = None
     platform_catalog_list = active_platform_catalog(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 # (id, label, keyword substrings — first match wins)
@@ -238,33 +239,113 @@ def _campaign_rows_from_breakdowns(breakdowns: dict[str, Any]) -> list[dict[str,
     return rows
 
 
-def client_has_segment_filters(client_slug: str) -> bool:
-    slug = (client_slug or "").strip().lower()
-    return slug in ("penn", "nixon")
+def _nixon_filter_slugs() -> set[str]:
+    raw = (os.getenv("NIXON_FILTER_SLUGS") or "nixon,demo").strip()
+    return {s.strip().lower() for s in raw.split(",") if s.strip()}
 
 
-def segment_filter_label(client_slug: str) -> str:
+def client_filter_profile(
+    client_slug: str,
+    *,
+    cfg: Any | None = None,
+    label: str | None = None,
+    ga4_client_key: str | None = None,
+) -> str | None:
+    """Return filter profile: ``penn`` (business lines), ``nixon`` (regions), or None."""
     slug = (client_slug or "").strip().lower()
-    if slug == "nixon":
+    if slug == "penn":
+        return "penn"
+    if slug in _nixon_filter_slugs():
+        return "nixon"
+
+    ga4 = (ga4_client_key or "").strip().lower()
+    if not ga4 and cfg is not None:
+        ga4 = str(getattr(cfg, "ga4_client_key", "") or "").strip().lower()
+    if ga4 == "nixon":
+        return "nixon"
+
+    resolved_label = (label or "").strip().lower()
+    if not resolved_label and cfg is not None:
+        resolved_label = str(getattr(cfg, "label", "") or "").strip().lower()
+    if "nixon" in resolved_label:
+        return "nixon"
+    return None
+
+
+def client_has_segment_filters(
+    client_slug: str,
+    *,
+    cfg: Any | None = None,
+    label: str | None = None,
+    ga4_client_key: str | None = None,
+) -> bool:
+    return client_filter_profile(
+        client_slug,
+        cfg=cfg,
+        label=label,
+        ga4_client_key=ga4_client_key,
+    ) is not None
+
+
+def segment_filter_label(
+    client_slug: str,
+    *,
+    cfg: Any | None = None,
+    label: str | None = None,
+    ga4_client_key: str | None = None,
+) -> str:
+    profile = client_filter_profile(
+        client_slug,
+        cfg=cfg,
+        label=label,
+        ga4_client_key=ga4_client_key,
+    )
+    if profile == "nixon":
         return "Region"
     return "Business line"
 
 
-def segment_column_label(client_slug: str) -> str:
-    return segment_filter_label(client_slug)
+def segment_column_label(
+    client_slug: str,
+    *,
+    cfg: Any | None = None,
+    label: str | None = None,
+    ga4_client_key: str | None = None,
+) -> str:
+    return segment_filter_label(
+        client_slug,
+        cfg=cfg,
+        label=label,
+        ga4_client_key=ga4_client_key,
+    )
 
 
-def client_has_product_line_filters(client_slug: str) -> bool:
-    return (client_slug or "").strip().lower() == "nixon"
+def client_has_product_line_filters(
+    client_slug: str,
+    *,
+    cfg: Any | None = None,
+    label: str | None = None,
+    ga4_client_key: str | None = None,
+) -> bool:
+    return (
+        client_filter_profile(
+            client_slug,
+            cfg=cfg,
+            label=label,
+            ga4_client_key=ga4_client_key,
+        )
+        == "nixon"
+    )
 
 
 def active_client_product_line_catalog(
     campaigns: list[dict[str, Any]],
     *,
     client_slug: str,
+    filter_profile: str | None = None,
 ) -> list[dict[str, str]]:
-    slug = (client_slug or "").strip().lower()
-    if slug == "nixon":
+    profile = filter_profile or client_filter_profile(client_slug)
+    if profile == "nixon":
         from nixon_regions import active_product_line_catalog
 
         return active_product_line_catalog(campaigns)
@@ -275,9 +356,11 @@ def build_client_segment_campaigns(
     breakdowns: dict[str, Any],
     *,
     client_slug: str = "penn",
+    filter_profile: str | None = None,
 ) -> list[dict[str, Any]]:
     slug = (client_slug or "").strip().lower()
-    if slug == "nixon":
+    profile = filter_profile or client_filter_profile(slug)
+    if profile == "nixon":
         from nixon_regions import build_nixon_region_campaigns
 
         return build_nixon_region_campaigns(breakdowns)
@@ -288,9 +371,10 @@ def active_client_segment_catalog(
     campaigns: list[dict[str, Any]],
     *,
     client_slug: str,
+    filter_profile: str | None = None,
 ) -> list[dict[str, str]]:
-    slug = (client_slug or "").strip().lower()
-    if slug == "nixon":
+    profile = filter_profile or client_filter_profile(client_slug)
+    if profile == "nixon":
         from nixon_regions import active_region_catalog
 
         return active_region_catalog(campaigns)
