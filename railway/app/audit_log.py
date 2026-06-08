@@ -45,6 +45,9 @@ _ACTION_LABELS = {
     "dashboard.config_saved": "Saved dashboard config",
     "dashboard.created": "Created dashboard",
     "dashboard.deleted": "Deleted dashboard",
+    "dev_note.created": "Created dev note",
+    "dev_note.updated": "Updated dev note",
+    "dev_note.deleted": "Deleted dev note",
     "oauth.connected": "OAuth connected",
     "oauth.disconnected": "OAuth disconnected",
 }
@@ -183,6 +186,13 @@ def format_detail(event: dict[str, Any]) -> str:
         plat = detail.get("platform")
         if plat:
             parts.append(str(plat))
+    elif action in ("dev_note.created", "dev_note.updated", "dev_note.deleted"):
+        title = detail.get("title")
+        note_id = detail.get("note_id")
+        if title:
+            parts.append(str(title))
+        elif note_id:
+            parts.append(f"id={note_id}")
     elif detail:
         parts.append(
             ", ".join(f"{k}={v}" for k, v in detail.items() if v is not None and k != "reason")
