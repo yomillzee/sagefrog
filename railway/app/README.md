@@ -87,9 +87,16 @@ The shared `?key=` link still works when `CRON_SECRET` / `DASHBOARD_SECRET` is s
 
 Railway `BQ_PROJECT_ID` / `BQ_DATASET_ID` stay the **default** (e.g. Penn). Add other projects via **`GA4_CLIENTS`** (one-line JSON) or per-request overrides on sync.
 
-1. **IAM:** Grant your Railway service account **BigQuery Data Viewer** on each project (`penn-community-b-...`, `sagefrog`, `synergistix-497616`). Cross-project reads fail without this even if SQL is correct.
+1. **IAM:** Grant your Railway service account **BigQuery Data Viewer** on each project (`penn-community-b-...`, `nixon-medical`, `sagefrog`, `synergistix-497616`). Cross-project reads fail without this even if SQL is correct.
 
-2. **Registry (recommended for GPT):** set `GA4_CLIENTS` with slugs `penn`, `sagefrog`, `synergistix` and each project's `bq_dataset_id` (`analytics_XXXXX` from GA4 → BigQuery Link).
+2. **Registry (recommended for GPT):** set `GA4_CLIENTS` with slugs `penn`, `nixon`, `sagefrog`, `synergistix` and each project's `bq_dataset_id` (`analytics_XXXXX` from GA4 → BigQuery Link). Nixon Medical example:
+   ```json
+   "nixon": {
+     "label": "Nixon Medical",
+     "bq_project_id": "nixon-medical",
+     "bq_dataset_id": "analytics_256372599"
+   }
+   ```
 
 3. **Sync per client:**
    ```http

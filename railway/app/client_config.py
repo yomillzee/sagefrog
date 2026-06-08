@@ -17,6 +17,13 @@ _BUILTIN_CLIENTS: dict[str, dict[str, Any]] = {
         "meta_account_id": "",
         "ga4_client_key": "",
     },
+    "nixon": {
+        "label": "Nixon Medical",
+        "google_customer_id": "",
+        "linkedin_account_id": "",
+        "meta_account_id": "",
+        "ga4_client_key": "nixon",
+    },
 }
 
 
