@@ -33,6 +33,10 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config
       ADD COLUMN IF NOT EXISTS harvest_project_id TEXT
     """,
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS monthly_budget_usd NUMERIC(14,2)
+    """,
 ]
 
 
@@ -45,6 +49,7 @@ class ClientConfigRow:
     meta_account_id: str | None
     ga4_client_key: str | None
     harvest_project_id: str | None = None
+    monthly_budget_usd: float | None = None
     updated_at: str | None = None
     updated_by: str | None = None
 
@@ -77,7 +82,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         row = conn.execute(
             """
             SELECT client_slug, label, google_customer_id, linkedin_account_id,
-                   meta_account_id, ga4_client_key, harvest_project_id, updated_at, updated_by
+                   meta_account_id, ga4_client_key, harvest_project_id,
+                   monthly_budget_usd, updated_at, updated_by
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -85,7 +91,11 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         ).fetchone()
     if not row:
         return None
-    updated = row[7]
+    updated = row[8]
+    budget_raw = row[7]
+    budget: float | None = None
+    if budget_raw is not None:
+        budget = float(budget_raw)
     return ClientConfigRow(
         client_slug=str(row[0]),
         label=str(row[1] or ""),
@@ -94,8 +104,9 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         meta_account_id=str(row[4]).strip() if row[4] else None,
         ga4_client_key=str(row[5]).strip() if row[5] else None,
         harvest_project_id=str(row[6]).strip() if row[6] else None,
+        monthly_budget_usd=budget,
         updated_at=updated.isoformat() if updated else None,
-        updated_by=str(row[8]).strip() if row[8] else None,
+        updated_by=str(row[9]).strip() if row[9] else None,
     )
 
 
@@ -149,6 +160,51 @@ def save_config(
                 _clean(meta_account_id),
                 _clean(ga4_client_key),
                 _clean(harvest_project_id),
+                now,
+                (updated_by or "").strip() or None,
+            ),
+        )
+    saved = get_config(slug)
+    if not saved:
+        raise RuntimeError("Failed to load saved client config.")
+    return saved
+
+
+def save_monthly_budget(
+    client_slug: str,
+    monthly_budget_usd: float | None,
+    *,
+    updated_by: str | None = None,
+) -> ClientConfigRow:
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save client dashboard config.")
+    if monthly_budget_usd is not None and monthly_budget_usd < 0:
+        raise ValueError("Monthly budget must be zero or greater.")
+
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    existing = get_config(slug)
+    label = existing.label if existing else slug
+    with psycopg.connect(_get_db_url()) as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, monthly_budget_usd, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              monthly_budget_usd = EXCLUDED.monthly_budget_usd,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (
+                slug,
+                label,
+                monthly_budget_usd,
                 now,
                 (updated_by or "").strip() or None,
             ),
@@ -245,6 +301,7 @@ def as_dict(row: ClientConfigRow | None) -> dict[str, Any]:
         "meta_account_id": row.meta_account_id,
         "ga4_client_key": row.ga4_client_key,
         "harvest_project_id": row.harvest_project_id,
+        "monthly_budget_usd": row.monthly_budget_usd,
         "updated_at": row.updated_at,
         "updated_by": row.updated_by,
     }

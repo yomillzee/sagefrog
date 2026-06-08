@@ -152,6 +152,7 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
     ga4_key = _strip_env(str(entry.get("ga4_client_key") or "")) or (slug if slug in _BUILTIN_CLIENTS else "")
     label = _strip_env(str(entry.get("label") or "")) or _default_label(slug)
     harvest_project_id = _strip_env(str(entry.get("harvest_project_id") or "")) or None
+    monthly_budget_usd: float | None = None
 
     row = _get_db_row(slug)
     if row:
@@ -167,6 +168,8 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
             ga4_key = row.ga4_client_key
         if row.harvest_project_id:
             harvest_project_id = row.harvest_project_id
+        if row.monthly_budget_usd is not None:
+            monthly_budget_usd = row.monthly_budget_usd
 
     in_registry = False
     try:
@@ -194,4 +197,5 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
         meta_account_id=meta or None,
         ga4_client_key=ga4_key or slug,
         harvest_project_id=harvest_project_id,
+        monthly_budget_usd=monthly_budget_usd,
     )

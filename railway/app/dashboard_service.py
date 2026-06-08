@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 import html
 import json
 import os
@@ -29,6 +30,7 @@ import warehouse
 from dates_util import resolve_date_range
 from penn_config import PennDashboardConfig, load_penn_config
 import client_config
+import client_dashboard_config
 from penn_business_lines import (
     PLATFORM_LABELS,
     active_client_product_line_catalog,
@@ -361,6 +363,195 @@ def _penn_load_daily_metrics_from_warehouse(
         payload["aggregated_paid_media"] = _aggregated_paid_media(platform_totals)
     elif platform_totals != (payload.get("platform_totals") or {}):
         payload["platform_totals"] = platform_totals
+
+
+def parse_monthly_budget_input(raw: str | None) -> float | None:
+    text = (raw or "").strip().replace(",", "").replace("$", "")
+    if not text:
+        return None
+    val = float(text)
+    if val < 0:
+        raise ValueError("Monthly budget must be zero or greater.")
+    return val
+
+
+def _mtd_calendar_bounds(today: date | None = None) -> tuple[date, date, date]:
+    """Return (month_start, month_end, today) for budget pacing."""
+    current = today or date.today()
+    month_start = current.replace(day=1)
+    last_day = calendar.monthrange(current.year, current.month)[1]
+    month_end = current.replace(day=last_day)
+    return month_start, month_end, current
+
+
+def _paid_daily_spend_map(
+    daily_metrics: dict[str, Any],
+    *,
+    month_start: date,
+    through: date,
+) -> dict[str, float]:
+    start_key = month_start.isoformat()
+    end_key = through.isoformat()
+    out: dict[str, float] = {}
+    for platform in ("google", "linkedin", "meta"):
+        for row in daily_metrics.get(platform) or []:
+            key = str(row.get("metric_date") or "")[:10]
+            if not key or key < start_key or key > end_key:
+                continue
+            out[key] = out.get(key, 0.0) + float(row.get("spend") or 0)
+    return out
+
+
+def _load_mtd_daily_metrics(cfg: PennDashboardConfig) -> dict[str, Any]:
+    """Load paid-platform daily metrics for the current calendar month."""
+    month_start, _, today = _mtd_calendar_bounds()
+    payload: dict[str, Any] = {"daily_metrics": {}, "errors": {}}
+    if warehouse.enabled():
+        _penn_load_daily_metrics_from_warehouse(
+            cfg,
+            start=month_start,
+            end=today,
+            payload=payload,
+            ga4_account=None,
+            update_platform_totals=False,
+        )
+        return payload.get("daily_metrics") or {}
+    return {}
+
+
+def _build_budget_pacing_payload(
+    cfg: PennDashboardConfig,
+    *,
+    snapshot_daily_metrics: dict[str, Any] | None = None,
+    monthly_budget: float | None = None,
+) -> dict[str, Any]:
+    month_start, month_end, today = _mtd_calendar_bounds()
+    daily_metrics = _load_mtd_daily_metrics(cfg)
+    if not any(daily_metrics.get(p) for p in ("google", "linkedin", "meta")):
+        daily_metrics = snapshot_daily_metrics or {}
+    spend_by_day = _paid_daily_spend_map(
+        daily_metrics,
+        month_start=month_start,
+        through=today,
+    )
+    daily_spend_by_platform: dict[str, dict[str, float]] = {}
+    start_key = month_start.isoformat()
+    end_key = today.isoformat()
+    for platform in ("google", "linkedin", "meta"):
+        platform_map: dict[str, float] = {}
+        for row in daily_metrics.get(platform) or []:
+            key = str(row.get("metric_date") or "")[:10]
+            if not key or key < start_key or key > end_key:
+                continue
+            platform_map[key] = platform_map.get(key, 0.0) + float(row.get("spend") or 0)
+        daily_spend_by_platform[platform] = platform_map
+
+    labels: list[str] = []
+    cursor = month_start
+    while cursor <= today:
+        labels.append(cursor.isoformat())
+        cursor += timedelta(days=1)
+
+    cumulative: list[float] = []
+    running = 0.0
+    for day_key in labels:
+        running += spend_by_day.get(day_key, 0.0)
+        cumulative.append(round(running, 2))
+
+    days_in_month = calendar.monthrange(month_start.year, month_start.month)[1]
+    budget = float(monthly_budget if monthly_budget is not None else (cfg.monthly_budget_usd or 0))
+    pace_line = [
+        round(budget * ((idx + 1) / days_in_month), 2) if budget > 0 else 0.0
+        for idx in range(len(labels))
+    ]
+    mtd_spend = cumulative[-1] if cumulative else 0.0
+    expected_pace = round(budget * (len(labels) / days_in_month), 2) if budget > 0 else 0.0
+    pct_month = round(100 * len(labels) / days_in_month, 1)
+    pct_budget = round(100 * mtd_spend / budget, 1) if budget > 0 else None
+
+    return {
+        "labels": labels,
+        "cumulative_spend": cumulative,
+        "pace_line": pace_line,
+        "daily_spend_by_platform": daily_spend_by_platform,
+        "monthly_budget": budget,
+        "month_label": month_start.strftime("%B %Y"),
+        "days_in_month": days_in_month,
+        "month_end": month_end.isoformat(),
+        "mtd_spend": mtd_spend,
+        "expected_pace_today": expected_pace,
+        "pct_month_elapsed": pct_month,
+        "pct_budget_spent": pct_budget,
+    }
+
+
+def _budget_pacing_panel_html(
+    *,
+    client_slug: str,
+    pacing: dict[str, Any],
+    settings_url: str,
+    can_save_budget: bool,
+) -> str:
+    budget_val = pacing.get("monthly_budget") or 0
+    budget_input = f"{budget_val:.2f}".rstrip("0").rstrip(".") if budget_val else ""
+    pct_budget = pacing.get("pct_budget_spent")
+    pct_month = pacing.get("pct_month_elapsed")
+    pace_note = ""
+    if budget_val > 0 and pct_budget is not None:
+        if pct_budget > pct_month + 5:
+            pace_note = "Ahead of pace"
+        elif pct_budget < pct_month - 5:
+            pace_note = "Behind pace"
+        else:
+            pace_note = "On pace"
+    save_form = ""
+    if can_save_budget:
+        save_form = f"""
+                <form method="post" action="{_esc(settings_url)}" class="budget-pacing-save-form">
+                  <input type="hidden" name="action" value="save_budget">
+                  <input type="hidden" name="monthly_budget_usd" id="budgetPacingSaveValue" value="{_esc(budget_input)}">
+                  <button type="submit" class="btn secondary budget-pacing-save-btn">Save budget</button>
+                </form>"""
+    return f"""
+            <section class="panel budget-pacing-panel">
+              <div class="panel-head performance-trend-head">
+                <div class="panel-head-text">
+                  <h2>Budget pacing</h2>
+                  <p class="performance-trend-desc muted">Cumulative paid spend for {_esc(str(pacing.get("month_label") or "this month"))} vs a linear monthly budget target.</p>
+                </div>
+                <div class="budget-pacing-controls">
+                  <label for="budgetPacingInput">Monthly budget</label>
+                  <div class="budget-pacing-input-row">
+                    <span class="budget-pacing-currency">$</span>
+                    <input id="budgetPacingInput" type="number" min="0" step="100" placeholder="25000"
+                      value="{_esc(budget_input)}" inputmode="decimal" aria-label="Monthly budget in US dollars">
+                    {save_form}
+                  </div>
+                </div>
+              </div>
+              <div class="budget-pacing-stats" id="budgetPacingStats">
+                <div class="budget-pacing-stat">
+                  <span class="budget-pacing-stat-label">MTD spend</span>
+                  <strong id="budgetPacingMtd">{_fmt_money(float(pacing.get("mtd_spend") or 0))}</strong>
+                </div>
+                <div class="budget-pacing-stat">
+                  <span class="budget-pacing-stat-label">Budget</span>
+                  <strong id="budgetPacingBudget">{_fmt_money(budget_val) if budget_val else "—"}</strong>
+                </div>
+                <div class="budget-pacing-stat">
+                  <span class="budget-pacing-stat-label">Expected pace</span>
+                  <strong id="budgetPacingExpected">{_fmt_money(float(pacing.get("expected_pace_today") or 0)) if budget_val else "—"}</strong>
+                </div>
+                <div class="budget-pacing-stat">
+                  <span class="budget-pacing-stat-label">Status</span>
+                  <strong id="budgetPacingStatus">{_esc(pace_note or "—")}</strong>
+                </div>
+              </div>
+              <div class="performance-trend-chart-wrap budget-pacing-chart-wrap">
+                <p class="performance-trend-empty" id="budgetPacingEmpty">Enter a monthly budget to show the pacing line.</p>
+                <canvas id="budgetPacingChart"></canvas>
+              </div>
+            </section>"""
 
 
 def _load_organic_daily_metrics(
@@ -3647,6 +3838,34 @@ def render_penn_html(
     ga4_pages_json = _json_for_html_script((ga4_pages_report or {}).get("pages") or [])
     ga4_summary_json = _json_for_html_script((ga4_pages_report or {}).get("summary") or {})
     metric_defs_json = _json_for_html_script(dashboard_theme.chart_metric_defs(theme))
+    can_save_budget = session_is_admin if use_session else bool(access_key)
+    settings_url = _settings_page_url(
+        client_slug=slug, access_key=access_key, use_session=use_session
+    )
+    pacing_cfg = client_cfg
+    if pacing_cfg is None:
+        try:
+            pacing_cfg = client_config.load_client_config(slug)
+        except Exception:
+            pacing_cfg = PennDashboardConfig(
+                client_key=slug,
+                label=str(label or slug),
+                google_customer_id=None,
+                linkedin_account_id=None,
+                meta_account_id=None,
+                ga4_client_key=slug,
+            )
+    budget_pacing = _build_budget_pacing_payload(
+        pacing_cfg,
+        snapshot_daily_metrics=chart_data,
+    )
+    budget_pacing_json = _json_for_html_script(budget_pacing)
+    budget_pacing_html = _budget_pacing_panel_html(
+        client_slug=slug,
+        pacing=budget_pacing,
+        settings_url=settings_url,
+        can_save_budget=can_save_budget and client_dashboard_config.enabled(),
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -4242,6 +4461,73 @@ def render_penn_html(
     }}
     .performance-trend-empty.show {{
       display: block;
+    }}
+    .budget-pacing-panel {{
+      margin-top: 18px;
+    }}
+    .budget-pacing-controls {{
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      min-width: 220px;
+    }}
+    .budget-pacing-controls label {{
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }}
+    .budget-pacing-input-row {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }}
+    .budget-pacing-currency {{
+      color: var(--muted);
+      font-weight: 600;
+    }}
+    #budgetPacingInput {{
+      width: 140px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.95rem;
+    }}
+    .budget-pacing-save-form {{
+      margin: 0;
+    }}
+    .budget-pacing-stats {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      padding: 0 22px 16px;
+    }}
+    .budget-pacing-stat {{
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }}
+    .budget-pacing-stat-label {{
+      display: block;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }}
+    .budget-pacing-chart-wrap {{
+      padding: 0 22px 22px;
+    }}
+    @media (max-width: 900px) {{
+      .budget-pacing-stats {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .budget-pacing-controls {{ align-items: stretch; width: 100%; }}
+      .budget-pacing-input-row {{ justify-content: flex-start; }}
     }}
     .chart-subhead {{
       margin: 0 0 8px;
@@ -5226,6 +5512,8 @@ def render_penn_html(
                 <canvas id="performanceTrendChart"></canvas>
               </div>
             </section>
+
+            {budget_pacing_html}
           </div>
 
           <div id="view-campaigns" class="view-panel" role="tabpanel" hidden>
@@ -5246,6 +5534,7 @@ def render_penn_html(
     </div>
   </div>
   <div class="andre-toast" id="andreToast" role="status" aria-live="polite" hidden>Hello Andre</div>
+  <script type="application/json" id="budget-pacing-chart-data">{budget_pacing_json}</script>
   <script type="application/json" id="performance-chart-data">{performance_chart_json}</script>
   <script type="application/json" id="metric-defs-data">{metric_defs_json}</script>
   <script type="application/json" id="paid-overview-metrics-data">{paid_overview_metrics_json}</script>
@@ -5324,7 +5613,18 @@ def render_penn_html(
     const escHtml = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 
     const performanceChartRaw = readJson('performance-chart-data', {{ labels: [], metrics: {{}} }});
+    const budgetPacingRaw = readJson('budget-pacing-chart-data', {{
+      labels: [],
+      cumulative_spend: [],
+      pace_line: [],
+      daily_spend_by_platform: {{}},
+      monthly_budget: 0,
+      days_in_month: 30,
+      pct_month_elapsed: 0,
+    }});
     let performanceChartInstance = null;
+    let budgetPacingChartInstance = null;
+    let budgetPacingBudget = Number(budgetPacingRaw.monthly_budget || 0);
 
     function formatDailyLabel(dateStr) {{
       const s = String(dateStr).slice(0, 10);
@@ -5469,6 +5769,141 @@ def render_penn_html(
       }});
     }});
     syncMetricToggleButtons();
+
+    function paidChartPlatforms() {{
+      return activeChartPlatforms().filter(id => id !== 'organic');
+    }}
+
+    function buildBudgetPacingSeries() {{
+      const labels = budgetPacingRaw.labels || [];
+      const byPlatform = budgetPacingRaw.daily_spend_by_platform || {{}};
+      const platforms = paidChartPlatforms();
+      let running = 0;
+      const cumulative = labels.map(dayKey => {{
+        const daySpend = platforms.reduce(
+          (sum, platform) => sum + Number(byPlatform[platform]?.[dayKey] || 0),
+          0
+        );
+        running += daySpend;
+        return running;
+      }});
+      const daysInMonth = Number(budgetPacingRaw.days_in_month || labels.length || 30);
+      const paceLine = labels.map((_, idx) => (
+        budgetPacingBudget > 0 ? budgetPacingBudget * ((idx + 1) / daysInMonth) : 0
+      ));
+      return {{ labels, cumulative, paceLine }};
+    }}
+
+    function updateBudgetPacingStats(cumulative, paceLine) {{
+      const mtd = cumulative.length ? cumulative[cumulative.length - 1] : 0;
+      const expected = paceLine.length ? paceLine[paceLine.length - 1] : 0;
+      const labels = budgetPacingRaw.labels || [];
+      const daysInMonth = Number(budgetPacingRaw.days_in_month || 30);
+      const pctMonth = daysInMonth ? (100 * labels.length / daysInMonth) : 0;
+      const pctBudget = budgetPacingBudget > 0 ? (100 * mtd / budgetPacingBudget) : null;
+      const mtdEl = document.getElementById('budgetPacingMtd');
+      const budgetEl = document.getElementById('budgetPacingBudget');
+      const expectedEl = document.getElementById('budgetPacingExpected');
+      const statusEl = document.getElementById('budgetPacingStatus');
+      const saveValueEl = document.getElementById('budgetPacingSaveValue');
+      if (mtdEl) mtdEl.textContent = fmtMoney(mtd);
+      if (budgetEl) budgetEl.textContent = budgetPacingBudget > 0 ? fmtMoney(budgetPacingBudget) : '—';
+      if (expectedEl) expectedEl.textContent = budgetPacingBudget > 0 ? fmtMoney(expected) : '—';
+      if (saveValueEl) saveValueEl.value = budgetPacingBudget > 0 ? String(budgetPacingBudget) : '';
+      if (statusEl) {{
+        if (!budgetPacingBudget) {{
+          statusEl.textContent = '—';
+        }} else if (pctBudget > pctMonth + 5) {{
+          statusEl.textContent = 'Ahead of pace';
+        }} else if (pctBudget < pctMonth - 5) {{
+          statusEl.textContent = 'Behind pace';
+        }} else {{
+          statusEl.textContent = 'On pace';
+        }}
+      }}
+    }}
+
+    function refreshBudgetPacingChart() {{
+      const emptyEl = document.getElementById('budgetPacingEmpty');
+      const canvas = document.getElementById('budgetPacingChart');
+      if (!canvas) return;
+
+      if (budgetPacingChartInstance) {{
+        budgetPacingChartInstance.destroy();
+        budgetPacingChartInstance = null;
+      }}
+
+      const {{ labels, cumulative, paceLine }} = buildBudgetPacingSeries();
+      const hasSpend = cumulative.some(v => Number(v) > 0);
+      const showChart = hasSpend || budgetPacingBudget > 0;
+      if (emptyEl) {{
+        emptyEl.classList.toggle('show', !showChart);
+        emptyEl.textContent = budgetPacingBudget > 0
+          ? 'No paid spend recorded yet this month.'
+          : 'Enter a monthly budget to show the pacing line.';
+      }}
+      canvas.hidden = !showChart;
+      updateBudgetPacingStats(cumulative, paceLine);
+      if (!showChart) return;
+
+      budgetPacingChartInstance = new Chart(canvas, {{
+        type: 'line',
+        data: {{
+          labels: labels.map(formatDailyLabel),
+          datasets: [
+            {{
+              label: 'Cumulative spend',
+              data: cumulative,
+              borderColor: '#0a2540',
+              backgroundColor: 'rgba(10, 37, 64, 0.08)',
+              fill: true,
+              tension: 0.25,
+              borderWidth: 2.5,
+              pointRadius: 2,
+            }},
+            {{
+              label: 'Budget pace',
+              data: paceLine,
+              borderColor: '#c9a227',
+              borderDash: [6, 4],
+              fill: false,
+              tension: 0,
+              borderWidth: 2,
+              pointRadius: 0,
+            }},
+          ],
+        }},
+        options: {{
+          responsive: true,
+          maintainAspectRatio: true,
+          interaction: {{ mode: 'index', intersect: false }},
+          scales: {{
+            x: {{ grid: {{ display: false }} }},
+            y: {{
+              beginAtZero: true,
+              ticks: {{ callback: v => '$' + Number(v).toLocaleString() }},
+            }},
+          }},
+          plugins: {{
+            legend: {{ position: 'bottom' }},
+            tooltip: {{
+              callbacks: {{
+                label(context) {{
+                  return `${{context.dataset.label}}: ${{fmtMoney(context.parsed.y)}}`;
+                }},
+              }},
+            }},
+          }},
+        }},
+      }});
+    }}
+
+    const budgetPacingInput = document.getElementById('budgetPacingInput');
+    budgetPacingInput?.addEventListener('input', () => {{
+      budgetPacingBudget = Math.max(0, Number(budgetPacingInput.value || 0));
+      refreshBudgetPacingChart();
+    }});
+    refreshBudgetPacingChart();
 
     function showAndreToast() {{
       const toast = document.getElementById('andreToast');
@@ -5698,6 +6133,7 @@ def render_penn_html(
     function applyGlobalFilters() {{
       applyBlView();
       applyOverviewFilters();
+      refreshBudgetPacingChart();
       renderGa4Pages();
     }}
 

@@ -983,12 +983,17 @@ def render_settings_html(
         else (cfg.ga4_client_key or "—")
     )
 
+    budget_label = "—"
+    if getattr(cfg, "monthly_budget_usd", None) is not None:
+        budget_label = f"${float(cfg.monthly_budget_usd):,.2f}"
+
     account_rows = f"""
     <tr><td>Google Ads customer ID</td><td class="mono">{_esc(cfg.google_customer_id or "—")}</td></tr>
     <tr><td>LinkedIn account ID</td><td class="mono">{_esc(cfg.linkedin_account_id or "—")}</td></tr>
     <tr><td>Meta ad account ID</td><td class="mono">{_esc(cfg.meta_account_id or "—")}</td></tr>
     <tr><td>GA4 client key</td><td class="mono">{_esc(ga4_client_label)}</td></tr>
     <tr><td>Harvest project</td><td class="mono">{_esc(harvest_project_label)}</td></tr>
+    <tr><td>Monthly budget</td><td class="mono">{_esc(budget_label)}</td></tr>
     <tr><td>GA4 BigQuery target</td><td class="mono">{_esc(ga4_detail)}</td></tr>
     """
 
@@ -1108,6 +1113,13 @@ def render_settings_html(
               </div>
               {ga4_field}
               {harvest_field}
+              <div>
+                <label for="monthly_budget_usd">Monthly budget (USD)</label>
+                <input id="monthly_budget_usd" name="monthly_budget_usd" type="number" min="0" step="100"
+                  value="{_esc((f"{cfg.monthly_budget_usd:.2f}".rstrip("0").rstrip(".")) if getattr(cfg, "monthly_budget_usd", None) is not None else "")}"
+                  placeholder="25000">
+                <p class="hint">Used for the budget pacing chart on the dashboard overview.</p>
+              </div>
             </div>
             <button type="submit" class="btn primary">Save &amp; verify mapping</button>
           </form>

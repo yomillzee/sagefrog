@@ -25,6 +25,7 @@ class PennDashboardConfig:
     meta_account_id: str | None
     ga4_client_key: str
     harvest_project_id: str | None = None
+    monthly_budget_usd: float | None = None
 
 
 # Penn Community Bank — used when PENN_DASHBOARD / PENN_* env vars are unset.
@@ -88,6 +89,7 @@ def load_penn_config() -> PennDashboardConfig:
 
     label = _strip_env(str(data.get("label") or "")) or "Penn Community Bank"
     harvest_project_id: str | None = _strip_env(str(data.get("harvest_project_id") or "")) or None
+    monthly_budget_usd: float | None = None
 
     try:
         import client_dashboard_config as cdc
@@ -106,6 +108,8 @@ def load_penn_config() -> PennDashboardConfig:
                 ga4_key = row.ga4_client_key
             if row.harvest_project_id:
                 harvest_project_id = row.harvest_project_id
+            if row.monthly_budget_usd is not None:
+                monthly_budget_usd = row.monthly_budget_usd
     except Exception:
         pass
 
@@ -123,4 +127,5 @@ def load_penn_config() -> PennDashboardConfig:
         meta_account_id=meta or None,
         ga4_client_key=ga4_key,
         harvest_project_id=harvest_project_id,
+        monthly_budget_usd=monthly_budget_usd,
     )

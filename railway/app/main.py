@@ -1739,6 +1739,7 @@ def dashboard_client_settings_post(
     meta_account_id: str = Form(""),
     ga4_client_key: str = Form(""),
     harvest_project_id: str = Form(""),
+    monthly_budget_usd: str = Form(""),
     business_line_rules_text: str = Form("", alias="business_line_rules"),
     sidebar_from: str = Form(""),
     sidebar_to: str = Form(""),
@@ -1827,6 +1828,12 @@ def dashboard_client_settings_post(
                 harvest_project_id=harvest_project_id,
                 updated_by=session_email or "dashboard_key",
             )
+            budget = dashboard_service.parse_monthly_budget_input(monthly_budget_usd)
+            saved = client_dashboard_config.save_monthly_budget(
+                slug,
+                budget,
+                updated_by=session_email or "dashboard_key",
+            )
             cfg = client_config.load_client_config(slug)
             dashboard_service.patch_snapshot_from_config(cfg)
             audit_log.record(
@@ -1858,6 +1865,49 @@ def dashboard_client_settings_post(
                 **session_kw,
             )
         )
+
+    if act == "save_budget":
+        if web_users.enabled() and not session_is_admin:
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error="Only admins can save the monthly budget.",
+                    **session_kw,
+                ),
+                status_code=403,
+            )
+        if not client_dashboard_config.enabled():
+            raise HTTPException(status_code=503, detail="DATABASE_URL is required to save budget.")
+        try:
+            budget = dashboard_service.parse_monthly_budget_input(monthly_budget_usd)
+            saved = client_dashboard_config.save_monthly_budget(
+                slug,
+                budget,
+                updated_by=session_email or "dashboard_key",
+            )
+            audit_log.record(
+                action="dashboard.budget_saved",
+                actor_email=session_email,
+                detail={"client_slug": slug, "monthly_budget_usd": saved.monthly_budget_usd},
+                **audit_log.request_context(request),
+            )
+        except Exception as exc:
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error=str(exc)[:300],
+                    **session_kw,
+                ),
+                status_code=400,
+            )
+        dash_url = f"/dashboard/{slug}"
+        if not use_session and access_key:
+            dash_url = f"{dash_url}?key={quote(access_key, safe='')}"
+        return RedirectResponse(url=f"{dash_url}?budget_saved=1", status_code=303)
 
     if act == "save_business_line_rules":
         if slug != "penn":
@@ -2236,6 +2286,7 @@ def dashboard_client(
     request: Request,
     key: str | None = None,
     synced: str | None = None,
+    budget_saved: str | None = None,
     insights_saved: str | None = None,
     doc_uploaded: str | None = None,
     doc_deleted: str | None = None,
@@ -2252,6 +2303,8 @@ def dashboard_client(
         flash = "Insights saved."
     elif synced:
         flash = "Dashboard refreshed."
+    elif budget_saved:
+        flash = "Monthly budget saved."
     else:
         flash = None
     if web_users.enabled():
