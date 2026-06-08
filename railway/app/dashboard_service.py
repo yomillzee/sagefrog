@@ -3892,41 +3892,45 @@ def render_penn_html(
     ga4_pages_json = _json_for_html_script((ga4_pages_report or {}).get("pages") or [])
     ga4_summary_json = _json_for_html_script((ga4_pages_report or {}).get("summary") or {})
     metric_defs_json = _json_for_html_script(dashboard_theme.chart_metric_defs(theme))
+    show_budget_pacing = slug != "penn"
     can_save_budget = session_is_admin if use_session else bool(access_key)
     settings_url = _settings_page_url(
         client_slug=slug, access_key=access_key, use_session=use_session
     )
-    pacing_cfg = client_cfg
-    if pacing_cfg is None:
-        try:
-            pacing_cfg = client_config.load_client_config(slug)
-        except Exception:
-            pacing_cfg = PennDashboardConfig(
-                client_key=slug,
-                label=str(label or slug),
-                google_customer_id=None,
-                linkedin_account_id=None,
-                meta_account_id=None,
-                ga4_client_key=slug,
-            )
-    budget_pacing = _build_budget_pacing_payload(
-        pacing_cfg,
-        snapshot_daily_metrics=chart_data,
-    )
-    budget_pacing["platform_colors"] = {
-        "all": theme.get("sidebar_from", "#0a2540"),
-        "pace": theme.get("business_line", "#c9a227"),
-        "google": theme.get("google", "#4285f4"),
-        "linkedin": theme.get("linkedin", "#0a66c2"),
-        "meta": theme.get("meta", "#9333ea"),
-    }
-    budget_pacing_json = _json_for_html_script(budget_pacing)
-    budget_pacing_html = _budget_pacing_panel_html(
-        client_slug=slug,
-        pacing=budget_pacing,
-        settings_url=settings_url,
-        can_save_budget=can_save_budget and client_dashboard_config.enabled(),
-    )
+    budget_pacing_html = ""
+    budget_pacing_json = _json_for_html_script({})
+    if show_budget_pacing:
+        pacing_cfg = client_cfg
+        if pacing_cfg is None:
+            try:
+                pacing_cfg = client_config.load_client_config(slug)
+            except Exception:
+                pacing_cfg = PennDashboardConfig(
+                    client_key=slug,
+                    label=str(label or slug),
+                    google_customer_id=None,
+                    linkedin_account_id=None,
+                    meta_account_id=None,
+                    ga4_client_key=slug,
+                )
+        budget_pacing = _build_budget_pacing_payload(
+            pacing_cfg,
+            snapshot_daily_metrics=chart_data,
+        )
+        budget_pacing["platform_colors"] = {
+            "all": theme.get("sidebar_from", "#0a2540"),
+            "pace": theme.get("business_line", "#c9a227"),
+            "google": theme.get("google", "#4285f4"),
+            "linkedin": theme.get("linkedin", "#0a66c2"),
+            "meta": theme.get("meta", "#9333ea"),
+        }
+        budget_pacing_json = _json_for_html_script(budget_pacing)
+        budget_pacing_html = _budget_pacing_panel_html(
+            client_slug=slug,
+            pacing=budget_pacing,
+            settings_url=settings_url,
+            can_save_budget=can_save_budget and client_dashboard_config.enabled(),
+        )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -5648,6 +5652,8 @@ def render_penn_html(
 
     const SHOW_SEGMENT_FILTERS = {'true' if show_segment_filters else 'false'};
     const SHOW_PRODUCT_LINE_FILTERS = {'true' if show_product_line_filters else 'false'};
+    const SHOW_BUDGET_PACING = {'true' if show_budget_pacing else 'false'};
+    const PAID_PLATFORM_IDS = new Set(['google', 'linkedin', 'meta']);
     const SEGMENT_FILTER_ALL_LABEL = {_json_for_html_script(seg_filter_all_label)};
     const PRODUCT_LINE_FILTER_ALL_LABEL = "All product lines";
 
@@ -5683,8 +5689,24 @@ def render_penn_html(
       return channelState.size > 0 && channelState.size < platformCatalog.length;
     }}
 
+    function paidPlatformsInCatalog() {{
+      return platformCatalog.filter(item => PAID_PLATFORM_IDS.has(item.id));
+    }}
+
+    function selectedPaidChannelIds() {{
+      return effectiveFilterIds(channelState, platformCatalog).filter(id => PAID_PLATFORM_IDS.has(id));
+    }}
+
+    function paidChannelFilterActive() {{
+      const paidCatalog = paidPlatformsInCatalog();
+      if (!paidCatalog.length || !channelFilterRestricts()) return false;
+      const selected = selectedPaidChannelIds();
+      if (!selected.length) return true;
+      return selected.length < paidCatalog.length;
+    }}
+
     function activeChartPlatforms() {{
-      const ids = effectiveFilterIds(channelState, platformCatalog);
+      const ids = selectedPaidChannelIds();
       const fromMetrics = performanceChartRaw.metrics?.clicks
         ? Object.keys(performanceChartRaw.metrics.clicks)
         : [];
@@ -6169,13 +6191,15 @@ def render_penn_html(
       }});
     }}
 
-    const budgetPacingInput = document.getElementById('budgetPacingInput');
-    budgetPacingInput?.addEventListener('input', () => {{
-      budgetPacingBudget = Math.max(0, Number(budgetPacingInput.value || 0));
+    if (SHOW_BUDGET_PACING) {{
+      const budgetPacingInput = document.getElementById('budgetPacingInput');
+      budgetPacingInput?.addEventListener('input', () => {{
+        budgetPacingBudget = Math.max(0, Number(budgetPacingInput.value || 0));
+        refreshBudgetPacingChart();
+      }});
+      initBudgetPacingPlatformSlicers();
       refreshBudgetPacingChart();
-    }});
-    initBudgetPacingPlatformSlicers();
-    refreshBudgetPacingChart();
+    }}
 
     function showAndreToast() {{
       const toast = document.getElementById('andreToast');
@@ -6302,7 +6326,7 @@ def render_penn_html(
 
     function filteredBlCampaigns() {{
       const showZeroSpend = !!document.getElementById('showZeroSpend')?.checked;
-      const channels = effectiveFilterIds(channelState, platformCatalog).filter(p => p !== 'organic');
+      const channels = selectedPaidChannelIds();
       if (!channels.length) return [];
       const bls = SHOW_SEGMENT_FILTERS
         ? effectiveFilterIds(blState, blCatalog)
@@ -6344,6 +6368,11 @@ def render_penn_html(
         statsEl.innerHTML = defaults.statsHtml;
         return;
       }}
+      if (platformId === 'organic') {{
+        valueEl.innerHTML = defaults.valueHtml;
+        statsEl.innerHTML = defaults.statsHtml;
+        return;
+      }}
       valueEl.textContent = fmtMoney(totals.spend);
       statsEl.innerHTML = `
         <span>${{fmtInt(totals.clicks)}} clicks</span>
@@ -6360,13 +6389,21 @@ def render_penn_html(
       const partialProduct = SHOW_PRODUCT_LINE_FILTERS
         && productLineCatalog.length
         && !isAllSelected(productLineState, productLineCatalog);
-      const partialCh = platformCatalog.length && !isAllSelected(channelState, platformCatalog);
-      return partialBl || partialProduct || partialCh;
+      return partialBl || partialProduct || paidChannelFilterActive();
+    }}
+
+    function computePaidHeroTotals() {{
+      if (!filtersPartiallyApplied()) return null;
+      return filteredBlCampaigns().reduce((acc, r) => ({{
+        spend: acc.spend + (r.spend || 0),
+        clicks: acc.clicks + (r.clicks || 0),
+        impressions: acc.impressions + (r.impressions || 0),
+        conversions: acc.conversions + (r.conversions || 0),
+      }}), {{ spend: 0, clicks: 0, impressions: 0, conversions: 0 }});
     }}
 
     function applyOverviewFilters() {{
       const blFiltered = filtersPartiallyApplied() ? filteredBlCampaigns() : null;
-      let heroTotals = null;
 
       document.querySelectorAll('.cards .card[data-platform]').forEach(card => {{
         const platformId = card.dataset.platform;
@@ -6374,7 +6411,7 @@ def render_penn_html(
         card.hidden = !visible;
         card.style.display = visible ? '' : 'none';
         if (!visible) return;
-        if (blFiltered) {{
+        if (blFiltered && platformId !== 'organic') {{
           const totals = aggregatePlatformTotals(platformId, blFiltered);
           updateOverviewCard(platformId, totals);
         }} else {{
@@ -6388,15 +6425,7 @@ def render_penn_html(
         panel.style.display = visible ? '' : 'none';
       }});
 
-      if (blFiltered) {{
-        heroTotals = blFiltered.reduce((acc, r) => ({{
-          spend: acc.spend + (r.spend || 0),
-          clicks: acc.clicks + (r.clicks || 0),
-          impressions: acc.impressions + (r.impressions || 0),
-          conversions: acc.conversions + (r.conversions || 0),
-        }}), {{ spend: 0, clicks: 0, impressions: 0, conversions: 0 }});
-      }}
-      updateHeroTotals(heroTotals);
+      updateHeroTotals(computePaidHeroTotals());
       refreshCharts();
     }}
 
