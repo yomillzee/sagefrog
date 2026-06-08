@@ -670,5 +670,174 @@ def fetch_attribution_for_dashboard(
     return report
 
 
+def _landing_pages_sql_suffix(
+    *,
+    table: str,
+    suffix_start: str,
+    suffix_end: str,
+    row_limit: int,
+) -> str:
+    key_events = _key_events_sql_list()
+    return f"""
+    , page_view_events AS (
+      SELECT
+        user_pseudo_id,
+        (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') AS ga_session_id,
+        PARSE_DATE('%Y%m%d', event_date) AS metric_date,
+        event_timestamp,
+        event_name,
+        COALESCE(
+          NULLIF(TRIM((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_path')), ''),
+          REGEXP_EXTRACT(
+            (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_location'),
+            r'https?://[^/]+(/[^?#]*)'
+          )
+        ) AS page_path,
+        COALESCE(
+          NULLIF(TRIM((SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'page_title')), ''),
+          '(not set)'
+        ) AS page_title,
+        (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'engagement_time_msec') AS engagement_time_msec
+      FROM {table}
+      WHERE _TABLE_SUFFIX BETWEEN '{suffix_start}' AND '{suffix_end}'
+        AND (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id') IS NOT NULL
+        AND event_name IN ('page_view', {key_events})
+    ),
+    first_landing AS (
+      SELECT
+        user_pseudo_id,
+        ga_session_id,
+        metric_date,
+        page_path,
+        page_title
+      FROM (
+        SELECT
+          user_pseudo_id,
+          ga_session_id,
+          metric_date,
+          page_path,
+          page_title,
+          ROW_NUMBER() OVER (
+            PARTITION BY user_pseudo_id, ga_session_id, metric_date
+            ORDER BY event_timestamp ASC
+          ) AS rn
+        FROM page_view_events
+        WHERE event_name = 'page_view'
+          AND IFNULL(page_path, '') != ''
+      )
+      WHERE rn = 1
+    ),
+    landing_session_metrics AS (
+      SELECT
+        s.platform,
+        s.attribution_tier,
+        fl.page_path,
+        fl.page_title,
+        s.user_pseudo_id,
+        s.ga_session_id,
+        s.metric_date,
+        COUNTIF(e.event_name = 'page_view') AS page_views,
+        COALESCE(MAX(e.engagement_time_msec), 0) AS max_engagement_time_msec,
+        COUNTIF(e.event_name IN ({key_events})) AS key_events,
+        COUNTIF(e.event_name = 'user_engagement') AS user_engagement_events
+      FROM paid_sessions s
+      INNER JOIN first_landing fl
+        ON s.user_pseudo_id = fl.user_pseudo_id
+        AND s.ga_session_id = fl.ga_session_id
+        AND s.metric_date = fl.metric_date
+      LEFT JOIN page_view_events e
+        ON s.user_pseudo_id = e.user_pseudo_id
+        AND s.ga_session_id = e.ga_session_id
+        AND s.metric_date = e.metric_date
+      GROUP BY
+        s.platform,
+        s.attribution_tier,
+        fl.page_path,
+        fl.page_title,
+        s.user_pseudo_id,
+        s.ga_session_id,
+        s.metric_date
+    )
+    SELECT
+      platform,
+      page_path,
+      page_title,
+      COUNT(*) AS sessions,
+      COUNT(DISTINCT user_pseudo_id) AS users,
+      COUNTIF(
+        max_engagement_time_msec >= 10000
+        OR page_views >= 2
+        OR key_events >= 1
+        OR user_engagement_events >= 1
+      ) AS engaged_sessions,
+      SUM(page_views) AS page_views,
+      SUM(key_events) AS key_events
+    FROM landing_session_metrics
+    GROUP BY platform, page_path, page_title
+    ORDER BY platform, sessions DESC
+    LIMIT {row_limit}
+    """
+
+
+def fetch_landing_pages_by_platform(
+    *,
+    start: date,
+    end: date,
+    target: Ga4ClientTarget | None = None,
+    limit: int = 500,
+) -> dict[str, list[dict[str, Any]]]:
+    """Landing page metrics for paid sessions, split by platform (gclid, li_fat_id, fbclid, etc.)."""
+    _ensure_bq_ready()
+    target = target or resolve_target()
+    suffix_start = start.strftime("%Y%m%d")
+    suffix_end = end.strftime("%Y%m%d")
+    table = _events_table(target)
+    row_limit = max(1, min(int(limit) * 3, 6000))
+    sql = _attribution_base_sql(table, suffix_start, suffix_end) + _landing_pages_sql_suffix(
+        table=table,
+        suffix_start=suffix_start,
+        suffix_end=suffix_end,
+        row_limit=row_limit,
+    )
+    rows = run_query(sql, max_rows=row_limit, project_id=target.bq_project_id)
+    per_platform: dict[str, list[dict[str, Any]]] = {
+        "google": [],
+        "linkedin": [],
+        "meta": [],
+    }
+    per_limit = max(1, min(int(limit), 2000))
+    for row in rows:
+        platform = str(row.get("platform") or "").strip().lower()
+        if platform not in per_platform:
+            continue
+        if len(per_platform[platform]) >= per_limit:
+            continue
+        path = str(row.get("page_path") or "").strip()
+        if not path:
+            continue
+        sessions = int(row.get("sessions") or 0)
+        engaged = int(row.get("engaged_sessions") or 0)
+        per_platform[platform].append(
+            {
+                "page_path": path,
+                "page_title": str(row.get("page_title") or "(not set)").strip() or "(not set)",
+                "page_views": int(row.get("page_views") or 0),
+                "sessions": sessions,
+                "users": int(row.get("users") or 0),
+                "engaged_sessions": engaged,
+                "engagement_rate": round(engaged / sessions, 4) if sessions else 0.0,
+                "key_events": int(row.get("key_events") or 0),
+            }
+        )
+    return per_platform
+
+
+LANDING_PAGE_ATTRIBUTION_LABELS: dict[str, str] = {
+    "google": "Google Ads landing pages (gclid / linked campaigns)",
+    "linkedin": "LinkedIn landing pages (li_fat_id / UTM)",
+    "meta": "Meta landing pages (fbclid / UTM)",
+}
+
+
 # Backward-compatible alias
 fetch_google_ads_attribution = fetch_paid_media_attribution
