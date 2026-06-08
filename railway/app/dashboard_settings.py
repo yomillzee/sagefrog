@@ -124,6 +124,40 @@ def list_harvest_projects_for_settings() -> list[dict[str, Any]]:
         return []
 
 
+def list_ga4_clients_for_settings() -> list[dict[str, Any]]:
+    """GA4 registry entries for the settings dropdown (empty if BigQuery not configured)."""
+    try:
+        ga4 = bigquery_service.env_summary()
+        registry = ga4_clients.load_client_registry()
+        if not (
+            ga4.get("has_gcp_service_account_json")
+            and ga4.get("gcp_service_account_json_parse_ok")
+            and (ga4.get("has_bq_project_id") or registry)
+        ):
+            return []
+        return ga4_clients.list_clients_public()
+    except Exception:
+        return []
+
+
+def _ga4_client_label_for_key(
+    client_key: str | None,
+    clients: list[dict[str, Any]],
+) -> str:
+    key = str(client_key or "").strip()
+    if not key:
+        return "—"
+    for row in clients:
+        if str(row.get("client_key") or "") == key:
+            label = str(row.get("label") or key)
+            project = str(row.get("bq_project_id") or "")
+            dataset = str(row.get("bq_dataset_id") or "")
+            if project and dataset:
+                return f"{label} · {project}/{dataset} (key {key})"
+            return key
+    return key
+
+
 def _oauth_platform_card_html(
     *,
     platform: str,
@@ -932,6 +966,7 @@ def render_settings_html(
         ga4_detail = str(ga4_target.get("error"))
 
     harvest_projects = list_harvest_projects_for_settings()
+    ga4_clients_list = list_ga4_clients_for_settings()
     harvest_project_label = cfg.harvest_project_id or "—"
     if cfg.harvest_project_id and harvest_projects:
         for proj in harvest_projects:
@@ -942,14 +977,65 @@ def render_settings_html(
                 )
                 break
 
+    ga4_client_label = (
+        _ga4_client_label_for_key(cfg.ga4_client_key, ga4_clients_list)
+        if ga4_clients_list
+        else (cfg.ga4_client_key or "—")
+    )
+
     account_rows = f"""
     <tr><td>Google Ads customer ID</td><td class="mono">{_esc(cfg.google_customer_id or "—")}</td></tr>
     <tr><td>LinkedIn account ID</td><td class="mono">{_esc(cfg.linkedin_account_id or "—")}</td></tr>
     <tr><td>Meta ad account ID</td><td class="mono">{_esc(cfg.meta_account_id or "—")}</td></tr>
-    <tr><td>GA4 client key</td><td class="mono">{_esc(cfg.ga4_client_key or "—")}</td></tr>
+    <tr><td>GA4 client key</td><td class="mono">{_esc(ga4_client_label)}</td></tr>
     <tr><td>Harvest project</td><td class="mono">{_esc(harvest_project_label)}</td></tr>
     <tr><td>GA4 BigQuery target</td><td class="mono">{_esc(ga4_detail)}</td></tr>
     """
+
+    ga4_field = ""
+    if ga4_clients_list:
+        options = ['<option value="">— None —</option>']
+        selected_key = str(cfg.ga4_client_key or "").strip().lower()
+        known_keys = {str(c.get("client_key") or "") for c in ga4_clients_list}
+        if not selected_key and slug in known_keys:
+            selected_key = slug
+        if selected_key and selected_key not in known_keys:
+            options.append(
+                f'<option value="{_esc(selected_key)}" selected>'
+                f"{_esc(selected_key)} (not in registry)</option>"
+            )
+        for client in sorted(
+            ga4_clients_list,
+            key=lambda c: str(c.get("label") or c.get("client_key") or "").lower(),
+        ):
+            ckey = str(client.get("client_key") or "")
+            label_text = (
+                f"{client.get('label') or ckey} · "
+                f"{client.get('bq_project_id')}/{client.get('bq_dataset_id')}"
+            )
+            selected = " selected" if ckey == selected_key else ""
+            options.append(f'<option value="{_esc(ckey)}"{selected}>{_esc(label_text)}</option>')
+        ga4_field = f"""
+              <div>
+                <label for="ga4_client_key">GA4 client key</label>
+                <select id="ga4_client_key" name="ga4_client_key">
+                  {"".join(options)}
+                </select>
+                <p class="hint">Loaded from GA4_CLIENTS in Railway (agency BigQuery connection).</p>
+              </div>"""
+    else:
+        ga4_hint = (
+            "Set GCP_SERVICE_ACCOUNT_JSON and GA4_CLIENTS in Railway to load the client list."
+            if not api["ga4"]["ok"]
+            else "No GA4 clients found — enter a registry key manually."
+        )
+        ga4_field = f"""
+              <div>
+                <label for="ga4_client_key">GA4 client key</label>
+                <input id="ga4_client_key" name="ga4_client_key" type="text"
+                  value="{_esc(cfg.ga4_client_key or '')}" placeholder="penn">
+                <p class="hint">{_esc(ga4_hint)}</p>
+              </div>"""
 
     harvest_field = ""
     if harvest_projects:
@@ -1020,12 +1106,7 @@ def render_settings_html(
                   value="{_esc(cfg.meta_account_id or '')}" placeholder="2581574002135957">
                 <p class="hint">Find IDs in Admin → Meta → accessible accounts list.</p>
               </div>
-              <div>
-                <label for="ga4_client_key">GA4 client key</label>
-                <input id="ga4_client_key" name="ga4_client_key" type="text"
-                  value="{_esc(cfg.ga4_client_key or '')}" placeholder="penn">
-                <p class="hint">Must match a key in GA4_CLIENTS (Railway).</p>
-              </div>
+              {ga4_field}
               {harvest_field}
             </div>
             <button type="submit" class="btn primary">Save &amp; verify mapping</button>
