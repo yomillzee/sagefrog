@@ -458,6 +458,15 @@ def _build_budget_pacing_payload(
         running += spend_by_day.get(day_key, 0.0)
         cumulative.append(round(running, 2))
 
+    cumulative_by_platform: dict[str, list[float]] = {}
+    for pid in ("google", "linkedin", "meta"):
+        platform_running = 0.0
+        platform_series: list[float] = []
+        for day_key in labels:
+            platform_running += daily_spend_by_platform.get(pid, {}).get(day_key, 0.0)
+            platform_series.append(round(platform_running, 2))
+        cumulative_by_platform[pid] = platform_series
+
     days_in_month = calendar.monthrange(month_start.year, month_start.month)[1]
     budget = float(monthly_budget if monthly_budget is not None else (cfg.monthly_budget_usd or 0))
     pace_line = [
@@ -468,6 +477,25 @@ def _build_budget_pacing_payload(
     expected_pace = round(budget * (len(labels) / days_in_month), 2) if budget > 0 else 0.0
     pct_month = round(100 * len(labels) / days_in_month, 1)
     pct_budget = round(100 * mtd_spend / budget, 1) if budget > 0 else None
+    pct_vs_pace = (
+        round(100 * (mtd_spend - expected_pace) / expected_pace, 1)
+        if expected_pace > 0
+        else None
+    )
+    days_elapsed = len(labels)
+    days_remaining = max(0, days_in_month - days_elapsed)
+    remaining_budget = round(budget - mtd_spend, 2) if budget > 0 else 0.0
+    avg_daily = round(mtd_spend / days_elapsed, 2) if days_elapsed > 0 else 0.0
+    required_daily = (
+        round(remaining_budget / days_remaining, 2)
+        if budget > 0 and days_remaining > 0
+        else None
+    )
+    daily_adjustment = (
+        round(required_daily - avg_daily, 2)
+        if required_daily is not None and days_elapsed > 0
+        else None
+    )
 
     pacing_platforms = [
         {"id": pid, "label": PLATFORM_LABELS[pid]}
@@ -486,17 +514,25 @@ def _build_budget_pacing_payload(
     return {
         "labels": labels,
         "cumulative_spend": cumulative,
+        "cumulative_by_platform": cumulative_by_platform,
         "pace_line": pace_line,
         "daily_spend_by_platform": daily_spend_by_platform,
         "platforms": pacing_platforms,
         "monthly_budget": budget,
         "month_label": month_start.strftime("%B %Y"),
         "days_in_month": days_in_month,
+        "days_elapsed": days_elapsed,
+        "days_remaining": days_remaining,
         "month_end": month_end.isoformat(),
         "mtd_spend": mtd_spend,
         "expected_pace_today": expected_pace,
         "pct_month_elapsed": pct_month,
         "pct_budget_spent": pct_budget,
+        "pct_vs_pace": pct_vs_pace,
+        "remaining_budget": remaining_budget,
+        "avg_daily_spend": avg_daily,
+        "required_daily_spend": required_daily,
+        "daily_adjustment": daily_adjustment,
     }
 
 
@@ -509,16 +545,6 @@ def _budget_pacing_panel_html(
 ) -> str:
     budget_val = pacing.get("monthly_budget") or 0
     budget_input = f"{budget_val:.2f}".rstrip("0").rstrip(".") if budget_val else ""
-    pct_budget = pacing.get("pct_budget_spent")
-    pct_month = pacing.get("pct_month_elapsed")
-    pace_note = ""
-    if budget_val > 0 and pct_budget is not None:
-        if pct_budget > pct_month + 5:
-            pace_note = "Ahead of pace"
-        elif pct_budget < pct_month - 5:
-            pace_note = "Behind pace"
-        else:
-            pace_note = "On pace"
     save_form = ""
     if can_save_budget:
         save_form = f"""
@@ -545,27 +571,36 @@ def _budget_pacing_panel_html(
                 </div>
               </div>
               <div class="budget-pacing-slicers">
-                <span class="filter-column-label">Platforms</span>
-                <div id="budgetPacingPlatformSlicers" class="filter-toggles" role="group" aria-label="Budget pacing platforms"></div>
+                <span class="filter-column-label">Show lines</span>
+                <div id="budgetPacingPlatformSlicers" class="filter-toggles" role="group" aria-label="Budget pacing chart lines"></div>
               </div>
               <div class="budget-pacing-stats" id="budgetPacingStats">
                 <div class="budget-pacing-stat">
-                  <span class="budget-pacing-stat-label">MTD spend</span>
-                  <strong id="budgetPacingMtd">{_fmt_money(float(pacing.get("mtd_spend") or 0))}</strong>
+                  <span class="budget-pacing-stat-label">MTD spend (All)</span>
+                  <strong id="budgetPacingMtd">—</strong>
                 </div>
                 <div class="budget-pacing-stat">
-                  <span class="budget-pacing-stat-label">Budget</span>
-                  <strong id="budgetPacingBudget">{_fmt_money(budget_val) if budget_val else "—"}</strong>
+                  <span class="budget-pacing-stat-label">Monthly budget</span>
+                  <strong id="budgetPacingBudgetStat">—</strong>
                 </div>
                 <div class="budget-pacing-stat">
-                  <span class="budget-pacing-stat-label">Expected pace</span>
-                  <strong id="budgetPacingExpected">{_fmt_money(float(pacing.get("expected_pace_today") or 0)) if budget_val else "—"}</strong>
+                  <span class="budget-pacing-stat-label">Expected pace today</span>
+                  <strong id="budgetPacingExpected">—</strong>
                 </div>
                 <div class="budget-pacing-stat">
-                  <span class="budget-pacing-stat-label">Status</span>
-                  <strong id="budgetPacingStatus">{_esc(pace_note or "—")}</strong>
+                  <span class="budget-pacing-stat-label">vs pace</span>
+                  <strong id="budgetPacingVsPace">—</strong>
+                </div>
+                <div class="budget-pacing-stat">
+                  <span class="budget-pacing-stat-label">Required daily (rest of month)</span>
+                  <strong id="budgetPacingRequiredDaily">—</strong>
+                </div>
+                <div class="budget-pacing-stat">
+                  <span class="budget-pacing-stat-label">Adjust daily spend by</span>
+                  <strong id="budgetPacingDailyAdjust">—</strong>
                 </div>
               </div>
+              <div class="budget-pacing-guidance" id="budgetPacingGuidance" aria-live="polite"></div>
               <div class="performance-trend-chart-wrap budget-pacing-chart-wrap">
                 <p class="performance-trend-empty" id="budgetPacingEmpty">Enter a monthly budget to show the pacing line.</p>
                 <canvas id="budgetPacingChart"></canvas>
@@ -3878,6 +3913,13 @@ def render_penn_html(
         pacing_cfg,
         snapshot_daily_metrics=chart_data,
     )
+    budget_pacing["platform_colors"] = {
+        "all": theme.get("sidebar_from", "#0a2540"),
+        "pace": theme.get("business_line", "#c9a227"),
+        "google": theme.get("google", "#4285f4"),
+        "linkedin": theme.get("linkedin", "#0a66c2"),
+        "meta": theme.get("meta", "#9333ea"),
+    }
     budget_pacing_json = _json_for_html_script(budget_pacing)
     budget_pacing_html = _budget_pacing_panel_html(
         client_slug=slug,
@@ -4531,9 +4573,26 @@ def render_penn_html(
     }}
     .budget-pacing-stats {{
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 12px;
       padding: 0 22px 16px;
+    }}
+    .budget-pacing-stat strong.over {{ color: #b45309; }}
+    .budget-pacing-stat strong.under {{ color: #0f766e; }}
+    .budget-pacing-guidance {{
+      margin: 0 22px 16px;
+      padding: 14px 16px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 0.9rem;
+      color: var(--text);
+      line-height: 1.55;
+    }}
+    .budget-pacing-guidance .guidance-platforms {{
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.84rem;
     }}
     .budget-pacing-stat {{
       background: #f8fafc;
@@ -5656,7 +5715,8 @@ def render_penn_html(
     let budgetPacingChartInstance = null;
     let budgetPacingBudget = Number(budgetPacingRaw.monthly_budget || 0);
     const budgetPacingPlatformCatalog = budgetPacingRaw.platforms || [];
-    const budgetPacingPlatformState = new Set(budgetPacingPlatformCatalog.map(item => item.id));
+    const budgetPacingColors = budgetPacingRaw.platform_colors || {{}};
+    const budgetPacingLineState = new Set(['all', ...budgetPacingPlatformCatalog.map(item => item.id)]);
 
     function formatDailyLabel(dateStr) {{
       const s = String(dateStr).slice(0, 10);
@@ -5802,51 +5862,51 @@ def render_penn_html(
     }});
     syncMetricToggleButtons();
 
-    function budgetPacingActivePlatforms() {{
-      if (!budgetPacingPlatformCatalog.length) {{
-        return ['google', 'linkedin', 'meta'];
-      }}
-      return budgetPacingPlatformCatalog
-        .filter(item => budgetPacingPlatformState.has(item.id))
-        .map(item => item.id);
-    }}
-
     function syncBudgetPacingPlatformSlicers() {{
       const wrap = document.getElementById('budgetPacingPlatformSlicers');
       if (!wrap) return;
       wrap.querySelectorAll('.filter-toggle').forEach(btn => {{
-        const on = budgetPacingPlatformState.has(btn.dataset.id);
+        const on = budgetPacingLineState.has(btn.dataset.id);
         btn.classList.toggle('active', on);
         btn.setAttribute('aria-pressed', on ? 'true' : 'false');
       }});
+    }}
+
+    function toggleBudgetPacingLine(lineId) {{
+      if (budgetPacingLineState.has(lineId)) {{
+        const visibleLines = [...budgetPacingLineState].filter(id => id !== 'pace');
+        if (visibleLines.length <= 1) return;
+        budgetPacingLineState.delete(lineId);
+      }} else {{
+        budgetPacingLineState.add(lineId);
+      }}
+      syncBudgetPacingPlatformSlicers();
+      refreshBudgetPacingChart();
     }}
 
     function initBudgetPacingPlatformSlicers() {{
       const wrap = document.getElementById('budgetPacingPlatformSlicers');
       if (!wrap) return;
       wrap.innerHTML = '';
-      if (!budgetPacingPlatformCatalog.length) {{
+      const lineOptions = [
+        {{ id: 'all', label: 'All', className: 'filter-toggle--all' }},
+        ...budgetPacingPlatformCatalog.map(item => ({{
+          id: item.id,
+          label: item.label,
+          className: `t-${{item.id}}`,
+        }})),
+      ];
+      if (!lineOptions.length) {{
         wrap.innerHTML = '<span class="muted">No paid platform spend this month yet.</span>';
         return;
       }}
-      for (const item of budgetPacingPlatformCatalog) {{
+      for (const item of lineOptions) {{
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = `filter-toggle t-${{item.id}}`;
+        btn.className = `filter-toggle ${{item.className || ''}}`.trim();
         btn.textContent = item.label;
         btn.dataset.id = item.id;
-        btn.setAttribute('aria-pressed', budgetPacingPlatformState.has(item.id) ? 'true' : 'false');
-        if (budgetPacingPlatformState.has(item.id)) btn.classList.add('active');
-        btn.addEventListener('click', () => {{
-          if (budgetPacingPlatformState.has(item.id)) {{
-            if (budgetPacingPlatformState.size <= 1) return;
-            budgetPacingPlatformState.delete(item.id);
-          }} else {{
-            budgetPacingPlatformState.add(item.id);
-          }}
-          syncBudgetPacingPlatformSlicers();
-          refreshBudgetPacingChart();
-        }});
+        btn.addEventListener('click', () => toggleBudgetPacingLine(item.id));
         wrap.appendChild(btn);
       }}
       syncBudgetPacingPlatformSlicers();
@@ -5855,48 +5915,163 @@ def render_penn_html(
     function buildBudgetPacingSeries() {{
       const labels = budgetPacingRaw.labels || [];
       const byPlatform = budgetPacingRaw.daily_spend_by_platform || {{}};
-      const platforms = budgetPacingActivePlatforms();
-      let running = 0;
-      const cumulative = labels.map(dayKey => {{
-        const daySpend = platforms.reduce(
-          (sum, platform) => sum + Number(byPlatform[platform]?.[dayKey] || 0),
+      const storedByPlatform = budgetPacingRaw.cumulative_by_platform || {{}};
+      const cumulativeByPlatform = {{}};
+      for (const item of budgetPacingPlatformCatalog) {{
+        if (storedByPlatform[item.id]) {{
+          cumulativeByPlatform[item.id] = storedByPlatform[item.id];
+          continue;
+        }}
+        let running = 0;
+        cumulativeByPlatform[item.id] = labels.map(dayKey => {{
+          running += Number(byPlatform[item.id]?.[dayKey] || 0);
+          return running;
+        }});
+      }}
+      let allRunning = 0;
+      const cumulativeAll = labels.map(dayKey => {{
+        const dayTotal = budgetPacingPlatformCatalog.reduce(
+          (sum, item) => sum + Number(byPlatform[item.id]?.[dayKey] || 0),
           0
         );
-        running += daySpend;
-        return running;
+        allRunning += dayTotal;
+        return allRunning;
       }});
       const daysInMonth = Number(budgetPacingRaw.days_in_month || labels.length || 30);
       const paceLine = labels.map((_, idx) => (
         budgetPacingBudget > 0 ? budgetPacingBudget * ((idx + 1) / daysInMonth) : 0
       ));
-      return {{ labels, cumulative, paceLine }};
+      return {{ labels, cumulativeAll, cumulativeByPlatform, paceLine }};
     }}
 
-    function updateBudgetPacingStats(cumulative, paceLine) {{
-      const mtd = cumulative.length ? cumulative[cumulative.length - 1] : 0;
-      const expected = paceLine.length ? paceLine[paceLine.length - 1] : 0;
+    function computeBudgetPacingGuidance(cumulativeAll, paceLine) {{
       const labels = budgetPacingRaw.labels || [];
+      const byPlatform = budgetPacingRaw.daily_spend_by_platform || {{}};
       const daysInMonth = Number(budgetPacingRaw.days_in_month || 30);
-      const pctMonth = daysInMonth ? (100 * labels.length / daysInMonth) : 0;
-      const pctBudget = budgetPacingBudget > 0 ? (100 * mtd / budgetPacingBudget) : null;
+      const daysElapsed = labels.length;
+      const daysRemaining = Math.max(0, daysInMonth - daysElapsed);
+      const mtd = cumulativeAll.length ? cumulativeAll[cumulativeAll.length - 1] : 0;
+      const expected = paceLine.length ? paceLine[paceLine.length - 1] : 0;
+      const budget = budgetPacingBudget;
+      const pctVsPace = expected > 0 ? (100 * (mtd - expected) / expected) : null;
+      const remainingBudget = budget - mtd;
+      const avgDaily = daysElapsed > 0 ? mtd / daysElapsed : 0;
+      const requiredDaily = budget > 0 && daysRemaining > 0 ? remainingBudget / daysRemaining : null;
+      const dailyAdjustment = requiredDaily !== null && daysElapsed > 0
+        ? requiredDaily - avgDaily
+        : null;
+
+      const platformAdjustments = [];
+      for (const item of budgetPacingPlatformCatalog) {{
+        let platformMtd = 0;
+        for (const dayKey of labels) {{
+          platformMtd += Number(byPlatform[item.id]?.[dayKey] || 0);
+        }}
+        const platformAvg = daysElapsed > 0 ? platformMtd / daysElapsed : 0;
+        const share = mtd > 0 ? platformMtd / mtd : (1 / budgetPacingPlatformCatalog.length);
+        const platformRequired = requiredDaily !== null ? remainingBudget * share / daysRemaining : null;
+        const platformAdjust = platformRequired !== null ? platformRequired - platformAvg : null;
+        platformAdjustments.push({{
+          id: item.id,
+          label: item.label,
+          mtd: platformMtd,
+          adjustment: platformAdjust,
+        }});
+      }}
+
+      return {{
+        mtd,
+        expected,
+        budget,
+        pctVsPace,
+        daysRemaining,
+        requiredDaily,
+        dailyAdjustment,
+        platformAdjustments,
+      }};
+    }}
+
+    function formatPctVsPace(pct) {{
+      if (pct === null || !Number.isFinite(pct)) return '—';
+      const abs = Math.abs(pct).toFixed(1);
+      if (Math.abs(pct) < 0.05) return 'On pace (0%)';
+      return `${{pct > 0 ? '+' : '-'}}${{abs}}% ${{pct > 0 ? 'over' : 'under'}}`;
+    }}
+
+    function formatDailyAdjust(amount) {{
+      if (amount === null || !Number.isFinite(amount)) return '—';
+      if (Math.abs(amount) < 0.01) return 'On target ($0/day)';
+      const verb = amount > 0 ? 'Raise' : 'Lower';
+      return `${{verb}} by ${{fmtMoney(Math.abs(amount))}}/day`;
+    }}
+
+    function updateBudgetPacingStats(cumulativeAll, paceLine) {{
+      const guidance = computeBudgetPacingGuidance(cumulativeAll, paceLine);
       const mtdEl = document.getElementById('budgetPacingMtd');
-      const budgetEl = document.getElementById('budgetPacingBudget');
+      const budgetEl = document.getElementById('budgetPacingBudgetStat');
       const expectedEl = document.getElementById('budgetPacingExpected');
-      const statusEl = document.getElementById('budgetPacingStatus');
+      const vsPaceEl = document.getElementById('budgetPacingVsPace');
+      const requiredEl = document.getElementById('budgetPacingRequiredDaily');
+      const adjustEl = document.getElementById('budgetPacingDailyAdjust');
+      const guidanceEl = document.getElementById('budgetPacingGuidance');
       const saveValueEl = document.getElementById('budgetPacingSaveValue');
-      if (mtdEl) mtdEl.textContent = fmtMoney(mtd);
-      if (budgetEl) budgetEl.textContent = budgetPacingBudget > 0 ? fmtMoney(budgetPacingBudget) : '—';
-      if (expectedEl) expectedEl.textContent = budgetPacingBudget > 0 ? fmtMoney(expected) : '—';
-      if (saveValueEl) saveValueEl.value = budgetPacingBudget > 0 ? String(budgetPacingBudget) : '';
-      if (statusEl) {{
-        if (!budgetPacingBudget) {{
-          statusEl.textContent = '—';
-        }} else if (pctBudget > pctMonth + 5) {{
-          statusEl.textContent = 'Ahead of pace';
-        }} else if (pctBudget < pctMonth - 5) {{
-          statusEl.textContent = 'Behind pace';
+
+      if (mtdEl) mtdEl.textContent = fmtMoney(guidance.mtd);
+      if (budgetEl) budgetEl.textContent = guidance.budget > 0 ? fmtMoney(guidance.budget) : '—';
+      if (expectedEl) expectedEl.textContent = guidance.budget > 0 ? fmtMoney(guidance.expected) : '—';
+      if (saveValueEl) saveValueEl.value = guidance.budget > 0 ? String(guidance.budget) : '';
+
+      if (vsPaceEl) {{
+        vsPaceEl.textContent = guidance.budget > 0 ? formatPctVsPace(guidance.pctVsPace) : '—';
+        vsPaceEl.classList.remove('over', 'under');
+        if (guidance.pctVsPace !== null && Math.abs(guidance.pctVsPace) >= 0.05) {{
+          vsPaceEl.classList.add(guidance.pctVsPace > 0 ? 'over' : 'under');
+        }}
+      }}
+      if (requiredEl) {{
+        if (guidance.budget <= 0) {{
+          requiredEl.textContent = 'Set budget first';
+        }} else if (guidance.requiredDaily === null) {{
+          requiredEl.textContent = '—';
+        }} else if (guidance.budget - guidance.mtd <= 0) {{
+          requiredEl.textContent = '$0/day (over budget)';
         }} else {{
-          statusEl.textContent = 'On pace';
+          requiredEl.textContent = `${{fmtMoney(guidance.requiredDaily)}}/day`;
+        }}
+      }}
+      if (adjustEl) {{
+        adjustEl.textContent = guidance.budget > 0 ? formatDailyAdjust(guidance.dailyAdjustment) : '—';
+        adjustEl.classList.remove('over', 'under');
+        if (guidance.dailyAdjustment !== null && Math.abs(guidance.dailyAdjustment) >= 0.01) {{
+          adjustEl.classList.add(guidance.dailyAdjustment > 0 ? 'under' : 'over');
+        }}
+      }}
+
+      if (guidanceEl) {{
+        if (!guidance.budget) {{
+          guidanceEl.innerHTML = '<p class="muted">Enter a monthly budget to see pacing guidance for the rest of the month.</p>';
+        }} else if (!guidance.daysRemaining) {{
+          guidanceEl.innerHTML = '<p class="muted">Last day of the month — compare MTD spend to budget above.</p>';
+        }} else {{
+          const remaining = guidance.budget - guidance.mtd;
+          const adjText = formatDailyAdjust(guidance.dailyAdjustment);
+          const direction = guidance.dailyAdjustment > 0 ? 'raise' : 'lower';
+          const platformLines = guidance.platformAdjustments
+            .filter(row => row.mtd > 0 || row.adjustment !== null)
+            .map(row => {{
+              if (row.adjustment === null) return `${{row.label}}: —`;
+              if (Math.abs(row.adjustment) < 0.01) return `${{row.label}}: on target`;
+              const v = row.adjustment > 0 ? 'raise' : 'lower';
+              return `${{row.label}}: ${{v}} ${{fmtMoney(Math.abs(row.adjustment))}}/day`;
+            }})
+            .join(' · ');
+          guidanceEl.innerHTML = `
+            <p><strong>Pacing note for media:</strong> You are <strong>${{formatPctVsPace(guidance.pctVsPace)}}</strong> vs where spend should be today.
+            With <strong>${{guidance.daysRemaining}}</strong> day${{guidance.daysRemaining === 1 ? '' : 's'}} left,
+            <strong>${{fmtMoney(Math.max(0, remaining))}}</strong> remains in budget${{remaining <= 0 ? ' (already over budget)' : ''}}.
+            To land on budget, ${{direction}} total daily spend — ${{adjText.replace('Raise by ', 'raise by ').replace('Lower by ', 'lower by ')}} for the rest of the month
+            (target <strong>${{remaining <= 0 ? '$0/day' : fmtMoney(guidance.requiredDaily) + '/day'}}</strong> vs current avg <strong>${{fmtMoney(guidance.mtd / (budgetPacingRaw.labels?.length || 1))}}/day</strong>).</p>
+            ${{platformLines ? `<p class="guidance-platforms"><strong>By platform:</strong> ${{escHtml(platformLines)}}</p>` : ''}}`;
         }}
       }}
     }}
@@ -5911,8 +6086,8 @@ def render_penn_html(
         budgetPacingChartInstance = null;
       }}
 
-      const {{ labels, cumulative, paceLine }} = buildBudgetPacingSeries();
-      const hasSpend = cumulative.some(v => Number(v) > 0);
+      const {{ labels, cumulativeAll, cumulativeByPlatform, paceLine }} = buildBudgetPacingSeries();
+      const hasSpend = cumulativeAll.some(v => Number(v) > 0);
       const showChart = hasSpend || budgetPacingBudget > 0;
       if (emptyEl) {{
         emptyEl.classList.toggle('show', !showChart);
@@ -5921,35 +6096,53 @@ def render_penn_html(
           : 'Enter a monthly budget to show the pacing line.';
       }}
       canvas.hidden = !showChart;
-      updateBudgetPacingStats(cumulative, paceLine);
+      updateBudgetPacingStats(cumulativeAll, paceLine);
       if (!showChart) return;
+
+      const datasets = [];
+      if (budgetPacingLineState.has('all')) {{
+        datasets.push({{
+          label: 'All',
+          data: cumulativeAll,
+          borderColor: budgetPacingColors.all || '#0a2540',
+          backgroundColor: 'rgba(10, 37, 64, 0.06)',
+          fill: false,
+          tension: 0.25,
+          borderWidth: 3,
+          pointRadius: 2,
+        }});
+      }}
+      for (const item of budgetPacingPlatformCatalog) {{
+        if (!budgetPacingLineState.has(item.id)) continue;
+        datasets.push({{
+          label: item.label,
+          data: cumulativeByPlatform[item.id] || [],
+          borderColor: budgetPacingColors[item.id] || '#64748b',
+          fill: false,
+          tension: 0.25,
+          borderWidth: 2,
+          pointRadius: 1,
+          borderDash: [],
+        }});
+      }}
+      if (budgetPacingBudget > 0) {{
+        datasets.push({{
+          label: 'Budget pace',
+          data: paceLine,
+          borderColor: budgetPacingColors.pace || '#c9a227',
+          borderDash: [6, 4],
+          fill: false,
+          tension: 0,
+          borderWidth: 2,
+          pointRadius: 0,
+        }});
+      }}
 
       budgetPacingChartInstance = new Chart(canvas, {{
         type: 'line',
         data: {{
           labels: labels.map(formatDailyLabel),
-          datasets: [
-            {{
-              label: 'Cumulative spend',
-              data: cumulative,
-              borderColor: '#0a2540',
-              backgroundColor: 'rgba(10, 37, 64, 0.08)',
-              fill: true,
-              tension: 0.25,
-              borderWidth: 2.5,
-              pointRadius: 2,
-            }},
-            {{
-              label: 'Budget pace',
-              data: paceLine,
-              borderColor: '#c9a227',
-              borderDash: [6, 4],
-              fill: false,
-              tension: 0,
-              borderWidth: 2,
-              pointRadius: 0,
-            }},
-          ],
+          datasets,
         }},
         options: {{
           responsive: true,
