@@ -32,6 +32,54 @@ def _keyword_in_text(keyword: str, lowered: str) -> bool:
         idx = pos + 1
 
 
+# (id, label, keyword substrings — first match wins)
+PRODUCT_LINE_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("patient_apparel", "Patient Apparel", ("patient apparel",)),
+    ("laundry_linens", "Laundry & Linens", ("laundry & linens", "laundry and linens")),
+    ("scrubs", "Scrubs", ("scrubs",)),
+)
+
+
+def product_line_catalog() -> list[dict[str, str]]:
+    lines = [{"id": pid, "label": label} for pid, label, _ in PRODUCT_LINE_RULES]
+    lines.append({"id": "other", "label": "Other"})
+    return lines
+
+
+def active_product_line_catalog(campaigns: list[dict[str, Any]]) -> list[dict[str, str]]:
+    present: set[str] = set()
+    for row in campaigns:
+        pid = row.get("product_line")
+        if pid:
+            present.add(str(pid))
+    catalog = product_line_catalog()
+    return [item for item in catalog if item["id"] in present]
+
+
+def classify_product_line(
+    name: str,
+    *,
+    extra_names: tuple[str, ...] = (),
+) -> tuple[str, str]:
+    """Match one product line from campaign / group names."""
+    candidates: list[str] = []
+    for text in (*extra_names, name):
+        cleaned = (text or "").strip()
+        if cleaned and cleaned not in candidates:
+            candidates.append(cleaned)
+    if len(candidates) > 1:
+        combined = " | ".join(candidates)
+        if combined not in candidates:
+            candidates.insert(0, combined)
+
+    for text in candidates:
+        lowered = text.lower()
+        for pid, label, keywords in PRODUCT_LINE_RULES:
+            if any(kw in lowered for kw in keywords):
+                return pid, label
+    return "other", "Other"
+
+
 def region_catalog() -> list[dict[str, str]]:
     lines = [{"id": rid, "label": label} for rid, label, _ in REGION_RULES]
     lines.append({"id": "other", "label": "Other"})
@@ -87,7 +135,7 @@ def classify_regions(
 
 
 def build_nixon_region_campaigns(breakdowns: dict[str, Any]) -> list[dict[str, Any]]:
-    """Campaign rows with region tags for Nixon dashboard filters."""
+    """Campaign rows with region and product line tags for Nixon dashboard filters."""
     out: list[dict[str, Any]] = []
     for row in _campaign_rows_from_breakdowns(breakdowns):
         platform = str(row.get("_platform") or "")
@@ -95,6 +143,7 @@ def build_nixon_region_campaigns(breakdowns: dict[str, Any]) -> list[dict[str, A
         primary = names[0] if names else "—"
         extras = names[1:]
         region_ids, region_label = classify_regions(primary, extra_names=extras)
+        product_line_id, product_line_label = classify_product_line(primary, extra_names=extras)
         primary_region = region_ids[0] if region_ids else "other"
         out.append(
             {
@@ -106,11 +155,21 @@ def build_nixon_region_campaigns(breakdowns: dict[str, Any]) -> list[dict[str, A
                 "business_line": primary_region,
                 "business_line_label": region_label,
                 "region_ids": region_ids,
+                "product_line": product_line_id,
+                "product_line_label": product_line_label,
+                "product_line_ids": [product_line_id],
                 "spend": float(row.get("spend") or 0),
                 "clicks": int(row.get("clicks") or 0),
                 "impressions": int(row.get("impressions") or 0),
                 "conversions": float(row.get("conversions") or 0),
             }
         )
-    out.sort(key=lambda r: (r["business_line_label"], r["platform"], -r["spend"]))
+    out.sort(
+        key=lambda r: (
+            r["product_line_label"],
+            r["business_line_label"],
+            r["platform"],
+            -r["spend"],
+        )
+    )
     return out

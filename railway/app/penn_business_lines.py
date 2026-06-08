@@ -254,6 +254,23 @@ def segment_column_label(client_slug: str) -> str:
     return segment_filter_label(client_slug)
 
 
+def client_has_product_line_filters(client_slug: str) -> bool:
+    return (client_slug or "").strip().lower() == "nixon"
+
+
+def active_client_product_line_catalog(
+    campaigns: list[dict[str, Any]],
+    *,
+    client_slug: str,
+) -> list[dict[str, str]]:
+    slug = (client_slug or "").strip().lower()
+    if slug == "nixon":
+        from nixon_regions import active_product_line_catalog
+
+        return active_product_line_catalog(campaigns)
+    return []
+
+
 def build_client_segment_campaigns(
     breakdowns: dict[str, Any],
     *,

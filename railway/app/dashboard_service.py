@@ -31,9 +31,11 @@ from penn_config import PennDashboardConfig, load_penn_config
 import client_config
 from penn_business_lines import (
     PLATFORM_LABELS,
+    active_client_product_line_catalog,
     active_client_segment_catalog,
     active_platform_catalog,
     build_client_segment_campaigns,
+    client_has_product_line_filters,
     client_has_segment_filters,
     platform_catalog,
     platforms_present_in_snapshot,
@@ -2547,10 +2549,11 @@ def _dashboard_view_tabs_html(*, show_website: bool) -> str:
 def _global_filters_bar_html(
     *,
     show_segment_filters: bool,
+    show_product_line_filters: bool,
     show_channel_filters: bool,
     segment_filter_label: str = "Business line",
 ) -> str:
-    if not show_segment_filters and not show_channel_filters:
+    if not show_segment_filters and not show_product_line_filters and not show_channel_filters:
         return ""
     bl_column = ""
     if show_segment_filters:
@@ -2559,6 +2562,13 @@ def _global_filters_bar_html(
               <span class="filter-column-label">{_esc(segment_filter_label)}</span>
               <div id="blFilters" class="filter-toggles" role="group" aria-label="{_esc(segment_filter_label)}"></div>
             </div>"""
+    product_line_column = ""
+    if show_product_line_filters:
+        product_line_column = """
+            <div class="filter-column">
+              <span class="filter-column-label">Product line</span>
+              <div id="productLineFilters" class="filter-toggles" role="group" aria-label="Product line"></div>
+            </div>"""
     channel_column = ""
     if show_channel_filters:
         channel_column = """
@@ -2566,11 +2576,16 @@ def _global_filters_bar_html(
               <span class="filter-column-label">Channel</span>
               <div id="channelFilters" class="filter-toggles" role="group" aria-label="Channel"></div>
             </div>"""
+    filter_count = sum(
+        1 for flag in (show_segment_filters, show_product_line_filters, show_channel_filters) if flag
+    )
     grid_class = "global-filter-grid"
-    if not show_segment_filters or not show_channel_filters:
+    if filter_count <= 1:
         grid_class = "global-filter-grid global-filter-grid--single"
+    elif filter_count >= 3:
+        grid_class = "global-filter-grid global-filter-grid--triple"
     more_options = ""
-    if show_segment_filters or show_channel_filters:
+    if show_segment_filters or show_product_line_filters or show_channel_filters:
         more_options = """
             <details class="filter-more-options">
               <summary>More filter options</summary>
@@ -2595,6 +2610,7 @@ def _global_filters_bar_html(
           <div class="global-filters-body" id="globalFiltersBody">
             <div class="{grid_class}">
               {bl_column}
+              {product_line_column}
               {channel_column}
             </div>
             {more_options}
@@ -3323,6 +3339,7 @@ def _campaign_explorer_content_html(
     *,
     show_segment_filters: bool,
     segment_column_label: str = "Business line",
+    show_product_line_column: bool = False,
 ) -> str:
     bl_header = (
         f"""
@@ -3330,12 +3347,25 @@ def _campaign_explorer_content_html(
         if show_segment_filters
         else ""
     )
-    filter_note = (
-        f"Use the filters at the top to narrow {segment_column_label.lower()}s and channels — all are included by default."
-        if show_segment_filters
-        else "Use the channel filters at the top to narrow platforms — all are included by default."
+    product_line_header = (
+        """
+                        <th class="sortable" data-sort="product_line" scope="col" aria-sort="none">Product line<span class="sort-icon" aria-hidden="true"></span></th>"""
+        if show_product_line_column
+        else ""
     )
-    empty_colspan = 10 if show_segment_filters else 9
+    if show_segment_filters and show_product_line_column:
+        filter_note = (
+            "Use the filters at the top to narrow regions, product lines, and channels — "
+            "all are included by default."
+        )
+    elif show_segment_filters:
+        filter_note = (
+            f"Use the filters at the top to narrow {segment_column_label.lower()}s and channels — "
+            "all are included by default."
+        )
+    else:
+        filter_note = "Use the channel filters at the top to narrow platforms — all are included by default."
+    empty_colspan = 9 + int(show_segment_filters) + int(show_product_line_column)
     return f"""
             <section class="campaign-explorer-section" aria-label="Campaign performance">
               <div class="bl-summary" id="blSummary"></div>
@@ -3346,11 +3376,11 @@ def _campaign_explorer_content_html(
                 </div>
                 <p class="table-note">{filter_note} LinkedIn rows start at campaign group (Campaign Manager “Campaign”); drill down to ad sets and ads. Google and Meta drill to ad groups/ad sets and ads.</p>
                 <div class="table-wrap">
-                  <table class="data-table" id="blTable" data-show-segment-filters="{'true' if show_segment_filters else 'false'}" data-empty-colspan="{empty_colspan}">
+                  <table class="data-table" id="blTable" data-show-segment-filters="{'true' if show_segment_filters else 'false'}" data-show-product-line="{'true' if show_product_line_column else 'false'}" data-empty-colspan="{empty_colspan}">
                     <thead>
                       <tr>
                         <th class="chevron-col"></th>
-                        <th class="sortable" data-sort="platform" scope="col" aria-sort="none">Platform<span class="sort-icon" aria-hidden="true"></span></th>{bl_header}
+                        <th class="sortable" data-sort="platform" scope="col" aria-sort="none">Platform<span class="sort-icon" aria-hidden="true"></span></th>{bl_header}{product_line_header}
                         <th class="sortable" data-sort="name" scope="col" aria-sort="none">Campaign / group<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="spend" scope="col" aria-sort="none">Spend<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="clicks" scope="col" aria-sort="none">Clicks<span class="sort-icon" aria-hidden="true"></span></th>
@@ -3431,6 +3461,7 @@ def render_penn_html(
     label = snapshot.get("label") or client_config.client_label(slug)
     client_slug = str(snapshot.get("client_key") or slug)
     show_segment_filters = client_has_segment_filters(client_slug)
+    show_product_line_filters = client_has_product_line_filters(client_slug)
     seg_filter_label = segment_filter_label(client_slug)
     seg_column_label = segment_column_label(client_slug)
     seg_filter_all_label = f"All {seg_filter_label.lower()}s"
@@ -3503,6 +3534,9 @@ def render_penn_html(
     bl_catalog_json = _json_for_html_script(
         active_client_segment_catalog(bl_campaigns, client_slug=client_slug)
     )
+    product_line_catalog_json = _json_for_html_script(
+        active_client_product_line_catalog(bl_campaigns, client_slug=client_slug)
+    )
     try:
         client_cfg = client_config.load_client_config(slug)
     except Exception:
@@ -3547,12 +3581,14 @@ def render_penn_html(
     view_tabs_html = _dashboard_view_tabs_html(show_website=has_ga4)
     filters_bar_html = _global_filters_bar_html(
         show_segment_filters=show_segment_filters,
+        show_product_line_filters=show_product_line_filters,
         show_channel_filters=bool(platform_catalog_list),
         segment_filter_label=seg_filter_label,
     )
     campaign_explorer_html = _campaign_explorer_content_html(
         show_segment_filters=show_segment_filters,
         segment_column_label=seg_column_label,
+        show_product_line_column=show_product_line_filters,
     )
     website_analytics_html = _ga4_website_content_html(ga4_pages_report if has_ga4 else None)
     website_search_html = _ga4_website_search_html(has_pages=has_ga4_pages)
@@ -4585,6 +4621,9 @@ def render_penn_html(
     .global-filter-grid--single {{
       grid-template-columns: 1fr;
     }}
+    .global-filter-grid--triple {{
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }}
     .filter-column {{
       min-width: 0;
     }}
@@ -5174,6 +5213,7 @@ def render_penn_html(
   <script type="application/json" id="ga4-campaign-metrics">{ga4_campaign_metrics_json}</script>
   <script type="application/json" id="bl-campaigns-data">{bl_campaigns_json}</script>
   <script type="application/json" id="bl-catalog-data">{bl_catalog_json}</script>
+  <script type="application/json" id="product-line-catalog-data">{product_line_catalog_json}</script>
   <script type="application/json" id="platform-catalog-data">{platform_catalog_json}</script>
   <script type="application/json" id="ga4-pages-data">{ga4_pages_json}</script>
   <script type="application/json" id="ga4-summary-data">{ga4_summary_json}</script>
@@ -5190,18 +5230,28 @@ def render_penn_html(
     }}
 
     const SHOW_SEGMENT_FILTERS = {'true' if show_segment_filters else 'false'};
+    const SHOW_PRODUCT_LINE_FILTERS = {'true' if show_product_line_filters else 'false'};
     const SEGMENT_FILTER_ALL_LABEL = {_json_for_html_script(seg_filter_all_label)};
+    const PRODUCT_LINE_FILTER_ALL_LABEL = "All product lines";
 
     const breakdowns = readJson('breakdowns-data', {{}});
     const ga4CampaignMetrics = readJson('ga4-campaign-metrics', {{}});
     const blCampaigns = readJson('bl-campaigns-data', []);
     const blCatalog = readJson('bl-catalog-data', []);
+    const productLineCatalog = readJson('product-line-catalog-data', []);
     const platformCatalog = readJson('platform-catalog-data', []);
     const ga4Pages = readJson('ga4-pages-data', []);
     const ga4SiteSummary = readJson('ga4-summary-data', {{}});
 
     const channelState = new Set();
     const blState = new Set();
+    const productLineState = new Set();
+
+    const FILTER_GROUPS = {{
+      channel: {{ state: channelState, catalog: platformCatalog, wrapId: 'channelFilters' }},
+      bl: {{ state: blState, catalog: blCatalog, wrapId: 'blFilters' }},
+      product: {{ state: productLineState, catalog: productLineCatalog, wrapId: 'productLineFilters' }},
+    }};
 
     function isAllSelected(state, catalog) {{
       return !catalog.length || state.size === 0 || state.size === catalog.length;
@@ -5496,21 +5546,29 @@ def render_penn_html(
       return ids.some(id => selectedIds.includes(id));
     }}
 
+    function rowMatchesProductLineFilter(row, selectedIds) {{
+      const ids = Array.isArray(row.product_line_ids) && row.product_line_ids.length
+        ? row.product_line_ids
+        : [row.product_line];
+      return ids.some(id => selectedIds.includes(id));
+    }}
+
     function filteredBlCampaigns() {{
       const showZeroSpend = !!document.getElementById('showZeroSpend')?.checked;
       const channels = effectiveFilterIds(channelState, platformCatalog).filter(p => p !== 'organic');
       if (!channels.length) return [];
-      if (SHOW_SEGMENT_FILTERS) {{
-        const bls = effectiveFilterIds(blState, blCatalog);
-        if (!blCatalog.length || !bls.length) return [];
-        return blCampaigns.filter(r => {{
-          if (!channels.includes(r.platform) || !rowMatchesSegmentFilter(r, bls)) return false;
-          if (!showZeroSpend && (r.spend || 0) < 0.01) return false;
-          return true;
-        }});
-      }}
+      const bls = SHOW_SEGMENT_FILTERS
+        ? effectiveFilterIds(blState, blCatalog)
+        : null;
+      const products = SHOW_PRODUCT_LINE_FILTERS
+        ? effectiveFilterIds(productLineState, productLineCatalog)
+        : null;
+      if (SHOW_SEGMENT_FILTERS && (!blCatalog.length || !bls.length)) return [];
+      if (SHOW_PRODUCT_LINE_FILTERS && (!productLineCatalog.length || !products.length)) return [];
       return blCampaigns.filter(r => {{
         if (!channels.includes(r.platform)) return false;
+        if (SHOW_SEGMENT_FILTERS && !rowMatchesSegmentFilter(r, bls)) return false;
+        if (SHOW_PRODUCT_LINE_FILTERS && !rowMatchesProductLineFilter(r, products)) return false;
         if (!showZeroSpend && (r.spend || 0) < 0.01) return false;
         return true;
       }});
@@ -5550,12 +5608,17 @@ def render_penn_html(
       updatePaidOverviewMetrics(totals);
     }}
 
-    function applyOverviewFilters() {{
+    function filtersPartiallyApplied() {{
       const partialBl = SHOW_SEGMENT_FILTERS && blCatalog.length && !isAllSelected(blState, blCatalog);
+      const partialProduct = SHOW_PRODUCT_LINE_FILTERS
+        && productLineCatalog.length
+        && !isAllSelected(productLineState, productLineCatalog);
       const partialCh = platformCatalog.length && !isAllSelected(channelState, platformCatalog);
-      const blFiltered = (partialBl || partialCh)
-        ? filteredBlCampaigns()
-        : null;
+      return partialBl || partialProduct || partialCh;
+    }}
+
+    function applyOverviewFilters() {{
+      const blFiltered = filtersPartiallyApplied() ? filteredBlCampaigns() : null;
       let heroTotals = null;
 
       document.querySelectorAll('.cards .card[data-platform]').forEach(card => {{
@@ -5604,6 +5667,8 @@ def render_penn_html(
           return String(r.platform_label || r.platform || '').toLowerCase();
         case 'business_line':
           return String(r.business_line_label || '').toLowerCase();
+        case 'product_line':
+          return String(r.product_line_label || '').toLowerCase();
         case 'name':
           return String(r.name || '').toLowerCase();
         case 'spend':
@@ -5626,7 +5691,7 @@ def render_penn_html(
     function sortBlRows(rows) {{
       const {{ key, dir }} = blSort;
       const mul = dir === 'asc' ? 1 : -1;
-      const textKeys = new Set(['platform', 'business_line', 'name']);
+      const textKeys = new Set(['platform', 'business_line', 'product_line', 'name']);
       return [...rows].sort((a, b) => {{
         const av = blSortValue(a, key);
         const bv = blSortValue(b, key);
@@ -5659,7 +5724,7 @@ def render_penn_html(
         blSort.dir = blSort.dir === 'asc' ? 'desc' : 'asc';
       }} else {{
         blSort.key = key;
-        blSort.dir = (key === 'platform' || key === 'business_line' || key === 'name') ? 'asc' : 'desc';
+        blSort.dir = (key === 'platform' || key === 'business_line' || key === 'product_line' || key === 'name') ? 'asc' : 'desc';
       }}
       applyBlView();
     }}
@@ -5693,6 +5758,8 @@ def render_penn_html(
         btn.className = 'filter-toggle';
         if (group === 'channel') {{
           btn.classList.add(`t-${{item.id}}`);
+        }} else if (group === 'product') {{
+          btn.classList.add('t-bl');
         }} else {{
           btn.classList.add('t-bl');
         }}
@@ -5716,9 +5783,9 @@ def render_penn_html(
     }}
 
     function syncToggleGroup(group) {{
-      const state = group === 'channel' ? channelState : blState;
-      const catalog = group === 'channel' ? platformCatalog : blCatalog;
-      const wrapId = group === 'channel' ? 'channelFilters' : 'blFilters';
+      const cfg = FILTER_GROUPS[group];
+      if (!cfg) return;
+      const {{ state, catalog, wrapId }} = cfg;
       const wrap = document.getElementById(wrapId);
       if (!wrap) return;
       wrap.querySelectorAll('.filter-toggle').forEach(btn => {{
@@ -5735,9 +5802,10 @@ def render_penn_html(
     }}
 
     function setGroupSelection(group, ids) {{
-      const state = group === 'channel' ? channelState : blState;
-      state.clear();
-      ids.forEach(id => state.add(id));
+      const cfg = FILTER_GROUPS[group];
+      if (!cfg) return;
+      cfg.state.clear();
+      ids.forEach(id => cfg.state.add(id));
       syncToggleGroup(group);
       applyGlobalFilters();
     }}
@@ -5763,7 +5831,7 @@ def render_penn_html(
 
       const tbody = document.getElementById('blTableBody');
       const blTable = document.getElementById('blTable');
-      const emptyColspan = Number(blTable?.dataset.emptyColspan || (SHOW_SEGMENT_FILTERS ? 10 : 9));
+      const emptyColspan = Number(blTable?.dataset.emptyColspan || 9);
       if (tbody) {{
         if (!filtered.length) {{
           tbody.innerHTML = `<tr><td colspan="${{emptyColspan}}" class="muted" style="padding:24px;text-align:center">No campaigns match — try other filters or enable $0 spend rows.</td></tr>`;
@@ -5783,26 +5851,33 @@ def render_penn_html(
       if (status) {{
         const chLabels = platformCatalog.filter(p => channelState.has(p.id)).map(p => p.label);
         const blLabels = blCatalog.filter(b => blState.has(b.id)).map(b => b.label);
-        const allCh = chLabels.length === platformCatalog.length && platformCatalog.length > 0;
-        const allBl = blLabels.length === blCatalog.length && blCatalog.length > 0;
+        const productLabels = productLineCatalog.filter(p => productLineState.has(p.id)).map(p => p.label);
         const chText = isAllSelected(channelState, platformCatalog)
           ? 'All channels'
-          : (allCh ? 'All channels' : chLabels.join(', '));
+          : chLabels.join(', ');
+        const parts = [];
         if (SHOW_SEGMENT_FILTERS && blCatalog.length) {{
-          const blText = isAllSelected(blState, blCatalog)
-            ? SEGMENT_FILTER_ALL_LABEL
-            : (allBl ? SEGMENT_FILTER_ALL_LABEL : blLabels.join(', '));
-          const zeroNote = showZeroSpend ? ' · incl. $0 spend' : '';
-          status.textContent = `${{blText}} · ${{chText}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}${{zeroNote}}`;
-        }} else {{
-          status.textContent = chText;
+          parts.push(
+            isAllSelected(blState, blCatalog) ? SEGMENT_FILTER_ALL_LABEL : blLabels.join(', ')
+          );
         }}
+        if (SHOW_PRODUCT_LINE_FILTERS && productLineCatalog.length) {{
+          parts.push(
+            isAllSelected(productLineState, productLineCatalog)
+              ? PRODUCT_LINE_FILTER_ALL_LABEL
+              : productLabels.join(', ')
+          );
+        }}
+        parts.push(chText);
+        const zeroNote = showZeroSpend ? ' · incl. $0 spend' : '';
+        status.textContent = `${{parts.join(' · ')}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}${{zeroNote}}`;
       }}
       updateBlSortHeaders();
     }}
 
     initToggleGroup('channelFilters', platformCatalog, channelState, 'channel');
     initToggleGroup('blFilters', blCatalog, blState, 'bl');
+    initToggleGroup('productLineFilters', productLineCatalog, productLineState, 'product');
     document.getElementById('showZeroSpend')?.addEventListener('change', applyGlobalFilters);
 
     const filtersPanel = document.getElementById('globalFiltersPanel');
@@ -6185,8 +6260,15 @@ def render_penn_html(
         + `<td class="num ga4-col">${{fmtInt(keyEvents)}}</td>`;
     }}
 
+    function blTablePrefixColCount() {{
+      let count = 1;
+      if (SHOW_SEGMENT_FILTERS) count += 1;
+      if (SHOW_PRODUCT_LINE_FILTERS) count += 1;
+      return count;
+    }}
+
     function treeNameColIndex(table) {{
-      if (table?.id === 'blTable') return SHOW_SEGMENT_FILTERS ? 3 : 2;
+      if (table?.id === 'blTable') return blTablePrefixColCount() + 1;
       return 1;
     }}
 
@@ -6243,8 +6325,11 @@ def render_penn_html(
       const blCell = SHOW_SEGMENT_FILTERS
         ? `<td><span class="bl-tag">${{escHtml(r.business_line_label)}}</span></td>`
         : '';
+      const productCell = SHOW_PRODUCT_LINE_FILTERS
+        ? `<td><span class="bl-tag">${{escHtml(r.product_line_label || '—')}}</span></td>`
+        : '';
       const prefixCells = `
-        <td><span class="platform-pill ${{escHtml(platform)}}">${{escHtml(r.platform_label)}}</span></td>${{blCell}}`;
+        <td><span class="platform-pill ${{escHtml(platform)}}">${{escHtml(r.platform_label)}}</span></td>${{blCell}}${{productCell}}`;
       const level = r.entity_level || blRootLevel(platform);
       return buildTreeRow(r, platform, level, 0, prefixCells, false);
     }}
@@ -6277,7 +6362,7 @@ def render_penn_html(
       let insertAfter = row;
       const table = row.closest('table');
       const isBlTable = table?.id === 'blTable';
-      const childPrefix = isBlTable ? (SHOW_SEGMENT_FILTERS ? '<td></td><td></td>' : '<td></td>') : '';
+      const childPrefix = isBlTable ? '<td></td>'.repeat(blTablePrefixColCount()) : '';
       if (!children.length) {{
         const empty = document.createElement('tr');
         empty.className = 'tree-row tree-empty';
