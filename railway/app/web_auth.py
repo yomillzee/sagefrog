@@ -242,11 +242,105 @@ def _format_audit_time(iso: str | None) -> str:
         return iso[:19] if iso else "—"
 
 
+def _render_dev_notes_section(*, dev_notes: list | None) -> str:
+    if dev_notes is None:
+        return """
+    <section>
+      <h2>Dev notes</h2>
+      <p class="muted">Connect DATABASE_URL to store internal notes about updates, features, and fixes.</p>
+    </section>"""
+
+    category_options = ""
+    for cat in ("update", "feature", "bug", "note"):
+        category_options += f'<option value="{cat}">{cat}</option>\n'
+
+    note_cards: list[str] = []
+    for note in dev_notes:
+        note_id = int(note.id)
+        cat = _esc(note.category)
+        title = _esc(note.title)
+        body = _esc(note.body)
+        when = _format_audit_time(note.updated_at or note.created_at)
+        author = _esc(note.updated_by or note.created_by or "—")
+        cat_selected = {
+            c: ' selected' if c == note.category else ""
+            for c in ("update", "feature", "bug", "note")
+        }
+        note_cards.append(
+            f"""
+        <article class="dev-note-card">
+          <div class="dev-note-head">
+            <span class="dev-note-cat cat-{cat}">{cat}</span>
+            <strong>{title}</strong>
+            <span class="dev-note-meta">{when} · {author}</span>
+          </div>
+          <div class="dev-note-body">{body if body else '<span class="muted">No details.</span>'}</div>
+          <details class="dev-note-edit">
+            <summary>Edit</summary>
+            <form method="post" action="/admin/dev-notes/{note_id}" class="dev-note-form">
+              <label for="edit-title-{note_id}">Title</label>
+              <input id="edit-title-{note_id}" name="title" type="text" required maxlength="200" value="{title}">
+              <label for="edit-category-{note_id}">Category</label>
+              <select id="edit-category-{note_id}" name="category">
+                <option value="update"{cat_selected["update"]}>update</option>
+                <option value="feature"{cat_selected["feature"]}>feature</option>
+                <option value="bug"{cat_selected["bug"]}>bug</option>
+                <option value="note"{cat_selected["note"]}>note</option>
+              </select>
+              <label for="edit-body-{note_id}">Details</label>
+              <textarea id="edit-body-{note_id}" name="body" rows="5" class="dev-note-textarea">{body}</textarea>
+              <button type="submit" class="primary">Save changes</button>
+            </form>
+          </details>
+          <form method="post" action="/admin/dev-notes/{note_id}/delete" class="dev-note-delete"
+            onsubmit="return confirm('Delete this dev note?');">
+            <button type="submit" class="link danger">Delete</button>
+          </form>
+        </article>"""
+        )
+
+    notes_html = (
+        "\n".join(note_cards)
+        if note_cards
+        else '<p class="muted">No dev notes yet. Add one below.</p>'
+    )
+
+    return f"""
+    <section>
+      <h2>Dev notes</h2>
+      <p class="muted">Internal notes for updates, features, bugs, and deployment reminders. Visible to admins only.</p>
+      <div class="dev-notes-list">
+{notes_html}
+      </div>
+      <form method="post" action="/admin/dev-notes" class="dev-note-add">
+        <h3>Add note</h3>
+        <div class="row">
+          <div>
+            <label for="dev-note-title">Title</label>
+            <input id="dev-note-title" name="title" type="text" required maxlength="200"
+              placeholder="Budget pacing chart shipped">
+          </div>
+          <div>
+            <label for="dev-note-category">Category</label>
+            <select id="dev-note-category" name="category">
+{category_options}
+            </select>
+          </div>
+        </div>
+        <label for="dev-note-body">Details</label>
+        <textarea id="dev-note-body" name="body" rows="5" class="dev-note-textarea"
+          placeholder="What changed, follow-ups, client impact…"></textarea>
+        <button type="submit" class="primary">Add note</button>
+      </form>
+    </section>"""
+
+
 def render_admin_page(
     *,
     user: WebUser,
     users: list[dict],
     audit_events: list[dict] | None = None,
+    dev_notes: list | None = None,
     message: str | None = None,
     error: str | None = None,
     oauth_section_html: str = "",
@@ -472,6 +566,24 @@ def render_admin_page(
     .dash-delete-fold summary::-webkit-details-marker {{ display: none; }}
     .dash-delete-form {{ margin-top: 8px; padding: 10px; background: #fafbfc; border-radius: 8px; border: 1px solid var(--border); }}
     .dash-delete-form input {{ max-width: 100%; margin-bottom: 8px; }}
+    .dev-notes-list {{ display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }}
+    .dev-note-card {{ border: 1px solid var(--border); border-radius: 10px; padding: 14px; background: #fafbfc; }}
+    .dev-note-head {{ display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }}
+    .dev-note-meta {{ margin-left: auto; font-size: .78rem; color: var(--muted); }}
+    .dev-note-cat {{ display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .72rem;
+      font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }}
+    .dev-note-cat.cat-update {{ background: #e3f2fd; color: #1565c0; }}
+    .dev-note-cat.cat-feature {{ background: #e8f5e9; color: #2e7d32; }}
+    .dev-note-cat.cat-bug {{ background: #fdecea; color: #b42318; }}
+    .dev-note-cat.cat-note {{ background: #eceff3; color: #5a6578; }}
+    .dev-note-body {{ font-size: .9rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }}
+    .dev-note-edit {{ margin-top: 10px; font-size: .88rem; }}
+    .dev-note-edit summary {{ cursor: pointer; font-weight: 600; color: var(--accent); }}
+    .dev-note-form, .dev-note-add {{ margin-top: 12px; }}
+    .dev-note-add h3 {{ margin: 0 0 12px; font-size: .95rem; color: var(--navy); }}
+    .dev-note-textarea {{ width: 100%; max-width: 100%; min-height: 100px; padding: 10px;
+      border: 1px solid var(--border); border-radius: 8px; font: inherit; resize: vertical; }}
+    .dev-note-delete {{ margin-top: 8px; }}
   </style>
 </head>
 <body>
@@ -488,6 +600,7 @@ def render_admin_page(
     {notice}
     {oauth_section_html}
     {dashboard_manage_html}
+    {_render_dev_notes_section(dev_notes=dev_notes)}
     <section>
       <h2>Create user</h2>
       <form method="post" action="/admin/users">
