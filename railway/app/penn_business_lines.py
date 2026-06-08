@@ -238,6 +238,48 @@ def _campaign_rows_from_breakdowns(breakdowns: dict[str, Any]) -> list[dict[str,
     return rows
 
 
+def client_has_segment_filters(client_slug: str) -> bool:
+    slug = (client_slug or "").strip().lower()
+    return slug in ("penn", "nixon")
+
+
+def segment_filter_label(client_slug: str) -> str:
+    slug = (client_slug or "").strip().lower()
+    if slug == "nixon":
+        return "Region"
+    return "Business line"
+
+
+def segment_column_label(client_slug: str) -> str:
+    return segment_filter_label(client_slug)
+
+
+def build_client_segment_campaigns(
+    breakdowns: dict[str, Any],
+    *,
+    client_slug: str = "penn",
+) -> list[dict[str, Any]]:
+    slug = (client_slug or "").strip().lower()
+    if slug == "nixon":
+        from nixon_regions import build_nixon_region_campaigns
+
+        return build_nixon_region_campaigns(breakdowns)
+    return build_business_line_campaigns(breakdowns, client_slug=slug)
+
+
+def active_client_segment_catalog(
+    campaigns: list[dict[str, Any]],
+    *,
+    client_slug: str,
+) -> list[dict[str, str]]:
+    slug = (client_slug or "").strip().lower()
+    if slug == "nixon":
+        from nixon_regions import active_region_catalog
+
+        return active_region_catalog(campaigns)
+    return active_business_line_catalog(campaigns)
+
+
 def build_business_line_campaigns(
     breakdowns: dict[str, Any],
     *,

@@ -31,11 +31,14 @@ from penn_config import PennDashboardConfig, load_penn_config
 import client_config
 from penn_business_lines import (
     PLATFORM_LABELS,
-    active_business_line_catalog,
+    active_client_segment_catalog,
     active_platform_catalog,
-    build_business_line_campaigns,
+    build_client_segment_campaigns,
+    client_has_segment_filters,
     platform_catalog,
     platforms_present_in_snapshot,
+    segment_column_label,
+    segment_filter_label,
     _breakdown_has_platform_data,
     _totals_have_metrics,
 )
@@ -562,7 +565,7 @@ def refresh_client(
             payload["platform_totals"]["meta"] = meta_totals
 
     payload["breakdowns"] = breakdowns
-    payload["business_line_campaigns"] = build_business_line_campaigns(
+    payload["business_line_campaigns"] = build_client_segment_campaigns(
         breakdowns,
         client_slug=cfg.client_key,
     )
@@ -668,7 +671,7 @@ def refresh_client_quick(
         "errors": {},
         "ga4_attribution": existing.get("ga4_attribution"),
         "ga4_pages": existing.get("ga4_pages"),
-        "business_line_campaigns": build_business_line_campaigns(
+        "business_line_campaigns": build_client_segment_campaigns(
             breakdowns, client_slug=cfg.client_key
         ),
         "refresh_mode": "warehouse",
@@ -2543,17 +2546,18 @@ def _dashboard_view_tabs_html(*, show_website: bool) -> str:
 
 def _global_filters_bar_html(
     *,
-    show_business_line: bool,
+    show_segment_filters: bool,
     show_channel_filters: bool,
+    segment_filter_label: str = "Business line",
 ) -> str:
-    if not show_business_line and not show_channel_filters:
+    if not show_segment_filters and not show_channel_filters:
         return ""
     bl_column = ""
-    if show_business_line:
-        bl_column = """
+    if show_segment_filters:
+        bl_column = f"""
             <div class="filter-column">
-              <span class="filter-column-label">Business line</span>
-              <div id="blFilters" class="filter-toggles" role="group" aria-label="Business line"></div>
+              <span class="filter-column-label">{_esc(segment_filter_label)}</span>
+              <div id="blFilters" class="filter-toggles" role="group" aria-label="{_esc(segment_filter_label)}"></div>
             </div>"""
     channel_column = ""
     if show_channel_filters:
@@ -2563,10 +2567,10 @@ def _global_filters_bar_html(
               <div id="channelFilters" class="filter-toggles" role="group" aria-label="Channel"></div>
             </div>"""
     grid_class = "global-filter-grid"
-    if not show_business_line or not show_channel_filters:
+    if not show_segment_filters or not show_channel_filters:
         grid_class = "global-filter-grid global-filter-grid--single"
     more_options = ""
-    if show_business_line or show_channel_filters:
+    if show_segment_filters or show_channel_filters:
         more_options = """
             <details class="filter-more-options">
               <summary>More filter options</summary>
@@ -3296,15 +3300,15 @@ def _platform_site_impact_html(
 
 
 def _business_line_campaigns_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
-    """Derive campaign rows from breakdowns (Penn always; other clients when not stored)."""
+    """Derive campaign rows from breakdowns when not stored on the snapshot."""
     client_key = str(snapshot.get("client_key") or "penn")
     breakdowns = _breakdowns_from_snapshot(snapshot)
-    if client_key == "penn":
-        return build_business_line_campaigns(breakdowns, client_slug=client_key)
+    if client_has_segment_filters(client_key):
+        return build_client_segment_campaigns(breakdowns, client_slug=client_key)
     stored = snapshot.get("business_line_campaigns") or []
     if stored:
         return stored
-    return build_business_line_campaigns(breakdowns, client_slug=client_key)
+    return build_client_segment_campaigns(breakdowns, client_slug=client_key)
 
 
 def _breakdowns_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -3315,19 +3319,23 @@ def _breakdowns_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {platform: {"campaign": rows} for platform, rows in legacy.items()}
 
 
-def _campaign_explorer_content_html(*, show_business_line: bool) -> str:
+def _campaign_explorer_content_html(
+    *,
+    show_segment_filters: bool,
+    segment_column_label: str = "Business line",
+) -> str:
     bl_header = (
-        """
-                        <th class="sortable" data-sort="business_line" scope="col" aria-sort="none">Business line<span class="sort-icon" aria-hidden="true"></span></th>"""
-        if show_business_line
+        f"""
+                        <th class="sortable" data-sort="business_line" scope="col" aria-sort="none">{_esc(segment_column_label)}<span class="sort-icon" aria-hidden="true"></span></th>"""
+        if show_segment_filters
         else ""
     )
     filter_note = (
-        "Use the filters at the top to narrow business lines and channels — all are included by default."
-        if show_business_line
+        f"Use the filters at the top to narrow {segment_column_label.lower()}s and channels — all are included by default."
+        if show_segment_filters
         else "Use the channel filters at the top to narrow platforms — all are included by default."
     )
-    empty_colspan = 10 if show_business_line else 9
+    empty_colspan = 10 if show_segment_filters else 9
     return f"""
             <section class="campaign-explorer-section" aria-label="Campaign performance">
               <div class="bl-summary" id="blSummary"></div>
@@ -3338,7 +3346,7 @@ def _campaign_explorer_content_html(*, show_business_line: bool) -> str:
                 </div>
                 <p class="table-note">{filter_note} LinkedIn rows start at campaign group (Campaign Manager “Campaign”); drill down to ad sets and ads. Google and Meta drill to ad groups/ad sets and ads.</p>
                 <div class="table-wrap">
-                  <table class="data-table" id="blTable" data-show-business-line="{'true' if show_business_line else 'false'}" data-empty-colspan="{empty_colspan}">
+                  <table class="data-table" id="blTable" data-show-segment-filters="{'true' if show_segment_filters else 'false'}" data-empty-colspan="{empty_colspan}">
                     <thead>
                       <tr>
                         <th class="chevron-col"></th>
@@ -3361,7 +3369,7 @@ def _campaign_explorer_content_html(*, show_business_line: bool) -> str:
 
 def _business_line_merged_section_html() -> str:
     """Deprecated — use _campaign_explorer_content_html with filters in _global_filters_bar_html."""
-    return _campaign_explorer_content_html(show_business_line=True)
+    return _campaign_explorer_content_html(show_segment_filters=True)
 
 
 def render_penn_html(
@@ -3377,7 +3385,9 @@ def render_penn_html(
     """use_session: refresh forms omit ?key= (cookie auth). access_key: legacy shared secret."""
     slug = (client_slug or "penn").strip().lower()
     theme = dashboard_theme.load_client_theme(slug)
-    show_business_line = slug == "penn"
+    show_segment_filters = client_has_segment_filters(slug)
+    seg_filter_label = segment_filter_label(slug)
+    seg_column_label = segment_column_label(slug)
     if not snapshot:
         try:
             label = client_config.client_label(slug)
@@ -3407,7 +3417,7 @@ def render_penn_html(
             use_session=use_session,
             session_email=session_email,
             session_is_admin=session_is_admin,
-            show_business_line=show_business_line,
+            show_business_line=show_segment_filters,
             extra_css="""
     .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow-sm); }
     .panel h2 { margin: 0 0 10px; font-size: 1.05rem; color: var(--navy); }
@@ -3420,7 +3430,10 @@ def render_penn_html(
 
     label = snapshot.get("label") or client_config.client_label(slug)
     client_slug = str(snapshot.get("client_key") or slug)
-    show_business_line = client_slug == "penn"
+    show_segment_filters = client_has_segment_filters(client_slug)
+    seg_filter_label = segment_filter_label(client_slug)
+    seg_column_label = segment_column_label(client_slug)
+    seg_filter_all_label = f"All {seg_filter_label.lower()}s"
     dr = snapshot.get("date_range") or {}
     refreshed = snapshot.get("refreshed_at") or "—"
     preset = dr.get("preset") or ""
@@ -3487,7 +3500,9 @@ def render_penn_html(
     ga4_campaign_metrics_json = _json_for_html_script(ga4_campaign_metrics)
     bl_campaigns = _business_line_campaigns_from_snapshot(snapshot)
     bl_campaigns_json = _json_for_html_script(bl_campaigns)
-    bl_catalog_json = _json_for_html_script(active_business_line_catalog(bl_campaigns))
+    bl_catalog_json = _json_for_html_script(
+        active_client_segment_catalog(bl_campaigns, client_slug=client_slug)
+    )
     try:
         client_cfg = client_config.load_client_config(slug)
     except Exception:
@@ -3531,10 +3546,14 @@ def render_penn_html(
     has_ga4_summary = bool((ga4_pages_report or {}).get("summary"))
     view_tabs_html = _dashboard_view_tabs_html(show_website=has_ga4)
     filters_bar_html = _global_filters_bar_html(
-        show_business_line=show_business_line,
+        show_segment_filters=show_segment_filters,
         show_channel_filters=bool(platform_catalog_list),
+        segment_filter_label=seg_filter_label,
     )
-    campaign_explorer_html = _campaign_explorer_content_html(show_business_line=show_business_line)
+    campaign_explorer_html = _campaign_explorer_content_html(
+        show_segment_filters=show_segment_filters,
+        segment_column_label=seg_column_label,
+    )
     website_analytics_html = _ga4_website_content_html(ga4_pages_report if has_ga4 else None)
     website_search_html = _ga4_website_search_html(has_pages=has_ga4_pages)
     ga4_metrics_html = _ga4_metrics_summary_html(has_summary=has_ga4_summary)
@@ -5170,7 +5189,8 @@ def render_penn_html(
       }}
     }}
 
-    const SHOW_BUSINESS_LINE = {'true' if show_business_line else 'false'};
+    const SHOW_SEGMENT_FILTERS = {'true' if show_segment_filters else 'false'};
+    const SEGMENT_FILTER_ALL_LABEL = {_json_for_html_script(seg_filter_all_label)};
 
     const breakdowns = readJson('breakdowns-data', {{}});
     const ga4CampaignMetrics = readJson('ga4-campaign-metrics', {{}});
@@ -5469,15 +5489,22 @@ def render_penn_html(
       return effectiveFilterIds(channelState, platformCatalog).includes(platformId);
     }}
 
+    function rowMatchesSegmentFilter(row, selectedIds) {{
+      const ids = Array.isArray(row.region_ids) && row.region_ids.length
+        ? row.region_ids
+        : [row.business_line];
+      return ids.some(id => selectedIds.includes(id));
+    }}
+
     function filteredBlCampaigns() {{
       const showZeroSpend = !!document.getElementById('showZeroSpend')?.checked;
       const channels = effectiveFilterIds(channelState, platformCatalog).filter(p => p !== 'organic');
       if (!channels.length) return [];
-      if (SHOW_BUSINESS_LINE) {{
+      if (SHOW_SEGMENT_FILTERS) {{
         const bls = effectiveFilterIds(blState, blCatalog);
         if (!blCatalog.length || !bls.length) return [];
         return blCampaigns.filter(r => {{
-          if (!channels.includes(r.platform) || !bls.includes(r.business_line)) return false;
+          if (!channels.includes(r.platform) || !rowMatchesSegmentFilter(r, bls)) return false;
           if (!showZeroSpend && (r.spend || 0) < 0.01) return false;
           return true;
         }});
@@ -5524,7 +5551,7 @@ def render_penn_html(
     }}
 
     function applyOverviewFilters() {{
-      const partialBl = SHOW_BUSINESS_LINE && blCatalog.length && !isAllSelected(blState, blCatalog);
+      const partialBl = SHOW_SEGMENT_FILTERS && blCatalog.length && !isAllSelected(blState, blCatalog);
       const partialCh = platformCatalog.length && !isAllSelected(channelState, platformCatalog);
       const blFiltered = (partialBl || partialCh)
         ? filteredBlCampaigns()
@@ -5736,7 +5763,7 @@ def render_penn_html(
 
       const tbody = document.getElementById('blTableBody');
       const blTable = document.getElementById('blTable');
-      const emptyColspan = Number(blTable?.dataset.emptyColspan || (SHOW_BUSINESS_LINE ? 10 : 9));
+      const emptyColspan = Number(blTable?.dataset.emptyColspan || (SHOW_SEGMENT_FILTERS ? 10 : 9));
       if (tbody) {{
         if (!filtered.length) {{
           tbody.innerHTML = `<tr><td colspan="${{emptyColspan}}" class="muted" style="padding:24px;text-align:center">No campaigns match — try other filters or enable $0 spend rows.</td></tr>`;
@@ -5761,10 +5788,10 @@ def render_penn_html(
         const chText = isAllSelected(channelState, platformCatalog)
           ? 'All channels'
           : (allCh ? 'All channels' : chLabels.join(', '));
-        if (SHOW_BUSINESS_LINE && blCatalog.length) {{
+        if (SHOW_SEGMENT_FILTERS && blCatalog.length) {{
           const blText = isAllSelected(blState, blCatalog)
-            ? 'All business lines'
-            : (allBl ? 'All business lines' : blLabels.join(', '));
+            ? SEGMENT_FILTER_ALL_LABEL
+            : (allBl ? SEGMENT_FILTER_ALL_LABEL : blLabels.join(', '));
           const zeroNote = showZeroSpend ? ' · incl. $0 spend' : '';
           status.textContent = `${{blText}} · ${{chText}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}${{zeroNote}}`;
         }} else {{
@@ -6159,7 +6186,7 @@ def render_penn_html(
     }}
 
     function treeNameColIndex(table) {{
-      if (table?.id === 'blTable') return SHOW_BUSINESS_LINE ? 3 : 2;
+      if (table?.id === 'blTable') return SHOW_SEGMENT_FILTERS ? 3 : 2;
       return 1;
     }}
 
@@ -6213,7 +6240,7 @@ def render_penn_html(
 
     function buildBlCampaignRow(r) {{
       const platform = r.platform;
-      const blCell = SHOW_BUSINESS_LINE
+      const blCell = SHOW_SEGMENT_FILTERS
         ? `<td><span class="bl-tag">${{escHtml(r.business_line_label)}}</span></td>`
         : '';
       const prefixCells = `
@@ -6250,7 +6277,7 @@ def render_penn_html(
       let insertAfter = row;
       const table = row.closest('table');
       const isBlTable = table?.id === 'blTable';
-      const childPrefix = isBlTable ? (SHOW_BUSINESS_LINE ? '<td></td><td></td>' : '<td></td>') : '';
+      const childPrefix = isBlTable ? (SHOW_SEGMENT_FILTERS ? '<td></td><td></td>' : '<td></td>') : '';
       if (!children.length) {{
         const empty = document.createElement('tr');
         empty.className = 'tree-row tree-empty';
