@@ -206,10 +206,21 @@ def fetch_pages_for_dashboard(
     client_key: str | None = None,
     limit: int = 500,
 ) -> dict[str, Any]:
+    from ga4_attribution_service import (
+        LANDING_PAGE_ATTRIBUTION_LABELS,
+        fetch_landing_pages_by_platform,
+    )
+
     target = resolve_target(client_key=client_key)
     start, end, preset = resolve_date_range(date_range)
     pages = fetch_page_metrics(start=start, end=end, target=target, limit=limit)
     summary = fetch_site_metrics_summary(start=start, end=end, target=target)
+    pages_by_platform = fetch_landing_pages_by_platform(
+        start=start,
+        end=end,
+        target=target,
+        limit=limit,
+    )
     return {
         "client_key": target.client_key,
         "account_id": target.account_id,
@@ -219,4 +230,6 @@ def fetch_pages_for_dashboard(
         "row_count": len(pages),
         "summary": summary,
         "pages": pages,
+        "pages_by_platform": pages_by_platform,
+        "landing_page_labels": LANDING_PAGE_ATTRIBUTION_LABELS,
     }

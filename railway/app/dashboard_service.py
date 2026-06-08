@@ -2718,11 +2718,21 @@ def _ga4_website_search_html(*, has_pages: bool) -> str:
         return ""
     return """
         <div class="website-search-bar">
+          <div class="website-traffic-filters">
+            <span class="filter-label">Traffic</span>
+            <div class="filter-toggles" id="ga4TrafficFilters" role="group" aria-label="Landing page traffic source">
+              <button type="button" class="filter-toggle filter-toggle--all active" data-source="all" aria-pressed="true">All site</button>
+              <button type="button" class="filter-toggle t-google" data-source="google" aria-pressed="false">Google Ads</button>
+              <button type="button" class="filter-toggle t-linkedin" data-source="linkedin" aria-pressed="false">LinkedIn</button>
+              <button type="button" class="filter-toggle t-meta" data-source="meta" aria-pressed="false">Meta</button>
+            </div>
+          </div>
           <label for="ga4PageSearch" class="filter-label">Search pages</label>
           <input type="search" id="ga4PageSearch" class="ga4-pages-search"
             placeholder="Filter by page path or title…" autocomplete="off">
           <span class="badge" id="ga4PagesCount">0 pages</span>
-        </div>"""
+        </div>
+        <p class="ga4-traffic-filter-note muted" id="ga4TrafficFilterNote" hidden></p>"""
 
 
 def _ga4_metrics_summary_html(*, has_summary: bool) -> str:
@@ -2749,7 +2759,7 @@ def _ga4_website_content_html(ga4_pages: dict[str, Any] | None) -> str:
             "from Settings after GA4 BigQuery is connected.</p>"
         )
     return f"""
-        <p class="table-note muted">Site-wide GA4 metrics{f' for {range_label}' if range_label else ''}. Use the search bar above to filter paths and titles.</p>
+        <p class="table-note muted" id="ga4PagesTableNote">Site-wide GA4 metrics{f' for {range_label}' if range_label else ''}. Filter by paid traffic source to see click-ID landing pages (gclid, li_fat_id, fbclid).</p>
         <div class="table-wrap">
           <table class="data-table ga4-pages-table" id="ga4PagesTable">
             <thead>
@@ -3861,7 +3871,10 @@ def render_penn_html(
     ga4_pages_report = snapshot.get("ga4_pages")
     accounts = snapshot.get("accounts") or {}
     has_ga4 = bool(accounts.get("ga4_client_key") or (ga4_pages_report or {}).get("pages"))
-    has_ga4_pages = bool((ga4_pages_report or {}).get("pages"))
+    has_ga4_pages = bool((ga4_pages_report or {}).get("pages")) or any(
+        (ga4_pages_report or {}).get("pages_by_platform", {}).get(platform)
+        for platform in ("google", "linkedin", "meta")
+    )
     has_ga4_summary = bool((ga4_pages_report or {}).get("summary"))
     view_tabs_html = _dashboard_view_tabs_html(show_website=has_ga4)
     filters_bar_html = _global_filters_bar_html(
@@ -3890,6 +3903,12 @@ def render_penn_html(
             </section>
           </div>"""
     ga4_pages_json = _json_for_html_script((ga4_pages_report or {}).get("pages") or [])
+    ga4_pages_by_platform_json = _json_for_html_script(
+        (ga4_pages_report or {}).get("pages_by_platform") or {}
+    )
+    ga4_landing_labels_json = _json_for_html_script(
+        (ga4_pages_report or {}).get("landing_page_labels") or {}
+    )
     ga4_summary_json = _json_for_html_script((ga4_pages_report or {}).get("summary") or {})
     metric_defs_json = _json_for_html_script(dashboard_theme.chart_metric_defs(theme))
     show_budget_pacing = slug != "penn"
@@ -5123,11 +5142,23 @@ def render_penn_html(
       flex-wrap: wrap;
       align-items: center;
       gap: 12px 16px;
-      margin-bottom: 16px;
+      margin-bottom: 8px;
       padding: 12px 14px;
       background: #f8fafc;
       border: 1px solid var(--border);
-      border-radius: 12px;
+      border-radius: 10px;
+    }}
+    .website-traffic-filters {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 14px;
+      flex: 1 1 100%;
+      min-width: 0;
+    }}
+    .ga4-traffic-filter-note {{
+      margin: 0 0 14px;
+      font-size: 0.86rem;
     }}
     .website-search-bar .filter-label {{
       min-width: auto;
@@ -5637,6 +5668,8 @@ def render_penn_html(
   <script type="application/json" id="product-line-catalog-data">{product_line_catalog_json}</script>
   <script type="application/json" id="platform-catalog-data">{platform_catalog_json}</script>
   <script type="application/json" id="ga4-pages-data">{ga4_pages_json}</script>
+  <script type="application/json" id="ga4-pages-by-platform-data">{ga4_pages_by_platform_json}</script>
+  <script type="application/json" id="ga4-landing-labels-data">{ga4_landing_labels_json}</script>
   <script type="application/json" id="ga4-summary-data">{ga4_summary_json}</script>
   <script>
     function readJson(id, fallback) {{
@@ -5664,6 +5697,8 @@ def render_penn_html(
     const productLineCatalog = readJson('product-line-catalog-data', []);
     const platformCatalog = readJson('platform-catalog-data', []);
     const ga4Pages = readJson('ga4-pages-data', []);
+    const ga4PagesByPlatform = readJson('ga4-pages-by-platform-data', {{}});
+    const ga4LandingLabels = readJson('ga4-landing-labels-data', {{}});
     const ga4SiteSummary = readJson('ga4-summary-data', {{}});
 
     const channelState = new Set();
@@ -6740,14 +6775,61 @@ def render_penn_html(
         </div>`;
     }}
 
-    if (ga4PagesBody && ga4Pages.length) {{
+    if (ga4PagesBody && (ga4Pages.length || Object.values(ga4PagesByPlatform).some(rows => (rows || []).length))) {{
       const ga4PageSearch = document.getElementById('ga4PageSearch');
       const ga4PagesCount = document.getElementById('ga4PagesCount');
       const ga4PagesPagination = document.getElementById('ga4PagesPagination');
+      const ga4TrafficFilterNote = document.getElementById('ga4TrafficFilterNote');
+      const ga4PagesTableNote = document.getElementById('ga4PagesTableNote');
       const ga4PageSort = {{ key: 'sessions', dir: 'desc' }};
       let ga4PageQuery = '';
       let ga4PageNum = 1;
+      let ga4TrafficSource = 'all';
       const GA4_PAGE_SIZE = 10;
+
+      function ga4ActivePages() {{
+        if (ga4TrafficSource === 'all') return ga4Pages;
+        return ga4PagesByPlatform[ga4TrafficSource] || [];
+      }}
+
+      function syncGa4TrafficFilterButtons() {{
+        document.querySelectorAll('#ga4TrafficFilters .filter-toggle').forEach(btn => {{
+          const on = btn.dataset.source === ga4TrafficSource;
+          btn.classList.toggle('active', on);
+          btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }});
+        const label = ga4LandingLabels[ga4TrafficSource] || '';
+        if (ga4TrafficFilterNote) {{
+          if (ga4TrafficSource !== 'all' && label) {{
+            ga4TrafficFilterNote.textContent = label;
+            ga4TrafficFilterNote.hidden = false;
+          }} else {{
+            ga4TrafficFilterNote.hidden = true;
+            ga4TrafficFilterNote.textContent = '';
+          }}
+        }}
+        if (ga4PagesTableNote) {{
+          ga4PagesTableNote.textContent = ga4TrafficSource === 'all'
+            ? ga4PagesTableNote.dataset.allNote || ga4PagesTableNote.textContent
+            : (label || 'Paid landing pages for the selected traffic source.');
+        }}
+      }}
+
+      if (ga4PagesTableNote) {{
+        ga4PagesTableNote.dataset.allNote = ga4PagesTableNote.textContent;
+      }}
+
+      document.querySelectorAll('#ga4TrafficFilters .filter-toggle').forEach(btn => {{
+        btn.addEventListener('click', () => {{
+          const source = btn.dataset.source || 'all';
+          if (source === ga4TrafficSource) return;
+          ga4TrafficSource = source;
+          ga4PageNum = 1;
+          syncGa4TrafficFilterButtons();
+          renderGa4Pages();
+        }});
+      }});
+      syncGa4TrafficFilterButtons();
 
       function ga4PageSortValue(row, key) {{
         if (key === 'page_path' || key === 'page_title') {{
@@ -6818,9 +6900,10 @@ def render_penn_html(
       }}
 
       renderGa4Pages = function() {{
-        const filtered = filterGa4Pages(ga4Pages);
+        const sourcePages = ga4ActivePages();
+        const filtered = filterGa4Pages(sourcePages);
         const sorted = sortGa4Pages(filtered);
-        const isFiltered = !!ga4PageQuery.trim();
+        const isFiltered = !!ga4PageQuery.trim() || ga4TrafficSource !== 'all';
         renderGa4MetricsSummary(filtered, isFiltered);
         const totalPages = Math.max(1, Math.ceil(sorted.length / GA4_PAGE_SIZE));
         if (ga4PageNum > totalPages) ga4PageNum = totalPages;
@@ -6829,7 +6912,10 @@ def render_penn_html(
           ga4PagesCount.textContent = sorted.length + ' page' + (sorted.length === 1 ? '' : 's');
         }}
         if (!sorted.length) {{
-          ga4PagesBody.innerHTML = '<tr><td colspan="8" class="muted" style="padding:24px;text-align:center">No pages match your search.</td></tr>';
+          const emptyMsg = ga4TrafficSource !== 'all' && !sourcePages.length
+            ? 'No landing pages for this traffic source yet. Run a full refresh after GA4 BigQuery is connected.'
+            : 'No pages match your search.';
+          ga4PagesBody.innerHTML = `<tr><td colspan="8" class="muted" style="padding:24px;text-align:center">${{escHtml(emptyMsg)}}</td></tr>`;
           renderGa4Pagination(0, 1, GA4_PAGE_SIZE);
           updateGa4SortHeaders();
           return;
@@ -6857,7 +6943,7 @@ def render_penn_html(
       ga4PagesPagination?.addEventListener('click', e => {{
         const btn = e.target.closest('[data-page]');
         if (!btn || btn.disabled) return;
-        const total = sortGa4Pages(filterGa4Pages(ga4Pages)).length;
+        const total = sortGa4Pages(filterGa4Pages(ga4ActivePages())).length;
         const totalPages = Math.max(1, Math.ceil(total / GA4_PAGE_SIZE));
         if (btn.dataset.page === 'prev' && ga4PageNum > 1) {{
           ga4PageNum -= 1;
