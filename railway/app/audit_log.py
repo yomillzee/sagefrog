@@ -43,6 +43,8 @@ _ACTION_LABELS = {
     "user.deactivated": "Deactivated user",
     "user.bootstrap_admin": "Bootstrap admin created",
     "dashboard.config_saved": "Saved dashboard config",
+    "dashboard.created": "Created dashboard",
+    "dashboard.deleted": "Deleted dashboard",
     "oauth.connected": "OAuth connected",
     "oauth.disconnected": "OAuth disconnected",
 }
