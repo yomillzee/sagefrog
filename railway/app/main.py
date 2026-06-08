@@ -30,6 +30,7 @@ from security import require_api_key
 import audit_log
 import client_config
 import client_dashboard_config
+import dashboard_registry
 import business_line_rules
 import client_insight_documents
 import dashboard_settings
@@ -153,6 +154,7 @@ try:
     web_users.ensure_schema()
     audit_log.ensure_schema()
     client_dashboard_config.ensure_schema()
+    dashboard_registry.ensure_schema()
     business_line_rules.ensure_schema()
     client_insight_documents.ensure_schema()
     oauth_store.ensure_schema()
@@ -1419,6 +1421,86 @@ def admin_deactivate_user(
             **ctx,
         )
     return RedirectResponse(url="/admin?msg=User+deactivated", status_code=303)
+
+
+@app.post("/admin/dashboards", include_in_schema=False)
+def admin_create_dashboard(
+    request: Request,
+    client_slug: str = Form(...),
+    label: str = Form(...),
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    ctx = audit_log.request_context(request)
+    try:
+        created = dashboard_registry.create_client(
+            client_slug=client_slug,
+            label=label,
+            created_by=user.email,
+        )
+    except ValueError as exc:
+        users = web_users.list_users(include_inactive=False)
+        events = audit_log.list_recent(limit=150)
+        oauth_html = dashboard_settings.render_admin_oauth_section(return_url="/admin")
+        return HTMLResponse(
+            web_auth.render_admin_page(
+                user=user,
+                users=users,
+                audit_events=events,
+                error=str(exc),
+                oauth_section_html=oauth_html,
+            ),
+            status_code=400,
+        )
+    audit_log.record(
+        action="dashboard.created",
+        actor_email=user.email,
+        detail={"client_slug": created.client_slug, "label": created.label},
+        **ctx,
+    )
+    return RedirectResponse(
+        url=f"/admin?msg=Dashboard+{quote(created.label)}+created",
+        status_code=303,
+    )
+
+
+@app.post("/admin/dashboards/{client_slug}/delete", include_in_schema=False)
+def admin_delete_dashboard(
+    client_slug: str,
+    request: Request,
+    confirm_label: str = Form(""),
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    ctx = audit_log.request_context(request)
+    try:
+        deleted = dashboard_registry.delete_client(
+            client_slug=client_slug,
+            confirm_label=confirm_label,
+            deleted_by=user.email,
+        )
+    except ValueError as exc:
+        users = web_users.list_users(include_inactive=False)
+        events = audit_log.list_recent(limit=150)
+        oauth_html = dashboard_settings.render_admin_oauth_section(return_url="/admin")
+        return HTMLResponse(
+            web_auth.render_admin_page(
+                user=user,
+                users=users,
+                audit_events=events,
+                error=str(exc),
+                oauth_section_html=oauth_html,
+            ),
+            status_code=400,
+        )
+    audit_log.record(
+        action="dashboard.deleted",
+        actor_email=user.email,
+        detail=deleted,
+        **ctx,
+    )
+    return RedirectResponse(
+        url=f"/admin?msg=Dashboard+{quote(deleted['label'])}+deleted",
+        status_code=303,
+    )
 
 
 @app.post(

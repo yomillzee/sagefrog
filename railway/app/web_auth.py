@@ -291,10 +291,112 @@ def render_admin_page(
         or '<tr><td colspan="5" class="muted">No events yet.</td></tr>'
     )
 
-    dashboard_links = "\n".join(
-        f'        <li><a href="/dashboard/{_esc(slug)}">{_esc(label)}</a></li>'
-        for slug, label in client_config.list_dashboard_clients()
-    ) or '        <li class="muted">No dashboards configured.</li>'
+    dashboard_manage_html = ""
+    client_slug_options = ""
+    client_slug_datalist = ""
+    dash_delete_js = ""
+    try:
+        import dashboard_registry
+
+        if dashboard_registry.enabled():
+            dash_rows = []
+            for row in dashboard_registry.list_clients():
+                slug = row.client_slug
+                label = row.label
+                delete_cell = ""
+                if slug == "penn":
+                    delete_cell = '<span class="muted">Protected</span>'
+                else:
+                    field_id = f"confirm-{slug.replace('-', '_')}"
+                    btn_id = f"delete-btn-{slug.replace('-', '_')}"
+                    delete_cell = f"""
+                    <details class="dash-delete-fold">
+                      <summary class="link danger">Delete…</summary>
+                      <form method="post" action="/admin/dashboards/{_esc(slug)}/delete" class="dash-delete-form">
+                        <p class="hint">Type <strong>{_esc(label)}</strong> to confirm.</p>
+                        <input type="text" id="{field_id}" name="confirm_label"
+                          placeholder="{_esc(label)}" autocomplete="off"
+                          data-expected="{_esc(label)}" data-btn-id="{btn_id}">
+                        <button type="submit" id="{btn_id}" class="link danger" disabled>Delete dashboard</button>
+                      </form>
+                    </details>"""
+                dash_rows.append(
+                    f"<tr>"
+                    f'<td class="mono">{_esc(slug)}</td>'
+                    f"<td>{_esc(label)}</td>"
+                    f'<td><a href="/dashboard/{_esc(slug)}">Open</a> · '
+                    f'<a href="/dashboard/{_esc(slug)}/settings">Settings</a></td>'
+                    f"<td>{delete_cell}</td>"
+                    f"</tr>"
+                )
+            dash_table = (
+                "\n".join(dash_rows)
+                or '<tr><td colspan="4" class="muted">No dashboards yet.</td></tr>'
+            )
+            for slug, _label in client_config.list_dashboard_clients():
+                client_slug_options += f'<option value="{_esc(slug)}"></option>\n'
+            if client_slug_options:
+                client_slug_datalist = f'<datalist id="clientSlugOptions">{client_slug_options}</datalist>'
+            dashboard_manage_html = f"""
+    <section>
+      <h2>Dashboards</h2>
+      <p class="muted">Add client dashboards here. Map ad accounts and GA4 in each dashboard's Settings.</p>
+      <form method="post" action="/admin/dashboards" class="dash-add-form">
+        <div class="row">
+          <div>
+            <label for="dash_slug">Slug</label>
+            <input id="dash_slug" name="client_slug" type="text" required
+              pattern="[a-z0-9-]+" placeholder="nixon" maxlength="64">
+            <p class="hint">Lowercase URL segment, e.g. <code>nixon</code> → /dashboard/nixon</p>
+          </div>
+          <div>
+            <label for="dash_label">Display name</label>
+            <input id="dash_label" name="label" type="text" required maxlength="120"
+              placeholder="Nixon Medical">
+          </div>
+        </div>
+        <button type="submit" class="primary">Add dashboard</button>
+      </form>
+      <table class="dash-table">
+        <thead><tr><th>Slug</th><th>Name</th><th>Links</th><th></th></tr></thead>
+        <tbody>{dash_table}</tbody>
+      </table>
+    </section>"""
+            dash_delete_js = """
+    document.querySelectorAll('.dash-delete-form input[name="confirm_label"]').forEach((input) => {
+      const expected = input.dataset.expected || '';
+      const btn = document.getElementById(input.dataset.btnId || '');
+      const sync = () => {
+        if (btn) btn.disabled = input.value.trim() !== expected;
+      };
+      input.addEventListener('input', sync);
+      sync();
+    });"""
+        else:
+            dashboard_links = "\n".join(
+                f'        <li><a href="/dashboard/{_esc(slug)}">{_esc(label)}</a></li>'
+                for slug, label in client_config.list_dashboard_clients()
+            ) or '        <li class="muted">No dashboards configured.</li>'
+            dashboard_manage_html = f"""
+    <section>
+      <h2>Dashboards</h2>
+      <p class="muted">Connect DATABASE_URL to add or remove dashboards from Admin.</p>
+      <ul class="links">
+{dashboard_links}
+      </ul>
+    </section>"""
+    except Exception:
+        dashboard_links = "\n".join(
+            f'        <li><a href="/dashboard/{_esc(slug)}">{_esc(label)}</a></li>'
+            for slug, label in client_config.list_dashboard_clients()
+        ) or '        <li class="muted">No dashboards configured.</li>'
+        dashboard_manage_html = f"""
+    <section>
+      <h2>Dashboards</h2>
+      <ul class="links">
+{dashboard_links}
+      </ul>
+    </section>"""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -363,6 +465,13 @@ def render_admin_page(
     .settings-fold summary {{ cursor: pointer; color: var(--muted); }}
     .hint {{ color: var(--muted); font-size: .82rem; margin: 4px 0 0; }}
     .hint.mono {{ font-family: ui-monospace, monospace; }}
+    .dash-add-form {{ margin-bottom: 18px; }}
+    .dash-table {{ margin-top: 8px; }}
+    .dash-delete-fold {{ margin: 0; font-size: .88rem; }}
+    .dash-delete-fold summary {{ cursor: pointer; list-style: none; }}
+    .dash-delete-fold summary::-webkit-details-marker {{ display: none; }}
+    .dash-delete-form {{ margin-top: 8px; padding: 10px; background: #fafbfc; border-radius: 8px; border: 1px solid var(--border); }}
+    .dash-delete-form input {{ max-width: 100%; margin-bottom: 8px; }}
   </style>
 </head>
 <body>
@@ -378,12 +487,7 @@ def render_admin_page(
   <main>
     {notice}
     {oauth_section_html}
-    <section>
-      <h2>Dashboards</h2>
-      <ul class="links">
-{dashboard_links}
-      </ul>
-    </section>
+    {dashboard_manage_html}
     <section>
       <h2>Create user</h2>
       <form method="post" action="/admin/users">
@@ -407,7 +511,9 @@ def render_admin_page(
           </div>
           <div>
             <label for="client_slug">Client slug (for client role, e.g. penn)</label>
-            <input id="client_slug" name="client_slug" type="text" placeholder="penn">
+            <input id="client_slug" name="client_slug" type="text" placeholder="penn"
+              list="clientSlugOptions">
+            {client_slug_datalist}
           </div>
         </div>
         <button type="submit" class="primary">Create user</button>
@@ -431,5 +537,6 @@ def render_admin_page(
       </div>
     </section>
   </main>
+  <script>{dash_delete_js}</script>
 </body>
 </html>"""

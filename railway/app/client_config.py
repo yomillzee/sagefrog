@@ -55,9 +55,18 @@ def _load_registry_from_env() -> dict[str, dict[str, Any]]:
 
 
 def list_client_slugs() -> list[str]:
-    """Known dashboard client slugs (env registry + built-in clients)."""
+    """Known dashboard client slugs (Postgres registry, env, built-in)."""
+    slugs: set[str] = set()
+    try:
+        import dashboard_registry
+
+        if dashboard_registry.enabled():
+            dashboard_registry.ensure_schema(seed_defaults=True)
+            slugs.update(dashboard_registry.list_slugs())
+    except Exception:
+        pass
     registry = _load_registry_from_env()
-    slugs = set(registry.keys())
+    slugs.update(registry.keys())
     slugs.update(_BUILTIN_CLIENTS.keys())
     slugs.add("penn")
     return sorted(slugs)
@@ -72,15 +81,25 @@ def list_dashboard_clients() -> list[tuple[str, str]]:
 
 def _labels_for_slugs(slugs: list[str]) -> dict[str, str]:
     """Batch-load display labels from Postgres when available."""
+    labels: dict[str, str] = {}
+    try:
+        import dashboard_registry
+
+        if dashboard_registry.enabled():
+            for row in dashboard_registry.list_clients():
+                if row.label:
+                    labels[row.client_slug] = row.label
+    except Exception:
+        pass
     try:
         import client_dashboard_config as cdc
 
-        if not cdc.enabled():
-            return {}
-        rows = cdc.list_config_labels()
-        return {slug: label for slug, label in rows.items() if label}
+        if cdc.enabled():
+            rows = cdc.list_config_labels()
+            labels.update({slug: label for slug, label in rows.items() if label})
     except Exception:
-        return {}
+        pass
+    return labels
 
 
 def _get_db_row(slug: str):
@@ -149,7 +168,20 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
         if row.harvest_project_id:
             harvest_project_id = row.harvest_project_id
 
-    if slug not in _BUILTIN_CLIENTS and not any((google, linkedin, meta, ga4_key)):
+    in_registry = False
+    try:
+        import dashboard_registry
+
+        in_registry = dashboard_registry.has_slug(slug)
+    except Exception:
+        in_registry = False
+
+    if (
+        slug not in _BUILTIN_CLIENTS
+        and slug != "penn"
+        and not in_registry
+        and not any((google, linkedin, meta, ga4_key))
+    ):
         raise RuntimeError(
             f"Client '{slug}' is not configured. Set DASHBOARD_CLIENTS or save account IDs in settings."
         )

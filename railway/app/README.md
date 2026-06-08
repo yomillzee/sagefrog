@@ -65,7 +65,7 @@ Requires **Postgres** (`DATABASE_URL`). The service creates a `web_users` table.
 **Routes:**
 
 - `GET /login` — sign in
-- `GET /admin` — admin hub (create users, open dashboards)
+- `GET /admin` — admin hub (create users, manage dashboards, open dashboards)
 - `GET /dashboard/penn` — Penn dashboard (admin or `client` user with `client_slug=penn`)
 
 **Roles:**
