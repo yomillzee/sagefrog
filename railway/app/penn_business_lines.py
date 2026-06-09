@@ -19,6 +19,7 @@ BUSINESS_LINE_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "CD / Certificate",
         ("breakable cd", "lehigh cd", " cd ", " cd-", "- cd", "certificate"),
     ),
+    ("home_mortgage", "Home Mortgage", ("home mortgage", "mortgage")),
     ("commercial", "Commercial", ("commercial",)),
 )
 

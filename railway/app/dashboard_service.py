@@ -677,39 +677,75 @@ def _merge_linkedin_creative_media(
     """Attach thumbnail/image metadata to LinkedIn creative rows when available."""
     if not creatives or not account_id:
         return
+    index = _linkedin_creative_media_index(account_id)
+    _apply_linkedin_creative_media_rows(creatives, index)
+
+
+def _linkedin_creative_media_index(account_id: str) -> dict[str, dict[str, str]]:
+    """Fresh LinkedIn creative preview URLs keyed by creative id."""
+    if not account_id:
+        return {}
     try:
         media_data = linkedin_service.list_video_creatives(account_id, videos_only=False)
-        by_id: dict[str, dict[str, Any]] = {}
-        for row in media_data.get("videos") or []:
-            cid = str(row.get("creative_id") or "")
-            if not cid:
-                continue
-            existing = by_id.get(cid)
-            thumb = str(row.get("thumbnail_url") or row.get("image_url") or "")
-            if existing and (existing.get("thumbnail_url") or not thumb):
-                continue
-            by_id[cid] = row
-        for creative in creatives:
-            media = by_id.get(str(creative.get("id") or ""))
-            if not media:
-                continue
-            thumb = str(media.get("thumbnail_url") or media.get("image_url") or "")
-            if thumb:
-                creative["thumbnail_url"] = thumb
-            image_url = str(media.get("image_url") or "")
-            if image_url:
-                creative["image_url"] = image_url
-            video_url = str(media.get("video_url") or "")
-            if video_url:
-                creative["video_url"] = video_url
-            media_type = str(media.get("media_type") or "")
-            if media_type:
-                creative["media_type"] = media_type
-            creative_name = str(media.get("creative_name") or "")
-            if creative_name:
-                creative["creative_name"] = creative_name
     except Exception:
-        pass
+        return {}
+
+    index: dict[str, dict[str, str]] = {}
+    for row in media_data.get("videos") or []:
+        cid = str(row.get("creative_id") or "").strip()
+        if not cid:
+            continue
+        thumb = str(row.get("thumbnail_url") or row.get("image_url") or "")
+        existing = index.get(cid)
+        if existing and (existing.get("thumbnail_url") or not thumb):
+            continue
+        index[cid] = {
+            "thumbnail_url": thumb,
+            "image_url": str(row.get("image_url") or ""),
+            "video_url": str(row.get("video_url") or ""),
+            "media_type": str(row.get("media_type") or ""),
+            "creative_name": str(row.get("creative_name") or ""),
+        }
+    return index
+
+
+def _apply_linkedin_creative_media_rows(
+    creatives: list[dict[str, Any]],
+    index: dict[str, dict[str, str]],
+) -> None:
+    for creative in creatives:
+        media = index.get(str(creative.get("id") or "").strip())
+        if not media:
+            continue
+        thumb = str(media.get("thumbnail_url") or media.get("image_url") or "")
+        if thumb:
+            creative["thumbnail_url"] = thumb
+        image_url = str(media.get("image_url") or "")
+        if image_url:
+            creative["image_url"] = image_url
+        video_url = str(media.get("video_url") or "")
+        if video_url:
+            creative["video_url"] = video_url
+        media_type = str(media.get("media_type") or "")
+        if media_type:
+            creative["media_type"] = media_type
+        creative_name = str(media.get("creative_name") or "")
+        if creative_name:
+            creative["creative_name"] = creative_name
+
+
+def _hydrate_linkedin_breakdown_media(
+    breakdowns: dict[str, Any],
+    account_id: str | None,
+) -> dict[str, dict[str, str]]:
+    """Re-fetch LinkedIn creative media on page render (signed URLs expire quickly)."""
+    if not account_id:
+        return {}
+    index = _linkedin_creative_media_index(account_id)
+    linkedin = breakdowns.get("linkedin")
+    if linkedin and index:
+        _apply_linkedin_creative_media_rows(linkedin.get("creative") or [], index)
+    return index
 
 
 def _sync_meta(trigger: str) -> dict[str, str]:
@@ -2751,38 +2787,16 @@ def render_time_tracking_page(
 </html>"""
 
 
-def _ga4_website_search_html(
-    *,
-    has_pages: bool,
-    show_segment_filters: bool = False,
-    segment_filter_label: str = "Business line",
-) -> str:
+def _ga4_website_search_html(*, has_pages: bool) -> str:
     if not has_pages:
         return ""
-    segment_filters = ""
-    if show_segment_filters:
-        segment_filters = f"""
-          <div class="website-segment-filters">
-            <span class="filter-label">{_esc(segment_filter_label)}</span>
-            <div class="filter-toggles" id="ga4BlFilters" role="group" aria-label="{_esc(segment_filter_label)}"></div>
-          </div>"""
-    return f"""
+    return """
         <div class="website-search-bar">
-          <div class="website-traffic-filters">
-            <span class="filter-label">Traffic</span>
-            <div class="filter-toggles" id="ga4TrafficFilters" role="group" aria-label="Landing page traffic source">
-              <button type="button" class="filter-toggle filter-toggle--all active" data-source="all" aria-pressed="true">All site</button>
-              <button type="button" class="filter-toggle t-google" data-source="google" aria-pressed="false">Google Ads</button>
-              <button type="button" class="filter-toggle t-linkedin" data-source="linkedin" aria-pressed="false">LinkedIn</button>
-              <button type="button" class="filter-toggle t-meta" data-source="meta" aria-pressed="false">Meta</button>
-            </div>
-          </div>{segment_filters}
           <label for="ga4PageSearch" class="filter-label">Search pages</label>
           <input type="search" id="ga4PageSearch" class="ga4-pages-search"
             placeholder="Filter by page path or title…" autocomplete="off">
           <span class="badge" id="ga4PagesCount">0 pages</span>
-        </div>
-        <p class="ga4-traffic-filter-note muted" id="ga4TrafficFilterNote" hidden></p>"""
+        </div>"""
 
 
 def _ga4_metrics_summary_html(*, has_summary: bool) -> str:
@@ -2809,7 +2823,7 @@ def _ga4_website_content_html(ga4_pages: dict[str, Any] | None) -> str:
             "from Settings after GA4 BigQuery is connected.</p>"
         )
     return f"""
-        <p class="table-note muted" id="ga4PagesTableNote">Site-wide GA4 metrics{f' for {range_label}' if range_label else ''}. Filter by paid traffic source to see click-ID landing pages (gclid, li_fat_id, fbclid). Use business line filters to match campaign, path, and title keywords.</p>
+        <p class="table-note muted" id="ga4PagesTableNote">Site-wide GA4 metrics{f' for {range_label}' if range_label else ''}. Use the filters at the top of the page for channel and business line.</p>
         <div class="table-wrap">
           <table class="data-table ga4-pages-table" id="ga4PagesTable">
             <thead>
@@ -3867,7 +3881,17 @@ def render_penn_html(
     ga4_attr = snapshot.get("ga4_attribution")
     ga4_platforms = _ga4_platform_reports(ga4_attr)
     aggregated = snapshot.get("aggregated_paid_media") or _aggregated_paid_media(totals)
+    linkedin_account_id = str(
+        (client_cfg.linkedin_account_id if client_cfg else "")
+        or accounts_early.get("linkedin")
+        or ""
+    ).strip()
+    linkedin_creative_media_index = _hydrate_linkedin_breakdown_media(
+        breakdowns,
+        linkedin_account_id or None,
+    )
     breakdowns_json = _json_for_html_script(breakdowns)
+    linkedin_creative_media_json = _json_for_html_script(linkedin_creative_media_index)
     ga4_campaign_metrics: dict[str, dict[str, dict[str, Any]]] = {}
     for platform in ("google", "linkedin", "meta"):
         campaigns = (breakdowns.get(platform) or {}).get("campaign") or []
@@ -3959,11 +3983,7 @@ def render_penn_html(
         show_product_line_column=show_product_line_filters,
     )
     website_analytics_html = _ga4_website_content_html(ga4_pages_report if has_ga4 else None)
-    website_search_html = _ga4_website_search_html(
-        has_pages=has_ga4_pages,
-        show_segment_filters=show_segment_filters,
-        segment_filter_label=seg_filter_label,
-    )
+    website_search_html = _ga4_website_search_html(has_pages=has_ga4_pages)
     ga4_metrics_html = _ga4_metrics_summary_html(has_summary=has_ga4_summary)
     website_tab_panel = ""
     if show_website_tab:
@@ -3989,6 +4009,11 @@ def render_penn_html(
     can_save_budget = session_is_admin if use_session else bool(access_key)
     settings_url = _settings_page_url(
         client_slug=slug, access_key=access_key, use_session=use_session
+    )
+    data_range_note_html = (
+        f'<p class="dash-data-range-note muted">This dashboard includes the '
+        f"<strong>last 30 days</strong> of data ({_esc(dr.get('start', ''))} → "
+        f"{_esc(dr.get('end', ''))}). Expanded historical date ranges are in progress.</p>"
     )
     budget_pacing_html = ""
     budget_pacing_json = _json_for_html_script({})
@@ -5105,6 +5130,15 @@ def render_penn_html(
       padding: 16px 0 18px;
       background: transparent;
     }}
+    .dash-data-range-note {{
+      margin: 0 0 16px;
+      padding: 10px 14px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.88rem;
+      line-height: 1.45;
+    }}
     .dash-filters-bar:empty {{
       display: none;
     }}
@@ -5716,6 +5750,7 @@ def render_penn_html(
         <div class="dash-page-header">
           {view_tabs_html}
           {filters_bar_html}
+          {data_range_note_html}
         </div>
       </div>
 
@@ -5757,6 +5792,7 @@ def render_penn_html(
   <script type="application/json" id="metric-defs-data">{metric_defs_json}</script>
   <script type="application/json" id="paid-overview-metrics-data">{paid_overview_metrics_json}</script>
   <script type="application/json" id="breakdowns-data">{breakdowns_json}</script>
+  <script type="application/json" id="linkedin-creative-media-data">{linkedin_creative_media_json}</script>
   <script type="application/json" id="ga4-campaign-metrics">{ga4_campaign_metrics_json}</script>
   <script type="application/json" id="bl-campaigns-data">{bl_campaigns_json}</script>
   <script type="application/json" id="bl-catalog-data">{bl_catalog_json}</script>
@@ -5790,6 +5826,7 @@ def render_penn_html(
     const PRODUCT_LINE_FILTER_ALL_LABEL = "All product lines";
 
     const breakdowns = readJson('breakdowns-data', {{}});
+    const linkedinCreativeMedia = readJson('linkedin-creative-media-data', {{}});
     const ga4CampaignMetrics = readJson('ga4-campaign-metrics', {{}});
     const blCampaigns = readJson('bl-campaigns-data', []);
     const blCatalog = readJson('bl-catalog-data', []);
@@ -6593,12 +6630,14 @@ def render_penn_html(
       refreshCharts();
     }}
 
+    let ga4PageNum = 1;
     let renderGa4Pages = () => {{}};
 
     function applyGlobalFilters() {{
       collapseAllExpandedTreeRows();
       applyBlView();
       applyOverviewFilters();
+      ga4PageNum = 1;
       renderGa4Pages();
     }}
 
@@ -6909,19 +6948,15 @@ def render_penn_html(
       const ga4PageSearch = document.getElementById('ga4PageSearch');
       const ga4PagesCount = document.getElementById('ga4PagesCount');
       const ga4PagesPagination = document.getElementById('ga4PagesPagination');
-      const ga4TrafficFilterNote = document.getElementById('ga4TrafficFilterNote');
       const ga4PagesTableNote = document.getElementById('ga4PagesTableNote');
       const ga4PageSort = {{ key: 'sessions', dir: 'desc' }};
       let ga4PageQuery = '';
-      let ga4PageNum = 1;
-      let ga4TrafficSource = 'all';
-      const ga4BlState = new Set();
       const GA4_PAGE_SIZE = 10;
 
       function rowMatchesGa4SegmentFilter(row) {{
         if (!SHOW_SEGMENT_FILTERS || !blCatalog.length) return true;
-        if (isAllSelected(ga4BlState, blCatalog)) return true;
-        const selected = effectiveFilterIds(ga4BlState, blCatalog);
+        if (isAllSelected(blState, blCatalog)) return true;
+        const selected = effectiveFilterIds(blState, blCatalog);
         const ids = Array.isArray(row.region_ids) && row.region_ids.length
           ? row.region_ids
           : [row.business_line];
@@ -6930,116 +6965,49 @@ def render_penn_html(
 
       function filterGa4PagesBySegment(rows) {{
         if (!SHOW_SEGMENT_FILTERS || !blCatalog.length) return rows;
-        if (isAllSelected(ga4BlState, blCatalog)) return rows;
+        if (isAllSelected(blState, blCatalog)) return rows;
         return rows.filter(rowMatchesGa4SegmentFilter);
       }}
 
-      function syncGa4BlFilterButtons() {{
-        const wrap = document.getElementById('ga4BlFilters');
-        if (!wrap) return;
-        wrap.querySelectorAll('.filter-toggle').forEach(btn => {{
-          if (btn.dataset.id === '__all__') {{
-            const on = isAllSelected(ga4BlState, blCatalog);
-            btn.classList.toggle('active', on);
-            btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-            return;
-          }}
-          const on = ga4BlState.has(btn.dataset.id);
-          btn.classList.toggle('active', on);
-          btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-        }});
-      }}
-
-      function initGa4BlFilters() {{
-        const wrap = document.getElementById('ga4BlFilters');
-        if (!wrap || !SHOW_SEGMENT_FILTERS || !blCatalog.length) return;
-        wrap.innerHTML = '';
-
-        const allBtn = document.createElement('button');
-        allBtn.type = 'button';
-        allBtn.className = 'filter-toggle filter-toggle--all';
-        allBtn.textContent = 'All';
-        allBtn.dataset.id = '__all__';
-        allBtn.setAttribute('aria-pressed', 'false');
-        allBtn.addEventListener('click', () => {{
-          const allOn = ga4BlState.size === blCatalog.length;
-          ga4BlState.clear();
-          if (!allOn) {{
-            blCatalog.forEach(item => ga4BlState.add(item.id));
-          }}
-          syncGa4BlFilterButtons();
-          ga4PageNum = 1;
-          renderGa4Pages();
-        }});
-        wrap.appendChild(allBtn);
-
-        for (const item of blCatalog) {{
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'filter-toggle t-bl';
-          btn.textContent = item.label;
-          btn.dataset.id = item.id;
-          btn.setAttribute('aria-pressed', 'false');
-          btn.addEventListener('click', () => {{
-            if (ga4BlState.has(item.id)) {{
-              ga4BlState.delete(item.id);
-            }} else {{
-              ga4BlState.add(item.id);
-            }}
-            syncGa4BlFilterButtons();
-            ga4PageNum = 1;
-            renderGa4Pages();
-          }});
-          wrap.appendChild(btn);
-        }}
-        syncGa4BlFilterButtons();
-      }}
-
-      initGa4BlFilters();
-
       function ga4ActivePages() {{
-        if (ga4TrafficSource === 'all') return ga4Pages;
-        return ga4PagesByPlatform[ga4TrafficSource] || [];
-      }}
-
-      function syncGa4TrafficFilterButtons() {{
-        document.querySelectorAll('#ga4TrafficFilters .filter-toggle').forEach(btn => {{
-          const on = btn.dataset.source === ga4TrafficSource;
-          btn.classList.toggle('active', on);
-          btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-        }});
-        const label = ga4LandingLabels[ga4TrafficSource] || '';
-        if (ga4TrafficFilterNote) {{
-          if (ga4TrafficSource !== 'all' && label) {{
-            ga4TrafficFilterNote.textContent = label;
-            ga4TrafficFilterNote.hidden = false;
-          }} else {{
-            ga4TrafficFilterNote.hidden = true;
-            ga4TrafficFilterNote.textContent = '';
+        const selected = selectedPaidChannelIds();
+        if (!selected.length) return [];
+        if (!paidChannelFilterActive()) return ga4Pages;
+        if (selected.length === 1) {{
+          return ga4PagesByPlatform[selected[0]] || ga4Pages;
+        }}
+        const merged = [];
+        const seen = new Set();
+        for (const platformId of selected) {{
+          for (const row of (ga4PagesByPlatform[platformId] || [])) {{
+            const key = String(row.page_path || '');
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            merged.push(row);
           }}
         }}
-        if (ga4PagesTableNote) {{
-          ga4PagesTableNote.textContent = ga4TrafficSource === 'all'
-            ? ga4PagesTableNote.dataset.allNote || ga4PagesTableNote.textContent
-            : (label || 'Paid landing pages for the selected traffic source.');
+        return merged.length ? merged : ga4Pages;
+      }}
+
+      function updateGa4PagesTableNote() {{
+        if (!ga4PagesTableNote) return;
+        const base = ga4PagesTableNote.dataset.allNote || ga4PagesTableNote.textContent;
+        if (!paidChannelFilterActive()) {{
+          ga4PagesTableNote.textContent = base;
+          return;
         }}
+        const selected = selectedPaidChannelIds();
+        if (selected.length === 1) {{
+          const label = ga4LandingLabels[selected[0]] || 'Paid landing pages for the selected channel.';
+          ga4PagesTableNote.textContent = label;
+          return;
+        }}
+        ga4PagesTableNote.textContent = 'Paid landing pages for the selected channels (use filters at the top).';
       }}
 
       if (ga4PagesTableNote) {{
         ga4PagesTableNote.dataset.allNote = ga4PagesTableNote.textContent;
       }}
-
-      document.querySelectorAll('#ga4TrafficFilters .filter-toggle').forEach(btn => {{
-        btn.addEventListener('click', () => {{
-          const source = btn.dataset.source || 'all';
-          if (source === ga4TrafficSource) return;
-          ga4TrafficSource = source;
-          ga4PageNum = 1;
-          syncGa4TrafficFilterButtons();
-          renderGa4Pages();
-        }});
-      }});
-      syncGa4TrafficFilterButtons();
 
       function ga4PageSortValue(row, key) {{
         if (key === 'page_path' || key === 'page_title') {{
@@ -7110,14 +7078,16 @@ def render_penn_html(
       }}
 
       renderGa4Pages = function() {{
+        updateGa4PagesTableNote();
         const sourcePages = ga4ActivePages();
         const bySegment = filterGa4PagesBySegment(sourcePages);
         const filtered = filterGa4Pages(bySegment);
         const sorted = sortGa4Pages(filtered);
         const segmentFiltered = SHOW_SEGMENT_FILTERS
           && blCatalog.length
-          && !isAllSelected(ga4BlState, blCatalog);
-        const isFiltered = !!ga4PageQuery.trim() || ga4TrafficSource !== 'all' || segmentFiltered;
+          && !isAllSelected(blState, blCatalog);
+        const channelFiltered = paidChannelFilterActive();
+        const isFiltered = !!ga4PageQuery.trim() || channelFiltered || segmentFiltered;
         renderGa4MetricsSummary(filtered, isFiltered);
         const totalPages = Math.max(1, Math.ceil(sorted.length / GA4_PAGE_SIZE));
         if (ga4PageNum > totalPages) ga4PageNum = totalPages;
@@ -7126,8 +7096,8 @@ def render_penn_html(
           ga4PagesCount.textContent = sorted.length + ' page' + (sorted.length === 1 ? '' : 's');
         }}
         if (!sorted.length) {{
-          const emptyMsg = ga4TrafficSource !== 'all' && !sourcePages.length
-            ? 'No landing pages for this traffic source yet. Run a full refresh after GA4 BigQuery is connected.'
+          const emptyMsg = channelFiltered && !sourcePages.length
+            ? 'No landing pages for the selected channel(s) yet. Run a full refresh after GA4 BigQuery is connected.'
             : segmentFiltered
               ? `No pages match the selected ${{GA4_SEGMENT_FILTER_LABEL.toLowerCase()}} filters.`
               : 'No pages match your search.';
@@ -7217,6 +7187,14 @@ def render_penn_html(
         if (level === 'creative') return 'Ad';
       }}
       return LEVEL_LABELS[level] || String(level || '').replace(/_/g, ' ');
+    }}
+
+    function enrichRowMedia(r, platform, level) {{
+      if (platform !== 'linkedin' || (level !== 'creative' && level !== 'ad')) return r;
+      if (r.thumbnail_url || r.image_url) return r;
+      const media = linkedinCreativeMedia[String(r.id || '')];
+      if (!media) return r;
+      return Object.assign({{}}, r, media);
     }}
 
     function childRows(platform, level, parentId) {{
@@ -7364,6 +7342,7 @@ def render_penn_html(
     }}
 
     function buildTreeRow(r, platform, level, depth, prefixCellsHtml = '', includeGa4 = true) {{
+      r = enrichRowMedia(r, platform, level);
       const spend = r.spend || 0;
       const clicks = r.clicks || 0;
       const impressions = r.impressions || 0;
