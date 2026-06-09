@@ -10,6 +10,8 @@ from urllib.parse import quote
 import auth as google_auth
 import bigquery_service
 import client_config
+import client_dashboard_config
+import dashboard_features
 import dashboard_service
 import dashboard_snapshots
 import dashboard_theme
@@ -572,6 +574,12 @@ def _settings_page_css() -> str:
     .color-field label { margin-bottom: 6px; }
     .theme-group-title { margin: 16px 0 10px; font-size: .88rem; font-weight: 700; color: var(--navy); text-transform: uppercase; letter-spacing: .04em; }
     .theme-group-title:first-of-type { margin-top: 0; }
+    .feature-toggle-grid { display: grid; gap: 12px; margin-bottom: 16px; }
+    .feature-toggle { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px;
+      border: 1px solid var(--border); border-radius: 10px; background: #fafbfc; cursor: pointer; }
+    .feature-toggle input { margin-top: 3px; flex-shrink: 0; }
+    .feature-toggle-text { display: block; min-width: 0; }
+    .feature-toggle-text strong { display: block; margin-bottom: 4px; color: var(--navy); }
     textarea.rules-textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
       font-family: ui-monospace, monospace; font-size: .84rem; line-height: 1.45; min-height: 160px; margin-bottom: 12px; }
     .status-table { width: 100%; border-collapse: collapse; font-size: .88rem; margin-top: 8px; }
@@ -876,6 +884,37 @@ def _brand_colors_section_html(
     </section>"""
 
 
+def _dashboard_sections_section_html(
+    *,
+    settings_url: str,
+    features: dashboard_features.DashboardFeatures,
+) -> str:
+    toggles: list[str] = []
+    for key in dashboard_features.FEATURE_KEYS:
+        checked = " checked" if features.get(key) else ""
+        toggles.append(
+            f"""
+        <label class="feature-toggle">
+          <input type="checkbox" name="feature_{key}" value="1"{checked}>
+          <span class="feature-toggle-text">
+            <strong>{_esc(dashboard_features.FEATURE_LABELS[key])}</strong>
+            <span class="hint">{_esc(dashboard_features.FEATURE_HINTS[key])}</span>
+          </span>
+        </label>"""
+        )
+    return f"""
+    <section class="panel">
+      <h2>Dashboard sections</h2>
+      <p class="muted">Turn overview panels and tabs on or off for this client. Defaults vary by client
+      (for example, Penn starts with budget pacing off).</p>
+      <form method="post" action="{settings_url}">
+        <input type="hidden" name="action" value="save_dashboard_sections">
+        <div class="feature-toggle-grid">{"".join(toggles)}</div>
+        <button type="submit" class="btn primary">Save section visibility</button>
+      </form>
+    </section>"""
+
+
 def render_settings_html(
     *,
     client_slug: str,
@@ -987,8 +1026,15 @@ def render_settings_html(
     if getattr(cfg, "monthly_budget_usd", None) is not None:
         budget_label = f"${float(cfg.monthly_budget_usd):,.2f}"
 
+    resolved_features = dashboard_features.resolve_features(
+        slug,
+        cfg=cfg,
+        label=cfg.label,
+        ga4_client_key=cfg.ga4_client_key,
+    )
+
     budget_row = ""
-    if slug != "penn":
+    if resolved_features.budget_pacing:
         budget_row = f'<tr><td>Monthly budget</td><td class="mono">{_esc(budget_label)}</td></tr>'
 
     account_rows = f"""
@@ -1117,14 +1163,14 @@ def render_settings_html(
               </div>
               {ga4_field}
               {harvest_field}
-              {'' if slug == 'penn' else f'''
+              {f'''
               <div>
                 <label for="monthly_budget_usd">Monthly budget (USD)</label>
                 <input id="monthly_budget_usd" name="monthly_budget_usd" type="number" min="0" step="100"
                   value="{_esc((f"{cfg.monthly_budget_usd:.2f}".rstrip("0").rstrip(".")) if getattr(cfg, "monthly_budget_usd", None) is not None else "")}"
                   placeholder="25000">
-                <p class="hint">Used for the budget pacing chart on the dashboard overview.</p>
-              </div>'''}
+                <p class="hint">Used when the budget pacing chart is enabled in Dashboard sections.</p>
+              </div>''' if resolved_features.budget_pacing else ''}
             </div>
             <button type="submit" class="btn primary">Save &amp; verify mapping</button>
           </form>
@@ -1199,6 +1245,13 @@ def render_settings_html(
         theme_section = _brand_colors_section_html(
             settings_url=settings_url,
             theme=dashboard_theme.load_client_theme(slug),
+        )
+
+    sections_section = ""
+    if db_editable:
+        sections_section = _dashboard_sections_section_html(
+            settings_url=settings_url,
+            features=resolved_features,
         )
 
     insights_fold = ""
@@ -1288,6 +1341,7 @@ def render_settings_html(
     </section>
     {agency_status}
     {edit_form}
+    {sections_section}
     {bl_rules_section}
     {theme_section}
     {probe_fold}

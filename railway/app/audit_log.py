@@ -45,6 +45,7 @@ _ACTION_LABELS = {
     "dashboard.config_saved": "Saved dashboard config",
     "dashboard.created": "Created dashboard",
     "dashboard.deleted": "Deleted dashboard",
+    "dashboard.sections_saved": "Saved dashboard sections",
     "dev_note.created": "Created dev note",
     "dev_note.updated": "Updated dev note",
     "dev_note.deleted": "Deleted dev note",

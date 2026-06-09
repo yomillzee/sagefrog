@@ -31,6 +31,7 @@ from dates_util import resolve_date_range
 from penn_config import PennDashboardConfig, load_penn_config
 import client_config
 import client_dashboard_config
+import dashboard_features
 from penn_business_lines import (
     PLATFORM_LABELS,
     active_client_product_line_catalog,
@@ -2803,17 +2804,23 @@ def _ga4_pages_panel_html(ga4_pages: dict[str, Any] | None) -> str:
     </section>"""
 
 
-def _dashboard_view_tabs_html(*, show_website: bool) -> str:
+def _dashboard_view_tabs_html(*, show_website: bool, show_campaigns: bool = True) -> str:
     website_tab = ""
     if show_website:
         website_tab = (
             '<button type="button" class="dash-view-btn" data-view="website" role="tab" '
             'aria-selected="false">Website Analytics</button>'
         )
+    campaigns_tab = ""
+    if show_campaigns:
+        campaigns_tab = (
+            '<button type="button" class="dash-view-btn" data-view="campaigns" role="tab" '
+            'aria-selected="false">Campaign Explorer</button>'
+        )
     return f"""
       <nav class="dash-view-nav" role="tablist" aria-label="Dashboard views">
         <button type="button" class="dash-view-btn active" data-view="overview" role="tab" aria-selected="true">Overview</button>
-        <button type="button" class="dash-view-btn" data-view="campaigns" role="tab" aria-selected="false">Campaign Explorer</button>
+        {campaigns_tab}
         {website_tab}
       </nav>"""
 
@@ -2964,6 +2971,7 @@ def _dash_top_header_html(
     session_is_admin: bool,
     session_email: str | None,
     show_files: bool,
+    show_time_tracking: bool | None = None,
 ) -> str:
     overview_url = _dashboard_page_url(
         client_slug=client_slug,
@@ -2989,9 +2997,13 @@ def _dash_top_header_html(
     try:
         import oauth_store
 
-        show_time_tracking = oauth_store.public_status("harvest").connected
+        harvest_connected = oauth_store.public_status("harvest").connected
     except Exception:
-        show_time_tracking = False
+        harvest_connected = False
+    if show_time_tracking is None:
+        show_time_tracking = harvest_connected
+    else:
+        show_time_tracking = bool(show_time_tracking) and harvest_connected
 
     client_selector = _topbar_client_selector_html(
         client_slug=client_slug,
@@ -3759,8 +3771,9 @@ def render_penn_html(
         "ga4_client_key": str((snapshot.get("accounts") or {}).get("ga4_client_key") or ""),
     }
     filter_profile = client_filter_profile(client_slug, **filter_kwargs)
-    show_segment_filters = client_has_segment_filters(client_slug, **filter_kwargs)
-    show_product_line_filters = client_has_product_line_filters(client_slug, **filter_kwargs)
+    features = dashboard_features.resolve_features(client_slug, **filter_kwargs)
+    show_segment_filters = features.segment_filters
+    show_product_line_filters = features.product_line_filters
     seg_filter_label = segment_filter_label(client_slug, **filter_kwargs)
     seg_column_label = segment_column_label(client_slug, **filter_kwargs)
     seg_filter_all_label = f"All {seg_filter_label.lower()}s"
@@ -3795,8 +3808,9 @@ def render_penn_html(
 
     accounts_early = snapshot.get("accounts") or {}
     has_ga4_config = bool(accounts_early.get("ga4_client_key") or totals.get("organic"))
+    include_organic = has_ga4_config and features.organic_channel
     chart_platform_ids = ("google", "linkedin", "meta") + (
-        ("organic",) if has_ga4_config else ()
+        ("organic",) if include_organic else ()
     )
 
     performance_chart_json = _json_for_html_script(
@@ -3851,19 +3865,21 @@ def render_penn_html(
         client_cfg = None
     platform_catalog_list = active_platform_catalog(
         bl_campaigns,
-        include_organic=has_ga4_config,
+        include_organic=include_organic,
     )
     if not platform_catalog_list:
         present = platforms_present_in_snapshot(
             snapshot,
             cfg=client_cfg,
             include_configured=True,
-            include_organic=has_ga4_config,
+            include_organic=include_organic,
         )
         platform_catalog_list = [
-            item for item in platform_catalog(include_organic=has_ga4_config) if item["id"] in present
+            item for item in platform_catalog(include_organic=include_organic) if item["id"] in present
         ]
     summary_platform_ids = _platforms_with_summary_data(totals, chart_data, breakdowns)
+    if not features.organic_channel:
+        summary_platform_ids = [pid for pid in summary_platform_ids if pid != "organic"]
     platform_catalog_json = _json_for_html_script(platform_catalog_list)
     overview_paid_html = _paid_ad_overview_html(aggregated, ga4_attr)
     paid_overview_metrics_json = _json_for_html_script(
@@ -3880,6 +3896,7 @@ def render_penn_html(
         session_is_admin=session_is_admin,
         session_email=session_email,
         show_files=docs.enabled(),
+        show_time_tracking=features.time_tracking,
     )
     ga4_pages_report = snapshot.get("ga4_pages")
     accounts = snapshot.get("accounts") or {}
@@ -3889,7 +3906,11 @@ def render_penn_html(
         for platform in ("google", "linkedin", "meta")
     )
     has_ga4_summary = bool((ga4_pages_report or {}).get("summary"))
-    view_tabs_html = _dashboard_view_tabs_html(show_website=has_ga4)
+    show_website_tab = features.website_analytics and has_ga4
+    view_tabs_html = _dashboard_view_tabs_html(
+        show_website=show_website_tab,
+        show_campaigns=features.campaign_explorer,
+    )
     filters_bar_html = _global_filters_bar_html(
         show_segment_filters=show_segment_filters,
         show_product_line_filters=show_product_line_filters,
@@ -3909,7 +3930,7 @@ def render_penn_html(
     )
     ga4_metrics_html = _ga4_metrics_summary_html(has_summary=has_ga4_summary)
     website_tab_panel = ""
-    if has_ga4:
+    if show_website_tab:
         website_tab_panel = f"""
           <div id="view-website" class="view-panel" role="tabpanel" hidden>
             <section class="panel ga4-pages-panel" aria-label="Website analytics">
@@ -3928,7 +3949,7 @@ def render_penn_html(
     )
     ga4_summary_json = _json_for_html_script((ga4_pages_report or {}).get("summary") or {})
     metric_defs_json = _json_for_html_script(dashboard_theme.chart_metric_defs(theme))
-    show_budget_pacing = slug != "penn"
+    show_budget_pacing = features.budget_pacing
     can_save_budget = session_is_admin if use_session else bool(access_key)
     settings_url = _settings_page_url(
         client_slug=slug, access_key=access_key, use_session=use_session
@@ -3967,6 +3988,37 @@ def render_penn_html(
             settings_url=settings_url,
             can_save_budget=can_save_budget and client_dashboard_config.enabled(),
         )
+
+    performance_trend_html = ""
+    if features.performance_trend:
+        performance_trend_html = """
+            <section class="panel performance-trend-panel">
+              <div class="panel-head performance-trend-head">
+                <div class="panel-head-text">
+                  <h2>Daily Paid Performance Trend</h2>
+                  <p class="performance-trend-desc muted">Daily combined paid-media totals across selected channels. Choose one metric at a time.</p>
+                </div>
+                <div class="performance-trend-controls">
+                  <div class="metric-toggle-group" role="group" aria-label="Chart metric">
+                    <button type="button" class="metric-toggle active" data-metric="spend" aria-pressed="true">Spend</button>
+                    <button type="button" class="metric-toggle" data-metric="clicks" aria-pressed="false">Clicks</button>
+                    <button type="button" class="metric-toggle" data-metric="impressions" aria-pressed="false">Impressions</button>
+                    <button type="button" class="metric-toggle" data-metric="conversions" aria-pressed="false">Conversions</button>
+                  </div>
+                </div>
+              </div>
+              <div class="performance-trend-chart-wrap">
+                <p class="performance-trend-empty" id="performanceTrendEmpty">Choose a metric to display the chart.</p>
+                <canvas id="performanceTrendChart"></canvas>
+              </div>
+            </section>"""
+
+    campaign_explorer_panel = ""
+    if features.campaign_explorer:
+        campaign_explorer_panel = f"""
+          <div id="view-campaigns" class="view-panel" role="tabpanel" hidden>
+            {campaign_explorer_html}
+          </div>"""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -5640,33 +5692,12 @@ def render_penn_html(
               {_summary_cards_html(totals, summary_platform_ids)}
             </div>
 
-            <section class="panel performance-trend-panel">
-              <div class="panel-head performance-trend-head">
-                <div class="panel-head-text">
-                  <h2>Daily Paid Performance Trend</h2>
-                  <p class="performance-trend-desc muted">Daily combined paid-media totals across selected channels. Choose one metric at a time.</p>
-                </div>
-                <div class="performance-trend-controls">
-                  <div class="metric-toggle-group" role="group" aria-label="Chart metric">
-                    <button type="button" class="metric-toggle active" data-metric="spend" aria-pressed="true">Spend</button>
-                    <button type="button" class="metric-toggle" data-metric="clicks" aria-pressed="false">Clicks</button>
-                    <button type="button" class="metric-toggle" data-metric="impressions" aria-pressed="false">Impressions</button>
-                    <button type="button" class="metric-toggle" data-metric="conversions" aria-pressed="false">Conversions</button>
-                  </div>
-                </div>
-              </div>
-              <div class="performance-trend-chart-wrap">
-                <p class="performance-trend-empty" id="performanceTrendEmpty">Choose a metric to display the chart.</p>
-                <canvas id="performanceTrendChart"></canvas>
-              </div>
-            </section>
+            {performance_trend_html}
 
             {budget_pacing_html}
           </div>
 
-          <div id="view-campaigns" class="view-panel" role="tabpanel" hidden>
-            {campaign_explorer_html}
-          </div>
+          {campaign_explorer_panel}
 
           {website_tab_panel}
         </div>
@@ -5712,6 +5743,9 @@ def render_penn_html(
     const SHOW_PRODUCT_LINE_FILTERS = {'true' if show_product_line_filters else 'false'};
     const GA4_SEGMENT_FILTER_LABEL = {_json_for_html_script(seg_filter_label)};
     const SHOW_BUDGET_PACING = {'true' if show_budget_pacing else 'false'};
+    const SHOW_PERFORMANCE_TREND = {'true' if features.performance_trend else 'false'};
+    const SHOW_CAMPAIGN_EXPLORER = {'true' if features.campaign_explorer else 'false'};
+    const SHOW_WEBSITE_ANALYTICS = {'true' if show_website_tab else 'false'};
     const PAID_PLATFORM_IDS = new Set(['google', 'linkedin', 'meta']);
     const SEGMENT_FILTER_ALL_LABEL = {_json_for_html_script(seg_filter_all_label)};
     const PRODUCT_LINE_FILTER_ALL_LABEL = "All product lines";
@@ -5943,7 +5977,9 @@ def render_penn_html(
         refreshCharts();
       }});
     }});
-    syncMetricToggleButtons();
+    if (SHOW_PERFORMANCE_TREND) {{
+      syncMetricToggleButtons();
+    }}
 
     function syncBudgetPacingPlatformSlicers() {{
       const wrap = document.getElementById('budgetPacingPlatformSlicers');
@@ -6281,9 +6317,14 @@ def render_penn_html(
     }};
 
     function setActiveView(view) {{
-      const allowed = ['overview', 'campaigns', 'website'];
+      const allowed = ['overview'];
+      if (SHOW_CAMPAIGN_EXPLORER) allowed.push('campaigns');
+      if (SHOW_WEBSITE_ANALYTICS) allowed.push('website');
       if (!allowed.includes(view)) view = 'overview';
       if (view === 'website' && !document.querySelector('.dash-view-btn[data-view="website"]')) {{
+        view = 'overview';
+      }}
+      if (view === 'campaigns' && !SHOW_CAMPAIGN_EXPLORER) {{
         view = 'overview';
       }}
       document.querySelectorAll('.dash-view-btn').forEach(btn => {{
@@ -6316,7 +6357,7 @@ def render_penn_html(
     }});
 
     const initialView = new URLSearchParams(window.location.search).get('view');
-    if (initialView && ['overview', 'campaigns', 'website'].includes(initialView)) {{
+    if (initialView) {{
       setActiveView(initialView);
     }}
 

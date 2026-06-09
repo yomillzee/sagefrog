@@ -37,6 +37,10 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config
       ADD COLUMN IF NOT EXISTS monthly_budget_usd NUMERIC(14,2)
     """,
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS features_json JSONB
+    """,
 ]
 
 
@@ -225,6 +229,72 @@ def list_config_labels() -> dict[str, str]:
             "SELECT client_slug, label FROM client_dashboard_config WHERE label <> ''"
         ).fetchall()
     return {str(row[0]): str(row[1]) for row in rows if row[1]}
+
+
+def get_features(client_slug: str) -> dict[str, Any] | None:
+    slug = (client_slug or "").strip().lower()
+    if not slug or not enabled():
+        return None
+    ensure_schema()
+    with psycopg.connect(_get_db_url()) as conn:
+        row = conn.execute(
+            "SELECT features_json FROM client_dashboard_config WHERE client_slug = %s",
+            (slug,),
+        ).fetchone()
+    if not row or row[0] is None:
+        return None
+    payload = row[0]
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def save_features(
+    client_slug: str,
+    features: dict[str, Any],
+    *,
+    updated_by: str | None = None,
+) -> dict[str, Any]:
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save dashboard features.")
+
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    existing = get_config(slug)
+    label = existing.label if existing else slug
+    with psycopg.connect(_get_db_url()) as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, features_json, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              features_json = EXCLUDED.features_json,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (
+                slug,
+                label,
+                json.dumps(features),
+                now,
+                (updated_by or "").strip() or None,
+            ),
+        )
+    saved = get_features(slug)
+    if saved is None:
+        raise RuntimeError("Failed to load saved dashboard features.")
+    return saved
 
 
 def get_theme(client_slug: str) -> dict[str, Any] | None:
