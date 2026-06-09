@@ -4902,6 +4902,9 @@ def render_penn_html(
       background: #f0f4f8;
       display: block;
     }}
+    .ad-thumb--placeholder {{
+      display: inline-block;
+    }}
     .ad-thumb-btn {{
       position: relative;
       appearance: none;
@@ -6470,7 +6473,13 @@ def render_penn_html(
 
     function passesSpendFilter(row) {{
       if (showZeroSpendRows()) return true;
-      return Number(row?.spend || 0) >= MIN_SPEND_VISIBLE;
+      const spend = Number(row?.spend || 0);
+      const clicks = Number(row?.clicks || 0);
+      const impressions = Number(row?.impressions || 0);
+      // Keep rows with any delivery; hide only fully inactive ($0 spend + no clicks/impressions).
+      // LinkedIn creative-level spend can be $0 while the parent ad set still has spend.
+      if (spend >= MIN_SPEND_VISIBLE || clicks > 0 || impressions > 0) return true;
+      return false;
     }}
 
     function filteredBlCampaigns() {{
@@ -7249,7 +7258,10 @@ def render_penn_html(
         ? ` data-preview-type="${{escHtml(preview.type)}}" data-preview-url="${{escHtml(preview.url)}}"`
         : ` data-preview-type="image" data-preview-url="${{escHtml(thumbUrl)}}"`;
       const play = playable ? '<span class="ad-play-icon" aria-hidden="true">▶</span>' : '';
-      return `<button type="button" class="${{cls}}"${{attrs}} aria-label="Preview creative">${{play}}<img class="ad-thumb" src="${{escHtml(thumbUrl)}}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.closest('button')?.remove()"></button>`;
+      const img = thumbUrl
+        ? `<img class="ad-thumb" src="${{escHtml(thumbUrl)}}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'">`
+        : (playable ? '<span class="ad-thumb ad-thumb--placeholder" aria-hidden="true"></span>' : '');
+      return `<button type="button" class="${{cls}}"${{attrs}} aria-label="Preview creative">${{play}}${{img}}</button>`;
     }}
 
     let previewPlayer = null;
