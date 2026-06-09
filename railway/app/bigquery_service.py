@@ -125,8 +125,14 @@ def env_summary() -> dict[str, Any]:
         "has_gcp_service_account_json": has_sa,
         "has_bq_project_id": bool((os.getenv("BQ_PROJECT_ID") or "").strip()),
         "has_bq_dataset_id": bool((os.getenv("BQ_DATASET_ID") or "").strip()),
+        "has_bq_google_ads_dataset": bool((os.getenv("BQ_GOOGLE_ADS_DATASET") or "").strip()),
+        "has_bq_linkedin_dataset": bool((os.getenv("BQ_LINKEDIN_DATASET") or "").strip()),
+        "has_bq_meta_dataset": bool((os.getenv("BQ_META_DATASET") or "").strip()),
         "bq_project_id": (os.getenv("BQ_PROJECT_ID") or "").strip() or None,
         "bq_dataset_id": (os.getenv("BQ_DATASET_ID") or "").strip() or None,
+        "bq_google_ads_dataset": (os.getenv("BQ_GOOGLE_ADS_DATASET") or "").strip() or "warehouse_google_ads",
+        "bq_linkedin_dataset": (os.getenv("BQ_LINKEDIN_DATASET") or "").strip() or "warehouse_linkedin",
+        "bq_meta_dataset": (os.getenv("BQ_META_DATASET") or "").strip() or "warehouse_meta",
         "gcp_service_account_json_char_count": len(raw),
         "gcp_service_account_json_hint": "empty",
         "gcp_service_account_json_suspected_truncated": False,
@@ -167,3 +173,18 @@ def run_query(sql: str, *, max_rows: int = 1000, project_id: str | None = None) 
     query_job = client.query(sql)
     rows = query_job.result(max_results=max_rows)
     return [dict(row.items()) for row in rows]
+
+
+def run_dml(sql: str, *, project_id: str | None = None) -> int:
+    """Run a BigQuery DML statement (MERGE/INSERT/DELETE) and return affected row count."""
+    client = build_client(project_id)
+    job = client.query(sql)
+    job.result()
+    return int(job.num_dml_affected_rows or 0)
+
+
+def project_id() -> str:
+    pid = (os.getenv("BQ_PROJECT_ID") or "").strip()
+    if not pid:
+        raise RuntimeError("Missing BigQuery project id (BQ_PROJECT_ID).")
+    return pid

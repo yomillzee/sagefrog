@@ -362,20 +362,80 @@ def fetch_daily_metrics(
     return out
 
 
+def fetch_campaign_daily_metrics(
+    account_id: str,
+    *,
+    start: date,
+    end: date,
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+) -> list[dict[str, Any]]:
+    """Campaign-level Meta metrics per day."""
+    env = env or load_meta_env()
+    access_token = access_token or env.access_token
+    account_id_clean = _normalize_account_id(account_id)
+
+    rows = _graph_get_all(
+        f"/{_act_id(account_id_clean)}/insights",
+        access_token=access_token,
+        params={
+            "fields": _INSIGHT_FIELDS,
+            "time_range": _time_range(start, end),
+            "time_increment": 1,
+            "level": "campaign",
+            "limit": 500,
+        },
+        env=env,
+    )
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        metric_day = str(row.get("date_start") or "")[:10]
+        campaign_id = str(row.get("campaign_id") or "").strip()
+        if not metric_day or not campaign_id:
+            continue
+        parsed = _parse_insight_row(row)
+        out.append(
+            {
+                "metric_date": metric_day,
+                "campaign_id": campaign_id,
+                "campaign_name": row.get("campaign_name") or "",
+                **parsed,
+            }
+        )
+    return out
+
+
 def sync_account_to_warehouse(
     account_id: str,
     *,
-    date_range: str = "LAST_30_DAYS",
+    date_range: str = "LAST_7_DAYS",
+    start_date: str | date | None = None,
+    end_date: str | date | None = None,
     access_token: str | None = None,
     env: MetaEnv | None = None,
 ) -> dict[str, Any]:
+    import paid_media_bq
     import warehouse
+
+    from dates_util import resolve_sync_date_range
 
     if not warehouse.enabled():
         raise RuntimeError("DATABASE_URL is not set — warehouse storage is disabled.")
 
-    start, end, preset = resolve_date_range(date_range)
+    start, end, preset = resolve_sync_date_range(
+        date_range,
+        start_date=start_date,
+        end_date=end_date,
+    )
     daily_rows = fetch_daily_metrics(
+        account_id,
+        start=start,
+        end=end,
+        access_token=access_token,
+        env=env,
+    )
+    campaign_rows = fetch_campaign_daily_metrics(
         account_id,
         start=start,
         end=end,
@@ -385,12 +445,28 @@ def sync_account_to_warehouse(
     account_id_clean = _normalize_account_id(account_id)
     written = warehouse.upsert_metrics_daily_batch("meta", account_id_clean, daily_rows)
     coverage = warehouse.account_date_coverage("meta", account_id_clean)
-    return {
+    date_range_meta = {"start": start.isoformat(), "end": end.isoformat(), "preset": preset}
+    result: dict[str, Any] = {
         "account_id": account_id_clean,
-        "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
+        "date_range": date_range_meta,
         "days_synced": written,
         "coverage": coverage,
+        "postgres": {"days_synced": written, "coverage": coverage},
     }
+    try:
+        if paid_media_bq.enabled():
+            result["bigquery"] = paid_media_bq.sync_platform_metrics(
+                "meta",
+                account_id_clean,
+                account_rows=daily_rows,
+                campaign_rows=campaign_rows,
+                date_range=date_range_meta,
+            )
+        else:
+            result["bigquery"] = {"enabled": False}
+    except Exception as exc:
+        result["bigquery"] = {"enabled": True, "error": str(exc)[:500]}
+    return result
 
 
 def account_performance(

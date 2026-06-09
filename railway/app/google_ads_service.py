@@ -453,6 +453,52 @@ def fetch_daily_metrics(
     return out
 
 
+def fetch_campaign_daily_metrics(
+    customer_id: str,
+    *,
+    start: date,
+    end: date,
+    client: GoogleAdsClient | None = None,
+) -> list[dict[str, Any]]:
+    """Campaign-level Google Ads metrics per day."""
+    customer_id_clean = str(customer_id).replace("-", "").strip()
+    start_key = start.isoformat()
+    end_key = end.isoformat()
+    query = f"""
+        SELECT
+          segments.date,
+          campaign.id,
+          campaign.name,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.conversions,
+          metrics.conversions_value,
+          metrics.cost_micros
+        FROM campaign
+        WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
+    """
+    rows = search(customer_id_clean, query, client=client)
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        day = str(_dig(row, "segments", "date") or "").strip()
+        cid = str(_dig(row, "campaign", "id") or "").strip()
+        if not day or not cid:
+            continue
+        out.append(
+            {
+                "metric_date": day,
+                "campaign_id": cid,
+                "campaign_name": _dig(row, "campaign", "name") or "",
+                "spend": int(_dig(row, "metrics", "cost_micros") or 0) / 1_000_000,
+                "clicks": int(_dig(row, "metrics", "clicks") or 0),
+                "impressions": int(_dig(row, "metrics", "impressions") or 0),
+                "conversions": float(_dig(row, "metrics", "conversions") or 0),
+                "conversion_value": float(_dig(row, "metrics", "conversions_value") or 0),
+            }
+        )
+    return out
+
+
 def campaign_performance(
     customer_id: str,
     *,
@@ -1040,25 +1086,51 @@ def ads_performance(
 def sync_account_to_warehouse(
     customer_id: str,
     *,
-    date_range: str = "LAST_30_DAYS",
+    date_range: str = "LAST_7_DAYS",
+    start_date: str | date | None = None,
+    end_date: str | date | None = None,
     client: GoogleAdsClient | None = None,
 ) -> dict[str, Any]:
+    import paid_media_bq
     import warehouse
+
+    from dates_util import resolve_sync_date_range
 
     if not warehouse.enabled():
         raise RuntimeError("DATABASE_URL is not set — warehouse storage is disabled.")
 
-    start, end, preset = resolve_date_range(date_range)
+    start, end, preset = resolve_sync_date_range(
+        date_range,
+        start_date=start_date,
+        end_date=end_date,
+    )
     daily_rows = fetch_daily_metrics(customer_id, start=start, end=end, client=client)
+    campaign_rows = fetch_campaign_daily_metrics(customer_id, start=start, end=end, client=client)
     customer_id_clean = str(customer_id).replace("-", "").strip()
     written = warehouse.upsert_metrics_daily_batch("google", customer_id_clean, daily_rows)
     coverage = warehouse.account_date_coverage("google", customer_id_clean)
-    return {
+    date_range_meta = {"start": start.isoformat(), "end": end.isoformat(), "preset": preset}
+    result: dict[str, Any] = {
         "account_id": customer_id_clean,
-        "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
+        "date_range": date_range_meta,
         "days_synced": written,
         "coverage": coverage,
+        "postgres": {"days_synced": written, "coverage": coverage},
     }
+    try:
+        if paid_media_bq.enabled():
+            result["bigquery"] = paid_media_bq.sync_platform_metrics(
+                "google",
+                customer_id_clean,
+                account_rows=daily_rows,
+                campaign_rows=campaign_rows,
+                date_range=date_range_meta,
+            )
+        else:
+            result["bigquery"] = {"enabled": False}
+    except Exception as exc:
+        result["bigquery"] = {"enabled": True, "error": str(exc)[:500]}
+    return result
 
 
 def account_summary(customer_id: str, date_range: str = "LAST_30_DAYS", *, client: GoogleAdsClient | None = None) -> dict[str, Any]:

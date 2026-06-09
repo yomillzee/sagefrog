@@ -26,6 +26,7 @@ from ga4_attribution_service import (
 import google_ads_service
 import linkedin_service
 import meta_service
+import paid_media_bq
 import warehouse
 from dates_util import resolve_date_range
 from penn_config import PennDashboardConfig, load_penn_config
@@ -314,6 +315,31 @@ def _penn_sync_warehouses(
     return ga4_account
 
 
+def _load_paid_daily_metrics(
+    source: str,
+    account_id: str,
+    *,
+    start: date,
+    end: date,
+) -> list[dict[str, Any]]:
+    """Paid media account daily rows: BigQuery when configured, else Postgres."""
+    if source in paid_media_bq.PAID_PLATFORMS and paid_media_bq.enabled():
+        return paid_media_bq.query_account_daily(
+            source,
+            str(account_id),
+            start=start,
+            end=end,
+        )
+    # TODO: remove Postgres fallback once BigQuery backfill is complete for all clients.
+    return warehouse.query_metrics(
+        source=source,
+        account_id=str(account_id),
+        from_date=start,
+        to_date=end,
+        limit=5000,
+    )
+
+
 def _penn_load_daily_metrics_from_warehouse(
     cfg: PennDashboardConfig,
     *,
@@ -323,9 +349,12 @@ def _penn_load_daily_metrics_from_warehouse(
     ga4_account: str | None,
     update_platform_totals: bool = True,
 ) -> None:
-    """Read metrics_daily into snapshot daily_metrics (and optionally platform_totals)."""
-    if not warehouse.enabled():
-        payload["errors"]["warehouse"] = "DATABASE_URL is not set — warehouse storage is disabled."
+    """Read daily metrics into snapshot daily_metrics (paid: BQ; ga4: Postgres)."""
+    paid_bq = paid_media_bq.enabled()
+    if not warehouse.enabled() and not paid_bq:
+        payload["errors"]["warehouse"] = (
+            "DATABASE_URL is not set and paid media BigQuery is not configured."
+        )
         return
 
     platform_totals: dict[str, Any] = dict(payload.get("platform_totals") or {})
@@ -337,14 +366,20 @@ def _penn_load_daily_metrics_from_warehouse(
     ):
         if not account_id:
             continue
+        if source == "ga4" and not warehouse.enabled():
+            payload["errors"]["ga4_daily"] = "DATABASE_URL is not set — GA4 warehouse reads require Postgres."
+            continue
         try:
-            rows = warehouse.query_metrics(
-                source=source,
-                account_id=str(account_id),
-                from_date=start,
-                to_date=end,
-                limit=5000,
-            )
+            if source == "ga4":
+                rows = warehouse.query_metrics(
+                    source=source,
+                    account_id=str(account_id),
+                    from_date=start,
+                    to_date=end,
+                    limit=5000,
+                )
+            else:
+                rows = _load_paid_daily_metrics(source, str(account_id), start=start, end=end)
             payload["daily_metrics"][source] = rows
             if not update_platform_totals:
                 if source == "ga4" and source not in platform_totals:
@@ -359,6 +394,7 @@ def _penn_load_daily_metrics_from_warehouse(
         except Exception as exc:
             payload["errors"][f"{source}_daily"] = _platform_error(exc)
 
+    # TODO: campaign/ad breakdown tables still come from live API on full refresh, not BQ metrics_campaign_daily.
     if update_platform_totals:
         payload["platform_totals"] = platform_totals
         payload["aggregated_paid_media"] = _aggregated_paid_media(platform_totals)
@@ -407,7 +443,7 @@ def _load_mtd_daily_metrics(cfg: PennDashboardConfig) -> dict[str, Any]:
     """Load paid-platform daily metrics for the current calendar month."""
     month_start, _, today = _mtd_calendar_bounds()
     payload: dict[str, Any] = {"daily_metrics": {}, "errors": {}}
-    if warehouse.enabled():
+    if warehouse.enabled() or paid_media_bq.enabled():
         _penn_load_daily_metrics_from_warehouse(
             cfg,
             start=month_start,
