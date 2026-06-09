@@ -35,6 +35,7 @@ import business_line_rules
 import admin_dev_notes
 import client_insight_documents
 import dashboard_settings
+import dashboard_features
 import dashboard_theme
 import login_rate_limit
 import not_found_page
@@ -1652,6 +1653,7 @@ def dashboard_client_settings(
     saved: str | None = None,
     bl_rules_saved: str | None = None,
     theme_saved: str | None = None,
+    sections_saved: str | None = None,
     tested: str | None = None,
 ):
     slug = _validate_client_slug(client_slug)
@@ -1660,6 +1662,8 @@ def dashboard_client_settings(
         if saved
         else "Brand colors saved."
         if theme_saved
+        else "Dashboard section visibility saved."
+        if sections_saved
         else (
             "Business line rules saved. Run a full refresh to re-classify campaigns."
             if bl_rules_saved
@@ -1847,6 +1851,14 @@ def dashboard_client_settings_post(
     organic_bg: str = Form(""),
     business_line: str = Form(""),
     business_line_bg: str = Form(""),
+    feature_budget_pacing: str = Form(""),
+    feature_performance_trend: str = Form(""),
+    feature_campaign_explorer: str = Form(""),
+    feature_website_analytics: str = Form(""),
+    feature_segment_filters: str = Form(""),
+    feature_product_line_filters: str = Form(""),
+    feature_organic_channel: str = Form(""),
+    feature_time_tracking: str = Form(""),
 ):
     slug = _validate_client_slug(client_slug)
     act = (action or "save").strip().lower()
@@ -2130,6 +2142,62 @@ def dashboard_client_settings_post(
             )
         return RedirectResponse(
             url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&theme_saved=1",
+            status_code=303,
+        )
+
+    if act == "save_dashboard_sections":
+        if web_users.enabled() and not session_is_admin:
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error="Only admins can change dashboard sections.",
+                    **session_kw,
+                ),
+                status_code=403,
+            )
+        if not client_dashboard_config.enabled():
+            raise HTTPException(status_code=503, detail="DATABASE_URL is required to save dashboard sections.")
+        try:
+            dashboard_features.save_features(
+                slug,
+                dashboard_features.features_from_form(
+                    budget_pacing=feature_budget_pacing,
+                    performance_trend=feature_performance_trend,
+                    campaign_explorer=feature_campaign_explorer,
+                    website_analytics=feature_website_analytics,
+                    segment_filters=feature_segment_filters,
+                    product_line_filters=feature_product_line_filters,
+                    organic_channel=feature_organic_channel,
+                    time_tracking=feature_time_tracking,
+                ),
+                updated_by=session_email or "dashboard_key",
+            )
+            audit_log.record(
+                action="dashboard.sections_saved",
+                actor_email=session_email,
+                detail={"client_slug": slug},
+                **audit_log.request_context(request),
+            )
+        except Exception as exc:
+            cfg = dashboard_settings.load_settings_config(slug)
+            return HTMLResponse(
+                dashboard_settings.render_settings_html(
+                    client_slug=slug,
+                    cfg=cfg,
+                    flash_error=str(exc)[:300],
+                    **session_kw,
+                ),
+                status_code=400,
+            )
+        if use_session:
+            return RedirectResponse(
+                url=f"/dashboard/{slug}/settings?sections_saved=1",
+                status_code=303,
+            )
+        return RedirectResponse(
+            url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&sections_saved=1",
             status_code=303,
         )
 
