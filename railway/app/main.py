@@ -20,6 +20,7 @@ import google_ads_service
 import linkedin_service
 import meta_service
 import db_cache
+import paid_media_bq
 import warehouse
 from auth import creds_fingerprint, env_summary
 from linkedin_auth import env_summary as linkedin_env_summary
@@ -117,6 +118,35 @@ _WAREHOUSE_DATE_RANGES = frozenset(
         "LAST_MONTH",
     }
 )
+
+
+def _validate_warehouse_sync_range(
+    *,
+    date_range: str,
+    start_date: str | None,
+    end_date: str | None,
+) -> str:
+    if start_date or end_date:
+        if not (start_date and end_date):
+            raise HTTPException(
+                status_code=400,
+                detail="start_date and end_date must both be provided for backfill.",
+            )
+        try:
+            start = date.fromisoformat(start_date.strip()[:10])
+            end = date.fromisoformat(end_date.strip()[:10])
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="start_date and end_date must be YYYY-MM-DD",
+            ) from exc
+        if end < start:
+            raise HTTPException(status_code=400, detail="end_date must be on or after start_date")
+        return "CUSTOM"
+    preset = date_range.strip().upper().replace("-", "_")
+    if preset not in _WAREHOUSE_DATE_RANGES:
+        raise HTTPException(status_code=400, detail=f"Invalid date_range: {date_range}")
+    return preset
 
 load_dotenv()
 
@@ -563,11 +593,18 @@ def google_ads_summary_all(body: SummaryAllRequest) -> SummaryAllResponse:
     summary="Sync Google Ads daily metrics into Postgres warehouse",
 )
 def google_ads_warehouse_sync(body: GoogleAdsWarehouseSyncRequest) -> WarehouseSyncResponse:
-    preset = body.date_range.strip().upper().replace("-", "_")
-    if preset not in _WAREHOUSE_DATE_RANGES:
-        raise HTTPException(status_code=400, detail=f"Invalid date_range: {body.date_range}")
+    preset = _validate_warehouse_sync_range(
+        date_range=body.date_range,
+        start_date=body.start_date,
+        end_date=body.end_date,
+    )
     try:
-        result = google_ads_service.sync_account_to_warehouse(body.customer_id, date_range=preset)
+        result = google_ads_service.sync_account_to_warehouse(
+            body.customer_id,
+            date_range=preset,
+            start_date=body.start_date,
+            end_date=body.end_date,
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return WarehouseSyncResponse(**result)
@@ -935,11 +972,18 @@ def linkedin_videos(
     summary="Sync LinkedIn daily metrics into Postgres warehouse",
 )
 def linkedin_warehouse_sync(body: LinkedInWarehouseSyncRequest) -> LinkedInWarehouseSyncResponse:
-    preset = body.date_range.strip().upper().replace("-", "_")
-    if preset not in _WAREHOUSE_DATE_RANGES:
-        raise HTTPException(status_code=400, detail=f"Invalid date_range: {body.date_range}")
+    preset = _validate_warehouse_sync_range(
+        date_range=body.date_range,
+        start_date=body.start_date,
+        end_date=body.end_date,
+    )
     try:
-        result = linkedin_service.sync_account_to_warehouse(body.account_id, date_range=preset)
+        result = linkedin_service.sync_account_to_warehouse(
+            body.account_id,
+            date_range=preset,
+            start_date=body.start_date,
+            end_date=body.end_date,
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return LinkedInWarehouseSyncResponse(**result)
@@ -1200,11 +1244,18 @@ def meta_videos(
     summary="Sync Meta daily metrics into Postgres warehouse",
 )
 def meta_warehouse_sync(body: MetaWarehouseSyncRequest) -> MetaWarehouseSyncResponse:
-    preset = body.date_range.strip().upper().replace("-", "_")
-    if preset not in _WAREHOUSE_DATE_RANGES:
-        raise HTTPException(status_code=400, detail=f"Invalid date_range: {body.date_range}")
+    preset = _validate_warehouse_sync_range(
+        date_range=body.date_range,
+        start_date=body.start_date,
+        end_date=body.end_date,
+    )
     try:
-        result = meta_service.sync_account_to_warehouse(body.account_id, date_range=preset)
+        result = meta_service.sync_account_to_warehouse(
+            body.account_id,
+            date_range=preset,
+            start_date=body.start_date,
+            end_date=body.end_date,
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return MetaWarehouseSyncResponse(**result)
@@ -1239,13 +1290,28 @@ def warehouse_metrics(
         raise HTTPException(status_code=400, detail="from_date and to_date must be YYYY-MM-DD") from e
     if end < start:
         raise HTTPException(status_code=400, detail="to_date must be on or after from_date")
-    rows = warehouse.query_metrics(
-        source=source,
-        account_id=account_id,
-        from_date=start,
-        to_date=end,
-        limit=limit,
-    )
+    source_key = (source or "").strip().lower()
+    if (
+        source_key in paid_media_bq.PAID_PLATFORMS
+        and account_id
+        and paid_media_bq.enabled()
+    ):
+        rows = paid_media_bq.query_account_daily(
+            source_key,
+            account_id,
+            start=start,
+            end=end,
+            limit=limit,
+        )
+    else:
+        # TODO: ga4 and unconfigured paid media still read Postgres metrics_daily.
+        rows = warehouse.query_metrics(
+            source=source,
+            account_id=account_id,
+            from_date=start,
+            to_date=end,
+            limit=limit,
+        )
     return WarehouseMetricsResponse(count=len(rows), rows=rows)
 
 

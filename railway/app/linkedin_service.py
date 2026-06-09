@@ -1030,21 +1030,103 @@ def fetch_daily_metrics(
     return out
 
 
+def fetch_campaign_daily_metrics(
+    account_id: str,
+    *,
+    start: date,
+    end: date,
+    access_token: str | None = None,
+    env: LinkedInEnv | None = None,
+) -> list[dict[str, Any]]:
+    """Campaign-level LinkedIn metrics per day."""
+    env = env or load_linkedin_env()
+    access_token = access_token or refresh_access_token(env)["access_token"]
+    account_id_clean = _normalize_account_id(account_id)
+
+    with_conversions = _analytics_url(
+        pivot="CAMPAIGN",
+        account_id=account_id_clean,
+        start=start,
+        end=end,
+        time_granularity="DAILY",
+        fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,pivotValues,dateRange",
+    )
+    fallback = _analytics_url(
+        pivot="CAMPAIGN",
+        account_id=account_id_clean,
+        start=start,
+        end=end,
+        time_granularity="DAILY",
+        fields="impressions,clicks,costInUsd,pivotValues,dateRange",
+    )
+
+    try:
+        payload = _linkedin_get(with_conversions, access_token=access_token, env=env)
+        conversion_ok = True
+    except Exception as primary_error:
+        msg = str(primary_error)
+        if 'Projected field "conversions"' not in msg:
+            raise
+        payload = _linkedin_get(fallback, access_token=access_token, env=env)
+        conversion_ok = False
+
+    out: list[dict[str, Any]] = []
+    for row in payload.get("elements") or []:
+        metric_day = _date_from_analytics_row(row)
+        if not metric_day:
+            continue
+        campaign_id = ""
+        for urn in row.get("pivotValues") or []:
+            if "sponsoredCampaign" in str(urn):
+                campaign_id = _campaign_id_from_pivot(urn)
+                break
+        if not campaign_id:
+            continue
+        parsed = {
+            "metric_date": metric_day.isoformat(),
+            "campaign_id": campaign_id,
+            "campaign_name": None,
+            "spend": _parse_spend(row),
+            "clicks": int(row.get("clicks") or 0),
+            "impressions": int(row.get("impressions") or 0),
+            "conversions": _parse_conversions(row) if conversion_ok else 0.0,
+            "conversion_value": _parse_conversion_value(row) if conversion_ok else 0.0,
+        }
+        out.append(parsed)
+    return out
+
+
 def sync_account_to_warehouse(
     account_id: str,
     *,
-    date_range: str = "LAST_30_DAYS",
+    date_range: str = "LAST_7_DAYS",
+    start_date: str | date | None = None,
+    end_date: str | date | None = None,
     access_token: str | None = None,
     env: LinkedInEnv | None = None,
 ) -> dict[str, Any]:
-    """Pull daily LinkedIn metrics and upsert into metrics_daily."""
+    """Pull daily LinkedIn metrics and upsert into Postgres + BigQuery."""
+    import paid_media_bq
     import warehouse
+
+    from dates_util import resolve_sync_date_range
 
     if not warehouse.enabled():
         raise RuntimeError("DATABASE_URL is not set — warehouse storage is disabled.")
 
-    start, end, preset = resolve_date_range(date_range)
+    start, end, preset = resolve_sync_date_range(
+        date_range,
+        start_date=start_date,
+        end_date=end_date,
+    )
     daily_rows = fetch_daily_metrics(
+        account_id,
+        start=start,
+        end=end,
+        access_token=access_token,
+        env=env,
+    )
+    campaign_rows = fetch_campaign_daily_metrics(
         account_id,
         start=start,
         end=end,
@@ -1054,12 +1136,28 @@ def sync_account_to_warehouse(
     account_id_clean = _normalize_account_id(account_id)
     written = warehouse.upsert_metrics_daily_batch("linkedin", account_id_clean, daily_rows)
     coverage = warehouse.account_date_coverage("linkedin", account_id_clean)
-    return {
+    date_range_meta = {"start": start.isoformat(), "end": end.isoformat(), "preset": preset}
+    result: dict[str, Any] = {
         "account_id": account_id_clean,
-        "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
+        "date_range": date_range_meta,
         "days_synced": written,
         "coverage": coverage,
+        "postgres": {"days_synced": written, "coverage": coverage},
     }
+    try:
+        if paid_media_bq.enabled():
+            result["bigquery"] = paid_media_bq.sync_platform_metrics(
+                "linkedin",
+                account_id_clean,
+                account_rows=daily_rows,
+                campaign_rows=campaign_rows,
+                date_range=date_range_meta,
+            )
+        else:
+            result["bigquery"] = {"enabled": False}
+    except Exception as exc:
+        result["bigquery"] = {"enabled": True, "error": str(exc)[:500]}
+    return result
 
 
 def _fetch_campaign_by_id(

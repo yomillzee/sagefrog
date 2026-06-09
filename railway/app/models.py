@@ -381,8 +381,16 @@ class LinkedInPerformanceResponse(BaseModel):
 class LinkedInWarehouseSyncRequest(BaseModel):
     account_id: str = Field(..., description="LinkedIn ad account ID (digits only)")
     date_range: str = Field(
-        default="LAST_30_DAYS",
+        default="LAST_7_DAYS",
         description="LAST_7_DAYS, LAST_30_DAYS, LAST_90_DAYS, LAST_180_DAYS, THIS_MONTH, LAST_MONTH",
+    )
+    start_date: str | None = Field(
+        default=None,
+        description="Optional backfill start (YYYY-MM-DD). Use with end_date instead of date_range.",
+    )
+    end_date: str | None = Field(
+        default=None,
+        description="Optional backfill end (YYYY-MM-DD). Use with start_date instead of date_range.",
     )
 
 
@@ -391,6 +399,8 @@ class LinkedInWarehouseSyncResponse(BaseModel):
     date_range: dict
     days_synced: int
     coverage: dict
+    postgres: dict | None = None
+    bigquery: dict | None = None
 
 
 class MetaEnvSummary(BaseModel):
@@ -497,8 +507,16 @@ class MetaAdSetsPerformanceResponse(BaseModel):
 class MetaWarehouseSyncRequest(BaseModel):
     account_id: str = Field(..., description="Meta ad account ID (digits only or act_ prefix)")
     date_range: str = Field(
-        default="LAST_30_DAYS",
+        default="LAST_7_DAYS",
         description="LAST_7_DAYS, LAST_30_DAYS, LAST_90_DAYS, LAST_180_DAYS, THIS_MONTH, LAST_MONTH",
+    )
+    start_date: str | None = Field(
+        default=None,
+        description="Optional backfill start (YYYY-MM-DD). Use with end_date instead of date_range.",
+    )
+    end_date: str | None = Field(
+        default=None,
+        description="Optional backfill end (YYYY-MM-DD). Use with start_date instead of date_range.",
     )
 
 
@@ -507,13 +525,23 @@ class MetaWarehouseSyncResponse(BaseModel):
     date_range: dict
     days_synced: int
     coverage: dict
+    postgres: dict | None = None
+    bigquery: dict | None = None
 
 
 class GoogleAdsWarehouseSyncRequest(BaseModel):
     customer_id: str = Field(..., description="Google Ads customer ID, digits only")
     date_range: str = Field(
-        default="LAST_30_DAYS",
+        default="LAST_7_DAYS",
         description="LAST_7_DAYS, LAST_30_DAYS, LAST_90_DAYS, LAST_180_DAYS, THIS_MONTH, LAST_MONTH",
+    )
+    start_date: str | None = Field(
+        default=None,
+        description="Optional backfill start (YYYY-MM-DD). Use with end_date instead of date_range.",
+    )
+    end_date: str | None = Field(
+        default=None,
+        description="Optional backfill end (YYYY-MM-DD). Use with start_date instead of date_range.",
     )
 
 
@@ -549,6 +577,8 @@ class WarehouseSyncResponse(BaseModel):
     bq_dataset_id: str | None = None
     client_key: str | None = None
     label: str | None = None
+    postgres: dict | None = None
+    bigquery: dict | None = None
 
 
 class WarehouseStatusResponse(BaseModel):
