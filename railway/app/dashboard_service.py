@@ -184,7 +184,7 @@ def _normalize_entity_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _rows_for_display(rows: list[dict[str, Any]], *, min_spend: float = 0.01) -> list[dict[str, Any]]:
-    """Hide zero-spend rows so inactive campaigns, ad sets, and ads do not clutter tables."""
+    """Hide zero-spend rows so inactive Google campaigns do not clutter the table."""
     visible = [r for r in rows if float(r.get("spend") or 0) >= min_spend]
     return visible if visible else rows
 
@@ -6502,25 +6502,8 @@ def render_penn_html(
       return ids.some(id => selectedIds.includes(id));
     }}
 
-    const MIN_SPEND_VISIBLE = 0.01;
-
-    function showZeroSpendRows() {{
-      return !!document.getElementById('showZeroSpend')?.checked;
-    }}
-
-    function passesSpendFilter(row) {{
-      if (showZeroSpendRows()) return true;
-      const spend = Number(row?.spend || 0);
-      const clicks = Number(row?.clicks || 0);
-      const impressions = Number(row?.impressions || 0);
-      // Keep rows with any delivery; hide only fully inactive ($0 spend + no clicks/impressions).
-      // LinkedIn creative-level spend can be $0 while the parent ad set still has spend.
-      if (spend >= MIN_SPEND_VISIBLE || clicks > 0 || impressions > 0) return true;
-      return false;
-    }}
-
     function filteredBlCampaigns() {{
-      const showZeroSpend = showZeroSpendRows();
+      const showZeroSpend = !!document.getElementById('showZeroSpend')?.checked;
       const channels = selectedPaidChannelIds();
       if (!channels.length) return [];
       const bls = SHOW_SEGMENT_FILTERS
@@ -6535,14 +6518,8 @@ def render_penn_html(
         if (!channels.includes(r.platform)) return false;
         if (SHOW_SEGMENT_FILTERS && !rowMatchesSegmentFilter(r, bls)) return false;
         if (SHOW_PRODUCT_LINE_FILTERS && !rowMatchesProductLineFilter(r, products)) return false;
-        if (!passesSpendFilter(r)) return false;
+        if (!showZeroSpend && (r.spend || 0) < 0.01) return false;
         return true;
-      }});
-    }}
-
-    function collapseAllExpandedTreeRows() {{
-      document.querySelectorAll('tr.tree-expandable.expanded').forEach(row => {{
-        collapseDescendants(row);
       }});
     }}
 
@@ -6634,7 +6611,6 @@ def render_penn_html(
     let renderGa4Pages = () => {{}};
 
     function applyGlobalFilters() {{
-      collapseAllExpandedTreeRows();
       applyBlView();
       applyOverviewFilters();
       ga4PageNum = 1;
@@ -7202,9 +7178,7 @@ def render_penn_html(
       if (!rule) return [];
       const pool = (breakdowns[platform] || {{}})[rule.childLevel] || [];
       const pid = String(parentId || '');
-      return pool
-        .filter(r => String(r.parent_id || '') === pid)
-        .filter(passesSpendFilter)
+      return pool.filter(r => String(r.parent_id || '') === pid)
         .sort((a, b) => (b.spend || 0) - (a.spend || 0));
     }}
 
