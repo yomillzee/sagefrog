@@ -1229,7 +1229,7 @@ def render_settings_html(
         bl_rules_section = f"""
         <section class="panel">
           <h2>Business line matching</h2>
-          <p class="muted">Campaigns are categorized by keyword substring match. Custom rules run <strong>before</strong> built-in Penn defaults (Home Equity, Cash Bonus, HYS, CD / Certificate, Commercial). LinkedIn campaign group names are included when matching.</p>
+          <p class="muted">Campaigns are categorized by keyword substring match. Custom rules run <strong>before</strong> built-in Penn defaults (Home Equity, Cash Bonus, HYS, CD / Certificate, Home Mortgage, Commercial). LinkedIn campaign group names are included when matching.</p>
           <p class="hint">One rule per line: <code>Business line name | keyword, keyword, keyword</code></p>
           <form method="post" action="{settings_url}">
             <input type="hidden" name="action" value="save_business_line_rules">
