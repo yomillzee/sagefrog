@@ -41,6 +41,13 @@ SCHEMA_SQL_STATEMENTS = [
       created_by TEXT
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS dashboard_client_suppressions (
+      client_slug TEXT PRIMARY KEY,
+      deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      deleted_by TEXT
+    )
+    """,
 ]
 
 
@@ -100,8 +107,26 @@ def ensure_schema(*, seed_defaults: bool = True) -> bool:
     return True
 
 
+def suppressed_slugs() -> set[str]:
+    if not enabled():
+        return set()
+    ensure_schema(seed_defaults=False)
+    with psycopg.connect(_get_db_url()) as conn:
+        rows = conn.execute(
+            "SELECT client_slug FROM dashboard_client_suppressions"
+        ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
 def _seed_defaults(conn) -> None:
     import client_config
+
+    suppressed = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT client_slug FROM dashboard_client_suppressions"
+        ).fetchall()
+    }
 
     now = datetime.now(tz=UTC)
     seeds: list[tuple[str, str, str]] = [("penn", "Penn Community Bank", "builtin")]
@@ -114,7 +139,7 @@ def _seed_defaults(conn) -> None:
 
     seen: set[str] = set()
     for slug, label, source in seeds:
-        if slug in seen:
+        if slug in seen or slug in suppressed:
             continue
         seen.add(slug)
         conn.execute(
@@ -206,6 +231,10 @@ def create_client(
     now = datetime.now(tz=UTC)
     with psycopg.connect(_get_db_url()) as conn:
         conn.execute(
+            "DELETE FROM dashboard_client_suppressions WHERE client_slug = %s",
+            (slug,),
+        )
+        conn.execute(
             """
             INSERT INTO dashboard_clients (client_slug, label, source, created_at, created_by)
             VALUES (%s, %s, 'admin', %s, %s)
@@ -284,6 +313,17 @@ def delete_client(
             "DELETE FROM dashboard_clients WHERE client_slug = %s RETURNING client_slug",
             (slug,),
         ).fetchone()
+        if deleted:
+            conn.execute(
+                """
+                INSERT INTO dashboard_client_suppressions (client_slug, deleted_at, deleted_by)
+                VALUES (%s, NOW(), %s)
+                ON CONFLICT (client_slug) DO UPDATE
+                  SET deleted_at = EXCLUDED.deleted_at,
+                      deleted_by = EXCLUDED.deleted_by
+                """,
+                (slug, (deleted_by or "").strip() or None),
+            )
     if not deleted:
         raise RuntimeError(f"Failed to delete dashboard '{slug}'.")
 

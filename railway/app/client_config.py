@@ -57,17 +57,19 @@ def _load_registry_from_env() -> dict[str, dict[str, Any]]:
 def list_client_slugs() -> list[str]:
     """Known dashboard client slugs (Postgres registry, env, built-in)."""
     slugs: set[str] = set()
+    suppressed: set[str] = set()
     try:
         import dashboard_registry
 
         if dashboard_registry.enabled():
             dashboard_registry.ensure_schema(seed_defaults=True)
             slugs.update(dashboard_registry.list_slugs())
+            suppressed = dashboard_registry.suppressed_slugs()
     except Exception:
         pass
     registry = _load_registry_from_env()
-    slugs.update(registry.keys())
-    slugs.update(_BUILTIN_CLIENTS.keys())
+    slugs.update(slug for slug in registry.keys() if slug not in suppressed)
+    slugs.update(slug for slug in _BUILTIN_CLIENTS.keys() if slug not in suppressed)
     slugs.add("penn")
     return sorted(slugs)
 

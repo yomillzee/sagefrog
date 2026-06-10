@@ -27,8 +27,11 @@ SCHEMA_SQL_STATEMENTS = [
     )
     """,
     """
-    CREATE UNIQUE INDEX IF NOT EXISTS web_users_email_lower_uq
-      ON web_users (LOWER(email))
+    DROP INDEX IF EXISTS web_users_email_lower_uq
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS web_users_active_email_lower_uq
+      ON web_users (LOWER(email)) WHERE is_active = TRUE
     """,
     """
     CREATE INDEX IF NOT EXISTS web_users_role_idx ON web_users (role)
@@ -223,17 +226,43 @@ def create_user(
     now = datetime.now(tz=UTC)
     pw_hash = hash_password(password)
     with psycopg.connect(_get_db_url()) as conn:
-        try:
+        inactive = conn.execute(
+            """
+            SELECT id
+            FROM web_users
+            WHERE LOWER(email) = %s AND is_active = FALSE
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (normalized_email,),
+        ).fetchone()
+        if inactive:
             row = conn.execute(
                 """
-                INSERT INTO web_users (email, password_hash, role, client_slug, is_active, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, TRUE, %s, %s)
+                UPDATE web_users
+                SET email = %s,
+                    password_hash = %s,
+                    role = %s,
+                    client_slug = %s,
+                    is_active = TRUE,
+                    updated_at = %s
+                WHERE id = %s
                 RETURNING id, email, role, client_slug, is_active
                 """,
-                (normalized_email, pw_hash, role, slug, now, now),
+                (normalized_email, pw_hash, role, slug, now, int(inactive[0])),
             ).fetchone()
-        except psycopg.errors.UniqueViolation as e:
-            raise ValueError("A user with that email already exists.") from e
+        else:
+            try:
+                row = conn.execute(
+                    """
+                    INSERT INTO web_users (email, password_hash, role, client_slug, is_active, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, TRUE, %s, %s)
+                    RETURNING id, email, role, client_slug, is_active
+                    """,
+                    (normalized_email, pw_hash, role, slug, now, now),
+                ).fetchone()
+            except psycopg.errors.UniqueViolation as e:
+                raise ValueError("A user with that email already exists.") from e
     return _row_to_user(row)
 
 
