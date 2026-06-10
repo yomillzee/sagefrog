@@ -7,8 +7,15 @@ Incremental refactor of the monolithic `dashboard_service.py` module. Behavior, 
 ```
 dashboard/
   ARCHITECTURE.md          # This file
-  routes/                  # (Pass 4) FastAPI route handlers
-  services/                # (Pass 3) Refresh, warehouse sync, metrics loading
+  routes/                  # (Pass 4) FastAPI route handlers — done
+    helpers.py             # Slug validation, session kwargs, files redirects
+    settings_routes.py     # GET/POST /dashboard/{slug}/settings
+    core_routes.py         # Dashboard HTML, refresh, insights, JSON, cron sync
+    files_routes.py        # Files browser, time tracking, insight documents
+  services/                # (Pass 3) Refresh, warehouse sync, metrics loading — done
+    refresh_service.py       # refresh_client, refresh_client_quick, save_penn_insights
+    warehouse_metrics_service.py  # penn_sync_warehouses, daily metrics load, LinkedIn media
+    snapshot_metrics_service.py   # totals, breakdowns, budget pacing for renderers
   renderers/               # (Pass 2) HTML builders — done
     base_layout.py         # Favicon, topbar, shell pages, refresh toolbar
     cards_renderer.py      # Summary cards, hero metrics, budget pacing panel
@@ -20,10 +27,12 @@ dashboard/
     formatting.py
     urls.py
     auth.py
-    dates.py
+    dates.py               # Also WAREHOUSE_DATE_RANGES constant
 ```
 
-`dashboard_service.py` remains the compatibility façade (~1000 lines): refresh/sync logic, snapshot data helpers, and re-exports of all public render functions.
+`dashboard_service.py` remains the compatibility façade (~130 lines): re-exports of utils, services, and renderers so `main.py`, `dashboard_settings.py`, and cron jobs need no import changes.
+
+`main.py` calls `register_dashboard_routes(app)` to attach all `/dashboard/*` handlers.
 
 ## Pass 1 (complete): `utils/`
 
@@ -32,7 +41,7 @@ dashboard/
 | `formatting.py` | `fmt_money`, `fmt_int`, `fmt_pct`, `fmt_cpa`, `esc`, `json_for_html_script`, `platform_error`, `fmt_file_size`, `fmt_short_date`, `entity_level_label`, `platform_title_html`, `file_type_icon_html`, `folder_icon_html` |
 | `urls.py` | All dashboard URL builders (`dashboard_page_url`, `settings_page_url`, `files_page_url`, insight document/folder URLs, `client_switch_target_url`, etc.) |
 | `auth.py` | `configured_dashboard_secret`, `min_refresh_seconds`, `refresh_cooldown_status`, `verify_dashboard_key`, `can_edit_penn_insights` |
-| `dates.py` | `parse_monthly_budget_input`, `mtd_calendar_bounds`, `paid_daily_spend_map` |
+| `dates.py` | `parse_monthly_budget_input`, `mtd_calendar_bounds`, `paid_daily_spend_map`, `WAREHOUSE_DATE_RANGES` |
 
 ## Pass 2 (complete): `renderers/`
 
@@ -47,7 +56,26 @@ dashboard/
 
 `dashboard_service.py` re-exports private renderer names with `_` aliases (e.g. `_drillable_table`) so `dashboard_settings.py` and internal code need no changes.
 
-`render_penn_html` lazy-imports data helpers from `dashboard_service` (`_hydrate_platform_totals`, `_breakdowns_from_snapshot`, etc.) to avoid circular imports.
+`render_penn_html` imports snapshot data helpers from `dashboard.services.snapshot_metrics_service` to avoid circular imports with `dashboard_service`.
+
+## Pass 3 (complete): `services/`
+
+| Module | Functions |
+|--------|-----------|
+| `refresh_service.py` | `refresh_client`, `refresh_client_quick`, `refresh_penn`, `refresh_penn_quick`, `patch_snapshot_from_config`, `save_penn_insights` |
+| `warehouse_metrics_service.py` | `totals_from_daily_rows`, `penn_sync_warehouses`, `penn_load_daily_metrics_from_warehouse`, `load_mtd_daily_metrics`, `load_organic_daily_metrics`, `merge_linkedin_creative_media`, `sync_meta` |
+| `snapshot_metrics_service.py` | `normalize_entity_row`, `account_totals`, `hydrate_platform_totals`, `platforms_with_summary_data`, `aggregated_paid_media`, `build_budget_pacing_payload`, `breakdowns_from_snapshot`, `business_line_campaigns_from_snapshot` |
+
+## Pass 4 (complete): `routes/`
+
+| Module | Routes |
+|--------|--------|
+| `settings_routes.py` | `GET/POST /dashboard/{client_slug}/settings` |
+| `core_routes.py` | `GET /dashboard/{client_slug}`, `GET /dashboard/penn`, `POST /dashboard/{client_slug}/refresh`, `POST /dashboard/{client_slug}/insights`, `GET /dashboard/{client_slug}.json`, `POST /internal/sync-penn` |
+| `files_routes.py` | Files browser, time tracking, insight document/folder upload/download/delete/move |
+| `helpers.py` | `validate_client_slug`, session kwargs, files flash redirects, JSON API helpers |
+
+OAuth routes (`/oauth/{platform}/*`) remain in `main.py` (admin tooling, not client dashboard).
 
 ## Where to add things
 
@@ -60,9 +88,10 @@ dashboard/
 | Insights editor / card | `renderers/settings_renderer.py` |
 | Files browser, time tracking page | `renderers/files_renderer.py` |
 | Settings page body (theme, OAuth) | `dashboard_settings.py` (not moved yet) |
-| Refresh / sync behavior | `dashboard_service.py` until Pass 3 → `services/refresh_service.py` |
-| Platform API pulls, warehouse writes | Pass 3 → `services/warehouse_metrics_service.py` |
-| New HTTP routes | `main.py` until Pass 4 → `dashboard/routes/` |
+| Refresh / sync behavior | `services/refresh_service.py` |
+| Platform API pulls, warehouse writes | `services/warehouse_metrics_service.py` |
+| Snapshot totals, breakdowns, budget pacing | `services/snapshot_metrics_service.py` |
+| New `/dashboard/*` HTTP routes | `routes/` (appropriate module) |
 | Formatting, URLs, auth keys | `dashboard/utils/` |
 
 ## What Cursor should inspect first
@@ -71,13 +100,9 @@ dashboard/
 2. **Platform table rows / GA4 columns** — `renderers/tables_renderer.py`.
 3. **Overview cards / budget pacing HTML** — `renderers/cards_renderer.py`.
 4. **Topbar / client switcher** — `renderers/base_layout.py`.
-5. **Refresh / missing data / warehouse** — `dashboard_service.py` (Pass 3 target).
-6. **Business line classification** — `penn_business_lines.py`.
-7. **Auth / admin** — `web_auth.py`, `dashboard/utils/auth.py`.
-
-## Next passes
-
-- **Pass 3:** Move `refresh_client`, warehouse sync, daily metrics loading into `services/`.
-- **Pass 4:** Move FastAPI handlers from `main.py` into `dashboard/routes/`.
+5. **Refresh / missing data / warehouse** — `services/refresh_service.py`, `services/warehouse_metrics_service.py`.
+6. **Dashboard HTTP handlers** — `routes/core_routes.py`, `routes/files_routes.py`, `routes/settings_routes.py`.
+7. **Business line classification** — `penn_business_lines.py`.
+8. **Auth / admin** — `web_auth.py`, `dashboard/utils/auth.py`.
 
 Each pass should end with `python3 -m py_compile` on touched modules and `import dashboard_service; import main`.
