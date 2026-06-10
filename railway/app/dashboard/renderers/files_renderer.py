@@ -91,7 +91,7 @@ def client_files_browser_html(
 
     folders = docs.list_folders(client_slug, parent_id=folder_id)
     files = docs.list_documents(client_slug, folder_id=folder_id)
-    breadcrumb_html = _files_breadcrumb_html(
+    breadcrumb_html = files_breadcrumb_html(
         client_slug=client_slug,
         access_key=access_key,
         use_session=use_session,
@@ -636,7 +636,7 @@ def render_files_page(
     flash_html = ""
     if flash_message:
         flash_html = f'<div class="dash-flash">{_esc(flash_message)}</div>'
-    body = flash_html + _client_files_browser_html(
+    body = flash_html + client_files_browser_html(
         client_slug=slug,
         access_key=access_key,
         use_session=use_session,
@@ -651,13 +651,13 @@ def render_files_page(
         active_nav="files",
         page_title="Files",
         page_subtitle=f"{label} · Shared documents",
-        content_html=body + f"<script>{_files_page_js()}</script>",
+        content_html=body + f"<script>{files_page_js()}</script>",
         access_key=access_key,
         use_session=use_session,
         session_email=session_email,
         session_is_admin=session_is_admin,
         show_files=docs.enabled(),
-        extra_css=_files_page_css(),
+        extra_css=files_page_css(),
     )
 
 
@@ -879,7 +879,7 @@ def render_time_tracking_page(
 
     chart_script = ""
     if report and chart_labels:
-        chart_script = f"<script>{_time_tracking_page_js(chart_labels=chart_labels, chart_hours=chart_hours)}</script>"
+        chart_script = f"<script>{time_tracking_page_js(chart_labels=chart_labels, chart_hours=chart_hours)}</script>"
 
     import client_insight_documents as docs
 
@@ -900,7 +900,7 @@ def render_time_tracking_page(
     .dash-content {{ flex: 1; width: 100%; padding: 28px 32px 48px; }}
     .wrap {{ width: 100%; max-width: 960px; min-width: 0; }}
     {_DASH_TOPBAR_CSS}
-    {_time_tracking_page_css()}
+    {time_tracking_page_css()}
   </style>
 </head>
 <body>
