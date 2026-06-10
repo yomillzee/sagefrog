@@ -5,8 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 import client_config
+import client_dashboard_config
 import dashboard_features
 import dashboard_theme
+from penn_config import PennDashboardConfig
 from ga4_attribution_service import build_ga4_campaign_index
 from penn_business_lines import (
     active_client_product_line_catalog,
