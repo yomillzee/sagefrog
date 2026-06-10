@@ -5886,13 +5886,75 @@ def render_penn_html(
       return selected.length < paidCatalog.length;
     }}
 
+    function blFilterRestricts() {{
+      return SHOW_SEGMENT_FILTERS && blCatalog.length && !isAllSelected(blState, blCatalog);
+    }}
+
+    function productFilterRestricts() {{
+      return SHOW_PRODUCT_LINE_FILTERS
+        && productLineCatalog.length
+        && !isAllSelected(productLineState, productLineCatalog);
+    }}
+
+    function segmentFiltersRestrict() {{
+      return blFilterRestricts() || productFilterRestricts();
+    }}
+
+    function includeZeroSpendCampaigns() {{
+      return !!document.getElementById('showZeroSpend')?.checked;
+    }}
+
+    function filteredCampaignsForSegmentFilters() {{
+      const showZeroSpend = includeZeroSpendCampaigns();
+      const bls = SHOW_SEGMENT_FILTERS
+        ? effectiveFilterIds(blState, blCatalog)
+        : null;
+      const products = SHOW_PRODUCT_LINE_FILTERS
+        ? effectiveFilterIds(productLineState, productLineCatalog)
+        : null;
+      if (SHOW_SEGMENT_FILTERS && (!blCatalog.length || !bls.length)) return [];
+      if (SHOW_PRODUCT_LINE_FILTERS && (!productLineCatalog.length || !products.length)) return [];
+      return blCampaigns.filter(r => {{
+        if (SHOW_SEGMENT_FILTERS && !rowMatchesSegmentFilter(r, bls)) return false;
+        if (SHOW_PRODUCT_LINE_FILTERS && !rowMatchesProductLineFilter(r, products)) return false;
+        if (!showZeroSpend && (r.spend || 0) < 0.01) return false;
+        return true;
+      }});
+    }}
+
+    function platformsWithSegmentCampaigns() {{
+      const rows = filteredCampaignsForSegmentFilters();
+      return new Set(rows.map(r => r.platform).filter(id => PAID_PLATFORM_IDS.has(id)));
+    }}
+
+    function chartPlatformScale(platformId) {{
+      if (!segmentFiltersRestrict()) return 1;
+      const showZeroSpend = includeZeroSpendCampaigns();
+      const segmentRows = filteredCampaignsForSegmentFilters().filter(r => r.platform === platformId);
+      const allRows = blCampaigns.filter(r => {{
+        if (r.platform !== platformId) return false;
+        if (!showZeroSpend && (r.spend || 0) < 0.01) return false;
+        return true;
+      }});
+      const filteredSpend = segmentRows.reduce((sum, r) => sum + (r.spend || 0), 0);
+      const totalSpend = allRows.reduce((sum, r) => sum + (r.spend || 0), 0);
+      if (totalSpend < 0.01) return 0;
+      return filteredSpend / totalSpend;
+    }}
+
     function activeChartPlatforms() {{
-      const ids = selectedPaidChannelIds();
+      let ids = selectedPaidChannelIds();
       const fromMetrics = performanceChartRaw.metrics?.clicks
         ? Object.keys(performanceChartRaw.metrics.clicks)
         : [];
-      if (!fromMetrics.length) return ids;
-      return ids.filter(id => fromMetrics.includes(id));
+      if (fromMetrics.length) {{
+        ids = ids.filter(id => fromMetrics.includes(id));
+      }}
+      if (segmentFiltersRestrict()) {{
+        const present = platformsWithSegmentCampaigns();
+        ids = ids.filter(id => present.has(id));
+      }}
+      return ids;
     }}
 
     const METRIC_DEFS = readJson('metric-defs-data', []);
@@ -5933,12 +5995,20 @@ def render_penn_html(
       const len = performanceChartRaw.labels?.length || 0;
       const out = new Array(len).fill(0);
       for (const platform of platforms) {{
+        const scale = chartPlatformScale(platform);
+        if (scale <= 0) continue;
         const series = byPlatform[platform] || [];
         for (let i = 0; i < len; i += 1) {{
-          out[i] += Number(series[i] || 0);
+          out[i] += Number(series[i] || 0) * scale;
         }}
       }}
       return out;
+    }}
+
+    function performanceChartHasVisibleData() {{
+      if (!(performanceChartRaw.labels || []).length) return false;
+      const series = combineMetricSeries(activeMetricId);
+      return series.some(value => Number(value || 0) > 0);
     }}
 
     function buildPerformancePayload() {{
@@ -5998,12 +6068,19 @@ def render_penn_html(
       }}
 
       const hasMetrics = !!activeMetricId;
-      const hasData = (performanceChartRaw.labels || []).length > 0;
+      const hasLabels = (performanceChartRaw.labels || []).length > 0;
+      const hasData = hasLabels && performanceChartHasVisibleData();
       if (emptyEl) {{
         emptyEl.classList.toggle('show', !hasMetrics || !hasData);
-        emptyEl.textContent = !hasMetrics
-          ? 'Choose a metric to display the chart.'
-          : 'No daily performance data for this period.';
+        if (!hasMetrics) {{
+          emptyEl.textContent = 'Choose a metric to display the chart.';
+        }} else if (!hasLabels) {{
+          emptyEl.textContent = 'No daily performance data for this period.';
+        }} else if (segmentFiltersRestrict() && !activeChartPlatforms().length) {{
+          emptyEl.textContent = 'No paid campaigns on the selected channels for this business line.';
+        }} else {{
+          emptyEl.textContent = 'No daily performance data for the selected filters.';
+        }}
       }}
       canvas.hidden = !hasMetrics || !hasData;
       if (!hasMetrics || !hasData) return;
@@ -6492,10 +6569,24 @@ def render_penn_html(
     }}
 
     function platformVisible(platformId) {{
-      if (platformId === 'organic') {{
-        return effectiveFilterIds(channelState, platformCatalog).includes('organic');
+      if (!effectiveFilterIds(channelState, platformCatalog).includes(platformId)) return false;
+      if (platformId !== 'organic' && segmentFiltersRestrict()) {{
+        return platformsWithSegmentCampaigns().has(platformId);
       }}
-      return effectiveFilterIds(channelState, platformCatalog).includes(platformId);
+      return true;
+    }}
+
+    function syncChannelToggleVisibility() {{
+      const wrap = document.getElementById('channelFilters');
+      if (!wrap) return;
+      const present = segmentFiltersRestrict() ? platformsWithSegmentCampaigns() : null;
+      wrap.querySelectorAll('.filter-toggle').forEach(btn => {{
+        const id = btn.dataset.id;
+        if (!id || id === '__all__' || id === 'organic') return;
+        const hasData = !present || present.has(id);
+        btn.hidden = !hasData;
+        btn.style.display = hasData ? '' : 'none';
+      }});
     }}
 
     function rowMatchesSegmentFilter(row, selectedIds) {{
@@ -6513,7 +6604,7 @@ def render_penn_html(
     }}
 
     function filteredBlCampaigns() {{
-      const showZeroSpend = !!document.getElementById('showZeroSpend')?.checked;
+      const showZeroSpend = includeZeroSpendCampaigns();
       const channels = selectedPaidChannelIds();
       if (!channels.length) return [];
       const bls = SHOW_SEGMENT_FILTERS
@@ -6535,7 +6626,6 @@ def render_penn_html(
 
     function aggregatePlatformTotals(platformId, rows) {{
       const subset = rows.filter(r => r.platform === platformId);
-      if (!subset.length) return null;
       return subset.reduce((acc, r) => ({{
         spend: acc.spend + (r.spend || 0),
         clicks: acc.clicks + (r.clicks || 0),
@@ -6544,7 +6634,11 @@ def render_penn_html(
       }}), {{ spend: 0, clicks: 0, impressions: 0, conversions: 0 }});
     }}
 
-    function updateOverviewCard(platformId, totals) {{
+    function zeroOverviewTotals() {{
+      return {{ spend: 0, clicks: 0, impressions: 0, conversions: 0 }};
+    }}
+
+    function updateOverviewCard(platformId, totals, filteredMode = false) {{
       const card = document.querySelector(`.cards .card[data-platform="${{platformId}}"]`);
       if (!card) return;
       const defaults = overviewCardDefaults.get(platformId);
@@ -6552,9 +6646,12 @@ def render_penn_html(
       const statsEl = card.querySelector('.card-stats');
       if (!valueEl || !statsEl || !defaults) return;
       if (!totals) {{
-        valueEl.innerHTML = defaults.valueHtml;
-        statsEl.innerHTML = defaults.statsHtml;
-        return;
+        if (!filteredMode || platformId === 'organic') {{
+          valueEl.innerHTML = defaults.valueHtml;
+          statsEl.innerHTML = defaults.statsHtml;
+          return;
+        }}
+        totals = zeroOverviewTotals();
       }}
       if (platformId === 'organic') {{
         valueEl.innerHTML = defaults.valueHtml;
@@ -6593,6 +6690,8 @@ def render_penn_html(
     function applyOverviewFilters() {{
       const blFiltered = filtersPartiallyApplied() ? filteredBlCampaigns() : null;
 
+      syncChannelToggleVisibility();
+
       document.querySelectorAll('.cards .card[data-platform]').forEach(card => {{
         const platformId = card.dataset.platform;
         const visible = platformVisible(platformId);
@@ -6601,9 +6700,9 @@ def render_penn_html(
         if (!visible) return;
         if (blFiltered && platformId !== 'organic') {{
           const totals = aggregatePlatformTotals(platformId, blFiltered);
-          updateOverviewCard(platformId, totals);
+          updateOverviewCard(platformId, totals, true);
         }} else {{
-          updateOverviewCard(platformId, null);
+          updateOverviewCard(platformId, null, false);
         }}
       }});
 
