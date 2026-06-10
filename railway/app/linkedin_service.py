@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 from typing import Any
 from urllib.parse import quote
@@ -1148,6 +1149,12 @@ def creatives_performance(
         access_token=access_token,
         env=env,
     )
+    account_videos = list_account_video_assets(
+        account_id_clean,
+        access_token=access_token,
+        env=env,
+    )
+    account_videos_by_urn, account_videos_by_name = _account_video_indexes(account_videos)
 
     for crid, matched in sorted(by_creative.items()):
         meta = _fetch_creative_by_id(
@@ -1200,6 +1207,8 @@ def creatives_performance(
                 video_cache=video_cache,
                 image_cache=image_cache,
                 sponsored_posts=sponsored_posts,
+                account_videos_by_urn=account_videos_by_urn,
+                account_videos_by_name=account_videos_by_name,
             )
             for key in ("thumbnail_url", "image_url", "video_url", "media_type", "creative_name"):
                 val = str(media.get(key) or "").strip()
@@ -1521,6 +1530,116 @@ def _gather_creative_media_urns(
     return videos, images
 
 
+def _normalize_match_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def _video_preview_from_asset(video: dict[str, Any]) -> dict[str, str]:
+    return {
+        "thumbnail_url": str(video.get("thumbnail") or ""),
+        "image_url": "",
+        "video_url": str(video.get("downloadUrl") or video.get("download_url") or ""),
+        "media_type": "video",
+        "creative_name": str((video.get("mediaLibraryMetadata") or {}).get("assetName") or ""),
+    }
+
+
+def _account_video_indexes(
+    videos: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    by_urn: dict[str, dict[str, Any]] = {}
+    by_name: dict[str, dict[str, Any]] = {}
+    for video in videos:
+        if not isinstance(video, dict):
+            continue
+        vid = str(video.get("id") or "").strip()
+        if vid:
+            by_urn[vid] = video
+            by_urn[_creative_id_from_pivot(vid)] = video
+        asset_name = str((video.get("mediaLibraryMetadata") or {}).get("assetName") or "").strip()
+        if asset_name:
+            by_name[_normalize_match_key(asset_name)] = video
+    return by_urn, by_name
+
+
+def list_account_video_assets(
+    account_id: str,
+    *,
+    access_token: str | None = None,
+    env: LinkedInEnv | None = None,
+) -> list[dict[str, Any]]:
+    """List video assets for an ad account (works with r_ads; no Posts API needed)."""
+    env = env or load_linkedin_env()
+    access_token = access_token or refresh_access_token(env)["access_token"]
+    account_id_clean = _normalize_account_id(account_id)
+    if not account_id_clean:
+        return []
+    try:
+        return _linkedin_finder_get_all_elements(
+            "/videos",
+            access_token=access_token,
+            params={
+                "q": "associatedAccount",
+                "associatedAccount": _account_urn(account_id_clean),
+            },
+            env=env,
+        )
+    except Exception:
+        return []
+
+
+def _lookup_account_video_asset(
+    video_urn: str,
+    *,
+    account_videos_by_urn: dict[str, dict[str, Any]] | None,
+    access_token: str,
+    env: LinkedInEnv,
+    video_cache: dict[str, dict[str, str]],
+) -> dict[str, str]:
+    text = str(video_urn or "").strip()
+    if not text:
+        return {}
+    if account_videos_by_urn:
+        for candidate in _video_urn_candidates(text):
+            hit = account_videos_by_urn.get(candidate)
+            if hit:
+                return _video_preview_from_asset(hit)
+    asset = _fetch_linkedin_video_asset(
+        text,
+        access_token=access_token,
+        env=env,
+        cache=video_cache,
+    )
+    if asset.get("thumbnail_url") or asset.get("video_url"):
+        return {
+            "thumbnail_url": asset.get("thumbnail_url") or "",
+            "image_url": "",
+            "video_url": asset.get("video_url") or "",
+            "media_type": "video",
+            "creative_name": "",
+        }
+    return {}
+
+
+def _match_account_video_by_name(
+    creative_name: str,
+    *,
+    account_videos_by_name: dict[str, dict[str, Any]] | None,
+) -> dict[str, str]:
+    key = _normalize_match_key(creative_name)
+    if not key or not account_videos_by_name:
+        return {}
+    direct = account_videos_by_name.get(key)
+    if direct:
+        return _video_preview_from_asset(direct)
+    for name_key, video in account_videos_by_name.items():
+        if not name_key:
+            continue
+        if key in name_key or name_key in key:
+            return _video_preview_from_asset(video)
+    return {}
+
+
 def _resolve_creative_media_fields(
     creative: dict[str, Any],
     *,
@@ -1529,6 +1648,8 @@ def _resolve_creative_media_fields(
     video_cache: dict[str, dict[str, str]],
     image_cache: dict[str, dict[str, str]],
     sponsored_posts: dict[str, dict[str, Any]] | None = None,
+    account_videos_by_urn: dict[str, dict[str, Any]] | None = None,
+    account_videos_by_name: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, str]:
     """Resolve preview URLs for the first video or image on a LinkedIn creative."""
     videos, images = _gather_creative_media_urns(
@@ -1544,18 +1665,32 @@ def _resolve_creative_media_fields(
         "media_type": "",
         "creative_name": str(creative.get("name") or ""),
     }
+
+    if not videos and not images:
+        for ref in _creative_post_references(creative):
+            post = (sponsored_posts or {}).get(ref) or {}
+            if not post:
+                continue
+            post_videos, post_images = _extract_post_media_urns(post)
+            videos.update(post_videos)
+            images.update(post_images)
+            if videos or images:
+                break
+
     if videos:
         video_urn = sorted(videos)[0]
-        asset = _fetch_linkedin_video_asset(
+        preview = _lookup_account_video_asset(
             video_urn,
+            account_videos_by_urn=account_videos_by_urn,
             access_token=access_token,
             env=env,
-            cache=video_cache,
+            video_cache=video_cache,
         )
-        out["video_url"] = asset.get("video_url") or ""
-        out["thumbnail_url"] = asset.get("thumbnail_url") or ""
-        out["media_type"] = "video"
-        return out
+        if preview:
+            out.update(preview)
+            if not out.get("creative_name"):
+                out["creative_name"] = str(creative.get("name") or "")
+            return out
     if images:
         image_urn = sorted(images)[0]
         asset = _fetch_linkedin_image_asset(
@@ -1567,6 +1702,17 @@ def _resolve_creative_media_fields(
         out["image_url"] = asset.get("image_url") or ""
         out["thumbnail_url"] = asset.get("thumbnail_url") or asset.get("image_url") or ""
         out["media_type"] = "image"
+        if out["thumbnail_url"]:
+            return out
+
+    name_preview = _match_account_video_by_name(
+        str(creative.get("name") or ""),
+        account_videos_by_name=account_videos_by_name,
+    )
+    if name_preview:
+        out.update(name_preview)
+        if not out.get("creative_name"):
+            out["creative_name"] = str(creative.get("name") or "")
     return out
 
 
@@ -1576,13 +1722,16 @@ def enrich_creative_rows_with_media(
     *,
     access_token: str | None = None,
     env: LinkedInEnv | None = None,
-) -> int:
-    """Attach thumbnail/image/video metadata to LinkedIn creative rows in place.
-
-    Returns the number of creatives enriched with a thumbnail or image URL.
-    """
+) -> dict[str, int]:
+    """Attach thumbnail/image/video metadata to LinkedIn creative rows in place."""
+    stats = {
+        "enriched": 0,
+        "already_had": 0,
+        "sponsored_posts": 0,
+        "account_videos": 0,
+    }
     if not creatives or not account_id:
-        return 0
+        return stats
     env = env or load_linkedin_env()
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
@@ -1593,10 +1742,17 @@ def enrich_creative_rows_with_media(
         access_token=access_token,
         env=env,
     )
-    enriched = 0
+    account_videos = list_account_video_assets(
+        account_id_clean,
+        access_token=access_token,
+        env=env,
+    )
+    account_videos_by_urn, account_videos_by_name = _account_video_indexes(account_videos)
+    stats["sponsored_posts"] = len(sponsored_posts)
+    stats["account_videos"] = len(account_videos)
     for creative in creatives:
         if str(creative.get("thumbnail_url") or creative.get("image_url") or "").strip():
-            enriched += 1
+            stats["already_had"] += 1
             continue
         crid = str(creative.get("id") or "")
         if not crid:
@@ -1613,6 +1769,8 @@ def enrich_creative_rows_with_media(
             video_cache=video_cache,
             image_cache=image_cache,
             sponsored_posts=sponsored_posts,
+            account_videos_by_urn=account_videos_by_urn,
+            account_videos_by_name=account_videos_by_name,
         )
         got_visual = False
         for key in ("thumbnail_url", "image_url", "video_url", "media_type", "creative_name"):
@@ -1622,8 +1780,8 @@ def enrich_creative_rows_with_media(
                 if key in ("thumbnail_url", "image_url"):
                     got_visual = True
         if got_visual:
-            enriched += 1
-    return enriched
+            stats["enriched"] += 1
+    return stats
 
 
 def _collect_media_urns(node: Any, *, videos: set[str], images: set[str]) -> None:
@@ -1667,7 +1825,6 @@ def _fetch_sponsored_posts_index(
                 "q": "dscAdAccount",
                 "dscAdAccount": _account_urn(account_id_clean),
                 "dscAdTypes": "List(STANDARD,VIDEO)",
-                "viewContext": "AUTHOR",
             },
             env=env,
         )
@@ -1886,6 +2043,12 @@ def list_video_creatives(
         access_token=access_token,
         env=env,
     )
+    account_videos = list_account_video_assets(
+        account_id_clean,
+        access_token=access_token,
+        env=env,
+    )
+    account_videos_by_urn, account_videos_by_name = _account_video_indexes(account_videos)
     videos_out: list[dict[str, Any]] = []
 
     for creative in creatives:
@@ -1909,6 +2072,34 @@ def list_video_creatives(
                 cname = cmeta.get("name") or ""
                 campaign_name_cache[cid] = cname
 
+        preview = _resolve_creative_media_fields(
+            creative,
+            access_token=access_token,
+            env=env,
+            video_cache=video_cache,
+            image_cache=image_cache,
+            sponsored_posts=sponsored_posts,
+            account_videos_by_urn=account_videos_by_urn,
+            account_videos_by_name=account_videos_by_name,
+        )
+        if preview.get("thumbnail_url") or preview.get("image_url"):
+            videos_out.append(
+                {
+                    "source": "linkedin_creative",
+                    "creative_id": crid,
+                    "creative_name": creative.get("name") or preview.get("creative_name") or "",
+                    "creative_status": creative.get("intendedStatus") or "",
+                    "campaign_id": cid,
+                    "campaign_name": cname,
+                    "media_type": preview.get("media_type") or "video",
+                    "video_urn": "",
+                    "video_url": preview.get("video_url") or "",
+                    "thumbnail_url": preview.get("thumbnail_url") or "",
+                    "image_url": preview.get("image_url") or "",
+                }
+            )
+            continue
+
         videos, images = _gather_creative_media_urns(
             creative,
             access_token=access_token,
@@ -1918,11 +2109,12 @@ def list_video_creatives(
 
         if videos:
             for video_urn in sorted(videos):
-                asset = _fetch_linkedin_video_asset(
+                asset = _lookup_account_video_asset(
                     video_urn,
+                    account_videos_by_urn=account_videos_by_urn,
                     access_token=access_token,
                     env=env,
-                    cache=video_cache,
+                    video_cache=video_cache,
                 )
                 videos_out.append(
                     {

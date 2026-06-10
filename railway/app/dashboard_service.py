@@ -641,8 +641,10 @@ def _merge_linkedin_creative_media(
     """Attach thumbnail/image metadata to LinkedIn creative rows when available."""
     if not creatives or not account_id:
         return None
+    list_video_rows = 0
     try:
         media_data = linkedin_service.list_video_creatives(account_id, videos_only=False)
+        list_video_rows = int(media_data.get("row_count") or 0)
         by_id: dict[str, dict[str, Any]] = {}
         for row in media_data.get("videos") or []:
             cid = str(row.get("creative_id") or "")
@@ -669,20 +671,25 @@ def _merge_linkedin_creative_media(
                     creative[key] = val
     except Exception:
         pass
-    enriched = 0
+    enrich_stats: dict[str, int] = {}
     try:
-        enriched = linkedin_service.enrich_creative_rows_with_media(creatives, account_id)
+        enrich_stats = linkedin_service.enrich_creative_rows_with_media(creatives, account_id)
     except Exception:
-        pass
+        enrich_stats = {}
     missing = sum(
         1
         for creative in creatives
         if not str(creative.get("thumbnail_url") or creative.get("image_url") or "").strip()
     )
     if missing:
+        enriched = int(enrich_stats.get("enriched") or 0)
+        account_videos = int(enrich_stats.get("account_videos") or 0)
+        sponsored_posts = int(enrich_stats.get("sponsored_posts") or 0)
         return (
             f"{missing} of {len(creatives)} LinkedIn ad rows are missing creative thumbnails "
-            f"after refresh ({enriched} enriched)."
+            f"after refresh ({enriched} newly enriched; {account_videos} account videos and "
+            f"{sponsored_posts} sponsored posts indexed; {list_video_rows} preview rows from "
+            f"creative listing). Reconnect LinkedIn in Settings if this persists."
         )
     return None
 
