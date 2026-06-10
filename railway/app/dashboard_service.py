@@ -657,21 +657,20 @@ def _merge_linkedin_creative_media(
             media = by_id.get(str(creative.get("id") or ""))
             if not media:
                 continue
-            thumb = str(media.get("thumbnail_url") or media.get("image_url") or "")
-            if thumb:
-                creative["thumbnail_url"] = thumb
-            image_url = str(media.get("image_url") or "")
-            if image_url:
-                creative["image_url"] = image_url
-            video_url = str(media.get("video_url") or "")
-            if video_url:
-                creative["video_url"] = video_url
-            media_type = str(media.get("media_type") or "")
-            if media_type:
-                creative["media_type"] = media_type
-            creative_name = str(media.get("creative_name") or "")
-            if creative_name:
-                creative["creative_name"] = creative_name
+            for key in (
+                "thumbnail_url",
+                "image_url",
+                "video_url",
+                "media_type",
+                "creative_name",
+            ):
+                val = str(media.get(key) or "").strip()
+                if val and not str(creative.get(key) or "").strip():
+                    creative[key] = val
+    except Exception:
+        pass
+    try:
+        linkedin_service.enrich_creative_rows_with_media(creatives, account_id)
     except Exception:
         pass
 
@@ -7247,6 +7246,12 @@ def render_penn_html(
       return null;
     }}
 
+    function thumbReferrerPolicy(url) {{
+      const u = String(url || '').toLowerCase();
+      if (u.includes('licdn.com') || u.includes('linkedin.com')) return 'origin';
+      return 'no-referrer';
+    }}
+
     function buildThumbButton(r) {{
       const thumbUrl = r.thumbnail_url || r.image_url || '';
       if (!thumbUrl) return '';
@@ -7257,7 +7262,8 @@ def render_penn_html(
         ? ` data-preview-type="${{escHtml(preview.type)}}" data-preview-url="${{escHtml(preview.url)}}"`
         : ` data-preview-type="image" data-preview-url="${{escHtml(thumbUrl)}}"`;
       const play = playable ? '<span class="ad-play-icon" aria-hidden="true">▶</span>' : '';
-      return `<button type="button" class="${{cls}}"${{attrs}} aria-label="Preview creative">${{play}}<img class="ad-thumb" src="${{escHtml(thumbUrl)}}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.closest('button')?.remove()"></button>`;
+      const referrer = thumbReferrerPolicy(thumbUrl);
+      return `<button type="button" class="${{cls}}"${{attrs}} aria-label="Preview creative">${{play}}<img class="ad-thumb" src="${{escHtml(thumbUrl)}}" alt="" loading="lazy" referrerpolicy="${{referrer}}" onerror="this.closest('button')?.remove()"></button>`;
     }}
 
     let previewPlayer = null;

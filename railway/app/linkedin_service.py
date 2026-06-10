@@ -1141,6 +1141,8 @@ def creatives_performance(
     group_name_cache: dict[str, str] = {}
     creatives_out: list[dict[str, Any]] = []
     filter_campaign = _normalize_account_id(campaign_id) if campaign_id else ""
+    video_cache: dict[str, dict[str, str]] = {}
+    image_cache: dict[str, dict[str, str]] = {}
 
     for crid, matched in sorted(by_creative.items()):
         meta = _fetch_creative_by_id(
@@ -1171,22 +1173,33 @@ def creatives_performance(
         impressions = int(sum(int(row.get("impressions") or 0) for row in matched))
         conversions = sum(_parse_conversions(row) for row in matched) if conversion_ok else 0.0
 
-        creatives_out.append(
-            {
-                "id": crid,
-                "entity_level": "creative",
-                "name": meta.get("name") or meta.get("intendedStatus") or "",
-                "status": meta.get("intendedStatus") or meta.get("status") or "",
-                "campaign_id": cid,
-                "campaign_name": cname,
-                "campaign_group_id": group_ctx["campaign_group_id"],
-                "campaign_group_name": group_ctx["campaign_group_name"],
-                "spend": spend,
-                "clicks": clicks,
-                "impressions": impressions,
-                "conversions": conversions,
-            }
-        )
+        item: dict[str, Any] = {
+            "id": crid,
+            "entity_level": "creative",
+            "name": meta.get("name") or meta.get("intendedStatus") or "",
+            "status": meta.get("intendedStatus") or meta.get("status") or "",
+            "campaign_id": cid,
+            "campaign_name": cname,
+            "campaign_group_id": group_ctx["campaign_group_id"],
+            "campaign_group_name": group_ctx["campaign_group_name"],
+            "spend": spend,
+            "clicks": clicks,
+            "impressions": impressions,
+            "conversions": conversions,
+        }
+        if meta:
+            media = _resolve_creative_media_fields(
+                meta,
+                access_token=access_token,
+                env=env,
+                video_cache=video_cache,
+                image_cache=image_cache,
+            )
+            for key in ("thumbnail_url", "image_url", "video_url", "media_type", "creative_name"):
+                val = str(media.get(key) or "").strip()
+                if val:
+                    item[key] = val
+        creatives_out.append(item)
 
     totals = {
         "spend": sum(c["spend"] for c in creatives_out),
@@ -1364,6 +1377,127 @@ def _linkedin_finder_get_all_elements(
     return elements
 
 
+def _creative_content_reference(creative: dict[str, Any]) -> str:
+    """Return a post/share URN referenced by creative content when media is not inline."""
+    raw = creative.get("content")
+    if isinstance(raw, str):
+        text = raw.strip()
+        if text.startswith("urn:li:"):
+            return text
+    if isinstance(raw, dict):
+        ref = str(raw.get("reference") or raw.get("share") or "").strip()
+        if ref.startswith("urn:li:"):
+            return ref
+    return ""
+
+
+def _gather_creative_media_urns(
+    creative: dict[str, Any],
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+) -> tuple[set[str], set[str]]:
+    """Collect video/image URNs from creative content, inline content, and referenced posts."""
+    videos: set[str] = set()
+    images: set[str] = set()
+    for block_key in ("content", "inlineContent"):
+        block = creative.get(block_key)
+        if isinstance(block, dict):
+            _collect_media_urns(block, videos=videos, images=images)
+        elif isinstance(block, str) and block.strip().startswith("urn:li:"):
+            _collect_media_urns(block, videos=videos, images=images)
+
+    ref = _creative_content_reference(creative)
+    if ref and not videos and not images:
+        post = _fetch_linkedin_post_content(ref, access_token=access_token, env=env)
+        _collect_media_urns(post, videos=videos, images=images)
+    return videos, images
+
+
+def _resolve_creative_media_fields(
+    creative: dict[str, Any],
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+    video_cache: dict[str, dict[str, str]],
+    image_cache: dict[str, dict[str, str]],
+) -> dict[str, str]:
+    """Resolve preview URLs for the first video or image on a LinkedIn creative."""
+    videos, images = _gather_creative_media_urns(
+        creative, access_token=access_token, env=env
+    )
+    out: dict[str, str] = {
+        "thumbnail_url": "",
+        "image_url": "",
+        "video_url": "",
+        "media_type": "",
+        "creative_name": str(creative.get("name") or ""),
+    }
+    if videos:
+        video_urn = sorted(videos)[0]
+        asset = _fetch_linkedin_video_asset(
+            video_urn,
+            access_token=access_token,
+            env=env,
+            cache=video_cache,
+        )
+        out["video_url"] = asset.get("video_url") or ""
+        out["thumbnail_url"] = asset.get("thumbnail_url") or ""
+        out["media_type"] = "video"
+        return out
+    if images:
+        image_urn = sorted(images)[0]
+        asset = _fetch_linkedin_image_asset(
+            image_urn,
+            access_token=access_token,
+            env=env,
+            cache=image_cache,
+        )
+        out["image_url"] = asset.get("image_url") or ""
+        out["thumbnail_url"] = asset.get("thumbnail_url") or asset.get("image_url") or ""
+        out["media_type"] = "image"
+    return out
+
+
+def enrich_creative_rows_with_media(
+    creatives: list[dict[str, Any]],
+    account_id: str,
+    *,
+    access_token: str | None = None,
+    env: LinkedInEnv | None = None,
+) -> None:
+    """Attach thumbnail/image/video metadata to LinkedIn creative rows in place."""
+    if not creatives or not account_id:
+        return
+    env = env or load_linkedin_env()
+    access_token = access_token or refresh_access_token(env)["access_token"]
+    account_id_clean = _normalize_account_id(account_id)
+    video_cache: dict[str, dict[str, str]] = {}
+    image_cache: dict[str, dict[str, str]] = {}
+    for creative in creatives:
+        if str(creative.get("thumbnail_url") or creative.get("image_url") or "").strip():
+            continue
+        crid = str(creative.get("id") or "")
+        if not crid:
+            continue
+        meta = _fetch_creative_by_id(
+            account_id_clean, crid, access_token=access_token, env=env
+        )
+        if not meta:
+            continue
+        media = _resolve_creative_media_fields(
+            meta,
+            access_token=access_token,
+            env=env,
+            video_cache=video_cache,
+            image_cache=image_cache,
+        )
+        for key in ("thumbnail_url", "image_url", "video_url", "media_type", "creative_name"):
+            val = str(media.get(key) or "").strip()
+            if val and not str(creative.get(key) or "").strip():
+                creative[key] = val
+
+
 def _collect_media_urns(node: Any, *, videos: set[str], images: set[str]) -> None:
     if isinstance(node, str):
         text = node.strip()
@@ -1398,11 +1532,19 @@ def _fetch_linkedin_post_content(
             return _linkedin_get_with_versions(path, access_token=access_token, env=env)
         except Exception:
             continue
-    if "ugcPost" in ref:
+    if "ugcpost" in ref.lower():
         post_id = ref.split(":")[-1]
         try:
             return _linkedin_get_with_versions(
                 f"/ugcPosts/{post_id}", access_token=access_token, env=env
+            )
+        except Exception:
+            return {}
+    if "share" in ref.lower():
+        share_id = ref.split(":")[-1]
+        try:
+            return _linkedin_get_with_versions(
+                f"/shares/{share_id}", access_token=access_token, env=env
             )
         except Exception:
             return {}
@@ -1424,8 +1566,8 @@ def _fetch_linkedin_video_asset(
         data = _linkedin_get_with_versions(
             f"/videos/{encoded}", access_token=access_token, env=env
         )
-        out["video_url"] = str(data.get("downloadUrl") or "")
-        out["thumbnail_url"] = str(data.get("thumbnail") or "")
+        out["video_url"] = str(data.get("downloadUrl") or data.get("download_url") or "")
+        out["thumbnail_url"] = str(data.get("thumbnail") or data.get("thumbnailUrl") or "")
     except Exception:
         pass
     cache[video_urn] = out
@@ -1562,23 +1704,9 @@ def list_video_creatives(
                 cname = cmeta.get("name") or ""
                 campaign_name_cache[cid] = cname
 
-        content = creative.get("content") if isinstance(creative.get("content"), dict) else {}
-        inline = (
-            creative.get("inlineContent")
-            if isinstance(creative.get("inlineContent"), dict)
-            else {}
+        videos, images = _gather_creative_media_urns(
+            creative, access_token=access_token, env=env
         )
-        videos: set[str] = set()
-        images: set[str] = set()
-        _collect_media_urns(content, videos=videos, images=images)
-        _collect_media_urns(inline, videos=videos, images=images)
-
-        ref = str(content.get("reference") or "")
-        if ref and not videos and not images:
-            post = _fetch_linkedin_post_content(
-                ref, access_token=access_token, env=env
-            )
-            _collect_media_urns(post, videos=videos, images=images)
 
         if videos:
             for video_urn in sorted(videos):
