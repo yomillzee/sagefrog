@@ -8,6 +8,7 @@ from typing import Any
 # (id, label, keyword substrings — first match wins)
 BUSINESS_LINE_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("home_equity", "Home Equity", ("home equity", "heloc")),
+    ("home_mortgage", "Home Mortgage", ("home mortgage",)),
     (
         "cash_bonus",
         "Cash Bonus",
