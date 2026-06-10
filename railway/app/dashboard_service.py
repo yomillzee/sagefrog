@@ -2830,9 +2830,16 @@ def _global_filters_bar_html(
     show_segment_filters: bool,
     show_product_line_filters: bool,
     show_channel_filters: bool,
+    show_date_range_filter: bool = False,
+    date_range_label: str = "Last 30 days",
     segment_filter_label: str = "Business line",
 ) -> str:
-    if not show_segment_filters and not show_product_line_filters and not show_channel_filters:
+    if (
+        not show_segment_filters
+        and not show_product_line_filters
+        and not show_channel_filters
+        and not show_date_range_filter
+    ):
         return ""
     bl_column = ""
     if show_segment_filters:
@@ -2855,8 +2862,32 @@ def _global_filters_bar_html(
               <span class="filter-column-label">Channel</span>
               <div id="channelFilters" class="filter-toggles" role="group" aria-label="Channel"></div>
             </div>"""
+    date_range_column = ""
+    if show_date_range_filter:
+        date_range_column = f"""
+            <div class="filter-column filter-column--locked">
+              <span class="filter-column-label">Date range</span>
+              <div class="filter-toggles filter-range-locked" role="group" aria-label="Date range">
+                <button type="button" class="filter-toggle filter-toggle--locked" disabled
+                  aria-disabled="true" title="Date range is fixed at the last 30 days">
+                  <svg class="filter-lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" aria-hidden="true">
+                    <rect x="5" y="11" width="14" height="10" rx="2"/>
+                    <path d="M8 11V8a4 4 0 0 1 8 0v3"/>
+                  </svg>
+                  {_esc(date_range_label)}
+                </button>
+              </div>
+            </div>"""
     filter_count = sum(
-        1 for flag in (show_segment_filters, show_product_line_filters, show_channel_filters) if flag
+        1
+        for flag in (
+            show_segment_filters,
+            show_product_line_filters,
+            show_channel_filters,
+            show_date_range_filter,
+        )
+        if flag
     )
     grid_class = "global-filter-grid"
     if filter_count <= 1:
@@ -2888,6 +2919,7 @@ def _global_filters_bar_html(
           </div>
           <div class="global-filters-body" id="globalFiltersBody">
             <div class="{grid_class}">
+              {date_range_column}
               {bl_column}
               {product_line_column}
               {channel_column}
@@ -3915,6 +3947,8 @@ def render_penn_html(
         show_segment_filters=show_segment_filters,
         show_product_line_filters=show_product_line_filters,
         show_channel_filters=bool(platform_catalog_list),
+        show_date_range_filter=slug == "penn",
+        date_range_label="Last 30 days",
         segment_filter_label=seg_filter_label,
     )
     campaign_explorer_html = _campaign_explorer_content_html(
@@ -5132,6 +5166,36 @@ def render_penn_html(
     }}
     .filter-column {{
       min-width: 0;
+    }}
+    .filter-column--locked {{
+      opacity: 0.72;
+    }}
+    .filter-column--locked .filter-column-label {{
+      color: #94a3b8;
+    }}
+    .filter-range-locked {{
+      pointer-events: none;
+    }}
+    .filter-toggle--locked {{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: not-allowed;
+      background: #f1f5f9;
+      border-color: #cbd5e1;
+      color: #64748b;
+      font-weight: 600;
+      opacity: 1;
+      box-shadow: none;
+    }}
+    .filter-toggle--locked:disabled {{
+      opacity: 1;
+    }}
+    .filter-lock-icon {{
+      width: 13px;
+      height: 13px;
+      flex-shrink: 0;
+      opacity: 0.85;
     }}
     .filter-column-label {{
       display: block;
