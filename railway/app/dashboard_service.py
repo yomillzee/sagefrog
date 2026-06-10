@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import calendar
-import html
 import json
 import os
 import re
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
-from urllib.parse import quote
 
 import dashboard_snapshots
 import dashboard_theme
@@ -48,11 +46,49 @@ from penn_business_lines import (
     _breakdown_has_platform_data,
     _totals_have_metrics,
 )
-
-
-def configured_dashboard_secret() -> str | None:
-    secret = (os.getenv("DASHBOARD_SECRET") or os.getenv("CRON_SECRET") or "").strip()
-    return secret or None
+from dashboard.utils.auth import (
+    can_edit_penn_insights,
+    configured_dashboard_secret,
+    min_refresh_seconds,
+    refresh_cooldown_status,
+    verify_dashboard_key,
+)
+from dashboard.utils.dates import (
+    mtd_calendar_bounds as _mtd_calendar_bounds,
+    paid_daily_spend_map as _paid_daily_spend_map,
+    parse_monthly_budget_input,
+)
+from dashboard.utils.formatting import (
+    entity_level_label as _entity_level_label,
+    esc as _esc,
+    file_type_icon_html as _file_type_icon_html,
+    folder_icon_html as _folder_icon_html,
+    fmt_cpa as _fmt_cpa,
+    fmt_file_size as _fmt_file_size,
+    fmt_int as _fmt_int,
+    fmt_money as _fmt_money,
+    fmt_pct as _fmt_pct,
+    fmt_short_date as _fmt_short_date,
+    json_for_html_script as _json_for_html_script,
+    platform_error as _platform_error,
+    platform_title_html as _platform_title_html,
+)
+from dashboard.utils.urls import (
+    client_switch_target_url as _client_switch_target_url,
+    dashboard_page_url as _dashboard_page_url,
+    files_page_url as _files_page_url,
+    insight_document_delete_url as _insight_document_delete_url,
+    insight_document_download_url as _insight_document_download_url,
+    insight_document_move_url as _insight_document_move_url,
+    insight_documents_action_url as _insight_documents_action_url,
+    insight_folder_action_url as _insight_folder_action_url,
+    insight_folder_delete_url as _insight_folder_delete_url,
+    insights_action_url as _insights_action_url,
+    insights_upload_page_url as _insights_upload_page_url,
+    refresh_action_url as _refresh_action_url,
+    settings_page_url as _settings_page_url,
+    time_tracking_page_url as _time_tracking_page_url,
+)
 
 
 def _favicon_head_html() -> str:
@@ -63,63 +99,6 @@ def _favicon_head_html() -> str:
   <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
   <link rel="manifest" href="/static/site.webmanifest">
   <meta name="theme-color" content="#0a2540">"""
-
-
-def min_refresh_seconds(*, quick: bool = False) -> int:
-    """Minimum seconds between manual dashboard refreshes. Default 0 (no cooldown)."""
-    env_key = "DASHBOARD_MIN_QUICK_REFRESH_SECONDS" if quick else "DASHBOARD_MIN_REFRESH_SECONDS"
-    raw = (os.getenv(env_key) or "0").strip()
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        return 0
-
-
-def _parse_refreshed_at(snapshot: dict[str, Any] | None) -> datetime | None:
-    raw = (snapshot or {}).get("refreshed_at")
-    if not raw:
-        return None
-    text = str(raw).strip().replace("Z", "+00:00")
-    try:
-        dt = datetime.fromisoformat(text)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=UTC)
-        return dt
-    except ValueError:
-        return None
-
-
-def refresh_cooldown_status(
-    snapshot: dict[str, Any] | None, *, quick: bool = False
-) -> tuple[bool, int]:
-    """Return (allowed_now, seconds_remaining)."""
-    wait = min_refresh_seconds(quick=quick)
-    if wait <= 0:
-        return True, 0
-    last = _parse_refreshed_at(snapshot)
-    if not last:
-        return True, 0
-    elapsed = (datetime.now(tz=UTC) - last).total_seconds()
-    if elapsed >= wait:
-        return True, 0
-    return False, int(wait - elapsed)
-
-
-def verify_dashboard_key(key: str | None) -> None:
-    from fastapi import HTTPException
-
-    expected = configured_dashboard_secret()
-    if not expected:
-        raise HTTPException(
-            status_code=503,
-            detail="Dashboard access is not configured (set CRON_SECRET or DASHBOARD_SECRET).",
-        )
-    if not key or key.strip() != expected:
-        raise HTTPException(status_code=401, detail="Invalid or missing key query parameter.")
-
-
-def _platform_error(exc: Exception) -> str:
-    return str(exc)[:500]
 
 
 def _normalize_entity_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -364,43 +343,6 @@ def _penn_load_daily_metrics_from_warehouse(
         payload["aggregated_paid_media"] = _aggregated_paid_media(platform_totals)
     elif platform_totals != (payload.get("platform_totals") or {}):
         payload["platform_totals"] = platform_totals
-
-
-def parse_monthly_budget_input(raw: str | None) -> float | None:
-    text = (raw or "").strip().replace(",", "").replace("$", "")
-    if not text:
-        return None
-    val = float(text)
-    if val < 0:
-        raise ValueError("Monthly budget must be zero or greater.")
-    return val
-
-
-def _mtd_calendar_bounds(today: date | None = None) -> tuple[date, date, date]:
-    """Return (month_start, month_end, today) for budget pacing."""
-    current = today or date.today()
-    month_start = current.replace(day=1)
-    last_day = calendar.monthrange(current.year, current.month)[1]
-    month_end = current.replace(day=last_day)
-    return month_start, month_end, current
-
-
-def _paid_daily_spend_map(
-    daily_metrics: dict[str, Any],
-    *,
-    month_start: date,
-    through: date,
-) -> dict[str, float]:
-    start_key = month_start.isoformat()
-    end_key = through.isoformat()
-    out: dict[str, float] = {}
-    for platform in ("google", "linkedin", "meta"):
-        for row in daily_metrics.get(platform) or []:
-            key = str(row.get("metric_date") or "")[:10]
-            if not key or key < start_key or key > end_key:
-                continue
-            out[key] = out.get(key, 0.0) + float(row.get("spend") or 0)
-    return out
 
 
 def _load_mtd_daily_metrics(cfg: PennDashboardConfig) -> dict[str, Any]:
@@ -974,76 +916,6 @@ def refresh_penn_quick(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = 
     return refresh_client_quick(client_slug="penn", date_range=date_range, sync_trigger=sync_trigger)
 
 
-def _fmt_money(value: float) -> str:
-    return f"${value:,.2f}"
-
-
-def _fmt_int(value: int | float) -> str:
-    return f"{int(value):,}"
-
-
-def _fmt_pct(num: float, den: float) -> str:
-    if not den:
-        return "—"
-    return f"{100.0 * num / den:.2f}%"
-
-
-def _esc(value: Any) -> str:
-    return html.escape(str(value or ""))
-
-
-_PLATFORM_FAVICONS: dict[str, str] = {
-    "google": "https://www.google.com/s2/favicons?domain=google.com&sz=32",
-    "linkedin": "https://www.google.com/s2/favicons?domain=linkedin.com&sz=32",
-    "meta": "https://www.google.com/s2/favicons?domain=facebook.com&sz=32",
-}
-
-
-def _platform_title_html(platform: str, label: str) -> str:
-    icon = _PLATFORM_FAVICONS.get(platform, "")
-    icon_html = (
-        f'<img class="platform-favicon" src="{icon}" alt="" width="20" height="20" loading="lazy" />'
-        if icon
-        else ""
-    )
-    return (
-        f'<span class="platform-title">'
-        f"{icon_html}"
-        f'<span>{_esc(label)}</span></span>'
-    )
-
-
-def _json_for_html_script(data: Any) -> str:
-    """Embed JSON in HTML without breaking out of a script tag."""
-    return (
-        json.dumps(data, ensure_ascii=False)
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-        .replace("&", "\\u0026")
-    )
-
-
-def _entity_level_label(level: str, *, platform: str | None = None) -> str:
-    """Human label for an entity row; LinkedIn uses Campaign Manager UI names (2025+)."""
-    if platform == "linkedin":
-        linkedin_labels = {
-            "campaign_group": "campaign group",
-            "campaign": "ad set",
-            "creative": "ad",
-        }
-        if level in linkedin_labels:
-            return linkedin_labels[level]
-    labels = {
-        "campaign": "campaign",
-        "campaign_group": "campaign group",
-        "ad_group": "ad group",
-        "adset": "ad set",
-        "ad": "ad",
-        "creative": "creative",
-    }
-    return labels.get(level, level.replace("_", " "))
-
-
 _GA4_TABLE_HEADERS = """
               <th class="ga4-col" title="GA4 attributed sessions">Sess.</th>
               <th class="ga4-col" title="GA4 engagement rate">Eng.</th>
@@ -1294,98 +1166,6 @@ def _summary_card(
     """
 
 
-def _dashboard_page_url(
-    *,
-    client_slug: str = "penn",
-    access_key: str | None,
-    use_session: bool,
-    tab: str | None = None,
-) -> str:
-    base = f"/dashboard/{client_slug}"
-    if tab:
-        base = f"{base}?tab={quote(tab, safe='')}"
-    if use_session:
-        return base
-    if access_key:
-        sep = "&" if "?" in base else "?"
-        return f"{base}{sep}key={quote(access_key, safe='')}"
-    return base
-
-
-def _settings_page_url(
-    *,
-    client_slug: str = "penn",
-    access_key: str | None,
-    use_session: bool,
-) -> str | None:
-    base = f"/dashboard/{client_slug}/settings"
-    if use_session:
-        return base
-    if access_key:
-        return f"{base}?key={quote(access_key, safe='')}"
-    return base
-
-
-def _files_page_url(
-    *,
-    client_slug: str = "penn",
-    access_key: str | None,
-    use_session: bool,
-    folder_id: int | None = None,
-) -> str | None:
-    base = f"/dashboard/{client_slug}/files"
-    params: list[str] = []
-    if folder_id is not None:
-        params.append(f"folder={int(folder_id)}")
-    if not use_session and access_key:
-        params.append(f"key={quote(access_key, safe='')}")
-    if params:
-        return f"{base}?{'&'.join(params)}"
-    return base
-
-
-def _time_tracking_page_url(
-    *,
-    client_slug: str = "penn",
-    access_key: str | None,
-    use_session: bool,
-) -> str | None:
-    base = f"/dashboard/{client_slug}/time-tracking"
-    if use_session:
-        return base
-    if access_key:
-        return f"{base}?key={quote(access_key, safe='')}"
-    return base
-
-
-def _insights_upload_page_url(
-    *,
-    client_slug: str = "penn",
-    access_key: str | None,
-    use_session: bool,
-) -> str | None:
-    """Deprecated — use _files_page_url."""
-    return _files_page_url(
-        client_slug=client_slug,
-        access_key=access_key,
-        use_session=use_session,
-    )
-
-
-def _refresh_action_url(
-    *,
-    client_slug: str = "penn",
-    access_key: str | None,
-    use_session: bool,
-) -> str | None:
-    base = f"/dashboard/{client_slug}/refresh"
-    if use_session:
-        return base
-    if access_key:
-        return f"{base}?key={quote(access_key, safe='')}"
-    return None
-
-
 def _refresh_toolbar(
     *,
     client_slug: str = "penn",
@@ -1454,15 +1234,6 @@ def _session_account_html(*, email: str | None, is_admin: bool) -> str:
     """
 
 
-def can_edit_penn_insights(*, session_is_admin: bool, access_key: str | None) -> bool:
-    """Admins (session) or legacy shared-key mode may edit insights text."""
-    if session_is_admin:
-        return True
-    if not web_users.enabled() and access_key:
-        return True
-    return False
-
-
 def _insights_from_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:
     raw = (snapshot or {}).get("insights")
     if isinstance(raw, str):
@@ -1527,20 +1298,6 @@ def save_penn_insights(
     existing["insights"] = insights
     dashboard_snapshots.save_snapshot(key, existing, touch_refreshed_at=False)
     return insights
-
-
-def _insights_action_url(
-    *,
-    client_slug: str = "penn",
-    access_key: str | None,
-    use_session: bool,
-) -> str | None:
-    base = f"/dashboard/{client_slug}/insights"
-    if use_session:
-        return base
-    if access_key:
-        return f"{base}?key={quote(access_key, safe='')}"
-    return None
 
 
 def _insights_editor_html(
@@ -1641,12 +1398,6 @@ def _paid_ad_overview_metrics(
     }
 
 
-def _fmt_cpa(spend: float, count: float | int) -> str:
-    if not count:
-        return "—"
-    return _fmt_money(spend / float(count))
-
-
 def _paid_ad_overview_html(
     aggregated: dict[str, Any],
     ga4_attr: dict[str, Any] | None = None,
@@ -1705,142 +1456,6 @@ def _paid_ad_overview_html(
         </div>
       </div>
     </section>"""
-
-
-def _fmt_file_size(num_bytes: int) -> str:
-    size = int(num_bytes or 0)
-    if size < 1024:
-        return f"{size} B"
-    if size < 1024 * 1024:
-        return f"{round(size / 1024)} KB"
-    return f"{round(size / (1024 * 1024), 1)} MB"
-
-
-def _fmt_short_date(iso_value: str | None) -> str:
-    text = (iso_value or "").strip()
-    if not text:
-        return "—"
-    return text[:10] if len(text) >= 10 else text
-
-
-def _file_type_icon_html(filename: str) -> str:
-    ext = os.path.splitext(filename or "")[1].lower()
-    if ext == ".pdf":
-        return (
-            '<svg class="files-item-icon files-item-icon--pdf" viewBox="0 0 24 24" fill="none" '
-            'stroke="currentColor" stroke-width="1.5" aria-hidden="true">'
-            '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>'
-            '<path d="M14 2v6h6"/><text x="7" y="17" font-size="6" fill="currentColor" stroke="none">PDF</text></svg>'
-        )
-    if ext == ".docx":
-        return (
-            '<svg class="files-item-icon files-item-icon--doc" viewBox="0 0 24 24" fill="none" '
-            'stroke="currentColor" stroke-width="1.5" aria-hidden="true">'
-            '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>'
-            '<path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>'
-        )
-    return (
-        '<svg class="files-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-        'stroke-width="1.5" aria-hidden="true">'
-        '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>'
-    )
-
-
-def _folder_icon_html() -> str:
-    return (
-        '<svg class="files-item-icon files-item-icon--folder" viewBox="0 0 24 24" fill="currentColor" '
-        'stroke="none" aria-hidden="true">'
-        '<path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/>'
-        '</svg>'
-    )
-
-
-def _insight_documents_action_url(
-    *,
-    client_slug: str,
-    access_key: str | None,
-    use_session: bool,
-) -> str | None:
-    base = f"/dashboard/{client_slug}/insight-documents"
-    if use_session:
-        return base
-    if access_key:
-        return f"{base}?key={quote(access_key, safe='')}"
-    return None
-
-
-def _insight_document_download_url(
-    *,
-    client_slug: str,
-    doc_id: int,
-    access_key: str | None,
-    use_session: bool,
-) -> str:
-    base = f"/dashboard/{client_slug}/insight-documents/{int(doc_id)}"
-    if use_session:
-        return base
-    if access_key:
-        return f"{base}?key={quote(access_key, safe='')}"
-    return base
-
-
-def _insight_document_delete_url(
-    *,
-    client_slug: str,
-    doc_id: int,
-    access_key: str | None,
-    use_session: bool,
-) -> str:
-    base = f"/dashboard/{client_slug}/insight-documents/{int(doc_id)}/delete"
-    if use_session:
-        return base
-    if access_key:
-        return f"{base}?key={quote(access_key, safe='')}"
-    return base
-
-
-def _insight_document_move_url(
-    *,
-    client_slug: str,
-    doc_id: int,
-    access_key: str | None,
-    use_session: bool,
-) -> str:
-    base = f"/dashboard/{client_slug}/insight-documents/{int(doc_id)}/move"
-    if use_session:
-        return base
-    if access_key:
-        return f"{base}?key={quote(access_key, safe='')}"
-    return base
-
-
-def _insight_folder_action_url(
-    *,
-    client_slug: str,
-    access_key: str | None,
-    use_session: bool,
-) -> str | None:
-    base = f"/dashboard/{client_slug}/insight-folders"
-    if use_session:
-        return base
-    if access_key:
-        return f"{base}?key={quote(access_key, safe='')}"
-    return None
-
-
-def _insight_folder_delete_url(
-    *,
-    client_slug: str,
-    folder_id: int,
-    access_key: str | None,
-    use_session: bool,
-) -> str:
-    base = f"/dashboard/{client_slug}/insight-folders/{int(folder_id)}/delete"
-    if use_session:
-        return base
-    if access_key:
-        return f"{base}?key={quote(access_key, safe='')}"
-    return base
 
 
 def _files_breadcrumb_html(
@@ -2950,36 +2565,6 @@ def _global_filters_bar_html(
           </div>
         </section>
       </div>"""
-
-
-def _client_switch_target_url(
-    *,
-    client_slug: str,
-    active_nav: str,
-    access_key: str | None,
-    use_session: bool,
-) -> str:
-    slug = (client_slug or "penn").strip().lower()
-    nav = (active_nav or "overview").strip().lower()
-    if nav == "settings":
-        return _settings_page_url(
-            client_slug=slug, access_key=access_key, use_session=use_session
-        ) or f"/dashboard/{slug}/settings"
-    if nav == "files":
-        return _files_page_url(
-            client_slug=slug, access_key=access_key, use_session=use_session
-        ) or f"/dashboard/{slug}/files"
-    if nav == "insights-upload":
-        return _files_page_url(
-            client_slug=slug, access_key=access_key, use_session=use_session
-        ) or f"/dashboard/{slug}/files"
-    if nav == "time-tracking":
-        return _time_tracking_page_url(
-            client_slug=slug, access_key=access_key, use_session=use_session
-        ) or f"/dashboard/{slug}/time-tracking"
-    return _dashboard_page_url(
-        client_slug=slug, access_key=access_key, use_session=use_session
-    )
 
 
 def _topbar_client_selector_html(
