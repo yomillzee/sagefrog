@@ -23,7 +23,7 @@ GOOGLE_ADS_SCOPE = "https://www.googleapis.com/auth/adwords"
 
 LINKEDIN_AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization"
 LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
-LINKEDIN_SCOPES = "r_ads r_ads_reporting"
+LINKEDIN_SCOPES = "r_ads r_ads_reporting r_organization_social"
 
 META_SCOPES = "ads_read,business_management"
 
