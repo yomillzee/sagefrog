@@ -2919,10 +2919,10 @@ def _global_filters_bar_html(
           </div>
           <div class="global-filters-body" id="globalFiltersBody">
             <div class="{grid_class}">
-              {date_range_column}
               {bl_column}
               {product_line_column}
               {channel_column}
+              {date_range_column}
             </div>
             {more_options}
           </div>
