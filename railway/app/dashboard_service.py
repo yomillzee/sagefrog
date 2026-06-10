@@ -637,10 +637,10 @@ def _load_organic_daily_metrics(
 
 def _merge_linkedin_creative_media(
     creatives: list[dict[str, Any]], account_id: str
-) -> None:
+) -> str | None:
     """Attach thumbnail/image metadata to LinkedIn creative rows when available."""
     if not creatives or not account_id:
-        return
+        return None
     try:
         media_data = linkedin_service.list_video_creatives(account_id, videos_only=False)
         by_id: dict[str, dict[str, Any]] = {}
@@ -669,10 +669,22 @@ def _merge_linkedin_creative_media(
                     creative[key] = val
     except Exception:
         pass
+    enriched = 0
     try:
-        linkedin_service.enrich_creative_rows_with_media(creatives, account_id)
+        enriched = linkedin_service.enrich_creative_rows_with_media(creatives, account_id)
     except Exception:
         pass
+    missing = sum(
+        1
+        for creative in creatives
+        if not str(creative.get("thumbnail_url") or creative.get("image_url") or "").strip()
+    )
+    if missing:
+        return (
+            f"{missing} of {len(creatives)} LinkedIn ad rows are missing creative thumbnails "
+            f"after refresh ({enriched} enriched)."
+        )
+    return None
 
 
 def _sync_meta(trigger: str) -> dict[str, str]:
@@ -769,7 +781,11 @@ def refresh_client(
                 cfg.linkedin_account_id, date_range=preset
             )
             li_creatives_raw = creatives_perf.get("creatives") or []
-            _merge_linkedin_creative_media(li_creatives_raw, cfg.linkedin_account_id)
+            thumb_warning = _merge_linkedin_creative_media(
+                li_creatives_raw, cfg.linkedin_account_id
+            )
+            if thumb_warning:
+                payload["errors"]["linkedin_creative_thumbnails"] = thumb_warning
             li_creatives = [_normalize_entity_row(c) for c in li_creatives_raw]
         except Exception as exc:
             payload["errors"]["linkedin_creatives"] = _platform_error(exc)
@@ -7263,7 +7279,7 @@ def render_penn_html(
         : ` data-preview-type="image" data-preview-url="${{escHtml(thumbUrl)}}"`;
       const play = playable ? '<span class="ad-play-icon" aria-hidden="true">▶</span>' : '';
       const referrer = thumbReferrerPolicy(thumbUrl);
-      return `<button type="button" class="${{cls}}"${{attrs}} aria-label="Preview creative">${{play}}<img class="ad-thumb" src="${{escHtml(thumbUrl)}}" alt="" loading="lazy" referrerpolicy="${{referrer}}" onerror="this.closest('button')?.remove()"></button>`;
+      return `<button type="button" class="${{cls}}"${{attrs}} aria-label="Preview creative">${{play}}<img class="ad-thumb" src="${{escHtml(thumbUrl)}}" alt="" loading="lazy" referrerpolicy="${{referrer}}" onerror="this.style.opacity='0.35'"></button>`;
     }}
 
     let previewPlayer = null;
