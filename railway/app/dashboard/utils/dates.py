@@ -6,6 +6,17 @@ import calendar
 from datetime import date
 from typing import Any
 
+WAREHOUSE_DATE_RANGES = frozenset(
+    {
+        "LAST_7_DAYS",
+        "LAST_30_DAYS",
+        "LAST_90_DAYS",
+        "LAST_180_DAYS",
+        "THIS_MONTH",
+        "LAST_MONTH",
+    }
+)
+
 
 def parse_monthly_budget_input(raw: str | None) -> float | None:
     text = (raw or "").strip().replace(",", "").replace("$", "")
