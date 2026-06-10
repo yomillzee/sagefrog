@@ -313,14 +313,14 @@ def render_penn_html(
     flash_message: str | None = None,
 ) -> str:
     """use_session: refresh forms omit ?key= (cookie auth). access_key: legacy shared secret."""
-    import dashboard_service as svc
-
-    _hydrate_platform_totals = svc._hydrate_platform_totals
-    _breakdowns_from_snapshot = svc._breakdowns_from_snapshot
-    _aggregated_paid_media = svc._aggregated_paid_media
-    _business_line_campaigns_from_snapshot = svc._business_line_campaigns_from_snapshot
-    _platforms_with_summary_data = svc._platforms_with_summary_data
-    _build_budget_pacing_payload = svc._build_budget_pacing_payload
+    from dashboard.services.snapshot_metrics_service import (
+        aggregated_paid_media as _aggregated_paid_media,
+        breakdowns_from_snapshot as _breakdowns_from_snapshot,
+        build_budget_pacing_payload as _build_budget_pacing_payload,
+        business_line_campaigns_from_snapshot as _business_line_campaigns_from_snapshot,
+        hydrate_platform_totals as _hydrate_platform_totals,
+        platforms_with_summary_data as _platforms_with_summary_data,
+    )
 
     slug = (client_slug or "penn").strip().lower()
     theme = dashboard_theme.load_client_theme(slug)
