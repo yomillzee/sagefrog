@@ -13,6 +13,7 @@ from penn_business_lines import (
 )
 
 FEATURE_KEYS: tuple[str, ...] = (
+    "overview",
     "budget_pacing",
     "performance_trend",
     "campaign_explorer",
@@ -24,6 +25,7 @@ FEATURE_KEYS: tuple[str, ...] = (
 )
 
 FEATURE_LABELS: dict[str, str] = {
+    "overview": "Overview tab",
     "budget_pacing": "Budget pacing chart",
     "performance_trend": "Daily paid performance trend",
     "campaign_explorer": "Campaign Explorer tab",
@@ -35,6 +37,7 @@ FEATURE_LABELS: dict[str, str] = {
 }
 
 FEATURE_HINTS: dict[str, str] = {
+    "overview": "Overview page with performance summary and key metrics.",
     "budget_pacing": "MTD spend vs monthly budget on the overview tab.",
     "performance_trend": "Daily spend/clicks/impressions/conversions chart on overview.",
     "campaign_explorer": "Campaign-level table and drill-down view.",
@@ -48,6 +51,7 @@ FEATURE_HINTS: dict[str, str] = {
 
 @dataclass(frozen=True)
 class DashboardFeatures:
+    overview: bool = True
     budget_pacing: bool = True
     performance_trend: bool = True
     campaign_explorer: bool = True
@@ -97,6 +101,7 @@ def default_features(
     slug = (client_slug or "").strip().lower()
     fk = _filter_kwargs(slug, cfg=cfg, label=label, ga4_client_key=ga4_client_key)
     return DashboardFeatures(
+        overview=True,
         budget_pacing=slug != "penn",
         performance_trend=True,
         campaign_explorer=True,
@@ -165,6 +170,7 @@ def resolve_features(
     product_ok = client_has_product_line_filters(slug, **fk)
 
     return DashboardFeatures(
+        overview=resolved.overview,
         budget_pacing=resolved.budget_pacing,
         performance_trend=resolved.performance_trend,
         campaign_explorer=resolved.campaign_explorer,
