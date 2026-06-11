@@ -121,6 +121,7 @@ def dashboard_client_settings_post(
     organic_bg: str = Form(""),
     business_line: str = Form(""),
     business_line_bg: str = Form(""),
+    feature_overview: str = Form(""),
     feature_budget_pacing: str = Form(""),
     feature_performance_trend: str = Form(""),
     feature_campaign_explorer: str = Form(""),
@@ -433,6 +434,7 @@ def dashboard_client_settings_post(
             dashboard_features.save_features(
                 slug,
                 dashboard_features.features_from_form(
+                    overview=feature_overview,
                     budget_pacing=feature_budget_pacing,
                     performance_trend=feature_performance_trend,
                     campaign_explorer=feature_campaign_explorer,
