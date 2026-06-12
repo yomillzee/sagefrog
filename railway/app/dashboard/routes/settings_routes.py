@@ -21,6 +21,16 @@ from dashboard.routes.helpers import dashboard_settings_session_kwargs, validate
 
 router = APIRouter(include_in_schema=False)
 
+
+def _config_updated_at(client_slug: str) -> str | None:
+    """Settings metadata is optional; a database issue must not break the page."""
+    try:
+        row = client_dashboard_config.get_config(client_slug)
+    except Exception:
+        return None
+    return row.updated_at if row else None
+
+
 @router.get(
     "/dashboard/{client_slug}/settings",
     summary="Client dashboard settings (HTML)",
@@ -64,7 +74,6 @@ def dashboard_client_settings(
         if isinstance(auth, RedirectResponse):
             return auth
         cfg = dashboard_settings.load_settings_config(slug)
-        db_row = client_dashboard_config.get_config(slug)
         return HTMLResponse(
             dashboard_settings.render_settings_html(
                 client_slug=slug,
@@ -72,13 +81,12 @@ def dashboard_client_settings(
                 flash_message=flash,
                 flash_error=flash_err,
                 probe_results=probe_results,
-                db_config_updated_at=db_row.updated_at if db_row else None,
+                db_config_updated_at=_config_updated_at(slug),
                 **dashboard_settings_session_kwargs(auth),
             )
         )
     dashboard_service.verify_dashboard_key(key)
     cfg = dashboard_settings.load_settings_config(slug)
-    db_row = client_dashboard_config.get_config(slug)
     return HTMLResponse(
         dashboard_settings.render_settings_html(
             client_slug=slug,
@@ -87,7 +95,7 @@ def dashboard_client_settings(
             flash_message=flash,
             flash_error=flash_err,
             probe_results=probe_results,
-            db_config_updated_at=db_row.updated_at if db_row else None,
+            db_config_updated_at=_config_updated_at(slug),
         )
     )
 @router.post(
@@ -160,13 +168,12 @@ def dashboard_client_settings_post(
     if act == "test":
         cfg = dashboard_settings.load_settings_config(slug)
         probe = dashboard_settings.probe_client_connections(cfg)
-        db_row = client_dashboard_config.get_config(slug)
         return HTMLResponse(
             dashboard_settings.render_settings_html(
                 client_slug=slug,
                 cfg=cfg,
                 probe_results=probe,
-                db_config_updated_at=db_row.updated_at if db_row else None,
+                db_config_updated_at=_config_updated_at(slug),
                 **session_kw,
             )
         )
