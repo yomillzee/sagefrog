@@ -181,16 +181,6 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
     except Exception:
         in_registry = False
 
-    if (
-        slug not in _BUILTIN_CLIENTS
-        and slug != "penn"
-        and not in_registry
-        and not any((google, linkedin, meta, ga4_key))
-    ):
-        raise RuntimeError(
-            f"Client '{slug}' is not configured. Set DASHBOARD_CLIENTS or save account IDs in settings."
-        )
-
     return PennDashboardConfig(
         client_key=slug,
         label=label,
