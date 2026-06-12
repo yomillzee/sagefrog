@@ -114,6 +114,33 @@ def build_api_status() -> dict[str, Any]:
     }
 
 
+def _disconnected_oauth_statuses() -> dict[str, oauth_store.OAuthCredentialPublic]:
+    return {
+        platform: oauth_store.OAuthCredentialPublic(
+            platform=platform,
+            connected=False,
+            source="unavailable",
+            connected_by=None,
+            connected_at=None,
+            updated_at=None,
+            scopes=None,
+            metadata={},
+        )
+        for platform in sorted(oauth_store.PLATFORMS)
+    }
+
+
+def _unavailable_api_status() -> dict[str, Any]:
+    return {
+        "google": {"env": {}, "ok": False},
+        "linkedin": {"env": {}, "ok": False},
+        "meta": {"env": {}, "ok": False},
+        "harvest": {"env": {}, "ok": False},
+        "ga4": {"env": {}, "registry_count": 0, "ok": False},
+        "overall_ok": False,
+    }
+
+
 def list_harvest_projects_for_settings() -> list[dict[str, Any]]:
     """Active Harvest projects for the settings dropdown (empty if not connected)."""
     try:
@@ -930,10 +957,23 @@ def render_settings_html(
 ) -> str:
     slug = client_slug.strip().lower()
     settings_url = _settings_url(client_slug=slug, access_key=access_key, use_session=use_session)
-    snapshot = dashboard_snapshots.get_snapshot_settings_context(slug)
-    oauth_status = oauth_store.all_public_status()
+    status_warnings: list[str] = []
+    try:
+        snapshot = dashboard_snapshots.get_snapshot_settings_context(slug)
+    except Exception:
+        snapshot = None
+        status_warnings.append("Snapshot status is temporarily unavailable.")
+    try:
+        oauth_status = oauth_store.all_public_status()
+    except Exception:
+        oauth_status = _disconnected_oauth_statuses()
+        status_warnings.append("OAuth connection status is temporarily unavailable.")
     auth = build_auth_status()
-    api = build_api_status()
+    try:
+        api = build_api_status()
+    except Exception:
+        api = _unavailable_api_status()
+        status_warnings.append("Platform connection status is temporarily unavailable.")
     ga4_target = _ga4_target_summary(cfg)
     can_edit = session_is_admin if use_session else bool(access_key)
     db_editable = web_users.enabled() and session_is_admin
@@ -943,6 +983,12 @@ def render_settings_html(
         notice += f'<div class="notice ok">{_esc(flash_message)}</div>'
     if flash_error:
         notice += f'<div class="notice err">{_esc(flash_error)}</div>'
+    if status_warnings:
+        notice += (
+            '<div class="notice err">'
+            + " ".join(_esc(message) for message in status_warnings)
+            + "</div>"
+        )
 
     auth_rows = [
         _connection_row(
