@@ -75,8 +75,8 @@ def _key_events_sql_list() -> str:
     return ", ".join(f"'{name}'" for name in KEY_EVENT_NAMES)
 
 
-def _ensure_bq_ready() -> None:
-    summ = env_summary()
+def _ensure_bq_ready(credentials_env: str | None = None) -> None:
+    summ = env_summary(credentials_env=credentials_env)
     if not summ.get("gcp_service_account_json_parse_ok"):
         raise RuntimeError(
             summ.get("gcp_service_account_json_parse_error")
@@ -266,8 +266,8 @@ def fetch_paid_media_attribution(
     end: date,
     target: Ga4ClientTarget | None = None,
 ) -> dict[str, Any]:
-    _ensure_bq_ready()
     target = target or resolve_target()
+    _ensure_bq_ready(credentials_env=target.credentials_env)
     suffix_start = start.strftime("%Y%m%d")
     suffix_end = end.strftime("%Y%m%d")
     table = _events_table(target)
@@ -337,9 +337,9 @@ def fetch_paid_media_attribution(
     """
     )
 
-    daily_rows = run_query(daily_sql, max_rows=10000, project_id=target.bq_project_id)
-    campaign_rows = run_query(campaign_sql, max_rows=5000, project_id=target.bq_project_id)
-    top_event_rows = run_query(events_sql, max_rows=200, project_id=target.bq_project_id)
+    daily_rows = run_query(daily_sql, max_rows=10000, project_id=target.bq_project_id, credentials_env=target.credentials_env)
+    campaign_rows = run_query(campaign_sql, max_rows=5000, project_id=target.bq_project_id, credentials_env=target.credentials_env)
+    top_event_rows = run_query(events_sql, max_rows=200, project_id=target.bq_project_id, credentials_env=target.credentials_env)
 
     return _build_multi_platform_report(
         start=start,
@@ -790,8 +790,8 @@ def fetch_landing_page_rows(
     limit: int = 500,
 ) -> list[dict[str, Any]]:
     """Granular paid landing page rows (platform, campaign, path) from BigQuery."""
-    _ensure_bq_ready()
     target = target or resolve_target()
+    _ensure_bq_ready(credentials_env=target.credentials_env)
     suffix_start = start.strftime("%Y%m%d")
     suffix_end = end.strftime("%Y%m%d")
     table = _events_table(target)
@@ -802,7 +802,7 @@ def fetch_landing_page_rows(
         suffix_end=suffix_end,
         row_limit=row_limit,
     )
-    return run_query(sql, max_rows=row_limit, project_id=target.bq_project_id)
+    return run_query(sql, max_rows=row_limit, project_id=target.bq_project_id, credentials_env=target.credentials_env)
 
 
 LANDING_PAGE_ATTRIBUTION_LABELS: dict[str, str] = {

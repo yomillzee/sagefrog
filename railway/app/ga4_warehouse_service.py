@@ -26,7 +26,7 @@ def fetch_daily_metrics(
     - spend = 0 (not applicable to GA4)
     """
     target = target or resolve_target()
-    summ = env_summary()
+    summ = env_summary(credentials_env=target.credentials_env)
     if not summ.get("gcp_service_account_json_parse_ok"):
         raise RuntimeError(
             summ.get("gcp_service_account_json_parse_error")
@@ -47,7 +47,7 @@ def fetch_daily_metrics(
         GROUP BY metric_date
         ORDER BY metric_date
     """
-    rows = run_query(sql, max_rows=2000, project_id=target.bq_project_id)
+    rows = run_query(sql, max_rows=2000, project_id=target.bq_project_id, credentials_env=target.credentials_env)
     by_day: dict[str, dict[str, Any]] = {}
     for row in rows:
         raw_date = row.get("metric_date") or row.get("event_date")
@@ -98,7 +98,7 @@ def fetch_organic_daily_metrics(
     Warehouse-style mapping: clicks=sessions, impressions=page_views, spend=0.
     """
     target = target or resolve_target(client_key=client_key)
-    summ = env_summary()
+    summ = env_summary(credentials_env=target.credentials_env)
     if not summ.get("gcp_service_account_json_parse_ok"):
         raise RuntimeError(
             summ.get("gcp_service_account_json_parse_error")
@@ -128,7 +128,7 @@ def fetch_organic_daily_metrics(
         GROUP BY metric_date
         ORDER BY metric_date
     """
-    rows = run_query(sql, max_rows=2000, project_id=target.bq_project_id)
+    rows = run_query(sql, max_rows=2000, project_id=target.bq_project_id, credentials_env=target.credentials_env)
     by_day: dict[str, dict[str, Any]] = {}
     for row in rows:
         raw_date = row.get("metric_date") or row.get("event_date")
