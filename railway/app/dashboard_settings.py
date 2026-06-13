@@ -16,6 +16,7 @@ import dashboard_service
 import dashboard_snapshots
 import dashboard_theme
 import ga4_clients
+from ga4_credentials import GLOBAL_GCP_CREDENTIALS_ENV
 import harvest_auth
 import linkedin_auth
 import meta_auth
@@ -154,14 +155,17 @@ def list_harvest_projects_for_settings() -> list[dict[str, Any]]:
 
 
 def list_ga4_clients_for_settings() -> list[dict[str, Any]]:
-    """GA4 registry entries for the settings dropdown (empty if BigQuery not configured)."""
+    """GA4 registry entries for the settings dropdown (empty if BigQuery is not configured)."""
     try:
-        ga4 = bigquery_service.env_summary()
         registry = ga4_clients.load_client_registry()
+        if registry:
+            return ga4_clients.list_clients_public()
+
+        ga4 = bigquery_service.env_summary()
         if not (
             ga4.get("has_gcp_service_account_json")
             and ga4.get("gcp_service_account_json_parse_ok")
-            and (ga4.get("has_bq_project_id") or registry)
+            and ga4.get("has_bq_project_id")
         ):
             return []
         return ga4_clients.list_clients_public()
@@ -185,6 +189,68 @@ def _ga4_client_label_for_key(
                 return f"{label} · {project}/{dataset} (key {key})"
             return key
     return key
+
+
+
+def _ga4_safe_credential_detail(
+    *,
+    client_key: str | None,
+    credentials_env: str | None,
+    client_email: str | None,
+) -> str:
+    selected_key = str(client_key or "").strip() or "—"
+    env_name = str(credentials_env or "").strip() or GLOBAL_GCP_CREDENTIALS_ENV
+    email = str(client_email or "").strip() or "unavailable"
+    return f"client_key {selected_key} · credentials_env {env_name} · service account {email}"
+
+
+def _ga4_safe_credential_summary(cfg: PennDashboardConfig) -> dict[str, Any]:
+    key = str(cfg.ga4_client_key or "").strip()
+    if not key:
+        return {
+            "ok": False,
+            "client_key": None,
+            "credentials_env": None,
+            "client_email": None,
+            "detail": "No GA4 client key mapped for this client.",
+        }
+    try:
+        resolved = ga4_clients.resolve_client_config(client_key=key)
+        env_name = resolved.credentials_env or GLOBAL_GCP_CREDENTIALS_ENV
+        client_email = str(resolved.credentials.get("client_email") or "").strip() or None
+        detail = _ga4_safe_credential_detail(
+            client_key=resolved.client_key or key,
+            credentials_env=env_name,
+            client_email=client_email,
+        )
+        return {
+            "ok": True,
+            "client_key": resolved.client_key or key,
+            "credentials_env": env_name,
+            "client_email": client_email,
+            "detail": detail,
+        }
+    except Exception as exc:
+        try:
+            target = ga4_clients.resolve_target(client_key=key)
+            env_name = target.credentials_env or GLOBAL_GCP_CREDENTIALS_ENV
+            selected_key = target.client_key or key
+        except Exception:
+            env_name = None
+            selected_key = key
+        detail = _ga4_safe_credential_detail(
+            client_key=selected_key,
+            credentials_env=env_name,
+            client_email=None,
+        )
+        return {
+            "ok": False,
+            "client_key": selected_key,
+            "credentials_env": env_name,
+            "client_email": None,
+            "detail": f"{detail} · credential error: {str(exc)[:300]}",
+            "error": str(exc)[:300],
+        }
 
 
 def _oauth_platform_card_html(
@@ -503,6 +569,7 @@ def _agency_oauth_status_html(
     *,
     api: dict[str, Any],
     oauth_status: dict[str, oauth_store.OAuthCredentialPublic] | None = None,
+    ga4_credential_summary: dict[str, Any] | None = None,
 ) -> str:
     oauth_status = oauth_status or oauth_store.all_public_status()
     rows = []
@@ -525,6 +592,14 @@ def _agency_oauth_status_html(
     if not ga4_ok:
         ga4_detail = "Set GCP_SERVICE_ACCOUNT_JSON + GA4_CLIENTS in Railway"
     rows.append(_connection_row("GA4 / BigQuery", ga4_ok, ga4_detail))
+    if ga4_credential_summary is not None:
+        rows.append(
+            _connection_row(
+                "Selected GA4 credential",
+                bool(ga4_credential_summary.get("ok")),
+                str(ga4_credential_summary.get("detail") or "—"),
+            )
+        )
 
     return f"""
     <section class="panel">
@@ -743,8 +818,17 @@ def probe_client_connections(cfg: PennDashboardConfig) -> dict[str, Any]:
     if cfg.ga4_client_key:
         configured.append("ga4")
         try:
+            resolved = ga4_clients.resolve_client_config(client_key=cfg.ga4_client_key)
             target = ga4_clients.resolve_target(client_key=cfg.ga4_client_key)
-            client = bigquery_service.build_client(project_id=target.bq_project_id, credentials_env=target.credentials_env)
+            credential_detail = _ga4_safe_credential_detail(
+                client_key=resolved.client_key or cfg.ga4_client_key,
+                credentials_env=resolved.credentials_env or GLOBAL_GCP_CREDENTIALS_ENV,
+                client_email=str(resolved.credentials.get("client_email") or "").strip() or None,
+            )
+            client = bigquery_service.build_client(
+                project_id=target.bq_project_id,
+                credentials_info=resolved.credentials,
+            )
             client.query(
                 f"SELECT 1 FROM `{target.bq_project_id}.{target.bq_dataset_id}.events_*` LIMIT 1"
             ).result(timeout=30)
@@ -752,11 +836,21 @@ def probe_client_connections(cfg: PennDashboardConfig) -> dict[str, Any]:
                 "ok": True,
                 "message": (
                     f"{target.label or cfg.ga4_client_key} · {target.bq_project_id}/"
-                    f"{target.bq_dataset_id} · property {target.account_id}"
+                    f"{target.bq_dataset_id} · property {target.account_id} · {credential_detail}"
                 ),
+                "client_key": resolved.client_key or cfg.ga4_client_key,
+                "credentials_env": resolved.credentials_env or GLOBAL_GCP_CREDENTIALS_ENV,
+                "client_email": str(resolved.credentials.get("client_email") or "").strip() or None,
             }
         except Exception as exc:
-            results["ga4"] = {"ok": False, "message": str(exc)[:300]}
+            credential_summary = _ga4_safe_credential_summary(cfg)
+            results["ga4"] = {
+                "ok": False,
+                "message": f"{credential_summary.get('detail') or 'GA4 credentials unavailable'} · {str(exc)[:300]}",
+                "client_key": credential_summary.get("client_key"),
+                "credentials_env": credential_summary.get("credentials_env"),
+                "client_email": credential_summary.get("client_email"),
+            }
     else:
         _skip("ga4", "No GA4 client key mapped for this client.")
 
@@ -975,6 +1069,7 @@ def render_settings_html(
         api = _unavailable_api_status()
         status_warnings.append("Platform connection status is temporarily unavailable.")
     ga4_target = _ga4_target_summary(cfg)
+    ga4_credential_summary = _ga4_safe_credential_summary(cfg)
     can_edit = session_is_admin if use_session else bool(access_key)
     db_editable = web_users.enabled() and session_is_admin
 
@@ -1039,6 +1134,11 @@ def render_settings_html(
             api["ga4"]["ok"],
             f"GCP service account + {api['ga4']['registry_count']} GA4_CLIENTS entries",
         ),
+        _connection_row(
+            "Selected GA4 credential",
+            bool(ga4_credential_summary.get("ok")),
+            str(ga4_credential_summary.get("detail") or "—"),
+        ),
     ]
 
     ga4_detail = "—"
@@ -1088,6 +1188,9 @@ def render_settings_html(
     <tr><td>LinkedIn account ID</td><td class="mono">{_esc(cfg.linkedin_account_id or "—")}</td></tr>
     <tr><td>Meta ad account ID</td><td class="mono">{_esc(cfg.meta_account_id or "—")}</td></tr>
     <tr><td>GA4 client key</td><td class="mono">{_esc(ga4_client_label)}</td></tr>
+    <tr><td>GA4 selected client key</td><td class="mono">{_esc(ga4_credential_summary.get("client_key") or "—")}</td></tr>
+    <tr><td>GA4 credentials env</td><td class="mono">{_esc(ga4_credential_summary.get("credentials_env") or "—")}</td></tr>
+    <tr><td>GA4 service account email</td><td class="mono">{_esc(ga4_credential_summary.get("client_email") or "unavailable")}</td></tr>
     <tr><td>Harvest project</td><td class="mono">{_esc(harvest_project_label)}</td></tr>
     {budget_row}
     <tr><td>GA4 BigQuery target</td><td class="mono">{_esc(ga4_detail)}</td></tr>
@@ -1261,10 +1364,17 @@ def render_settings_html(
         flash_message=None,
     )
 
-    agency_status = _agency_oauth_status_html(api=api, oauth_status=oauth_status)
+    agency_status = _agency_oauth_status_html(
+        api=api,
+        oauth_status=oauth_status,
+        ga4_credential_summary=ga4_credential_summary,
+    )
 
     checklist = _setup_checklist_html(
-        api=api, cfg=cfg, ga4_ok=api["ga4"]["ok"], oauth_status=oauth_status
+        api=api,
+        cfg=cfg,
+        ga4_ok=api["ga4"]["ok"] or bool(ga4_credential_summary.get("ok")),
+        oauth_status=oauth_status,
     )
 
     bl_rules_section = ""
