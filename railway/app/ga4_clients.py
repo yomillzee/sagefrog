@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+from ga4_credentials import GLOBAL_GCP_CREDENTIALS_ENV, load_service_account_info_from_env
 
 
 @dataclass(frozen=True)
@@ -17,6 +19,20 @@ class Ga4ClientTarget:
     bq_dataset_id: str
     client_key: str | None = None
     label: str | None = None
+    credentials_env: str | None = None
+
+
+@dataclass(frozen=True)
+class ResolvedGa4Client:
+    """Selected GA4 target plus decoded server-side credentials."""
+
+    label: str | None
+    bq_project_id: str
+    bq_dataset_id: str
+    credentials: dict[str, Any] = field(repr=False)
+    client_key: str | None = None
+    account_id: str | None = None
+    credentials_env: str | None = field(default=None, repr=False)
 
 
 def _strip_env(val: str | None) -> str:
@@ -72,8 +88,10 @@ def load_client_registry() -> dict[str, Ga4ClientTarget]:
         slug = str(key).strip().lower()
         project = _strip_env(str(entry.get("bq_project_id") or entry.get("project") or ""))
         dataset = _strip_env(str(entry.get("bq_dataset_id") or entry.get("dataset") or ""))
-        if not project or not dataset:
-            continue
+        if not project:
+            raise RuntimeError(f"GA4_CLIENTS.{slug}.bq_project_id is required.")
+        if not dataset:
+            raise RuntimeError(f"GA4_CLIENTS.{slug}.bq_dataset_id is required.")
         account_id = _strip_env(str(entry.get("account_id") or "")) or _account_id_from_dataset(dataset)
         out[slug] = Ga4ClientTarget(
             client_key=slug,
@@ -81,6 +99,7 @@ def load_client_registry() -> dict[str, Ga4ClientTarget]:
             bq_project_id=project,
             bq_dataset_id=dataset,
             account_id=account_id,
+            credentials_env=_strip_env(str(entry.get("credentials_env") or "")) or None,
         )
     return out
 
@@ -121,7 +140,11 @@ def resolve_target(
 
     project = _strip_env(bq_project_id)
     dataset = _strip_env(bq_dataset_id)
-    if project and dataset:
+    if project or dataset:
+        if not project:
+            raise RuntimeError("Missing bq_project_id for GA4 BigQuery target.")
+        if not dataset:
+            raise RuntimeError("Missing bq_dataset_id for GA4 BigQuery target.")
         acct = _strip_env(account_id) or _account_id_from_dataset(dataset)
         return Ga4ClientTarget(
             client_key=None,
@@ -161,3 +184,33 @@ def list_clients_public() -> list[dict[str, Any]]:
         ]
     except RuntimeError:
         return []
+
+
+def resolve_client_config(
+    *,
+    client_key: str | None = None,
+    bq_project_id: str | None = None,
+    bq_dataset_id: str | None = None,
+    account_id: str | None = None,
+) -> ResolvedGa4Client:
+    """Resolve the selected GA4 client and decode its server-side BigQuery credentials."""
+    target = resolve_target(
+        client_key=client_key,
+        bq_project_id=bq_project_id,
+        bq_dataset_id=bq_dataset_id,
+        account_id=account_id,
+    )
+    env_var = (target.credentials_env or "").strip()
+    credentials = load_service_account_info_from_env(
+        env_var or GLOBAL_GCP_CREDENTIALS_ENV,
+        require_base64=bool(env_var),
+    )
+    return ResolvedGa4Client(
+        label=target.label,
+        bq_project_id=target.bq_project_id,
+        bq_dataset_id=target.bq_dataset_id,
+        credentials=credentials,
+        client_key=target.client_key,
+        account_id=target.account_id,
+        credentials_env=env_var or None,
+    )

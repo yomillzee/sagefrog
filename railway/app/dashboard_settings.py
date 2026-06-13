@@ -744,7 +744,7 @@ def probe_client_connections(cfg: PennDashboardConfig) -> dict[str, Any]:
         configured.append("ga4")
         try:
             target = ga4_clients.resolve_target(client_key=cfg.ga4_client_key)
-            client = bigquery_service.build_client(project_id=target.bq_project_id)
+            client = bigquery_service.build_client(project_id=target.bq_project_id, credentials_env=target.credentials_env)
             client.query(
                 f"SELECT 1 FROM `{target.bq_project_id}.{target.bq_dataset_id}.events_*` LIMIT 1"
             ).result(timeout=30)

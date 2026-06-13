@@ -165,8 +165,8 @@ def _key_events_sql_list() -> str:
     return ", ".join(f"'{name}'" for name in KEY_EVENT_NAMES)
 
 
-def _ensure_bq_ready() -> None:
-    summ = env_summary()
+def _ensure_bq_ready(credentials_env: str | None = None) -> None:
+    summ = env_summary(credentials_env=credentials_env)
     if not summ.get("gcp_service_account_json_parse_ok"):
         raise RuntimeError(
             summ.get("gcp_service_account_json_parse_error")
@@ -183,7 +183,7 @@ def fetch_page_metrics(
 ) -> list[dict[str, Any]]:
     """Aggregate page path/title metrics for the date range (site-wide traffic)."""
     target = target or resolve_target()
-    _ensure_bq_ready()
+    _ensure_bq_ready(credentials_env=target.credentials_env)
 
     suffix_start = start.strftime("%Y%m%d")
     suffix_end = end.strftime("%Y%m%d")
@@ -245,7 +245,7 @@ def fetch_page_metrics(
     ORDER BY page_views DESC
     LIMIT {row_limit}
     """
-    rows = run_query(sql, max_rows=row_limit, project_id=target.bq_project_id)
+    rows = run_query(sql, max_rows=row_limit, project_id=target.bq_project_id, credentials_env=target.credentials_env)
     out: list[dict[str, Any]] = []
     for row in rows:
         path = str(row.get("page_path") or "").strip()
@@ -276,7 +276,7 @@ def fetch_site_metrics_summary(
 ) -> dict[str, Any]:
     """Site-wide GA4 session metrics for the dashboard summary bar."""
     target = target or resolve_target()
-    _ensure_bq_ready()
+    _ensure_bq_ready(credentials_env=target.credentials_env)
 
     suffix_start = start.strftime("%Y%m%d")
     suffix_end = end.strftime("%Y%m%d")
@@ -332,7 +332,7 @@ def fetch_site_metrics_summary(
       SAFE_DIVIDE(SUM(page_views), COUNT(*)) AS views_per_session
     FROM session_metrics
     """
-    rows = run_query(sql, max_rows=1, project_id=target.bq_project_id)
+    rows = run_query(sql, max_rows=1, project_id=target.bq_project_id, credentials_env=target.credentials_env)
     row = rows[0] if rows else {}
     sessions = int(row.get("sessions") or 0)
     return {
