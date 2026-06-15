@@ -1,0 +1,449 @@
+--- a/railway/app/google_ads_service.py
++++ b/railway/app/google_ads_service.py
+@@ -457,6 +457,7 @@
+     customer_id: str,
+     *,
+     date_range: str = "LAST_30_DAYS",
++    include_reach: bool = False,
+     client: GoogleAdsClient | None = None,
+ ) -> dict[str, Any]:
+@@ -464,11 +465,13 @@
+     customer_id_clean = str(customer_id).replace("-", "").strip()
+     start_key = start.isoformat()
+     end_key = end.isoformat()
++    reach_select = "metrics.unique_users," if include_reach else ""
+     query = f"""
+         SELECT
+           campaign.id,
+           campaign.name,
+           campaign.status,
++          {reach_select}
+           metrics.impressions,
+@@ -477,7 +480,15 @@
+         WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
+     """
+-    rows = search(customer_id_clean, query, client=client)
++    reach_supported = include_reach
++    try:
++        rows = search(customer_id_clean, query, client=client)
++    except Exception:
++        if not include_reach:
++            raise
++        reach_supported = False
++        query = query.replace("          metrics.unique_users,\n", "")
++        rows = search(customer_id_clean, query, client=client)
+@@ -495,12 +506,34 @@
+                 "conversion_value": 0.0,
+             }
++            if include_reach:
++                by_campaign[cid].update(
++                    {
++                        "reach": None,
++                        "reach_source_metric": "metrics.unique_users",
++                        "reach_is_estimated": False,
++                        "reach_unavailable_reason": (
++                            None
++                            if reach_supported
++                            else "Google Unique Users is unavailable for this campaign type or date range."
++                        ),
++                    }
++                )
+         rec = by_campaign[cid]
+@@ -508,6 +541,16 @@
+         rec["conversions"] += float(_dig(row, "metrics", "conversions") or 0)
+         rec["conversion_value"] += float(_dig(row, "metrics", "conversions_value") or 0)
++        if include_reach and reach_supported:
++            raw_reach = _dig(row, "metrics", "unique_users")
++            if raw_reach is not None:
++                rec["reach"] = max(int(rec["reach"] or 0), int(raw_reach))
++                rec["reach_unavailable_reason"] = None
++            elif rec["reach"] is None:
++                rec["reach_unavailable_reason"] = (
++                    "Google Unique Users is unavailable for this campaign type or date range."
++                )
+@@ -877,6 +920,7 @@
+     date_range: str = "LAST_30_DAYS",
+     campaign_id: str | None = None,
++    include_reach: bool = False,
+     client: GoogleAdsClient | None = None,
+@@ -925,6 +969,17 @@
+                 "conversion_value": 0.0,
+             }
++            if include_reach:
++                by_adgroup[agid].update(
++                    {
++                        "reach": None,
++                        "reach_source_metric": "metrics.unique_users",
++                        "reach_is_estimated": False,
++                        "reach_unavailable_reason": "Google Unique Users is not reported at ad group level.",
++                    }
++                )
+@@ -951,6 +1006,7 @@
+     ad_group_id: str | None = None,
+     include_creative: bool = True,
++    include_reach: bool = False,
+     client: GoogleAdsClient | None = None,
+@@ -1014,6 +1070,15 @@
+                 "conversion_value": 0.0,
+             }
++            if include_reach:
++                item.update({
++                    "reach": None,
++                    "reach_source_metric": "metrics.unique_users",
++                    "reach_is_estimated": False,
++                    "reach_unavailable_reason": "Google Unique Users is not reported at ad level.",
++                })
+--- a/railway/app/linkedin_service.py
++++ b/railway/app/linkedin_service.py
+@@ -755,6 +755,7 @@
+     account_id: str,
+     *,
+     date_range: str = "LAST_30_DAYS",
++    include_reach: bool = False,
+@@ -774,6 +775,7 @@
+         access_token=access_token,
+         env=env,
++        include_reach=include_reach,
+@@ -782,6 +784,7 @@
+         access_token=access_token,
+         env=env,
++        include_reach=include_reach,
+@@ -806,7 +809,9 @@
+-    if not by_group:
++    rolled_up_from_campaigns = False
++    if not by_group:
++        rolled_up_from_campaigns = True
+@@ -814,6 +819,7 @@
+             access_token=access_token,
+             env=env,
++            include_reach=include_reach,
+@@ -850,6 +856,22 @@
+                 "conversions": conversions,
++                **(
++                    _linkedin_reach_fields(matched)
++                    if include_reach and not rolled_up_from_campaigns
++                    else ({
++                        "reach": None,
++                        "reach_source_metric": "approximateMemberReach",
++                        "reach_is_estimated": True,
++                        "reach_unavailable_reason": "LinkedIn reach is not rolled up from campaigns to campaign groups.",
++                    } if include_reach else {})
++                ),
+@@ -905,21 +927,23 @@
+     access_token: str,
+     env: LinkedInEnv,
++    include_reach: bool = False,
+ ) -> tuple[list[dict[str, Any]], bool]:
++    reach_field = ",approximateMemberReach" if include_reach else ""
+@@ -911,14 +935,14 @@
+-        fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,pivotValues",
++        fields=f"impressions,clicks,costInUsd,conversions,conversionValueInUsd,pivotValues{reach_field}",
+@@ -918,7 +942,7 @@
+-        fields="impressions,clicks,costInUsd,pivotValues",
++        fields=f"impressions,clicks,costInUsd,pivotValues{reach_field}",
+@@ -928,14 +952,14 @@
+-            fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd",
++            fields=f"impressions,clicks,costInUsd,conversions,conversionValueInUsd{reach_field}",
+@@ -936,7 +960,7 @@
+-            fields="impressions,clicks,costInUsd",
++            fields=f"impressions,clicks,costInUsd{reach_field}",
+@@ -944,9 +968,48 @@
+         if 'Projected field "conversions"' not in msg:
++            if include_reach:
++                return _fetch_analytics(account_id, pivot=pivot, start=start, end=end, access_token=access_token, env=env)
+             raise
+-        payload = _linkedin_get(fallback, access_token=access_token, env=env)
+-        return payload.get("elements") or [], False
++        try:
++            payload = _linkedin_get(fallback, access_token=access_token, env=env)
++            return payload.get("elements") or [], False
++        except Exception:
++            if include_reach:
++                return _fetch_analytics(account_id, pivot=pivot, start=start, end=end, access_token=access_token, env=env)
++            raise
++
++
++def _linkedin_reach_fields(rows: list[dict[str, Any]], *, unavailable_reason: str = "LinkedIn Approximate Member Reach is unavailable.") -> dict[str, Any]:
++    values = [int(row["approximateMemberReach"]) for row in rows if row.get("approximateMemberReach") is not None]
++    return {
++        "reach": max(values) if values else None,
++        "reach_source_metric": "approximateMemberReach",
++        "reach_is_estimated": True,
++        "reach_unavailable_reason": None if values else unavailable_reason,
++    }
+@@ -1107,6 +1170,7 @@
+     date_range: str = "LAST_30_DAYS",
+     campaign_id: str | None = None,
++    include_reach: bool = False,
+@@ -1128,6 +1192,7 @@
+         env=env,
++        include_reach=include_reach,
+@@ -1199,6 +1264,8 @@
+         }
++        if include_reach:
++            item.update(_linkedin_reach_fields(matched))
+@@ -1241,6 +1308,7 @@
+     date_range: str = "LAST_30_DAYS",
++    include_reach: bool = False,
+@@ -1261,6 +1329,7 @@
+         env=env,
++        include_reach=include_reach,
+@@ -1269,6 +1338,7 @@
+         env=env,
++        include_reach=include_reach,
+@@ -1328,6 +1398,7 @@
+                 "conversions": conversions,
++                **(_linkedin_reach_fields(matched) if include_reach else {}),
+--- a/railway/app/meta_service.py
++++ b/railway/app/meta_service.py
+@@ -137,6 +137,42 @@
+     return rows
++
++def _graph_get_all_with_optional_reach(path: str, *, access_token: str, params: dict[str, Any], base_fields: str, include_reach: bool, env: MetaEnv) -> tuple[list[dict[str, Any]], bool]:
++    request_params = dict(params)
++    request_params["fields"] = f"{base_fields},reach" if include_reach else base_fields
++    try:
++        return (_graph_get_all(path, access_token=access_token, params=request_params, env=env), include_reach)
++    except Exception:
++        if not include_reach:
++            raise
++        request_params["fields"] = base_fields
++        return (_graph_get_all(path, access_token=access_token, params=request_params, env=env), False)
+@@ -397,6 +433,7 @@
+     date_range: str = "LAST_30_DAYS",
++    include_reach: bool = False,
+@@ -408,26 +445,28 @@
+-    account_rows = _graph_get_all(
++    account_rows, _ = _graph_get_all_with_optional_reach(
+@@ -412,7 +449,8 @@
+-            "fields": _INSIGHT_FIELDS,
+@@ -416,6 +454,8 @@
+         },
++        base_fields=_INSIGHT_FIELDS,
++        include_reach=include_reach,
+@@ -419,7 +459,7 @@
+-    campaign_rows = _graph_get_all(
++    campaign_rows, campaign_reach_supported = _graph_get_all_with_optional_reach(
+@@ -423,7 +463,8 @@
+-            "fields": _INSIGHT_FIELDS,
+@@ -427,6 +468,8 @@
+         },
++        base_fields=_INSIGHT_FIELDS,
++        include_reach=include_reach,
+@@ -453,6 +496,18 @@
+                 **parsed,
++                **({
++                    "reach": int(row["reach"]) if row.get("reach") is not None else None,
++                    "reach_source_metric": "reach",
++                    "reach_is_estimated": False,
++                    "reach_unavailable_reason": None if row.get("reach") is not None else ("Meta Reach is unavailable." if campaign_reach_supported else "Meta Reach is unsupported at this reporting level."),
++                } if include_reach else {}),
+@@ -496,6 +551,7 @@
+     campaign_id: str | None = None,
++    include_reach: bool = False,
+@@ -513,7 +569,6 @@
+-        "fields": _ADSET_INSIGHT_FIELDS,
+@@ -523,10 +578,12 @@
+-    adset_rows = _graph_get_all(
++    adset_rows, adset_reach_supported = _graph_get_all_with_optional_reach(
+@@ -526,6 +583,8 @@
+         params=params,
++        base_fields=_ADSET_INSIGHT_FIELDS,
++        include_reach=include_reach,
+@@ -545,6 +604,12 @@
+                 **parsed,
++                **({
++                    "reach": int(row["reach"]) if row.get("reach") is not None else None,
++                    "reach_source_metric": "reach",
++                    "reach_is_estimated": False,
++                    "reach_unavailable_reason": None if row.get("reach") is not None else ("Meta Reach is unavailable." if adset_reach_supported else "Meta Reach is unsupported at this reporting level."),
++                } if include_reach else {}),
+@@ -639,6 +704,7 @@
+     include_creative: bool = True,
++    include_reach: bool = False,
+@@ -656,7 +722,6 @@
+-        "fields": _AD_INSIGHT_FIELDS,
+@@ -670,10 +735,12 @@
+-    ad_rows = _graph_get_all(
++    ad_rows, ad_reach_supported = _graph_get_all_with_optional_reach(
+@@ -673,6 +740,8 @@
+         params=params,
++        base_fields=_AD_INSIGHT_FIELDS,
++        include_reach=include_reach,
+@@ -707,6 +776,14 @@
+         }
++        if include_reach:
++            item.update({
++                "reach": int(row["reach"]) if row.get("reach") is not None else None,
++                "reach_source_metric": "reach",
++                "reach_is_estimated": False,
++                "reach_unavailable_reason": None if row.get("reach") is not None else ("Meta Reach is unavailable." if ad_reach_supported else "Meta Reach is unsupported at this reporting level."),
++            })
+--- a/railway/app/dashboard/services/refresh_service.py
++++ b/railway/app/dashboard/services/refresh_service.py
+@@ -59,12 +59,15 @@
+     breakdowns: dict[str, dict[str, list[dict[str, Any]]]] = {}
++    include_reach = cfg.client_key == "penn"
+@@ -65,7 +68,9 @@
+-            perf = google_ads_service.campaign_performance(cfg.google_customer_id, date_range=preset)
++            perf = google_ads_service.campaign_performance(cfg.google_customer_id, date_range=preset, include_reach=include_reach)
+@@ -76,7 +81,7 @@
+-                cfg.google_customer_id, date_range=preset
++                cfg.google_customer_id, date_range=preset, include_reach=include_reach
+@@ -85,7 +90,7 @@
+-                cfg.google_customer_id, date_range=preset, include_creative=True
++                cfg.google_customer_id, date_range=preset, include_creative=True, include_reach=include_reach
+@@ -104,7 +109,7 @@
+-                cfg.linkedin_account_id, date_range=preset
++                cfg.linkedin_account_id, date_range=preset, include_reach=include_reach
+@@ -112,7 +117,7 @@
+-            perf = linkedin_service.account_performance(cfg.linkedin_account_id, date_range=preset)
++            perf = linkedin_service.account_performance(cfg.linkedin_account_id, date_range=preset, include_reach=include_reach)
+@@ -118,7 +123,7 @@
+-                cfg.linkedin_account_id, date_range=preset
++                cfg.linkedin_account_id, date_range=preset, include_reach=include_reach
+@@ -143,7 +148,7 @@
+-            perf = meta_service.account_performance(cfg.meta_account_id, date_range=preset)
++            perf = meta_service.account_performance(cfg.meta_account_id, date_range=preset, include_reach=include_reach)
+@@ -151,7 +156,7 @@
+-            adsets_perf = meta_service.adsets_performance(cfg.meta_account_id, date_range=preset)
++            adsets_perf = meta_service.adsets_performance(cfg.meta_account_id, date_range=preset, include_reach=include_reach)
+@@ -157,7 +162,7 @@
+-            ads_perf = meta_service.ads_performance(cfg.meta_account_id, date_range=preset)
++            ads_perf = meta_service.ads_performance(cfg.meta_account_id, date_range=preset, include_reach=include_reach)
+--- a/railway/app/dashboard/services/snapshot_metrics_service.py
++++ b/railway/app/dashboard/services/snapshot_metrics_service.py
+@@ -64,6 +64,14 @@
+     }
+     for key in (
++        "reach",
++        "reach_source_metric",
++        "reach_is_estimated",
++        "reach_unavailable_reason",
++    ):
++        if key in row:
++            out[key] = row.get(key)
++    for key in (
+--- a/railway/app/penn_business_lines.py
++++ b/railway/app/penn_business_lines.py
+@@ -407,20 +407,27 @@
+-        out.append(
+-            {
++        item = {
+@@ -424,5 +424,12 @@
+-            }
+-        )
++        }
++        for key in ("reach", "reach_source_metric", "reach_is_estimated", "reach_unavailable_reason"):
++            if key in row:
++                item[key] = row.get(key)
++        out.append(item)
+--- a/railway/app/dashboard/renderers/dashboard_renderer.py
++++ b/railway/app/dashboard/renderers/dashboard_renderer.py
+@@ -232,6 +232,7 @@
+     show_product_line_column: bool = False,
++    show_reach: bool = False,
+@@ -257,7 +258,15 @@
+-    empty_colspan = 9 + int(show_segment_filters) + int(show_product_line_column)
++    reach_header = (
++        """<th class="sortable" data-sort="reach" scope="col" aria-sort="none" title="Reach is normalized across platforms. Meta uses Reach, LinkedIn uses Approximate Member Reach, and Google uses Unique Users. Availability varies by platform, campaign type, date range, and reporting level.">Reach<span class="sort-icon" aria-hidden="true"></span></th>"""
++        if show_reach else ""
++    )
++    empty_colspan = 9 + int(show_segment_filters) + int(show_product_line_column) + int(show_reach)
+@@ -276,7 +285,7 @@
+-                        <th class="sortable" data-sort="impressions" scope="col" aria-sort="none">Impressions<span class="sort-icon" aria-hidden="true"></span></th>
++                        <th class="sortable" data-sort="impressions" scope="col" aria-sort="none">Impressions<span class="sort-icon" aria-hidden="true"></span></th>{reach_header}
+@@ -531,6 +540,7 @@
+         show_product_line_column=show_product_line_filters,
++        show_reach=slug == "penn",
+@@ -2365,6 +2375,7 @@
+     const SHOW_CAMPAIGN_EXPLORER = {'true' if features.campaign_explorer else 'false'};
++    const SHOW_NORMALIZED_REACH = {'true' if slug == 'penn' else 'false'};
+@@ -3978,6 +3989,9 @@
+       const impressions = r.impressions || 0;
++      const reachCell = SHOW_NORMALIZED_REACH
++        ? `<td class="num" title="${{escHtml(r.reach_unavailable_reason || '')}}">${{r.reach == null ? '&mdash;' : fmtInt(r.reach)}}</td>`
++        : '';
+@@ -4003,6 +4017,7 @@
+         <td class="num">${{fmtInt(impressions)}}</td>
++        ${{reachCell}}
+--- a/railway/app/models.py
++++ b/railway/app/models.py
+@@ -294,6 +294,10 @@
+     conversions: float = 0.0
++    reach: int | None = None
++    reach_source_metric: str | None = None
++    reach_is_estimated: bool | None = None
++    reach_unavailable_reason: str | None = None
+@@ -319,6 +323,10 @@
+     conversions: float = 0.0
++    reach: int | None = None
++    reach_source_metric: str | None = None
++    reach_is_estimated: bool | None = None
++    reach_unavailable_reason: str | None = None
+@@ -334,6 +342,10 @@
+     conversions: float = 0.0
++    reach: int | None = None
++    reach_source_metric: str | None = None
++    reach_is_estimated: bool | None = None
++    reach_unavailable_reason: str | None = None
+@@ -452,6 +464,10 @@
+     conversions: float = 0.0
++    reach: int | None = None
++    reach_source_metric: str | None = None
++    reach_is_estimated: bool | None = None
++    reach_unavailable_reason: str | None = None
+@@ -475,6 +491,10 @@
+     conversion_value: float = 0.0
++    reach: int | None = None
++    reach_source_metric: str | None = None
++    reach_is_estimated: bool | None = None
++    reach_unavailable_reason: str | None = None
+--- /dev/null
++++ b/railway/app/tests/test_penn_reach.py
+@@ -0,0 +1,67 @@
++import ast, html, sys, types, unittest
++from pathlib import Path
++from typing import Any
++from unittest.mock import patch
++try:
++    from google.ads.googleads.client import GoogleAdsClient
++except ModuleNotFoundError:
++    for name in ("google","google.ads","google.ads.googleads","google.ads.googleads.client","google.auth","google.auth.transport","google.auth.transport.requests","google.oauth2","google.oauth2.credentials","google.protobuf","google.protobuf.json_format"):
++        sys.modules.setdefault(name, types.ModuleType(name))
++    sys.modules["google.ads.googleads.client"].GoogleAdsClient = object
++    sys.modules["google.auth.transport.requests"].Request = object
++    sys.modules["google.oauth2.credentials"].Credentials = object
++    sys.modules["google.protobuf.json_format"].MessageToDict = lambda *args, **kwargs: {}
++try:
++    import httpx
++except ModuleNotFoundError:
++    httpx_stub = types.ModuleType("httpx"); httpx_stub.Client = object; httpx_stub.HTTPStatusError = RuntimeError; sys.modules["httpx"] = httpx_stub
++import google_ads_service, linkedin_service, meta_service
++def _load_pure_function(relative_path, function_name):
++    source = (Path(__file__).resolve().parents[1] / relative_path).read_text(encoding="utf-8")
++    node = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == function_name)
++    ns = {"Any": Any, "_esc": lambda value: html.escape(str(value), quote=True)}
++    exec(compile(ast.Module(body=[node], type_ignores=[]), relative_path, "exec"), ns)
++    return ns[function_name]
++campaign_explorer_content_html = _load_pure_function("dashboard/renderers/dashboard_renderer.py", "campaign_explorer_content_html")
++normalize_entity_row = _load_pure_function("dashboard/services/snapshot_metrics_service.py", "normalize_entity_row")
++class PennReachTests(unittest.TestCase):
++    def test_meta_reach_maps_to_normalized_reach(self):
++        with patch.object(meta_service, "_graph_get_all", side_effect=[[{}], [{"campaign_id":"1","campaign_name":"Penn","reach":"123"}]]):
++            payload = meta_service.account_performance("1", include_reach=True, access_token="token", env=object())
++        self.assertEqual(payload["campaigns"][0]["reach"], 123)
++    def test_linkedin_approximate_reach_maps_to_normalized_reach(self):
++        fields = linkedin_service._linkedin_reach_fields([{"approximateMemberReach":456}]); self.assertEqual(fields["reach"],456)
++    def test_google_unique_users_maps_to_normalized_reach(self):
++        row={"campaign":{"id":"1","name":"Penn","status":"ENABLED"},"metrics":{"unique_users":"789"}}
++        with patch.object(google_ads_service,"search",return_value=[row]) as search:
++            payload=google_ads_service.campaign_performance("1",include_reach=True)
++        self.assertIn("metrics.unique_users",search.call_args.args[1]); self.assertEqual(payload["campaigns"][0]["reach"],789)
++    def test_google_lower_levels_do_not_invent_reach(self):
++        row={"campaign":{"id":"1","name":"Penn"},"ad_group":{"id":"2","name":"Group","status":"ENABLED"},"metrics":{}}
++        with patch.object(google_ads_service,"search",return_value=[row]): payload=google_ads_service.adgroups_performance("1",include_reach=True)
++        normalized=normalize_entity_row(payload["adgroups"][0]); self.assertIsNone(normalized["reach"])
++    def test_campaign_explorer_has_one_reach_column(self):
++        rendered=campaign_explorer_content_html(show_segment_filters=True,show_reach=True); self.assertEqual(rendered.count(">Reach<span"),1)
++if __name__ == "__main__": unittest.main()
