@@ -1,0 +1,30 @@
+name: Apply Penn normalized Reach
+
+on:
+  push:
+    branches:
+      - codex/penn-normalized-reach
+    paths:
+      - .github/workflows/codex-apply-penn-reach.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/penn-normalized-reach
+      - name: Apply verified patch
+        run: git apply --check .codex/penn-reach.patch && git apply .codex/penn-reach.patch
+      - name: Remove temporary publisher files
+        run: rm .codex/penn-reach.patch .github/workflows/codex-apply-penn-reach.yml
+      - name: Commit implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add railway/app .codex .github/workflows
+          git commit -m "Add Penn normalized Reach"
+          git push origin HEAD:codex/penn-normalized-reach
