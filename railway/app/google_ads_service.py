@@ -581,10 +581,9 @@ def _fetch_campaign_reach_safe(
 
     start_key = start.isoformat()
     end_key = end.isoformat()
-    type_list = ", ".join(f"'{t}'" for t in sorted(_GOOGLE_REACH_ELIGIBLE_TYPES))
 
-    # unique_users cannot be aggregated by the API — query at campaign × date grain
-    # and take the max per campaign across days as the period reach figure.
+    # Query all campaign types — unique_users is available for Search as well.
+    # Campaign type is still selected so diagnostics can log which types returned data.
     query = f"""
         SELECT
           campaign.id,
@@ -592,30 +591,23 @@ def _fetch_campaign_reach_safe(
           metrics.unique_users
         FROM campaign
         WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
-          AND campaign.advertising_channel_type IN ({type_list})
     """
 
     unique_users_rows = 0
-    ineligible_rows = 0
+    zero_rows = 0
 
     try:
         rows = search(customer_id, query, client=client)
-        _log.info(
-            "Google Ads reach: query returned %d rows for eligible campaign types",
-            len(rows),
-        )
+        _log.info("Google Ads reach: query returned %d rows across all campaign types", len(rows))
 
         per_campaign: dict[str, dict[str, Any]] = {}
         for row in rows:
             cid = str(_dig(row, "campaign", "id") or "").strip()
+            if not cid:
+                continue
             channel_type = str(
                 _dig(row, "campaign", "advertising_channel_type") or ""
             ).upper()
-            if not cid:
-                continue
-            if channel_type not in _GOOGLE_REACH_ELIGIBLE_TYPES:
-                ineligible_rows += 1
-                continue
 
             if cid not in per_campaign:
                 per_campaign[cid] = {"channel_type": channel_type, "unique_users": None}
@@ -628,13 +620,21 @@ def _fetch_campaign_reach_safe(
                     if rec["unique_users"] is None or uu_int > rec["unique_users"]:
                         rec["unique_users"] = uu_int
                     unique_users_rows += 1
+                else:
+                    zero_rows += 1
+
+        by_type: dict[str, int] = {}
+        for rec in per_campaign.values():
+            ct = rec["channel_type"]
+            by_type[ct] = by_type.get(ct, 0) + (1 if rec["unique_users"] else 0)
 
         _log.info(
-            "Google Ads reach diagnostics: unique_users_rows=%d, ineligible_rows=%d, "
-            "eligible_campaigns=%d",
+            "Google Ads reach diagnostics: unique_users_rows=%d, zero_rows=%d, "
+            "campaigns=%d, by_type=%s",
             unique_users_rows,
-            ineligible_rows,
+            zero_rows,
             len(per_campaign),
+            by_type,
         )
         return per_campaign
 
