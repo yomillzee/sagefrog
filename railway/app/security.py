@@ -16,14 +16,30 @@ def configured_api_key() -> str | None:
     return key or None
 
 
+def is_production() -> bool:
+    """True when running on Railway (RAILWAY_ENVIRONMENT or RAILWAY_PUBLIC_DOMAIN is present)."""
+    return bool(
+        (os.getenv("RAILWAY_ENVIRONMENT") or "").strip()
+        or (os.getenv("RAILWAY_PUBLIC_DOMAIN") or "").strip()
+    )
+
+
 async def require_api_key(
     bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
     x_api_key: str | None = Security(_api_key_header),
 ) -> None:
-    """When API_KEY is set in the environment, require Bearer token or X-API-Key."""
+    """Require Bearer token or X-API-Key. Fails closed in production; open in local dev when API_KEY is unset."""
     expected = configured_api_key()
     if not expected:
-        return
+        if is_production():
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "API_KEY is not configured on this server. "
+                    "Set API_KEY in Railway environment variables."
+                ),
+            )
+        return  # local dev: open access when API_KEY is absent
 
     token: str | None = None
     if bearer_credentials and bearer_credentials.credentials:

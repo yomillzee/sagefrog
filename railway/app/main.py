@@ -30,7 +30,7 @@ from meta_auth import env_summary as meta_env_summary
 from indeed_auth import env_summary as indeed_env_summary
 from openapi_gpt import build_chatgpt_openapi
 from cron_security import require_cron_secret
-from security import require_api_key
+from security import configured_api_key, is_production, require_api_key
 import audit_log
 import client_config
 import client_dashboard_config
@@ -140,13 +140,35 @@ def _production_hide_api_docs() -> bool:
 
 _hide_api_docs = _production_hide_api_docs()
 
+
+def _require_api_key_configured() -> None:
+    """Refuse to start in production when API_KEY is not set.
+
+    Without API_KEY every platform endpoint (/google-ads/*, /linkedin/*, /meta/*,
+    /ga4/*, /indeed/*, /warehouse/*) is publicly accessible. Fail hard here rather
+    than silently exposing live marketing data.
+    """
+    if is_production() and not configured_api_key():
+        import sys
+
+        print(
+            "FATAL: API_KEY is not set. All platform API routes (/google-ads/*, /linkedin/*, "
+            "/meta/*, /ga4/*, /indeed/*, /warehouse/*) would be publicly accessible. "
+            "Set API_KEY in Railway environment variables and redeploy.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+_require_api_key_configured()
+
 app = FastAPI(
     title="EOS Ads + GA4 Service",
     version="0.2.0",
     description=(
-        "When the server has API_KEY set in Railway, all /google-ads/*, /linkedin/*, /meta/*, /ga4/*, and /indeed/* "
-        "routes require Authorization: Bearer (your API_KEY value) or header X-API-Key with the "
-        "same value. GET /health stays public for load balancers."
+        "All /google-ads/*, /linkedin/*, /meta/*, /ga4/*, /indeed/*, and /warehouse/* routes "
+        "require Authorization: Bearer <API_KEY> or header X-API-Key: <API_KEY>. "
+        "GET /health stays public for load balancers."
     ),
     docs_url=None if _hide_api_docs else "/docs",
     redoc_url=None if _hide_api_docs else "/redoc",
