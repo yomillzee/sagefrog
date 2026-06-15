@@ -101,7 +101,7 @@ def dashboard_client_refresh(
     client_slug: str,
     request: Request,
     key: str | None = None,
-    date_range: str = "LAST_30_DAYS",
+    date_range: str = Form("LAST_30_DAYS"),
     quick: str | None = Form(None),
 ):
     slug = validate_client_slug(client_slug)

@@ -41,6 +41,17 @@ from dashboard.renderers.tables_renderer import ga4_platform_reports as _ga4_pla
 from dashboard.utils.formatting import esc as _esc, json_for_html_script as _json_for_html_script
 from dashboard.utils.urls import settings_page_url as _settings_page_url
 
+def _preset_to_label(preset: str) -> str:
+    return {
+        "LAST_7_DAYS": "Last 7 days",
+        "LAST_30_DAYS": "Last 30 days",
+        "LAST_90_DAYS": "Last 90 days",
+        "LAST_180_DAYS": "Last 180 days",
+        "THIS_MONTH": "This month",
+        "LAST_MONTH": "Last month",
+    }.get((preset or "").upper(), "Last 30 days")
+
+
 def ga4_website_search_html(
     *,
     has_pages: bool,
@@ -157,7 +168,7 @@ def global_filters_bar_html(
               <span class="filter-column-label">Date range</span>
               <div class="filter-toggles filter-range-locked" role="group" aria-label="Date range">
                 <button type="button" class="filter-toggle filter-toggle--locked" disabled
-                  aria-disabled="true" title="Date range is fixed at the last 30 days">
+                  aria-disabled="true" title="Date range is fixed at {_esc(date_range_label)}">
                   <svg class="filter-lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                     stroke-width="2" aria-hidden="true">
                     <rect x="5" y="11" width="14" height="10" rx="2"/>
@@ -524,7 +535,7 @@ def render_penn_html(
         show_channel_filters=bool(platform_catalog_list),
         show_date_range_filter=slug == "penn",
         show_website_search=show_website_tab and has_ga4_pages,
-        date_range_label="Last 30 days",
+        date_range_label=_preset_to_label(preset),
         segment_filter_label=seg_filter_label,
     )
     campaign_explorer_html = campaign_explorer_content_html(
