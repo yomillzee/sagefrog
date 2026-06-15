@@ -786,10 +786,12 @@ def campaign_groups_performance(
     conversion_fields_supported = account_conversions_ok or group_conversions_ok
 
     account_ins = account_rows[0] if account_rows else {}
+    _acct_reach = int(account_ins.get("approximateUniqueImpressions") or 0)
     totals = {
         "spend": _parse_spend(account_ins),
         "clicks": int(account_ins.get("clicks") or 0),
         "impressions": int(account_ins.get("impressions") or 0),
+        "reach": _acct_reach if _acct_reach > 0 else None,
         "conversions": _parse_conversions(account_ins) if conversion_fields_supported else 0.0,
         "conversion_value": (
             _parse_conversion_value(account_ins) if conversion_fields_supported else 0.0
@@ -840,6 +842,7 @@ def campaign_groups_performance(
             if conversion_fields_supported
             else 0.0
         )
+        _grp_reach = int(sum(int(row.get("approximateUniqueImpressions") or 0) for row in matched))
         groups_out.append(
             {
                 "id": gid,
@@ -849,6 +852,7 @@ def campaign_groups_performance(
                 "spend": spend,
                 "clicks": clicks,
                 "impressions": impressions,
+                "reach": _grp_reach if _grp_reach > 0 else None,
                 "conversions": conversions,
             }
         )
@@ -907,19 +911,20 @@ def _fetch_analytics(
     env: LinkedInEnv,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Load adAnalytics for ACCOUNT or CAMPAIGN pivot (conversions field optional)."""
+    reach_field = ",approximateUniqueImpressions" if pivot != "CREATIVE" else ""
     with_conversions = _analytics_url(
         pivot=pivot,
         account_id=account_id,
         start=start,
         end=end,
-        fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,pivotValues",
+        fields=f"impressions,clicks,costInUsd,conversions,conversionValueInUsd,pivotValues{reach_field}",
     )
     fallback = _analytics_url(
         pivot=pivot,
         account_id=account_id,
         start=start,
         end=end,
-        fields="impressions,clicks,costInUsd,pivotValues",
+        fields=f"impressions,clicks,costInUsd,pivotValues{reach_field}",
     )
     if pivot == "ACCOUNT":
         # Account pivot does not use pivotValues in the same way.
@@ -928,14 +933,14 @@ def _fetch_analytics(
             account_id=account_id,
             start=start,
             end=end,
-            fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd",
+            fields=f"impressions,clicks,costInUsd,conversions,conversionValueInUsd{reach_field}",
         )
         fallback = _analytics_url(
             pivot=pivot,
             account_id=account_id,
             start=start,
             end=end,
-            fields="impressions,clicks,costInUsd",
+            fields=f"impressions,clicks,costInUsd{reach_field}",
         )
 
     try:
@@ -968,7 +973,7 @@ def fetch_daily_metrics(
         start=start,
         end=end,
         time_granularity="DAILY",
-        fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,dateRange",
+        fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,approximateUniqueImpressions,dateRange",
     )
     fallback = _analytics_url(
         pivot="ACCOUNT",
@@ -976,7 +981,7 @@ def fetch_daily_metrics(
         start=start,
         end=end,
         time_granularity="DAILY",
-        fields="impressions,clicks,costInUsd,dateRange",
+        fields="impressions,clicks,costInUsd,approximateUniqueImpressions,dateRange",
     )
 
     try:
@@ -1001,6 +1006,7 @@ def fetch_daily_metrics(
                 "spend": 0.0,
                 "clicks": 0,
                 "impressions": 0,
+                "reach": None,
                 "conversions": 0.0,
                 "conversion_value": 0.0,
             }
@@ -1008,6 +1014,9 @@ def fetch_daily_metrics(
         rec["spend"] += _parse_spend(row)
         rec["clicks"] += int(row.get("clicks") or 0)
         rec["impressions"] += int(row.get("impressions") or 0)
+        raw_reach = int(row.get("approximateUniqueImpressions") or 0)
+        if raw_reach > 0:
+            rec["reach"] = (rec["reach"] or 0) + raw_reach
         if conversion_ok:
             rec["conversions"] += _parse_conversions(row)
             rec["conversion_value"] += _parse_conversion_value(row)
@@ -1023,6 +1032,7 @@ def fetch_daily_metrics(
                 "spend": 0.0,
                 "clicks": 0,
                 "impressions": 0,
+                "reach": None,
                 "conversions": 0.0,
                 "conversion_value": 0.0,
             }
@@ -1197,6 +1207,7 @@ def creatives_performance(
             "spend": spend,
             "clicks": clicks,
             "impressions": impressions,
+            "reach": None,
             "conversions": conversions,
         }
         if meta:
@@ -1273,10 +1284,12 @@ def account_performance(
     conversion_fields_supported = account_conversions_ok or campaign_conversions_ok
 
     account_ins = account_rows[0] if account_rows else {}
+    _li_acct_reach = int(account_ins.get("approximateUniqueImpressions") or 0)
     totals = {
         "spend": _parse_spend(account_ins),
         "clicks": int(account_ins.get("clicks") or 0),
         "impressions": int(account_ins.get("impressions") or 0),
+        "reach": _li_acct_reach if _li_acct_reach > 0 else None,
         "conversions": _parse_conversions(account_ins) if conversion_fields_supported else 0.0,
         "conversion_value": (
             _parse_conversion_value(account_ins) if conversion_fields_supported else 0.0
@@ -1316,6 +1329,7 @@ def account_performance(
             if conversion_fields_supported
             else 0.0
         )
+        _camp_reach = int(sum(int(row.get("approximateUniqueImpressions") or 0) for row in matched))
         campaigns_out.append(
             {
                 "id": cid,
@@ -1327,6 +1341,7 @@ def account_performance(
                 "spend": spend,
                 "clicks": clicks,
                 "impressions": impressions,
+                "reach": _camp_reach if _camp_reach > 0 else None,
                 "conversions": conversions,
             }
         )

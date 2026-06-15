@@ -39,6 +39,7 @@ def normalize_entity_row(row: dict[str, Any]) -> dict[str, Any]:
     else:
         parent_id = ""
         parent_name = ""
+    _raw_reach = row.get("reach")
     out: dict[str, Any] = {
         "id": str(
             row.get("id")
@@ -59,6 +60,7 @@ def normalize_entity_row(row: dict[str, Any]) -> dict[str, Any]:
         "spend": float(row.get("spend") or 0),
         "clicks": int(row.get("clicks") or 0),
         "impressions": int(row.get("impressions") or 0),
+        "reach": int(_raw_reach) if _raw_reach is not None and int(_raw_reach) > 0 else None,
         "conversions": float(row.get("conversions") or 0),
         "parent_id": parent_id,
         "parent_name": parent_name,
@@ -134,11 +136,15 @@ def aggregated_paid_media(platform_totals: dict[str, Any]) -> dict[str, Any]:
         clicks += int(t.get("clicks") or 0)
         impressions += int(t.get("impressions") or 0)
         conversions += float(t.get("conversions") or 0)
+    _meta_r = (platform_totals.get("meta") or {}).get("reach")
+    _li_r = (platform_totals.get("linkedin") or {}).get("reach")
     return {
         "spend": spend,
         "clicks": int(clicks),
         "impressions": int(impressions),
         "conversions": conversions,
+        "meta_reach": int(_meta_r) if _meta_r is not None and int(_meta_r) > 0 else None,
+        "linkedin_reach": int(_li_r) if _li_r is not None and int(_li_r) > 0 else None,
     }
 
 

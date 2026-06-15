@@ -424,6 +424,7 @@ def fetch_daily_metrics(
                 "spend": 0.0,
                 "clicks": 0,
                 "impressions": 0,
+                "reach": None,
                 "conversions": 0.0,
                 "conversion_value": 0.0,
             }
@@ -445,6 +446,7 @@ def fetch_daily_metrics(
                 "spend": 0.0,
                 "clicks": 0,
                 "impressions": 0,
+                "reach": None,
                 "conversions": 0.0,
                 "conversion_value": 0.0,
             }
@@ -492,6 +494,7 @@ def campaign_performance(
                 "spend": 0.0,
                 "clicks": 0,
                 "impressions": 0,
+                "reach": None,
                 "conversions": 0.0,
                 "conversion_value": 0.0,
             }
@@ -922,6 +925,7 @@ def adgroups_performance(
                 "spend": 0.0,
                 "clicks": 0,
                 "impressions": 0,
+                "reach": None,
                 "conversions": 0.0,
                 "conversion_value": 0.0,
             }
@@ -1011,6 +1015,7 @@ def ads_performance(
                 "spend": 0.0,
                 "clicks": 0,
                 "impressions": 0,
+                "reach": None,
                 "conversions": 0.0,
                 "conversion_value": 0.0,
             }
