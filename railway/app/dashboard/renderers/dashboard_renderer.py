@@ -340,7 +340,7 @@ def campaign_explorer_content_html(
         )
     else:
         filter_note = "Use the channel filters at the top to narrow platforms — all are included by default."
-    empty_colspan = 9 + int(show_segment_filters) + int(show_product_line_column)
+    empty_colspan = 10 + int(show_segment_filters) + int(show_product_line_column)
     return f"""
             <section class="campaign-explorer-section" aria-label="Campaign performance">
               <div class="bl-summary" id="blSummary"></div>
@@ -360,6 +360,7 @@ def campaign_explorer_content_html(
                         <th class="sortable" data-sort="spend" scope="col" aria-sort="none">Spend<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="clicks" scope="col" aria-sort="none">Clicks<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="impressions" scope="col" aria-sort="none">Impressions<span class="sort-icon" aria-hidden="true"></span></th>
+                        <th class="sortable" data-sort="reach" scope="col" aria-sort="none" title="Platform-reported reach. Not deduplicated across platforms or days.">Reach<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="ctr" scope="col" aria-sort="none">CTR<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="conversions" scope="col" aria-sort="none">Conv.<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="cpc" scope="col" aria-sort="none">CPC<span class="sort-icon" aria-hidden="true"></span></th>
@@ -2425,6 +2426,7 @@ def render_penn_html(
 
           <div id="view-overview" class="view-panel active" role="tabpanel">
             {overview_paid_html}
+            <p class="table-note muted" style="padding:0 22px 10px;margin:0;font-size:0.82rem;">Reach is reported by platform and is not deduplicated across platforms. Google Ads daily reach is unavailable through the current API path.</p>
 
             <div class="cards">
               {_summary_cards_html(totals, summary_platform_ids)}
@@ -4098,6 +4100,7 @@ def render_penn_html(
       const impressions = r.impressions || 0;
       const conv = r.conversions || 0;
       const cpc = clicks ? fmtMoney(spend / clicks) : '—';
+      const reach = (r.reach != null && r.reach > 0) ? fmtInt(r.reach) : '—';
       const expandable = isExpandable(platform, level);
       const chevron = expandable
         ? '<span class="tree-chevron" aria-hidden="true">▸</span>'
@@ -4121,6 +4124,7 @@ def render_penn_html(
         <td class="num">${{fmtMoney(spend)}}</td>
         <td class="num">${{fmtInt(clicks)}}</td>
         <td class="num">${{fmtInt(impressions)}}</td>
+        <td class="num" title="Platform-reported reach. Not deduplicated across platforms or days.">${{reach}}</td>
         <td class="num">${{fmtPct(clicks, impressions)}}</td>
         <td class="num">${{fmtInt(conv)}}</td>
         <td class="num">${{cpc}}</td>

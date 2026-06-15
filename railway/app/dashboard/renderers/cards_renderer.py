@@ -178,6 +178,8 @@ def paid_ad_overview_metrics(
         "reported_cpa": (spend / conversions) if conversions else None,
         "verified_cpa": (spend / ga4_key_events) if ga4_key_events else None,
         "ga4_key_events": ga4_key_events,
+        "meta_reach": aggregated.get("meta_reach"),
+        "linkedin_reach": aggregated.get("linkedin_reach"),
     }
 
 
@@ -194,6 +196,12 @@ def paid_ad_overview_html(
         if ga4_events
         else "No paid GA4 TY events in range"
     )
+    meta_reach = m.get("meta_reach")
+    linkedin_reach = m.get("linkedin_reach")
+    meta_reach_val = _fmt_int(meta_reach) if meta_reach else "—"
+    linkedin_reach_val = _fmt_int(linkedin_reach) if linkedin_reach else "—"
+    meta_reach_sub = "Platform-reported daily reach total" if meta_reach else "Run a Full Refresh to populate"
+    linkedin_reach_sub = "Approximate, platform-reported" if linkedin_reach else "Run a Full Refresh to populate"
     return f"""
     <section class="paid-ad-overview" aria-label="Paid Ad Overview">
       <div class="paid-ad-metrics-grid">
@@ -236,6 +244,16 @@ def paid_ad_overview_html(
           <div class="ga4-metric-label">Verified CPA</div>
           <div class="ga4-metric-value" id="heroVerifiedCpa">{_fmt_cpa(m["spend"], ga4_events) if ga4_events else "—"}</div>
           <div class="ga4-metric-sub" id="heroVerifiedCpaSub">{verified_sub}</div>
+        </div>
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">Meta Reach</div>
+          <div class="ga4-metric-value">{meta_reach_val}</div>
+          <div class="ga4-metric-sub">{meta_reach_sub}</div>
+        </div>
+        <div class="ga4-metric-card">
+          <div class="ga4-metric-label">LinkedIn Reach</div>
+          <div class="ga4-metric-value">{linkedin_reach_val}</div>
+          <div class="ga4-metric-sub">{linkedin_reach_sub}</div>
         </div>
       </div>
     </section>"""

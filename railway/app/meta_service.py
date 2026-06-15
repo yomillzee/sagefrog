@@ -11,15 +11,15 @@ from meta_auth import MetaEnv, load_meta_env
 
 _ACCOUNT_FIELDS = "id,account_id,name,account_status,currency,business_name"
 _INSIGHT_FIELDS = (
-    "spend,impressions,clicks,actions,action_values,"
+    "spend,impressions,clicks,reach,actions,action_values,"
     "campaign_id,campaign_name,date_start,date_stop"
 )
 _ADSET_INSIGHT_FIELDS = (
-    "spend,impressions,clicks,actions,action_values,"
+    "spend,impressions,clicks,reach,actions,action_values,"
     "adset_id,adset_name,campaign_id,campaign_name,date_start,date_stop"
 )
 _AD_INSIGHT_FIELDS = (
-    "spend,impressions,clicks,actions,action_values,"
+    "spend,impressions,clicks,reach,actions,action_values,"
     "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,date_start,date_stop"
 )
 _ACCOUNT_STATUS = {
@@ -167,10 +167,12 @@ def _parse_conversion_value(action_values: list[dict[str, Any]] | None) -> float
 
 
 def _parse_insight_row(row: dict[str, Any]) -> dict[str, Any]:
+    raw_reach = int(float(row.get("reach") or 0))
     return {
         "spend": float(row.get("spend") or 0),
         "clicks": int(float(row.get("clicks") or 0)),
         "impressions": int(float(row.get("impressions") or 0)),
+        "reach": raw_reach if raw_reach > 0 else None,
         "conversions": _parse_conversions(row.get("actions")),
         "conversion_value": _parse_conversion_value(row.get("action_values")),
     }
@@ -354,6 +356,7 @@ def fetch_daily_metrics(
                 "spend": 0.0,
                 "clicks": 0,
                 "impressions": 0,
+                "reach": None,
                 "conversions": 0.0,
                 "conversion_value": 0.0,
             }
@@ -435,6 +438,7 @@ def account_performance(
         "spend": 0.0,
         "clicks": 0,
         "impressions": 0,
+        "reach": None,
         "conversions": 0.0,
         "conversion_value": 0.0,
     }
