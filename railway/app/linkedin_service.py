@@ -117,9 +117,10 @@ def _linkedin_get(
     env: LinkedInEnv | None = None,
     api_version: str | None = None,
     restli_method: str | None = None,
+    timeout: float = 120.0,
 ) -> dict[str, Any]:
     url = f"{LINKEDIN_API_BASE}{path}"
-    with httpx.Client(timeout=120.0) as client:
+    with httpx.Client(timeout=timeout) as client:
         response = client.get(
             url,
             params=params,
@@ -998,7 +999,7 @@ def _fetch_account_reach_safe(
             fields=field,
         )
         try:
-            payload = _linkedin_get(url, access_token=access_token, env=env)
+            payload = _linkedin_get(url, access_token=access_token, env=env, timeout=10.0)
             elements = payload.get("elements") or []
             if not elements:
                 _log.info("LinkedIn account reach: %s returned no elements", field)
@@ -1052,7 +1053,7 @@ def _fetch_daily_reach_safe(
             fields=f"dateRange,{field}",
         )
         try:
-            payload = _linkedin_get(url, access_token=access_token, env=env)
+            payload = _linkedin_get(url, access_token=access_token, env=env, timeout=10.0)
             elements = payload.get("elements") or []
             _log.info("LinkedIn daily reach: %s returned %d elements", field, len(elements))
             result: dict[str, int] = {}

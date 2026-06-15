@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import date, timedelta
 from typing import Any
 
@@ -597,7 +598,13 @@ def _fetch_campaign_reach_safe(
     zero_rows = 0
 
     try:
-        rows = search(customer_id, query, client=client)
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(search, customer_id, query, client=client)
+            try:
+                rows = future.result(timeout=15)
+            except FuturesTimeoutError:
+                _log.warning("Google Ads reach: query timed out after 15 s, skipping")
+                return {}
         _log.info("Google Ads reach: query returned %d rows across all campaign types", len(rows))
 
         per_campaign: dict[str, dict[str, Any]] = {}
