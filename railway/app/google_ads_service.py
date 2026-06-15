@@ -643,6 +643,27 @@ def _fetch_campaign_reach_safe(
         return {}
 
 
+def fetch_account_reach_safe(
+    customer_id: str,
+    *,
+    start: date,
+    end: date,
+    client: GoogleAdsClient | None = None,
+) -> int | None:
+    """
+    Fetch period reach (unique_users) for the account across eligible campaign types.
+
+    Calls _fetch_campaign_reach_safe and sums per-campaign unique_users.
+    Returns None on error, no eligible campaigns, or date range > 92 days.
+    Safe to call independently of campaign_performance().
+    """
+    reach_data = _fetch_campaign_reach_safe(customer_id, start=start, end=end, client=client)
+    if not reach_data:
+        return None
+    total = sum(rd["unique_users"] for rd in reach_data.values() if rd.get("unique_users"))
+    return total if total > 0 else None
+
+
 def _accumulate_metrics(rec: dict[str, Any], row: dict[str, Any]) -> None:
     rec["spend"] += int(_dig(row, "metrics", "cost_micros") or 0) / 1_000_000
     rec["clicks"] += int(_dig(row, "metrics", "clicks") or 0)
