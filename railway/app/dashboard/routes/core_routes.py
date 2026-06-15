@@ -48,6 +48,7 @@ def dashboard_client(
     client_slug: str,
     request: Request,
     key: str | None = None,
+    view_range: str | None = None,
     synced: str | None = None,
     budget_saved: str | None = None,
     insights_saved: str | None = None,
@@ -80,6 +81,7 @@ def dashboard_client(
                 snapshot,
                 client_slug=slug,
                 flash_message=flash,
+                view_range=view_range,
                 **penn_html_session_kwargs(auth),
             )
         )
@@ -87,7 +89,7 @@ def dashboard_client(
     snapshot = dashboard_snapshots.get_snapshot(slug)
     return HTMLResponse(
         dashboard_service.render_penn_html(
-            snapshot, client_slug=slug, access_key=key, flash_message=flash
+            snapshot, client_slug=slug, access_key=key, flash_message=flash, view_range=view_range
         )
     )
 @router.post(
@@ -101,7 +103,7 @@ def dashboard_client_refresh(
     client_slug: str,
     request: Request,
     key: str | None = None,
-    date_range: str = Form("LAST_30_DAYS"),
+    date_range: str = "LAST_30_DAYS",
     quick: str | None = Form(None),
 ):
     slug = validate_client_slug(client_slug)
@@ -259,6 +261,7 @@ def dashboard_client_json(client_slug: str, request: Request, key: str | None = 
 def dashboard_penn_legacy(
     request: Request,
     key: str | None = None,
+    view_range: str | None = None,
     synced: str | None = None,
     insights_saved: str | None = None,
 ):
@@ -266,6 +269,7 @@ def dashboard_penn_legacy(
         client_slug="penn",
         request=request,
         key=key,
+        view_range=view_range,
         synced=synced,
         insights_saved=insights_saved,
     )
