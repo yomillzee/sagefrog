@@ -50,6 +50,16 @@ def session_account_html(*, email: str | None, is_admin: bool) -> str:
     """
 
 
+_PRESET_LABELS: dict[str, str] = {
+    "LAST_7_DAYS": "Last 7 days",
+    "LAST_30_DAYS": "Last 30 days",
+    "LAST_90_DAYS": "Last 90 days",
+    "LAST_180_DAYS": "Last 180 days",
+    "THIS_MONTH": "This month",
+    "LAST_MONTH": "Last month",
+}
+
+
 def refresh_toolbar(
     *,
     client_slug: str = "penn",
@@ -73,10 +83,20 @@ def refresh_toolbar(
     elif min_refresh_seconds(quick=False) > 0 and not quick_allowed and not full_allowed:
         mins = max(1, (min(quick_remaining, full_remaining) + 59) // 60)
         notice = f'<div class="notice muted">Refresh available in ~{mins} min.</div>'
+    dr = (snapshot or {}).get("date_range") or {}
+    current_preset = dr.get("preset") or "LAST_30_DAYS"
+    options_html = "".join(
+        f'<option value="{k}"{" selected" if k == current_preset else ""}>{v}</option>'
+        for k, v in _PRESET_LABELS.items()
+    )
+    date_range_select = (
+        f'<select name="date_range" class="refresh-preset-select">{options_html}</select>'
+    )
     if quick_allowed:
         quick_btn = (
             f'<form method="post" action="{refresh_url}" class="refresh-form">'
             f'<input type="hidden" name="quick" value="1">'
+            f'{date_range_select}'
             f'<button type="submit" class="refresh-btn">Quick refresh</button></form>'
         )
     else:
@@ -84,6 +104,7 @@ def refresh_toolbar(
     if full_allowed:
         full_btn = (
             f'<form method="post" action="{refresh_url}" class="refresh-form">'
+            f'{date_range_select}'
             f'<button type="submit" class="refresh-btn refresh-btn--secondary">'
             f"Full refresh</button></form>"
         )
