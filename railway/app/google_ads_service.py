@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from datetime import date, timedelta
 from typing import Any
@@ -12,7 +13,19 @@ from google.protobuf.json_format import MessageToDict
 from auth import GoogleAdsEnv, load_google_ads_env
 from dates_util import resolve_date_range
 
+_log = logging.getLogger(__name__)
+
 _YOUTUBE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
+
+# Campaign types that support metrics.unique_users and
+# metrics.average_impression_frequency_per_user in the Google Ads API.
+# Search campaigns are explicitly excluded — never use impressions as a reach proxy there.
+_GOOGLE_REACH_ELIGIBLE_TYPES = frozenset(
+    {"DISPLAY", "VIDEO", "DISCOVERY", "DEMAND_GEN", "MULTI_CHANNEL"}
+)
+
+# Google Ads limits unique_users to date ranges of at most 92 days.
+_GOOGLE_REACH_DAYS_MAX = 92
 
 
 def build_client(env: GoogleAdsEnv | None = None) -> GoogleAdsClient:
@@ -506,12 +519,42 @@ def campaign_performance(
         rec["conversion_value"] += float(_dig(row, "metrics", "conversions_value") or 0)
 
     campaigns_out = sorted(by_campaign.values(), key=lambda item: item.get("spend", 0), reverse=True)
+
+    # Reach enrichment — completely separate from the core query above.
+    # unique_users is the authoritative reach metric; estimated_reach (impressions /
+    # avg_frequency) is only used when unique_users is unavailable.  Both are None
+    # for Search campaigns and any campaign type not in _GOOGLE_REACH_ELIGIBLE_TYPES.
+    reach_data = _fetch_campaign_reach_safe(
+        customer_id_clean, start=start, end=end, client=client
+    )
+    for camp in campaigns_out:
+        cid = camp.get("id", "")
+        rd = reach_data.get(cid)
+        if rd:
+            camp["reach"] = rd["unique_users"]
+            camp["estimated_reach"] = rd["estimated_reach"]
+            camp["channel_type"] = rd["channel_type"]
+        else:
+            camp["reach"] = None
+            camp["estimated_reach"] = None
+
+    # Account-level reach total: prefer unique_users; fall back to estimated_reach.
+    # Labeled estimated in all cases because summing per-campaign reach overcounts
+    # users who were reached by multiple campaigns.
+    _reach_eligible = [c for c in campaigns_out if c.get("reach") or c.get("estimated_reach")]
+    _estimated_reach_total: int | None = None
+    if _reach_eligible:
+        _estimated_reach_total = sum(
+            (c.get("reach") or c.get("estimated_reach") or 0) for c in _reach_eligible
+        ) or None
+
     totals = {
         "spend": sum(c["spend"] for c in campaigns_out),
         "clicks": sum(c["clicks"] for c in campaigns_out),
         "impressions": sum(c["impressions"] for c in campaigns_out),
         "conversions": sum(c["conversions"] for c in campaigns_out),
         "campaign_count": len(campaigns_out),
+        "estimated_reach": _estimated_reach_total,
     }
     return {
         "customer_id": customer_id_clean,
@@ -520,6 +563,141 @@ def campaign_performance(
         "totals": totals,
         "campaigns": campaigns_out,
     }
+
+
+def _fetch_campaign_reach_safe(
+    customer_id: str,
+    *,
+    start: date,
+    end: date,
+    client: GoogleAdsClient | None = None,
+) -> dict[str, dict[str, Any]]:
+    """
+    Fetch reach metrics for Google Ads campaigns whose type supports reach reporting.
+
+    Eligible types: DISPLAY, VIDEO, DISCOVERY, DEMAND_GEN, MULTI_CHANNEL (App).
+    Search campaigns are never included.
+
+    Date range must be <= 92 days (Google API restriction for unique_users).
+    Returns {} on any error so it can never break core reporting.
+
+    Return structure: {campaign_id: {
+        "channel_type": str,
+        "unique_users": int | None,   # platform-reported reach; use as `reach`
+        "estimated_reach": int | None # impressions / avg_frequency if unique_users absent
+    }}
+
+    Diagnostics are logged at INFO level.  Tokens and auth headers are never logged.
+    """
+    days = (end - start).days + 1
+    if days > _GOOGLE_REACH_DAYS_MAX:
+        _log.info(
+            "Google Ads reach: date range %d days > %d-day limit, skipping",
+            days,
+            _GOOGLE_REACH_DAYS_MAX,
+        )
+        return {}
+
+    start_key = start.isoformat()
+    end_key = end.isoformat()
+    type_list = ", ".join(f"'{t}'" for t in sorted(_GOOGLE_REACH_ELIGIBLE_TYPES))
+
+    # unique_users cannot be aggregated — query at campaign × date grain then fold.
+    # average_impression_frequency_per_user is used as a fallback estimator only.
+    query = f"""
+        SELECT
+          campaign.id,
+          campaign.advertising_channel_type,
+          metrics.unique_users,
+          metrics.average_impression_frequency_per_user,
+          metrics.impressions
+        FROM campaign
+        WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
+          AND campaign.advertising_channel_type IN ({type_list})
+    """
+
+    unique_users_rows = 0
+    frequency_rows = 0
+    ineligible_rows = 0
+
+    try:
+        rows = search(customer_id, query, client=client)
+        _log.info(
+            "Google Ads reach: query returned %d rows for eligible campaign types",
+            len(rows),
+        )
+
+        # Accumulate per-campaign across days.
+        per_campaign: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            cid = str(_dig(row, "campaign", "id") or "").strip()
+            channel_type = str(
+                _dig(row, "campaign", "advertising_channel_type") or ""
+            ).upper()
+            if not cid:
+                continue
+            if channel_type not in _GOOGLE_REACH_ELIGIBLE_TYPES:
+                ineligible_rows += 1
+                continue
+
+            if cid not in per_campaign:
+                per_campaign[cid] = {
+                    "channel_type": channel_type,
+                    "unique_users": None,
+                    "impressions": 0,
+                    "freq_weighted_sum": 0.0,
+                    "freq_impression_sum": 0,
+                }
+            rec = per_campaign[cid]
+
+            uu = _dig(row, "metrics", "unique_users")
+            if uu is not None:
+                uu_int = int(uu)
+                if uu_int > 0:
+                    # unique_users is a cumulative count per day; take the max
+                    # over days as the best single-period estimate.
+                    if rec["unique_users"] is None or uu_int > rec["unique_users"]:
+                        rec["unique_users"] = uu_int
+                    unique_users_rows += 1
+
+            imp = int(_dig(row, "metrics", "impressions") or 0)
+            rec["impressions"] += imp
+
+            freq = _dig(row, "metrics", "average_impression_frequency_per_user")
+            if freq is not None and imp > 0:
+                freq_f = float(freq)
+                if freq_f > 0:
+                    # Weight frequency by impressions for a correct period aggregate.
+                    rec["freq_weighted_sum"] += freq_f * imp
+                    rec["freq_impression_sum"] += imp
+                    frequency_rows += 1
+
+        _log.info(
+            "Google Ads reach diagnostics: unique_users_rows=%d, frequency_rows=%d, "
+            "ineligible_rows=%d, eligible_campaigns=%d",
+            unique_users_rows,
+            frequency_rows,
+            ineligible_rows,
+            len(per_campaign),
+        )
+
+        result: dict[str, dict[str, Any]] = {}
+        for cid, rec in per_campaign.items():
+            estimated: int | None = None
+            if rec["unique_users"] is None and rec["freq_impression_sum"] > 0:
+                avg_freq = rec["freq_weighted_sum"] / rec["freq_impression_sum"]
+                if avg_freq > 0:
+                    estimated = int(rec["impressions"] / avg_freq)
+            result[cid] = {
+                "channel_type": rec["channel_type"],
+                "unique_users": rec["unique_users"],
+                "estimated_reach": estimated,
+            }
+        return result
+
+    except Exception as exc:
+        _log.warning("Google Ads reach enrichment failed: %s", str(exc)[:300])
+        return {}
 
 
 def _accumulate_metrics(rec: dict[str, Any], row: dict[str, Any]) -> None:

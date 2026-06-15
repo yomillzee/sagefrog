@@ -138,6 +138,12 @@ def aggregated_paid_media(platform_totals: dict[str, Any]) -> dict[str, Any]:
         conversions += float(t.get("conversions") or 0)
     _meta_r = (platform_totals.get("meta") or {}).get("reach")
     _li_r = (platform_totals.get("linkedin") or {}).get("reach")
+    # Google does not report a true account-level reach metric.
+    # estimated_reach is the sum of per-campaign unique_users (or impressions/frequency)
+    # for eligible campaign types only (Display, Video, Discovery/Demand Gen, App).
+    # It overcounts users reached by multiple campaigns and must never be blended
+    # with Meta or LinkedIn reach.
+    _g_er = (platform_totals.get("google") or {}).get("estimated_reach")
     return {
         "spend": spend,
         "clicks": int(clicks),
@@ -145,6 +151,7 @@ def aggregated_paid_media(platform_totals: dict[str, Any]) -> dict[str, Any]:
         "conversions": conversions,
         "meta_reach": int(_meta_r) if _meta_r is not None and int(_meta_r) > 0 else None,
         "linkedin_reach": int(_li_r) if _li_r is not None and int(_li_r) > 0 else None,
+        "google_estimated_reach": int(_g_er) if _g_er is not None and int(_g_er) > 0 else None,
     }
 
 

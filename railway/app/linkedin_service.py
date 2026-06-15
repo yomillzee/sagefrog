@@ -26,6 +26,10 @@ _CONVERSION_FIELDS = (
     "opens",
 )
 
+# LinkedIn limits approximateMemberReach (and the legacy approximateUniqueImpressions)
+# to non-demographic pivots and date ranges of at most 92 days.
+_LI_REACH_DAYS_MAX = 92
+
 
 def _normalize_account_id(account_id: str) -> str:
     return str(account_id or "").strip().split(":")[-1]
@@ -969,26 +973,109 @@ def _fetch_account_reach_safe(
     access_token: str,
     env: LinkedInEnv,
 ) -> int | None:
-    """Fetch period-total unique reach for the account. Returns None if unavailable or rejected."""
-    url = _analytics_url(
-        pivot="ACCOUNT",
-        account_id=account_id,
-        start=start,
-        end=end,
-        fields="approximateUniqueImpressions",
-    )
-    try:
-        payload = _linkedin_get(url, access_token=access_token, env=env)
-        elements = payload.get("elements") or []
-        if not elements:
-            _log.debug("LinkedIn account reach: no elements returned")
-            return None
-        raw = int(elements[0].get("approximateUniqueImpressions") or 0)
-        _log.debug("LinkedIn account reach: approximateUniqueImpressions=%d", raw)
-        return raw if raw > 0 else None
-    except Exception as exc:
-        _log.warning("LinkedIn account reach unavailable: %s", str(exc)[:300])
+    """
+    Fetch period-total unique reach for the account.
+
+    Tries approximateMemberReach (current) first, then falls back to the legacy
+    approximateUniqueImpressions.  Returns None if both are unavailable or the
+    date range exceeds _LI_REACH_DAYS_MAX days.
+    """
+    days = (end - start).days + 1
+    if days > _LI_REACH_DAYS_MAX:
+        _log.info(
+            "LinkedIn account reach: date range %d days > %d-day limit, skipping",
+            days,
+            _LI_REACH_DAYS_MAX,
+        )
         return None
+
+    for field in ("approximateMemberReach", "approximateUniqueImpressions"):
+        url = _analytics_url(
+            pivot="ACCOUNT",
+            account_id=account_id,
+            start=start,
+            end=end,
+            fields=field,
+        )
+        try:
+            payload = _linkedin_get(url, access_token=access_token, env=env)
+            elements = payload.get("elements") or []
+            if not elements:
+                _log.info("LinkedIn account reach: %s returned no elements", field)
+                return None
+            raw = int(elements[0].get(field) or 0)
+            _log.info("LinkedIn account reach: %s=%d", field, raw)
+            return raw if raw > 0 else None
+        except Exception as exc:
+            _log.warning(
+                "LinkedIn account reach: %s rejected (%s), trying next field",
+                field,
+                str(exc)[:200],
+            )
+
+    _log.info("LinkedIn account reach: approximateMemberReach and approximateUniqueImpressions both rejected")
+    return None
+
+
+def _fetch_daily_reach_safe(
+    account_id: str,
+    *,
+    start: date,
+    end: date,
+    access_token: str,
+    env: LinkedInEnv,
+) -> dict[str, int]:
+    """
+    Fetch per-day reach keyed by ISO date string.
+
+    Tries approximateMemberReach first (LinkedIn's current reach metric), then
+    falls back to the legacy approximateUniqueImpressions.  Returns an empty
+    dict if the date range exceeds _LI_REACH_DAYS_MAX or both fields are rejected.
+    Never raises — failures are logged and isolated from core metric reporting.
+    """
+    days = (end - start).days + 1
+    if days > _LI_REACH_DAYS_MAX:
+        _log.info(
+            "LinkedIn daily reach: date range %d days > %d-day limit, skipping",
+            days,
+            _LI_REACH_DAYS_MAX,
+        )
+        return {}
+
+    for field in ("approximateMemberReach", "approximateUniqueImpressions"):
+        url = _analytics_url(
+            pivot="ACCOUNT",
+            account_id=account_id,
+            start=start,
+            end=end,
+            time_granularity="DAILY",
+            fields=f"dateRange,{field}",
+        )
+        try:
+            payload = _linkedin_get(url, access_token=access_token, env=env)
+            elements = payload.get("elements") or []
+            _log.info("LinkedIn daily reach: %s returned %d elements", field, len(elements))
+            result: dict[str, int] = {}
+            for row in elements:
+                day = _date_from_analytics_row(row)
+                if not day:
+                    continue
+                val = int(row.get(field) or 0)
+                if val > 0:
+                    result[day.isoformat()] = val
+            return result
+        except Exception as exc:
+            _log.warning(
+                "LinkedIn daily reach: %s rejected (%s), trying next field",
+                field,
+                str(exc)[:200],
+            )
+
+    _log.info(
+        "LinkedIn daily reach: approximateMemberReach and approximateUniqueImpressions "
+        "both rejected — reach unavailable for this report"
+    )
+    return {}
 
 
 def fetch_daily_metrics(
@@ -999,28 +1086,18 @@ def fetch_daily_metrics(
     access_token: str | None = None,
     env: LinkedInEnv | None = None,
 ) -> list[dict[str, Any]]:
-    """Account-level metrics per day (for Postgres warehouse / metrics_daily)."""
+    """Account-level metrics per day (for Postgres warehouse / metrics_daily).
+
+    Core spend/clicks/impressions/conversions are fetched in one isolated request.
+    Reach is fetched separately via _fetch_daily_reach_safe so that reach failures
+    can never break core metric reporting.
+    """
     env = env or load_linkedin_env()
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
 
-    _url_conv_reach = _analytics_url(
-        pivot="ACCOUNT",
-        account_id=account_id_clean,
-        start=start,
-        end=end,
-        time_granularity="DAILY",
-        fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,approximateUniqueImpressions,dateRange",
-    )
-    _url_reach_only = _analytics_url(
-        pivot="ACCOUNT",
-        account_id=account_id_clean,
-        start=start,
-        end=end,
-        time_granularity="DAILY",
-        fields="impressions,clicks,costInUsd,approximateUniqueImpressions,dateRange",
-    )
-    _url_conv_only = _analytics_url(
+    # Core metrics request — no reach field; two-URL fallback for conversions only.
+    _url_with_conv = _analytics_url(
         pivot="ACCOUNT",
         account_id=account_id_clean,
         start=start,
@@ -1038,38 +1115,15 @@ def fetch_daily_metrics(
     )
 
     _LI_CONV_ERR = 'Projected field "conversions"'
-    _LI_REACH_ERR = '"approximateUniqueImpressions"'
     conversion_ok = False
-    _daily_reach_ok = False
 
     try:
-        payload = _linkedin_get(_url_conv_reach, access_token=access_token, env=env)
+        payload = _linkedin_get(_url_with_conv, access_token=access_token, env=env)
         conversion_ok = True
-        _daily_reach_ok = True
     except Exception as _e1:
-        _m1 = str(_e1)
-        _conv_rejected = _LI_CONV_ERR in _m1
-        _reach_rejected = _LI_REACH_ERR in _m1
-        if _conv_rejected and not _reach_rejected:
-            try:
-                payload = _linkedin_get(_url_reach_only, access_token=access_token, env=env)
-                _daily_reach_ok = True
-            except Exception as _e2:
-                if _LI_REACH_ERR in str(_e2):
-                    _log.warning("LinkedIn daily: approximateUniqueImpressions rejected, reach unavailable")
-                    payload = _linkedin_get(_url_safe, access_token=access_token, env=env)
-                else:
-                    raise
-        elif _reach_rejected:
-            _log.warning("LinkedIn daily: approximateUniqueImpressions rejected (%s)", _m1[:300])
-            try:
-                payload = _linkedin_get(_url_conv_only, access_token=access_token, env=env)
-                conversion_ok = True
-            except Exception as _e2:
-                if _LI_CONV_ERR in str(_e2):
-                    payload = _linkedin_get(_url_safe, access_token=access_token, env=env)
-                else:
-                    raise
+        if _LI_CONV_ERR in str(_e1):
+            _log.warning("LinkedIn daily: conversions rejected, retrying without")
+            payload = _linkedin_get(_url_safe, access_token=access_token, env=env)
         else:
             raise
 
@@ -1093,13 +1147,21 @@ def fetch_daily_metrics(
         rec["spend"] += _parse_spend(row)
         rec["clicks"] += int(row.get("clicks") or 0)
         rec["impressions"] += int(row.get("impressions") or 0)
-        if _daily_reach_ok:
-            raw_reach = int(row.get("approximateUniqueImpressions") or 0)
-            if raw_reach > 0:
-                rec["reach"] = (rec["reach"] or 0) + raw_reach
         if conversion_ok:
             rec["conversions"] += _parse_conversions(row)
             rec["conversion_value"] += _parse_conversion_value(row)
+
+    # Dedicated reach request — completely isolated from core metrics above.
+    daily_reach = _fetch_daily_reach_safe(
+        account_id_clean,
+        start=start,
+        end=end,
+        access_token=access_token,
+        env=env,
+    )
+    for key, reach_val in daily_reach.items():
+        if key in by_date:
+            by_date[key]["reach"] = reach_val
 
     out: list[dict[str, Any]] = []
     cursor = start
