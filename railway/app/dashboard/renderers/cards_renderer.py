@@ -201,7 +201,7 @@ def paid_ad_overview_html(
     meta_reach_val = _fmt_int(meta_reach) if meta_reach else "—"
     linkedin_reach_val = _fmt_int(linkedin_reach) if linkedin_reach else "—"
     meta_reach_sub = "Platform-reported daily reach total" if meta_reach else "Run a Full Refresh to populate"
-    linkedin_reach_sub = "Approximate, platform-reported" if linkedin_reach else "Run a Full Refresh to populate"
+    linkedin_reach_sub = "Approximate, platform-reported" if linkedin_reach else "Unavailable from LinkedIn API for this report"
     return f"""
     <section class="paid-ad-overview" aria-label="Paid Ad Overview">
       <div class="paid-ad-metrics-grid">

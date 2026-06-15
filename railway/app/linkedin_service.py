@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from datetime import date, timedelta
 from typing import Any
@@ -12,6 +13,8 @@ from linkedin_auth import LinkedInEnv, load_linkedin_env
 
 LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 LINKEDIN_API_BASE = "https://api.linkedin.com/rest"
+
+_log = logging.getLogger(__name__)
 
 _CONVERSION_FIELDS = (
     "conversions",
@@ -786,12 +789,18 @@ def campaign_groups_performance(
     conversion_fields_supported = account_conversions_ok or group_conversions_ok
 
     account_ins = account_rows[0] if account_rows else {}
-    _acct_reach = int(account_ins.get("approximateUniqueImpressions") or 0)
+    _acct_reach = _fetch_account_reach_safe(
+        account_id_clean,
+        start=start,
+        end=end,
+        access_token=access_token,
+        env=env,
+    )
     totals = {
         "spend": _parse_spend(account_ins),
         "clicks": int(account_ins.get("clicks") or 0),
         "impressions": int(account_ins.get("impressions") or 0),
-        "reach": _acct_reach if _acct_reach > 0 else None,
+        "reach": _acct_reach,
         "conversions": _parse_conversions(account_ins) if conversion_fields_supported else 0.0,
         "conversion_value": (
             _parse_conversion_value(account_ins) if conversion_fields_supported else 0.0
@@ -842,7 +851,6 @@ def campaign_groups_performance(
             if conversion_fields_supported
             else 0.0
         )
-        _grp_reach = int(sum(int(row.get("approximateUniqueImpressions") or 0) for row in matched))
         groups_out.append(
             {
                 "id": gid,
@@ -852,7 +860,7 @@ def campaign_groups_performance(
                 "spend": spend,
                 "clicks": clicks,
                 "impressions": impressions,
-                "reach": _grp_reach if _grp_reach > 0 else None,
+                "reach": None,
                 "conversions": conversions,
             }
         )
@@ -911,20 +919,19 @@ def _fetch_analytics(
     env: LinkedInEnv,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Load adAnalytics for ACCOUNT or CAMPAIGN pivot (conversions field optional)."""
-    reach_field = ",approximateUniqueImpressions" if pivot != "CREATIVE" else ""
     with_conversions = _analytics_url(
         pivot=pivot,
         account_id=account_id,
         start=start,
         end=end,
-        fields=f"impressions,clicks,costInUsd,conversions,conversionValueInUsd,pivotValues{reach_field}",
+        fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,pivotValues",
     )
     fallback = _analytics_url(
         pivot=pivot,
         account_id=account_id,
         start=start,
         end=end,
-        fields=f"impressions,clicks,costInUsd,pivotValues{reach_field}",
+        fields="impressions,clicks,costInUsd,pivotValues",
     )
     if pivot == "ACCOUNT":
         # Account pivot does not use pivotValues in the same way.
@@ -933,14 +940,14 @@ def _fetch_analytics(
             account_id=account_id,
             start=start,
             end=end,
-            fields=f"impressions,clicks,costInUsd,conversions,conversionValueInUsd{reach_field}",
+            fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd",
         )
         fallback = _analytics_url(
             pivot=pivot,
             account_id=account_id,
             start=start,
             end=end,
-            fields=f"impressions,clicks,costInUsd{reach_field}",
+            fields="impressions,clicks,costInUsd",
         )
 
     try:
@@ -952,6 +959,36 @@ def _fetch_analytics(
             raise
         payload = _linkedin_get(fallback, access_token=access_token, env=env)
         return payload.get("elements") or [], False
+
+
+def _fetch_account_reach_safe(
+    account_id: str,
+    *,
+    start: date,
+    end: date,
+    access_token: str,
+    env: LinkedInEnv,
+) -> int | None:
+    """Fetch period-total unique reach for the account. Returns None if unavailable or rejected."""
+    url = _analytics_url(
+        pivot="ACCOUNT",
+        account_id=account_id,
+        start=start,
+        end=end,
+        fields="approximateUniqueImpressions",
+    )
+    try:
+        payload = _linkedin_get(url, access_token=access_token, env=env)
+        elements = payload.get("elements") or []
+        if not elements:
+            _log.debug("LinkedIn account reach: no elements returned")
+            return None
+        raw = int(elements[0].get("approximateUniqueImpressions") or 0)
+        _log.debug("LinkedIn account reach: approximateUniqueImpressions=%d", raw)
+        return raw if raw > 0 else None
+    except Exception as exc:
+        _log.warning("LinkedIn account reach unavailable: %s", str(exc)[:300])
+        return None
 
 
 def fetch_daily_metrics(
@@ -967,7 +1004,7 @@ def fetch_daily_metrics(
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
 
-    with_conversions = _analytics_url(
+    _url_conv_reach = _analytics_url(
         pivot="ACCOUNT",
         account_id=account_id_clean,
         start=start,
@@ -975,7 +1012,7 @@ def fetch_daily_metrics(
         time_granularity="DAILY",
         fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,approximateUniqueImpressions,dateRange",
     )
-    fallback = _analytics_url(
+    _url_reach_only = _analytics_url(
         pivot="ACCOUNT",
         account_id=account_id_clean,
         start=start,
@@ -983,16 +1020,58 @@ def fetch_daily_metrics(
         time_granularity="DAILY",
         fields="impressions,clicks,costInUsd,approximateUniqueImpressions,dateRange",
     )
+    _url_conv_only = _analytics_url(
+        pivot="ACCOUNT",
+        account_id=account_id_clean,
+        start=start,
+        end=end,
+        time_granularity="DAILY",
+        fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,dateRange",
+    )
+    _url_safe = _analytics_url(
+        pivot="ACCOUNT",
+        account_id=account_id_clean,
+        start=start,
+        end=end,
+        time_granularity="DAILY",
+        fields="impressions,clicks,costInUsd,dateRange",
+    )
+
+    _LI_CONV_ERR = 'Projected field "conversions"'
+    _LI_REACH_ERR = '"approximateUniqueImpressions"'
+    conversion_ok = False
+    _daily_reach_ok = False
 
     try:
-        payload = _linkedin_get(with_conversions, access_token=access_token, env=env)
+        payload = _linkedin_get(_url_conv_reach, access_token=access_token, env=env)
         conversion_ok = True
-    except Exception as primary_error:
-        msg = str(primary_error)
-        if 'Projected field "conversions"' not in msg:
+        _daily_reach_ok = True
+    except Exception as _e1:
+        _m1 = str(_e1)
+        _conv_rejected = _LI_CONV_ERR in _m1
+        _reach_rejected = _LI_REACH_ERR in _m1
+        if _conv_rejected and not _reach_rejected:
+            try:
+                payload = _linkedin_get(_url_reach_only, access_token=access_token, env=env)
+                _daily_reach_ok = True
+            except Exception as _e2:
+                if _LI_REACH_ERR in str(_e2):
+                    _log.warning("LinkedIn daily: approximateUniqueImpressions rejected, reach unavailable")
+                    payload = _linkedin_get(_url_safe, access_token=access_token, env=env)
+                else:
+                    raise
+        elif _reach_rejected:
+            _log.warning("LinkedIn daily: approximateUniqueImpressions rejected (%s)", _m1[:300])
+            try:
+                payload = _linkedin_get(_url_conv_only, access_token=access_token, env=env)
+                conversion_ok = True
+            except Exception as _e2:
+                if _LI_CONV_ERR in str(_e2):
+                    payload = _linkedin_get(_url_safe, access_token=access_token, env=env)
+                else:
+                    raise
+        else:
             raise
-        payload = _linkedin_get(fallback, access_token=access_token, env=env)
-        conversion_ok = False
 
     by_date: dict[str, dict[str, Any]] = {}
     for row in payload.get("elements") or []:
@@ -1014,9 +1093,10 @@ def fetch_daily_metrics(
         rec["spend"] += _parse_spend(row)
         rec["clicks"] += int(row.get("clicks") or 0)
         rec["impressions"] += int(row.get("impressions") or 0)
-        raw_reach = int(row.get("approximateUniqueImpressions") or 0)
-        if raw_reach > 0:
-            rec["reach"] = (rec["reach"] or 0) + raw_reach
+        if _daily_reach_ok:
+            raw_reach = int(row.get("approximateUniqueImpressions") or 0)
+            if raw_reach > 0:
+                rec["reach"] = (rec["reach"] or 0) + raw_reach
         if conversion_ok:
             rec["conversions"] += _parse_conversions(row)
             rec["conversion_value"] += _parse_conversion_value(row)
@@ -1284,12 +1364,18 @@ def account_performance(
     conversion_fields_supported = account_conversions_ok or campaign_conversions_ok
 
     account_ins = account_rows[0] if account_rows else {}
-    _li_acct_reach = int(account_ins.get("approximateUniqueImpressions") or 0)
+    _li_acct_reach = _fetch_account_reach_safe(
+        account_id_clean,
+        start=start,
+        end=end,
+        access_token=access_token,
+        env=env,
+    )
     totals = {
         "spend": _parse_spend(account_ins),
         "clicks": int(account_ins.get("clicks") or 0),
         "impressions": int(account_ins.get("impressions") or 0),
-        "reach": _li_acct_reach if _li_acct_reach > 0 else None,
+        "reach": _li_acct_reach,
         "conversions": _parse_conversions(account_ins) if conversion_fields_supported else 0.0,
         "conversion_value": (
             _parse_conversion_value(account_ins) if conversion_fields_supported else 0.0
@@ -1329,7 +1415,6 @@ def account_performance(
             if conversion_fields_supported
             else 0.0
         )
-        _camp_reach = int(sum(int(row.get("approximateUniqueImpressions") or 0) for row in matched))
         campaigns_out.append(
             {
                 "id": cid,
@@ -1341,7 +1426,7 @@ def account_performance(
                 "spend": spend,
                 "clicks": clicks,
                 "impressions": impressions,
-                "reach": _camp_reach if _camp_reach > 0 else None,
+                "reach": None,
                 "conversions": conversions,
             }
         )
