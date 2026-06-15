@@ -1099,7 +1099,7 @@ def render_settings_html(
         _connection_row(
             "ChatGPT / API key",
             auth["api_key"],
-            "API_KEY in Railway — protects /google-ads, /linkedin, /meta, /ga4 routes",
+            "API_KEY in Railway — required; protects /google-ads, /linkedin, /meta, /ga4, /indeed, /warehouse routes",
         ),
         _connection_row(
             "Legacy dashboard key",

@@ -41,6 +41,69 @@ from dashboard.renderers.tables_renderer import ga4_platform_reports as _ga4_pla
 from dashboard.utils.formatting import esc as _esc, json_for_html_script as _json_for_html_script
 from dashboard.utils.urls import settings_page_url as _settings_page_url
 
+def _preset_to_label(preset: str) -> str:
+    return {
+        "LAST_7_DAYS": "Last 7 days",
+        "LAST_30_DAYS": "Last 30 days",
+        "LAST_90_DAYS": "Last 90 days",
+        "LAST_180_DAYS": "Last 180 days",
+        "THIS_MONTH": "This month",
+        "LAST_MONTH": "Last month",
+    }.get((preset or "").upper(), "Last 30 days")
+
+
+_VR_PRESETS: tuple[tuple[str, str], ...] = (
+    ("LAST_7_DAYS", "Last 7 days"),
+    ("LAST_30_DAYS", "Last 30 days"),
+    ("LAST_90_DAYS", "Last 90 days"),
+    ("LAST_180_DAYS", "Last 180 days"),
+    ("THIS_MONTH", "This month"),
+    ("LAST_MONTH", "Last month"),
+)
+
+
+def _filter_snapshot_for_view(
+    snapshot: dict[str, Any],
+    vr_preset: str,
+) -> tuple[dict[str, Any], str]:
+    """Return (view_snapshot, notice). Filters daily_metrics to vr_preset bounds in memory.
+
+    Does not mutate snapshot. platform_totals and aggregated_paid_media are cleared so
+    downstream helpers recompute them from the filtered rows.
+    """
+    from dates_util import resolve_date_range
+
+    start, end, _ = resolve_date_range(vr_preset)
+    start_key = start.isoformat()
+    end_key = end.isoformat()
+
+    raw_daily: dict[str, Any] = snapshot.get("daily_metrics") or {}
+    filtered_daily: dict[str, list] = {
+        platform: [
+            row for row in (rows or [])
+            if start_key <= str(row.get("metric_date") or "")[:10] <= end_key
+        ]
+        for platform, rows in raw_daily.items()
+    }
+
+    snap_start = str((snapshot.get("date_range") or {}).get("start") or "")
+    notice = (
+        "Showing available stored data. Run a wider refresh to populate older dates."
+        if snap_start and start_key < snap_start
+        else ""
+    )
+
+    return (
+        {
+            **snapshot,
+            "daily_metrics": filtered_daily,
+            "platform_totals": {},
+            "aggregated_paid_media": None,
+        },
+        notice,
+    )
+
+
 def ga4_website_search_html(
     *,
     has_pages: bool,
@@ -120,6 +183,9 @@ def global_filters_bar_html(
     show_website_search: bool = False,
     date_range_label: str = "Last 30 days",
     segment_filter_label: str = "Business line",
+    view_range_preset: str = "LAST_30_DAYS",
+    view_range_form_action: str = "",
+    view_range_key_field: str = "",
 ) -> str:
     if (
         not show_segment_filters
@@ -152,12 +218,29 @@ def global_filters_bar_html(
             </div>"""
     date_range_column = ""
     if show_date_range_filter:
-        date_range_column = f"""
+        if view_range_form_action:
+            _vr_options = "".join(
+                f'<option value="{k}"{" selected" if k == view_range_preset else ""}>{v}</option>'
+                for k, v in _VR_PRESETS
+            )
+            date_range_column = f"""
+            <div class="filter-column">
+              <span class="filter-column-label">Date range</span>
+              <form method="get" action="{_esc(view_range_form_action)}" style="display:contents">
+                {view_range_key_field}
+                <select name="view_range" aria-label="Date range" onchange="this.form.submit()"
+                  style="cursor:pointer;font:inherit;font-size:0.82rem;padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text)">
+                  {_vr_options}
+                </select>
+              </form>
+            </div>"""
+        else:
+            date_range_column = f"""
             <div class="filter-column filter-column--locked">
               <span class="filter-column-label">Date range</span>
               <div class="filter-toggles filter-range-locked" role="group" aria-label="Date range">
                 <button type="button" class="filter-toggle filter-toggle--locked" disabled
-                  aria-disabled="true" title="Date range is fixed at the last 30 days">
+                  aria-disabled="true" title="Date range is fixed at {_esc(date_range_label)}">
                   <svg class="filter-lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                     stroke-width="2" aria-hidden="true">
                     <rect x="5" y="11" width="14" height="10" rx="2"/>
@@ -257,7 +340,7 @@ def campaign_explorer_content_html(
         )
     else:
         filter_note = "Use the channel filters at the top to narrow platforms — all are included by default."
-    empty_colspan = 9 + int(show_segment_filters) + int(show_product_line_column)
+    empty_colspan = 10 + int(show_segment_filters) + int(show_product_line_column)
     return f"""
             <section class="campaign-explorer-section" aria-label="Campaign performance">
               <div class="bl-summary" id="blSummary"></div>
@@ -277,6 +360,7 @@ def campaign_explorer_content_html(
                         <th class="sortable" data-sort="spend" scope="col" aria-sort="none">Spend<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="clicks" scope="col" aria-sort="none">Clicks<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="impressions" scope="col" aria-sort="none">Impressions<span class="sort-icon" aria-hidden="true"></span></th>
+                        <th class="sortable" data-sort="reach" scope="col" aria-sort="none" title="Platform-reported reach. Not deduplicated across platforms or days.">Reach<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="ctr" scope="col" aria-sort="none">CTR<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="conversions" scope="col" aria-sort="none">Conv.<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="cpc" scope="col" aria-sort="none">CPC<span class="sort-icon" aria-hidden="true"></span></th>
@@ -303,6 +387,7 @@ def render_penn_html(
     session_email: str | None = None,
     session_is_admin: bool = False,
     flash_message: str | None = None,
+    view_range: str | None = None,
 ) -> str:
     """use_session: refresh forms omit ?key= (cookie auth). access_key: legacy shared secret."""
     from dashboard.services.snapshot_metrics_service import (
@@ -366,6 +451,14 @@ def render_penn_html(
             """,
         )
 
+    # Filter daily_metrics to the selected view range in memory — no platform sync, no snapshot write.
+    from dashboard.utils.dates import WAREHOUSE_DATE_RANGES as _VR_VALID
+    _vr_preset = (view_range or "LAST_30_DAYS").strip().upper().replace("-", "_")
+    if _vr_preset not in _VR_VALID:
+        _vr_preset = "LAST_30_DAYS"
+    _original_daily_metrics = snapshot.get("daily_metrics") or {}
+    snapshot, _view_notice = _filter_snapshot_for_view(snapshot, _vr_preset)
+
     label = snapshot.get("label") or client_config.client_label(slug)
     client_slug = str(snapshot.get("client_key") or slug)
     try:
@@ -398,6 +491,12 @@ def render_penn_html(
     flash_html = ""
     if flash_message:
         flash_html = f'<div class="dash-flash">{_esc(flash_message)}</div>'
+    view_notice_html = (
+        f'<div class="dash-flash" style="background:#fff8e1;border-color:#e5c87a;color:#7a5900;">'
+        f"{_esc(_view_notice)}</div>"
+        if _view_notice
+        else ""
+    )
 
     chart_data = snapshot.get("daily_metrics") or {}
     dates_set: set[str] = set()
@@ -518,14 +617,26 @@ def render_penn_html(
         show_website=show_website_tab,
         show_campaigns=features.campaign_explorer,
     )
+    if use_session:
+        _vr_action = f"/dashboard/{slug}"
+        _vr_key_field = ""
+    elif access_key:
+        _vr_action = f"/dashboard/{slug}"
+        _vr_key_field = f'<input type="hidden" name="key" value="{_esc(access_key)}">'
+    else:
+        _vr_action = ""
+        _vr_key_field = ""
     filters_bar_html = global_filters_bar_html(
         show_segment_filters=show_segment_filters,
         show_product_line_filters=show_product_line_filters,
         show_channel_filters=bool(platform_catalog_list),
         show_date_range_filter=slug == "penn",
         show_website_search=show_website_tab and has_ga4_pages,
-        date_range_label="Last 30 days",
+        date_range_label=_preset_to_label(_vr_preset),
         segment_filter_label=seg_filter_label,
+        view_range_preset=_vr_preset,
+        view_range_form_action=_vr_action,
+        view_range_key_field=_vr_key_field,
     )
     campaign_explorer_html = campaign_explorer_content_html(
         show_segment_filters=show_segment_filters,
@@ -582,7 +693,7 @@ def render_penn_html(
                 )
         budget_pacing = _build_budget_pacing_payload(
             pacing_cfg,
-            snapshot_daily_metrics=chart_data,
+            snapshot_daily_metrics=_original_daily_metrics,
         )
         budget_pacing["platform_colors"] = {
             "all": theme.get("sidebar_from", "#0a2540"),
@@ -625,8 +736,15 @@ def render_penn_html(
 
     campaign_explorer_panel = ""
     if features.campaign_explorer:
+        _breakdown_scope_note = (
+            '<p class="table-note muted" style="padding:10px 22px 2px;margin:0;">'
+            "Campaign details reflect the full refreshed snapshot period — "
+            "they are not filtered by the date range selected above."
+            "</p>"
+        ) if slug == "penn" else ""
         campaign_explorer_panel = f"""
           <div id="view-campaigns" class="view-panel" role="tabpanel" hidden>
+            {_breakdown_scope_note}
             {campaign_explorer_html}
           </div>"""
 
@@ -2303,10 +2421,12 @@ def render_penn_html(
       <div class="dash-content">
         <div class="wrap">
           {flash_html}
+          {view_notice_html}
           {error_html}
 
           <div id="view-overview" class="view-panel active" role="tabpanel">
             {overview_paid_html}
+            <p class="table-note muted" style="padding:0 22px 10px;margin:0;font-size:0.82rem;">Reach is reported by platform and is not deduplicated across platforms. Google Ads daily reach is unavailable through the current API path.</p>
 
             <div class="cards">
               {_summary_cards_html(totals, summary_platform_ids)}
@@ -3980,6 +4100,7 @@ def render_penn_html(
       const impressions = r.impressions || 0;
       const conv = r.conversions || 0;
       const cpc = clicks ? fmtMoney(spend / clicks) : '—';
+      const reach = (r.reach != null && r.reach > 0) ? fmtInt(r.reach) : '—';
       const expandable = isExpandable(platform, level);
       const chevron = expandable
         ? '<span class="tree-chevron" aria-hidden="true">▸</span>'
@@ -4003,6 +4124,7 @@ def render_penn_html(
         <td class="num">${{fmtMoney(spend)}}</td>
         <td class="num">${{fmtInt(clicks)}}</td>
         <td class="num">${{fmtInt(impressions)}}</td>
+        <td class="num" title="Platform-reported reach. Not deduplicated across platforms or days.">${{reach}}</td>
         <td class="num">${{fmtPct(clicks, impressions)}}</td>
         <td class="num">${{fmtInt(conv)}}</td>
         <td class="num">${{cpc}}</td>

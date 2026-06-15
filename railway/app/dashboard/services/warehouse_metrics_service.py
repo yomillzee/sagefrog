@@ -16,10 +16,12 @@ from penn_config import PennDashboardConfig
 
 def totals_from_daily_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Account-level totals summed from metrics_daily rows."""
+    reach_sum = sum(int(r["reach"]) for r in rows if r.get("reach") is not None)
     return {
         "spend": sum(float(r.get("spend") or 0) for r in rows),
         "clicks": sum(int(r.get("clicks") or 0) for r in rows),
         "impressions": sum(int(r.get("impressions") or 0) for r in rows),
+        "reach": reach_sum if reach_sum > 0 else None,
         "conversions": sum(float(r.get("conversions") or 0) for r in rows),
     }
 
