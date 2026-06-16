@@ -28,7 +28,6 @@ SCHEMA_SQL_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_metrics_daily_lookup
       ON metrics_daily (source, account_id, metric_date DESC)
     """,
-    "ALTER TABLE metrics_daily ADD COLUMN IF NOT EXISTS reach BIGINT",
 ]
 
 
@@ -136,15 +135,14 @@ def upsert_metrics_daily_batch(
     written = 0
     sql = """
       INSERT INTO metrics_daily (
-        source, account_id, metric_date, spend, clicks, impressions, conversions, conversion_value, reach
-      ) VALUES (%s, %s, %s::date, %s, %s, %s, %s, %s, %s)
+        source, account_id, metric_date, spend, clicks, impressions, conversions, conversion_value
+      ) VALUES (%s, %s, %s::date, %s, %s, %s, %s, %s)
       ON CONFLICT (source, account_id, metric_date) DO UPDATE SET
         spend = EXCLUDED.spend,
         clicks = EXCLUDED.clicks,
         impressions = EXCLUDED.impressions,
         conversions = EXCLUDED.conversions,
         conversion_value = EXCLUDED.conversion_value,
-        reach = EXCLUDED.reach,
         synced_at = NOW()
     """
     with psycopg.connect(_get_db_url()) as conn:
@@ -152,7 +150,6 @@ def upsert_metrics_daily_batch(
             metric_date = row.get("metric_date") or row.get("metricDate")
             if not metric_date:
                 continue
-            reach_val = row.get("reach")
             conn.execute(
                 sql,
                 (
@@ -164,7 +161,6 @@ def upsert_metrics_daily_batch(
                     int(row.get("impressions") or 0),
                     float(row.get("conversions") or 0),
                     float(row.get("conversion_value") or row.get("conversionValue") or 0),
-                    int(reach_val) if reach_val is not None else None,
                 ),
             )
             written += 1
@@ -195,7 +191,7 @@ def query_metrics(
       SELECT source, account_id, metric_date::text AS metric_date,
              spend::float AS spend, clicks, impressions,
              conversions::float AS conversions, conversion_value::float AS conversion_value,
-             reach, synced_at::text AS synced_at
+             synced_at::text AS synced_at
       FROM metrics_daily {where}
       ORDER BY metric_date ASC, source, account_id
       LIMIT {lim}
@@ -247,7 +243,6 @@ def fill_date_gaps(
                     "impressions": 0,
                     "conversions": 0.0,
                     "conversion_value": 0.0,
-                    "reach": None,
                 }
             )
         cursor += timedelta(days=1)

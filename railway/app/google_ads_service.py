@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import date, timedelta
 from typing import Any
 
@@ -18,15 +17,6 @@ _log = logging.getLogger(__name__)
 
 _YOUTUBE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
 
-# Campaign types that support metrics.unique_users and
-# metrics.average_impression_frequency_per_user in the Google Ads API.
-# Search campaigns are explicitly excluded — never use impressions as a reach proxy there.
-_GOOGLE_REACH_ELIGIBLE_TYPES = frozenset(
-    {"DISPLAY", "VIDEO", "DISCOVERY", "DEMAND_GEN", "MULTI_CHANNEL"}
-)
-
-# Google Ads limits unique_users to date ranges of at most 92 days.
-_GOOGLE_REACH_DAYS_MAX = 92
 
 
 def build_client(env: GoogleAdsEnv | None = None) -> GoogleAdsClient:
@@ -438,7 +428,6 @@ def fetch_daily_metrics(
                 "spend": 0.0,
                 "clicks": 0,
                 "impressions": 0,
-                "reach": None,
                 "conversions": 0.0,
                 "conversion_value": 0.0,
             }
@@ -460,7 +449,6 @@ def fetch_daily_metrics(
                 "spend": 0.0,
                 "clicks": 0,
                 "impressions": 0,
-                "reach": None,
                 "conversions": 0.0,
                 "conversion_value": 0.0,
             }
@@ -508,7 +496,6 @@ def campaign_performance(
                 "spend": 0.0,
                 "clicks": 0,
                 "impressions": 0,
-                "reach": None,
                 "conversions": 0.0,
                 "conversion_value": 0.0,
             }
@@ -521,27 +508,12 @@ def campaign_performance(
 
     campaigns_out = sorted(by_campaign.values(), key=lambda item: item.get("spend", 0), reverse=True)
 
-    # Reach enrichment — separate from the core query above.
-    # unique_users is the reach metric for eligible campaign types only.
-    # Search campaigns always get reach=None.
-    reach_data = _fetch_campaign_reach_safe(
-        customer_id_clean, start=start, end=end, client=client
-    )
-    for camp in campaigns_out:
-        rd = reach_data.get(camp.get("id", ""))
-        camp["reach"] = rd["unique_users"] if rd else None
-
-    _reach_total: int | None = (
-        sum(c["reach"] for c in campaigns_out if c.get("reach")) or None
-    )
-
     totals = {
         "spend": sum(c["spend"] for c in campaigns_out),
         "clicks": sum(c["clicks"] for c in campaigns_out),
         "impressions": sum(c["impressions"] for c in campaigns_out),
         "conversions": sum(c["conversions"] for c in campaigns_out),
         "campaign_count": len(campaigns_out),
-        "reach": _reach_total,
     }
     return {
         "customer_id": customer_id_clean,
@@ -550,125 +522,6 @@ def campaign_performance(
         "totals": totals,
         "campaigns": campaigns_out,
     }
-
-
-def _fetch_campaign_reach_safe(
-    customer_id: str,
-    *,
-    start: date,
-    end: date,
-    client: GoogleAdsClient | None = None,
-) -> dict[str, dict[str, Any]]:
-    """
-    Fetch metrics.unique_users for eligible Google Ads campaign types.
-
-    Eligible types: DISPLAY, VIDEO, DISCOVERY, DEMAND_GEN, MULTI_CHANNEL (App).
-    Search campaigns are never included.
-
-    Date range must be <= 92 days (API restriction for unique_users).
-    Returns {} on any error — never breaks core reporting.
-
-    Return structure: {campaign_id: {"channel_type": str, "unique_users": int | None}}
-    Diagnostics logged at INFO; tokens/headers never logged.
-    """
-    days = (end - start).days + 1
-    if days > _GOOGLE_REACH_DAYS_MAX:
-        _log.info(
-            "Google Ads reach: date range %d days > %d-day limit, skipping",
-            days,
-            _GOOGLE_REACH_DAYS_MAX,
-        )
-        return {}
-
-    start_key = start.isoformat()
-    end_key = end.isoformat()
-
-    # Query all campaign types — unique_users is available for Search as well.
-    # Campaign type is still selected so diagnostics can log which types returned data.
-    query = f"""
-        SELECT
-          campaign.id,
-          campaign.advertising_channel_type,
-          metrics.unique_users
-        FROM campaign
-        WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
-    """
-
-    unique_users_rows = 0
-    zero_rows = 0
-
-    try:
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            future = ex.submit(search, customer_id, query, client=client)
-            try:
-                rows = future.result(timeout=15)
-            except FuturesTimeoutError:
-                _log.warning("Google Ads reach: query timed out after 15 s, skipping")
-                return {}
-        _log.info("Google Ads reach: query returned %d rows across all campaign types", len(rows))
-
-        per_campaign: dict[str, dict[str, Any]] = {}
-        for row in rows:
-            cid = str(_dig(row, "campaign", "id") or "").strip()
-            if not cid:
-                continue
-            channel_type = str(
-                _dig(row, "campaign", "advertising_channel_type") or ""
-            ).upper()
-
-            if cid not in per_campaign:
-                per_campaign[cid] = {"channel_type": channel_type, "unique_users": None}
-            rec = per_campaign[cid]
-
-            uu = _dig(row, "metrics", "unique_users")
-            if uu is not None:
-                uu_int = int(uu)
-                if uu_int > 0:
-                    if rec["unique_users"] is None or uu_int > rec["unique_users"]:
-                        rec["unique_users"] = uu_int
-                    unique_users_rows += 1
-                else:
-                    zero_rows += 1
-
-        by_type: dict[str, int] = {}
-        for rec in per_campaign.values():
-            ct = rec["channel_type"]
-            by_type[ct] = by_type.get(ct, 0) + (1 if rec["unique_users"] else 0)
-
-        _log.info(
-            "Google Ads reach diagnostics: unique_users_rows=%d, zero_rows=%d, "
-            "campaigns=%d, by_type=%s",
-            unique_users_rows,
-            zero_rows,
-            len(per_campaign),
-            by_type,
-        )
-        return per_campaign
-
-    except Exception as exc:
-        _log.warning("Google Ads reach enrichment failed: %s", str(exc)[:300])
-        return {}
-
-
-def fetch_account_reach_safe(
-    customer_id: str,
-    *,
-    start: date,
-    end: date,
-    client: GoogleAdsClient | None = None,
-) -> int | None:
-    """
-    Fetch period reach (unique_users) for the account across eligible campaign types.
-
-    Calls _fetch_campaign_reach_safe and sums per-campaign unique_users.
-    Returns None on error, no eligible campaigns, or date range > 92 days.
-    Safe to call independently of campaign_performance().
-    """
-    reach_data = _fetch_campaign_reach_safe(customer_id, start=start, end=end, client=client)
-    if not reach_data:
-        return None
-    total = sum(rd["unique_users"] for rd in reach_data.values() if rd.get("unique_users"))
-    return total if total > 0 else None
 
 
 def _accumulate_metrics(rec: dict[str, Any], row: dict[str, Any]) -> None:
@@ -1074,7 +927,6 @@ def adgroups_performance(
                 "spend": 0.0,
                 "clicks": 0,
                 "impressions": 0,
-                "reach": None,
                 "conversions": 0.0,
                 "conversion_value": 0.0,
             }
@@ -1164,7 +1016,6 @@ def ads_performance(
                 "spend": 0.0,
                 "clicks": 0,
                 "impressions": 0,
-                "reach": None,
                 "conversions": 0.0,
                 "conversion_value": 0.0,
             }
