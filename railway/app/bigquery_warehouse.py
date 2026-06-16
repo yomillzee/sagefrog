@@ -30,7 +30,6 @@ def _schema() -> list[Any]:
         bigquery.SchemaField("impressions", "INT64", mode="REQUIRED"),
         bigquery.SchemaField("conversions", "FLOAT64", mode="REQUIRED"),
         bigquery.SchemaField("conversion_value", "FLOAT64", mode="REQUIRED"),
-        bigquery.SchemaField("reach", "INT64"),
         bigquery.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"),
     ]
 
@@ -94,7 +93,6 @@ def mirror_metrics_daily_batch(source: str, account_id: str, rows: list[dict[str
         metric_date = row.get("metric_date") or row.get("metricDate")
         if not metric_date:
             continue
-        reach = row.get("reach")
         payload.append(
             {
                 "source": source_key,
@@ -105,7 +103,6 @@ def mirror_metrics_daily_batch(source: str, account_id: str, rows: list[dict[str
                 "impressions": int(row.get("impressions") or 0),
                 "conversions": float(row.get("conversions") or 0),
                 "conversion_value": float(row.get("conversion_value") or row.get("conversionValue") or 0),
-                "reach": int(reach) if reach is not None else None,
                 "synced_at": synced_at,
             }
         )
@@ -126,12 +123,11 @@ def mirror_metrics_daily_batch(source: str, account_id: str, rows: list[dict[str
       impressions = S.impressions,
       conversions = S.conversions,
       conversion_value = S.conversion_value,
-      reach = S.reach,
       synced_at = S.synced_at
     WHEN NOT MATCHED THEN INSERT (
-      source, account_id, metric_date, spend, clicks, impressions, conversions, conversion_value, reach, synced_at
+      source, account_id, metric_date, spend, clicks, impressions, conversions, conversion_value, synced_at
     ) VALUES (
-      S.source, S.account_id, S.metric_date, S.spend, S.clicks, S.impressions, S.conversions, S.conversion_value, S.reach, S.synced_at
+      S.source, S.account_id, S.metric_date, S.spend, S.clicks, S.impressions, S.conversions, S.conversion_value, S.synced_at
     )
     """
     try:

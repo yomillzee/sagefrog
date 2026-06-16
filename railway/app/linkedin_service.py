@@ -27,9 +27,6 @@ _CONVERSION_FIELDS = (
     "opens",
 )
 
-# LinkedIn limits approximateMemberReach (and the legacy approximateUniqueImpressions)
-# to non-demographic pivots and date ranges of at most 92 days.
-_LI_REACH_DAYS_MAX = 92
 
 
 def _normalize_account_id(account_id: str) -> str:
@@ -795,18 +792,10 @@ def campaign_groups_performance(
     conversion_fields_supported = account_conversions_ok or group_conversions_ok
 
     account_ins = account_rows[0] if account_rows else {}
-    _acct_reach = _fetch_account_reach_safe(
-        account_id_clean,
-        start=start,
-        end=end,
-        access_token=access_token,
-        env=env,
-    )
     totals = {
         "spend": _parse_spend(account_ins),
         "clicks": int(account_ins.get("clicks") or 0),
         "impressions": int(account_ins.get("impressions") or 0),
-        "reach": _acct_reach,
         "conversions": _parse_conversions(account_ins) if conversion_fields_supported else 0.0,
         "conversion_value": (
             _parse_conversion_value(account_ins) if conversion_fields_supported else 0.0
@@ -866,7 +855,6 @@ def campaign_groups_performance(
                 "spend": spend,
                 "clicks": clicks,
                 "impressions": impressions,
-                "reach": None,
                 "conversions": conversions,
             }
         )
@@ -967,119 +955,6 @@ def _fetch_analytics(
         return payload.get("elements") or [], False
 
 
-def _fetch_account_reach_safe(
-    account_id: str,
-    *,
-    start: date,
-    end: date,
-    access_token: str,
-    env: LinkedInEnv,
-) -> int | None:
-    """
-    Fetch period-total unique reach for the account.
-
-    Tries approximateMemberReach (current) first, then falls back to the legacy
-    approximateUniqueImpressions.  Returns None if both are unavailable or the
-    date range exceeds _LI_REACH_DAYS_MAX days.
-    """
-    days = (end - start).days + 1
-    if days > _LI_REACH_DAYS_MAX:
-        _log.info(
-            "LinkedIn account reach: date range %d days > %d-day limit, skipping",
-            days,
-            _LI_REACH_DAYS_MAX,
-        )
-        return None
-
-    for field in ("approximateMemberReach", "approximateUniqueImpressions"):
-        url = _analytics_url(
-            pivot="ACCOUNT",
-            account_id=account_id,
-            start=start,
-            end=end,
-            fields=field,
-        )
-        try:
-            payload = _linkedin_get(url, access_token=access_token, env=env, timeout=10.0)
-            elements = payload.get("elements") or []
-            if not elements:
-                _log.info("LinkedIn account reach: %s returned no elements", field)
-                return None
-            raw = int(elements[0].get(field) or 0)
-            _log.info("LinkedIn account reach: %s=%d", field, raw)
-            return raw if raw > 0 else None
-        except Exception as exc:
-            _log.warning(
-                "LinkedIn account reach: %s rejected (%s), trying next field",
-                field,
-                str(exc)[:200],
-            )
-
-    _log.info("LinkedIn account reach: approximateMemberReach and approximateUniqueImpressions both rejected")
-    return None
-
-
-def _fetch_daily_reach_safe(
-    account_id: str,
-    *,
-    start: date,
-    end: date,
-    access_token: str,
-    env: LinkedInEnv,
-) -> dict[str, int]:
-    """
-    Fetch per-day reach keyed by ISO date string.
-
-    Tries approximateMemberReach first (LinkedIn's current reach metric), then
-    falls back to the legacy approximateUniqueImpressions.  Returns an empty
-    dict if the date range exceeds _LI_REACH_DAYS_MAX or both fields are rejected.
-    Never raises — failures are logged and isolated from core metric reporting.
-    """
-    days = (end - start).days + 1
-    if days > _LI_REACH_DAYS_MAX:
-        _log.info(
-            "LinkedIn daily reach: date range %d days > %d-day limit, skipping",
-            days,
-            _LI_REACH_DAYS_MAX,
-        )
-        return {}
-
-    for field in ("approximateMemberReach", "approximateUniqueImpressions"):
-        url = _analytics_url(
-            pivot="ACCOUNT",
-            account_id=account_id,
-            start=start,
-            end=end,
-            time_granularity="DAILY",
-            fields=f"dateRange,{field}",
-        )
-        try:
-            payload = _linkedin_get(url, access_token=access_token, env=env, timeout=10.0)
-            elements = payload.get("elements") or []
-            _log.info("LinkedIn daily reach: %s returned %d elements", field, len(elements))
-            result: dict[str, int] = {}
-            for row in elements:
-                day = _date_from_analytics_row(row)
-                if not day:
-                    continue
-                val = int(row.get(field) or 0)
-                if val > 0:
-                    result[day.isoformat()] = val
-            return result
-        except Exception as exc:
-            _log.warning(
-                "LinkedIn daily reach: %s rejected (%s), trying next field",
-                field,
-                str(exc)[:200],
-            )
-
-    _log.info(
-        "LinkedIn daily reach: approximateMemberReach and approximateUniqueImpressions "
-        "both rejected — reach unavailable for this report"
-    )
-    return {}
-
-
 def fetch_daily_metrics(
     account_id: str,
     *,
@@ -1088,17 +963,12 @@ def fetch_daily_metrics(
     access_token: str | None = None,
     env: LinkedInEnv | None = None,
 ) -> list[dict[str, Any]]:
-    """Account-level metrics per day (for Postgres warehouse / metrics_daily).
-
-    Core spend/clicks/impressions/conversions are fetched in one isolated request.
-    Reach is fetched separately via _fetch_daily_reach_safe so that reach failures
-    can never break core metric reporting.
-    """
+    """Account-level metrics per day (for Postgres warehouse / metrics_daily)."""
     env = env or load_linkedin_env()
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
 
-    # Core metrics request — no reach field; two-URL fallback for conversions only.
+    # Two-URL fallback for conversions only.
     _url_with_conv = _analytics_url(
         pivot="ACCOUNT",
         account_id=account_id_clean,
@@ -1141,7 +1011,6 @@ def fetch_daily_metrics(
                 "spend": 0.0,
                 "clicks": 0,
                 "impressions": 0,
-                "reach": None,
                 "conversions": 0.0,
                 "conversion_value": 0.0,
             }
@@ -1152,18 +1021,6 @@ def fetch_daily_metrics(
         if conversion_ok:
             rec["conversions"] += _parse_conversions(row)
             rec["conversion_value"] += _parse_conversion_value(row)
-
-    # Dedicated reach request — completely isolated from core metrics above.
-    daily_reach = _fetch_daily_reach_safe(
-        account_id_clean,
-        start=start,
-        end=end,
-        access_token=access_token,
-        env=env,
-    )
-    for key, reach_val in daily_reach.items():
-        if key in by_date:
-            by_date[key]["reach"] = reach_val
 
     out: list[dict[str, Any]] = []
     cursor = start
@@ -1176,7 +1033,6 @@ def fetch_daily_metrics(
                 "spend": 0.0,
                 "clicks": 0,
                 "impressions": 0,
-                "reach": None,
                 "conversions": 0.0,
                 "conversion_value": 0.0,
             }
@@ -1370,7 +1226,6 @@ def creatives_performance(
             "spend": spend,
             "clicks": clicks,
             "impressions": impressions,
-            "reach": None,
             "conversions": conversions,
         }
         if meta:
@@ -1447,18 +1302,10 @@ def account_performance(
     conversion_fields_supported = account_conversions_ok or campaign_conversions_ok
 
     account_ins = account_rows[0] if account_rows else {}
-    _li_acct_reach = _fetch_account_reach_safe(
-        account_id_clean,
-        start=start,
-        end=end,
-        access_token=access_token,
-        env=env,
-    )
     totals = {
         "spend": _parse_spend(account_ins),
         "clicks": int(account_ins.get("clicks") or 0),
         "impressions": int(account_ins.get("impressions") or 0),
-        "reach": _li_acct_reach,
         "conversions": _parse_conversions(account_ins) if conversion_fields_supported else 0.0,
         "conversion_value": (
             _parse_conversion_value(account_ins) if conversion_fields_supported else 0.0
@@ -1509,7 +1356,6 @@ def account_performance(
                 "spend": spend,
                 "clicks": clicks,
                 "impressions": impressions,
-                "reach": None,
                 "conversions": conversions,
             }
         )
