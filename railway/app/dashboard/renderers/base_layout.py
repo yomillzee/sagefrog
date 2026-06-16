@@ -15,7 +15,6 @@ from dashboard.utils.urls import (
     files_page_url as _files_page_url,
     refresh_action_url as _refresh_action_url,
     settings_page_url as _settings_page_url,
-    time_tracking_page_url as _time_tracking_page_url,
 )
 
 def favicon_head_html() -> str:
@@ -139,7 +138,6 @@ def dash_top_header_html(
     session_is_admin: bool,
     session_email: str | None,
     show_files: bool,
-    show_time_tracking: bool | None = None,
 ) -> str:
     overview_url = _dashboard_page_url(
         client_slug=client_slug,
@@ -156,22 +154,6 @@ def dash_top_header_html(
         access_key=access_key,
         use_session=use_session,
     ) or "#"
-    time_tracking_url = _time_tracking_page_url(
-        client_slug=client_slug,
-        access_key=access_key,
-        use_session=use_session,
-    ) or "#"
-
-    try:
-        import oauth_store
-
-        harvest_connected = oauth_store.public_status("harvest").connected
-    except Exception:
-        harvest_connected = False
-    if show_time_tracking is None:
-        show_time_tracking = harvest_connected
-    else:
-        show_time_tracking = bool(show_time_tracking) and harvest_connected
 
     client_selector = topbar_client_selector_html(
         client_slug=client_slug,
@@ -194,13 +176,6 @@ def dash_top_header_html(
         '<circle cx="12" cy="12" r="3"/>'
         '</svg>'
     )
-    icon_time = (
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">'
-        '<circle cx="12" cy="12" r="9"/>'
-        '<path d="M12 7v5l3 2"/>'
-        '</svg>'
-    )
-
     files_btn = ""
     if show_files:
         files_active = active_nav in ("files", "insights-upload")
@@ -210,15 +185,6 @@ def dash_top_header_html(
             )
         else:
             files_btn = f'<a href="{files_url}" class="dash-top-btn" title="Files">{icon_files}</a>'
-
-    time_btn = ""
-    if show_time_tracking:
-        if active_nav == "time-tracking":
-            time_btn = (
-                f'<span class="dash-top-btn active" aria-current="page" title="Time Tracking">{icon_time}</span>'
-            )
-        else:
-            time_btn = f'<a href="{time_tracking_url}" class="dash-top-btn" title="Time Tracking">{icon_time}</a>'
 
     if active_nav == "settings":
         settings_btn = (
@@ -260,7 +226,6 @@ def dash_top_header_html(
         </div>
         <div class="dash-top-right">
           {client_selector}
-          {time_btn}
           {files_btn}
           {settings_btn}
           {account_html}

@@ -224,7 +224,6 @@ def patch_snapshot_from_config(cfg: PennDashboardConfig) -> None:
             "linkedin": cfg.linkedin_account_id,
             "meta": cfg.meta_account_id,
             "ga4_client_key": cfg.ga4_client_key,
-            "harvest_project_id": cfg.harvest_project_id,
         }
     )
     existing["label"] = cfg.label
@@ -257,7 +256,6 @@ def refresh_client_quick(
             "linkedin": cfg.linkedin_account_id,
             "meta": cfg.meta_account_id,
             "ga4_client_key": cfg.ga4_client_key,
-            "harvest_project_id": cfg.harvest_project_id,
         }
     )
 

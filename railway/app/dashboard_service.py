@@ -48,7 +48,6 @@ from dashboard.utils.urls import (
     insights_upload_page_url as _insights_upload_page_url,
     refresh_action_url as _refresh_action_url,
     settings_page_url as _settings_page_url,
-    time_tracking_page_url as _time_tracking_page_url,
 )
 
 # --- Pass 3 services (re-exported for backward compatibility) ---
@@ -109,9 +108,6 @@ from dashboard.renderers.files_renderer import (
     files_page_js as _files_page_js,
     render_files_page,
     render_insights_upload_page,
-    render_time_tracking_page,
-    time_tracking_page_css as _time_tracking_page_css,
-    time_tracking_page_js as _time_tracking_page_js,
 )
 from dashboard.renderers.settings_renderer import (
     format_insights_body_html as _format_insights_body_html,

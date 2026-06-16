@@ -21,7 +21,6 @@ FEATURE_KEYS: tuple[str, ...] = (
     "segment_filters",
     "product_line_filters",
     "organic_channel",
-    "time_tracking",
 )
 
 FEATURE_LABELS: dict[str, str] = {
@@ -33,7 +32,6 @@ FEATURE_LABELS: dict[str, str] = {
     "segment_filters": "Business line / region filters",
     "product_line_filters": "Product line filters",
     "organic_channel": "Organic channel (GA4)",
-    "time_tracking": "Time tracking page",
 }
 
 FEATURE_HINTS: dict[str, str] = {
@@ -45,7 +43,6 @@ FEATURE_HINTS: dict[str, str] = {
     "segment_filters": "Business line or region toggles on overview, campaigns, and website.",
     "product_line_filters": "Product line toggles (Nixon and similar profiles).",
     "organic_channel": "Organic sessions card and channel filter when GA4 is connected.",
-    "time_tracking": "Harvest billable hours link in the dashboard header.",
 }
 
 
@@ -59,7 +56,6 @@ class DashboardFeatures:
     segment_filters: bool = True
     product_line_filters: bool = True
     organic_channel: bool = True
-    time_tracking: bool = True
 
     def as_dict(self) -> dict[str, bool]:
         return {key: bool(getattr(self, key)) for key in FEATURE_KEYS}
@@ -109,7 +105,6 @@ def default_features(
         segment_filters=client_has_segment_filters(slug, **fk),
         product_line_filters=client_has_product_line_filters(slug, **fk),
         organic_channel=True,
-        time_tracking=True,
     )
 
 
@@ -178,7 +173,6 @@ def resolve_features(
         segment_filters=resolved.segment_filters and segment_ok,
         product_line_filters=resolved.product_line_filters and product_ok,
         organic_channel=resolved.organic_channel,
-        time_tracking=resolved.time_tracking,
     )
 
 

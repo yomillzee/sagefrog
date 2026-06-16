@@ -1,4 +1,4 @@
-"""Files browser, time tracking, and insight document routes."""
+"""Files browser and insight document routes."""
 
 from __future__ import annotations
 
@@ -27,54 +27,6 @@ from dashboard.routes.helpers import (
 
 router = APIRouter(include_in_schema=False)
 
-@router.get(
-    "/dashboard/{client_slug}/time-tracking",
-    summary="Client Harvest time tracking page",
-    response_class=HTMLResponse,
-    include_in_schema=False,
-)
-def dashboard_client_time_tracking_page(
-    client_slug: str,
-    request: Request,
-    key: str | None = None,
-    refresh: str | None = None,
-):
-    slug = validate_client_slug(client_slug)
-    force_refresh = (refresh or "").strip().lower() in ("1", "true", "yes")
-    flash = "Harvest data refreshed." if force_refresh else None
-
-    if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
-        if isinstance(auth, RedirectResponse):
-            return auth
-        try:
-            label = client_config.client_label(slug)
-        except ValueError:
-            label = slug.replace("-", " ").title()
-        return HTMLResponse(
-            dashboard_service.render_time_tracking_page(
-                client_slug=slug,
-                label=label,
-                force_refresh=force_refresh,
-                flash_message=flash,
-                **penn_html_session_kwargs(auth),
-            )
-        )
-
-    dashboard_service.verify_dashboard_key(key)
-    try:
-        label = client_config.client_label(slug)
-    except ValueError:
-        label = slug.replace("-", " ").title()
-    return HTMLResponse(
-        dashboard_service.render_time_tracking_page(
-            client_slug=slug,
-            label=label,
-            access_key=key,
-            force_refresh=force_refresh,
-            flash_message=flash,
-        )
-    )
 @router.get(
     "/dashboard/{client_slug}/files",
     summary="Client file sharing page",

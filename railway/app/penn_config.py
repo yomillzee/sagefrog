@@ -24,7 +24,6 @@ class PennDashboardConfig:
     linkedin_account_id: str | None
     meta_account_id: str | None
     ga4_client_key: str
-    harvest_project_id: str | None = None
     monthly_budget_usd: float | None = None
 
 
@@ -88,7 +87,6 @@ def load_penn_config() -> PennDashboardConfig:
     )
 
     label = _strip_env(str(data.get("label") or "")) or "Penn Community Bank"
-    harvest_project_id: str | None = _strip_env(str(data.get("harvest_project_id") or "")) or None
     monthly_budget_usd: float | None = None
 
     try:
@@ -106,8 +104,6 @@ def load_penn_config() -> PennDashboardConfig:
                 meta = row.meta_account_id
             if row.ga4_client_key:
                 ga4_key = row.ga4_client_key
-            if row.harvest_project_id:
-                harvest_project_id = row.harvest_project_id
             if row.monthly_budget_usd is not None:
                 monthly_budget_usd = row.monthly_budget_usd
     except Exception:
@@ -126,6 +122,5 @@ def load_penn_config() -> PennDashboardConfig:
         linkedin_account_id=linkedin or None,
         meta_account_id=meta or None,
         ga4_client_key=ga4_key,
-        harvest_project_id=harvest_project_id,
         monthly_budget_usd=monthly_budget_usd,
     )

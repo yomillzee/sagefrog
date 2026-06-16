@@ -114,7 +114,6 @@ def dashboard_client_settings_post(
     linkedin_account_id: str = Form(""),
     meta_account_id: str = Form(""),
     ga4_client_key: str = Form(""),
-    harvest_project_id: str = Form(""),
     monthly_budget_usd: str = Form(""),
     business_line_rules_text: str = Form("", alias="business_line_rules"),
     sidebar_from: str = Form(""),
@@ -137,7 +136,6 @@ def dashboard_client_settings_post(
     feature_segment_filters: str = Form(""),
     feature_product_line_filters: str = Form(""),
     feature_organic_channel: str = Form(""),
-    feature_time_tracking: str = Form(""),
 ):
     slug = validate_client_slug(client_slug)
     act = (action or "save").strip().lower()
@@ -209,7 +207,6 @@ def dashboard_client_settings_post(
                 linkedin_account_id=linkedin_account_id,
                 meta_account_id=meta_account_id,
                 ga4_client_key=ga4_client_key,
-                harvest_project_id=harvest_project_id,
                 updated_by=session_email or "dashboard_key",
             )
             budget = dashboard_service.parse_monthly_budget_input(monthly_budget_usd)
@@ -449,7 +446,6 @@ def dashboard_client_settings_post(
                     segment_filters=feature_segment_filters,
                     product_line_filters=feature_product_line_filters,
                     organic_channel=feature_organic_channel,
-                    time_tracking=feature_time_tracking,
                 ),
                 updated_by=session_email or "dashboard_key",
             )

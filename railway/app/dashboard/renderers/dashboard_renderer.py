@@ -602,7 +602,6 @@ def render_penn_html(
         session_is_admin=session_is_admin,
         session_email=session_email,
         show_files=docs.enabled(),
-        show_time_tracking=features.time_tracking,
     )
     ga4_pages_report = snapshot.get("ga4_pages")
     accounts = snapshot.get("accounts") or {}

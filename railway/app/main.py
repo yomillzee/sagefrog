@@ -1568,7 +1568,7 @@ def admin_home(
     )
     flash = msg
     if oauth_disconnected and not flash:
-        labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta", "harvest": "Harvest", "indeed": "Indeed"}
+        labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta", "indeed": "Indeed"}
         flash = f"{labels.get(oauth_disconnected, oauth_disconnected)} disconnected."
     return HTMLResponse(
         web_auth.render_admin_page(
