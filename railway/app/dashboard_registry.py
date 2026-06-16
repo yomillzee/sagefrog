@@ -251,7 +251,6 @@ def create_client(
         linkedin_account_id=None,
         meta_account_id=None,
         ga4_client_key=slug,
-        harvest_project_id=None,
         updated_by=created_by or "admin",
     )
     row = get_client(slug)

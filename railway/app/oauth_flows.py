@@ -11,11 +11,10 @@ from urllib.parse import urlencode
 import httpx
 
 import auth as google_auth
-import harvest_auth
 import linkedin_auth
 import meta_auth
 
-PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "harvest"})
+PLATFORMS = frozenset({"google_ads", "linkedin", "meta"})
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -26,9 +25,6 @@ LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 LINKEDIN_SCOPES = "r_ads r_ads_reporting r_organization_social"
 
 META_SCOPES = "ads_read,business_management"
-
-HARVEST_AUTH_URL = "https://id.getharvest.com/oauth2/authorize"
-HARVEST_TOKEN_URL = "https://id.getharvest.com/api/v2/oauth2/token"
 
 
 def public_base_url() -> str:
@@ -109,20 +105,6 @@ def connect_prerequisites(platform: str) -> dict[str, Any]:
             ],
             "note": "Connect stores the refresh token in Postgres.",
         }
-    if slug == "harvest":
-        summary = harvest_auth.env_summary()
-        return {
-            "ready": bool(summary.get("has_client_id") and summary.get("has_client_secret")),
-            "missing": [
-                label
-                for key, label in (
-                    ("has_client_id", "HARVEST_CLIENT_ID"),
-                    ("has_client_secret", "HARVEST_CLIENT_SECRET"),
-                )
-                if not summary.get(key)
-            ],
-            "note": "Connect stores the refresh token in Postgres for agency-wide time tracking.",
-        }
     summary = meta_auth.env_summary()
     return {
         "ready": bool(summary.get("has_app_id") and summary.get("has_app_secret")),
@@ -167,17 +149,6 @@ def build_authorize_url(platform: str, *, state: str) -> str:
             "scope": LINKEDIN_SCOPES,
         }
         return f"{LINKEDIN_AUTH_URL}?{urlencode(params)}"
-    if slug == "harvest":
-        client_id = harvest_auth._get_env(*harvest_auth._ENV_ALIASES["client_id"])
-        if not client_id:
-            raise RuntimeError("Set HARVEST_CLIENT_ID before connecting Harvest.")
-        params = {
-            "client_id": client_id,
-            "response_type": "code",
-            "redirect_uri": redirect_uri,
-            "state": state,
-        }
-        return f"{HARVEST_AUTH_URL}?{urlencode(params)}"
     env = meta_auth._get_env(*meta_auth._ENV_ALIASES["app_id"])
     api_version = meta_auth._get_env(*meta_auth._ENV_ALIASES["api_version"]) or "v21.0"
     if not env:
@@ -199,8 +170,6 @@ def exchange_code(platform: str, *, code: str) -> dict[str, Any]:
         return _exchange_google_code(code, redirect_uri=redirect_uri)
     if slug == "linkedin":
         return _exchange_linkedin_code(code, redirect_uri=redirect_uri)
-    if slug == "harvest":
-        return _exchange_harvest_code(code, redirect_uri=redirect_uri)
     return _exchange_meta_code(code, redirect_uri=redirect_uri)
 
 
@@ -264,43 +233,6 @@ def _exchange_linkedin_code(code: str, *, redirect_uri: str) -> dict[str, Any]:
         "access_token": data.get("access_token"),
         "token_expires_at": expires_at,
         "scopes": LINKEDIN_SCOPES,
-    }
-
-
-def _exchange_harvest_code(code: str, *, redirect_uri: str) -> dict[str, Any]:
-    import harvest_service
-
-    client_id = harvest_auth._get_required_env(*harvest_auth._ENV_ALIASES["client_id"])
-    client_secret = harvest_auth._get_required_env(*harvest_auth._ENV_ALIASES["client_secret"])
-    body = {
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": redirect_uri,
-        "client_id": client_id,
-        "client_secret": client_secret,
-    }
-    with httpx.Client(timeout=60.0) as client:
-        response = client.post(
-            HARVEST_TOKEN_URL,
-            data=body,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-    if response.status_code >= 400:
-        raise RuntimeError(f"Harvest token exchange failed ({response.status_code}): {response.text[:500]}")
-    data = response.json()
-    refresh = (data.get("refresh_token") or "").strip()
-    access = (data.get("access_token") or "").strip()
-    if not refresh:
-        raise RuntimeError("Harvest did not return a refresh token.")
-    expires_in = int(data.get("expires_in") or 0)
-    expires_at = datetime.now(tz=UTC) + timedelta(seconds=expires_in) if expires_in else None
-    metadata = harvest_service.fetch_accounts_for_oauth_metadata(access)
-    return {
-        "refresh_token": refresh,
-        "access_token": access,
-        "token_expires_at": expires_at,
-        "scopes": data.get("scope") or "",
-        "metadata": metadata,
     }
 
 

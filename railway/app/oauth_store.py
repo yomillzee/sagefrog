@@ -14,7 +14,7 @@ import psycopg
 
 import web_users
 
-PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "harvest"})
+PLATFORMS = frozenset({"google_ads", "linkedin", "meta"})
 
 SCHEMA_SQL_STATEMENTS = [
     """

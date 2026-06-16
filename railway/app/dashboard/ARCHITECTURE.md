@@ -11,7 +11,7 @@ dashboard/
     helpers.py             # Slug validation, session kwargs, files redirects
     settings_routes.py     # GET/POST /dashboard/{slug}/settings
     core_routes.py         # Dashboard HTML, refresh, insights, JSON, cron sync
-    files_routes.py        # Files browser, time tracking, insight documents
+    files_routes.py        # Files browser and insight documents
   services/                # (Pass 3) Refresh, warehouse sync, metrics loading — done
     refresh_service.py       # refresh_client, refresh_client_quick, save_penn_insights
     warehouse_metrics_service.py  # penn_sync_warehouses, daily metrics load, LinkedIn media
@@ -21,7 +21,7 @@ dashboard/
     cards_renderer.py      # Summary cards, hero metrics, budget pacing panel
     tables_renderer.py     # Drill-down platform tables, GA4 row cells
     settings_renderer.py   # Insights editor + overview card
-    files_renderer.py      # Files browser, time-tracking pages
+    files_renderer.py      # Files browser
     dashboard_renderer.py  # Main Penn dashboard (render_penn_html + tabs/filters)
   utils/                   # (Pass 1) Pure helpers — done
     formatting.py
@@ -51,7 +51,7 @@ dashboard/
 | `cards_renderer.py` | `summary_cards_html`, `summary_card`, `aggregated_card`, `budget_pacing_panel_html`, `ga4_paid_key_events`, `paid_ad_overview_metrics`, `paid_ad_overview_html` |
 | `tables_renderer.py` | `rows_for_display`, `GA4_TABLE_HEADERS`, `ga4_row_cells`, `drillable_table`, `entity_table`, `ga4_platform_reports`, `platform_breakdown_html`, `platform_site_impact_html` |
 | `settings_renderer.py` | `insights_from_snapshot`, `format_insights_body_html`, `insights_editor_html`, `insights_card_html` |
-| `files_renderer.py` | `files_breadcrumb_html`, `client_files_browser_html`, `files_page_css`, `files_page_js`, `render_files_page`, `render_insights_upload_page`, `time_tracking_page_css`, `time_tracking_page_js`, `render_time_tracking_page` |
+| `files_renderer.py` | `files_breadcrumb_html`, `client_files_browser_html`, `files_page_css`, `files_page_js`, `render_files_page`, `render_insights_upload_page` |
 | `dashboard_renderer.py` | `ga4_website_search_html`, `ga4_metrics_summary_html`, `ga4_website_content_html`, `ga4_pages_panel_html`, `global_filters_bar_html`, `campaign_explorer_content_html`, `business_line_merged_section_html`, **`render_penn_html`** |
 
 `dashboard_service.py` re-exports private renderer names with `_` aliases (e.g. `_drillable_table`) so `dashboard_settings.py` and internal code need no changes.
@@ -72,7 +72,7 @@ dashboard/
 |--------|--------|
 | `settings_routes.py` | `GET/POST /dashboard/{client_slug}/settings` |
 | `core_routes.py` | `GET /dashboard/{client_slug}`, `GET /dashboard/penn`, `POST /dashboard/{client_slug}/refresh`, `POST /dashboard/{client_slug}/insights`, `GET /dashboard/{client_slug}.json`, `POST /internal/sync-penn` |
-| `files_routes.py` | Files browser, time tracking, insight document/folder upload/download/delete/move |
+| `files_routes.py` | Files browser, insight document/folder upload/download/delete/move |
 | `helpers.py` | `validate_client_slug`, session kwargs, files flash redirects, JSON API helpers |
 
 OAuth routes (`/oauth/{platform}/*`) remain in `main.py` (admin tooling, not client dashboard).
@@ -86,7 +86,7 @@ OAuth routes (`/oauth/{platform}/*`) remain in `main.py` (admin tooling, not cli
 | Platform drill-down tables | `renderers/tables_renderer.py` |
 | Topbar, shell layout, refresh toolbar | `renderers/base_layout.py` |
 | Insights editor / card | `renderers/settings_renderer.py` |
-| Files browser, time tracking page | `renderers/files_renderer.py` |
+| Files browser | `renderers/files_renderer.py` |
 | Settings page body (theme, OAuth) | `dashboard_settings.py` (not moved yet) |
 | Refresh / sync behavior | `services/refresh_service.py` |
 | Platform API pulls, warehouse writes | `services/warehouse_metrics_service.py` |
