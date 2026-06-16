@@ -47,18 +47,28 @@ def internal_sync_penn(date_range: str = "LAST_30_DAYS") -> dict:
 def dashboard_penn_bq_test(
     request: Request,
     key: str | None = None,
-    days: int = 30,
+    view_range: str | None = None,
 ):
     if web_users.enabled():
         auth = web_auth.authenticate_dashboard(request, client_slug="penn-bq-test", key=key)
         if isinstance(auth, RedirectResponse):
             return auth
+        html_kw = penn_html_session_kwargs(auth)
+    else:
+        dashboard_service.verify_dashboard_key(key)
+        html_kw = {"access_key": key, "use_session": False}
 
     import bq_mart_service
-    from dashboard.renderers.bq_dashboard_renderer import render_bq_dashboard_html
 
-    payload = bq_mart_service.build_dashboard_payload(days=max(1, min(days, 180)))
-    return HTMLResponse(render_bq_dashboard_html(payload))
+    snapshot = bq_mart_service.build_snapshot(days=30)
+    return HTMLResponse(
+        dashboard_service.render_penn_html(
+            snapshot,
+            client_slug="penn-bq-test",
+            view_range=view_range,
+            **html_kw,
+        )
+    )
 
 
 @router.get(
