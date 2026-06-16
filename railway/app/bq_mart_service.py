@@ -1,6 +1,9 @@
 """BigQuery marketing mart reader for the Penn BQ Test dashboard.
 
-Reads from `fact_google_ads_campaign_daily` in the marketing_marts dataset.
+Reads from `fact_google_ads_campaign_daily` in the marketing_marts dataset
+and builds a snapshot dict that render_penn_html() can consume directly —
+giving Penn BQ Test the same Overview + Campaign Explorer template as other
+dashboards without touching the snapshot/refresh workflow.
 
 Required env vars (falls back to defaults if unset):
   BQ_MART_PROJECT_ID   — GCP project (default: penn-community-b-1699391543298)
@@ -13,7 +16,7 @@ Auth uses the same GCP_SERVICE_ACCOUNT_JSON / BQ_PROJECT_ID credentials as GA4.
 from __future__ import annotations
 
 import os
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import bigquery_service
@@ -37,7 +40,7 @@ def fetch_campaign_daily(*, days: int = 30) -> list[dict[str, Any]]:
     """Return per-campaign per-day rows for the past `days` days.
 
     Assumes the mart has columns: date, campaign_id, campaign_name,
-    spend (or cost), impressions, clicks, conversions.
+    spend, impressions, clicks, conversions.
     """
     table = _full_table()
     sql = f"""
@@ -57,33 +60,22 @@ def fetch_campaign_daily(*, days: int = 30) -> list[dict[str, Any]]:
     return bigquery_service.run_query(sql, project_id=_project_id(), max_rows=5000)
 
 
-def build_dashboard_payload(*, days: int = 30) -> dict[str, Any]:
-    """Query the mart and aggregate into a dashboard-ready payload.
+def build_snapshot(*, days: int = 30) -> dict[str, Any]:
+    """Query the mart and return a snapshot dict compatible with render_penn_html().
 
-    Returns:
-        {
-          "rows": [...],          # raw per-campaign-per-day rows
-          "totals": {...},        # spend/impressions/clicks/conversions summed
-          "by_date": {...},       # {date_str: {spend, impressions, clicks, conversions}}
-          "by_campaign": [...],   # [{campaign_id, campaign_name, spend, ...}] sorted by spend desc
-          "date_range": {"start": ..., "end": ..., "days": ...},
-          "row_count": int,
-          "error": str | None,
-        }
+    Produces:
+      daily_metrics.google  — account-level daily rows (aggregated across campaigns)
+      platform_totals.google — totals + campaign_count
+      breakdowns.google.campaign — one row per campaign (normalized for Campaign Explorer)
+      aggregated_paid_media  — cross-platform totals (Google-only here)
     """
     error: str | None = None
     rows: list[dict[str, Any]] = []
     try:
         rows = fetch_campaign_daily(days=days)
     except Exception as exc:
-        error = str(exc)[:500]
+        error = str(exc)[:600]
 
-    totals: dict[str, float] = {
-        "spend": 0.0,
-        "impressions": 0,
-        "clicks": 0,
-        "conversions": 0.0,
-    }
     by_date: dict[str, dict[str, Any]] = {}
     by_campaign: dict[str, dict[str, Any]] = {}
 
@@ -94,12 +86,7 @@ def build_dashboard_payload(*, days: int = 30) -> dict[str, Any]:
         clicks = int(row.get("clicks") or 0)
         conversions = float(row.get("conversions") or 0)
         cid = str(row.get("campaign_id") or "")
-        cname = str(row.get("campaign_name") or cid)
-
-        totals["spend"] += spend
-        totals["impressions"] += impressions
-        totals["clicks"] += clicks
-        totals["conversions"] += conversions
+        cname = str(row.get("campaign_name") or cid or "—")
 
         if d:
             day = by_date.setdefault(d, {"spend": 0.0, "impressions": 0, "clicks": 0, "conversions": 0.0})
@@ -121,23 +108,99 @@ def build_dashboard_payload(*, days: int = 30) -> dict[str, Any]:
             camp["impressions"] += impressions
             camp["clicks"] += clicks
             camp["conversions"] += conversions
-            if cname and not camp.get("campaign_name"):
+            if cname and cname != cid and not camp.get("campaign_name"):
                 camp["campaign_name"] = cname
 
-    sorted_campaigns = sorted(by_campaign.values(), key=lambda c: c["spend"], reverse=True)
+    # Account-level daily rows for the chart
+    daily_google: list[dict[str, Any]] = [
+        {
+            "metric_date": d,
+            "spend": v["spend"],
+            "impressions": v["impressions"],
+            "clicks": v["clicks"],
+            "conversions": v["conversions"],
+            "conversion_value": 0.0,
+        }
+        for d, v in sorted(by_date.items())
+    ]
+
+    # Campaign rows shaped like normalize_entity_row() output for Campaign Explorer
+    campaign_breakdowns: list[dict[str, Any]] = sorted(
+        [
+            {
+                "id": c["campaign_id"],
+                "name": c["campaign_name"],
+                "entity_level": "campaign",
+                "spend": c["spend"],
+                "clicks": c["clicks"],
+                "impressions": c["impressions"],
+                "conversions": c["conversions"],
+                "parent_id": "",
+                "parent_name": "",
+            }
+            for c in by_campaign.values()
+        ],
+        key=lambda r: r["spend"],
+        reverse=True,
+    )
+
+    total_spend = sum(v["spend"] for v in by_date.values())
+    total_impressions = sum(v["impressions"] for v in by_date.values())
+    total_clicks = sum(v["clicks"] for v in by_date.values())
+    total_conversions = sum(v["conversions"] for v in by_date.values())
+
+    platform_totals_google: dict[str, Any] = {
+        "spend": total_spend,
+        "clicks": total_clicks,
+        "impressions": total_impressions,
+        "conversions": total_conversions,
+        "campaign_count": len(by_campaign),
+    }
+
     end = date.today()
     start = end - timedelta(days=days - 1)
 
+    errors: dict[str, str] = {}
+    if error:
+        errors["bq_mart"] = error
+
     return {
-        "rows": rows,
-        "totals": totals,
-        "by_date": by_date,
-        "by_campaign": sorted_campaigns,
+        "client_key": "penn-bq-test",
+        "label": "Penn BQ Test",
         "date_range": {
             "start": start.isoformat(),
             "end": end.isoformat(),
-            "days": days,
+            "preset": "LAST_30_DAYS",
         },
-        "row_count": len(rows),
-        "error": error,
+        "refreshed_at": datetime.now(tz=UTC).isoformat(),
+        "accounts": {
+            "google": _project_id(),
+            "linkedin": None,
+            "meta": None,
+        },
+        "daily_metrics": {
+            "google": daily_google,
+        },
+        "platform_totals": {
+            "google": platform_totals_google,
+        },
+        "breakdowns": {
+            "google": {
+                "campaign": campaign_breakdowns,
+                "ad_group": [],
+                "ad": [],
+            },
+        },
+        "aggregated_paid_media": {
+            "spend": total_spend,
+            "clicks": total_clicks,
+            "impressions": total_impressions,
+            "conversions": total_conversions,
+        },
+        "business_line_campaigns": [],
+        "warehouse_sync": {},
+        "ga4_attribution": None,
+        "ga4_pages": None,
+        "errors": errors,
+        "refresh_mode": "bq_mart",
     }
