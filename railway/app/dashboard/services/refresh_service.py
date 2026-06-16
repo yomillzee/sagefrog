@@ -27,6 +27,7 @@ from dashboard.services.warehouse_metrics_service import (
     merge_linkedin_creative_media,
     penn_load_daily_metrics_from_warehouse,
     penn_sync_warehouses,
+    sync_campaign_daily,
     sync_meta,
 )
 
@@ -61,6 +62,7 @@ def refresh_client(
     breakdowns: dict[str, dict[str, list[dict[str, Any]]]] = {}
 
     ga4_account = penn_sync_warehouses(cfg, preset, payload)
+    sync_campaign_daily(cfg, preset, payload)
 
     if cfg.google_customer_id:
         try:
@@ -283,6 +285,7 @@ def refresh_client_quick(
         payload["insights"] = existing["insights"]
 
     ga4_account = penn_sync_warehouses(cfg, preset, payload)
+    sync_campaign_daily(cfg, preset, payload)
     penn_load_daily_metrics_from_warehouse(
         cfg,
         start=start,

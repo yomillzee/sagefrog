@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Any
 
+import bigquery_warehouse
 import ga4_warehouse_service
 import google_ads_service
 import linkedin_service
@@ -231,6 +232,65 @@ def merge_linkedin_creative_media(
             f"creative listing). Reconnect LinkedIn in Settings if this persists."
         )
     return None
+
+
+def sync_campaign_daily(
+    cfg: PennDashboardConfig,
+    preset: str,
+    payload: dict[str, Any],
+) -> None:
+    """Fetch per-campaign daily metrics from each ad API and write to campaign_daily."""
+    if not warehouse.enabled():
+        return
+    from dates_util import resolve_date_range
+
+    start, end, _ = resolve_date_range(preset)
+
+    for source, account_id, fetch_fn in (
+        ("google", cfg.google_customer_id, google_ads_service.fetch_campaign_daily_metrics),
+        ("linkedin", cfg.linkedin_account_id, linkedin_service.fetch_campaign_daily_metrics),
+        ("meta", cfg.meta_account_id, meta_service.fetch_campaign_daily_metrics),
+    ):
+        if not account_id:
+            continue
+        try:
+            rows = fetch_fn(account_id, start=start, end=end)
+            warehouse.upsert_campaign_daily_batch(source, account_id, rows)
+            try:
+                bigquery_warehouse.mirror_campaign_daily_batch(source, account_id, rows)
+            except Exception:
+                pass
+        except Exception as exc:
+            payload.setdefault("errors", {})[f"{source}_campaign_daily_sync"] = platform_error(exc)
+
+
+def load_campaign_daily_from_warehouse(
+    cfg: PennDashboardConfig,
+    *,
+    start: date,
+    end: date,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Return campaign totals for [start, end] keyed by {source: {campaign_id: metrics}}.
+
+    Returns {} if warehouse is not enabled or no data exists for the window.
+    """
+    if not warehouse.enabled():
+        return {}
+    result: dict[str, dict[str, dict[str, Any]]] = {}
+    for source, account_id in (
+        ("google", cfg.google_customer_id),
+        ("linkedin", cfg.linkedin_account_id),
+        ("meta", cfg.meta_account_id),
+    ):
+        if not account_id:
+            continue
+        try:
+            rows = warehouse.query_campaign_daily(source, account_id, start, end)
+            if rows:
+                result[source] = {r["campaign_id"]: r for r in rows}
+        except Exception:
+            pass
+    return result
 
 
 def sync_meta(trigger: str) -> dict[str, str]:

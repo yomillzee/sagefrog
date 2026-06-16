@@ -11,6 +11,7 @@ from uuid import uuid4
 _DEFAULT_LINKEDIN_PROJECT = "penn-community-b-1699391543298"
 _DEFAULT_LINKEDIN_DATASET = "linkedin_ads"
 _DEFAULT_TABLE = "metrics_daily"
+_DEFAULT_CAMPAIGN_TABLE = "campaign_daily"
 
 
 def _bigquery():
@@ -24,6 +25,23 @@ def _schema() -> list[Any]:
     return [
         bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("account_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("metric_date", "DATE", mode="REQUIRED"),
+        bigquery.SchemaField("spend", "FLOAT64", mode="REQUIRED"),
+        bigquery.SchemaField("clicks", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("impressions", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("conversions", "FLOAT64", mode="REQUIRED"),
+        bigquery.SchemaField("conversion_value", "FLOAT64", mode="REQUIRED"),
+        bigquery.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"),
+    ]
+
+
+def _campaign_daily_schema() -> list[Any]:
+    bigquery = _bigquery()
+    return [
+        bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("account_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("campaign_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("campaign_name", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("metric_date", "DATE", mode="REQUIRED"),
         bigquery.SchemaField("spend", "FLOAT64", mode="REQUIRED"),
         bigquery.SchemaField("clicks", "INT64", mode="REQUIRED"),
@@ -128,6 +146,74 @@ def mirror_metrics_daily_batch(source: str, account_id: str, rows: list[dict[str
       source, account_id, metric_date, spend, clicks, impressions, conversions, conversion_value, synced_at
     ) VALUES (
       S.source, S.account_id, S.metric_date, S.spend, S.clicks, S.impressions, S.conversions, S.conversion_value, S.synced_at
+    )
+    """
+    try:
+        client.query(merge_sql).result()
+    finally:
+        client.delete_table(temp_id, not_found_ok=True)
+    return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
+
+
+def mirror_campaign_daily_batch(source: str, account_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Mirror per-campaign daily rows to BigQuery campaign_daily table."""
+    if not rows or not enabled(source):
+        return {"enabled": False, "rows_upserted": 0, "table": None}
+
+    source_key = source.strip().lower()
+    account_id_clean = str(account_id).strip().split(":")[-1]
+    client, base_table = _target(source_key)
+    table_id = base_table.rsplit(".", 1)[0] + "." + _DEFAULT_CAMPAIGN_TABLE
+    bigquery = _bigquery()
+    dataset_ref = ".".join(table_id.split(".")[:2])
+    client.create_dataset(bigquery.Dataset(dataset_ref), exists_ok=True)
+    table = bigquery.Table(table_id, schema=_campaign_daily_schema())
+    table.time_partitioning = bigquery.TimePartitioning(field="metric_date")
+    table.clustering_fields = ["source", "account_id", "campaign_id"]
+    client.create_table(table, exists_ok=True)
+
+    synced_at = datetime.now(timezone.utc).isoformat()
+    payload = []
+    for row in rows:
+        metric_date = row.get("metric_date")
+        campaign_id = str(row.get("campaign_id") or "").strip()
+        if not metric_date or not campaign_id:
+            continue
+        payload.append({
+            "source": source_key,
+            "account_id": account_id_clean,
+            "campaign_id": campaign_id,
+            "campaign_name": str(row.get("campaign_name") or ""),
+            "metric_date": str(metric_date)[:10],
+            "spend": float(row.get("spend") or 0),
+            "clicks": int(row.get("clicks") or 0),
+            "impressions": int(row.get("impressions") or 0),
+            "conversions": float(row.get("conversions") or 0),
+            "conversion_value": float(row.get("conversion_value") or 0),
+            "synced_at": synced_at,
+        })
+    if not payload:
+        return {"enabled": True, "rows_upserted": 0, "table": table_id}
+
+    temp_id = f"{table_id}_staging_{uuid4().hex}"
+    job_config = bigquery.LoadJobConfig(schema=_campaign_daily_schema(), write_disposition="WRITE_TRUNCATE")
+    client.load_table_from_json(payload, temp_id, job_config=job_config).result()
+    merge_sql = f"""
+    MERGE `{table_id}` T
+    USING `{temp_id}` S
+    ON T.source = S.source AND T.account_id = S.account_id
+      AND T.campaign_id = S.campaign_id AND T.metric_date = S.metric_date
+    WHEN MATCHED THEN UPDATE SET
+      campaign_name = S.campaign_name,
+      spend = S.spend, clicks = S.clicks, impressions = S.impressions,
+      conversions = S.conversions, conversion_value = S.conversion_value,
+      synced_at = S.synced_at
+    WHEN NOT MATCHED THEN INSERT (
+      source, account_id, campaign_id, campaign_name, metric_date,
+      spend, clicks, impressions, conversions, conversion_value, synced_at
+    ) VALUES (
+      S.source, S.account_id, S.campaign_id, S.campaign_name, S.metric_date,
+      S.spend, S.clicks, S.impressions, S.conversions, S.conversion_value, S.synced_at
     )
     """
     try:
