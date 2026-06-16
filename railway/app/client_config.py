@@ -24,6 +24,13 @@ _BUILTIN_CLIENTS: dict[str, dict[str, Any]] = {
         "meta_account_id": "",
         "ga4_client_key": "nixon",
     },
+    "penn-bq-test": {
+        "label": "Penn BQ Test",
+        "google_customer_id": "",
+        "linkedin_account_id": "",
+        "meta_account_id": "",
+        "ga4_client_key": "",
+    },
 }
 
 

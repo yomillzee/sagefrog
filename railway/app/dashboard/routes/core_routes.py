@@ -39,6 +39,29 @@ def internal_sync_penn(date_range: str = "LAST_30_DAYS") -> dict:
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 @router.get(
+    "/dashboard/penn-bq-test",
+    summary="Penn BQ Test — BigQuery mart dashboard (HTML)",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def dashboard_penn_bq_test(
+    request: Request,
+    key: str | None = None,
+    days: int = 30,
+):
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug="penn-bq-test", key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+
+    import bq_mart_service
+    from dashboard.renderers.bq_dashboard_renderer import render_bq_dashboard_html
+
+    payload = bq_mart_service.build_dashboard_payload(days=max(1, min(days, 180)))
+    return HTMLResponse(render_bq_dashboard_html(payload))
+
+
+@router.get(
     "/dashboard/{client_slug}",
     summary="Client ads performance dashboard (HTML)",
     response_class=HTMLResponse,
