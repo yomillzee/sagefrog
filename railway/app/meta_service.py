@@ -362,6 +362,52 @@ def fetch_daily_metrics(
     return out
 
 
+def fetch_campaign_daily_metrics(
+    account_id: str,
+    *,
+    start: date,
+    end: date,
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+) -> list[dict[str, Any]]:
+    """Per-campaign daily metrics for warehouse storage.
+
+    Returns list of {campaign_id, campaign_name, metric_date, spend, clicks, impressions,
+    conversions, conversion_value}. One row per (campaign, day).
+    """
+    env = env or load_meta_env()
+    access_token = access_token or env.access_token
+    account_id_clean = _normalize_account_id(account_id)
+
+    rows = _graph_get_all(
+        f"/{_act_id(account_id_clean)}/insights",
+        access_token=access_token,
+        params={
+            "fields": _INSIGHT_FIELDS,
+            "time_range": _time_range(start, end),
+            "time_increment": 1,
+            "level": "campaign",
+            "limit": 500,
+        },
+        env=env,
+    )
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        metric_day = str(row.get("date_start") or "")[:10]
+        campaign_id = str(row.get("campaign_id") or "").strip()
+        if not metric_day or not campaign_id:
+            continue
+        parsed = _parse_insight_row(row)
+        out.append({
+            "campaign_id": campaign_id,
+            "campaign_name": str(row.get("campaign_name") or ""),
+            "metric_date": metric_day,
+            **parsed,
+        })
+    return out
+
+
 def sync_account_to_warehouse(
     account_id: str,
     *,

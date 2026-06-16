@@ -1041,6 +1041,85 @@ def fetch_daily_metrics(
     return out
 
 
+def fetch_campaign_daily_metrics(
+    account_id: str,
+    *,
+    start: date,
+    end: date,
+    access_token: str | None = None,
+    env: LinkedInEnv | None = None,
+) -> list[dict[str, Any]]:
+    """Per-campaign daily metrics for warehouse storage.
+
+    Returns list of {campaign_id, campaign_name, metric_date, spend, clicks, impressions,
+    conversions, conversion_value}. One row per (campaign, day).
+    """
+    env = env or load_linkedin_env()
+    access_token = access_token or refresh_access_token(env)["access_token"]
+    account_id_clean = _normalize_account_id(account_id)
+
+    _LI_CONV_ERR = 'Projected field "conversions"'
+    url_with_conv = _analytics_url(
+        pivot="CAMPAIGN",
+        account_id=account_id_clean,
+        start=start,
+        end=end,
+        time_granularity="DAILY",
+        fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,pivotValues,dateRange",
+    )
+    url_safe = _analytics_url(
+        pivot="CAMPAIGN",
+        account_id=account_id_clean,
+        start=start,
+        end=end,
+        time_granularity="DAILY",
+        fields="impressions,clicks,costInUsd,pivotValues,dateRange",
+    )
+    conversion_ok = False
+    try:
+        payload = _linkedin_get(url_with_conv, access_token=access_token, env=env)
+        conversion_ok = True
+    except Exception as _e:
+        if _LI_CONV_ERR in str(_e):
+            payload = _linkedin_get(url_safe, access_token=access_token, env=env)
+        else:
+            raise
+
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in payload.get("elements") or []:
+        day = _date_from_analytics_row(row)
+        if not day:
+            continue
+        cid = ""
+        for urn in row.get("pivotValues") or []:
+            cid = _campaign_id_from_pivot(str(urn))
+            if cid:
+                break
+        if not cid:
+            continue
+        key = (cid, day.isoformat())
+        if key not in by_key:
+            by_key[key] = {
+                "campaign_id": cid,
+                "campaign_name": "",
+                "metric_date": day.isoformat(),
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+            }
+        rec = by_key[key]
+        rec["spend"] += _parse_spend(row)
+        rec["clicks"] += int(row.get("clicks") or 0)
+        rec["impressions"] += int(row.get("impressions") or 0)
+        if conversion_ok:
+            rec["conversions"] += _parse_conversions(row)
+            rec["conversion_value"] += _parse_conversion_value(row)
+
+    return list(by_key.values())
+
+
 def sync_account_to_warehouse(
     account_id: str,
     *,

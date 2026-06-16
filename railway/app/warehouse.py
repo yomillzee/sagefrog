@@ -28,6 +28,27 @@ SCHEMA_SQL_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_metrics_daily_lookup
       ON metrics_daily (source, account_id, metric_date DESC)
     """,
+    """
+    CREATE TABLE IF NOT EXISTS campaign_daily (
+      id BIGSERIAL PRIMARY KEY,
+      source TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      campaign_id TEXT NOT NULL,
+      campaign_name TEXT NOT NULL DEFAULT '',
+      metric_date DATE NOT NULL,
+      spend NUMERIC(18,6) NOT NULL DEFAULT 0,
+      clicks BIGINT NOT NULL DEFAULT 0,
+      impressions BIGINT NOT NULL DEFAULT 0,
+      conversions NUMERIC(18,6) NOT NULL DEFAULT 0,
+      conversion_value NUMERIC(18,6) NOT NULL DEFAULT 0,
+      synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (source, account_id, campaign_id, metric_date)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_campaign_daily_lookup
+      ON campaign_daily (source, account_id, metric_date DESC)
+    """,
 ]
 
 
@@ -198,6 +219,90 @@ def query_metrics(
     """
     with psycopg.connect(_get_db_url()) as conn:
         cur = conn.execute(sql, params)
+        cols = [d.name for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def upsert_campaign_daily_batch(
+    source: str,
+    account_id: str,
+    rows: list[dict[str, Any]],
+) -> int:
+    """Insert or update per-campaign daily rows. Each row needs campaign_id + metric_date."""
+    if not enabled() or not rows:
+        return 0
+    ensure_schema()
+    account_id = str(account_id).strip()
+    source_key = _normalize_source(source)
+    written = 0
+    sql = """
+      INSERT INTO campaign_daily (
+        source, account_id, campaign_id, campaign_name, metric_date,
+        spend, clicks, impressions, conversions, conversion_value
+      ) VALUES (%s, %s, %s, %s, %s::date, %s, %s, %s, %s, %s)
+      ON CONFLICT (source, account_id, campaign_id, metric_date) DO UPDATE SET
+        campaign_name = EXCLUDED.campaign_name,
+        spend = EXCLUDED.spend,
+        clicks = EXCLUDED.clicks,
+        impressions = EXCLUDED.impressions,
+        conversions = EXCLUDED.conversions,
+        conversion_value = EXCLUDED.conversion_value,
+        synced_at = NOW()
+    """
+    with psycopg.connect(_get_db_url()) as conn:
+        for row in rows:
+            metric_date = row.get("metric_date")
+            campaign_id = str(row.get("campaign_id") or "").strip()
+            if not metric_date or not campaign_id:
+                continue
+            conn.execute(
+                sql,
+                (
+                    source_key,
+                    account_id,
+                    campaign_id,
+                    str(row.get("campaign_name") or ""),
+                    str(metric_date)[:10],
+                    float(row.get("spend") or 0),
+                    int(row.get("clicks") or 0),
+                    int(row.get("impressions") or 0),
+                    float(row.get("conversions") or 0),
+                    float(row.get("conversion_value") or 0),
+                ),
+            )
+            written += 1
+    return written
+
+
+def query_campaign_daily(
+    source: str,
+    account_id: str,
+    from_date: date,
+    to_date: date,
+) -> list[dict[str, Any]]:
+    """Return campaign totals aggregated over [from_date, to_date].
+
+    Each returned row: {campaign_id, campaign_name, spend, clicks, impressions, conversions, conversion_value}.
+    """
+    if not enabled():
+        return []
+    ensure_schema()
+    source_key = _normalize_source(source)
+    account_id_clean = str(account_id).strip().split(":")[-1]
+    sql = """
+      SELECT campaign_id, MAX(campaign_name) AS campaign_name,
+             SUM(spend)::float AS spend,
+             SUM(clicks) AS clicks,
+             SUM(impressions) AS impressions,
+             SUM(conversions)::float AS conversions,
+             SUM(conversion_value)::float AS conversion_value
+      FROM campaign_daily
+      WHERE source = %s AND account_id = %s
+        AND metric_date >= %s::date AND metric_date <= %s::date
+      GROUP BY campaign_id
+    """
+    with psycopg.connect(_get_db_url()) as conn:
+        cur = conn.execute(sql, (source_key, account_id_clean, from_date, to_date))
         cols = [d.name for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
