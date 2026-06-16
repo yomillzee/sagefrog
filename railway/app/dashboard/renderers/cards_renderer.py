@@ -178,7 +178,6 @@ def paid_ad_overview_metrics(
         "reported_cpa": (spend / conversions) if conversions else None,
         "verified_cpa": (spend / ga4_key_events) if ga4_key_events else None,
         "ga4_key_events": ga4_key_events,
-        "reach": aggregated.get("reach"),
     }
 
 
@@ -195,9 +194,6 @@ def paid_ad_overview_html(
         if ga4_events
         else "No paid GA4 TY events in range"
     )
-    reach = m.get("reach")
-    reach_val = _fmt_int(reach) if reach else "—"
-    reach_sub = "Platform-reported unique users" if reach else "—"
     return f"""
     <section class="paid-ad-overview" aria-label="Paid Ad Overview">
       <div class="paid-ad-metrics-grid">
@@ -240,11 +236,6 @@ def paid_ad_overview_html(
           <div class="ga4-metric-label">Verified CPA</div>
           <div class="ga4-metric-value" id="heroVerifiedCpa">{_fmt_cpa(m["spend"], ga4_events) if ga4_events else "—"}</div>
           <div class="ga4-metric-sub" id="heroVerifiedCpaSub">{verified_sub}</div>
-        </div>
-        <div class="ga4-metric-card">
-          <div class="ga4-metric-label">Reach</div>
-          <div class="ga4-metric-value" id="heroReach">{reach_val}</div>
-          <div class="ga4-metric-sub">{reach_sub}</div>
         </div>
       </div>
     </section>"""

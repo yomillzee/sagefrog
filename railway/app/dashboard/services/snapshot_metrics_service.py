@@ -130,24 +130,17 @@ def platforms_with_summary_data(
 
 def aggregated_paid_media(platform_totals: dict[str, Any]) -> dict[str, Any]:
     spend = clicks = impressions = conversions = 0.0
-    reach_total = 0
-    reach_available = False
     for key in ("google", "linkedin", "meta"):
         t = platform_totals.get(key) or {}
         spend += float(t.get("spend") or 0)
         clicks += int(t.get("clicks") or 0)
         impressions += int(t.get("impressions") or 0)
         conversions += float(t.get("conversions") or 0)
-        r = t.get("reach")
-        if r is not None and int(r) > 0:
-            reach_total += int(r)
-            reach_available = True
     return {
         "spend": spend,
         "clicks": int(clicks),
         "impressions": int(impressions),
         "conversions": conversions,
-        "reach": reach_total if reach_available else None,
     }
 
 

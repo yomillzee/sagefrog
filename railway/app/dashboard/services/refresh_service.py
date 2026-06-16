@@ -292,25 +292,6 @@ def refresh_client_quick(
         update_platform_totals=True,
     )
     load_organic_daily_metrics(cfg, start=start, end=end, payload=payload)
-
-    # Google reach comes from metrics.unique_users which is not stored in the
-    # warehouse — fetch it separately and patch platform_totals so the reach
-    # card reflects eligible Display/Video/Discovery/App campaigns.
-    if cfg.google_customer_id:
-        try:
-            g_reach = google_ads_service.fetch_account_reach_safe(
-                cfg.google_customer_id, start=start, end=end
-            )
-            if g_reach is not None:
-                pt = dict(payload.get("platform_totals") or {})
-                g = dict(pt.get("google") or {})
-                g["reach"] = g_reach
-                pt["google"] = g
-                payload["platform_totals"] = pt
-                payload["aggregated_paid_media"] = aggregated_paid_media(pt)
-        except Exception as exc:
-            payload["errors"]["google_reach"] = platform_error(exc)
-
     payload["sync_meta"] = sync_meta(sync_trigger)
 
     dashboard_snapshots.save_snapshot(cfg.client_key, payload)
