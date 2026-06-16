@@ -104,6 +104,33 @@ def _filter_snapshot_for_view(
     )
 
 
+def _patch_campaign_breakdowns(
+    breakdowns: dict[str, dict[str, list[dict[str, Any]]]],
+    campaign_daily: dict[str, dict[str, dict[str, Any]]],
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """Overlay campaign-level metrics with view-range warehouse values."""
+    if not campaign_daily:
+        return breakdowns
+    patched = dict(breakdowns)
+    for source, by_cid in campaign_daily.items():
+        src_data = patched.get(source)
+        if not src_data or "campaign" not in src_data:
+            continue
+        new_campaigns = []
+        for row in src_data["campaign"]:
+            cid = row.get("id") or ""
+            wh = by_cid.get(cid)
+            if wh:
+                row = dict(row)
+                row["spend"] = float(wh.get("spend") or 0)
+                row["clicks"] = int(wh.get("clicks") or 0)
+                row["impressions"] = int(wh.get("impressions") or 0)
+                row["conversions"] = float(wh.get("conversions") or 0)
+            new_campaigns.append(row)
+        patched[source] = {**src_data, "campaign": new_campaigns}
+    return patched
+
+
 def ga4_website_search_html(
     *,
     has_pages: bool,
@@ -457,6 +484,8 @@ def render_penn_html(
         _vr_preset = "LAST_30_DAYS"
     _original_daily_metrics = snapshot.get("daily_metrics") or {}
     snapshot, _view_notice = _filter_snapshot_for_view(snapshot, _vr_preset)
+    from dates_util import resolve_date_range as _resolve_vr
+    _vr_start, _vr_end, _ = _resolve_vr(_vr_preset)
 
     label = snapshot.get("label") or client_config.client_label(slug)
     client_slug = str(snapshot.get("client_key") or slug)
@@ -532,6 +561,13 @@ def render_penn_html(
     )
 
     breakdowns = _breakdowns_from_snapshot(snapshot)
+    if client_cfg and _vr_preset != preset:
+        try:
+            from dashboard.services.warehouse_metrics_service import load_campaign_daily_from_warehouse
+            _campaign_daily = load_campaign_daily_from_warehouse(client_cfg, start=_vr_start, end=_vr_end)
+            breakdowns = _patch_campaign_breakdowns(breakdowns, _campaign_daily)
+        except Exception:
+            pass
     accounts = accounts_early
     ga4_attr = snapshot.get("ga4_attribution")
     ga4_platforms = _ga4_platform_reports(ga4_attr)
@@ -734,12 +770,14 @@ def render_penn_html(
 
     campaign_explorer_panel = ""
     if features.campaign_explorer:
-        _breakdown_scope_note = (
-            '<p class="table-note muted" style="padding:10px 22px 2px;margin:0;">'
-            "Campaign details reflect the full refreshed snapshot period — "
-            "they are not filtered by the date range selected above."
-            "</p>"
-        ) if slug == "penn" else ""
+        _breakdown_scope_note = ""
+        if slug == "penn" and _vr_preset != preset:
+            _breakdown_scope_note = (
+                '<p class="table-note muted" style="padding:10px 22px 2px;margin:0;">'
+                "Campaign spend, clicks, impressions, and conversions reflect the selected date range. "
+                "Ad group and ad rows reflect the full refreshed snapshot period."
+                "</p>"
+            )
         campaign_explorer_panel = f"""
           <div id="view-campaigns" class="view-panel" role="tabpanel" hidden>
             {_breakdown_scope_note}

@@ -457,6 +457,62 @@ def fetch_daily_metrics(
     return out
 
 
+def fetch_campaign_daily_metrics(
+    customer_id: str,
+    *,
+    start: date,
+    end: date,
+    client: GoogleAdsClient | None = None,
+) -> list[dict[str, Any]]:
+    """Per-campaign daily metrics for warehouse storage.
+
+    Returns list of {campaign_id, campaign_name, metric_date, spend, clicks, impressions,
+    conversions, conversion_value}. One row per (campaign, day).
+    """
+    customer_id = str(customer_id).replace("-", "").strip()
+    start_key = start.isoformat()
+    end_key = end.isoformat()
+    query = f"""
+        SELECT
+          campaign.id,
+          campaign.name,
+          segments.date,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.conversions,
+          metrics.conversions_value,
+          metrics.cost_micros
+        FROM campaign
+        WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
+    """
+    rows = search(customer_id, query, client=client)
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        cid = str(_dig(row, "campaign", "id") or "").strip()
+        day = str(_dig(row, "segments", "date") or "").strip()
+        if not cid or not day:
+            continue
+        key = (cid, day)
+        if key not in by_key:
+            by_key[key] = {
+                "campaign_id": cid,
+                "campaign_name": _dig(row, "campaign", "name") or "",
+                "metric_date": day,
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+            }
+        rec = by_key[key]
+        rec["spend"] += int(_dig(row, "metrics", "cost_micros") or 0) / 1_000_000
+        rec["clicks"] += int(_dig(row, "metrics", "clicks") or 0)
+        rec["impressions"] += int(_dig(row, "metrics", "impressions") or 0)
+        rec["conversions"] += float(_dig(row, "metrics", "conversions") or 0)
+        rec["conversion_value"] += float(_dig(row, "metrics", "conversions_value") or 0)
+    return list(by_key.values())
+
+
 def campaign_performance(
     customer_id: str,
     *,
