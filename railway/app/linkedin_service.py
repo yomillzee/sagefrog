@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import re
 from datetime import date, timedelta
@@ -1206,13 +1207,32 @@ def sync_account_to_warehouse(
         env=env,
     )
     account_id_clean = _normalize_account_id(account_id)
-    written = warehouse.upsert_metrics_daily_batch("linkedin", account_id_clean, daily_rows)
-    coverage = warehouse.account_date_coverage("linkedin", account_id_clean)
+    def _write_postgres() -> tuple[int, dict[str, Any]]:
+        rows_written = warehouse.upsert_metrics_daily_batch("linkedin", account_id_clean, daily_rows)
+        return rows_written, warehouse.account_date_coverage("linkedin", account_id_clean)
+
+    def _write_bigquery() -> dict[str, Any]:
+        import bigquery_warehouse
+
+        return bigquery_warehouse.mirror_metrics_daily_batch("linkedin", account_id_clean, daily_rows)
+
+    bigquery_result: dict[str, Any] = {"enabled": False, "rows_upserted": 0, "table": None}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        postgres_future = executor.submit(_write_postgres)
+        bigquery_future = executor.submit(_write_bigquery)
+        written, coverage = postgres_future.result()
+        try:
+            bigquery_result = bigquery_future.result()
+        except Exception as exc:
+            _log.warning("LinkedIn BigQuery mirror failed: %s", str(exc)[:500])
+            bigquery_result = {"enabled": True, "rows_upserted": 0, "table": None, "error": str(exc)[:500]}
+
     return {
         "account_id": account_id_clean,
         "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
         "days_synced": written,
         "coverage": coverage,
+        "bigquery": bigquery_result,
     }
 
 
