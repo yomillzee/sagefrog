@@ -2425,7 +2425,6 @@ def render_penn_html(
 
           <div id="view-overview" class="view-panel active" role="tabpanel">
             {overview_paid_html}
-            <p class="table-note muted" style="padding:0 22px 10px;margin:0;font-size:0.82rem;">Reach is reported by platform and is not deduplicated across platforms. Google Ads daily reach is unavailable through the current API path.</p>
 
             <div class="cards">
               {_summary_cards_html(totals, summary_platform_ids)}
