@@ -376,7 +376,7 @@ def campaign_explorer_content_html(
                   <h2>Campaign performance</h2>
                   <span class="badge" id="blRowCount">0 rows</span>
                 </div>
-                <p class="table-note">{filter_note} LinkedIn rows start at campaign group (Campaign Manager “Campaign”); drill down to ad sets and ads. Google and Meta drill to ad groups/ad sets and ads.</p>
+                <p class=”table-note”>{filter_note} Expand a row to drill into ad groups and ads.</p>
                 <div class="table-wrap">
                   <table class="data-table" id="blTable" data-show-segment-filters="{'true' if show_segment_filters else 'false'}" data-show-product-line="{'true' if show_product_line_column else 'false'}" data-empty-colspan="{empty_colspan}">
                     <thead>

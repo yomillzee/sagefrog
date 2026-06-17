@@ -277,6 +277,7 @@ def platform_breakdown_html(
 
     linkedin = breakdowns.get("linkedin") or {}
     groups = linkedin.get("campaign_group") or []
+    li_campaigns = linkedin.get("campaign") or []
     if groups:
         parts.append(
             drillable_table(
@@ -288,12 +289,23 @@ def platform_breakdown_html(
                 ga4_by_campaign=ga4_index("linkedin"),
             )
         )
+    elif li_campaigns:
+        parts.append(
+            drillable_table(
+                "linkedin",
+                _platform_title_html("linkedin", "LinkedIn"),
+                li_campaigns,
+                entity_level="campaign",
+                site_footer=site_block("linkedin"),
+                ga4_by_campaign=ga4_index("linkedin"),
+            )
+        )
     else:
         parts.append(
             f"""
         <section class="panel platform-panel platform-linkedin">
           <div class="panel-head"><h2>{_platform_title_html("linkedin", "LinkedIn")}</h2></div>
-          <p class="muted">No campaign group data — click Refresh now.</p>
+          <p class="muted">No LinkedIn campaign data — click Refresh now.</p>
           {site_block("linkedin")}
         </section>
         """

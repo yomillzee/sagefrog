@@ -355,7 +355,7 @@ def _campaign_totals(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not cid:
             continue
         name = str(row.get("campaign_name") or cid)
-        item = by_id.setdefault(cid, {"id": cid, "name": name, "entity_level": "campaign_group", "campaign_id": cid, "campaign_name": name, "spend": 0.0, "clicks": 0, "impressions": 0, "conversions": 0.0, "reach": 0})
+        item = by_id.setdefault(cid, {"id": cid, "name": name, "entity_level": "campaign", "campaign_id": cid, "campaign_name": name, "spend": 0.0, "clicks": 0, "impressions": 0, "conversions": 0.0, "reach": 0})
         item["spend"] += float(row.get("spend") or 0)
         item["clicks"] += int(row.get("clicks") or 0)
         item["impressions"] += int(row.get("impressions") or 0)
@@ -395,7 +395,7 @@ def build_snapshot(*, cfg: PennDashboardConfig, start: date, end: date, preset: 
     platform_totals = {"linkedin": totals}
     breakdowns = {
         "linkedin": {
-            "campaign_group": campaigns,
+            "campaign_group": [],
             "campaign": campaigns,
             "creative": creative_rows,
         }
