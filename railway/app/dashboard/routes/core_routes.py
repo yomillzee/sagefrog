@@ -63,6 +63,7 @@ def dashboard_penn_bq_test(
         html_kw = {"access_key": key, "use_session": False}
 
     from dates_util import resolve_date_range
+    import bq_gsc_service
     import bq_linkedin_ads_service
     import bq_mart_service
     import client_config
@@ -150,6 +151,12 @@ def dashboard_penn_bq_test(
             "errors": {"penn_bq_test": message},
             "refresh_mode": "bigquery_linkedin",
         }
+    # GSC mart — runs independently so a paid-media failure doesn't suppress Search Console
+    try:
+        snapshot["gsc"] = bq_gsc_service.build_gsc_snapshot(start=start, end=end)
+    except Exception as _gsc_exc:
+        LOGGER.warning("Penn BQ Test GSC fetch failed: %s", _gsc_exc)
+        snapshot.setdefault("errors", {})["gsc"] = str(_gsc_exc)[:400]
     try:
         html = dashboard_service.render_penn_html(
             snapshot,

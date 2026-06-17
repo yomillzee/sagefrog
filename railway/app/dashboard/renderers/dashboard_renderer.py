@@ -784,6 +784,16 @@ def render_penn_html(
             {campaign_explorer_html}
           </div>"""
 
+    # GSC section — only rendered when snapshot carries gsc data (penn-bq-test only)
+    gsc_section_html = ""
+    _gsc_data = snapshot.get("gsc")
+    if _gsc_data:
+        from dashboard.renderers.gsc_renderer import GSC_CSS as _GSC_CSS
+        from dashboard.renderers.gsc_renderer import gsc_section_html as _render_gsc
+        gsc_section_html = _render_gsc(_gsc_data)
+    else:
+        _GSC_CSS = ""
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2441,6 +2451,7 @@ def render_penn_html(
       .global-filters-head .filter-status {{ text-align: left; }}
       .dash-content {{ padding: 18px 16px 40px; }}
     }}
+    {_GSC_CSS}
   </style>
 </head>
 <body>
@@ -2470,6 +2481,8 @@ def render_penn_html(
             {performance_trend_html}
 
             {budget_pacing_html}
+
+            {gsc_section_html}
           </div>
 
           {campaign_explorer_panel}
