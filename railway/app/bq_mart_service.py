@@ -86,12 +86,12 @@ def fetch_linkedin_campaign_daily(
     """Return per-campaign per-day rows (LinkedIn Ads mart)."""
     table = _linkedin_full_table()
     if start and end:
-        where_clause = f"metric_date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
+        where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
     else:
-        where_clause = f"metric_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(days)} DAY)"
+        where_clause = f"date >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(days)} DAY)"
     sql = f"""
     SELECT
-      CAST(metric_date AS STRING) AS metric_date,
+      CAST(date AS STRING) AS metric_date,
       CAST(campaign_id AS STRING) AS campaign_id,
       MAX(campaign_name) AS campaign_name,
       SUM(CAST(spend AS FLOAT64)) AS spend,

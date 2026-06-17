@@ -398,5 +398,10 @@ def rebuild_linkedin_campaign_daily_mart() -> dict[str, Any]:
       ON CAST(cd.account_id AS STRING) = CAST(c.account_id AS STRING)
      AND CAST(cd.campaign_id AS STRING) = CAST(c.campaign_id AS STRING)
     """
+    try:
+        if client.get_table(table_id).table_type == "VIEW":
+            return {"enabled": True, "table": table_id, "skipped": True, "reason": "target_is_view"}
+    except Exception:
+        pass
     client.query(sql).result()
     return {"enabled": True, "table": table_id}

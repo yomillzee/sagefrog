@@ -125,7 +125,7 @@ def campaign_daily_sql(*, start: date, end: date, account_id: str | None = None)
         account_filter = f"AND CAST(account_id AS STRING) = '{safe_account}'"
     return f"""
     SELECT
-      CAST(metric_date AS STRING) AS metric_date,
+      CAST(date AS STRING) AS metric_date,
       CAST(account_id AS STRING) AS account_id,
       CAST(campaign_id AS STRING) AS campaign_id,
       COALESCE(NULLIF(TRIM(CAST(campaign_name AS STRING)), ''), CAST(campaign_id AS STRING)) AS campaign_name,
@@ -140,10 +140,10 @@ def campaign_daily_sql(*, start: date, end: date, account_id: str | None = None)
       SAFE_DIVIDE(SUM(CAST(spend AS FLOAT64)), SUM(CAST(impressions AS FLOAT64))) * 1000 AS cpm,
       SAFE_DIVIDE(SUM(CAST(spend AS FLOAT64)), SUM(CAST(conversions AS FLOAT64))) AS cost_per_conversion
     FROM {_mart_table()}
-    WHERE metric_date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+    WHERE date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
       {account_filter}
-    GROUP BY metric_date, account_id, campaign_id, campaign_name
-    ORDER BY metric_date DESC, spend DESC
+    GROUP BY 1, 2, 3, 4
+    ORDER BY 1 DESC, spend DESC
     """
 
 
