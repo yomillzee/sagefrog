@@ -1344,6 +1344,28 @@ def render_settings_html(
             f"Date range: {dr.get('start', '')} → {dr.get('end', '')}\nLast refreshed: {refreshed} UTC"
         )
 
+    bq_mart_section = ""
+    if slug == "penn-bq-test":
+        try:
+            import bq_mart_service
+            bm = bq_mart_service.env_summary()
+            bq_mart_section = f"""
+    <section class="panel">
+      <h2>BigQuery Mart</h2>
+      <p class="muted">Tables queried for this dashboard. Override with env vars in Railway.</p>
+      <table class="status-table">
+        <thead><tr><th>Setting</th><th>Value</th><th>Env var</th></tr></thead>
+        <tbody>
+          <tr><td>Project</td><td class="mono">{_esc(bm["project_id"])}</td><td class="mono muted">BQ_MART_PROJECT_ID</td></tr>
+          <tr><td>Dataset</td><td class="mono">{_esc(bm["dataset_id"])}</td><td class="mono muted">BQ_MART_DATASET_ID</td></tr>
+          <tr><td>Google table</td><td class="mono">{_esc(bm["google_table"])}</td><td class="mono muted">BQ_MART_TABLE</td></tr>
+          <tr><td>LinkedIn table</td><td class="mono">{_esc(bm["linkedin_table"])}</td><td class="mono muted">BQ_MART_LINKEDIN_TABLE</td></tr>
+        </tbody>
+      </table>
+    </section>"""
+        except Exception:
+            pass
+
     content = f"""
     {notice}
     <section class="panel">
@@ -1363,6 +1385,7 @@ def render_settings_html(
       {refresh_block}
       <div class="toolbar">{test_btn}</div>
     </section>
+    {bq_mart_section}
     {advanced}
     """
 
