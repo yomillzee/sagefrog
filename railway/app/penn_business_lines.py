@@ -195,6 +195,15 @@ def _aggregate_linkedin_campaign_groups(platform_data: dict[str, Any]) -> list[d
     if not campaigns:
         return []
 
+    # If no campaign has a parent reference, they are already root-level rows
+    # (BQ mart data where campaigns are the top entity, not children of groups)
+    has_parents = any(
+        str(row.get("parent_id") or row.get("campaign_group_id") or "").strip()
+        for row in campaigns
+    )
+    if not has_parents:
+        return campaigns
+
     by_group: dict[str, dict[str, Any]] = {}
     for row in campaigns:
         gid = str(row.get("parent_id") or row.get("campaign_group_id") or "").strip()
