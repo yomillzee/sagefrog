@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
+import logging
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -19,6 +21,7 @@ from dashboard.routes.helpers import (
 from dashboard.utils.dates import WAREHOUSE_DATE_RANGES
 
 router = APIRouter(include_in_schema=False)
+LOGGER = logging.getLogger(__name__)
 
 @router.post(
     "/internal/sync-penn",
@@ -58,9 +61,43 @@ def dashboard_penn_bq_test(
         dashboard_service.verify_dashboard_key(key)
         html_kw = {"access_key": key, "use_session": False}
 
-    import bq_mart_service
+    from dates_util import resolve_date_range
+    import bq_linkedin_ads_service
+    import client_config
+    from dashboard.utils.formatting import platform_error
 
-    snapshot = bq_mart_service.build_snapshot(days=30)
+    cfg = client_config.load_client_config("penn-bq-test")
+    linkedin_source = (cfg.platform_sources or {}).get("linkedin")
+    if linkedin_source != "bigquery":
+        raise HTTPException(status_code=500, detail="Penn BQ Test is not configured for LinkedIn BigQuery.")
+    start, end, preset = resolve_date_range(view_range or "LAST_30_DAYS")
+    LOGGER.info("LinkedIn source: BigQuery.")
+    try:
+        snapshot = bq_linkedin_ads_service.build_snapshot(
+            cfg=cfg,
+            start=start,
+            end=end,
+            preset=preset,
+        )
+    except Exception as exc:
+        message = f"Penn BQ Test LinkedIn BigQuery query failed: {platform_error(exc)}"
+        snapshot = {
+            "client_key": "penn-bq-test",
+            "label": cfg.label,
+            "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
+            "accounts": {"google": None, "linkedin": cfg.linkedin_account_id, "meta": None},
+            "data_sources": {"linkedin": "bigquery"},
+            "daily_metrics": {},
+            "platform_totals": {},
+            "breakdowns": {},
+            "aggregated_paid_media": {},
+            "business_line_campaigns": [],
+            "warehouse_sync": {},
+            "ga4_attribution": None,
+            "ga4_pages": None,
+            "errors": {"linkedin_bigquery": message},
+            "refresh_mode": "bigquery_linkedin",
+        }
     return HTMLResponse(
         dashboard_service.render_penn_html(
             snapshot,
