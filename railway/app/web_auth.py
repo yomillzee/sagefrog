@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import html
 import os
 from dataclasses import dataclass
@@ -24,11 +25,10 @@ def session_secret() -> str:
     secret = (
         (os.getenv("AUTH_SESSION_SECRET") or "").strip()
         or (os.getenv("CRON_SECRET") or "").strip()
-        or (os.getenv("API_KEY") or "").strip()
     )
     if not secret:
         raise RuntimeError(
-            "Set AUTH_SESSION_SECRET (recommended) or CRON_SECRET/API_KEY for signed session cookies."
+            "Set AUTH_SESSION_SECRET (recommended) or CRON_SECRET for signed session cookies."
         )
     return secret
 
@@ -114,7 +114,7 @@ def legacy_dashboard_key_ok(key: str | None) -> bool:
     expected = configured_dashboard_secret()
     if not expected:
         return False
-    return bool(key and key.strip() == expected)
+    return bool(key and hmac.compare_digest(key.strip(), expected))
 
 
 def resolve_client_dashboard_user(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import os
 
 from fastapi import HTTPException, Security
@@ -47,7 +48,7 @@ async def require_api_key(
     elif x_api_key:
         token = x_api_key.strip()
 
-    if not token or token != expected:
+    if not token or not hmac.compare_digest(token, expected):
         raise HTTPException(
             status_code=401,
             detail=(

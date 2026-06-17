@@ -195,9 +195,9 @@ try:
             subject_email=boot.email,
             detail={"source": "AUTH_BOOTSTRAP_ADMIN_*"},
         )
-except Exception:
-    # If Postgres isn't attached (or is temporarily unavailable), the service should still run.
-    pass
+except Exception as _boot_exc:
+    import sys as _sys
+    print(f"WARNING: DB schema/bootstrap error at startup: {_boot_exc}", file=_sys.stderr)
 
 if web_users.enabled():
     try:
@@ -1466,9 +1466,8 @@ def login_page(request: Request, next: str | None = None, error: str | None = No
             detail="User login requires DATABASE_URL (Postgres).",
         )
     if web_auth.get_current_user(request):
-        target = (next or "/admin").strip() or "/admin"
-        return RedirectResponse(url=target, status_code=303)
-    target = (next or "/admin").strip() or "/admin"
+        return RedirectResponse(url=oauth_flows.validate_return_to(next), status_code=303)
+    target = oauth_flows.validate_return_to(next)
     ctx = audit_log.request_context(request)
     rl = login_rate_limit.check_login_allowed(ip=ctx.get("ip_address"))
     if not rl.allowed:
@@ -1518,9 +1517,7 @@ def login_submit(
         detail={"role": user.role, "client_slug": user.client_slug},
         **ctx,
     )
-    target = (next or "/admin").strip() or "/admin"
-    if not target.startswith("/"):
-        target = "/admin"
+    target = oauth_flows.validate_return_to(next)
     return RedirectResponse(url=target, status_code=303)
 
 

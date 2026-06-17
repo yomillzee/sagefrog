@@ -111,10 +111,12 @@ def record(
 
 
 def request_context(request) -> dict[str, str | None]:
-    client = getattr(request, "client", None)
-    ip = getattr(client, "host", None) if client else None
+    xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()[:45]
+    if not xff:
+        client = getattr(request, "client", None)
+        xff = getattr(client, "host", None) if client else None
     ua = (request.headers.get("user-agent") or "").strip()
-    return {"ip_address": ip, "user_agent": ua[:500] if ua else None}
+    return {"ip_address": xff or None, "user_agent": ua[:500] if ua else None}
 
 
 def list_recent(*, limit: int = 100) -> list[dict[str, Any]]:

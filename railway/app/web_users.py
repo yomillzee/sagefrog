@@ -163,16 +163,17 @@ def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
     if not enabled():
         return []
     ensure_schema()
-    clause = "" if include_inactive else "WHERE is_active = TRUE"
     with psycopg.connect(_get_db_url()) as conn:
-        rows = conn.execute(
-            f"""
-            SELECT id, email, role, client_slug, is_active, created_at
-            FROM web_users
-            {clause}
-            ORDER BY role DESC, LOWER(email)
-            """
-        ).fetchall()
+        if include_inactive:
+            rows = conn.execute(
+                "SELECT id, email, role, client_slug, is_active, created_at "
+                "FROM web_users ORDER BY role DESC, LOWER(email)"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, email, role, client_slug, is_active, created_at "
+                "FROM web_users WHERE is_active = TRUE ORDER BY role DESC, LOWER(email)"
+            ).fetchall()
     out: list[dict[str, Any]] = []
     for row in rows:
         out.append(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import os
 
 from fastapi import HTTPException, Security
@@ -22,5 +23,5 @@ async def require_cron_secret(x_cron_secret: str | None = Security(_cron_header)
             status_code=503,
             detail="CRON_SECRET is not configured on the server.",
         )
-    if not x_cron_secret or x_cron_secret.strip() != expected:
+    if not x_cron_secret or not hmac.compare_digest(x_cron_secret.strip(), expected):
         raise HTTPException(status_code=401, detail="Invalid or missing X-Cron-Secret header.")
