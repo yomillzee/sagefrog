@@ -305,6 +305,111 @@ def refresh_penn_quick(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = 
     return refresh_client_quick(client_slug="penn", date_range=date_range, sync_trigger=sync_trigger)
 
 
+def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = "manual_full") -> dict[str, Any]:
+    """Run all BQ queries for Penn BQ Test and save to Postgres snapshot cache."""
+    import bq_gsc_service
+    import bq_linkedin_ads_service
+    import bq_mart_service
+    import penn_config
+    from concurrent.futures import ThreadPoolExecutor
+    from dashboard.utils.formatting import platform_error
+
+    start, end, preset = resolve_date_range(date_range)
+    cfg = client_config.load_client_config("penn-bq-test")
+    penn_cfg = penn_config.load_penn_config()
+    linkedin_account_id = cfg.linkedin_account_id or penn_cfg.linkedin_account_id
+
+    # Start GSC in background while paid media queries run
+    _gsc_executor = ThreadPoolExecutor(max_workers=1)
+    _gsc_fut = _gsc_executor.submit(bq_gsc_service.build_gsc_snapshot, start=start, end=end)
+
+    try:
+        snapshot = bq_mart_service.build_snapshot(start=start, end=end, preset=preset)
+        snapshot["label"] = cfg.label
+        snapshot["date_range"] = {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "preset": preset,
+        }
+        snapshot.setdefault("accounts", {})["linkedin"] = linkedin_account_id
+        snapshot.setdefault("data_sources", {})["google"] = "bigquery"
+        try:
+            metadata_sync = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(
+                account_id=linkedin_account_id,
+                start=start,
+                end=end,
+            )
+            snapshot.setdefault("warehouse_sync", {})["linkedin_campaign_metadata"] = metadata_sync
+
+            linkedin_snapshot = bq_linkedin_ads_service.build_snapshot(
+                cfg=penn_cfg,
+                start=start,
+                end=end,
+                preset=preset,
+            )
+            linkedin_daily = (linkedin_snapshot.get("daily_metrics") or {}).get("linkedin", [])
+            linkedin_totals = (linkedin_snapshot.get("platform_totals") or {}).get("linkedin", {})
+            linkedin_breakdowns = (linkedin_snapshot.get("breakdowns") or {}).get("linkedin", {})
+
+            snapshot.setdefault("daily_metrics", {})["linkedin"] = linkedin_daily
+            snapshot.setdefault("platform_totals", {})["linkedin"] = linkedin_totals
+            snapshot.setdefault("breakdowns", {})["linkedin"] = linkedin_breakdowns
+            snapshot.setdefault("data_sources", {})["linkedin"] = "bigquery"
+            snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = "postgres"
+            snapshot["creative_metadata"] = linkedin_snapshot.get("creative_metadata") or {
+                "source": "postgres",
+                "merged_rows": 0,
+            }
+        except Exception as exc:
+            message = f"Penn BQ Test LinkedIn BigQuery query failed: {platform_error(exc)}"
+            snapshot.setdefault("errors", {})["linkedin_bigquery"] = message
+            snapshot.setdefault("data_sources", {})["linkedin"] = "bigquery"
+            snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = "postgres"
+            snapshot.setdefault("creative_metadata", {"source": "postgres", "merged_rows": 0})
+
+        from dashboard.services.snapshot_metrics_service import aggregated_paid_media
+        snapshot["aggregated_paid_media"] = aggregated_paid_media(snapshot.get("platform_totals") or {})
+    except Exception as exc:
+        message = f"Penn BQ Test dashboard failed: {platform_error(exc)}"
+        snapshot = {
+            "client_key": "penn-bq-test",
+            "label": "Penn BQ Test",
+            "date_range": {
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "preset": preset,
+            },
+            "accounts": {"google": None, "linkedin": None, "meta": None},
+            "data_sources": {
+                "google": "bigquery",
+                "linkedin": "bigquery",
+                "linkedin_creative_metadata": "postgres",
+            },
+            "daily_metrics": {},
+            "platform_totals": {},
+            "breakdowns": {},
+            "aggregated_paid_media": {},
+            "business_line_campaigns": [],
+            "warehouse_sync": {},
+            "ga4_attribution": None,
+            "ga4_pages": None,
+            "creative_metadata": {"source": "postgres", "merged_rows": 0},
+            "errors": {"penn_bq_test": message},
+            "refresh_mode": "bigquery_linkedin",
+        }
+    finally:
+        try:
+            snapshot["gsc"] = _gsc_fut.result(timeout=60)
+        except Exception as gsc_exc:
+            snapshot.setdefault("errors", {})["gsc"] = str(gsc_exc)[:400]
+        finally:
+            _gsc_executor.shutdown(wait=False)
+
+    snapshot["sync_meta"] = sync_meta(sync_trigger)
+    dashboard_snapshots.save_snapshot("penn-bq-test", snapshot)
+    return snapshot
+
+
 def save_penn_insights(
     body: str,
     *,

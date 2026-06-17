@@ -19,10 +19,10 @@ from dashboard.routes.helpers import (
     validate_client_slug,
 )
 from dashboard.utils.dates import WAREHOUSE_DATE_RANGES
+from dashboard.utils.formatting import platform_error
 
 router = APIRouter(include_in_schema=False)
 LOGGER = logging.getLogger(__name__)
-PENN_BQ_TEST_LINKEDIN_SOURCE = "bigquery"
 
 @router.post(
     "/internal/sync-penn",
@@ -38,6 +38,26 @@ def internal_sync_penn(date_range: str = "LAST_30_DAYS") -> dict:
         )
     try:
         return dashboard_service.refresh_penn(date_range=preset, sync_trigger="cron")
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post(
+    "/internal/sync-penn-bq-test",
+    summary="Cron: refresh Penn BQ Test BigQuery snapshot",
+    dependencies=[Depends(require_cron_secret)],
+)
+def internal_sync_penn_bq_test(date_range: str = "LAST_30_DAYS") -> dict:
+    preset = (date_range or "LAST_30_DAYS").strip().upper().replace("-", "_")
+    if preset not in WAREHOUSE_DATE_RANGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid date_range. Use one of: {', '.join(sorted(WAREHOUSE_DATE_RANGES))}",
+        )
+    try:
+        return dashboard_service.refresh_penn_bq_test(date_range=preset, sync_trigger="cron")
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
@@ -62,107 +82,22 @@ def dashboard_penn_bq_test(
         dashboard_service.verify_dashboard_key(key)
         html_kw = {"access_key": key, "use_session": False}
 
-    from dates_util import resolve_date_range
-    import bq_gsc_service
-    import bq_linkedin_ads_service
-    import bq_mart_service
-    import client_config
-    import penn_config
-    from dashboard.services.snapshot_metrics_service import aggregated_paid_media
-    from dashboard.utils.formatting import platform_error
-
-    from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
-
-    start, end, preset = resolve_date_range(view_range or "LAST_30_DAYS")
-    LOGGER.info("LinkedIn source: BigQuery.")
-    _gsc_executor = _ThreadPoolExecutor(max_workers=1)
-    _gsc_fut = _gsc_executor.submit(bq_gsc_service.build_gsc_snapshot, start=start, end=end)
-    try:
-        cfg = client_config.load_client_config("penn-bq-test")
-        if PENN_BQ_TEST_LINKEDIN_SOURCE != "bigquery":
-            raise RuntimeError("Penn BQ Test is not configured for LinkedIn BigQuery.")
-        penn_cfg = penn_config.load_penn_config()
-        linkedin_account_id = cfg.linkedin_account_id or penn_cfg.linkedin_account_id
-        snapshot = bq_mart_service.build_snapshot(start=start, end=end, preset=preset)
-        snapshot["label"] = cfg.label
-        snapshot["date_range"] = {
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "preset": preset,
-        }
-        snapshot.setdefault("accounts", {})["linkedin"] = linkedin_account_id
-        snapshot.setdefault("data_sources", {})["google"] = "bigquery"
+    # Cache-first: read from Postgres snapshot; run live queries only on cache miss
+    snapshot = dashboard_snapshots.get_snapshot("penn-bq-test")
+    if not snapshot:
+        LOGGER.info("Penn BQ Test: no cached snapshot — running live BQ queries")
         try:
-            metadata_sync = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(
-                account_id=linkedin_account_id,
-                start=start,
-                end=end,
+            snapshot = dashboard_service.refresh_penn_bq_test(
+                date_range=view_range or "LAST_30_DAYS",
+                sync_trigger="cache_miss",
             )
-            snapshot.setdefault("warehouse_sync", {})["linkedin_campaign_metadata"] = metadata_sync
-
-            linkedin_snapshot = bq_linkedin_ads_service.build_snapshot(
-                cfg=penn_cfg,
-                start=start,
-                end=end,
-                preset=preset,
-            )
-            linkedin_daily = (linkedin_snapshot.get("daily_metrics") or {}).get("linkedin", [])
-            linkedin_totals = (linkedin_snapshot.get("platform_totals") or {}).get("linkedin", {})
-            linkedin_breakdowns = (linkedin_snapshot.get("breakdowns") or {}).get("linkedin", {})
-
-            snapshot.setdefault("daily_metrics", {})["linkedin"] = linkedin_daily
-            snapshot.setdefault("platform_totals", {})["linkedin"] = linkedin_totals
-            snapshot.setdefault("breakdowns", {})["linkedin"] = linkedin_breakdowns
-            snapshot.setdefault("data_sources", {})["linkedin"] = "bigquery"
-            snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = "postgres"
-            snapshot["creative_metadata"] = linkedin_snapshot.get("creative_metadata") or {
-                "source": "postgres",
-                "merged_rows": 0,
-            }
         except Exception as exc:
-            message = f"Penn BQ Test LinkedIn BigQuery query failed: {platform_error(exc)}"
-            snapshot.setdefault("errors", {})["linkedin_bigquery"] = message
-            snapshot.setdefault("data_sources", {})["linkedin"] = "bigquery"
-            snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = "postgres"
-            snapshot.setdefault("creative_metadata", {"source": "postgres", "merged_rows": 0})
-        snapshot["aggregated_paid_media"] = aggregated_paid_media(snapshot.get("platform_totals") or {})
-    except Exception as exc:
-        LOGGER.exception("Penn BQ Test dashboard failed before render")
-        message = f"Penn BQ Test dashboard failed: {platform_error(exc)}"
-        snapshot = {
-            "client_key": "penn-bq-test",
-            "label": "Penn BQ Test",
-            "date_range": {
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-                "preset": preset,
-            },
-            "accounts": {"google": None, "linkedin": None, "meta": None},
-            "data_sources": {
-                "google": "bigquery",
-                "linkedin": "bigquery",
-                "linkedin_creative_metadata": "postgres",
-            },
-            "daily_metrics": {},
-            "platform_totals": {},
-            "breakdowns": {},
-            "aggregated_paid_media": {},
-            "business_line_campaigns": [],
-            "warehouse_sync": {},
-            "ga4_attribution": None,
-            "ga4_pages": None,
-            "creative_metadata": {"source": "postgres", "merged_rows": 0},
-            "errors": {"penn_bq_test": message},
-            "refresh_mode": "bigquery_linkedin",
-        }
-    # GSC mart — was started in a background thread above; collect result now
-    try:
-        snapshot["gsc"] = _gsc_fut.result(timeout=60)
-    except Exception as _gsc_exc:
-        LOGGER.warning("Penn BQ Test GSC fetch failed: %s", _gsc_exc)
-        snapshot.setdefault("errors", {})["gsc"] = str(_gsc_exc)[:400]
-    finally:
-        _gsc_executor.shutdown(wait=False)
+            LOGGER.exception("Penn BQ Test dashboard failed before render")
+            snapshot = {
+                "client_key": "penn-bq-test",
+                "label": "Penn BQ Test",
+                "errors": {"penn_bq_test": f"Dashboard failed: {platform_error(exc)}"},
+            }
     try:
         html = dashboard_service.render_penn_html(
             snapshot,
@@ -234,6 +169,67 @@ def dashboard_client(
             snapshot, client_slug=slug, access_key=key, flash_message=flash, view_range=view_range
         )
     )
+@router.post(
+    "/dashboard/penn-bq-test/refresh",
+    summary="Refresh Penn BQ Test BigQuery snapshot (rate-limited)",
+    response_class=HTMLResponse,
+    response_model=None,
+    include_in_schema=False,
+)
+def dashboard_penn_bq_test_refresh(
+    request: Request,
+    key: str | None = None,
+    date_range: str = "LAST_30_DAYS",
+):
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug="penn-bq-test", key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        html_kw = penn_html_session_kwargs(auth)
+        access_key = auth.access_key
+        use_session = auth.use_session
+    else:
+        dashboard_service.verify_dashboard_key(key)
+        html_kw = {"access_key": key, "use_session": False}
+        access_key = key
+        use_session = False
+
+    snapshot = dashboard_snapshots.get_snapshot("penn-bq-test")
+    allowed, remaining = dashboard_service.refresh_cooldown_status(snapshot, quick=False)
+    if not allowed:
+        mins = max(1, (remaining + 59) // 60)
+        return HTMLResponse(
+            dashboard_service.render_penn_html(
+                snapshot,
+                client_slug="penn-bq-test",
+                flash_message=f"Please wait ~{mins} minutes before another refresh.",
+                **html_kw,
+            ),
+            status_code=429,
+        )
+    preset = (date_range or "LAST_30_DAYS").strip().upper().replace("-", "_")
+    if preset not in WAREHOUSE_DATE_RANGES:
+        preset = "LAST_30_DAYS"
+    try:
+        dashboard_service.refresh_penn_bq_test(date_range=preset, sync_trigger="manual_full")
+    except Exception as e:
+        return HTMLResponse(
+            dashboard_service.render_penn_html(
+                snapshot,
+                client_slug="penn-bq-test",
+                flash_message=f"Refresh failed: {str(e)[:200]}",
+                **html_kw,
+            ),
+            status_code=400,
+        )
+    if use_session:
+        return RedirectResponse(url="/dashboard/penn-bq-test?synced=1", status_code=303)
+    return RedirectResponse(
+        url=f"/dashboard/penn-bq-test?key={quote(access_key or '', safe='')}&synced=1",
+        status_code=303,
+    )
+
+
 @router.post(
     "/dashboard/{client_slug}/refresh",
     summary="Refresh client dashboard snapshot (rate-limited)",
