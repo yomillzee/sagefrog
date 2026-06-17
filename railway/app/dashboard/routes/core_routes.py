@@ -22,6 +22,7 @@ from dashboard.utils.dates import WAREHOUSE_DATE_RANGES
 
 router = APIRouter(include_in_schema=False)
 LOGGER = logging.getLogger(__name__)
+PENN_BQ_TEST_LINKEDIN_SOURCE = "bigquery"
 
 @router.post(
     "/internal/sync-penn",
@@ -69,8 +70,7 @@ def dashboard_penn_bq_test(
     from dashboard.utils.formatting import platform_error
 
     cfg = client_config.load_client_config("penn-bq-test")
-    linkedin_source = (cfg.platform_sources or {}).get("linkedin")
-    if linkedin_source != "bigquery":
+    if PENN_BQ_TEST_LINKEDIN_SOURCE != "bigquery":
         raise HTTPException(status_code=500, detail="Penn BQ Test is not configured for LinkedIn BigQuery.")
     start, end, preset = resolve_date_range(view_range or "LAST_30_DAYS")
     LOGGER.info("LinkedIn source: BigQuery.")

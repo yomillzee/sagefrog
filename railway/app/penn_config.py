@@ -25,7 +25,6 @@ class PennDashboardConfig:
     meta_account_id: str | None
     ga4_client_key: str
     monthly_budget_usd: float | None = None
-    platform_sources: dict[str, str] | None = None
 
 
 # Penn Community Bank — used when PENN_DASHBOARD / PENN_* env vars are unset.
@@ -89,7 +88,6 @@ def load_penn_config() -> PennDashboardConfig:
 
     label = _strip_env(str(data.get("label") or "")) or "Penn Community Bank"
     monthly_budget_usd: float | None = None
-    platform_sources: dict[str, str] | None = None
 
     try:
         import client_dashboard_config as cdc
@@ -125,5 +123,4 @@ def load_penn_config() -> PennDashboardConfig:
         meta_account_id=meta or None,
         ga4_client_key=ga4_key,
         monthly_budget_usd=monthly_budget_usd,
-        platform_sources={"linkedin": "postgres_api"},
     )
