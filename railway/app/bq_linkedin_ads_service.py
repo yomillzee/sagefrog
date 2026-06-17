@@ -35,6 +35,8 @@ _DEFAULT_PROJECT = "penn-community-b-1699391543298"
 _DEFAULT_DATASET = "linkedin_ads"
 _METRICS_TABLE = "metrics_daily"
 _CAMPAIGN_TABLE = "campaign_daily"
+_DEFAULT_MART_DATASET = "marketing_marts"
+_DEFAULT_CAMPAIGN_FACT_TABLE = "fact_linkedin_ads_campaign_daily"
 
 
 def _project_id() -> str:
@@ -47,6 +49,16 @@ def _dataset_id() -> str:
 
 def _table(table_name: str) -> str:
     return f"`{_project_id()}.{_dataset_id()}.{table_name}`"
+
+
+def _mart_table(table_name: str | None = None) -> str:
+    dataset = (os.getenv("BQ_MART_DATASET_ID") or _DEFAULT_MART_DATASET).strip()
+    table = (
+        table_name
+        or os.getenv("BQ_LINKEDIN_CAMPAIGN_FACT_TABLE")
+        or _DEFAULT_CAMPAIGN_FACT_TABLE
+    ).strip()
+    return f"`{_project_id()}.{dataset}.{table}`"
 
 
 def _safe_ratio(numerator: float, denominator: float, multiplier: float = 1.0) -> float:
@@ -106,12 +118,11 @@ def daily_metrics_sql(*, start: date, end: date, account_id: str | None = None) 
     """
 
 
-def campaign_daily_sql(*, start: date, end: date, account_id: str | None = None, include_reach: bool = True) -> str:
+def campaign_daily_sql(*, start: date, end: date, account_id: str | None = None) -> str:
     account_filter = ""
     if account_id:
         safe_account = str(account_id).replace("'", "\\'")
         account_filter = f"AND CAST(account_id AS STRING) = '{safe_account}'"
-    reach_expr = "SUM(CAST(COALESCE(reach, 0) AS INT64))" if include_reach else "0"
     return f"""
     SELECT
       CAST(metric_date AS STRING) AS metric_date,
@@ -123,12 +134,12 @@ def campaign_daily_sql(*, start: date, end: date, account_id: str | None = None,
       SUM(CAST(impressions AS INT64)) AS impressions,
       SUM(CAST(conversions AS FLOAT64)) AS conversions,
       SUM(CAST(conversion_value AS FLOAT64)) AS conversion_value,
-      {reach_expr} AS reach,
+      SUM(CAST(COALESCE(reach, 0) AS INT64)) AS reach,
       SAFE_DIVIDE(SUM(CAST(clicks AS FLOAT64)), SUM(CAST(impressions AS FLOAT64))) AS ctr,
       SAFE_DIVIDE(SUM(CAST(spend AS FLOAT64)), SUM(CAST(clicks AS FLOAT64))) AS cpc,
       SAFE_DIVIDE(SUM(CAST(spend AS FLOAT64)), SUM(CAST(impressions AS FLOAT64))) * 1000 AS cpm,
       SAFE_DIVIDE(SUM(CAST(spend AS FLOAT64)), SUM(CAST(conversions AS FLOAT64))) AS cost_per_conversion
-    FROM {_table(_CAMPAIGN_TABLE)}
+    FROM {_mart_table()}
     WHERE metric_date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
       {account_filter}
     GROUP BY metric_date, account_id, campaign_id, campaign_name
@@ -153,14 +164,98 @@ def _table_has_column(*, table_name: str, column_name: str, project_id: str) -> 
         return True
 
 
+def _campaign_ids_sql(*, start: date, end: date, account_id: str) -> str:
+    safe_account = str(account_id).replace("'", "\'")
+    return f"""
+    SELECT DISTINCT CAST(campaign_id AS STRING) AS campaign_id
+    FROM {_table(_CAMPAIGN_TABLE)}
+    WHERE metric_date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+      AND CAST(account_id AS STRING) = '{safe_account}'
+      AND campaign_id IS NOT NULL
+    """
+
+
+def _campaign_metadata_from_postgres(
+    *,
+    account_id: str,
+    start: date,
+    end: date,
+) -> dict[str, dict[str, Any]]:
+    try:
+        import warehouse
+
+        rows = warehouse.query_campaign_daily("linkedin", account_id, start, end)
+    except Exception:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        cid = str(row.get("campaign_id") or "").strip()
+        name = str(row.get("campaign_name") or "").strip()
+        if cid and name:
+            out[cid] = {
+                "source": "linkedin",
+                "account_id": str(account_id).strip().split(":")[-1],
+                "campaign_id": cid,
+                "campaign_name": name,
+                "campaign_status": "",
+                "campaign_group_id": "",
+                "campaign_group_name": "",
+            }
+    return out
+
+
+def sync_campaign_metadata_and_rebuild_mart(
+    *,
+    account_id: str | None,
+    start: date,
+    end: date,
+) -> dict[str, Any]:
+    """Populate linkedin_ads.campaigns and rebuild the LinkedIn campaign mart.
+
+    Uses existing Postgres campaign names first, then fetches missing metadata
+    from LinkedIn. This is only called by the Penn BQ test route.
+    """
+    if not account_id:
+        return {"enabled": False, "rows_upserted": 0, "reason": "missing_account_id"}
+    account_id_clean = str(account_id).strip().split(":")[-1]
+    project = _project_id()
+    id_rows = bigquery_service.run_query(
+        _campaign_ids_sql(start=start, end=end, account_id=account_id_clean),
+        project_id=project,
+        max_rows=10000,
+    )
+    campaign_ids = sorted({str(row.get("campaign_id") or "").strip() for row in id_rows if row.get("campaign_id")})
+    metadata_by_id = _campaign_metadata_from_postgres(
+        account_id=account_id_clean,
+        start=start,
+        end=end,
+    )
+    missing = [cid for cid in campaign_ids if cid not in metadata_by_id]
+    if missing:
+        import linkedin_service
+
+        for row in linkedin_service.fetch_campaign_metadata_rows(account_id_clean, missing):
+            cid = str(row.get("campaign_id") or "").strip()
+            if cid:
+                metadata_by_id[cid] = row
+
+    import bigquery_warehouse
+
+    mirror = bigquery_warehouse.mirror_linkedin_campaign_metadata(list(metadata_by_id.values()))
+    mart = bigquery_warehouse.rebuild_linkedin_campaign_daily_mart()
+    return {
+        "enabled": True,
+        "campaign_ids": len(campaign_ids),
+        "metadata_rows": len(metadata_by_id),
+        "missing_after_sync": len([cid for cid in campaign_ids if cid not in metadata_by_id]),
+        "bigquery": mirror,
+        "mart": mart,
+    }
+
+
 def fetch_linkedin_ads(*, start: date, end: date, account_id: str | None = None) -> dict[str, Any]:
     LOGGER.info("LinkedIn source: BigQuery.")
     project = _project_id()
-    campaign_has_reach = _table_has_column(
-        table_name=_CAMPAIGN_TABLE,
-        column_name="reach",
-        project_id=project,
-    )
     return {
         "account_summary": bigquery_service.run_query(
             account_summary_sql(start=start, end=end, account_id=account_id),
@@ -177,7 +272,6 @@ def fetch_linkedin_ads(*, start: date, end: date, account_id: str | None = None)
                 start=start,
                 end=end,
                 account_id=account_id,
-                include_reach=campaign_has_reach,
             ),
             project_id=project,
             max_rows=10000,
@@ -309,8 +403,6 @@ def build_snapshot(*, cfg: PennDashboardConfig, start: date, end: date, preset: 
             "creative": creative_rows,
         }
     }
-    platform_totals = {"linkedin": totals}
-    breakdowns = {"linkedin": {"campaign_group": campaigns, "campaign": campaigns, "creative": []}}
     return {
         "client_key": cfg.client_key,
         "label": cfg.label,
@@ -321,7 +413,6 @@ def build_snapshot(*, cfg: PennDashboardConfig, start: date, end: date, preset: 
             "linkedin": "bigquery",
             "linkedin_creative_metadata": "postgres",
         },
-        "data_sources": {"linkedin": "bigquery"},
         "daily_metrics": {"linkedin": daily},
         "platform_totals": platform_totals,
         "breakdowns": breakdowns,

@@ -66,6 +66,7 @@ def dashboard_penn_bq_test(
     import bq_linkedin_ads_service
     import bq_mart_service
     import client_config
+    import penn_config
     from dashboard.services.snapshot_metrics_service import aggregated_paid_media
     from dashboard.utils.formatting import platform_error
 
@@ -74,37 +75,34 @@ def dashboard_penn_bq_test(
         raise HTTPException(status_code=500, detail="Penn BQ Test is not configured for LinkedIn BigQuery.")
     start, end, preset = resolve_date_range(view_range or "LAST_30_DAYS")
     LOGGER.info("LinkedIn source: BigQuery.")
+    penn_cfg = penn_config.load_penn_config()
+    linkedin_account_id = cfg.linkedin_account_id or penn_cfg.linkedin_account_id
     snapshot = bq_mart_service.build_snapshot(start=start, end=end, preset=preset)
     snapshot["label"] = cfg.label
     snapshot["date_range"] = {"start": start.isoformat(), "end": end.isoformat(), "preset": preset}
+    snapshot.setdefault("accounts", {})["linkedin"] = linkedin_account_id
     snapshot.setdefault("data_sources", {})["google"] = "bigquery"
     try:
-        linkedin_snapshot = bq_linkedin_ads_service.build_snapshot(
-    import client_config
-    from dashboard.utils.formatting import platform_error
+        metadata_sync = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(
+            account_id=linkedin_account_id,
+            start=start,
+            end=end,
+        )
+        snapshot.setdefault("warehouse_sync", {})["linkedin_campaign_metadata"] = metadata_sync
 
-    cfg = client_config.load_client_config("penn-bq-test")
-    linkedin_source = (cfg.platform_sources or {}).get("linkedin")
-    if linkedin_source != "bigquery":
-        raise HTTPException(status_code=500, detail="Penn BQ Test is not configured for LinkedIn BigQuery.")
-    start, end, preset = resolve_date_range(view_range or "LAST_30_DAYS")
-    LOGGER.info("LinkedIn source: BigQuery.")
-    try:
-        snapshot = bq_linkedin_ads_service.build_snapshot(
-            cfg=cfg,
+        linkedin_snapshot = bq_linkedin_ads_service.build_snapshot(
+            cfg=penn_cfg,
             start=start,
             end=end,
             preset=preset,
         )
-        snapshot.setdefault("daily_metrics", {})["linkedin"] = (
-            linkedin_snapshot.get("daily_metrics") or {}
-        ).get("linkedin", [])
-        snapshot.setdefault("platform_totals", {})["linkedin"] = (
-            linkedin_snapshot.get("platform_totals") or {}
-        ).get("linkedin", {})
-        snapshot.setdefault("breakdowns", {})["linkedin"] = (
-            linkedin_snapshot.get("breakdowns") or {}
-        ).get("linkedin", {})
+        linkedin_daily = (linkedin_snapshot.get("daily_metrics") or {}).get("linkedin", [])
+        linkedin_totals = (linkedin_snapshot.get("platform_totals") or {}).get("linkedin", {})
+        linkedin_breakdowns = (linkedin_snapshot.get("breakdowns") or {}).get("linkedin", {})
+
+        snapshot.setdefault("daily_metrics", {})["linkedin"] = linkedin_daily
+        snapshot.setdefault("platform_totals", {})["linkedin"] = linkedin_totals
+        snapshot.setdefault("breakdowns", {})["linkedin"] = linkedin_breakdowns
         snapshot.setdefault("data_sources", {})["linkedin"] = "bigquery"
         snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = "postgres"
         snapshot["creative_metadata"] = linkedin_snapshot.get("creative_metadata") or {
@@ -118,25 +116,6 @@ def dashboard_penn_bq_test(
         snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = "postgres"
         snapshot.setdefault("creative_metadata", {"source": "postgres", "merged_rows": 0})
     snapshot["aggregated_paid_media"] = aggregated_paid_media(snapshot.get("platform_totals") or {})
-    except Exception as exc:
-        message = f"Penn BQ Test LinkedIn BigQuery query failed: {platform_error(exc)}"
-        snapshot = {
-            "client_key": "penn-bq-test",
-            "label": cfg.label,
-            "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
-            "accounts": {"google": None, "linkedin": cfg.linkedin_account_id, "meta": None},
-            "data_sources": {"linkedin": "bigquery"},
-            "daily_metrics": {},
-            "platform_totals": {},
-            "breakdowns": {},
-            "aggregated_paid_media": {},
-            "business_line_campaigns": [],
-            "warehouse_sync": {},
-            "ga4_attribution": None,
-            "ga4_pages": None,
-            "errors": {"linkedin_bigquery": message},
-            "refresh_mode": "bigquery_linkedin",
-        }
     return HTMLResponse(
         dashboard_service.render_penn_html(
             snapshot,

@@ -162,8 +162,6 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
     ga4_key = _strip_env(str(entry.get("ga4_client_key") or "")) or (slug if slug in _BUILTIN_CLIENTS else "")
     label = _strip_env(str(entry.get("label") or "")) or _default_label(slug)
     monthly_budget_usd: float | None = None
-    platform_sources = dict(entry.get("platform_sources") or {})
-
     row = _get_db_row(slug)
     if row:
         if row.label:
