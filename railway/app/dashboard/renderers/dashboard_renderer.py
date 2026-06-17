@@ -647,9 +647,11 @@ def render_penn_html(
     )
     has_ga4_summary = bool((ga4_pages_report or {}).get("summary"))
     show_website_tab = features.website_analytics and has_ga4
+    _gsc_data = snapshot.get("gsc")
     view_tabs_html = _dashboard_view_tabs_html(
         show_website=show_website_tab,
         show_campaigns=features.campaign_explorer,
+        show_gsc=bool(_gsc_data),
     )
     if use_session:
         _vr_action = f"/dashboard/{slug}"
@@ -784,13 +786,15 @@ def render_penn_html(
             {campaign_explorer_html}
           </div>"""
 
-    # GSC section — only rendered when snapshot carries gsc data (penn-bq-test only)
-    gsc_section_html = ""
-    _gsc_data = snapshot.get("gsc")
+    # GSC tab panel — only rendered when snapshot carries gsc data (penn-bq-test only)
+    gsc_tab_panel = ""
     if _gsc_data:
         from dashboard.renderers.gsc_renderer import GSC_CSS as _GSC_CSS
         from dashboard.renderers.gsc_renderer import gsc_section_html as _render_gsc
-        gsc_section_html = _render_gsc(_gsc_data)
+        gsc_tab_panel = f"""
+          <div id="view-gsc" class="view-panel" role="tabpanel" hidden>
+            {_render_gsc(_gsc_data)}
+          </div>"""
     else:
         _GSC_CSS = ""
 
@@ -2481,11 +2485,11 @@ def render_penn_html(
             {performance_trend_html}
 
             {budget_pacing_html}
-
-            {gsc_section_html}
           </div>
 
           {campaign_explorer_panel}
+
+          {gsc_tab_panel}
 
           {website_tab_panel}
         </div>
@@ -2534,6 +2538,7 @@ def render_penn_html(
     const SHOW_PERFORMANCE_TREND = {'true' if features.performance_trend else 'false'};
     const SHOW_CAMPAIGN_EXPLORER = {'true' if features.campaign_explorer else 'false'};
     const SHOW_WEBSITE_ANALYTICS = {'true' if show_website_tab else 'false'};
+    const SHOW_GSC = {'true' if _gsc_data else 'false'};
     const PAID_PLATFORM_IDS = new Set(['google', 'linkedin', 'meta']);
     const SEGMENT_FILTER_ALL_LABEL = {_json_for_html_script(seg_filter_all_label)};
     const PRODUCT_LINE_FILTER_ALL_LABEL = "All product lines";
@@ -3178,12 +3183,14 @@ def render_penn_html(
     const VIEW_LABELS = {{
       overview: 'Overview',
       campaigns: 'Campaign Explorer',
+      gsc: 'GSC',
       website: 'Website Analytics',
     }};
 
     function setActiveView(view) {{
       const allowed = ['overview'];
       if (SHOW_CAMPAIGN_EXPLORER) allowed.push('campaigns');
+      if (SHOW_GSC) allowed.push('gsc');
       if (SHOW_WEBSITE_ANALYTICS) allowed.push('website');
       if (!allowed.includes(view)) view = 'overview';
       if (view === 'website' && !document.querySelector('.dash-view-btn[data-view="website"]')) {{

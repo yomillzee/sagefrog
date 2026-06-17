@@ -68,27 +68,13 @@ def _gsc_table(rows: list[dict], columns: list[tuple[str, str, str]]) -> str:
     </div>"""
 
 
-def _breakdown_table(rows: list[dict], key_field: str, key_label: str) -> str:
-    cols = [
-        (key_field, key_label, "left"),
-        ("clicks", "Clicks", "right"),
-        ("impressions", "Impr.", "right"),
-        ("ctr", "CTR", "right"),
-        ("avg_position", "Pos.", "right"),
-    ]
-    return _gsc_table(rows, cols)
-
-
 def gsc_section_html(gsc: dict[str, Any]) -> str:
-    """Return the full GSC section HTML to inject into the overview panel."""
+    """Return the GSC section HTML for the GSC tab panel."""
     kpis = gsc.get("kpis") or {}
     daily = gsc.get("daily") or []
     top_queries = gsc.get("top_queries") or []
     top_pages = gsc.get("top_pages") or []
     top_query_page = gsc.get("top_query_page") or []
-    device_breakdown = gsc.get("device_breakdown") or []
-    country_breakdown = gsc.get("country_breakdown") or []
-    search_type_breakdown = gsc.get("search_type_breakdown") or []
     errors = gsc.get("errors") or {}
 
     clicks = int(kpis.get("clicks") or 0)
@@ -128,11 +114,6 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
         ("ctr", "CTR", "right"),
         ("avg_position", "Avg. Position", "right"),
     ])
-
-    # Breakdown tables
-    device_table_html = _breakdown_table(device_breakdown, "device", "Device")
-    country_table_html = _breakdown_table(country_breakdown, "country", "Country")
-    search_type_table_html = _breakdown_table(search_type_breakdown, "search_type", "Search Type")
 
     daily_json = _safe_json(daily)
 
@@ -198,22 +179,6 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
     </summary>
     {qp_table_html}
   </details>
-
-  <!-- Breakdowns -->
-  <div class="gsc-breakdown-grid">
-    <div class="gsc-breakdown-card">
-      <div class="gsc-breakdown-title">Device</div>
-      {device_table_html}
-    </div>
-    <div class="gsc-breakdown-card">
-      <div class="gsc-breakdown-title">Country (top 15)</div>
-      {country_table_html}
-    </div>
-    <div class="gsc-breakdown-card">
-      <div class="gsc-breakdown-title">Search Type</div>
-      {search_type_table_html}
-    </div>
-  </div>
 </section>
 
 <script>
@@ -416,31 +381,6 @@ GSC_CSS = """
       font-size: 0.82rem;
       font-weight: 400;
     }
-    .gsc-breakdown-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
-      margin-top: 16px;
-    }
-    @media (max-width: 900px) { .gsc-breakdown-grid { grid-template-columns: 1fr; } }
-    .gsc-breakdown-card {
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      overflow: hidden;
-    }
-    .gsc-breakdown-title {
-      font-size: 0.76rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .05em;
-      color: var(--muted);
-      padding: 10px 12px;
-      background: #f8fafc;
-      border-bottom: 1px solid var(--border);
-    }
-    .gsc-breakdown-card .table-wrap { margin: 0; }
-    .gsc-breakdown-card .data-table th,
-    .gsc-breakdown-card .data-table td { padding: 8px 10px; font-size: 0.8rem; }
     .gsc-empty {
       color: var(--muted);
       font-size: 0.84rem;

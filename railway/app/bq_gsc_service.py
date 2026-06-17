@@ -188,101 +188,16 @@ def fetch_top_query_page(*, start: date, end: date, limit: int = 25) -> list[dic
     ]
 
 
-def fetch_device_breakdown(*, start: date, end: date) -> list[dict[str, Any]]:
-    table = _full_table()
-    sql = f"""
-    SELECT
-      device,
-      SUM(organic_clicks) AS clicks,
-      SUM(organic_impressions) AS impressions,
-      SAFE_DIVIDE(SUM(organic_clicks), SUM(organic_impressions)) AS ctr,
-      SAFE_DIVIDE(SUM(organic_sum_position), SUM(organic_impressions)) + 1 AS avg_position
-    FROM {table}
-    WHERE {_where(start, end)}
-    GROUP BY 1
-    ORDER BY clicks DESC
-    """
-    rows = _run(sql, max_rows=20)
-    return [
-        {
-            "device": str(r.get("device") or ""),
-            "clicks": int(r.get("clicks") or 0),
-            "impressions": int(r.get("impressions") or 0),
-            "ctr": float(r.get("ctr") or 0) * 100,
-            "avg_position": float(r.get("avg_position") or 0),
-        }
-        for r in rows
-    ]
-
-
-def fetch_country_breakdown(*, start: date, end: date, limit: int = 15) -> list[dict[str, Any]]:
-    table = _full_table()
-    sql = f"""
-    SELECT
-      country,
-      SUM(organic_clicks) AS clicks,
-      SUM(organic_impressions) AS impressions,
-      SAFE_DIVIDE(SUM(organic_clicks), SUM(organic_impressions)) AS ctr,
-      SAFE_DIVIDE(SUM(organic_sum_position), SUM(organic_impressions)) + 1 AS avg_position
-    FROM {table}
-    WHERE {_where(start, end)}
-    GROUP BY 1
-    ORDER BY clicks DESC
-    LIMIT {int(limit)}
-    """
-    rows = _run(sql, max_rows=limit + 5)
-    return [
-        {
-            "country": str(r.get("country") or ""),
-            "clicks": int(r.get("clicks") or 0),
-            "impressions": int(r.get("impressions") or 0),
-            "ctr": float(r.get("ctr") or 0) * 100,
-            "avg_position": float(r.get("avg_position") or 0),
-        }
-        for r in rows
-    ]
-
-
-def fetch_search_type_breakdown(*, start: date, end: date) -> list[dict[str, Any]]:
-    table = _full_table()
-    sql = f"""
-    SELECT
-      search_type,
-      SUM(organic_clicks) AS clicks,
-      SUM(organic_impressions) AS impressions,
-      SAFE_DIVIDE(SUM(organic_clicks), SUM(organic_impressions)) AS ctr,
-      SAFE_DIVIDE(SUM(organic_sum_position), SUM(organic_impressions)) + 1 AS avg_position
-    FROM {table}
-    WHERE {_where(start, end)}
-    GROUP BY 1
-    ORDER BY clicks DESC
-    """
-    rows = _run(sql, max_rows=20)
-    return [
-        {
-            "search_type": str(r.get("search_type") or ""),
-            "clicks": int(r.get("clicks") or 0),
-            "impressions": int(r.get("impressions") or 0),
-            "ctr": float(r.get("ctr") or 0) * 100,
-            "avg_position": float(r.get("avg_position") or 0),
-        }
-        for r in rows
-    ]
-
-
 def build_gsc_snapshot(*, start: date, end: date) -> dict[str, Any]:
-    """Fetch all GSC modules in parallel. Returns a dict with kpis, daily, and breakdown tables."""
+    """Fetch GSC modules in parallel. Returns kpis, daily trend, top queries, and top pages."""
     from concurrent.futures import ThreadPoolExecutor
 
     tasks: dict[str, Any] = {
         "kpis": lambda: fetch_kpis(start=start, end=end),
         "daily": lambda: fetch_daily(start=start, end=end),
-        "top_queries": lambda: fetch_top_queries(start=start, end=end),
-        "top_pages": lambda: fetch_top_pages(start=start, end=end),
+        "top_queries": lambda: fetch_top_queries(start=start, end=end, limit=5),
+        "top_pages": lambda: fetch_top_pages(start=start, end=end, limit=5),
         "top_query_page": lambda: fetch_top_query_page(start=start, end=end),
-        "device_breakdown": lambda: fetch_device_breakdown(start=start, end=end),
-        "country_breakdown": lambda: fetch_country_breakdown(start=start, end=end),
-        "search_type_breakdown": lambda: fetch_search_type_breakdown(start=start, end=end),
     }
     result: dict[str, Any] = {k: ({} if k == "kpis" else []) for k in tasks}
     errors: dict[str, str] = {}

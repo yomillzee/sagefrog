@@ -254,7 +254,9 @@ def dashboard_topbar_js() -> str:
     """
 
 
-def dashboard_view_tabs_html(*, show_website: bool, show_campaigns: bool = True) -> str:
+def dashboard_view_tabs_html(
+    *, show_website: bool, show_campaigns: bool = True, show_gsc: bool = False
+) -> str:
     website_tab = ""
     if show_website:
         website_tab = (
@@ -267,10 +269,17 @@ def dashboard_view_tabs_html(*, show_website: bool, show_campaigns: bool = True)
             '<button type="button" class="dash-view-btn" data-view="campaigns" role="tab" '
             'aria-selected="false">Campaign Explorer</button>'
         )
+    gsc_tab = ""
+    if show_gsc:
+        gsc_tab = (
+            '<button type="button" class="dash-view-btn" data-view="gsc" role="tab" '
+            'aria-selected="false">GSC</button>'
+        )
     return f"""
       <nav class="dash-view-nav" role="tablist" aria-label="Dashboard views">
         <button type="button" class="dash-view-btn active" data-view="overview" role="tab" aria-selected="true">Overview</button>
         {campaigns_tab}
+        {gsc_tab}
         {website_tab}
       </nav>"""
 
