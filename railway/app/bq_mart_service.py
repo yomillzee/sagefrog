@@ -344,6 +344,17 @@ def build_snapshot(
     # Daily chart data still aggregated the same way; breakdown uses the richer builder.
     by_date_li, _ = _aggregate_campaign_rows(linkedin_rows)
     li_breakdowns = _build_linkedin_mart_breakdowns(linkedin_rows)
+
+    # Borrow creative rows from the main Penn snapshot — creatives come from LinkedIn API
+    # sync (no creative-level BQ table exists yet) and campaign IDs are shared.
+    try:
+        import dashboard_snapshots
+        _penn = dashboard_snapshots.get_snapshot("penn") or {}
+        _penn_li = (_penn.get("breakdowns") or {}).get("linkedin") or {}
+        li_breakdowns["creative"] = list(_penn_li.get("creative") or [])
+    except Exception:
+        pass
+
     li_campaigns = li_breakdowns["campaign"]
     totals_li = {
         "spend": sum(float(c.get("spend") or 0) for c in li_campaigns),
