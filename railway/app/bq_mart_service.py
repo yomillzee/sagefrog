@@ -94,6 +94,8 @@ def fetch_linkedin_campaign_daily(
       CAST(date AS STRING) AS metric_date,
       campaign_id,
       MAX(campaign_name) AS campaign_name,
+      MAX(CAST(campaign_group_id AS STRING)) AS campaign_group_id,
+      MAX(CAST(campaign_group_name AS STRING)) AS campaign_group_name,
       SUM(spend) AS spend,
       SUM(impressions) AS impressions,
       SUM(clicks) AS clicks,
@@ -196,6 +198,118 @@ def _platform_totals(by_date: dict, by_campaign: dict) -> dict[str, Any]:
     }
 
 
+def _safe_ratio(num: float, den: float, mult: float = 1.0) -> float:
+    return (num / den * mult) if den else 0.0
+
+
+def _clean_id(val: Any) -> str:
+    s = str(val or "").strip()
+    return "" if s.lower() in ("none", "null", "0", "") else s
+
+
+def _build_linkedin_mart_breakdowns(
+    rows: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Build campaign_group (tier 1) and campaign (tier 2) rows from mart daily rows.
+
+    Gracefully stops at campaign level when campaign_group_id is absent — never
+    duplicates parent totals into child rows.
+    """
+    by_campaign: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        cid = _clean_id(row.get("campaign_id"))
+        if not cid:
+            continue
+        gid = _clean_id(row.get("campaign_group_id"))
+        gname = str(row.get("campaign_group_name") or "").strip()
+        if gname.lower() in ("none", "null"):
+            gname = ""
+        cname = str(row.get("campaign_name") or cid)
+
+        if cid not in by_campaign:
+            by_campaign[cid] = {
+                "id": cid,
+                "name": cname,
+                "entity_level": "campaign",
+                "campaign_id": cid,
+                "campaign_name": cname,
+                "parent_id": gid,
+                "parent_name": gname,
+                "campaign_group_id": gid,
+                "campaign_group_name": gname,
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+            }
+        item = by_campaign[cid]
+        # Backfill group info on the first row that carries it
+        if gid and not item["campaign_group_id"]:
+            item["campaign_group_id"] = gid
+            item["campaign_group_name"] = gname
+            item["parent_id"] = gid
+            item["parent_name"] = gname
+        item["spend"] += float(row.get("spend") or 0)
+        item["clicks"] += int(row.get("clicks") or 0)
+        item["impressions"] += int(row.get("impressions") or 0)
+        item["conversions"] += float(row.get("conversions") or 0)
+        item["conversion_value"] += float(row.get("conversion_value") or 0)
+
+    campaign_list = sorted(
+        by_campaign.values(), key=lambda r: float(r.get("spend") or 0), reverse=True
+    )
+    for item in campaign_list:
+        item["ctr"] = _safe_ratio(float(item["clicks"]), float(item["impressions"]))
+        item["cpc"] = _safe_ratio(float(item["spend"]), float(item["clicks"]))
+        item["cpm"] = _safe_ratio(float(item["spend"]), float(item["impressions"]), 1000)
+        item["cost_per_conversion"] = _safe_ratio(
+            float(item["spend"]), float(item["conversions"])
+        )
+
+    # Aggregate campaign_group rows bottom-up from campaign data
+    by_group: dict[str, dict[str, Any]] = {}
+    for camp in campaign_list:
+        gid = str(camp.get("campaign_group_id") or "").strip()
+        if not gid:
+            continue
+        if gid not in by_group:
+            by_group[gid] = {
+                "id": gid,
+                "name": str(camp.get("campaign_group_name") or f"Group {gid}"),
+                "entity_level": "campaign_group",
+                "campaign_group_id": gid,
+                "campaign_group_name": str(camp.get("campaign_group_name") or f"Group {gid}"),
+                "parent_id": "",
+                "parent_name": "",
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+            }
+        g = by_group[gid]
+        g["spend"] += camp["spend"]
+        g["clicks"] += camp["clicks"]
+        g["impressions"] += camp["impressions"]
+        g["conversions"] += camp["conversions"]
+        g["conversion_value"] += camp.get("conversion_value", 0.0)
+
+    group_list = sorted(
+        by_group.values(), key=lambda r: float(r.get("spend") or 0), reverse=True
+    )
+    for g in group_list:
+        g["ctr"] = _safe_ratio(float(g["clicks"]), float(g["impressions"]))
+        g["cpc"] = _safe_ratio(float(g["spend"]), float(g["clicks"]))
+        g["cpm"] = _safe_ratio(float(g["spend"]), float(g["impressions"]), 1000)
+        g["cost_per_conversion"] = _safe_ratio(float(g["spend"]), float(g["conversions"]))
+
+    return {
+        "campaign_group": group_list,
+        "campaign": campaign_list,
+        "creative": [],  # no creative-level BQ table yet; drilldown stops here
+    }
+
 
 def build_snapshot(
     *,
@@ -226,8 +340,18 @@ def build_snapshot(
     by_date_g, by_campaign_g = _aggregate_campaign_rows(google_rows)
     totals_g = _platform_totals(by_date_g, by_campaign_g)
 
-    by_date_li, by_campaign_li = _aggregate_campaign_rows(linkedin_rows)
-    totals_li = _platform_totals(by_date_li, by_campaign_li)
+    # LinkedIn: build grouped breakdown (campaign_group → campaign) from mart rows.
+    # Daily chart data still aggregated the same way; breakdown uses the richer builder.
+    by_date_li, _ = _aggregate_campaign_rows(linkedin_rows)
+    li_breakdowns = _build_linkedin_mart_breakdowns(linkedin_rows)
+    li_campaigns = li_breakdowns["campaign"]
+    totals_li = {
+        "spend": sum(float(c.get("spend") or 0) for c in li_campaigns),
+        "clicks": sum(int(c.get("clicks") or 0) for c in li_campaigns),
+        "impressions": sum(int(c.get("impressions") or 0) for c in li_campaigns),
+        "conversions": sum(float(c.get("conversions") or 0) for c in li_campaigns),
+        "campaign_count": len(li_campaigns),
+    }
 
     if end is None:
         end = date.today()
@@ -262,11 +386,7 @@ def build_snapshot(
                 "ad_group": [],
                 "ad": [],
             },
-            "linkedin": {
-                "campaign": _campaign_breakdowns(by_campaign_li),
-                "ad_group": [],
-                "ad": [],
-            },
+            "linkedin": li_breakdowns,
         },
         "aggregated_paid_media": {
             "spend": totals_g["spend"] + totals_li["spend"],
