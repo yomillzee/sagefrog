@@ -2280,3 +2280,49 @@ def list_video_creatives(
         "row_count": len(videos_out),
         "videos": videos_out,
     }
+
+
+def fetch_campaign_metadata_rows(
+    account_id: str,
+    campaign_ids: list[str],
+    *,
+    access_token: str | None = None,
+    env: LinkedInEnv | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch LinkedIn campaign metadata rows for BigQuery campaign-name enrichment."""
+    env = env or load_linkedin_env()
+    access_token = access_token or refresh_access_token(env)["access_token"]
+    account_id_clean = _normalize_account_id(account_id)
+    group_name_cache: dict[str, str] = {}
+    out: list[dict[str, Any]] = []
+    for raw_id in campaign_ids:
+        cid = _campaign_id_from_pivot(str(raw_id))
+        if not cid:
+            continue
+        meta = _fetch_campaign_by_id(
+            account_id_clean,
+            cid,
+            access_token=access_token,
+            env=env,
+        )
+        if not meta:
+            continue
+        group_ctx = _campaign_group_context_from_campaign_meta(
+            meta,
+            account_id_clean,
+            access_token=access_token,
+            env=env,
+            group_name_cache=group_name_cache,
+        )
+        out.append(
+            {
+                "source": "linkedin",
+                "account_id": account_id_clean,
+                "campaign_id": cid,
+                "campaign_name": str(meta.get("name") or ""),
+                "campaign_status": str(meta.get("intendedStatus") or meta.get("status") or ""),
+                "campaign_group_id": group_ctx.get("campaign_group_id") or "",
+                "campaign_group_name": group_ctx.get("campaign_group_name") or "",
+            }
+        )
+    return out

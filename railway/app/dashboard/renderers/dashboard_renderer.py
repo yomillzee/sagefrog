@@ -664,7 +664,7 @@ def render_penn_html(
         show_segment_filters=show_segment_filters,
         show_product_line_filters=show_product_line_filters,
         show_channel_filters=bool(platform_catalog_list),
-        show_date_range_filter=slug == "penn",
+        show_date_range_filter=slug in {"penn", "penn-bq-test"},
         show_website_search=show_website_tab and has_ga4_pages,
         date_range_label=_preset_to_label(_vr_preset),
         segment_filter_label=seg_filter_label,

@@ -30,6 +30,7 @@ _BUILTIN_CLIENTS: dict[str, dict[str, Any]] = {
         "linkedin_account_id": "",
         "meta_account_id": "",
         "ga4_client_key": "",
+        "platform_sources": {"linkedin": "bigquery"},
     },
 }
 
@@ -161,7 +162,6 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
     ga4_key = _strip_env(str(entry.get("ga4_client_key") or "")) or (slug if slug in _BUILTIN_CLIENTS else "")
     label = _strip_env(str(entry.get("label") or "")) or _default_label(slug)
     monthly_budget_usd: float | None = None
-
     row = _get_db_row(slug)
     if row:
         if row.label:
@@ -203,4 +203,5 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
         meta_account_id=meta or None,
         ga4_client_key=ga4_key or slug,
         monthly_budget_usd=monthly_budget_usd,
+        platform_sources=platform_sources or None,
     )
