@@ -408,6 +408,96 @@ def fetch_campaign_daily_metrics(
     return out
 
 
+def fetch_adset_daily_metrics(
+    account_id: str,
+    *,
+    start: date,
+    end: date,
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+) -> list[dict[str, Any]]:
+    """Per-adset daily metrics for BQ warehouse storage."""
+    env = env or load_meta_env()
+    access_token = access_token or env.access_token
+    account_id_clean = _normalize_account_id(account_id)
+
+    rows = _graph_get_all(
+        f"/{_act_id(account_id_clean)}/insights",
+        access_token=access_token,
+        params={
+            "fields": _ADSET_INSIGHT_FIELDS,
+            "time_range": _time_range(start, end),
+            "time_increment": 1,
+            "level": "adset",
+            "limit": 500,
+        },
+        env=env,
+    )
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        metric_day = str(row.get("date_start") or "")[:10]
+        adset_id = str(row.get("adset_id") or "").strip()
+        if not metric_day or not adset_id:
+            continue
+        parsed = _parse_insight_row(row)
+        out.append({
+            "adset_id": adset_id,
+            "adset_name": str(row.get("adset_name") or ""),
+            "campaign_id": str(row.get("campaign_id") or "").strip(),
+            "campaign_name": str(row.get("campaign_name") or ""),
+            "metric_date": metric_day,
+            **parsed,
+        })
+    return out
+
+
+def fetch_ad_daily_metrics(
+    account_id: str,
+    *,
+    start: date,
+    end: date,
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+) -> list[dict[str, Any]]:
+    """Per-ad daily metrics for BQ warehouse storage."""
+    env = env or load_meta_env()
+    access_token = access_token or env.access_token
+    account_id_clean = _normalize_account_id(account_id)
+
+    rows = _graph_get_all(
+        f"/{_act_id(account_id_clean)}/insights",
+        access_token=access_token,
+        params={
+            "fields": _AD_INSIGHT_FIELDS,
+            "time_range": _time_range(start, end),
+            "time_increment": 1,
+            "level": "ad",
+            "limit": 500,
+        },
+        env=env,
+    )
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        metric_day = str(row.get("date_start") or "")[:10]
+        ad_id = str(row.get("ad_id") or "").strip()
+        if not metric_day or not ad_id:
+            continue
+        parsed = _parse_insight_row(row)
+        out.append({
+            "ad_id": ad_id,
+            "ad_name": str(row.get("ad_name") or ""),
+            "adset_id": str(row.get("adset_id") or "").strip(),
+            "adset_name": str(row.get("adset_name") or ""),
+            "campaign_id": str(row.get("campaign_id") or "").strip(),
+            "campaign_name": str(row.get("campaign_name") or ""),
+            "metric_date": metric_day,
+            **parsed,
+        })
+    return out
+
+
 def sync_account_to_warehouse(
     account_id: str,
     *,

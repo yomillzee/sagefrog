@@ -310,6 +310,7 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
     import bq_gsc_service
     import bq_linkedin_ads_service
     import bq_mart_service
+    import bq_meta_ads_service
     import penn_config
     from concurrent.futures import ThreadPoolExecutor
     from dashboard.utils.formatting import platform_error
@@ -318,6 +319,7 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
     cfg = client_config.load_client_config("penn-bq-test")
     penn_cfg = penn_config.load_penn_config()
     linkedin_account_id = cfg.linkedin_account_id or penn_cfg.linkedin_account_id
+    meta_account_id = cfg.meta_account_id or penn_cfg.meta_account_id
 
     # Start GSC in background while paid media queries run
     _gsc_executor = ThreadPoolExecutor(max_workers=1)
@@ -332,7 +334,10 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
             "preset": preset,
         }
         snapshot.setdefault("accounts", {})["linkedin"] = linkedin_account_id
+        snapshot.setdefault("accounts", {})["meta"] = meta_account_id
         snapshot.setdefault("data_sources", {})["google"] = "bigquery"
+
+        # LinkedIn: sync metadata + rebuild mart, then override snapshot
         try:
             metadata_sync = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(
                 account_id=linkedin_account_id,
@@ -365,6 +370,27 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
             snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = "bigquery"
             snapshot.setdefault("creative_metadata", {"source": "bigquery", "merged_rows": 0})
 
+        # Meta: sync API → BQ, then read from mart views
+        if meta_account_id:
+            try:
+                meta_sync = bq_meta_ads_service.sync_meta_to_bq(
+                    meta_account_id,
+                    start=start,
+                    end=end,
+                )
+                snapshot.setdefault("warehouse_sync", {})["meta"] = meta_sync
+
+                meta_result = bq_meta_ads_service.build_meta_breakdowns(start=start, end=end)
+                snapshot.setdefault("breakdowns", {})["meta"] = meta_result["breakdowns"]
+                snapshot.setdefault("platform_totals", {})["meta"] = meta_result["platform_totals"]
+                snapshot.setdefault("data_sources", {})["meta"] = "bigquery"
+                if meta_result.get("errors"):
+                    snapshot.setdefault("errors", {}).update(meta_result["errors"])
+            except Exception as exc:
+                message = f"Penn BQ Test Meta BigQuery sync/query failed: {platform_error(exc)}"
+                snapshot.setdefault("errors", {})["meta_bigquery"] = message
+                snapshot.setdefault("data_sources", {})["meta"] = "bigquery"
+
         from dashboard.services.snapshot_metrics_service import aggregated_paid_media
         snapshot["aggregated_paid_media"] = aggregated_paid_media(snapshot.get("platform_totals") or {})
     except Exception as exc:
@@ -381,6 +407,7 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
             "data_sources": {
                 "google": "bigquery",
                 "linkedin": "bigquery",
+                "meta": "bigquery",
                 "linkedin_creative_metadata": "postgres",
             },
             "daily_metrics": {},
