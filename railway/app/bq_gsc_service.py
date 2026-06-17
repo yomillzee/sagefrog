@@ -271,33 +271,29 @@ def fetch_search_type_breakdown(*, start: date, end: date) -> list[dict[str, Any
 
 
 def build_gsc_snapshot(*, start: date, end: date) -> dict[str, Any]:
-    """Fetch all GSC modules. Returns a dict with kpis, daily, and breakdown tables."""
-    errors: dict[str, str] = {}
-    result: dict[str, Any] = {
-        "kpis": {},
-        "daily": [],
-        "top_queries": [],
-        "top_pages": [],
-        "top_query_page": [],
-        "device_breakdown": [],
-        "country_breakdown": [],
-        "search_type_breakdown": [],
+    """Fetch all GSC modules in parallel. Returns a dict with kpis, daily, and breakdown tables."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    tasks: dict[str, Any] = {
+        "kpis": lambda: fetch_kpis(start=start, end=end),
+        "daily": lambda: fetch_daily(start=start, end=end),
+        "top_queries": lambda: fetch_top_queries(start=start, end=end),
+        "top_pages": lambda: fetch_top_pages(start=start, end=end),
+        "top_query_page": lambda: fetch_top_query_page(start=start, end=end),
+        "device_breakdown": lambda: fetch_device_breakdown(start=start, end=end),
+        "country_breakdown": lambda: fetch_country_breakdown(start=start, end=end),
+        "search_type_breakdown": lambda: fetch_search_type_breakdown(start=start, end=end),
     }
+    result: dict[str, Any] = {k: ({} if k == "kpis" else []) for k in tasks}
+    errors: dict[str, str] = {}
 
-    def _try(key: str, fn):
-        try:
-            result[key] = fn()
-        except Exception as exc:
-            errors[key] = str(exc)[:400]
-
-    _try("kpis", lambda: fetch_kpis(start=start, end=end))
-    _try("daily", lambda: fetch_daily(start=start, end=end))
-    _try("top_queries", lambda: fetch_top_queries(start=start, end=end))
-    _try("top_pages", lambda: fetch_top_pages(start=start, end=end))
-    _try("top_query_page", lambda: fetch_top_query_page(start=start, end=end))
-    _try("device_breakdown", lambda: fetch_device_breakdown(start=start, end=end))
-    _try("country_breakdown", lambda: fetch_country_breakdown(start=start, end=end))
-    _try("search_type_breakdown", lambda: fetch_search_type_breakdown(start=start, end=end))
+    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+        futures = {key: pool.submit(fn) for key, fn in tasks.items()}
+        for key, fut in futures.items():
+            try:
+                result[key] = fut.result()
+            except Exception as exc:
+                errors[key] = str(exc)[:400]
 
     if errors:
         result["errors"] = errors

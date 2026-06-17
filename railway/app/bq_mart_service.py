@@ -92,18 +92,17 @@ def fetch_linkedin_campaign_daily(
     sql = f"""
     SELECT
       CAST(date AS STRING) AS metric_date,
-      CAST(campaign_id AS STRING) AS campaign_id,
+      campaign_id,
       MAX(campaign_name) AS campaign_name,
-      SUM(CAST(spend AS FLOAT64)) AS spend,
-      SUM(CAST(impressions AS INT64)) AS impressions,
-      SUM(CAST(clicks AS INT64)) AS clicks,
-      SUM(CAST(conversions AS FLOAT64)) AS conversions,
-      SUM(CAST(conversion_value AS FLOAT64)) AS conversion_value,
-      MAX(account_id) AS account_id
+      SUM(spend) AS spend,
+      SUM(impressions) AS impressions,
+      SUM(clicks) AS clicks,
+      SUM(conversions) AS conversions,
+      SUM(conversion_value) AS conversion_value
     FROM {table}
     WHERE {where_clause}
     GROUP BY 1, 2
-    ORDER BY 1 DESC, 4 DESC
+    ORDER BY 1 DESC, spend DESC
     """
     return bigquery_service.run_query(sql, project_id=_project_id(), max_rows=5000)
 
@@ -206,29 +205,26 @@ def build_snapshot(
     preset: str = "LAST_30_DAYS",
 ) -> dict[str, Any]:
     """Query Google and LinkedIn marts and return a snapshot dict compatible with render_penn_html()."""
+    from concurrent.futures import ThreadPoolExecutor
     errors: dict[str, str] = {}
 
-    # Google Ads mart
     google_rows: list[dict[str, Any]] = []
-    try:
-        google_rows = fetch_campaign_daily(days=days, start=start, end=end)
-    except Exception as exc:
-        errors["bq_mart_google"] = str(exc)[:600]
+    linkedin_rows: list[dict[str, Any]] = []
+
+    with ThreadPoolExecutor(max_workers=2) as _pool:
+        _gf = _pool.submit(fetch_campaign_daily, days=days, start=start, end=end)
+        _lf = _pool.submit(fetch_linkedin_campaign_daily, days=days, start=start, end=end)
+        try:
+            google_rows = _gf.result()
+        except Exception as exc:
+            errors["bq_mart_google"] = str(exc)[:600]
+        try:
+            linkedin_rows = _lf.result()
+        except Exception as exc:
+            errors["bq_mart_linkedin"] = str(exc)[:600]
 
     by_date_g, by_campaign_g = _aggregate_campaign_rows(google_rows)
     totals_g = _platform_totals(by_date_g, by_campaign_g)
-
-    # LinkedIn Ads mart
-    linkedin_rows: list[dict[str, Any]] = []
-    linkedin_account_id: str | None = None
-    try:
-        linkedin_rows = fetch_linkedin_campaign_daily(days=days, start=start, end=end)
-        for r in linkedin_rows:
-            if r.get("account_id"):
-                linkedin_account_id = str(r["account_id"]).strip().split(":")[-1]
-                break
-    except Exception as exc:
-        errors["bq_mart_linkedin"] = str(exc)[:600]
 
     by_date_li, by_campaign_li = _aggregate_campaign_rows(linkedin_rows)
     totals_li = _platform_totals(by_date_li, by_campaign_li)
@@ -249,7 +245,7 @@ def build_snapshot(
         "refreshed_at": datetime.now(tz=UTC).isoformat(),
         "accounts": {
             "google": _project_id(),
-            "linkedin": linkedin_account_id,
+            "linkedin": None,
             "meta": None,
         },
         "daily_metrics": {

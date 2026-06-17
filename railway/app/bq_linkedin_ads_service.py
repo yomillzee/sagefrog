@@ -126,23 +126,20 @@ def campaign_daily_sql(*, start: date, end: date, account_id: str | None = None)
     return f"""
     SELECT
       CAST(date AS STRING) AS metric_date,
-      CAST(account_id AS STRING) AS account_id,
-      CAST(campaign_id AS STRING) AS campaign_id,
-      COALESCE(NULLIF(TRIM(CAST(campaign_name AS STRING)), ''), CAST(campaign_id AS STRING)) AS campaign_name,
-      SUM(CAST(spend AS FLOAT64)) AS spend,
-      SUM(CAST(clicks AS INT64)) AS clicks,
-      SUM(CAST(impressions AS INT64)) AS impressions,
-      SUM(CAST(conversions AS FLOAT64)) AS conversions,
-      SUM(CAST(conversion_value AS FLOAT64)) AS conversion_value,
-      SUM(CAST(COALESCE(reach, 0) AS INT64)) AS reach,
-      SAFE_DIVIDE(SUM(CAST(clicks AS FLOAT64)), SUM(CAST(impressions AS FLOAT64))) AS ctr,
-      SAFE_DIVIDE(SUM(CAST(spend AS FLOAT64)), SUM(CAST(clicks AS FLOAT64))) AS cpc,
-      SAFE_DIVIDE(SUM(CAST(spend AS FLOAT64)), SUM(CAST(impressions AS FLOAT64))) * 1000 AS cpm,
-      SAFE_DIVIDE(SUM(CAST(spend AS FLOAT64)), SUM(CAST(conversions AS FLOAT64))) AS cost_per_conversion
+      campaign_id,
+      MAX(campaign_name) AS campaign_name,
+      SUM(spend) AS spend,
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SUM(conversions) AS conversions,
+      SUM(conversion_value) AS conversion_value,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      SAFE_DIVIDE(SUM(spend), SUM(clicks)) AS cpc,
+      SAFE_DIVIDE(SUM(spend), SUM(impressions)) * 1000 AS cpm,
+      SAFE_DIVIDE(SUM(spend), SUM(conversions)) AS cost_per_conversion
     FROM {_mart_table()}
     WHERE date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
-      {account_filter}
-    GROUP BY 1, 2, 3, 4
+    GROUP BY 1, 2
     ORDER BY 1 DESC, spend DESC
     """
 

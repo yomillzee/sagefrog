@@ -71,8 +71,12 @@ def dashboard_penn_bq_test(
     from dashboard.services.snapshot_metrics_service import aggregated_paid_media
     from dashboard.utils.formatting import platform_error
 
+    from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
+
     start, end, preset = resolve_date_range(view_range or "LAST_30_DAYS")
     LOGGER.info("LinkedIn source: BigQuery.")
+    _gsc_executor = _ThreadPoolExecutor(max_workers=1)
+    _gsc_fut = _gsc_executor.submit(bq_gsc_service.build_gsc_snapshot, start=start, end=end)
     try:
         cfg = client_config.load_client_config("penn-bq-test")
         if PENN_BQ_TEST_LINKEDIN_SOURCE != "bigquery":
@@ -151,12 +155,14 @@ def dashboard_penn_bq_test(
             "errors": {"penn_bq_test": message},
             "refresh_mode": "bigquery_linkedin",
         }
-    # GSC mart — runs independently so a paid-media failure doesn't suppress Search Console
+    # GSC mart — was started in a background thread above; collect result now
     try:
-        snapshot["gsc"] = bq_gsc_service.build_gsc_snapshot(start=start, end=end)
+        snapshot["gsc"] = _gsc_fut.result(timeout=60)
     except Exception as _gsc_exc:
         LOGGER.warning("Penn BQ Test GSC fetch failed: %s", _gsc_exc)
         snapshot.setdefault("errors", {})["gsc"] = str(_gsc_exc)[:400]
+    finally:
+        _gsc_executor.shutdown(wait=False)
     try:
         html = dashboard_service.render_penn_html(
             snapshot,
