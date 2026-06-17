@@ -309,6 +309,8 @@ def build_snapshot(*, cfg: PennDashboardConfig, start: date, end: date, preset: 
             "creative": creative_rows,
         }
     }
+    platform_totals = {"linkedin": totals}
+    breakdowns = {"linkedin": {"campaign_group": campaigns, "campaign": campaigns, "creative": []}}
     return {
         "client_key": cfg.client_key,
         "label": cfg.label,
@@ -319,6 +321,7 @@ def build_snapshot(*, cfg: PennDashboardConfig, start: date, end: date, preset: 
             "linkedin": "bigquery",
             "linkedin_creative_metadata": "postgres",
         },
+        "data_sources": {"linkedin": "bigquery"},
         "daily_metrics": {"linkedin": daily},
         "platform_totals": platform_totals,
         "breakdowns": breakdowns,

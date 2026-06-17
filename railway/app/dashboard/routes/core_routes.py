@@ -80,6 +80,17 @@ def dashboard_penn_bq_test(
     snapshot.setdefault("data_sources", {})["google"] = "bigquery"
     try:
         linkedin_snapshot = bq_linkedin_ads_service.build_snapshot(
+    import client_config
+    from dashboard.utils.formatting import platform_error
+
+    cfg = client_config.load_client_config("penn-bq-test")
+    linkedin_source = (cfg.platform_sources or {}).get("linkedin")
+    if linkedin_source != "bigquery":
+        raise HTTPException(status_code=500, detail="Penn BQ Test is not configured for LinkedIn BigQuery.")
+    start, end, preset = resolve_date_range(view_range or "LAST_30_DAYS")
+    LOGGER.info("LinkedIn source: BigQuery.")
+    try:
+        snapshot = bq_linkedin_ads_service.build_snapshot(
             cfg=cfg,
             start=start,
             end=end,
@@ -107,6 +118,25 @@ def dashboard_penn_bq_test(
         snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = "postgres"
         snapshot.setdefault("creative_metadata", {"source": "postgres", "merged_rows": 0})
     snapshot["aggregated_paid_media"] = aggregated_paid_media(snapshot.get("platform_totals") or {})
+    except Exception as exc:
+        message = f"Penn BQ Test LinkedIn BigQuery query failed: {platform_error(exc)}"
+        snapshot = {
+            "client_key": "penn-bq-test",
+            "label": cfg.label,
+            "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
+            "accounts": {"google": None, "linkedin": cfg.linkedin_account_id, "meta": None},
+            "data_sources": {"linkedin": "bigquery"},
+            "daily_metrics": {},
+            "platform_totals": {},
+            "breakdowns": {},
+            "aggregated_paid_media": {},
+            "business_line_campaigns": [],
+            "warehouse_sync": {},
+            "ga4_attribution": None,
+            "ga4_pages": None,
+            "errors": {"linkedin_bigquery": message},
+            "refresh_mode": "bigquery_linkedin",
+        }
     return HTMLResponse(
         dashboard_service.render_penn_html(
             snapshot,
