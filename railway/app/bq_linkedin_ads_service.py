@@ -172,6 +172,44 @@ def _campaign_ids_sql(*, start: date, end: date, account_id: str) -> str:
     """
 
 
+def _campaign_group_map_sql(*, start: date, end: date, account_id: str) -> str:
+    """Return campaign→group mapping from the raw campaign_daily table (has campaign_group_id)."""
+    safe_account = str(account_id).replace("'", "\\'")
+    return f"""
+    SELECT
+      CAST(campaign_id AS STRING) AS campaign_id,
+      MAX(CAST(campaign_group_id AS STRING)) AS campaign_group_id,
+      MAX(CAST(campaign_group_name AS STRING)) AS campaign_group_name
+    FROM {_table(_CAMPAIGN_TABLE)}
+    WHERE metric_date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+      AND CAST(account_id AS STRING) = '{safe_account}'
+      AND campaign_id IS NOT NULL
+      AND campaign_group_id IS NOT NULL
+      AND CAST(campaign_group_id AS STRING) NOT IN ('', 'None', 'null')
+    GROUP BY 1
+    """
+
+
+def _fetch_campaign_group_map(*, start: date, end: date, account_id: str) -> dict[str, dict[str, str]]:
+    """Return {campaign_id: {id, name}} from the raw BQ campaign_daily table."""
+    try:
+        rows = bigquery_service.run_query(
+            _campaign_group_map_sql(start=start, end=end, account_id=account_id),
+            project_id=_project_id(),
+            max_rows=5000,
+        )
+    except Exception:
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    for row in rows:
+        cid = str(row.get("campaign_id") or "").strip()
+        gid = str(row.get("campaign_group_id") or "").strip()
+        gname = str(row.get("campaign_group_name") or "").strip()
+        if cid and gid:
+            out[cid] = {"id": gid, "name": gname or f"Group {gid}"}
+    return out
+
+
 def _campaign_metadata_from_postgres(
     *,
     account_id: str,
@@ -348,31 +386,108 @@ def merge_postgres_creative_metadata(
     return merged
 
 
-def _campaign_totals(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_id: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        cid = str(row.get("campaign_id") or "")
+def _build_linkedin_breakdowns(
+    campaign_daily_rows: list[dict[str, Any]],
+    group_map: dict[str, dict[str, str]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Build campaign_group (tier 1 = UI Campaign) and campaign (tier 2 = UI Ad Set) rows."""
+    by_campaign: dict[str, dict[str, Any]] = {}
+    for row in campaign_daily_rows:
+        cid = str(row.get("campaign_id") or "").strip()
         if not cid:
             continue
         name = str(row.get("campaign_name") or cid)
-        item = by_id.setdefault(cid, {"id": cid, "name": name, "entity_level": "campaign", "campaign_id": cid, "campaign_name": name, "spend": 0.0, "clicks": 0, "impressions": 0, "conversions": 0.0, "reach": 0})
+        group_info = group_map.get(cid) or {}
+        gid = str(group_info.get("id") or "").strip()
+        gname = str(group_info.get("name") or "").strip()
+        if cid not in by_campaign:
+            by_campaign[cid] = {
+                "id": cid,
+                "name": name,
+                "entity_level": "campaign",
+                "campaign_id": cid,
+                "campaign_name": name,
+                "parent_id": gid,
+                "parent_name": gname,
+                "campaign_group_id": gid,
+                "campaign_group_name": gname,
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "reach": 0,
+            }
+        item = by_campaign[cid]
         item["spend"] += float(row.get("spend") or 0)
         item["clicks"] += int(row.get("clicks") or 0)
         item["impressions"] += int(row.get("impressions") or 0)
         item["conversions"] += float(row.get("conversions") or 0)
         item["reach"] += int(row.get("reach") or 0)
-    for item in by_id.values():
+
+    campaign_list: list[dict[str, Any]] = sorted(
+        by_campaign.values(), key=lambda r: float(r.get("spend") or 0), reverse=True
+    )
+    for item in campaign_list:
         item["ctr"] = _safe_ratio(float(item["clicks"]), float(item["impressions"]))
         item["cpc"] = _safe_ratio(float(item["spend"]), float(item["clicks"]))
         item["cpm"] = _safe_ratio(float(item["spend"]), float(item["impressions"]), 1000)
         item["cost_per_conversion"] = _safe_ratio(float(item["spend"]), float(item["conversions"]))
-    return sorted(by_id.values(), key=lambda r: float(r.get("spend") or 0), reverse=True)
+
+    # Aggregate campaign_group rows (tier 1 = UI "Campaign") from campaign tier
+    by_group: dict[str, dict[str, Any]] = {}
+    for camp in campaign_list:
+        gid = str(camp.get("campaign_group_id") or "").strip()
+        if not gid:
+            continue
+        if gid not in by_group:
+            by_group[gid] = {
+                "id": gid,
+                "name": str(camp.get("campaign_group_name") or f"Group {gid}"),
+                "entity_level": "campaign_group",
+                "campaign_group_id": gid,
+                "campaign_group_name": str(camp.get("campaign_group_name") or f"Group {gid}"),
+                "parent_id": "",
+                "parent_name": "",
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "reach": 0,
+            }
+        g = by_group[gid]
+        g["spend"] += camp["spend"]
+        g["clicks"] += camp["clicks"]
+        g["impressions"] += camp["impressions"]
+        g["conversions"] += camp["conversions"]
+        g["reach"] += camp.get("reach", 0)
+
+    group_list: list[dict[str, Any]] = sorted(
+        by_group.values(), key=lambda r: float(r.get("spend") or 0), reverse=True
+    )
+    for g in group_list:
+        g["ctr"] = _safe_ratio(float(g["clicks"]), float(g["impressions"]))
+        g["cpc"] = _safe_ratio(float(g["spend"]), float(g["clicks"]))
+        g["cpm"] = _safe_ratio(float(g["spend"]), float(g["impressions"]), 1000)
+        g["cost_per_conversion"] = _safe_ratio(float(g["spend"]), float(g["conversions"]))
+
+    return {
+        "campaign_group": group_list,
+        "campaign": campaign_list,
+    }
 
 
 def build_snapshot(*, cfg: PennDashboardConfig, start: date, end: date, preset: str) -> dict[str, Any]:
-    data = fetch_linkedin_ads(start=start, end=end, account_id=cfg.linkedin_account_id)
+    account_id_clean = str(cfg.linkedin_account_id or "").strip().split(":")[-1]
+    data = fetch_linkedin_ads(start=start, end=end, account_id=account_id_clean or None)
     daily = data["daily_metrics"]
-    campaigns = _campaign_totals(data["campaign_daily"])
+
+    # Fetch campaign→group mapping from raw BQ campaign_daily (has campaign_group_id)
+    group_map: dict[str, dict[str, str]] = {}
+    if account_id_clean:
+        group_map = _fetch_campaign_group_map(start=start, end=end, account_id=account_id_clean)
+
+    li_breakdowns = _build_linkedin_breakdowns(data["campaign_daily"], group_map)
+
     summary = data["account_summary"][0] if data["account_summary"] else {}
     totals = {
         "spend": float(summary.get("spend") or 0),
@@ -385,21 +500,13 @@ def build_snapshot(*, cfg: PennDashboardConfig, start: date, end: date, preset: 
         "cpc": float(summary.get("cpc") or 0),
         "cpm": float(summary.get("cpm") or 0),
         "cost_per_conversion": float(summary.get("cost_per_conversion") or 0),
-        "campaign_count": len(campaigns),
+        "campaign_count": len(li_breakdowns["campaign"]),
     }
     creative_rows: list[dict[str, Any]] = []
-    creative_metadata_rows = merge_postgres_creative_metadata(
-        creative_rows,
-        client_key="penn",
-    )
+    creative_metadata_rows = merge_postgres_creative_metadata(creative_rows, client_key="penn")
+    li_breakdowns["creative"] = creative_rows
     platform_totals = {"linkedin": totals}
-    breakdowns = {
-        "linkedin": {
-            "campaign_group": [],
-            "campaign": campaigns,
-            "creative": creative_rows,
-        }
-    }
+    breakdowns = {"linkedin": li_breakdowns}
     return {
         "client_key": cfg.client_key,
         "label": cfg.label,
