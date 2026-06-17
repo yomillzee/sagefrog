@@ -61,6 +61,9 @@ def _mart_table(table_name: str | None = None) -> str:
     return f"`{_project_id()}.{dataset}.{table}`"
 
 
+_DEFAULT_CREATIVE_FACT_TABLE = "fact_linkedin_ads_creative_daily"
+
+
 def _safe_ratio(numerator: float, denominator: float, multiplier: float = 1.0) -> float:
     return (numerator / denominator * multiplier) if denominator else 0.0
 
@@ -141,6 +144,38 @@ def campaign_daily_sql(*, start: date, end: date, account_id: str | None = None)
     WHERE date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
     GROUP BY 1, 2
     ORDER BY 1 DESC, spend DESC
+    """
+
+
+def _creative_daily_sql(*, start: date, end: date, account_id: str | None = None) -> str:
+    account_filter = ""
+    if account_id:
+        safe_account = str(account_id).replace("'", "\\'")
+        account_filter = f"AND CAST(source_account_id AS STRING) = '{safe_account}'"
+    creative_table = _mart_table(_DEFAULT_CREATIVE_FACT_TABLE)
+    return f"""
+    SELECT
+      creative_id,
+      MAX(campaign_id) AS campaign_id,
+      MAX(creative_name) AS creative_name,
+      MAX(campaign_name) AS campaign_name,
+      MAX(campaign_group_id) AS campaign_group_id,
+      MAX(campaign_group_name) AS campaign_group_name,
+      MAX(status) AS status,
+      MAX(media_type) AS media_type,
+      MAX(thumbnail_url) AS thumbnail_url,
+      MAX(image_url) AS image_url,
+      MAX(video_url) AS video_url,
+      SUM(spend) AS spend,
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SUM(conversions) AS conversions,
+      SUM(conversion_value) AS conversion_value
+    FROM {creative_table}
+    WHERE date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+    {account_filter}
+    GROUP BY 1
+    ORDER BY spend DESC
     """
 
 
@@ -277,6 +312,15 @@ def sync_campaign_metadata_and_rebuild_mart(
 
     mirror = bigquery_warehouse.mirror_linkedin_campaign_metadata(list(metadata_by_id.values()))
     mart = bigquery_warehouse.rebuild_linkedin_campaign_daily_mart()
+
+    creative_sync: dict[str, Any] = {}
+    try:
+        creative_sync = sync_linkedin_creative_daily(
+            account_id=account_id_clean, start=start, end=end
+        )
+    except Exception as exc:
+        creative_sync = {"error": str(exc)[:300]}
+
     return {
         "enabled": True,
         "campaign_ids": len(campaign_ids),
@@ -284,6 +328,47 @@ def sync_campaign_metadata_and_rebuild_mart(
         "missing_after_sync": len([cid for cid in campaign_ids if cid not in metadata_by_id]),
         "bigquery": mirror,
         "mart": mart,
+        "creative_sync": creative_sync,
+    }
+
+
+def sync_linkedin_creative_daily(
+    *,
+    account_id: str,
+    start: date,
+    end: date,
+) -> dict[str, Any]:
+    """Sync LinkedIn creative daily metrics + metadata to BigQuery.
+
+    Writes to linkedin_ads.ad_daily and linkedin_ads.creative_metadata,
+    then creates/replaces the fact_linkedin_ads_creative_daily mart view.
+    """
+    import bigquery_warehouse
+    import linkedin_service
+
+    account_id_clean = str(account_id).strip().split(":")[-1]
+
+    daily_rows = linkedin_service.fetch_creative_daily_metrics(
+        account_id_clean, start=start, end=end
+    )
+    ad_mirror = bigquery_warehouse.mirror_linkedin_ad_daily_batch(account_id_clean, daily_rows)
+
+    creatives_perf = linkedin_service.creatives_performance(
+        account_id_clean, date_range="LAST_30_DAYS"
+    )
+    raw_creatives = creatives_perf.get("creatives") or []
+    for row in raw_creatives:
+        row.setdefault("account_id", account_id_clean)
+    meta_mirror = bigquery_warehouse.mirror_linkedin_creative_metadata(raw_creatives)
+
+    view = bigquery_warehouse.create_linkedin_creative_mart_view()
+
+    return {
+        "daily_rows": len(daily_rows),
+        "metadata_rows": len(raw_creatives),
+        "ad_daily": ad_mirror,
+        "creative_metadata": meta_mirror,
+        "mart_view": view,
     }
 
 
@@ -475,6 +560,50 @@ def _build_linkedin_breakdowns(
     }
 
 
+def _normalize_creative_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Shape BQ creative mart rows into the dashboard breakdowns format."""
+    out = []
+    for row in rows:
+        crid = str(row.get("creative_id") or "").strip()
+        if not crid:
+            continue
+        cname = str(row.get("creative_name") or crid)
+        cid = str(row.get("campaign_id") or "").strip()
+        spend = float(row.get("spend") or 0)
+        clicks = int(row.get("clicks") or 0)
+        impressions = int(row.get("impressions") or 0)
+        convs = float(row.get("conversions") or 0)
+        item: dict[str, Any] = {
+            "id": crid,
+            "creative_id": crid,
+            "name": cname,
+            "creative_name": cname,
+            "entity_level": "creative",
+            "parent_id": cid,
+            "parent_name": str(row.get("campaign_name") or "").strip(),
+            "campaign_id": cid,
+            "campaign_name": str(row.get("campaign_name") or "").strip(),
+            "campaign_group_id": str(row.get("campaign_group_id") or "").strip(),
+            "campaign_group_name": str(row.get("campaign_group_name") or "").strip(),
+            "status": str(row.get("status") or "").strip(),
+            "spend": spend,
+            "clicks": clicks,
+            "impressions": impressions,
+            "conversions": convs,
+            "conversion_value": float(row.get("conversion_value") or 0),
+            "ctr": _safe_ratio(float(clicks), float(impressions)),
+            "cpc": _safe_ratio(spend, float(clicks)),
+            "cpm": _safe_ratio(spend, float(impressions), 1000),
+            "cost_per_conversion": _safe_ratio(spend, convs),
+        }
+        for field in ("media_type", "thumbnail_url", "image_url", "video_url"):
+            val = str(row.get(field) or "").strip()
+            if val:
+                item[field] = val
+        out.append(item)
+    return out
+
+
 def build_snapshot(*, cfg: PennDashboardConfig, start: date, end: date, preset: str) -> dict[str, Any]:
     account_id_clean = str(cfg.linkedin_account_id or "").strip().split(":")[-1]
     data = fetch_linkedin_ads(start=start, end=end, account_id=account_id_clean or None)
@@ -501,9 +630,21 @@ def build_snapshot(*, cfg: PennDashboardConfig, start: date, end: date, preset: 
         "cost_per_conversion": float(summary.get("cost_per_conversion") or 0),
         "campaign_count": len(li_breakdowns["campaign"]),
     }
+    # Read creatives from BQ mart; fall back to Postgres if mart isn't populated yet.
     creative_rows: list[dict[str, Any]] = []
-    creative_metadata_rows = merge_postgres_creative_metadata(creative_rows, client_key="penn")
+    creative_source = "bigquery"
+    try:
+        bq_creative_rows = bigquery_service.run_query(
+            _creative_daily_sql(start=start, end=end, account_id=account_id_clean or None),
+            project_id=_project_id(),
+            max_rows=5000,
+        )
+        creative_rows = _normalize_creative_rows(bq_creative_rows)
+    except Exception:
+        creative_source = "postgres"
+        merge_postgres_creative_metadata(creative_rows, client_key="penn")
     li_breakdowns["creative"] = creative_rows
+
     platform_totals = {"linkedin": totals}
     breakdowns = {"linkedin": li_breakdowns}
     return {
@@ -514,7 +655,7 @@ def build_snapshot(*, cfg: PennDashboardConfig, start: date, end: date, preset: 
         "accounts": {"google": cfg.google_customer_id, "linkedin": cfg.linkedin_account_id or _project_id(), "meta": cfg.meta_account_id},
         "data_sources": {
             "linkedin": "bigquery",
-            "linkedin_creative_metadata": "postgres",
+            "linkedin_creative_metadata": creative_source,
         },
         "daily_metrics": {"linkedin": daily},
         "platform_totals": platform_totals,
@@ -526,8 +667,8 @@ def build_snapshot(*, cfg: PennDashboardConfig, start: date, end: date, preset: 
         "ga4_pages": None,
         "errors": {},
         "creative_metadata": {
-            "source": "postgres",
-            "merged_rows": creative_metadata_rows,
+            "source": creative_source,
+            "merged_rows": len(creative_rows),
         },
         "refresh_mode": "bigquery_linkedin",
     }

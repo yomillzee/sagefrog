@@ -355,17 +355,15 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
             snapshot.setdefault("platform_totals", {})["linkedin"] = linkedin_totals
             snapshot.setdefault("breakdowns", {})["linkedin"] = linkedin_breakdowns
             snapshot.setdefault("data_sources", {})["linkedin"] = "bigquery"
-            snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = "postgres"
-            snapshot["creative_metadata"] = linkedin_snapshot.get("creative_metadata") or {
-                "source": "postgres",
-                "merged_rows": 0,
-            }
+            creative_meta = linkedin_snapshot.get("creative_metadata") or {}
+            snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = creative_meta.get("source", "bigquery")
+            snapshot["creative_metadata"] = creative_meta or {"source": "bigquery", "merged_rows": 0}
         except Exception as exc:
             message = f"Penn BQ Test LinkedIn BigQuery query failed: {platform_error(exc)}"
             snapshot.setdefault("errors", {})["linkedin_bigquery"] = message
             snapshot.setdefault("data_sources", {})["linkedin"] = "bigquery"
-            snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = "postgres"
-            snapshot.setdefault("creative_metadata", {"source": "postgres", "merged_rows": 0})
+            snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = "bigquery"
+            snapshot.setdefault("creative_metadata", {"source": "bigquery", "merged_rows": 0})
 
         from dashboard.services.snapshot_metrics_service import aggregated_paid_media
         snapshot["aggregated_paid_media"] = aggregated_paid_media(snapshot.get("platform_totals") or {})

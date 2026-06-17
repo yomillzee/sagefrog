@@ -13,8 +13,11 @@ _DEFAULT_LINKEDIN_DATASET = "linkedin_ads"
 _DEFAULT_TABLE = "metrics_daily"
 _DEFAULT_CAMPAIGN_TABLE = "campaign_daily"
 _DEFAULT_CAMPAIGNS_TABLE = "campaigns"
+_DEFAULT_AD_TABLE = "ad_daily"
+_DEFAULT_CREATIVE_METADATA_TABLE = "creative_metadata"
 _DEFAULT_MART_DATASET = "marketing_marts"
 _DEFAULT_LINKEDIN_CAMPAIGN_FACT_TABLE = "fact_linkedin_ads_campaign_daily"
+_DEFAULT_LINKEDIN_CREATIVE_FACT_TABLE = "fact_linkedin_ads_creative_daily"
 
 
 def _bigquery():
@@ -403,5 +406,238 @@ def rebuild_linkedin_campaign_daily_mart() -> dict[str, Any]:
             return {"enabled": True, "table": table_id, "skipped": True, "reason": "target_is_view"}
     except Exception:
         pass
+    client.query(sql).result()
+    return {"enabled": True, "table": table_id}
+
+
+def _ad_daily_schema() -> list[Any]:
+    bigquery = _bigquery()
+    return [
+        bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("account_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("creative_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("metric_date", "DATE", mode="REQUIRED"),
+        bigquery.SchemaField("spend", "FLOAT64", mode="REQUIRED"),
+        bigquery.SchemaField("clicks", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("impressions", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("conversions", "FLOAT64", mode="REQUIRED"),
+        bigquery.SchemaField("conversion_value", "FLOAT64", mode="REQUIRED"),
+        bigquery.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"),
+    ]
+
+
+def _creative_metadata_schema() -> list[Any]:
+    bigquery = _bigquery()
+    return [
+        bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("account_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("creative_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("campaign_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("creative_name", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("status", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("media_type", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("thumbnail_url", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("image_url", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("video_url", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("last_synced_at", "TIMESTAMP", mode="REQUIRED"),
+    ]
+
+
+def _ad_daily_table_id() -> tuple[Any, str]:
+    client, base_table = _target("linkedin")
+    return client, base_table.rsplit(".", 1)[0] + "." + _DEFAULT_AD_TABLE
+
+
+def _creative_metadata_table_id() -> tuple[Any, str]:
+    client, base_table = _target("linkedin")
+    return client, base_table.rsplit(".", 1)[0] + "." + _DEFAULT_CREATIVE_METADATA_TABLE
+
+
+def mirror_linkedin_ad_daily_batch(
+    account_id: str, rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Mirror per-creative daily metric rows to linkedin_ads.ad_daily."""
+    if not rows or not enabled("linkedin"):
+        return {"enabled": False, "rows_upserted": 0, "table": None}
+
+    account_id_clean = str(account_id).strip().split(":")[-1]
+    client, table_id = _ad_daily_table_id()
+    bigquery = _bigquery()
+    dataset_ref = ".".join(table_id.split(".")[:2])
+    client.create_dataset(bigquery.Dataset(dataset_ref), exists_ok=True)
+    schema = _ad_daily_schema()
+    t = bigquery.Table(table_id, schema=schema)
+    t.time_partitioning = bigquery.TimePartitioning(field="metric_date")
+    t.clustering_fields = ["source", "account_id", "creative_id"]
+    client.create_table(t, exists_ok=True)
+
+    synced_at = datetime.now(timezone.utc).isoformat()
+    payload = []
+    for row in rows:
+        crid = str(row.get("creative_id") or "").strip()
+        metric_date = str(row.get("metric_date") or "")[:10]
+        if not crid or not metric_date:
+            continue
+        payload.append({
+            "source": "linkedin",
+            "account_id": account_id_clean,
+            "creative_id": crid,
+            "metric_date": metric_date,
+            "spend": float(row.get("spend") or 0),
+            "clicks": int(row.get("clicks") or 0),
+            "impressions": int(row.get("impressions") or 0),
+            "conversions": float(row.get("conversions") or 0),
+            "conversion_value": float(row.get("conversion_value") or 0),
+            "synced_at": synced_at,
+        })
+    if not payload:
+        return {"enabled": True, "rows_upserted": 0, "table": table_id}
+
+    temp_id = f"{table_id}_staging_{uuid4().hex}"
+    job_config = bigquery.LoadJobConfig(schema=schema, write_disposition="WRITE_TRUNCATE")
+    client.load_table_from_json(payload, temp_id, job_config=job_config).result()
+    merge_sql = f"""
+    MERGE `{table_id}` T
+    USING `{temp_id}` S
+    ON T.source = S.source AND T.account_id = S.account_id
+      AND T.creative_id = S.creative_id AND T.metric_date = S.metric_date
+    WHEN MATCHED THEN UPDATE SET
+      spend = S.spend, clicks = S.clicks, impressions = S.impressions,
+      conversions = S.conversions, conversion_value = S.conversion_value,
+      synced_at = S.synced_at
+    WHEN NOT MATCHED THEN INSERT (
+      source, account_id, creative_id, metric_date,
+      spend, clicks, impressions, conversions, conversion_value, synced_at
+    ) VALUES (
+      S.source, S.account_id, S.creative_id, S.metric_date,
+      S.spend, S.clicks, S.impressions, S.conversions, S.conversion_value, S.synced_at
+    )
+    """
+    try:
+        client.query(merge_sql).result()
+    finally:
+        client.delete_table(temp_id, not_found_ok=True)
+    return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
+
+
+def mirror_linkedin_creative_metadata(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Upsert LinkedIn creative metadata (thumbnails, media_type, etc.) to linkedin_ads.creative_metadata."""
+    if not rows or not enabled("linkedin"):
+        return {"enabled": False, "rows_upserted": 0, "table": None}
+
+    client, table_id = _creative_metadata_table_id()
+    bigquery = _bigquery()
+    dataset_ref = ".".join(table_id.split(".")[:2])
+    client.create_dataset(bigquery.Dataset(dataset_ref), exists_ok=True)
+    schema = _creative_metadata_schema()
+    t = bigquery.Table(table_id, schema=schema)
+    t.clustering_fields = ["source", "account_id", "creative_id"]
+    client.create_table(t, exists_ok=True)
+
+    synced_at = datetime.now(timezone.utc).isoformat()
+    payload = []
+    for row in rows:
+        account_id = str(row.get("account_id") or "").strip().split(":")[-1]
+        crid = str(row.get("creative_id") or row.get("id") or "").strip()
+        if not crid:
+            continue
+        payload.append({
+            "source": "linkedin",
+            "account_id": account_id,
+            "creative_id": crid,
+            "campaign_id": str(row.get("campaign_id") or "").strip() or None,
+            "creative_name": str(row.get("creative_name") or row.get("name") or "").strip() or None,
+            "status": str(row.get("status") or "").strip() or None,
+            "media_type": str(row.get("media_type") or "").strip() or None,
+            "thumbnail_url": str(row.get("thumbnail_url") or "").strip() or None,
+            "image_url": str(row.get("image_url") or "").strip() or None,
+            "video_url": str(row.get("video_url") or "").strip() or None,
+            "last_synced_at": synced_at,
+        })
+    if not payload:
+        return {"enabled": True, "rows_upserted": 0, "table": table_id}
+
+    temp_id = f"{table_id}_staging_{uuid4().hex}"
+    job_config = bigquery.LoadJobConfig(schema=schema, write_disposition="WRITE_TRUNCATE")
+    client.load_table_from_json(payload, temp_id, job_config=job_config).result()
+    merge_sql = f"""
+    MERGE `{table_id}` T
+    USING `{temp_id}` S
+    ON T.source = S.source AND T.account_id = S.account_id AND T.creative_id = S.creative_id
+    WHEN MATCHED THEN UPDATE SET
+      campaign_id = S.campaign_id,
+      creative_name = S.creative_name,
+      status = S.status,
+      media_type = S.media_type,
+      thumbnail_url = S.thumbnail_url,
+      image_url = S.image_url,
+      video_url = S.video_url,
+      last_synced_at = S.last_synced_at
+    WHEN NOT MATCHED THEN INSERT (
+      source, account_id, creative_id, campaign_id, creative_name,
+      status, media_type, thumbnail_url, image_url, video_url, last_synced_at
+    ) VALUES (
+      S.source, S.account_id, S.creative_id, S.campaign_id, S.creative_name,
+      S.status, S.media_type, S.thumbnail_url, S.image_url, S.video_url, S.last_synced_at
+    )
+    """
+    try:
+        client.query(merge_sql).result()
+    finally:
+        client.delete_table(temp_id, not_found_ok=True)
+    return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
+
+
+def create_linkedin_creative_mart_view() -> dict[str, Any]:
+    """Create or replace marketing_marts.fact_linkedin_ads_creative_daily view."""
+    if not enabled("linkedin"):
+        return {"enabled": False, "table": None}
+    project_id = _linkedin_project_id()
+    raw_dataset = _dataset_id("linkedin")
+    mart_dataset = (os.getenv("BQ_MART_DATASET_ID") or _DEFAULT_MART_DATASET).strip()
+    mart_table = _DEFAULT_LINKEDIN_CREATIVE_FACT_TABLE
+    import bigquery_service
+    client = bigquery_service.build_client(project_id)
+    bigquery = _bigquery()
+    client.create_dataset(bigquery.Dataset(f"{project_id}.{mart_dataset}"), exists_ok=True)
+    table_id = f"{project_id}.{mart_dataset}.{mart_table}"
+    sql = f"""
+    CREATE OR REPLACE VIEW `{table_id}` AS
+    SELECT
+      'penn' AS client_key,
+      ad.metric_date AS date,
+      ad.source AS source_platform,
+      CAST(ad.account_id AS STRING) AS source_account_id,
+      CAST(ad.creative_id AS STRING) AS creative_id,
+      COALESCE(
+        NULLIF(TRIM(CAST(cm.creative_name AS STRING)), ''),
+        CAST(ad.creative_id AS STRING)
+      ) AS creative_name,
+      CAST(cm.campaign_id AS STRING) AS campaign_id,
+      CAST(camp.campaign_name AS STRING) AS campaign_name,
+      CAST(camp.campaign_group_id AS STRING) AS campaign_group_id,
+      CAST(camp.campaign_group_name AS STRING) AS campaign_group_name,
+      CAST(cm.status AS STRING) AS status,
+      CAST(cm.media_type AS STRING) AS media_type,
+      CAST(cm.thumbnail_url AS STRING) AS thumbnail_url,
+      CAST(cm.image_url AS STRING) AS image_url,
+      CAST(cm.video_url AS STRING) AS video_url,
+      SUM(ad.spend) AS spend,
+      SUM(ad.clicks) AS clicks,
+      SUM(ad.impressions) AS impressions,
+      SUM(ad.conversions) AS conversions,
+      SUM(ad.conversion_value) AS conversion_value,
+      CURRENT_TIMESTAMP() AS updated_at
+    FROM `{project_id}.{raw_dataset}.{_DEFAULT_AD_TABLE}` ad
+    LEFT JOIN `{project_id}.{raw_dataset}.{_DEFAULT_CREATIVE_METADATA_TABLE}` cm
+      ON CAST(ad.creative_id AS STRING) = CAST(cm.creative_id AS STRING)
+    LEFT JOIN `{project_id}.{raw_dataset}.{_DEFAULT_CAMPAIGNS_TABLE}` camp
+      ON CAST(cm.campaign_id AS STRING) = CAST(camp.campaign_id AS STRING)
+    GROUP BY
+      client_key, date, source_platform, source_account_id,
+      creative_id, creative_name, campaign_id, campaign_name,
+      campaign_group_id, campaign_group_name, status, media_type,
+      thumbnail_url, image_url, video_url
+    """
     client.query(sql).result()
     return {"enabled": True, "table": table_id}
