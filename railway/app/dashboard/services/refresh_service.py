@@ -383,6 +383,7 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
                 meta_result = bq_meta_ads_service.build_meta_breakdowns(start=start, end=end)
                 snapshot.setdefault("breakdowns", {})["meta"] = meta_result["breakdowns"]
                 snapshot.setdefault("platform_totals", {})["meta"] = meta_result["platform_totals"]
+                snapshot.setdefault("daily_metrics", {})["meta"] = meta_result.get("daily_metrics", [])
                 snapshot.setdefault("data_sources", {})["meta"] = "bigquery"
                 if meta_result.get("errors"):
                     snapshot.setdefault("errors", {}).update(meta_result["errors"])

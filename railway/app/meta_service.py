@@ -1114,3 +1114,85 @@ def list_videos(
         "row_count": len(videos_out),
         "videos": videos_out,
     }
+
+
+def fetch_ad_creative_metadata(
+    account_id: str,
+    *,
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+) -> list[dict[str, Any]]:
+    """Return ad creative metadata (thumbnail, image, media_type) for BQ storage.
+
+    Returns a list of {ad_id, ad_name, adset_id, adset_name, campaign_id, campaign_name,
+    thumbnail_url, image_url, media_type} — one row per ad.
+    """
+    env = env or load_meta_env()
+    access_token = access_token or env.access_token
+    account_id_clean = _normalize_account_id(account_id)
+    if not account_id_clean:
+        raise ValueError("account_id is required")
+
+    try:
+        ad_rows = _graph_get_all(
+            f"/{_act_id(account_id_clean)}/ads",
+            access_token=access_token,
+            params={
+                "fields": _AD_MEDIA_FIELDS,
+                "limit": 500,
+                "effective_status": json.dumps(
+                    ["ACTIVE", "PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "PENDING_REVIEW", "DISAPPROVED"]
+                ),
+            },
+            env=env,
+        )
+    except Exception as exc:
+        if _is_meta_ads_read_error(exc):
+            return []
+        raise
+
+    out: list[dict[str, Any]] = []
+    video_ids: set[str] = set()
+    interim: list[dict[str, Any]] = []
+
+    for ad in ad_rows:
+        ad_id = str(ad.get("id") or "")
+        if not ad_id:
+            continue
+        creative = ad.get("creative") if isinstance(ad.get("creative"), dict) else {}
+        entries = _extract_creative_media(creative)
+        entry = entries[0] if entries else {}
+        vid = str(entry.get("video_id") or "").strip()
+        if vid:
+            video_ids.add(vid)
+        campaign = ad.get("campaign") if isinstance(ad.get("campaign"), dict) else {}
+        adset = ad.get("adset") if isinstance(ad.get("adset"), dict) else {}
+        interim.append({
+            "ad_id": ad_id,
+            "ad_name": str(ad.get("name") or ""),
+            "adset_id": str(adset.get("id") or "").strip(),
+            "adset_name": str(adset.get("name") or ""),
+            "campaign_id": str(campaign.get("id") or "").strip(),
+            "campaign_name": str(campaign.get("name") or ""),
+            "thumbnail_url": str(entry.get("thumbnail_url") or ""),
+            "image_url": str(entry.get("image_url") or ""),
+            "media_type": str(entry.get("media_type") or ""),
+            "video_id": vid,
+        })
+
+    video_details: dict[str, Any] = {}
+    if video_ids:
+        try:
+            video_details = _fetch_video_details(video_ids, access_token=access_token, env=env)
+        except Exception:
+            pass
+
+    for item in interim:
+        vid = item.pop("video_id", "")
+        if vid and video_details.get(vid):
+            detail = video_details[vid]
+            if not item["thumbnail_url"]:
+                item["thumbnail_url"] = str(detail.get("thumbnail_url") or "")
+        out.append(item)
+
+    return out

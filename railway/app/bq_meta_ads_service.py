@@ -40,7 +40,7 @@ def sync_meta_to_bq(
     start: date,
     end: date,
 ) -> dict[str, Any]:
-    """Fetch Meta campaign/adset/ad daily metrics and upsert into BigQuery."""
+    """Fetch Meta campaign/adset/ad daily metrics + ad creatives and upsert into BigQuery."""
     from concurrent.futures import ThreadPoolExecutor
 
     account_id_clean = meta_service._normalize_account_id(account_id)
@@ -48,12 +48,14 @@ def sync_meta_to_bq(
     campaign_rows: list[dict[str, Any]] = []
     adset_rows: list[dict[str, Any]] = []
     ad_rows: list[dict[str, Any]] = []
+    creative_rows: list[dict[str, Any]] = []
     errors: dict[str, str] = {}
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         _cf = pool.submit(meta_service.fetch_campaign_daily_metrics, account_id_clean, start=start, end=end)
         _af = pool.submit(meta_service.fetch_adset_daily_metrics, account_id_clean, start=start, end=end)
         _adf = pool.submit(meta_service.fetch_ad_daily_metrics, account_id_clean, start=start, end=end)
+        _crf = pool.submit(meta_service.fetch_ad_creative_metadata, account_id_clean)
         try:
             campaign_rows = _cf.result()
         except Exception as exc:
@@ -66,10 +68,15 @@ def sync_meta_to_bq(
             ad_rows = _adf.result()
         except Exception as exc:
             errors["meta_ad_fetch"] = str(exc)[:400]
+        try:
+            creative_rows = _crf.result()
+        except Exception as exc:
+            errors["meta_creative_fetch"] = str(exc)[:400]
 
     campaign_mirror = bigquery_warehouse.mirror_meta_campaign_daily_batch(account_id_clean, campaign_rows)
     adset_mirror = bigquery_warehouse.mirror_meta_adset_daily_batch(account_id_clean, adset_rows)
     ad_mirror = bigquery_warehouse.mirror_meta_ad_daily_batch(account_id_clean, ad_rows)
+    creative_mirror = bigquery_warehouse.mirror_meta_ad_creative_batch(account_id_clean, creative_rows)
 
     views = bigquery_warehouse.create_meta_mart_views()
 
@@ -78,6 +85,7 @@ def sync_meta_to_bq(
         "campaign_rows": campaign_mirror.get("rows_upserted", 0),
         "adset_rows": adset_mirror.get("rows_upserted", 0),
         "ad_rows": ad_mirror.get("rows_upserted", 0),
+        "creative_rows": creative_mirror.get("rows_upserted", 0),
         "views": views.get("views", []),
         "errors": errors,
     }
@@ -167,7 +175,10 @@ def fetch_meta_ad_daily(
       SUM(impressions) AS impressions,
       SUM(clicks) AS clicks,
       SUM(conversions) AS conversions,
-      SUM(conversion_value) AS conversion_value
+      SUM(conversion_value) AS conversion_value,
+      MAX(thumbnail_url) AS thumbnail_url,
+      MAX(image_url) AS image_url,
+      MAX(media_type) AS media_type
     FROM {table}
     WHERE {where}
     GROUP BY 1, 2
@@ -262,6 +273,10 @@ def _build_ad_breakdowns(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         a["impressions"] += int(row.get("impressions") or 0)
         a["conversions"] += float(row.get("conversions") or 0)
         a["conversion_value"] += float(row.get("conversion_value") or 0)
+        for field in ("thumbnail_url", "image_url", "media_type"):
+            val = str(row.get(field) or "").strip()
+            if val and not a.get(field):
+                a[field] = val
     out = sorted(by_ad.values(), key=lambda r: float(r.get("spend") or 0), reverse=True)
     for a in out:
         a["ctr"] = _safe_ratio(float(a["clicks"]), float(a["impressions"]))
@@ -271,13 +286,31 @@ def _build_ad_breakdowns(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _build_daily_metrics(campaign_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Aggregate per-campaign daily rows into account-level daily totals for charts."""
+    by_date: dict[str, dict[str, Any]] = {}
+    for row in campaign_rows:
+        d = str(row.get("metric_date") or "")[:10]
+        if not d:
+            continue
+        if d not in by_date:
+            by_date[d] = {"metric_date": d, "spend": 0.0, "clicks": 0, "impressions": 0, "conversions": 0.0, "conversion_value": 0.0}
+        day = by_date[d]
+        day["spend"] += float(row.get("spend") or 0)
+        day["clicks"] += int(row.get("clicks") or 0)
+        day["impressions"] += int(row.get("impressions") or 0)
+        day["conversions"] += float(row.get("conversions") or 0)
+        day["conversion_value"] += float(row.get("conversion_value") or 0)
+    return sorted(by_date.values(), key=lambda r: r["metric_date"])
+
+
 def build_meta_breakdowns(
     *,
     days: int = 30,
     start: date | None = None,
     end: date | None = None,
 ) -> dict[str, Any]:
-    """Read Meta mart views and return breakdowns + platform_totals."""
+    """Read Meta mart views and return breakdowns + platform_totals + daily_metrics."""
     from concurrent.futures import ThreadPoolExecutor
     errors: dict[str, str] = {}
     campaign_rows: list[dict[str, Any]] = []
@@ -304,6 +337,7 @@ def build_meta_breakdowns(
     campaigns = _build_campaign_breakdowns(campaign_rows)
     adsets = _build_adset_breakdowns(adset_rows)
     ads = _build_ad_breakdowns(ad_rows)
+    daily = _build_daily_metrics(campaign_rows)
 
     totals = {
         "spend": sum(float(c.get("spend") or 0) for c in campaigns),
@@ -316,5 +350,6 @@ def build_meta_breakdowns(
     return {
         "breakdowns": {"campaign": campaigns, "adset": adsets, "ad": ads},
         "platform_totals": totals,
+        "daily_metrics": daily,
         "errors": errors,
     }

@@ -593,6 +593,7 @@ _DEFAULT_META_DATASET = "meta_data"
 _DEFAULT_META_CAMPAIGN_TABLE = "campaign_daily"
 _DEFAULT_META_ADSET_TABLE = "adset_daily"
 _DEFAULT_META_AD_TABLE = "ad_daily"
+_DEFAULT_META_AD_CREATIVE_TABLE = "ad_creative"
 _DEFAULT_META_CAMPAIGN_FACT_TABLE = "fact_meta_ads_campaign_daily"
 _DEFAULT_META_ADSET_FACT_TABLE = "fact_meta_ads_adset_daily"
 _DEFAULT_META_AD_FACT_TABLE = "fact_meta_ads_ad_daily"
@@ -851,8 +852,81 @@ def mirror_meta_ad_daily_batch(account_id: str, rows: list[dict[str, Any]]) -> d
     return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
 
 
+def _meta_ad_creative_schema() -> list[Any]:
+    bigquery = _bigquery()
+    return [
+        bigquery.SchemaField("account_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("ad_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("ad_name", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("adset_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("adset_name", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("campaign_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("campaign_name", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("thumbnail_url", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("image_url", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("media_type", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"),
+    ]
+
+
+def mirror_meta_ad_creative_batch(account_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Upsert Meta ad creative metadata (thumbnails) to meta_data.ad_creative."""
+    if not rows:
+        return {"enabled": True, "rows_upserted": 0, "table": None}
+    account_id_clean = str(account_id).strip().lstrip("act_").split(":")[-1]
+    table_id = _ensure_meta_table(_DEFAULT_META_AD_CREATIVE_TABLE, _meta_ad_creative_schema())
+    client = _meta_client()
+    bigquery = _bigquery()
+    synced_at = datetime.now(timezone.utc).isoformat()
+    payload = []
+    for row in rows:
+        aid = str(row.get("ad_id") or "").strip()
+        if not aid:
+            continue
+        payload.append({
+            "account_id": account_id_clean,
+            "ad_id": aid,
+            "ad_name": str(row.get("ad_name") or ""),
+            "adset_id": str(row.get("adset_id") or "").strip(),
+            "adset_name": str(row.get("adset_name") or ""),
+            "campaign_id": str(row.get("campaign_id") or "").strip(),
+            "campaign_name": str(row.get("campaign_name") or ""),
+            "thumbnail_url": str(row.get("thumbnail_url") or ""),
+            "image_url": str(row.get("image_url") or ""),
+            "media_type": str(row.get("media_type") or ""),
+            "synced_at": synced_at,
+        })
+    if not payload:
+        return {"enabled": True, "rows_upserted": 0, "table": table_id}
+    temp_id = f"{table_id}_staging_{uuid4().hex}"
+    job_config = bigquery.LoadJobConfig(schema=_meta_ad_creative_schema(), write_disposition="WRITE_TRUNCATE")
+    client.load_table_from_json(payload, temp_id, job_config=job_config).result()
+    merge_sql = f"""
+    MERGE `{table_id}` T
+    USING `{temp_id}` S
+    ON T.account_id = S.account_id AND T.ad_id = S.ad_id
+    WHEN MATCHED THEN UPDATE SET
+      ad_name = S.ad_name, adset_id = S.adset_id, adset_name = S.adset_name,
+      campaign_id = S.campaign_id, campaign_name = S.campaign_name,
+      thumbnail_url = S.thumbnail_url, image_url = S.image_url,
+      media_type = S.media_type, synced_at = S.synced_at
+    WHEN NOT MATCHED THEN INSERT (
+      account_id, ad_id, ad_name, adset_id, adset_name,
+      campaign_id, campaign_name, thumbnail_url, image_url, media_type, synced_at
+    ) VALUES (
+      S.account_id, S.ad_id, S.ad_name, S.adset_id, S.adset_name,
+      S.campaign_id, S.campaign_name, S.thumbnail_url, S.image_url, S.media_type, S.synced_at
+    )
+    """
+    try:
+        client.query(merge_sql).result()
+    finally:
+        client.delete_table(temp_id, not_found_ok=True)
+    return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
+
+
 def create_meta_mart_views() -> dict[str, Any]:
-    """Create or replace the three Meta mart views in marketing_marts."""
+    """Create or replace Meta mart views in marketing_marts (ad view joins creative metadata)."""
     project_id = _meta_project_id()
     dataset_id = _meta_dataset_id()
     mart_dataset = (os.getenv("BQ_MART_DATASET_ID") or _DEFAULT_MART_DATASET).strip()
@@ -862,6 +936,8 @@ def create_meta_mart_views() -> dict[str, Any]:
     client.create_dataset(bigquery.Dataset(f"{project_id}.{mart_dataset}"), exists_ok=True)
 
     views_created = []
+
+    # Campaign and adset views — simple passthroughs
     for fact_table, raw_table, id_col, name_col, parent_cols in [
         (
             _DEFAULT_META_CAMPAIGN_FACT_TABLE,
@@ -876,13 +952,6 @@ def create_meta_mart_views() -> dict[str, Any]:
             "adset_id",
             "adset_name",
             "campaign_id, campaign_name,",
-        ),
-        (
-            _DEFAULT_META_AD_FACT_TABLE,
-            _DEFAULT_META_AD_TABLE,
-            "ad_id",
-            "ad_name",
-            "adset_id, adset_name, campaign_id, campaign_name,",
         ),
     ]:
         table_id = f"{project_id}.{mart_dataset}.{fact_table}"
@@ -903,6 +972,34 @@ def create_meta_mart_views() -> dict[str, Any]:
         """
         client.query(sql).result()
         views_created.append(table_id)
+
+    # Ad view — LEFT JOIN creative metadata for thumbnails
+    ad_fact_id = f"{project_id}.{mart_dataset}.{_DEFAULT_META_AD_FACT_TABLE}"
+    ad_sql = f"""
+    CREATE OR REPLACE VIEW `{ad_fact_id}` AS
+    SELECT
+      ad.account_id,
+      ad.adset_id,
+      ad.adset_name,
+      ad.campaign_id,
+      ad.campaign_name,
+      ad.ad_id,
+      ad.ad_name,
+      ad.metric_date AS date,
+      ad.spend,
+      ad.impressions,
+      ad.clicks,
+      ad.conversions,
+      ad.conversion_value,
+      cr.thumbnail_url,
+      cr.image_url,
+      cr.media_type
+    FROM `{project_id}.{dataset_id}.{_DEFAULT_META_AD_TABLE}` ad
+    LEFT JOIN `{project_id}.{dataset_id}.{_DEFAULT_META_AD_CREATIVE_TABLE}` cr
+      ON ad.account_id = cr.account_id AND ad.ad_id = cr.ad_id
+    """
+    client.query(ad_sql).result()
+    views_created.append(ad_fact_id)
 
     return {"enabled": True, "views": views_created}
 
