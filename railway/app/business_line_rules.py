@@ -48,14 +48,22 @@ def _slugify(label: str) -> str:
 
 
 def parse_rules_text(text: str) -> list[dict[str, Any]]:
-    """Parse textarea lines: ``Label | keyword, keyword``."""
+    """Parse textarea lines.
+
+    Supported formats (both accepted):
+      ``keywords, keywords = Label``   (preferred — keywords left, label right)
+      ``Label | keyword, keyword``     (legacy)
+    Lines starting with ``#`` are comments and are ignored.
+    """
     rules: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for raw_line in (text or "").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        if "|" in line:
+        if "=" in line:
+            kw_part, label_part = line.split("=", 1)
+        elif "|" in line:
             label_part, kw_part = line.split("|", 1)
         else:
             label_part, kw_part = line, line
@@ -161,3 +169,8 @@ def rules_as_tuples(client_slug: str) -> list[tuple[str, str, tuple[str, ...]]]:
         (str(r["id"]), str(r["label"]), tuple(r.get("keywords") or ()))
         for r in get_rules(client_slug)
     ]
+
+
+def has_rules(client_slug: str) -> bool:
+    """Return True if the client has at least one custom business line rule saved."""
+    return bool(get_rules(client_slug))

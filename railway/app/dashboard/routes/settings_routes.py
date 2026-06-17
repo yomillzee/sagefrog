@@ -291,8 +291,6 @@ def dashboard_client_settings_post(
         return RedirectResponse(url=f"{dash_url}?budget_saved=1", status_code=303)
 
     if act == "save_business_line_rules":
-        if slug != "penn":
-            raise HTTPException(status_code=400, detail="Business line rules are only available for Penn.")
         if web_users.enabled() and not session_is_admin:
             cfg = dashboard_settings.load_settings_config(slug)
             return HTMLResponse(

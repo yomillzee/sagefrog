@@ -128,11 +128,14 @@ def platforms_present_in_snapshot(
 
 def _effective_rules(
     custom_rules: list[tuple[str, str, tuple[str, ...]]] | None,
+    *,
+    use_builtin: bool = True,
 ) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
     merged: list[tuple[str, str, tuple[str, ...]]] = []
     if custom_rules:
         merged.extend(custom_rules)
-    merged.extend(BUSINESS_LINE_RULES)
+    if use_builtin:
+        merged.extend(BUSINESS_LINE_RULES)
     return tuple(merged)
 
 
@@ -141,6 +144,7 @@ def classify_business_line(
     *,
     extra_names: tuple[str, ...] = (),
     custom_rules: list[tuple[str, str, tuple[str, ...]]] | None = None,
+    use_builtin: bool = True,
 ) -> tuple[str, str]:
     """Match business line from campaign / group names (custom rules first)."""
     candidates: list[str] = []
@@ -153,7 +157,7 @@ def classify_business_line(
         if combined not in candidates:
             candidates.insert(0, combined)
 
-    rules = _effective_rules(custom_rules)
+    rules = _effective_rules(custom_rules, use_builtin=use_builtin)
     for text in candidates:
         lowered = text.lower()
         for bid, label, keywords in rules:
@@ -289,12 +293,15 @@ def client_has_segment_filters(
     label: str | None = None,
     ga4_client_key: str | None = None,
 ) -> bool:
-    return client_filter_profile(
-        client_slug,
-        cfg=cfg,
-        label=label,
-        ga4_client_key=ga4_client_key,
-    ) is not None
+    if client_filter_profile(client_slug, cfg=cfg, label=label, ga4_client_key=ga4_client_key) is not None:
+        return True
+    try:
+        import business_line_rules as _bl_rules
+        if _bl_rules.enabled() and _bl_rules.has_rules(client_slug):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def segment_filter_label(
@@ -396,14 +403,19 @@ def build_business_line_campaigns(
     *,
     client_slug: str = "penn",
 ) -> list[dict[str, Any]]:
+    slug = (client_slug or "").strip().lower()
     custom_rules: list[tuple[str, str, tuple[str, ...]]] | None = None
-    if (client_slug or "").strip().lower() == "penn":
-        try:
-            import business_line_rules as bl_rules
+    try:
+        import business_line_rules as bl_rules
+        loaded = bl_rules.rules_as_tuples(slug)
+        if loaded:
+            custom_rules = loaded
+    except Exception:
+        custom_rules = None
 
-            custom_rules = bl_rules.rules_as_tuples(client_slug)
-        except Exception:
-            custom_rules = None
+    # Only apply built-in Penn keyword defaults for the Penn client.
+    # Other clients use only their own custom rules (or get "Other" if none set).
+    use_builtin = slug == "penn"
 
     out: list[dict[str, Any]] = []
     for row in _campaign_rows_from_breakdowns(breakdowns):
@@ -415,6 +427,7 @@ def build_business_line_campaigns(
             primary,
             extra_names=extras,
             custom_rules=custom_rules,
+            use_builtin=use_builtin,
         )
         out.append(
             {

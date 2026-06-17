@@ -1234,21 +1234,26 @@ def render_settings_html(
     )
 
     bl_rules_section = ""
-    if slug == "penn" and db_editable:
+    if db_editable:
         import business_line_rules as bl_rules
 
         rules_text = bl_rules.rules_to_text(bl_rules.get_rules(slug))
+        builtin_note = (
+            " Custom rules run <strong>before</strong> built-in defaults (Home Equity, Cash Bonus, HYS, CD / Certificate, Commercial)."
+            if slug == "penn"
+            else ""
+        )
         bl_rules_section = f"""
         <section class="panel">
-          <h2>Business line matching</h2>
-          <p class="muted">Campaigns are categorized by keyword substring match. Custom rules run <strong>before</strong> built-in Penn defaults (Home Equity, Cash Bonus, HYS, CD / Certificate, Commercial). LinkedIn campaign group names are included when matching.</p>
-          <p class="hint">One rule per line: <code>Business line name | keyword, keyword, keyword</code></p>
+          <h2>Campaign grouping rules</h2>
+          <p class="muted">Map campaigns to custom labels using keyword substring matching.{builtin_note} Once rules are saved, the Campaign Explorer will show a filter bar to toggle by label.</p>
+          <p class="hint">One rule per line: <code>keyword, keyword = Label</code></p>
           <form method="post" action="{settings_url}">
             <input type="hidden" name="action" value="save_business_line_rules">
-            <label for="business_line_rules">Custom keyword rules</label>
-            <textarea id="business_line_rules" name="business_line_rules" rows="10" class="rules-textarea">{_esc(rules_text)}</textarea>
-            <p class="hint">Example: <code>Spring Promo | spring promo, sp2026</code>. After saving, run a <strong>full refresh</strong> to re-classify campaigns.</p>
-            <button type="submit" class="btn primary">Save business line rules</button>
+            <label for="business_line_rules">Grouping rules</label>
+            <textarea id="business_line_rules" name="business_line_rules" rows="10" class="rules-textarea" placeholder="home equity, heloc = Home Equity&#10;commercial, comm = Commercial">{_esc(rules_text)}</textarea>
+            <p class="hint">Keywords on the left of <code>=</code>, label on the right. Matching is case-insensitive substring. After saving, click <strong>Refresh</strong> on the dashboard to re-classify.</p>
+            <button type="submit" class="btn primary">Save grouping rules</button>
           </form>
         </section>"""
 
