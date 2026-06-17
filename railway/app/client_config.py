@@ -30,6 +30,7 @@ _BUILTIN_CLIENTS: dict[str, dict[str, Any]] = {
         "linkedin_account_id": "",
         "meta_account_id": "",
         "ga4_client_key": "",
+        "platform_sources": {"linkedin": "bigquery"},
     },
 }
 
@@ -202,4 +203,5 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
         meta_account_id=meta or None,
         ga4_client_key=ga4_key or slug,
         monthly_budget_usd=monthly_budget_usd,
+        platform_sources=platform_sources or None,
     )
