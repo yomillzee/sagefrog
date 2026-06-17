@@ -674,7 +674,9 @@ def _ensure_meta_table(table_name: str, schema: list[Any]) -> str:
     table_id = f"{project_id}.{dataset_id}.{table_name}"
     client.create_dataset(bigquery.Dataset(f"{project_id}.{dataset_id}"), exists_ok=True)
     table = bigquery.Table(table_id, schema=schema)
-    table.time_partitioning = bigquery.TimePartitioning(field="metric_date")
+    field_names = {f.name for f in schema}
+    if "metric_date" in field_names:
+        table.time_partitioning = bigquery.TimePartitioning(field="metric_date")
     table.clustering_fields = ["account_id"]
     client.create_table(table, exists_ok=True)
     return table_id
