@@ -19,6 +19,18 @@ from penn_config import PennDashboardConfig
 
 LOGGER = logging.getLogger(__name__)
 
+_CREATIVE_METADATA_FIELDS = (
+    "thumbnail_url",
+    "image_url",
+    "video_url",
+    "media_type",
+    "creative_name",
+    "creative_id",
+    "ad_id",
+    "preview_url",
+    "asset_url",
+)
+
 _DEFAULT_PROJECT = "penn-community-b-1699391543298"
 _DEFAULT_DATASET = "linkedin_ads"
 _METRICS_TABLE = "metrics_daily"
@@ -173,6 +185,78 @@ def fetch_linkedin_ads(*, start: date, end: date, account_id: str | None = None)
     }
 
 
+def _creative_lookup_key(row: dict[str, Any]) -> str:
+    """Return a safe creative/ad key without treating campaign IDs as creatives."""
+    for key in ("creative_id", "ad_id"):
+        val = str(row.get(key) or "").strip()
+        if val:
+            return val
+    if str(row.get("entity_level") or "").strip().lower() in {"creative", "ad"}:
+        return str(row.get("id") or "").strip()
+    return ""
+
+
+def _load_postgres_creative_metadata(*, client_key: str = "penn") -> dict[str, dict[str, Any]]:
+    """Load existing LinkedIn creative media metadata from the Postgres snapshot store.
+
+    BigQuery remains the source for Penn BQ test performance metrics; this helper
+    only reads already-stored dashboard creative metadata so thumbnail/asset links
+    continue to use the existing Postgres-backed path.
+    """
+    try:
+        import dashboard_snapshots
+
+        snapshot = dashboard_snapshots.get_snapshot(client_key) or {}
+    except Exception:
+        return {}
+
+    linkedin = (snapshot.get("breakdowns") or {}).get("linkedin") or {}
+    rows = list(linkedin.get("creative") or []) + list(linkedin.get("ad") or [])
+    lookup: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        key = _creative_lookup_key(row)
+        if not key:
+            continue
+        metadata = {
+            field: row.get(field)
+            for field in _CREATIVE_METADATA_FIELDS
+            if str(row.get(field) or "").strip()
+        }
+        if metadata:
+            lookup[key] = metadata
+    return lookup
+
+
+def merge_postgres_creative_metadata(
+    rows: list[dict[str, Any]],
+    *,
+    client_key: str = "penn",
+) -> int:
+    """Attach Postgres-sourced creative metadata to creative/ad rows in place.
+
+    Campaign-level BigQuery rows intentionally receive no thumbnail because they
+    do not identify a specific creative asset.
+    """
+    if not rows:
+        return 0
+    metadata_by_id = _load_postgres_creative_metadata(client_key=client_key)
+    if not metadata_by_id:
+        return 0
+    merged = 0
+    for row in rows:
+        key = _creative_lookup_key(row)
+        if not key:
+            continue
+        metadata = metadata_by_id.get(key)
+        if not metadata:
+            continue
+        for field, value in metadata.items():
+            if value and not str(row.get(field) or "").strip():
+                row[field] = value
+        merged += 1
+    return merged
+
+
 def _campaign_totals(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_id: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -212,6 +296,19 @@ def build_snapshot(*, cfg: PennDashboardConfig, start: date, end: date, preset: 
         "cost_per_conversion": float(summary.get("cost_per_conversion") or 0),
         "campaign_count": len(campaigns),
     }
+    creative_rows: list[dict[str, Any]] = []
+    creative_metadata_rows = merge_postgres_creative_metadata(
+        creative_rows,
+        client_key="penn",
+    )
+    platform_totals = {"linkedin": totals}
+    breakdowns = {
+        "linkedin": {
+            "campaign_group": campaigns,
+            "campaign": campaigns,
+            "creative": creative_rows,
+        }
+    }
     platform_totals = {"linkedin": totals}
     breakdowns = {"linkedin": {"campaign_group": campaigns, "campaign": campaigns, "creative": []}}
     return {
@@ -220,6 +317,10 @@ def build_snapshot(*, cfg: PennDashboardConfig, start: date, end: date, preset: 
         "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
         "refreshed_at": datetime.now(tz=UTC).isoformat(),
         "accounts": {"google": cfg.google_customer_id, "linkedin": cfg.linkedin_account_id or _project_id(), "meta": cfg.meta_account_id},
+        "data_sources": {
+            "linkedin": "bigquery",
+            "linkedin_creative_metadata": "postgres",
+        },
         "data_sources": {"linkedin": "bigquery"},
         "daily_metrics": {"linkedin": daily},
         "platform_totals": platform_totals,
@@ -230,5 +331,9 @@ def build_snapshot(*, cfg: PennDashboardConfig, start: date, end: date, preset: 
         "ga4_attribution": None,
         "ga4_pages": None,
         "errors": {},
+        "creative_metadata": {
+            "source": "postgres",
+            "merged_rows": creative_metadata_rows,
+        },
         "refresh_mode": "bigquery_linkedin",
     }
