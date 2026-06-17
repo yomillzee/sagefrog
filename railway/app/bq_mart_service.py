@@ -36,13 +36,22 @@ def _full_table() -> str:
     return f"`{_project_id()}.{dataset}.{table}`"
 
 
-def fetch_campaign_daily(*, days: int = 30) -> list[dict[str, Any]]:
+def fetch_campaign_daily(
+    *,
+    days: int = 30,
+    start: date | None = None,
+    end: date | None = None,
+) -> list[dict[str, Any]]:
     """Return per-campaign per-day rows for the past `days` days.
 
     Assumes the mart has columns: date, campaign_id, campaign_name,
     spend, impressions, clicks, conversions.
     """
     table = _full_table()
+    if start and end:
+        where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
+    else:
+        where_clause = f"date >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(days)} DAY)"
     sql = f"""
     SELECT
       CAST(date AS STRING) AS metric_date,
@@ -53,14 +62,20 @@ def fetch_campaign_daily(*, days: int = 30) -> list[dict[str, Any]]:
       SUM(CAST(clicks AS INT64)) AS clicks,
       SUM(CAST(conversions AS FLOAT64)) AS conversions
     FROM {table}
-    WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(days)} DAY)
+    WHERE {where_clause}
     GROUP BY 1, 2
     ORDER BY 1 DESC, 4 DESC
     """
     return bigquery_service.run_query(sql, project_id=_project_id(), max_rows=5000)
 
 
-def build_snapshot(*, days: int = 30) -> dict[str, Any]:
+def build_snapshot(
+    *,
+    days: int = 30,
+    start: date | None = None,
+    end: date | None = None,
+    preset: str = "LAST_30_DAYS",
+) -> dict[str, Any]:
     """Query the mart and return a snapshot dict compatible with render_penn_html().
 
     Produces:
@@ -72,7 +87,7 @@ def build_snapshot(*, days: int = 30) -> dict[str, Any]:
     error: str | None = None
     rows: list[dict[str, Any]] = []
     try:
-        rows = fetch_campaign_daily(days=days)
+        rows = fetch_campaign_daily(days=days, start=start, end=end)
     except Exception as exc:
         error = str(exc)[:600]
 
@@ -157,8 +172,10 @@ def build_snapshot(*, days: int = 30) -> dict[str, Any]:
         "campaign_count": len(by_campaign),
     }
 
-    end = date.today()
-    start = end - timedelta(days=days - 1)
+    if end is None:
+        end = date.today()
+    if start is None:
+        start = end - timedelta(days=days - 1)
 
     errors: dict[str, str] = {}
     if error:
@@ -170,7 +187,7 @@ def build_snapshot(*, days: int = 30) -> dict[str, Any]:
         "date_range": {
             "start": start.isoformat(),
             "end": end.isoformat(),
-            "preset": "LAST_30_DAYS",
+            "preset": preset,
         },
         "refreshed_at": datetime.now(tz=UTC).isoformat(),
         "accounts": {
