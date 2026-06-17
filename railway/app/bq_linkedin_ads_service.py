@@ -173,20 +173,19 @@ def _campaign_ids_sql(*, start: date, end: date, account_id: str) -> str:
 
 
 def _campaign_group_map_sql(*, start: date, end: date, account_id: str) -> str:
-    """Return campaign→group mapping from the raw campaign_daily table (has campaign_group_id)."""
+    """Return campaign→group mapping from the campaigns metadata table."""
     safe_account = str(account_id).replace("'", "\\'")
+    # campaign_daily has no campaign_group_id column; group info lives in campaigns metadata.
     return f"""
     SELECT
       CAST(campaign_id AS STRING) AS campaign_id,
-      MAX(CAST(campaign_group_id AS STRING)) AS campaign_group_id,
-      MAX(CAST(campaign_group_name AS STRING)) AS campaign_group_name
-    FROM {_table(_CAMPAIGN_TABLE)}
-    WHERE metric_date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
-      AND CAST(account_id AS STRING) = '{safe_account}'
+      CAST(campaign_group_id AS STRING) AS campaign_group_id,
+      CAST(campaign_group_name AS STRING) AS campaign_group_name
+    FROM {_table('campaigns')}
+    WHERE CAST(account_id AS STRING) = '{safe_account}'
       AND campaign_id IS NOT NULL
       AND campaign_group_id IS NOT NULL
       AND CAST(campaign_group_id AS STRING) NOT IN ('', 'None', 'null')
-    GROUP BY 1
     """
 
 
