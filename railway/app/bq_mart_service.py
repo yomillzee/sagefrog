@@ -25,6 +25,8 @@ import bigquery_service
 _DEFAULT_PROJECT = "penn-community-b-1699391543298"
 _DEFAULT_DATASET = "marketing_marts"
 _DEFAULT_TABLE = "fact_google_ads_campaign_daily"
+_DEFAULT_GOOGLE_AD_GROUP_TABLE = "fact_google_ads_ad_group_daily"
+_DEFAULT_GOOGLE_AD_TABLE = "fact_google_ads_ad_daily"
 _DEFAULT_LINKEDIN_TABLE = "fact_linkedin_ads_campaign_daily"
 
 
@@ -32,16 +34,17 @@ def _project_id() -> str:
     return (os.getenv("BQ_MART_PROJECT_ID") or _DEFAULT_PROJECT).strip()
 
 
-def _full_table() -> str:
+def _mart_table(name: str) -> str:
     dataset = (os.getenv("BQ_MART_DATASET_ID") or _DEFAULT_DATASET).strip()
-    table = (os.getenv("BQ_MART_TABLE") or _DEFAULT_TABLE).strip()
-    return f"`{_project_id()}.{dataset}.{table}`"
+    return f"`{_project_id()}.{dataset}.{name}`"
+
+
+def _full_table() -> str:
+    return _mart_table(os.getenv("BQ_MART_TABLE") or _DEFAULT_TABLE)
 
 
 def _linkedin_full_table() -> str:
-    dataset = (os.getenv("BQ_MART_DATASET_ID") or _DEFAULT_DATASET).strip()
-    table = (os.getenv("BQ_MART_LINKEDIN_TABLE") or _DEFAULT_LINKEDIN_TABLE).strip()
-    return f"`{_project_id()}.{dataset}.{table}`"
+    return _mart_table(os.getenv("BQ_MART_LINKEDIN_TABLE") or _DEFAULT_LINKEDIN_TABLE)
 
 
 def fetch_campaign_daily(
@@ -107,6 +110,72 @@ def fetch_linkedin_campaign_daily(
     ORDER BY 1 DESC, spend DESC
     """
     return bigquery_service.run_query(sql, project_id=_project_id(), max_rows=5000)
+
+
+def fetch_google_ad_group_daily(
+    *,
+    days: int = 30,
+    start: date | None = None,
+    end: date | None = None,
+) -> list[dict[str, Any]]:
+    """Return per-ad-group per-day rows from the Google Ads ad group mart."""
+    table = _mart_table(_DEFAULT_GOOGLE_AD_GROUP_TABLE)
+    if start and end:
+        where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
+    else:
+        where_clause = f"date >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(days)} DAY)"
+    sql = f"""
+    SELECT
+      CAST(date AS STRING) AS metric_date,
+      ad_group_id,
+      MAX(ad_group_name) AS ad_group_name,
+      MAX(campaign_id) AS campaign_id,
+      MAX(campaign_name) AS campaign_name,
+      SUM(spend) AS spend,
+      SUM(impressions) AS impressions,
+      SUM(clicks) AS clicks,
+      SUM(conversions) AS conversions,
+      SUM(conversion_value) AS conversion_value
+    FROM {table}
+    WHERE {where_clause}
+    GROUP BY 1, 2
+    ORDER BY 1 DESC, spend DESC
+    """
+    return bigquery_service.run_query(sql, project_id=_project_id(), max_rows=10000)
+
+
+def fetch_google_ad_daily(
+    *,
+    days: int = 30,
+    start: date | None = None,
+    end: date | None = None,
+) -> list[dict[str, Any]]:
+    """Return per-ad per-day rows from the Google Ads ad mart."""
+    table = _mart_table(_DEFAULT_GOOGLE_AD_TABLE)
+    if start and end:
+        where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
+    else:
+        where_clause = f"date >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(days)} DAY)"
+    sql = f"""
+    SELECT
+      CAST(date AS STRING) AS metric_date,
+      ad_id,
+      MAX(ad_name) AS ad_name,
+      MAX(ad_group_id) AS ad_group_id,
+      MAX(ad_group_name) AS ad_group_name,
+      MAX(campaign_id) AS campaign_id,
+      MAX(campaign_name) AS campaign_name,
+      SUM(spend) AS spend,
+      SUM(impressions) AS impressions,
+      SUM(clicks) AS clicks,
+      SUM(conversions) AS conversions,
+      SUM(conversion_value) AS conversion_value
+    FROM {table}
+    WHERE {where_clause}
+    GROUP BY 1, 2
+    ORDER BY 1 DESC, spend DESC
+    """
+    return bigquery_service.run_query(sql, project_id=_project_id(), max_rows=20000)
 
 
 def _aggregate_campaign_rows(rows: list[dict[str, Any]]) -> tuple[
@@ -186,6 +255,72 @@ def _campaign_breakdowns(by_campaign: dict[str, dict[str, Any]]) -> list[dict[st
         key=lambda r: r["spend"],
         reverse=True,
     )
+
+
+def _google_ad_group_breakdowns(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_ag: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        agid = str(row.get("ad_group_id") or "").strip()
+        if not agid:
+            continue
+        if agid not in by_ag:
+            by_ag[agid] = {
+                "id": agid,
+                "name": str(row.get("ad_group_name") or agid),
+                "entity_level": "ad_group",
+                "parent_id": str(row.get("campaign_id") or "").strip(),
+                "parent_name": str(row.get("campaign_name") or "").strip(),
+                "campaign_id": str(row.get("campaign_id") or "").strip(),
+                "campaign_name": str(row.get("campaign_name") or "").strip(),
+                "spend": 0.0, "clicks": 0, "impressions": 0, "conversions": 0.0, "conversion_value": 0.0,
+            }
+        ag = by_ag[agid]
+        ag["spend"] += float(row.get("spend") or 0)
+        ag["clicks"] += int(row.get("clicks") or 0)
+        ag["impressions"] += int(row.get("impressions") or 0)
+        ag["conversions"] += float(row.get("conversions") or 0)
+        ag["conversion_value"] += float(row.get("conversion_value") or 0)
+    out = sorted(by_ag.values(), key=lambda r: float(r.get("spend") or 0), reverse=True)
+    for ag in out:
+        ag["ctr"] = _safe_ratio(float(ag["clicks"]), float(ag["impressions"]))
+        ag["cpc"] = _safe_ratio(float(ag["spend"]), float(ag["clicks"]))
+        ag["cpm"] = _safe_ratio(float(ag["spend"]), float(ag["impressions"]), 1000)
+        ag["cost_per_conversion"] = _safe_ratio(float(ag["spend"]), float(ag["conversions"]))
+    return out
+
+
+def _google_ad_breakdowns(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_ad: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        adid = str(row.get("ad_id") or "").strip()
+        if not adid:
+            continue
+        if adid not in by_ad:
+            by_ad[adid] = {
+                "id": adid,
+                "name": str(row.get("ad_name") or f"Ad {adid}"),
+                "entity_level": "ad",
+                "parent_id": str(row.get("ad_group_id") or "").strip(),
+                "parent_name": str(row.get("ad_group_name") or "").strip(),
+                "ad_group_id": str(row.get("ad_group_id") or "").strip(),
+                "ad_group_name": str(row.get("ad_group_name") or "").strip(),
+                "campaign_id": str(row.get("campaign_id") or "").strip(),
+                "campaign_name": str(row.get("campaign_name") or "").strip(),
+                "spend": 0.0, "clicks": 0, "impressions": 0, "conversions": 0.0, "conversion_value": 0.0,
+            }
+        ad = by_ad[adid]
+        ad["spend"] += float(row.get("spend") or 0)
+        ad["clicks"] += int(row.get("clicks") or 0)
+        ad["impressions"] += int(row.get("impressions") or 0)
+        ad["conversions"] += float(row.get("conversions") or 0)
+        ad["conversion_value"] += float(row.get("conversion_value") or 0)
+    out = sorted(by_ad.values(), key=lambda r: float(r.get("spend") or 0), reverse=True)
+    for ad in out:
+        ad["ctr"] = _safe_ratio(float(ad["clicks"]), float(ad["impressions"]))
+        ad["cpc"] = _safe_ratio(float(ad["spend"]), float(ad["clicks"]))
+        ad["cpm"] = _safe_ratio(float(ad["spend"]), float(ad["impressions"]), 1000)
+        ad["cost_per_conversion"] = _safe_ratio(float(ad["spend"]), float(ad["conversions"]))
+    return out
 
 
 def _platform_totals(by_date: dict, by_campaign: dict) -> dict[str, Any]:
@@ -323,15 +458,27 @@ def build_snapshot(
     errors: dict[str, str] = {}
 
     google_rows: list[dict[str, Any]] = []
+    google_ad_group_rows: list[dict[str, Any]] = []
+    google_ad_rows: list[dict[str, Any]] = []
     linkedin_rows: list[dict[str, Any]] = []
 
-    with ThreadPoolExecutor(max_workers=2) as _pool:
+    with ThreadPoolExecutor(max_workers=4) as _pool:
         _gf = _pool.submit(fetch_campaign_daily, days=days, start=start, end=end)
+        _gag = _pool.submit(fetch_google_ad_group_daily, days=days, start=start, end=end)
+        _gad = _pool.submit(fetch_google_ad_daily, days=days, start=start, end=end)
         _lf = _pool.submit(fetch_linkedin_campaign_daily, days=days, start=start, end=end)
         try:
             google_rows = _gf.result()
         except Exception as exc:
             errors["bq_mart_google"] = str(exc)[:600]
+        try:
+            google_ad_group_rows = _gag.result()
+        except Exception as exc:
+            errors["bq_mart_google_ad_group"] = str(exc)[:600]
+        try:
+            google_ad_rows = _gad.result()
+        except Exception as exc:
+            errors["bq_mart_google_ad"] = str(exc)[:600]
         try:
             linkedin_rows = _lf.result()
         except Exception as exc:
@@ -384,8 +531,8 @@ def build_snapshot(
         "breakdowns": {
             "google": {
                 "campaign": _campaign_breakdowns(by_campaign_g),
-                "ad_group": [],
-                "ad": [],
+                "ad_group": _google_ad_group_breakdowns(google_ad_group_rows),
+                "ad": _google_ad_breakdowns(google_ad_rows),
             },
             "linkedin": li_breakdowns,
         },
