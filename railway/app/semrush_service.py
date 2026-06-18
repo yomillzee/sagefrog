@@ -133,17 +133,23 @@ def fetch_domain_overview(
         def _col(name: str, fallback_idx: int) -> str:
             return r.get(name) or (list(r.values())[fallback_idx] if len(r) > fallback_idx else "")
 
+        # Rank column: API returns shortcodes as headers ("Rk") not human names.
+        # Authority Score: "As" is the column code; if the API returns human-readable
+        # headers the name would be "Authority Score". Index 8 is the fallback.
+        # Also check "As" directly since headers may be shortcodes.
+        _as_raw = r.get("Authority Score") or r.get("As") or _col("Authority Score", 8)
         return {
             "domain": domain,
             "database": db,
-            "semrush_rank":       _int(_col("Rank", 1)),
-            "organic_keywords":   _int(_col("Organic Keywords", 2)),
-            "organic_traffic":    _int(_col("Organic Traffic", 3)),
-            "organic_cost":       _float(_col("Organic Cost", 4)),
-            "paid_keywords":      _int(_col("Adwords Keywords", 5)),
-            "paid_traffic":       _int(_col("Adwords Traffic", 6)),
-            "authority_score":    _int(_col("Authority Score", 8)),
+            "semrush_rank":       _int(r.get("Rk") or _col("Rank", 1)),
+            "organic_keywords":   _int(r.get("Or") or _col("Organic Keywords", 2)),
+            "organic_traffic":    _int(r.get("Ot") or _col("Organic Traffic", 3)),
+            "organic_cost":       _float(r.get("Oc") or _col("Organic Cost", 4)),
+            "paid_keywords":      _int(r.get("Ad") or _col("Adwords Keywords", 5)),
+            "paid_traffic":       _int(r.get("At") or _col("Adwords Traffic", 6)),
+            "authority_score":    _int(_as_raw),
             "error": None,
+            "_raw_keys": list(r.keys()),   # debug: tells us the exact column names returned
         }
     except Exception as exc:
         return {"domain": domain, "error": str(exc)[:300]}
@@ -222,12 +228,17 @@ def fetch_backlinks_overview(domain: str | None = None) -> dict[str, Any]:
         if not rows:
             return {"domain": domain, "error": "No backlink data returned"}
         r = rows[0]
-        # Headers vary by API version; try human-readable names then shortcodes
+        # Probe every known authority-score column name across API versions.
+        # Store raw keys in debug so we can identify the right one if it's missing.
+        _AS_KEYS = ("Authority Score", "As", "ascore", "authority_score",
+                    "DomainScore", "domain_ascore", "score")
+        auth_score = next(
+            (_int(r[k]) for k in _AS_KEYS if r.get(k) not in (None, "", "0", 0)),
+            0,
+        )
         return {
             "domain":            domain,
-            "authority_score":   _int(
-                r.get("Authority Score") or r.get("As") or r.get("ascore")
-            ),
+            "authority_score":   auth_score,
             "total_backlinks":   _int(
                 r.get("Total Backlinks") or r.get("Tl") or r.get("total")
             ),
@@ -244,6 +255,7 @@ def fetch_backlinks_overview(domain: str | None = None) -> dict[str, Any]:
                 r.get("Nofollow Links") or r.get("Nl") or r.get("nofollows_num")
             ),
             "error": None,
+            "_raw_keys": list(r.keys()),   # debug: tells us the exact column names returned
         }
     except Exception as exc:
         return {"domain": domain, "error": str(exc)[:300]}
@@ -337,6 +349,14 @@ def build_semrush_snapshot(
     if not backlinks.get("authority_score") and overview.get("authority_score"):
         backlinks = dict(backlinks)
         backlinks["authority_score"] = overview["authority_score"]
+
+    # Debug: expose raw column names returned by each API so we can identify
+    # the authority score field if it's still 0. Will remove once confirmed.
+    bl_keys = backlinks.pop("_raw_keys", None)
+    ov_keys = overview.pop("_raw_keys", None)
+    if not backlinks.get("authority_score"):
+        errors["_debug_bl_keys"] = str(bl_keys)
+        errors["_debug_ov_keys"] = str(ov_keys)
 
     result: dict[str, Any] = {
         "domain": domain,
