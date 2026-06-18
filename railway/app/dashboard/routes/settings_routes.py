@@ -23,7 +23,6 @@ router = APIRouter(include_in_schema=False)
 
 
 def _config_updated_at(client_slug: str) -> str | None:
-    """Settings metadata is optional; a database issue must not break the page."""
     try:
         row = client_dashboard_config.get_config(client_slug)
     except Exception:
@@ -45,7 +44,6 @@ def dashboard_client_settings(
     bl_rules_saved: str | None = None,
     theme_saved: str | None = None,
     sections_saved: str | None = None,
-    tested: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
     flash = (
@@ -58,17 +56,9 @@ def dashboard_client_settings(
         else (
             "Business line rules saved. Run a full refresh to re-classify campaigns."
             if bl_rules_saved
-            else ("Connection test complete." if tested else None)
+            else None
         )
     )
-    flash_err = None
-    probe_results = None
-    if tested:
-        try:
-            cfg_for_probe = dashboard_settings.load_settings_config(slug)
-            probe_results = dashboard_settings.probe_client_connections(cfg_for_probe)
-        except Exception:
-            probe_results = None
     if web_users.enabled():
         auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
         if isinstance(auth, RedirectResponse):
@@ -79,8 +69,6 @@ def dashboard_client_settings(
                 client_slug=slug,
                 cfg=cfg,
                 flash_message=flash,
-                flash_error=flash_err,
-                probe_results=probe_results,
                 db_config_updated_at=_config_updated_at(slug),
                 **dashboard_settings_session_kwargs(auth),
             )
@@ -93,14 +81,14 @@ def dashboard_client_settings(
             cfg=cfg,
             access_key=key,
             flash_message=flash,
-            flash_error=flash_err,
-            probe_results=probe_results,
             db_config_updated_at=_config_updated_at(slug),
         )
     )
+
+
 @router.post(
     "/dashboard/{client_slug}/settings",
-    summary="Save or test client dashboard settings",
+    summary="Save client dashboard settings",
     response_class=HTMLResponse,
     include_in_schema=False,
 )
@@ -110,11 +98,12 @@ def dashboard_client_settings_post(
     action: str = Form("save"),
     key: str | None = None,
     label: str = Form(""),
-    google_customer_id: str = Form(""),
     linkedin_account_id: str = Form(""),
     meta_account_id: str = Form(""),
     ga4_client_key: str = Form(""),
     monthly_budget_usd: str = Form(""),
+    gsc_site_url: str = Form(""),
+    semrush_domain: str = Form(""),
     business_line_rules_text: str = Form("", alias="business_line_rules"),
     sidebar_from: str = Form(""),
     sidebar_to: str = Form(""),
@@ -136,9 +125,6 @@ def dashboard_client_settings_post(
     feature_segment_filters: str = Form(""),
     feature_product_line_filters: str = Form(""),
     feature_organic_channel: str = Form(""),
-    dashboard_mode: str = Form("api"),
-    gsc_site_url: str = Form(""),
-    semrush_domain: str = Form(""),
 ):
     slug = validate_client_slug(client_slug)
     act = (action or "save").strip().lower()
@@ -166,25 +152,6 @@ def dashboard_client_settings_post(
         else {"access_key": access_key, "use_session": use_session}
     )
 
-    if act == "test":
-        cfg = dashboard_settings.load_settings_config(slug)
-        probe = dashboard_settings.probe_client_connections(cfg)
-        try:
-            import bq_provision_service
-            bq_result = bq_provision_service.validate_all()
-            probe["bq_tables"] = bq_result.as_dict()
-        except Exception as exc:
-            probe["bq_tables"] = {"error": str(exc)[:200]}
-        return HTMLResponse(
-            dashboard_settings.render_settings_html(
-                client_slug=slug,
-                cfg=cfg,
-                probe_results=probe,
-                db_config_updated_at=_config_updated_at(slug),
-                **session_kw,
-            )
-        )
-
     if act == "save":
         if web_users.enabled() and not session_is_admin:
             cfg = dashboard_settings.load_settings_config(slug)
@@ -192,7 +159,7 @@ def dashboard_client_settings_post(
                 dashboard_settings.render_settings_html(
                     client_slug=slug,
                     cfg=cfg,
-                    flash_error="Only admins can save client mapping.",
+                    flash_error="Only admins can save client settings.",
                     **session_kw,
                 ),
                 status_code=403,
@@ -203,36 +170,35 @@ def dashboard_client_settings_post(
                 dashboard_settings.render_settings_html(
                     client_slug=slug,
                     cfg=cfg,
-                    flash_error="DATABASE_URL is required to save settings in the app.",
+                    flash_error="DATABASE_URL is required to save settings.",
                     **session_kw,
                 ),
                 status_code=503,
             )
         try:
-            saved = client_dashboard_config.save_config(
+            existing = client_dashboard_config.get_config(slug)
+            saved_row = client_dashboard_config.save_config(
                 slug,
                 label=label,
-                google_customer_id=google_customer_id,
+                google_customer_id=(existing.google_customer_id if existing else None),
                 linkedin_account_id=linkedin_account_id,
                 meta_account_id=meta_account_id,
                 ga4_client_key=ga4_client_key,
                 updated_by=session_email or "dashboard_key",
-                dashboard_mode=dashboard_mode.strip() or "api",
+                dashboard_mode="bigquery",
                 gsc_site_url=gsc_site_url.strip() or None,
                 semrush_domain=semrush_domain.strip() or None,
             )
             budget = dashboard_service.parse_monthly_budget_input(monthly_budget_usd)
-            saved = client_dashboard_config.save_monthly_budget(
-                slug,
-                budget,
-                updated_by=session_email or "dashboard_key",
+            client_dashboard_config.save_monthly_budget(
+                slug, budget, updated_by=session_email or "dashboard_key",
             )
             cfg = client_config.load_client_config(slug)
             dashboard_service.patch_snapshot_from_config(cfg)
             audit_log.record(
                 action="dashboard.config_saved",
                 actor_email=session_email,
-                detail={"client_slug": slug, **client_dashboard_config.as_dict(saved)},
+                detail={"client_slug": slug, **client_dashboard_config.as_dict(saved_row)},
                 **audit_log.request_context(request),
             )
         except Exception as exc:
@@ -246,23 +212,11 @@ def dashboard_client_settings_post(
                 ),
                 status_code=400,
             )
-        probe = dashboard_settings.probe_client_connections(cfg)
-        try:
-            import bq_provision_service
-            bq_result = bq_provision_service.validate_all()
-            probe["bq_tables"] = bq_result.as_dict()
-        except Exception as exc:
-            probe["bq_tables"] = {"error": str(exc)[:200]}
-        db_row = saved
-        return HTMLResponse(
-            dashboard_settings.render_settings_html(
-                client_slug=slug,
-                cfg=cfg,
-                flash_message="Settings saved and mapped accounts verified below.",
-                probe_results=probe,
-                db_config_updated_at=db_row.updated_at if db_row else None,
-                **session_kw,
-            )
+        if use_session:
+            return RedirectResponse(url=f"/dashboard/{slug}/settings?saved=1", status_code=303)
+        return RedirectResponse(
+            url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&saved=1",
+            status_code=303,
         )
 
     if act == "save_budget":
@@ -281,15 +235,13 @@ def dashboard_client_settings_post(
             raise HTTPException(status_code=503, detail="DATABASE_URL is required to save budget.")
         try:
             budget = dashboard_service.parse_monthly_budget_input(monthly_budget_usd)
-            saved = client_dashboard_config.save_monthly_budget(
-                slug,
-                budget,
-                updated_by=session_email or "dashboard_key",
+            saved_b = client_dashboard_config.save_monthly_budget(
+                slug, budget, updated_by=session_email or "dashboard_key",
             )
             audit_log.record(
                 action="dashboard.budget_saved",
                 actor_email=session_email,
-                detail={"client_slug": slug, "monthly_budget_usd": saved.monthly_budget_usd},
+                detail={"client_slug": slug, "monthly_budget_usd": saved_b.monthly_budget_usd},
                 **audit_log.request_context(request),
             )
         except Exception as exc:
@@ -333,9 +285,7 @@ def dashboard_client_settings_post(
             )
         try:
             business_line_rules.save_rules(
-                slug,
-                business_line_rules_text,
-                updated_by=session_email or "dashboard_key",
+                slug, business_line_rules_text, updated_by=session_email or "dashboard_key",
             )
             audit_log.record(
                 action="dashboard.business_line_rules_saved",
@@ -356,8 +306,7 @@ def dashboard_client_settings_post(
             )
         if use_session:
             return RedirectResponse(
-                url=f"/dashboard/{slug}/settings?bl_rules_saved=1",
-                status_code=303,
+                url=f"/dashboard/{slug}/settings?bl_rules_saved=1", status_code=303,
             )
         return RedirectResponse(
             url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&bl_rules_saved=1",
@@ -384,30 +333,22 @@ def dashboard_client_settings_post(
                 dashboard_settings.render_settings_html(
                     client_slug=slug,
                     cfg=cfg,
-                    flash_error="DATABASE_URL is required to save brand colors in the app.",
+                    flash_error="DATABASE_URL is required to save brand colors.",
                     **session_kw,
                 ),
                 status_code=503,
             )
         try:
             theme = dashboard_theme.parse_theme_form(
-                sidebar_from=sidebar_from,
-                sidebar_to=sidebar_to,
-                google=google,
-                google_bg=google_bg,
-                linkedin=linkedin,
-                linkedin_bg=linkedin_bg,
-                meta=meta,
-                meta_bg=meta_bg,
-                organic=organic,
-                organic_bg=organic_bg,
-                business_line=business_line,
-                business_line_bg=business_line_bg,
+                sidebar_from=sidebar_from, sidebar_to=sidebar_to,
+                google=google, google_bg=google_bg,
+                linkedin=linkedin, linkedin_bg=linkedin_bg,
+                meta=meta, meta_bg=meta_bg,
+                organic=organic, organic_bg=organic_bg,
+                business_line=business_line, business_line_bg=business_line_bg,
             )
             saved_theme = client_dashboard_config.save_theme(
-                slug,
-                theme,
-                updated_by=session_email or "dashboard_key",
+                slug, theme, updated_by=session_email or "dashboard_key",
             )
             audit_log.record(
                 action="dashboard.theme_saved",
@@ -427,10 +368,7 @@ def dashboard_client_settings_post(
                 status_code=400,
             )
         if use_session:
-            return RedirectResponse(
-                url=f"/dashboard/{slug}/settings?theme_saved=1",
-                status_code=303,
-            )
+            return RedirectResponse(url=f"/dashboard/{slug}/settings?theme_saved=1", status_code=303)
         return RedirectResponse(
             url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&theme_saved=1",
             status_code=303,
@@ -483,10 +421,7 @@ def dashboard_client_settings_post(
                 status_code=400,
             )
         if use_session:
-            return RedirectResponse(
-                url=f"/dashboard/{slug}/settings?sections_saved=1",
-                status_code=303,
-            )
+            return RedirectResponse(url=f"/dashboard/{slug}/settings?sections_saved=1", status_code=303)
         return RedirectResponse(
             url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&sections_saved=1",
             status_code=303,

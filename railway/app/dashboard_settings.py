@@ -953,31 +953,17 @@ def render_settings_html(
     session_is_admin: bool = False,
     flash_message: str | None = None,
     flash_error: str | None = None,
-    probe_results: dict[str, Any] | None = None,
+    probe_results: dict[str, Any] | None = None,  # kept for call-site compat, unused
     db_config_updated_at: str | None = None,
 ) -> str:
     slug = client_slug.strip().lower()
     settings_url = _settings_url(client_slug=slug, access_key=access_key, use_session=use_session)
-    status_warnings: list[str] = []
+
     try:
         snapshot = dashboard_snapshots.get_snapshot_settings_context(slug)
     except Exception:
         snapshot = None
-        status_warnings.append("Snapshot status is temporarily unavailable.")
-    try:
-        oauth_status = oauth_store.all_public_status()
-    except Exception:
-        oauth_status = _disconnected_oauth_statuses()
-        status_warnings.append("OAuth connection status is temporarily unavailable.")
-    auth = build_auth_status()
-    try:
-        api = build_api_status()
-    except Exception:
-        api = _unavailable_api_status()
-        status_warnings.append("Platform connection status is temporarily unavailable.")
-    ga4_target = _ga4_target_summary(cfg)
-    ga4_credential_summary = _ga4_safe_credential_summary(cfg)
-    can_edit = session_is_admin if use_session else bool(access_key)
+
     db_editable = web_users.enabled() and session_is_admin
 
     notice = ""
@@ -985,108 +971,9 @@ def render_settings_html(
         notice += f'<div class="notice ok">{_esc(flash_message)}</div>'
     if flash_error:
         notice += f'<div class="notice err">{_esc(flash_error)}</div>'
-    if status_warnings:
-        notice += (
-            '<div class="notice err">'
-            + " ".join(_esc(message) for message in status_warnings)
-            + "</div>"
-        )
 
-    auth_rows = [
-        _connection_row(
-            "Browser login (Postgres)",
-            auth["session_auth"],
-            "DATABASE_URL attached — users sign in at /login",
-        ),
-        _connection_row(
-            "Session signing secret",
-            auth["session_secret"],
-            "AUTH_SESSION_SECRET or CRON_SECRET/API_KEY fallback",
-        ),
-        _connection_row(
-            "ChatGPT / API key",
-            auth["api_key"],
-            "API_KEY in Railway — required; protects /google-ads, /linkedin, /meta, /ga4, /indeed, /warehouse routes",
-        ),
-        _connection_row(
-            "Legacy dashboard key",
-            auth["dashboard_secret"],
-            "CRON_SECRET or DASHBOARD_SECRET for ?key= links",
-        ),
-    ]
-
-    api_rows = [
-        _connection_row(
-            "Google Ads OAuth",
-            api["google"]["ok"],
-            "GOOGLE_ADS_* credentials in Railway",
-        ),
-        _connection_row(
-            "LinkedIn OAuth",
-            api["linkedin"]["ok"],
-            "LINKEDIN_* refresh token in Railway",
-        ),
-        _connection_row(
-            "Meta Business Manager",
-            api["meta"]["ok"],
-            "META_* access token in Railway",
-        ),
-        _connection_row(
-            "GA4 / BigQuery",
-            api["ga4"]["ok"],
-            f"GCP service account + {api['ga4']['registry_count']} GA4_CLIENTS entries",
-        ),
-        _connection_row(
-            "Selected GA4 credential",
-            bool(ga4_credential_summary.get("ok")),
-            str(ga4_credential_summary.get("detail") or "—"),
-        ),
-    ]
-
-    ga4_detail = "—"
-    if ga4_target.get("ok"):
-        ga4_detail = (
-            f"{ga4_target.get('project')}/{ga4_target.get('dataset')} "
-            f"(property {ga4_target.get('account_id')})"
-        )
-    elif ga4_target.get("error"):
-        ga4_detail = str(ga4_target.get("error"))
-
+    # --- GA4 field (dropdown if registry available, otherwise text input) ---
     ga4_clients_list = list_ga4_clients_for_settings()
-    ga4_client_label = (
-        _ga4_client_label_for_key(cfg.ga4_client_key, ga4_clients_list)
-        if ga4_clients_list
-        else (cfg.ga4_client_key or "—")
-    )
-
-    budget_label = "—"
-    if getattr(cfg, "monthly_budget_usd", None) is not None:
-        budget_label = f"${float(cfg.monthly_budget_usd):,.2f}"
-
-    resolved_features = dashboard_features.resolve_features(
-        slug,
-        cfg=cfg,
-        label=cfg.label,
-        ga4_client_key=cfg.ga4_client_key,
-    )
-
-    budget_row = ""
-    if resolved_features.budget_pacing:
-        budget_row = f'<tr><td>Monthly budget</td><td class="mono">{_esc(budget_label)}</td></tr>'
-
-    account_rows = f"""
-    <tr><td>Google Ads customer ID</td><td class="mono">{_esc(cfg.google_customer_id or "—")}</td></tr>
-    <tr><td>LinkedIn account ID</td><td class="mono">{_esc(cfg.linkedin_account_id or "—")}</td></tr>
-    <tr><td>Meta ad account ID</td><td class="mono">{_esc(cfg.meta_account_id or "—")}</td></tr>
-    <tr><td>GA4 client key</td><td class="mono">{_esc(ga4_client_label)}</td></tr>
-    <tr><td>GA4 selected client key</td><td class="mono">{_esc(ga4_credential_summary.get("client_key") or "—")}</td></tr>
-    <tr><td>GA4 credentials env</td><td class="mono">{_esc(ga4_credential_summary.get("credentials_env") or "—")}</td></tr>
-    <tr><td>GA4 service account email</td><td class="mono">{_esc(ga4_credential_summary.get("client_email") or "unavailable")}</td></tr>
-    {budget_row}
-    <tr><td>GA4 BigQuery target</td><td class="mono">{_esc(ga4_detail)}</td></tr>
-    """
-
-    ga4_field = ""
     if ga4_clients_list:
         options = ['<option value="">— None —</option>']
         selected_key = str(cfg.ga4_client_key or "").strip().lower()
@@ -1098,50 +985,65 @@ def render_settings_html(
                 f'<option value="{_esc(selected_key)}" selected>'
                 f"{_esc(selected_key)} (not in registry)</option>"
             )
-        for client in sorted(
+        for c in sorted(
             ga4_clients_list,
             key=lambda c: str(c.get("label") or c.get("client_key") or "").lower(),
         ):
-            ckey = str(client.get("client_key") or "")
+            ckey = str(c.get("client_key") or "")
             label_text = (
-                f"{client.get('label') or ckey} · "
-                f"{client.get('bq_project_id')}/{client.get('bq_dataset_id')}"
+                f"{c.get('label') or ckey} · "
+                f"{c.get('bq_project_id')}/{c.get('bq_dataset_id')}"
             )
-            selected = " selected" if ckey == selected_key else ""
-            options.append(f'<option value="{_esc(ckey)}"{selected}>{_esc(label_text)}</option>')
+            sel = " selected" if ckey == selected_key else ""
+            options.append(f'<option value="{_esc(ckey)}"{sel}>{_esc(label_text)}</option>')
         ga4_field = f"""
-              <div>
-                <label for="ga4_client_key">GA4 client key</label>
-                <select id="ga4_client_key" name="ga4_client_key">
-                  {"".join(options)}
-                </select>
-                <p class="hint">Loaded from GA4_CLIENTS in Railway (agency BigQuery connection).</p>
-              </div>"""
+          <div>
+            <label for="ga4_client_key">GA4 client key</label>
+            <select id="ga4_client_key" name="ga4_client_key">{"".join(options)}</select>
+            <p class="hint">GA4_CLIENTS registry in Railway.</p>
+          </div>"""
     else:
-        ga4_hint = (
-            "Set GCP_SERVICE_ACCOUNT_JSON and GA4_CLIENTS in Railway to load the client list."
-            if not api["ga4"]["ok"]
-            else "No GA4 clients found — enter a registry key manually."
-        )
         ga4_field = f"""
-              <div>
-                <label for="ga4_client_key">GA4 client key</label>
-                <input id="ga4_client_key" name="ga4_client_key" type="text"
-                  value="{_esc(cfg.ga4_client_key or '')}" placeholder="penn">
-                <p class="hint">{_esc(ga4_hint)}</p>
-              </div>"""
+          <div>
+            <label for="ga4_client_key">GA4 client key</label>
+            <input id="ga4_client_key" name="ga4_client_key" type="text"
+              value="{_esc(cfg.ga4_client_key or '')}" placeholder="penn">
+            <p class="hint">Set GA4_CLIENTS in Railway to load a dropdown.</p>
+          </div>"""
 
-    edit_form = ""
+    resolved_features = dashboard_features.resolve_features(
+        slug, cfg=cfg, label=cfg.label, ga4_client_key=cfg.ga4_client_key,
+    )
+
+    # --- Try to load per-client DB config for pre-filled BQ fields ---
+    try:
+        _db_cfg = client_dashboard_config.get_config(slug)
+    except Exception:
+        _db_cfg = None
+    _gsc_url_val = (_db_cfg.gsc_site_url if _db_cfg else None) or ""
+    _semrush_val = (_db_cfg.semrush_domain if _db_cfg else None) or ""
+
+    # --- Edit form ---
     if db_editable:
-        meta = ""
+        meta_line = ""
         if db_config_updated_at:
-            meta = f'<p class="muted">Last saved: {_esc(db_config_updated_at[:19])} UTC</p>'
+            meta_line = f'<p class="muted">Last saved: {_esc(db_config_updated_at[:19])} UTC</p>'
+        budget_field = ""
+        if resolved_features.budget_pacing:
+            bud_val = _esc(
+                (f"{cfg.monthly_budget_usd:.2f}".rstrip("0").rstrip("."))
+                if getattr(cfg, "monthly_budget_usd", None) is not None else ""
+            )
+            budget_field = f"""
+          <div>
+            <label for="monthly_budget_usd">Monthly budget (USD)</label>
+            <input id="monthly_budget_usd" name="monthly_budget_usd" type="number" min="0" step="100"
+              value="{bud_val}" placeholder="25000">
+          </div>"""
         edit_form = f"""
         <section class="panel panel--primary">
-          <h2>1. Map client account IDs</h2>
-          <p class="muted">Enter the Google, LinkedIn, Meta, and GA4 identifiers for <strong>{_esc(cfg.label)}</strong>.
-          After saving, we verify each ID against the agency connection and show account details below.</p>
-          {meta}
+          <h2>Client configuration</h2>
+          {meta_line}
           <form method="post" action="{settings_url}">
             <input type="hidden" name="action" value="save">
             <div class="form-grid">
@@ -1150,95 +1052,51 @@ def render_settings_html(
                 <input id="label" name="label" type="text" value="{_esc(cfg.label)}" maxlength="120">
               </div>
               <div>
-                <label for="google_customer_id">Google Ads customer ID</label>
-                <input id="google_customer_id" name="google_customer_id" type="text"
-                  value="{_esc(cfg.google_customer_id or '')}" placeholder="1549971930">
-                <p class="hint">Find IDs in Admin → Google Ads → accessible accounts list.</p>
-              </div>
-              <div>
                 <label for="linkedin_account_id">LinkedIn account ID</label>
                 <input id="linkedin_account_id" name="linkedin_account_id" type="text"
                   value="{_esc(cfg.linkedin_account_id or '')}" placeholder="508590994">
-                <p class="hint">Find IDs in Admin → LinkedIn → accessible accounts list.</p>
+                <p class="hint">Numeric ID from the LinkedIn Campaign Manager URL.</p>
               </div>
               <div>
                 <label for="meta_account_id">Meta ad account ID</label>
                 <input id="meta_account_id" name="meta_account_id" type="text"
                   value="{_esc(cfg.meta_account_id or '')}" placeholder="2581574002135957">
-                <p class="hint">Find IDs in Admin → Meta → accessible accounts list.</p>
+                <p class="hint">act_XXXXXXXX from Meta Business Manager.</p>
               </div>
               {ga4_field}
-              {f'''
-              <div>
-                <label for="monthly_budget_usd">Monthly budget (USD)</label>
-                <input id="monthly_budget_usd" name="monthly_budget_usd" type="number" min="0" step="100"
-                  value="{_esc((f"{cfg.monthly_budget_usd:.2f}".rstrip("0").rstrip(".")) if getattr(cfg, "monthly_budget_usd", None) is not None else "")}"
-                  placeholder="25000">
-                <p class="hint">Used when the budget pacing chart is enabled in Dashboard sections.</p>
-              </div>''' if resolved_features.budget_pacing else ''}
-            </div>
-            <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)">
-            <h3 style="margin:0 0 8px">BigQuery / organic data</h3>
-            <p class="muted" style="margin-bottom:12px">Leave Dashboard Mode as <em>API</em> unless this client reads from BigQuery mart tables.</p>
-            <div class="form-grid">
-              <div>
-                <label for="dashboard_mode">Dashboard mode</label>
-                <select id="dashboard_mode" name="dashboard_mode">
-                  <option value="api"{' selected' if not getattr(cfg, 'dashboard_mode', None) or getattr(cfg, 'dashboard_mode', 'api') == 'api' else ''}>API (standard)</option>
-                  <option value="bigquery"{' selected' if getattr(cfg, 'dashboard_mode', None) == 'bigquery' else ''}>BigQuery (BQ mart tables)</option>
-                </select>
-                <p class="hint">BigQuery mode reads from pre-built mart tables instead of live ad platform APIs.</p>
-              </div>
+              {budget_field}
               <div>
                 <label for="gsc_site_url">GSC site URL</label>
                 <input id="gsc_site_url" name="gsc_site_url" type="text"
-                  value="{_esc(getattr(cfg, 'gsc_site_url', '') or '')}"
+                  value="{_esc(_gsc_url_val)}"
                   placeholder="https://www.example.com/ or sc-domain:example.com">
-                <p class="hint">Google Search Console property URL for this client. Used by GSC → BigQuery sync.</p>
+                <p class="hint">Google Search Console property — used by the GSC → BigQuery sync.</p>
               </div>
               <div>
                 <label for="semrush_domain">SEMrush domain</label>
                 <input id="semrush_domain" name="semrush_domain" type="text"
-                  value="{_esc(getattr(cfg, 'semrush_domain', '') or '')}"
+                  value="{_esc(_semrush_val)}"
                   placeholder="example.com">
-                <p class="hint">Root domain (no www, no https://) for SEMrush authority score and backlink lookups.</p>
+                <p class="hint">Root domain (no www, no https://) for SEMrush lookups.</p>
               </div>
             </div>
-            <button type="submit" class="btn primary">Save &amp; verify mapping</button>
+            <button type="submit" class="btn primary">Save settings</button>
           </form>
-        </section>
-        """
+        </section>"""
     elif use_session and not session_is_admin:
         edit_form = """
         <section class="panel">
-          <h2>1. Map client account IDs</h2>
-          <p class="muted">Only admins can edit account IDs. Ask your agency admin to update this client's mapping in Settings.</p>
-        </section>
-        """
+          <p class="muted">Only admins can edit settings. Ask your agency admin to update this client's configuration.</p>
+        </section>"""
     else:
         edit_form = f"""
         <section class="panel">
-          <h2>2. Map client account IDs</h2>
-          <p class="muted">Current IDs: Google {_esc(cfg.google_customer_id or "—")}, LinkedIn {_esc(cfg.linkedin_account_id or "—")}, Meta {_esc(cfg.meta_account_id or "—")}.</p>
-        </section>
-        """
+          <p class="muted">LinkedIn: {_esc(cfg.linkedin_account_id or "—")} &nbsp;·&nbsp;
+          Meta: {_esc(cfg.meta_account_id or "—")} &nbsp;·&nbsp;
+          GA4: {_esc(cfg.ga4_client_key or "—")}</p>
+        </section>"""
 
-        edit_form = f"""
-        <section class="panel">
-          <h2>1. Map client account IDs</h2>
-          <p class="muted">Current IDs: Google {_esc(cfg.google_customer_id or "—")}, LinkedIn {_esc(cfg.linkedin_account_id or "—")}, Meta {_esc(cfg.meta_account_id or "—")}.</p>
-        </section>
-        """
-
-    test_btn = ""
-    if can_edit:
-        test_btn = f"""
-        <form method="post" action="{settings_url}" class="inline-form">
-          <input type="hidden" name="action" value="test">
-          <button type="submit" class="btn secondary">Re-verify mapped accounts</button>
-        </form>
-        """
-
+    # --- Refresh toolbar ---
     refresh_block = dashboard_service._refresh_toolbar(
         client_slug=slug,
         access_key=access_key,
@@ -1247,187 +1105,30 @@ def render_settings_html(
         flash_message=None,
     )
 
-    agency_status = _agency_oauth_status_html(
-        api=api,
-        oauth_status=oauth_status,
-        ga4_credential_summary=ga4_credential_summary,
-    )
-
-    checklist = _setup_checklist_html(
-        api=api,
-        cfg=cfg,
-        ga4_ok=api["ga4"]["ok"] or bool(ga4_credential_summary.get("ok")),
-        oauth_status=oauth_status,
-    )
-
-    bl_rules_section = ""
-    if db_editable:
-        import business_line_rules as bl_rules
-
-        rules_text = bl_rules.rules_to_text(bl_rules.get_rules(slug))
-        builtin_note = (
-            " Custom rules run <strong>before</strong> built-in defaults (Home Equity, Cash Bonus, HYS, CD / Certificate, Commercial)."
-            if slug == "penn"
-            else ""
-        )
-        bl_rules_section = f"""
-        <section class="panel">
-          <h2>Campaign grouping rules</h2>
-          <p class="muted">Map campaigns to custom labels using keyword substring matching.{builtin_note} Once rules are saved, the Campaign Explorer will show a filter bar to toggle by label.</p>
-          <p class="hint">One rule per line: <code>keyword, keyword = Label</code></p>
-          <form method="post" action="{settings_url}">
-            <input type="hidden" name="action" value="save_business_line_rules">
-            <label for="business_line_rules">Grouping rules</label>
-            <textarea id="business_line_rules" name="business_line_rules" rows="10" class="rules-textarea" placeholder="home equity, heloc = Home Equity&#10;commercial, comm = Commercial">{_esc(rules_text)}</textarea>
-            <p class="hint">Keywords on the left of <code>=</code>, label on the right. Matching is case-insensitive substring. After saving, click <strong>Refresh</strong> on the dashboard to re-classify.</p>
-            <button type="submit" class="btn primary">Save grouping rules</button>
-          </form>
-        </section>"""
-
-    theme_section = ""
-    if slug == "penn" and db_editable:
-        theme_section = _brand_colors_section_html(
-            settings_url=settings_url,
-            theme=dashboard_theme.load_client_theme(slug),
-        )
-
-    sections_section = ""
-    if db_editable:
-        sections_section = _dashboard_sections_section_html(
-            settings_url=settings_url,
-            features=resolved_features,
-        )
-
-    insights_fold = ""
-    if dashboard_service.can_edit_penn_insights(
-        session_is_admin=session_is_admin,
-        access_key=access_key,
-    ):
-        insights_fold = f"""
-        <details class="settings-fold">
-          <summary>Dashboard insights (admin notes)</summary>
-          <div class="fold-body">
-            {dashboard_service._insights_editor_html(client_slug=slug, access_key=access_key, use_session=use_session, snapshot=snapshot)}
-          </div>
-        </details>"""
-
-    probe_fold = ""
-    if probe_results:
-        probe_rows = []
-        labels = {"google": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta", "ga4": "GA4"}
-        for platform in ("google", "linkedin", "meta", "ga4"):
-            row = probe_results.get(platform) or {}
-            if row.get("skipped"):
-                probe_rows.append(
-                    f"<tr><td>{_esc(labels[platform])}</td>"
-                    f'<td><span class="badge err">Not mapped</span></td>'
-                    f'<td class="detail">{_esc(str(row.get("message") or "—"))}</td></tr>'
-                )
-                continue
-            probe_rows.append(
-                _connection_row(
-                    labels[platform],
-                    bool(row.get("ok")),
-                    str(row.get("message") or "—"),
-                )
-            )
-        summary = "All mapped accounts verified." if probe_results.get("overall_ok") else "Some mapped accounts need attention."
-
-        bq_tables_html = ""
-        bq_data = probe_results.get("bq_tables") or {}
-        if bq_data:
-            bq_rows = []
-            if bq_data.get("error"):
-                bq_rows.append(
-                    f'<tr><td colspan="4" style="color:#dc2626">'
-                    f'{_esc(bq_data["error"])}</td></tr>'
-                )
-            else:
-                for t in bq_data.get("tables") or []:
-                    name = (t.get("table_id") or "").split(".")[-1]
-                    ok   = t.get("ok", False)
-                    n    = t.get("row_count")
-                    rng  = ""
-                    if t.get("min_date") and t.get("max_date"):
-                        rng = f'{t["min_date"]} → {t["max_date"]}'
-                    elif t.get("error"):
-                        rng = t["error"][:80]
-                    badge = _status_badge(ok, ok_label="OK", fail_label="Error" if t.get("error") else "Missing")
-                    count_str = f"{n:,}" if n is not None else "—"
-                    bq_rows.append(
-                        f"<tr><td class='mono'>{_esc(name)}</td>"
-                        f"<td>{badge}</td>"
-                        f"<td>{count_str} rows</td>"
-                        f"<td class='muted'>{_esc(rng)}</td></tr>"
-                    )
-            bq_tables_html = f"""
-          <h3 style="margin:16px 0 8px">BigQuery tables</h3>
-          <table class="status-table">
-            <thead><tr><th>Table</th><th>Status</th><th>Rows</th><th>Date range</th></tr></thead>
-            <tbody>{"".join(bq_rows)}</tbody>
-          </table>"""
-
-        probe_fold = f"""
-        <section class="panel panel--primary">
-          <h2>Account verification</h2>
-          <p class="muted">{_esc(summary)} Details come from the agency connection in Admin.</p>
-          <table class="status-table">
-            <thead><tr><th>Platform</th><th>Status</th><th>Account details</th></tr></thead>
-            <tbody>{"".join(probe_rows)}</tbody>
-          </table>
-          {bq_tables_html}
-        </section>"""
-
-    advanced = f"""
-    <details class="settings-fold">
-      <summary>Auth &amp; API diagnostics</summary>
-      <div class="fold-body">
-        <table class="status-table">
-          <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
-          <tbody>{"".join(auth_rows)}</tbody>
-        </table>
-        <table class="status-table">
-          <thead><tr><th>Platform</th><th>Status</th><th>Notes</th></tr></thead>
-          <tbody>{"".join(api_rows)}</tbody>
-        </table>
-      </div>
-    </details>
-    <details class="settings-fold">
-      <summary>Sync status &amp; account details</summary>
-      <div class="fold-body">
-        <table class="status-table">
-          <thead><tr><th>Field</th><th>Value</th></tr></thead>
-          <tbody>{account_rows}</tbody>
-        </table>
-        {_sync_meta_html(snapshot)}
-      </div>
-    </details>
-    {insights_fold}"""
-
-    client_meta_tip = ""
-    if snapshot:
-        dr = snapshot.get("date_range") or {}
-        refreshed = snapshot.get("refreshed_at") or "—"
-        client_meta_tip = _esc(
-            f"Date range: {dr.get('start', '')} → {dr.get('end', '')}\nLast refreshed: {refreshed} UTC"
-        )
-
-    try:
-        _db_row = client_dashboard_config.get_config(slug)
-        _is_bq_client = bool(_db_row and _db_row.dashboard_mode == "bigquery")
-    except Exception:
-        _is_bq_client = False
-    _show_bq_sections = slug == "penn-bq-test" or _is_bq_client
-
-    bq_mart_section = ""
-    if _show_bq_sections:
-        try:
-            import bq_mart_service
-            bm = bq_mart_service.env_summary()
-            bq_mart_section = f"""
+    # --- Data sync ---
+    key_param = f"?key={quote(access_key, safe='')}" if (not use_session and access_key) else ""
+    post_url = f"/dashboard/{slug}/settings{key_param}"
+    data_sync_section = f"""
     <section class="panel">
-      <h2>BigQuery Mart</h2>
-      <p class="muted">Tables queried for this dashboard. Override with env vars in Railway.</p>
+      <h2>Data sync</h2>
+      <form method="post" action="{_esc(post_url)}" style="margin:0">
+        <input type="hidden" name="action" value="gsc_sync">
+        <button type="submit" class="btn secondary">Sync GSC → BigQuery</button>
+      </form>
+      <p class="hint" style="margin-top:8px">
+        Fills missing days in <code>fact_gsc_query_daily</code> &amp; <code>fact_gsc_page_daily</code>.
+        If the tables are empty, a full 480-day backfill starts in the background (~15 min).
+      </p>
+    </section>"""
+
+    # --- BigQuery Mart info ---
+    bq_mart_section = ""
+    try:
+        import bq_mart_service
+        bm = bq_mart_service.env_summary()
+        bq_mart_section = f"""
+    <section class="panel">
+      <h2>BigQuery mart</h2>
       <table class="status-table">
         <thead><tr><th>Setting</th><th>Value</th><th>Env var</th></tr></thead>
         <tbody>
@@ -1438,61 +1139,81 @@ def render_settings_html(
         </tbody>
       </table>
     </section>"""
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-    data_sync_section = ""
-    if _show_bq_sections:
-        key_param = f"?key={quote(access_key, safe='')}" if (not use_session and access_key) else ""
-        post_url  = f"/dashboard/{slug}/settings{key_param}"
-        data_sync_section = f"""
-    <section class="panel">
-      <h2>Data sync</h2>
-      <p class="muted">
-        Manually trigger data syncs without redeploying. The dashboard refresh button also
-        runs these automatically each time you load data.
-      </p>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start">
-        <form method="post" action="{_esc(post_url)}" style="margin:0">
-          <input type="hidden" name="action" value="gsc_sync">
-          <button type="submit" class="btn secondary">
-            Sync GSC → BigQuery
-          </button>
-          <p class="muted" style="margin:6px 0 0;font-size:0.8rem">
-            Fills any missing days in fact_gsc_query_daily &amp; fact_gsc_page_daily.<br>
-            If the tables are empty, a full 480-day backfill starts in the background
-            and completes in ~15 min.
-          </p>
-        </form>
-      </div>
-      <p class="muted" style="margin-top:14px;font-size:0.82rem">
-        SEMrush and paid media data refresh automatically each time you click
-        <strong>Refresh data</strong> on the dashboard.
-      </p>
-    </section>"""
+    # --- Dashboard sections ---
+    sections_section = ""
+    if db_editable:
+        sections_section = _dashboard_sections_section_html(
+            settings_url=settings_url,
+            features=resolved_features,
+        )
+
+    # --- Campaign grouping rules ---
+    bl_rules_section = ""
+    if db_editable:
+        import business_line_rules as bl_rules
+        rules_text = bl_rules.rules_to_text(bl_rules.get_rules(slug))
+        builtin_note = (
+            " Custom rules run <strong>before</strong> built-in defaults (Home Equity, Cash Bonus, HYS, CD / Certificate, Commercial)."
+            if slug == "penn" else ""
+        )
+        bl_rules_section = f"""
+        <section class="panel">
+          <h2>Campaign grouping rules</h2>
+          <p class="muted">Map campaigns to custom labels using keyword substring matching.{builtin_note}</p>
+          <p class="hint">One rule per line: <code>keyword, keyword = Label</code></p>
+          <form method="post" action="{settings_url}">
+            <input type="hidden" name="action" value="save_business_line_rules">
+            <label for="business_line_rules">Grouping rules</label>
+            <textarea id="business_line_rules" name="business_line_rules" rows="10" class="rules-textarea"
+              placeholder="home equity, heloc = Home Equity&#10;commercial, comm = Commercial">{_esc(rules_text)}</textarea>
+            <p class="hint">After saving, click <strong>Refresh</strong> on the dashboard to re-classify campaigns.</p>
+            <button type="submit" class="btn primary">Save grouping rules</button>
+          </form>
+        </section>"""
+
+    # --- Brand colors (Penn only) ---
+    theme_section = ""
+    if slug == "penn" and db_editable:
+        theme_section = _brand_colors_section_html(
+            settings_url=settings_url,
+            theme=dashboard_theme.load_client_theme(slug),
+        )
+
+    # --- Insights editor ---
+    insights_fold = ""
+    if dashboard_service.can_edit_penn_insights(session_is_admin=session_is_admin, access_key=access_key):
+        insights_fold = f"""
+        <details class="settings-fold">
+          <summary>Dashboard insights (admin notes)</summary>
+          <div class="fold-body">
+            {dashboard_service._insights_editor_html(client_slug=slug, access_key=access_key, use_session=use_session, snapshot=snapshot)}
+          </div>
+        </details>"""
+
+    client_meta_tip = ""
+    if snapshot:
+        dr = snapshot.get("date_range") or {}
+        refreshed = snapshot.get("refreshed_at") or "—"
+        client_meta_tip = _esc(
+            f"Date range: {dr.get('start', '')} → {dr.get('end', '')}\nLast refreshed: {refreshed} UTC"
+        )
 
     content = f"""
     {notice}
-    <section class="panel">
-      <h2>Setup checklist</h2>
-      <p class="muted">Connect platforms in <a href="/admin">Admin</a>, map this client's account IDs below, then refresh data.</p>
-      {checklist}
-    </section>
-    {agency_status}
     {edit_form}
+    <section class="panel panel--primary">
+      <h2>Refresh data</h2>
+      {refresh_block}
+    </section>
+    {data_sync_section}
+    {bq_mart_section}
     {sections_section}
     {bl_rules_section}
     {theme_section}
-    {probe_fold}
-    <section class="panel panel--primary">
-      <h2>2. Refresh data</h2>
-      <p class="muted">After mapping account IDs, run a full refresh to pull campaign data into this dashboard.</p>
-      {refresh_block}
-      <div class="toolbar">{test_btn}</div>
-    </section>
-    {bq_mart_section}
-    {data_sync_section}
-    {advanced}
+    {insights_fold}
     """
 
     return dashboard_service.render_client_shell_page(
@@ -1500,7 +1221,7 @@ def render_settings_html(
         label=cfg.label,
         active_nav="settings",
         page_title="Settings",
-        page_subtitle=f"{cfg.label} · connections & data",
+        page_subtitle=f"{cfg.label} · settings",
         content_html=content,
         access_key=access_key,
         use_session=use_session,
