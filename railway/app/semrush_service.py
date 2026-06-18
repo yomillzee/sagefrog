@@ -350,13 +350,8 @@ def build_semrush_snapshot(
         backlinks = dict(backlinks)
         backlinks["authority_score"] = overview["authority_score"]
 
-    # Debug: expose raw column names returned by each API so we can identify
-    # the authority score field if it's still 0. Will remove once confirmed.
-    bl_keys = backlinks.pop("_raw_keys", None)
-    ov_keys = overview.pop("_raw_keys", None)
-    if not backlinks.get("authority_score"):
-        errors["_debug_bl_keys"] = str(bl_keys)
-        errors["_debug_ov_keys"] = str(ov_keys)
+    backlinks.pop("_raw_keys", None)
+    overview.pop("_raw_keys", None)
 
     result: dict[str, Any] = {
         "domain": domain,
