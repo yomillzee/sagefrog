@@ -267,7 +267,7 @@ def client_filter_profile(
 ) -> str | None:
     """Return filter profile: ``penn`` (business lines), ``nixon`` (regions), or None."""
     slug = (client_slug or "").strip().lower()
-    if slug == "penn":
+    if slug == "penn" or slug.startswith("penn-"):
         return "penn"
     if slug in _nixon_filter_slugs():
         return "nixon"
@@ -413,9 +413,9 @@ def build_business_line_campaigns(
     except Exception:
         custom_rules = None
 
-    # Only apply built-in Penn keyword defaults for the Penn client.
+    # Only apply built-in Penn keyword defaults for Penn-profile clients.
     # Other clients use only their own custom rules (or get "Other" if none set).
-    use_builtin = slug == "penn"
+    use_builtin = slug == "penn" or slug.startswith("penn-")
 
     out: list[dict[str, Any]] = []
     for row in _campaign_rows_from_breakdowns(breakdowns):
