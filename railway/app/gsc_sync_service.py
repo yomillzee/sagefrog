@@ -364,8 +364,20 @@ def sync_for_refresh() -> dict[str, Any]:
     - Small gap (≤ 30 days) → sync synchronously; fresh data in this snapshot
     - Large gap / empty tables → spawn background thread; data available next refresh
     """
+    site_url = _site_url()
+    if not site_url:
+        return {"ok": False, "error": "GSC_SITE_URL env var not set in Railway"}
+
+    # Test credentials and table creation synchronously so errors surface immediately
+    # rather than disappearing into the background thread.
     try:
-        start, end = get_missing_range()
+        client = _bq_client()
+        _ensure_tables(client)
+    except Exception as exc:
+        return {"ok": False, "error": f"BQ setup failed (check service account permissions): {exc}"}
+
+    try:
+        start, end = get_missing_range(client=client)
     except Exception as exc:
         return {"ok": False, "error": f"get_missing_range failed: {exc}"}
 
