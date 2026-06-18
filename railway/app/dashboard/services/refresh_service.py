@@ -323,12 +323,28 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
     linkedin_account_id = cfg.linkedin_account_id or penn_cfg.linkedin_account_id
     meta_account_id = cfg.meta_account_id or penn_cfg.meta_account_id
 
-    # GSC: reads from native BQ export (auto-populated by Google daily, no sync needed)
-    # SEMrush: runs in parallel
+    # GSC: on cron, sync new days from GSC API → fact_gsc_query/page_daily first,
+    # then read the combined snapshot (native export UNION historical backfill).
+    # On manual refresh, skip the API sync and just read from BQ.
     import semrush_service as _semrush_svc
+    import gsc_sync_service
+
+    is_cron = (sync_trigger == "cron")
+
+    def _gsc_task():
+        gsc_sync_result = None
+        if is_cron:
+            try:
+                gsc_sync_result = gsc_sync_service.sync_for_refresh()
+            except Exception as exc:
+                gsc_sync_result = {"ok": False, "error": str(exc)[:300]}
+        data = bq_gsc_service.build_gsc_snapshot(start=start, end=end)
+        if gsc_sync_result:
+            data["_sync_result"] = gsc_sync_result
+        return data
 
     _gsc_executor = ThreadPoolExecutor(max_workers=2)
-    _gsc_fut = _gsc_executor.submit(bq_gsc_service.build_gsc_snapshot, start=start, end=end)
+    _gsc_fut = _gsc_executor.submit(_gsc_task)
     _smr_fut = _gsc_executor.submit(_semrush_svc.build_semrush_snapshot)
 
     try:
@@ -346,7 +362,6 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
         # LinkedIn: cron syncs from API → BQ; manual refresh just reads from BQ.
         # Calling the LinkedIn OAuth token endpoint on every manual refresh causes
         # 429 rate-limit errors and is unnecessary when the cron keeps BQ current.
-        is_cron = (sync_trigger == "cron")
         try:
             if is_cron:
                 metadata_sync = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(

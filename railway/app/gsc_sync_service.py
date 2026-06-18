@@ -15,7 +15,10 @@ Required env vars:
 
 Optional:
     GSC_BQ_PROJECT_ID       (default: penn-community-b-1699391543298)
-    GSC_BQ_DATASET_ID       (default: marketing_marts)
+    BQ_MART_DATASET_ID      (default: marketing_marts)
+                            Note: GSC_BQ_DATASET_ID is intentionally NOT used here — that var
+                            is reserved for the native GSC export dataset (searchconsole_penn).
+                            Historical API-backfill tables are written to the mart dataset.
 """
 
 from __future__ import annotations
@@ -34,10 +37,10 @@ from uuid import uuid4
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_PROJECT = "penn-community-b-1699391543298"
-_DEFAULT_DATASET = "marketing_marts"
-_QUERY_TABLE     = "fact_gsc_query_daily"
-_PAGE_TABLE      = "fact_gsc_page_daily"
+_DEFAULT_PROJECT     = "penn-community-b-1699391543298"
+_DEFAULT_MART_DATASET = "marketing_marts"
+_QUERY_TABLE         = "fact_gsc_query_daily"
+_PAGE_TABLE          = "fact_gsc_page_daily"
 _GSC_LAG_DAYS    = 3
 _MAX_HISTORY     = 480      # GSC retains ~16 months
 _ROW_LIMIT       = 25_000   # GSC API page size
@@ -58,7 +61,7 @@ def _project_id() -> str:
 
 
 def _dataset_id() -> str:
-    return (os.getenv("GSC_BQ_DATASET_ID") or _DEFAULT_DATASET).strip()
+    return (os.getenv("BQ_MART_DATASET_ID") or _DEFAULT_MART_DATASET).strip()
 
 
 def _site_url() -> str:
