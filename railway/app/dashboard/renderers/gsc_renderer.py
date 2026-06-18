@@ -21,6 +21,16 @@ def _fmt_int(v: int | float) -> str:
     return f"{int(v):,}"
 
 
+def _fmt_compact(v: int | float) -> str:
+    """Short number: 5,090,000 → 5.09M, 57,400 → 57.4K."""
+    v = float(v)
+    if v >= 1_000_000:
+        return f"{v / 1_000_000:.2f}M"
+    if v >= 1_000:
+        return f"{v / 1_000:.1f}K"
+    return str(int(v))
+
+
 def _fmt_pct(v: float) -> str:
     return f"{v:.2f}%"
 
@@ -109,19 +119,19 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
     badge_position    = _delta_badge(avg_position, prior_avg_position, lower_is_better=True)
 
     prev_clicks_html = (
-        f'<div class="gsc-kpi-prev">vs {_fmt_int(prior_clicks)} prev. period</div>'
+        f'<div class="gsc-kpi-prev">vs previous period ({_fmt_compact(prior_clicks)})</div>'
         if has_prior else ""
     )
     prev_impressions_html = (
-        f'<div class="gsc-kpi-prev">vs {_fmt_int(prior_impressions)} prev. period</div>'
+        f'<div class="gsc-kpi-prev">vs previous period ({_fmt_compact(prior_impressions)})</div>'
         if has_prior else ""
     )
     prev_ctr_html = (
-        f'<div class="gsc-kpi-prev">vs {_fmt_pct(prior_ctr)} prev. period</div>'
+        f'<div class="gsc-kpi-prev">vs previous period ({_fmt_pct(prior_ctr)})</div>'
         if has_prior else ""
     )
     prev_position_html = (
-        f'<div class="gsc-kpi-prev">vs {_fmt_pos(prior_avg_position)} prev. period</div>'
+        f'<div class="gsc-kpi-prev">vs previous period ({_fmt_pos(prior_avg_position)})</div>'
         if has_prior else ""
     )
 
@@ -175,23 +185,27 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
   <div class="gsc-kpis">
     <div class="gsc-kpi">
       <div class="gsc-kpi-label">Organic Clicks</div>
-      <div class="gsc-kpi-value">{_esc(_fmt_int(clicks))}{badge_clicks}</div>
+      <div class="gsc-kpi-value">{_esc(_fmt_compact(clicks))}{badge_clicks}</div>
       {prev_clicks_html}
+      <div class="gsc-sparkline-wrap"><canvas class="gsc-sparkline" data-metric="clicks"></canvas></div>
     </div>
     <div class="gsc-kpi">
       <div class="gsc-kpi-label">Impressions</div>
-      <div class="gsc-kpi-value">{_esc(_fmt_int(impressions))}{badge_impressions}</div>
+      <div class="gsc-kpi-value">{_esc(_fmt_compact(impressions))}{badge_impressions}</div>
       {prev_impressions_html}
+      <div class="gsc-sparkline-wrap"><canvas class="gsc-sparkline" data-metric="impressions"></canvas></div>
     </div>
     <div class="gsc-kpi">
       <div class="gsc-kpi-label">Avg. CTR</div>
       <div class="gsc-kpi-value">{_esc(_fmt_pct(ctr))}{badge_ctr}</div>
       {prev_ctr_html}
+      <div class="gsc-sparkline-wrap"><canvas class="gsc-sparkline" data-metric="ctr"></canvas></div>
     </div>
     <div class="gsc-kpi">
       <div class="gsc-kpi-label">Avg. Position</div>
       <div class="gsc-kpi-value">{_esc(_fmt_pos(avg_position))}{badge_position}</div>
       {prev_position_html}
+      <div class="gsc-sparkline-wrap"><canvas class="gsc-sparkline" data-metric="avg_position"></canvas></div>
     </div>
   </div>
 
@@ -235,6 +249,46 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
 <script>
 (function() {{
   var gscDaily = {daily_json};
+
+  // ── Sparklines inside each KPI card ─────────────────────────────────
+  var gscSparkColors = {{
+    clicks:      '#16a34a',
+    impressions: '#0a66c2',
+    ctr:         '#c9a227',
+    avg_position:'#7c3aed',
+  }};
+  if (typeof Chart !== 'undefined' && gscDaily.length > 1) {{
+    document.querySelectorAll('.gsc-sparkline').forEach(function(canvas) {{
+      var metric = canvas.dataset.metric;
+      var color = gscSparkColors[metric] || '#0a66c2';
+      var values = gscDaily.map(function(r) {{ return r[metric] || 0; }});
+      new Chart(canvas.getContext('2d'), {{
+        type: 'line',
+        data: {{
+          labels: gscDaily.map(function(r) {{ return r.date; }}),
+          datasets: [{{
+            data: values,
+            borderColor: color,
+            backgroundColor: color + '22',
+            fill: true,
+            tension: 0.35,
+            pointRadius: 0,
+            borderWidth: 1.5,
+          }}]
+        }},
+        options: {{
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          plugins: {{ legend: {{ display: false }}, tooltip: {{ enabled: false }} }},
+          scales: {{
+            x: {{ display: false }},
+            y: {{ display: false, beginAtZero: metric !== 'avg_position' }},
+          }},
+        }},
+      }});
+    }});
+  }}
 
   var gscPriorValues = {{
     clicks: {prior_clicks},
@@ -392,7 +446,9 @@ GSC_CSS = """
       background: #f8fafc;
       border: 1px solid var(--border);
       border-radius: 10px;
-      padding: 14px 16px;
+      padding: 14px 16px 0;
+      display: flex;
+      flex-direction: column;
     }
     .gsc-kpi-label {
       font-size: 0.7rem;
@@ -403,8 +459,8 @@ GSC_CSS = """
       margin-bottom: 4px;
     }
     .gsc-kpi-value {
-      font-size: 1.55rem;
-      font-weight: 800;
+      font-size: 1.65rem;
+      font-weight: 900;
       color: var(--navy);
       letter-spacing: -0.02em;
       font-variant-numeric: tabular-nums;
@@ -412,11 +468,18 @@ GSC_CSS = """
       align-items: baseline;
       gap: 8px;
       flex-wrap: wrap;
+      line-height: 1.1;
     }
     .gsc-delta { font-size: 0.72rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; }
     .gsc-delta-good { color: #16a34a; background: #f0fdf4; }
     .gsc-delta-bad  { color: #dc2626; background: #fef2f2; }
-    .gsc-kpi-prev   { font-size: 0.68rem; color: var(--muted); margin-top: 3px; }
+    .gsc-kpi-prev   { font-size: 0.68rem; color: var(--muted); margin-top: 4px; }
+    .gsc-sparkline-wrap {
+      margin-top: 10px;
+      height: 52px;
+      flex-shrink: 0;
+    }
+    .gsc-sparkline { display: block; width: 100%; height: 100%; }
     .gsc-chart-prior-label { font-size: 0.78rem; color: var(--muted); margin-top: 6px; text-align: right; }
     .gsc-chart-section {
       margin-bottom: 20px;
