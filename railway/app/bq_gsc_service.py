@@ -1,20 +1,22 @@
-"""BigQuery Search Console mart reader for Penn BQ Test dashboard.
+"""BigQuery Search Console reader for Penn BQ Test dashboard.
 
-Reads from two lean tables populated by gsc_backfill.py:
+Reads from the native GSC BigQuery export in searchconsole_penn:
 
-  fact_gsc_query_daily  — (date, query)     → KPIs, daily trend, top queries
-  fact_gsc_page_daily   — (date, page_url)  → top pages
+  searchdata_site_impression  — (date, query, country, device)
+                                → KPIs, daily trend, top queries
 
-Why two tables?
-  Storing (date × query × page) produces millions of rows.
-  Each table has ~100–200K rows for a 480-day backfill, totalling ~300K rows.
+  searchdata_url_impression   — (date, url, query, country, device)
+                                → top pages
+
+Google auto-exports to these tables daily; no manual sync needed.
+Both tables are filtered to search_type = 'WEB' (organic web search).
+
+Position formula: SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1
+  sum_top_position / sum_position are 0-based cumulative position sums.
 
 Required env vars (fall back to defaults if unset):
-  BQ_MART_PROJECT_ID     GCP project  (default: penn-community-b-1699391543298)
-  BQ_MART_DATASET_ID     dataset      (default: marketing_marts)
-
-Position note: never average organic_sum_position directly.
-  avg_position = SAFE_DIVIDE(SUM(organic_sum_position), SUM(organic_impressions)) + 1
+  GSC_BQ_PROJECT_ID   GCP project  (default: penn-community-b-1699391543298)
+  GSC_BQ_DATASET_ID   dataset      (default: searchconsole_penn)
 """
 
 from __future__ import annotations
@@ -25,10 +27,10 @@ from typing import Any
 
 import bigquery_service
 
-_DEFAULT_PROJECT     = "penn-community-b-1699391543298"
-_DEFAULT_DATASET     = "marketing_marts"
-_DEFAULT_QUERY_TABLE = "fact_gsc_query_daily"
-_DEFAULT_PAGE_TABLE  = "fact_gsc_page_daily"
+_DEFAULT_PROJECT  = "penn-community-b-1699391543298"
+_DEFAULT_DATASET  = "searchconsole_penn"
+_SITE_TABLE       = "searchdata_site_impression"
+_URL_TABLE        = "searchdata_url_impression"
 
 
 # ---------------------------------------------------------------------------
@@ -36,25 +38,23 @@ _DEFAULT_PAGE_TABLE  = "fact_gsc_page_daily"
 # ---------------------------------------------------------------------------
 
 def _project_id() -> str:
-    return (os.getenv("BQ_MART_PROJECT_ID") or _DEFAULT_PROJECT).strip()
+    return (os.getenv("GSC_BQ_PROJECT_ID") or _DEFAULT_PROJECT).strip()
 
 
 def _dataset() -> str:
-    return (os.getenv("BQ_MART_DATASET_ID") or _DEFAULT_DATASET).strip()
+    return (os.getenv("GSC_BQ_DATASET_ID") or _DEFAULT_DATASET).strip()
 
 
-def _query_table() -> str:
-    tbl = (os.getenv("BQ_GSC_QUERY_TABLE") or _DEFAULT_QUERY_TABLE).strip()
-    return f"`{_project_id()}.{_dataset()}.{tbl}`"
+def _site_tbl() -> str:
+    return f"`{_project_id()}.{_dataset()}.{_SITE_TABLE}`"
 
 
-def _page_table() -> str:
-    tbl = (os.getenv("BQ_GSC_PAGE_TABLE") or _DEFAULT_PAGE_TABLE).strip()
-    return f"`{_project_id()}.{_dataset()}.{tbl}`"
+def _url_tbl() -> str:
+    return f"`{_project_id()}.{_dataset()}.{_URL_TABLE}`"
 
 
 def _where(start: date, end: date) -> str:
-    return f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
+    return f"data_date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
 
 
 def _run(sql: str, max_rows: int = 500) -> list[dict[str, Any]]:
@@ -70,7 +70,6 @@ def _anon_label() -> str:
 
 
 def _prior_period(start: date, end: date) -> tuple[date, date]:
-    """Immediately preceding period of the same length."""
     n = (end - start).days + 1
     prior_end   = start - timedelta(days=1)
     prior_start = prior_end - timedelta(days=n - 1)
@@ -84,36 +83,41 @@ def _pct_delta(current: float, prior: float) -> float | None:
 
 
 # ---------------------------------------------------------------------------
-# KPIs  (query table — daily sums roll up to correct site totals)
+# KPIs  (site_impression — already site-level, sum over query/country/device)
 # ---------------------------------------------------------------------------
 
 def fetch_kpis_with_comparison(*, start: date, end: date) -> dict[str, Any]:
     """Current + prior period KPIs in one query using conditional aggregation."""
     prior_start, prior_end = _prior_period(start, end)
-    t  = _query_table()
+    t  = _site_tbl()
     s, e   = start.isoformat(), end.isoformat()
     ps, pe = prior_start.isoformat(), prior_end.isoformat()
 
     sql = f"""
     SELECT
-      SUM(IF(date BETWEEN '{s}' AND '{e}', organic_clicks, 0))       AS clicks,
-      SUM(IF(date BETWEEN '{s}' AND '{e}', organic_impressions, 0))  AS impressions,
-      (SUM(IF(date BETWEEN '{s}' AND '{e}', organic_clicks, 0)) /
-       NULLIF(SUM(IF(date BETWEEN '{s}' AND '{e}', organic_impressions, 0)), 0))
-                                                                      AS ctr,
-      (SUM(IF(date BETWEEN '{s}' AND '{e}', organic_sum_position, 0.0)) /
-       NULLIF(SUM(IF(date BETWEEN '{s}' AND '{e}', organic_impressions, 0)), 0)) + 1.0
-                                                                      AS avg_position,
-      SUM(IF(date BETWEEN '{ps}' AND '{pe}', organic_clicks, 0))     AS prior_clicks,
-      SUM(IF(date BETWEEN '{ps}' AND '{pe}', organic_impressions, 0)) AS prior_impressions,
-      (SUM(IF(date BETWEEN '{ps}' AND '{pe}', organic_clicks, 0)) /
-       NULLIF(SUM(IF(date BETWEEN '{ps}' AND '{pe}', organic_impressions, 0)), 0))
-                                                                      AS prior_ctr,
-      (SUM(IF(date BETWEEN '{ps}' AND '{pe}', organic_sum_position, 0.0)) /
-       NULLIF(SUM(IF(date BETWEEN '{ps}' AND '{pe}', organic_impressions, 0)), 0)) + 1.0
-                                                                      AS prior_avg_position
+      SUM(IF(data_date BETWEEN '{s}'  AND '{e}',  clicks, 0))       AS clicks,
+      SUM(IF(data_date BETWEEN '{s}'  AND '{e}',  impressions, 0))  AS impressions,
+      SAFE_DIVIDE(
+        SUM(IF(data_date BETWEEN '{s}'  AND '{e}',  clicks, 0)),
+        NULLIF(SUM(IF(data_date BETWEEN '{s}'  AND '{e}',  impressions, 0)), 0)
+      )                                                               AS ctr,
+      SAFE_DIVIDE(
+        SUM(IF(data_date BETWEEN '{s}'  AND '{e}',  sum_top_position, 0.0)),
+        NULLIF(SUM(IF(data_date BETWEEN '{s}'  AND '{e}',  impressions, 0)), 0)
+      ) + 1.0                                                         AS avg_position,
+      SUM(IF(data_date BETWEEN '{ps}' AND '{pe}', clicks, 0))        AS prior_clicks,
+      SUM(IF(data_date BETWEEN '{ps}' AND '{pe}', impressions, 0))   AS prior_impressions,
+      SAFE_DIVIDE(
+        SUM(IF(data_date BETWEEN '{ps}' AND '{pe}', clicks, 0)),
+        NULLIF(SUM(IF(data_date BETWEEN '{ps}' AND '{pe}', impressions, 0)), 0)
+      )                                                               AS prior_ctr,
+      SAFE_DIVIDE(
+        SUM(IF(data_date BETWEEN '{ps}' AND '{pe}', sum_top_position, 0.0)),
+        NULLIF(SUM(IF(data_date BETWEEN '{ps}' AND '{pe}', impressions, 0)), 0)
+      ) + 1.0                                                         AS prior_avg_position
     FROM {t}
-    WHERE date BETWEEN '{ps}' AND '{e}'
+    WHERE search_type = 'WEB'
+      AND data_date BETWEEN '{ps}' AND '{e}'
     """
     rows = _run(sql, max_rows=1)
     if not rows:
@@ -149,31 +153,31 @@ def fetch_kpis_with_comparison(*, start: date, end: date) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Daily trend  (query table — correct site totals when grouped by date)
+# Daily trend  (site_impression — sum over query/country/device per day)
 # ---------------------------------------------------------------------------
 
 def fetch_daily(*, start: date, end: date) -> list[dict[str, Any]]:
     """One row per date with site-wide aggregated GSC metrics."""
     sql = f"""
     SELECT
-      CAST(date AS STRING)                                            AS date,
-      SUM(organic_clicks)                                             AS clicks,
-      SUM(organic_impressions)                                        AS impressions,
-      SAFE_DIVIDE(SUM(organic_clicks), SUM(organic_impressions))     AS ctr,
-      SAFE_DIVIDE(SUM(organic_sum_position), SUM(organic_impressions)) + 1
-                                                                      AS avg_position
-    FROM {_query_table()}
-    WHERE {_where(start, end)}
+      CAST(data_date AS STRING)                                         AS date,
+      SUM(clicks)                                                       AS clicks,
+      SUM(impressions)                                                  AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions))                        AS ctr,
+      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1          AS avg_position
+    FROM {_site_tbl()}
+    WHERE search_type = 'WEB'
+      AND {_where(start, end)}
     GROUP BY 1
     ORDER BY 1
     """
     rows = _run(sql, max_rows=400)
     return [
         {
-            "date":        str(r.get("date") or "")[:10],
-            "clicks":      int(r.get("clicks") or 0),
-            "impressions": int(r.get("impressions") or 0),
-            "ctr":         float(r.get("ctr") or 0) * 100,
+            "date":         str(r.get("date") or "")[:10],
+            "clicks":       int(r.get("clicks") or 0),
+            "impressions":  int(r.get("impressions") or 0),
+            "ctr":          float(r.get("ctr") or 0) * 100,
             "avg_position": float(r.get("avg_position") or 0),
         }
         for r in rows
@@ -181,21 +185,21 @@ def fetch_daily(*, start: date, end: date) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Top queries  (query table)
+# Top queries  (site_impression — aggregate over country/device)
 # ---------------------------------------------------------------------------
 
 def fetch_top_queries(*, start: date, end: date, limit: int = 25) -> list[dict[str, Any]]:
-    """Top queries by clicks for the period, anonymized queries grouped together."""
+    """Top queries by clicks, aggregated over country and device."""
     sql = f"""
     SELECT
-      {_anon_label()}                                                  AS query,
-      SUM(organic_clicks)                                              AS clicks,
-      SUM(organic_impressions)                                         AS impressions,
-      SAFE_DIVIDE(SUM(organic_clicks), SUM(organic_impressions))      AS ctr,
-      SAFE_DIVIDE(SUM(organic_sum_position), SUM(organic_impressions)) + 1
-                                                                       AS avg_position
-    FROM {_query_table()}
-    WHERE {_where(start, end)}
+      {_anon_label()}                                                    AS query,
+      SUM(clicks)                                                        AS clicks,
+      SUM(impressions)                                                   AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions))                         AS ctr,
+      SAFE_DIVIDE(SUM(sum_top_position), SUM(impressions)) + 1           AS avg_position
+    FROM {_site_tbl()}
+    WHERE search_type = 'WEB'
+      AND {_where(start, end)}
     GROUP BY 1
     ORDER BY clicks DESC, impressions DESC
     LIMIT {int(limit)}
@@ -203,10 +207,10 @@ def fetch_top_queries(*, start: date, end: date, limit: int = 25) -> list[dict[s
     rows = _run(sql, max_rows=limit + 5)
     return [
         {
-            "query":       str(r.get("query") or "(anonymized query)"),
-            "clicks":      int(r.get("clicks") or 0),
-            "impressions": int(r.get("impressions") or 0),
-            "ctr":         float(r.get("ctr") or 0) * 100,
+            "query":        str(r.get("query") or "(anonymized query)"),
+            "clicks":       int(r.get("clicks") or 0),
+            "impressions":  int(r.get("impressions") or 0),
+            "ctr":          float(r.get("ctr") or 0) * 100,
             "avg_position": float(r.get("avg_position") or 0),
         }
         for r in rows
@@ -214,21 +218,21 @@ def fetch_top_queries(*, start: date, end: date, limit: int = 25) -> list[dict[s
 
 
 # ---------------------------------------------------------------------------
-# Top pages  (page table)
+# Top pages  (url_impression — aggregate over query/country/device)
 # ---------------------------------------------------------------------------
 
 def fetch_top_pages(*, start: date, end: date, limit: int = 25) -> list[dict[str, Any]]:
-    """Top pages by clicks for the period."""
+    """Top pages by clicks, aggregated over query, country, and device."""
     sql = f"""
     SELECT
-      page_url,
-      SUM(organic_clicks)                                              AS clicks,
-      SUM(organic_impressions)                                         AS impressions,
-      SAFE_DIVIDE(SUM(organic_clicks), SUM(organic_impressions))      AS ctr,
-      SAFE_DIVIDE(SUM(organic_sum_position), SUM(organic_impressions)) + 1
-                                                                       AS avg_position
-    FROM {_page_table()}
-    WHERE {_where(start, end)}
+      url                                                                AS page_url,
+      SUM(clicks)                                                        AS clicks,
+      SUM(impressions)                                                   AS impressions,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions))                         AS ctr,
+      SAFE_DIVIDE(SUM(sum_position), SUM(impressions)) + 1               AS avg_position
+    FROM {_url_tbl()}
+    WHERE search_type = 'WEB'
+      AND {_where(start, end)}
     GROUP BY 1
     ORDER BY clicks DESC, impressions DESC
     LIMIT {int(limit)}
@@ -236,10 +240,10 @@ def fetch_top_pages(*, start: date, end: date, limit: int = 25) -> list[dict[str
     rows = _run(sql, max_rows=limit + 5)
     return [
         {
-            "page_url":    str(r.get("page_url") or ""),
-            "clicks":      int(r.get("clicks") or 0),
-            "impressions": int(r.get("impressions") or 0),
-            "ctr":         float(r.get("ctr") or 0) * 100,
+            "page_url":     str(r.get("page_url") or ""),
+            "clicks":       int(r.get("clicks") or 0),
+            "impressions":  int(r.get("impressions") or 0),
+            "ctr":          float(r.get("ctr") or 0) * 100,
             "avg_position": float(r.get("avg_position") or 0),
         }
         for r in rows
@@ -251,10 +255,16 @@ def fetch_top_pages(*, start: date, end: date, limit: int = 25) -> list[dict[str
 # ---------------------------------------------------------------------------
 
 def check_tables() -> dict[str, Any]:
-    """Row count + date range for both tables. Returns dict keyed by table name."""
+    """Row count + date range for both native export tables."""
     results = {}
-    for name, tbl in [("query", _query_table()), ("page", _page_table())]:
-        sql = f"SELECT COUNT(*) AS n, MIN(date) AS min_date, MAX(date) AS max_date FROM {tbl} LIMIT 1"
+    for name, tbl, date_col in [
+        ("site_impression", _site_tbl(), "data_date"),
+        ("url_impression",  _url_tbl(),  "data_date"),
+    ]:
+        sql = (
+            f"SELECT COUNT(*) AS n, MIN({date_col}) AS min_date, MAX({date_col}) AS max_date "
+            f"FROM {tbl} WHERE search_type = 'WEB' LIMIT 1"
+        )
         try:
             rows = _run(sql, max_rows=1)
             r    = rows[0] if rows else {}
@@ -303,8 +313,8 @@ def build_gsc_snapshot(*, start: date, end: date) -> dict[str, Any]:
 
 def env_summary() -> dict[str, str]:
     return {
-        "project_id":    _project_id(),
-        "dataset_id":    _dataset(),
-        "query_table":   (os.getenv("BQ_GSC_QUERY_TABLE") or _DEFAULT_QUERY_TABLE).strip(),
-        "page_table":    (os.getenv("BQ_GSC_PAGE_TABLE")  or _DEFAULT_PAGE_TABLE).strip(),
+        "project_id": _project_id(),
+        "dataset_id": _dataset(),
+        "site_table": _SITE_TABLE,
+        "url_table":  _URL_TABLE,
     }
