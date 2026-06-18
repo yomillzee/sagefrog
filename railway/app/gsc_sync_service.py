@@ -324,10 +324,12 @@ def sync_range(
 
     grand_q = grand_p = 0
     errors: list[str] = []
-    d = start
     day_num = 0
 
-    while d <= end:
+    # Process newest → oldest so the dashboard's "Last 30 days" view fills in first.
+    dates = [end - timedelta(days=i) for i in range(total_days)]
+
+    for d in dates:
         day_num += 1
         if progress_cb:
             progress_cb(d, total_days)
@@ -343,13 +345,12 @@ def sync_range(
                 grand_p += _upsert(client, page_id, rows, p_schema, p_merge)
             except Exception as exc:
                 errors.append(f"{d} page: {exc}")
-        if day_num % 30 == 0 or d == end:
+        if day_num % 30 == 0 or day_num == total_days:
             log.info(
-                "GSC backfill progress: %d/%d days (%s → %s), "
+                "GSC backfill progress: %d/%d days (latest=%s), "
                 "query_rows=%d, page_rows=%d, errors=%d",
-                day_num, total_days, start, d, grand_q, grand_p, len(errors),
+                day_num, total_days, dates[0], grand_q, grand_p, len(errors),
             )
-        d += timedelta(days=1)
 
     return {
         "ok":            len(errors) == 0,
