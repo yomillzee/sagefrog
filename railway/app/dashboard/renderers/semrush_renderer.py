@@ -54,16 +54,28 @@ def semrush_section_html(data: dict[str, Any]) -> str:
         error_html = f'<div class="smr-errors"><strong>SEMrush warnings</strong><ul>{items}</ul></div>'
 
     # ── KPI strip ──────────────────────────────────────────────────────────
+    bl_error      = bool(backlinks.get("error"))
     auth_score    = int(backlinks.get("authority_score") or 0)
     auth_color    = "#16a34a" if auth_score >= 40 else "#c9a227" if auth_score >= 20 else "#dc2626"
     auth_value    = f'<span style="color:{auth_color};font-weight:900">{auth_score}</span><span style="font-size:0.9rem;color:var(--muted)">/100</span>'
+
+    def _bl(key: str) -> str:
+        """Format a backlink metric — show '—' when backlinks API failed."""
+        if bl_error:
+            return '<span style="color:var(--muted)">—</span>'
+        return _fmt_int(backlinks.get(key) or 0)
+
+    ref_domains_subtitle = (
+        f"{_fmt_int(backlinks.get('total_backlinks') or 0)} total backlinks"
+        if not bl_error else "backlinks API unavailable"
+    )
 
     kpi_html = f"""
     <div class="smr-kpis">
       {_kpi_card("Organic Traffic (est.)", _fmt_int(overview.get("organic_traffic") or 0), f"{database.upper()} database · monthly")}
       {_kpi_card("Organic Keywords", _fmt_int(overview.get("organic_keywords") or 0), "ranking in top 100")}
       {_kpi_card("Authority Score", auth_value, "0–100 domain authority")}
-      {_kpi_card("Referring Domains", _fmt_int(backlinks.get("referring_domains") or 0), f"{_fmt_int(backlinks.get('total_backlinks') or 0)} total backlinks")}
+      {_kpi_card("Referring Domains", _bl("referring_domains"), ref_domains_subtitle)}
     </div>"""
 
     # ── Secondary KPIs ─────────────────────────────────────────────────────
@@ -79,11 +91,11 @@ def semrush_section_html(data: dict[str, Any]) -> str:
       </div>
       <div class="smr-secondary-item">
         <span class="smr-secondary-label">Dofollow Links</span>
-        <span class="smr-secondary-value">{_fmt_int(backlinks.get("dofollow") or 0)}</span>
+        <span class="smr-secondary-value">{_bl("dofollow")}</span>
       </div>
       <div class="smr-secondary-item">
         <span class="smr-secondary-label">Nofollow Links</span>
-        <span class="smr-secondary-value">{_fmt_int(backlinks.get("nofollow") or 0)}</span>
+        <span class="smr-secondary-value">{_bl("nofollow")}</span>
       </div>
       <div class="smr-secondary-item">
         <span class="smr-secondary-label">Paid Keywords</span>

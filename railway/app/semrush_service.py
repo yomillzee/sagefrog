@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 _BASE_URL = "https://api.semrush.com/"
+_BASE_URL_V1 = "https://api.semrush.com/analytics/v1/"
 _DEFAULT_DOMAIN = "penncommunitybank.com"
 _DEFAULT_DATABASE = "us"
 
@@ -48,16 +49,26 @@ def _database() -> str:
 # HTTP + parsing
 # ---------------------------------------------------------------------------
 
-def _get(params: dict[str, str], timeout: int = 30) -> str:
-    """GET the SEMrush API. Raises on HTTP errors or non-200 status."""
+def _get(params: dict[str, str], timeout: int = 30, base_url: str = _BASE_URL) -> str:
+    """GET the SEMrush API. Raises with the response body included on HTTP errors."""
     key = _api_key()
     if not key:
         raise ValueError("SEMRUSH_API_KEY env var is not set")
     params = dict(params)
     params["key"] = key
-    url = _BASE_URL + "?" + urllib.parse.urlencode(params)
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
-        return resp.read().decode("utf-8")
+    url = base_url + "?" + urllib.parse.urlencode(params)
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            return resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        # Read the response body so SEMrush's error code is visible in logs
+        try:
+            body = exc.read().decode("utf-8", errors="replace")[:300]
+        except Exception:
+            body = ""
+        raise urllib.error.HTTPError(
+            exc.url, exc.code, f"{exc.reason} — {body}", exc.headers, None
+        ) from exc
 
 
 def _parse_csv(text: str) -> list[dict[str, str]]:
@@ -199,11 +210,14 @@ def fetch_backlinks_overview(domain: str | None = None) -> dict[str, Any]:
     """
     domain = domain or _domain()
     try:
-        text = _get({
-            "type": "backlinks_overview",
-            "target": domain,
-            "target_type": "root_domain",
-        })
+        text = _get(
+            {
+                "type": "backlinks_overview",
+                "target": domain,
+                "target_type": "root_domain",
+            },
+            base_url=_BASE_URL_V1,
+        )
         rows = _parse_csv(text)
         if not rows:
             return {"domain": domain, "error": "No backlink data returned"}
