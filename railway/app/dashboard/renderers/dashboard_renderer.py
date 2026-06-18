@@ -255,7 +255,8 @@ def global_filters_bar_html(
               <span class="filter-column-label">Date range</span>
               <form method="get" action="{_esc(view_range_form_action)}" style="display:contents">
                 {view_range_key_field}
-                <select name="view_range" aria-label="Date range" onchange="this.form.submit()"
+                <select name="view_range" aria-label="Date range"
+                  onchange="(function(sel){{var v=(new URLSearchParams(location.search)).get('view');if(v){{var i=document.createElement('input');i.type='hidden';i.name='view';i.value=v;sel.form.appendChild(i)}}sel.form.submit()}})(this)"
                   style="cursor:pointer;font:inherit;font-size:0.82rem;padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text)">
                   {_vr_options}
                 </select>
