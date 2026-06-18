@@ -353,6 +353,7 @@ def build_semrush_snapshot(
     backlinks.pop("_raw_keys", None)
     overview.pop("_raw_keys", None)
 
+    from datetime import datetime, timezone
     result: dict[str, Any] = {
         "domain": domain,
         "database": db,
@@ -360,6 +361,7 @@ def build_semrush_snapshot(
         "keywords": keywords,
         "backlinks": backlinks,
         "position_distribution": position_dist,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
     if errors:
         result["errors"] = errors

@@ -537,6 +537,22 @@ def refresh_bq_client(
     semrush_domain      = (db_cfg.semrush_domain if db_cfg else None) or ""
     is_cron             = (sync_trigger == "cron")
 
+    # Reuse cached SEMrush data if it's under 24 hours old — SEMrush scores
+    # update at most daily and cost API tokens on every call.
+    from datetime import datetime, timezone as _tz
+    _existing = dashboard_snapshots.get_snapshot(slug) or {}
+    _cached_smr = _existing.get("semrush") or {}
+    _smr_age_hours: float = 999
+    try:
+        _fetched = _cached_smr.get("fetched_at")
+        if _fetched:
+            _smr_age_hours = (
+                datetime.now(_tz.utc) - datetime.fromisoformat(_fetched)
+            ).total_seconds() / 3600
+    except Exception:
+        pass
+    _smr_fresh = _smr_age_hours < 24
+
     def _gsc_task():
         gsc_sync_result = None
         if is_cron and gsc_site_url:
@@ -551,9 +567,9 @@ def refresh_bq_client(
 
     _pool = ThreadPoolExecutor(max_workers=2)
     _gsc_fut = _pool.submit(_gsc_task)
-    _smr_fut = _pool.submit(
-        _smr_svc.build_semrush_snapshot,
-        semrush_domain or None,
+    _smr_fut = (
+        None if _smr_fresh
+        else _pool.submit(_smr_svc.build_semrush_snapshot, semrush_domain or None)
     )
 
     try:
@@ -648,14 +664,17 @@ def refresh_bq_client(
             snapshot["gsc"] = _gsc_fut.result(timeout=60)
         except Exception as exc:
             snapshot.setdefault("errors", {})["gsc"] = str(exc)[:400]
-        try:
-            smr = _smr_fut.result(timeout=30)
-            if smr and not smr.get("error", "").startswith("SEMRUSH_API_KEY"):
-                snapshot["semrush"] = smr
-        except Exception as exc:
-            snapshot.setdefault("errors", {})["semrush"] = str(exc)[:400]
-        finally:
-            _pool.shutdown(wait=False)
+        if _smr_fresh:
+            if _cached_smr:
+                snapshot["semrush"] = _cached_smr
+        else:
+            try:
+                smr = _smr_fut.result(timeout=30)
+                if smr and not smr.get("error", "").startswith("SEMRUSH_API_KEY"):
+                    snapshot["semrush"] = smr
+            except Exception as exc:
+                snapshot.setdefault("errors", {})["semrush"] = str(exc)[:400]
+        _pool.shutdown(wait=False)
 
     snapshot["sync_meta"] = sync_meta(sync_trigger)
     dashboard_snapshots.save_snapshot(slug, snapshot)
