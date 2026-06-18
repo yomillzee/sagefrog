@@ -166,6 +166,12 @@ def dashboard_client_settings_post(
     if act == "test":
         cfg = dashboard_settings.load_settings_config(slug)
         probe = dashboard_settings.probe_client_connections(cfg)
+        try:
+            import bq_provision_service
+            bq_result = bq_provision_service.validate_all()
+            probe["bq_tables"] = bq_result.as_dict()
+        except Exception as exc:
+            probe["bq_tables"] = {"error": str(exc)[:200]}
         return HTMLResponse(
             dashboard_settings.render_settings_html(
                 client_slug=slug,
@@ -235,6 +241,12 @@ def dashboard_client_settings_post(
                 status_code=400,
             )
         probe = dashboard_settings.probe_client_connections(cfg)
+        try:
+            import bq_provision_service
+            bq_result = bq_provision_service.validate_all()
+            probe["bq_tables"] = bq_result.as_dict()
+        except Exception as exc:
+            probe["bq_tables"] = {"error": str(exc)[:200]}
         db_row = saved
         return HTMLResponse(
             dashboard_settings.render_settings_html(

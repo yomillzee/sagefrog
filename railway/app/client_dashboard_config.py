@@ -37,6 +37,12 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config
       ADD COLUMN IF NOT EXISTS features_json JSONB
     """,
+    """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS gcp_project_id TEXT
+    """,
+    """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS bq_mart_dataset_id TEXT
+    """,
 ]
 
 
@@ -51,6 +57,8 @@ class ClientConfigRow:
     monthly_budget_usd: float | None = None
     updated_at: str | None = None
     updated_by: str | None = None
+    gcp_project_id: str | None = None
+    bq_mart_dataset_id: str | None = None
 
 
 def _get_db_url() -> str | None:
@@ -82,7 +90,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
             """
             SELECT client_slug, label, google_customer_id, linkedin_account_id,
                    meta_account_id, ga4_client_key,
-                   monthly_budget_usd, updated_at, updated_by
+                   monthly_budget_usd, updated_at, updated_by,
+                   gcp_project_id, bq_mart_dataset_id
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -95,6 +104,14 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
     budget: float | None = None
     if budget_raw is not None:
         budget = float(budget_raw)
+    try:
+        gcp_project_id = str(row[9]).strip() if row[9] else None
+    except (IndexError, AttributeError):
+        gcp_project_id = None
+    try:
+        bq_mart_dataset_id = str(row[10]).strip() if row[10] else None
+    except (IndexError, AttributeError):
+        bq_mart_dataset_id = None
     return ClientConfigRow(
         client_slug=str(row[0]),
         label=str(row[1] or ""),
@@ -105,6 +122,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         monthly_budget_usd=budget,
         updated_at=updated.isoformat() if updated else None,
         updated_by=str(row[8]).strip() if row[8] else None,
+        gcp_project_id=gcp_project_id,
+        bq_mart_dataset_id=bq_mart_dataset_id,
     )
 
 
@@ -117,6 +136,8 @@ def save_config(
     meta_account_id: str | None,
     ga4_client_key: str | None,
     updated_by: str | None = None,
+    gcp_project_id: str | None = None,
+    bq_mart_dataset_id: str | None = None,
 ) -> ClientConfigRow:
     slug = (client_slug or "").strip().lower()
     if not slug:
@@ -130,14 +151,36 @@ def save_config(
 
     ensure_schema()
     now = datetime.now(tz=UTC)
+    # Build optional GCP column updates only when values are provided
+    _gcp_proj = _clean(gcp_project_id)
+    _bq_mart_ds = _clean(bq_mart_dataset_id)
+    gcp_set_clause = ""
+    if gcp_project_id is not None:
+        gcp_set_clause += ",\n              gcp_project_id = EXCLUDED.gcp_project_id"
+    if bq_mart_dataset_id is not None:
+        gcp_set_clause += ",\n              bq_mart_dataset_id = EXCLUDED.bq_mart_dataset_id"
+
+    # Build column/value lists dynamically for optional GCP columns
+    extra_cols = ""
+    extra_placeholders = ""
+    extra_vals: list = []
+    if gcp_project_id is not None:
+        extra_cols += ", gcp_project_id"
+        extra_placeholders += ", %s"
+        extra_vals.append(_gcp_proj)
+    if bq_mart_dataset_id is not None:
+        extra_cols += ", bq_mart_dataset_id"
+        extra_placeholders += ", %s"
+        extra_vals.append(_bq_mart_ds)
+
     with psycopg.connect(_get_db_url()) as conn:
         conn.execute(
-            """
+            f"""
             INSERT INTO client_dashboard_config (
               client_slug, label, google_customer_id, linkedin_account_id,
-              meta_account_id, ga4_client_key, updated_at, updated_by
+              meta_account_id, ga4_client_key, updated_at, updated_by{extra_cols}
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s{extra_placeholders})
             ON CONFLICT (client_slug)
             DO UPDATE SET
               label = EXCLUDED.label,
@@ -146,7 +189,7 @@ def save_config(
               meta_account_id = EXCLUDED.meta_account_id,
               ga4_client_key = EXCLUDED.ga4_client_key,
               updated_at = EXCLUDED.updated_at,
-              updated_by = EXCLUDED.updated_by
+              updated_by = EXCLUDED.updated_by{gcp_set_clause}
             """,
             (
                 slug,
@@ -157,6 +200,7 @@ def save_config(
                 _clean(ga4_client_key),
                 now,
                 (updated_by or "").strip() or None,
+                *extra_vals,
             ),
         )
     saved = get_config(slug)
@@ -364,4 +408,6 @@ def as_dict(row: ClientConfigRow | None) -> dict[str, Any]:
         "monthly_budget_usd": row.monthly_budget_usd,
         "updated_at": row.updated_at,
         "updated_by": row.updated_by,
+        "gcp_project_id": row.gcp_project_id,
+        "bq_mart_dataset_id": row.bq_mart_dataset_id,
     }

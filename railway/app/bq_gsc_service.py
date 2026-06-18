@@ -14,7 +14,7 @@ Rolled-up avg = SAFE_DIVIDE(SUM(organic_sum_position), SUM(organic_impressions))
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import bigquery_service
@@ -49,6 +49,20 @@ def _anon_expr() -> str:
     )
 
 
+def _prior_period(start: date, end: date) -> tuple[date, date]:
+    """Immediately preceding period of the same length."""
+    n = (end - start).days + 1
+    prior_end = start - timedelta(days=1)
+    prior_start = prior_end - timedelta(days=n - 1)
+    return prior_start, prior_end
+
+
+def _pct_delta(current: float, prior: float) -> float | None:
+    if not prior:
+        return None
+    return round((current - prior) / prior * 100, 1)
+
+
 def fetch_kpis(*, start: date, end: date) -> dict[str, Any]:
     table = _full_table()
     sql = f"""
@@ -70,6 +84,95 @@ def fetch_kpis(*, start: date, end: date) -> dict[str, Any]:
         "ctr": float(r.get("ctr") or 0) * 100,
         "avg_position": float(r.get("avg_position") or 0),
     }
+
+
+def fetch_kpis_with_comparison(*, start: date, end: date) -> dict[str, Any]:
+    """Fetch current + prior period KPIs in a single BQ query using conditional aggregation.
+
+    Returns a superset of fetch_kpis: all current-period fields at the top level plus
+    prior_clicks, prior_impressions, prior_ctr, prior_avg_position, prior_start, prior_end,
+    and delta_* percentage change fields.
+    """
+    prior_start, prior_end = _prior_period(start, end)
+    table = _full_table()
+    s = start.isoformat()
+    e = end.isoformat()
+    ps = prior_start.isoformat()
+    pe = prior_end.isoformat()
+
+    sql = f"""
+    SELECT
+      SUM(IF(date BETWEEN '{s}' AND '{e}', organic_clicks, 0))        AS clicks,
+      SUM(IF(date BETWEEN '{s}' AND '{e}', organic_impressions, 0))    AS impressions,
+      (SUM(IF(date BETWEEN '{s}' AND '{e}', organic_clicks, 0)) /
+       NULLIF(SUM(IF(date BETWEEN '{s}' AND '{e}', organic_impressions, 0)), 0))
+                                                                        AS ctr,
+      (SUM(IF(date BETWEEN '{s}' AND '{e}', organic_sum_position, 0.0)) /
+       NULLIF(SUM(IF(date BETWEEN '{s}' AND '{e}', organic_impressions, 0)), 0)) + 1.0
+                                                                        AS avg_position,
+
+      SUM(IF(date BETWEEN '{ps}' AND '{pe}', organic_clicks, 0))       AS prior_clicks,
+      SUM(IF(date BETWEEN '{ps}' AND '{pe}', organic_impressions, 0))  AS prior_impressions,
+      (SUM(IF(date BETWEEN '{ps}' AND '{pe}', organic_clicks, 0)) /
+       NULLIF(SUM(IF(date BETWEEN '{ps}' AND '{pe}', organic_impressions, 0)), 0))
+                                                                        AS prior_ctr,
+      (SUM(IF(date BETWEEN '{ps}' AND '{pe}', organic_sum_position, 0.0)) /
+       NULLIF(SUM(IF(date BETWEEN '{ps}' AND '{pe}', organic_impressions, 0)), 0)) + 1.0
+                                                                        AS prior_avg_position
+    FROM {table}
+    WHERE date BETWEEN '{ps}' AND '{e}'
+    """
+    rows = _run(sql, max_rows=1)
+    if not rows:
+        return {}
+    r = rows[0]
+
+    clicks = int(r.get("clicks") or 0)
+    impressions = int(r.get("impressions") or 0)
+    ctr = float(r.get("ctr") or 0) * 100
+    avg_position = float(r.get("avg_position") or 0)
+
+    prior_clicks = int(r.get("prior_clicks") or 0)
+    prior_impressions = int(r.get("prior_impressions") or 0)
+    prior_ctr = float(r.get("prior_ctr") or 0) * 100
+    prior_avg_position = float(r.get("prior_avg_position") or 0)
+
+    return {
+        # Current period (same keys as fetch_kpis)
+        "clicks": clicks,
+        "impressions": impressions,
+        "ctr": ctr,
+        "avg_position": avg_position,
+        # Prior period
+        "prior_clicks": prior_clicks,
+        "prior_impressions": prior_impressions,
+        "prior_ctr": prior_ctr,
+        "prior_avg_position": prior_avg_position,
+        "prior_start": prior_start.isoformat(),
+        "prior_end": prior_end.isoformat(),
+        # Deltas
+        "delta_clicks": _pct_delta(clicks, prior_clicks),
+        "delta_impressions": _pct_delta(impressions, prior_impressions),
+        "delta_ctr": _pct_delta(ctr, prior_ctr),
+        "delta_avg_position": _pct_delta(avg_position, prior_avg_position),
+    }
+
+
+def check_table_has_data() -> dict[str, Any]:
+    """Quick health check: does the table exist and does it have rows?"""
+    table = _full_table()
+    sql = f"SELECT COUNT(*) AS n, MIN(date) AS min_date, MAX(date) AS max_date FROM {table} LIMIT 1"
+    try:
+        rows = _run(sql, max_rows=1)
+        if not rows:
+            return {"ok": True, "row_count": 0, "min_date": None, "max_date": None, "error": None}
+        r = rows[0]
+        n = int(r.get("n") or 0)
+        min_d = str(r.get("min_date") or "")[:10] or None
+        max_d = str(r.get("max_date") or "")[:10] or None
+        return {"ok": True, "row_count": n, "min_date": min_d, "max_date": max_d, "error": None}
+    except Exception as exc:
+        return {"ok": False, "row_count": None, "min_date": None, "max_date": None, "error": str(exc)[:300]}
 
 
 def fetch_daily(*, start: date, end: date) -> list[dict[str, Any]]:
@@ -193,7 +296,7 @@ def build_gsc_snapshot(*, start: date, end: date) -> dict[str, Any]:
     from concurrent.futures import ThreadPoolExecutor
 
     tasks: dict[str, Any] = {
-        "kpis": lambda: fetch_kpis(start=start, end=end),
+        "kpis": lambda: fetch_kpis_with_comparison(start=start, end=end),
         "daily": lambda: fetch_daily(start=start, end=end),
         "top_queries": lambda: fetch_top_queries(start=start, end=end, limit=5),
         "top_pages": lambda: fetch_top_pages(start=start, end=end, limit=5),

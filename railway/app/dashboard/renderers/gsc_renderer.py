@@ -29,6 +29,18 @@ def _fmt_pos(v: float) -> str:
     return f"{v:.1f}" if v else "—"
 
 
+def _delta_badge(current: float, prior: float, *, lower_is_better: bool = False) -> str:
+    """Render a ▲/▼ pct badge. Returns '' if no prior data."""
+    if not prior or not current:
+        return ""
+    pct = (current - prior) / prior * 100
+    is_up = pct >= 0
+    good = (is_up and not lower_is_better) or (not is_up and lower_is_better)
+    cls = "gsc-delta-good" if good else "gsc-delta-bad"
+    arrow = "▲" if is_up else "▼"
+    return f'<span class="gsc-delta {cls}">{arrow} {abs(pct):.1f}%</span>'
+
+
 def _gsc_table(rows: list[dict], columns: list[tuple[str, str, str]]) -> str:
     """Render a sortable GSC data table.
 
@@ -82,6 +94,37 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
     ctr = float(kpis.get("ctr") or 0)
     avg_position = float(kpis.get("avg_position") or 0)
 
+    prior_clicks       = int(kpis.get("prior_clicks") or 0)
+    prior_impressions  = int(kpis.get("prior_impressions") or 0)
+    prior_ctr          = float(kpis.get("prior_ctr") or 0)
+    prior_avg_position = float(kpis.get("prior_avg_position") or 0)
+    prior_start        = kpis.get("prior_start") or ""
+    prior_end          = kpis.get("prior_end") or ""
+
+    has_prior = prior_impressions > 0
+
+    badge_clicks      = _delta_badge(clicks, prior_clicks)
+    badge_impressions = _delta_badge(impressions, prior_impressions)
+    badge_ctr         = _delta_badge(ctr, prior_ctr)
+    badge_position    = _delta_badge(avg_position, prior_avg_position, lower_is_better=True)
+
+    prev_clicks_html = (
+        f'<div class="gsc-kpi-prev">vs {_fmt_int(prior_clicks)} prev. period</div>'
+        if has_prior else ""
+    )
+    prev_impressions_html = (
+        f'<div class="gsc-kpi-prev">vs {_fmt_int(prior_impressions)} prev. period</div>'
+        if has_prior else ""
+    )
+    prev_ctr_html = (
+        f'<div class="gsc-kpi-prev">vs {_fmt_pct(prior_ctr)} prev. period</div>'
+        if has_prior else ""
+    )
+    prev_position_html = (
+        f'<div class="gsc-kpi-prev">vs {_fmt_pos(prior_avg_position)} prev. period</div>'
+        if has_prior else ""
+    )
+
     error_html = ""
     if errors:
         items = "".join(f"<li><strong>{_esc(k)}</strong>: {_esc(v)}</li>" for k, v in errors.items())
@@ -117,6 +160,9 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
 
     daily_json = _safe_json(daily)
 
+    prior_ctr_rounded = round(prior_ctr, 2)
+    prior_avg_position_rounded = round(prior_avg_position, 1)
+
     return f"""
 <section class="panel gsc-panel" aria-label="Search Console — Organic Search">
   <div class="panel-head">
@@ -129,19 +175,23 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
   <div class="gsc-kpis">
     <div class="gsc-kpi">
       <div class="gsc-kpi-label">Organic Clicks</div>
-      <div class="gsc-kpi-value">{_esc(_fmt_int(clicks))}</div>
+      <div class="gsc-kpi-value">{_esc(_fmt_int(clicks))}{badge_clicks}</div>
+      {prev_clicks_html}
     </div>
     <div class="gsc-kpi">
       <div class="gsc-kpi-label">Impressions</div>
-      <div class="gsc-kpi-value">{_esc(_fmt_int(impressions))}</div>
+      <div class="gsc-kpi-value">{_esc(_fmt_int(impressions))}{badge_impressions}</div>
+      {prev_impressions_html}
     </div>
     <div class="gsc-kpi">
       <div class="gsc-kpi-label">Avg. CTR</div>
-      <div class="gsc-kpi-value">{_esc(_fmt_pct(ctr))}</div>
+      <div class="gsc-kpi-value">{_esc(_fmt_pct(ctr))}{badge_ctr}</div>
+      {prev_ctr_html}
     </div>
     <div class="gsc-kpi">
       <div class="gsc-kpi-label">Avg. Position</div>
-      <div class="gsc-kpi-value">{_esc(_fmt_pos(avg_position))}</div>
+      <div class="gsc-kpi-value">{_esc(_fmt_pos(avg_position))}{badge_position}</div>
+      {prev_position_html}
     </div>
   </div>
 
@@ -154,6 +204,7 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
       <button class="gsc-metric-btn" data-gsc-metric="avg_position">Avg. Position</button>
     </div>
     <canvas id="gscTrendChart" style="max-height:220px;"></canvas>
+    <div class="gsc-chart-prior-label" id="gscPriorLabel"></div>
   </div>
 
   <!-- Top Queries -->
@@ -184,6 +235,32 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
 <script>
 (function() {{
   var gscDaily = {daily_json};
+
+  var gscPriorValues = {{
+    clicks: {prior_clicks},
+    impressions: {prior_impressions},
+    ctr: {prior_ctr_rounded},
+    avg_position: {prior_avg_position_rounded}
+  }};
+  var gscPriorRange = '{_esc(prior_start)} – {_esc(prior_end)}';
+  var gscPriorMetricLabels = {{
+    clicks: 'clicks',
+    impressions: 'impressions',
+    ctr: '% CTR',
+    avg_position: ' avg. position'
+  }};
+
+  function gscUpdatePriorLabel(metric) {{
+    var el = document.getElementById('gscPriorLabel');
+    if (!el) return;
+    var val = gscPriorValues[metric];
+    if (!val && val !== 0) {{ el.textContent = ''; return; }}
+    var formatted = metric === 'ctr' ? val.toFixed(2) + '%' :
+                    metric === 'avg_position' ? val.toFixed(1) :
+                    Math.round(val).toLocaleString();
+    var label = gscPriorMetricLabels[metric] || metric;
+    el.textContent = 'Previous period (' + gscPriorRange + '): ' + formatted + ' ' + label;
+  }}
 
   // Chart
   var gscMetricColors = {{
@@ -231,6 +308,7 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
       }}
     }});
   }}
+  gscUpdatePriorLabel(gscActiveMetric);
 
   document.querySelectorAll('.gsc-metric-btn').forEach(function(btn) {{
     btn.addEventListener('click', function() {{
@@ -241,6 +319,7 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
         gscChart.data = gscChartData(gscActiveMetric);
         gscChart.update();
       }}
+      gscUpdatePriorLabel(gscActiveMetric);
     }});
   }});
 
@@ -329,7 +408,16 @@ GSC_CSS = """
       color: var(--navy);
       letter-spacing: -0.02em;
       font-variant-numeric: tabular-nums;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      flex-wrap: wrap;
     }
+    .gsc-delta { font-size: 0.72rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; }
+    .gsc-delta-good { color: #16a34a; background: #f0fdf4; }
+    .gsc-delta-bad  { color: #dc2626; background: #fef2f2; }
+    .gsc-kpi-prev   { font-size: 0.68rem; color: var(--muted); margin-top: 3px; }
+    .gsc-chart-prior-label { font-size: 0.78rem; color: var(--muted); margin-top: 6px; text-align: right; }
     .gsc-chart-section {
       margin-bottom: 20px;
     }
