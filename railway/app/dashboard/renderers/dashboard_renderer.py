@@ -668,10 +668,12 @@ def render_penn_html(
     has_ga4_summary = bool((ga4_pages_report or {}).get("summary"))
     show_website_tab = features.website_analytics and has_ga4
     _gsc_data = snapshot.get("gsc")
+    _semrush_data = snapshot.get("semrush")
     view_tabs_html = _dashboard_view_tabs_html(
         show_website=show_website_tab,
         show_campaigns=features.campaign_explorer,
         show_gsc=bool(_gsc_data),
+        show_semrush=bool(_semrush_data),
     )
     if use_session:
         _vr_action = f"/dashboard/{slug}"
@@ -823,6 +825,18 @@ def render_penn_html(
           </div>"""
     else:
         _GSC_CSS = ""
+
+    # SEMrush tab panel
+    semrush_tab_panel = ""
+    if _semrush_data:
+        from dashboard.renderers.semrush_renderer import SEMRUSH_CSS as _SEMRUSH_CSS
+        from dashboard.renderers.semrush_renderer import semrush_section_html as _render_semrush
+        semrush_tab_panel = f"""
+          <div id="view-semrush" class="view-panel" role="tabpanel" hidden>
+            {_render_semrush(_semrush_data)}
+          </div>"""
+    else:
+        _SEMRUSH_CSS = ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -2497,6 +2511,7 @@ def render_penn_html(
       .dash-content {{ padding: 18px 16px 40px; }}
     }}
     {_GSC_CSS}
+    {_SEMRUSH_CSS}
   </style>
 </head>
 <body>
@@ -2531,6 +2546,8 @@ def render_penn_html(
           {campaign_explorer_panel}
 
           {gsc_tab_panel}
+
+          {semrush_tab_panel}
 
           {website_tab_panel}
         </div>
@@ -2583,6 +2600,7 @@ def render_penn_html(
     const SHOW_CAMPAIGN_EXPLORER = {'true' if features.campaign_explorer else 'false'};
     const SHOW_WEBSITE_ANALYTICS = {'true' if show_website_tab else 'false'};
     const SHOW_GSC = {'true' if _gsc_data else 'false'};
+    const SHOW_SEMRUSH = {'true' if _semrush_data else 'false'};
     const PAID_PLATFORM_IDS = new Set(['google', 'linkedin', 'meta']);
     const SEGMENT_FILTER_ALL_LABEL = {_json_for_html_script(seg_filter_all_label)};
     const PRODUCT_LINE_FILTER_ALL_LABEL = "All product lines";
@@ -3233,6 +3251,7 @@ def render_penn_html(
       campaigns: 'Campaign Explorer',
       gsc: 'GSC',
       website: 'Website Analytics',
+      semrush: 'SEMrush',
     }};
 
     function setActiveView(view) {{
@@ -3240,6 +3259,7 @@ def render_penn_html(
       if (SHOW_CAMPAIGN_EXPLORER) allowed.push('campaigns');
       if (SHOW_GSC) allowed.push('gsc');
       if (SHOW_WEBSITE_ANALYTICS) allowed.push('website');
+      if (SHOW_SEMRUSH) allowed.push('semrush');
       if (!allowed.includes(view)) view = 'overview';
       if (view === 'website' && !document.querySelector('.dash-view-btn[data-view="website"]')) {{
         view = 'overview';

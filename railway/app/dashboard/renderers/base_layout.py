@@ -255,7 +255,8 @@ def dashboard_topbar_js() -> str:
 
 
 def dashboard_view_tabs_html(
-    *, show_website: bool, show_campaigns: bool = True, show_gsc: bool = False
+    *, show_website: bool, show_campaigns: bool = True, show_gsc: bool = False,
+    show_semrush: bool = False,
 ) -> str:
     website_tab = ""
     if show_website:
@@ -275,12 +276,19 @@ def dashboard_view_tabs_html(
             '<button type="button" class="dash-view-btn" data-view="gsc" role="tab" '
             'aria-selected="false">GSC</button>'
         )
+    semrush_tab = ""
+    if show_semrush:
+        semrush_tab = (
+            '<button type="button" class="dash-view-btn" data-view="semrush" role="tab" '
+            'aria-selected="false">SEMrush</button>'
+        )
     return f"""
       <nav class="dash-view-nav" role="tablist" aria-label="Dashboard views">
         <button type="button" class="dash-view-btn active" data-view="overview" role="tab" aria-selected="true">Overview</button>
         {campaigns_tab}
         {gsc_tab}
         {website_tab}
+        {semrush_tab}
       </nav>"""
 
 

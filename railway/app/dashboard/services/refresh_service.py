@@ -323,9 +323,11 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
     linkedin_account_id = cfg.linkedin_account_id or penn_cfg.linkedin_account_id
     meta_account_id = cfg.meta_account_id or penn_cfg.meta_account_id
 
-    # Start GSC in background while paid media queries run
-    _gsc_executor = ThreadPoolExecutor(max_workers=1)
+    # Start GSC + SEMrush in background while paid media queries run
+    import semrush_service as _semrush_svc
+    _gsc_executor = ThreadPoolExecutor(max_workers=2)
     _gsc_fut = _gsc_executor.submit(bq_gsc_service.build_gsc_snapshot, start=start, end=end)
+    _smr_fut = _gsc_executor.submit(_semrush_svc.build_semrush_snapshot)
 
     try:
         snapshot = bq_mart_service.build_snapshot(start=start, end=end, preset=preset)
@@ -465,6 +467,13 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
             snapshot["gsc"] = _gsc_fut.result(timeout=60)
         except Exception as gsc_exc:
             snapshot.setdefault("errors", {})["gsc"] = str(gsc_exc)[:400]
+        try:
+            smr = _smr_fut.result(timeout=30)
+            # Only store in snapshot if key is configured (avoids showing empty tab)
+            if smr and not smr.get("error", "").startswith("SEMRUSH_API_KEY"):
+                snapshot["semrush"] = smr
+        except Exception as smr_exc:
+            snapshot.setdefault("errors", {})["semrush"] = str(smr_exc)[:400]
         finally:
             _gsc_executor.shutdown(wait=False)
 
