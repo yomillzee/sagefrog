@@ -29,6 +29,7 @@ from dashboard.services.warehouse_metrics_service import (
     penn_sync_warehouses,
     sync_campaign_daily,
     sync_meta,
+    totals_from_daily_rows,
 )
 
 
@@ -392,6 +393,39 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
                 snapshot.setdefault("errors", {})["meta_bigquery"] = message
                 snapshot.setdefault("data_sources", {})["meta"] = "bigquery"
 
+        # GA4 / Website Analytics: services already query BigQuery directly
+        _GA4_CLIENT_KEY = "penn"
+        snapshot.setdefault("accounts", {})["ga4_client_key"] = _GA4_CLIENT_KEY
+        snapshot.setdefault("data_sources", {})["ga4"] = "bigquery"
+        try:
+            snapshot["ga4_attribution"] = ga4_attribution_service.fetch_attribution_for_dashboard(
+                date_range=preset,
+                client_key=_GA4_CLIENT_KEY,
+            )
+        except Exception as exc:
+            snapshot.setdefault("errors", {})["ga4_attribution"] = platform_error(exc)
+        try:
+            snapshot["ga4_pages"] = ga4_page_service.fetch_pages_for_dashboard(
+                date_range=preset,
+                client_key=_GA4_CLIENT_KEY,
+                client_slug="penn-bq-test",
+            )
+        except Exception as exc:
+            snapshot.setdefault("errors", {})["ga4_pages"] = platform_error(exc)
+        try:
+            import ga4_warehouse_service
+            organic_rows = ga4_warehouse_service.fetch_organic_daily_metrics(
+                start=start,
+                end=end,
+                client_key=_GA4_CLIENT_KEY,
+            )
+            snapshot.setdefault("daily_metrics", {})["organic"] = organic_rows
+            organic_totals = totals_from_daily_rows(organic_rows)
+            organic_totals["campaign_count"] = 0
+            snapshot.setdefault("platform_totals", {})["organic"] = organic_totals
+        except Exception as exc:
+            snapshot.setdefault("errors", {})["organic_daily"] = platform_error(exc)
+
         from dashboard.services.snapshot_metrics_service import aggregated_paid_media
         snapshot["aggregated_paid_media"] = aggregated_paid_media(snapshot.get("platform_totals") or {})
     except Exception as exc:
@@ -404,12 +438,13 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
                 "end": end.isoformat(),
                 "preset": preset,
             },
-            "accounts": {"google": None, "linkedin": None, "meta": None},
+            "accounts": {"google": None, "linkedin": None, "meta": None, "ga4_client_key": "penn"},
             "data_sources": {
                 "google": "bigquery",
                 "linkedin": "bigquery",
                 "meta": "bigquery",
                 "linkedin_creative_metadata": "postgres",
+                "ga4": "bigquery",
             },
             "daily_metrics": {},
             "platform_totals": {},
