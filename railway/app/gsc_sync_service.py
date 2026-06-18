@@ -316,8 +316,10 @@ def sync_range(
     grand_q = grand_p = 0
     errors: list[str] = []
     d = start
+    day_num = 0
 
     while d <= end:
+        day_num += 1
         if progress_cb:
             progress_cb(d, total_days)
         if do_q:
@@ -332,6 +334,12 @@ def sync_range(
                 grand_p += _upsert(client, page_id, rows, p_schema, p_merge)
             except Exception as exc:
                 errors.append(f"{d} page: {exc}")
+        if day_num % 30 == 0 or d == end:
+            log.info(
+                "GSC backfill progress: %d/%d days (%s → %s), "
+                "query_rows=%d, page_rows=%d, errors=%d",
+                day_num, total_days, start, d, grand_q, grand_p, len(errors),
+            )
         d += timedelta(days=1)
 
     return {
