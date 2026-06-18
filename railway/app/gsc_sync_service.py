@@ -72,10 +72,18 @@ def _site_url() -> str:
 # Credentials
 # ---------------------------------------------------------------------------
 
+def _creds_env() -> str:
+    """Prefer the Penn-specific credential; fall back to the global one."""
+    if (os.getenv("GCP_CREDS_PENN_BASE64") or "").strip():
+        return "GCP_CREDS_PENN_BASE64"
+    return "GCP_SERVICE_ACCOUNT_JSON"
+
+
 def _gsc_creds():
     from google.oauth2 import service_account
     from ga4_credentials import load_service_account_info_from_env
-    info = load_service_account_info_from_env("GCP_CREDS_PENN_BASE64", require_base64=True)
+    env = _creds_env()
+    info = load_service_account_info_from_env(env, require_base64=(env == "GCP_CREDS_PENN_BASE64"))
     return service_account.Credentials.from_service_account_info(
         info, scopes=[_GSC_SCOPE, _BQ_SCOPE]
     )
@@ -85,7 +93,8 @@ def _bq_client():
     from google.cloud import bigquery as bq
     from google.oauth2 import service_account
     from ga4_credentials import load_service_account_info_from_env
-    info = load_service_account_info_from_env("GCP_CREDS_PENN_BASE64", require_base64=True)
+    env = _creds_env()
+    info = load_service_account_info_from_env(env, require_base64=(env == "GCP_CREDS_PENN_BASE64"))
     creds = service_account.Credentials.from_service_account_info(
         info, scopes=[_BQ_SCOPE]
     )
