@@ -343,14 +343,18 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
         snapshot.setdefault("accounts", {})["meta"] = meta_account_id
         snapshot.setdefault("data_sources", {})["google"] = "bigquery"
 
-        # LinkedIn: sync metadata + rebuild mart, then override snapshot
+        # LinkedIn: cron syncs from API → BQ; manual refresh just reads from BQ.
+        # Calling the LinkedIn OAuth token endpoint on every manual refresh causes
+        # 429 rate-limit errors and is unnecessary when the cron keeps BQ current.
+        is_cron = (sync_trigger == "cron")
         try:
-            metadata_sync = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(
-                account_id=linkedin_account_id,
-                start=start,
-                end=end,
-            )
-            snapshot.setdefault("warehouse_sync", {})["linkedin_campaign_metadata"] = metadata_sync
+            if is_cron:
+                metadata_sync = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(
+                    account_id=linkedin_account_id,
+                    start=start,
+                    end=end,
+                )
+                snapshot.setdefault("warehouse_sync", {})["linkedin_campaign_metadata"] = metadata_sync
 
             linkedin_snapshot = bq_linkedin_ads_service.build_snapshot(
                 cfg=penn_cfg,
@@ -376,15 +380,16 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
             snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = "bigquery"
             snapshot.setdefault("creative_metadata", {"source": "bigquery", "merged_rows": 0})
 
-        # Meta: sync API → BQ, then read from mart views
+        # Meta: cron syncs from API → BQ; manual refresh just reads from BQ.
         if meta_account_id:
             try:
-                meta_sync = bq_meta_ads_service.sync_meta_to_bq(
-                    meta_account_id,
-                    start=start,
-                    end=end,
-                )
-                snapshot.setdefault("warehouse_sync", {})["meta"] = meta_sync
+                if is_cron:
+                    meta_sync = bq_meta_ads_service.sync_meta_to_bq(
+                        meta_account_id,
+                        start=start,
+                        end=end,
+                    )
+                    snapshot.setdefault("warehouse_sync", {})["meta"] = meta_sync
 
                 meta_result = bq_meta_ads_service.build_meta_breakdowns(start=start, end=end)
                 snapshot.setdefault("breakdowns", {})["meta"] = meta_result["breakdowns"]
