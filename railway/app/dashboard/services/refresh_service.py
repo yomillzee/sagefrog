@@ -323,10 +323,17 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
     linkedin_account_id = cfg.linkedin_account_id or penn_cfg.linkedin_account_id
     meta_account_id = cfg.meta_account_id or penn_cfg.meta_account_id
 
-    # Start GSC + SEMrush in background while paid media queries run
+    # GSC: sync missing days first, then build snapshot (runs as one background task)
+    # SEMrush: runs in parallel
+    import gsc_sync_service as _gsc_sync
     import semrush_service as _semrush_svc
+
+    def _gsc_pipeline():
+        _gsc_sync.sync_for_refresh()          # auto-syncs missing days / triggers backfill
+        return bq_gsc_service.build_gsc_snapshot(start=start, end=end)
+
     _gsc_executor = ThreadPoolExecutor(max_workers=2)
-    _gsc_fut = _gsc_executor.submit(bq_gsc_service.build_gsc_snapshot, start=start, end=end)
+    _gsc_fut = _gsc_executor.submit(_gsc_pipeline)
     _smr_fut = _gsc_executor.submit(_semrush_svc.build_semrush_snapshot)
 
     try:
