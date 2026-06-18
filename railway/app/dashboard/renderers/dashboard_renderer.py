@@ -143,6 +143,10 @@ def ga4_website_search_html(
         <div class="website-results-status">
           <span class="badge" id="ga4PagesCount">0 pages</span>
         </div>
+        <div id="websiteAiFilterRow" class="website-ai-filter-row" hidden>
+          <span class="filter-column-label">AI traffic</span>
+          <div id="aiFilterPills" class="filter-toggles" role="group" aria-label="AI traffic source"></div>
+        </div>
         <p class="ga4-traffic-filter-note muted" id="ga4TrafficFilterNote" hidden></p>"""
 
 
@@ -706,23 +710,10 @@ def render_penn_html(
     if show_website_tab:
         website_tab_panel = f"""
           <div id="view-website" class="view-panel" role="tabpanel" hidden>
-            <section class="panel ai-traffic-panel" id="aiTrafficPanel" hidden>
-              <div class="panel-head ai-traffic-head">
-                <h2>AI Traffic</h2>
-                <div id="aiSourceFilters" class="ai-source-filters filter-toggles" role="group" aria-label="AI source"></div>
-              </div>
-              <div class="ai-chart-wrap">
-                <canvas id="aiTrafficChart" aria-label="AI traffic trend"></canvas>
-              </div>
-            </section>
             <section class="panel ga4-pages-panel" aria-label="Website analytics">
               {ga4_metrics_html}
               <div class="panel-head">
                 <h2 id="ga4PagesHeading">Page performance</h2>
-                <button type="button" id="aiTrafficToggle" class="ai-traffic-toggle" hidden
-                  aria-pressed="false" aria-controls="aiTrafficPanel">
-                  ✦ AI Traffic
-                </button>
               </div>
               {website_search_html}
               {website_analytics_html}
@@ -1182,73 +1173,20 @@ def render_penn_html(
     .ga4-pages-panel {{
       margin-bottom: 20px;
     }}
-    .ai-traffic-panel {{
-      margin-bottom: 20px;
-    }}
-    .ai-traffic-head {{
+    .website-ai-filter-row {{
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 12px;
-    }}
-    .ai-source-filters {{
-      display: flex;
       flex-wrap: wrap;
       gap: 8px;
+      padding: 0 22px 10px;
     }}
-    .ai-source-btn {{
-      padding: 6px 14px;
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      background: #fff;
-      font: inherit;
-      font-size: 0.82rem;
-      cursor: pointer;
-      color: var(--text-secondary, #555);
-      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    .website-ai-filter-row .filter-column-label {{
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
       white-space: nowrap;
-    }}
-    .ai-source-btn:hover {{
-      border-color: var(--accent);
-      color: var(--accent);
-    }}
-    .ai-source-btn.active {{
-      background: var(--accent);
-      color: #fff;
-      border-color: var(--accent);
-    }}
-    .ai-chart-wrap {{
-      padding: 0 22px 22px;
-      position: relative;
-      height: 220px;
-    }}
-    .ai-chart-wrap canvas {{
-      width: 100% !important;
-      height: 100% !important;
-    }}
-    .ai-traffic-toggle {{
-      padding: 6px 14px;
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      background: #fff;
-      font: inherit;
-      font-size: 0.82rem;
-      cursor: pointer;
-      color: var(--text-secondary, #555);
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      transition: background 0.15s, color 0.15s, border-color 0.15s;
-    }}
-    .ai-traffic-toggle:hover {{
-      border-color: var(--accent);
-      color: var(--accent);
-    }}
-    .ai-traffic-toggle.active {{
-      background: var(--accent);
-      color: #fff;
-      border-color: var(--accent);
     }}
     .ga4-pages-toolbar {{
       display: flex;
@@ -4087,112 +4025,27 @@ def render_penn_html(
       renderGa4MetricsSummary([], false);
     }}
 
-    // --- AI Traffic -------------------------------------------------------
+    // --- AI Traffic filter (website analytics tab only) --------------------
     (function initAiTraffic() {{
       if (!SHOW_AI_TRAFFIC) return;
 
-      const panel = document.getElementById('aiTrafficPanel');
-      const toggle = document.getElementById('aiTrafficToggle');
-      const filtersWrap = document.getElementById('aiSourceFilters');
-      const canvas = document.getElementById('aiTrafficChart');
+      const filterRow  = document.getElementById('websiteAiFilterRow');
+      const pillsWrap  = document.getElementById('aiFilterPills');
       const pagesHeading = document.getElementById('ga4PagesHeading');
-      if (!panel || !toggle || !canvas) return;
+      if (!filterRow || !pillsWrap) return;
 
-      toggle.hidden = false;
-
-      // build palette — up to 9 distinct hues
-      const AI_PALETTE = [
-        '#2563eb','#16a34a','#dc2626','#9333ea','#ea580c',
-        '#0891b2','#ca8a04','#db2777','#475569'
-      ];
-      const sourceColors = {{}};
-      aiSources.forEach((s, i) => {{
-        sourceColors[s.id] = AI_PALETTE[i % AI_PALETTE.length];
-      }});
-
-      // build sorted list of all dates in range
-      const allDates = [...new Set(aiDaily.map(r => r.date))].sort();
-
-      // group daily rows: {{ source: {{ date: sessions }} }}
-      const dailyBySource = {{}};
-      aiDaily.forEach(r => {{
-        if (!dailyBySource[r.source]) dailyBySource[r.source] = {{}};
-        dailyBySource[r.source][r.date] = (dailyBySource[r.source][r.date] || 0) + r.sessions;
-      }});
-
-      // active AI source filter (null = All)
-      let aiActiveSource = null;
-
-      // ---- chart -----------------------------------------------------------
-      let aiChart = null;
-
-      function buildChartDatasets(sourceId) {{
-        const sources = sourceId ? aiSources.filter(s => s.id === sourceId) : aiSources;
-        return sources.map(s => ({{
-          label: s.label,
-          data: allDates.map(d => (dailyBySource[s.id] || {{}})[d] || 0),
-          borderColor: sourceColors[s.id],
-          backgroundColor: sourceColors[s.id] + '22',
-          borderWidth: 2,
-          pointRadius: allDates.length <= 14 ? 3 : 0,
-          pointHoverRadius: 5,
-          fill: false,
-          tension: 0.3,
-        }}));
-      }}
-
-      function renderAiChart(sourceId) {{
-        const datasets = buildChartDatasets(sourceId);
-        if (aiChart) {{
-          aiChart.data.labels = allDates;
-          aiChart.data.datasets = datasets;
-          aiChart.update('none');
-          return;
-        }}
-        aiChart = new Chart(canvas, {{
-          type: 'line',
-          data: {{ labels: allDates, datasets }},
-          options: {{
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: {{ mode: 'index', intersect: false }},
-            plugins: {{
-              legend: {{
-                position: 'top',
-                labels: {{ boxWidth: 12, padding: 14, font: {{ size: 12 }} }},
-              }},
-              tooltip: {{
-                callbacks: {{
-                  title: items => items[0].label,
-                  label: item => ` ${{item.dataset.label}}: ${{fmtInt(item.raw)}} sessions`,
-                }},
-              }},
-            }},
-            scales: {{
-              x: {{
-                ticks: {{ maxTicksLimit: 8, font: {{ size: 11 }} }},
-                grid: {{ display: false }},
-              }},
-              y: {{
-                beginAtZero: true,
-                ticks: {{ precision: 0, font: {{ size: 11 }} }},
-                grid: {{ color: 'rgba(0,0,0,0.05)' }},
-              }},
-            }},
-          }},
-        }});
-      }}
+      filterRow.hidden = false;
 
       // ---- pages table bridge ----------------------------------------------
       let aiModeActive = false;
+      let aiActiveSource = null;
 
       function getAiPages(sourceId) {{
-        const key = sourceId || 'all';
-        return (aiPagesBySource[key] || []);
+        return (aiPagesBySource[sourceId || 'all'] || []);
       }}
 
-      // Wrap renderGa4Pages so every call (pagination, search, filters)
-      // automatically serves AI pages when AI mode is on.
+      // Wrap renderGa4Pages so pagination/search/filters keep serving AI
+      // pages while AI mode is on.
       const _origRenderGa4Pages = renderGa4Pages;
       renderGa4Pages = function() {{
         if (!aiModeActive) {{
@@ -4200,13 +4053,16 @@ def render_penn_html(
           return;
         }}
         const backup = [...ga4Pages];
-        const aiRows = getAiPages(aiActiveSource);
-        ga4Pages.splice(0, ga4Pages.length, ...aiRows);
+        ga4Pages.splice(0, ga4Pages.length, ...getAiPages(aiActiveSource));
         _origRenderGa4Pages();
         ga4Pages.splice(0, ga4Pages.length, ...backup);
       }};
 
       function openAiMode(sourceId) {{
+        // Clear paid-channel filters so they don't conflict.
+        channelState.clear();
+        syncToggleGroup('channel');
+
         aiModeActive = true;
         aiActiveSource = sourceId;
         if (pagesHeading) {{
@@ -4222,55 +4078,49 @@ def render_penn_html(
         aiModeActive = false;
         aiActiveSource = null;
         if (pagesHeading) pagesHeading.textContent = 'Page performance';
+        pillsWrap.querySelectorAll('.filter-toggle').forEach(b => {{
+          b.classList.remove('active');
+          b.setAttribute('aria-pressed', 'false');
+        }});
         renderGa4Pages();
       }}
 
       // ---- source filter pills ---------------------------------------------
-      function buildSourceFilters() {{
-        const allBtn = document.createElement('button');
-        allBtn.type = 'button';
-        allBtn.className = 'ai-source-btn active';
-        allBtn.dataset.source = '';
-        allBtn.textContent = 'All AI';
-        filtersWrap.appendChild(allBtn);
-
-        aiSources.forEach(s => {{
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'ai-source-btn';
-          btn.dataset.source = s.id;
-          const dot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${{sourceColors[s.id]}};margin-right:5px"></span>`;
-          btn.innerHTML = dot + escHtml(s.label);
-          filtersWrap.appendChild(btn);
-        }});
-
-        filtersWrap.addEventListener('click', e => {{
-          const btn = e.target.closest('.ai-source-btn');
-          if (!btn) return;
-          filtersWrap.querySelectorAll('.ai-source-btn').forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
-          const src = btn.dataset.source || null;
-          aiActiveSource = src;
-          renderAiChart(src);
-          if (panel && !panel.hidden) openAiMode(src);
-        }});
+      function makePill(label, sourceId) {{
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'filter-toggle';
+        btn.textContent = label;
+        btn.dataset.source = sourceId || '';
+        btn.setAttribute('aria-pressed', 'false');
+        return btn;
       }}
 
-      // ---- toggle button ---------------------------------------------------
-      toggle.addEventListener('click', () => {{
-        const open = !toggle.classList.contains('active');
-        toggle.classList.toggle('active', open);
-        toggle.setAttribute('aria-pressed', open ? 'true' : 'false');
-        panel.hidden = !open;
-        if (open) {{
-          renderAiChart(aiActiveSource);
-          openAiMode(aiActiveSource);
-        }} else {{
-          clearAiMode();
-        }}
-      }});
+      // "All AI" pill
+      pillsWrap.appendChild(makePill('All AI', ''));
 
-      buildSourceFilters();
+      // Per-source pills (only sources with data — aiSources is already filtered)
+      aiSources.forEach(s => pillsWrap.appendChild(makePill(s.label, s.id)));
+
+      pillsWrap.addEventListener('click', e => {{
+        const btn = e.target.closest('.filter-toggle');
+        if (!btn) return;
+        const src = btn.dataset.source || null;
+
+        // Clicking the active pill toggles AI mode off
+        if (btn.classList.contains('active')) {{
+          clearAiMode();
+          return;
+        }}
+
+        pillsWrap.querySelectorAll('.filter-toggle').forEach(b => {{
+          b.classList.remove('active');
+          b.setAttribute('aria-pressed', 'false');
+        }});
+        btn.classList.add('active');
+        btn.setAttribute('aria-pressed', 'true');
+        openAiMode(src);
+      }});
     }})();
 
     const DRILL_MAP = {{
