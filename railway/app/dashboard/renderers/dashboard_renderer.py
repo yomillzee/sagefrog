@@ -641,7 +641,18 @@ def render_penn_html(
     )
     ga4_pages_report = snapshot.get("ga4_pages")
     accounts = snapshot.get("accounts") or {}
-    has_ga4 = bool(accounts.get("ga4_client_key") or (ga4_pages_report or {}).get("pages"))
+    _ga4_client_key = str(accounts.get("ga4_client_key") or "").strip()
+    if _ga4_client_key and _vr_preset != preset:
+        try:
+            import ga4_page_service as _ga4ps
+            ga4_pages_report = _ga4ps.fetch_pages_for_dashboard(
+                date_range=_vr_preset,
+                client_key=_ga4_client_key,
+                client_slug=client_slug,
+            )
+        except Exception:
+            pass
+    has_ga4 = bool(_ga4_client_key or (ga4_pages_report or {}).get("pages"))
     has_ga4_pages = bool((ga4_pages_report or {}).get("pages")) or any(
         (ga4_pages_report or {}).get("pages_by_platform", {}).get(platform)
         for platform in ("google", "linkedin", "meta")
