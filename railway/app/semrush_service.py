@@ -101,7 +101,7 @@ def fetch_domain_overview(
     """Organic + paid overview for a domain.
 
     Returns dict with: domain, semrush_rank, organic_keywords, organic_traffic,
-    organic_cost, paid_keywords, paid_traffic, error (str | None).
+    organic_cost, paid_keywords, paid_traffic, authority_score, error (str | None).
     """
     domain = domain or _domain()
     db = database or _database()
@@ -110,7 +110,7 @@ def fetch_domain_overview(
             "type": "domain_ranks",
             "domain": domain,
             "database": db,
-            "export_columns": "Dn,Rk,Or,Ot,Oc,Ad,At,Ac",
+            "export_columns": "Dn,Rk,Or,Ot,Oc,Ad,At,Ac,As",
             "display_limit": "1",
         })
         rows = _parse_csv(text)
@@ -119,7 +119,6 @@ def fetch_domain_overview(
         r = rows[0]
         # SEMrush returns header names that match human-readable labels;
         # fall back by position if exact header key differs across API versions.
-        keys = list(r.keys())
         def _col(name: str, fallback_idx: int) -> str:
             return r.get(name) or (list(r.values())[fallback_idx] if len(r) > fallback_idx else "")
 
@@ -132,6 +131,7 @@ def fetch_domain_overview(
             "organic_cost":       _float(_col("Organic Cost", 4)),
             "paid_keywords":      _int(_col("Adwords Keywords", 5)),
             "paid_traffic":       _int(_col("Adwords Traffic", 6)),
+            "authority_score":    _int(_col("Authority Score", 8)),
             "error": None,
         }
     except Exception as exc:
@@ -191,6 +191,11 @@ def fetch_backlinks_overview(domain: str | None = None) -> dict[str, Any]:
 
     Returns dict with: total_backlinks, referring_domains, referring_ips,
     dofollow, nofollow, authority_score, error (str | None).
+
+    Note: export_columns is intentionally omitted — the backlinks_overview
+    endpoint uses different column codes than the analytics API and rejects
+    the export_columns parameter with HTTP 400 when unrecognised codes are sent.
+    Omitting it returns all columns with human-readable headers.
     """
     domain = domain or _domain()
     try:
@@ -198,20 +203,32 @@ def fetch_backlinks_overview(domain: str | None = None) -> dict[str, Any]:
             "type": "backlinks_overview",
             "target": domain,
             "target_type": "root_domain",
-            "export_columns": "target,ascore,total,domains_num,ips_num,follows_num,nofollows_num",
         })
         rows = _parse_csv(text)
         if not rows:
             return {"domain": domain, "error": "No backlink data returned"}
         r = rows[0]
+        # Headers vary by API version; try human-readable names then shortcodes
         return {
             "domain":            domain,
-            "authority_score":   _int(r.get("Authority Score") or r.get("ascore")),
-            "total_backlinks":   _int(r.get("Total Backlinks") or r.get("total")),
-            "referring_domains": _int(r.get("Referring Domains") or r.get("domains_num")),
-            "referring_ips":     _int(r.get("Referring IPs") or r.get("ips_num")),
-            "dofollow":          _int(r.get("Follow Links") or r.get("follows_num")),
-            "nofollow":          _int(r.get("Nofollow Links") or r.get("nofollows_num")),
+            "authority_score":   _int(
+                r.get("Authority Score") or r.get("As") or r.get("ascore")
+            ),
+            "total_backlinks":   _int(
+                r.get("Total Backlinks") or r.get("Tl") or r.get("total")
+            ),
+            "referring_domains": _int(
+                r.get("Referring Domains") or r.get("Rd") or r.get("domains_num")
+            ),
+            "referring_ips":     _int(
+                r.get("Referring IPs") or r.get("Ri") or r.get("ips_num")
+            ),
+            "dofollow":          _int(
+                r.get("Follow Links") or r.get("Fl") or r.get("follows_num")
+            ),
+            "nofollow":          _int(
+                r.get("Nofollow Links") or r.get("Nl") or r.get("nofollows_num")
+            ),
             "error": None,
         }
     except Exception as exc:
@@ -300,6 +317,12 @@ def build_semrush_snapshot(
             errors["backlinks"] = str(exc)[:300]
 
     position_dist = _position_distribution(keywords)
+
+    # If backlinks API returned no authority_score (call failed), fall back to
+    # the As column that domain_ranks also provides.
+    if not backlinks.get("authority_score") and overview.get("authority_score"):
+        backlinks = dict(backlinks)
+        backlinks["authority_score"] = overview["authority_score"]
 
     result: dict[str, Any] = {
         "domain": domain,

@@ -1305,6 +1305,41 @@ def render_settings_html(
                 )
             )
         summary = "All mapped accounts verified." if probe_results.get("overall_ok") else "Some mapped accounts need attention."
+
+        bq_tables_html = ""
+        bq_data = probe_results.get("bq_tables") or {}
+        if bq_data:
+            bq_rows = []
+            if bq_data.get("error"):
+                bq_rows.append(
+                    f'<tr><td colspan="4" style="color:#dc2626">'
+                    f'{_esc(bq_data["error"])}</td></tr>'
+                )
+            else:
+                for t in bq_data.get("tables") or []:
+                    name = (t.get("table_id") or "").split(".")[-1]
+                    ok   = t.get("ok", False)
+                    n    = t.get("row_count")
+                    rng  = ""
+                    if t.get("min_date") and t.get("max_date"):
+                        rng = f'{t["min_date"]} → {t["max_date"]}'
+                    elif t.get("error"):
+                        rng = t["error"][:80]
+                    badge = _status_badge(ok, ok_label="OK", fail_label="Error" if t.get("error") else "Missing")
+                    count_str = f"{n:,}" if n is not None else "—"
+                    bq_rows.append(
+                        f"<tr><td class='mono'>{_esc(name)}</td>"
+                        f"<td>{badge}</td>"
+                        f"<td>{count_str} rows</td>"
+                        f"<td class='muted'>{_esc(rng)}</td></tr>"
+                    )
+            bq_tables_html = f"""
+          <h3 style="margin:16px 0 8px">BigQuery tables</h3>
+          <table class="status-table">
+            <thead><tr><th>Table</th><th>Status</th><th>Rows</th><th>Date range</th></tr></thead>
+            <tbody>{"".join(bq_rows)}</tbody>
+          </table>"""
+
         probe_fold = f"""
         <section class="panel panel--primary">
           <h2>Account verification</h2>
@@ -1313,6 +1348,7 @@ def render_settings_html(
             <thead><tr><th>Platform</th><th>Status</th><th>Account details</th></tr></thead>
             <tbody>{"".join(probe_rows)}</tbody>
           </table>
+          {bq_tables_html}
         </section>"""
 
     advanced = f"""
@@ -1371,6 +1407,36 @@ def render_settings_html(
         except Exception:
             pass
 
+    data_sync_section = ""
+    if slug == "penn-bq-test":
+        key_param = f"?key={quote(access_key, safe='')}" if (not use_session and access_key) else ""
+        post_url  = f"/dashboard/{slug}/settings{key_param}"
+        data_sync_section = f"""
+    <section class="panel">
+      <h2>Data sync</h2>
+      <p class="muted">
+        Manually trigger data syncs without redeploying. The dashboard refresh button also
+        runs these automatically each time you load data.
+      </p>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start">
+        <form method="post" action="{_esc(post_url)}" style="margin:0">
+          <input type="hidden" name="action" value="gsc_sync">
+          <button type="submit" class="btn secondary">
+            Sync GSC → BigQuery
+          </button>
+          <p class="muted" style="margin:6px 0 0;font-size:0.8rem">
+            Fills any missing days in fact_gsc_query_daily &amp; fact_gsc_page_daily.<br>
+            If the tables are empty, a full 480-day backfill starts in the background
+            and completes in ~15 min.
+          </p>
+        </form>
+      </div>
+      <p class="muted" style="margin-top:14px;font-size:0.82rem">
+        SEMrush and paid media data refresh automatically each time you click
+        <strong>Refresh data</strong> on the dashboard.
+      </p>
+    </section>"""
+
     content = f"""
     {notice}
     <section class="panel">
@@ -1391,6 +1457,7 @@ def render_settings_html(
       <div class="toolbar">{test_btn}</div>
     </section>
     {bq_mart_section}
+    {data_sync_section}
     {advanced}
     """
 

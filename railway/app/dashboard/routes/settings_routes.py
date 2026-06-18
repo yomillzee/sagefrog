@@ -486,4 +486,42 @@ def dashboard_client_settings_post(
             status_code=303,
         )
 
+    if act == "gsc_sync":
+        flash_msg = flash_err_msg = None
+        try:
+            import gsc_sync_service
+            result = gsc_sync_service.sync_for_refresh()
+            status = result.get("status", "")
+            if status == "up_to_date":
+                flash_msg = "GSC tables are already up to date. No sync needed."
+            elif status == "backfill_started":
+                days = result.get("days_missing", "")
+                flash_msg = (
+                    f"GSC backfill started in the background ({days} days missing). "
+                    "Data will appear after ~15 minutes — then click Refresh on the dashboard."
+                )
+            elif status == "synced":
+                q = result.get("query_rows", 0)
+                p = result.get("page_rows", 0)
+                d = result.get("days_synced", 0)
+                flash_msg = f"GSC sync complete: {d} day(s), {q:,} query rows, {p:,} page rows written."
+            elif not result.get("ok"):
+                flash_err_msg = f"GSC sync error: {result.get('error', 'unknown error')}"
+            else:
+                flash_msg = f"GSC sync finished. Status: {status}"
+        except Exception as exc:
+            flash_err_msg = f"GSC sync failed: {str(exc)[:200]}"
+
+        cfg = dashboard_settings.load_settings_config(slug)
+        return HTMLResponse(
+            dashboard_settings.render_settings_html(
+                client_slug=slug,
+                cfg=cfg,
+                flash_message=flash_msg,
+                flash_error=flash_err_msg,
+                db_config_updated_at=_config_updated_at(slug),
+                **session_kw,
+            )
+        )
+
     raise HTTPException(status_code=400, detail="Unknown action.")
