@@ -136,6 +136,9 @@ def dashboard_client_settings_post(
     feature_segment_filters: str = Form(""),
     feature_product_line_filters: str = Form(""),
     feature_organic_channel: str = Form(""),
+    dashboard_mode: str = Form("api"),
+    gsc_site_url: str = Form(""),
+    semrush_domain: str = Form(""),
 ):
     slug = validate_client_slug(client_slug)
     act = (action or "save").strip().lower()
@@ -214,6 +217,9 @@ def dashboard_client_settings_post(
                 meta_account_id=meta_account_id,
                 ga4_client_key=ga4_client_key,
                 updated_by=session_email or "dashboard_key",
+                dashboard_mode=dashboard_mode.strip() or "api",
+                gsc_site_url=gsc_site_url.strip() or None,
+                semrush_domain=semrush_domain.strip() or None,
             )
             budget = dashboard_service.parse_monthly_budget_input(monthly_budget_usd)
             saved = client_dashboard_config.save_monthly_budget(
@@ -490,7 +496,9 @@ def dashboard_client_settings_post(
         flash_msg = flash_err_msg = None
         try:
             import gsc_sync_service
-            result = gsc_sync_service.sync_for_refresh()
+            db_cfg_for_sync = client_dashboard_config.get_config(slug)
+            _gsc_url = (db_cfg_for_sync.gsc_site_url if db_cfg_for_sync else None) or None
+            result = gsc_sync_service.sync_for_refresh(site_url=_gsc_url)
             status = result.get("status", "")
             if status == "up_to_date":
                 flash_msg = "GSC tables are already up to date. No sync needed."

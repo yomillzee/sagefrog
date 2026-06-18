@@ -115,6 +115,24 @@ def dashboard_penn_bq_test(
     return HTMLResponse(html)
 
 
+@router.post(
+    "/internal/sync-bq/{client_slug}",
+    summary="Cron: refresh any BigQuery-mode client dashboard snapshot",
+    dependencies=[Depends(require_cron_secret)],
+)
+def internal_sync_bq_client(client_slug: str, date_range: str = "LAST_30_DAYS") -> dict:
+    slug = validate_client_slug(client_slug)
+    preset = (date_range or "LAST_30_DAYS").strip().upper().replace("-", "_")
+    if preset not in WAREHOUSE_DATE_RANGES:
+        raise HTTPException(status_code=400, detail=f"Invalid date_range.")
+    try:
+        return dashboard_service.refresh_bq_client(slug, date_range=preset, sync_trigger="cron")
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @router.get(
     "/dashboard/{client_slug}",
     summary="Client ads performance dashboard (HTML)",
@@ -148,11 +166,21 @@ def dashboard_client(
         flash = "Monthly budget saved."
     else:
         flash = None
+    import client_dashboard_config as _cdc
+
     if web_users.enabled():
         auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
         if isinstance(auth, RedirectResponse):
             return auth
         snapshot = dashboard_snapshots.get_snapshot(slug)
+        if not snapshot:
+            db_cfg = _cdc.get_config(slug)
+            if db_cfg and db_cfg.dashboard_mode == "bigquery":
+                try:
+                    snapshot = dashboard_service.refresh_bq_client(slug, sync_trigger="cache_miss")
+                except Exception as exc:
+                    LOGGER.exception("BQ client dashboard cache miss refresh failed: %s", slug)
+                    snapshot = {"client_key": slug, "errors": {"bq": platform_error(exc)}}
         return HTMLResponse(
             dashboard_service.render_penn_html(
                 snapshot,
@@ -164,6 +192,14 @@ def dashboard_client(
         )
     dashboard_service.verify_dashboard_key(key)
     snapshot = dashboard_snapshots.get_snapshot(slug)
+    if not snapshot:
+        db_cfg = _cdc.get_config(slug)
+        if db_cfg and db_cfg.dashboard_mode == "bigquery":
+            try:
+                snapshot = dashboard_service.refresh_bq_client(slug, sync_trigger="cache_miss")
+            except Exception as exc:
+                LOGGER.exception("BQ client dashboard cache miss refresh failed: %s", slug)
+                snapshot = {"client_key": slug, "errors": {"bq": platform_error(exc)}}
     return HTMLResponse(
         dashboard_service.render_penn_html(
             snapshot, client_slug=slug, access_key=key, flash_message=flash, view_range=view_range
@@ -276,11 +312,19 @@ def dashboard_client_refresh(
             ),
             status_code=429,
         )
+    import client_dashboard_config as _cdc
+    db_cfg = _cdc.get_config(slug)
+    is_bq_mode = bool(db_cfg and db_cfg.dashboard_mode == "bigquery")
+
     preset = (date_range or "LAST_30_DAYS").strip().upper().replace("-", "_")
     if preset not in WAREHOUSE_DATE_RANGES:
         preset = "LAST_30_DAYS"
     try:
-        if is_quick:
+        if is_bq_mode:
+            dashboard_service.refresh_bq_client(
+                slug, date_range=preset, sync_trigger="manual_full"
+            )
+        elif is_quick:
             dashboard_service.refresh_client_quick(
                 client_slug=slug, date_range=preset, sync_trigger="manual_quick"
             )

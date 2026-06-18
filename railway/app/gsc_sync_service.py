@@ -301,9 +301,11 @@ def sync_range(
     end: date,
     which: str = "both",
     progress_cb=None,
+    *,
+    site_url: str | None = None,
 ) -> dict[str, Any]:
     """Fetch and write GSC data for start..end. Returns summary dict."""
-    site_url = _site_url()
+    site_url = (site_url or "").strip() or _site_url()
     if not site_url:
         return {"ok": False, "error": "GSC_SITE_URL env var not set"}
 
@@ -367,16 +369,17 @@ def sync_range(
 # Refresh-pipeline entry point
 # ---------------------------------------------------------------------------
 
-def sync_for_refresh() -> dict[str, Any]:
+def sync_for_refresh(site_url: str | None = None) -> dict[str, Any]:
     """Called automatically from the dashboard refresh pipeline.
 
+    site_url: override the GSC_SITE_URL env var (for per-client config).
     - Tables up to date → no-op (fast)
     - Small gap (≤ 30 days) → sync synchronously; fresh data in this snapshot
     - Large gap / empty tables → spawn background thread; data available next refresh
     """
-    site_url = _site_url()
+    site_url = (site_url or "").strip() or _site_url()
     if not site_url:
-        return {"ok": False, "error": "GSC_SITE_URL env var not set in Railway"}
+        return {"ok": False, "error": "GSC_SITE_URL not configured (set it in Settings → GSC Site URL)"}
 
     # Test credentials and table creation synchronously so errors surface immediately
     # rather than disappearing into the background thread.
@@ -398,9 +401,11 @@ def sync_for_refresh() -> dict[str, Any]:
 
     if days_missing > _BACKGROUND_THRESHOLD:
         # Full backfill — don't block the refresh
+        _url = site_url  # capture for closure
+
         def _bg():
             try:
-                result = sync_range(start, end)
+                result = sync_range(start, end, site_url=_url)
                 log.info("GSC background backfill complete: %s", result)
             except Exception as exc:
                 log.error("GSC background backfill failed: %s", exc)
@@ -416,6 +421,6 @@ def sync_for_refresh() -> dict[str, Any]:
         }
     else:
         # Small gap — sync now so this snapshot has fresh data
-        result = sync_range(start, end)
+        result = sync_range(start, end, site_url=site_url)
         result["status"] = "synced"
         return result

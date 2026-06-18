@@ -604,8 +604,17 @@ def _normalize_creative_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
     return out
 
 
-def build_snapshot(*, cfg: PennDashboardConfig, start: date, end: date, preset: str) -> dict[str, Any]:
-    account_id_clean = str(cfg.linkedin_account_id or "").strip().split(":")[-1]
+def build_snapshot(
+    *,
+    cfg: PennDashboardConfig | None = None,
+    account_id: str | None = None,
+    start: date,
+    end: date,
+    preset: str,
+) -> dict[str, Any]:
+    # account_id param takes precedence over cfg.linkedin_account_id for multi-client support
+    _raw_id = account_id or (str(cfg.linkedin_account_id or "") if cfg else "")
+    account_id_clean = str(_raw_id or "").strip().split(":")[-1]
     data = fetch_linkedin_ads(start=start, end=end, account_id=account_id_clean or None)
     daily = data["daily_metrics"]
 

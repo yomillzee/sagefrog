@@ -53,6 +53,7 @@ from dashboard.utils.urls import (
 # --- Pass 3 services (re-exported for backward compatibility) ---
 from dashboard.services.refresh_service import (
     patch_snapshot_from_config,
+    refresh_bq_client,
     refresh_client,
     refresh_client_quick,
     refresh_penn,

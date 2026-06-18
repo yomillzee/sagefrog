@@ -43,6 +43,15 @@ SCHEMA_SQL_STATEMENTS = [
     """
     ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS bq_mart_dataset_id TEXT
     """,
+    """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS dashboard_mode TEXT NOT NULL DEFAULT 'api'
+    """,
+    """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS gsc_site_url TEXT
+    """,
+    """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS semrush_domain TEXT
+    """,
 ]
 
 
@@ -59,6 +68,9 @@ class ClientConfigRow:
     updated_by: str | None = None
     gcp_project_id: str | None = None
     bq_mart_dataset_id: str | None = None
+    dashboard_mode: str = "api"
+    gsc_site_url: str | None = None
+    semrush_domain: str | None = None
 
 
 def _get_db_url() -> str | None:
@@ -91,7 +103,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
             SELECT client_slug, label, google_customer_id, linkedin_account_id,
                    meta_account_id, ga4_client_key,
                    monthly_budget_usd, updated_at, updated_by,
-                   gcp_project_id, bq_mart_dataset_id
+                   gcp_project_id, bq_mart_dataset_id,
+                   dashboard_mode, gsc_site_url, semrush_domain
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -99,31 +112,27 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         ).fetchone()
     if not row:
         return None
-    updated = row[7]
+
+    def _s(v: object) -> str | None:
+        return str(v).strip() or None if v else None
+
     budget_raw = row[6]
-    budget: float | None = None
-    if budget_raw is not None:
-        budget = float(budget_raw)
-    try:
-        gcp_project_id = str(row[9]).strip() if row[9] else None
-    except (IndexError, AttributeError):
-        gcp_project_id = None
-    try:
-        bq_mart_dataset_id = str(row[10]).strip() if row[10] else None
-    except (IndexError, AttributeError):
-        bq_mart_dataset_id = None
+    updated = row[7]
     return ClientConfigRow(
         client_slug=str(row[0]),
         label=str(row[1] or ""),
-        google_customer_id=str(row[2]).strip() if row[2] else None,
-        linkedin_account_id=str(row[3]).strip() if row[3] else None,
-        meta_account_id=str(row[4]).strip() if row[4] else None,
-        ga4_client_key=str(row[5]).strip() if row[5] else None,
-        monthly_budget_usd=budget,
+        google_customer_id=_s(row[2]),
+        linkedin_account_id=_s(row[3]),
+        meta_account_id=_s(row[4]),
+        ga4_client_key=_s(row[5]),
+        monthly_budget_usd=float(budget_raw) if budget_raw is not None else None,
         updated_at=updated.isoformat() if updated else None,
-        updated_by=str(row[8]).strip() if row[8] else None,
-        gcp_project_id=gcp_project_id,
-        bq_mart_dataset_id=bq_mart_dataset_id,
+        updated_by=_s(row[8]),
+        gcp_project_id=_s(row[9]),
+        bq_mart_dataset_id=_s(row[10]),
+        dashboard_mode=str(row[11] or "api").strip() or "api",
+        gsc_site_url=_s(row[12]),
+        semrush_domain=_s(row[13]),
     )
 
 
@@ -138,6 +147,9 @@ def save_config(
     updated_by: str | None = None,
     gcp_project_id: str | None = None,
     bq_mart_dataset_id: str | None = None,
+    dashboard_mode: str | None = None,
+    gsc_site_url: str | None = None,
+    semrush_domain: str | None = None,
 ) -> ClientConfigRow:
     slug = (client_slug or "").strip().lower()
     if not slug:
@@ -151,27 +163,25 @@ def save_config(
 
     ensure_schema()
     now = datetime.now(tz=UTC)
-    # Build optional GCP column updates only when values are provided
-    _gcp_proj = _clean(gcp_project_id)
-    _bq_mart_ds = _clean(bq_mart_dataset_id)
-    gcp_set_clause = ""
+    # Build optional column updates dynamically (only include when caller provides a value)
+    _optional: list[tuple[str, object]] = []
     if gcp_project_id is not None:
-        gcp_set_clause += ",\n              gcp_project_id = EXCLUDED.gcp_project_id"
+        _optional.append(("gcp_project_id", _clean(gcp_project_id)))
     if bq_mart_dataset_id is not None:
-        gcp_set_clause += ",\n              bq_mart_dataset_id = EXCLUDED.bq_mart_dataset_id"
+        _optional.append(("bq_mart_dataset_id", _clean(bq_mart_dataset_id)))
+    if dashboard_mode is not None:
+        _optional.append(("dashboard_mode", (_clean(dashboard_mode) or "api")))
+    if gsc_site_url is not None:
+        _optional.append(("gsc_site_url", _clean(gsc_site_url)))
+    if semrush_domain is not None:
+        _optional.append(("semrush_domain", _clean(semrush_domain)))
 
-    # Build column/value lists dynamically for optional GCP columns
-    extra_cols = ""
-    extra_placeholders = ""
-    extra_vals: list = []
-    if gcp_project_id is not None:
-        extra_cols += ", gcp_project_id"
-        extra_placeholders += ", %s"
-        extra_vals.append(_gcp_proj)
-    if bq_mart_dataset_id is not None:
-        extra_cols += ", bq_mart_dataset_id"
-        extra_placeholders += ", %s"
-        extra_vals.append(_bq_mart_ds)
+    gcp_set_clause = "".join(
+        f",\n              {col} = EXCLUDED.{col}" for col, _ in _optional
+    )
+    extra_cols = "".join(f", {col}" for col, _ in _optional)
+    extra_placeholders = "".join(", %s" for _ in _optional)
+    extra_vals: list = [val for _, val in _optional]
 
     with psycopg.connect(_get_db_url()) as conn:
         conn.execute(
@@ -410,4 +420,7 @@ def as_dict(row: ClientConfigRow | None) -> dict[str, Any]:
         "updated_by": row.updated_by,
         "gcp_project_id": row.gcp_project_id,
         "bq_mart_dataset_id": row.bq_mart_dataset_id,
+        "dashboard_mode": row.dashboard_mode,
+        "gsc_site_url": row.gsc_site_url,
+        "semrush_domain": row.semrush_domain,
     }

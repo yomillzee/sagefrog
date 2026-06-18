@@ -504,6 +504,164 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
     return snapshot
 
 
+def refresh_bq_client(
+    slug: str,
+    *,
+    date_range: str = "LAST_30_DAYS",
+    sync_trigger: str = "manual_full",
+) -> dict[str, Any]:
+    """Generic BigQuery-sourced refresh for any client with dashboard_mode='bigquery'.
+
+    Reads all configuration (account IDs, GSC URL, SEMrush domain) from the
+    client_dashboard_config table.  Penn BQ Test keeps its own refresh_penn_bq_test()
+    function; this function is for new clients going forward.
+    """
+    import bq_gsc_service
+    import bq_linkedin_ads_service
+    import bq_mart_service
+    import bq_meta_ads_service
+    import client_dashboard_config as _cdc
+    import gsc_sync_service
+    import semrush_service as _smr_svc
+    from concurrent.futures import ThreadPoolExecutor
+    from dashboard.utils.formatting import platform_error
+
+    start, end, preset = resolve_date_range(date_range)
+    cfg = client_config.load_client_config(slug)
+    db_cfg = _cdc.get_config(slug)
+
+    linkedin_account_id = cfg.linkedin_account_id
+    meta_account_id     = cfg.meta_account_id
+    ga4_client_key      = cfg.ga4_client_key or slug
+    gsc_site_url        = (db_cfg.gsc_site_url if db_cfg else None) or ""
+    semrush_domain      = (db_cfg.semrush_domain if db_cfg else None) or ""
+    is_cron             = (sync_trigger == "cron")
+
+    def _gsc_task():
+        gsc_sync_result = None
+        if is_cron and gsc_site_url:
+            try:
+                gsc_sync_result = gsc_sync_service.sync_for_refresh(site_url=gsc_site_url)
+            except Exception as exc:
+                gsc_sync_result = {"ok": False, "error": str(exc)[:300]}
+        data = bq_gsc_service.build_gsc_snapshot(start=start, end=end)
+        if gsc_sync_result:
+            data["_sync_result"] = gsc_sync_result
+        return data
+
+    _pool = ThreadPoolExecutor(max_workers=2)
+    _gsc_fut = _pool.submit(_gsc_task)
+    _smr_fut = _pool.submit(
+        _smr_svc.build_semrush_snapshot,
+        semrush_domain or None,
+    )
+
+    try:
+        snapshot = bq_mart_service.build_snapshot(start=start, end=end, preset=preset)
+        snapshot["label"]      = cfg.label
+        snapshot["date_range"] = {"start": start.isoformat(), "end": end.isoformat(), "preset": preset}
+        snapshot.setdefault("accounts", {})["linkedin"] = linkedin_account_id
+        snapshot.setdefault("accounts", {})["meta"]     = meta_account_id
+        snapshot.setdefault("data_sources", {})["google"] = "bigquery"
+
+        if linkedin_account_id:
+            try:
+                if is_cron:
+                    meta_sync = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(
+                        account_id=linkedin_account_id, start=start, end=end,
+                    )
+                    snapshot.setdefault("warehouse_sync", {})["linkedin_campaign_metadata"] = meta_sync
+                li_snap = bq_linkedin_ads_service.build_snapshot(
+                    account_id=linkedin_account_id, start=start, end=end, preset=preset,
+                )
+                snapshot.setdefault("daily_metrics", {})["linkedin"]  = (li_snap.get("daily_metrics") or {}).get("linkedin", [])
+                snapshot.setdefault("platform_totals", {})["linkedin"] = (li_snap.get("platform_totals") or {}).get("linkedin", {})
+                snapshot.setdefault("breakdowns", {})["linkedin"]      = (li_snap.get("breakdowns") or {}).get("linkedin", {})
+                snapshot.setdefault("data_sources", {})["linkedin"]    = "bigquery"
+                creative_meta = li_snap.get("creative_metadata") or {}
+                snapshot["creative_metadata"] = creative_meta or {"source": "bigquery", "merged_rows": 0}
+            except Exception as exc:
+                snapshot.setdefault("errors", {})["linkedin_bigquery"] = platform_error(exc)
+                snapshot.setdefault("data_sources", {})["linkedin"] = "bigquery"
+
+        if meta_account_id:
+            try:
+                if is_cron:
+                    m_sync = bq_meta_ads_service.sync_meta_to_bq(meta_account_id, start=start, end=end)
+                    snapshot.setdefault("warehouse_sync", {})["meta"] = m_sync
+                meta_result = bq_meta_ads_service.build_meta_breakdowns(start=start, end=end)
+                snapshot.setdefault("breakdowns", {})["meta"]      = meta_result["breakdowns"]
+                snapshot.setdefault("platform_totals", {})["meta"] = meta_result["platform_totals"]
+                snapshot.setdefault("daily_metrics", {})["meta"]   = meta_result.get("daily_metrics", [])
+                snapshot.setdefault("data_sources", {})["meta"]    = "bigquery"
+                if meta_result.get("errors"):
+                    snapshot.setdefault("errors", {}).update(meta_result["errors"])
+            except Exception as exc:
+                snapshot.setdefault("errors", {})["meta_bigquery"] = platform_error(exc)
+                snapshot.setdefault("data_sources", {})["meta"] = "bigquery"
+
+        snapshot.setdefault("accounts", {})["ga4_client_key"] = ga4_client_key
+        snapshot.setdefault("data_sources", {})["ga4"] = "bigquery"
+        try:
+            snapshot["ga4_attribution"] = ga4_attribution_service.fetch_attribution_for_dashboard(
+                date_range=preset, client_key=ga4_client_key,
+            )
+        except Exception as exc:
+            snapshot.setdefault("errors", {})["ga4_attribution"] = platform_error(exc)
+        try:
+            _ga4_by_preset = ga4_page_service.fetch_pages_for_all_presets(
+                client_key=ga4_client_key, client_slug=slug,
+            )
+            snapshot["ga4_pages_by_preset"] = _ga4_by_preset
+            snapshot["ga4_pages"] = _ga4_by_preset.get(preset) or _ga4_by_preset.get("LAST_30_DAYS")
+        except Exception as exc:
+            snapshot.setdefault("errors", {})["ga4_pages"] = platform_error(exc)
+        try:
+            import ga4_warehouse_service
+            organic_rows = ga4_warehouse_service.fetch_organic_daily_metrics(
+                start=start, end=end, client_key=ga4_client_key,
+            )
+            snapshot.setdefault("daily_metrics", {})["organic"] = organic_rows
+            from dashboard.services.warehouse_metrics_service import totals_from_daily_rows
+            organic_totals = totals_from_daily_rows(organic_rows)
+            organic_totals["campaign_count"] = 0
+            snapshot.setdefault("platform_totals", {})["organic"] = organic_totals
+        except Exception as exc:
+            snapshot.setdefault("errors", {})["organic_daily"] = platform_error(exc)
+
+        from dashboard.services.snapshot_metrics_service import aggregated_paid_media
+        snapshot["aggregated_paid_media"] = aggregated_paid_media(snapshot.get("platform_totals") or {})
+
+    except Exception as exc:
+        snapshot = {
+            "client_key": slug,
+            "label": cfg.label,
+            "date_range": {"start": start.isoformat(), "end": end.isoformat(), "preset": preset},
+            "accounts": {"ga4_client_key": ga4_client_key},
+            "data_sources": {"google": "bigquery", "linkedin": "bigquery", "meta": "bigquery", "ga4": "bigquery"},
+            "daily_metrics": {}, "platform_totals": {}, "breakdowns": {},
+            "aggregated_paid_media": {}, "warehouse_sync": {},
+            "errors": {"bq_client": platform_error(exc)},
+        }
+    finally:
+        try:
+            snapshot["gsc"] = _gsc_fut.result(timeout=60)
+        except Exception as exc:
+            snapshot.setdefault("errors", {})["gsc"] = str(exc)[:400]
+        try:
+            smr = _smr_fut.result(timeout=30)
+            if smr and not smr.get("error", "").startswith("SEMRUSH_API_KEY"):
+                snapshot["semrush"] = smr
+        except Exception as exc:
+            snapshot.setdefault("errors", {})["semrush"] = str(exc)[:400]
+        finally:
+            _pool.shutdown(wait=False)
+
+    snapshot["sync_meta"] = sync_meta(sync_trigger)
+    dashboard_snapshots.save_snapshot(slug, snapshot)
+    return snapshot
+
+
 def save_penn_insights(
     body: str,
     *,

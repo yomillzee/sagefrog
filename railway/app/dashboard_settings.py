@@ -1177,6 +1177,33 @@ def render_settings_html(
                 <p class="hint">Used when the budget pacing chart is enabled in Dashboard sections.</p>
               </div>''' if resolved_features.budget_pacing else ''}
             </div>
+            <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)">
+            <h3 style="margin:0 0 8px">BigQuery / organic data</h3>
+            <p class="muted" style="margin-bottom:12px">Leave Dashboard Mode as <em>API</em> unless this client reads from BigQuery mart tables.</p>
+            <div class="form-grid">
+              <div>
+                <label for="dashboard_mode">Dashboard mode</label>
+                <select id="dashboard_mode" name="dashboard_mode">
+                  <option value="api"{' selected' if not getattr(cfg, 'dashboard_mode', None) or getattr(cfg, 'dashboard_mode', 'api') == 'api' else ''}>API (standard)</option>
+                  <option value="bigquery"{' selected' if getattr(cfg, 'dashboard_mode', None) == 'bigquery' else ''}>BigQuery (BQ mart tables)</option>
+                </select>
+                <p class="hint">BigQuery mode reads from pre-built mart tables instead of live ad platform APIs.</p>
+              </div>
+              <div>
+                <label for="gsc_site_url">GSC site URL</label>
+                <input id="gsc_site_url" name="gsc_site_url" type="text"
+                  value="{_esc(getattr(cfg, 'gsc_site_url', '') or '')}"
+                  placeholder="https://www.example.com/ or sc-domain:example.com">
+                <p class="hint">Google Search Console property URL for this client. Used by GSC → BigQuery sync.</p>
+              </div>
+              <div>
+                <label for="semrush_domain">SEMrush domain</label>
+                <input id="semrush_domain" name="semrush_domain" type="text"
+                  value="{_esc(getattr(cfg, 'semrush_domain', '') or '')}"
+                  placeholder="example.com">
+                <p class="hint">Root domain (no www, no https://) for SEMrush authority score and backlink lookups.</p>
+              </div>
+            </div>
             <button type="submit" class="btn primary">Save &amp; verify mapping</button>
           </form>
         </section>
@@ -1385,8 +1412,15 @@ def render_settings_html(
             f"Date range: {dr.get('start', '')} → {dr.get('end', '')}\nLast refreshed: {refreshed} UTC"
         )
 
+    try:
+        _db_row = client_dashboard_config.get_config(slug)
+        _is_bq_client = bool(_db_row and _db_row.dashboard_mode == "bigquery")
+    except Exception:
+        _is_bq_client = False
+    _show_bq_sections = slug == "penn-bq-test" or _is_bq_client
+
     bq_mart_section = ""
-    if slug == "penn-bq-test":
+    if _show_bq_sections:
         try:
             import bq_mart_service
             bm = bq_mart_service.env_summary()
@@ -1408,7 +1442,7 @@ def render_settings_html(
             pass
 
     data_sync_section = ""
-    if slug == "penn-bq-test":
+    if _show_bq_sections:
         key_param = f"?key={quote(access_key, safe='')}" if (not use_session and access_key) else ""
         post_url  = f"/dashboard/{slug}/settings{key_param}"
         data_sync_section = f"""
