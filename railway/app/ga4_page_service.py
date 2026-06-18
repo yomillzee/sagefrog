@@ -382,3 +382,33 @@ def fetch_pages_for_dashboard(
         "pages_by_platform": pages_by_platform,
         "landing_page_labels": LANDING_PAGE_ATTRIBUTION_LABELS,
     }
+
+
+_CACHE_PRESETS = ("LAST_7_DAYS", "LAST_30_DAYS", "LAST_90_DAYS", "THIS_MONTH", "LAST_MONTH")
+
+
+def fetch_pages_for_all_presets(
+    *,
+    client_key: str,
+    client_slug: str,
+) -> dict[str, Any]:
+    """Fetch GA4 pages for all view-range presets in parallel for snapshot caching."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    results: dict[str, Any] = {}
+    with ThreadPoolExecutor(max_workers=len(_CACHE_PRESETS)) as pool:
+        futures = {
+            p: pool.submit(
+                fetch_pages_for_dashboard,
+                date_range=p,
+                client_key=client_key,
+                client_slug=client_slug,
+            )
+            for p in _CACHE_PRESETS
+        }
+        for p, fut in futures.items():
+            try:
+                results[p] = fut.result()
+            except Exception:
+                pass
+    return results

@@ -184,11 +184,12 @@ def refresh_client(
         except Exception as exc:
             payload["errors"]["ga4_attribution"] = platform_error(exc)
         try:
-            payload["ga4_pages"] = ga4_page_service.fetch_pages_for_dashboard(
-                date_range=preset,
+            _ga4_pages_by_preset = ga4_page_service.fetch_pages_for_all_presets(
                 client_key=cfg.ga4_client_key,
                 client_slug=cfg.client_key,
             )
+            payload["ga4_pages_by_preset"] = _ga4_pages_by_preset
+            payload["ga4_pages"] = _ga4_pages_by_preset.get(preset) or _ga4_pages_by_preset.get("LAST_30_DAYS")
         except Exception as exc:
             payload["errors"]["ga4_pages"] = platform_error(exc)
 
@@ -405,11 +406,12 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
         except Exception as exc:
             snapshot.setdefault("errors", {})["ga4_attribution"] = platform_error(exc)
         try:
-            snapshot["ga4_pages"] = ga4_page_service.fetch_pages_for_dashboard(
-                date_range=preset,
+            _ga4_pages_by_preset = ga4_page_service.fetch_pages_for_all_presets(
                 client_key=_GA4_CLIENT_KEY,
                 client_slug="penn-bq-test",
             )
+            snapshot["ga4_pages_by_preset"] = _ga4_pages_by_preset
+            snapshot["ga4_pages"] = _ga4_pages_by_preset.get(preset) or _ga4_pages_by_preset.get("LAST_30_DAYS")
         except Exception as exc:
             snapshot.setdefault("errors", {})["ga4_pages"] = platform_error(exc)
         try:
