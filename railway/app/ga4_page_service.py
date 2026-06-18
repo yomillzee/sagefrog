@@ -353,23 +353,35 @@ def fetch_pages_for_dashboard(
     client_slug: str | None = None,
     limit: int = 500,
 ) -> dict[str, Any]:
+    from concurrent.futures import ThreadPoolExecutor
     from ga4_attribution_service import (
         LANDING_PAGE_ATTRIBUTION_LABELS,
         fetch_landing_page_rows,
     )
+    import ga4_ai_service
 
     target = resolve_target(client_key=client_key)
     slug = (client_slug or client_key or target.client_key or "").strip().lower()
     start, end, preset = resolve_date_range(date_range)
-    pages = fetch_page_metrics(start=start, end=end, target=target, limit=limit)
+
+    # Run all five BQ queries in parallel
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        _pages_f   = pool.submit(fetch_page_metrics, start=start, end=end, target=target, limit=limit)
+        _summary_f = pool.submit(fetch_site_metrics_summary, start=start, end=end, target=target)
+        _landing_f = pool.submit(fetch_landing_page_rows, start=start, end=end, target=target, limit=limit)
+        _ai_day_f  = pool.submit(ga4_ai_service.fetch_ai_daily, start=start, end=end, target=target)
+        _ai_pgs_f  = pool.submit(ga4_ai_service.fetch_ai_pages, start=start, end=end, target=target)
+
+        pages           = _pages_f.result()
+        summary         = _summary_f.result()
+        raw_landing     = _landing_f.result()
+        ai_daily_rows   = _ai_day_f.result() if not _ai_day_f.exception() else []
+        ai_page_rows    = _ai_pgs_f.result() if not _ai_pgs_f.exception() else []
+
     pages = annotate_site_pages_with_segment(pages, client_slug=slug)
-    summary = fetch_site_metrics_summary(start=start, end=end, target=target)
-    raw_landing_rows = fetch_landing_page_rows(start=start, end=end, target=target, limit=limit)
-    pages_by_platform = aggregate_landing_rows_by_platform(
-        raw_landing_rows,
-        client_slug=slug,
-        limit=limit,
-    )
+    pages_by_platform = aggregate_landing_rows_by_platform(raw_landing, client_slug=slug, limit=limit)
+    ai_traffic = ga4_ai_service.build_ai_traffic(ai_daily_rows, ai_page_rows)
+
     return {
         "client_key": target.client_key,
         "account_id": target.account_id,
@@ -381,6 +393,7 @@ def fetch_pages_for_dashboard(
         "pages": pages,
         "pages_by_platform": pages_by_platform,
         "landing_page_labels": LANDING_PAGE_ATTRIBUTION_LABELS,
+        "ai_traffic": ai_traffic,
     }
 
 

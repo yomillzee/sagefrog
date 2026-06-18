@@ -706,9 +706,24 @@ def render_penn_html(
     if show_website_tab:
         website_tab_panel = f"""
           <div id="view-website" class="view-panel" role="tabpanel" hidden>
+            <section class="panel ai-traffic-panel" id="aiTrafficPanel" hidden>
+              <div class="panel-head ai-traffic-head">
+                <h2>AI Traffic</h2>
+                <div id="aiSourceFilters" class="ai-source-filters filter-toggles" role="group" aria-label="AI source"></div>
+              </div>
+              <div class="ai-chart-wrap">
+                <canvas id="aiTrafficChart" aria-label="AI traffic trend"></canvas>
+              </div>
+            </section>
             <section class="panel ga4-pages-panel" aria-label="Website analytics">
               {ga4_metrics_html}
-              <div class="panel-head"><h2>Page performance</h2></div>
+              <div class="panel-head">
+                <h2 id="ga4PagesHeading">Page performance</h2>
+                <button type="button" id="aiTrafficToggle" class="ai-traffic-toggle" hidden
+                  aria-pressed="false" aria-controls="aiTrafficPanel">
+                  ✦ AI Traffic
+                </button>
+              </div>
               {website_search_html}
               {website_analytics_html}
             </section>
@@ -721,6 +736,10 @@ def render_penn_html(
         (ga4_pages_report or {}).get("landing_page_labels") or {}
     )
     ga4_summary_json = _json_for_html_script((ga4_pages_report or {}).get("summary") or {})
+    _ai = (ga4_pages_report or {}).get("ai_traffic") or {}
+    ai_daily_json          = _json_for_html_script(_ai.get("daily") or [])
+    ai_pages_by_source_json = _json_for_html_script(_ai.get("pages_by_source") or {})
+    ai_sources_json        = _json_for_html_script(_ai.get("sources") or [])
     metric_defs_json = _json_for_html_script(dashboard_theme.chart_metric_defs(theme))
     show_budget_pacing = features.budget_pacing
     can_save_budget = session_is_admin if use_session else bool(access_key)
@@ -1162,6 +1181,74 @@ def render_penn_html(
     }}
     .ga4-pages-panel {{
       margin-bottom: 20px;
+    }}
+    .ai-traffic-panel {{
+      margin-bottom: 20px;
+    }}
+    .ai-traffic-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }}
+    .ai-source-filters {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }}
+    .ai-source-btn {{
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: #fff;
+      font: inherit;
+      font-size: 0.82rem;
+      cursor: pointer;
+      color: var(--text-secondary, #555);
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      white-space: nowrap;
+    }}
+    .ai-source-btn:hover {{
+      border-color: var(--accent);
+      color: var(--accent);
+    }}
+    .ai-source-btn.active {{
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }}
+    .ai-chart-wrap {{
+      padding: 0 22px 22px;
+      position: relative;
+      height: 220px;
+    }}
+    .ai-chart-wrap canvas {{
+      width: 100% !important;
+      height: 100% !important;
+    }}
+    .ai-traffic-toggle {{
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: #fff;
+      font: inherit;
+      font-size: 0.82rem;
+      cursor: pointer;
+      color: var(--text-secondary, #555);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }}
+    .ai-traffic-toggle:hover {{
+      border-color: var(--accent);
+      color: var(--accent);
+    }}
+    .ai-traffic-toggle.active {{
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
     }}
     .ga4-pages-toolbar {{
       display: flex;
@@ -2535,6 +2622,9 @@ def render_penn_html(
   <script type="application/json" id="ga4-pages-by-platform-data">{ga4_pages_by_platform_json}</script>
   <script type="application/json" id="ga4-landing-labels-data">{ga4_landing_labels_json}</script>
   <script type="application/json" id="ga4-summary-data">{ga4_summary_json}</script>
+  <script type="application/json" id="ai-daily-data">{ai_daily_json}</script>
+  <script type="application/json" id="ai-pages-by-source-data">{ai_pages_by_source_json}</script>
+  <script type="application/json" id="ai-sources-data">{ai_sources_json}</script>
   <script>
     function readJson(id, fallback) {{
       const el = document.getElementById(id);
@@ -2569,6 +2659,10 @@ def render_penn_html(
     const ga4PagesByPlatform = readJson('ga4-pages-by-platform-data', {{}});
     const ga4LandingLabels = readJson('ga4-landing-labels-data', {{}});
     const ga4SiteSummary = readJson('ga4-summary-data', {{}});
+    const aiDaily = readJson('ai-daily-data', []);
+    const aiPagesBySource = readJson('ai-pages-by-source-data', {{}});
+    const aiSources = readJson('ai-sources-data', []);
+    const SHOW_AI_TRAFFIC = aiSources.length > 0;
 
     const channelState = new Set();
     const blState = new Set();
@@ -3992,6 +4086,192 @@ def render_penn_html(
     }} else if (ga4MetricsGrid && ga4SiteSummary && ga4SiteSummary.sessions) {{
       renderGa4MetricsSummary([], false);
     }}
+
+    // --- AI Traffic -------------------------------------------------------
+    (function initAiTraffic() {{
+      if (!SHOW_AI_TRAFFIC) return;
+
+      const panel = document.getElementById('aiTrafficPanel');
+      const toggle = document.getElementById('aiTrafficToggle');
+      const filtersWrap = document.getElementById('aiSourceFilters');
+      const canvas = document.getElementById('aiTrafficChart');
+      const pagesHeading = document.getElementById('ga4PagesHeading');
+      if (!panel || !toggle || !canvas) return;
+
+      toggle.hidden = false;
+
+      // build palette — up to 9 distinct hues
+      const AI_PALETTE = [
+        '#2563eb','#16a34a','#dc2626','#9333ea','#ea580c',
+        '#0891b2','#ca8a04','#db2777','#475569'
+      ];
+      const sourceColors = {{}};
+      aiSources.forEach((s, i) => {{
+        sourceColors[s.id] = AI_PALETTE[i % AI_PALETTE.length];
+      }});
+
+      // build sorted list of all dates in range
+      const allDates = [...new Set(aiDaily.map(r => r.date))].sort();
+
+      // group daily rows: {{ source: {{ date: sessions }} }}
+      const dailyBySource = {{}};
+      aiDaily.forEach(r => {{
+        if (!dailyBySource[r.source]) dailyBySource[r.source] = {{}};
+        dailyBySource[r.source][r.date] = (dailyBySource[r.source][r.date] || 0) + r.sessions;
+      }});
+
+      // active AI source filter (null = All)
+      let aiActiveSource = null;
+
+      // ---- chart -----------------------------------------------------------
+      let aiChart = null;
+
+      function buildChartDatasets(sourceId) {{
+        const sources = sourceId ? aiSources.filter(s => s.id === sourceId) : aiSources;
+        return sources.map(s => ({{
+          label: s.label,
+          data: allDates.map(d => (dailyBySource[s.id] || {{}})[d] || 0),
+          borderColor: sourceColors[s.id],
+          backgroundColor: sourceColors[s.id] + '22',
+          borderWidth: 2,
+          pointRadius: allDates.length <= 14 ? 3 : 0,
+          pointHoverRadius: 5,
+          fill: false,
+          tension: 0.3,
+        }}));
+      }}
+
+      function renderAiChart(sourceId) {{
+        const datasets = buildChartDatasets(sourceId);
+        if (aiChart) {{
+          aiChart.data.labels = allDates;
+          aiChart.data.datasets = datasets;
+          aiChart.update('none');
+          return;
+        }}
+        aiChart = new Chart(canvas, {{
+          type: 'line',
+          data: {{ labels: allDates, datasets }},
+          options: {{
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {{ mode: 'index', intersect: false }},
+            plugins: {{
+              legend: {{
+                position: 'top',
+                labels: {{ boxWidth: 12, padding: 14, font: {{ size: 12 }} }},
+              }},
+              tooltip: {{
+                callbacks: {{
+                  title: items => items[0].label,
+                  label: item => ` ${{item.dataset.label}}: ${{fmtInt(item.raw)}} sessions`,
+                }},
+              }},
+            }},
+            scales: {{
+              x: {{
+                ticks: {{ maxTicksLimit: 8, font: {{ size: 11 }} }},
+                grid: {{ display: false }},
+              }},
+              y: {{
+                beginAtZero: true,
+                ticks: {{ precision: 0, font: {{ size: 11 }} }},
+                grid: {{ color: 'rgba(0,0,0,0.05)' }},
+              }},
+            }},
+          }},
+        }});
+      }}
+
+      // ---- pages table bridge ----------------------------------------------
+      let aiModeActive = false;
+
+      function getAiPages(sourceId) {{
+        const key = sourceId || 'all';
+        return (aiPagesBySource[key] || []);
+      }}
+
+      // Wrap renderGa4Pages so every call (pagination, search, filters)
+      // automatically serves AI pages when AI mode is on.
+      const _origRenderGa4Pages = renderGa4Pages;
+      renderGa4Pages = function() {{
+        if (!aiModeActive) {{
+          _origRenderGa4Pages();
+          return;
+        }}
+        const backup = [...ga4Pages];
+        const aiRows = getAiPages(aiActiveSource);
+        ga4Pages.splice(0, ga4Pages.length, ...aiRows);
+        _origRenderGa4Pages();
+        ga4Pages.splice(0, ga4Pages.length, ...backup);
+      }};
+
+      function openAiMode(sourceId) {{
+        aiModeActive = true;
+        aiActiveSource = sourceId;
+        if (pagesHeading) {{
+          const lbl = sourceId
+            ? (aiSources.find(s => s.id === sourceId) || {{}}).label || sourceId
+            : 'All AI';
+          pagesHeading.textContent = `Page performance — AI Traffic (${{lbl}})`;
+        }}
+        renderGa4Pages();
+      }}
+
+      function clearAiMode() {{
+        aiModeActive = false;
+        aiActiveSource = null;
+        if (pagesHeading) pagesHeading.textContent = 'Page performance';
+        renderGa4Pages();
+      }}
+
+      // ---- source filter pills ---------------------------------------------
+      function buildSourceFilters() {{
+        const allBtn = document.createElement('button');
+        allBtn.type = 'button';
+        allBtn.className = 'ai-source-btn active';
+        allBtn.dataset.source = '';
+        allBtn.textContent = 'All AI';
+        filtersWrap.appendChild(allBtn);
+
+        aiSources.forEach(s => {{
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'ai-source-btn';
+          btn.dataset.source = s.id;
+          const dot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${{sourceColors[s.id]}};margin-right:5px"></span>`;
+          btn.innerHTML = dot + escHtml(s.label);
+          filtersWrap.appendChild(btn);
+        }});
+
+        filtersWrap.addEventListener('click', e => {{
+          const btn = e.target.closest('.ai-source-btn');
+          if (!btn) return;
+          filtersWrap.querySelectorAll('.ai-source-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          const src = btn.dataset.source || null;
+          aiActiveSource = src;
+          renderAiChart(src);
+          if (panel && !panel.hidden) openAiMode(src);
+        }});
+      }}
+
+      // ---- toggle button ---------------------------------------------------
+      toggle.addEventListener('click', () => {{
+        const open = !toggle.classList.contains('active');
+        toggle.classList.toggle('active', open);
+        toggle.setAttribute('aria-pressed', open ? 'true' : 'false');
+        panel.hidden = !open;
+        if (open) {{
+          renderAiChart(aiActiveSource);
+          openAiMode(aiActiveSource);
+        }} else {{
+          clearAiMode();
+        }}
+      }});
+
+      buildSourceFilters();
+    }})();
 
     const DRILL_MAP = {{
       'google:campaign': {{ childLevel: 'ad_group', childLabel: 'Ad group' }},
