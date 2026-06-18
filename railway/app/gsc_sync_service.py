@@ -42,7 +42,7 @@ _DEFAULT_MART_DATASET = "marketing_marts"
 _QUERY_TABLE         = "fact_gsc_query_daily"
 _PAGE_TABLE          = "fact_gsc_page_daily"
 _GSC_LAG_DAYS    = 3
-_MAX_HISTORY     = 480      # GSC retains ~16 months
+_MAX_HISTORY     = 180      # 6 months is sufficient
 _ROW_LIMIT       = 25_000   # GSC API page size
 _RETRY_SLEEP     = 60
 # If more than this many days are missing, run in background to avoid blocking refresh
