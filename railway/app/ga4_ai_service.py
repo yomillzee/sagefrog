@@ -71,7 +71,7 @@ def fetch_ai_daily(
     target = target or resolve_target()
     table = _events_table(target)
     s, e = start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
-    ai_case = _ai_case_sql()
+    ai_case = _ai_case_sql("LOWER(traffic_source.source)")
 
     sql = f"""
     WITH session_starts AS (
@@ -123,7 +123,7 @@ def fetch_ai_pages(
     target = target or resolve_target()
     table = _events_table(target)
     s, e = start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
-    ai_case = _ai_case_sql()
+    ai_case = _ai_case_sql("LOWER(traffic_source.source)")
     row_limit = max(1, min(int(limit) * len(AI_SOURCES), 5000))
 
     sql = f"""
