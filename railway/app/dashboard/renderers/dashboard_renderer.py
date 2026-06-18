@@ -143,7 +143,7 @@ def ga4_website_search_html(
         <div class="website-results-status">
           <span class="badge" id="ga4PagesCount">0 pages</span>
         </div>
-        <div id="websiteAiFilterRow" class="website-ai-filter-row" hidden>
+        <div id="websiteAiFilterRow" class="website-ai-filter-row">
           <span class="filter-column-label">AI traffic</span>
           <div id="aiFilterPills" class="filter-toggles" role="group" aria-label="AI traffic source"></div>
         </div>
@@ -4027,31 +4027,23 @@ def render_penn_html(
 
     // --- AI Traffic filter (website analytics tab only) --------------------
     (function initAiTraffic() {{
-      if (!SHOW_AI_TRAFFIC) return;
-
-      const filterRow  = document.getElementById('websiteAiFilterRow');
-      const pillsWrap  = document.getElementById('aiFilterPills');
+      const pillsWrap    = document.getElementById('aiFilterPills');
       const pagesHeading = document.getElementById('ga4PagesHeading');
-      if (!filterRow || !pillsWrap) return;
-
-      filterRow.hidden = false;
+      if (!pillsWrap) return;
 
       // ---- pages table bridge ----------------------------------------------
-      let aiModeActive = false;
+      let aiModeActive   = false;
       let aiActiveSource = null;
 
       function getAiPages(sourceId) {{
         return (aiPagesBySource[sourceId || 'all'] || []);
       }}
 
-      // Wrap renderGa4Pages so pagination/search/filters keep serving AI
-      // pages while AI mode is on.
+      // Wrap renderGa4Pages so pagination / search / segment filters
+      // keep serving AI pages while AI mode is on.
       const _origRenderGa4Pages = renderGa4Pages;
       renderGa4Pages = function() {{
-        if (!aiModeActive) {{
-          _origRenderGa4Pages();
-          return;
-        }}
+        if (!aiModeActive) {{ _origRenderGa4Pages(); return; }}
         const backup = [...ga4Pages];
         ga4Pages.splice(0, ga4Pages.length, ...getAiPages(aiActiveSource));
         _origRenderGa4Pages();
@@ -4059,11 +4051,11 @@ def render_penn_html(
       }};
 
       function openAiMode(sourceId) {{
-        // Clear paid-channel filters so they don't conflict.
+        // Clear paid-channel filters to avoid conflicts.
         channelState.clear();
         syncToggleGroup('channel');
 
-        aiModeActive = true;
+        aiModeActive   = true;
         aiActiveSource = sourceId;
         if (pagesHeading) {{
           const lbl = sourceId
@@ -4075,7 +4067,7 @@ def render_penn_html(
       }}
 
       function clearAiMode() {{
-        aiModeActive = false;
+        aiModeActive   = false;
         aiActiveSource = null;
         if (pagesHeading) pagesHeading.textContent = 'Page performance';
         pillsWrap.querySelectorAll('.filter-toggle').forEach(b => {{
@@ -4085,10 +4077,10 @@ def render_penn_html(
         renderGa4Pages();
       }}
 
-      // ---- source filter pills ---------------------------------------------
+      // ---- build pills -----------------------------------------------------
       function makePill(label, sourceId) {{
         const btn = document.createElement('button');
-        btn.type = 'button';
+        btn.type  = 'button';
         btn.className = 'filter-toggle';
         btn.textContent = label;
         btn.dataset.source = sourceId || '';
@@ -4096,23 +4088,20 @@ def render_penn_html(
         return btn;
       }}
 
-      // "All AI" pill
+      // "All AI" is always present
       pillsWrap.appendChild(makePill('All AI', ''));
-
-      // Per-source pills (only sources with data — aiSources is already filtered)
+      // Per-source pills only when the snapshot contains AI data
       aiSources.forEach(s => pillsWrap.appendChild(makePill(s.label, s.id)));
 
       pillsWrap.addEventListener('click', e => {{
         const btn = e.target.closest('.filter-toggle');
         if (!btn) return;
         const src = btn.dataset.source || null;
-
-        // Clicking the active pill toggles AI mode off
+        // Clicking the active pill deactivates AI mode
         if (btn.classList.contains('active')) {{
           clearAiMode();
           return;
         }}
-
         pillsWrap.querySelectorAll('.filter-toggle').forEach(b => {{
           b.classList.remove('active');
           b.setAttribute('aria-pressed', 'false');
