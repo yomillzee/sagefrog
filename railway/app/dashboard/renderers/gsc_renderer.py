@@ -96,7 +96,6 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
     daily = gsc.get("daily") or []
     top_queries = gsc.get("top_queries") or []
     top_pages = gsc.get("top_pages") or []
-    top_query_page = gsc.get("top_query_page") or []
     errors = gsc.get("errors") or {}
 
     clicks = int(kpis.get("clicks") or 0)
@@ -158,15 +157,6 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
         ("avg_position", "Avg. Position", "right"),
     ])
 
-    # Query + Page table
-    qp_table_html = _gsc_table(top_query_page, [
-        ("query", "Query", "left"),
-        ("page_url", "Page URL", "left"),
-        ("clicks", "Clicks", "right"),
-        ("impressions", "Impressions", "right"),
-        ("ctr", "CTR", "right"),
-        ("avg_position", "Avg. Position", "right"),
-    ])
 
     daily_json = _safe_json(daily)
 
@@ -237,13 +227,6 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
     {page_table_html}
   </details>
 
-  <!-- Top Query + Page -->
-  <details class="gsc-detail">
-    <summary class="gsc-detail-summary">
-      Top Query / Page Combinations <span class="badge">{len(top_query_page)}</span>
-    </summary>
-    {qp_table_html}
-  </details>
 </section>
 
 <script>

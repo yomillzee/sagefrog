@@ -112,91 +112,99 @@ class ProvisionResult:
 # Schema
 # ---------------------------------------------------------------------------
 
-def _gsc_schema():
-    """Return the BigQuery schema for fact_gsc_url_daily."""
+def _gsc_query_schema():
     from google.cloud import bigquery as bq
     return [
-        bq.SchemaField("date", "DATE", mode="REQUIRED"),
-        bq.SchemaField("page_url", "STRING", mode="REQUIRED"),
-        bq.SchemaField("query", "STRING", mode="NULLABLE"),
-        bq.SchemaField("organic_clicks", "INT64", mode="REQUIRED"),
-        bq.SchemaField("organic_impressions", "INT64", mode="REQUIRED"),
-        bq.SchemaField("organic_sum_position", "FLOAT64", mode="REQUIRED"),
-        bq.SchemaField("is_anonymized_query", "BOOL", mode="REQUIRED"),
-        bq.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"),
+        bq.SchemaField("date",                 "DATE",      mode="REQUIRED"),
+        bq.SchemaField("query",                "STRING",    mode="NULLABLE"),
+        bq.SchemaField("organic_clicks",       "INT64",     mode="REQUIRED"),
+        bq.SchemaField("organic_impressions",  "INT64",     mode="REQUIRED"),
+        bq.SchemaField("organic_sum_position", "FLOAT64",   mode="REQUIRED"),
+        bq.SchemaField("is_anonymized_query",  "BOOL",      mode="REQUIRED"),
+        bq.SchemaField("synced_at",            "TIMESTAMP", mode="REQUIRED"),
     ]
+
+
+def _gsc_page_schema():
+    from google.cloud import bigquery as bq
+    return [
+        bq.SchemaField("date",                 "DATE",      mode="REQUIRED"),
+        bq.SchemaField("page_url",             "STRING",    mode="REQUIRED"),
+        bq.SchemaField("organic_clicks",       "INT64",     mode="REQUIRED"),
+        bq.SchemaField("organic_impressions",  "INT64",     mode="REQUIRED"),
+        bq.SchemaField("organic_sum_position", "FLOAT64",   mode="REQUIRED"),
+        bq.SchemaField("synced_at",            "TIMESTAMP", mode="REQUIRED"),
+    ]
+
+
+def _ensure_one_table(c, full_id: str, schema, cluster_field: str) -> TableStatus:
+    """Create a single date-partitioned, clustered table if it doesn't exist."""
+    from google.cloud import bigquery as bq
+    from google.cloud.exceptions import NotFound
+
+    created_now = False
+    try:
+        c.get_table(full_id)
+    except NotFound:
+        t = bq.Table(full_id, schema=schema)
+        t.time_partitioning = bq.TimePartitioning(
+            type_=bq.TimePartitioningType.DAY, field="date"
+        )
+        t.clustering_fields = [cluster_field]
+        c.create_table(t, exists_ok=True)
+        created_now = True
+
+    sql = (
+        f"SELECT COUNT(*) AS n, MIN(date) AS min_date, MAX(date) AS max_date "
+        f"FROM `{full_id}` LIMIT 1"
+    )
+    rows = list(c.query(sql).result(max_results=1))
+    r = dict(rows[0].items()) if rows else {}
+    return TableStatus(
+        table_id=full_id,
+        exists=True,
+        row_count=int(r.get("n") or 0),
+        min_date=str(r.get("min_date") or "")[:10] or None,
+        max_date=str(r.get("max_date") or "")[:10] or None,
+        created_now=created_now,
+        error=None,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Table operations
 # ---------------------------------------------------------------------------
 
-def ensure_gsc_table(client=None) -> TableStatus:
-    """Ensure fact_gsc_url_daily exists, creating it if necessary.
+def ensure_gsc_tables(client=None) -> list[TableStatus]:
+    """Ensure fact_gsc_query_daily and fact_gsc_page_daily exist.
 
-    Returns a TableStatus with row count and date range.
+    Returns [query_status, page_status].
     """
     from google.cloud import bigquery as bq
-    from google.cloud.exceptions import NotFound
 
-    full_id = f"{_mart_project_id()}.{_mart_dataset_id()}.fact_gsc_url_daily"
-    try:
-        c = client or _bq_client()
+    proj    = _mart_project_id()
+    dataset = _mart_dataset_id()
+    query_id = f"{proj}.{dataset}.fact_gsc_query_daily"
+    page_id  = f"{proj}.{dataset}.fact_gsc_page_daily"
 
-        # Ensure dataset exists
-        dataset_ref = bq.Dataset(f"{_mart_project_id()}.{_mart_dataset_id()}")
-        dataset_ref.location = "US"
-        c.create_dataset(dataset_ref, exists_ok=True)
-
-        # Detect whether table already exists
-        created_now = False
+    statuses = []
+    for full_id, schema, cluster in [
+        (query_id, _gsc_query_schema(), "query"),
+        (page_id,  _gsc_page_schema(),  "page_url"),
+    ]:
         try:
-            c.get_table(full_id)
-        except NotFound:
-            # Create the table
-            table_ref = bq.Table(full_id, schema=_gsc_schema())
-            table_ref.time_partitioning = bq.TimePartitioning(
-                type_=bq.TimePartitioningType.DAY,
-                field="date",
-            )
-            table_ref.clustering_fields = ["page_url"]
-            c.create_table(table_ref, exists_ok=True)
-            created_now = True
-
-        # Row count health check
-        sql = (
-            f"SELECT COUNT(*) AS n, MIN(date) AS min_date, MAX(date) AS max_date "
-            f"FROM `{full_id}` LIMIT 1"
-        )
-        rows = list(c.query(sql).result(max_results=1))
-        if rows:
-            r = dict(rows[0].items())
-            n = int(r.get("n") or 0)
-            min_d = str(r.get("min_date") or "")[:10] or None
-            max_d = str(r.get("max_date") or "")[:10] or None
-        else:
-            n, min_d, max_d = 0, None, None
-
-        return TableStatus(
-            table_id=full_id,
-            exists=True,
-            row_count=n,
-            min_date=min_d,
-            max_date=max_d,
-            created_now=created_now,
-            error=None,
-        )
-
-    except Exception as exc:
-        return TableStatus(
-            table_id=full_id,
-            exists=False,
-            row_count=None,
-            min_date=None,
-            max_date=None,
-            created_now=False,
-            error=str(exc)[:300],
-        )
+            c = client or _bq_client()
+            ds_ref = bq.Dataset(f"{proj}.{dataset}")
+            ds_ref.location = "US"
+            c.create_dataset(ds_ref, exists_ok=True)
+            statuses.append(_ensure_one_table(c, full_id, schema, cluster))
+        except Exception as exc:
+            statuses.append(TableStatus(
+                table_id=full_id, exists=False, row_count=None,
+                min_date=None, max_date=None, created_now=False,
+                error=str(exc)[:300],
+            ))
+    return statuses
 
 
 def validate_ga4_export(client=None) -> TableStatus:
@@ -254,7 +262,7 @@ def validate_ga4_export(client=None) -> TableStatus:
 # ---------------------------------------------------------------------------
 
 def validate_all() -> ProvisionResult:
-    """Validate all required BQ tables. Creates fact_gsc_url_daily if missing.
+    """Validate all required BQ tables. Creates GSC tables if missing.
 
     Never raises — all exceptions are captured into the result.
     """
@@ -268,16 +276,16 @@ def validate_all() -> ProvisionResult:
             error=str(exc)[:300],
         )
 
-    gsc_status = ensure_gsc_table(client=c)
-    ga4_status = validate_ga4_export(client=c)
+    gsc_statuses = ensure_gsc_tables(client=c)
+    ga4_status   = validate_ga4_export(client=c)
 
     return ProvisionResult(
-        tables=[gsc_status, ga4_status],
+        tables=[*gsc_statuses, ga4_status],
         credentials_ok=credentials_ok,
         error=None,
     )
 
 
 # provision_all is semantically the same as validate_all:
-# ensure_gsc_table already creates the table if missing.
+# ensure_gsc_tables already creates tables if missing.
 provision_all = validate_all
