@@ -319,13 +319,21 @@ def _gsc_field_html(*, selected: str, properties: list[dict[str, str]], connecte
             </p>"""
 
     options = ['<option value="">— none —</option>']
-    known_urls = {p["site_url"] for p in properties}
-    if selected and selected not in known_urls:
+    # GSC API returns URL-prefix properties with a trailing slash; saved values
+    # may or may not have one. Normalize to rstrip('/') for comparison only —
+    # sc-domain: entries have no slash to strip so they're unaffected.
+    def _norm(u: str) -> str:
+        return u.rstrip("/") if u and not u.startswith("sc-domain:") else (u or "")
+    known_norm = {_norm(p["site_url"]): p["site_url"] for p in properties}
+    selected_norm = _norm(selected)
+    matched_api_url = known_norm.get(selected_norm)  # canonical API URL for saved value
+    if selected and selected_norm not in known_norm:
         options.append(f'<option value="{_esc(selected)}" selected>{_esc(selected)} (not in property list)</option>')
     for p in properties:
         url = p["site_url"]
         perm = p.get("permission_level") or ""
-        sel = " selected" if url == selected else ""
+        # Select if this entry matches the saved value (with or without trailing slash)
+        sel = " selected" if matched_api_url and url == matched_api_url else ""
         label_text = f"{url} · {perm}" if perm else url
         options.append(f'<option value="{_esc(url)}"{sel}>{_esc(label_text)}</option>')
     return f"""
