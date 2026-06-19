@@ -500,12 +500,21 @@ def build_gsc_snapshot(*, start: date, end: date, client_slug: str | None = None
     errors: dict[str, str] = {}
 
     with _client_context(client_slug):
-        # Python 3.7+ ThreadPoolExecutor already copies the calling thread's
-        # context into each worker, so _client_slug_ctx is visible in all tasks
-        # without ctx.run(). Using a single ctx.run() object across multiple
-        # concurrent pool.submit() calls raises "already entered".
+        # ThreadPoolExecutor worker threads do NOT inherit the calling thread's
+        # contextvars — a new thread starts with default ContextVar values. So
+        # _client_slug_ctx, set above via _client_context, is invisible inside a
+        # bare pool.submit(fn) and the fetch helpers fall back to the Penn-only
+        # default_target() — silently querying the wrong project.
+        #
+        # Capture a fresh copy of the current context (which includes the slug
+        # set above) for each task and run the callable inside it. A separate
+        # copy per task avoids the "cannot enter context: already entered" error
+        # that a single shared Context object raises across concurrent threads.
         with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
-            futures = {key: pool.submit(fn) for key, fn in tasks.items()}
+            futures = {
+                key: pool.submit(contextvars.copy_context().run, fn)
+                for key, fn in tasks.items()
+            }
             for key, fut in futures.items():
                 try:
                     result[key] = fut.result()
