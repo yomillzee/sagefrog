@@ -1717,6 +1717,13 @@ def admin_create_dashboard(
         detail={"client_slug": created.client_slug, "label": created.label},
         **ctx,
     )
+    # Auto-provision GSC BQ tables for the new client.
+    # Runs best-effort — failures are logged but don't block dashboard creation.
+    try:
+        import bq_provision_service
+        bq_provision_service.ensure_gsc_tables(client_slug=created.client_slug)
+    except Exception:
+        LOGGER.exception("GSC table auto-provision failed for %s", created.client_slug)
     return RedirectResponse(
         url=f"/admin?msg=Dashboard+{quote(created.label)}+created",
         status_code=303,
