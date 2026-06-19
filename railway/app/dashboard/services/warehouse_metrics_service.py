@@ -293,6 +293,68 @@ def load_campaign_daily_from_warehouse(
     return result
 
 
+def load_campaign_daily_from_bq(
+    *,
+    linkedin_account_id: str | None,
+    meta_account_id: str | None,
+    start: date,
+    end: date,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Return campaign totals for [start, end] from BQ mart tables.
+
+    Keyed as {source: {campaign_id: metrics}}. Used as BQ fallback when the
+    Postgres warehouse is empty (BigQuery-mode clients only).
+    """
+    import bigquery_service
+    result: dict[str, dict[str, dict[str, Any]]] = {}
+
+    if linkedin_account_id:
+        try:
+            import bq_linkedin_ads_service as _li
+            rows = bigquery_service.run_query(
+                _li.campaign_daily_sql(start=start, end=end, account_id=linkedin_account_id),
+                project_id=_li._project_id(),
+                max_rows=5000,
+            )
+            by_cid: dict[str, dict[str, Any]] = {}
+            for row in rows:
+                cid = str(row.get("campaign_id") or "")
+                if not cid:
+                    continue
+                if cid not in by_cid:
+                    by_cid[cid] = {"campaign_id": cid, "spend": 0.0, "clicks": 0, "impressions": 0, "conversions": 0.0}
+                by_cid[cid]["spend"]       += float(row.get("spend") or 0)
+                by_cid[cid]["clicks"]      += int(row.get("clicks") or 0)
+                by_cid[cid]["impressions"] += int(row.get("impressions") or 0)
+                by_cid[cid]["conversions"] += float(row.get("conversions") or 0)
+            if by_cid:
+                result["linkedin"] = by_cid
+        except Exception:
+            pass
+
+    if meta_account_id:
+        try:
+            import bq_meta_ads_service as _meta
+            rows = _meta.fetch_meta_campaign_daily(start=start, end=end)
+            by_cid = {}
+            for row in rows:
+                cid = str(row.get("campaign_id") or "")
+                if not cid:
+                    continue
+                if cid not in by_cid:
+                    by_cid[cid] = {"campaign_id": cid, "spend": 0.0, "clicks": 0, "impressions": 0, "conversions": 0.0}
+                by_cid[cid]["spend"]       += float(row.get("spend") or 0)
+                by_cid[cid]["clicks"]      += int(row.get("clicks") or 0)
+                by_cid[cid]["impressions"] += int(row.get("impressions") or 0)
+                by_cid[cid]["conversions"] += float(row.get("conversions") or 0)
+            if by_cid:
+                result["meta"] = by_cid
+        except Exception:
+            pass
+
+    return result
+
+
 def sync_meta(trigger: str) -> dict[str, str]:
     return {
         "trigger": trigger,

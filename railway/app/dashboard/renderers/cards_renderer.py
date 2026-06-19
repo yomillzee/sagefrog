@@ -90,12 +90,13 @@ def budget_pacing_panel_html(
                   <input type="hidden" name="monthly_budget_usd" id="budgetPacingSaveValue" value="{_esc(budget_input)}">
                   <button type="submit" class="btn secondary budget-pacing-save-btn">Save budget</button>
                 </form>"""
+    month_label = _esc(str(pacing.get("month_label") or "this month"))
     return f"""
-            <section class="panel budget-pacing-panel">
+            <section class="panel budget-pacing-panel" id="budgetPacingPanel">
               <div class="panel-head performance-trend-head">
                 <div class="panel-head-text">
                   <h2>Budget pacing</h2>
-                  <p class="performance-trend-desc muted">Cumulative paid spend for {_esc(str(pacing.get("month_label") or "this month"))} vs a linear monthly budget target.</p>
+                  <p class="performance-trend-desc muted">Cumulative paid spend for {month_label} vs a linear budget target. KPIs reflect last complete day.</p>
                 </div>
                 <div class="budget-pacing-controls">
                   <label for="budgetPacingInput">Monthly budget</label>
@@ -107,40 +108,56 @@ def budget_pacing_panel_html(
                   </div>
                 </div>
               </div>
-              <div class="budget-pacing-slicers">
-                <span class="filter-column-label">Show lines</span>
-                <div id="budgetPacingPlatformSlicers" class="filter-toggles" role="group" aria-label="Budget pacing chart lines"></div>
-              </div>
-              <div class="budget-pacing-stats" id="budgetPacingStats">
-                <div class="budget-pacing-stat">
-                  <span class="budget-pacing-stat-label">MTD spend (All)</span>
-                  <strong id="budgetPacingMtd">—</strong>
+
+              <div class="bp-status-grid">
+                <div class="bp-stat">
+                  <span class="bp-stat-label">Paced MTD spend</span>
+                  <strong id="bpMtd">—</strong>
+                  <small id="bpMtdSub">Through last complete day</small>
                 </div>
-                <div class="budget-pacing-stat">
-                  <span class="budget-pacing-stat-label">Monthly budget</span>
-                  <strong id="budgetPacingBudgetStat">—</strong>
+                <div class="bp-stat">
+                  <span class="bp-stat-label">Expected pace</span>
+                  <strong id="bpExpected">—</strong>
                 </div>
-                <div class="budget-pacing-stat">
-                  <span class="budget-pacing-stat-label">Expected pace today</span>
-                  <strong id="budgetPacingExpected">—</strong>
+                <div class="bp-stat">
+                  <span class="bp-stat-label">Pace variance</span>
+                  <strong id="bpVariance">—</strong>
                 </div>
-                <div class="budget-pacing-stat">
-                  <span class="budget-pacing-stat-label">vs pace</span>
-                  <strong id="budgetPacingVsPace">—</strong>
-                </div>
-                <div class="budget-pacing-stat">
-                  <span class="budget-pacing-stat-label">Required daily (rest of month)</span>
-                  <strong id="budgetPacingRequiredDaily">—</strong>
-                </div>
-                <div class="budget-pacing-stat">
-                  <span class="budget-pacing-stat-label">Adjust daily spend by</span>
-                  <strong id="budgetPacingDailyAdjust">—</strong>
+                <div class="bp-stat">
+                  <span class="bp-stat-label" id="bpActionLabel">Daily change</span>
+                  <strong id="bpAction">—</strong>
+                  <small id="bpActionSub"></small>
                 </div>
               </div>
-              <div class="budget-pacing-guidance" id="budgetPacingGuidance" aria-live="polite"></div>
-              <div class="performance-trend-chart-wrap budget-pacing-chart-wrap">
-                <p class="performance-trend-empty" id="budgetPacingEmpty">Enter a monthly budget to show the pacing line.</p>
-                <canvas id="budgetPacingChart"></canvas>
+
+              <div class="bp-main-grid">
+                <div class="bp-chart-card">
+                  <div class="bp-chart-head">
+                    <div>
+                      <div class="bp-chart-title">Cumulative spend by platform</div>
+                      <div class="bp-chart-sub" id="bpChartSub">Platform layers re-stack; total always reflects all platforms.</div>
+                    </div>
+                    <div class="bp-chart-btns">
+                      <button class="bp-mini-btn active" id="bpToggleProjection">Projection</button>
+                      <button class="bp-mini-btn active" id="bpTogglePoints">Points</button>
+                    </div>
+                  </div>
+                  <div id="bpSvgWrap" style="position:relative;">
+                    <svg id="bpChart" style="width:100%;height:340px;display:block;" role="img" aria-label="Budget pacing chart"></svg>
+                    <div class="bp-tooltip" id="bpTooltip"></div>
+                  </div>
+                  <div class="bp-legend" id="bpLegend"></div>
+                  <p class="bp-empty-msg" id="bpEmptyMsg">Enter a monthly budget to show the pacing line.</p>
+                </div>
+
+                <aside class="bp-side">
+                  <div class="bp-side-status" id="bpSideStatus"></div>
+                  <div class="bp-platform-list" id="bpPlatformList"></div>
+                  <details class="bp-freshness">
+                    <summary>Calculation details &amp; data freshness</summary>
+                    <div id="bpFreshnessBody" class="bp-freshness-body"></div>
+                  </details>
+                </aside>
               </div>
             </section>"""
 

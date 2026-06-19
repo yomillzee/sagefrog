@@ -566,13 +566,28 @@ def render_penn_html(
     )
 
     breakdowns = _breakdowns_from_snapshot(snapshot)
-    if client_cfg and _vr_preset != preset:
-        try:
-            from dashboard.services.warehouse_metrics_service import load_campaign_daily_from_warehouse
-            _campaign_daily = load_campaign_daily_from_warehouse(client_cfg, start=_vr_start, end=_vr_end)
+    if _vr_preset != preset:
+        _campaign_daily: dict[str, Any] = {}
+        if client_cfg:
+            try:
+                from dashboard.services.warehouse_metrics_service import load_campaign_daily_from_warehouse
+                _campaign_daily = load_campaign_daily_from_warehouse(client_cfg, start=_vr_start, end=_vr_end)
+            except Exception:
+                pass
+        if not _campaign_daily:
+            try:
+                from dashboard.services.warehouse_metrics_service import load_campaign_daily_from_bq
+                _accs = snapshot.get("accounts") or {}
+                _campaign_daily = load_campaign_daily_from_bq(
+                    linkedin_account_id=str(_accs.get("linkedin") or "") or None,
+                    meta_account_id=str(_accs.get("meta") or "") or None,
+                    start=_vr_start,
+                    end=_vr_end,
+                )
+            except Exception:
+                pass
+        if _campaign_daily:
             breakdowns = _patch_campaign_breakdowns(breakdowns, _campaign_daily)
-        except Exception:
-            pass
     accounts = accounts_early
     ga4_attr = snapshot.get("ga4_attribution")
     ga4_platforms = _ga4_platform_reports(ga4_attr)
@@ -668,6 +683,8 @@ def render_penn_html(
     has_ga4_summary = bool((ga4_pages_report or {}).get("summary"))
     show_website_tab = features.website_analytics and has_ga4
     _gsc_data = snapshot.get("gsc")
+    if _gsc_data and _vr_preset != preset:
+        _gsc_data = (snapshot.get("gsc_by_preset") or {}).get(_vr_preset) or _gsc_data
     _semrush_data = snapshot.get("semrush")
     view_tabs_html = _dashboard_view_tabs_html(
         show_website=show_website_tab,
@@ -1472,10 +1489,7 @@ def render_penn_html(
       flex-wrap: wrap;
       justify-content: flex-end;
     }}
-    .budget-pacing-currency {{
-      color: var(--muted);
-      font-weight: 600;
-    }}
+    .budget-pacing-currency {{ color: var(--muted); font-weight: 600; }}
     #budgetPacingInput {{
       width: 140px;
       padding: 8px 10px;
@@ -1483,62 +1497,218 @@ def render_penn_html(
       border-radius: 8px;
       font-size: 0.95rem;
     }}
-    .budget-pacing-save-form {{
-      margin: 0;
-    }}
-    .budget-pacing-slicers {{
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 10px 16px;
-      padding: 0 22px 14px;
-    }}
-    .budget-pacing-slicers .filter-column-label {{
-      margin-bottom: 0;
-    }}
-    .budget-pacing-stats {{
+    .budget-pacing-save-form {{ margin: 0; }}
+    .bp-status-grid {{
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0,1fr));
       gap: 12px;
       padding: 0 22px 16px;
     }}
-    .budget-pacing-stat strong.over {{ color: #b45309; }}
-    .budget-pacing-stat strong.under {{ color: #0f766e; }}
-    .budget-pacing-guidance {{
-      margin: 0 22px 16px;
-      padding: 14px 16px;
-      background: #f8fafc;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      font-size: 0.9rem;
-      color: var(--text);
-      line-height: 1.55;
-    }}
-    .budget-pacing-guidance .guidance-platforms {{
-      margin-top: 8px;
-      color: var(--muted);
-      font-size: 0.84rem;
-    }}
-    .budget-pacing-stat {{
+    .bp-stat {{
       background: #f8fafc;
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
     }}
-    .budget-pacing-stat-label {{
-      display: block;
+    .bp-stat-label {{
       font-size: 0.72rem;
       font-weight: 700;
       letter-spacing: 0.05em;
       text-transform: uppercase;
       color: var(--muted);
-      margin-bottom: 4px;
     }}
-    .budget-pacing-chart-wrap {{
+    .bp-stat strong {{
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }}
+    .bp-stat small {{ font-size: 0.72rem; color: var(--muted); font-weight: 600; }}
+    .bp-over {{ color: #b45309 !important; }}
+    .bp-under {{ color: #0f766e !important; }}
+    .bp-main-grid {{
+      display: grid;
+      grid-template-columns: minmax(0,1fr) 300px;
+      gap: 14px;
       padding: 0 22px 22px;
+      align-items: start;
     }}
-    @media (max-width: 900px) {{
-      .budget-pacing-stats {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    .bp-chart-card {{
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 14px 8px;
+      overflow: hidden;
+    }}
+    .bp-chart-head {{
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 8px;
+    }}
+    .bp-chart-title {{ font-weight: 800; font-size: 0.92rem; letter-spacing: -0.01em; }}
+    .bp-chart-sub {{ color: var(--muted); font-size: 0.75rem; font-weight: 600; margin-top: 2px; }}
+    .bp-chart-btns {{ display: flex; gap: 6px; flex-shrink: 0; }}
+    .bp-mini-btn {{
+      font-size: 0.72rem;
+      font-weight: 750;
+      border: 1px solid var(--border);
+      background: #fff;
+      border-radius: 999px;
+      padding: 5px 9px;
+      cursor: pointer;
+      color: var(--muted);
+    }}
+    .bp-mini-btn.active {{ background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }}
+    .bp-legend {{
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 7px;
+      padding: 8px 4px 4px;
+    }}
+    .bp-legend-item {{
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #fff;
+      font-size: 0.75rem;
+      font-weight: 750;
+      color: var(--muted-2, #475569);
+      cursor: pointer;
+      user-select: none;
+      transition: opacity 0.15s, box-shadow 0.15s;
+    }}
+    .bp-legend-item:hover {{ box-shadow: 0 4px 12px rgba(15,23,42,.08); }}
+    .bp-legend-item.off {{ opacity: 0.4; background: #f8fafc; }}
+    .bp-legend-swatch {{
+      width: 26px;
+      height: 9px;
+      border-radius: 999px;
+      border: 2.5px solid currentColor;
+      background: #fff;
+      flex-shrink: 0;
+    }}
+    .bp-empty-msg {{
+      display: none;
+      padding: 40px 16px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }}
+    .bp-empty-msg.show {{ display: block; }}
+    .bp-tooltip {{
+      position: absolute;
+      min-width: 215px;
+      background: #0f172a;
+      color: #fff;
+      border-radius: 11px;
+      padding: 10px 12px;
+      pointer-events: none;
+      box-shadow: 0 10px 28px rgba(15,23,42,.28);
+      font-size: 0.72rem;
+      transform: translate(-50%,-112%);
+      opacity: 0;
+      transition: opacity 0.08s;
+      z-index: 5;
+    }}
+    .bp-tooltip.show {{ opacity: 1; }}
+    .bp-tt-title {{ font-weight: 900; margin-bottom: 6px; font-size: 0.8rem; }}
+    .bp-tt-row {{ display: flex; justify-content: space-between; gap: 14px; margin: 2px 0; color: #dbeafe; }}
+    .bp-tt-row b {{ color: #fff; }}
+    .bp-side {{
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }}
+    .bp-side-status {{
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      overflow: hidden;
+    }}
+    .bp-side-row {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 12px;
+      font-size: 0.8rem;
+      border-bottom: 1px solid var(--border);
+    }}
+    .bp-side-row:last-child {{ border-bottom: 0; }}
+    .bp-side-row-label {{ color: var(--muted); font-weight: 700; }}
+    .bp-side-row-val {{ font-weight: 800; text-align: right; color: var(--text); }}
+    .bp-platform-list {{ display: flex; flex-direction: column; gap: 7px; }}
+    .bp-platform-accordion {{
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      background: #fff;
+      overflow: hidden;
+    }}
+    .bp-platform-accordion summary {{
+      cursor: pointer;
+      padding: 10px 12px;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }}
+    .bp-platform-accordion summary::-webkit-details-marker {{ display: none; }}
+    .bp-platform-accordion summary::after {{ content: "+"; color: var(--muted); font-size: 15px; flex-shrink: 0; }}
+    .bp-platform-accordion[open] summary::after {{ content: "−"; }}
+    .bp-plat-summary {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; width: 100%; min-width: 0; }}
+    .bp-plat-title {{ display: flex; align-items: center; gap: 5px; font-size: 0.8rem; font-weight: 850; color: var(--text); margin-bottom: 2px; }}
+    .bp-plat-sub {{ font-size: 0.7rem; color: var(--muted); font-weight: 600; }}
+    .bp-plat-delta {{ font-size: 0.7rem; font-weight: 850; white-space: nowrap; text-align: right; flex-shrink: 0; padding-top: 1px; }}
+    .bp-dot {{ width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }}
+    .bp-plat-body {{ padding: 0 10px 10px; }}
+    .bp-plat-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }}
+    .bp-plat-metric {{ background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }}
+    .bp-plat-metric span {{ display: block; font-size: 0.62rem; font-weight: 750; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 2px; }}
+    .bp-plat-metric b {{ display: block; font-size: 0.75rem; color: var(--text); font-weight: 800; }}
+    .bp-freshness {{
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      background: #fff;
+      overflow: hidden;
+    }}
+    .bp-freshness summary {{
+      cursor: pointer;
+      padding: 9px 12px;
+      font-size: 0.75rem;
+      font-weight: 750;
+      color: var(--muted);
+      list-style: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }}
+    .bp-freshness summary::-webkit-details-marker {{ display: none; }}
+    .bp-freshness summary::after {{ content: "+"; font-size: 13px; color: var(--muted); }}
+    .bp-freshness[open] summary::after {{ content: "−"; }}
+    .bp-freshness-body {{
+      padding: 0 12px 12px;
+      font-size: 0.75rem;
+      color: var(--muted);
+      line-height: 1.55;
+      border-top: 1px solid var(--border);
+    }}
+    @media (max-width: 960px) {{
+      .bp-status-grid {{ grid-template-columns: repeat(2, minmax(0,1fr)); }}
+      .bp-main-grid {{ grid-template-columns: 1fr; }}
+      .bp-side {{ order: -1; }}
+    }}
+    @media (max-width: 640px) {{
+      .bp-status-grid {{ grid-template-columns: 1fr 1fr; }}
       .budget-pacing-controls {{ align-items: stretch; width: 100%; }}
       .budget-pacing-input-row {{ justify-content: flex-start; }}
     }}
@@ -2750,11 +2920,13 @@ def render_penn_html(
       pct_month_elapsed: 0,
     }});
     let performanceChartInstance = null;
-    let budgetPacingChartInstance = null;
     let budgetPacingBudget = Number(budgetPacingRaw.monthly_budget || 0);
     const budgetPacingPlatformCatalog = budgetPacingRaw.platforms || [];
     const budgetPacingColors = budgetPacingRaw.platform_colors || {{}};
-    const budgetPacingLineState = new Set(['all', ...budgetPacingPlatformCatalog.map(item => item.id)]);
+    const bpVisible = {{ all: true }};
+    for (const _bpi of budgetPacingPlatformCatalog) bpVisible[_bpi.id] = true;
+    let bpShowProjection = true;
+    let bpShowPoints = true;
 
     function formatDailyLabel(dateStr) {{
       const s = String(dateStr).slice(0, 10);
@@ -2917,321 +3089,408 @@ def render_penn_html(
       syncMetricToggleButtons();
     }}
 
-    function syncBudgetPacingPlatformSlicers() {{
-      const wrap = document.getElementById('budgetPacingPlatformSlicers');
-      if (!wrap) return;
-      wrap.querySelectorAll('.filter-toggle').forEach(btn => {{
-        const on = budgetPacingLineState.has(btn.dataset.id);
-        btn.classList.toggle('active', on);
-        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-      }});
+    function bpGetDailyArr(platformId) {{
+      const raw = ((budgetPacingRaw.daily_spend_by_platform || {{}})[platformId]) || {{}};
+      return (budgetPacingRaw.labels || []).map(d => Number(raw[d] || 0));
     }}
 
-    function toggleBudgetPacingLine(lineId) {{
-      if (budgetPacingLineState.has(lineId)) {{
-        const visibleLines = [...budgetPacingLineState].filter(id => id !== 'pace');
-        if (visibleLines.length <= 1) return;
-        budgetPacingLineState.delete(lineId);
-      }} else {{
-        budgetPacingLineState.add(lineId);
-      }}
-      syncBudgetPacingPlatformSlicers();
-      refreshBudgetPacingChart();
-    }}
-
-    function initBudgetPacingPlatformSlicers() {{
-      const wrap = document.getElementById('budgetPacingPlatformSlicers');
-      if (!wrap) return;
-      wrap.innerHTML = '';
-      const lineOptions = [
-        {{ id: 'all', label: 'All', className: 'filter-toggle--all' }},
-        ...budgetPacingPlatformCatalog.map(item => ({{
-          id: item.id,
-          label: item.label,
-          className: `t-${{item.id}}`,
-        }})),
-      ];
-      if (!lineOptions.length) {{
-        wrap.innerHTML = '<span class="muted">No paid platform spend this month yet.</span>';
-        return;
-      }}
-      for (const item of lineOptions) {{
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = `filter-toggle ${{item.className || ''}}`.trim();
-        btn.textContent = item.label;
-        btn.dataset.id = item.id;
-        btn.addEventListener('click', () => toggleBudgetPacingLine(item.id));
-        wrap.appendChild(btn);
-      }}
-      syncBudgetPacingPlatformSlicers();
-    }}
-
-    function buildBudgetPacingSeries() {{
+    function bpComputeGuidance() {{
       const labels = budgetPacingRaw.labels || [];
-      const byPlatform = budgetPacingRaw.daily_spend_by_platform || {{}};
-      const storedByPlatform = budgetPacingRaw.cumulative_by_platform || {{}};
-      const cumulativeByPlatform = {{}};
-      for (const item of budgetPacingPlatformCatalog) {{
-        if (storedByPlatform[item.id]) {{
-          cumulativeByPlatform[item.id] = storedByPlatform[item.id];
-          continue;
-        }}
-        let running = 0;
-        cumulativeByPlatform[item.id] = labels.map(dayKey => {{
-          running += Number(byPlatform[item.id]?.[dayKey] || 0);
-          return running;
-        }});
-      }}
-      let allRunning = 0;
-      const cumulativeAll = labels.map(dayKey => {{
-        const dayTotal = budgetPacingPlatformCatalog.reduce(
-          (sum, item) => sum + Number(byPlatform[item.id]?.[dayKey] || 0),
-          0
-        );
-        allRunning += dayTotal;
-        return allRunning;
-      }});
-      const daysInMonth = Number(budgetPacingRaw.days_in_month || labels.length || 30);
-      const paceLine = labels.map((_, idx) => (
-        budgetPacingBudget > 0 ? budgetPacingBudget * ((idx + 1) / daysInMonth) : 0
-      ));
-      return {{ labels, cumulativeAll, cumulativeByPlatform, paceLine }};
-    }}
-
-    function computeBudgetPacingGuidance(cumulativeAll, paceLine) {{
-      const labels = budgetPacingRaw.labels || [];
-      const byPlatform = budgetPacingRaw.daily_spend_by_platform || {{}};
       const daysInMonth = Number(budgetPacingRaw.days_in_month || 30);
       const daysElapsed = labels.length;
-      const daysRemaining = Math.max(0, daysInMonth - daysElapsed);
-      const mtd = cumulativeAll.length ? cumulativeAll[cumulativeAll.length - 1] : 0;
-      const expected = paceLine.length ? paceLine[paceLine.length - 1] : 0;
-      const budget = budgetPacingBudget;
-      const pctVsPace = expected > 0 ? (100 * (mtd - expected) / expected) : null;
-      const remainingBudget = budget - mtd;
-      const avgDaily = daysElapsed > 0 ? mtd / daysElapsed : 0;
-      const requiredDaily = budget > 0 && daysRemaining > 0 ? remainingBudget / daysRemaining : null;
-      const dailyAdjustment = requiredDaily !== null && daysElapsed > 0
-        ? requiredDaily - avgDaily
-        : null;
+      const pacingDay = Math.max(0, daysElapsed - 1);
+      const remainingDays = Math.max(0, daysInMonth - pacingDay);
 
-      const platformAdjustments = [];
-      for (const item of budgetPacingPlatformCatalog) {{
-        let platformMtd = 0;
-        for (const dayKey of labels) {{
-          platformMtd += Number(byPlatform[item.id]?.[dayKey] || 0);
-        }}
-        const platformAvg = daysElapsed > 0 ? platformMtd / daysElapsed : 0;
-        const share = mtd > 0 ? platformMtd / mtd : (1 / budgetPacingPlatformCatalog.length);
-        const platformRequired = requiredDaily !== null ? remainingBudget * share / daysRemaining : null;
-        const platformAdjust = platformRequired !== null ? platformRequired - platformAvg : null;
-        platformAdjustments.push({{
-          id: item.id,
-          label: item.label,
-          mtd: platformMtd,
-          adjustment: platformAdjust,
-        }});
-      }}
+      const platformDailies = budgetPacingPlatformCatalog.map(p => bpGetDailyArr(p.id));
+      const allDailyTotal = labels.map((_, i) =>
+        platformDailies.reduce((s, d) => s + (d[i] || 0), 0)
+      );
+      let _bpRun = 0;
+      const allCumulative = allDailyTotal.map(v => (_bpRun += v));
+
+      const pacedMtd = pacingDay > 0 ? (allCumulative[pacingDay - 1] || 0) : 0;
+      const expectedPace = budgetPacingBudget > 0 ? budgetPacingBudget / daysInMonth * pacingDay : 0;
+      const paceVariance = pacedMtd - expectedPace;
+      const budgetLeft = budgetPacingBudget - pacedMtd;
+      const neededPerDay = remainingDays > 0 ? budgetLeft / remainingDays : null;
+
+      const windowSize = Math.min(7, pacingDay);
+      const windowStart = pacingDay - windowSize;
+      const windowSpend = allDailyTotal.slice(windowStart, pacingDay).reduce((s, v) => s + v, 0);
+      const recentAvgPerDay = windowSize > 0 ? windowSpend / windowSize : 0;
+      const increaseDecreaseAmt = neededPerDay !== null ? neededPerDay - recentAvgPerDay : null;
+
+      const platforms = budgetPacingPlatformCatalog.map((p, pi) => {{
+        const daily = platformDailies[pi];
+        let _r2 = 0;
+        const cumul = daily.map(v => (_r2 += v));
+        const platMtd = pacingDay > 0 ? (cumul[pacingDay - 1] || 0) : 0;
+        const platShare = pacedMtd > 0 ? platMtd / pacedMtd : (1 / Math.max(1, budgetPacingPlatformCatalog.length));
+        const platBudget = budgetPacingBudget > 0 ? budgetPacingBudget * platShare : 0;
+        const platLeft = platBudget - platMtd;
+        const platNeeded = remainingDays > 0 ? platLeft / remainingDays : null;
+        const platWin = daily.slice(windowStart, pacingDay).reduce((s, v) => s + v, 0);
+        const platRecentAvg = windowSize > 0 ? platWin / windowSize : 0;
+        const platDelta = platNeeded !== null ? platNeeded - platRecentAvg : null;
+        return {{
+          id: p.id, label: p.label,
+          color: budgetPacingColors[p.id] || '#64748b',
+          daily, cumul,
+          mtd: platMtd, budget: platBudget, budgetLeft: platLeft,
+          neededPerDay: platNeeded, recentAvg: platRecentAvg, delta: platDelta,
+        }};
+      }});
 
       return {{
-        mtd,
-        expected,
-        budget,
-        pctVsPace,
-        daysRemaining,
-        requiredDaily,
-        dailyAdjustment,
-        platformAdjustments,
+        labels, daysInMonth, daysElapsed, pacingDay, remainingDays,
+        allDailyTotal, allCumulative,
+        pacedMtd, expectedPace, paceVariance,
+        budgetLeft, neededPerDay, recentAvgPerDay, increaseDecreaseAmt,
+        platforms, windowSize, windowStart,
       }};
     }}
 
-    function formatPctVsPace(pct) {{
-      if (pct === null || !Number.isFinite(pct)) return '—';
-      const abs = Math.abs(pct).toFixed(1);
-      if (Math.abs(pct) < 0.05) return 'On pace (0%)';
-      return `${{pct > 0 ? '+' : '-'}}${{abs}}% ${{pct > 0 ? 'over' : 'under'}}`;
+    function bpFmtSign(v) {{
+      if (v === null || !Number.isFinite(v)) return '—';
+      return (v >= 0 ? '+' : '−') + fmtMoney(Math.abs(v));
     }}
 
-    function formatDailyAdjust(amount) {{
-      if (amount === null || !Number.isFinite(amount)) return '—';
-      if (Math.abs(amount) < 0.01) return 'On target ($0/day)';
-      const verb = amount > 0 ? 'Raise' : 'Lower';
-      return `${{verb}} by ${{fmtMoney(Math.abs(amount))}}/day`;
-    }}
-
-    function updateBudgetPacingStats(cumulativeAll, paceLine) {{
-      const guidance = computeBudgetPacingGuidance(cumulativeAll, paceLine);
-      const mtdEl = document.getElementById('budgetPacingMtd');
-      const budgetEl = document.getElementById('budgetPacingBudgetStat');
-      const expectedEl = document.getElementById('budgetPacingExpected');
-      const vsPaceEl = document.getElementById('budgetPacingVsPace');
-      const requiredEl = document.getElementById('budgetPacingRequiredDaily');
-      const adjustEl = document.getElementById('budgetPacingDailyAdjust');
-      const guidanceEl = document.getElementById('budgetPacingGuidance');
-      const saveValueEl = document.getElementById('budgetPacingSaveValue');
-
-      if (mtdEl) mtdEl.textContent = fmtMoney(guidance.mtd);
-      if (budgetEl) budgetEl.textContent = guidance.budget > 0 ? fmtMoney(guidance.budget) : '—';
-      if (expectedEl) expectedEl.textContent = guidance.budget > 0 ? fmtMoney(guidance.expected) : '—';
-      if (saveValueEl) saveValueEl.value = guidance.budget > 0 ? String(guidance.budget) : '';
-
-      if (vsPaceEl) {{
-        vsPaceEl.textContent = guidance.budget > 0 ? formatPctVsPace(guidance.pctVsPace) : '—';
-        vsPaceEl.classList.remove('over', 'under');
-        if (guidance.pctVsPace !== null && Math.abs(guidance.pctVsPace) >= 0.05) {{
-          vsPaceEl.classList.add(guidance.pctVsPace > 0 ? 'over' : 'under');
-        }}
+    function bpUpdateStatusBar(g) {{
+      const hasBudget = budgetPacingBudget > 0;
+      const mtdEl = document.getElementById('bpMtd');
+      const expEl = document.getElementById('bpExpected');
+      const varEl = document.getElementById('bpVariance');
+      const actEl = document.getElementById('bpAction');
+      const actLbl = document.getElementById('bpActionLabel');
+      const actSub = document.getElementById('bpActionSub');
+      if (mtdEl) mtdEl.textContent = fmtMoney(g.pacedMtd);
+      if (expEl) expEl.textContent = hasBudget ? fmtMoney(g.expectedPace) : '—';
+      if (varEl) {{
+        varEl.textContent = hasBudget ? bpFmtSign(g.paceVariance) : '—';
+        varEl.className = hasBudget && Number.isFinite(g.paceVariance)
+          ? (g.paceVariance >= 0 ? 'bp-over' : 'bp-under') : '';
       }}
-      if (requiredEl) {{
-        if (guidance.budget <= 0) {{
-          requiredEl.textContent = 'Set budget first';
-        }} else if (guidance.requiredDaily === null) {{
-          requiredEl.textContent = '—';
-        }} else if (guidance.budget - guidance.mtd <= 0) {{
-          requiredEl.textContent = '$0/day (over budget)';
+      if (actEl && actLbl) {{
+        const amt = g.increaseDecreaseAmt;
+        if (!hasBudget || amt === null) {{
+          actLbl.textContent = 'Daily change';
+          actEl.textContent = '—';
+          actEl.className = '';
+          if (actSub) actSub.textContent = '';
         }} else {{
-          requiredEl.textContent = `${{fmtMoney(guidance.requiredDaily)}}/day`;
-        }}
-      }}
-      if (adjustEl) {{
-        adjustEl.textContent = guidance.budget > 0 ? formatDailyAdjust(guidance.dailyAdjustment) : '—';
-        adjustEl.classList.remove('over', 'under');
-        if (guidance.dailyAdjustment !== null && Math.abs(guidance.dailyAdjustment) >= 0.01) {{
-          adjustEl.classList.add(guidance.dailyAdjustment > 0 ? 'under' : 'over');
-        }}
-      }}
-
-      if (guidanceEl) {{
-        if (!guidance.budget) {{
-          guidanceEl.innerHTML = '<p class="muted">Enter a monthly budget to see pacing guidance for the rest of the month.</p>';
-        }} else if (!guidance.daysRemaining) {{
-          guidanceEl.innerHTML = '<p class="muted">Last day of the month — compare MTD spend to budget above.</p>';
-        }} else {{
-          const remaining = guidance.budget - guidance.mtd;
-          const adjText = formatDailyAdjust(guidance.dailyAdjustment);
-          const direction = guidance.dailyAdjustment > 0 ? 'raise' : 'lower';
-          const platformLines = guidance.platformAdjustments
-            .filter(row => row.mtd > 0 || row.adjustment !== null)
-            .map(row => {{
-              if (row.adjustment === null) return `${{row.label}}: —`;
-              if (Math.abs(row.adjustment) < 0.01) return `${{row.label}}: on target`;
-              const v = row.adjustment > 0 ? 'raise' : 'lower';
-              return `${{row.label}}: ${{v}} ${{fmtMoney(Math.abs(row.adjustment))}}/day`;
-            }})
-            .join(' · ');
-          guidanceEl.innerHTML = `
-            <p><strong>Pacing note for media:</strong> You are <strong>${{formatPctVsPace(guidance.pctVsPace)}}</strong> vs where spend should be today.
-            With <strong>${{guidance.daysRemaining}}</strong> day${{guidance.daysRemaining === 1 ? '' : 's'}} left,
-            <strong>${{fmtMoney(Math.max(0, remaining))}}</strong> remains in budget${{remaining <= 0 ? ' (already over budget)' : ''}}.
-            To land on budget, ${{direction}} total daily spend — ${{adjText.replace('Raise by ', 'raise by ').replace('Lower by ', 'lower by ')}} for the rest of the month
-            (target <strong>${{remaining <= 0 ? '$0/day' : fmtMoney(guidance.requiredDaily) + '/day'}}</strong> vs current avg <strong>${{fmtMoney(guidance.mtd / (budgetPacingRaw.labels?.length || 1))}}/day</strong>).</p>
-            ${{platformLines ? `<p class="guidance-platforms"><strong>By platform:</strong> ${{escHtml(platformLines)}}</p>` : ''}}`;
+          actLbl.textContent = amt >= 0 ? 'Increase by' : 'Decrease by';
+          actEl.textContent = fmtMoney(Math.abs(amt)) + '/day';
+          actEl.className = amt >= 0 ? 'bp-under' : 'bp-over';
+          if (actSub) actSub.textContent = g.remainingDays + ' days remaining';
         }}
       }}
     }}
 
-    function refreshBudgetPacingChart() {{
-      const emptyEl = document.getElementById('budgetPacingEmpty');
-      const canvas = document.getElementById('budgetPacingChart');
-      if (!canvas) return;
+    function bpUpdateSideStatus(g) {{
+      const el = document.getElementById('bpSideStatus');
+      if (!el) return;
+      const hasBudget = budgetPacingBudget > 0;
+      const rows = [
+        ['MTD spend', fmtMoney(g.pacedMtd)],
+        ['Monthly budget', hasBudget ? fmtMoney(budgetPacingBudget) : '—'],
+        ['Budget remaining', hasBudget ? fmtMoney(Math.max(0, g.budgetLeft)) : '—'],
+        ['Pace variance', hasBudget ? bpFmtSign(g.paceVariance) : '—'],
+        ['Needed/day', hasBudget && g.neededPerDay !== null ? fmtMoney(Math.max(0, g.neededPerDay)) + '/day' : '—'],
+        ['Recent avg/day', fmtMoney(g.recentAvgPerDay) + '/day'],
+      ];
+      el.innerHTML = rows.map(([lbl, val]) =>
+        `<div class="bp-side-row"><span class="bp-side-row-label">${{escHtml(lbl)}}</span><span class="bp-side-row-val">${{escHtml(val)}}</span></div>`
+      ).join('');
+    }}
 
-      if (budgetPacingChartInstance) {{
-        budgetPacingChartInstance.destroy();
-        budgetPacingChartInstance = null;
-      }}
+    function bpUpdatePlatformList(g) {{
+      const el = document.getElementById('bpPlatformList');
+      if (!el) return;
+      const hasBudget = budgetPacingBudget > 0;
+      el.innerHTML = g.platforms.map(p => {{
+        const delta = hasBudget && p.delta !== null ? p.delta : null;
+        const deltaText = delta === null ? '' : (delta >= 0
+          ? `Increase ${{fmtMoney(Math.abs(delta))}}/day`
+          : `Decrease ${{fmtMoney(Math.abs(delta))}}/day`);
+        const deltaClass = delta === null ? '' : (delta >= 0 ? 'bp-under' : 'bp-over');
+        const metrics = [
+          ['MTD spend', fmtMoney(p.mtd)],
+          ['Budget share', hasBudget ? fmtMoney(p.budget) : '—'],
+          ['Budget left', hasBudget ? fmtMoney(Math.max(0, p.budgetLeft)) : '—'],
+          ['Needed/day', hasBudget && p.neededPerDay !== null ? fmtMoney(Math.max(0, p.neededPerDay)) + '/day' : '—'],
+          ['Recent avg/day', fmtMoney(p.recentAvg) + '/day'],
+          ['Daily change', delta !== null ? (delta >= 0 ? '+' : '−') + fmtMoney(Math.abs(delta)) + '/day' : '—'],
+          ['Days remaining', String(g.remainingDays)],
+          ['Pacing day', String(g.pacingDay) + ' of ' + String(g.daysInMonth)],
+        ];
+        return `
+          <details class="bp-platform-accordion">
+            <summary>
+              <div class="bp-plat-summary">
+                <div>
+                  <div class="bp-plat-title"><span class="bp-dot" style="background:${{escHtml(p.color)}}"></span>${{escHtml(p.label)}}</div>
+                  <div class="bp-plat-sub">MTD: ${{escHtml(fmtMoney(p.mtd))}}</div>
+                </div>
+                <span class="bp-plat-delta ${{escHtml(deltaClass)}}">${{escHtml(deltaText)}}</span>
+              </div>
+            </summary>
+            <div class="bp-plat-body">
+              <div class="bp-plat-grid">
+                ${{metrics.map(([lbl, val]) => `<div class="bp-plat-metric"><span>${{escHtml(lbl)}}</span><b>${{escHtml(val)}}</b></div>`).join('')}}
+              </div>
+            </div>
+          </details>`;
+      }}).join('');
+    }}
 
-      const {{ labels, cumulativeAll, cumulativeByPlatform, paceLine }} = buildBudgetPacingSeries();
-      const hasSpend = cumulativeAll.some(v => Number(v) > 0);
-      const showChart = hasSpend || budgetPacingBudget > 0;
-      if (emptyEl) {{
-        emptyEl.classList.toggle('show', !showChart);
-        emptyEl.textContent = budgetPacingBudget > 0
-          ? 'No paid spend recorded yet this month.'
-          : 'Enter a monthly budget to show the pacing line.';
-      }}
-      canvas.hidden = !showChart;
-      updateBudgetPacingStats(cumulativeAll, paceLine);
-      if (!showChart) return;
+    function bpUpdateFreshness(g) {{
+      const el = document.getElementById('bpFreshnessBody');
+      if (!el) return;
+      const lastComplete = g.pacingDay > 0 ? (g.labels[g.pacingDay - 1] || '—') : '—';
+      const lastData = g.labels.length > 0 ? g.labels[g.labels.length - 1] : '—';
+      el.innerHTML = `<div style="margin-top:8px">
+        <strong>Pacing day:</strong> ${{escHtml(String(g.pacingDay))}} of ${{escHtml(String(g.daysInMonth))}}<br>
+        <strong>Last complete day:</strong> ${{escHtml(lastComplete)}}<br>
+        <strong>Last data row:</strong> ${{escHtml(lastData)}}<br>
+        <strong>Expected pace</strong> = budget &divide; days_in_month &times; pacing_day<br>
+        <strong>Needed/day</strong> = (budget &minus; MTD) &divide; remaining_days<br>
+        <strong>Recent avg</strong> = last ${{escHtml(String(g.windowSize))}} complete day(s) avg spend/day
+      </div>`;
+    }}
 
-      const datasets = [];
-      if (budgetPacingLineState.has('all')) {{
-        datasets.push({{
-          label: 'All',
-          data: cumulativeAll,
-          borderColor: budgetPacingColors.all || '#0a2540',
-          backgroundColor: 'rgba(10, 37, 64, 0.06)',
-          fill: false,
-          tension: 0.25,
-          borderWidth: 3,
-          pointRadius: 2,
+    function bpUpdateLegend(g) {{
+      const el = document.getElementById('bpLegend');
+      if (!el) return;
+      const items = [
+        ...g.platforms.map(p => ({{ id: p.id, label: p.label, color: p.color, isLine: false }})),
+        {{ id: '_total', label: 'Total', color: '#0a2540', isLine: true }},
+        ...(budgetPacingBudget > 0 ? [{{ id: '_pace', label: 'Budget pace', color: '#c9a227', isLine: true }}] : []),
+      ];
+      el.innerHTML = items.map(item => {{
+        const off = (item.id === '_total' || item.id === '_pace') ? false : !bpVisible[item.id];
+        const sw = item.isLine
+          ? `border-color:${{escHtml(item.color)}};background:transparent`
+          : `border-color:${{escHtml(item.color)}};background:${{escHtml(item.color)}}33`;
+        return `<button class="bp-legend-item${{off ? ' off' : ''}}" data-bp-legend="${{escHtml(item.id)}}" type="button">
+          <span class="bp-legend-swatch" style="${{escHtml(sw)}}"></span>
+          ${{escHtml(item.label)}}
+        </button>`;
+      }}).join('');
+      el.querySelectorAll('[data-bp-legend]').forEach(btn => {{
+        btn.addEventListener('click', () => {{
+          const id = btn.dataset.bpLegend;
+          if (id === '_total' || id === '_pace') return;
+          bpVisible[id] = !bpVisible[id];
+          bpDraw();
         }});
-      }}
-      for (const item of budgetPacingPlatformCatalog) {{
-        if (!budgetPacingLineState.has(item.id)) continue;
-        datasets.push({{
-          label: item.label,
-          data: cumulativeByPlatform[item.id] || [],
-          borderColor: budgetPacingColors[item.id] || '#64748b',
-          fill: false,
-          tension: 0.25,
-          borderWidth: 2,
-          pointRadius: 1,
-          borderDash: [],
-        }});
-      }}
-      if (budgetPacingBudget > 0) {{
-        datasets.push({{
-          label: 'Budget pace',
-          data: paceLine,
-          borderColor: budgetPacingColors.pace || '#c9a227',
-          borderDash: [6, 4],
-          fill: false,
-          tension: 0,
-          borderWidth: 2,
-          pointRadius: 0,
-        }});
-      }}
-
-      budgetPacingChartInstance = new Chart(canvas, {{
-        type: 'line',
-        data: {{
-          labels: labels.map(formatDailyLabel),
-          datasets,
-        }},
-        options: {{
-          responsive: true,
-          maintainAspectRatio: true,
-          interaction: {{ mode: 'index', intersect: false }},
-          scales: {{
-            x: {{ grid: {{ display: false }} }},
-            y: {{
-              beginAtZero: true,
-              ticks: {{ callback: v => '$' + Number(v).toLocaleString() }},
-            }},
-          }},
-          plugins: {{
-            legend: {{ position: 'bottom' }},
-            tooltip: {{
-              callbacks: {{
-                label(context) {{
-                  return `${{context.dataset.label}}: ${{fmtMoney(context.parsed.y)}}`;
-                }},
-              }},
-            }},
-          }},
-        }},
       }});
+    }}
+
+    function bpDrawChart(g) {{
+      const svg = document.getElementById('bpChart');
+      if (!svg) return;
+      svg.innerHTML = '';
+      const W = svg.clientWidth || 600;
+      const H = 340;
+      const PAD = {{ top: 20, right: 24, bottom: 40, left: 64 }};
+      const cW = Math.max(1, W - PAD.left - PAD.right);
+      const cH = Math.max(1, H - PAD.top - PAD.bottom);
+      const ns = 'http://www.w3.org/2000/svg';
+
+      const labels = g.labels;
+      const daysInMonth = g.daysInMonth;
+      const nPoints = labels.length;
+      if (nPoints === 0) return;
+
+      const yMax = Math.max(
+        ...g.allCumulative, budgetPacingBudget > 0 ? budgetPacingBudget : 0, 1
+      ) * 1.08;
+
+      function xOf(dayIdx) {{
+        return PAD.left + (dayIdx / Math.max(1, daysInMonth - 1)) * cW;
+      }}
+      function yOf(val) {{
+        return PAD.top + cH - (Math.max(0, val) / yMax) * cH;
+      }}
+
+      // Y gridlines + labels
+      for (let ti = 0; ti <= 5; ti++) {{
+        const val = (yMax / 5) * ti;
+        const y = yOf(val);
+        const gl = document.createElementNS(ns, 'line');
+        gl.setAttribute('x1', PAD.left); gl.setAttribute('x2', PAD.left + cW);
+        gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+        gl.setAttribute('stroke', '#e2e8f0'); gl.setAttribute('stroke-width', '1');
+        svg.appendChild(gl);
+        const tl = document.createElementNS(ns, 'text');
+        tl.setAttribute('x', PAD.left - 6); tl.setAttribute('y', y + 4);
+        tl.setAttribute('text-anchor', 'end');
+        tl.setAttribute('font-size', '10'); tl.setAttribute('fill', '#94a3b8');
+        tl.textContent = val >= 1000 ? '$' + (val >= 10000 ? Math.round(val / 1000) : (val / 1000).toFixed(1)) + 'k' : '$' + Math.round(val);
+        svg.appendChild(tl);
+      }}
+
+      // X axis day labels (~6 ticks)
+      const xStep = Math.max(1, Math.round(daysInMonth / 6));
+      for (let di = 0; di < daysInMonth; di += xStep) {{
+        const xl = document.createElementNS(ns, 'text');
+        xl.setAttribute('x', xOf(di)); xl.setAttribute('y', PAD.top + cH + 16);
+        xl.setAttribute('text-anchor', 'middle');
+        xl.setAttribute('font-size', '10'); xl.setAttribute('fill', '#94a3b8');
+        xl.textContent = di < labels.length ? labels[di].slice(8, 10) : String(di + 1);
+        svg.appendChild(xl);
+      }}
+
+      // Stacked areas (visible platforms)
+      const visiblePlats = g.platforms.filter(p => bpVisible[p.id]);
+      const stackBot = new Array(nPoints).fill(0);
+      for (const p of visiblePlats) {{
+        const stackTop = p.cumul.map((v, i) => stackBot[i] + v);
+        const topPts = stackTop.map((v, i) => ({{ x: xOf(i), y: yOf(v) }}));
+        const botPts = stackBot.map((v, i) => ({{ x: xOf(i), y: yOf(v) }}));
+        const d = [
+          ...topPts.map((pt, i) => (i === 0 ? `M${{pt.x}},${{pt.y}}` : `L${{pt.x}},${{pt.y}}`)),
+          ...[...botPts].reverse().map(pt => `L${{pt.x}},${{pt.y}}`),
+          'Z',
+        ].join(' ');
+        const area = document.createElementNS(ns, 'path');
+        area.setAttribute('d', d);
+        area.setAttribute('fill', p.color + '33');
+        area.setAttribute('stroke', 'none');
+        svg.appendChild(area);
+        for (let i = 0; i < nPoints; i++) stackBot[i] = stackTop[i];
+      }}
+
+      // All-platform total line
+      if (g.allCumulative.length > 0) {{
+        const ld = g.allCumulative.map((v, i) => (i === 0 ? `M${{xOf(i)}},${{yOf(v)}}` : `L${{xOf(i)}},${{yOf(v)}}`)).join(' ');
+        const totalLine = document.createElementNS(ns, 'path');
+        totalLine.setAttribute('d', ld); totalLine.setAttribute('fill', 'none');
+        totalLine.setAttribute('stroke', '#0a2540'); totalLine.setAttribute('stroke-width', '2.5');
+        totalLine.setAttribute('stroke-linejoin', 'round');
+        svg.appendChild(totalLine);
+      }}
+
+      // Budget pace line
+      if (budgetPacingBudget > 0) {{
+        const pl = document.createElementNS(ns, 'line');
+        pl.setAttribute('x1', xOf(0)); pl.setAttribute('y1', yOf(0));
+        pl.setAttribute('x2', xOf(daysInMonth - 1)); pl.setAttribute('y2', yOf(budgetPacingBudget));
+        pl.setAttribute('stroke', '#c9a227'); pl.setAttribute('stroke-width', '1.75');
+        pl.setAttribute('stroke-dasharray', '6 4');
+        svg.appendChild(pl);
+      }}
+
+      // Projection (dashed, last point → budget target)
+      if (bpShowProjection && budgetPacingBudget > 0 && nPoints < daysInMonth && g.allCumulative.length > 0) {{
+        const lastV = g.allCumulative[nPoints - 1];
+        const prl = document.createElementNS(ns, 'line');
+        prl.setAttribute('x1', xOf(nPoints - 1)); prl.setAttribute('y1', yOf(lastV));
+        prl.setAttribute('x2', xOf(daysInMonth - 1)); prl.setAttribute('y2', yOf(budgetPacingBudget));
+        prl.setAttribute('stroke', '#0a2540'); prl.setAttribute('stroke-width', '1.5');
+        prl.setAttribute('stroke-dasharray', '5 4'); prl.setAttribute('opacity', '0.35');
+        svg.appendChild(prl);
+      }}
+
+      // Data points per visible platform
+      if (bpShowPoints) {{
+        for (const p of visiblePlats) {{
+          for (let i = 0; i < nPoints; i++) {{
+            const dot = document.createElementNS(ns, 'circle');
+            dot.setAttribute('cx', xOf(i)); dot.setAttribute('cy', yOf(p.cumul[i] || 0));
+            dot.setAttribute('r', '3'); dot.setAttribute('fill', p.color);
+            dot.setAttribute('stroke', '#fff'); dot.setAttribute('stroke-width', '1.5');
+            svg.appendChild(dot);
+          }}
+        }}
+      }}
+
+      // Hover overlay
+      const tooltip = document.getElementById('bpTooltip');
+      let _bpCross = null;
+      const overlay = document.createElementNS(ns, 'rect');
+      overlay.setAttribute('x', PAD.left); overlay.setAttribute('y', PAD.top);
+      overlay.setAttribute('width', cW); overlay.setAttribute('height', cH);
+      overlay.setAttribute('fill', 'transparent');
+      overlay.style.cursor = 'crosshair';
+
+      overlay.addEventListener('mousemove', evt => {{
+        const rect = svg.getBoundingClientRect();
+        const relX = evt.clientX - rect.left - PAD.left;
+        const dayIdx = Math.round((relX / cW) * (daysInMonth - 1));
+        const ci = Math.max(0, Math.min(dayIdx, nPoints - 1));
+        const x = xOf(ci);
+        if (_bpCross) _bpCross.remove();
+        _bpCross = document.createElementNS(ns, 'line');
+        _bpCross.setAttribute('x1', x); _bpCross.setAttribute('x2', x);
+        _bpCross.setAttribute('y1', PAD.top); _bpCross.setAttribute('y2', PAD.top + cH);
+        _bpCross.setAttribute('stroke', '#94a3b8'); _bpCross.setAttribute('stroke-width', '1');
+        _bpCross.setAttribute('stroke-dasharray', '3 3');
+        svg.insertBefore(_bpCross, overlay);
+        if (tooltip) {{
+          const dateLabel = ci < labels.length ? labels[ci] : '—';
+          const allTotal = g.allCumulative[ci] || 0;
+          const visTotal = visiblePlats.reduce((s, p) => s + (p.cumul[ci] || 0), 0);
+          const paceAmt = budgetPacingBudget > 0 ? budgetPacingBudget / daysInMonth * (ci + 1) : null;
+          let html = `<div class="bp-tt-title">${{escHtml(dateLabel)}}</div>`;
+          for (const p of visiblePlats) {{
+            html += `<div class="bp-tt-row"><span style="color:${{escHtml(p.color)}}">${{escHtml(p.label)}}</span><b>${{escHtml(fmtMoney(p.daily[ci] || 0))}} / ${{escHtml(fmtMoney(p.cumul[ci] || 0))}}</b></div>`;
+          }}
+          if (visiblePlats.length < g.platforms.length) {{
+            html += `<div class="bp-tt-row" style="border-top:1px solid #334155;margin-top:4px;padding-top:4px"><span>Visible total</span><b>${{escHtml(fmtMoney(visTotal))}}</b></div>`;
+          }}
+          html += `<div class="bp-tt-row"><span>All-platform</span><b>${{escHtml(fmtMoney(allTotal))}}</b></div>`;
+          if (paceAmt !== null) html += `<div class="bp-tt-row"><span>Budget pace</span><b>${{escHtml(fmtMoney(paceAmt))}}</b></div>`;
+          tooltip.innerHTML = html;
+          const svgW = rect.width;
+          tooltip.style.left = x + 'px';
+          tooltip.style.top = (yOf(allTotal) - 10) + 'px';
+          tooltip.style.transform = x < svgW / 2 ? 'translate(8px,-100%)' : 'translate(calc(-100% - 8px),-100%)';
+          tooltip.classList.add('show');
+        }}
+      }});
+
+      overlay.addEventListener('mouseleave', () => {{
+        if (_bpCross) {{ _bpCross.remove(); _bpCross = null; }}
+        if (tooltip) tooltip.classList.remove('show');
+      }});
+
+      svg.appendChild(overlay);
+    }}
+
+    function bpDraw() {{
+      if (!document.getElementById('bpChart')) return;
+      const g = bpComputeGuidance();
+      const hasSpend = g.allCumulative.some(v => v > 0);
+      const emptyEl = document.getElementById('bpEmptyMsg');
+      if (emptyEl) emptyEl.classList.toggle('show', !hasSpend && budgetPacingBudget <= 0);
+      bpUpdateStatusBar(g);
+      bpUpdateSideStatus(g);
+      bpUpdatePlatformList(g);
+      bpUpdateFreshness(g);
+      bpUpdateLegend(g);
+      bpDrawChart(g);
     }}
 
     if (SHOW_BUDGET_PACING) {{
       const budgetPacingInput = document.getElementById('budgetPacingInput');
       budgetPacingInput?.addEventListener('input', () => {{
         budgetPacingBudget = Math.max(0, Number(budgetPacingInput.value || 0));
-        refreshBudgetPacingChart();
+        const saveEl = document.getElementById('budgetPacingSaveValue');
+        if (saveEl) saveEl.value = budgetPacingBudget > 0 ? String(budgetPacingBudget) : '';
+        bpDraw();
       }});
-      initBudgetPacingPlatformSlicers();
-      refreshBudgetPacingChart();
+      document.getElementById('bpToggleProjection')?.addEventListener('click', evt => {{
+        bpShowProjection = !bpShowProjection;
+        evt.currentTarget.classList.toggle('active', bpShowProjection);
+        bpDrawChart(bpComputeGuidance());
+      }});
+      document.getElementById('bpTogglePoints')?.addEventListener('click', evt => {{
+        bpShowPoints = !bpShowPoints;
+        evt.currentTarget.classList.toggle('active', bpShowPoints);
+        bpDrawChart(bpComputeGuidance());
+      }});
+      bpDraw();
     }}
 
     function showAndreToast() {{

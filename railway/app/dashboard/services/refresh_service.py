@@ -554,6 +554,7 @@ def refresh_bq_client(
     _smr_fresh = _smr_age_hours < 24
 
     def _gsc_task():
+        from dates_util import resolve_date_range as _resolve
         gsc_sync_result = None
         if is_cron and gsc_site_url:
             try:
@@ -563,7 +564,19 @@ def refresh_bq_client(
         data = bq_gsc_service.build_gsc_snapshot(start=start, end=end)
         if gsc_sync_result:
             data["_sync_result"] = gsc_sync_result
-        return data
+
+        # Build per-preset snapshots so the renderer can serve alternate date ranges
+        # without a live re-query when the user changes the date range toggle.
+        by_preset: dict[str, Any] = {preset: data}
+        for _p in ("LAST_7_DAYS", "LAST_30_DAYS", "LAST_90_DAYS"):
+            if _p == preset:
+                continue
+            try:
+                _s, _e, _ = _resolve(_p)
+                by_preset[_p] = bq_gsc_service.build_gsc_snapshot(start=_s, end=_e)
+            except Exception:
+                pass
+        return data, by_preset
 
     _pool = ThreadPoolExecutor(max_workers=2)
     _gsc_fut = _pool.submit(_gsc_task)
@@ -661,7 +674,9 @@ def refresh_bq_client(
         }
     finally:
         try:
-            snapshot["gsc"] = _gsc_fut.result(timeout=60)
+            _gsc_data, _gsc_by_preset = _gsc_fut.result(timeout=60)
+            snapshot["gsc"] = _gsc_data
+            snapshot["gsc_by_preset"] = _gsc_by_preset
         except Exception as exc:
             snapshot.setdefault("errors", {})["gsc"] = str(exc)[:400]
         if _smr_fresh:
