@@ -14,11 +14,15 @@ import auth as google_auth
 import linkedin_auth
 import meta_auth
 
-PLATFORMS = frozenset({"google_ads", "linkedin", "meta"})
+PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc"})
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_ADS_SCOPE = "https://www.googleapis.com/auth/adwords"
+# GSC reuses the same Google Cloud OAuth client (GOOGLE_ADS_CLIENT_ID/SECRET) as
+# Google Ads — it's just a different scope on the same login, so no separate
+# Cloud Console app is required.
+GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 
 LINKEDIN_AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization"
 LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
@@ -91,6 +95,23 @@ def connect_prerequisites(platform: str) -> dict[str, Any]:
             ],
             "note": "Developer token stays in Railway; Connect mints the refresh token.",
         }
+    if slug == "gsc":
+        summary = google_auth.env_summary()
+        return {
+            "ready": bool(summary.get("has_client_id") and summary.get("has_client_secret")),
+            "missing": [
+                label
+                for key, label in (
+                    ("has_client_id", "GOOGLE_ADS_CLIENT_ID"),
+                    ("has_client_secret", "GOOGLE_ADS_CLIENT_SECRET"),
+                )
+                if not summary.get(key)
+            ],
+            "note": (
+                "Reuses the Google Ads OAuth client. Connect with the agency Google "
+                "account that has access to every client's Search Console property."
+            ),
+        }
     if slug == "linkedin":
         summary = linkedin_auth.env_summary()
         return {
@@ -137,6 +158,20 @@ def build_authorize_url(platform: str, *, state: str) -> str:
             "state": state,
         }
         return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
+    if slug == "gsc":
+        client_id = google_auth._get_env(*google_auth._ENV_ALIASES["client_id"])
+        if not client_id:
+            raise RuntimeError("Set GOOGLE_ADS_CLIENT_ID before connecting Search Console.")
+        params = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": GSC_SCOPE,
+            "access_type": "offline",
+            "prompt": "consent",
+            "state": state,
+        }
+        return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
     if slug == "linkedin":
         client_id = linkedin_auth._get_env(*linkedin_auth._ENV_ALIASES["client_id"])
         if not client_id:
@@ -167,13 +202,15 @@ def exchange_code(platform: str, *, code: str) -> dict[str, Any]:
     slug = _normalize_platform(platform)
     redirect_uri = callback_url(slug)
     if slug == "google_ads":
-        return _exchange_google_code(code, redirect_uri=redirect_uri)
+        return _exchange_google_code(code, redirect_uri=redirect_uri, scope_label=GOOGLE_ADS_SCOPE)
+    if slug == "gsc":
+        return _exchange_google_code(code, redirect_uri=redirect_uri, scope_label=GSC_SCOPE)
     if slug == "linkedin":
         return _exchange_linkedin_code(code, redirect_uri=redirect_uri)
     return _exchange_meta_code(code, redirect_uri=redirect_uri)
 
 
-def _exchange_google_code(code: str, *, redirect_uri: str) -> dict[str, Any]:
+def _exchange_google_code(code: str, *, redirect_uri: str, scope_label: str = GOOGLE_ADS_SCOPE) -> dict[str, Any]:
     client_id = google_auth._get_required_env(*google_auth._ENV_ALIASES["client_id"])
     client_secret = google_auth._get_required_env(*google_auth._ENV_ALIASES["client_secret"])
     body = {
@@ -200,7 +237,7 @@ def _exchange_google_code(code: str, *, redirect_uri: str) -> dict[str, Any]:
         "refresh_token": refresh,
         "access_token": data.get("access_token"),
         "token_expires_at": expires_at,
-        "scopes": GOOGLE_ADS_SCOPE,
+        "scopes": scope_label,
     }
 
 

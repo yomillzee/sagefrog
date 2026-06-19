@@ -50,11 +50,11 @@ def _credentials_env() -> str:
     return "GCP_CREDS_PENN_BASE64"
 
 
-def _bq_client():
+def _bq_client(credentials_env: str | None = None, project_id: str | None = None):
     """Build a BigQuery client using bigquery_service.build_client. Raises on bad credentials."""
     return bigquery_service.build_client(
-        project_id=_mart_project_id(),
-        credentials_env=_credentials_env(),
+        project_id=project_id or _mart_project_id(),
+        credentials_env=credentials_env or _credentials_env(),
     )
 
 
@@ -175,15 +175,20 @@ def _ensure_one_table(c, full_id: str, schema, cluster_field: str) -> TableStatu
 # Table operations
 # ---------------------------------------------------------------------------
 
-def ensure_gsc_tables(client=None) -> list[TableStatus]:
+def ensure_gsc_tables(client=None, client_slug: str | None = None) -> list[TableStatus]:
     """Ensure fact_gsc_query_daily and fact_gsc_page_daily exist.
+
+    client_slug routes into that client's BQ destination via gsc_clients
+    (same registry gsc_sync_service uses). Omit for legacy Penn-only behaviour.
 
     Returns [query_status, page_status].
     """
     from google.cloud import bigquery as bq
+    import gsc_clients
 
-    proj    = _mart_project_id()
-    dataset = _mart_dataset_id()
+    target = gsc_clients.resolve_target(client_slug) if client_slug else gsc_clients.default_target()
+    proj    = target.bq_project_id
+    dataset = target.bq_dataset_id
     query_id = f"{proj}.{dataset}.fact_gsc_query_daily"
     page_id  = f"{proj}.{dataset}.fact_gsc_page_daily"
 
@@ -193,7 +198,7 @@ def ensure_gsc_tables(client=None) -> list[TableStatus]:
         (page_id,  _gsc_page_schema(),  "page_url"),
     ]:
         try:
-            c = client or _bq_client()
+            c = client or _bq_client(credentials_env=target.credentials_env, project_id=proj)
             ds_ref = bq.Dataset(f"{proj}.{dataset}")
             ds_ref.location = "US"
             c.create_dataset(ds_ref, exists_ok=True)

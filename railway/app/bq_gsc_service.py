@@ -31,7 +31,9 @@ Required env vars (fall back to defaults if unset):
 
 from __future__ import annotations
 
+import contextvars
 import os
+from contextlib import contextmanager
 from datetime import date, timedelta
 from typing import Any
 
@@ -45,29 +47,69 @@ _URL_TABLE             = "searchdata_url_impression"
 _QUERY_HIST_TABLE      = "fact_gsc_query_daily"
 _PAGE_HIST_TABLE       = "fact_gsc_page_daily"
 
+# Set by build_gsc_snapshot(client_slug=...) so every helper below (_project_id,
+# _run, the CTE builders, etc.) routes into that client's BQ destination without
+# threading client_slug through every function signature individually. Falls
+# back to the legacy Penn-only env vars when unset, so existing callers that
+# don't pass client_slug keep working unchanged.
+_client_slug_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "bq_gsc_client_slug", default=None
+)
+
+
+@contextmanager
+def _client_context(client_slug: str | None):
+    token = _client_slug_ctx.set(client_slug)
+    try:
+        yield
+    finally:
+        _client_slug_ctx.reset(token)
+
+
+def _resolved_target():
+    import gsc_clients
+    slug = _client_slug_ctx.get()
+    return gsc_clients.resolve_target(slug) if slug else gsc_clients.default_target()
+
 
 # ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
 
 def _project_id() -> str:
+    target = _resolved_target()
+    if not target.is_default_fallback:
+        return target.bq_project_id
     return (os.getenv("GSC_BQ_PROJECT_ID") or _DEFAULT_PROJECT).strip()
 
 
 def _mart_project_id() -> str:
+    target = _resolved_target()
+    if not target.is_default_fallback:
+        return target.bq_project_id
     return (os.getenv("BQ_MART_PROJECT_ID") or _DEFAULT_PROJECT).strip()
 
 
 def _native_ds() -> str:
+    target = _resolved_target()
+    if not target.is_default_fallback and target.native_dataset_id:
+        return target.native_dataset_id
     return (os.getenv("GSC_BQ_DATASET_ID") or _DEFAULT_NATIVE_DS).strip()
 
 
 def _mart_ds() -> str:
+    target = _resolved_target()
+    if not target.is_default_fallback:
+        return target.bq_dataset_id
     return (os.getenv("BQ_MART_DATASET_ID") or _DEFAULT_MART_DS).strip()
 
 
 def _run(sql: str, max_rows: int = 500) -> list[dict[str, Any]]:
-    return bigquery_service.run_query(sql, project_id=_project_id(), max_rows=max_rows)
+    target = _resolved_target()
+    credentials_env = None if target.is_default_fallback else target.credentials_env
+    return bigquery_service.run_query(
+        sql, project_id=_project_id(), credentials_env=credentials_env, max_rows=max_rows
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -376,37 +418,39 @@ def fetch_top_pages(*, start: date, end: date, limit: int = 25) -> list[dict[str
 # Health check
 # ---------------------------------------------------------------------------
 
-def check_tables() -> dict[str, Any]:
-    results = {}
-    checks = [
-        ("native_site",  f"`{_project_id()}.{_native_ds()}.{_SITE_TABLE}`",  "data_date"),
-        ("native_url",   f"`{_project_id()}.{_native_ds()}.{_URL_TABLE}`",   "data_date"),
-        ("hist_query",   f"`{_mart_project_id()}.{_mart_ds()}.{_QUERY_HIST_TABLE}`", "date"),
-        ("hist_page",    f"`{_mart_project_id()}.{_mart_ds()}.{_PAGE_HIST_TABLE}`",  "date"),
-    ]
-    for name, tbl, date_col in checks:
-        sql = f"SELECT COUNT(*) AS n, MIN({date_col}) AS min_d, MAX({date_col}) AS max_d FROM {tbl} LIMIT 1"
-        try:
-            rows = _run(sql, max_rows=1)
-            r    = rows[0] if rows else {}
-            results[name] = {
-                "ok": True,
-                "row_count": int(r.get("n") or 0),
-                "min_date":  str(r.get("min_d") or "")[:10] or None,
-                "max_date":  str(r.get("max_d") or "")[:10] or None,
-                "error": None,
-            }
-        except Exception as exc:
-            results[name] = {"ok": False, "row_count": None, "min_date": None,
-                             "max_date": None, "error": str(exc)[:200]}
-    return results
+def check_tables(client_slug: str | None = None) -> dict[str, Any]:
+    with _client_context(client_slug):
+        results = {}
+        checks = [
+            ("native_site",  f"`{_project_id()}.{_native_ds()}.{_SITE_TABLE}`",  "data_date"),
+            ("native_url",   f"`{_project_id()}.{_native_ds()}.{_URL_TABLE}`",   "data_date"),
+            ("hist_query",   f"`{_mart_project_id()}.{_mart_ds()}.{_QUERY_HIST_TABLE}`", "date"),
+            ("hist_page",    f"`{_mart_project_id()}.{_mart_ds()}.{_PAGE_HIST_TABLE}`",  "date"),
+        ]
+        for name, tbl, date_col in checks:
+            sql = f"SELECT COUNT(*) AS n, MIN({date_col}) AS min_d, MAX({date_col}) AS max_d FROM {tbl} LIMIT 1"
+            try:
+                rows = _run(sql, max_rows=1)
+                r    = rows[0] if rows else {}
+                results[name] = {
+                    "ok": True,
+                    "row_count": int(r.get("n") or 0),
+                    "min_date":  str(r.get("min_d") or "")[:10] or None,
+                    "max_date":  str(r.get("max_d") or "")[:10] or None,
+                    "error": None,
+                }
+            except Exception as exc:
+                results[name] = {"ok": False, "row_count": None, "min_date": None,
+                                 "max_date": None, "error": str(exc)[:200]}
+        return results
 
 
 # ---------------------------------------------------------------------------
 # Snapshot builder
 # ---------------------------------------------------------------------------
 
-def build_gsc_snapshot(*, start: date, end: date) -> dict[str, Any]:
+def build_gsc_snapshot(*, start: date, end: date, client_slug: str | None = None) -> dict[str, Any]:
+    import contextvars
     from concurrent.futures import ThreadPoolExecutor
 
     tasks = {
@@ -418,27 +462,33 @@ def build_gsc_snapshot(*, start: date, end: date) -> dict[str, Any]:
     result: dict[str, Any] = {k: ({} if k == "kpis" else []) for k in tasks}
     errors: dict[str, str] = {}
 
-    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
-        futures = {key: pool.submit(fn) for key, fn in tasks.items()}
-        for key, fut in futures.items():
-            try:
-                result[key] = fut.result()
-            except Exception as exc:
-                errors[key] = str(exc)[:400]
+    with _client_context(client_slug):
+        # ThreadPoolExecutor workers don't inherit contextvars by default —
+        # copy_context() + ctx.run() makes sure the resolved client routing
+        # (set above) is visible inside each worker thread too.
+        ctx = contextvars.copy_context()
+        with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+            futures = {key: pool.submit(ctx.run, fn) for key, fn in tasks.items()}
+            for key, fut in futures.items():
+                try:
+                    result[key] = fut.result()
+                except Exception as exc:
+                    errors[key] = str(exc)[:400]
 
     if errors:
         result["errors"] = errors
     return result
 
 
-def env_summary() -> dict[str, str]:
-    return {
-        "native_project":  _project_id(),
-        "native_dataset":  _native_ds(),
-        "mart_project":    _mart_project_id(),
-        "mart_dataset":    _mart_ds(),
-        "site_table":      _SITE_TABLE,
-        "url_table":       _URL_TABLE,
-        "hist_query_table": _QUERY_HIST_TABLE,
-        "hist_page_table":  _PAGE_HIST_TABLE,
-    }
+def env_summary(client_slug: str | None = None) -> dict[str, str]:
+    with _client_context(client_slug):
+        return {
+            "native_project":  _project_id(),
+            "native_dataset":  _native_ds(),
+            "mart_project":    _mart_project_id(),
+            "mart_dataset":    _mart_ds(),
+            "site_table":      _SITE_TABLE,
+            "url_table":       _URL_TABLE,
+            "hist_query_table": _QUERY_HIST_TABLE,
+            "hist_page_table":  _PAGE_HIST_TABLE,
+        }

@@ -32,6 +32,10 @@ def main() -> None:
     parser.add_argument(
         "--table", choices=["both", "queries", "pages"], default="both",
     )
+    parser.add_argument(
+        "--client-slug", default=None,
+        help="Route into this client's BQ destination (GSC_CLIENTS registry). Omit for legacy Penn behaviour.",
+    )
     parser.add_argument("--dry-run", action="store_true",
                         help="Fetch from GSC but skip BigQuery writes")
     args = parser.parse_args()
@@ -104,7 +108,7 @@ def main() -> None:
         print(f"[{i:>4}/{total}] {d}", flush=True)
 
     result = gsc_sync_service.sync_range(
-        start_date, end_date, which=args.table, progress_cb=_progress
+        start_date, end_date, which=args.table, progress_cb=_progress, client_slug=args.client_slug
     )
 
     print(
