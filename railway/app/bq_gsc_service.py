@@ -153,7 +153,8 @@ def _query_cte(start: date, end: date) -> str:
         organic_impressions                              AS impressions,
         organic_sum_position                             AS pos_sum
       FROM `{mp}.{md}.{_QUERY_HIST_TABLE}`
-      WHERE date BETWEEN DATE '{s}' AND DATE '{e}'"""
+      WHERE date BETWEEN DATE '{s}' AND DATE '{e}'
+    )"""
 
     p  = _project_id()
     nd = _native_ds()
@@ -215,7 +216,8 @@ def _page_cte(start: date, end: date) -> str:
         organic_impressions AS impressions,
         organic_sum_position AS pos_sum
       FROM `{mp}.{md}.{_PAGE_HIST_TABLE}`
-      WHERE date BETWEEN DATE '{s}' AND DATE '{e}'"""
+      WHERE date BETWEEN DATE '{s}' AND DATE '{e}'
+    )"""
 
     p  = _project_id()
     nd = _native_ds()
