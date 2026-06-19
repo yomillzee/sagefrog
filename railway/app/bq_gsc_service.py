@@ -97,6 +97,14 @@ def _native_ds() -> str:
     return (os.getenv("GSC_BQ_DATASET_ID") or _DEFAULT_NATIVE_DS).strip()
 
 
+def _has_native_export() -> bool:
+    """True when this client has a native GSC → BQ export to query."""
+    target = _resolved_target()
+    if target.is_default_fallback:
+        return True  # Penn always has native export
+    return bool(target.native_dataset_id)
+
+
 def _mart_ds() -> str:
     target = _resolved_target()
     if not target.is_default_fallback:
@@ -128,12 +136,27 @@ def _query_cte(start: date, end: date) -> str:
     not already covered by the native export (avoids double-counting).
     If fact_gsc_query_daily doesn't exist yet, the native-only branch is used
     and the query still succeeds.
+    For clients with no native GSC → BQ export, only the hist table is used.
     """
-    p  = _project_id()
     mp = _mart_project_id()
-    nd = _native_ds()
     md = _mart_ds()
     s, e = start.isoformat(), end.isoformat()
+
+    if not _has_native_export():
+        return f"""
+    gsc AS (
+      SELECT
+        date,
+        query,
+        is_anonymized_query,
+        organic_clicks                                   AS clicks,
+        organic_impressions                              AS impressions,
+        organic_sum_position                             AS pos_sum
+      FROM `{mp}.{md}.{_QUERY_HIST_TABLE}`
+      WHERE date BETWEEN DATE '{s}' AND DATE '{e}'"""
+
+    p  = _project_id()
+    nd = _native_ds()
 
     return f"""
     native_min AS (
@@ -175,12 +198,27 @@ def _query_cte(start: date, end: date) -> str:
 
 
 def _page_cte(start: date, end: date) -> str:
-    """CTE `gsc_pages` combining native url_impression + historical page table."""
-    p  = _project_id()
+    """CTE `gsc_pages` combining native url_impression + historical page table.
+    For clients with no native GSC → BQ export, only the hist table is used.
+    """
     mp = _mart_project_id()
-    nd = _native_ds()
     md = _mart_ds()
     s, e = start.isoformat(), end.isoformat()
+
+    if not _has_native_export():
+        return f"""
+    gsc_pages AS (
+      SELECT
+        date,
+        page_url,
+        organic_clicks      AS clicks,
+        organic_impressions AS impressions,
+        organic_sum_position AS pos_sum
+      FROM `{mp}.{md}.{_PAGE_HIST_TABLE}`
+      WHERE date BETWEEN DATE '{s}' AND DATE '{e}'"""
+
+    p  = _project_id()
+    nd = _native_ds()
 
     return f"""
     page_native_min AS (
