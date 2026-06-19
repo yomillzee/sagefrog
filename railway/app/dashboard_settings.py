@@ -1133,6 +1133,12 @@ def render_settings_html(
                 <input id="label" name="label" type="text" value="{_esc(cfg.label)}" maxlength="120">
               </div>
               <div>
+                <label for="google_customer_id">Google Ads customer ID</label>
+                <input id="google_customer_id" name="google_customer_id" type="text"
+                  value="{_esc(cfg.google_customer_id or '')}" placeholder="1549971930">
+                <p class="hint">10-digit customer ID (dashes optional). Data arrives in BigQuery via Google's Data Transfer Service.</p>
+              </div>
+              <div>
                 <label for="linkedin_account_id">LinkedIn account ID</label>
                 <input id="linkedin_account_id" name="linkedin_account_id" type="text"
                   value="{_esc(cfg.linkedin_account_id or '')}" placeholder="508590994">
