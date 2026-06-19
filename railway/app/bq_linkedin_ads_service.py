@@ -7,6 +7,8 @@ snapshot shaped for the existing Penn dashboard renderer.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import logging
 import os
 from datetime import UTC, date, datetime
@@ -39,7 +41,41 @@ _DEFAULT_MART_DATASET = "marketing_marts"
 _DEFAULT_CAMPAIGN_FACT_TABLE = "fact_linkedin_ads_campaign_daily"
 
 
+# Per-client routing override. Default None → fall back to the Penn env vars,
+# so Penn / penn-bq-test (which never set a route) behave exactly as before.
+# refresh_bq_client sets this via route() so a client's LinkedIn reads hit that
+# client's BigQuery project (datasets keep the same names — linkedin_ads /
+# marketing_marts — across clients). build_snapshot's read path is fully
+# sequential (no ThreadPoolExecutor), so the contextvar is visible throughout
+# without copy_context plumbing.
+_route_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "bq_linkedin_route", default=None
+)
+
+
+@contextlib.contextmanager
+def route(*, bq_project_id: str | None = None, credentials_env: str | None = None):
+    """Scope LinkedIn BigQuery reads to a specific project/credentials."""
+    payload = {
+        "project": (bq_project_id or "").strip() or None,
+        "credentials_env": (credentials_env or "").strip() or None,
+    }
+    token = _route_ctx.set(payload if (payload["project"] or payload["credentials_env"]) else None)
+    try:
+        yield
+    finally:
+        _route_ctx.reset(token)
+
+
+def _routed_credentials_env() -> str | None:
+    r = _route_ctx.get()
+    return r.get("credentials_env") if r else None
+
+
 def _project_id() -> str:
+    r = _route_ctx.get()
+    if r and r.get("project"):
+        return r["project"]
     return (os.getenv("PENN_BQ_LINKEDIN_PROJECT_ID") or _DEFAULT_PROJECT).strip()
 
 
@@ -230,6 +266,7 @@ def _fetch_campaign_group_map(*, start: date, end: date, account_id: str) -> dic
         rows = bigquery_service.run_query(
             _campaign_group_map_sql(start=start, end=end, account_id=account_id),
             project_id=_project_id(),
+            credentials_env=_routed_credentials_env(),
             max_rows=5000,
         )
     except Exception:
@@ -291,6 +328,7 @@ def sync_campaign_metadata_and_rebuild_mart(
     id_rows = bigquery_service.run_query(
         _campaign_ids_sql(start=start, end=end, account_id=account_id_clean),
         project_id=project,
+        credentials_env=_routed_credentials_env(),
         max_rows=10000,
     )
     campaign_ids = sorted({str(row.get("campaign_id") or "").strip() for row in id_rows if row.get("campaign_id")})
@@ -375,15 +413,18 @@ def sync_linkedin_creative_daily(
 def fetch_linkedin_ads(*, start: date, end: date, account_id: str | None = None) -> dict[str, Any]:
     LOGGER.info("LinkedIn source: BigQuery.")
     project = _project_id()
+    creds = _routed_credentials_env()
     return {
         "account_summary": bigquery_service.run_query(
             account_summary_sql(start=start, end=end, account_id=account_id),
             project_id=project,
+            credentials_env=creds,
             max_rows=1000,
         ),
         "daily_metrics": bigquery_service.run_query(
             daily_metrics_sql(start=start, end=end, account_id=account_id),
             project_id=project,
+            credentials_env=creds,
             max_rows=5000,
         ),
         "campaign_daily": bigquery_service.run_query(
@@ -393,6 +434,7 @@ def fetch_linkedin_ads(*, start: date, end: date, account_id: str | None = None)
                 account_id=account_id,
             ),
             project_id=project,
+            credentials_env=creds,
             max_rows=10000,
         ),
     }
@@ -646,6 +688,7 @@ def build_snapshot(
         bq_creative_rows = bigquery_service.run_query(
             _creative_daily_sql(start=start, end=end, account_id=account_id_clean or None),
             project_id=_project_id(),
+            credentials_env=_routed_credentials_env(),
             max_rows=5000,
         )
         creative_rows = _normalize_creative_rows(bq_creative_rows)

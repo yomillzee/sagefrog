@@ -614,14 +614,21 @@ def refresh_bq_client(
 
         if linkedin_account_id:
             try:
-                if is_cron:
-                    meta_sync = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(
-                        account_id=linkedin_account_id, start=start, end=end,
+                # Route LinkedIn BQ reads to this client's project (datasets keep
+                # the same names across clients). cfg must be passed — build_snapshot
+                # uses cfg.client_key/label, so omitting it raised AttributeError and
+                # silently broke LinkedIn for every generic BQ client.
+                with bq_linkedin_ads_service.route(
+                    bq_project_id=_mart_bq_project, credentials_env=_mart_credentials_env
+                ):
+                    if is_cron:
+                        meta_sync = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(
+                            account_id=linkedin_account_id, start=start, end=end,
+                        )
+                        snapshot.setdefault("warehouse_sync", {})["linkedin_campaign_metadata"] = meta_sync
+                    li_snap = bq_linkedin_ads_service.build_snapshot(
+                        cfg=cfg, account_id=linkedin_account_id, start=start, end=end, preset=preset,
                     )
-                    snapshot.setdefault("warehouse_sync", {})["linkedin_campaign_metadata"] = meta_sync
-                li_snap = bq_linkedin_ads_service.build_snapshot(
-                    account_id=linkedin_account_id, start=start, end=end, preset=preset,
-                )
                 snapshot.setdefault("daily_metrics", {})["linkedin"]  = (li_snap.get("daily_metrics") or {}).get("linkedin", [])
                 snapshot.setdefault("platform_totals", {})["linkedin"] = (li_snap.get("platform_totals") or {}).get("linkedin", {})
                 snapshot.setdefault("breakdowns", {})["linkedin"]      = (li_snap.get("breakdowns") or {}).get("linkedin", {})
