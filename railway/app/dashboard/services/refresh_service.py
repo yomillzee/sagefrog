@@ -603,6 +603,8 @@ def refresh_bq_client(
             start=start, end=end, preset=preset,
             bq_project_id=_mart_bq_project,
             credentials_env=_mart_credentials_env,
+            include_google=bool(cfg.google_customer_id),
+            include_linkedin=bool(linkedin_account_id),
         )
         snapshot["label"]      = cfg.label
         snapshot["date_range"] = {"start": start.isoformat(), "end": end.isoformat(), "preset": preset}

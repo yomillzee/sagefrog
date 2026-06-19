@@ -57,6 +57,20 @@ def _resolve_table(name: str, bq_project_id: str | None, bq_dataset_id: str | No
     return f"`{project}.{dataset}.{name}`"
 
 
+def _is_table_not_found(exc: Exception) -> bool:
+    """True when a mart query failed because the table simply doesn't exist.
+
+    A missing mart table means the client hasn't set that source up (e.g. a
+    client with no Google Ads has no fact_google_ads_* views) — that's an
+    absent source, not an error worth alarming on. Real failures (auth,
+    permission, SQL) are NOT swallowed by this check.
+    """
+    if getattr(exc, "code", None) == 404:
+        return True
+    msg = str(exc).lower()
+    return "not found" in msg and "table" in msg
+
+
 def fetch_campaign_daily(
     *,
     days: int = 30,
@@ -479,8 +493,17 @@ def build_snapshot(
     bq_project_id: str | None = None,
     bq_dataset_id: str | None = None,
     credentials_env: str | None = None,
+    include_google: bool = True,
+    include_linkedin: bool = True,
 ) -> dict[str, Any]:
-    """Query Google and LinkedIn marts and return a snapshot dict compatible with render_penn_html()."""
+    """Query Google and LinkedIn marts and return a snapshot dict compatible with render_penn_html().
+
+    include_google / include_linkedin let callers skip a platform a client
+    doesn't have (e.g. a client with no Google Ads). Skipped platforms simply
+    come back empty — no query, no warning. A queried mart whose table doesn't
+    exist yet (source set up but not synced) is also treated as empty rather
+    than surfaced as an error; only real failures (auth, permission, SQL) are.
+    """
     from concurrent.futures import ThreadPoolExecutor
     errors: dict[str, str] = {}
 
@@ -491,27 +514,32 @@ def build_snapshot(
 
     _bq_kwargs = dict(bq_project_id=bq_project_id, bq_dataset_id=bq_dataset_id, credentials_env=credentials_env)
 
+    def _collect(fut, error_key: str) -> list[dict[str, Any]]:
+        """Resolve a mart future; missing table → empty, real error → recorded."""
+        try:
+            return fut.result()
+        except Exception as exc:
+            if not _is_table_not_found(exc):
+                errors[error_key] = str(exc)[:600]
+            return []
+
     with ThreadPoolExecutor(max_workers=4) as _pool:
-        _gf = _pool.submit(fetch_campaign_daily, days=days, start=start, end=end, **_bq_kwargs)
-        _gag = _pool.submit(fetch_google_ad_group_daily, days=days, start=start, end=end, **_bq_kwargs)
-        _gad = _pool.submit(fetch_google_ad_daily, days=days, start=start, end=end, **_bq_kwargs)
-        _lf = _pool.submit(fetch_linkedin_campaign_daily, days=days, start=start, end=end, **_bq_kwargs)
-        try:
-            google_rows = _gf.result()
-        except Exception as exc:
-            errors["bq_mart_google"] = str(exc)[:600]
-        try:
-            google_ad_group_rows = _gag.result()
-        except Exception as exc:
-            errors["bq_mart_google_ad_group"] = str(exc)[:600]
-        try:
-            google_ad_rows = _gad.result()
-        except Exception as exc:
-            errors["bq_mart_google_ad"] = str(exc)[:600]
-        try:
-            linkedin_rows = _lf.result()
-        except Exception as exc:
-            errors["bq_mart_linkedin"] = str(exc)[:600]
+        _gf = _gag = _gad = _lf = None
+        if include_google:
+            _gf = _pool.submit(fetch_campaign_daily, days=days, start=start, end=end, **_bq_kwargs)
+            _gag = _pool.submit(fetch_google_ad_group_daily, days=days, start=start, end=end, **_bq_kwargs)
+            _gad = _pool.submit(fetch_google_ad_daily, days=days, start=start, end=end, **_bq_kwargs)
+        if include_linkedin:
+            _lf = _pool.submit(fetch_linkedin_campaign_daily, days=days, start=start, end=end, **_bq_kwargs)
+
+        if _gf is not None:
+            google_rows = _collect(_gf, "bq_mart_google")
+        if _gag is not None:
+            google_ad_group_rows = _collect(_gag, "bq_mart_google_ad_group")
+        if _gad is not None:
+            google_ad_rows = _collect(_gad, "bq_mart_google_ad")
+        if _lf is not None:
+            linkedin_rows = _collect(_lf, "bq_mart_linkedin")
 
     by_date_g, by_campaign_g = _aggregate_campaign_rows(google_rows)
     totals_g = _platform_totals(by_date_g, by_campaign_g)
