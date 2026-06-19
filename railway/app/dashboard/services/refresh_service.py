@@ -641,10 +641,13 @@ def refresh_bq_client(
 
         if meta_account_id:
             try:
-                if is_cron:
-                    m_sync = bq_meta_ads_service.sync_meta_to_bq(meta_account_id, start=start, end=end)
-                    snapshot.setdefault("warehouse_sync", {})["meta"] = m_sync
-                meta_result = bq_meta_ads_service.build_meta_breakdowns(start=start, end=end)
+                with bq_meta_ads_service.route(
+                    bq_project_id=_mart_bq_project, credentials_env=_mart_credentials_env
+                ):
+                    if is_cron:
+                        m_sync = bq_meta_ads_service.sync_meta_to_bq(meta_account_id, start=start, end=end)
+                        snapshot.setdefault("warehouse_sync", {})["meta"] = m_sync
+                    meta_result = bq_meta_ads_service.build_meta_breakdowns(start=start, end=end)
                 snapshot.setdefault("breakdowns", {})["meta"]      = meta_result["breakdowns"]
                 snapshot.setdefault("platform_totals", {})["meta"] = meta_result["platform_totals"]
                 snapshot.setdefault("daily_metrics", {})["meta"]   = meta_result.get("daily_metrics", [])

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 from datetime import date
 from typing import Any
 
@@ -17,8 +19,40 @@ _DEFAULT_ADSET_FACT = "fact_meta_ads_adset_daily"
 _DEFAULT_AD_FACT = "fact_meta_ads_ad_daily"
 
 
+# Per-client routing override. Default None → Penn env fallback, so Penn /
+# penn-bq-test (which never set a route) are unchanged. Unlike LinkedIn, Meta's
+# read/write paths use ThreadPoolExecutor, so each pool.submit must run inside a
+# copied context (copy_context().run) for the contextvar to reach the worker —
+# bare submit() does NOT inherit contextvars (the GSC bug).
+_route_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "bq_meta_route", default=None
+)
+
+
+@contextlib.contextmanager
+def route(*, bq_project_id: str | None = None, credentials_env: str | None = None):
+    """Scope Meta BigQuery reads/writes to a specific project/credentials."""
+    payload = {
+        "project": (bq_project_id or "").strip() or None,
+        "credentials_env": (credentials_env or "").strip() or None,
+    }
+    token = _route_ctx.set(payload if (payload["project"] or payload["credentials_env"]) else None)
+    try:
+        yield
+    finally:
+        _route_ctx.reset(token)
+
+
+def _routed_credentials_env() -> str | None:
+    r = _route_ctx.get()
+    return r.get("credentials_env") if r else None
+
+
 def _project_id() -> str:
     import os
+    r = _route_ctx.get()
+    if r and r.get("project"):
+        return r["project"]
     return (os.getenv("BQ_META_PROJECT_ID") or _DEFAULT_PROJECT).strip()
 
 
@@ -117,7 +151,7 @@ def fetch_meta_campaign_daily(
     GROUP BY 1, 2
     ORDER BY 1 DESC, spend DESC
     """
-    return bigquery_service.run_query(sql, project_id=_project_id(), max_rows=5000)
+    return bigquery_service.run_query(sql, project_id=_project_id(), credentials_env=_routed_credentials_env(), max_rows=5000)
 
 
 def fetch_meta_adset_daily(
@@ -148,7 +182,7 @@ def fetch_meta_adset_daily(
     GROUP BY 1, 2
     ORDER BY 1 DESC, spend DESC
     """
-    return bigquery_service.run_query(sql, project_id=_project_id(), max_rows=10000)
+    return bigquery_service.run_query(sql, project_id=_project_id(), credentials_env=_routed_credentials_env(), max_rows=10000)
 
 
 def fetch_meta_ad_daily(
@@ -184,7 +218,7 @@ def fetch_meta_ad_daily(
     GROUP BY 1, 2
     ORDER BY 1 DESC, spend DESC
     """
-    return bigquery_service.run_query(sql, project_id=_project_id(), max_rows=20000)
+    return bigquery_service.run_query(sql, project_id=_project_id(), credentials_env=_routed_credentials_env(), max_rows=20000)
 
 
 def _build_campaign_breakdowns(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -317,10 +351,19 @@ def build_meta_breakdowns(
     adset_rows: list[dict[str, Any]] = []
     ad_rows: list[dict[str, Any]] = []
 
+    # These fetch from the Meta mart views in BigQuery, so each task must run in
+    # the calling thread's context for the routing contextvar to reach the
+    # worker — bare pool.submit() does NOT inherit contextvars. copy_context()
+    # is evaluated HERE (calling thread) so it snapshots the active route; a
+    # fresh copy per task avoids the "already entered" error a shared Context
+    # raises across concurrent threads.
     with ThreadPoolExecutor(max_workers=3) as pool:
-        _cf = pool.submit(fetch_meta_campaign_daily, days=days, start=start, end=end)
-        _af = pool.submit(fetch_meta_adset_daily, days=days, start=start, end=end)
-        _adf = pool.submit(fetch_meta_ad_daily, days=days, start=start, end=end)
+        _cf = pool.submit(contextvars.copy_context().run,
+                          lambda: fetch_meta_campaign_daily(days=days, start=start, end=end))
+        _af = pool.submit(contextvars.copy_context().run,
+                          lambda: fetch_meta_adset_daily(days=days, start=start, end=end))
+        _adf = pool.submit(contextvars.copy_context().run,
+                           lambda: fetch_meta_ad_daily(days=days, start=start, end=end))
         try:
             campaign_rows = _cf.result()
         except Exception as exc:
