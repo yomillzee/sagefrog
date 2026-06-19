@@ -3389,8 +3389,9 @@ def render_penn_html(
         const pl = document.createElementNS(ns, 'line');
         pl.setAttribute('x1', xOf(0)); pl.setAttribute('y1', yOf(0));
         pl.setAttribute('x2', xOf(daysInMonth - 1)); pl.setAttribute('y2', yOf(budgetPacingBudget));
-        pl.setAttribute('stroke', '#c9a227'); pl.setAttribute('stroke-width', '1.75');
-        pl.setAttribute('stroke-dasharray', '6 4');
+        pl.setAttribute('stroke', '#c9a227'); pl.setAttribute('stroke-width', '2.5');
+        pl.setAttribute('stroke-dasharray', '8 5');
+        pl.setAttribute('opacity', '0.9');
         svg.appendChild(pl);
       }}
 
