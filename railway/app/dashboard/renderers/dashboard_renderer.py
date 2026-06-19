@@ -3341,27 +3341,40 @@ def render_penn_html(
         svg.appendChild(xl);
       }}
 
-      // Stacked areas (visible platforms)
+      // Stacked areas + per-platform lines + dots (all in one pass to share stackTop)
       const visiblePlats = g.platforms.filter(p => bpVisible[p.id]);
       const stackBot = new Array(nPoints).fill(0);
+      // Store stacked tops per platform so dots can reuse them
+      const stackedTops = [];
       for (const p of visiblePlats) {{
         const stackTop = p.cumul.map((v, i) => stackBot[i] + v);
+        stackedTops.push(stackTop);
+        // Filled area
         const topPts = stackTop.map((v, i) => ({{ x: xOf(i), y: yOf(v) }}));
         const botPts = stackBot.map((v, i) => ({{ x: xOf(i), y: yOf(v) }}));
-        const d = [
+        const areaD = [
           ...topPts.map((pt, i) => (i === 0 ? `M${{pt.x}},${{pt.y}}` : `L${{pt.x}},${{pt.y}}`)),
           ...[...botPts].reverse().map(pt => `L${{pt.x}},${{pt.y}}`),
           'Z',
         ].join(' ');
         const area = document.createElementNS(ns, 'path');
-        area.setAttribute('d', d);
+        area.setAttribute('d', areaD);
         area.setAttribute('fill', p.color + '33');
         area.setAttribute('stroke', 'none');
         svg.appendChild(area);
+        // Stroke line along the top edge of this platform's stack layer
+        const lineD = topPts.map((pt, i) => (i === 0 ? `M${{pt.x}},${{pt.y}}` : `L${{pt.x}},${{pt.y}}`)).join(' ');
+        const platLine = document.createElementNS(ns, 'path');
+        platLine.setAttribute('d', lineD);
+        platLine.setAttribute('fill', 'none');
+        platLine.setAttribute('stroke', p.color);
+        platLine.setAttribute('stroke-width', '2');
+        platLine.setAttribute('stroke-linejoin', 'round');
+        svg.appendChild(platLine);
         for (let i = 0; i < nPoints; i++) stackBot[i] = stackTop[i];
       }}
 
-      // All-platform total line
+      // All-platform total line (always on top of stacks)
       if (g.allCumulative.length > 0) {{
         const ld = g.allCumulative.map((v, i) => (i === 0 ? `M${{xOf(i)}},${{yOf(v)}}` : `L${{xOf(i)}},${{yOf(v)}}`)).join(' ');
         const totalLine = document.createElementNS(ns, 'path');
@@ -3392,17 +3405,18 @@ def render_penn_html(
         svg.appendChild(prl);
       }}
 
-      // Data points per visible platform
+      // Data points: use stacked tops so dots sit on their lines
       if (bpShowPoints) {{
-        for (const p of visiblePlats) {{
+        visiblePlats.forEach((p, pi) => {{
+          const tops = stackedTops[pi];
           for (let i = 0; i < nPoints; i++) {{
             const dot = document.createElementNS(ns, 'circle');
-            dot.setAttribute('cx', xOf(i)); dot.setAttribute('cy', yOf(p.cumul[i] || 0));
+            dot.setAttribute('cx', xOf(i)); dot.setAttribute('cy', yOf(tops[i] || 0));
             dot.setAttribute('r', '3'); dot.setAttribute('fill', p.color);
             dot.setAttribute('stroke', '#fff'); dot.setAttribute('stroke-width', '1.5');
             svg.appendChild(dot);
           }}
-        }}
+        }});
       }}
 
       // Hover overlay
