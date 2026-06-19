@@ -170,15 +170,39 @@ def list_accessible_properties() -> list[dict[str, str]]:
     """
     import google.auth.transport.requests
     creds = _gsc_read_creds()
+    cred_type = type(creds).__name__
+
+    # Refresh if needed — captures token refresh errors explicitly
     if not creds.valid:
-        creds.refresh(google.auth.transport.requests.Request())
+        try:
+            creds.refresh(google.auth.transport.requests.Request())
+        except Exception as refresh_exc:
+            raise RuntimeError(
+                f"Token refresh failed (cred_type={cred_type}): {refresh_exc}"
+            ) from refresh_exc
+
+    # Surface which scopes the refreshed token actually carries
+    token_scopes = getattr(creds, "scopes", None) or getattr(creds, "_scopes", None)
+
     req = urllib.request.Request(
         "https://www.googleapis.com/webmasters/v3/sites",
         headers={"Authorization": f"Bearer {creds.token}"},
         method="GET",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", errors="replace")[:300]
+        except Exception:
+            pass
+        raise RuntimeError(
+            f"webmasters API {exc.code} (cred_type={cred_type}, "
+            f"token_scopes={token_scopes}): {body}"
+        ) from exc
+
     out = []
     for entry in data.get("siteEntry") or []:
         url = entry.get("siteUrl") or ""
