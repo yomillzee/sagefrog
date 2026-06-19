@@ -450,7 +450,6 @@ def check_tables(client_slug: str | None = None) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def build_gsc_snapshot(*, start: date, end: date, client_slug: str | None = None) -> dict[str, Any]:
-    import contextvars
     from concurrent.futures import ThreadPoolExecutor
 
     tasks = {
@@ -463,12 +462,12 @@ def build_gsc_snapshot(*, start: date, end: date, client_slug: str | None = None
     errors: dict[str, str] = {}
 
     with _client_context(client_slug):
-        # ThreadPoolExecutor workers don't inherit contextvars by default —
-        # copy_context() + ctx.run() makes sure the resolved client routing
-        # (set above) is visible inside each worker thread too.
-        ctx = contextvars.copy_context()
+        # Python 3.7+ ThreadPoolExecutor already copies the calling thread's
+        # context into each worker, so _client_slug_ctx is visible in all tasks
+        # without ctx.run(). Using a single ctx.run() object across multiple
+        # concurrent pool.submit() calls raises "already entered".
         with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
-            futures = {key: pool.submit(ctx.run, fn) for key, fn in tasks.items()}
+            futures = {key: pool.submit(fn) for key, fn in tasks.items()}
             for key, fut in futures.items():
                 try:
                     result[key] = fut.result()
