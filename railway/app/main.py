@@ -1717,13 +1717,11 @@ def admin_create_dashboard(
         detail={"client_slug": created.client_slug, "label": created.label},
         **ctx,
     )
-    # Auto-provision GSC BQ tables for the new client.
-    # Runs best-effort — failures are logged but don't block dashboard creation.
-    try:
-        import bq_provision_service
-        bq_provision_service.ensure_gsc_tables(client_slug=created.client_slug)
-    except Exception:
-        LOGGER.exception("GSC table auto-provision failed for %s", created.client_slug)
+    # NOTE: GSC table provisioning intentionally does NOT happen here. At
+    # creation time the client has no BQ registry entry yet, so routing would
+    # fall back to the Penn default project and create the tables in the wrong
+    # place. Provisioning runs in admin_save_gsc_config(), once the client's
+    # BigQuery destination is known.
     return RedirectResponse(
         url=f"/admin?msg=Dashboard+{quote(created.label)}+created",
         status_code=303,
@@ -1851,8 +1849,24 @@ def admin_save_gsc_config(
         detail={"client_slug": client_slug.strip().lower(), "bq_project_id": bq_project_id},
         **ctx,
     )
+    # Provision the client's GSC tables now that routing is known. This is the
+    # right moment — at dashboard-creation time the registry entry doesn't yet
+    # exist, so resolve_target would fall back to the Penn default project.
+    slug_norm = client_slug.strip().lower()
+    provision_note = ""
+    try:
+        import bq_provision_service
+        statuses = bq_provision_service.ensure_gsc_tables(client_slug=slug_norm)
+        failed = [s for s in statuses if not s.ok]
+        if failed:
+            provision_note = "+(table+provision+had+errors+—+see+logs)"
+            for s in failed:
+                LOGGER.error("GSC provision failed for %s: %s -> %s", slug_norm, s.table_id, s.error)
+    except Exception:
+        provision_note = "+(table+provision+failed+—+see+logs)"
+        LOGGER.exception("GSC table provision failed for %s", slug_norm)
     return RedirectResponse(
-        url=f"/admin?msg=GSC+config+saved+for+{quote(client_slug.strip().lower())}",
+        url=f"/admin?msg=GSC+config+saved+for+{quote(slug_norm)}{provision_note}",
         status_code=303,
     )
 
