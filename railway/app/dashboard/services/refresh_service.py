@@ -335,10 +335,10 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
         gsc_sync_result = None
         if is_cron:
             try:
-                gsc_sync_result = gsc_sync_service.sync_for_refresh()
+                gsc_sync_result = gsc_sync_service.sync_for_refresh(client_slug="penn-bq-test")
             except Exception as exc:
                 gsc_sync_result = {"ok": False, "error": str(exc)[:300]}
-        data = bq_gsc_service.build_gsc_snapshot(start=start, end=end)
+        data = bq_gsc_service.build_gsc_snapshot(start=start, end=end, client_slug="penn-bq-test")
         if gsc_sync_result:
             data["_sync_result"] = gsc_sync_result
         return data
@@ -558,10 +558,10 @@ def refresh_bq_client(
         gsc_sync_result = None
         if is_cron and gsc_site_url:
             try:
-                gsc_sync_result = gsc_sync_service.sync_for_refresh(site_url=gsc_site_url)
+                gsc_sync_result = gsc_sync_service.sync_for_refresh(site_url=gsc_site_url, client_slug=slug)
             except Exception as exc:
                 gsc_sync_result = {"ok": False, "error": str(exc)[:300]}
-        data = bq_gsc_service.build_gsc_snapshot(start=start, end=end)
+        data = bq_gsc_service.build_gsc_snapshot(start=start, end=end, client_slug=slug)
         if gsc_sync_result:
             data["_sync_result"] = gsc_sync_result
 
@@ -573,7 +573,7 @@ def refresh_bq_client(
                 continue
             try:
                 _s, _e, _ = _resolve(_p)
-                by_preset[_p] = bq_gsc_service.build_gsc_snapshot(start=_s, end=_e)
+                by_preset[_p] = bq_gsc_service.build_gsc_snapshot(start=_s, end=_e, client_slug=slug)
             except Exception:
                 pass
         return data, by_preset

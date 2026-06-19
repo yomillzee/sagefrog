@@ -305,6 +305,38 @@ def _oauth_platform_card_html(
     """
 
 
+def _gsc_field_html(*, selected: str, properties: list[dict[str, str]], connected: bool) -> str:
+    """GSC property field: live dropdown when OAuth-connected, free text otherwise."""
+    if not connected:
+        return f"""
+            <label for="gsc_site_url">GSC site URL</label>
+            <input id="gsc_site_url" name="gsc_site_url" type="text"
+              value="{_esc(selected)}"
+              placeholder="https://www.example.com/ or sc-domain:example.com">
+            <p class="hint">
+              Connect Google Search Console in <a href="/admin">Admin</a> to pick from a
+              dropdown of properties instead of typing the URL.
+            </p>"""
+
+    options = ['<option value="">— none —</option>']
+    known_urls = {p["site_url"] for p in properties}
+    if selected and selected not in known_urls:
+        options.append(f'<option value="{_esc(selected)}" selected>{_esc(selected)} (not in property list)</option>')
+    for p in properties:
+        url = p["site_url"]
+        perm = p.get("permission_level") or ""
+        sel = " selected" if url == selected else ""
+        label_text = f"{url} · {perm}" if perm else url
+        options.append(f'<option value="{_esc(url)}"{sel}>{_esc(label_text)}</option>')
+    return f"""
+            <label for="gsc_site_url">GSC property</label>
+            <select id="gsc_site_url" name="gsc_site_url">{"".join(options)}</select>
+            <p class="hint">
+              From the agency Google Search Console login connected in
+              <a href="/admin">Admin</a> — used by the GSC → BigQuery sync.
+            </p>"""
+
+
 def probe_agency_oauth_platform(platform: str) -> dict[str, Any]:
     """Live agency-wide OAuth status for the admin page."""
     import google_ads_service
@@ -388,6 +420,29 @@ def probe_agency_oauth_platform(platform: str) -> dict[str, Any]:
                 "details": [],
             }
 
+    if platform == "gsc":
+        import gsc_sync_service
+        try:
+            properties = gsc_sync_service.list_accessible_properties()
+            details = [
+                f"{row.get('site_url')} · {row.get('permission_level') or '—'}"
+                for row in properties[:12]
+            ]
+            extra = f" (+{len(properties) - 12} more)" if len(properties) > 12 else ""
+            return {
+                "ok": True,
+                "connected": True,
+                "message": f"OAuth active · {len(properties)} accessible Search Console propert{'y' if len(properties) == 1 else 'ies'}{extra}",
+                "details": details or ["No properties returned for this login."],
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "connected": True,
+                "message": str(exc)[:300],
+                "details": [],
+            }
+
     if platform == "meta":
         token = meta_service.test_access_token()
         if not token.get("ok"):
@@ -444,6 +499,7 @@ def render_admin_oauth_section(
             "google_ads": "Google Ads",
             "linkedin": "LinkedIn",
             "meta": "Meta",
+            "gsc": "Google Search Console",
         }
         notice += (
             f'<div class="notice ok">{_esc(labels.get(oauth_connected, oauth_connected))} '
@@ -457,7 +513,7 @@ def render_admin_oauth_section(
     if live_probe:
         live_results = {
             platform: probe_agency_oauth_platform(platform)
-            for platform in ("google_ads", "linkedin", "meta")
+            for platform in ("google_ads", "linkedin", "meta", "gsc")
         }
 
     refresh_href = _esc(f"{return_url}?oauth_refresh=1")
@@ -475,6 +531,7 @@ def render_admin_oauth_section(
         ("google_ads", "Google Ads"),
         ("linkedin", "LinkedIn"),
         ("meta", "Meta"),
+        ("gsc", "Google Search Console"),
     ):
         pub = oauth_status[platform]
         probe = live_results.get(platform) if live_probe else None
@@ -506,6 +563,7 @@ def render_admin_oauth_section(
           <li>{base}/oauth/google_ads/callback</li>
           <li>{base}/oauth/linkedin/callback</li>
           <li>{base}/oauth/meta/callback</li>
+          <li>{base}/oauth/gsc/callback</li>
         </ul>
       </details>
     </section>"""
@@ -523,6 +581,7 @@ def _agency_oauth_status_html(
         ("google_ads", "Google Ads"),
         ("linkedin", "LinkedIn"),
         ("meta", "Meta"),
+        ("gsc", "Google Search Console"),
     ):
         pub = oauth_status[platform]
         detail = (
@@ -1021,6 +1080,18 @@ def render_settings_html(
     except Exception:
         _db_cfg = None
     _gsc_url_val = (_db_cfg.gsc_site_url if _db_cfg else None) or ""
+    try:
+        _gsc_connected = oauth_store.public_status("gsc").connected
+    except Exception:
+        _gsc_connected = False
+    if _gsc_connected:
+        try:
+            import gsc_sync_service as _gsc_svc
+            _gsc_properties = _gsc_svc.list_accessible_properties()
+        except Exception:
+            _gsc_properties = []
+    else:
+        _gsc_properties = []
     _semrush_val = (_db_cfg.semrush_domain if _db_cfg else None) or ""
 
     # --- Edit form ---
@@ -1066,11 +1137,7 @@ def render_settings_html(
               {ga4_field}
               {budget_field}
               <div>
-                <label for="gsc_site_url">GSC site URL</label>
-                <input id="gsc_site_url" name="gsc_site_url" type="text"
-                  value="{_esc(_gsc_url_val)}"
-                  placeholder="https://www.example.com/ or sc-domain:example.com">
-                <p class="hint">Google Search Console property — used by the GSC → BigQuery sync.</p>
+                {_gsc_field_html(selected=_gsc_url_val, properties=_gsc_properties, connected=_gsc_connected)}
               </div>
               <div>
                 <label for="semrush_domain">SEMrush domain</label>

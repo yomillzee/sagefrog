@@ -433,7 +433,7 @@ def dashboard_client_settings_post(
             import gsc_sync_service
             db_cfg_for_sync = client_dashboard_config.get_config(slug)
             _gsc_url = (db_cfg_for_sync.gsc_site_url if db_cfg_for_sync else None) or None
-            result = gsc_sync_service.sync_for_refresh(site_url=_gsc_url)
+            result = gsc_sync_service.sync_for_refresh(site_url=_gsc_url, client_slug=slug)
             status = result.get("status", "")
             if status == "up_to_date":
                 flash_msg = "GSC tables are already up to date. No sync needed."

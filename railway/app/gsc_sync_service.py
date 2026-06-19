@@ -56,11 +56,23 @@ _GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 # Config helpers
 # ---------------------------------------------------------------------------
 
-def _project_id() -> str:
+def _resolve(target=None, client_slug: str | None = None):
+    """Pick a GscClientTarget: explicit target > client_slug lookup > legacy Penn default."""
+    import gsc_clients
+    if target is not None:
+        return target
+    return gsc_clients.resolve_target(client_slug) if client_slug else gsc_clients.default_target()
+
+
+def _project_id(target=None) -> str:
+    if target is not None:
+        return target.bq_project_id
     return (os.getenv("GSC_BQ_PROJECT_ID") or _DEFAULT_PROJECT).strip()
 
 
-def _dataset_id() -> str:
+def _dataset_id(target=None) -> str:
+    if target is not None:
+        return target.bq_dataset_id
     return (os.getenv("BQ_MART_DATASET_ID") or _DEFAULT_MART_DATASET).strip()
 
 
@@ -72,33 +84,71 @@ def _site_url() -> str:
 # Credentials
 # ---------------------------------------------------------------------------
 
-def _creds_env() -> str:
-    """Prefer the Penn-specific credential; fall back to the global one."""
+def _creds_env(target=None) -> str:
+    """Prefer the client's registry credential; fall back to Penn-specific, then global."""
+    if target is not None and target.credentials_env:
+        return target.credentials_env
     if (os.getenv("GCP_CREDS_PENN_BASE64") or "").strip():
         return "GCP_CREDS_PENN_BASE64"
     return "GCP_SERVICE_ACCOUNT_JSON"
 
 
-def _gsc_creds():
+def _gsc_creds(target=None):
+    """Service-account credentials, scoped for both GSC reads and BQ writes.
+
+    Used as the fallback read path when no agency GSC OAuth token is
+    connected yet (keeps Penn's existing setup working unchanged).
+    """
     from google.oauth2 import service_account
     from ga4_credentials import load_service_account_info_from_env
-    env = _creds_env()
+    env = _creds_env(target)
     info = load_service_account_info_from_env(env, require_base64=(env == "GCP_CREDS_PENN_BASE64"))
     return service_account.Credentials.from_service_account_info(
         info, scopes=[_GSC_SCOPE, _BQ_SCOPE]
     )
 
 
-def _bq_client():
+def _gsc_read_creds(target=None):
+    """Credentials used to call the Search Console API.
+
+    Prefers the agency-wide GSC OAuth login (Settings -> Admin -> Connect
+    Google Search Console) since that one login already has access to
+    every client's property. Falls back to the service account when GSC
+    hasn't been connected via OAuth yet, so nothing breaks mid-rollout.
+    """
+    try:
+        import oauth_store
+        refresh_token = oauth_store.get_refresh_token("gsc")
+    except Exception:
+        refresh_token = None
+
+    if refresh_token:
+        import auth as google_auth
+        from google.oauth2.credentials import Credentials
+        client_id = google_auth._get_env(*google_auth._ENV_ALIASES["client_id"])
+        client_secret = google_auth._get_env(*google_auth._ENV_ALIASES["client_secret"])
+        if client_id and client_secret:
+            return Credentials(
+                token=None,
+                refresh_token=refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=client_id,
+                client_secret=client_secret,
+                scopes=[_GSC_SCOPE],
+            )
+    return _gsc_creds(target)
+
+
+def _bq_client(target=None):
     from google.cloud import bigquery as bq
     from google.oauth2 import service_account
     from ga4_credentials import load_service_account_info_from_env
-    env = _creds_env()
+    env = _creds_env(target)
     info = load_service_account_info_from_env(env, require_base64=(env == "GCP_CREDS_PENN_BASE64"))
     creds = service_account.Credentials.from_service_account_info(
         info, scopes=[_BQ_SCOPE]
     )
-    return bq.Client(project=_project_id(), credentials=creds)
+    return bq.Client(project=_project_id(target), credentials=creds)
 
 
 def _token(creds) -> str:
@@ -111,6 +161,32 @@ def _token(creds) -> str:
 # ---------------------------------------------------------------------------
 # GSC API
 # ---------------------------------------------------------------------------
+
+def list_accessible_properties() -> list[dict[str, str]]:
+    """List every GSC property the connected agency OAuth login can see.
+
+    Requires GSC to be connected via Admin → Connect Google Search Console.
+    Used to populate the property dropdown on each client's settings page.
+    """
+    import google.auth.transport.requests
+    creds = _gsc_read_creds()
+    if not creds.valid:
+        creds.refresh(google.auth.transport.requests.Request())
+    req = urllib.request.Request(
+        "https://www.googleapis.com/webmasters/v3/sites",
+        headers={"Authorization": f"Bearer {creds.token}"},
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read())
+    out = []
+    for entry in data.get("siteEntry") or []:
+        url = entry.get("siteUrl") or ""
+        if not url:
+            continue
+        out.append({"site_url": url, "permission_level": entry.get("permissionLevel") or ""})
+    return sorted(out, key=lambda e: e["site_url"])
+
 
 def _gsc_post(token: str, site_url: str, body: dict) -> dict:
     encoded = urllib.parse.quote(site_url, safe="")
@@ -203,9 +279,9 @@ def _page_schema():
     ]
 
 
-def _ensure_tables(client) -> tuple[str, str]:
+def _ensure_tables(client, target=None) -> tuple[str, str]:
     from google.cloud import bigquery as bq
-    proj, ds = _project_id(), _dataset_id()
+    proj, ds = _project_id(target), _dataset_id(target)
     query_id = f"{proj}.{ds}.{_QUERY_TABLE}"
     page_id  = f"{proj}.{ds}.{_PAGE_TABLE}"
     client.create_dataset(bq.Dataset(f"{proj}.{ds}"), exists_ok=True)
@@ -266,14 +342,14 @@ def _table_max_date(client, table_id: str) -> date | None:
     return None
 
 
-def get_missing_range(client=None) -> tuple[date | None, date | None]:
+def get_missing_range(client=None, target=None) -> tuple[date | None, date | None]:
     """Return (start, end) for dates that need syncing, or (None, None) if current."""
     lag_cutoff = date.today() - timedelta(days=_GSC_LAG_DAYS)
     max_history = date.today() - timedelta(days=_MAX_HISTORY)
 
     try:
-        c = client or _bq_client()
-        proj, ds = _project_id(), _dataset_id()
+        c = client or _bq_client(target)
+        proj, ds = _project_id(target), _dataset_id(target)
         q_max = _table_max_date(c, f"{proj}.{ds}.{_QUERY_TABLE}")
         p_max = _table_max_date(c, f"{proj}.{ds}.{_PAGE_TABLE}")
         # Sync from the earlier of the two max dates (keep tables in step)
@@ -303,9 +379,11 @@ def sync_range(
     progress_cb=None,
     *,
     site_url: str | None = None,
+    client_slug: str | None = None,
 ) -> dict[str, Any]:
     """Fetch and write GSC data for start..end. Returns summary dict."""
-    site_url = (site_url or "").strip() or _site_url()
+    target = _resolve(client_slug=client_slug)
+    site_url = (site_url or "").strip() or (target.site_url or "") or _site_url()
     if not site_url:
         return {"ok": False, "error": "GSC_SITE_URL env var not set"}
 
@@ -314,9 +392,9 @@ def sync_range(
     total_days = (end - start).days + 1
 
     try:
-        creds  = _gsc_creds()
-        client = _bq_client()
-        query_id, page_id = _ensure_tables(client)
+        creds  = _gsc_read_creds(target)
+        client = _bq_client(target)
+        query_id, page_id = _ensure_tables(client, target)
         q_schema = _query_schema()
         p_schema = _page_schema()
         q_merge  = "T.date = S.date AND IFNULL(T.query, '') = IFNULL(S.query, '')"
@@ -369,28 +447,32 @@ def sync_range(
 # Refresh-pipeline entry point
 # ---------------------------------------------------------------------------
 
-def sync_for_refresh(site_url: str | None = None) -> dict[str, Any]:
+def sync_for_refresh(site_url: str | None = None, client_slug: str | None = None) -> dict[str, Any]:
     """Called automatically from the dashboard refresh pipeline.
 
     site_url: override the GSC_SITE_URL env var (for per-client config).
+    client_slug: which client's BigQuery destination (project/dataset/creds)
+        to route into, via gsc_clients.resolve_target(). Omit to keep the
+        legacy Penn-only behaviour.
     - Tables up to date → no-op (fast)
     - Small gap (≤ 30 days) → sync synchronously; fresh data in this snapshot
     - Large gap / empty tables → spawn background thread; data available next refresh
     """
-    site_url = (site_url or "").strip() or _site_url()
+    target = _resolve(client_slug=client_slug)
+    site_url = (site_url or "").strip() or (target.site_url or "") or _site_url()
     if not site_url:
         return {"ok": False, "error": "GSC_SITE_URL not configured (set it in Settings → GSC Site URL)"}
 
     # Test credentials and table creation synchronously so errors surface immediately
     # rather than disappearing into the background thread.
     try:
-        client = _bq_client()
-        _ensure_tables(client)
+        client = _bq_client(target)
+        _ensure_tables(client, target)
     except Exception as exc:
         return {"ok": False, "error": f"BQ setup failed (check service account permissions): {exc}"}
 
     try:
-        start, end = get_missing_range(client=client)
+        start, end = get_missing_range(client=client, target=target)
     except Exception as exc:
         return {"ok": False, "error": f"get_missing_range failed: {exc}"}
 
@@ -402,10 +484,11 @@ def sync_for_refresh(site_url: str | None = None) -> dict[str, Any]:
     if days_missing > _BACKGROUND_THRESHOLD:
         # Full backfill — don't block the refresh
         _url = site_url  # capture for closure
+        _slug = client_slug
 
         def _bg():
             try:
-                result = sync_range(start, end, site_url=_url)
+                result = sync_range(start, end, site_url=_url, client_slug=_slug)
                 log.info("GSC background backfill complete: %s", result)
             except Exception as exc:
                 log.error("GSC background backfill failed: %s", exc)
@@ -421,6 +504,6 @@ def sync_for_refresh(site_url: str | None = None) -> dict[str, Any]:
         }
     else:
         # Small gap — sync now so this snapshot has fresh data
-        result = sync_range(start, end, site_url=site_url)
+        result = sync_range(start, end, site_url=site_url, client_slug=client_slug)
         result["status"] = "synced"
         return result
