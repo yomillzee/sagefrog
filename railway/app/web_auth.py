@@ -581,12 +581,18 @@ def render_admin_page(
                         <button type="submit" id="{btn_id}" class="link danger" disabled>Delete dashboard</button>
                       </form>
                     </details>"""
+                clear_snapshot_form = (
+                    f'<form method="post" action="/admin/snapshot/{_esc(slug)}/delete" style="display:inline">'
+                    f'<button type="submit" class="link" onclick="return confirm(\'Clear cached snapshot for {_esc(label)}?\')">Clear snapshot</button>'
+                    f"</form>"
+                )
                 dash_rows.append(
                     f"<tr>"
                     f'<td class="mono">{_esc(slug)}</td>'
                     f"<td>{_esc(label)}</td>"
                     f'<td><a href="/dashboard/{_esc(slug)}">Open</a> · '
-                    f'<a href="/dashboard/{_esc(slug)}/settings">Settings</a></td>'
+                    f'<a href="/dashboard/{_esc(slug)}/settings">Settings</a> · '
+                    f"{clear_snapshot_form}</td>"
                     f"<td>{delete_cell}</td>"
                     f"</tr>"
                 )

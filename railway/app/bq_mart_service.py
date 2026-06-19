@@ -47,18 +47,32 @@ def _linkedin_full_table() -> str:
     return _mart_table(os.getenv("BQ_MART_LINKEDIN_TABLE") or _DEFAULT_LINKEDIN_TABLE)
 
 
+def _resolve_project(bq_project_id: str | None) -> str:
+    return (bq_project_id or os.getenv("BQ_MART_PROJECT_ID") or _DEFAULT_PROJECT).strip()
+
+
+def _resolve_table(name: str, bq_project_id: str | None, bq_dataset_id: str | None) -> str:
+    project = _resolve_project(bq_project_id)
+    dataset = (bq_dataset_id or os.getenv("BQ_MART_DATASET_ID") or _DEFAULT_DATASET).strip()
+    return f"`{project}.{dataset}.{name}`"
+
+
 def fetch_campaign_daily(
     *,
     days: int = 30,
     start: date | None = None,
     end: date | None = None,
+    bq_project_id: str | None = None,
+    bq_dataset_id: str | None = None,
+    credentials_env: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return per-campaign per-day rows (Google Ads mart).
 
     Assumes the mart has columns: date, campaign_id, campaign_name,
     spend, impressions, clicks, conversions.
     """
-    table = _full_table()
+    table = _resolve_table(os.getenv("BQ_MART_TABLE") or _DEFAULT_TABLE, bq_project_id, bq_dataset_id)
+    proj = _resolve_project(bq_project_id)
     if start and end:
         where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
     else:
@@ -77,7 +91,7 @@ def fetch_campaign_daily(
     GROUP BY 1, 2
     ORDER BY 1 DESC, 4 DESC
     """
-    return bigquery_service.run_query(sql, project_id=_project_id(), max_rows=5000)
+    return bigquery_service.run_query(sql, project_id=proj, credentials_env=credentials_env, max_rows=5000)
 
 
 def fetch_linkedin_campaign_daily(
@@ -85,9 +99,13 @@ def fetch_linkedin_campaign_daily(
     days: int = 30,
     start: date | None = None,
     end: date | None = None,
+    bq_project_id: str | None = None,
+    bq_dataset_id: str | None = None,
+    credentials_env: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return per-campaign per-day rows (LinkedIn Ads mart)."""
-    table = _linkedin_full_table()
+    table = _resolve_table(os.getenv("BQ_MART_LINKEDIN_TABLE") or _DEFAULT_LINKEDIN_TABLE, bq_project_id, bq_dataset_id)
+    proj = _resolve_project(bq_project_id)
     if start and end:
         where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
     else:
@@ -109,7 +127,7 @@ def fetch_linkedin_campaign_daily(
     GROUP BY 1, 2
     ORDER BY 1 DESC, spend DESC
     """
-    return bigquery_service.run_query(sql, project_id=_project_id(), max_rows=5000)
+    return bigquery_service.run_query(sql, project_id=proj, credentials_env=credentials_env, max_rows=5000)
 
 
 def fetch_google_ad_group_daily(
@@ -117,9 +135,12 @@ def fetch_google_ad_group_daily(
     days: int = 30,
     start: date | None = None,
     end: date | None = None,
+    bq_project_id: str | None = None,
+    bq_dataset_id: str | None = None,
+    credentials_env: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return per-ad-group per-day rows from the Google Ads ad group mart."""
-    table = _mart_table(_DEFAULT_GOOGLE_AD_GROUP_TABLE)
+    table = _resolve_table(_DEFAULT_GOOGLE_AD_GROUP_TABLE, bq_project_id, bq_dataset_id)
     if start and end:
         where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
     else:
@@ -141,7 +162,7 @@ def fetch_google_ad_group_daily(
     GROUP BY 1, 2
     ORDER BY 1 DESC, spend DESC
     """
-    return bigquery_service.run_query(sql, project_id=_project_id(), max_rows=10000)
+    return bigquery_service.run_query(sql, project_id=_resolve_project(bq_project_id), credentials_env=credentials_env, max_rows=10000)
 
 
 def fetch_google_ad_daily(
@@ -149,9 +170,12 @@ def fetch_google_ad_daily(
     days: int = 30,
     start: date | None = None,
     end: date | None = None,
+    bq_project_id: str | None = None,
+    bq_dataset_id: str | None = None,
+    credentials_env: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return per-ad per-day rows from the Google Ads ad mart."""
-    table = _mart_table(_DEFAULT_GOOGLE_AD_TABLE)
+    table = _resolve_table(_DEFAULT_GOOGLE_AD_TABLE, bq_project_id, bq_dataset_id)
     if start and end:
         where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
     else:
@@ -175,7 +199,7 @@ def fetch_google_ad_daily(
     GROUP BY 1, 2
     ORDER BY 1 DESC, spend DESC
     """
-    return bigquery_service.run_query(sql, project_id=_project_id(), max_rows=20000)
+    return bigquery_service.run_query(sql, project_id=_resolve_project(bq_project_id), credentials_env=credentials_env, max_rows=20000)
 
 
 def _aggregate_campaign_rows(rows: list[dict[str, Any]]) -> tuple[
@@ -452,6 +476,9 @@ def build_snapshot(
     start: date | None = None,
     end: date | None = None,
     preset: str = "LAST_30_DAYS",
+    bq_project_id: str | None = None,
+    bq_dataset_id: str | None = None,
+    credentials_env: str | None = None,
 ) -> dict[str, Any]:
     """Query Google and LinkedIn marts and return a snapshot dict compatible with render_penn_html()."""
     from concurrent.futures import ThreadPoolExecutor
@@ -462,11 +489,13 @@ def build_snapshot(
     google_ad_rows: list[dict[str, Any]] = []
     linkedin_rows: list[dict[str, Any]] = []
 
+    _bq_kwargs = dict(bq_project_id=bq_project_id, bq_dataset_id=bq_dataset_id, credentials_env=credentials_env)
+
     with ThreadPoolExecutor(max_workers=4) as _pool:
-        _gf = _pool.submit(fetch_campaign_daily, days=days, start=start, end=end)
-        _gag = _pool.submit(fetch_google_ad_group_daily, days=days, start=start, end=end)
-        _gad = _pool.submit(fetch_google_ad_daily, days=days, start=start, end=end)
-        _lf = _pool.submit(fetch_linkedin_campaign_daily, days=days, start=start, end=end)
+        _gf = _pool.submit(fetch_campaign_daily, days=days, start=start, end=end, **_bq_kwargs)
+        _gag = _pool.submit(fetch_google_ad_group_daily, days=days, start=start, end=end, **_bq_kwargs)
+        _gad = _pool.submit(fetch_google_ad_daily, days=days, start=start, end=end, **_bq_kwargs)
+        _lf = _pool.submit(fetch_linkedin_campaign_daily, days=days, start=start, end=end, **_bq_kwargs)
         try:
             google_rows = _gf.result()
         except Exception as exc:
@@ -507,8 +536,6 @@ def build_snapshot(
         start = end - timedelta(days=days - 1)
 
     return {
-        "client_key": "penn-bq-test",
-        "label": "Penn BQ Test",
         "date_range": {
             "start": start.isoformat(),
             "end": end.isoformat(),
@@ -516,7 +543,7 @@ def build_snapshot(
         },
         "refreshed_at": datetime.now(tz=UTC).isoformat(),
         "accounts": {
-            "google": _project_id(),
+            "google": _resolve_project(bq_project_id),
             "linkedin": None,
             "meta": None,
         },

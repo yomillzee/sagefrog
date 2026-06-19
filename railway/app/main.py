@@ -1870,6 +1870,27 @@ def admin_delete_gsc_config(
     )
 
 
+@app.post("/admin/snapshot/{client_slug}/delete", include_in_schema=False)
+def admin_delete_snapshot(
+    client_slug: str,
+    request: Request,
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    import dashboard_snapshots
+    slug = (client_slug or "").strip().lower()
+    dashboard_snapshots.delete_snapshot(slug)
+    audit_log.record(
+        action="dashboard.snapshot.deleted",
+        actor_email=user.email,
+        detail={"client_slug": slug},
+        **audit_log.request_context(request),
+    )
+    return RedirectResponse(
+        url=f"/admin?msg=Snapshot+cleared+for+{quote(slug)}",
+        status_code=303,
+    )
+
+
 @app.post("/admin/dev-notes", include_in_schema=False)
 def admin_create_dev_note(
     request: Request,

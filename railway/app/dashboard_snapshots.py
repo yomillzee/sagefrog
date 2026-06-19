@@ -100,6 +100,18 @@ def get_snapshot(client_key: str) -> dict[str, Any] | None:
     return payload
 
 
+def delete_snapshot(client_key: str) -> bool:
+    if not enabled():
+        return False
+    ensure_schema()
+    with psycopg.connect(_get_db_url()) as conn:
+        cur = conn.execute(
+            "DELETE FROM dashboard_snapshots WHERE client_key = %s",
+            ((client_key or "").strip().lower(),),
+        )
+        return bool(getattr(cur, "rowcount", 0))
+
+
 def get_snapshot_settings_context(client_key: str) -> dict[str, Any] | None:
     """Lightweight snapshot fields for settings (skip campaign/metrics payloads)."""
     if not enabled():

@@ -537,6 +537,19 @@ def refresh_bq_client(
     semrush_domain      = (db_cfg.semrush_domain if db_cfg else None) or ""
     is_cron             = (sync_trigger == "cron")
 
+    # Resolve client-specific BQ project/credentials for mart queries.
+    # Mart tables (fact_google_ads_campaign_daily etc.) live in the same GCP project
+    # as the client's GA4 export — use the GA4 registry to find the right project.
+    _mart_bq_project: str | None = None
+    _mart_credentials_env: str | None = None
+    try:
+        import ga4_clients as _ga4c
+        _ga4_target = _ga4c.resolve_target(client_key=ga4_client_key)
+        _mart_bq_project = _ga4_target.bq_project_id or None
+        _mart_credentials_env = _ga4_target.credentials_env or None
+    except Exception:
+        pass
+
     # Reuse cached SEMrush data if it's under 24 hours old — SEMrush scores
     # update at most daily and cost API tokens on every call.
     from datetime import datetime, timezone as _tz
@@ -586,7 +599,11 @@ def refresh_bq_client(
     )
 
     try:
-        snapshot = bq_mart_service.build_snapshot(start=start, end=end, preset=preset)
+        snapshot = bq_mart_service.build_snapshot(
+            start=start, end=end, preset=preset,
+            bq_project_id=_mart_bq_project,
+            credentials_env=_mart_credentials_env,
+        )
         snapshot["label"]      = cfg.label
         snapshot["date_range"] = {"start": start.isoformat(), "end": end.isoformat(), "preset": preset}
         snapshot.setdefault("accounts", {})["linkedin"] = linkedin_account_id
