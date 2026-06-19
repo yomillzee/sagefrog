@@ -50,30 +50,8 @@ def _strip_env(val: str | None) -> str:
     return v
 
 
-def load_client_registry() -> dict[str, GscClientTarget]:
-    """
-    Optional Railway env GSC_CLIENTS -- JSON object keyed by client slug.
-
-    Example:
-    {
-      "penn-bq-test": {
-        "bq_project_id": "penn-community-b-1699391543298",
-        "bq_dataset_id": "marketing_marts",
-        "credentials_env": "GCP_CREDS_PENN_BASE64"
-      },
-      "nixon": {
-        "bq_project_id": "nixon-medical-gcp-project",
-        "bq_dataset_id": "marketing_marts",
-        "credentials_env": "GCP_CREDS_NIXON_BASE64",
-        "site_url": "sc-domain:nixonmedical.com",
-        "native_dataset_id": "searchconsole_nixon"
-      }
-    }
-
-    site_url here is optional -- it's normally stored per-client in the
-    dashboard settings DB (client_dashboard_config.gsc_site_url). Set it
-    here only if you want to override that.
-    """
+def _load_from_env() -> dict[str, GscClientTarget]:
+    """Load GSC client registry from the GSC_CLIENTS env var only."""
     raw = _strip_env(os.getenv("GSC_CLIENTS"))
     if not raw:
         return {}
@@ -106,6 +84,41 @@ def load_client_registry() -> dict[str, GscClientTarget]:
             label=_strip_env(str(entry.get("label") or "")) or slug,
             native_dataset_id=_strip_env(str(entry.get("native_dataset_id") or "")) or None,
         )
+    return out
+
+
+def load_client_registry() -> dict[str, GscClientTarget]:
+    """
+    Load GSC client registry, merging env var and database entries.
+    Database entries (set via Admin → Client BQ Registry) take precedence.
+
+    Example GSC_CLIENTS env var:
+    {
+      "penn-bq-test": {
+        "bq_project_id": "penn-community-b-1699391543298",
+        "bq_dataset_id": "marketing_marts",
+        "credentials_env": "GCP_CREDS_PENN_BASE64"
+      }
+    }
+
+    site_url is optional here -- normally stored per-client in the dashboard
+    settings DB (client_dashboard_config.gsc_site_url).
+    """
+    out = _load_from_env()
+    try:
+        import client_registry_store
+        for row in client_registry_store.list_gsc_configs():
+            slug = row.client_slug
+            out[slug] = GscClientTarget(
+                client_slug=slug,
+                bq_project_id=row.bq_project_id,
+                bq_dataset_id=row.bq_dataset_id,
+                credentials_env=row.credentials_env or _DEFAULT_CREDENTIALS_ENV,
+                native_dataset_id=row.native_dataset_id,
+                label=row.label or slug,
+            )
+    except Exception:
+        pass
     return out
 
 

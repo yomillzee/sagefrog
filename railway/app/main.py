@@ -34,6 +34,7 @@ from security import configured_api_key, is_production, require_api_key
 import audit_log
 import client_config
 import client_dashboard_config
+import client_registry_store
 import dashboard_registry
 import business_line_rules
 import admin_dev_notes
@@ -1567,6 +1568,40 @@ def admin_home(
     if oauth_disconnected and not flash:
         labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta", "indeed": "Indeed"}
         flash = f"{labels.get(oauth_disconnected, oauth_disconnected)} disconnected."
+
+    ga4_registry: list[dict] | None = None
+    gsc_registry: list[dict] | None = None
+    try:
+        import ga4_clients as _ga4c
+        import gsc_clients as _gscc
+        ga4_db_slugs = {r.client_slug for r in client_registry_store.list_ga4_configs()}
+        ga4_all = _ga4c.load_client_registry()
+        ga4_registry = [
+            {
+                "slug": slug,
+                "bq_project_id": t.bq_project_id,
+                "bq_dataset_id": t.bq_dataset_id,
+                "credentials_env": t.credentials_env or "",
+                "source": "database" if slug in ga4_db_slugs else "env",
+            }
+            for slug, t in sorted(ga4_all.items())
+        ]
+        gsc_db_slugs = {r.client_slug for r in client_registry_store.list_gsc_configs()}
+        gsc_all = _gscc.load_client_registry()
+        gsc_registry = [
+            {
+                "slug": slug,
+                "bq_project_id": t.bq_project_id,
+                "bq_dataset_id": t.bq_dataset_id,
+                "credentials_env": t.credentials_env or "",
+                "native_dataset_id": t.native_dataset_id or "",
+                "source": "database" if slug in gsc_db_slugs else "env",
+            }
+            for slug, t in sorted(gsc_all.items())
+        ]
+    except Exception:
+        pass
+
     return HTMLResponse(
         web_auth.render_admin_page(
             user=user,
@@ -1576,6 +1611,8 @@ def admin_home(
             message=flash,
             error=err,
             oauth_section_html=oauth_html,
+            ga4_registry=ga4_registry,
+            gsc_registry=gsc_registry,
         )
     )
 
@@ -1723,6 +1760,112 @@ def admin_delete_dashboard(
     )
     return RedirectResponse(
         url=f"/admin?msg=Dashboard+{quote(deleted['label'])}+deleted",
+        status_code=303,
+    )
+
+
+@app.post("/admin/client-registry/ga4", include_in_schema=False)
+def admin_save_ga4_config(
+    request: Request,
+    client_slug: str = Form(...),
+    bq_project_id: str = Form(...),
+    bq_dataset_id: str = Form(...),
+    credentials_env: str = Form(""),
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    ctx = audit_log.request_context(request)
+    try:
+        client_registry_store.save_ga4_config(
+            client_slug=client_slug,
+            bq_project_id=bq_project_id,
+            bq_dataset_id=bq_dataset_id,
+            credentials_env=credentials_env.strip() or None,
+            updated_by=user.email,
+        )
+    except (ValueError, RuntimeError) as exc:
+        return RedirectResponse(url=f"/admin?err={quote(str(exc))}", status_code=303)
+    audit_log.record(
+        action="client_registry.ga4.saved",
+        actor_email=user.email,
+        detail={"client_slug": client_slug.strip().lower(), "bq_project_id": bq_project_id},
+        **ctx,
+    )
+    return RedirectResponse(
+        url=f"/admin?msg=GA4+config+saved+for+{quote(client_slug.strip().lower())}",
+        status_code=303,
+    )
+
+
+@app.post("/admin/client-registry/ga4/{client_slug}/delete", include_in_schema=False)
+def admin_delete_ga4_config(
+    client_slug: str,
+    request: Request,
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    ctx = audit_log.request_context(request)
+    client_registry_store.delete_ga4_config(client_slug)
+    audit_log.record(
+        action="client_registry.ga4.deleted",
+        actor_email=user.email,
+        detail={"client_slug": client_slug},
+        **ctx,
+    )
+    return RedirectResponse(
+        url=f"/admin?msg=GA4+config+removed+for+{quote(client_slug)}",
+        status_code=303,
+    )
+
+
+@app.post("/admin/client-registry/gsc", include_in_schema=False)
+def admin_save_gsc_config(
+    request: Request,
+    client_slug: str = Form(...),
+    bq_project_id: str = Form(...),
+    bq_dataset_id: str = Form(...),
+    credentials_env: str = Form("GCP_SERVICE_ACCOUNT_JSON"),
+    native_dataset_id: str = Form(""),
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    ctx = audit_log.request_context(request)
+    try:
+        client_registry_store.save_gsc_config(
+            client_slug=client_slug,
+            bq_project_id=bq_project_id,
+            bq_dataset_id=bq_dataset_id,
+            credentials_env=credentials_env.strip() or "GCP_SERVICE_ACCOUNT_JSON",
+            native_dataset_id=native_dataset_id.strip() or None,
+            updated_by=user.email,
+        )
+    except (ValueError, RuntimeError) as exc:
+        return RedirectResponse(url=f"/admin?err={quote(str(exc))}", status_code=303)
+    audit_log.record(
+        action="client_registry.gsc.saved",
+        actor_email=user.email,
+        detail={"client_slug": client_slug.strip().lower(), "bq_project_id": bq_project_id},
+        **ctx,
+    )
+    return RedirectResponse(
+        url=f"/admin?msg=GSC+config+saved+for+{quote(client_slug.strip().lower())}",
+        status_code=303,
+    )
+
+
+@app.post("/admin/client-registry/gsc/{client_slug}/delete", include_in_schema=False)
+def admin_delete_gsc_config(
+    client_slug: str,
+    request: Request,
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    ctx = audit_log.request_context(request)
+    client_registry_store.delete_gsc_config(client_slug)
+    audit_log.record(
+        action="client_registry.gsc.deleted",
+        actor_email=user.email,
+        detail={"client_slug": client_slug},
+        **ctx,
+    )
+    return RedirectResponse(
+        url=f"/admin?msg=GSC+config+removed+for+{quote(client_slug)}",
         status_code=303,
     )
 

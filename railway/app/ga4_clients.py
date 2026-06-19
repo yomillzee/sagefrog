@@ -51,24 +51,8 @@ def _account_id_from_dataset(dataset: str) -> str:
     return ds
 
 
-def load_client_registry() -> dict[str, Ga4ClientTarget]:
-    """
-    Optional Railway env GA4_CLIENTS — JSON object keyed by client slug.
-
-    Example:
-    {
-      "penn": {
-        "bq_project_id": "penn-community-b-1699391543298",
-        "bq_dataset_id": "analytics_313855909",
-        "account_id": "313855909",
-        "label": "Penn Community Bank"
-      },
-      "sagefrog": {
-        "bq_project_id": "sagefrog",
-        "bq_dataset_id": "analytics_123456789"
-      }
-    }
-    """
+def _load_from_env() -> dict[str, Ga4ClientTarget]:
+    """Load GA4 client registry from the GA4_CLIENTS env var only."""
     raw = _strip_env(os.getenv("GA4_CLIENTS"))
     if not raw:
         return {}
@@ -101,6 +85,39 @@ def load_client_registry() -> dict[str, Ga4ClientTarget]:
             account_id=account_id,
             credentials_env=_strip_env(str(entry.get("credentials_env") or "")) or None,
         )
+    return out
+
+
+def load_client_registry() -> dict[str, Ga4ClientTarget]:
+    """
+    Load GA4 client registry, merging env var and database entries.
+    Database entries (set via Admin → Client BQ Registry) take precedence.
+
+    Example GA4_CLIENTS env var:
+    {
+      "penn": {
+        "bq_project_id": "penn-community-b-1699391543298",
+        "bq_dataset_id": "analytics_313855909",
+        "account_id": "313855909",
+        "label": "Penn Community Bank"
+      }
+    }
+    """
+    out = _load_from_env()
+    try:
+        import client_registry_store
+        for row in client_registry_store.list_ga4_configs():
+            slug = row.client_slug
+            out[slug] = Ga4ClientTarget(
+                client_key=slug,
+                label=row.label or slug,
+                bq_project_id=row.bq_project_id,
+                bq_dataset_id=row.bq_dataset_id,
+                account_id=_account_id_from_dataset(row.bq_dataset_id),
+                credentials_env=row.credentials_env or None,
+            )
+    except Exception:
+        pass
     return out
 
 

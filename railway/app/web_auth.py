@@ -335,6 +335,171 @@ def _render_dev_notes_section(*, dev_notes: list | None) -> str:
     </section>"""
 
 
+def _render_registry_section(
+    *,
+    ga4_registry: list[dict] | None,
+    gsc_registry: list[dict] | None,
+) -> str:
+    if ga4_registry is None and gsc_registry is None:
+        return ""
+
+    def _trunc(val: str, n: int = 30) -> str:
+        s = _esc(val or "")
+        return f'<span class="trunc mono" title="{s}">{s}</span>' if len(val or "") > n else f'<span class="mono">{s}</span>'
+
+    # --- GA4 table ---
+    ga4_rows_html = ""
+    for e in (ga4_registry or []):
+        slug = _esc(e["slug"])
+        src = e.get("source", "env")
+        badge = f'<span class="src-db">database</span>' if src == "database" else f'<span class="src-env">env var</span>'
+        remove_cell = (
+            f'<form method="post" action="/admin/client-registry/ga4/{slug}/delete" style="display:inline">'
+            f'<button type="submit" class="link danger" '
+            f'onclick="return confirm(\'Remove GA4 config for {slug}?\')">Remove</button></form>'
+            if src == "database"
+            else '<span class="muted hint">Edit GA4_CLIENTS env var</span>'
+        )
+        ga4_rows_html += (
+            f"<tr>"
+            f"<td class=\"mono\">{slug}</td>"
+            f"<td>{_trunc(e.get('bq_project_id', ''))}</td>"
+            f"<td>{_trunc(e.get('bq_dataset_id', ''))}</td>"
+            f"<td>{_trunc(e.get('credentials_env', '') or '(global default)')}</td>"
+            f"<td>{badge}</td>"
+            f"<td>{remove_cell}</td>"
+            f"</tr>\n"
+        )
+    if not ga4_rows_html:
+        ga4_rows_html = '<tr><td colspan="6" class="muted">No GA4 entries yet.</td></tr>'
+
+    # --- GSC table ---
+    gsc_rows_html = ""
+    for e in (gsc_registry or []):
+        slug = _esc(e["slug"])
+        src = e.get("source", "env")
+        badge = f'<span class="src-db">database</span>' if src == "database" else f'<span class="src-env">env var</span>'
+        remove_cell = (
+            f'<form method="post" action="/admin/client-registry/gsc/{slug}/delete" style="display:inline">'
+            f'<button type="submit" class="link danger" '
+            f'onclick="return confirm(\'Remove GSC config for {slug}?\')">Remove</button></form>'
+            if src == "database"
+            else '<span class="muted hint">Edit GSC_CLIENTS env var</span>'
+        )
+        native = _esc(e.get("native_dataset_id") or "—")
+        gsc_rows_html += (
+            f"<tr>"
+            f"<td class=\"mono\">{slug}</td>"
+            f"<td>{_trunc(e.get('bq_project_id', ''))}</td>"
+            f"<td>{_trunc(e.get('bq_dataset_id', ''))}</td>"
+            f"<td>{_trunc(e.get('credentials_env', ''))}</td>"
+            f"<td class=\"mono\">{native}</td>"
+            f"<td>{badge}</td>"
+            f"<td>{remove_cell}</td>"
+            f"</tr>\n"
+        )
+    if not gsc_rows_html:
+        gsc_rows_html = '<tr><td colspan="7" class="muted">No GSC entries yet.</td></tr>'
+
+    return f"""
+    <section>
+      <h2>Client BQ Registry</h2>
+      <p class="muted" style="margin:0 0 14px">Maps each dashboard to its BigQuery sources. Add a row when onboarding a new client. Entries saved here override the <code>GA4_CLIENTS</code> / <code>GSC_CLIENTS</code> env vars for the same slug.</p>
+
+      <details class="admin-fold" open>
+        <summary>GA4 (Google Analytics 4 → BigQuery)</summary>
+        <table class="registry-table">
+          <thead><tr>
+            <th>Slug</th><th>GCP Project</th><th>BQ Dataset</th>
+            <th>Credentials Env</th><th>Source</th><th></th>
+          </tr></thead>
+          <tbody>{ga4_rows_html}</tbody>
+        </table>
+        <details class="admin-fold" style="margin-top:14px">
+          <summary>+ Add / update GA4 entry</summary>
+          <form method="post" action="/admin/client-registry/ga4" class="registry-form">
+            <div class="row">
+              <div>
+                <label>Client slug</label>
+                <input name="client_slug" type="text" required placeholder="nixon" pattern="[a-z0-9-]+">
+                <p class="hint">Must match the dashboard slug exactly.</p>
+              </div>
+              <div>
+                <label>GCP Project ID</label>
+                <input name="bq_project_id" type="text" required placeholder="my-gcp-project-id">
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>BigQuery Dataset ID</label>
+                <input name="bq_dataset_id" type="text" required placeholder="analytics_313855909">
+                <p class="hint">Usually <code>analytics_&lt;GA4_property_id&gt;</code></p>
+              </div>
+              <div>
+                <label>Credentials Env <span class="muted">(optional)</span></label>
+                <input name="credentials_env" type="text" placeholder="GCP_CREDS_CLIENT_BASE64">
+                <p class="hint">Railway env var holding base64 service account JSON. Leave blank to use <code>GCP_SERVICE_ACCOUNT_JSON</code>.</p>
+              </div>
+            </div>
+            <button type="submit" class="primary">Save GA4 entry</button>
+          </form>
+        </details>
+      </details>
+
+      <details class="admin-fold" style="margin-top:16px" open>
+        <summary>GSC (Search Console → BigQuery sync destination)</summary>
+        <table class="registry-table">
+          <thead><tr>
+            <th>Slug</th><th>GCP Project</th><th>Mart Dataset</th>
+            <th>Credentials Env</th><th>Native Dataset</th><th>Source</th><th></th>
+          </tr></thead>
+          <tbody>{gsc_rows_html}</tbody>
+        </table>
+        <details class="admin-fold" style="margin-top:14px">
+          <summary>+ Add / update GSC entry</summary>
+          <form method="post" action="/admin/client-registry/gsc" class="registry-form">
+            <div class="row">
+              <div>
+                <label>Client slug</label>
+                <input name="client_slug" type="text" required placeholder="nixon" pattern="[a-z0-9-]+">
+              </div>
+              <div>
+                <label>GCP Project ID</label>
+                <input name="bq_project_id" type="text" required placeholder="my-gcp-project-id">
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>Mart Dataset ID</label>
+                <input name="bq_dataset_id" type="text" required placeholder="marketing_marts">
+                <p class="hint">BigQuery dataset where GSC data will be written.</p>
+              </div>
+              <div>
+                <label>Credentials Env</label>
+                <input name="credentials_env" type="text" placeholder="GCP_SERVICE_ACCOUNT_JSON" value="GCP_SERVICE_ACCOUNT_JSON">
+                <p class="hint">Railway env var holding base64 service account JSON.</p>
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>Native Dataset ID <span class="muted">(optional)</span></label>
+                <input name="native_dataset_id" type="text" placeholder="searchconsole_nixon">
+                <p class="hint">Only if client has Google's native GSC → BQ bulk export enabled.</p>
+              </div>
+            </div>
+            <button type="submit" class="primary">Save GSC entry</button>
+          </form>
+        </details>
+      </details>
+
+      <div class="registry-cron-note">
+        <strong>After adding a new client:</strong> register a daily cron in Railway pointing to<br>
+        <code>POST /internal/sync-bq/{{client-slug}}</code> &nbsp;with header&nbsp;
+        <code>X-Cron-Secret: &lt;CRON_SECRET&gt;</code>
+      </div>
+    </section>"""
+
+
 def render_admin_page(
     *,
     user: WebUser,
@@ -344,6 +509,8 @@ def render_admin_page(
     message: str | None = None,
     error: str | None = None,
     oauth_section_html: str = "",
+    ga4_registry: list[dict] | None = None,
+    gsc_registry: list[dict] | None = None,
 ) -> str:
     notice = ""
     if message:
@@ -492,6 +659,11 @@ def render_admin_page(
       </ul>
     </section>"""
 
+    registry_section_html = _render_registry_section(
+        ga4_registry=ga4_registry,
+        gsc_registry=gsc_registry,
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -584,6 +756,15 @@ def render_admin_page(
     .dev-note-textarea {{ width: 100%; max-width: 100%; min-height: 100px; padding: 10px;
       border: 1px solid var(--border); border-radius: 8px; font: inherit; resize: vertical; }}
     .dev-note-delete {{ margin-top: 8px; }}
+    .registry-table {{ margin: 12px 0; font-size: .88rem; }}
+    .registry-table td {{ vertical-align: middle; }}
+    .registry-form {{ margin-top: 14px; padding: 14px; background: #fafbfc; border: 1px solid var(--border); border-radius: 8px; }}
+    .registry-form input {{ max-width: 280px; }}
+    .registry-cron-note {{ margin-top: 16px; padding: 12px 14px; background: #f0f4ff; border: 1px solid #c7d7f5; border-radius: 8px; font-size: .88rem; line-height: 1.5; }}
+    .registry-cron-note code {{ background: #e8eef8; padding: 2px 5px; border-radius: 4px; font-family: ui-monospace, monospace; font-size: .82rem; }}
+    .src-db {{ display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .72rem; font-weight: 700; background: #e3f2fd; color: #1565c0; }}
+    .src-env {{ display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .72rem; font-weight: 700; background: #eceff3; color: #5a6578; }}
+    .trunc {{ max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; }}
   </style>
 </head>
 <body>
@@ -600,6 +781,7 @@ def render_admin_page(
     {notice}
     {oauth_section_html}
     {dashboard_manage_html}
+    {registry_section_html}
     {_render_dev_notes_section(dev_notes=dev_notes)}
     <section>
       <h2>Create user</h2>
