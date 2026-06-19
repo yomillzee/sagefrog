@@ -98,6 +98,7 @@ def dashboard_client_settings_post(
     action: str = Form("save"),
     key: str | None = None,
     label: str = Form(""),
+    google_customer_id: str = Form(""),
     linkedin_account_id: str = Form(""),
     meta_account_id: str = Form(""),
     ga4_client_key: str = Form(""),
@@ -180,7 +181,7 @@ def dashboard_client_settings_post(
             saved_row = client_dashboard_config.save_config(
                 slug,
                 label=label,
-                google_customer_id=(existing.google_customer_id if existing else None),
+                google_customer_id=(google_customer_id.replace("-", "").strip() or None),
                 linkedin_account_id=linkedin_account_id,
                 meta_account_id=meta_account_id,
                 ga4_client_key=ga4_client_key,
