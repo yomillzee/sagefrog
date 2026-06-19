@@ -330,6 +330,34 @@ def dashboard_ga4_backfill(
     )
 
 
+@router.get(
+    "/dashboard/{client_slug}/data-source-status",
+    summary="Per-source BigQuery feed status (settings panel)",
+    response_model=None,
+    include_in_schema=False,
+)
+def dashboard_data_source_status(
+    client_slug: str,
+    request: Request,
+    key: str | None = None,
+):
+    """Read-only health of each data source's BigQuery feed for the settings page."""
+    slug = validate_client_slug(client_slug)
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        if isinstance(auth, RedirectResponse):
+            return JSONResponse({"ok": False, "error": "auth_required"}, status_code=401)
+    else:
+        dashboard_service.verify_dashboard_key(key)
+    try:
+        import data_source_status
+        sources = data_source_status.build_status(slug)
+        return JSONResponse({"ok": True, "sources": sources})
+    except Exception as exc:
+        LOGGER.exception("data source status failed: %s", slug)
+        return JSONResponse({"ok": False, "error": platform_error(exc)}, status_code=200)
+
+
 @router.post(
     "/dashboard/{client_slug}/refresh",
     summary="Refresh client dashboard snapshot (rate-limited)",

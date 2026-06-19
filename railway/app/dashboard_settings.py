@@ -1199,6 +1199,47 @@ def render_settings_html(
       </p>
     </section>"""
 
+    # --- Data source status (lazy-loaded BQ feed health) ---
+    status_url = f"/dashboard/{slug}/data-source-status{key_param}"
+    data_source_status_section = f"""
+    <section class="panel">
+      <h2>Data source status</h2>
+      <p class="hint">Live BigQuery feed health per source. Google Ads &amp; GA4 arrive via Google's Data Transfer Service (set up in GCP); LinkedIn, Meta &amp; Search Console are written by the app sync.</p>
+      <div id="dataSourceStatus" class="dss-wrap"><p class="muted">Checking feeds…</p></div>
+    </section>
+    <script>
+    (function() {{
+      var url = '{status_url}';
+      var el = document.getElementById('dataSourceStatus');
+      if (!el) return;
+      function badge(s) {{
+        var map = {{
+          feeding: ['#0a7f3f', '#e6f5ec', 'Feeding'],
+          empty: ['#92600a', '#fdf3e2', 'Empty'],
+          missing: ['#92600a', '#fdf3e2', 'Not set up'],
+          not_configured: ['#64748b', '#eef1f5', 'Not configured'],
+          error: ['#b42318', '#fdecea', 'Error']
+        }};
+        var m = map[s] || map.error;
+        return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;color:' + m[0] + ';background:' + m[1] + '">' + m[2] + '</span>';
+      }}
+      fetch(url, {{ credentials: 'same-origin' }}).then(function(r) {{ return r.json(); }}).then(function(d) {{
+        if (!d || !d.ok) {{ el.innerHTML = '<p class="muted">Could not load status' + (d && d.error ? ': ' + d.error : '') + '.</p>'; return; }}
+        var rows = (d.sources || []).map(function(s) {{
+          var detail = '';
+          if (s.status === 'feeding') {{
+            detail = (s.max_date ? 'last ' + s.max_date : '') + (s.rows != null ? ' · ' + s.rows.toLocaleString() + ' rows/30d' : '');
+          }} else {{
+            detail = s.hint || '';
+          }}
+          if (s.error) detail += ' — ' + s.error;
+          return '<tr><td>' + s.label + '</td><td>' + badge(s.status) + '</td><td class="muted">' + detail + '</td></tr>';
+        }}).join('');
+        el.innerHTML = '<table class="status-table"><thead><tr><th>Source</th><th>Status</th><th>Detail</th></tr></thead><tbody>' + rows + '</tbody></table>';
+      }}).catch(function() {{ el.innerHTML = '<p class="muted">Could not load status.</p>'; }});
+    }})();
+    </script>"""
+
     # --- BigQuery Mart info ---
     bq_mart_section = ""
     try:
@@ -1287,6 +1328,7 @@ def render_settings_html(
       {refresh_block}
     </section>
     {data_sync_section}
+    {data_source_status_section}
     {bq_mart_section}
     {sections_section}
     {bl_rules_section}
