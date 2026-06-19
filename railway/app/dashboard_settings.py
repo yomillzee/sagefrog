@@ -1092,12 +1092,14 @@ def render_settings_html(
         _gsc_connected = oauth_store.public_status("gsc").connected
     except Exception:
         _gsc_connected = False
+    _gsc_properties_error: str | None = None
     if _gsc_connected:
         try:
             import gsc_sync_service as _gsc_svc
             _gsc_properties = _gsc_svc.list_accessible_properties()
-        except Exception:
+        except Exception as _gsc_prop_exc:
             _gsc_properties = []
+            _gsc_properties_error = str(_gsc_prop_exc)[:300]
     else:
         _gsc_properties = []
     _semrush_val = (_db_cfg.semrush_domain if _db_cfg else None) or ""
@@ -1146,6 +1148,7 @@ def render_settings_html(
               {budget_field}
               <div>
                 {_gsc_field_html(selected=_gsc_url_val, properties=_gsc_properties, connected=_gsc_connected)}
+                {f'<p class="hint" style="color:#b45309">Could not load property list: {_esc(_gsc_properties_error)}</p>' if _gsc_properties_error else ''}
               </div>
               <div>
                 <label for="semrush_domain">SEMrush domain</label>
