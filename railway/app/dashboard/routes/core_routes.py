@@ -7,7 +7,7 @@ from urllib.parse import quote
 import logging
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import dashboard_service
 import dashboard_snapshots
@@ -263,6 +263,70 @@ def dashboard_penn_bq_test_refresh(
     return RedirectResponse(
         url=f"/dashboard/penn-bq-test?key={quote(access_key or '', safe='')}&synced=1",
         status_code=303,
+    )
+
+
+@router.get(
+    "/dashboard/{client_slug}/ga4-backfill",
+    summary="GA4 BigQuery export daily coverage (backfill progress)",
+    response_model=None,
+    include_in_schema=False,
+)
+def dashboard_ga4_backfill(
+    client_slug: str,
+    request: Request,
+    key: str | None = None,
+    days: int = 365,
+):
+    """Daily GA4 session/page-view counts straight from the BigQuery export.
+
+    Live, on-demand (not from the snapshot) so the Website Analytics tab can
+    show how far the GA4 Data Transfer backfill has progressed — zero/empty
+    days are dates not yet loaded.
+    """
+    slug = validate_client_slug(client_slug)
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        if isinstance(auth, RedirectResponse):
+            return JSONResponse({"ok": False, "error": "auth_required"}, status_code=401)
+    else:
+        dashboard_service.verify_dashboard_key(key)
+
+    import client_config
+    import ga4_clients
+    import ga4_warehouse_service
+    from datetime import date, timedelta
+
+    window = max(7, min(int(days or 365), 540))
+    end = date.today()
+    start = end - timedelta(days=window)
+    cfg = client_config.load_client_config(slug)
+    ga4_key = cfg.ga4_client_key or slug
+    try:
+        target = ga4_clients.resolve_target(client_key=ga4_key)
+        rows = ga4_warehouse_service.fetch_daily_metrics(start=start, end=end, target=target)
+    except Exception as exc:
+        LOGGER.exception("GA4 backfill coverage query failed: %s", slug)
+        return JSONResponse({"ok": False, "error": platform_error(exc)}, status_code=200)
+
+    days_out = [
+        {
+            "date": r.get("metric_date"),
+            "sessions": int(r.get("clicks") or 0),
+            "page_views": int(r.get("impressions") or 0),
+        }
+        for r in rows
+    ]
+    covered = [d for d in days_out if d["sessions"] or d["page_views"]]
+    return JSONResponse(
+        {
+            "ok": True,
+            "days": days_out,
+            "covered_days": len(covered),
+            "total_days": len(days_out),
+            "first_covered": covered[0]["date"] if covered else None,
+            "last_covered": covered[-1]["date"] if covered else None,
+        }
     )
 
 

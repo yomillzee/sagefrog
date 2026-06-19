@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import client_config
 import client_dashboard_config
@@ -695,12 +696,15 @@ def render_penn_html(
     if use_session:
         _vr_action = f"/dashboard/{slug}"
         _vr_key_field = ""
+        _ga4_backfill_url = f"/dashboard/{slug}/ga4-backfill"
     elif access_key:
         _vr_action = f"/dashboard/{slug}"
         _vr_key_field = f'<input type="hidden" name="key" value="{_esc(access_key)}">'
+        _ga4_backfill_url = f"/dashboard/{slug}/ga4-backfill?key={quote(access_key, safe='')}"
     else:
         _vr_action = ""
         _vr_key_field = ""
+        _ga4_backfill_url = ""
     filters_bar_html = global_filters_bar_html(
         show_segment_filters=show_segment_filters,
         show_product_line_filters=show_product_line_filters,
@@ -731,6 +735,12 @@ def render_penn_html(
           <div id="view-website" class="view-panel" role="tabpanel" hidden>
             <section class="panel ga4-pages-panel" aria-label="Website analytics">
               {ga4_metrics_html}
+              <div class="panel-head ga4-backfill-head">
+                <h2>GA4 export coverage</h2>
+                <span class="muted ga4-backfill-status" id="ga4BackfillStatus"></span>
+              </div>
+              <p class="table-note muted">Daily sessions straight from the GA4 BigQuery export. Empty/zero days haven't been loaded yet — watch this fill in as the Data Transfer backfill runs.</p>
+              <div class="ga4-backfill-wrap"><canvas id="ga4BackfillChart"></canvas></div>
               <div class="panel-head">
                 <h2 id="ga4PagesHeading">Page performance</h2>
               </div>
@@ -1998,6 +2008,10 @@ def render_penn_html(
       color: var(--ok);
     }}
     canvas {{ max-height: 280px; }}
+    .ga4-backfill-head {{ display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }}
+    .ga4-backfill-status {{ font-size: 12px; }}
+    .ga4-backfill-wrap {{ position: relative; height: 220px; margin: 4px 0 22px; }}
+    .ga4-backfill-wrap canvas {{ max-height: 220px; }}
     .muted {{ color: var(--muted); }}
     .refresh-bar {{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }}
     .refresh-actions {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }}
@@ -2769,6 +2783,7 @@ def render_penn_html(
     const SHOW_PERFORMANCE_TREND = {'true' if features.performance_trend else 'false'};
     const SHOW_CAMPAIGN_EXPLORER = {'true' if features.campaign_explorer else 'false'};
     const SHOW_WEBSITE_ANALYTICS = {'true' if show_website_tab else 'false'};
+    const GA4_BACKFILL_URL = {_json_for_html_script(_ga4_backfill_url)};
     const SHOW_GSC = {'true' if _gsc_data else 'false'};
     const SHOW_SEMRUSH = {'true' if _semrush_data else 'false'};
     const PAID_PLATFORM_IDS = new Set(['google', 'linkedin', 'meta']);
@@ -3528,6 +3543,62 @@ def render_penn_html(
       semrush: 'SEMrush',
     }};
 
+    let ga4BackfillLoaded = false;
+    let ga4BackfillChartInstance = null;
+    function loadGa4Backfill() {{
+      if (ga4BackfillLoaded) return;
+      if (!SHOW_WEBSITE_ANALYTICS || !GA4_BACKFILL_URL) return;
+      const canvas = document.getElementById('ga4BackfillChart');
+      const statusEl = document.getElementById('ga4BackfillStatus');
+      if (!canvas || typeof Chart === 'undefined') return;
+      ga4BackfillLoaded = true;
+      if (statusEl) statusEl.textContent = 'Loading…';
+      fetch(GA4_BACKFILL_URL, {{ credentials: 'same-origin' }})
+        .then(r => r.json())
+        .then(data => {{
+          if (!data || !data.ok) {{
+            if (statusEl) statusEl.textContent = (data && data.error) ? ('Error: ' + data.error) : 'Failed to load coverage.';
+            ga4BackfillLoaded = false;
+            return;
+          }}
+          const days = data.days || [];
+          const labels = days.map(d => d.date);
+          const sessions = days.map(d => d.sessions || 0);
+          if (statusEl) {{
+            let txt = `${{data.covered_days}} / ${{data.total_days}} days with data`;
+            if (data.first_covered) txt += ` · ${{data.first_covered}} → ${{data.last_covered}}`;
+            statusEl.textContent = txt;
+          }}
+          if (ga4BackfillChartInstance) {{ ga4BackfillChartInstance.destroy(); }}
+          ga4BackfillChartInstance = new Chart(canvas, {{
+            type: 'bar',
+            data: {{ labels, datasets: [{{
+              label: 'Sessions', data: sessions,
+              backgroundColor: '#34d399', borderWidth: 0,
+              barPercentage: 1.0, categoryPercentage: 1.0,
+            }}] }},
+            options: {{
+              responsive: true, maintainAspectRatio: false,
+              scales: {{
+                x: {{ ticks: {{ maxTicksLimit: 14, autoSkip: true, color: '#94a3b8', font: {{ size: 10 }} }}, grid: {{ display: false }} }},
+                y: {{ beginAtZero: true, ticks: {{ color: '#94a3b8', font: {{ size: 10 }}, precision: 0 }}, grid: {{ color: 'rgba(148,163,184,0.15)' }} }},
+              }},
+              plugins: {{
+                legend: {{ display: false }},
+                tooltip: {{ callbacks: {{
+                  title: items => items[0].label,
+                  label: ctx => `${{(ctx.parsed.y || 0).toLocaleString()}} sessions`,
+                }} }},
+              }},
+            }},
+          }});
+        }})
+        .catch(() => {{
+          if (statusEl) statusEl.textContent = 'Failed to load coverage.';
+          ga4BackfillLoaded = false;
+        }});
+    }}
+
     function setActiveView(view) {{
       const allowed = ['overview'];
       if (SHOW_CAMPAIGN_EXPLORER) allowed.push('campaigns');
@@ -3557,6 +3628,9 @@ def render_penn_html(
       document.querySelectorAll('[data-campaign-filter]').forEach(control => {{
         control.hidden = view !== 'campaigns';
       }});
+      if (view === 'website') {{
+        try {{ loadGa4Backfill(); }} catch (err) {{ /* ignore */ }}
+      }}
       const titleSuffix = VIEW_LABELS[view] || 'Dashboard';
       document.title = `${{document.title.split(' — ')[0]}} — ${{titleSuffix}}`;
       try {{
