@@ -842,7 +842,8 @@ def probe_client_connections(cfg: PennDashboardConfig) -> dict[str, Any]:
                 credentials_info=resolved.credentials,
             )
             client.query(
-                f"SELECT 1 FROM `{target.bq_project_id}.{target.bq_dataset_id}.events_*` LIMIT 1"
+                f"SELECT 1 FROM `{target.bq_project_id}.{target.bq_dataset_id}.events_*` LIMIT 1",
+                job_config=bigquery_service.make_job_config(),
             ).result(timeout=30)
             results["ga4"] = {
                 "ok": True,

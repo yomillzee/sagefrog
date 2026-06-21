@@ -35,6 +35,8 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
+import bigquery_service
+
 log = logging.getLogger(__name__)
 
 _DEFAULT_PROJECT     = "penn-community-b-1699391543298"
@@ -341,7 +343,7 @@ def _upsert(client, table_id: str, rows: list[dict], schema, merge_key_sql: str)
     WHEN NOT MATCHED THEN INSERT ({ins_cols}) VALUES ({ins_vals})
     """
     try:
-        client.query(sql).result()
+        client.query(sql, job_config=bigquery_service.make_job_config()).result()
     finally:
         client.delete_table(temp_id, not_found_ok=True)
     return len(payload)
@@ -355,7 +357,8 @@ def _table_max_date(client, table_id: str) -> date | None:
     """Return the most recent date in the table, or None if empty / missing."""
     try:
         rows = list(client.query(
-            f"SELECT MAX(date) AS max_date FROM `{table_id}` LIMIT 1"
+            f"SELECT MAX(date) AS max_date FROM `{table_id}` LIMIT 1",
+            job_config=bigquery_service.make_job_config(),
         ).result(max_results=1))
         if rows:
             val = dict(rows[0].items()).get("max_date")

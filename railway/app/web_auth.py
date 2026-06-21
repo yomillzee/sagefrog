@@ -16,6 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import audit_log
 import client_config
 import web_users
+from security import is_production
 from web_users import WebUser
 
 SESSION_USER_ID = "user_id"
@@ -39,7 +40,11 @@ def https_only_cookies() -> bool:
         return False
     if raw in ("1", "true", "yes"):
         return True
-    return bool((os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PUBLIC_DOMAIN") or "").strip())
+    # No explicit setting: secure cookies by default in any deployed environment.
+    # Insecure cookies (local HTTP) now require an explicit AUTH_SESSION_HTTPS_ONLY=0,
+    # so a custom host/proxy with the Railway vars absent stays secure instead of
+    # silently downgrading.
+    return is_production()
 
 
 def add_session_middleware(app) -> None:

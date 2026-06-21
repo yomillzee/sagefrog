@@ -131,15 +131,16 @@ def status() -> dict[str, Any]:
         }
 
 
+_VALID_SOURCES = ("google", "ga4", "meta", "linkedin")
+
+
 def _normalize_source(source: str) -> str:
     key = str(source or "").strip().lower()
-    if key == "google":
-        return "google"
-    if key == "ga4":
-        return "ga4"
-    if key == "meta":
-        return "meta"
-    return "linkedin"
+    if key in _VALID_SOURCES:
+        return key
+    # Fail loud rather than silently bucketing unknown sources into `linkedin`,
+    # which corrupts (and can overwrite) real LinkedIn rows on the upsert key.
+    raise ValueError(f"unknown metrics source: {source!r} (expected one of {_VALID_SOURCES})")
 
 
 def upsert_metrics_daily_batch(

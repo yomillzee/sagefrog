@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import psycopg
 
 import web_users
+
+log = logging.getLogger(__name__)
+
+# In-memory fallback used when Postgres is unreachable. Brute-force protection
+# must NOT silently disappear when the DB is degraded (that is exactly when an
+# attacker would push). This is per-process, but failing to a local limiter is
+# far safer than failing open. State here is best-effort and ephemeral.
+_MEM_LOCK = threading.Lock()
+_MEM_BUCKETS: dict[str, dict] = {}
 
 SCHEMA_SQL_STATEMENTS = [
     """
@@ -126,6 +137,71 @@ def _check_bucket(conn, bucket_key: str, now: datetime) -> RateLimitStatus:
     return RateLimitStatus(allowed=True)
 
 
+def _mem_check(bucket_key: str, now: datetime) -> RateLimitStatus:
+    with _MEM_LOCK:
+        row = _MEM_BUCKETS.get(bucket_key)
+        if not row:
+            return RateLimitStatus(allowed=True)
+        locked_until = row.get("locked_until")
+        if locked_until and locked_until > now:
+            retry = int((locked_until - now).total_seconds())
+            mins = max(1, (retry + 59) // 60)
+            return RateLimitStatus(
+                allowed=False,
+                retry_after_seconds=retry,
+                message=f"Too many failed attempts. Try again in about {mins} minutes.",
+            )
+        window_start = row.get("window_start")
+        if window_start and (now - window_start).total_seconds() > window_seconds():
+            _MEM_BUCKETS.pop(bucket_key, None)
+            return RateLimitStatus(allowed=True)
+        if int(row.get("failed_count", 0)) >= max_failures():
+            lock_until = now + timedelta(seconds=lockout_seconds())
+            row["locked_until"] = lock_until
+            retry = lockout_seconds()
+            mins = max(1, (retry + 59) // 60)
+            return RateLimitStatus(
+                allowed=False,
+                retry_after_seconds=retry,
+                message=f"Too many failed attempts. Try again in about {mins} minutes.",
+            )
+    return RateLimitStatus(allowed=True)
+
+
+def _mem_record_failure(bucket_key: str, now: datetime) -> None:
+    with _MEM_LOCK:
+        row = _MEM_BUCKETS.get(bucket_key)
+        if not row:
+            _MEM_BUCKETS[bucket_key] = {"failed_count": 1, "window_start": now, "locked_until": None}
+            return
+        window_start = row.get("window_start")
+        if window_start and (now - window_start).total_seconds() > window_seconds():
+            row.update({"failed_count": 1, "window_start": now, "locked_until": None})
+            return
+        new_count = int(row.get("failed_count", 0)) + 1
+        row["failed_count"] = new_count
+        if new_count >= max_failures():
+            row["locked_until"] = now + timedelta(seconds=lockout_seconds())
+
+
+def _mem_clear(keys: list[str]) -> None:
+    with _MEM_LOCK:
+        for key in keys:
+            _MEM_BUCKETS.pop(key, None)
+
+
+def _check_login_allowed_mem(ip: str | None, email: str | None) -> RateLimitStatus:
+    now = datetime.now(tz=UTC)
+    ip_status = _mem_check(_bucket_key_ip(ip), now)
+    if not ip_status.allowed:
+        return ip_status
+    if email:
+        email_status = _mem_check(_bucket_key_email(email), now)
+        if not email_status.allowed:
+            return email_status
+    return RateLimitStatus(allowed=True)
+
+
 def check_login_allowed(*, ip: str | None, email: str | None = None) -> RateLimitStatus:
     if not enabled():
         return RateLimitStatus(allowed=True)
@@ -142,7 +218,9 @@ def check_login_allowed(*, ip: str | None, email: str | None = None) -> RateLimi
                     return email_status
         return RateLimitStatus(allowed=True)
     except Exception:
-        return RateLimitStatus(allowed=True)
+        # Fail to the in-memory limiter instead of failing open.
+        log.warning("login rate limiter DB unavailable; using in-memory fallback", exc_info=True)
+        return _check_login_allowed_mem(ip, email)
 
 
 def _record_failure_conn(conn, bucket_key: str, now: datetime) -> None:
@@ -201,7 +279,10 @@ def record_login_failure(*, ip: str | None, email: str) -> None:
             _record_failure_conn(conn, _bucket_key_ip(ip), now)
             _record_failure_conn(conn, _bucket_key_email(email), now)
     except Exception:
-        pass
+        log.warning("login rate limiter DB unavailable; recording failure in memory", exc_info=True)
+        now = datetime.now(tz=UTC)
+        _mem_record_failure(_bucket_key_ip(ip), now)
+        _mem_record_failure(_bucket_key_email(email), now)
 
 
 def clear_login_limits(*, ip: str | None, email: str) -> None:
@@ -216,3 +297,6 @@ def clear_login_limits(*, ip: str | None, email: str) -> None:
             )
     except Exception:
         pass
+    finally:
+        # Always clear the in-memory fallback so a successful login resets it.
+        _mem_clear([_bucket_key_ip(ip), _bucket_key_email(email)])

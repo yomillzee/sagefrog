@@ -13,6 +13,7 @@ from typing import Any
 import psycopg
 
 import web_users
+from security import is_production
 
 PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc"})
 
@@ -65,16 +66,32 @@ def ensure_schema() -> bool:
 
 
 def _encryption_key() -> bytes:
-    secret = (
-        (os.getenv("OAUTH_TOKEN_ENCRYPTION_KEY") or "").strip()
-        or (os.getenv("AUTH_SESSION_SECRET") or "").strip()
-        or (os.getenv("CRON_SECRET") or "").strip()
-        or (os.getenv("API_KEY") or "").strip()
-    )
-    if not secret:
+    dedicated = (os.getenv("OAUTH_TOKEN_ENCRYPTION_KEY") or "").strip()
+    if dedicated:
+        secret = dedicated
+    elif is_production():
+        # Fail closed: in production we will NOT silently derive the token key
+        # from AUTH_SESSION_SECRET / CRON_SECRET / API_KEY. That chain meant
+        # rotating any of those secrets made every stored OAuth token
+        # undecryptable, and tied token security to unrelated secrets. To migrate
+        # without re-auth, set OAUTH_TOKEN_ENCRYPTION_KEY to the value previously
+        # used (historically AUTH_SESSION_SECRET).
         raise RuntimeError(
-            "Set OAUTH_TOKEN_ENCRYPTION_KEY or AUTH_SESSION_SECRET to encrypt OAuth tokens."
+            "OAUTH_TOKEN_ENCRYPTION_KEY is not set. Set a dedicated OAuth token "
+            "encryption key in the environment (in production this is required)."
         )
+    else:
+        # Local dev convenience only: fall back to an existing secret so OAuth
+        # flows work without extra setup.
+        secret = (
+            (os.getenv("AUTH_SESSION_SECRET") or "").strip()
+            or (os.getenv("CRON_SECRET") or "").strip()
+            or (os.getenv("API_KEY") or "").strip()
+        )
+        if not secret:
+            raise RuntimeError(
+                "Set OAUTH_TOKEN_ENCRYPTION_KEY (or AUTH_SESSION_SECRET in dev) to encrypt OAuth tokens."
+            )
     digest = hashlib.sha256(secret.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest)
 

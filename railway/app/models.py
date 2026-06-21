@@ -7,6 +7,12 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
+class HealthReadyResponse(BaseModel):
+    status: str = "ok"
+    database: bool = False
+    detail: str | None = None
+
+
 class CacheHealthResponse(BaseModel):
     has_database_url: bool
     schema_ready: bool

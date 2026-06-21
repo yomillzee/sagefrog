@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 from google.cloud import bigquery
@@ -89,6 +90,72 @@ def env_summary(credentials_env: str | None = None) -> dict[str, Any]:
     return summary
 
 
+def _env_int(name: str) -> int | None:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+# Default cost guard: cap bytes *scanned* per query. `max_rows` only limits rows
+# returned, so a full events_* scan still bills fully without this. 100 GiB is
+# generous for normal queries but blocks runaway full-table scans. Override with
+# BQ_MAX_BYTES_BILLED (set to 0 to disable).
+_DEFAULT_MAX_BYTES_BILLED = 100 * 1024**3
+
+
+def make_job_config(*, dry_run: bool = False) -> bigquery.QueryJobConfig:
+    """Shared QueryJobConfig so the cost/time cap is universal across the app.
+
+    Every BigQuery query should go through this (directly or via run_query) so
+    that `maximum_bytes_billed` — and an optional wall-clock timeout — always
+    apply. Without it, an unbounded scan can bill arbitrarily.
+    """
+    config = bigquery.QueryJobConfig(dry_run=dry_run)
+    max_bytes = _env_int("BQ_MAX_BYTES_BILLED")
+    if max_bytes is None:
+        max_bytes = _DEFAULT_MAX_BYTES_BILLED
+    if max_bytes > 0:
+        config.maximum_bytes_billed = max_bytes
+    timeout_ms = _env_int("BQ_JOB_TIMEOUT_MS")
+    if timeout_ms and timeout_ms > 0 and hasattr(config, "job_timeout_ms"):
+        config.job_timeout_ms = timeout_ms
+    return config
+
+
+_SQL_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_SQL_LINE_COMMENT = re.compile(r"(--|#)[^\n]*")
+_FORBIDDEN_SQL_KEYWORD = re.compile(
+    r"(?i)\b(INSERT|UPDATE|DELETE|MERGE|DROP|TRUNCATE|ALTER|CREATE|REPLACE|GRANT|"
+    r"REVOKE|CALL|EXPORT|LOAD|BEGIN|COMMIT|ROLLBACK)\b"
+)
+
+
+def assert_read_only_select(sql: str) -> str:
+    """Guard arbitrary SQL submitted over the API: allow only a single read-only
+    SELECT/WITH statement. Rejects DML/DDL and multi-statement payloads.
+
+    Returns the original SQL when valid; raises ValueError otherwise.
+    """
+    raw = (sql or "").strip()
+    if not raw:
+        raise ValueError("Empty SQL.")
+    cleaned = _SQL_LINE_COMMENT.sub(" ", _SQL_BLOCK_COMMENT.sub(" ", raw)).strip()
+    # Allow at most one trailing semicolon; reject stacked statements.
+    body = cleaned.rstrip(";").strip()
+    if ";" in body:
+        raise ValueError("Multiple SQL statements are not allowed; submit a single SELECT.")
+    head = body.lstrip("(").lstrip()
+    if not (head[:6].upper() == "SELECT" or head[:4].upper() == "WITH"):
+        raise ValueError("Only read-only SELECT / WITH queries are allowed.")
+    if _FORBIDDEN_SQL_KEYWORD.search(body):
+        raise ValueError("Query contains a disallowed (write/DDL) statement keyword.")
+    return raw
+
+
 def run_query(
     sql: str,
     *,
@@ -98,6 +165,6 @@ def run_query(
     credentials_info: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     client = build_client(project_id, credentials_env=credentials_env, credentials_info=credentials_info)
-    query_job = client.query(sql)
+    query_job = client.query(sql, job_config=make_job_config())
     rows = query_job.result(max_results=max_rows)
     return [dict(row.items()) for row in rows]

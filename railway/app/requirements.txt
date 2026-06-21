@@ -11,4 +11,3 @@ bcrypt
 python-multipart
 itsdangerous
 cryptography
-redis==5.0.1

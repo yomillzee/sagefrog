@@ -56,6 +56,7 @@ from models import (
     SummaryAllResponse,
     GoogleAdsEnvSummary,
     HealthResponse,
+    HealthReadyResponse,
     SearchManyRequest,
     SearchManyResponse,
     SearchManyResult,
@@ -358,6 +359,25 @@ def root() -> dict:
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse()
+
+
+@app.get("/health/ready", response_model=HealthReadyResponse)
+def health_ready(response: Response) -> HealthReadyResponse:
+    """Readiness probe: verifies DB connectivity so a broken deploy is not
+    reported healthy. `/health` stays liveness-only."""
+    url = (os.getenv("DATABASE_URL") or "").strip()
+    if not url:
+        response.status_code = 503
+        return HealthReadyResponse(status="error", database=False, detail="DATABASE_URL is not set.")
+    try:
+        import psycopg
+
+        with psycopg.connect(url, connect_timeout=5) as conn:
+            conn.execute("SELECT 1")
+        return HealthReadyResponse(status="ok", database=True)
+    except Exception as exc:
+        response.status_code = 503
+        return HealthReadyResponse(status="error", database=False, detail=str(exc)[:200])
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -2137,6 +2157,10 @@ def ga4_clients() -> Ga4ClientsResponse:
     dependencies=[Depends(require_api_key)],
 )
 def ga4_query(body: Ga4QueryRequest) -> Ga4QueryResponse:
+    try:
+        bigquery_service.assert_read_only_select(body.sql)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     cache_payload = {"sql": body.sql, "max_rows": body.max_rows}
     hit = db_cache.get_cached("ga4.query", cache_payload)
     if hit is not None:
