@@ -685,7 +685,23 @@ def render_penn_html(
     show_website_tab = features.website_analytics and has_ga4
     _gsc_data = snapshot.get("gsc")
     if _gsc_data and _vr_preset != preset:
-        _gsc_data = (snapshot.get("gsc_by_preset") or {}).get(_vr_preset) or _gsc_data
+        _cached_gsc = (snapshot.get("gsc_by_preset") or {}).get(_vr_preset)
+        if _cached_gsc:
+            _gsc_data = _cached_gsc
+        else:
+            # Only LAST_7/30/90 are precomputed in refresh. For the other dropdown
+            # ranges (Last 180 days, This month, Last month) fetch live for the
+            # selected range — otherwise the date filter silently shows the
+            # default window's GSC data. Mirrors the GA4-pages fallback above.
+            try:
+                import bq_gsc_service as _bqgsc
+                from dates_util import resolve_date_range as _resolve_gsc
+                _gs, _ge, _ = _resolve_gsc(_vr_preset)
+                _gsc_data = _bqgsc.build_gsc_snapshot(
+                    start=_gs, end=_ge, client_slug=client_slug,
+                )
+            except Exception:
+                pass
     _semrush_data = snapshot.get("semrush")
     view_tabs_html = _dashboard_view_tabs_html(
         show_website=show_website_tab,
