@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import psycopg
+import db
 
 import web_users
 
@@ -76,7 +77,7 @@ def lockout_seconds() -> int:
 def ensure_schema() -> bool:
     if not _get_db_url():
         return False
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         for stmt in SCHEMA_SQL_STATEMENTS:
             conn.execute(stmt)
     return True
@@ -208,7 +209,7 @@ def check_login_allowed(*, ip: str | None, email: str | None = None) -> RateLimi
     try:
         ensure_schema()
         now = datetime.now(tz=UTC)
-        with psycopg.connect(_get_db_url()) as conn:
+        with db.connection() as conn:
             ip_status = _check_bucket(conn, _bucket_key_ip(ip), now)
             if not ip_status.allowed:
                 return ip_status
@@ -275,7 +276,7 @@ def record_login_failure(*, ip: str | None, email: str) -> None:
     try:
         ensure_schema()
         now = datetime.now(tz=UTC)
-        with psycopg.connect(_get_db_url()) as conn:
+        with db.connection() as conn:
             _record_failure_conn(conn, _bucket_key_ip(ip), now)
             _record_failure_conn(conn, _bucket_key_email(email), now)
     except Exception:
@@ -290,7 +291,7 @@ def clear_login_limits(*, ip: str | None, email: str) -> None:
         return
     try:
         ensure_schema()
-        with psycopg.connect(_get_db_url()) as conn:
+        with db.connection() as conn:
             conn.execute(
                 "DELETE FROM login_rate_buckets WHERE bucket_key = ANY(%s)",
                 ([_bucket_key_ip(ip), _bucket_key_email(email)],),

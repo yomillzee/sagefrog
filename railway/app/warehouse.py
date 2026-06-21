@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from typing import Any
 
 import psycopg
+import db
 
 SCHEMA_SQL_STATEMENTS = [
     """
@@ -65,7 +66,7 @@ def ensure_schema() -> bool:
     url = _get_db_url()
     if not url:
         return False
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         for stmt in SCHEMA_SQL_STATEMENTS:
             conn.execute(stmt)
     return True
@@ -85,7 +86,7 @@ def status() -> dict[str, Any]:
         }
     try:
         ensure_schema()
-        with psycopg.connect(_get_db_url()) as conn:
+        with db.connection() as conn:
             conn.execute("SELECT 1")
             metrics_rows = int(conn.execute("SELECT COUNT(*) FROM metrics_daily").fetchone()[0])
             linkedin_rows = int(
@@ -167,7 +168,7 @@ def upsert_metrics_daily_batch(
         conversion_value = EXCLUDED.conversion_value,
         synced_at = NOW()
     """
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         for row in rows:
             metric_date = row.get("metric_date") or row.get("metricDate")
             if not metric_date:
@@ -218,7 +219,7 @@ def query_metrics(
       ORDER BY metric_date ASC, source, account_id
       LIMIT {lim}
     """
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         cur = conn.execute(sql, params)
         cols = [d.name for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -250,7 +251,7 @@ def upsert_campaign_daily_batch(
         conversion_value = EXCLUDED.conversion_value,
         synced_at = NOW()
     """
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         for row in rows:
             metric_date = row.get("metric_date")
             campaign_id = str(row.get("campaign_id") or "").strip()
@@ -302,7 +303,7 @@ def query_campaign_daily(
         AND metric_date >= %s::date AND metric_date <= %s::date
       GROUP BY campaign_id
     """
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         cur = conn.execute(sql, (source_key, account_id_clean, from_date, to_date))
         cols = [d.name for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -319,7 +320,7 @@ def account_date_coverage(source: str, account_id: str) -> dict[str, Any]:
       FROM metrics_daily
       WHERE source = %s AND account_id = %s
     """
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         row = conn.execute(sql, (source_key, account_id)).fetchone()
     if not row or not row[0]:
         return {"min_date": None, "max_date": None, "day_count": 0}

@@ -10,6 +10,7 @@ from typing import Any
 
 import bcrypt
 import psycopg
+import db
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -68,7 +69,7 @@ def ensure_schema() -> bool:
     url = _get_db_url()
     if not url:
         return False
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         for stmt in SCHEMA_SQL_STATEMENTS:
             conn.execute(stmt)
     return True
@@ -100,7 +101,7 @@ def get_user_by_email(email: str) -> WebUser | None:
         return None
     ensure_schema()
     normalized = email.strip().lower()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             """
             SELECT id, email, role, client_slug, is_active
@@ -125,7 +126,7 @@ def get_user_record(user_id: int) -> WebUser | None:
     if not enabled():
         return None
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             """
             SELECT id, email, role, client_slug, is_active
@@ -144,7 +145,7 @@ def get_password_hash(email: str) -> str | None:
         return None
     ensure_schema()
     normalized = email.strip().lower()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             "SELECT password_hash FROM web_users WHERE LOWER(email) = %s AND is_active = TRUE",
             (normalized,),
@@ -163,7 +164,7 @@ def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
     if not enabled():
         return []
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         if include_inactive:
             rows = conn.execute(
                 "SELECT id, email, role, client_slug, is_active, created_at "
@@ -193,7 +194,7 @@ def count_admins() -> int:
     if not enabled():
         return 0
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             "SELECT COUNT(*) FROM web_users WHERE role = 'admin' AND is_active = TRUE"
         ).fetchone()
@@ -226,7 +227,7 @@ def create_user(
     ensure_schema()
     now = datetime.now(tz=UTC)
     pw_hash = hash_password(password)
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         inactive = conn.execute(
             """
             SELECT id
@@ -271,7 +272,7 @@ def deactivate_user(user_id: int) -> bool:
     if not enabled():
         return False
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         cur = conn.execute(
             """
             UPDATE web_users

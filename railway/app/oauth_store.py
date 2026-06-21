@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
+import db
 
 import web_users
 from security import is_production
@@ -59,7 +60,7 @@ def ensure_schema() -> bool:
     url = _get_db_url()
     if not url:
         return False
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         for stmt in SCHEMA_SQL_STATEMENTS:
             conn.execute(stmt)
     return True
@@ -137,7 +138,7 @@ def _get_row(platform: str) -> dict[str, Any] | None:
     if not slug or not enabled():
         return None
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             """
             SELECT refresh_token_enc, access_token_enc, token_expires_at, scopes,
@@ -197,7 +198,7 @@ def save_tokens(
     if not refresh_enc and not access_enc:
         raise ValueError("At least one token is required.")
     meta_json = json.dumps(metadata or existing.get("metadata_json") or {})
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         conn.execute(
             """
             INSERT INTO oauth_credentials (
@@ -234,7 +235,7 @@ def delete_platform(platform: str) -> bool:
     if not enabled():
         return False
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         cur = conn.execute("DELETE FROM oauth_credentials WHERE platform = %s", (slug,))
         return bool(getattr(cur, "rowcount", 0))
 
@@ -276,7 +277,7 @@ def all_public_status() -> dict[str, OAuthCredentialPublic]:
     if not enabled():
         return out
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         rows = conn.execute(
             """
             SELECT platform, refresh_token_enc, access_token_enc, token_expires_at,

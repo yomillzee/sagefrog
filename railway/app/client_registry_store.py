@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import psycopg
+import db
 
 SCHEMA_SQL = [
     """
@@ -51,7 +52,7 @@ def ensure_schema() -> None:
     url = _db_url()
     if not url:
         return
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         for stmt in SCHEMA_SQL:
             conn.execute(stmt)
 
@@ -83,7 +84,7 @@ def list_ga4_configs() -> list[Ga4ConfigRow]:
     if not enabled():
         return []
     ensure_schema()
-    with psycopg.connect(_db_url()) as conn:
+    with db.connection() as conn:
         rows = conn.execute(
             "SELECT client_slug, bq_project_id, bq_dataset_id, credentials_env, label, "
             "updated_at, updated_by FROM client_ga4_config ORDER BY client_slug"
@@ -122,7 +123,7 @@ def save_ga4_config(
         raise ValueError("bq_dataset_id is required.")
     ensure_schema()
     now = datetime.now(tz=UTC)
-    with psycopg.connect(_db_url()) as conn:
+    with db.connection() as conn:
         conn.execute(
             """
             INSERT INTO client_ga4_config
@@ -152,7 +153,7 @@ def delete_ga4_config(client_slug: str) -> bool:
     if not enabled():
         return False
     ensure_schema()
-    with psycopg.connect(_db_url()) as conn:
+    with db.connection() as conn:
         cur = conn.execute(
             "DELETE FROM client_ga4_config WHERE client_slug = %s",
             ((client_slug or "").strip().lower(),),
@@ -164,7 +165,7 @@ def list_gsc_configs() -> list[GscConfigRow]:
     if not enabled():
         return []
     ensure_schema()
-    with psycopg.connect(_db_url()) as conn:
+    with db.connection() as conn:
         rows = conn.execute(
             "SELECT client_slug, bq_project_id, bq_dataset_id, credentials_env, "
             "native_dataset_id, label, updated_at, updated_by "
@@ -206,7 +207,7 @@ def save_gsc_config(
         raise ValueError("bq_dataset_id is required.")
     ensure_schema()
     now = datetime.now(tz=UTC)
-    with psycopg.connect(_db_url()) as conn:
+    with db.connection() as conn:
         conn.execute(
             """
             INSERT INTO client_gsc_config
@@ -239,7 +240,7 @@ def delete_gsc_config(client_slug: str) -> bool:
     if not enabled():
         return False
     ensure_schema()
-    with psycopg.connect(_db_url()) as conn:
+    with db.connection() as conn:
         cur = conn.execute(
             "DELETE FROM client_gsc_config WHERE client_slug = %s",
             ((client_slug or "").strip().lower(),),

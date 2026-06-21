@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
+import db
 
 import web_users
 
@@ -57,7 +58,7 @@ def ensure_schema() -> bool:
     url = _get_db_url()
     if not url:
         return False
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         for stmt in SCHEMA_SQL_STATEMENTS:
             conn.execute(stmt)
     return True
@@ -90,7 +91,7 @@ def list_notes(*, limit: int = 100) -> list[DevNote]:
     limit = max(1, min(int(limit), 500))
     url = _get_db_url()
     assert url
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         rows = conn.execute(
             """
             SELECT id, title, body, category, created_at, updated_at, created_by, updated_by
@@ -109,7 +110,7 @@ def get_note(note_id: int) -> DevNote | None:
     ensure_schema()
     url = _get_db_url()
     assert url
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             """
             SELECT id, title, body, category, created_at, updated_at, created_by, updated_by
@@ -139,7 +140,7 @@ def create_note(
     author = (created_by or "").strip() or None
     url = _get_db_url()
     assert url
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             """
             INSERT INTO admin_dev_notes (title, body, category, created_at, updated_at, created_by, updated_by)
@@ -171,7 +172,7 @@ def update_note(
     editor = (updated_by or "").strip() or None
     url = _get_db_url()
     assert url
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             """
             UPDATE admin_dev_notes
@@ -192,6 +193,6 @@ def delete_note(note_id: int) -> bool:
     ensure_schema()
     url = _get_db_url()
     assert url
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         cur = conn.execute("DELETE FROM admin_dev_notes WHERE id = %s", (int(note_id),))
     return bool(cur.rowcount)

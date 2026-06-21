@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import psycopg
+import db
 
 
 def _utcnow() -> datetime:
@@ -77,7 +78,7 @@ def ensure_schema() -> bool:
     url = _get_db_url()
     if not url:
         return False
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         for stmt in SCHEMA_SQL_STATEMENTS:
             conn.execute(stmt)
     return True
@@ -98,7 +99,7 @@ def status() -> dict[str, Any]:
         }
     try:
         ensure_schema()
-        with psycopg.connect(url) as conn:
+        with db.connection() as conn:
             table_exists = bool(
                 conn.execute("SELECT to_regclass('public.api_cache') IS NOT NULL").fetchone()[0]
             )
@@ -134,7 +135,7 @@ def get_cached(source: str, payload: dict[str, Any]) -> CacheHit | None:
       WHERE source = %s AND request_key = %s AND expires_at > %s
       LIMIT 1
     """
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         row = conn.execute(sql, (source, key, now)).fetchone()
         if not row:
             return None
@@ -183,6 +184,6 @@ def put_cached(
     """
     req_json = _canonical_json(payload)
     resp_json = _canonical_json(response_json)
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         conn.execute(sql, (source, key, req_json, resp_json, int(row_count or 0), status, error, expires))
 

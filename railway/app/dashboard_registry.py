@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
+import db
 
 import web_users
 
@@ -99,7 +100,7 @@ def ensure_schema(*, seed_defaults: bool = True) -> bool:
     url = _get_db_url()
     if not url:
         return False
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         for stmt in SCHEMA_SQL_STATEMENTS:
             conn.execute(stmt)
         if seed_defaults:
@@ -111,7 +112,7 @@ def suppressed_slugs() -> set[str]:
     if not enabled():
         return set()
     ensure_schema(seed_defaults=False)
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         rows = conn.execute(
             "SELECT client_slug FROM dashboard_client_suppressions"
         ).fetchall()
@@ -156,7 +157,7 @@ def list_clients() -> list[DashboardClientRow]:
     if not enabled():
         return []
     ensure_schema(seed_defaults=True)
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         rows = conn.execute(
             """
             SELECT client_slug, label, source, created_at, created_by
@@ -188,7 +189,7 @@ def get_client(client_slug: str) -> DashboardClientRow | None:
     if not slug or not enabled():
         return None
     ensure_schema(seed_defaults=False)
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             """
             SELECT client_slug, label, source, created_at, created_by
@@ -229,7 +230,7 @@ def create_client(
         raise ValueError(f"Dashboard '{slug}' already exists.")
 
     now = datetime.now(tz=UTC)
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         conn.execute(
             "DELETE FROM dashboard_client_suppressions WHERE client_slug = %s",
             (slug,),
@@ -283,7 +284,7 @@ def delete_client(
     if typed != expected:
         raise ValueError(f"Confirmation name must exactly match '{expected}'.")
 
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         conn.execute(
             "DELETE FROM client_insight_documents WHERE client_slug = %s",
             (slug,),

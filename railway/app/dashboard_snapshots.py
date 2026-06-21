@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
+import db
 
 SCHEMA_SQL_STATEMENTS = [
     """
@@ -33,7 +34,7 @@ def ensure_schema() -> bool:
     url = _get_db_url()
     if not url:
         return False
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         for stmt in SCHEMA_SQL_STATEMENTS:
             conn.execute(stmt)
     return True
@@ -70,7 +71,7 @@ def save_snapshot(
                     refreshed_db = datetime.now(tz=UTC)
         if refreshed_db is None:
             refreshed_db = datetime.now(tz=UTC)
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         conn.execute(
             """
             INSERT INTO dashboard_snapshots (client_key, payload_json, refreshed_at)
@@ -87,7 +88,7 @@ def get_snapshot(client_key: str) -> dict[str, Any] | None:
     if not enabled():
         return None
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             "SELECT payload_json FROM dashboard_snapshots WHERE client_key = %s",
             (client_key,),
@@ -104,7 +105,7 @@ def delete_snapshot(client_key: str) -> bool:
     if not enabled():
         return False
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         cur = conn.execute(
             "DELETE FROM dashboard_snapshots WHERE client_key = %s",
             ((client_key or "").strip().lower(),),
@@ -117,7 +118,7 @@ def get_snapshot_settings_context(client_key: str) -> dict[str, Any] | None:
     if not enabled():
         return None
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             """
             SELECT jsonb_build_object(

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
+import db
 
 import web_users
 
@@ -66,7 +67,7 @@ def enabled() -> bool:
 def ensure_schema() -> bool:
     if not _get_db_url():
         return False
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         for stmt in SCHEMA_SQL_STATEMENTS:
             conn.execute(stmt)
     return True
@@ -86,7 +87,7 @@ def record(
         return
     try:
         ensure_schema()
-        with psycopg.connect(_get_db_url()) as conn:
+        with db.connection() as conn:
             conn.execute(
                 """
                 INSERT INTO audit_events (
@@ -124,7 +125,7 @@ def list_recent(*, limit: int = 100) -> list[dict[str, Any]]:
         return []
     ensure_schema()
     limit = max(1, min(int(limit), 500))
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         rows = conn.execute(
             """
             SELECT created_at, action, actor_email, subject_email, detail_json, ip_address

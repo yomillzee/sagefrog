@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
+import db
 
 import web_users
 
@@ -36,7 +37,7 @@ def ensure_schema() -> bool:
     url = _get_db_url()
     if not url:
         return False
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         for stmt in SCHEMA_SQL_STATEMENTS:
             conn.execute(stmt)
     return True
@@ -104,7 +105,7 @@ def get_rules(client_slug: str) -> list[dict[str, Any]]:
     url = _get_db_url()
     if not url:
         return []
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             "SELECT rules_json FROM client_business_line_rules WHERE client_slug = %s",
             (slug,),
@@ -147,7 +148,7 @@ def save_rules(
     now = datetime.now(tz=UTC)
     url = _get_db_url()
     assert url
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         conn.execute(
             """
             INSERT INTO client_business_line_rules (client_slug, rules_json, updated_at, updated_by)

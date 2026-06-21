@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
+import db
 
 import web_users
 
@@ -112,7 +113,7 @@ def ensure_schema() -> bool:
     url = _get_db_url()
     if not url:
         return False
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         for stmt in SCHEMA_SQL_STATEMENTS:
             conn.execute(stmt)
     return True
@@ -241,7 +242,7 @@ def list_folders(client_slug: str, *, parent_id: int | None = None) -> list[Insi
     if not slug or not enabled():
         return []
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         if parent_id is None:
             rows = conn.execute(
                 """
@@ -270,7 +271,7 @@ def get_folder(client_slug: str, folder_id: int) -> InsightFolderRow | None:
     if not slug or not enabled():
         return None
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             """
             SELECT id, client_slug, parent_id, name, created_at, created_by
@@ -291,7 +292,7 @@ def folder_breadcrumb(client_slug: str, folder_id: int | None) -> list[InsightFo
     trail: list[InsightFolderRow] = []
     current_id: int | None = int(folder_id)
     seen: set[int] = set()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         while current_id is not None:
             if current_id in seen:
                 break
@@ -318,7 +319,7 @@ def folder_is_empty(client_slug: str, folder_id: int) -> bool:
     if not slug or not enabled():
         return True
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         child_folder = conn.execute(
             """
             SELECT 1 FROM client_insight_folders
@@ -356,7 +357,7 @@ def create_folder(
     clean_name = validate_folder_name(name)
     ensure_schema()
     now = datetime.now(tz=UTC)
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         if parent_id is not None:
             _resolve_folder_id(slug, int(parent_id), conn=conn)
         row = conn.execute(
@@ -385,7 +386,7 @@ def delete_folder(client_slug: str, folder_id: int) -> bool:
     if not folder_is_empty(slug, int(folder_id)):
         raise ValueError("Delete files and subfolders before removing this folder.")
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         cur = conn.execute(
             """
             DELETE FROM client_insight_folders
@@ -405,7 +406,7 @@ def list_documents(
     if not slug or not enabled():
         return []
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         if folder_id is None:
             rows = conn.execute(
                 """
@@ -436,7 +437,7 @@ def get_document(client_slug: str, doc_id: int) -> InsightDocumentRow | None:
     if not slug or not enabled():
         return None
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             """
             SELECT id, client_slug, title, period_year, period_month, original_filename,
@@ -454,7 +455,7 @@ def get_document_bytes(client_slug: str, doc_id: int) -> tuple[InsightDocumentRo
     if not slug or not enabled():
         return None
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             """
             SELECT id, client_slug, title, period_year, period_month, original_filename,
@@ -505,7 +506,7 @@ def save_document(
 
     ensure_schema()
     now = datetime.now(tz=UTC)
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         resolved_folder_id = _resolve_folder_id(slug, folder_id, conn=conn) if folder_id else None
         row = conn.execute(
             """
@@ -549,7 +550,7 @@ def move_document(
         raise RuntimeError("DATABASE_URL is required to store insight documents.")
 
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         existing = conn.execute(
             """
             SELECT id FROM client_insight_documents
@@ -583,7 +584,7 @@ def delete_document(client_slug: str, doc_id: int) -> bool:
     if not slug or not enabled():
         return False
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         cur = conn.execute(
             """
             DELETE FROM client_insight_documents

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
+import db
 
 import web_users
 
@@ -86,7 +87,7 @@ def ensure_schema() -> bool:
     url = _get_db_url()
     if not url:
         return False
-    with psycopg.connect(url) as conn:
+    with db.connection() as conn:
         for stmt in SCHEMA_SQL_STATEMENTS:
             conn.execute(stmt)
     return True
@@ -97,7 +98,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
     if not slug or not enabled():
         return None
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             """
             SELECT client_slug, label, google_customer_id, linkedin_account_id,
@@ -183,7 +184,7 @@ def save_config(
     extra_placeholders = "".join(", %s" for _ in _optional)
     extra_vals: list = [val for _, val in _optional]
 
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         conn.execute(
             f"""
             INSERT INTO client_dashboard_config (
@@ -237,7 +238,7 @@ def save_monthly_budget(
     now = datetime.now(tz=UTC)
     existing = get_config(slug)
     label = existing.label if existing else slug
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         conn.execute(
             """
             INSERT INTO client_dashboard_config (
@@ -269,7 +270,7 @@ def list_config_labels() -> dict[str, str]:
     if not enabled():
         return {}
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         rows = conn.execute(
             "SELECT client_slug, label FROM client_dashboard_config WHERE label <> ''"
         ).fetchall()
@@ -281,7 +282,7 @@ def get_features(client_slug: str) -> dict[str, Any] | None:
     if not slug or not enabled():
         return None
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             "SELECT features_json FROM client_dashboard_config WHERE client_slug = %s",
             (slug,),
@@ -315,7 +316,7 @@ def save_features(
     now = datetime.now(tz=UTC)
     existing = get_config(slug)
     label = existing.label if existing else slug
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         conn.execute(
             """
             INSERT INTO client_dashboard_config (
@@ -347,7 +348,7 @@ def get_theme(client_slug: str) -> dict[str, Any] | None:
     if not slug or not enabled():
         return None
     ensure_schema()
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         row = conn.execute(
             "SELECT theme_json FROM client_dashboard_config WHERE client_slug = %s",
             (slug,),
@@ -378,7 +379,7 @@ def save_theme(
     now = datetime.now(tz=UTC)
     existing = get_config(slug)
     label = existing.label if existing else slug
-    with psycopg.connect(_get_db_url()) as conn:
+    with db.connection() as conn:
         conn.execute(
             """
             INSERT INTO client_dashboard_config (
