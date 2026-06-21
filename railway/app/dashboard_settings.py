@@ -649,16 +649,36 @@ def _setup_checklist_html(
 
 def _settings_page_css() -> str:
     return """
-    .panel { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
-    .panel--primary { border-color: #b8cfe8; box-shadow: 0 2px 12px rgba(11, 92, 171, 0.08); }
-    .panel h2 { margin: 0 0 8px; font-size: 1.05rem; color: var(--navy); }
+    /* ---------- Layout ---------- */
+    .settings-page { max-width: 980px; margin: 0 auto; }
+    .settings-hero { margin: 0 0 22px; }
+    .settings-hero-title { margin: 0 0 4px; font-size: 1.5rem; font-weight: 700; letter-spacing: -.01em; color: var(--navy); }
+    .settings-hero-sub { margin: 0; font-size: .95rem; color: var(--muted); }
+    .settings-section-title { display: flex; align-items: center; gap: 10px; margin: 30px 0 12px;
+      font-size: .74rem; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+    .settings-section-title::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+    /* ---------- Panels ---------- */
+    .panel { background: var(--panel, #fff); border: 1px solid var(--border); border-radius: 14px;
+      padding: 22px 24px; margin-bottom: 16px; box-shadow: var(--shadow-sm); }
+    .panel--primary { border-color: #c2d8ef; box-shadow: 0 2px 16px rgba(11, 92, 171, 0.10); }
+    .panel h2 { margin: 0 0 4px; font-size: 1.08rem; font-weight: 650; letter-spacing: -.01em; color: var(--navy); }
     .panel h3 { margin: 0 0 8px; font-size: .95rem; color: var(--navy); }
-    p { margin: 0 0 10px; line-height: 1.45; }
+    .panel > h2 + .muted, .panel > h2 + p, .panel > h2 + .hint { margin-top: 0; }
+    .panel-meta { margin: 0 0 16px; font-size: .82rem; color: var(--muted); }
+    p { margin: 0 0 10px; line-height: 1.5; }
     .muted { color: var(--muted); font-size: .92rem; }
-    .hint { color: var(--muted); font-size: .82rem; margin: 4px 0 0; }
-    .notice { padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; font-size: .9rem; }
-    .notice.ok { background: var(--ok-bg); color: var(--ok); }
-    .notice.err { background: var(--err-bg); color: var(--err); }
+    .hint { color: var(--muted); font-size: .82rem; margin: 6px 0 0; line-height: 1.45; }
+    code { font-family: ui-monospace, monospace; font-size: .85em; background: #eef2f7;
+      padding: 1px 5px; border-radius: 5px; color: var(--navy); }
+
+    /* ---------- Notices ---------- */
+    .notice { padding: 11px 14px; border-radius: 9px; margin-bottom: 16px; font-size: .9rem; font-weight: 500;
+      border: 1px solid transparent; }
+    .notice.ok { background: var(--ok-bg); color: var(--ok); border-color: #bbf0cf; }
+    .notice.err { background: var(--err-bg); color: var(--err); border-color: #f6c9c4; }
+
+    /* ---------- Checklists / OAuth (shared) ---------- */
     .setup-checklist { margin: 12px 0 0; padding: 0; list-style: none; }
     .setup-checklist li { display: flex; align-items: center; justify-content: space-between; gap: 12px;
       padding: 10px 0; border-bottom: 1px solid var(--border); font-size: .92rem; }
@@ -667,56 +687,92 @@ def _settings_page_css() -> str:
     .oauth-details { margin: 8px 0 0; padding-left: 1.1rem; font-size: .82rem; color: var(--navy); }
     .oauth-details li { margin: 4px 0; }
     .oauth-status-msg { margin: 8px 0 0; font-size: .88rem; color: var(--navy); font-weight: 600; }
-    .oauth-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; background: #fafbfc; }
+    .oauth-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; background: var(--surface); }
     .oauth-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
     .oauth-card h3 { margin: 0; font-size: .95rem; }
     .oauth-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
-    .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: .78rem; font-weight: 600; }
-    .badge.ok { background: var(--ok-bg); color: var(--ok); }
-    .badge.err { background: var(--err-bg); color: var(--err); }
-    .btn { display: inline-block; padding: 9px 16px; border-radius: 8px; border: 0; font-weight: 600;
-      cursor: pointer; font-size: .88rem; text-decoration: none; }
-    .btn.primary { background: var(--accent); color: #fff; }
-    .btn.secondary { background: #fff; color: var(--accent); border: 1px solid var(--border); }
+
+    /* ---------- Badges ---------- */
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: .76rem; font-weight: 600;
+      border: 1px solid transparent; }
+    .badge.ok { background: var(--ok-bg); color: var(--ok); border-color: #bbf0cf; }
+    .badge.err { background: var(--err-bg); color: var(--err); border-color: #f6c9c4; }
+
+    /* ---------- Buttons (unified) ---------- */
+    .btn, .refresh-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 9px 17px; border-radius: 8px; border: 1px solid transparent; font-weight: 600; font-size: .88rem;
+      line-height: 1.1; cursor: pointer; text-decoration: none; white-space: nowrap;
+      transition: background .15s, border-color .15s, color .15s, box-shadow .15s; }
+    .btn.primary, .refresh-btn { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .btn.primary:hover, .refresh-btn:not(:disabled):hover { background: #094a8a; border-color: #094a8a; }
+    .btn.secondary, .refresh-btn--secondary { background: #fff; color: var(--accent); border-color: var(--border); }
+    .btn.secondary:hover, .refresh-btn--secondary:not(:disabled):hover { background: #f4f7fb; border-color: #b8c4d4; }
+    .btn:focus-visible, .refresh-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(11, 92, 171, .28); }
+    .btn:disabled, .refresh-btn:disabled { opacity: .5; cursor: not-allowed; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
     .inline-form { display: inline; margin: 0; }
-    .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin-bottom: 14px; }
-    label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 6px; }
-    input[type="text"], input[type="password"], select { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
-    input[type="color"] { width: 100%; height: 42px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: #fff; }
-    .color-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin-bottom: 16px; }
+
+    /* ---------- Forms ---------- */
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px 18px; margin-bottom: 18px; }
+    label { display: block; font-size: .84rem; font-weight: 600; margin-bottom: 6px; color: var(--navy); }
+    input[type="text"], input[type="password"], input[type="number"], select, textarea {
+      width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; background: #fff;
+      font: inherit; font-size: .9rem; color: var(--text); transition: border-color .15s, box-shadow .15s; }
+    input[type="text"]:hover, input[type="password"]:hover, input[type="number"]:hover, select:hover, textarea:hover { border-color: #c3ccd8; }
+    input[type="text"]:focus, input[type="password"]:focus, input[type="number"]:focus, select:focus, textarea:focus {
+      outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(11, 92, 171, .15); }
+    input::placeholder, textarea::placeholder { color: #aab4c2; }
+
+    /* ---------- Brand colors ---------- */
+    input[type="color"] { width: 100%; height: 38px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: #fff; }
+    .color-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px 14px; margin-bottom: 14px; }
     .color-field label { margin-bottom: 6px; }
-    .theme-group-title { margin: 16px 0 10px; font-size: .88rem; font-weight: 700; color: var(--navy); text-transform: uppercase; letter-spacing: .04em; }
-    .theme-group-title:first-of-type { margin-top: 0; }
-    .feature-toggle-grid { display: grid; gap: 12px; margin-bottom: 16px; }
-    .feature-toggle { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px;
-      border: 1px solid var(--border); border-radius: 10px; background: #fafbfc; cursor: pointer; }
-    .feature-toggle input { margin-top: 3px; flex-shrink: 0; }
+    .theme-group-title { margin: 18px 0 10px; font-size: .74rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+    .theme-group-title:first-of-type { margin-top: 4px; }
+
+    /* ---------- Feature toggles ---------- */
+    .feature-toggle-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .feature-toggle { display: flex; align-items: flex-start; gap: 11px; padding: 13px 15px;
+      border: 1px solid var(--border); border-radius: 10px; background: var(--surface); cursor: pointer;
+      transition: border-color .15s, background .15s, box-shadow .15s; }
+    .feature-toggle:hover { border-color: #c3ccd8; background: #f1f5fa; }
+    .feature-toggle:has(input:checked) { border-color: #bcd6f2; background: #f0f7ff; }
+    .feature-toggle input { margin-top: 2px; flex-shrink: 0; width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
     .feature-toggle-text { display: block; min-width: 0; }
-    .feature-toggle-text strong { display: block; margin-bottom: 4px; color: var(--navy); }
-    textarea.rules-textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
-      font-family: ui-monospace, monospace; font-size: .84rem; line-height: 1.45; min-height: 160px; margin-bottom: 12px; }
-    .status-table { width: 100%; border-collapse: collapse; font-size: .88rem; margin-top: 8px; }
-    .status-table th, .status-table td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
-    .status-table th { color: var(--muted); font-size: .75rem; text-transform: uppercase; }
+    .feature-toggle-text strong { display: block; margin-bottom: 3px; color: var(--navy); font-size: .92rem; }
+
+    /* ---------- Textareas ---------- */
+    textarea.rules-textarea { width: 100%; padding: 11px 13px; border: 1px solid var(--border); border-radius: 8px;
+      font-family: ui-monospace, monospace; font-size: .84rem; line-height: 1.5; min-height: 160px; margin-bottom: 14px; resize: vertical; }
+
+    /* ---------- Tables ---------- */
+    .status-table { width: 100%; border-collapse: collapse; font-size: .88rem; margin-top: 10px; }
+    .status-table th, .status-table td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .status-table thead th { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; font-weight: 700; }
+    .status-table tbody tr:last-child td { border-bottom: 0; }
     .mono { font-family: ui-monospace, monospace; font-size: .85rem; }
-    .settings-fold { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 0 14px; background: #fafbfc; }
-    .settings-fold--inline { margin-top: 10px; padding: 8px 10px; }
-    .settings-fold summary { cursor: pointer; font-weight: 600; font-size: .9rem; color: var(--navy); padding: 12px 0; }
-    .settings-fold[open] summary { border-bottom: 1px solid var(--border); margin-bottom: 10px; }
-    .settings-fold .fold-body { padding-bottom: 14px; }
+
+    /* ---------- Folds ---------- */
+    .settings-fold { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 0 16px; background: var(--surface); }
+    .settings-fold--inline { margin-top: 10px; padding: 8px 12px; }
+    .settings-fold summary { cursor: pointer; font-weight: 600; font-size: .9rem; color: var(--navy); padding: 13px 0; list-style-position: inside; }
+    .settings-fold[open] summary { border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+    .settings-fold .fold-body { padding-bottom: 16px; }
     .checklist { margin: 8px 0 0; padding-left: 1.2rem; line-height: 1.55; font-size: .88rem; }
     .error-list { margin: 8px 0 0; padding-left: 1.2rem; color: var(--err); font-size: .88rem; }
-    .refresh-bar { margin-top: 8px; }
-    .refresh-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-    .refresh-btn { padding: 9px 16px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent);
-      color: #fff; cursor: pointer; font-weight: 600; font-size: .88rem; }
-    .refresh-btn--secondary { background: #fff; color: var(--accent); }
-    .refresh-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ---------- Refresh / insights ---------- */
+    .refresh-bar { margin-top: 4px; }
+    .refresh-actions { display: flex; flex-wrap: wrap; gap: 10px; }
     .refresh-form { display: inline; margin: 0; }
     .insights-editor { margin-top: 8px; }
-    .insights-textarea { width: 100%; min-height: 120px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font: inherit; }
+    .insights-textarea { width: 100%; min-height: 120px; padding: 11px; border: 1px solid var(--border); border-radius: 8px; font: inherit; resize: vertical; }
     .meta-manual { margin-top: 12px; }
+
+    @media (max-width: 600px) {
+      .panel { padding: 18px 16px; }
+      .form-grid { grid-template-columns: 1fr; }
+    }
     """
 
 
@@ -1327,20 +1383,43 @@ def render_settings_html(
             f"Date range: {dr.get('start', '')} → {dr.get('end', '')}\nLast refreshed: {refreshed} UTC"
         )
 
-    content = f"""
-    {notice}
-    {edit_form}
-    <section class="panel panel--primary">
+    refresh_panel = f"""
+    <section class="panel">
       <h2>Refresh data</h2>
+      <p class="muted">Pull the latest numbers from connected sources. Quick refresh updates recent days; full refresh rebuilds the snapshot.</p>
       {refresh_block}
-    </section>
+    </section>"""
+
+    # Group the dashboard-display panels so the section heading only shows when
+    # at least one of them renders (admins only).
+    display_panels = "".join(p for p in (sections_section, bl_rules_section, theme_section) if p.strip())
+    display_group = (
+        f'<h2 class="settings-section-title">Dashboard display</h2>{display_panels}'
+        if display_panels
+        else ""
+    )
+
+    content = f"""
+    <div class="settings-page">
+    {notice}
+    <header class="settings-hero">
+      <h1 class="settings-hero-title">Settings</h1>
+      <p class="settings-hero-sub">Manage data connections, dashboard layout, and appearance for {_esc(cfg.label)}.</p>
+    </header>
+
+    <h2 class="settings-section-title">Configuration</h2>
+    {edit_form}
+
+    <h2 class="settings-section-title">Data &amp; sync</h2>
+    {refresh_panel}
     {data_sync_section}
     {data_source_status_section}
     {bq_mart_section}
-    {sections_section}
-    {bl_rules_section}
-    {theme_section}
+
+    {display_group}
+
     {insights_fold}
+    </div>
     """
 
     return dashboard_service.render_client_shell_page(
