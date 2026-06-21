@@ -933,6 +933,70 @@ def fetch_ad_media_index(
     return index
 
 
+_HEADLINE_PIN_ORDER = {
+    "HEADLINE_1": 0,
+    "HEADLINE_2": 1,
+    "HEADLINE_3": 2,
+}
+
+
+def _ordered_headline_texts(assets: Any) -> list[str]:
+    """Return Responsive Search Ad headline texts, pinned positions first.
+
+    Pinned headlines are surfaced ahead of unpinned ones (in pin order) so a
+    short preview reflects what a searcher is most likely to see; remaining
+    headlines keep their original order.
+    """
+    if not isinstance(assets, list):
+        return []
+    pinned: list[tuple[int, str]] = []
+    unpinned: list[str] = []
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        text = str(asset.get("text") or "").strip()
+        if not text:
+            continue
+        pin = _HEADLINE_PIN_ORDER.get(str(asset.get("pinned_field") or ""))
+        if pin is not None:
+            pinned.append((pin, text))
+        else:
+            unpinned.append(text)
+    return [text for _, text in sorted(pinned, key=lambda p: p[0])] + unpinned
+
+
+def fetch_ad_headlines_index(
+    customer_id: str,
+    *,
+    client: GoogleAdsClient | None = None,
+) -> dict[str, list[str]]:
+    """Map Google ad id -> ordered Responsive Search Ad headline texts."""
+    customer_id_clean = str(customer_id).replace("-", "").strip()
+    client = client or build_client()
+    index: dict[str, list[str]] = {}
+    query = """
+        SELECT
+          ad_group_ad.ad.id,
+          ad_group_ad.ad.responsive_search_ad.headlines
+        FROM ad_group_ad
+        WHERE ad_group_ad.status != 'REMOVED'
+          AND ad_group_ad.ad.type = 'RESPONSIVE_SEARCH_AD'
+    """
+    try:
+        for raw in search(customer_id_clean, query, client=client):
+            ad_id = str(_dig(raw, "ad_group_ad", "ad", "id") or "")
+            if not ad_id:
+                continue
+            texts = _ordered_headline_texts(
+                _dig(raw, "ad_group_ad", "ad", "responsive_search_ad", "headlines")
+            )
+            if texts:
+                index[ad_id] = texts
+    except Exception:
+        pass
+    return index
+
+
 def adgroups_performance(
     customer_id: str,
     *,
@@ -1042,11 +1106,16 @@ def ads_performance(
     """
     rows = search(customer_id_clean, query, client=client)
     media_index: dict[str, dict[str, str]] = {}
+    headlines_index: dict[str, list[str]] = {}
     if include_creative:
         try:
             media_index = fetch_ad_media_index(customer_id_clean, client=client)
         except Exception:
             media_index = {}
+        try:
+            headlines_index = fetch_ad_headlines_index(customer_id_clean, client=client)
+        except Exception:
+            headlines_index = {}
 
     by_ad: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -1078,6 +1147,9 @@ def ads_performance(
             media = media_index.get(aid) or {}
             if media:
                 item.update(media)
+            headlines = headlines_index.get(aid) or []
+            if headlines:
+                item["headlines"] = headlines
             by_ad[aid] = item
         _accumulate_metrics(by_ad[aid], row)
 

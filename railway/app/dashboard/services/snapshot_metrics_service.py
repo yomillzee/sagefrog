@@ -84,6 +84,11 @@ def normalize_entity_row(row: dict[str, Any]) -> dict[str, Any]:
         val = row.get(key)
         if val:
             out[key] = str(val)
+    headlines = row.get("headlines")
+    if isinstance(headlines, list):
+        cleaned = [str(h).strip() for h in headlines if str(h).strip()]
+        if cleaned:
+            out["headlines"] = cleaned
     return out
 
 

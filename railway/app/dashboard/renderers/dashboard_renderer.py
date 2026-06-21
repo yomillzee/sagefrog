@@ -1988,6 +1988,24 @@ def render_penn_html(
       color: var(--muted);
       margin-top: 2px;
     }}
+    .ad-headlines {{
+      display: block;
+      margin-top: 3px;
+      max-width: 360px;
+    }}
+    .ad-headline {{
+      display: block;
+      font-size: 0.72rem;
+      line-height: 1.3;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }}
+    .ad-headline::before {{
+      content: attr(data-i) ". ";
+      color: var(--muted);
+    }}
     .entity-tag {{
       font-size: 0.68rem;
       font-weight: 600;
@@ -4624,7 +4642,11 @@ def render_penn_html(
           ? `<span class="ad-creative-sub">${{escHtml(r.creative_name)}}</span>` : '';
         const typeBadge = r.media_type
           ? `<span class="ad-creative-sub">${{escHtml(r.media_type)}}</span>` : '';
-        inner = `<div class="name-inner">${{thumb}}<span><span>${{tag}}${{escHtml(r.name || '—')}}</span>${{creativeSub}}${{typeBadge}}</span></div>`;
+        const headlines = Array.isArray(r.headlines) ? r.headlines.slice(0, 3) : [];
+        const headlinesSub = headlines.length
+          ? `<span class="ad-headlines">${{headlines.map((h, i) => `<span class="ad-headline" data-i="${{i + 1}}" title="${{escHtml(h)}}">${{escHtml(h)}}</span>`).join('')}}</span>`
+          : '';
+        inner = `<div class="name-inner">${{thumb}}<span><span>${{tag}}${{escHtml(r.name || '—')}}</span>${{creativeSub}}${{typeBadge}}${{headlinesSub}}</span></div>`;
       }}
       return `<td class="name" style="padding-left:${{pad}}px">${{inner}}</td>`;
     }}
