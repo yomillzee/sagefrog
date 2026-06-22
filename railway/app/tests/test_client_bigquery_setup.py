@@ -107,6 +107,14 @@ class ClientBigQuerySetupTests(unittest.TestCase):
         ):
             result = client_bigquery_setup.ensure_client_bigquery(
                 client_key="client",
+                needs_google=True,
+                needs_linkedin=True,
+                needs_meta=True,
+                needs_mart=True,
+            )
+            repeated = client_bigquery_setup.ensure_client_bq_resources(
+                client_key="client",
+                needs_google=True,
                 needs_linkedin=True,
                 needs_meta=True,
                 needs_mart=True,
@@ -114,9 +122,15 @@ class ClientBigQuerySetupTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(build_calls[0][0], "client-project")
+        # Google is native-transfer-owned and is verified, never fabricated.
         self.assertEqual(len(result["datasets"]), 3)
-        self.assertEqual(len(client.created_tables), 3)
+        self.assertEqual(result["datasets"], repeated["datasets"])
+        self.assertEqual(len(client.created_tables), 6)
         self.assertEqual(client.created_tables, client.deleted_tables)
+        self.assertEqual(
+            result["native_sources"]["google"]["dataset"],
+            "client-project.raw_google_ads",
+        )
 
 
 if __name__ == "__main__":
