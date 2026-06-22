@@ -49,7 +49,7 @@ def _apply_mart_google_daily(
 
     The account-level Google Ads API daily (Postgres metrics_daily) sums every
     row including non-campaign / adjustment spend, so it can overstate the
-    dashboard's Google total — e.g. Penn showed $8,238 unfiltered vs the mart's
+    dashboard's Google total â€” e.g. Penn showed $8,238 unfiltered vs the mart's
     correct $6,475 (fact_google_ads_campaign_daily). The mart is the source of
     truth, so overwrite daily_metrics["google"] + platform_totals["google"] with
     it when available. Falls back silently to the API daily when the client has
@@ -79,7 +79,7 @@ def _apply_mart_google_daily(
             credentials_env=credentials_env,
         )
     except Exception as exc:
-        # Source set up but mart not built yet → expected; fall back to API daily
+        # Source set up but mart not built yet â†’ expected; fall back to API daily
         # silently. Only real failures (auth, permission, SQL) surface as warnings.
         if not bq_mart_service._is_table_not_found(exc):
             payload.setdefault("errors", {})["google_mart_daily"] = platform_error(exc)
@@ -390,7 +390,7 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
     linkedin_account_id = cfg.linkedin_account_id or penn_cfg.linkedin_account_id
     meta_account_id = cfg.meta_account_id or penn_cfg.meta_account_id
 
-    # GSC: on cron, sync new days from GSC API → fact_gsc_query/page_daily first,
+    # GSC: on cron, sync new days from GSC API â†’ fact_gsc_query/page_daily first,
     # then read the combined snapshot (native export UNION historical backfill).
     # On manual refresh, skip the API sync and just read from BQ.
     import semrush_service as _semrush_svc
@@ -426,7 +426,7 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
         snapshot.setdefault("accounts", {})["meta"] = meta_account_id
         snapshot.setdefault("data_sources", {})["google"] = "bigquery"
 
-        # LinkedIn: cron syncs from API → BQ; manual refresh just reads from BQ.
+        # LinkedIn: cron syncs from API â†’ BQ; manual refresh just reads from BQ.
         # Calling the LinkedIn OAuth token endpoint on every manual refresh causes
         # 429 rate-limit errors and is unnecessary when the cron keeps BQ current.
         try:
@@ -462,7 +462,7 @@ def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str 
             snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = "bigquery"
             snapshot.setdefault("creative_metadata", {"source": "bigquery", "merged_rows": 0})
 
-        # Meta: cron syncs from API → BQ; manual refresh just reads from BQ.
+        # Meta: cron syncs from API â†’ BQ; manual refresh just reads from BQ.
         if meta_account_id:
             try:
                 if is_cron:
@@ -587,6 +587,7 @@ def refresh_bq_client(
     import bq_linkedin_ads_service
     import bq_mart_service
     import bq_meta_ads_service
+    import bigquery_warehouse
     import client_dashboard_config as _cdc
     import gsc_sync_service
     import semrush_service as _smr_svc
@@ -607,7 +608,7 @@ def refresh_bq_client(
 
     # Resolve client-specific BQ project/credentials for mart queries.
     # Mart tables (fact_google_ads_campaign_daily etc.) live in the same GCP project
-    # as the client's GA4 export — use the GA4 registry to find the right project.
+    # as the client's GA4 export â€” use the GA4 registry to find the right project.
     _mart_bq_project: str | None = None
     _mart_credentials_env: str | None = None
     try:
@@ -618,7 +619,7 @@ def refresh_bq_client(
     except Exception:
         pass
 
-    # Reuse cached SEMrush data if it's under 24 hours old — SEMrush scores
+    # Reuse cached SEMrush data if it's under 24 hours old â€” SEMrush scores
     # update at most daily and cost API tokens on every call.
     from datetime import datetime, timezone as _tz
     _existing = dashboard_snapshots.get_snapshot(slug) or {}
@@ -684,7 +685,7 @@ def refresh_bq_client(
         if linkedin_account_id:
             try:
                 # Route LinkedIn BQ reads to this client's project (datasets keep
-                # the same names across clients). cfg must be passed — build_snapshot
+                # the same names across clients). cfg must be passed â€” build_snapshot
                 # uses cfg.client_key/label, so omitting it raised AttributeError and
                 # silently broke LinkedIn for every generic BQ client.
                 with bq_linkedin_ads_service.route(
@@ -761,11 +762,15 @@ def refresh_bq_client(
         )
         if fallback_sources:
             try:
-                api_snapshot = refresh_client(
-                    client_slug=slug,
-                    date_range=preset,
-                    sync_trigger=f"{sync_trigger}_api_fallback",
-                )
+                with bigquery_warehouse.route(
+                    bq_project_id=_mart_bq_project,
+                    credentials_env=_mart_credentials_env,
+                ):
+                    api_snapshot = refresh_client(
+                        client_slug=slug,
+                        date_range=preset,
+                        sync_trigger=f"{sync_trigger}_api_fallback",
+                    )
                 repaired = merge_api_fallback_sources(
                     snapshot, api_snapshot, fallback_sources
                 )
@@ -796,11 +801,15 @@ def refresh_bq_client(
         }
         if allow_api_fallback:
             try:
-                api_snapshot = refresh_client(
-                    client_slug=slug,
-                    date_range=preset,
-                    sync_trigger=f"{sync_trigger}_api_fallback",
-                )
+                with bigquery_warehouse.route(
+                    bq_project_id=_mart_bq_project,
+                    credentials_env=_mart_credentials_env,
+                ):
+                    api_snapshot = refresh_client(
+                        client_slug=slug,
+                        date_range=preset,
+                        sync_trigger=f"{sync_trigger}_api_fallback",
+                    )
                 snapshot = api_snapshot
                 snapshot.setdefault("warnings", {})["bq_client"] = platform_error(exc)
                 repaired = []

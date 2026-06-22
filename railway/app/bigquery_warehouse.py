@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import os
 from datetime import datetime, timezone
 from typing import Any
@@ -18,6 +20,58 @@ _DEFAULT_CREATIVE_METADATA_TABLE = "creative_metadata"
 _DEFAULT_MART_DATASET = "marketing_marts"
 _DEFAULT_LINKEDIN_CAMPAIGN_FACT_TABLE = "fact_linkedin_ads_campaign_daily"
 _DEFAULT_LINKEDIN_CREATIVE_FACT_TABLE = "fact_linkedin_ads_creative_daily"
+
+
+_route_ctx: contextvars.ContextVar[dict[str, str | None] | None] = contextvars.ContextVar(
+    "bigquery_warehouse_route", default=None
+)
+
+
+@contextlib.contextmanager
+def route(
+    *,
+    bq_project_id: str | None = None,
+    credentials_env: str | None = None,
+    linkedin_dataset_id: str | None = None,
+    meta_dataset_id: str | None = None,
+    mart_dataset_id: str | None = None,
+):
+    """Route every warehouse read/write to one client's BigQuery identity."""
+    payload = {
+        "project": (bq_project_id or "").strip() or None,
+        "credentials_env": (credentials_env or "").strip() or None,
+        "linkedin_dataset": (linkedin_dataset_id or "").strip() or None,
+        "meta_dataset": (meta_dataset_id or "").strip() or None,
+        "mart_dataset": (mart_dataset_id or "").strip() or None,
+    }
+    token = _route_ctx.set(payload if any(payload.values()) else None)
+    try:
+        yield
+    finally:
+        _route_ctx.reset(token)
+
+
+def _route_value(key: str) -> str | None:
+    current = _route_ctx.get()
+    return current.get(key) if current else None
+
+
+def _credentials_env() -> str | None:
+    return _route_value("credentials_env")
+
+
+def _client(project_id: str):
+    import bigquery_service
+
+    return bigquery_service.build_client(project_id, credentials_env=_credentials_env())
+
+
+def _mart_dataset_id() -> str:
+    return (
+        _route_value("mart_dataset")
+        or os.getenv("BQ_MART_DATASET_ID")
+        or _DEFAULT_MART_DATASET
+    ).strip()
 
 
 def _bigquery():
@@ -96,10 +150,17 @@ def enabled(source: str | None = None) -> bool:
 
 
 def _linkedin_project_id() -> str:
-    return (os.getenv("BQ_LINKEDIN_PROJECT_ID") or _DEFAULT_LINKEDIN_PROJECT).strip()
+    return (
+        _route_value("project")
+        or os.getenv("BQ_LINKEDIN_PROJECT_ID")
+        or _DEFAULT_LINKEDIN_PROJECT
+    ).strip()
 
 
 def _dataset_id(source: str) -> str:
+    routed = _route_value(f"{source.strip().lower()}_dataset")
+    if routed:
+        return routed
     key = source.strip().upper().replace("-", "_")
     return (os.getenv(f"BQ_{key}_DATASET_ID") or os.getenv("BQ_WAREHOUSE_DATASET_ID") or (_DEFAULT_LINKEDIN_DATASET if source == "linkedin" else "")).strip()
 
@@ -111,14 +172,19 @@ def _table_name(source: str) -> str:
 
 def _target(source: str) -> tuple[Any, str]:
     source_key = source.strip().lower()
-    project_id = _linkedin_project_id() if source_key == "linkedin" else (os.getenv("BQ_WAREHOUSE_PROJECT_ID") or os.getenv("BQ_PROJECT_ID") or "").strip()
+    project_id = (
+        _route_value("project")
+        or (
+            _linkedin_project_id()
+            if source_key == "linkedin"
+            else os.getenv("BQ_WAREHOUSE_PROJECT_ID") or os.getenv("BQ_PROJECT_ID") or ""
+        )
+    ).strip()
     dataset_id = _dataset_id(source_key)
     table_name = _table_name(source_key)
     if not project_id or not dataset_id or not table_name:
         raise RuntimeError("Missing BigQuery warehouse project/dataset/table configuration.")
-    import bigquery_service
-
-    return bigquery_service.build_client(project_id), f"{project_id}.{dataset_id}.{table_name}"
+    return _client(project_id), f"{project_id}.{dataset_id}.{table_name}"
 
 
 def ensure_table(source: str) -> str:
@@ -352,14 +418,12 @@ def rebuild_linkedin_campaign_daily_mart() -> dict[str, Any]:
         return {"enabled": False, "table": None}
     project_id = _linkedin_project_id()
     raw_dataset = _dataset_id("linkedin")
-    mart_dataset = (os.getenv("BQ_MART_DATASET_ID") or _DEFAULT_MART_DATASET).strip()
+    mart_dataset = _mart_dataset_id()
     mart_table = (
         os.getenv("BQ_LINKEDIN_CAMPAIGN_FACT_TABLE")
         or _DEFAULT_LINKEDIN_CAMPAIGN_FACT_TABLE
     ).strip()
-    import bigquery_service
-
-    client = bigquery_service.build_client(project_id)
+    client = _client(project_id)
     bigquery = _bigquery()
     client.create_dataset(bigquery.Dataset(f"{project_id}.{mart_dataset}"), exists_ok=True)
     table_id = f"{project_id}.{mart_dataset}.{mart_table}"
@@ -600,16 +664,23 @@ _DEFAULT_META_AD_FACT_TABLE = "fact_meta_ads_ad_daily"
 
 
 def _meta_project_id() -> str:
-    return (os.getenv("BQ_META_PROJECT_ID") or _DEFAULT_META_PROJECT).strip()
+    return (
+        _route_value("project")
+        or os.getenv("BQ_META_PROJECT_ID")
+        or _DEFAULT_META_PROJECT
+    ).strip()
 
 
 def _meta_dataset_id() -> str:
-    return (os.getenv("BQ_META_DATASET_ID") or _DEFAULT_META_DATASET).strip()
+    return (
+        _route_value("meta_dataset")
+        or os.getenv("BQ_META_DATASET_ID")
+        or _DEFAULT_META_DATASET
+    ).strip()
 
 
 def _meta_client():
-    import bigquery_service
-    return bigquery_service.build_client(_meta_project_id())
+    return _client(_meta_project_id())
 
 
 def _meta_adset_daily_schema() -> list[Any]:
@@ -931,15 +1002,14 @@ def create_meta_mart_views() -> dict[str, Any]:
     """Create or replace Meta mart views in marketing_marts (ad view joins creative metadata)."""
     project_id = _meta_project_id()
     dataset_id = _meta_dataset_id()
-    mart_dataset = (os.getenv("BQ_MART_DATASET_ID") or _DEFAULT_MART_DATASET).strip()
-    import bigquery_service
-    client = bigquery_service.build_client(project_id)
+    mart_dataset = _mart_dataset_id()
+    client = _client(project_id)
     bigquery = _bigquery()
     client.create_dataset(bigquery.Dataset(f"{project_id}.{mart_dataset}"), exists_ok=True)
 
     views_created = []
 
-    # Campaign and adset views — simple passthroughs
+    # Campaign and adset views â€” simple passthroughs
     for fact_table, raw_table, id_col, name_col, parent_cols in [
         (
             _DEFAULT_META_CAMPAIGN_FACT_TABLE,
@@ -975,7 +1045,7 @@ def create_meta_mart_views() -> dict[str, Any]:
         client.query(sql).result()
         views_created.append(table_id)
 
-    # Ad view — LEFT JOIN creative metadata for thumbnails
+    # Ad view â€” LEFT JOIN creative metadata for thumbnails
     ad_fact_id = f"{project_id}.{mart_dataset}.{_DEFAULT_META_AD_FACT_TABLE}"
     ad_sql = f"""
     CREATE OR REPLACE VIEW `{ad_fact_id}` AS
@@ -1012,10 +1082,9 @@ def create_linkedin_creative_mart_view() -> dict[str, Any]:
         return {"enabled": False, "table": None}
     project_id = _linkedin_project_id()
     raw_dataset = _dataset_id("linkedin")
-    mart_dataset = (os.getenv("BQ_MART_DATASET_ID") or _DEFAULT_MART_DATASET).strip()
+    mart_dataset = _mart_dataset_id()
     mart_table = _DEFAULT_LINKEDIN_CREATIVE_FACT_TABLE
-    import bigquery_service
-    client = bigquery_service.build_client(project_id)
+    client = _client(project_id)
     bigquery = _bigquery()
     client.create_dataset(bigquery.Dataset(f"{project_id}.{mart_dataset}"), exists_ok=True)
     table_id = f"{project_id}.{mart_dataset}.{mart_table}"

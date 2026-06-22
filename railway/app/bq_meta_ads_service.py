@@ -1,4 +1,4 @@
-"""Sync Meta Ads API → BigQuery and build dashboard snapshot from mart views."""
+"""Sync Meta Ads API â†’ BigQuery and build dashboard snapshot from mart views."""
 
 from __future__ import annotations
 
@@ -19,10 +19,10 @@ _DEFAULT_ADSET_FACT = "fact_meta_ads_adset_daily"
 _DEFAULT_AD_FACT = "fact_meta_ads_ad_daily"
 
 
-# Per-client routing override. Default None → Penn env fallback, so Penn /
+# Per-client routing override. Default None â†’ Penn env fallback, so Penn /
 # penn-bq-test (which never set a route) are unchanged. Unlike LinkedIn, Meta's
 # read/write paths use ThreadPoolExecutor, so each pool.submit must run inside a
-# copied context (copy_context().run) for the contextvar to reach the worker —
+# copied context (copy_context().run) for the contextvar to reach the worker â€”
 # bare submit() does NOT inherit contextvars (the GSC bug).
 _route_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "bq_meta_route", default=None
@@ -38,7 +38,15 @@ def route(*, bq_project_id: str | None = None, credentials_env: str | None = Non
     }
     token = _route_ctx.set(payload if (payload["project"] or payload["credentials_env"]) else None)
     try:
-        yield
+        import bigquery_warehouse
+        import os
+
+        with bigquery_warehouse.route(
+            bq_project_id=payload["project"],
+            credentials_env=payload["credentials_env"],
+            meta_dataset_id=(os.getenv("BQ_META_DATASET_ID") or "meta_data").strip(),
+        ):
+            yield
     finally:
         _route_ctx.reset(token)
 
@@ -353,7 +361,7 @@ def build_meta_breakdowns(
 
     # These fetch from the Meta mart views in BigQuery, so each task must run in
     # the calling thread's context for the routing contextvar to reach the
-    # worker — bare pool.submit() does NOT inherit contextvars. copy_context()
+    # worker â€” bare pool.submit() does NOT inherit contextvars. copy_context()
     # is evaluated HERE (calling thread) so it snapshots the active route; a
     # fresh copy per task avoids the "already entered" error a shared Context
     # raises across concurrent threads.

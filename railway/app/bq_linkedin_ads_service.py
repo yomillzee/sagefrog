@@ -41,11 +41,11 @@ _DEFAULT_MART_DATASET = "marketing_marts"
 _DEFAULT_CAMPAIGN_FACT_TABLE = "fact_linkedin_ads_campaign_daily"
 
 
-# Per-client routing override. Default None → fall back to the Penn env vars,
+# Per-client routing override. Default None â†’ fall back to the Penn env vars,
 # so Penn / penn-bq-test (which never set a route) behave exactly as before.
 # refresh_bq_client sets this via route() so a client's LinkedIn reads hit that
-# client's BigQuery project (datasets keep the same names — linkedin_ads /
-# marketing_marts — across clients). build_snapshot's read path is fully
+# client's BigQuery project (datasets keep the same names â€” linkedin_ads /
+# marketing_marts â€” across clients). build_snapshot's read path is fully
 # sequential (no ThreadPoolExecutor), so the contextvar is visible throughout
 # without copy_context plumbing.
 _route_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
@@ -62,7 +62,14 @@ def route(*, bq_project_id: str | None = None, credentials_env: str | None = Non
     }
     token = _route_ctx.set(payload if (payload["project"] or payload["credentials_env"]) else None)
     try:
-        yield
+        import bigquery_warehouse
+
+        with bigquery_warehouse.route(
+            bq_project_id=payload["project"],
+            credentials_env=payload["credentials_env"],
+            linkedin_dataset_id=_dataset_id(),
+        ):
+            yield
     finally:
         _route_ctx.reset(token)
 
@@ -227,7 +234,14 @@ def _table_has_column(*, table_name: str, column_name: str, project_id: str) -> 
     LIMIT 1
     """
     try:
-        return bool(bigquery_service.run_query(sql, project_id=project_id, max_rows=1))
+        return bool(
+            bigquery_service.run_query(
+                sql,
+                project_id=project_id,
+                credentials_env=_routed_credentials_env(),
+                max_rows=1,
+            )
+        )
     except Exception:
         return True
 
@@ -244,7 +258,7 @@ def _campaign_ids_sql(*, start: date, end: date, account_id: str) -> str:
 
 
 def _campaign_group_map_sql(*, start: date, end: date, account_id: str) -> str:
-    """Return campaign→group mapping from the campaigns metadata table."""
+    """Return campaignâ†’group mapping from the campaigns metadata table."""
     safe_account = str(account_id).replace("'", "\\'")
     # campaign_daily has no campaign_group_id column; group info lives in campaigns metadata.
     return f"""
@@ -660,7 +674,7 @@ def build_snapshot(
     data = fetch_linkedin_ads(start=start, end=end, account_id=account_id_clean or None)
     daily = data["daily_metrics"]
 
-    # Fetch campaign→group mapping from raw BQ campaign_daily (has campaign_group_id)
+    # Fetch campaignâ†’group mapping from raw BQ campaign_daily (has campaign_group_id)
     group_map: dict[str, dict[str, str]] = {}
     if account_id_clean:
         group_map = _fetch_campaign_group_map(start=start, end=end, account_id=account_id_clean)
