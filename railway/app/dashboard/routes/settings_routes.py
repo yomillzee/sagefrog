@@ -201,8 +201,9 @@ def dashboard_client_settings_post(
             try:
                 import client_bigquery_setup
 
-                client_bigquery_setup.ensure_client_bigquery(
+                client_bigquery_setup.ensure_client_bq_resources(
                     client_key=ga4_client_key or slug,
+                    needs_google=bool(google_customer_id.strip()),
                     needs_linkedin=bool(linkedin_account_id.strip()),
                     needs_meta=bool(meta_account_id.strip()),
                     needs_mart=bool(
