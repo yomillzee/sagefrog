@@ -147,43 +147,6 @@ def aggregated_paid_media(platform_totals: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def paid_totals_from_business_line_campaigns(
-    campaigns: list[dict[str, Any]],
-    base_totals: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Per-platform paid totals summed from the business-line campaign rows.
-
-    The unfiltered overview cards otherwise read ``platform_totals`` derived from
-    the account-level ``daily_metrics`` (Postgres), which can include a wider/
-    cumulative date span than the campaign breakdowns. Summing the same campaign
-    rows the channel-filtered overview uses keeps the default cards consistent
-    with the filtered view (and the campaign marts).
-
-    Only platforms that actually have campaign rows with metrics are overridden;
-    organic and clients without breakdowns keep their existing totals.
-    """
-    sums: dict[str, dict[str, Any]] = {}
-    for row in campaigns or []:
-        platform = str(row.get("platform") or "")
-        if platform not in ("google", "linkedin", "meta"):
-            continue
-        acc = sums.setdefault(
-            platform, {"spend": 0.0, "clicks": 0, "impressions": 0, "conversions": 0.0}
-        )
-        acc["spend"] += float(row.get("spend") or 0)
-        acc["clicks"] += int(row.get("clicks") or 0)
-        acc["impressions"] += int(row.get("impressions") or 0)
-        acc["conversions"] += float(row.get("conversions") or 0)
-    out = dict(base_totals or {})
-    for platform, totals in sums.items():
-        if not (totals["spend"] or totals["clicks"] or totals["impressions"]):
-            continue
-        merged = dict(out.get(platform) or {})
-        merged.update(totals)
-        out[platform] = merged
-    return out
-
-
 def build_budget_pacing_payload(
     cfg: PennDashboardConfig,
     *,

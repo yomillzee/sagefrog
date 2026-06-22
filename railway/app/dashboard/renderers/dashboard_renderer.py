@@ -434,7 +434,6 @@ def render_penn_html(
         build_budget_pacing_payload as _build_budget_pacing_payload,
         business_line_campaigns_from_snapshot as _business_line_campaigns_from_snapshot,
         hydrate_platform_totals as _hydrate_platform_totals,
-        paid_totals_from_business_line_campaigns as _paid_totals_from_business_line_campaigns,
         platforms_with_summary_data as _platforms_with_summary_data,
     )
 
@@ -613,15 +612,6 @@ def render_penn_html(
     ga4_campaign_metrics_json = _json_for_html_script(ga4_campaign_metrics)
     bl_campaigns = _business_line_campaigns_from_snapshot(snapshot)
     bl_campaigns_json = _json_for_html_script(bl_campaigns)
-    # Reconcile the unfiltered overview totals with the campaign-level rows the
-    # channel-filtered view sums (bl_campaigns). Without this, the default cards
-    # read platform_totals recomputed from the account-level daily_metrics, which
-    # can include a wider/cumulative date span than the campaign breakdowns —
-    # e.g. Google showing $8,238 unfiltered vs $6,475 once a channel filter is
-    # applied. Paid platforms with campaign rows are overridden to match; organic
-    # and breakdown-less clients are left untouched.
-    totals = _paid_totals_from_business_line_campaigns(bl_campaigns, totals)
-    aggregated = _aggregated_paid_media(totals)
     bl_catalog_json = _json_for_html_script(
         active_client_segment_catalog(
             bl_campaigns,
