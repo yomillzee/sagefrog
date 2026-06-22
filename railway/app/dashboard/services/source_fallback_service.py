@@ -103,4 +103,3 @@ def merge_api_fallback_sources(
             if key.startswith(source):
                 errors[key] = message
     return repaired
-
