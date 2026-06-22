@@ -586,6 +586,7 @@ def render_penn_html(
                 from dashboard.services.warehouse_metrics_service import load_campaign_daily_from_bq
                 _accs = snapshot.get("accounts") or {}
                 _campaign_daily = load_campaign_daily_from_bq(
+                    client_key=client_slug,
                     linkedin_account_id=str(_accs.get("linkedin") or "") or None,
                     meta_account_id=str(_accs.get("meta") or "") or None,
                     start=_vr_start,
