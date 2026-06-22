@@ -87,7 +87,7 @@ def penn_load_daily_metrics_from_warehouse(
 ) -> None:
     """Read metrics_daily into snapshot daily_metrics (and optionally platform_totals)."""
     if not warehouse.enabled():
-        payload["errors"]["warehouse"] = "DATABASE_URL is not set — warehouse storage is disabled."
+        payload["errors"]["warehouse"] = "DATABASE_URL is not set â€” warehouse storage is disabled."
         return
 
     platform_totals: dict[str, Any] = dict(payload.get("platform_totals") or {})
@@ -295,6 +295,7 @@ def load_campaign_daily_from_warehouse(
 
 def load_campaign_daily_from_bq(
     *,
+    client_key: str | None,
     linkedin_account_id: str | None,
     meta_account_id: str | None,
     start: date,
@@ -307,15 +308,28 @@ def load_campaign_daily_from_bq(
     """
     import bigquery_service
     result: dict[str, dict[str, dict[str, Any]]] = {}
+    bq_project_id = credentials_env = None
+    try:
+        import ga4_clients
+
+        target = ga4_clients.resolve_target(client_key=client_key)
+        bq_project_id = target.bq_project_id
+        credentials_env = target.credentials_env or None
+    except Exception:
+        pass
 
     if linkedin_account_id:
         try:
             import bq_linkedin_ads_service as _li
-            rows = bigquery_service.run_query(
-                _li.campaign_daily_sql(start=start, end=end, account_id=linkedin_account_id),
-                project_id=_li._project_id(),
-                max_rows=5000,
-            )
+            with _li.route(
+                bq_project_id=bq_project_id, credentials_env=credentials_env
+            ):
+                rows = bigquery_service.run_query(
+                    _li.campaign_daily_sql(start=start, end=end, account_id=linkedin_account_id),
+                    project_id=_li._project_id(),
+                    credentials_env=_li._routed_credentials_env(),
+                    max_rows=5000,
+                )
             by_cid: dict[str, dict[str, Any]] = {}
             for row in rows:
                 cid = str(row.get("campaign_id") or "")
@@ -335,7 +349,10 @@ def load_campaign_daily_from_bq(
     if meta_account_id:
         try:
             import bq_meta_ads_service as _meta
-            rows = _meta.fetch_meta_campaign_daily(start=start, end=end)
+            with _meta.route(
+                bq_project_id=bq_project_id, credentials_env=credentials_env
+            ):
+                rows = _meta.fetch_meta_campaign_daily(start=start, end=end)
             by_cid = {}
             for row in rows:
                 cid = str(row.get("campaign_id") or "")
