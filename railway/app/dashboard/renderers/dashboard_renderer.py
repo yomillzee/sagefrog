@@ -174,7 +174,7 @@ def ga4_website_content_html(ga4_pages: dict[str, Any] | None) -> str:
     dr = (ga4_pages or {}).get("date_range") or {}
     range_label = ""
     if dr.get("start") and dr.get("end"):
-        range_label = f"{dr.get('start')} â†’ {dr.get('end')}"
+        range_label = f"{dr.get('start')} → {dr.get('end')}"
     if not pages:
         return (
             '<p class="ga4-pages-empty muted">No page data yet. Run a <strong>full refresh</strong> '
@@ -203,7 +203,7 @@ def ga4_website_content_html(ga4_pages: dict[str, Any] | None) -> str:
 
 
 def ga4_pages_panel_html(ga4_pages: dict[str, Any] | None) -> str:
-    """Legacy wrapper â€” website content lives on the Website Analytics view."""
+    """Legacy wrapper — website content lives on the Website Analytics view."""
     body = ga4_website_content_html(ga4_pages)
     return f"""
     <section class="panel ga4-pages-panel" aria-label="GA4 pages">
@@ -295,7 +295,7 @@ def global_filters_bar_html(
             <div class="filter-column filter-column--website-search" data-website-filter hidden>
               <label for="ga4PageSearch" class="filter-column-label">Search pages</label>
               <input type="search" id="ga4PageSearch" class="ga4-pages-search"
-                placeholder="Filter by page path or titleâ€¦" autocomplete="off">
+                placeholder="Filter by page path or title…" autocomplete="off">
             </div>"""
     filter_count = sum(
         1
@@ -369,16 +369,16 @@ def campaign_explorer_content_html(
     )
     if show_segment_filters and show_product_line_column:
         filter_note = (
-            "Use the filters at the top to narrow regions, product lines, and channels â€” "
+            "Use the filters at the top to narrow regions, product lines, and channels — "
             "all are included by default."
         )
     elif show_segment_filters:
         filter_note = (
-            f"Use the filters at the top to narrow {segment_column_label.lower()}s and channels â€” "
+            f"Use the filters at the top to narrow {segment_column_label.lower()}s and channels — "
             "all are included by default."
         )
     else:
-        filter_note = "Use the channel filters at the top to narrow platforms â€” all are included by default."
+        filter_note = "Use the channel filters at the top to narrow platforms — all are included by default."
     empty_colspan = 10 + int(show_segment_filters) + int(show_product_line_column)
     return f"""
             <section class="campaign-explorer-section" aria-label="Campaign performance">
@@ -388,7 +388,7 @@ def campaign_explorer_content_html(
                   <h2>Campaign performance</h2>
                   <span class="badge" id="blRowCount">0 rows</span>
                 </div>
-                <p class=â€table-noteâ€>{filter_note} Expand a row to drill into ad groups and ads.</p>
+                <p class=”table-note”>{filter_note} Expand a row to drill into ad groups and ads.</p>
                 <div class="table-wrap">
                   <table class="data-table" id="blTable" data-show-segment-filters="{'true' if show_segment_filters else 'false'}" data-show-product-line="{'true' if show_product_line_column else 'false'}" data-empty-colspan="{empty_colspan}">
                     <thead>
@@ -412,7 +412,7 @@ def campaign_explorer_content_html(
 
 
 def business_line_merged_section_html() -> str:
-    """Deprecated â€” use _campaign_explorer_content_html with filters in _global_filters_bar_html."""
+    """Deprecated — use _campaign_explorer_content_html with filters in _global_filters_bar_html."""
     return campaign_explorer_content_html(show_segment_filters=True)
 
 
@@ -465,14 +465,14 @@ def render_penn_html(
         <section class="panel">
           <h2>No data yet</h2>
           <p class="muted">Connect your ad platforms and run a refresh from Settings.</p>
-          <p><a class="dash-link" href="{settings_page}">Go to Settings â†’</a></p>
+          <p><a class="dash-link" href="{settings_page}">Go to Settings →</a></p>
         </section>"""
         return render_client_shell_page(
             client_slug=slug,
             label=label,
             active_nav="overview",
             page_title="Overview",
-            page_subtitle=f"{label} Â· Paid media performance",
+            page_subtitle=f"{label} · Paid media performance",
             content_html=empty_body,
             access_key=access_key,
             use_session=use_session,
@@ -489,7 +489,7 @@ def render_penn_html(
             """,
         )
 
-    # Filter daily_metrics to the selected view range in memory â€” no platform sync, no snapshot write.
+    # Filter daily_metrics to the selected view range in memory — no platform sync, no snapshot write.
     from dashboard.utils.dates import WAREHOUSE_DATE_RANGES as _VR_VALID
     _vr_preset = (view_range or "LAST_30_DAYS").strip().upper().replace("-", "_")
     if _vr_preset not in _VR_VALID:
@@ -518,9 +518,9 @@ def render_penn_html(
     seg_column_label = segment_column_label(client_slug, **filter_kwargs)
     seg_filter_all_label = f"All {seg_filter_label.lower()}s"
     dr = snapshot.get("date_range") or {}
-    refreshed = snapshot.get("refreshed_at") or "â€”"
+    refreshed = snapshot.get("refreshed_at") or "—"
     preset = dr.get("preset") or ""
-    range_label = f"{dr.get('start', '')} â†’ {dr.get('end', '')} ({preset})"
+    range_label = f"{dr.get('start', '')} → {dr.get('end', '')} ({preset})"
 
     totals = _hydrate_platform_totals(snapshot)
     errors = snapshot.get("errors") or {}
@@ -681,7 +681,7 @@ def render_penn_html(
         else:
             # Only LAST_7/30/90 are precomputed in refresh. For the other dropdown
             # ranges (Last 180 days, This month, Last month) fetch live for the
-            # selected range â€” otherwise the date filter silently shows the
+            # selected range — otherwise the date filter silently shows the
             # default window's GSC data. Mirrors the GA4-pages fallback above.
             try:
                 import bq_gsc_service as _bqgsc
@@ -760,7 +760,7 @@ def render_penn_html(
                 <h2>GA4 export coverage</h2>
                 <span class="muted ga4-backfill-status" id="ga4BackfillStatus"></span>
               </div>
-              <p class="table-note muted">Daily sessions straight from the GA4 BigQuery export. Empty/zero days haven't been loaded yet â€” watch this fill in as the Data Transfer backfill runs.</p>
+              <p class="table-note muted">Daily sessions straight from the GA4 BigQuery export. Empty/zero days haven't been loaded yet — watch this fill in as the Data Transfer backfill runs.</p>
               <div class="ga4-backfill-wrap">
                 <div class="chart-loading" id="ga4BackfillLoading" aria-hidden="true">
                   <div class="chart-loading-bars">
@@ -768,7 +768,7 @@ def render_penn_html(
                     <span></span><span></span><span></span><span></span><span></span>
                     <span></span><span></span>
                   </div>
-                  <span class="chart-loading-label">Loading coverageâ€¦</span>
+                  <span class="chart-loading-label">Loading coverage…</span>
                 </div>
                 <canvas id="ga4BackfillChart"></canvas>
               </div>
@@ -872,7 +872,7 @@ def render_penn_html(
             {campaign_explorer_html}
           </div>"""
 
-    # GSC tab panel â€” only rendered when snapshot carries gsc data (penn-bq-test only)
+    # GSC tab panel — only rendered when snapshot carries gsc data (penn-bq-test only)
     gsc_tab_panel = ""
     if _gsc_data:
         from dashboard.renderers.gsc_renderer import GSC_CSS as _GSC_CSS
@@ -901,7 +901,7 @@ def render_penn_html(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{_esc(label)} â€” Ads Dashboard</title>{_favicon_head_html()}
+  <title>{_esc(label)} — Ads Dashboard</title>{_favicon_head_html()}
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     {dashboard_theme.root_css_block(theme)}
@@ -1750,7 +1750,7 @@ def render_penn_html(
     }}
     .bp-platform-accordion summary::-webkit-details-marker {{ display: none; }}
     .bp-platform-accordion summary::after {{ content: "+"; color: var(--muted); font-size: 15px; flex-shrink: 0; }}
-    .bp-platform-accordion[open] summary::after {{ content: "âˆ’"; }}
+    .bp-platform-accordion[open] summary::after {{ content: "−"; }}
     .bp-plat-summary {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; width: 100%; min-width: 0; }}
     .bp-plat-title {{ display: flex; align-items: center; gap: 5px; font-size: 0.8rem; font-weight: 850; color: var(--text); margin-bottom: 2px; }}
     .bp-plat-sub {{ font-size: 0.7rem; color: var(--muted); font-weight: 600; }}
@@ -1780,7 +1780,7 @@ def render_penn_html(
     }}
     .bp-freshness summary::-webkit-details-marker {{ display: none; }}
     .bp-freshness summary::after {{ content: "+"; font-size: 13px; color: var(--muted); }}
-    .bp-freshness[open] summary::after {{ content: "âˆ’"; }}
+    .bp-freshness[open] summary::after {{ content: "−"; }}
     .bp-freshness-body {{
       padding: 0 12px 12px;
       font-size: 0.75rem;
@@ -1896,9 +1896,9 @@ def render_penn_html(
       font-size: 0.85em;
     }}
     .data-table th.sortable.sort-active .sort-icon {{ opacity: 1; }}
-    .data-table th.sort-active[data-sort-dir="asc"] .sort-icon::before {{ content: 'â†‘'; }}
-    .data-table th.sort-active[data-sort-dir="desc"] .sort-icon::before {{ content: 'â†“'; }}
-    .data-table th.sortable:not(.sort-active) .sort-icon::before {{ content: 'â†•'; }}
+    .data-table th.sort-active[data-sort-dir="asc"] .sort-icon::before {{ content: '↑'; }}
+    .data-table th.sort-active[data-sort-dir="desc"] .sort-icon::before {{ content: '↓'; }}
+    .data-table th.sortable:not(.sort-active) .sort-icon::before {{ content: '↕'; }}
     .data-table tbody tr:last-child td {{ border-bottom: none; }}
     .data-table th.ga4-col, .data-table td.ga4-col {{
       border-left: 1px solid var(--border);
@@ -2106,7 +2106,7 @@ def render_penn_html(
     .ga4-backfill-status {{ font-size: 12px; }}
     .ga4-backfill-wrap {{ position: relative; height: 220px; margin: 4px 0 22px; }}
     .ga4-backfill-wrap canvas {{ max-height: 220px; }}
-    /* Lightweight chart loading skeleton â€” shimmering placeholder bars */
+    /* Lightweight chart loading skeleton — shimmering placeholder bars */
     .chart-loading {{
       position: absolute;
       inset: 0;
@@ -2370,7 +2370,7 @@ def render_penn_html(
       font-weight: 700;
     }}
     .filter-more-options[open] summary::before {{
-      content: 'âˆ’';
+      content: '−';
     }}
     .filter-more-options .filter-zero-spend {{
       margin: 0 0 4px;
@@ -2889,7 +2889,7 @@ def render_penn_html(
   <div id="creativePreview" class="creative-preview" hidden>
     <div class="creative-preview-backdrop" data-close-preview></div>
     <div class="creative-preview-dialog" role="dialog" aria-modal="true" aria-label="Creative preview">
-      <button type="button" class="creative-preview-close" data-close-preview aria-label="Close">Ã—</button>
+      <button type="button" class="creative-preview-close" data-close-preview aria-label="Close">×</button>
       <div class="creative-preview-body" id="creativePreviewBody"></div>
       <div class="creative-preview-caption" id="creativePreviewCaption"></div>
     </div>
@@ -3068,7 +3068,7 @@ def render_penn_html(
 
     const fmtMoney = n => '$' + Number(n || 0).toLocaleString(undefined, {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
     const fmtInt = n => Number(n || 0).toLocaleString();
-    const fmtPct = (n, d) => d ? (100 * n / d).toFixed(2) + '%' : 'â€”';
+    const fmtPct = (n, d) => d ? (100 * n / d).toFixed(2) + '%' : '—';
     const escHtml = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 
     const performanceChartRaw = readJson('performance-chart-data', {{ labels: [], metrics: {{}} }});
@@ -3314,8 +3314,8 @@ def render_penn_html(
     }}
 
     function bpFmtSign(v) {{
-      if (v === null || !Number.isFinite(v)) return 'â€”';
-      return (v >= 0 ? '+' : 'âˆ’') + fmtMoney(Math.abs(v));
+      if (v === null || !Number.isFinite(v)) return '—';
+      return (v >= 0 ? '+' : '−') + fmtMoney(Math.abs(v));
     }}
 
     function bpUpdateStatusBar(g) {{
@@ -3327,9 +3327,9 @@ def render_penn_html(
       const actLbl = document.getElementById('bpActionLabel');
       const actSub = document.getElementById('bpActionSub');
       if (mtdEl) mtdEl.textContent = fmtMoney(g.pacedMtd);
-      if (expEl) expEl.textContent = hasBudget ? fmtMoney(g.expectedPace) : 'â€”';
+      if (expEl) expEl.textContent = hasBudget ? fmtMoney(g.expectedPace) : '—';
       if (varEl) {{
-        varEl.textContent = hasBudget ? bpFmtSign(g.paceVariance) : 'â€”';
+        varEl.textContent = hasBudget ? bpFmtSign(g.paceVariance) : '—';
         varEl.className = hasBudget && Number.isFinite(g.paceVariance)
           ? (g.paceVariance >= 0 ? 'bp-over' : 'bp-under') : '';
       }}
@@ -3337,7 +3337,7 @@ def render_penn_html(
         const amt = g.increaseDecreaseAmt;
         if (!hasBudget || amt === null) {{
           actLbl.textContent = 'Daily change';
-          actEl.textContent = 'â€”';
+          actEl.textContent = '—';
           actEl.className = '';
           if (actSub) actSub.textContent = '';
         }} else {{
@@ -3355,10 +3355,10 @@ def render_penn_html(
       const hasBudget = budgetPacingBudget > 0;
       const rows = [
         ['MTD spend', fmtMoney(g.pacedMtd)],
-        ['Monthly budget', hasBudget ? fmtMoney(budgetPacingBudget) : 'â€”'],
-        ['Budget remaining', hasBudget ? fmtMoney(Math.max(0, g.budgetLeft)) : 'â€”'],
-        ['Pace variance', hasBudget ? bpFmtSign(g.paceVariance) : 'â€”'],
-        ['Needed/day', hasBudget && g.neededPerDay !== null ? fmtMoney(Math.max(0, g.neededPerDay)) + '/day' : 'â€”'],
+        ['Monthly budget', hasBudget ? fmtMoney(budgetPacingBudget) : '—'],
+        ['Budget remaining', hasBudget ? fmtMoney(Math.max(0, g.budgetLeft)) : '—'],
+        ['Pace variance', hasBudget ? bpFmtSign(g.paceVariance) : '—'],
+        ['Needed/day', hasBudget && g.neededPerDay !== null ? fmtMoney(Math.max(0, g.neededPerDay)) + '/day' : '—'],
         ['Recent avg/day', fmtMoney(g.recentAvgPerDay) + '/day'],
       ];
       el.innerHTML = rows.map(([lbl, val]) =>
@@ -3378,11 +3378,11 @@ def render_penn_html(
         const deltaClass = delta === null ? '' : (delta >= 0 ? 'bp-under' : 'bp-over');
         const metrics = [
           ['MTD spend', fmtMoney(p.mtd)],
-          ['Budget share', hasBudget ? fmtMoney(p.budget) : 'â€”'],
-          ['Budget left', hasBudget ? fmtMoney(Math.max(0, p.budgetLeft)) : 'â€”'],
-          ['Needed/day', hasBudget && p.neededPerDay !== null ? fmtMoney(Math.max(0, p.neededPerDay)) + '/day' : 'â€”'],
+          ['Budget share', hasBudget ? fmtMoney(p.budget) : '—'],
+          ['Budget left', hasBudget ? fmtMoney(Math.max(0, p.budgetLeft)) : '—'],
+          ['Needed/day', hasBudget && p.neededPerDay !== null ? fmtMoney(Math.max(0, p.neededPerDay)) + '/day' : '—'],
           ['Recent avg/day', fmtMoney(p.recentAvg) + '/day'],
-          ['Daily change', delta !== null ? (delta >= 0 ? '+' : 'âˆ’') + fmtMoney(Math.abs(delta)) + '/day' : 'â€”'],
+          ['Daily change', delta !== null ? (delta >= 0 ? '+' : '−') + fmtMoney(Math.abs(delta)) + '/day' : '—'],
           ['Days remaining', String(g.remainingDays)],
           ['Pacing day', String(g.pacingDay) + ' of ' + String(g.daysInMonth)],
         ];
@@ -3409,8 +3409,8 @@ def render_penn_html(
     function bpUpdateFreshness(g) {{
       const el = document.getElementById('bpFreshnessBody');
       if (!el) return;
-      const lastComplete = g.pacingDay > 0 ? (g.labels[g.pacingDay - 1] || 'â€”') : 'â€”';
-      const lastData = g.labels.length > 0 ? g.labels[g.labels.length - 1] : 'â€”';
+      const lastComplete = g.pacingDay > 0 ? (g.labels[g.pacingDay - 1] || '—') : '—';
+      const lastData = g.labels.length > 0 ? g.labels[g.labels.length - 1] : '—';
       el.innerHTML = `<div style="margin-top:8px">
         <strong>Pacing day:</strong> ${{escHtml(String(g.pacingDay))}} of ${{escHtml(String(g.daysInMonth))}}<br>
         <strong>Last complete day:</strong> ${{escHtml(lastComplete)}}<br>
@@ -3558,7 +3558,7 @@ def render_penn_html(
         svg.appendChild(pl);
       }}
 
-      // Projection (dashed, last point â†’ budget target)
+      // Projection (dashed, last point → budget target)
       if (bpShowProjection && budgetPacingBudget > 0 && nPoints < daysInMonth && g.allCumulative.length > 0) {{
         const lastV = g.allCumulative[nPoints - 1];
         const prl = document.createElementNS(ns, 'line');
@@ -3606,7 +3606,7 @@ def render_penn_html(
         _bpCross.setAttribute('stroke-dasharray', '3 3');
         svg.insertBefore(_bpCross, overlay);
         if (tooltip) {{
-          const dateLabel = ci < labels.length ? labels[ci] : 'â€”';
+          const dateLabel = ci < labels.length ? labels[ci] : '—';
           const allTotal = g.allCumulative[ci] || 0;
           const visTotal = visiblePlats.reduce((s, p) => s + (p.cumul[ci] || 0), 0);
           const paceAmt = budgetPacingBudget > 0 ? budgetPacingBudget / daysInMonth * (ci + 1) : null;
@@ -3702,7 +3702,7 @@ def render_penn_html(
       if (!canvas || typeof Chart === 'undefined') return;
       ga4BackfillLoaded = true;
       if (loadingEl) loadingEl.hidden = false;
-      if (statusEl) statusEl.textContent = 'Loadingâ€¦';
+      if (statusEl) statusEl.textContent = 'Loading…';
       fetch(GA4_BACKFILL_URL, {{ credentials: 'same-origin' }})
         .then(r => r.json())
         .then(data => {{
@@ -3718,7 +3718,7 @@ def render_penn_html(
           const sessions = days.map(d => d.sessions || 0);
           if (statusEl) {{
             let txt = `${{data.covered_days}} / ${{data.total_days}} days with data`;
-            if (data.first_covered) txt += ` Â· ${{data.first_covered}} â†’ ${{data.last_covered}}`;
+            if (data.first_covered) txt += ` · ${{data.first_covered}} → ${{data.last_covered}}`;
             statusEl.textContent = txt;
           }}
           if (ga4BackfillChartInstance) {{ ga4BackfillChartInstance.destroy(); }}
@@ -3785,7 +3785,7 @@ def render_penn_html(
         try {{ loadGa4Backfill(); }} catch (err) {{ /* ignore */ }}
       }}
       const titleSuffix = VIEW_LABELS[view] || 'Dashboard';
-      document.title = `${{document.title.split(' â€” ')[0]}} â€” ${{titleSuffix}}`;
+      document.title = `${{document.title.split(' — ')[0]}} — ${{titleSuffix}}`;
       try {{
         const url = new URL(window.location.href);
         if (view === 'overview') {{
@@ -3821,7 +3821,7 @@ def render_penn_html(
 
     function fmtCpa(spend, count) {{
       const n = Number(count || 0);
-      if (!n) return 'â€”';
+      if (!n) return '—';
       return fmtMoney(Number(spend || 0) / n);
     }}
 
@@ -3845,11 +3845,11 @@ def render_penn_html(
       const verCpaEl = document.getElementById('heroVerifiedCpa');
       if (impEl) impEl.textContent = fmtInt(impressions);
       if (clkEl) clkEl.textContent = fmtInt(clicks);
-      if (ctrEl) ctrEl.textContent = impressions ? fmtPct(clicks, impressions) : 'â€”';
-      if (cpcEl) cpcEl.textContent = clicks ? fmtCpa(spend, clicks) : 'â€”';
+      if (ctrEl) ctrEl.textContent = impressions ? fmtPct(clicks, impressions) : '—';
+      if (cpcEl) cpcEl.textContent = clicks ? fmtCpa(spend, clicks) : '—';
       if (convEl) convEl.textContent = fmtInt(conversions);
-      if (repCpaEl) repCpaEl.textContent = conversions ? fmtCpa(spend, conversions) : 'â€”';
-      if (verCpaEl) verCpaEl.textContent = ga4Events ? fmtCpa(spend, ga4Events) : 'â€”';
+      if (repCpaEl) repCpaEl.textContent = conversions ? fmtCpa(spend, conversions) : '—';
+      if (verCpaEl) verCpaEl.textContent = ga4Events ? fmtCpa(spend, ga4Events) : '—';
     }}
 
     function platformVisible(platformId) {{
@@ -4173,7 +4173,7 @@ def render_penn_html(
           <div class="bl-stat"><div class="bl-stat-val">${{fmtInt(clicks)}}</div><div class="bl-stat-lbl">Clicks</div></div>
           <div class="bl-stat"><div class="bl-stat-val">${{fmtInt(impressions)}}</div><div class="bl-stat-lbl">Impressions</div></div>
           <div class="bl-stat"><div class="bl-stat-val">${{fmtInt(conv)}}</div><div class="bl-stat-lbl">Conversions</div></div>
-          <div class="bl-stat"><div class="bl-stat-val">${{clicks ? fmtMoney(cpc) : 'â€”'}}</div><div class="bl-stat-lbl">CPC</div></div>`;
+          <div class="bl-stat"><div class="bl-stat-val">${{clicks ? fmtMoney(cpc) : '—'}}</div><div class="bl-stat-lbl">CPC</div></div>`;
       }}
 
       const tbody = document.getElementById('blTableBody');
@@ -4181,7 +4181,7 @@ def render_penn_html(
       const emptyColspan = Number(blTable?.dataset.emptyColspan || 9);
       if (tbody) {{
         if (!filtered.length) {{
-          tbody.innerHTML = `<tr><td colspan="${{emptyColspan}}" class="muted" style="padding:24px;text-align:center">No campaigns match â€” try other filters or enable $0 spend rows.</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="${{emptyColspan}}" class="muted" style="padding:24px;text-align:center">No campaigns match — try other filters or enable $0 spend rows.</td></tr>`;
         }} else {{
           const sorted = sortBlRows(filtered);
           tbody.innerHTML = '';
@@ -4216,8 +4216,8 @@ def render_penn_html(
           );
         }}
         parts.push(chText);
-        const zeroNote = showZeroSpend ? ' Â· incl. $0 spend' : '';
-        status.textContent = `${{parts.join(' Â· ')}} Â· ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}${{zeroNote}}`;
+        const zeroNote = showZeroSpend ? ' · incl. $0 spend' : '';
+        status.textContent = `${{parts.join(' · ')}} · ${{filtered.length}} campaign${{filtered.length === 1 ? '' : 's'}}${{zeroNote}}`;
       }}
       updateBlSortHeaders();
     }}
@@ -4242,19 +4242,19 @@ def render_penn_html(
 
     function fmtGa4Seconds(value) {{
       const n = Number(value);
-      if (!Number.isFinite(n) || n <= 0) return 'â€”';
+      if (!Number.isFinite(n) || n <= 0) return '—';
       return n.toFixed(1) + 's';
     }}
 
     function fmtGa4Rate(value) {{
       const n = Number(value);
-      if (!Number.isFinite(n) || n < 0) return 'â€”';
+      if (!Number.isFinite(n) || n < 0) return '—';
       return (100 * n).toFixed(2) + '%';
     }}
 
     function fmtGa4Ratio(value) {{
       const n = Number(value);
-      if (!Number.isFinite(n) || n < 0) return 'â€”';
+      if (!Number.isFinite(n) || n < 0) return '—';
       return n.toFixed(2);
     }}
 
@@ -4452,7 +4452,7 @@ def render_penn_html(
         const prevDisabled = page <= 1 ? ' disabled' : '';
         const nextDisabled = page >= totalPages ? ' disabled' : '';
         ga4PagesPagination.innerHTML = `
-          <span class="ga4-pages-pagination-info">Showing ${{start}}â€“${{end}} of ${{fmtInt(totalRows)}} pages</span>
+          <span class="ga4-pages-pagination-info">Showing ${{start}}–${{end}} of ${{fmtInt(totalRows)}} pages</span>
           <div class="ga4-pages-pagination-controls">
             <button type="button" class="ga4-pages-page-btn" data-page="prev"${{prevDisabled}} aria-label="Previous page">Previous</button>
             <span class="ga4-pages-pagination-info">Page ${{page}} of ${{totalPages}}</span>
@@ -4493,7 +4493,7 @@ def render_penn_html(
         ga4PagesBody.innerHTML = pageRows.map(row => {{
           const sessions = Number(row.sessions || 0);
           const engaged = Number(row.engaged_sessions || 0);
-          const engRate = sessions ? (100 * engaged / sessions).toFixed(1) + '%' : 'â€”';
+          const engRate = sessions ? (100 * engaged / sessions).toFixed(1) + '%' : '—';
           return `<tr>
             <td class="page-path" title="${{escHtml(row.page_path)}}">${{escHtml(row.page_path)}}</td>
             <td class="page-title" title="${{escHtml(row.page_title)}}">${{escHtml(row.page_title)}}</td>
@@ -4552,7 +4552,7 @@ def render_penn_html(
       const pagesHeading = document.getElementById('ga4PagesHeading');
       const aiRow        = document.getElementById('websiteAiFilterRow');
       if (!pillsWrap) return;
-      // No AI-referred sessions in this snapshot â€” keep the control hidden.
+      // No AI-referred sessions in this snapshot — keep the control hidden.
       if (!SHOW_AI_TRAFFIC) {{ if (aiRow) aiRow.hidden = true; return; }}
       if (aiRow) aiRow.hidden = false;
 
@@ -4586,7 +4586,7 @@ def render_penn_html(
           const lbl = sourceId
             ? (aiSources.find(s => s.id === sourceId) || {{}}).label || sourceId
             : 'All AI';
-          pagesHeading.textContent = `Page performance â€” AI Traffic (${{lbl}})`;
+          pagesHeading.textContent = `Page performance — AI Traffic (${{lbl}})`;
         }}
         renderGa4Pages();
       }}
@@ -4714,7 +4714,7 @@ def render_penn_html(
       const attrs = preview
         ? ` data-preview-type="${{escHtml(preview.type)}}" data-preview-url="${{escHtml(preview.url)}}"`
         : ` data-preview-type="image" data-preview-url="${{escHtml(thumbUrl)}}"`;
-      const play = playable ? '<span class="ad-play-icon" aria-hidden="true">â–¶</span>' : '';
+      const play = playable ? '<span class="ad-play-icon" aria-hidden="true">▶</span>' : '';
       const referrer = thumbReferrerPolicy(thumbUrl);
       return `<button type="button" class="${{cls}}"${{attrs}} aria-label="Preview creative">${{play}}<img class="ad-thumb" src="${{escHtml(thumbUrl)}}" alt="" loading="lazy" referrerpolicy="${{referrer}}" onerror="this.style.opacity='0.35'"></button>`;
     }}
@@ -4767,7 +4767,7 @@ def render_penn_html(
       const pad = 8 + depth * 20;
       const tag = levelLabel(platform, level)
         ? `<span class="entity-tag">${{escHtml(levelLabel(platform, level))}}</span>` : '';
-      let inner = `${{tag}}${{escHtml(r.name || 'â€”')}}`;
+      let inner = `${{tag}}${{escHtml(r.name || '—')}}`;
       if (level === 'ad' || level === 'creative') {{
         const thumb = buildThumbButton(r);
         const creativeSub = (r.creative_name && r.creative_name !== r.name)
@@ -4778,7 +4778,7 @@ def render_penn_html(
         const headlinesSub = headlines.length
           ? `<span class="ad-headlines">${{headlines.map((h, i) => `<span class="ad-headline" data-i="${{i + 1}}" title="${{escHtml(h)}}">${{escHtml(h)}}</span>`).join('')}}</span>`
           : '';
-        inner = `<div class="name-inner">${{thumb}}<span><span>${{tag}}${{escHtml(r.name || 'â€”')}}</span>${{creativeSub}}${{typeBadge}}${{headlinesSub}}</span></div>`;
+        inner = `<div class="name-inner">${{thumb}}<span><span>${{tag}}${{escHtml(r.name || '—')}}</span>${{creativeSub}}${{typeBadge}}${{headlinesSub}}</span></div>`;
       }}
       return `<td class="name" style="padding-left:${{pad}}px">${{inner}}</td>`;
     }}
@@ -4788,12 +4788,12 @@ def render_penn_html(
       if (!platformMetrics) return '';
       // LinkedIn GA4 attribution matches API campaigns (UI ad sets), not campaign groups.
       if (level !== 'campaign') {{
-        return '<td class="num ga4-col muted">â€”</td><td class="num ga4-col muted">â€”</td><td class="num ga4-col muted">â€”</td>';
+        return '<td class="num ga4-col muted">—</td><td class="num ga4-col muted">—</td><td class="num ga4-col muted">—</td>';
       }}
       const metrics = platformMetrics[String(rowId || '')] || {{}};
       const sessions = metrics.sessions || 0;
       if (!sessions) {{
-        return '<td class="num ga4-col muted">â€”</td><td class="num ga4-col muted">â€”</td><td class="num ga4-col muted">â€”</td>';
+        return '<td class="num ga4-col muted">—</td><td class="num ga4-col muted">—</td><td class="num ga4-col muted">—</td>';
       }}
       const engaged = metrics.engaged_sessions || 0;
       const keyEvents = metrics.key_events || 0;
@@ -4827,10 +4827,10 @@ def render_penn_html(
       const clicks = r.clicks || 0;
       const impressions = r.impressions || 0;
       const conv = r.conversions || 0;
-      const cpc = clicks ? fmtMoney(spend / clicks) : 'â€”';
+      const cpc = clicks ? fmtMoney(spend / clicks) : '—';
       const expandable = isExpandable(platform, level);
       const chevron = expandable
-        ? '<span class="tree-chevron" aria-hidden="true">â–¸</span>'
+        ? '<span class="tree-chevron" aria-hidden="true">▸</span>'
         : '<span class="tree-chevron leaf"></span>';
       const tr = document.createElement('tr');
       tr.className = `tree-row tree-depth-${{depth}}${{expandable ? ' tree-expandable' : ''}}`;
@@ -4868,7 +4868,7 @@ def render_penn_html(
         ? `<td><span class="bl-tag">${{escHtml(r.business_line_label)}}</span></td>`
         : '';
       const productCell = SHOW_PRODUCT_LINE_FILTERS
-        ? `<td><span class="bl-tag">${{escHtml(r.product_line_label || 'â€”')}}</span></td>`
+        ? `<td><span class="bl-tag">${{escHtml(r.product_line_label || '—')}}</span></td>`
         : '';
       const prefixCells = `
         <td><span class="platform-pill ${{escHtml(platform)}}">${{escHtml(r.platform_label)}}</span></td>${{blCell}}${{productCell}}`;
