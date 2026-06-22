@@ -575,25 +575,19 @@ def render_penn_html(
     breakdowns = _breakdowns_from_snapshot(snapshot)
     if _vr_preset != preset:
         _campaign_daily: dict[str, Any] = {}
-        if client_cfg:
-            try:
-                from dashboard.services.warehouse_metrics_service import load_campaign_daily_from_warehouse
-                _campaign_daily = load_campaign_daily_from_warehouse(client_cfg, start=_vr_start, end=_vr_end)
-            except Exception:
-                pass
-        if not _campaign_daily:
-            try:
-                from dashboard.services.warehouse_metrics_service import load_campaign_daily_from_bq
-                _accs = snapshot.get("accounts") or {}
-                _campaign_daily = load_campaign_daily_from_bq(
-                    client_key=client_slug,
-                    linkedin_account_id=str(_accs.get("linkedin") or "") or None,
-                    meta_account_id=str(_accs.get("meta") or "") or None,
-                    start=_vr_start,
-                    end=_vr_end,
-                )
-            except Exception:
-                pass
+        try:
+            from dashboard.services.warehouse_metrics_service import load_campaign_daily_from_bq
+            _accs = snapshot.get("accounts") or {}
+            _campaign_daily = load_campaign_daily_from_bq(
+                client_key=client_slug,
+                google_account_id=str(_accs.get("google") or "") or None,
+                linkedin_account_id=str(_accs.get("linkedin") or "") or None,
+                meta_account_id=str(_accs.get("meta") or "") or None,
+                start=_vr_start,
+                end=_vr_end,
+            )
+        except Exception:
+            pass
         if _campaign_daily:
             breakdowns = _patch_campaign_breakdowns(breakdowns, _campaign_daily)
     accounts = accounts_early

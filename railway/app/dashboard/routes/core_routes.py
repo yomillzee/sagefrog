@@ -64,7 +64,7 @@ def internal_sync_penn_bq_test(date_range: str = "LAST_30_DAYS") -> dict:
         raise HTTPException(status_code=400, detail=str(e)) from e
 @router.get(
     "/dashboard/penn-bq-test",
-    summary="Penn BQ Test — BigQuery mart dashboard (HTML)",
+    summary="Penn BQ Test â€” BigQuery mart dashboard (HTML)",
     response_class=HTMLResponse,
     include_in_schema=False,
 )
@@ -85,7 +85,7 @@ def dashboard_penn_bq_test(
     # Cache-first: read from Postgres snapshot; run live queries only on cache miss
     snapshot = dashboard_snapshots.get_snapshot("penn-bq-test")
     if not snapshot:
-        LOGGER.info("Penn BQ Test: no cached snapshot — running live BQ queries")
+        LOGGER.info("Penn BQ Test: no cached snapshot â€” running live BQ queries")
         try:
             snapshot = dashboard_service.refresh_penn_bq_test(
                 date_range=view_range or "LAST_30_DAYS",
@@ -131,6 +131,21 @@ def internal_sync_bq_client(client_slug: str, date_range: str = "LAST_30_DAYS") 
         raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post(
+    "/internal/backfill-bq/{client_slug}",
+    summary="Onboarding: ingest 180 days for a BigQuery-mode client",
+    dependencies=[Depends(require_cron_secret)],
+)
+def internal_backfill_bq_client(client_slug: str) -> dict:
+    slug = validate_client_slug(client_slug)
+    try:
+        return dashboard_service.refresh_bq_client(
+            slug, date_range="LAST_180_DAYS", sync_trigger="onboarding"
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get(
@@ -281,7 +296,7 @@ def dashboard_ga4_backfill(
     """Daily GA4 session/page-view counts straight from the BigQuery export.
 
     Live, on-demand (not from the snapshot) so the Website Analytics tab can
-    show how far the GA4 Data Transfer backfill has progressed — zero/empty
+    show how far the GA4 Data Transfer backfill has progressed â€” zero/empty
     days are dates not yet loaded.
     """
     slug = validate_client_slug(client_slug)

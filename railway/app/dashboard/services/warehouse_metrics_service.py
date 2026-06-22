@@ -257,7 +257,15 @@ def sync_campaign_daily(
             rows = fetch_fn(account_id, start=start, end=end)
             warehouse.upsert_campaign_daily_batch(source, account_id, rows)
             try:
+                if source == "google":
+                    # Google reporting data is owned exclusively by the native
+                    # BigQuery transfer.  Legacy Postgres snapshots may remain,
+                    # but they must never be promoted into normalized BQ facts.
+                    continue
                 bigquery_warehouse.mirror_campaign_daily_batch(source, account_id, rows)
+                if source == "linkedin":
+                    bigquery_warehouse.ensure_linkedin_campaigns_table()
+                    bigquery_warehouse.rebuild_linkedin_campaign_daily_mart()
             except Exception:
                 pass
         except Exception as exc:
@@ -296,6 +304,7 @@ def load_campaign_daily_from_warehouse(
 def load_campaign_daily_from_bq(
     *,
     client_key: str | None,
+    google_account_id: str | None,
     linkedin_account_id: str | None,
     meta_account_id: str | None,
     start: date,
@@ -306,7 +315,6 @@ def load_campaign_daily_from_bq(
     Keyed as {source: {campaign_id: metrics}}. Used as BQ fallback when the
     Postgres warehouse is empty (BigQuery-mode clients only).
     """
-    import bigquery_service
     result: dict[str, dict[str, dict[str, Any]]] = {}
     bq_project_id = credentials_env = None
     try:
@@ -318,31 +326,40 @@ def load_campaign_daily_from_bq(
     except Exception:
         pass
 
+    def _group(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        by_cid: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            cid = str(row.get("campaign_id") or "")
+            if not cid:
+                continue
+            if cid not in by_cid:
+                by_cid[cid] = {"campaign_id": cid, "spend": 0.0, "clicks": 0, "impressions": 0, "conversions": 0.0}
+            by_cid[cid]["spend"] += float(row.get("spend") or 0)
+            by_cid[cid]["clicks"] += int(row.get("clicks") or 0)
+            by_cid[cid]["impressions"] += int(row.get("impressions") or 0)
+            by_cid[cid]["conversions"] += float(row.get("conversions") or 0)
+        return by_cid
+
+    import bq_mart_service as _marts
+    common = {
+        "start": start,
+        "end": end,
+        "bq_project_id": bq_project_id,
+        "credentials_env": credentials_env,
+    }
+    if google_account_id:
+        try:
+            rows = _marts.fetch_campaign_daily(**common)
+            if grouped := _group(rows):
+                result["google"] = grouped
+        except Exception:
+            pass
+
     if linkedin_account_id:
         try:
-            import bq_linkedin_ads_service as _li
-            with _li.route(
-                bq_project_id=bq_project_id, credentials_env=credentials_env
-            ):
-                rows = bigquery_service.run_query(
-                    _li.campaign_daily_sql(start=start, end=end, account_id=linkedin_account_id),
-                    project_id=_li._project_id(),
-                    credentials_env=_li._routed_credentials_env(),
-                    max_rows=5000,
-                )
-            by_cid: dict[str, dict[str, Any]] = {}
-            for row in rows:
-                cid = str(row.get("campaign_id") or "")
-                if not cid:
-                    continue
-                if cid not in by_cid:
-                    by_cid[cid] = {"campaign_id": cid, "spend": 0.0, "clicks": 0, "impressions": 0, "conversions": 0.0}
-                by_cid[cid]["spend"]       += float(row.get("spend") or 0)
-                by_cid[cid]["clicks"]      += int(row.get("clicks") or 0)
-                by_cid[cid]["impressions"] += int(row.get("impressions") or 0)
-                by_cid[cid]["conversions"] += float(row.get("conversions") or 0)
-            if by_cid:
-                result["linkedin"] = by_cid
+            rows = _marts.fetch_linkedin_campaign_daily(**common)
+            if grouped := _group(rows):
+                result["linkedin"] = grouped
         except Exception:
             pass
 
@@ -353,19 +370,8 @@ def load_campaign_daily_from_bq(
                 bq_project_id=bq_project_id, credentials_env=credentials_env
             ):
                 rows = _meta.fetch_meta_campaign_daily(start=start, end=end)
-            by_cid = {}
-            for row in rows:
-                cid = str(row.get("campaign_id") or "")
-                if not cid:
-                    continue
-                if cid not in by_cid:
-                    by_cid[cid] = {"campaign_id": cid, "spend": 0.0, "clicks": 0, "impressions": 0, "conversions": 0.0}
-                by_cid[cid]["spend"]       += float(row.get("spend") or 0)
-                by_cid[cid]["clicks"]      += int(row.get("clicks") or 0)
-                by_cid[cid]["impressions"] += int(row.get("impressions") or 0)
-                by_cid[cid]["conversions"] += float(row.get("conversions") or 0)
-            if by_cid:
-                result["meta"] = by_cid
+            if grouped := _group(rows):
+                result["meta"] = grouped
         except Exception:
             pass
 

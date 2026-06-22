@@ -11,7 +11,8 @@ from uuid import uuid4
 
 
 _DEFAULT_LINKEDIN_PROJECT = "penn-community-b-1699391543298"
-_DEFAULT_LINKEDIN_DATASET = "linkedin_ads"
+_DEFAULT_LINKEDIN_DATASET = "raw_linkedin_ads"
+_DEFAULT_GOOGLE_DATASET = "raw_google_ads"
 _DEFAULT_TABLE = "metrics_daily"
 _DEFAULT_CAMPAIGN_TABLE = "campaign_daily"
 _DEFAULT_CAMPAIGNS_TABLE = "campaigns"
@@ -32,6 +33,7 @@ def route(
     *,
     bq_project_id: str | None = None,
     credentials_env: str | None = None,
+    google_dataset_id: str | None = None,
     linkedin_dataset_id: str | None = None,
     meta_dataset_id: str | None = None,
     mart_dataset_id: str | None = None,
@@ -41,6 +43,7 @@ def route(
         "project": (bq_project_id or "").strip() or None,
         "credentials_env": (credentials_env or "").strip() or None,
         "linkedin_dataset": (linkedin_dataset_id or "").strip() or None,
+        "google_dataset": (google_dataset_id or "").strip() or None,
         "meta_dataset": (meta_dataset_id or "").strip() or None,
         "mart_dataset": (mart_dataset_id or "").strip() or None,
     }
@@ -146,6 +149,8 @@ def enabled(source: str | None = None) -> bool:
     flag = (os.getenv("BQ_WAREHOUSE_ENABLED") or os.getenv("BIGQUERY_WAREHOUSE_ENABLED") or "").strip().lower()
     if flag in {"1", "true", "yes", "on"}:
         return True
+    if _route_value("project") and source and source.strip().lower() in {"google", "linkedin", "meta"}:
+        return True
     return bool(source and source.strip().lower() == "linkedin" and _linkedin_project_id())
 
 
@@ -162,7 +167,18 @@ def _dataset_id(source: str) -> str:
     if routed:
         return routed
     key = source.strip().upper().replace("-", "_")
-    return (os.getenv(f"BQ_{key}_DATASET_ID") or os.getenv("BQ_WAREHOUSE_DATASET_ID") or (_DEFAULT_LINKEDIN_DATASET if source == "linkedin" else "")).strip()
+    default_dataset = (
+        _DEFAULT_LINKEDIN_DATASET
+        if source == "linkedin"
+        else _DEFAULT_GOOGLE_DATASET
+        if source == "google"
+        else ""
+    )
+    return (
+        os.getenv(f"BQ_{key}_DATASET_ID")
+        or os.getenv("BQ_WAREHOUSE_DATASET_ID")
+        or default_dataset
+    ).strip()
 
 
 def _table_name(source: str) -> str:
@@ -323,6 +339,106 @@ def mirror_campaign_daily_batch(source: str, account_id: str, rows: list[dict[st
     finally:
         client.delete_table(temp_id, not_found_ok=True)
     return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
+
+
+def create_google_campaign_mart_view() -> dict[str, Any]:
+    """Normalize a native Google transfer table into the campaign fact view.
+
+    This function never creates or populates a Google raw table.  A missing
+    transfer table is returned as ``pending_data`` so callers can explain the
+    required GCP setup instead of silently substituting API snapshot rows.
+    """
+    project_id = _route_value("project") or (
+        os.getenv("BQ_WAREHOUSE_PROJECT_ID") or os.getenv("BQ_PROJECT_ID") or ""
+    ).strip()
+    if not project_id:
+        return {"enabled": False, "table": None, "reason": "missing_project"}
+    raw_dataset = _dataset_id("google")
+    raw_table = (os.getenv("BQ_GOOGLE_CAMPAIGN_RAW_TABLE") or "campaign_daily").strip()
+    mart_dataset = _mart_dataset_id()
+    fact_table = (os.getenv("BQ_MART_TABLE") or "fact_google_ads_campaign_daily").strip()
+    client = _client(project_id)
+    bigquery = _bigquery()
+    client.create_dataset(bigquery.Dataset(f"{project_id}.{mart_dataset}"), exists_ok=True)
+    table_id = f"{project_id}.{mart_dataset}.{fact_table}"
+    raw_table_id = f"{project_id}.{raw_dataset}.{raw_table}"
+    try:
+        client.get_table(raw_table_id)
+    except Exception as exc:
+        return {
+            "status": "pending_data",
+            "table": table_id,
+            "raw_table": raw_table_id,
+            "error": str(exc)[:400],
+        }
+    try:
+        existing_fact = client.get_table(table_id)
+        if str(getattr(existing_fact, "table_type", "TABLE")).upper() == "TABLE":
+            return {
+                "status": "success",
+                "table": table_id,
+                "raw_table": raw_table_id,
+                "existing": True,
+            }
+        create_statement = "CREATE OR REPLACE VIEW"
+    except Exception:
+        create_statement = "CREATE VIEW"
+    sql = f"""
+    {create_statement} `{table_id}` AS
+    SELECT
+      metric_date AS date,
+      account_id,
+      campaign_id,
+      campaign_name,
+      spend,
+      impressions,
+      clicks,
+      conversions,
+      conversion_value,
+      synced_at
+    FROM `{raw_table_id}`
+    """
+    client.query(sql).result()
+    return {"status": "success", "table": table_id, "raw_table": raw_table_id}
+
+
+def rebuild_unified_marketing_mart() -> dict[str, Any]:
+    """Build the dashboard's single daily fact from available normalized facts."""
+    project_id = _route_value("project") or (
+        os.getenv("BQ_WAREHOUSE_PROJECT_ID") or os.getenv("BQ_PROJECT_ID") or ""
+    ).strip()
+    if not project_id:
+        return {"status": "failed", "error": "missing_project"}
+    mart_dataset = _mart_dataset_id()
+    client = _client(project_id)
+    bigquery = _bigquery()
+    client.create_dataset(bigquery.Dataset(f"{project_id}.{mart_dataset}"), exists_ok=True)
+    candidates = {
+        "google": os.getenv("BQ_MART_TABLE") or "fact_google_ads_campaign_daily",
+        "meta": _DEFAULT_META_CAMPAIGN_FACT_TABLE,
+        "linkedin": _DEFAULT_LINKEDIN_CAMPAIGN_FACT_TABLE,
+    }
+    selects: list[str] = []
+    included: list[str] = []
+    for source, table in candidates.items():
+        source_id = f"{project_id}.{mart_dataset}.{table}"
+        try:
+            client.get_table(source_id)
+        except Exception:
+            continue
+        included.append(source)
+        selects.append(
+            f"SELECT '{source}' AS source, account_id, date, campaign_id, "
+            f"campaign_name, spend, impressions, clicks, conversions, "
+            f"conversion_value FROM `{source_id}`"
+        )
+    if not selects:
+        return {"status": "pending_data", "sources": [], "table": None}
+    table_id = f"{project_id}.{mart_dataset}.fact_marketing_daily"
+    client.query(
+        f"CREATE OR REPLACE VIEW `{table_id}` AS\n" + "\nUNION ALL\n".join(selects)
+    ).result()
+    return {"status": "success", "sources": included, "table": table_id}
 
 
 def mirror_linkedin_campaign_metadata(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -653,7 +769,7 @@ def mirror_linkedin_creative_metadata(rows: list[dict[str, Any]]) -> dict[str, A
 
 
 _DEFAULT_META_PROJECT = "penn-community-b-1699391543298"
-_DEFAULT_META_DATASET = "meta_data"
+_DEFAULT_META_DATASET = "raw_meta_ads"
 _DEFAULT_META_CAMPAIGN_TABLE = "campaign_daily"
 _DEFAULT_META_ADSET_TABLE = "adset_daily"
 _DEFAULT_META_AD_TABLE = "ad_daily"

@@ -22,11 +22,6 @@ from dashboard.services.snapshot_metrics_service import (
     aggregated_paid_media,
     normalize_entity_row,
 )
-from dashboard.services.source_fallback_service import (
-    configured_fallback_sources,
-    merge_api_fallback_sources,
-    source_has_snapshot_data,
-)
 from dashboard.services.warehouse_metrics_service import (
     load_organic_daily_metrics,
     merge_linkedin_creative_media,
@@ -375,201 +370,10 @@ def refresh_penn_quick(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = 
 
 
 def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = "manual_full") -> dict[str, Any]:
-    """Run all BQ queries for Penn BQ Test and save to Postgres snapshot cache."""
-    import bq_gsc_service
-    import bq_linkedin_ads_service
-    import bq_mart_service
-    import bq_meta_ads_service
-    import penn_config
-    from concurrent.futures import ThreadPoolExecutor
-    from dashboard.utils.formatting import platform_error
-
-    start, end, preset = resolve_date_range(date_range)
-    cfg = client_config.load_client_config("penn-bq-test")
-    penn_cfg = penn_config.load_penn_config()
-    linkedin_account_id = cfg.linkedin_account_id or penn_cfg.linkedin_account_id
-    meta_account_id = cfg.meta_account_id or penn_cfg.meta_account_id
-
-    # GSC: on cron, sync new days from GSC API â†’ fact_gsc_query/page_daily first,
-    # then read the combined snapshot (native export UNION historical backfill).
-    # On manual refresh, skip the API sync and just read from BQ.
-    import semrush_service as _semrush_svc
-    import gsc_sync_service
-
-    is_cron = (sync_trigger == "cron")
-
-    def _gsc_task():
-        gsc_sync_result = None
-        if is_cron:
-            try:
-                gsc_sync_result = gsc_sync_service.sync_for_refresh(client_slug="penn-bq-test")
-            except Exception as exc:
-                gsc_sync_result = {"ok": False, "error": str(exc)[:300]}
-        data = bq_gsc_service.build_gsc_snapshot(start=start, end=end, client_slug="penn-bq-test")
-        if gsc_sync_result:
-            data["_sync_result"] = gsc_sync_result
-        return data
-
-    _gsc_executor = ThreadPoolExecutor(max_workers=2)
-    _gsc_fut = _gsc_executor.submit(_gsc_task)
-    _smr_fut = _gsc_executor.submit(_semrush_svc.build_semrush_snapshot)
-
-    try:
-        snapshot = bq_mart_service.build_snapshot(start=start, end=end, preset=preset)
-        snapshot["label"] = cfg.label
-        snapshot["date_range"] = {
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "preset": preset,
-        }
-        snapshot.setdefault("accounts", {})["linkedin"] = linkedin_account_id
-        snapshot.setdefault("accounts", {})["meta"] = meta_account_id
-        snapshot.setdefault("data_sources", {})["google"] = "bigquery"
-
-        # LinkedIn: cron syncs from API â†’ BQ; manual refresh just reads from BQ.
-        # Calling the LinkedIn OAuth token endpoint on every manual refresh causes
-        # 429 rate-limit errors and is unnecessary when the cron keeps BQ current.
-        try:
-            if is_cron:
-                metadata_sync = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(
-                    account_id=linkedin_account_id,
-                    start=start,
-                    end=end,
-                )
-                snapshot.setdefault("warehouse_sync", {})["linkedin_campaign_metadata"] = metadata_sync
-
-            linkedin_snapshot = bq_linkedin_ads_service.build_snapshot(
-                cfg=penn_cfg,
-                start=start,
-                end=end,
-                preset=preset,
-            )
-            linkedin_daily = (linkedin_snapshot.get("daily_metrics") or {}).get("linkedin", [])
-            linkedin_totals = (linkedin_snapshot.get("platform_totals") or {}).get("linkedin", {})
-            linkedin_breakdowns = (linkedin_snapshot.get("breakdowns") or {}).get("linkedin", {})
-
-            snapshot.setdefault("daily_metrics", {})["linkedin"] = linkedin_daily
-            snapshot.setdefault("platform_totals", {})["linkedin"] = linkedin_totals
-            snapshot.setdefault("breakdowns", {})["linkedin"] = linkedin_breakdowns
-            snapshot.setdefault("data_sources", {})["linkedin"] = "bigquery"
-            creative_meta = linkedin_snapshot.get("creative_metadata") or {}
-            snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = creative_meta.get("source", "bigquery")
-            snapshot["creative_metadata"] = creative_meta or {"source": "bigquery", "merged_rows": 0}
-        except Exception as exc:
-            message = f"Penn BQ Test LinkedIn BigQuery query failed: {platform_error(exc)}"
-            snapshot.setdefault("errors", {})["linkedin_bigquery"] = message
-            snapshot.setdefault("data_sources", {})["linkedin"] = "bigquery"
-            snapshot.setdefault("data_sources", {})["linkedin_creative_metadata"] = "bigquery"
-            snapshot.setdefault("creative_metadata", {"source": "bigquery", "merged_rows": 0})
-
-        # Meta: cron syncs from API â†’ BQ; manual refresh just reads from BQ.
-        if meta_account_id:
-            try:
-                if is_cron:
-                    meta_sync = bq_meta_ads_service.sync_meta_to_bq(
-                        meta_account_id,
-                        start=start,
-                        end=end,
-                    )
-                    snapshot.setdefault("warehouse_sync", {})["meta"] = meta_sync
-
-                meta_result = bq_meta_ads_service.build_meta_breakdowns(start=start, end=end)
-                snapshot.setdefault("breakdowns", {})["meta"] = meta_result["breakdowns"]
-                snapshot.setdefault("platform_totals", {})["meta"] = meta_result["platform_totals"]
-                snapshot.setdefault("daily_metrics", {})["meta"] = meta_result.get("daily_metrics", [])
-                snapshot.setdefault("data_sources", {})["meta"] = "bigquery"
-                if meta_result.get("errors"):
-                    snapshot.setdefault("errors", {}).update(meta_result["errors"])
-            except Exception as exc:
-                message = f"Penn BQ Test Meta BigQuery sync/query failed: {platform_error(exc)}"
-                snapshot.setdefault("errors", {})["meta_bigquery"] = message
-                snapshot.setdefault("data_sources", {})["meta"] = "bigquery"
-
-        # GA4 / Website Analytics: services already query BigQuery directly
-        _GA4_CLIENT_KEY = "penn"
-        snapshot.setdefault("accounts", {})["ga4_client_key"] = _GA4_CLIENT_KEY
-        snapshot.setdefault("data_sources", {})["ga4"] = "bigquery"
-        try:
-            snapshot["ga4_attribution"] = ga4_attribution_service.fetch_attribution_for_dashboard(
-                date_range=preset,
-                client_key=_GA4_CLIENT_KEY,
-            )
-        except Exception as exc:
-            snapshot.setdefault("errors", {})["ga4_attribution"] = platform_error(exc)
-        try:
-            _ga4_pages_by_preset = ga4_page_service.fetch_pages_for_all_presets(
-                client_key=_GA4_CLIENT_KEY,
-                client_slug="penn-bq-test",
-            )
-            snapshot["ga4_pages_by_preset"] = _ga4_pages_by_preset
-            snapshot["ga4_pages"] = _ga4_pages_by_preset.get(preset) or _ga4_pages_by_preset.get("LAST_30_DAYS")
-        except Exception as exc:
-            snapshot.setdefault("errors", {})["ga4_pages"] = platform_error(exc)
-        try:
-            import ga4_warehouse_service
-            organic_rows = ga4_warehouse_service.fetch_organic_daily_metrics(
-                start=start,
-                end=end,
-                client_key=_GA4_CLIENT_KEY,
-            )
-            snapshot.setdefault("daily_metrics", {})["organic"] = organic_rows
-            organic_totals = totals_from_daily_rows(organic_rows)
-            organic_totals["campaign_count"] = 0
-            snapshot.setdefault("platform_totals", {})["organic"] = organic_totals
-        except Exception as exc:
-            snapshot.setdefault("errors", {})["organic_daily"] = platform_error(exc)
-
-        from dashboard.services.snapshot_metrics_service import aggregated_paid_media
-        snapshot["aggregated_paid_media"] = aggregated_paid_media(snapshot.get("platform_totals") or {})
-    except Exception as exc:
-        message = f"Penn BQ Test dashboard failed: {platform_error(exc)}"
-        snapshot = {
-            "client_key": "penn-bq-test",
-            "label": "Penn BQ Test",
-            "date_range": {
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-                "preset": preset,
-            },
-            "accounts": {"google": None, "linkedin": None, "meta": None, "ga4_client_key": "penn"},
-            "data_sources": {
-                "google": "bigquery",
-                "linkedin": "bigquery",
-                "meta": "bigquery",
-                "linkedin_creative_metadata": "postgres",
-                "ga4": "bigquery",
-            },
-            "daily_metrics": {},
-            "platform_totals": {},
-            "breakdowns": {},
-            "aggregated_paid_media": {},
-            "business_line_campaigns": [],
-            "warehouse_sync": {},
-            "ga4_attribution": None,
-            "ga4_pages": None,
-            "creative_metadata": {"source": "postgres", "merged_rows": 0},
-            "errors": {"penn_bq_test": message},
-            "refresh_mode": "bigquery_linkedin",
-        }
-    finally:
-        try:
-            snapshot["gsc"] = _gsc_fut.result(timeout=60)
-        except Exception as gsc_exc:
-            snapshot.setdefault("errors", {})["gsc"] = str(gsc_exc)[:400]
-        try:
-            smr = _smr_fut.result(timeout=30)
-            # Only store in snapshot if key is configured (avoids showing empty tab)
-            if smr and not smr.get("error", "").startswith("SEMRUSH_API_KEY"):
-                snapshot["semrush"] = smr
-        except Exception as smr_exc:
-            snapshot.setdefault("errors", {})["semrush"] = str(smr_exc)[:400]
-        finally:
-            _gsc_executor.shutdown(wait=False)
-
-    snapshot["sync_meta"] = sync_meta(sync_trigger)
-    dashboard_snapshots.save_snapshot("penn-bq-test", snapshot)
-    return snapshot
-
+    """Run Penn through the same orchestrated BigQuery pipeline as every client."""
+    return refresh_bq_client(
+        "penn-bq-test", date_range=date_range, sync_trigger=sync_trigger
+    )
 
 def refresh_bq_client(
     slug: str,
@@ -587,7 +391,6 @@ def refresh_bq_client(
     import bq_linkedin_ads_service
     import bq_mart_service
     import bq_meta_ads_service
-    import bigquery_warehouse
     import client_dashboard_config as _cdc
     import gsc_sync_service
     import semrush_service as _smr_svc
@@ -603,8 +406,22 @@ def refresh_bq_client(
     ga4_client_key      = cfg.ga4_client_key or slug
     gsc_site_url        = (db_cfg.gsc_site_url if db_cfg else None) or ""
     semrush_domain      = (db_cfg.semrush_domain if db_cfg else None) or ""
-    repair_bq_sources   = sync_trigger in {"cron", "manual_full"}
-    allow_api_fallback  = sync_trigger in {"cron", "manual_full", "cache_miss"}
+    # GET/cache-miss reads are strictly read-only.  Only cron, onboarding, and
+    # an explicit Full Refresh are allowed to run API ingestion.
+    from dashboard.services.bigquery_refresh_orchestrator import should_run_ingestion
+
+    run_ingestion = should_run_ingestion(sync_trigger)
+    refresh_run: dict[str, Any] | None = None
+    if run_ingestion:
+        from dashboard.services.bigquery_refresh_orchestrator import (
+            run_client_bigquery_refresh,
+        )
+
+        refresh_run = run_client_bigquery_refresh(
+            client_slug=slug, trigger=sync_trigger
+        )
+    repair_bq_sources = False
+    _bq_setup_error: str | None = None
 
     # Resolve client-specific BQ project/credentials for mart queries.
     # Mart tables (fact_google_ads_campaign_daily etc.) live in the same GCP project
@@ -681,6 +498,17 @@ def refresh_bq_client(
         snapshot.setdefault("accounts", {})["linkedin"] = linkedin_account_id
         snapshot.setdefault("accounts", {})["meta"]     = meta_account_id
         snapshot.setdefault("data_sources", {})["google"] = "bigquery"
+        if refresh_run:
+            snapshot["refresh_run"] = refresh_run
+            snapshot["source_freshness"] = refresh_run.get("sources", {})
+            snapshot["last_refreshed_at"] = refresh_run.get("last_refreshed_at")
+            snapshot["data_through"] = {
+                source: details.get("data_through")
+                for source, details in (refresh_run.get("sources") or {}).items()
+                if details.get("data_through")
+            }
+        if _bq_setup_error:
+            snapshot.setdefault("warnings", {})["bigquery_setup"] = _bq_setup_error
 
         if linkedin_account_id:
             try:
@@ -757,34 +585,6 @@ def refresh_bq_client(
         except Exception as exc:
             snapshot.setdefault("errors", {})["organic_daily"] = platform_error(exc)
 
-        fallback_sources = (
-            configured_fallback_sources(snapshot, cfg) if allow_api_fallback else set()
-        )
-        if fallback_sources:
-            try:
-                with bigquery_warehouse.route(
-                    bq_project_id=_mart_bq_project,
-                    credentials_env=_mart_credentials_env,
-                ):
-                    api_snapshot = refresh_client(
-                        client_slug=slug,
-                        date_range=preset,
-                        sync_trigger=f"{sync_trigger}_api_fallback",
-                    )
-                repaired = merge_api_fallback_sources(
-                    snapshot, api_snapshot, fallback_sources
-                )
-                snapshot.setdefault("fallback", {})["requested"] = sorted(fallback_sources)
-                snapshot["fallback"]["repaired"] = sorted(repaired)
-                if repaired:
-                    snapshot["business_line_campaigns"] = build_client_segment_campaigns(
-                        snapshot.get("breakdowns") or {},
-                        client_slug=cfg.client_key,
-                        filter_profile=client_filter_profile(cfg.client_key, cfg=cfg),
-                    )
-            except Exception as exc:
-                snapshot.setdefault("errors", {})["api_fallback"] = platform_error(exc)
-
         from dashboard.services.snapshot_metrics_service import aggregated_paid_media
         snapshot["aggregated_paid_media"] = aggregated_paid_media(snapshot.get("platform_totals") or {})
 
@@ -799,30 +599,8 @@ def refresh_bq_client(
             "aggregated_paid_media": {}, "warehouse_sync": {},
             "errors": {"bq_client": platform_error(exc)},
         }
-        if allow_api_fallback:
-            try:
-                with bigquery_warehouse.route(
-                    bq_project_id=_mart_bq_project,
-                    credentials_env=_mart_credentials_env,
-                ):
-                    api_snapshot = refresh_client(
-                        client_slug=slug,
-                        date_range=preset,
-                        sync_trigger=f"{sync_trigger}_api_fallback",
-                    )
-                snapshot = api_snapshot
-                snapshot.setdefault("warnings", {})["bq_client"] = platform_error(exc)
-                repaired = []
-                for source in ("google", "linkedin", "meta"):
-                    if source_has_snapshot_data(snapshot, source):
-                        snapshot.setdefault("data_sources", {})[source] = "api_fallback"
-                        repaired.append(source)
-                snapshot["fallback"] = {
-                    "requested": repaired,
-                    "repaired": repaired,
-                }
-            except Exception as fallback_exc:
-                snapshot.setdefault("errors", {})["api_fallback"] = platform_error(fallback_exc)
+        if _bq_setup_error:
+            snapshot.setdefault("warnings", {})["bigquery_setup"] = _bq_setup_error
     finally:
         try:
             _gsc_data, _gsc_by_preset = _gsc_fut.result(timeout=60)

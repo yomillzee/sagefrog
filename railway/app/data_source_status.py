@@ -5,7 +5,7 @@ its BigQuery table / export exist and is it receiving data? Reads route via
 the same registries the dashboard uses (ga4_clients / gsc_clients), so the
 status reflects the client's real project rather than the Penn fallback.
 
-This drives the "Data source status" panel — it validates IDs and shows
+This drives the "Data source status" panel â€” it validates IDs and shows
 whether each feed is live, since Google Ads / GA4 land in BigQuery through
 Google's Data Transfer Service (which the app can't trigger), and
 LinkedIn / Meta marts only exist once their sync has run.
@@ -167,7 +167,7 @@ def build_status(client_slug: str) -> list[dict[str, Any]]:
 
     out: list[dict[str, Any]] = []
 
-    # GA4 export (Data Transfer / native export — app can't write it)
+    # GA4 export (Data Transfer / native export â€” app can't write it)
     if cfg.ga4_client_key or ga4_target is not None:
         row = (
             _check_ga4_export(ga4_target)
@@ -195,7 +195,7 @@ def build_status(client_slug: str) -> list[dict[str, Any]]:
             row = _check_mart(project=m_project, dataset=m_dataset,
                               table="fact_google_ads_campaign_daily", credentials_env=m_creds)
             if row["status"] == "missing":
-                row["hint"] = f"Set up Google Ads → BigQuery Data Transfer in {m_project}"
+                row["hint"] = f"Set up Google Ads â†’ BigQuery Data Transfer in {m_project}"
             else:
                 row["hint"] = "Google BigQuery Data Transfer"
         else:
@@ -212,9 +212,9 @@ def build_status(client_slug: str) -> list[dict[str, Any]]:
             row = _check_mart(project=m_project, dataset=m_dataset,
                               table="fact_linkedin_ads_campaign_daily", credentials_env=m_creds)
             if row["status"] in ("missing", "empty"):
-                row["hint"] = "Account set — syncs on next refresh"
+                row["hint"] = "Account set â€” syncs on next refresh"
             else:
-                row["hint"] = "App sync (LinkedIn API → BigQuery)"
+                row["hint"] = "App sync (LinkedIn API â†’ BigQuery)"
         else:
             row = {"status": "error", "rows": None, "max_date": None, "error": "mart routing unresolved", "hint": ""}
         row.update({"key": "linkedin", "label": "LinkedIn"})
@@ -229,9 +229,9 @@ def build_status(client_slug: str) -> list[dict[str, Any]]:
             row = _check_mart(project=m_project, dataset=m_dataset,
                               table="fact_meta_ads_campaign_daily", credentials_env=m_creds)
             if row["status"] in ("missing", "empty"):
-                row["hint"] = "Account set — syncs on next refresh"
+                row["hint"] = "Account set â€” syncs on next refresh"
             else:
-                row["hint"] = "App sync (Meta API → BigQuery)"
+                row["hint"] = "App sync (Meta API â†’ BigQuery)"
         else:
             row = {"status": "error", "rows": None, "max_date": None, "error": "mart routing unresolved", "hint": ""}
         row.update({"key": "meta", "label": "Meta"})
@@ -244,32 +244,13 @@ def build_status(client_slug: str) -> list[dict[str, Any]]:
     if gsc_site:
         row = _check_gsc(slug)
         if row["status"] in ("missing", "empty"):
-            row["hint"] = "Site set — run Sync GSC → BigQuery"
+            row["hint"] = "Site set â€” run Sync GSC â†’ BigQuery"
         else:
-            row["hint"] = "App sync (Search Console API → BigQuery)"
+            row["hint"] = "App sync (Search Console API â†’ BigQuery)"
         row.update({"key": "gsc", "label": "Search Console"})
         out.append(row)
     else:
         out.append({"key": "gsc", "label": "Search Console", "status": "not_configured",
                     "rows": None, "max_date": None, "hint": "No GSC property set", "error": None})
-
-    # The dashboard snapshot is the frontend source of truth. If a refresh had to
-    # use a platform API because BigQuery was unavailable, report that degraded-but-
-    # usable state instead of implying that the dashboard itself has no data.
-    try:
-        import dashboard_snapshots
-
-        snapshot = dashboard_snapshots.get_snapshot(slug) or {}
-        snapshot_sources = snapshot.get("data_sources") or {}
-    except Exception:
-        snapshot_sources = {}
-    for row in out:
-        key = str(row.get("key") or "")
-        if (
-            snapshot_sources.get(key) == "api_fallback"
-            and row.get("status") in {"error", "missing", "empty"}
-        ):
-            row["status"] = "fallback"
-            row["hint"] = "Dashboard current via API fallback; BigQuery cache needs attention"
 
     return out
