@@ -19,7 +19,7 @@ import bigquery_service
 
 _DEFAULT_MART_DATASET = "marketing_marts"
 
-# status values: feeding | empty | missing | error | not_configured
+# status values: feeding | fallback | empty | missing | error | not_configured
 
 
 def _is_not_found(exc: Exception) -> bool:
@@ -252,5 +252,24 @@ def build_status(client_slug: str) -> list[dict[str, Any]]:
     else:
         out.append({"key": "gsc", "label": "Search Console", "status": "not_configured",
                     "rows": None, "max_date": None, "hint": "No GSC property set", "error": None})
+
+    # The dashboard snapshot is the frontend source of truth. If a refresh had to
+    # use a platform API because BigQuery was unavailable, report that degraded-but-
+    # usable state instead of implying that the dashboard itself has no data.
+    try:
+        import dashboard_snapshots
+
+        snapshot = dashboard_snapshots.get_snapshot(slug) or {}
+        snapshot_sources = snapshot.get("data_sources") or {}
+    except Exception:
+        snapshot_sources = {}
+    for row in out:
+        key = str(row.get("key") or "")
+        if (
+            snapshot_sources.get(key) == "api_fallback"
+            and row.get("status") in {"error", "missing", "empty"}
+        ):
+            row["status"] = "fallback"
+            row["hint"] = "Dashboard current via API fallback; BigQuery cache needs attention"
 
     return out
