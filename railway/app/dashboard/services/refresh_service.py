@@ -22,6 +22,11 @@ from dashboard.services.snapshot_metrics_service import (
     aggregated_paid_media,
     normalize_entity_row,
 )
+from dashboard.services.source_fallback_service import (
+    configured_fallback_sources,
+    merge_api_fallback_sources,
+    source_has_snapshot_data,
+)
 from dashboard.services.warehouse_metrics_service import (
     load_organic_daily_metrics,
     merge_linkedin_creative_media,
@@ -597,7 +602,8 @@ def refresh_bq_client(
     ga4_client_key      = cfg.ga4_client_key or slug
     gsc_site_url        = (db_cfg.gsc_site_url if db_cfg else None) or ""
     semrush_domain      = (db_cfg.semrush_domain if db_cfg else None) or ""
-    is_cron             = (sync_trigger == "cron")
+    repair_bq_sources   = sync_trigger in {"cron", "manual_full"}
+    allow_api_fallback  = sync_trigger in {"cron", "manual_full", "cache_miss"}
 
     # Resolve client-specific BQ project/credentials for mart queries.
     # Mart tables (fact_google_ads_campaign_daily etc.) live in the same GCP project
@@ -631,7 +637,7 @@ def refresh_bq_client(
     def _gsc_task():
         from dates_util import resolve_date_range as _resolve
         gsc_sync_result = None
-        if is_cron and gsc_site_url:
+        if repair_bq_sources and gsc_site_url:
             try:
                 gsc_sync_result = gsc_sync_service.sync_for_refresh(site_url=gsc_site_url, client_slug=slug)
             except Exception as exc:
@@ -670,6 +676,7 @@ def refresh_bq_client(
         )
         snapshot["label"]      = cfg.label
         snapshot["date_range"] = {"start": start.isoformat(), "end": end.isoformat(), "preset": preset}
+        snapshot.setdefault("accounts", {})["google"] = cfg.google_customer_id
         snapshot.setdefault("accounts", {})["linkedin"] = linkedin_account_id
         snapshot.setdefault("accounts", {})["meta"]     = meta_account_id
         snapshot.setdefault("data_sources", {})["google"] = "bigquery"
@@ -683,7 +690,7 @@ def refresh_bq_client(
                 with bq_linkedin_ads_service.route(
                     bq_project_id=_mart_bq_project, credentials_env=_mart_credentials_env
                 ):
-                    if is_cron:
+                    if repair_bq_sources:
                         meta_sync = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(
                             account_id=linkedin_account_id, start=start, end=end,
                         )
@@ -706,7 +713,7 @@ def refresh_bq_client(
                 with bq_meta_ads_service.route(
                     bq_project_id=_mart_bq_project, credentials_env=_mart_credentials_env
                 ):
-                    if is_cron:
+                    if repair_bq_sources:
                         m_sync = bq_meta_ads_service.sync_meta_to_bq(meta_account_id, start=start, end=end)
                         snapshot.setdefault("warehouse_sync", {})["meta"] = m_sync
                     meta_result = bq_meta_ads_service.build_meta_breakdowns(start=start, end=end)
@@ -749,6 +756,30 @@ def refresh_bq_client(
         except Exception as exc:
             snapshot.setdefault("errors", {})["organic_daily"] = platform_error(exc)
 
+        fallback_sources = (
+            configured_fallback_sources(snapshot, cfg) if allow_api_fallback else set()
+        )
+        if fallback_sources:
+            try:
+                api_snapshot = refresh_client(
+                    client_slug=slug,
+                    date_range=preset,
+                    sync_trigger=f"{sync_trigger}_api_fallback",
+                )
+                repaired = merge_api_fallback_sources(
+                    snapshot, api_snapshot, fallback_sources
+                )
+                snapshot.setdefault("fallback", {})["requested"] = sorted(fallback_sources)
+                snapshot["fallback"]["repaired"] = sorted(repaired)
+                if repaired:
+                    snapshot["business_line_campaigns"] = build_client_segment_campaigns(
+                        snapshot.get("breakdowns") or {},
+                        client_slug=cfg.client_key,
+                        filter_profile=client_filter_profile(cfg.client_key, cfg=cfg),
+                    )
+            except Exception as exc:
+                snapshot.setdefault("errors", {})["api_fallback"] = platform_error(exc)
+
         from dashboard.services.snapshot_metrics_service import aggregated_paid_media
         snapshot["aggregated_paid_media"] = aggregated_paid_media(snapshot.get("platform_totals") or {})
 
@@ -763,6 +794,26 @@ def refresh_bq_client(
             "aggregated_paid_media": {}, "warehouse_sync": {},
             "errors": {"bq_client": platform_error(exc)},
         }
+        if allow_api_fallback:
+            try:
+                api_snapshot = refresh_client(
+                    client_slug=slug,
+                    date_range=preset,
+                    sync_trigger=f"{sync_trigger}_api_fallback",
+                )
+                snapshot = api_snapshot
+                snapshot.setdefault("warnings", {})["bq_client"] = platform_error(exc)
+                repaired = []
+                for source in ("google", "linkedin", "meta"):
+                    if source_has_snapshot_data(snapshot, source):
+                        snapshot.setdefault("data_sources", {})[source] = "api_fallback"
+                        repaired.append(source)
+                snapshot["fallback"] = {
+                    "requested": repaired,
+                    "repaired": repaired,
+                }
+            except Exception as fallback_exc:
+                snapshot.setdefault("errors", {})["api_fallback"] = platform_error(fallback_exc)
     finally:
         try:
             _gsc_data, _gsc_by_preset = _gsc_fut.result(timeout=60)
