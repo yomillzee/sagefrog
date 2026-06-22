@@ -25,12 +25,12 @@ from penn_business_lines import (
 )
 
 from dashboard.renderers.base_layout import (
-    DASH_TOPBAR_CSS as _DASH_TOPBAR_CSS,
-    dash_top_header_html as _dash_top_header_html,
+    SIDEBAR_CSS as _SIDEBAR_CSS,
     dashboard_topbar_js as _dashboard_topbar_js,
-    dashboard_view_tabs_html as _dashboard_view_tabs_html,
     favicon_head_html as _favicon_head_html,
     render_client_shell_page,
+    render_sidebar as _render_sidebar,
+    sidebar_view_nav_html as _sidebar_view_nav_html,
 )
 from dashboard.renderers.cards_renderer import (
     budget_pacing_panel_html as _budget_pacing_panel_html,
@@ -144,9 +144,15 @@ def ga4_website_search_html(
         <div class="website-results-status">
           <span class="badge" id="ga4PagesCount">0 pages</span>
         </div>
-        <div id="websiteAiFilterRow" class="website-ai-filter-row">
-          <span class="filter-column-label">AI traffic</span>
-          <div id="aiFilterPills" class="filter-toggles" role="group" aria-label="AI traffic source"></div>
+        <div id="websiteAiFilterRow" class="website-ai-filter-row" hidden>
+          <span class="ai-filter-badge">
+            <svg class="ai-spark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 2l1.9 5.1L19 9l-5.1 1.9L12 16l-1.9-5.1L5 9l5.1-1.9L12 2z"/>
+              <path d="M19 14l.9 2.4L22 17l-2.1.6L19 20l-.9-2.4L16 17l2.1-.6L19 14z" opacity="0.7"/>
+            </svg>
+            AI traffic
+          </span>
+          <div id="aiFilterPills" class="filter-toggles ai-filter-pills" role="group" aria-label="AI traffic source"></div>
         </div>
         <p class="ga4-traffic-filter-note muted" id="ga4TrafficFilterNote" hidden></p>"""
 
@@ -648,17 +654,6 @@ def render_penn_html(
         _paid_ad_overview_metrics(aggregated, ga4_attr)
     )
     import client_insight_documents as docs
-
-    top_header = _dash_top_header_html(
-        client_slug=client_slug,
-        label=label,
-        active_nav="overview",
-        access_key=access_key,
-        use_session=use_session,
-        session_is_admin=session_is_admin,
-        session_email=session_email,
-        show_files=docs.enabled(),
-    )
     ga4_pages_report = snapshot.get("ga4_pages")
     accounts = snapshot.get("accounts") or {}
     _ga4_client_key = str(accounts.get("ga4_client_key") or "").strip()
@@ -703,11 +698,26 @@ def render_penn_html(
             except Exception:
                 pass
     _semrush_data = snapshot.get("semrush")
-    view_tabs_html = _dashboard_view_tabs_html(
+    view_nav_html = _sidebar_view_nav_html(
         show_website=show_website_tab,
         show_campaigns=features.campaign_explorer,
         show_gsc=bool(_gsc_data),
         show_semrush=bool(_semrush_data),
+        as_links=False,
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+    )
+    sidebar = _render_sidebar(
+        client_slug=client_slug,
+        label=label,
+        active_nav="overview",
+        access_key=access_key,
+        use_session=use_session,
+        session_is_admin=session_is_admin,
+        session_email=session_email,
+        show_files=docs.enabled(),
+        view_nav_html=view_nav_html,
     )
     if use_session:
         _vr_action = f"/dashboard/{slug}"
@@ -756,7 +766,17 @@ def render_penn_html(
                 <span class="muted ga4-backfill-status" id="ga4BackfillStatus"></span>
               </div>
               <p class="table-note muted">Daily sessions straight from the GA4 BigQuery export. Empty/zero days haven't been loaded yet — watch this fill in as the Data Transfer backfill runs.</p>
-              <div class="ga4-backfill-wrap"><canvas id="ga4BackfillChart"></canvas></div>
+              <div class="ga4-backfill-wrap">
+                <div class="chart-loading" id="ga4BackfillLoading" aria-hidden="true">
+                  <div class="chart-loading-bars">
+                    <span></span><span></span><span></span><span></span><span></span>
+                    <span></span><span></span><span></span><span></span><span></span>
+                    <span></span><span></span>
+                  </div>
+                  <span class="chart-loading-label">Loading coverage…</span>
+                </div>
+                <canvas id="ga4BackfillChart"></canvas>
+              </div>
               <div class="panel-head">
                 <h2 id="ga4PagesHeading">Page performance</h2>
               </div>
@@ -901,10 +921,10 @@ def render_penn_html(
     }}
     .app-shell {{
       display: flex;
-      flex-direction: column;
+      flex-direction: row;
       min-height: 100vh;
     }}
-    {_DASH_TOPBAR_CSS}
+    {_SIDEBAR_CSS}
     .info-tip {{
       appearance: none;
       border: 1px solid var(--border);
@@ -1234,16 +1254,61 @@ def render_penn_html(
       display: flex;
       align-items: center;
       flex-wrap: wrap;
-      gap: 8px;
-      padding: 0 22px 10px;
+      gap: 10px;
+      margin: 0 22px 14px;
+      padding: 9px 14px;
+      border: 1px solid color-mix(in srgb, #7c3aed 22%, var(--border));
+      border-radius: 12px;
+      background: linear-gradient(180deg, #fbfaff, #f5f3ff);
     }}
-    .website-ai-filter-row .filter-column-label {{
+    .website-ai-filter-row[hidden] {{ display: none; }}
+    .ai-filter-badge {{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       font-size: 0.75rem;
-      font-weight: 600;
+      font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.04em;
-      color: var(--muted);
+      color: #6d28d9;
       white-space: nowrap;
+    }}
+    .ai-filter-badge .ai-spark {{
+      width: 15px;
+      height: 15px;
+      flex-shrink: 0;
+    }}
+    .ai-filter-pills {{ gap: 7px; }}
+    .filter-toggle--ai {{
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border-color: color-mix(in srgb, #7c3aed 32%, var(--border));
+      color: #6d28d9;
+      background: #fff;
+    }}
+    .filter-toggle--ai:hover {{
+      border-color: #7c3aed;
+      background: #f3f0ff;
+    }}
+    .filter-toggle--ai.active {{
+      background: linear-gradient(135deg, #7c3aed, #6d28d9);
+      border-color: #6d28d9;
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(124, 58, 237, 0.28);
+    }}
+    .ai-pill-count {{
+      font-size: 0.72rem;
+      font-weight: 700;
+      line-height: 1;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: color-mix(in srgb, #7c3aed 13%, transparent);
+      color: #6d28d9;
+    }}
+    .filter-toggle--ai.active .ai-pill-count {{
+      background: rgba(255, 255, 255, 0.24);
+      color: #fff;
     }}
     .ga4-pages-toolbar {{
       display: flex;
@@ -2046,6 +2111,61 @@ def render_penn_html(
     .ga4-backfill-status {{ font-size: 12px; }}
     .ga4-backfill-wrap {{ position: relative; height: 220px; margin: 4px 0 22px; }}
     .ga4-backfill-wrap canvas {{ max-height: 220px; }}
+    /* Lightweight chart loading skeleton — shimmering placeholder bars */
+    .chart-loading {{
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      gap: 10px;
+      pointer-events: none;
+    }}
+    .chart-loading[hidden] {{ display: none; }}
+    .chart-loading-bars {{
+      display: flex;
+      align-items: flex-end;
+      gap: 6px;
+      height: 100%;
+    }}
+    .chart-loading-bars span {{
+      flex: 1;
+      border-radius: 4px 4px 0 0;
+      background: linear-gradient(90deg, #eef1f5 25%, #e2e8f0 37%, #eef1f5 63%);
+      background-size: 400% 100%;
+      animation: chart-shimmer 1.25s ease-in-out infinite;
+    }}
+    .chart-loading-bars span:nth-child(1)  {{ height: 38%; animation-delay: 0.00s; }}
+    .chart-loading-bars span:nth-child(2)  {{ height: 62%; animation-delay: 0.05s; }}
+    .chart-loading-bars span:nth-child(3)  {{ height: 48%; animation-delay: 0.10s; }}
+    .chart-loading-bars span:nth-child(4)  {{ height: 78%; animation-delay: 0.15s; }}
+    .chart-loading-bars span:nth-child(5)  {{ height: 55%; animation-delay: 0.20s; }}
+    .chart-loading-bars span:nth-child(6)  {{ height: 88%; animation-delay: 0.25s; }}
+    .chart-loading-bars span:nth-child(7)  {{ height: 44%; animation-delay: 0.30s; }}
+    .chart-loading-bars span:nth-child(8)  {{ height: 70%; animation-delay: 0.35s; }}
+    .chart-loading-bars span:nth-child(9)  {{ height: 52%; animation-delay: 0.40s; }}
+    .chart-loading-bars span:nth-child(10) {{ height: 82%; animation-delay: 0.45s; }}
+    .chart-loading-bars span:nth-child(11) {{ height: 46%; animation-delay: 0.50s; }}
+    .chart-loading-bars span:nth-child(12) {{ height: 66%; animation-delay: 0.55s; }}
+    .chart-loading-label {{
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.82);
+      padding: 4px 12px;
+      border-radius: 999px;
+    }}
+    @keyframes chart-shimmer {{
+      0%   {{ background-position: 100% 0; }}
+      100% {{ background-position: -100% 0; }}
+    }}
+    @media (prefers-reduced-motion: reduce) {{
+      .chart-loading-bars span {{ animation: none; }}
+    }}
     .muted {{ color: var(--muted); }}
     .refresh-bar {{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }}
     .refresh-actions {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }}
@@ -2734,11 +2854,10 @@ def render_penn_html(
 </head>
 <body>
   <div class="app-shell">
-    {top_header}
+    {sidebar}
     <div class="dash-main">
       <div class="dash-sticky-chrome">
         <div class="dash-page-header">
-          {view_tabs_html}
           {filters_bar_html}
         </div>
       </div>
@@ -3584,17 +3703,21 @@ def render_penn_html(
       if (!SHOW_WEBSITE_ANALYTICS || !GA4_BACKFILL_URL) return;
       const canvas = document.getElementById('ga4BackfillChart');
       const statusEl = document.getElementById('ga4BackfillStatus');
+      const loadingEl = document.getElementById('ga4BackfillLoading');
       if (!canvas || typeof Chart === 'undefined') return;
       ga4BackfillLoaded = true;
+      if (loadingEl) loadingEl.hidden = false;
       if (statusEl) statusEl.textContent = 'Loading…';
       fetch(GA4_BACKFILL_URL, {{ credentials: 'same-origin' }})
         .then(r => r.json())
         .then(data => {{
           if (!data || !data.ok) {{
+            if (loadingEl) loadingEl.hidden = true;
             if (statusEl) statusEl.textContent = (data && data.error) ? ('Error: ' + data.error) : 'Failed to load coverage.';
             ga4BackfillLoaded = false;
             return;
           }}
+          if (loadingEl) loadingEl.hidden = true;
           const days = data.days || [];
           const labels = days.map(d => d.date);
           const sessions = days.map(d => d.sessions || 0);
@@ -3628,6 +3751,7 @@ def render_penn_html(
           }});
         }})
         .catch(() => {{
+          if (loadingEl) loadingEl.hidden = true;
           if (statusEl) statusEl.textContent = 'Failed to load coverage.';
           ga4BackfillLoaded = false;
         }});
@@ -4431,7 +4555,11 @@ def render_penn_html(
     (function initAiTraffic() {{
       const pillsWrap    = document.getElementById('aiFilterPills');
       const pagesHeading = document.getElementById('ga4PagesHeading');
+      const aiRow        = document.getElementById('websiteAiFilterRow');
       if (!pillsWrap) return;
+      // No AI-referred sessions in this snapshot — keep the control hidden.
+      if (!SHOW_AI_TRAFFIC) {{ if (aiRow) aiRow.hidden = true; return; }}
+      if (aiRow) aiRow.hidden = false;
 
       // ---- pages table bridge ----------------------------------------------
       let aiModeActive   = false;
@@ -4480,20 +4608,29 @@ def render_penn_html(
       }}
 
       // ---- build pills -----------------------------------------------------
-      function makePill(label, sourceId) {{
+      function makePill(label, sourceId, count) {{
         const btn = document.createElement('button');
         btn.type  = 'button';
-        btn.className = 'filter-toggle';
-        btn.textContent = label;
+        btn.className = 'filter-toggle filter-toggle--ai';
         btn.dataset.source = sourceId || '';
         btn.setAttribute('aria-pressed', 'false');
+        const text = document.createElement('span');
+        text.textContent = label;
+        btn.appendChild(text);
+        if (count != null) {{
+          const chip = document.createElement('span');
+          chip.className = 'ai-pill-count';
+          chip.textContent = Number(count).toLocaleString();
+          btn.appendChild(chip);
+        }}
         return btn;
       }}
 
-      // "All AI" is always present
-      pillsWrap.appendChild(makePill('All AI', ''));
-      // Per-source pills only when the snapshot contains AI data
-      aiSources.forEach(s => pillsWrap.appendChild(makePill(s.label, s.id)));
+      // "All AI" aggregates every source's sessions
+      const totalAiSessions = aiSources.reduce((sum, s) => sum + (s.sessions || 0), 0);
+      pillsWrap.appendChild(makePill('All AI', '', totalAiSessions));
+      // Per-source pills, each with its own session count
+      aiSources.forEach(s => pillsWrap.appendChild(makePill(s.label, s.id, s.sessions)));
 
       pillsWrap.addEventListener('click', e => {{
         const btn = e.target.closest('.filter-toggle');
