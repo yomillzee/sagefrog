@@ -147,6 +147,30 @@ def list_google_ads_accounts_for_settings() -> list[dict[str, Any]]:
         return []
 
 
+def list_linkedin_accounts_for_settings() -> list[dict[str, Any]]:
+    """LinkedIn ad accounts available to the connected agency login."""
+    try:
+        import linkedin_service
+
+        if not oauth_store.public_status("linkedin").connected:
+            return []
+        return linkedin_service.list_ad_accounts()
+    except Exception:
+        return []
+
+
+def list_meta_accounts_for_settings() -> list[dict[str, Any]]:
+    """Meta ad accounts available to the connected agency Business Manager."""
+    try:
+        import meta_service
+
+        if not oauth_store.public_status("meta").connected:
+            return []
+        return meta_service.list_ad_accounts()
+    except Exception:
+        return []
+
+
 def list_ga4_clients_for_settings() -> list[dict[str, Any]]:
     """GA4 registry entries for the settings dropdown (empty if BigQuery is not configured)."""
     try:
@@ -1136,6 +1160,87 @@ def render_settings_html(
                 <p class="hint">{_esc(google_accounts_hint)}</p>
               </div>"""
 
+    linkedin_accounts = list_linkedin_accounts_for_settings()
+    linkedin_options = ['<option value="">— None —</option>']
+    selected_linkedin_id = str(cfg.linkedin_account_id or "").strip().split(":")[-1]
+    available_linkedin_ids: set[str] = set()
+    for account in sorted(
+        linkedin_accounts,
+        key=lambda row: str(row.get("name") or row.get("id") or "").casefold(),
+    ):
+        account_id = str(account.get("id") or "").strip().split(":")[-1]
+        if not account_id:
+            continue
+        available_linkedin_ids.add(account_id)
+        label_parts = [str(account.get("name") or "Unnamed LinkedIn account"), account_id]
+        if account.get("status"):
+            label_parts.append(str(account["status"]))
+        selected = " selected" if account_id == selected_linkedin_id else ""
+        linkedin_options.append(
+            f'<option value="{_esc(account_id)}"{selected}>'
+            f'{_esc(" · ".join(label_parts))}</option>'
+        )
+    if selected_linkedin_id and selected_linkedin_id not in available_linkedin_ids:
+        linkedin_options.append(
+            f'<option value="{_esc(selected_linkedin_id)}" selected>'
+            f'{_esc(selected_linkedin_id)} · currently saved (not returned by LinkedIn)</option>'
+        )
+    linkedin_hint = (
+        f"{len(linkedin_accounts)} ad account(s) loaded from the connected agency login."
+        if linkedin_accounts
+        else "No ad accounts loaded. Connect or re-verify LinkedIn in Admin."
+    )
+    linkedin_field = f"""
+              <div>
+                <label for="linkedin_account_id">LinkedIn ad account</label>
+                <select id="linkedin_account_id" name="linkedin_account_id">
+                  {"".join(linkedin_options)}
+                </select>
+                <p class="hint">{_esc(linkedin_hint)}</p>
+              </div>"""
+
+    meta_accounts = list_meta_accounts_for_settings()
+    meta_options = ['<option value="">— None —</option>']
+    selected_meta_id = str(cfg.meta_account_id or "").strip()
+    if selected_meta_id.lower().startswith("act_"):
+        selected_meta_id = selected_meta_id[4:]
+    selected_meta_id = selected_meta_id.split(":")[-1]
+    available_meta_ids: set[str] = set()
+    for account in meta_accounts:
+        account_id = str(account.get("id") or "").strip()
+        if account_id.lower().startswith("act_"):
+            account_id = account_id[4:]
+        account_id = account_id.split(":")[-1]
+        if not account_id:
+            continue
+        available_meta_ids.add(account_id)
+        label_parts = [str(account.get("name") or "Unnamed Meta account"), account_id]
+        if account.get("status"):
+            label_parts.append(str(account["status"]))
+        selected = " selected" if account_id == selected_meta_id else ""
+        meta_options.append(
+            f'<option value="{_esc(account_id)}"{selected}>'
+            f'{_esc(" · ".join(label_parts))}</option>'
+        )
+    if selected_meta_id and selected_meta_id not in available_meta_ids:
+        meta_options.append(
+            f'<option value="{_esc(selected_meta_id)}" selected>'
+            f'{_esc(selected_meta_id)} · currently saved (not returned by Meta)</option>'
+        )
+    meta_hint = (
+        f"{len(meta_accounts)} ad account(s) loaded from the connected Business Manager."
+        if meta_accounts
+        else "No ad accounts loaded. Connect or re-verify Meta in Admin."
+    )
+    meta_field = f"""
+              <div>
+                <label for="meta_account_id">Meta ad account</label>
+                <select id="meta_account_id" name="meta_account_id">
+                  {"".join(meta_options)}
+                </select>
+                <p class="hint">{_esc(meta_hint)}</p>
+              </div>"""
+
     # --- GA4 field (dropdown if registry available, otherwise text input) ---
     ga4_clients_list = list_ga4_clients_for_settings()
     if ga4_clients_list:
@@ -1230,18 +1335,8 @@ def render_settings_html(
                 <input id="label" name="label" type="text" value="{_esc(cfg.label)}" maxlength="120">
               </div>
               {google_ads_field}
-              <div>
-                <label for="linkedin_account_id">LinkedIn account ID</label>
-                <input id="linkedin_account_id" name="linkedin_account_id" type="text"
-                  value="{_esc(cfg.linkedin_account_id or '')}" placeholder="508590994">
-                <p class="hint">Numeric ID from the LinkedIn Campaign Manager URL.</p>
-              </div>
-              <div>
-                <label for="meta_account_id">Meta ad account ID</label>
-                <input id="meta_account_id" name="meta_account_id" type="text"
-                  value="{_esc(cfg.meta_account_id or '')}" placeholder="2581574002135957">
-                <p class="hint">act_XXXXXXXX from Meta Business Manager.</p>
-              </div>
+              {linkedin_field}
+              {meta_field}
               {ga4_field}
               {budget_field}
               <div>
