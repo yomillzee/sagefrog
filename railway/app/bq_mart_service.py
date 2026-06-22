@@ -371,6 +371,38 @@ def _platform_totals(by_date: dict, by_campaign: dict) -> dict[str, Any]:
     }
 
 
+def google_daily_series(
+    *,
+    start: date,
+    end: date,
+    bq_project_id: str | None = None,
+    bq_dataset_id: str | None = None,
+    credentials_env: str | None = None,
+) -> dict[str, Any]:
+    """Per-day Google paid series + totals from the campaign mart.
+
+    Aggregates ``fact_google_ads_campaign_daily`` by date across all campaigns —
+    the canonical campaign-level numbers. This deliberately excludes the
+    account-level non-campaign spend (adjustments, null-campaign rows) that the
+    Google Ads API account total carries, which is why the API daily can read
+    high (e.g. $8,238) vs the mart's correct $6,475.
+
+    Returns ``{"daily": [...], "totals": {...}}``; an empty dict when the mart has
+    no rows for the range (so callers can fall back to the API daily).
+    """
+    rows = fetch_campaign_daily(
+        start=start,
+        end=end,
+        bq_project_id=bq_project_id,
+        bq_dataset_id=bq_dataset_id,
+        credentials_env=credentials_env,
+    )
+    by_date, by_campaign = _aggregate_campaign_rows(rows)
+    if not by_date:
+        return {}
+    return {"daily": _daily_rows(by_date), "totals": _platform_totals(by_date, by_campaign)}
+
+
 def _safe_ratio(num: float, den: float, mult: float = 1.0) -> float:
     return (num / den * mult) if den else 0.0
 

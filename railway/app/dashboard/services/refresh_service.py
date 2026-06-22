@@ -33,6 +33,65 @@ from dashboard.services.warehouse_metrics_service import (
 )
 
 
+def _apply_mart_google_daily(
+    cfg: PennDashboardConfig,
+    payload: dict[str, Any],
+    *,
+    start,
+    end,
+) -> None:
+    """Prefer the BigQuery campaign mart for the Google paid daily series + totals.
+
+    The account-level Google Ads API daily (Postgres metrics_daily) sums every
+    row including non-campaign / adjustment spend, so it can overstate the
+    dashboard's Google total — e.g. Penn showed $8,238 unfiltered vs the mart's
+    correct $6,475 (fact_google_ads_campaign_daily). The mart is the source of
+    truth, so overwrite daily_metrics["google"] + platform_totals["google"] with
+    it when available. Falls back silently to the API daily when the client has
+    no mart project configured or the table isn't populated yet.
+    """
+    if not cfg.google_customer_id:
+        return
+    try:
+        import bq_mart_service
+    except Exception:
+        return
+
+    bq_project_id = credentials_env = None
+    try:
+        import ga4_clients
+        target = ga4_clients.resolve_target(client_key=cfg.ga4_client_key or cfg.client_key)
+        bq_project_id = target.bq_project_id or None
+        credentials_env = target.credentials_env or None
+    except Exception:
+        pass
+
+    try:
+        series = bq_mart_service.google_daily_series(
+            start=start,
+            end=end,
+            bq_project_id=bq_project_id,
+            credentials_env=credentials_env,
+        )
+    except Exception as exc:
+        # Source set up but mart not built yet → expected; fall back to API daily
+        # silently. Only real failures (auth, permission, SQL) surface as warnings.
+        if not bq_mart_service._is_table_not_found(exc):
+            payload.setdefault("errors", {})["google_mart_daily"] = platform_error(exc)
+        return
+
+    if not series:
+        return
+
+    payload.setdefault("daily_metrics", {})["google"] = series["daily"]
+    totals = dict(payload.get("platform_totals") or {})
+    existing = dict(totals.get("google") or {})
+    existing.update(series["totals"])
+    totals["google"] = existing
+    payload["platform_totals"] = totals
+    payload.setdefault("data_sources", {})["google"] = "bigquery_mart"
+
+
 def refresh_client(
     *,
     client_slug: str,
@@ -202,6 +261,7 @@ def refresh_client(
         update_platform_totals=False,
     )
     load_organic_daily_metrics(cfg, start=start, end=end, payload=payload)
+    _apply_mart_google_daily(cfg, payload, start=start, end=end)
     payload["aggregated_paid_media"] = aggregated_paid_media(payload["platform_totals"])
     payload["refresh_mode"] = "full"
     payload["sync_meta"] = sync_meta(sync_trigger)
@@ -297,6 +357,8 @@ def refresh_client_quick(
         update_platform_totals=True,
     )
     load_organic_daily_metrics(cfg, start=start, end=end, payload=payload)
+    _apply_mart_google_daily(cfg, payload, start=start, end=end)
+    payload["aggregated_paid_media"] = aggregated_paid_media(payload.get("platform_totals") or {})
     payload["sync_meta"] = sync_meta(sync_trigger)
 
     dashboard_snapshots.save_snapshot(cfg.client_key, payload)
