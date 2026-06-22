@@ -363,12 +363,91 @@ def list_accessible_customer_ids(*, client: GoogleAdsClient | None = None) -> li
     return sorted(set(ids))
 
 
+def list_accessible_customer_accounts(
+    *,
+    client: GoogleAdsClient | None = None,
+    include_managers: bool = False,
+) -> list[dict[str, Any]]:
+    """Return enabled Google Ads accounts beneath every directly accessible account.
+
+    CustomerService.list_accessible_customers only lists accounts directly available
+    to the OAuth user. For an agency login that is commonly just the manager account,
+    so query customer_client to discover the client accounts below it.
+    """
+    client = client or build_client()
+    root_ids = list_accessible_customer_ids(client=client)
+    query = (
+        "SELECT customer_client.client_customer, customer_client.id, "
+        "customer_client.descriptive_name, customer_client.manager, "
+        "customer_client.level, customer_client.status "
+        "FROM customer_client "
+        "WHERE customer_client.status = 'ENABLED'"
+    )
+    accounts: dict[str, dict[str, Any]] = {}
+
+    for root_id in root_ids:
+        try:
+            rows = search(root_id, query, client=client)
+        except Exception:
+            # A directly accessible advertiser account is still useful even if its
+            # customer_client query is unavailable for an unusual account setup.
+            try:
+                meta = get_account_metadata(root_id, client=client)
+            except Exception:
+                meta = {}
+            if meta.get("manager") and not include_managers:
+                continue
+            accounts.setdefault(
+                root_id,
+                {
+                    "customer_id": root_id,
+                    "descriptive_name": meta.get("descriptive_name"),
+                    "manager": False,
+                    "level": 0,
+                    "status": "ENABLED",
+                    "source_customer_id": root_id,
+                },
+            )
+            continue
+
+        for row in rows:
+            customer = row.get("customer_client") or {}
+            customer_id = str(customer.get("id") or "").replace("-", "").strip()
+            if not customer_id:
+                resource_name = str(customer.get("client_customer") or "")
+                customer_id = resource_name.rsplit("/", 1)[-1].replace("-", "").strip()
+            if not customer_id:
+                continue
+            is_manager = bool(customer.get("manager"))
+            if is_manager and not include_managers:
+                continue
+            candidate = {
+                "customer_id": customer_id,
+                "descriptive_name": customer.get("descriptive_name"),
+                "manager": is_manager,
+                "level": int(customer.get("level") or 0),
+                "status": str(customer.get("status") or "ENABLED"),
+                "source_customer_id": root_id,
+            }
+            existing = accounts.get(customer_id)
+            if existing is None or candidate["level"] < existing["level"]:
+                accounts[customer_id] = candidate
+
+    return sorted(
+        accounts.values(),
+        key=lambda account: (
+            str(account.get("descriptive_name") or "").casefold(),
+            str(account.get("customer_id") or ""),
+        ),
+    )
+
+
 def get_account_metadata(customer_id: str, *, client: GoogleAdsClient | None = None) -> dict[str, Any]:
     client = client or build_client()
     ga_service = client.get_service("GoogleAdsService")
     query = (
         "SELECT customer.id, customer.descriptive_name, customer.currency_code, "
-        "customer.time_zone, customer.status FROM customer LIMIT 1"
+        "customer.time_zone, customer.status, customer.manager FROM customer LIMIT 1"
     )
     resp = ga_service.search(customer_id=customer_id, query=query)
     first = next(iter(resp), None)
@@ -379,6 +458,7 @@ def get_account_metadata(customer_id: str, *, client: GoogleAdsClient | None = N
             "descriptive_name": None,
             "currency_code": None,
             "time_zone": None,
+            "manager": False,
             "status": "ok",
             "error": None,
         }
@@ -389,6 +469,7 @@ def get_account_metadata(customer_id: str, *, client: GoogleAdsClient | None = N
         "descriptive_name": getattr(customer, "descriptive_name", None),
         "currency_code": getattr(customer, "currency_code", None),
         "time_zone": getattr(customer, "time_zone", None),
+        "manager": bool(getattr(customer, "manager", False)),
         "status": "ok",
         "error": None,
     }

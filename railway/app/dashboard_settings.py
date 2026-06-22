@@ -135,6 +135,18 @@ def _unavailable_api_status() -> dict[str, Any]:
     }
 
 
+def list_google_ads_accounts_for_settings() -> list[dict[str, Any]]:
+    """Enabled advertiser accounts beneath the connected agency Google account."""
+    try:
+        import google_ads_service
+
+        if not oauth_store.public_status("google_ads").connected:
+            return []
+        return google_ads_service.list_accessible_customer_accounts()
+    except Exception:
+        return []
+
+
 def list_ga4_clients_for_settings() -> list[dict[str, Any]]:
     """GA4 registry entries for the settings dropdown (empty if BigQuery is not configured)."""
     try:
@@ -370,24 +382,18 @@ def probe_agency_oauth_platform(platform: str) -> dict[str, Any]:
                 "details": [],
             }
         try:
-            ids = google_ads_service.list_accessible_customer_ids()
+            accounts = google_ads_service.list_accessible_customer_accounts()
             details: list[str] = []
-            for cid in ids[:3]:
-                try:
-                    meta = google_ads_service.get_account_metadata(cid)
-                    name = meta.get("descriptive_name") or cid
-                    details.append(
-                        f"{name} · ID {meta.get('customer_id') or cid} · "
-                        f"{meta.get('currency_code') or '—'} · {meta.get('time_zone') or '—'}"
-                    )
-                except Exception:
-                    details.append(f"Customer ID {cid}")
-            extra = f" (+{len(ids) - 3} more)" if len(ids) > 3 else ""
+            for account in accounts[:3]:
+                cid = str(account.get("customer_id") or "")
+                name = account.get("descriptive_name") or cid
+                details.append(f"{name} · ID {cid}")
+            extra = f" (+{len(accounts) - 3} more)" if len(accounts) > 3 else ""
             return {
                 "ok": True,
                 "connected": True,
-                "message": f"OAuth active · {len(ids)} accessible Google Ads account(s){extra}",
-                "details": details or [f"{len(ids)} accessible account(s)"],
+                "message": f"OAuth active · {len(accounts)} accessible Google Ads client account(s){extra}",
+                "details": details or ["No enabled client accounts found beneath the connected account."],
             }
         except Exception as exc:
             return {
@@ -1096,6 +1102,40 @@ def render_settings_html(
     if flash_error:
         notice += f'<div class="notice err">{_esc(flash_error)}</div>'
 
+    google_ads_accounts = list_google_ads_accounts_for_settings()
+    google_options = ['<option value="">— None —</option>']
+    selected_google_id = str(cfg.google_customer_id or "").replace("-", "")
+    available_google_ids: set[str] = set()
+    for account in google_ads_accounts:
+        customer_id = str(account.get("customer_id") or "").replace("-", "")
+        if not customer_id:
+            continue
+        available_google_ids.add(customer_id)
+        label_text = str(account.get("descriptive_name") or "Unnamed Google Ads account")
+        label_text += f" · {customer_id}"
+        selected = " selected" if customer_id == selected_google_id else ""
+        google_options.append(
+            f'<option value="{_esc(customer_id)}"{selected}>{_esc(label_text)}</option>'
+        )
+    if selected_google_id and selected_google_id not in available_google_ids:
+        google_options.append(
+            f'<option value="{_esc(selected_google_id)}" selected>'
+            f'{_esc(selected_google_id)} · currently saved (not returned by Google)</option>'
+        )
+    google_accounts_hint = (
+        f"{len(google_ads_accounts)} enabled client account(s) loaded from the connected agency account."
+        if google_ads_accounts
+        else "No client accounts loaded. Connect or re-verify Google Ads in Admin."
+    )
+    google_ads_field = f"""
+              <div>
+                <label for="google_customer_id">Google Ads account</label>
+                <select id="google_customer_id" name="google_customer_id">
+                  {"".join(google_options)}
+                </select>
+                <p class="hint">{_esc(google_accounts_hint)}</p>
+              </div>"""
+
     # --- GA4 field (dropdown if registry available, otherwise text input) ---
     ga4_clients_list = list_ga4_clients_for_settings()
     if ga4_clients_list:
@@ -1189,12 +1229,7 @@ def render_settings_html(
                 <label for="label">Display label</label>
                 <input id="label" name="label" type="text" value="{_esc(cfg.label)}" maxlength="120">
               </div>
-              <div>
-                <label for="google_customer_id">Google Ads customer ID</label>
-                <input id="google_customer_id" name="google_customer_id" type="text"
-                  value="{_esc(cfg.google_customer_id or '')}" placeholder="1549971930">
-                <p class="hint">10-digit customer ID (dashes optional). Data arrives in BigQuery via Google's Data Transfer Service.</p>
-              </div>
+              {google_ads_field}
               <div>
                 <label for="linkedin_account_id">LinkedIn account ID</label>
                 <input id="linkedin_account_id" name="linkedin_account_id" type="text"
