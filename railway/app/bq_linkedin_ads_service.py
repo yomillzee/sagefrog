@@ -34,7 +34,7 @@ _CREATIVE_METADATA_FIELDS = (
 )
 
 _DEFAULT_PROJECT = "penn-community-b-1699391543298"
-_DEFAULT_DATASET = "linkedin_ads"
+_DEFAULT_DATASET = "raw_linkedin_ads"
 _METRICS_TABLE = "metrics_daily"
 _CAMPAIGN_TABLE = "campaign_daily"
 _DEFAULT_MART_DATASET = "marketing_marts"
