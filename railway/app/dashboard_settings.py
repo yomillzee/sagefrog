@@ -1408,6 +1408,7 @@ def render_settings_html(
       function badge(s) {{
         var map = {{
           feeding: ['#0a7f3f', '#e6f5ec', 'Feeding'],
+          fallback: ['#1d4ed8', '#e8efff', 'API fallback'],
           empty: ['#92600a', '#fdf3e2', 'Empty'],
           missing: ['#92600a', '#fdf3e2', 'Not set up'],
           not_configured: ['#64748b', '#eef1f5', 'Not configured'],
