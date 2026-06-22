@@ -44,7 +44,7 @@ def route(*, bq_project_id: str | None = None, credentials_env: str | None = Non
         with bigquery_warehouse.route(
             bq_project_id=payload["project"],
             credentials_env=payload["credentials_env"],
-            meta_dataset_id=(os.getenv("BQ_META_DATASET_ID") or "meta_data").strip(),
+            meta_dataset_id=(os.getenv("BQ_META_DATASET_ID") or "raw_meta_ads").strip(),
         ):
             yield
     finally:
