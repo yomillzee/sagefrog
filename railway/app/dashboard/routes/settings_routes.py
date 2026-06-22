@@ -44,6 +44,7 @@ def dashboard_client_settings(
     bl_rules_saved: str | None = None,
     theme_saved: str | None = None,
     sections_saved: str | None = None,
+    bq_error: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
     flash = (
@@ -69,6 +70,7 @@ def dashboard_client_settings(
                 client_slug=slug,
                 cfg=cfg,
                 flash_message=flash,
+                flash_error=(f"Settings saved, but BigQuery setup needs attention: {bq_error}" if bq_error else None),
                 db_config_updated_at=_config_updated_at(slug),
                 **dashboard_settings_session_kwargs(auth),
             )
@@ -81,6 +83,7 @@ def dashboard_client_settings(
             cfg=cfg,
             access_key=key,
             flash_message=flash,
+            flash_error=(f"Settings saved, but BigQuery setup needs attention: {bq_error}" if bq_error else None),
             db_config_updated_at=_config_updated_at(slug),
         )
     )
@@ -194,6 +197,22 @@ def dashboard_client_settings_post(
             client_dashboard_config.save_monthly_budget(
                 slug, budget, updated_by=session_email or "dashboard_key",
             )
+            bq_setup_error: str | None = None
+            try:
+                import client_bigquery_setup
+
+                client_bigquery_setup.ensure_client_bigquery(
+                    client_key=ga4_client_key or slug,
+                    needs_linkedin=bool(linkedin_account_id.strip()),
+                    needs_meta=bool(meta_account_id.strip()),
+                    needs_mart=bool(
+                        google_customer_id.strip()
+                        or linkedin_account_id.strip()
+                        or meta_account_id.strip()
+                    ),
+                )
+            except Exception as bq_exc:
+                bq_setup_error = str(bq_exc)[:300]
             cfg = client_config.load_client_config(slug)
             dashboard_service.patch_snapshot_from_config(cfg)
             audit_log.record(
@@ -213,10 +232,13 @@ def dashboard_client_settings_post(
                 ),
                 status_code=400,
             )
+        bq_error_param = f"&bq_error={quote(bq_setup_error, safe='')}" if bq_setup_error else ""
         if use_session:
-            return RedirectResponse(url=f"/dashboard/{slug}/settings?saved=1", status_code=303)
+            return RedirectResponse(
+                url=f"/dashboard/{slug}/settings?saved=1{bq_error_param}", status_code=303
+            )
         return RedirectResponse(
-            url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&saved=1",
+            url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&saved=1{bq_error_param}",
             status_code=303,
         )
 
@@ -442,7 +464,7 @@ def dashboard_client_settings_post(
                 days = result.get("days_missing", "")
                 flash_msg = (
                     f"GSC backfill started in the background ({days} days missing). "
-                    "Data will appear after ~15 minutes — then click Refresh on the dashboard."
+                    "Data will appear after ~15 minutes â€” then click Refresh on the dashboard."
                 )
             elif status == "synced":
                 q = result.get("query_rows", 0)
