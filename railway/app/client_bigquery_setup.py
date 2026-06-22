@@ -10,8 +10,9 @@ from uuid import uuid4
 
 def dataset_ids() -> dict[str, str]:
     return {
-        "linkedin": (os.getenv("BQ_LINKEDIN_DATASET_ID") or "linkedin_ads").strip(),
-        "meta": (os.getenv("BQ_META_DATASET_ID") or "meta_data").strip(),
+        "google": (os.getenv("BQ_GOOGLE_DATASET_ID") or "raw_google_ads").strip(),
+        "linkedin": (os.getenv("BQ_LINKEDIN_DATASET_ID") or "raw_linkedin_ads").strip(),
+        "meta": (os.getenv("BQ_META_DATASET_ID") or "raw_meta_ads").strip(),
         "mart": (os.getenv("BQ_MART_DATASET_ID") or "marketing_marts").strip(),
     }
 
@@ -51,14 +52,20 @@ def _ensure_writable_dataset(
     return full_dataset_id
 
 
-def ensure_client_bigquery(
+def ensure_client_bq_resources(
     *,
     client_key: str,
+    needs_google: bool,
     needs_linkedin: bool,
     needs_meta: bool,
     needs_mart: bool,
 ) -> dict[str, Any]:
-    """Create required datasets and verify query + write permissions."""
+    """Idempotently provision app-owned datasets and validate client access.
+
+    The Google raw dataset belongs to BigQuery Data Transfer Service.  It is
+    deliberately verified elsewhere and is never created here, because an
+    empty app-created dataset would falsely imply that the transfer exists.
+    """
     import bigquery_service
     import ga4_clients
 
@@ -111,4 +118,21 @@ def ensure_client_bigquery(
         "service_account_email": str(resolved.credentials.get("client_email") or ""),
         "location": location,
         "datasets": ready,
+        "native_sources": {
+            "google": {
+                "required": bool(needs_google),
+                "dataset": f"{project_id}.{ids['google']}",
+                "managed_by": "bigquery_data_transfer_service",
+            },
+            "ga4": {
+                "required": True,
+                "dataset": f"{project_id}.{resolved.bq_dataset_id}",
+                "managed_by": "google_analytics_export",
+            },
+        },
     }
+
+
+def ensure_client_bigquery(**kwargs: Any) -> dict[str, Any]:
+    """Backward-compatible alias for callers deployed before the refactor."""
+    return ensure_client_bq_resources(**kwargs)
