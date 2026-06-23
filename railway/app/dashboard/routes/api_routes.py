@@ -12,7 +12,7 @@ from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBea
 import nixon_marketing_service
 import web_auth
 import web_users
-from dashboard.renderers.nixon_bq_renderer import render_nixon_bigquery_portal
+from dashboard.renderers.nixon_bq_test_renderer import render_nixon_bigquery_test_page
 from dashboard.routes.helpers import penn_html_session_kwargs
 from security import configured_api_key, is_production
 
@@ -73,21 +73,21 @@ def _authorize_nixon_api(
 
 
 @router.get(
-    "/dashboard/nixon",
+    "/dashboard/nixon-bq-test",
     response_class=HTMLResponse,
     include_in_schema=False,
 )
-def nixon_bigquery_dashboard(request: Request, key: str | None = None):
+def nixon_bigquery_test_dashboard(request: Request, key: str | None = None):
     if web_users.enabled():
         auth = web_auth.authenticate_dashboard(request, client_slug="nixon", key=key)
         if isinstance(auth, RedirectResponse):
             return auth
-        return HTMLResponse(render_nixon_bigquery_portal(**penn_html_session_kwargs(auth)))
+        return HTMLResponse(render_nixon_bigquery_test_page(**penn_html_session_kwargs(auth)))
 
     if not web_auth.legacy_dashboard_key_ok(key):
         raise HTTPException(status_code=401, detail="Invalid or missing dashboard key.")
     return HTMLResponse(
-        render_nixon_bigquery_portal(
+        render_nixon_bigquery_test_page(
             access_key=key,
             use_session=False,
             session_email=None,
@@ -132,6 +132,44 @@ def nixon_marketing(
             start_date=start,
             end_date=end,
             top_limit=top_limit,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)[:500]) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/summary",
+    summary="Client paid media summary from BigQuery marketing mart",
+)
+def client_summary(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(
+        default=None,
+        description="Inclusive start date. Defaults to 29 days before end_date/today.",
+    ),
+    end_date: date | None = Query(
+        default=None,
+        description="Inclusive end date. Defaults to today.",
+    ),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    if normalized != "nixon":
+        raise HTTPException(status_code=404, detail=f"Summary is not available for client '{client_key}'.")
+    _authorize_nixon_api(
+        request,
+        key=key,
+        bearer_credentials=bearer_credentials,
+        x_api_key=x_api_key,
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        return nixon_marketing_service.fetch_nixon_summary(
+            start_date=start,
+            end_date=end,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)[:500]) from exc
