@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import hmac
+import logging
+import traceback
 from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, Request, Security
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
+import bigquery_service
 import nixon_marketing_service
 import web_auth
 import web_users
@@ -17,6 +20,7 @@ from dashboard.routes.helpers import penn_html_session_kwargs
 from security import configured_api_key, is_production
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 _bearer = HTTPBearer(auto_error=False)
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -70,6 +74,18 @@ def _authorize_nixon_api(
     if web_auth.legacy_dashboard_key_ok(key):
         return
     raise HTTPException(status_code=401, detail="Sign in or provide a valid API key.")
+
+
+def _nixon_endpoint_failure(exc: Exception) -> HTTPException:
+    logger.exception("Nixon endpoint failed")
+    logger.error("Nixon endpoint traceback:\n%s", traceback.format_exc())
+    return HTTPException(
+        status_code=500,
+        detail={
+            "error": str(exc),
+            "type": type(exc).__name__,
+        },
+    )
 
 
 @router.get(
@@ -134,7 +150,7 @@ def nixon_marketing(
             top_limit=top_limit,
         )
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)[:500]) from exc
+        raise _nixon_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -172,7 +188,7 @@ def client_summary(
             end_date=end,
         )
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)[:500]) from exc
+        raise _nixon_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -200,7 +216,39 @@ def nixon_marketing_health(
     try:
         return nixon_marketing_service.fetch_nixon_marketing_health(limit=limit)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)[:500]) from exc
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/health",
+    summary="Client paid media mart health from BigQuery",
+)
+def client_health(
+    client_key: str,
+    request: Request,
+    limit: int = Query(
+        default=100,
+        ge=1,
+        le=500,
+        description="Maximum health rows to return.",
+    ),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    if normalized != "nixon":
+        raise HTTPException(status_code=404, detail=f"Health is not available for client '{client_key}'.")
+    _authorize_nixon_api(
+        request,
+        key=key,
+        bearer_credentials=bearer_credentials,
+        x_api_key=x_api_key,
+    )
+    try:
+        return nixon_marketing_service.fetch_nixon_marketing_health(limit=limit)
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -234,4 +282,28 @@ def nixon_google_ads_explorer(
             end_date=end,
         )
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)[:500]) from exc
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get("/api/debug/bq", summary="Debug BigQuery client identity")
+def debug_bigquery_identity(
+    request: Request,
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(
+        request,
+        key=key,
+        bearer_credentials=bearer_credentials,
+        x_api_key=x_api_key,
+    )
+    try:
+        client = bigquery_service.build_client(project_id="nixon-medical")
+        credentials = getattr(client, "_credentials", None) or getattr(client, "credentials", None)
+        return {
+            "project": client.project,
+            "service_account": getattr(credentials, "service_account_email", None),
+        }
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
