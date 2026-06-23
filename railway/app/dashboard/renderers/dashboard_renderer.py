@@ -680,6 +680,17 @@ def render_penn_html(
     has_ga4_summary = bool((ga4_pages_report or {}).get("summary"))
     show_website_tab = features.website_analytics and has_ga4
     _gsc_data = snapshot.get("gsc")
+    # Suppress GSC for clients with no GSC BQ configuration — prevents Penn's
+    # data from leaking via the default fallback into an unrelated client's tab.
+    if _gsc_data and client_slug:
+        try:
+            import gsc_clients as _gsc_c
+            _gsc_target = _gsc_c.resolve_target(client_slug)
+            _is_penn_client = client_slug in ("penn",) or client_slug.startswith("penn-")
+            if _gsc_target.is_default_fallback and not _is_penn_client:
+                _gsc_data = None
+        except Exception:
+            pass
     if _gsc_data and _vr_preset != preset:
         _cached_gsc = (snapshot.get("gsc_by_preset") or {}).get(_vr_preset)
         if _cached_gsc:
@@ -735,7 +746,7 @@ def render_penn_html(
     filters_bar_html = global_filters_bar_html(
         show_segment_filters=show_segment_filters,
         show_product_line_filters=show_product_line_filters,
-        show_channel_filters=bool(platform_catalog_list),
+        show_channel_filters=bool(platform_catalog_list) and bool(bl_campaigns),
         show_date_range_filter=slug in {"penn", "penn-bq-test"},
         show_website_search=show_website_tab and has_ga4_pages,
         date_range_label=_preset_to_label(_vr_preset),

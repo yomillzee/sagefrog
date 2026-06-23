@@ -492,6 +492,15 @@ def check_tables(client_slug: str | None = None) -> dict[str, Any]:
 def build_gsc_snapshot(*, start: date, end: date, client_slug: str | None = None) -> dict[str, Any]:
     from concurrent.futures import ThreadPoolExecutor
 
+    # Skip entirely for clients with no GSC BQ config — avoids leaking Penn's data
+    # into an unrelated client's dashboard when resolve_target falls back to default.
+    if client_slug:
+        import gsc_clients as _gsc_c
+        _t = _gsc_c.resolve_target(client_slug)
+        _is_penn = client_slug in ("penn",) or client_slug.startswith("penn-")
+        if _t.is_default_fallback and not _is_penn:
+            return {}
+
     tasks = {
         "kpis":        lambda: fetch_kpis_with_comparison(start=start, end=end),
         "daily":       lambda: fetch_daily(start=start, end=end),
