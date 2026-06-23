@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import hmac
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request, Security
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 import nixon_marketing_service
-from security import require_api_key
+import web_auth
+import web_users
+from dashboard.renderers.nixon_bq_renderer import render_nixon_bigquery_portal
+from dashboard.routes.helpers import penn_html_session_kwargs
+from security import configured_api_key, is_production
 
 router = APIRouter()
+_bearer = HTTPBearer(auto_error=False)
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 def _resolve_nixon_marketing_dates(
@@ -31,12 +40,68 @@ def _resolve_nixon_marketing_dates(
     return start_date, end_date
 
 
+def _api_key_is_valid(
+    bearer_credentials: HTTPAuthorizationCredentials | None,
+    x_api_key: str | None,
+) -> bool:
+    expected = configured_api_key()
+    if not expected:
+        return not is_production()
+    token: str | None = None
+    if bearer_credentials and bearer_credentials.credentials:
+        token = bearer_credentials.credentials.strip()
+    elif x_api_key:
+        token = x_api_key.strip()
+    return bool(token and hmac.compare_digest(token, expected))
+
+
+def _authorize_nixon_api(
+    request: Request,
+    *,
+    key: str | None,
+    bearer_credentials: HTTPAuthorizationCredentials | None,
+    x_api_key: str | None,
+) -> None:
+    if _api_key_is_valid(bearer_credentials, x_api_key):
+        return
+    if web_users.enabled():
+        web_auth.authenticate_dashboard_api(request, client_slug="nixon", key=key)
+        return
+    if web_auth.legacy_dashboard_key_ok(key):
+        return
+    raise HTTPException(status_code=401, detail="Sign in or provide a valid API key.")
+
+
+@router.get(
+    "/dashboard/nixon",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def nixon_bigquery_dashboard(request: Request, key: str | None = None):
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug="nixon", key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        return HTMLResponse(render_nixon_bigquery_portal(**penn_html_session_kwargs(auth)))
+
+    if not web_auth.legacy_dashboard_key_ok(key):
+        raise HTTPException(status_code=401, detail="Invalid or missing dashboard key.")
+    return HTMLResponse(
+        render_nixon_bigquery_portal(
+            access_key=key,
+            use_session=False,
+            session_email=None,
+            session_is_admin=False,
+        )
+    )
+
+
 @router.get(
     "/api/clients/nixon/marketing",
-    dependencies=[Depends(require_api_key)],
     summary="Nixon paid media performance from BigQuery marketing mart",
 )
 def nixon_marketing(
+    request: Request,
     start_date: date | None = Query(
         default=None,
         description="Inclusive start date. Defaults to 29 days before end_date/today.",
@@ -51,7 +116,16 @@ def nixon_marketing(
         le=100,
         description="Number of top campaigns by spend to return.",
     ),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
+    _authorize_nixon_api(
+        request,
+        key=key,
+        bearer_credentials=bearer_credentials,
+        x_api_key=x_api_key,
+    )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
         return nixon_marketing_service.fetch_nixon_marketing(
@@ -65,18 +139,61 @@ def nixon_marketing(
 
 @router.get(
     "/api/clients/nixon/marketing/health",
-    dependencies=[Depends(require_api_key)],
     summary="Nixon paid media mart health from BigQuery",
 )
 def nixon_marketing_health(
+    request: Request,
     limit: int = Query(
         default=100,
         ge=1,
         le=500,
         description="Maximum mart_health rows to return.",
     ),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
+    _authorize_nixon_api(
+        request,
+        key=key,
+        bearer_credentials=bearer_credentials,
+        x_api_key=x_api_key,
+    )
     try:
         return nixon_marketing_service.fetch_nixon_marketing_health(limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)[:500]) from exc
+
+
+@router.get(
+    "/api/clients/nixon/google-ads/explorer",
+    summary="Nixon Google Ads explorer from BigQuery marketing mart",
+)
+def nixon_google_ads_explorer(
+    request: Request,
+    start_date: date | None = Query(
+        default=None,
+        description="Inclusive start date. Defaults to 29 days before end_date/today.",
+    ),
+    end_date: date | None = Query(
+        default=None,
+        description="Inclusive end date. Defaults to today.",
+    ),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(
+        request,
+        key=key,
+        bearer_credentials=bearer_credentials,
+        x_api_key=x_api_key,
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        return nixon_marketing_service.fetch_nixon_google_ads_explorer(
+            start_date=start,
+            end_date=end,
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)[:500]) from exc
