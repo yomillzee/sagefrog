@@ -49,6 +49,16 @@ def _table_freshness(client: Any, table_id: str, *, date_column: str = "date") -
         f"SELECT COUNT(*) AS row_count, CAST(MAX({date_column}) AS STRING) AS data_through "
         f"FROM `{table_id}`"
     )
+    rows = list(client.query(sql).result(max_results=1))
+    row = rows[0] if rows else None
+    count = int(getattr(row, "row_count", 0) or 0)
+    through = getattr(row, "data_through", None)
+    return _status(
+        "success" if count else "pending_data",
+        table=table_id,
+        row_count=count,
+        data_through=str(through) if through else None,
+    )
 
 
 def _latest_table_date(tables: list[Any]) -> str | None:
@@ -61,16 +71,6 @@ def _latest_table_date(tables: list[Any]) -> str | None:
         return None
     latest = max(suffixes)
     return f"{latest[:4]}-{latest[4:6]}-{latest[6:]}"
-    rows = list(client.query(sql).result(max_results=1))
-    row = rows[0] if rows else None
-    count = int(getattr(row, "row_count", 0) or 0)
-    through = getattr(row, "data_through", None)
-    return _status(
-        "success" if count else "pending_data",
-        table=table_id,
-        row_count=count,
-        data_through=str(through) if through else None,
-    )
 
 
 def verify_native_sources(

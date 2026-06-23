@@ -554,8 +554,13 @@ def rebuild_linkedin_campaign_daily_mart() -> dict[str, Any]:
         )
         else "0"
     )
+    # Built as a VIEW (always live off the raw mirror) to match the Google fact
+    # (create_google_campaign_mart_view) and the unified mart. metric_date is
+    # aliased to `date` because every consumer — campaign_daily_sql,
+    # bq_mart_service.fetch_linkedin_campaign_daily, and rebuild_unified_marketing_mart
+    # — reads `date`. Emitting raw `metric_date` here silently broke those reads.
     sql = f"""
-    CREATE OR REPLACE TABLE `{table_id}` AS
+    CREATE OR REPLACE VIEW `{table_id}` AS
     SELECT
       cd.source,
       CAST(cd.account_id AS STRING) AS account_id,
@@ -568,7 +573,7 @@ def rebuild_linkedin_campaign_daily_mart() -> dict[str, Any]:
       CAST(c.campaign_status AS STRING) AS campaign_status,
       CAST(c.campaign_group_id AS STRING) AS campaign_group_id,
       CAST(c.campaign_group_name AS STRING) AS campaign_group_name,
-      cd.metric_date,
+      cd.metric_date AS date,
       cd.spend,
       cd.clicks,
       cd.impressions,
@@ -581,13 +586,16 @@ def rebuild_linkedin_campaign_daily_mart() -> dict[str, Any]:
       ON CAST(cd.account_id AS STRING) = CAST(c.account_id AS STRING)
      AND CAST(cd.campaign_id AS STRING) = CAST(c.campaign_id AS STRING)
     """
+    # CREATE OR REPLACE VIEW cannot replace a pre-existing TABLE of the same name;
+    # drop a stale materialized fact (from the old table-based rebuild) first.
     try:
-        if client.get_table(table_id).table_type == "VIEW":
-            return {"enabled": True, "table": table_id, "skipped": True, "reason": "target_is_view"}
+        existing = client.get_table(table_id)
+        if str(getattr(existing, "table_type", "")).upper() == "TABLE":
+            client.delete_table(table_id, not_found_ok=True)
     except Exception:
         pass
     client.query(sql).result()
-    return {"enabled": True, "table": table_id}
+    return {"enabled": True, "table": table_id, "object_type": "view"}
 
 
 def _ad_daily_schema() -> list[Any]:
