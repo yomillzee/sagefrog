@@ -26,8 +26,11 @@ def render_nixon_bigquery_test_page(
     session_email: str | None = None,
     session_is_admin: bool = False,
 ) -> str:
+    # Default to the "Last 30 days" preset: 30 complete days ending yesterday
+    # (today is partial, excluded).
     today = date.today()
-    start = today - timedelta(days=29)
+    end = today - timedelta(days=1)
+    start = today - timedelta(days=30)
     account_html = ""
     if use_session and session_email:
         admin_link = '<a href="/admin">Admin</a>' if session_is_admin else ""
@@ -115,7 +118,7 @@ def render_nixon_bigquery_test_page(
   <main>
     <form class="toolbar" id="filters">
       <label>Start date<input id="startDate" type="date" value="{start.isoformat()}"></label>
-      <label>End date<input id="endDate" type="date" value="{today.isoformat()}"></label>
+      <label>End date<input id="endDate" type="date" value="{end.isoformat()}"></label>
       <button class="primary" type="submit">Refetch all modules</button>
     </form>
     <div class="filter-row" id="datePresetsRow">
