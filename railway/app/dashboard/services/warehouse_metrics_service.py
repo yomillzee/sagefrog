@@ -266,8 +266,12 @@ def sync_campaign_daily(
                 if source == "linkedin":
                     bigquery_warehouse.ensure_linkedin_campaigns_table()
                     bigquery_warehouse.rebuild_linkedin_campaign_daily_mart()
-            except Exception:
-                pass
+            except Exception as exc:
+                # Surface a failed BQ mirror as a refresh warning instead of
+                # swallowing it. A silent except here is exactly what made a
+                # broken LinkedIn→BQ write look like a dead cron: the Postgres
+                # warehouse stayed fresh while BQ silently fell behind.
+                payload.setdefault("errors", {})[f"{source}_bq_mirror"] = platform_error(exc)
         except Exception as exc:
             payload.setdefault("errors", {})[f"{source}_campaign_daily_sync"] = platform_error(exc)
 
