@@ -12,6 +12,7 @@ _PROJECT_ID = "nixon-medical"
 _DATASET_ID = "marketing_marts"
 _FACT_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.fact_marketing_daily`"
 _HEALTH_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.mart_health`"
+_GOOGLE_ADS_EXPLORER_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.explorer_google_ads_daily`"
 
 
 def _job_config(**params: bigquery.ScalarQueryParameter) -> bigquery.QueryJobConfig:
@@ -141,3 +142,47 @@ def fetch_nixon_marketing_health(*, limit: int = 100) -> dict[str, Any]:
         max_rows=limit,
     )
     return {"client": "nixon", "row_count": len(rows), "rows": rows}
+
+
+def fetch_nixon_google_ads_explorer(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    sql = f"""
+    SELECT
+      source,
+      campaign_id,
+      campaign_name,
+      ad_group_id,
+      ad_group_name,
+      ad_id,
+      ad_label,
+      ROUND(SUM(spend), 2) AS spend,
+      SUM(impressions) AS impressions,
+      SUM(clicks) AS clicks,
+      SUM(conversions) AS conversions,
+      SUM(conversion_value) AS conversion_value
+    FROM {_GOOGLE_ADS_EXPLORER_TABLE}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY
+      source, campaign_id, campaign_name, ad_group_id, ad_group_name, ad_id, ad_label
+    ORDER BY spend DESC
+    """
+    rows = _run_query(
+        sql,
+        params={
+            "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+            "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+        },
+        max_rows=20000,
+    )
+    return {
+        "client": "nixon",
+        "date_range": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+        "row_count": len(rows),
+        "rows": rows,
+    }

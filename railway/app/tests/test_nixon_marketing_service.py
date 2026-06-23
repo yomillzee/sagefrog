@@ -64,6 +64,21 @@ class _FakeClient:
 
     def query(self, sql, job_config=None):
         self.calls.append({"sql": sql, "job_config": job_config})
+        if "explorer_google_ads_daily" in sql:
+            return _FakeQueryJob([{
+                "source": "google",
+                "campaign_id": "c1",
+                "campaign_name": "Campaign 1",
+                "ad_group_id": "ag1",
+                "ad_group_name": "Ad Group 1",
+                "ad_id": "ad1",
+                "ad_label": "Ad 1",
+                "spend": 25,
+                "impressions": 250,
+                "clicks": 10,
+                "conversions": 2,
+                "conversion_value": 50,
+            }])
         if "GROUP BY source, campaign_id" in sql:
             return _FakeQueryJob([{
                 "source": "google",
@@ -165,6 +180,36 @@ class NixonMarketingServiceTests(unittest.TestCase):
             for param in fake_client.calls[0]["job_config"].query_parameters
         }
         self.assertEqual(params["limit"], 25)
+
+    def test_google_ads_explorer_queries_only_parameterized_marketing_mart(self) -> None:
+        fake_client = _FakeClient()
+
+        with patch.object(
+            nixon_marketing_service.bigquery_service,
+            "build_client",
+            return_value=fake_client,
+        ):
+            payload = nixon_marketing_service.fetch_nixon_google_ads_explorer(
+                start_date=date(2026, 6, 1),
+                end_date=date(2026, 6, 30),
+            )
+
+        self.assertEqual(payload["client"], "nixon")
+        self.assertEqual(payload["row_count"], 1)
+        self.assertEqual(payload["rows"][0]["ad_id"], "ad1")
+        self.assertEqual(len(fake_client.calls), 1)
+        sql = fake_client.calls[0]["sql"]
+        self.assertIn("`nixon-medical.marketing_marts.explorer_google_ads_daily`", sql)
+        self.assertIn("WHERE date BETWEEN @start_date AND @end_date", sql)
+        self.assertNotIn("raw_google_ads", sql)
+        self.assertNotIn("raw_linkedin_ads", sql)
+        self.assertNotIn("staging", sql.lower())
+        params = {
+            param.name: param.value
+            for param in fake_client.calls[0]["job_config"].query_parameters
+        }
+        self.assertEqual(params["start_date"], date(2026, 6, 1))
+        self.assertEqual(params["end_date"], date(2026, 6, 30))
 
 
 if __name__ == "__main__":
