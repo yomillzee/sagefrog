@@ -129,6 +129,10 @@ def render_nixon_bigquery_test_page(
           <button type="button" class="chip" data-preset="last_90">Last 90 days</button>
         </div>
       </div>
+      <div class="filter-group">
+        <span class="filter-label">Platform</span>
+        <div class="chips" id="platformChips"></div>
+      </div>
     </div>
 
     <section>
@@ -202,25 +206,50 @@ def render_nixon_bigquery_test_page(
       el.innerHTML = `<thead><tr>${{columns.map(c => `<th class="${{c.left ? 'left' : ''}}">${{esc(c.label)}}</th>`).join('')}}</tr></thead>` +
         `<tbody>${{rows.map(row => `<tr>${{columns.map(c => `<td class="${{c.left ? 'left' : ''}}">${{esc(c.format ? c.format(row[c.key], row) : row[c.key])}}</td>`).join('')}}</tr>`).join('')}}</tbody>`;
     }}
+    const SUMMARY_CARDS = [
+      ['spend', 'Spend', money],
+      ['impressions', 'Impressions', count],
+      ['clicks', 'Clicks', count],
+      ['conversions', 'Conversions', count],
+      ['cpc', 'CPC', money],
+      ['cpa', 'CPA', money],
+      ['ctr', 'CTR', pct],
+    ];
+    // Platform filter is shared by the summary cards and the explorer. Stored as
+    // display labels ('Google'/'LinkedIn'); lowercased to match source keys.
+    const platformFilter = new Set();
+    let summaryPayload = null;
+    function selectedSummary() {{
+      if (!summaryPayload) return {{}};
+      const by = summaryPayload.by_source || null;
+      // No per-source breakdown (live endpoint) or no platform selected → combined.
+      if (!by || platformFilter.size === 0) return summaryPayload.summary || {{}};
+      const acc = {{ spend:0, impressions:0, clicks:0, conversions:0 }};
+      for (const p of platformFilter) {{
+        const src = by[p.toLowerCase()];
+        if (!src) continue;
+        acc.spend += num(src.spend); acc.impressions += num(src.impressions);
+        acc.clicks += num(src.clicks); acc.conversions += num(src.conversions);
+      }}
+      return {{ ...acc,
+        cpc: acc.clicks ? acc.spend / acc.clicks : 0,
+        cpa: acc.conversions ? acc.spend / acc.conversions : 0,
+        ctr: acc.impressions ? acc.clicks / acc.impressions * 100 : 0 }};
+    }}
+    function renderSummary() {{
+      const s = selectedSummary();
+      summaryCards.innerHTML = SUMMARY_CARDS.map(([key, label, format]) => `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{format(s[key])}}</div></div>`).join('');
+    }}
     async function loadSummary() {{
       setStatus('summaryStatus', 'Loading summary...');
-      summaryCards.innerHTML = '';
       try {{
-        const payload = await getJson(withDates(SUMMARY_API));
-        const s = payload.summary || {{}};
-        const cards = [
-          ['spend', 'Spend', money],
-          ['impressions', 'Impressions', count],
-          ['clicks', 'Clicks', count],
-          ['conversions', 'Conversions', count],
-          ['cpc', 'CPC', money],
-          ['cpa', 'CPA', money],
-          ['ctr', 'CTR', pct],
-        ];
-        summaryCards.innerHTML = cards.map(([key, label, format]) => `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{format(s[key])}}</div></div>`).join('');
-        setRaw('summaryJson', payload);
-        setStatus('summaryStatus', `Loaded ${{payload.start_date}} to ${{payload.end_date}} from fact_marketing_daily.`);
+        summaryPayload = await getJson(withDates(SUMMARY_API));
+        renderSummary();
+        setRaw('summaryJson', summaryPayload);
+        const note = summaryPayload.by_source ? '' : ' (no per-platform breakdown — showing combined)';
+        setStatus('summaryStatus', `Loaded ${{summaryPayload.start_date}} to ${{summaryPayload.end_date}} from fact_marketing_daily.${{note}}`);
       }} catch (err) {{
+        summaryPayload = null;
         setStatus('summaryStatus', err.message || String(err), true);
         setRaw('summaryJson', {{ error: err.message || String(err) }});
       }}
@@ -261,7 +290,7 @@ def render_nixon_bigquery_test_page(
     const productFilter = new Set();
     const regionFilter = new Set();
     let explorerRows = [];
-    function buildChips(containerId, keys, stateSet) {{
+    function buildChips(containerId, keys, stateSet, onChange) {{
       const el = document.getElementById(containerId);
       el.innerHTML = ['All', ...keys].map(k => `<button type="button" class="chip" data-key="${{esc(k)}}">${{esc(k)}}</button>`).join('');
       el.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {{
@@ -270,7 +299,7 @@ def render_nixon_bigquery_test_page(
         else if (stateSet.has(key)) stateSet.delete(key);
         else stateSet.add(key);
         syncChips(el, stateSet);
-        renderExplorer();
+        (onChange || renderExplorer)();
       }}));
       syncChips(el, stateSet);
     }}
@@ -285,7 +314,8 @@ def render_nixon_bigquery_test_page(
       const name = String(row.campaign_name || '');
       const prodOk = !productFilter.size || [...productFilter].some(k => PRODUCT_RULES[k].test(name));
       const regOk = !regionFilter.size || [...regionFilter].some(k => REGION_RULES[k].test(name));
-      return prodOk && regOk;
+      const platOk = !platformFilter.size || [...platformFilter].some(k => k.toLowerCase() === (row.platform || ''));
+      return prodOk && regOk && platOk;
     }}
     // Group flat ad rows into campaign > ad group > ad, summing metrics at each level.
     function zeroMetrics() {{ return {{ spend:0, impressions:0, clicks:0, conversions:0 }}; }}
@@ -412,6 +442,7 @@ def render_nixon_bigquery_test_page(
     }}
     buildChips('productChips', ['Apparel', 'Scrubs', 'Linens'], productFilter);
     buildChips('regionChips', ['TX', 'FL', 'MA'], regionFilter);
+    buildChips('platformChips', ['Google', 'LinkedIn'], platformFilter, () => {{ renderSummary(); renderExplorer(); }});
     document.getElementById('explorerTable').addEventListener('click', event => {{
       const row = event.target.closest('tr[data-expandable]');
       if (row) toggleExplorerRow(row);

@@ -170,14 +170,11 @@ def fetch_nixon_summary(
       COALESCE(ROUND(SAFE_DIVIDE(clicks, impressions) * 100, 2), 0) AS ctr
     FROM totals
     """
-    rows = _run_query(
-        sql,
-        params={
-            "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
-            "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
-        },
-        max_rows=1,
-    )
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    rows = _run_query(sql, params=params, max_rows=1)
     summary = rows[0] if rows else {
         "spend": 0.0,
         "impressions": 0,
@@ -187,11 +184,39 @@ def fetch_nixon_summary(
         "cpa": 0.0,
         "ctr": 0.0,
     }
+
+    # Per-platform breakdown so the dashboard can filter the summary cards by
+    # source (google / linkedin) without a second round-trip.
+    by_source_sql = f"""
+    SELECT
+      source,
+      ROUND(SUM(COALESCE(spend, 0)), 2) AS spend,
+      CAST(SUM(COALESCE(impressions, 0)) AS INT64) AS impressions,
+      CAST(SUM(COALESCE(clicks, 0)) AS INT64) AS clicks,
+      SUM(COALESCE(conversions, 0)) AS conversions
+    FROM {_FACT_TABLE}
+    WHERE `date` BETWEEN @start_date AND @end_date
+    GROUP BY source
+    ORDER BY spend DESC
+    """
+    source_rows = _run_query(by_source_sql, params=dict(params), max_rows=50)
+    by_source = {
+        str(r.get("source") or "").lower(): {
+            "spend": r.get("spend"),
+            "impressions": r.get("impressions"),
+            "clicks": r.get("clicks"),
+            "conversions": r.get("conversions"),
+        }
+        for r in source_rows
+        if r.get("source")
+    }
+
     return {
         "client_key": "nixon",
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "summary": summary,
+        "by_source": by_source,
     }
 
 
