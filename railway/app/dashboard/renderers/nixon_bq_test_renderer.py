@@ -78,6 +78,12 @@ def render_nixon_bigquery_test_page(
     summary {{ color:var(--blue); cursor:pointer; font-weight:700; }}
     pre {{ max-height:360px; overflow:auto; background:#0b1020; color:#d7e3ff; border-radius:10px; padding:12px; font-size:.78rem; }}
     code {{ background:#eef4fb; padding:2px 4px; border-radius:4px; }}
+    .filter-row {{ display:flex; flex-wrap:wrap; gap:20px; margin-bottom:12px; align-items:center; }}
+    .filter-group {{ display:flex; align-items:center; gap:8px; }}
+    .filter-label {{ color:var(--muted); font-size:.74rem; font-weight:800; text-transform:uppercase; }}
+    .chips {{ display:flex; flex-wrap:wrap; gap:6px; }}
+    .chip {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:5px 13px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; }}
+    .chip.active {{ background:var(--navy); color:#fff; border-color:var(--navy); }}
     @media (max-width:900px) {{ .cards {{ grid-template-columns:repeat(2,minmax(120px,1fr)); }} header {{ flex-direction:column; }} }}
   </style>
 </head>
@@ -112,6 +118,16 @@ def render_nixon_bigquery_test_page(
 
     <section>
       <h2>3. Google Ads explorer table</h2>
+      <div class="filter-row" id="explorerFilters">
+        <div class="filter-group">
+          <span class="filter-label">Product</span>
+          <div class="chips" id="productChips"></div>
+        </div>
+        <div class="filter-group">
+          <span class="filter-label">Region</span>
+          <div class="chips" id="regionChips"></div>
+        </div>
+      </div>
       <div class="status" id="explorerStatus">Waiting...</div>
       <div class="table-wrap"><table id="explorerTable"></table></div>
       <details><summary>Raw explorer JSON</summary><pre id="explorerJson">{{}}</pre></details>
@@ -201,23 +217,65 @@ def render_nixon_bigquery_test_page(
         setRaw('healthJson', {{ error: err.message || String(err) }});
       }}
     }}
+    const EXPLORER_COLUMNS = [
+      {{ key:'campaign_name', label:'Campaign', left:true }},
+      {{ key:'ad_group_name', label:'Ad group', left:true }},
+      {{ key:'ad_label', label:'Ad / label', left:true }},
+      {{ key:'spend', label:'Spend', format:money }},
+      {{ key:'impressions', label:'Impr.', format:count }},
+      {{ key:'clicks', label:'Clicks', format:count }},
+      {{ key:'conversions', label:'Conv.', format:count }},
+    ];
+    // Fuzzy campaign-name match. Region tokens use word boundaries so "Patient
+    // Apparel - TX & FL" matches both TX and FL without false hits inside words.
+    const PRODUCT_RULES = {{ Apparel:/apparel/i, Scrubs:/scrub/i, Linens:/linen/i }};
+    const REGION_RULES = {{ TX:/\\bTX\\b/i, FL:/\\bFL\\b/i, MA:/\\bMA\\b/i }};
+    const productFilter = new Set();
+    const regionFilter = new Set();
+    let explorerRows = [];
+    function buildChips(containerId, keys, stateSet) {{
+      const el = document.getElementById(containerId);
+      el.innerHTML = ['All', ...keys].map(k => `<button type="button" class="chip" data-key="${{esc(k)}}">${{esc(k)}}</button>`).join('');
+      el.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {{
+        const key = btn.dataset.key;
+        if (key === 'All') stateSet.clear();
+        else if (stateSet.has(key)) stateSet.delete(key);
+        else stateSet.add(key);
+        syncChips(el, stateSet);
+        renderExplorer();
+      }}));
+      syncChips(el, stateSet);
+    }}
+    function syncChips(el, stateSet) {{
+      el.querySelectorAll('.chip').forEach(btn => {{
+        const key = btn.dataset.key;
+        const active = key === 'All' ? stateSet.size === 0 : stateSet.has(key);
+        btn.classList.toggle('active', active);
+      }});
+    }}
+    function explorerRowMatches(row) {{
+      const name = String(row.campaign_name || '');
+      const prodOk = !productFilter.size || [...productFilter].some(k => PRODUCT_RULES[k].test(name));
+      const regOk = !regionFilter.size || [...regionFilter].some(k => REGION_RULES[k].test(name));
+      return prodOk && regOk;
+    }}
+    function renderExplorer() {{
+      const filtered = explorerRows.filter(explorerRowMatches);
+      renderTable('explorerTable', EXPLORER_COLUMNS, filtered, 'No campaigns match these filters.');
+      const filterActive = productFilter.size || regionFilter.size;
+      setStatus('explorerStatus', explorerRows.length
+        ? (filterActive ? `Showing ${{filtered.length}} of ${{explorerRows.length}} row(s).` : `Loaded ${{explorerRows.length}} explorer row(s).`)
+        : 'No explorer rows found.');
+    }}
     async function loadExplorer() {{
       setStatus('explorerStatus', 'Loading Google Ads explorer...');
       try {{
         const payload = await getJson(withDates(EXPLORER_API));
-        const rows = payload.rows || [];
-        renderTable('explorerTable', [
-          {{ key:'campaign_name', label:'Campaign', left:true }},
-          {{ key:'ad_group_name', label:'Ad group', left:true }},
-          {{ key:'ad_label', label:'Ad / label', left:true }},
-          {{ key:'spend', label:'Spend', format:money }},
-          {{ key:'impressions', label:'Impr.', format:count }},
-          {{ key:'clicks', label:'Clicks', format:count }},
-          {{ key:'conversions', label:'Conv.', format:count }},
-        ], rows, 'No Google Ads explorer rows found.');
+        explorerRows = payload.rows || [];
+        renderExplorer();
         setRaw('explorerJson', payload);
-        setStatus('explorerStatus', rows.length ? `Loaded ${{rows.length}} explorer row(s).` : 'No explorer rows found.');
       }} catch (err) {{
+        explorerRows = [];
         setStatus('explorerStatus', err.message || String(err), true);
         setRaw('explorerJson', {{ error: err.message || String(err) }});
       }}
@@ -227,6 +285,8 @@ def render_nixon_bigquery_test_page(
       loadHealth();
       loadExplorer();
     }}
+    buildChips('productChips', ['Apparel', 'Scrubs', 'Linens'], productFilter);
+    buildChips('regionChips', ['TX', 'FL', 'MA'], regionFilter);
     filters.addEventListener('submit', event => {{
       event.preventDefault();
       loadAll();
