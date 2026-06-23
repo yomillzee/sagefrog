@@ -144,6 +144,56 @@ def fetch_nixon_marketing_health(*, limit: int = 100) -> dict[str, Any]:
     return {"client": "nixon", "row_count": len(rows), "rows": rows}
 
 
+def fetch_nixon_summary(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    sql = f"""
+    WITH totals AS (
+      SELECT
+        COALESCE(SUM(COALESCE(spend, 0)), 0) AS spend,
+        COALESCE(SUM(COALESCE(impressions, 0)), 0) AS impressions,
+        COALESCE(SUM(COALESCE(clicks, 0)), 0) AS clicks,
+        COALESCE(SUM(COALESCE(conversions, 0)), 0) AS conversions
+      FROM {_FACT_TABLE}
+      WHERE `date` BETWEEN @start_date AND @end_date
+    )
+    SELECT
+      ROUND(spend, 2) AS spend,
+      CAST(impressions AS INT64) AS impressions,
+      CAST(clicks AS INT64) AS clicks,
+      conversions,
+      COALESCE(ROUND(SAFE_DIVIDE(spend, clicks), 2), 0) AS cpc,
+      COALESCE(ROUND(SAFE_DIVIDE(spend, conversions), 2), 0) AS cpa,
+      COALESCE(ROUND(SAFE_DIVIDE(clicks, impressions) * 100, 2), 0) AS ctr
+    FROM totals
+    """
+    rows = _run_query(
+        sql,
+        params={
+            "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+            "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+        },
+        max_rows=1,
+    )
+    summary = rows[0] if rows else {
+        "spend": 0.0,
+        "impressions": 0,
+        "clicks": 0,
+        "conversions": 0.0,
+        "cpc": 0.0,
+        "cpa": 0.0,
+        "ctr": 0.0,
+    }
+    return {
+        "client_key": "nixon",
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "summary": summary,
+    }
+
+
 def fetch_nixon_google_ads_explorer(
     *,
     start_date: date,
