@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 import audit_log
@@ -15,6 +15,8 @@ import dashboard_features
 import dashboard_service
 import dashboard_settings
 import dashboard_theme
+import ga4_credentials
+import railway_api
 import web_auth
 import web_users
 from dashboard.routes.helpers import dashboard_settings_session_kwargs, validate_client_slug
@@ -45,10 +47,14 @@ def dashboard_client_settings(
     theme_saved: str | None = None,
     sections_saved: str | None = None,
     bq_error: str | None = None,
+    cred_saved: str | None = None,
+    cred_error: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
     flash = (
-        "Settings saved."
+        cred_saved
+        if cred_saved
+        else "Settings saved."
         if saved
         else "Brand colors saved."
         if theme_saved
@@ -60,6 +66,9 @@ def dashboard_client_settings(
             else None
         )
     )
+    flash_err = cred_error or (
+        f"Settings saved, but BigQuery setup needs attention: {bq_error}" if bq_error else None
+    )
     if web_users.enabled():
         auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
         if isinstance(auth, RedirectResponse):
@@ -70,7 +79,7 @@ def dashboard_client_settings(
                 client_slug=slug,
                 cfg=cfg,
                 flash_message=flash,
-                flash_error=(f"Settings saved, but BigQuery setup needs attention: {bq_error}" if bq_error else None),
+                flash_error=flash_err,
                 db_config_updated_at=_config_updated_at(slug),
                 **dashboard_settings_session_kwargs(auth),
             )
@@ -83,10 +92,76 @@ def dashboard_client_settings(
             cfg=cfg,
             access_key=key,
             flash_message=flash,
-            flash_error=(f"Settings saved, but BigQuery setup needs attention: {bq_error}" if bq_error else None),
+            flash_error=flash_err,
             db_config_updated_at=_config_updated_at(slug),
         )
     )
+
+
+@router.post(
+    "/dashboard/{client_slug}/gcp-credentials",
+    summary="Upload a service-account JSON and set this client's Railway credential var",
+    include_in_schema=False,
+)
+async def dashboard_client_gcp_credentials(
+    client_slug: str,
+    request: Request,
+    key: str | None = None,
+    env_var: str = Form(""),
+    credentials_file: UploadFile = File(...),
+):
+    slug = validate_client_slug(client_slug)
+    access_key = key
+    use_session = False
+    session_is_admin = False
+    session_email = None
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        access_key = auth.access_key
+        use_session = auth.use_session
+        session_is_admin = bool(auth.user and auth.user.role == "admin")
+        session_email = auth.user.email if auth.user else None
+    else:
+        dashboard_service.verify_dashboard_key(key)
+
+    def _back(param: str) -> RedirectResponse:
+        if use_session:
+            return RedirectResponse(url=f"/dashboard/{slug}/settings?{param}", status_code=303)
+        return RedirectResponse(
+            url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&{param}",
+            status_code=303,
+        )
+
+    if web_users.enabled() and not session_is_admin:
+        return _back("cred_error=" + quote("Only admins can upload credentials."))
+
+    name = (env_var or "").strip() or ga4_credentials.default_client_credentials_env(slug)
+    if not ga4_credentials.is_allowed_credentials_env_var(name):
+        return _back("cred_error=" + quote(
+            "Variable must be GCP_SERVICE_ACCOUNT_JSON or GCP_CREDS_<CLIENT>_BASE64."
+        ))
+    if not railway_api.enabled():
+        return _back("cred_error=" + quote(
+            "Railway API is not configured (RAILWAY_API_TOKEN/PROJECT_ID/ENVIRONMENT_ID/SERVICE_ID)."
+        ))
+    try:
+        raw = (await credentials_file.read()).decode("utf-8")
+        encoded, client_email = ga4_credentials.validate_and_encode_service_account(raw)
+        railway_api.set_variable(name, encoded)
+    except Exception as exc:
+        return _back("cred_error=" + quote(f"Upload failed: {str(exc)[:200]}"))
+
+    audit_log.record(
+        action="dashboard.gcp_credentials_set",
+        actor_email=session_email,
+        detail={"client_slug": slug, "env_var": name, "service_account": client_email},
+        **audit_log.request_context(request),
+    )
+    return _back("cred_saved=" + quote(
+        f"Set {name} for {client_email}. Railway is redeploying — live in ~1–2 min."
+    ))
 
 
 @router.post(

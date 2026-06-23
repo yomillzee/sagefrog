@@ -82,6 +82,28 @@ def _parse_service_account_json(candidate: str, *, env_var: str, decoded_from_ba
     return data
 
 
+def is_allowed_credentials_env_var(name: str) -> bool:
+    """Only GCP credential variable names are writable from a credential upload, so
+    it can never clobber DATABASE_URL, RAILWAY_API_TOKEN, session secrets, etc."""
+    name = (name or "").strip()
+    if name == GLOBAL_GCP_CREDENTIALS_ENV:
+        return True
+    if name.startswith("GCP_CREDS_") and name.endswith("_BASE64"):
+        middle = name[len("GCP_CREDS_"):-len("_BASE64")]
+        return bool(middle) and middle == middle.upper() and all(
+            ch.isalnum() or ch == "_" for ch in middle
+        )
+    return False
+
+
+def default_client_credentials_env(client_slug: str) -> str:
+    """Conventional per-client credential variable, e.g. GCP_CREDS_PENN_BQ_TEST_BASE64."""
+    sanitized = "".join(
+        ch if ch.isalnum() else "_" for ch in (client_slug or "").strip().upper()
+    ).strip("_")
+    return f"GCP_CREDS_{sanitized}_BASE64" if sanitized else GLOBAL_GCP_CREDENTIALS_ENV
+
+
 def validate_and_encode_service_account(raw_json: str) -> tuple[str, str]:
     """Validate an uploaded service-account JSON; return (base64_value, client_email).
 

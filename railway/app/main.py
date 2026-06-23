@@ -1566,16 +1566,7 @@ def _admin_dev_notes_for_page():
 
 
 def _is_allowed_cred_env_var(name: str) -> bool:
-    """Only allow GCP credential variable names, so this upload can never clobber
-    DATABASE_URL, RAILWAY_API_TOKEN, session secrets, etc."""
-    if name == "GCP_SERVICE_ACCOUNT_JSON":
-        return True
-    if name.startswith("GCP_CREDS_") and name.endswith("_BASE64"):
-        middle = name[len("GCP_CREDS_"):-len("_BASE64")]
-        return bool(middle) and middle == middle.upper() and all(
-            ch.isalnum() or ch == "_" for ch in middle
-        )
-    return False
+    return ga4_credentials.is_allowed_credentials_env_var(name)
 
 
 def _gcp_credentials_section_html() -> str:
