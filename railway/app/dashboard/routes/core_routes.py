@@ -367,7 +367,8 @@ def dashboard_data_source_status(
     try:
         import data_source_status
         sources = data_source_status.build_status(slug)
-        return JSONResponse({"ok": True, "sources": sources})
+        pipeline = data_source_status.build_pipeline_summary(slug, sources)
+        return JSONResponse({"ok": True, "sources": sources, "pipeline": pipeline})
     except Exception as exc:
         LOGGER.exception("data source status failed: %s", slug)
         return JSONResponse({"ok": False, "error": platform_error(exc)}, status_code=200)

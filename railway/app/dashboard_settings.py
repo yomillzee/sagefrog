@@ -782,6 +782,20 @@ def _settings_page_css() -> str:
     .status-table tbody tr:last-child td { border-bottom: 0; }
     .mono { font-family: ui-monospace, monospace; font-size: .85rem; }
 
+    /* ---------- Pipeline flow ---------- */
+    .dss-subhead { margin: 22px 0 0; font-size: .82rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 700; }
+    .pipeline-flow { margin-top: 12px; }
+    .pf-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+    .pf-step { flex: 1 1 0; min-width: 130px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--surface); }
+    .pf-step-t { font-weight: 700; font-size: .82rem; color: var(--navy); }
+    .pf-step-s { font-size: .78rem; color: var(--muted); margin-top: 3px; line-height: 1.35; }
+    .pf-arrow { align-self: center; color: var(--muted); font-size: 1.1rem; flex: 0 0 auto; }
+    .pf-drift { margin-top: 12px; padding: 9px 12px; border-radius: 9px; font-size: .85rem; font-weight: 600; }
+    @media (max-width: 640px) {
+      .pf-row { flex-direction: column; }
+      .pf-arrow { transform: rotate(90deg); align-self: flex-start; margin-left: 16px; }
+    }
+
     /* ---------- Folds ---------- */
     .settings-fold { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 0 16px; background: var(--surface); }
     .settings-fold--inline { margin-top: 10px; padding: 8px 12px; }
@@ -1448,15 +1462,47 @@ def render_settings_html(
     status_url = f"/dashboard/{slug}/data-source-status{key_param}"
     data_source_status_section = f"""
     <section class="panel">
-      <h2>Data source status</h2>
-      <p class="hint">Live BigQuery feed health per source. Google Ads &amp; GA4 arrive via Google's Data Transfer Service (set up in GCP); LinkedIn, Meta &amp; Search Console are written by the app sync.</p>
+      <h2>Data pipeline</h2>
+      <p class="hint">How this dashboard is wired: source feeds land in BigQuery, a refresh bakes them into a Postgres snapshot, and the page serves that snapshot. The flow below shows whether the served snapshot is current with BigQuery.</p>
+      <div id="pipelineFlow" class="pipeline-flow"><p class="muted">Checking pipeline…</p></div>
+      <h3 class="dss-subhead">Source feed health</h3>
+      <p class="hint">Live BigQuery freshness per source. Google Ads &amp; GA4 arrive via Google's Data Transfer Service (set up in GCP); LinkedIn, Meta &amp; Search Console are written by the app sync.</p>
       <div id="dataSourceStatus" class="dss-wrap"><p class="muted">Checking feeds…</p></div>
     </section>
     <script>
     (function() {{
       var url = '{status_url}';
       var el = document.getElementById('dataSourceStatus');
+      var flowEl = document.getElementById('pipelineFlow');
       if (!el) return;
+      function esc(v) {{ return String(v == null ? '' : v).replace(/[&<>"]/g, function(c) {{ return {{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}}[c]; }}); }}
+      function fmtWhen(v) {{ if (!v) return '—'; var s = String(v); return s.length > 16 ? s.slice(0, 16).replace('T', ' ') : s; }}
+      function renderFlow(p) {{
+        if (!flowEl) return;
+        if (!p) {{ flowEl.innerHTML = '<p class="muted">No pipeline data.</p>'; return; }}
+        var driftMap = {{
+          current: ['#0a7f3f', '#e6f5ec', 'Snapshot current with BigQuery'],
+          lagging: ['#92600a', '#fdf3e2', 'Snapshot lagging BigQuery'],
+          stale:   ['#b42318', '#fdecea', 'Snapshot stale — refresh to catch up'],
+          unknown: ['#64748b', '#eef1f5', 'Drift unknown']
+        }};
+        var d = driftMap[p.drift_status] || driftMap.unknown;
+        var driftMsg = d[2];
+        if (p.drift_days != null && p.drift_days > 1) driftMsg += ' (' + p.drift_days + 'd behind)';
+        var steps = [
+          {{ t: 'Source feeds', s: 'Google · LinkedIn · Meta · GA4 · GSC' }},
+          {{ t: 'BigQuery', s: p.bq_fresh_through ? 'fresh through ' + esc(p.bq_fresh_through) : 'no feeding sources' }},
+          {{ t: 'Snapshot (Postgres)', s: p.has_snapshot ? 'baked ' + esc(fmtWhen(p.refreshed_at)) + ' UTC' : 'no snapshot yet' }},
+          {{ t: 'Dashboard', s: esc(p.mode_label) + ' path' }}
+        ];
+        var chips = steps.map(function(x, i) {{
+          var arrow = i < steps.length - 1 ? '<span class="pf-arrow">→</span>' : '';
+          return '<div class="pf-step"><div class="pf-step-t">' + esc(x.t) + '</div><div class="pf-step-s">' + x.s + '</div></div>' + arrow;
+        }}).join('');
+        flowEl.innerHTML =
+          '<div class="pf-row">' + chips + '</div>' +
+          '<div class="pf-drift" style="color:' + d[0] + ';background:' + d[1] + '">' + esc(driftMsg) + '</div>';
+      }}
       function badge(s) {{
         var map = {{
           feeding: ['#0a7f3f', '#e6f5ec', 'Feeding'],
@@ -1470,7 +1516,12 @@ def render_settings_html(
         return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;color:' + m[0] + ';background:' + m[1] + '">' + m[2] + '</span>';
       }}
       fetch(url, {{ credentials: 'same-origin' }}).then(function(r) {{ return r.json(); }}).then(function(d) {{
-        if (!d || !d.ok) {{ el.innerHTML = '<p class="muted">Could not load status' + (d && d.error ? ': ' + d.error : '') + '.</p>'; return; }}
+        if (!d || !d.ok) {{
+          el.innerHTML = '<p class="muted">Could not load status' + (d && d.error ? ': ' + d.error : '') + '.</p>';
+          if (flowEl) flowEl.innerHTML = '';
+          return;
+        }}
+        renderFlow(d.pipeline);
         var rows = (d.sources || []).map(function(s) {{
           var detail = '';
           if (s.status === 'feeding') {{
@@ -1482,7 +1533,10 @@ def render_settings_html(
           return '<tr><td>' + s.label + '</td><td>' + badge(s.status) + '</td><td class="muted">' + detail + '</td></tr>';
         }}).join('');
         el.innerHTML = '<table class="status-table"><thead><tr><th>Source</th><th>Status</th><th>Detail</th></tr></thead><tbody>' + rows + '</tbody></table>';
-      }}).catch(function() {{ el.innerHTML = '<p class="muted">Could not load status.</p>'; }});
+      }}).catch(function() {{
+        el.innerHTML = '<p class="muted">Could not load status.</p>';
+        if (flowEl) flowEl.innerHTML = '';
+      }});
     }})();
     </script>"""
 

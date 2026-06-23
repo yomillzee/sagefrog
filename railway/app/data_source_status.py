@@ -145,6 +145,78 @@ def _check_gsc(client_slug: str) -> dict[str, Any]:
     }
 
 
+def _days_between(a: str | None, b: str | None) -> int | None:
+    """Whole days from a to b (b - a). None if either is unparseable."""
+    from datetime import date as _date
+
+    def _p(s: str | None):
+        try:
+            return _date.fromisoformat(str(s)[:10])
+        except Exception:
+            return None
+
+    da, db = _p(a), _p(b)
+    if da is None or db is None:
+        return None
+    return (db - da).days
+
+
+def build_pipeline_summary(client_slug: str, sources: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Describe how the served dashboard connects to BigQuery and the snapshot.
+
+    Answers, in one glance: which refresh path feeds this dashboard, when the
+    served Postgres snapshot was baked, the freshest date present across the
+    client's BigQuery feeds, and whether the snapshot has drifted behind BQ
+    (the failure mode that made a working cron look dead — BQ moved on while
+    the cached snapshot did not).
+    """
+    import client_dashboard_config as _cdc
+    import dashboard_snapshots
+
+    slug = (client_slug or "").strip().lower()
+    if sources is None:
+        sources = build_status(slug)
+
+    db_cfg = _cdc.get_config(slug)
+    mode = (getattr(db_cfg, "dashboard_mode", None) or "api").strip().lower()
+
+    snap = dashboard_snapshots.get_snapshot_settings_context(slug) or {}
+    refreshed_at = snap.get("refreshed_at")
+    dr = snap.get("date_range") or {}
+    snapshot_through = dr.get("end")
+
+    # Freshest BQ date across feeding sources — the "truth" the snapshot trails.
+    bq_dates = [
+        s.get("max_date") for s in sources
+        if s.get("status") == "feeding" and s.get("max_date")
+    ]
+    bq_fresh_through = max(bq_dates) if bq_dates else None
+
+    drift_days = _days_between(snapshot_through, bq_fresh_through)
+    if drift_days is None:
+        drift_status = "unknown"
+    elif drift_days <= 1:
+        drift_status = "current"
+    elif drift_days <= 3:
+        drift_status = "lagging"
+    else:
+        drift_status = "stale"
+
+    return {
+        "mode": mode,
+        "mode_label": "BigQuery-first" if mode == "bigquery" else "API → warehouse",
+        "refresh_path": f"/internal/sync-bq/{slug}" if mode == "bigquery" else (
+            "/internal/sync-penn" if slug == "penn" else f"/dashboard/{slug}/refresh"
+        ),
+        "refreshed_at": refreshed_at,
+        "snapshot_through": snapshot_through,
+        "bq_fresh_through": bq_fresh_through,
+        "drift_days": drift_days,
+        "drift_status": drift_status,
+        "has_snapshot": bool(snap),
+    }
+
+
 def build_status(client_slug: str) -> list[dict[str, Any]]:
     """Status rows for every data source, in display order.
 
