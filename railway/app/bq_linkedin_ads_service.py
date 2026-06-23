@@ -35,7 +35,6 @@ _CREATIVE_METADATA_FIELDS = (
 
 _DEFAULT_PROJECT = "penn-community-b-1699391543298"
 _DEFAULT_DATASET = "raw_linkedin_ads"
-_METRICS_TABLE = "metrics_daily"
 _CAMPAIGN_TABLE = "campaign_daily"
 _DEFAULT_MART_DATASET = "marketing_marts"
 _DEFAULT_CAMPAIGN_FACT_TABLE = "fact_linkedin_ads_campaign_daily"
@@ -112,55 +111,47 @@ def _safe_ratio(numerator: float, denominator: float, multiplier: float = 1.0) -
 
 
 def account_summary_sql(*, start: date, end: date, account_id: str | None = None) -> str:
-    account_filter = ""
-    if account_id:
-        safe_account = str(account_id).replace("'", "\\'")
-        account_filter = f"AND CAST(account_id AS STRING) = '{safe_account}'"
+    # Derived from the campaign mart, not raw_linkedin_ads.metrics_daily: the
+    # BigQuery-first ingestion only writes campaign_daily (+ the mart over it),
+    # never an account-level metrics_daily table. Summing the mart across
+    # campaigns yields the same account totals without a phantom dependency.
     return f"""
     SELECT
-      CAST(account_id AS STRING) AS account_id,
-      SUM(CAST(spend AS FLOAT64)) AS spend,
-      SUM(CAST(clicks AS INT64)) AS clicks,
-      SUM(CAST(impressions AS INT64)) AS impressions,
-      SUM(CAST(conversions AS FLOAT64)) AS conversions,
-      SUM(CAST(conversion_value AS FLOAT64)) AS conversion_value,
-      SUM(CAST(COALESCE(reach, 0) AS INT64)) AS reach,
-      SAFE_DIVIDE(SUM(CAST(clicks AS FLOAT64)), SUM(CAST(impressions AS FLOAT64))) AS ctr,
-      SAFE_DIVIDE(SUM(CAST(spend AS FLOAT64)), SUM(CAST(clicks AS FLOAT64))) AS cpc,
-      SAFE_DIVIDE(SUM(CAST(spend AS FLOAT64)), SUM(CAST(impressions AS FLOAT64))) * 1000 AS cpm,
-      SAFE_DIVIDE(SUM(CAST(spend AS FLOAT64)), SUM(CAST(conversions AS FLOAT64))) AS cost_per_conversion
-    FROM {_table(_METRICS_TABLE)}
-    WHERE metric_date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
-      {account_filter}
-    GROUP BY account_id
-    ORDER BY spend DESC
+      SUM(spend) AS spend,
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SUM(conversions) AS conversions,
+      SUM(conversion_value) AS conversion_value,
+      0 AS reach,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      SAFE_DIVIDE(SUM(spend), SUM(clicks)) AS cpc,
+      SAFE_DIVIDE(SUM(spend), SUM(impressions)) * 1000 AS cpm,
+      SAFE_DIVIDE(SUM(spend), SUM(conversions)) AS cost_per_conversion
+    FROM {_mart_table()}
+    WHERE date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
     """
 
 
 def daily_metrics_sql(*, start: date, end: date, account_id: str | None = None) -> str:
-    account_filter = ""
-    if account_id:
-        safe_account = str(account_id).replace("'", "\\'")
-        account_filter = f"AND CAST(account_id AS STRING) = '{safe_account}'"
+    # Daily account-level series aggregated from the campaign mart (see
+    # account_summary_sql for why metrics_daily is not used).
     return f"""
     SELECT
-      CAST(metric_date AS STRING) AS metric_date,
-      CAST(account_id AS STRING) AS account_id,
-      SUM(CAST(spend AS FLOAT64)) AS spend,
-      SUM(CAST(clicks AS INT64)) AS clicks,
-      SUM(CAST(impressions AS INT64)) AS impressions,
-      SUM(CAST(conversions AS FLOAT64)) AS conversions,
-      SUM(CAST(conversion_value AS FLOAT64)) AS conversion_value,
-      SUM(CAST(COALESCE(reach, 0) AS INT64)) AS reach,
-      SAFE_DIVIDE(SUM(CAST(clicks AS FLOAT64)), SUM(CAST(impressions AS FLOAT64))) AS ctr,
-      SAFE_DIVIDE(SUM(CAST(spend AS FLOAT64)), SUM(CAST(clicks AS FLOAT64))) AS cpc,
-      SAFE_DIVIDE(SUM(CAST(spend AS FLOAT64)), SUM(CAST(impressions AS FLOAT64))) * 1000 AS cpm,
-      SAFE_DIVIDE(SUM(CAST(spend AS FLOAT64)), SUM(CAST(conversions AS FLOAT64))) AS cost_per_conversion
-    FROM {_table(_METRICS_TABLE)}
-    WHERE metric_date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
-      {account_filter}
-    GROUP BY metric_date, account_id
-    ORDER BY metric_date ASC, account_id ASC
+      CAST(date AS STRING) AS metric_date,
+      SUM(spend) AS spend,
+      SUM(clicks) AS clicks,
+      SUM(impressions) AS impressions,
+      SUM(conversions) AS conversions,
+      SUM(conversion_value) AS conversion_value,
+      0 AS reach,
+      SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+      SAFE_DIVIDE(SUM(spend), SUM(clicks)) AS cpc,
+      SAFE_DIVIDE(SUM(spend), SUM(impressions)) * 1000 AS cpm,
+      SAFE_DIVIDE(SUM(spend), SUM(conversions)) AS cost_per_conversion
+    FROM {_mart_table()}
+    WHERE date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+    GROUP BY 1
+    ORDER BY 1 ASC
     """
 
 
