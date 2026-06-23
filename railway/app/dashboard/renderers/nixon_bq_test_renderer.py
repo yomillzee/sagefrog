@@ -103,7 +103,11 @@ def render_nixon_bigquery_test_page(
     .ad-cell {{ display:inline-flex; align-items:center; gap:9px; vertical-align:middle; }}
     .ad-thumb {{ width:34px; height:34px; border-radius:5px; object-fit:cover; border:1px solid var(--line); background:#f0f3f8; flex:0 0 auto; }}
     .ad-meta {{ display:flex; flex-direction:column; line-height:1.25; }}
+    .ad-label {{ font-weight:600; color:#1f2d40; }}
     .ad-type {{ font-size:.68rem; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }}
+    .ad-copy {{ display:flex; flex-direction:column; gap:1px; margin-top:3px; }}
+    .ad-copy-line {{ font-size:.78rem; color:var(--muted); white-space:normal; }}
+    .ad-copy-tag {{ display:inline-block; min-width:34px; color:#9aa7bd; font-weight:700; font-size:.66rem; text-transform:uppercase; margin-right:5px; }}
     @media (max-width:900px) {{ .cards {{ grid-template-columns:repeat(2,minmax(120px,1fr)); }} header {{ flex-direction:column; }} }}
   </style>
 </head>
@@ -354,12 +358,19 @@ def render_nixon_bigquery_test_page(
       return `<span class="pill pill-${{key}}">${{key === 'linkedin' ? 'LinkedIn' : 'Google'}}</span>`;
     }}
     function adCell(ad) {{
-      const label = esc(ad.ad_label || '\\u2014');
+      const label = esc(ad.ad_label || ad.ad_name || '\\u2014');
       const type = ad.media_type ? `<span class="ad-type">${{esc(ad.media_type)}}</span>` : '';
       const thumb = ad.thumbnail_url
         ? `<img class="ad-thumb" src="${{esc(ad.thumbnail_url)}}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none'">`
         : '';
-      return `<div class="ad-cell">${{thumb}}<span class="ad-meta"><span>${{label}}</span>${{type}}</span></div>`;
+      // Responsive search ad copy beneath the ad: headlines + first description.
+      const copyLines = [
+        ['H1', ad.headline_1], ['H2', ad.headline_2], ['H3', ad.headline_3], ['Desc', ad.description_1],
+      ].filter(([, v]) => v).map(
+        ([tag, v]) => `<span class="ad-copy-line"><span class="ad-copy-tag">${{tag}}</span>${{esc(v)}}</span>`
+      ).join('');
+      const copy = copyLines ? `<div class="ad-copy">${{copyLines}}</div>` : '';
+      return `<div class="ad-cell">${{thumb}}<span class="ad-meta"><span class="ad-label">${{label}}</span>${{type}}${{copy}}</span></div>`;
     }}
     function renderExplorer() {{
       const filtered = explorerRows.filter(explorerRowMatches);
@@ -420,7 +431,11 @@ def render_nixon_bigquery_test_page(
     function normalizeExplorerRows(google, linkedin) {{
       const out = [];
       for (const r of (google && google.rows ? google.rows : [])) {{
-        out.push({{ platform:'google', campaign_name:r.campaign_name, ad_group_name:r.ad_group_name, ad_label:r.ad_label, thumbnail_url:'', media_type:'', spend:num(r.spend), impressions:num(r.impressions), clicks:num(r.clicks), conversions:num(r.conversions) }});
+        out.push({{ platform:'google', campaign_name:r.campaign_name, ad_group_name:r.ad_group_name, ad_label:r.ad_label,
+          headline_1:r.headline_1, headline_2:r.headline_2, headline_3:r.headline_3,
+          description_1:r.description_1, description_2:r.description_2,
+          ad_name:r.ad_name, final_url:r.final_url, ad_type:r.ad_type,
+          thumbnail_url:'', media_type:r.ad_type || '', spend:num(r.spend), impressions:num(r.impressions), clicks:num(r.clicks), conversions:num(r.conversions) }});
       }}
       for (const r of (linkedin && linkedin.rows ? linkedin.rows : [])) {{
         out.push({{ platform:'linkedin', campaign_name:r.campaign_group_name || r.campaign_name, ad_group_name:r.campaign_name, ad_label:r.creative_name, thumbnail_url:r.thumbnail_url || r.image_url || '', media_type:r.media_type || '', spend:num(r.spend), impressions:num(r.impressions), clicks:num(r.clicks), conversions:num(r.conversions) }});
