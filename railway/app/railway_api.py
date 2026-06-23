@@ -90,6 +90,7 @@ def set_variable(name: str, value: str, *, timeout: float = 30.0) -> dict[str, A
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {c['token']}",
+            "User-Agent": "sagefrog-portal/1.0",
         },
     )
     try:
