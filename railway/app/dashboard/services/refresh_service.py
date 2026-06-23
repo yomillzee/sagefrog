@@ -507,6 +507,20 @@ def refresh_bq_client(
                 for source, details in (refresh_run.get("sources") or {}).items()
                 if details.get("data_through")
             }
+            # Surface ingestion failures as dashboard errors. A failed provision
+            # step (e.g. the GA4 dataset can't be read to detect its BQ region)
+            # bails the whole refresh before any source ingests — without this,
+            # the page just looks "unchanged" with no clue why nothing synced.
+            _prov = refresh_run.get("provision") or {}
+            if _prov.get("status") == "failed":
+                snapshot.setdefault("errors", {})["bigquery_provision"] = str(
+                    _prov.get("error") or "BigQuery provisioning failed"
+                )
+            for _src, _det in (refresh_run.get("sources") or {}).items():
+                if isinstance(_det, dict) and _det.get("status") == "failed":
+                    snapshot.setdefault("errors", {})[f"{_src}_ingest"] = str(
+                        _det.get("error") or f"{_src} ingestion failed"
+                    )
         if _bq_setup_error:
             snapshot.setdefault("warnings", {})["bigquery_setup"] = _bq_setup_error
 
