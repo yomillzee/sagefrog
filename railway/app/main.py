@@ -40,6 +40,8 @@ import business_line_rules
 import admin_dev_notes
 import client_insight_documents
 import dashboard_settings
+import ga4_credentials
+import railway_api
 import dashboard_features
 import dashboard_theme
 import login_rate_limit
@@ -1563,6 +1565,74 @@ def _admin_dev_notes_for_page():
     return None
 
 
+def _is_allowed_cred_env_var(name: str) -> bool:
+    """Only allow GCP credential variable names, so this upload can never clobber
+    DATABASE_URL, RAILWAY_API_TOKEN, session secrets, etc."""
+    if name == "GCP_SERVICE_ACCOUNT_JSON":
+        return True
+    if name.startswith("GCP_CREDS_") and name.endswith("_BASE64"):
+        middle = name[len("GCP_CREDS_"):-len("_BASE64")]
+        return bool(middle) and middle == middle.upper() and all(
+            ch.isalnum() or ch == "_" for ch in middle
+        )
+    return False
+
+
+def _gcp_credentials_section_html() -> str:
+    summary = railway_api.env_summary()
+    if summary["ready"]:
+        status = (
+            '<p class="muted">Railway API connected. Uploading a key sets the '
+            "variable and redeploys this service.</p>"
+        )
+        disabled = ""
+    else:
+        missing = [
+            env
+            for env, present in (
+                ("RAILWAY_API_TOKEN", summary["has_token"]),
+                ("RAILWAY_PROJECT_ID", summary["has_project_id"]),
+                ("RAILWAY_ENVIRONMENT_ID", summary["has_environment_id"]),
+                ("RAILWAY_SERVICE_ID", summary["has_service_id"]),
+            )
+            if not present
+        ]
+        status = (
+            '<div class="notice err">Railway API not configured. Set these Railway '
+            f'variables on this service, then reload: <span class="mono">{", ".join(missing)}</span></div>'
+        )
+        disabled = " disabled"
+    return f"""
+    <section>
+      <h2>GCP service account credentials</h2>
+      <p class="muted">Upload a Google service account JSON. The app validates it,
+      base64-encodes it, and writes it to Railway as the named variable. Railway then
+      redeploys this service so the credential goes live (~1–2 min).</p>
+      {status}
+      <form method="post" action="/admin/gcp-credentials" enctype="multipart/form-data"
+        onsubmit="return confirm('Set this variable on Railway? The service will redeploy.');">
+        <div class="row">
+          <div>
+            <label for="cred_env_var">Environment variable</label>
+            <input id="cred_env_var" name="env_var" type="text" required
+              placeholder="GCP_CREDS_ANDESA_BASE64"
+              pattern="GCP_SERVICE_ACCOUNT_JSON|GCP_CREDS_[A-Z0-9_]+_BASE64">
+            <span class="muted" style="font-size:.85rem">Convention:
+              <span class="mono">GCP_CREDS_&lt;CLIENT&gt;_BASE64</span> (matches the
+              credentials_env in the GA4/GSC registry), or
+              <span class="mono">GCP_SERVICE_ACCOUNT_JSON</span> for the global default.</span>
+          </div>
+          <div>
+            <label for="cred_file">Service account JSON</label>
+            <input id="cred_file" name="credentials_file" type="file"
+              accept="application/json,.json" required>
+          </div>
+        </div>
+        <button type="submit" class="primary"{disabled}>Upload &amp; set variable</button>
+      </form>
+    </section>"""
+
+
 @app.get("/admin", include_in_schema=False, response_class=HTMLResponse)
 def admin_home(
     request: Request,
@@ -1631,9 +1701,60 @@ def admin_home(
             message=flash,
             error=err,
             oauth_section_html=oauth_html,
+            credentials_section_html=_gcp_credentials_section_html(),
             ga4_registry=ga4_registry,
             gsc_registry=gsc_registry,
         )
+    )
+
+
+@app.post("/admin/gcp-credentials", include_in_schema=False)
+async def admin_set_gcp_credentials(
+    request: Request,
+    env_var: str = Form(...),
+    credentials_file: UploadFile = File(...),
+):
+    user = web_auth.get_current_user(request)
+    if not user or user.role != "admin":
+        return web_auth.redirect_to_login(request, next_path="/admin")
+
+    name = (env_var or "").strip()
+    if not _is_allowed_cred_env_var(name):
+        return RedirectResponse(
+            url="/admin?err=" + quote(
+                "Variable must be GCP_SERVICE_ACCOUNT_JSON or GCP_CREDS_<CLIENT>_BASE64."
+            ),
+            status_code=303,
+        )
+    if not railway_api.enabled():
+        return RedirectResponse(
+            url="/admin?err=" + quote(
+                "Railway API is not configured "
+                "(set RAILWAY_API_TOKEN / RAILWAY_PROJECT_ID / RAILWAY_ENVIRONMENT_ID / RAILWAY_SERVICE_ID)."
+            ),
+            status_code=303,
+        )
+    try:
+        raw = (await credentials_file.read()).decode("utf-8")
+        encoded, client_email = ga4_credentials.validate_and_encode_service_account(raw)
+        railway_api.set_variable(name, encoded)
+    except Exception as exc:
+        return RedirectResponse(
+            url="/admin?err=" + quote(f"Upload failed: {str(exc)[:200]}"),
+            status_code=303,
+        )
+
+    audit_log.record(
+        action="admin.gcp_credentials_set",
+        actor_email=user.email,
+        detail={"env_var": name, "service_account": client_email},
+        **audit_log.request_context(request),
+    )
+    return RedirectResponse(
+        url="/admin?msg=" + quote(
+            f"Set {name} for {client_email}. Railway is redeploying — live in ~1–2 min."
+        ),
+        status_code=303,
     )
 
 

@@ -514,6 +514,7 @@ def render_admin_page(
     message: str | None = None,
     error: str | None = None,
     oauth_section_html: str = "",
+    credentials_section_html: str = "",
     ga4_registry: list[dict] | None = None,
     gsc_registry: list[dict] | None = None,
 ) -> str:
@@ -791,6 +792,7 @@ def render_admin_page(
   <main>
     {notice}
     {oauth_section_html}
+    {credentials_section_html}
     {dashboard_manage_html}
     {registry_section_html}
     {_render_dev_notes_section(dev_notes=dev_notes)}

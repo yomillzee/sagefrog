@@ -82,6 +82,22 @@ def _parse_service_account_json(candidate: str, *, env_var: str, decoded_from_ba
     return data
 
 
+def validate_and_encode_service_account(raw_json: str) -> tuple[str, str]:
+    """Validate an uploaded service-account JSON; return (base64_value, client_email).
+
+    The base64 is the form client credential env vars (GCP_CREDS_<CLIENT>_BASE64)
+    and the global GCP_SERVICE_ACCOUNT_JSON accept. Raises RuntimeError if the
+    payload is not a Google service account key. Never logs the key material.
+    """
+    text = (raw_json or "").strip()
+    if not text:
+        raise RuntimeError("No JSON provided.")
+    info = _parse_service_account_json(text, env_var="uploaded credential")
+    client_email = str(info.get("client_email") or "").strip()
+    encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    return encoded, client_email
+
+
 def load_service_account_info_from_env(env_var: str = GLOBAL_GCP_CREDENTIALS_ENV, *, require_base64: bool = False) -> dict[str, Any]:
     """
     Load a Google service account key from an environment variable.
