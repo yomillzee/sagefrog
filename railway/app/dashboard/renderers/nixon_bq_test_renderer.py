@@ -452,11 +452,17 @@ def render_nixon_bigquery_test_page(
     function presetRange(name) {{
       const today = new Date();
       let s, e = today;
+      // "Last N days" = N complete days ending yesterday (today is partial, excluded).
+      // "This month" is month-to-date and "Last month" is the full prior month.
+      const lastNDays = n => {{
+        e = new Date(today); e.setDate(today.getDate() - 1);
+        s = new Date(today); s.setDate(today.getDate() - n);
+      }};
       if (name === 'this_month') s = new Date(today.getFullYear(), today.getMonth(), 1);
       else if (name === 'last_month') {{ s = new Date(today.getFullYear(), today.getMonth() - 1, 1); e = new Date(today.getFullYear(), today.getMonth(), 0); }}
-      else if (name === 'last_7') {{ s = new Date(today); s.setDate(today.getDate() - 6); }}
-      else if (name === 'last_30') {{ s = new Date(today); s.setDate(today.getDate() - 29); }}
-      else if (name === 'last_90') {{ s = new Date(today); s.setDate(today.getDate() - 89); }}
+      else if (name === 'last_7') lastNDays(7);
+      else if (name === 'last_30') lastNDays(30);
+      else if (name === 'last_90') lastNDays(90);
       else return null;
       return {{ start: fmtDate(s), end: fmtDate(e) }};
     }}
