@@ -590,6 +590,12 @@ def render_penn_html(
             pass
         if _campaign_daily:
             breakdowns = _patch_campaign_breakdowns(breakdowns, _campaign_daily)
+            # Reflect the view-range patch back onto the snapshot so business-line
+            # campaigns — which drive the Campaign Explorer table and the overview
+            # channel/segment filters — use the selected date range instead of the
+            # refresh window. Without this, picking "This month" re-filtered the
+            # chart but Campaign Explorer kept showing the last-30-day totals.
+            snapshot = {**snapshot, "breakdowns": breakdowns, "business_line_campaigns": None}
     accounts = accounts_early
     ga4_attr = snapshot.get("ga4_attribution")
     ga4_platforms = _ga4_platform_reports(ga4_attr)
