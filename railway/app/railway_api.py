@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-_DEFAULT_API_URL = "https://backboard.railway.com/graphql/v2"
+_DEFAULT_API_URL = "https://backboard.railway.app/graphql/v2"
 
 
 def _cfg(name: str) -> str:
