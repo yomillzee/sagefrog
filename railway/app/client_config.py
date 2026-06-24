@@ -20,9 +20,10 @@ _BUILTIN_CLIENTS: dict[str, dict[str, Any]] = {
     "nixon": {
         "label": "Nixon Medical",
         "google_customer_id": "",
-        "linkedin_account_id": "",
+        "linkedin_account_id": "503285948",
         "meta_account_id": "",
         "ga4_client_key": "nixon",
+        "platform_sources": {"linkedin": "bigquery"},
     },
     "penn-bq-test": {
         "label": "Penn BQ Test",
@@ -148,7 +149,10 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
     """Load merged config for a client slug (env defaults + DB overrides)."""
     slug = (client_slug or "").strip().lower()
     known = list_client_slugs()
-    if slug not in known:
+    # Built-in clients and Penn always have a real config, so they stay loadable
+    # even when suppressed from the dashboard list (suppression hides a client
+    # from the picker; it should not break refresh / API access to its config).
+    if slug not in known and slug not in _BUILTIN_CLIENTS and slug != "penn":
         raise ValueError(f"Unknown client '{client_slug}'. Known clients: {', '.join(known)}")
 
     if slug == "penn":
