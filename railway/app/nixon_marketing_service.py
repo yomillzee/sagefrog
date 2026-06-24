@@ -11,6 +11,9 @@ import bigquery_service
 _PROJECT_ID = "nixon-medical"
 _DATASET_ID = "marketing_marts"
 _FACT_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.fact_marketing_daily`"
+# Paid-media reads use the normalized view (source_platform = paid_google /
+# paid_linkedin); raw_source is debug-only. Supersedes fact_marketing_daily here.
+_PAID_MEDIA_VIEW = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_paid_media_daily`"
 _HEALTH_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.mart_health`"
 _GOOGLE_ADS_EXPLORER_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.explorer_google_ads_daily`"
 _LINKEDIN_CREATIVE_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.fact_linkedin_ads_creative_daily`"
@@ -159,7 +162,7 @@ def fetch_nixon_summary(
         COALESCE(SUM(COALESCE(impressions, 0)), 0) AS impressions,
         COALESCE(SUM(COALESCE(clicks, 0)), 0) AS clicks,
         COALESCE(SUM(COALESCE(conversions, 0)), 0) AS conversions
-      FROM {_FACT_TABLE}
+      FROM {_PAID_MEDIA_VIEW}
       WHERE `date` BETWEEN @start_date AND @end_date
     )
     SELECT
@@ -188,29 +191,29 @@ def fetch_nixon_summary(
     }
 
     # Per-platform breakdown so the dashboard can filter the summary cards by
-    # source (google / linkedin) without a second round-trip.
+    # platform (paid_google / paid_linkedin) without a second round-trip.
     by_source_sql = f"""
     SELECT
-      source,
+      source_platform,
       ROUND(SUM(COALESCE(spend, 0)), 2) AS spend,
       CAST(SUM(COALESCE(impressions, 0)) AS INT64) AS impressions,
       CAST(SUM(COALESCE(clicks, 0)) AS INT64) AS clicks,
       SUM(COALESCE(conversions, 0)) AS conversions
-    FROM {_FACT_TABLE}
+    FROM {_PAID_MEDIA_VIEW}
     WHERE `date` BETWEEN @start_date AND @end_date
-    GROUP BY source
+    GROUP BY source_platform
     ORDER BY spend DESC
     """
     source_rows = _run_query(by_source_sql, params=dict(params), max_rows=50)
     by_source = {
-        str(r.get("source") or "").lower(): {
+        str(r.get("source_platform") or "").lower(): {
             "spend": r.get("spend"),
             "impressions": r.get("impressions"),
             "clicks": r.get("clicks"),
             "conversions": r.get("conversions"),
         }
         for r in source_rows
-        if r.get("source")
+        if r.get("source_platform")
     }
 
     # Per-date-per-source daily series for the trend chart (so it can filter by
@@ -218,15 +221,15 @@ def fetch_nixon_summary(
     daily_sql = f"""
     SELECT
       CAST(`date` AS STRING) AS date,
-      source,
+      source_platform AS source,
       ROUND(SUM(COALESCE(spend, 0)), 2) AS spend,
       CAST(SUM(COALESCE(impressions, 0)) AS INT64) AS impressions,
       CAST(SUM(COALESCE(clicks, 0)) AS INT64) AS clicks,
       SUM(COALESCE(conversions, 0)) AS conversions
-    FROM {_FACT_TABLE}
+    FROM {_PAID_MEDIA_VIEW}
     WHERE `date` BETWEEN @start_date AND @end_date
-    GROUP BY `date`, source
-    ORDER BY `date`, source
+    GROUP BY `date`, source_platform
+    ORDER BY `date`, source_platform
     """
     daily = _run_query(daily_sql, params=dict(params), max_rows=20000)
 

@@ -141,6 +141,9 @@ def render_nixon_bigquery_test_page(
     body {{ margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:#102033; }}
     {_SIDEBAR_CSS}
     .page-head {{ margin-bottom:18px; }}
+    .src-note {{ margin:2px 0 12px; font-size:.74rem; color:var(--muted); }}
+    .src-note code {{ background:#eef4fb; padding:1px 5px; border-radius:4px; font-size:.72rem; color:#33506f; }}
+    .src-note .arrow {{ color:#9aa7bd; margin:0 3px; }}
     .admin-bar {{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px; padding:11px 14px; border:1px solid #e5c87a; border-radius:10px; background:#fff8e1; }}
     .admin-bar .status {{ margin:0; }}
     main {{ max-width:1400px; margin:0 auto; padding:24px; }}
@@ -240,6 +243,7 @@ def render_nixon_bigquery_test_page(
 
     <section id="sec-overview">
       <h2>1. Summary card</h2>
+      <p class="src-note"><code>GET /api/clients/nixon/summary</code><span class="arrow">→</span><code>marketing_marts.vw_paid_media_daily</code></p>
       <div class="status" id="summaryStatus">Waiting…</div>
       <div class="cards" id="summaryCards"></div>
       <details><summary>Raw summary JSON</summary><pre id="summaryJson">{{}}</pre></details>
@@ -247,6 +251,7 @@ def render_nixon_bigquery_test_page(
 
     <section>
       <h2>2. Trend chart</h2>
+      <p class="src-note"><code>GET /api/clients/nixon/summary</code> (daily)<span class="arrow">→</span><code>marketing_marts.vw_paid_media_daily</code></p>
       <div class="filter-row">
         <div class="filter-group">
           <span class="filter-label">Metrics</span>
@@ -263,6 +268,7 @@ def render_nixon_bigquery_test_page(
 
     <section>
       <h2>3. Mart health table</h2>
+      <p class="src-note"><code>GET /api/clients/nixon/marketing/health</code><span class="arrow">→</span><code>marketing_marts.mart_health</code></p>
       <div class="status" id="healthStatus">Waiting…</div>
       <div class="table-wrap"><table id="healthTable"></table></div>
       <details><summary>Raw health JSON</summary><pre id="healthJson">{{}}</pre></details>
@@ -270,6 +276,7 @@ def render_nixon_bigquery_test_page(
 
     <section id="sec-explorer">
       <h2>4. Campaign explorer (Google + LinkedIn)</h2>
+      <p class="src-note"><code>GET .../google-ads/explorer</code><span class="arrow">→</span><code>explorer_google_ads_daily</code> · <code>GET .../linkedin/explorer</code><span class="arrow">→</span><code>fact_linkedin_ads_creative_daily</code></p>
       <div class="filter-row" id="explorerFilters">
         <div class="filter-group">
           <span class="filter-label">Product</span>
@@ -287,6 +294,7 @@ def render_nixon_bigquery_test_page(
 
     <section id="sec-pages">
       <h2>5. Page performance</h2>
+      <p class="src-note"><code>GET .../pages/top</code><span class="arrow">→</span><code>vw_page_path_daily</code> · <code>GET .../pages/sources</code><span class="arrow">→</span><code>vw_page_path_source_daily</code></p>
       <div class="filter-row" id="pageFilters">
         <div class="filter-group">
           <span class="filter-label">AI platform</span>
@@ -366,9 +374,12 @@ def render_nixon_bigquery_test_page(
       // No per-source breakdown (live endpoint) or no platform selected → combined.
       if (!by || platformFilter.size === 0) return summaryPayload.summary || {{}};
       const acc = {{ spend:0, impressions:0, clicks:0, conversions:0 }};
-      for (const p of platformFilter) {{
-        const src = by[p.toLowerCase()];
-        if (!src) continue;
+      // Tolerant match: chip 'Google' matches source_platform 'paid_google' (and
+      // legacy 'google'); 'LinkedIn' matches 'paid_linkedin' / 'linkedin'.
+      const needles = [...platformFilter].map(p => p.toLowerCase());
+      for (const k of Object.keys(by)) {{
+        if (!needles.some(nd => k.toLowerCase().includes(nd))) continue;
+        const src = by[k];
         acc.spend += num(src.spend); acc.impressions += num(src.impressions);
         acc.clicks += num(src.clicks); acc.conversions += num(src.conversions);
       }}
@@ -396,10 +407,10 @@ def render_nixon_bigquery_test_page(
       // Per-date-per-source rows from the summary endpoint → filter by platform,
       // sum per day, derive cpc/cpa/ctr. Mirrors the summary-card platform logic.
       const daily = (summaryPayload && summaryPayload.daily) ? summaryPayload.daily : [];
-      const sel = platformFilter.size ? new Set([...platformFilter].map(p => p.toLowerCase())) : null;
+      const needles = platformFilter.size ? [...platformFilter].map(p => p.toLowerCase()) : null;
       const byDate = new Map();
       for (const r of daily) {{
-        if (sel && !sel.has(String(r.source || '').toLowerCase())) continue;
+        if (needles && !needles.some(nd => String(r.source || '').toLowerCase().includes(nd))) continue;
         let d = byDate.get(r.date);
         if (!d) {{ d = {{ date:r.date, spend:0, impressions:0, clicks:0, conversions:0 }}; byDate.set(r.date, d); }}
         d.spend += num(r.spend); d.impressions += num(r.impressions); d.clicks += num(r.clicks); d.conversions += num(r.conversions);
