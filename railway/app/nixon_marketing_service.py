@@ -213,12 +213,30 @@ def fetch_nixon_summary(
         if r.get("source")
     }
 
+    # Per-date-per-source daily series for the trend chart (so it can filter by
+    # platform and derive cpc/cpa/ctr per day, client-side).
+    daily_sql = f"""
+    SELECT
+      CAST(`date` AS STRING) AS date,
+      source,
+      ROUND(SUM(COALESCE(spend, 0)), 2) AS spend,
+      CAST(SUM(COALESCE(impressions, 0)) AS INT64) AS impressions,
+      CAST(SUM(COALESCE(clicks, 0)) AS INT64) AS clicks,
+      SUM(COALESCE(conversions, 0)) AS conversions
+    FROM {_FACT_TABLE}
+    WHERE `date` BETWEEN @start_date AND @end_date
+    GROUP BY `date`, source
+    ORDER BY `date`, source
+    """
+    daily = _run_query(daily_sql, params=dict(params), max_rows=20000)
+
     return {
         "client_key": "nixon",
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "summary": summary,
         "by_source": by_source,
+        "daily": daily,
     }
 
 
