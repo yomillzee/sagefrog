@@ -217,6 +217,9 @@ def render_nixon_bq_settings_page(
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({{ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }}[c]));
     const count = v => nums.format(Math.round(Number(v || 0)));
     const money = v => dollars.format(Number(v || 0));
+    const SOURCE_LABELS = {{ google:'Google Ads', linkedin:'LinkedIn', google_analytics:'Google Analytics' }};
+    const srcLabel = v => SOURCE_LABELS[String(v || '').toLowerCase()] || v;
+    const moneyD = v => (v == null ? '\\u2014' : money(v));
     function setStatus(id, text, isErr) {{ const el = document.getElementById(id); el.textContent = text; el.className = isErr ? 'status error' : 'status'; }}
     async function runJob(url, confirmMsg, label) {{
       if (confirmMsg && !confirm(confirmMsg)) return;
@@ -250,7 +253,7 @@ def render_nixon_bq_settings_page(
         const el = document.getElementById('healthTable');
         if (!rows.length) {{ el.innerHTML = '<tbody><tr><td class="empty">No mart health rows.</td></tr></tbody>'; setStatus('healthStatus', 'No data.'); return; }}
         const head = '<thead><tr><th class="left">Source</th><th>Rows</th><th class="left">Earliest</th><th class="left">Latest</th><th>Spend</th></tr></thead>';
-        const tb = rows.map(s => `<tr><td class="left">${{esc(s.source)}}</td><td>${{count(s.row_count)}}</td><td class="left">${{esc(s.earliest_date || '—')}}</td><td class="left">${{esc(s.latest_date || '—')}}</td><td>${{money(s.spend)}}</td></tr>`).join('');
+        const tb = rows.map(s => `<tr><td class="left">${{esc(srcLabel(s.source))}}</td><td>${{count(s.row_count)}}</td><td class="left">${{esc(s.earliest_date || '—')}}</td><td class="left">${{esc(s.latest_date || '—')}}</td><td>${{moneyD(s.spend)}}</td></tr>`).join('');
         el.innerHTML = head + `<tbody>${{tb}}</tbody>`;
         setStatus('healthStatus', `${{rows.length}} source(s).`);
       }} catch (err) {{

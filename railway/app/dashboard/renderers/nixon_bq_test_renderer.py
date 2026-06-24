@@ -535,15 +535,19 @@ def render_nixon_bigquery_test_page(
       try {{
         const payload = await getJson(withDates(HEALTH_API));
         const rows = payload.rows || [];
+        const SOURCE_LABELS = {{ google:'Google Ads', linkedin:'LinkedIn', google_analytics:'Google Analytics' }};
+        const srcLabel = v => SOURCE_LABELS[String(v || '').toLowerCase()] || v;
+        const moneyD = v => (v == null ? '\\u2014' : money(v));
+        const countD = v => (v == null ? '\\u2014' : count(v));
         renderTable('healthTable', [
-          {{ key:'source', label:'Source', left:true }},
+          {{ key:'source', label:'Source', left:true, format:srcLabel }},
           {{ key:'row_count', label:'Rows', format:count }},
           {{ key:'earliest_date', label:'Earliest', left:true }},
           {{ key:'latest_date', label:'Latest', left:true }},
-          {{ key:'spend', label:'Spend', format:money }},
-          {{ key:'impressions', label:'Impr.', format:count }},
-          {{ key:'clicks', label:'Clicks', format:count }},
-          {{ key:'conversions', label:'Conv.', format:count }},
+          {{ key:'spend', label:'Spend', format:moneyD }},
+          {{ key:'impressions', label:'Impr.', format:countD }},
+          {{ key:'clicks', label:'Clicks', format:countD }},
+          {{ key:'conversions', label:'Conv.', format:countD }},
         ], rows, 'No mart health rows found.');
         setRaw('healthJson', payload);
         setStatus('healthStatus', rows.length ? `Loaded ${{rows.length}} health row(s).` : 'No health rows found.');

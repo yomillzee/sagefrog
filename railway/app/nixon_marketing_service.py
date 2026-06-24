@@ -147,6 +147,28 @@ def fetch_nixon_marketing_health(*, limit: int = 100) -> dict[str, Any]:
         params={"limit": bigquery.ScalarQueryParameter("limit", "INT64", int(limit))},
         max_rows=limit,
     )
+
+    # Append a Google Analytics freshness row from the page-path mart (GA4 isn't
+    # in mart_health, which only tracks paid media). No spend — it's website
+    # analytics — so the metric columns stay null and the UI shows them as "—".
+    ga4_sql = f"""
+    SELECT
+      'google_analytics' AS source,
+      COUNT(*) AS row_count,
+      MIN(`date`) AS earliest_date,
+      MAX(`date`) AS latest_date,
+      CAST(NULL AS FLOAT64) AS spend,
+      CAST(NULL AS INT64) AS impressions,
+      CAST(NULL AS INT64) AS clicks,
+      CAST(NULL AS FLOAT64) AS conversions
+    FROM {_PAGE_PATH_DAILY_TABLE}
+    """
+    try:
+        ga4_rows = _run_query(ga4_sql, params={}, max_rows=1)
+        rows = list(rows) + [r for r in ga4_rows if r.get("row_count")]
+    except Exception:
+        pass
+
     return {"client": "nixon", "row_count": len(rows), "rows": rows}
 
 
