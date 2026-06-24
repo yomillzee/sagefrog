@@ -1423,6 +1423,106 @@ def creatives_performance(
     }
 
 
+def fetch_creatives_metadata_by_ids(
+    account_id: str,
+    creative_ids: list[str],
+    *,
+    access_token: str | None = None,
+    env: LinkedInEnv | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch creative metadata (campaign mapping, media, status) for an explicit
+    list of creative IDs — independent of analytics or date range, so paused,
+    archived, and historical creatives are included.
+
+    Mirrors the per-creative metadata build in ``creatives_performance`` but is
+    driven by the given IDs (not a 30-day analytics pivot) and skips performance
+    aggregation. Returns rows shaped for ``mirror_linkedin_creative_metadata``;
+    creatives whose lookup fails are skipped (retried on the next sync) rather
+    than cached as null.
+    """
+    env = env or load_linkedin_env()
+    access_token = access_token or refresh_access_token(env)["access_token"]
+    account_id_clean = _normalize_account_id(account_id)
+    if not account_id_clean:
+        raise ValueError("account_id is required")
+
+    ids = sorted({str(c).strip().split(":")[-1] for c in creative_ids if str(c).strip()})
+    if not ids:
+        return []
+
+    group_name_cache: dict[str, str] = {}
+    video_cache: dict[str, dict[str, str]] = {}
+    image_cache: dict[str, dict[str, str]] = {}
+    sponsored_posts = _fetch_sponsored_posts_index(
+        account_id_clean, access_token=access_token, env=env
+    )
+    account_videos = list_account_video_assets(
+        account_id_clean, access_token=access_token, env=env
+    )
+    account_videos_by_urn, account_videos_by_name = _account_video_indexes(account_videos)
+
+    out: list[dict[str, Any]] = []
+    for crid in ids:
+        try:
+            meta = _fetch_creative_by_id(
+                account_id_clean, crid, access_token=access_token, env=env
+            )
+        except Exception:
+            meta = {}
+        if not meta:
+            continue
+
+        campaign_urn = str(meta.get("campaign") or "")
+        cid = _campaign_id_from_pivot(campaign_urn) if campaign_urn else ""
+        cname = ""
+        group_ctx = {"campaign_group_id": "", "campaign_group_name": ""}
+        if cid:
+            try:
+                cmeta = _fetch_campaign_by_id(
+                    account_id_clean, cid, access_token=access_token, env=env
+                )
+                cname = cmeta.get("name") or ""
+                group_ctx = _campaign_group_context_from_campaign_meta(
+                    cmeta,
+                    account_id_clean,
+                    access_token=access_token,
+                    env=env,
+                    group_name_cache=group_name_cache,
+                )
+            except Exception:
+                pass
+
+        item: dict[str, Any] = {
+            "id": crid,
+            "creative_id": crid,
+            "account_id": account_id_clean,
+            "entity_level": "creative",
+            "name": meta.get("name") or "",
+            "status": meta.get("intendedStatus") or meta.get("status") or "",
+            "campaign_id": cid,
+            "campaign_name": cname,
+            "campaign_group_id": group_ctx["campaign_group_id"],
+            "campaign_group_name": group_ctx["campaign_group_name"],
+        }
+        media = _resolve_creative_media_fields(
+            meta,
+            access_token=access_token,
+            env=env,
+            video_cache=video_cache,
+            image_cache=image_cache,
+            sponsored_posts=sponsored_posts,
+            account_videos_by_urn=account_videos_by_urn,
+            account_videos_by_name=account_videos_by_name,
+        )
+        for key in ("thumbnail_url", "image_url", "video_url", "media_type", "creative_name"):
+            val = str(media.get(key) or "").strip()
+            if val:
+                item[key] = val
+        out.append(item)
+
+    return out
+
+
 def account_performance(
     account_id: str,
     *,

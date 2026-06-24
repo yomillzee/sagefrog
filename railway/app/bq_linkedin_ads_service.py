@@ -375,6 +375,78 @@ def sync_campaign_metadata_and_rebuild_mart(
     }
 
 
+def _backfill_missing_creative_metadata(account_id_clean: str) -> dict[str, Any]:
+    """Upsert metadata for creative_ids present in raw ad_daily but still missing
+    from creative_metadata — i.e. paused/archived/historical creatives the 30-day
+    performance call omits, which otherwise leave NULL campaign_id/name in the
+    fact_linkedin_ads_creative_daily mart.
+
+    Idempotent and additive: it only fetches the not-yet-present creatives, and
+    LinkedIn lookups are by creative ID so status (paused/archived) is irrelevant.
+    """
+    import bigquery_warehouse
+    import linkedin_service
+
+    project = _project_id()
+    dataset = _dataset_id()
+    creds = _routed_credentials_env()
+    safe_account = "".join(ch for ch in str(account_id_clean) if ch.isalnum())
+    sql = f"""
+    SELECT DISTINCT CAST(ad.creative_id AS STRING) AS creative_id
+    FROM `{project}.{dataset}.ad_daily` ad
+    LEFT JOIN `{project}.{dataset}.creative_metadata` m
+      ON CAST(ad.creative_id AS STRING) = CAST(m.creative_id AS STRING)
+     AND CAST(ad.account_id AS STRING) = CAST(m.account_id AS STRING)
+    WHERE ad.source = 'linkedin'
+      AND CAST(ad.account_id AS STRING) = '{safe_account}'
+      AND ad.creative_id IS NOT NULL
+      AND m.creative_id IS NULL
+    """
+    try:
+        rows = bigquery_service.run_query(
+            sql, project_id=project, credentials_env=creds, max_rows=20000
+        )
+    except Exception as exc:
+        return {"missing": 0, "fetched": 0, "error": str(exc)[:300]}
+
+    missing_ids = [str(r.get("creative_id") or "").strip() for r in rows if r.get("creative_id")]
+    if not missing_ids:
+        return {"missing": 0, "fetched": 0}
+
+    meta_rows = linkedin_service.fetch_creatives_metadata_by_ids(account_id_clean, missing_ids)
+    for r in meta_rows:
+        r.setdefault("account_id", account_id_clean)
+    mirror = bigquery_warehouse.mirror_linkedin_creative_metadata(meta_rows)
+
+    # The mart joins creative_metadata.campaign_id -> campaigns for campaign_name /
+    # group, so ensure those campaigns exist too (older creatives may belong to
+    # campaigns no longer in the 30-day campaign_daily window). De-dupe by id.
+    campaigns_by_id: dict[str, dict[str, Any]] = {}
+    for r in meta_rows:
+        cid = str(r.get("campaign_id") or "").strip()
+        if cid and cid not in campaigns_by_id:
+            campaigns_by_id[cid] = {
+                "source": "linkedin",
+                "account_id": account_id_clean,
+                "campaign_id": cid,
+                "campaign_name": r.get("campaign_name") or "",
+                "campaign_group_id": r.get("campaign_group_id") or "",
+                "campaign_group_name": r.get("campaign_group_name") or "",
+            }
+    camp_mirror: dict[str, Any] = {}
+    if campaigns_by_id:
+        camp_mirror = bigquery_warehouse.mirror_linkedin_campaign_metadata(
+            list(campaigns_by_id.values())
+        )
+
+    return {
+        "missing": len(missing_ids),
+        "fetched": len(meta_rows),
+        "rows_upserted": mirror.get("rows_upserted"),
+        "campaigns_upserted": camp_mirror.get("rows_upserted"),
+    }
+
+
 def sync_linkedin_creative_daily(
     *,
     account_id: str,
@@ -404,6 +476,10 @@ def sync_linkedin_creative_daily(
         row.setdefault("account_id", account_id_clean)
     meta_mirror = bigquery_warehouse.mirror_linkedin_creative_metadata(raw_creatives)
 
+    # Backfill metadata for historical/paused/archived creatives that exist in
+    # ad_daily but were never captured by the 30-day performance call above.
+    backfill = _backfill_missing_creative_metadata(account_id_clean)
+
     view = bigquery_warehouse.create_linkedin_creative_mart_view()
 
     return {
@@ -411,6 +487,7 @@ def sync_linkedin_creative_daily(
         "metadata_rows": len(raw_creatives),
         "ad_daily": ad_mirror,
         "creative_metadata": meta_mirror,
+        "metadata_backfill": backfill,
         "mart_view": view,
     }
 
