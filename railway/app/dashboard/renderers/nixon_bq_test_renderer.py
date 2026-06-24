@@ -19,6 +19,53 @@ def _api_url(path: str, *, access_key: str | None) -> str:
     return f"{path}?{urlencode({'key': access_key})}"
 
 
+# Self-contained copy of the portal's navy drawer sidebar (mirrors
+# base_layout.SIDEBAR_CSS) so this standalone page matches the main dashboard
+# chrome without importing the psycopg-heavy base_layout chain — which keeps
+# the offline .preview/ renderer working. Plain string: single braces.
+_SIDEBAR_CSS = """
+    .app-shell { display: flex; flex-direction: row; min-height: 100vh; }
+    .dash-main { flex: 1 1 auto; min-width: 0; }
+    .dash-sidebar {
+      flex-shrink: 0; width: 252px; align-self: flex-start; position: sticky; top: 0;
+      height: 100vh; display: flex; flex-direction: column;
+      background: linear-gradient(180deg, var(--sidebar-from), var(--sidebar-to));
+      color: #e6edf6; z-index: 90; overflow: hidden;
+    }
+    .dash-sidebar-head { display: flex; align-items: center; gap: 10px; padding: 20px 20px 16px; flex-shrink: 0; }
+    .dash-sidebar-logo { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; min-width: 0; }
+    .dash-sidebar-logo-icon { width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+    .dash-sidebar-wordmark { font-size: 1.18rem; font-weight: 700; letter-spacing: -.01em; color: #fff; white-space: nowrap; }
+    .dash-sidebar-beta { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 7px; background: rgba(255,255,255,.14); color: #ffd9a8; font-size: .66rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; line-height: 1; }
+    .dash-sidebar-nav { display: flex; flex-direction: column; gap: 3px; padding: 8px 12px; flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+    .dash-sidebar-nav .dash-view-btn { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 13px; border: 0; border-radius: 9px; background: transparent; color: #c3d2e6; font-size: .92rem; font-weight: 600; text-align: left; text-decoration: none; cursor: pointer; transition: background .15s, color .15s; }
+    .dash-sidebar-nav .dash-view-btn svg { width: 19px; height: 19px; flex-shrink: 0; opacity: .85; }
+    .dash-sidebar-nav .dash-view-btn:hover { background: rgba(255,255,255,.08); color: #fff; }
+    .dash-sidebar-nav .dash-view-btn.active { background: rgba(255,255,255,.15); color: #fff; box-shadow: inset 3px 0 0 #7dd3fc; }
+    .dash-sidebar-nav .dash-view-btn.active svg { opacity: 1; }
+    .dash-sidebar-footer { margin-top: auto; flex-shrink: 0; padding: 14px 14px 16px; border-top: 1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.12); }
+    .dash-sidebar-client { margin-bottom: 10px; }
+    .dash-sidebar-client .topbar-client-label { display: block; width: 100%; box-sizing: border-box; border-radius: 9px; border: 1px solid rgba(255,255,255,.18); background-color: rgba(255,255,255,.1); color: #fff; font-size: .9rem; font-weight: 650; padding: 9px 13px; }
+    .dash-sidebar-account { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.12); }
+    .dash-sidebar-account-email { display: block; font-size: .76rem; color: #9fb3cc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dash-sidebar-account-actions { display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: .8rem; }
+    .dash-sidebar-account-link { appearance: none; border: 0; background: none; padding: 0; font: inherit; color: #9ecbf5; text-decoration: none; cursor: pointer; }
+    .dash-sidebar-account-link:hover { text-decoration: underline; color: #cfe5fb; }
+    .dash-sidebar-account-sep { color: #64768f; }
+    .dash-sidebar-logout-form { display: inline; margin: 0; }
+    .dash-sidebar-toggle { display: none; position: fixed; top: 12px; left: 12px; z-index: 95; width: 42px; height: 42px; align-items: center; justify-content: center; border-radius: 10px; border: 1px solid var(--line); background: #fff; color: var(--navy); cursor: pointer; box-shadow: 0 1px 3px rgba(16,33,67,.12); }
+    .dash-sidebar-toggle svg { width: 20px; height: 20px; }
+    .dash-sidebar-backdrop { display: none; }
+    @media (max-width: 900px) {
+      .dash-sidebar { position: fixed; top: 0; left: 0; height: 100vh; width: 264px; transform: translateX(-100%); transition: transform .25s ease; box-shadow: 4px 0 24px rgba(0,0,0,.28); }
+      .app-shell.sidebar-open .dash-sidebar { transform: translateX(0); }
+      .app-shell.sidebar-open .dash-sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 88; background: rgba(8,18,33,.5); }
+      .dash-sidebar-toggle { display: inline-flex; }
+      main { padding-top: 60px; }
+    }
+"""
+
+
 def render_nixon_bigquery_test_page(
     *,
     access_key: str | None = None,
@@ -33,14 +80,53 @@ def render_nixon_bigquery_test_page(
     start = today - timedelta(days=30)
     account_html = ""
     if use_session and session_email:
-        admin_link = '<a href="/admin">Admin</a>' if session_is_admin else ""
+        admin_link = (
+            '<a class="dash-sidebar-account-link" href="/admin">Admin</a>'
+            '<span class="dash-sidebar-account-sep">·</span>'
+            if session_is_admin else ""
+        )
         account_html = f"""
-        <div class="account">
-          <span>{_esc(session_email)}</span>
-          {admin_link}
-          <form method="post" action="/logout"><button type="submit">Sign out</button></form>
-        </div>
-        """
+        <div class="dash-sidebar-account">
+          <span class="dash-sidebar-account-email">{_esc(session_email)}</span>
+          <div class="dash-sidebar-account-actions">
+            {admin_link}
+            <form class="dash-sidebar-logout-form" method="post" action="/logout"><button type="submit" class="dash-sidebar-account-link">Sign out</button></form>
+          </div>
+        </div>"""
+
+    _ICON_MENU = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>'
+    _ICON_OVERVIEW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>'
+    _ICON_EXPLORER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>'
+    _ICON_WEBSITE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>'
+    sidebar_html = f"""
+    <button type="button" class="dash-sidebar-toggle" id="sidebarToggle" aria-label="Open navigation" aria-expanded="false" aria-controls="dashSidebar">{_ICON_MENU}</button>
+    <div class="dash-sidebar-backdrop" id="sidebarBackdrop" hidden></div>
+    <aside class="dash-sidebar" id="dashSidebar" aria-label="Primary navigation">
+      <div class="dash-sidebar-head">
+        <a href="#sec-overview" class="dash-sidebar-logo" aria-label="Sagefrog home">
+          <img class="dash-sidebar-logo-icon" src="/static/apple-touch-icon.png" alt="" width="34" height="34" onerror="this.remove()" />
+          <span class="dash-sidebar-wordmark">Sagefrog</span>
+        </a>
+        <span class="dash-sidebar-beta">Beta</span>
+      </div>
+      <nav class="dash-sidebar-nav" aria-label="Sections">
+        <a class="dash-view-btn active" href="#sec-overview" data-nav="sec-overview">{_ICON_OVERVIEW}<span>Overview</span></a>
+        <a class="dash-view-btn" href="#sec-explorer" data-nav="sec-explorer">{_ICON_EXPLORER}<span>Campaign Explorer</span></a>
+        <a class="dash-view-btn" href="#sec-pages" data-nav="sec-pages">{_ICON_WEBSITE}<span>Website Analytics</span></a>
+      </nav>
+      <div class="dash-sidebar-footer">
+        <div class="dash-sidebar-client"><span class="topbar-client-label">Nixon — BQ Test</span></div>
+        {account_html}
+      </div>
+    </aside>"""
+
+    backfill_html = ""
+    if session_is_admin:
+        backfill_html = """
+    <div class="admin-bar">
+      <button type="button" class="primary" id="backfillBtn">Backfill LinkedIn — 180 days</button>
+      <span class="status" id="backfillStatus">Admin only · pulls ~180 days of LinkedIn into BigQuery and rebuilds the marts.</span>
+    </div>"""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -50,10 +136,13 @@ def render_nixon_bigquery_test_page(
   <title>Nixon BigQuery Test</title>
   {favicon_head_html()}
   <style>
-    :root {{ --bg:#f5f7fb; --card:#fff; --line:#d8e1ee; --navy:#0a2540; --blue:#1769aa; --muted:#66758f; --bad:#b42318; }}
+    :root {{ --bg:#f5f7fb; --card:#fff; --line:#d8e1ee; --navy:#0a2540; --blue:#1769aa; --muted:#66758f; --bad:#b42318; --sidebar-from:#0a2540; --sidebar-to:#123456; }}
     * {{ box-sizing:border-box; }}
     body {{ margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:#102033; }}
-    header {{ display:flex; justify-content:space-between; gap:16px; padding:20px 28px; background:#fff; border-bottom:1px solid var(--line); }}
+    {_SIDEBAR_CSS}
+    .page-head {{ margin-bottom:18px; }}
+    .admin-bar {{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px; padding:11px 14px; border:1px solid #e5c87a; border-radius:10px; background:#fff8e1; }}
+    .admin-bar .status {{ margin:0; }}
     main {{ max-width:1400px; margin:0 auto; padding:24px; }}
     h1 {{ margin:0; color:var(--navy); font-size:1.35rem; }}
     h2 {{ margin:0 0 8px; color:var(--navy); font-size:1.05rem; }}
@@ -118,14 +207,14 @@ def render_nixon_bigquery_test_page(
   </style>
 </head>
 <body>
-  <header>
-    <div>
+  <div class="app-shell" id="appShell">
+    {sidebar_html}
+    <div class="dash-main">
+  <main>
+    <div class="page-head">
       <h1>Nixon BigQuery Test</h1>
       <p>Internal validation page. Browser fetches Railway API endpoints only; Railway queries <code>marketing_marts</code>.</p>
     </div>
-    {account_html}
-  </header>
-  <main>
     <form class="toolbar" id="filters">
       <label>Start date<input id="startDate" type="date" value="{start.isoformat()}"></label>
       <label>End date<input id="endDate" type="date" value="{end.isoformat()}"></label>
@@ -147,8 +236,9 @@ def render_nixon_bigquery_test_page(
         <div class="chips" id="platformChips"></div>
       </div>
     </div>
+    {backfill_html}
 
-    <section>
+    <section id="sec-overview">
       <h2>1. Summary card</h2>
       <div class="status" id="summaryStatus">Waiting…</div>
       <div class="cards" id="summaryCards"></div>
@@ -178,7 +268,7 @@ def render_nixon_bigquery_test_page(
       <details><summary>Raw health JSON</summary><pre id="healthJson">{{}}</pre></details>
     </section>
 
-    <section>
+    <section id="sec-explorer">
       <h2>4. Campaign explorer (Google + LinkedIn)</h2>
       <div class="filter-row" id="explorerFilters">
         <div class="filter-group">
@@ -195,7 +285,7 @@ def render_nixon_bigquery_test_page(
       <details><summary>Raw explorer JSON</summary><pre id="explorerJson">{{}}</pre></details>
     </section>
 
-    <section>
+    <section id="sec-pages">
       <h2>5. Page performance</h2>
       <div class="filter-row" id="pageFilters">
         <div class="filter-group">
@@ -212,6 +302,8 @@ def render_nixon_bigquery_test_page(
       <details><summary>Raw page JSON</summary><pre id="pagesJson">{{}}</pre></details>
     </section>
   </main>
+    </div>
+  </div>
   <script>
     const SUMMARY_API = "{_api_url('/api/clients/nixon/summary', access_key=access_key)}";
     const HEALTH_API = "{_api_url('/api/clients/nixon/marketing/health', access_key=access_key)}";
@@ -219,6 +311,7 @@ def render_nixon_bigquery_test_page(
     const LINKEDIN_EXPLORER_API = "{_api_url('/api/clients/nixon/linkedin/explorer', access_key=access_key)}";
     const PAGES_TOP_API = "{_api_url('/api/clients/nixon/pages/top', access_key=access_key)}";
     const PAGES_SOURCES_API = "{_api_url('/api/clients/nixon/pages/sources', access_key=access_key)}";
+    const BACKFILL_API = "{_api_url('/api/clients/nixon/backfill-linkedin', access_key=access_key)}";
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
     const nums = new Intl.NumberFormat('en-US');
     const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({{ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }}[c]));
@@ -728,6 +821,64 @@ def render_nixon_bigquery_test_page(
       loadAll();
     }});
     loadAll();
+    // Admin-only LinkedIn backfill button (uses the signed-in session, no secret).
+    (function() {{
+      const btn = document.getElementById('backfillBtn');
+      if (!btn) return;
+      const st = document.getElementById('backfillStatus');
+      btn.addEventListener('click', async () => {{
+        if (!confirm('Backfill ~180 days of LinkedIn into BigQuery for Nixon?\\nThis calls the LinkedIn API and rebuilds the marts (1–2 min).')) return;
+        btn.disabled = true;
+        st.className = 'status';
+        st.textContent = 'Backfilling… this can take 1–2 minutes. Leave this tab open.';
+        const t0 = Date.now();
+        try {{
+          const r = await fetch(BACKFILL_API, {{ method: 'POST', credentials: 'same-origin' }});
+          const body = await r.json().catch(() => ({{}}));
+          if (!r.ok) throw new Error((body && (body.detail && body.detail.error || body.detail)) || r.statusText);
+          const li = body.linkedin || {{}};
+          const secs = Math.round((Date.now() - t0) / 1000);
+          st.textContent = `Done in ${{secs}}s · LinkedIn ${{li.status || 'ok'}} — ${{li.rows_fetched ?? '—'}} rows fetched, through ${{li.data_through ?? '—'}}. Refreshing…`;
+          loadAll();
+        }} catch (err) {{
+          st.className = 'status error';
+          st.textContent = 'Backfill failed: ' + (err.message || err);
+        }} finally {{
+          btn.disabled = false;
+        }}
+      }});
+    }})();
+    // Mobile drawer toggle (mirrors the portal sidebar behaviour).
+    (function() {{
+      const shell = document.querySelector('.app-shell');
+      const toggle = document.getElementById('sidebarToggle');
+      const backdrop = document.getElementById('sidebarBackdrop');
+      if (!shell || !toggle) return;
+      const setOpen = open => {{
+        shell.classList.toggle('sidebar-open', open);
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (backdrop) backdrop.hidden = !open;
+      }};
+      toggle.addEventListener('click', () => setOpen(!shell.classList.contains('sidebar-open')));
+      if (backdrop) backdrop.addEventListener('click', () => setOpen(false));
+      document.addEventListener('keydown', e => {{ if (e.key === 'Escape') setOpen(false); }});
+      shell.querySelectorAll('.dash-sidebar a').forEach(a => a.addEventListener('click', () => {{ if (window.innerWidth <= 900) setOpen(false); }}));
+    }})();
+    // Scrollspy: highlight the nav item for the section currently in view.
+    (function() {{
+      const links = [...document.querySelectorAll('.dash-sidebar-nav .dash-view-btn')];
+      const map = new Map(links.map(a => [a.dataset.nav, a]));
+      const obs = new IntersectionObserver(entries => {{
+        entries.forEach(en => {{
+          if (en.isIntersecting) {{
+            links.forEach(l => l.classList.remove('active'));
+            const a = map.get(en.target.id);
+            if (a) a.classList.add('active');
+          }}
+        }});
+      }}, {{ rootMargin: '-45% 0px -50% 0px' }});
+      links.forEach(a => {{ const el = document.getElementById(a.dataset.nav); if (el) obs.observe(el); }});
+    }})();
   </script>
 </body>
 </html>"""

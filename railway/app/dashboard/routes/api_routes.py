@@ -363,6 +363,45 @@ def nixon_pages_sources(
         raise _nixon_endpoint_failure(exc) from exc
 
 
+@router.post(
+    "/api/clients/nixon/backfill-linkedin",
+    summary="Nixon: 180-day LinkedIn backfill into BigQuery (session-authed)",
+)
+def nixon_backfill_linkedin(
+    request: Request,
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    """Run the 180-day onboarding ingestion for Nixon (writes raw_linkedin_ads +
+    rebuilds the marts). Authed by the signed-in dashboard session or an API key
+    — the same gate as the read endpoints — so no cron secret is needed."""
+    _authorize_nixon_api(
+        request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key
+    )
+    try:
+        import dashboard_service
+
+        result = dashboard_service.refresh_bq_client(
+            "nixon", date_range="LAST_180_DAYS", sync_trigger="onboarding"
+        )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+    run = (result or {}).get("refresh_run") or {}
+    linkedin = ((run.get("sources") or {}).get("linkedin")) or {}
+    return {
+        "ok": True,
+        "date_range": run.get("date_range"),
+        "linkedin": {
+            "status": linkedin.get("status"),
+            "rows_fetched": linkedin.get("rows_fetched"),
+            "rows_merged": linkedin.get("rows_merged"),
+            "data_through": linkedin.get("data_through"),
+        },
+    }
+
+
 @router.get("/api/debug/bq", summary="Debug BigQuery client identity")
 def debug_bigquery_identity(
     request: Request,
