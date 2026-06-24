@@ -1,0 +1,11 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "python run_sync_bq.py"
+# 11:30 UTC — offset from cron-sync-penn (11:00) so the two don't overlap.
+cronSchedule = "30 11 * * *"
+restartPolicyType = "never"
+# One-shot worker — no HTTP server; must disable health checks (not /health like sagefrog).
+healthcheckPath = ""
+healthcheckTimeout = 0
