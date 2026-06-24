@@ -46,6 +46,10 @@ _SIDEBAR_CSS = """
     .dash-sidebar-footer { margin-top: auto; flex-shrink: 0; padding: 14px 14px 16px; border-top: 1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.12); }
     .dash-sidebar-client { margin-bottom: 10px; }
     .dash-sidebar-client .topbar-client-label { display: block; width: 100%; box-sizing: border-box; border-radius: 9px; border: 1px solid rgba(255,255,255,.18); background-color: rgba(255,255,255,.1); color: #fff; font-size: .9rem; font-weight: 650; padding: 9px 13px; }
+    .dash-sidebar-links { display: flex; flex-direction: column; gap: 2px; }
+    .dash-sidebar-link { display: flex; align-items: center; gap: 11px; padding: 9px 12px; border-radius: 9px; color: #c3d2e6; font-size: .9rem; font-weight: 600; text-decoration: none; transition: background .15s, color .15s; }
+    .dash-sidebar-link svg { width: 18px; height: 18px; flex-shrink: 0; opacity: .85; }
+    .dash-sidebar-link:hover { background: rgba(255,255,255,.08); color: #fff; }
     .dash-sidebar-account { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.12); }
     .dash-sidebar-account-email { display: block; font-size: .76rem; color: #9fb3cc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .dash-sidebar-account-actions { display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: .8rem; }
@@ -98,6 +102,8 @@ def render_nixon_bigquery_test_page(
     _ICON_OVERVIEW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>'
     _ICON_EXPLORER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>'
     _ICON_WEBSITE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>'
+    _ICON_SETTINGS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
+    settings_url = _api_url("/dashboard/nixon/settings", access_key=access_key)
     sidebar_html = f"""
     <button type="button" class="dash-sidebar-toggle" id="sidebarToggle" aria-label="Open navigation" aria-expanded="false" aria-controls="dashSidebar">{_ICON_MENU}</button>
     <div class="dash-sidebar-backdrop" id="sidebarBackdrop" hidden></div>
@@ -116,10 +122,14 @@ def render_nixon_bigquery_test_page(
       </nav>
       <div class="dash-sidebar-footer">
         <div class="dash-sidebar-client"><span class="topbar-client-label">Nixon — BQ Test</span></div>
+        <nav class="dash-sidebar-links" aria-label="Account navigation">
+          <a href="{settings_url}" class="dash-sidebar-link">{_ICON_SETTINGS}<span>Settings</span></a>
+        </nav>
         {account_html}
       </div>
     </aside>"""
 
+    admin_class = "is-admin" if session_is_admin else ""
     backfill_html = ""
     if session_is_admin:
         backfill_html = """
@@ -136,44 +146,59 @@ def render_nixon_bigquery_test_page(
   <title>Nixon BigQuery Test</title>
   {favicon_head_html()}
   <style>
-    :root {{ --bg:#f5f7fb; --card:#fff; --line:#d8e1ee; --navy:#0a2540; --blue:#1769aa; --muted:#66758f; --bad:#b42318; --sidebar-from:#0a2540; --sidebar-to:#123456; }}
+    :root {{ --bg:#eef2f7; --card:#fff; --line:#e2e8f0; --line-soft:#eff3f8; --navy:#0a2540; --blue:#1769aa; --accent:#1d6fd0; --muted:#6b7a90; --bad:#b42318; --ok:#0a7f3f; --sidebar-from:#0a2540; --sidebar-to:#123456; --radius:14px; --radius-sm:9px; --shadow:0 1px 2px rgba(16,33,67,.04), 0 4px 16px rgba(16,33,67,.05); }}
     * {{ box-sizing:border-box; }}
-    body {{ margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:#102033; }}
+    body {{ margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:#102033; -webkit-font-smoothing:antialiased; }}
     {_SIDEBAR_CSS}
-    .page-head {{ margin-bottom:18px; }}
-    .src-note {{ margin:2px 0 12px; font-size:.74rem; color:var(--muted); }}
-    .src-note code {{ background:#eef4fb; padding:1px 5px; border-radius:4px; font-size:.72rem; color:#33506f; }}
-    .src-note .arrow {{ color:#9aa7bd; margin:0 3px; }}
-    .admin-bar {{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px; padding:11px 14px; border:1px solid #e5c87a; border-radius:10px; background:#fff8e1; }}
+    /* Debug surfaces — admins only (toggled by body.is-admin). */
+    .debug-only, .src-note, .raw-json {{ display:none; }}
+    .is-admin .debug-only, .is-admin .src-note, .is-admin .raw-json {{ display:block; }}
+    .page-head {{ margin-bottom:24px; }}
+    .src-note {{ margin:0 0 14px; font-size:.72rem; color:var(--muted); }}
+    .src-note code {{ background:#eef4fb; padding:1px 6px; border-radius:5px; font-size:.7rem; color:#33506f; }}
+    .src-note .arrow {{ color:#9aa7bd; margin:0 4px; }}
+    .admin-bar {{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:20px; padding:12px 16px; border:1px solid #ecd9a6; border-radius:var(--radius-sm); background:linear-gradient(180deg,#fffaf0,#fff6e3); }}
     .admin-bar .status {{ margin:0; }}
-    main {{ max-width:1400px; margin:0 auto; padding:24px; }}
-    h1 {{ margin:0; color:var(--navy); font-size:1.35rem; }}
-    h2 {{ margin:0 0 8px; color:var(--navy); font-size:1.05rem; }}
+    main {{ max-width:1320px; margin:0 auto; padding:30px 28px 56px; }}
+    h1 {{ margin:0; color:var(--navy); font-size:1.5rem; font-weight:800; letter-spacing:-.01em; }}
+    h2 {{ margin:0; color:var(--navy); font-size:1.1rem; font-weight:750; letter-spacing:-.005em; }}
     p {{ margin:6px 0 0; color:var(--muted); }}
-    .account {{ display:flex; align-items:center; gap:10px; font-size:.88rem; color:var(--muted); }}
-    .account a,.account button {{ border:0; background:transparent; color:var(--blue); cursor:pointer; padding:0; font:inherit; }}
-    .toolbar {{ display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-bottom:18px; }}
-    label {{ display:grid; gap:5px; color:var(--muted); font-size:.78rem; font-weight:800; text-transform:uppercase; }}
-    input {{ border:1px solid var(--line); border-radius:8px; padding:9px 11px; font:inherit; background:#fff; }}
-    button.primary {{ border:0; border-radius:8px; padding:10px 14px; background:var(--blue); color:#fff; font-weight:800; cursor:pointer; }}
-    section {{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:18px; }}
-    .cards {{ display:grid; grid-template-columns:repeat(7,minmax(120px,1fr)); gap:10px; }}
-    .card {{ border:1px solid var(--line); border-radius:10px; padding:12px; background:#fbfdff; }}
-    .card-title {{ color:var(--muted); font-size:.74rem; text-transform:uppercase; font-weight:800; }}
-    .card-value {{ margin-top:6px; font-size:1.2rem; color:var(--navy); font-weight:850; }}
-    .status {{ color:var(--muted); font-size:.9rem; margin-bottom:10px; }}
+    .page-head p {{ font-size:.9rem; }}
+    .toolbar {{ display:flex; flex-wrap:wrap; gap:14px; align-items:end; margin-bottom:14px; }}
+    label {{ display:grid; gap:6px; color:var(--muted); font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }}
+    input {{ border:1px solid var(--line); border-radius:var(--radius-sm); padding:9px 12px; font:inherit; background:#fff; color:#102033; }}
+    input:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
+    button.primary {{ border:0; border-radius:var(--radius-sm); padding:10px 16px; background:var(--accent); color:#fff; font-weight:700; cursor:pointer; box-shadow:0 1px 2px rgba(16,33,67,.12); transition:background .15s; }}
+    button.primary:hover {{ background:#1a62b8; }}
+    button.primary:disabled {{ opacity:.55; cursor:default; }}
+    section {{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:20px 22px; margin-bottom:20px; box-shadow:var(--shadow); }}
+    section > h2 {{ margin-bottom:14px; }}
+    .cards {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:12px; margin-top:2px; }}
+    .card {{ border:1px solid var(--line-soft); border-radius:var(--radius-sm); padding:14px 15px; background:linear-gradient(180deg,#fbfdff,#f5f9fd); }}
+    .card-title {{ color:var(--muted); font-size:.67rem; text-transform:uppercase; font-weight:800; letter-spacing:.05em; }}
+    .card-value {{ margin-top:8px; font-size:1.45rem; line-height:1.1; color:var(--navy); font-weight:800; letter-spacing:-.01em; }}
+    .status {{ color:var(--muted); font-size:.84rem; margin:0 0 14px; }}
     .status.error {{ color:var(--bad); }}
-    .table-wrap {{ overflow:auto; border:1px solid var(--line); border-radius:10px; }}
-    table {{ border-collapse:collapse; width:100%; min-width:780px; font-size:.88rem; }}
-    th,td {{ padding:9px 10px; border-bottom:1px solid #edf1f6; text-align:right; white-space:nowrap; }}
-    th {{ background:#f8fafc; color:#40516b; text-transform:uppercase; font-size:.72rem; position:sticky; top:0; }}
+    .table-wrap {{ overflow:auto; border:1px solid var(--line-soft); border-radius:var(--radius-sm); }}
+    table {{ border-collapse:collapse; width:100%; min-width:780px; font-size:.86rem; }}
+    th,td {{ padding:11px 13px; border-bottom:1px solid var(--line-soft); text-align:right; white-space:nowrap; }}
+    tbody tr:last-child td {{ border-bottom:0; }}
+    tbody tr:hover td {{ background:#f7faff; }}
+    th {{ background:#f4f7fb; color:#5a6b82; text-transform:uppercase; font-size:.68rem; letter-spacing:.04em; font-weight:800; position:sticky; top:0; }}
     th.left,td.left {{ text-align:left; }}
-    .empty {{ color:var(--muted); padding:20px; text-align:center; }}
-    details {{ margin-top:12px; }}
-    summary {{ color:var(--blue); cursor:pointer; font-weight:700; }}
-    pre {{ max-height:360px; overflow:auto; background:#0b1020; color:#d7e3ff; border-radius:10px; padding:12px; font-size:.78rem; }}
-    code {{ background:#eef4fb; padding:2px 4px; border-radius:4px; }}
+    .empty {{ color:var(--muted); padding:26px; text-align:center; }}
+    details.raw-json {{ margin-top:14px; }}
+    summary {{ color:var(--accent); cursor:pointer; font-weight:700; font-size:.82rem; }}
+    pre {{ max-height:360px; overflow:auto; background:#0b1020; color:#d7e3ff; border-radius:var(--radius-sm); padding:12px; font-size:.78rem; margin-top:10px; }}
+    code {{ background:#eef4fb; padding:2px 5px; border-radius:4px; }}
     .page-path {{ font-weight:600; color:#1f2d40; word-break:break-all; }}
+    table.compact {{ min-width:0; font-size:.84rem; }}
+    table.compact th, table.compact td {{ padding:8px 12px; }}
+    .pager {{ display:flex; align-items:center; justify-content:flex-end; gap:12px; margin-top:12px; }}
+    .pager-btn {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:var(--radius-sm); padding:6px 13px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s; }}
+    .pager-btn:hover:not(:disabled) {{ border-color:#b9c8dc; background:#f4f8fd; }}
+    .pager-btn:disabled {{ opacity:.45; cursor:default; }}
+    .pager-info {{ font-size:.8rem; color:var(--muted); font-weight:600; }}
     .chart-wrap {{ position:relative; border:1px solid var(--line); border-radius:10px; padding:10px 12px; background:#fff; }}
     .trend-svg {{ width:100%; height:260px; display:block; }}
     .chart-note {{ font-size:.76rem; color:var(--muted); margin-top:8px; }}
@@ -183,8 +208,10 @@ def render_nixon_bigquery_test_page(
     .filter-group {{ display:flex; align-items:center; gap:8px; }}
     .filter-label {{ color:var(--muted); font-size:.74rem; font-weight:800; text-transform:uppercase; }}
     .chips {{ display:flex; flex-wrap:wrap; gap:6px; }}
-    .chip {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:5px 13px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; }}
+    .chip {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:5px 13px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s, color .12s; }}
+    .chip:hover {{ border-color:#b9c8dc; background:#f4f8fd; }}
     .chip.active {{ background:var(--navy); color:#fff; border-color:var(--navy); }}
+    .chip.active:hover {{ background:#0d2c4d; }}
     .tree-row[data-expandable] {{ cursor:pointer; }}
     .tree-row[data-expandable]:hover {{ background:#f3f8ff; }}
     .caret {{ display:inline-block; width:14px; color:var(--muted); font-size:.8rem; }}
@@ -210,13 +237,13 @@ def render_nixon_bigquery_test_page(
   </style>
 </head>
 <body>
-  <div class="app-shell" id="appShell">
+  <div class="app-shell {admin_class}" id="appShell">
     {sidebar_html}
     <div class="dash-main">
   <main>
     <div class="page-head">
-      <h1>Nixon BigQuery Test</h1>
-      <p>Internal validation page. Browser fetches Railway API endpoints only; Railway queries <code>marketing_marts</code>.</p>
+      <h1>Nixon Medical</h1>
+      <p class="debug-only">Internal validation page. Browser fetches Railway API endpoints only; Railway queries <code>marketing_marts</code>.</p>
     </div>
     <form class="toolbar" id="filters">
       <label>Start date<input id="startDate" type="date" value="{start.isoformat()}"></label>
@@ -242,15 +269,15 @@ def render_nixon_bigquery_test_page(
     {backfill_html}
 
     <section id="sec-overview">
-      <h2>1. Summary card</h2>
+      <h2>Summary</h2>
       <p class="src-note"><code>GET /api/clients/nixon/summary</code><span class="arrow">→</span><code>marketing_marts.vw_paid_media_daily</code></p>
       <div class="status" id="summaryStatus">Waiting…</div>
       <div class="cards" id="summaryCards"></div>
-      <details><summary>Raw summary JSON</summary><pre id="summaryJson">{{}}</pre></details>
+      <details class="raw-json"><summary>Raw summary JSON</summary><pre id="summaryJson">{{}}</pre></details>
     </section>
 
     <section>
-      <h2>2. Trend chart</h2>
+      <h2>Trends</h2>
       <p class="src-note"><code>GET /api/clients/nixon/summary</code> (daily)<span class="arrow">→</span><code>marketing_marts.vw_paid_media_daily</code></p>
       <div class="filter-row">
         <div class="filter-group">
@@ -267,15 +294,15 @@ def render_nixon_bigquery_test_page(
     </section>
 
     <section>
-      <h2>3. Mart health table</h2>
+      <h2>Mart health</h2>
       <p class="src-note"><code>GET /api/clients/nixon/marketing/health</code><span class="arrow">→</span><code>marketing_marts.mart_health</code></p>
       <div class="status" id="healthStatus">Waiting…</div>
       <div class="table-wrap"><table id="healthTable"></table></div>
-      <details><summary>Raw health JSON</summary><pre id="healthJson">{{}}</pre></details>
+      <details class="raw-json"><summary>Raw health JSON</summary><pre id="healthJson">{{}}</pre></details>
     </section>
 
     <section id="sec-explorer">
-      <h2>4. Campaign explorer (Google + LinkedIn)</h2>
+      <h2>Campaign explorer</h2>
       <p class="src-note"><code>GET .../google-ads/explorer</code><span class="arrow">→</span><code>explorer_google_ads_daily</code> · <code>GET .../linkedin/explorer</code><span class="arrow">→</span><code>fact_linkedin_ads_creative_daily</code></p>
       <div class="filter-row" id="explorerFilters">
         <div class="filter-group">
@@ -289,11 +316,11 @@ def render_nixon_bigquery_test_page(
       </div>
       <div class="status" id="explorerStatus">Waiting…</div>
       <div class="table-wrap"><table id="explorerTable"></table></div>
-      <details><summary>Raw explorer JSON</summary><pre id="explorerJson">{{}}</pre></details>
+      <details class="raw-json"><summary>Raw explorer JSON</summary><pre id="explorerJson">{{}}</pre></details>
     </section>
 
     <section id="sec-pages">
-      <h2>5. Page performance</h2>
+      <h2>Page performance</h2>
       <p class="src-note"><code>GET .../pages/top</code><span class="arrow">→</span><code>vw_page_path_daily</code> · <code>GET .../pages/sources</code><span class="arrow">→</span><code>vw_page_path_source_daily</code></p>
       <div class="filter-row" id="pageFilters">
         <div class="filter-group">
@@ -306,8 +333,9 @@ def render_nixon_bigquery_test_page(
         </div>
       </div>
       <div class="status" id="pagesStatus">Waiting…</div>
-      <div class="table-wrap"><table id="pagesTable"></table></div>
-      <details><summary>Raw page JSON</summary><pre id="pagesJson">{{}}</pre></details>
+      <div class="table-wrap"><table id="pagesTable" class="compact"></table></div>
+      <div class="pager" id="pagesPager"></div>
+      <details class="raw-json"><summary>Raw page JSON</summary><pre id="pagesJson">{{}}</pre></details>
     </section>
   </main>
     </div>
@@ -699,6 +727,8 @@ def render_nixon_bigquery_test_page(
     let pagesSourceRows = [];   // /pages/sources — per page x source x AI
     const paidSourceFilter = new Set();  // selected paid source_platform values (e.g. 'paid_google')
     const aiPlatformFilter = new Set();  // selected ai_platform values (e.g. 'ChatGPT')
+    const PAGES_PER_PAGE = 10;
+    let pagesPageNum = 1;
     const PAID_SOURCE_LABELS = {{ paid_google:'Google', paid_bing:'Bing', paid_linkedin:'LinkedIn', paid_meta:'Meta', paid_facebook:'Facebook' }};
     function paidLabel(src) {{
       return PAID_SOURCE_LABELS[src] || String(src).replace(/^paid_/, '').replace(/_/g, ' ').replace(/\\b\\w/g, c => c.toUpperCase());
@@ -733,16 +763,34 @@ def render_nixon_bigquery_test_page(
       if (!base.length) {{
         el.innerHTML = `<tbody><tr><td class="empty">No pages for this range / filter.</td></tr></tbody>`;
         setStatus('pagesStatus', 'No pages for this range / filter.');
+        document.getElementById('pagesPager').innerHTML = '';
         return;
       }}
+      const totalPages = Math.max(1, Math.ceil(base.length / PAGES_PER_PAGE));
+      if (pagesPageNum > totalPages) pagesPageNum = totalPages;
+      const startIdx = (pagesPageNum - 1) * PAGES_PER_PAGE;
+      const pageRows = base.slice(startIdx, startIdx + PAGES_PER_PAGE);
       const head = `<thead><tr><th class="left">Page</th><th>Views</th><th>Users</th><th>Sessions</th><th>Avg engt</th></tr></thead>`;
-      const body = base.slice(0, 100).map(p => {{
-        const sub = p.page_group ? ` <span class="muted">${{esc(p.page_group)}}${{p.page_topic ? ' \\u00b7 ' + esc(p.page_topic) : ''}}</span>` : '';
+      const body = pageRows.map(p => {{
+        const sub = p.page_group ? ` <span class="muted">${{esc(p.page_group)}}</span>` : '';
         const engt = p.sessions ? p.engagement_seconds / p.sessions : 0;
         return `<tr><td class="left"><span class="page-path">${{esc(p.page_path)}}</span>${{sub}}</td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.sessions)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;
       }}).join('');
       el.innerHTML = head + `<tbody>${{body}}</tbody>`;
-      setStatus('pagesStatus', `${{Math.min(base.length, 100)}} of ${{base.length}} page(s)` + (pageFiltersActive() ? ' (filtered)' : '') + '.');
+      setStatus('pagesStatus', `${{startIdx + 1}}\\u2013${{startIdx + pageRows.length}} of ${{base.length}} page(s)` + (pageFiltersActive() ? ' (filtered)' : '') + '.');
+      renderPagesPager(totalPages);
+    }}
+    function renderPagesPager(totalPages) {{
+      const pager = document.getElementById('pagesPager');
+      if (totalPages <= 1) {{ pager.innerHTML = ''; return; }}
+      pager.innerHTML =
+        `<button type="button" class="pager-btn" id="pagesPrev"${{pagesPageNum <= 1 ? ' disabled' : ''}}>\\u2039 Prev</button>` +
+        `<span class="pager-info">Page ${{pagesPageNum}} of ${{totalPages}}</span>` +
+        `<button type="button" class="pager-btn" id="pagesNext"${{pagesPageNum >= totalPages ? ' disabled' : ''}}>Next \\u203a</button>`;
+      const prev = document.getElementById('pagesPrev');
+      const next = document.getElementById('pagesNext');
+      if (prev) prev.onclick = () => {{ if (pagesPageNum > 1) {{ pagesPageNum--; renderPages(); }} }};
+      if (next) next.onclick = () => {{ if (pagesPageNum < totalPages) {{ pagesPageNum++; renderPages(); }} }};
     }}
     // Render a multi-select chip group with an "All" reset. `entries` is a list
     // of [value, label]; the active set stores values. Rebuilt each load.
@@ -755,7 +803,7 @@ def render_nixon_bigquery_test_page(
         if (key === '__all__') stateSet.clear();
         else if (stateSet.has(key)) stateSet.delete(key);
         else stateSet.add(key);
-        sync(); renderPages();
+        sync(); pagesPageNum = 1; renderPages();
       }}));
       sync();
     }}
@@ -773,6 +821,7 @@ def render_nixon_bigquery_test_page(
       ]);
       pagesTopRows = top.rows || [];
       pagesSourceRows = src.rows || [];
+      pagesPageNum = 1;
       buildPageFilters();
       renderPages();
       setRaw('pagesJson', {{ top, sources: src }});

@@ -83,6 +83,14 @@ def list_client_slugs() -> list[str]:
     return sorted(slugs)
 
 
+def is_builtin_slug(slug: str) -> bool:
+    """True for built-in client slugs (and Penn). These always resolve to a real
+    config, so callers can accept them even when suppressed from the dashboard
+    list — matching load_client_config's leniency."""
+    s = (slug or "").strip().lower()
+    return s == "penn" or s in _BUILTIN_CLIENTS
+
+
 def list_dashboard_clients() -> list[tuple[str, str]]:
     """(slug, label) pairs for admin dashboard links."""
     slugs = list_client_slugs()

@@ -23,7 +23,9 @@ def penn_html_session_kwargs(auth: web_auth.DashboardAuth) -> dict:
 def validate_client_slug(client_slug: str) -> str:
     slug = (client_slug or "").strip().lower()
     known = client_config.list_client_slugs()
-    if slug not in known:
+    # Built-in clients (e.g. nixon) stay reachable even when suppressed from the
+    # dashboard list — suppression hides them from the picker, not from routing.
+    if slug not in known and not client_config.is_builtin_slug(slug):
         raise HTTPException(status_code=404, detail=f"Unknown client dashboard '{client_slug}'.")
     return slug
 
