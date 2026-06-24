@@ -14,6 +14,8 @@ _FACT_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.fact_marketing_daily`"
 _HEALTH_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.mart_health`"
 _GOOGLE_ADS_EXPLORER_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.explorer_google_ads_daily`"
 _LINKEDIN_CREATIVE_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.fact_linkedin_ads_creative_daily`"
+_PAGE_PATH_DAILY_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_page_path_daily`"
+_PAGE_PATH_SOURCE_DAILY_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_page_path_source_daily`"
 
 
 def _job_config(**params: bigquery.ScalarQueryParameter) -> bigquery.QueryJobConfig:
@@ -316,6 +318,83 @@ def fetch_nixon_linkedin_explorer(
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
         },
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
+def fetch_nixon_pages_top(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Top pages (all traffic) from vw_page_path_daily, aggregated per page."""
+    sql = f"""
+    SELECT
+      page_path,
+      ANY_VALUE(page_group) AS page_group,
+      ANY_VALUE(page_topic) AS page_topic,
+      SUM(page_views) AS page_views,
+      SUM(users) AS users,
+      SUM(sessions) AS sessions,
+      ROUND(SUM(engagement_seconds), 1) AS engagement_seconds
+    FROM {_PAGE_PATH_DAILY_TABLE}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY page_path
+    ORDER BY page_views DESC
+    """
+    rows = _run_query(
+        sql,
+        params={
+            "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+            "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+        },
+        max_rows=20000,
+    )
+    return {
+        "client": "nixon",
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
+def fetch_nixon_pages_sources(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Per-page traffic broken out by source / AI referral from
+    vw_page_path_source_daily, for filtering the top-pages list."""
+    sql = f"""
+    SELECT
+      page_path,
+      ANY_VALUE(page_group) AS page_group,
+      ANY_VALUE(page_topic) AS page_topic,
+      source_platform,
+      is_ai_referral,
+      ai_platform,
+      utm_campaign,
+      SUM(page_views) AS page_views,
+      SUM(users) AS users,
+      SUM(sessions) AS sessions,
+      ROUND(SUM(engagement_seconds), 1) AS engagement_seconds
+    FROM {_PAGE_PATH_SOURCE_DAILY_TABLE}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY page_path, source_platform, is_ai_referral, ai_platform, utm_campaign
+    ORDER BY page_views DESC
+    """
+    rows = _run_query(
+        sql,
+        params={
+            "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+            "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+        },
+        max_rows=50000,
+    )
+    return {
+        "client": "nixon",
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "row_count": len(rows),
         "rows": rows,
     }

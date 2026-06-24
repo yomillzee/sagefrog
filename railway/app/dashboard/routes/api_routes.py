@@ -319,6 +319,50 @@ def nixon_linkedin_explorer(
         raise _nixon_endpoint_failure(exc) from exc
 
 
+@router.get(
+    "/api/clients/nixon/pages/top",
+    summary="Nixon top pages (all traffic) from BigQuery",
+)
+def nixon_pages_top(
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(
+        request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        return nixon_marketing_service.fetch_nixon_pages_top(start_date=start, end_date=end)
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/nixon/pages/sources",
+    summary="Nixon page source / AI-referral breakdown from BigQuery",
+)
+def nixon_pages_sources(
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(
+        request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        return nixon_marketing_service.fetch_nixon_pages_sources(start_date=start, end_date=end)
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
 @router.get("/api/debug/bq", summary="Debug BigQuery client identity")
 def debug_bigquery_identity(
     request: Request,

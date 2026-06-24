@@ -81,6 +81,12 @@ def render_nixon_bigquery_test_page(
     summary {{ color:var(--blue); cursor:pointer; font-weight:700; }}
     pre {{ max-height:360px; overflow:auto; background:#0b1020; color:#d7e3ff; border-radius:10px; padding:12px; font-size:.78rem; }}
     code {{ background:#eef4fb; padding:2px 4px; border-radius:4px; }}
+    .page-path {{ font-weight:600; color:#1f2d40; word-break:break-all; }}
+    .chart-wrap {{ position:relative; border:1px solid var(--line); border-radius:10px; padding:10px 12px; background:#fff; }}
+    .trend-svg {{ width:100%; height:260px; display:block; }}
+    .chart-note {{ font-size:.76rem; color:var(--muted); margin-top:8px; }}
+    .chart-tip {{ position:absolute; pointer-events:none; background:#0b1020; color:#e8eefc; font-size:.74rem; line-height:1.5; padding:7px 9px; border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.25); transform:translate(-50%,-112%); white-space:nowrap; z-index:5; }}
+    .metric-swatch {{ width:10px; height:10px; border-radius:2px; display:inline-block; vertical-align:middle; margin-right:4px; }}
     .filter-row {{ display:flex; flex-wrap:wrap; gap:20px; margin-bottom:12px; align-items:center; }}
     .filter-group {{ display:flex; align-items:center; gap:8px; }}
     .filter-label {{ color:var(--muted); font-size:.74rem; font-weight:800; text-transform:uppercase; }}
@@ -150,14 +156,30 @@ def render_nixon_bigquery_test_page(
     </section>
 
     <section>
-      <h2>2. Mart health table</h2>
+      <h2>2. Trend chart</h2>
+      <div class="filter-row">
+        <div class="filter-group">
+          <span class="filter-label">Metrics</span>
+          <div class="chips" id="metricChips"></div>
+        </div>
+      </div>
+      <div class="status" id="chartStatus">Waiting…</div>
+      <div class="chart-wrap" id="trendChartWrap">
+        <svg id="trendChart" class="trend-svg" preserveAspectRatio="none"></svg>
+        <div id="chartTip" class="chart-tip" hidden></div>
+      </div>
+      <p class="chart-note">Each line is normalized to its own min–max, so the overlay compares trend shapes, not absolute scale. Hover for actual values.</p>
+    </section>
+
+    <section>
+      <h2>3. Mart health table</h2>
       <div class="status" id="healthStatus">Waiting…</div>
       <div class="table-wrap"><table id="healthTable"></table></div>
       <details><summary>Raw health JSON</summary><pre id="healthJson">{{}}</pre></details>
     </section>
 
     <section>
-      <h2>3. Campaign explorer (Google + LinkedIn)</h2>
+      <h2>4. Campaign explorer (Google + LinkedIn)</h2>
       <div class="filter-row" id="explorerFilters">
         <div class="filter-group">
           <span class="filter-label">Product</span>
@@ -172,12 +194,31 @@ def render_nixon_bigquery_test_page(
       <div class="table-wrap"><table id="explorerTable"></table></div>
       <details><summary>Raw explorer JSON</summary><pre id="explorerJson">{{}}</pre></details>
     </section>
+
+    <section>
+      <h2>5. Page performance</h2>
+      <div class="filter-row" id="pageFilters">
+        <div class="filter-group">
+          <span class="filter-label">AI referral</span>
+          <div class="chips" id="aiChips"></div>
+        </div>
+        <div class="filter-group">
+          <span class="filter-label">Source</span>
+          <div class="chips" id="sourceChips"></div>
+        </div>
+      </div>
+      <div class="status" id="pagesStatus">Waiting…</div>
+      <div class="table-wrap"><table id="pagesTable"></table></div>
+      <details><summary>Raw page JSON</summary><pre id="pagesJson">{{}}</pre></details>
+    </section>
   </main>
   <script>
     const SUMMARY_API = "{_api_url('/api/clients/nixon/summary', access_key=access_key)}";
     const HEALTH_API = "{_api_url('/api/clients/nixon/marketing/health', access_key=access_key)}";
     const EXPLORER_API = "{_api_url('/api/clients/nixon/google-ads/explorer', access_key=access_key)}";
     const LINKEDIN_EXPLORER_API = "{_api_url('/api/clients/nixon/linkedin/explorer', access_key=access_key)}";
+    const PAGES_TOP_API = "{_api_url('/api/clients/nixon/pages/top', access_key=access_key)}";
+    const PAGES_SOURCES_API = "{_api_url('/api/clients/nixon/pages/sources', access_key=access_key)}";
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
     const nums = new Intl.NumberFormat('en-US');
     const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({{ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }}[c]));
@@ -247,11 +288,107 @@ def render_nixon_bigquery_test_page(
       const s = selectedSummary();
       summaryCards.innerHTML = SUMMARY_CARDS.map(([key, label, format]) => `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{format(s[key])}}</div></div>`).join('');
     }}
+    // ---- Trend chart (overlay normalized daily series) ----
+    const CHART_METRICS = [
+      {{ key:'spend', label:'Spend', color:'#1769aa', fmt:money }},
+      {{ key:'impressions', label:'Impressions', color:'#7c3aed', fmt:count }},
+      {{ key:'clicks', label:'Clicks', color:'#0a7f3f', fmt:count }},
+      {{ key:'cpc', label:'CPC', color:'#d97706', fmt:money }},
+      {{ key:'cpa', label:'CPA', color:'#dc2626', fmt:money }},
+      {{ key:'ctr', label:'CTR', color:'#0891b2', fmt:pct }},
+    ];
+    const chartMetrics = new Set(['spend', 'clicks']);
+    let chartDaily = [];
+    function buildChartDaily() {{
+      // Per-date-per-source rows from the summary endpoint → filter by platform,
+      // sum per day, derive cpc/cpa/ctr. Mirrors the summary-card platform logic.
+      const daily = (summaryPayload && summaryPayload.daily) ? summaryPayload.daily : [];
+      const sel = platformFilter.size ? new Set([...platformFilter].map(p => p.toLowerCase())) : null;
+      const byDate = new Map();
+      for (const r of daily) {{
+        if (sel && !sel.has(String(r.source || '').toLowerCase())) continue;
+        let d = byDate.get(r.date);
+        if (!d) {{ d = {{ date:r.date, spend:0, impressions:0, clicks:0, conversions:0 }}; byDate.set(r.date, d); }}
+        d.spend += num(r.spend); d.impressions += num(r.impressions); d.clicks += num(r.clicks); d.conversions += num(r.conversions);
+      }}
+      const out = [...byDate.values()].sort((a, b) => a.date < b.date ? -1 : 1);
+      for (const d of out) {{
+        d.cpc = d.clicks ? d.spend / d.clicks : 0;
+        d.cpa = d.conversions ? d.spend / d.conversions : 0;
+        d.ctr = d.impressions ? d.clicks / d.impressions * 100 : 0;
+      }}
+      return out;
+    }}
+    function renderChart() {{
+      chartDaily = buildChartDaily();
+      const svg = document.getElementById('trendChart');
+      const W = 800, H = 260, padL = 12, padR = 12, padT = 14, padB = 26;
+      const plotW = W - padL - padR, plotH = H - padT - padB;
+      const n = chartDaily.length;
+      svg.setAttribute('viewBox', `0 0 ${{W}} ${{H}}`);
+      if (!n) {{ svg.innerHTML = ''; setStatus('chartStatus', 'No data for this range.'); return; }}
+      const active = CHART_METRICS.filter(m => chartMetrics.has(m.key));
+      const xAt = i => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+      const parts = [
+        `<line x1="${{padL}}" y1="${{padT}}" x2="${{padL}}" y2="${{padT + plotH}}" stroke="#eef2f7"/>`,
+        `<line x1="${{padL}}" y1="${{padT + plotH}}" x2="${{padL + plotW}}" y2="${{padT + plotH}}" stroke="#e3e9f1"/>`,
+      ];
+      for (const m of active) {{
+        const vals = chartDaily.map(d => num(d[m.key]));
+        const mn = Math.min(...vals), mx = Math.max(...vals), span = (mx - mn) || 1;
+        const pts = vals.map((v, i) => `${{xAt(i).toFixed(1)}},${{(padT + (1 - (v - mn) / span) * plotH).toFixed(1)}}`).join(' ');
+        parts.push(`<polyline fill="none" stroke="${{m.color}}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${{pts}}"/>`);
+      }}
+      const lblIdx = n === 1 ? [0] : [0, Math.floor((n - 1) / 2), n - 1];
+      for (const i of lblIdx) {{
+        const anchor = i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle');
+        parts.push(`<text x="${{xAt(i).toFixed(1)}}" y="${{H - 8}}" font-size="10" fill="#66758f" text-anchor="${{anchor}}">${{esc(String(chartDaily[i].date).slice(5))}}</text>`);
+      }}
+      svg.innerHTML = parts.join('');
+      setStatus('chartStatus', `${{n}} day(s) · ${{active.length}} metric(s) overlaid.`);
+    }}
+    function buildMetricChips() {{
+      const el = document.getElementById('metricChips');
+      el.innerHTML = CHART_METRICS.map(m => `<button type="button" class="chip" data-key="${{m.key}}"><span class="metric-swatch" style="background:${{m.color}}"></span>${{esc(m.label)}}</button>`).join('');
+      el.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {{
+        const k = btn.dataset.key;
+        if (chartMetrics.has(k)) chartMetrics.delete(k); else chartMetrics.add(k);
+        syncMetricChips();
+        renderChart();
+      }}));
+      syncMetricChips();
+    }}
+    function syncMetricChips() {{
+      document.querySelectorAll('#metricChips .chip').forEach(btn => btn.classList.toggle('active', chartMetrics.has(btn.dataset.key)));
+    }}
+    function setupChartHover() {{
+      const wrap = document.getElementById('trendChartWrap');
+      const svg = document.getElementById('trendChart');
+      const tip = document.getElementById('chartTip');
+      svg.addEventListener('mousemove', ev => {{
+        if (!chartDaily.length) {{ tip.hidden = true; return; }}
+        const rect = svg.getBoundingClientRect();
+        const W = 800, padL = 12, padR = 12;
+        const frac = ((ev.clientX - rect.left) / rect.width * W - padL) / (W - padL - padR);
+        let i = Math.round(frac * (chartDaily.length - 1));
+        i = Math.max(0, Math.min(chartDaily.length - 1, i));
+        const d = chartDaily[i];
+        const active = CHART_METRICS.filter(m => chartMetrics.has(m.key));
+        if (!active.length) {{ tip.hidden = true; return; }}
+        tip.innerHTML = `<strong>${{esc(d.date)}}</strong>` + active.map(m => `<br><span class="metric-swatch" style="background:${{m.color}}"></span>${{esc(m.label)}}: ${{m.fmt(d[m.key])}}`).join('');
+        tip.hidden = false;
+        const wrapRect = wrap.getBoundingClientRect();
+        tip.style.left = (ev.clientX - wrapRect.left) + 'px';
+        tip.style.top = (ev.clientY - wrapRect.top) + 'px';
+      }});
+      svg.addEventListener('mouseleave', () => {{ tip.hidden = true; }});
+    }}
     async function loadSummary() {{
       setStatus('summaryStatus', 'Loading summary...');
       try {{
         summaryPayload = await getJson(withDates(SUMMARY_API));
         renderSummary();
+        renderChart();
         setRaw('summaryJson', summaryPayload);
         const note = summaryPayload.by_source ? '' : ' (no per-platform breakdown — showing combined)';
         setStatus('summaryStatus', `Loaded ${{summaryPayload.start_date}} to ${{summaryPayload.end_date}} from fact_marketing_daily.${{note}}`);
@@ -453,14 +590,94 @@ def render_nixon_bigquery_test_page(
       renderExplorer();
       setRaw('explorerJson', {{ google: g, linkedin: l }});
     }}
+    // ---- Page performance ----
+    let pagesTopRows = [];      // /pages/top — all traffic, per page
+    let pagesSourceRows = [];   // /pages/sources — per page x source x AI
+    const pageSourceFilter = new Set();  // selected source_platform values
+    let pageAiFilter = 'all';            // 'all' | 'ai' | 'non'
+    function fmtDuration(secs) {{
+      secs = Math.round(num(secs));
+      if (secs < 60) return secs + 's';
+      const m = Math.floor(secs / 60), s = secs % 60;
+      return m + 'm ' + (s < 10 ? '0' : '') + s + 's';
+    }}
+    function pageFiltersActive() {{ return pageSourceFilter.size > 0 || pageAiFilter !== 'all'; }}
+    function pageSourceRowMatches(r) {{
+      if (pageAiFilter === 'ai' && !r.is_ai_referral) return false;
+      if (pageAiFilter === 'non' && r.is_ai_referral) return false;
+      if (pageSourceFilter.size && !pageSourceFilter.has(r.source_platform)) return false;
+      return true;
+    }}
+    function aggregatePages(rows) {{
+      const map = new Map();
+      for (const r of rows) {{
+        let g = map.get(r.page_path);
+        if (!g) {{ g = {{ page_path:r.page_path, page_group:r.page_group, page_topic:r.page_topic, page_views:0, users:0, sessions:0, engagement_seconds:0 }}; map.set(r.page_path, g); }}
+        g.page_views += num(r.page_views); g.users += num(r.users); g.sessions += num(r.sessions); g.engagement_seconds += num(r.engagement_seconds);
+      }}
+      return [...map.values()].sort((a, b) => b.page_views - a.page_views);
+    }}
+    function renderPages() {{
+      // No filter → the all-traffic top-pages view; any filter → recompute from
+      // the per-source rows so the list reflects only that source / AI traffic.
+      const base = pageFiltersActive() ? aggregatePages(pagesSourceRows.filter(pageSourceRowMatches)) : pagesTopRows;
+      const el = document.getElementById('pagesTable');
+      if (!base.length) {{
+        el.innerHTML = `<tbody><tr><td class="empty">No pages for this range / filter.</td></tr></tbody>`;
+        setStatus('pagesStatus', 'No pages for this range / filter.');
+        return;
+      }}
+      const head = `<thead><tr><th class="left">Page</th><th>Views</th><th>Users</th><th>Sessions</th><th>Avg engt</th></tr></thead>`;
+      const body = base.slice(0, 100).map(p => {{
+        const sub = p.page_group ? ` <span class="muted">${{esc(p.page_group)}}${{p.page_topic ? ' \\u00b7 ' + esc(p.page_topic) : ''}}</span>` : '';
+        const engt = p.sessions ? p.engagement_seconds / p.sessions : 0;
+        return `<tr><td class="left"><span class="page-path">${{esc(p.page_path)}}</span>${{sub}}</td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.sessions)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;
+      }}).join('');
+      el.innerHTML = head + `<tbody>${{body}}</tbody>`;
+      setStatus('pagesStatus', `${{Math.min(base.length, 100)}} of ${{base.length}} page(s)` + (pageFiltersActive() ? ' (filtered)' : '') + '.');
+    }}
+    function buildPageFilters() {{
+      const aiEl = document.getElementById('aiChips');
+      aiEl.innerHTML = [['all', 'All'], ['ai', 'AI only'], ['non', 'Non-AI']].map(([k, l]) => `<button type="button" class="chip" data-ai="${{k}}">${{esc(l)}}</button>`).join('');
+      const syncAi = () => aiEl.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.ai === pageAiFilter));
+      aiEl.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {{ pageAiFilter = btn.dataset.ai; syncAi(); renderPages(); }}));
+      syncAi();
+      const sources = [...new Set(pagesSourceRows.map(r => r.source_platform).filter(Boolean))].sort();
+      const srcEl = document.getElementById('sourceChips');
+      srcEl.innerHTML = ['All', ...sources].map(k => `<button type="button" class="chip" data-key="${{esc(k)}}">${{esc(k)}}</button>`).join('');
+      const syncSrc = () => srcEl.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.key === 'All' ? pageSourceFilter.size === 0 : pageSourceFilter.has(b.dataset.key)));
+      srcEl.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {{
+        const key = btn.dataset.key;
+        if (key === 'All') pageSourceFilter.clear();
+        else if (pageSourceFilter.has(key)) pageSourceFilter.delete(key);
+        else pageSourceFilter.add(key);
+        syncSrc(); renderPages();
+      }}));
+      syncSrc();
+    }}
+    async function loadPages() {{
+      setStatus('pagesStatus', 'Loading page performance...');
+      const [top, src] = await Promise.all([
+        getJson(withDates(PAGES_TOP_API)).catch(() => ({{ rows: [] }})),
+        getJson(withDates(PAGES_SOURCES_API)).catch(() => ({{ rows: [] }})),
+      ]);
+      pagesTopRows = top.rows || [];
+      pagesSourceRows = src.rows || [];
+      buildPageFilters();
+      renderPages();
+      setRaw('pagesJson', {{ top, sources: src }});
+    }}
     function loadAll() {{
       loadSummary();
       loadHealth();
       loadExplorer();
+      loadPages();
     }}
     buildChips('productChips', ['Apparel', 'Scrubs', 'Linens'], productFilter);
     buildChips('regionChips', ['TX', 'FL', 'MA'], regionFilter);
-    buildChips('platformChips', ['Google', 'LinkedIn'], platformFilter, () => {{ renderSummary(); renderExplorer(); }});
+    buildChips('platformChips', ['Google', 'LinkedIn'], platformFilter, () => {{ renderSummary(); renderChart(); renderExplorer(); }});
+    buildMetricChips();
+    setupChartHover();
     document.getElementById('explorerTable').addEventListener('click', event => {{
       const row = event.target.closest('tr[data-expandable]');
       if (row) toggleExplorerRow(row);
