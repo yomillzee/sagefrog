@@ -199,11 +199,11 @@ def render_nixon_bigquery_test_page(
       <h2>5. Page performance</h2>
       <div class="filter-row" id="pageFilters">
         <div class="filter-group">
-          <span class="filter-label">AI referral</span>
+          <span class="filter-label">AI platform</span>
           <div class="chips" id="aiChips"></div>
         </div>
         <div class="filter-group">
-          <span class="filter-label">Source</span>
+          <span class="filter-label">Paid source</span>
           <div class="chips" id="sourceChips"></div>
         </div>
       </div>
@@ -593,19 +593,23 @@ def render_nixon_bigquery_test_page(
     // ---- Page performance ----
     let pagesTopRows = [];      // /pages/top — all traffic, per page
     let pagesSourceRows = [];   // /pages/sources — per page x source x AI
-    const pageSourceFilter = new Set();  // selected source_platform values
-    let pageAiFilter = 'all';            // 'all' | 'ai' | 'non'
+    const paidSourceFilter = new Set();  // selected paid source_platform values (e.g. 'paid_google')
+    const aiPlatformFilter = new Set();  // selected ai_platform values (e.g. 'ChatGPT')
+    const PAID_SOURCE_LABELS = {{ paid_google:'Google', paid_bing:'Bing', paid_linkedin:'LinkedIn', paid_meta:'Meta', paid_facebook:'Facebook' }};
+    function paidLabel(src) {{
+      return PAID_SOURCE_LABELS[src] || String(src).replace(/^paid_/, '').replace(/_/g, ' ').replace(/\\b\\w/g, c => c.toUpperCase());
+    }}
     function fmtDuration(secs) {{
       secs = Math.round(num(secs));
       if (secs < 60) return secs + 's';
       const m = Math.floor(secs / 60), s = secs % 60;
       return m + 'm ' + (s < 10 ? '0' : '') + s + 's';
     }}
-    function pageFiltersActive() {{ return pageSourceFilter.size > 0 || pageAiFilter !== 'all'; }}
+    function pageFiltersActive() {{ return paidSourceFilter.size > 0 || aiPlatformFilter.size > 0; }}
     function pageSourceRowMatches(r) {{
-      if (pageAiFilter === 'ai' && !r.is_ai_referral) return false;
-      if (pageAiFilter === 'non' && r.is_ai_referral) return false;
-      if (pageSourceFilter.size && !pageSourceFilter.has(r.source_platform)) return false;
+      // ai_platform is only set on AI-referral rows, so selecting one implies AI.
+      if (aiPlatformFilter.size && !aiPlatformFilter.has(r.ai_platform)) return false;
+      if (paidSourceFilter.size && !paidSourceFilter.has(r.source_platform)) return false;
       return true;
     }}
     function aggregatePages(rows) {{
@@ -636,24 +640,26 @@ def render_nixon_bigquery_test_page(
       el.innerHTML = head + `<tbody>${{body}}</tbody>`;
       setStatus('pagesStatus', `${{Math.min(base.length, 100)}} of ${{base.length}} page(s)` + (pageFiltersActive() ? ' (filtered)' : '') + '.');
     }}
-    function buildPageFilters() {{
-      const aiEl = document.getElementById('aiChips');
-      aiEl.innerHTML = [['all', 'All'], ['ai', 'AI only'], ['non', 'Non-AI']].map(([k, l]) => `<button type="button" class="chip" data-ai="${{k}}">${{esc(l)}}</button>`).join('');
-      const syncAi = () => aiEl.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.ai === pageAiFilter));
-      aiEl.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {{ pageAiFilter = btn.dataset.ai; syncAi(); renderPages(); }}));
-      syncAi();
-      const sources = [...new Set(pagesSourceRows.map(r => r.source_platform).filter(Boolean))].sort();
-      const srcEl = document.getElementById('sourceChips');
-      srcEl.innerHTML = ['All', ...sources].map(k => `<button type="button" class="chip" data-key="${{esc(k)}}">${{esc(k)}}</button>`).join('');
-      const syncSrc = () => srcEl.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.key === 'All' ? pageSourceFilter.size === 0 : pageSourceFilter.has(b.dataset.key)));
-      srcEl.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {{
+    // Render a multi-select chip group with an "All" reset. `entries` is a list
+    // of [value, label]; the active set stores values. Rebuilt each load.
+    function buildMultiChips(containerId, entries, stateSet) {{
+      const el = document.getElementById(containerId);
+      el.innerHTML = [['__all__', 'All'], ...entries].map(([v, l]) => `<button type="button" class="chip" data-key="${{esc(v)}}">${{esc(l)}}</button>`).join('');
+      const sync = () => el.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.key === '__all__' ? stateSet.size === 0 : stateSet.has(b.dataset.key)));
+      el.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {{
         const key = btn.dataset.key;
-        if (key === 'All') pageSourceFilter.clear();
-        else if (pageSourceFilter.has(key)) pageSourceFilter.delete(key);
-        else pageSourceFilter.add(key);
-        syncSrc(); renderPages();
+        if (key === '__all__') stateSet.clear();
+        else if (stateSet.has(key)) stateSet.delete(key);
+        else stateSet.add(key);
+        sync(); renderPages();
       }}));
-      syncSrc();
+      sync();
+    }}
+    function buildPageFilters() {{
+      const aiPlatforms = [...new Set(pagesSourceRows.map(r => r.ai_platform).filter(Boolean))].sort();
+      buildMultiChips('aiChips', aiPlatforms.map(p => [p, p]), aiPlatformFilter);
+      const paidSources = [...new Set(pagesSourceRows.map(r => r.source_platform).filter(s => s && s.startsWith('paid_')))].sort();
+      buildMultiChips('sourceChips', paidSources.map(s => [s, paidLabel(s)]), paidSourceFilter);
     }}
     async function loadPages() {{
       setStatus('pagesStatus', 'Loading page performance...');
