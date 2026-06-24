@@ -15,6 +15,7 @@ import bigquery_service
 import nixon_marketing_service
 import web_auth
 import web_users
+from dashboard.renderers.nixon_bq_settings_renderer import render_nixon_bq_settings_page
 from dashboard.renderers.nixon_bq_test_renderer import render_nixon_bigquery_test_page
 from dashboard.routes.helpers import penn_html_session_kwargs
 from security import configured_api_key, is_production
@@ -108,6 +109,87 @@ def nixon_bigquery_test_dashboard(request: Request, key: str | None = None):
             use_session=False,
             session_email=None,
             session_is_admin=False,
+        )
+    )
+
+
+def _nixon_settings_context() -> tuple[dict, dict, str | None]:
+    """Routing + account-id config + service-account email for the settings page."""
+    import client_config
+    import ga4_clients
+    import railway_api
+
+    routing: dict = {"marts_dataset": "marketing_marts", "railway_ready": railway_api.enabled()}
+    sa_email: str | None = None
+    try:
+        target = ga4_clients.resolve_target(client_key="nixon")
+        routing["project"] = target.bq_project_id
+        routing["ga4_dataset"] = target.bq_dataset_id
+        routing["creds_env"] = target.credentials_env or "GCP_SERVICE_ACCOUNT_JSON"
+    except Exception:
+        pass
+    try:
+        resolved = ga4_clients.resolve_client_config(client_key="nixon")
+        sa_email = str((resolved.credentials or {}).get("client_email") or "") or None
+    except Exception:
+        pass
+    account_ids: dict = {}
+    try:
+        cfg = client_config.load_client_config("nixon")
+        account_ids = {
+            "google_customer_id": cfg.google_customer_id or "",
+            "linkedin_account_id": cfg.linkedin_account_id or "",
+            "meta_account_id": cfg.meta_account_id or "",
+            "ga4_client_key": cfg.ga4_client_key or "",
+        }
+    except Exception:
+        pass
+    return routing, account_ids, sa_email
+
+
+@router.get(
+    "/dashboard/nixon-bq-test/settings",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def nixon_bq_settings_page(
+    request: Request,
+    key: str | None = None,
+    saved: str | None = None,
+    cred_saved: str | None = None,
+    cred_error: str | None = None,
+    bq_error: str | None = None,
+):
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug="nixon", key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        html_kw = penn_html_session_kwargs(auth)
+    else:
+        if not web_auth.legacy_dashboard_key_ok(key):
+            raise HTTPException(status_code=401, detail="Invalid or missing dashboard key.")
+        html_kw = {"access_key": key, "use_session": False, "session_email": None, "session_is_admin": False}
+
+    routing, account_ids, sa_email = _nixon_settings_context()
+    flash = None
+    flash_error = None
+    if saved:
+        flash = "Account IDs saved."
+    elif cred_saved:
+        flash = "Service-account credential set on Railway — the service is redeploying."
+    if cred_error:
+        flash_error = str(cred_error)[:300]
+    elif bq_error:
+        flash_error = str(bq_error)[:300]
+
+    return HTMLResponse(
+        render_nixon_bq_settings_page(
+            routing=routing,
+            account_ids=account_ids,
+            sa_email=sa_email,
+            flash=flash,
+            flash_error=flash_error,
+            **html_kw,
         )
     )
 
@@ -397,6 +479,43 @@ def nixon_backfill_linkedin(
             "status": linkedin.get("status"),
             "rows_fetched": linkedin.get("rows_fetched"),
             "rows_merged": linkedin.get("rows_merged"),
+            "data_through": linkedin.get("data_through"),
+        },
+    }
+
+
+@router.post(
+    "/api/clients/nixon/refresh",
+    summary="Nixon: refresh BigQuery (last 30 days), session-authed",
+)
+def nixon_refresh(
+    request: Request,
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    """Pull the last 30 days into BigQuery for Nixon (the rolling refresh). Same
+    auth as the read endpoints — no cron secret needed."""
+    _authorize_nixon_api(
+        request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key
+    )
+    try:
+        import dashboard_service
+
+        result = dashboard_service.refresh_bq_client(
+            "nixon", date_range="LAST_30_DAYS", sync_trigger="manual_full"
+        )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+    run = (result or {}).get("refresh_run") or {}
+    linkedin = ((run.get("sources") or {}).get("linkedin")) or {}
+    return {
+        "ok": True,
+        "date_range": run.get("date_range"),
+        "linkedin": {
+            "status": linkedin.get("status"),
+            "rows_fetched": linkedin.get("rows_fetched"),
             "data_through": linkedin.get("data_through"),
         },
     }

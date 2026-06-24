@@ -32,6 +32,19 @@ def _config_updated_at(client_slug: str) -> str | None:
     return row.updated_at if row else None
 
 
+# Settings forms may carry a `next` path so save/credential redirects return to a
+# focused page (e.g. the nixon-bq-test settings) instead of the generic settings.
+# Only an explicit allow-list of relative paths is honoured (no open redirects).
+_SETTINGS_NEXT_ALLOW = ("/dashboard/nixon-bq-test/settings",)
+
+
+def _resolve_settings_next(next_url: str, slug: str) -> str:
+    n = (next_url or "").strip().split("?")[0].split("#")[0]
+    if n in _SETTINGS_NEXT_ALLOW:
+        return n
+    return f"/dashboard/{slug}/settings"
+
+
 @router.get(
     "/dashboard/{client_slug}/settings",
     summary="Client dashboard settings (HTML)",
@@ -108,6 +121,7 @@ async def dashboard_client_gcp_credentials(
     request: Request,
     key: str | None = None,
     env_var: str = Form(""),
+    next: str = Form(""),
     credentials_file: UploadFile = File(...),
 ):
     slug = validate_client_slug(client_slug)
@@ -126,11 +140,13 @@ async def dashboard_client_gcp_credentials(
     else:
         dashboard_service.verify_dashboard_key(key)
 
+    base = _resolve_settings_next(next, slug)
+
     def _back(param: str) -> RedirectResponse:
         if use_session:
-            return RedirectResponse(url=f"/dashboard/{slug}/settings?{param}", status_code=303)
+            return RedirectResponse(url=f"{base}?{param}", status_code=303)
         return RedirectResponse(
-            url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&{param}",
+            url=f"{base}?key={quote(access_key or '', safe='')}&{param}",
             status_code=303,
         )
 
@@ -175,6 +191,7 @@ def dashboard_client_settings_post(
     request: Request,
     action: str = Form("save"),
     key: str | None = None,
+    next: str = Form(""),
     label: str = Form(""),
     google_customer_id: str = Form(""),
     linkedin_account_id: str = Form(""),
@@ -309,12 +326,13 @@ def dashboard_client_settings_post(
                 status_code=400,
             )
         bq_error_param = f"&bq_error={quote(bq_setup_error, safe='')}" if bq_setup_error else ""
+        base = _resolve_settings_next(next, slug)
         if use_session:
             return RedirectResponse(
-                url=f"/dashboard/{slug}/settings?saved=1{bq_error_param}", status_code=303
+                url=f"{base}?saved=1{bq_error_param}", status_code=303
             )
         return RedirectResponse(
-            url=f"/dashboard/{slug}/settings?key={quote(access_key or '', safe='')}&saved=1{bq_error_param}",
+            url=f"{base}?key={quote(access_key or '', safe='')}&saved=1{bq_error_param}",
             status_code=303,
         )
 
