@@ -98,8 +98,14 @@ def _authorize_bq_client_api(
     raise HTTPException(status_code=401, detail="Sign in or provide a valid API key.")
 
 
-# Clients that use the generic BQ service (not Nixon's hardcoded service).
-_BQ_TEST_CLIENTS = {"arg-bq-test", "penn-bq-test"}
+# URL slug → DB config key mapping for generic BQ-test clients.
+# The URL uses a short name (e.g. "arg") while the DB stores config under the
+# full slug (e.g. "arg-bq-test") to avoid collisions with other client types.
+_BQ_TEST_CLIENT_CONFIG_KEYS: dict[str, str] = {
+    "arg": "arg-bq-test",
+    "penn-bq-test": "penn-bq-test",
+}
+_BQ_TEST_CLIENTS: frozenset[str] = frozenset(_BQ_TEST_CLIENT_CONFIG_KEYS)
 
 
 def _load_bq_test_config(slug: str) -> tuple[str, str]:
@@ -110,9 +116,10 @@ def _load_bq_test_config(slug: str) -> tuple[str, str]:
     """
     if slug not in _BQ_TEST_CLIENTS:
         raise HTTPException(status_code=404, detail=f"No BQ data available for client '{slug}'.")
+    config_key = _BQ_TEST_CLIENT_CONFIG_KEYS[slug]
     try:
         import client_dashboard_config as cdc
-        row = cdc.get_config(slug)
+        row = cdc.get_config(config_key)
     except Exception:
         row = None
     project_id = (row.gcp_project_id if row else None) or ""
