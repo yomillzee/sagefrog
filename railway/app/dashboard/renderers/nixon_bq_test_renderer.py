@@ -103,7 +103,8 @@ def render_nixon_bigquery_test_page(
     _ICON_EXPLORER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>'
     _ICON_WEBSITE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>'
     _ICON_SETTINGS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
-    settings_url = _api_url("/dashboard/nixon-bq-test/settings", access_key=access_key)
+    settings_url   = _api_url("/dashboard/nixon-bq-test/settings", access_key=access_key)
+    analytics_url  = _api_url("/dashboard/nixon-bq-test/analytics", access_key=access_key)
     sidebar_html = f"""
     <button type="button" class="dash-sidebar-toggle" id="sidebarToggle" aria-label="Open navigation" aria-expanded="false" aria-controls="dashSidebar">{_ICON_MENU}</button>
     <div class="dash-sidebar-backdrop" id="sidebarBackdrop" hidden></div>
@@ -118,14 +119,11 @@ def render_nixon_bigquery_test_page(
       <nav class="dash-sidebar-nav" aria-label="Sections">
         <a class="dash-view-btn active" href="#sec-overview" data-nav="sec-overview">{_ICON_OVERVIEW}<span>Overview</span></a>
         <a class="dash-view-btn" href="#sec-explorer" data-nav="sec-explorer">{_ICON_EXPLORER}<span>Campaign Explorer</span></a>
-        <a class="dash-view-btn" href="#sec-pages" data-nav="sec-pages">{_ICON_WEBSITE}<span>Top Pages</span></a>
-        <a class="dash-view-btn" href="#sec-traffic" data-nav="sec-traffic">{_ICON_WEBSITE}<span>Traffic</span></a>
-        <a class="dash-view-btn" href="#sec-audience" data-nav="sec-audience">{_ICON_WEBSITE}<span>Audience</span></a>
-        <a class="dash-view-btn" href="#sec-landing" data-nav="sec-landing">{_ICON_WEBSITE}<span>Landing Pages</span></a>
       </nav>
       <div class="dash-sidebar-footer">
         <div class="dash-sidebar-client"><span class="topbar-client-label">Nixon — BQ Test</span></div>
         <nav class="dash-sidebar-links" aria-label="Account navigation">
+          <a href="{analytics_url}" class="dash-sidebar-link">{_ICON_WEBSITE}<span>Website Analytics</span></a>
           <a href="{settings_url}" class="dash-sidebar-link">{_ICON_SETTINGS}<span>Settings</span></a>
         </nav>
         {account_html}
@@ -335,63 +333,6 @@ def render_nixon_bigquery_test_page(
       <details class="raw-json"><summary>Raw explorer JSON</summary><pre id="explorerJson">{{}}</pre></details>
     </section>
 
-    <section id="sec-pages">
-      <h2>Page performance</h2>
-      <p class="src-note"><code>GET .../pages/top</code><span class="arrow">→</span><code>vw_page_path_daily</code> · <code>GET .../pages/sources</code><span class="arrow">→</span><code>vw_page_path_source_daily</code></p>
-      <div class="filter-row" id="pageFilters">
-        <div class="filter-group">
-          <span class="filter-label">AI platform</span>
-          <div class="chips" id="aiChips"></div>
-        </div>
-        <div class="filter-group">
-          <span class="filter-label">Paid source</span>
-          <div class="chips" id="sourceChips"></div>
-        </div>
-      </div>
-      <div class="status" id="pagesStatus">Waiting…</div>
-      <div class="table-wrap"><table id="pagesTable" class="compact"></table></div>
-      <div class="pager" id="pagesPager"></div>
-      <details class="raw-json"><summary>Raw page JSON</summary><pre id="pagesJson">{{}}</pre></details>
-    </section>
-
-    <section id="sec-traffic">
-      <h2>Traffic overview</h2>
-      <p class="src-note"><code>GET .../pages/traffic-acquisition</code><span class="arrow">→</span><code>analytics_test.ga4_TrafficAcquisition_*</code></p>
-      <div class="status" id="trafficAcqStatus">Waiting…</div>
-      <div class="two-col">
-        <div class="col-panel">
-          <h3>Sessions over time</h3>
-          <svg id="sessionsTrendChart" class="trend-sm-svg" preserveAspectRatio="none"></svg>
-        </div>
-        <div class="col-panel">
-          <h3>By channel</h3>
-          <div id="channelBars"></div>
-        </div>
-      </div>
-      <h3 class="subsec-h3">Top sources / medium</h3>
-      <div class="table-wrap"><table id="sourcesTable" class="compact"></table></div>
-      <details class="raw-json"><summary>Raw traffic JSON</summary><pre id="trafficAcqJson">{{}}</pre></details>
-    </section>
-
-    <section id="sec-audience">
-      <h2>Audience</h2>
-      <p class="src-note"><code>GET .../pages/device-split</code><span class="arrow">→</span><code>analytics_test.ga4_TechDetails_*</code></p>
-      <div class="status" id="deviceStatus">Waiting…</div>
-      <div class="col-panel" style="max-width:440px">
-        <h3>Device type</h3>
-        <div id="deviceBars"></div>
-      </div>
-      <details class="raw-json"><summary>Raw device JSON</summary><pre id="deviceJson">{{}}</pre></details>
-    </section>
-
-    <section id="sec-landing">
-      <h2>Landing pages</h2>
-      <p class="src-note"><code>GET .../pages/landing</code><span class="arrow">→</span><code>analytics_test.ga4_LandingPage_*</code></p>
-      <div class="status" id="landingStatus">Waiting…</div>
-      <div class="table-wrap"><table id="landingTable" class="compact"></table></div>
-      <div class="pager" id="landingPager"></div>
-      <details class="raw-json"><summary>Raw landing JSON</summary><pre id="landingJson">{{}}</pre></details>
-    </section>
   </main>
     </div>
   </div>
@@ -400,11 +341,6 @@ def render_nixon_bigquery_test_page(
     const HEALTH_API = "{_api_url('/api/clients/nixon/marketing/health', access_key=access_key)}";
     const EXPLORER_API = "{_api_url('/api/clients/nixon/google-ads/explorer', access_key=access_key)}";
     const LINKEDIN_EXPLORER_API = "{_api_url('/api/clients/nixon/linkedin/explorer', access_key=access_key)}";
-    const PAGES_TOP_API = "{_api_url('/api/clients/nixon/pages/top', access_key=access_key)}";
-    const PAGES_SOURCES_API = "{_api_url('/api/clients/nixon/pages/sources', access_key=access_key)}";
-    const TRAFFIC_ACQ_API = "{_api_url('/api/clients/nixon/pages/traffic-acquisition', access_key=access_key)}";
-    const DEVICE_SPLIT_API = "{_api_url('/api/clients/nixon/pages/device-split', access_key=access_key)}";
-    const LANDING_PAGES_API = "{_api_url('/api/clients/nixon/pages/landing', access_key=access_key)}";
     const BACKFILL_API = "{_api_url('/api/clients/nixon/backfill-linkedin', access_key=access_key)}";
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
     const nums = new Intl.NumberFormat('en-US');
@@ -784,244 +720,10 @@ def render_nixon_bigquery_test_page(
       renderExplorer();
       setRaw('explorerJson', {{ google: g, linkedin: l }});
     }}
-    // ---- Page performance ----
-    let pagesTopRows = [];      // /pages/top — all traffic, per page
-    let pagesSourceRows = [];   // /pages/sources — per page x source x AI
-    const paidSourceFilter = new Set();  // selected paid source_platform values (e.g. 'paid_google')
-    const aiPlatformFilter = new Set();  // selected ai_platform values (e.g. 'ChatGPT')
-    const PAGES_PER_PAGE = 10;
-    let pagesPageNum = 1;
-    const PAID_SOURCE_LABELS = {{ paid_google:'Google', paid_bing:'Bing', paid_linkedin:'LinkedIn', paid_meta:'Meta', paid_facebook:'Facebook' }};
-    function paidLabel(src) {{
-      return PAID_SOURCE_LABELS[src] || String(src).replace(/^paid_/, '').replace(/_/g, ' ').replace(/\\b\\w/g, c => c.toUpperCase());
-    }}
-    function fmtDuration(secs) {{
-      secs = Math.round(num(secs));
-      if (secs < 60) return secs + 's';
-      const m = Math.floor(secs / 60), s = secs % 60;
-      return m + 'm ' + (s < 10 ? '0' : '') + s + 's';
-    }}
-    function pageFiltersActive() {{ return paidSourceFilter.size > 0 || aiPlatformFilter.size > 0; }}
-    function pageSourceRowMatches(r) {{
-      // ai_platform is only set on AI-referral rows, so selecting one implies AI.
-      if (aiPlatformFilter.size && !aiPlatformFilter.has(r.ai_platform)) return false;
-      if (paidSourceFilter.size && !paidSourceFilter.has(r.source_platform)) return false;
-      return true;
-    }}
-    function aggregatePages(rows) {{
-      const map = new Map();
-      for (const r of rows) {{
-        let g = map.get(r.page_path);
-        if (!g) {{ g = {{ page_path:r.page_path, page_group:r.page_group, page_topic:r.page_topic, page_views:0, users:0, sessions:0, engagement_seconds:0, key_events:0 }}; map.set(r.page_path, g); }}
-        g.page_views += num(r.page_views); g.users += num(r.users); g.sessions += num(r.sessions); g.engagement_seconds += num(r.engagement_seconds); g.key_events += num(r.key_events);
-      }}
-      return [...map.values()].sort((a, b) => b.page_views - a.page_views);
-    }}
-    function renderPages() {{
-      // No filter → the all-traffic top-pages view; any filter → recompute from
-      // the per-source rows so the list reflects only that source / AI traffic.
-      const base = pageFiltersActive() ? aggregatePages(pagesSourceRows.filter(pageSourceRowMatches)) : pagesTopRows;
-      const el = document.getElementById('pagesTable');
-      if (!base.length) {{
-        el.innerHTML = `<tbody><tr><td class="empty">No pages for this range / filter.</td></tr></tbody>`;
-        setStatus('pagesStatus', 'No pages for this range / filter.');
-        document.getElementById('pagesPager').innerHTML = '';
-        return;
-      }}
-      const totalPages = Math.max(1, Math.ceil(base.length / PAGES_PER_PAGE));
-      if (pagesPageNum > totalPages) pagesPageNum = totalPages;
-      const startIdx = (pagesPageNum - 1) * PAGES_PER_PAGE;
-      const pageRows = base.slice(startIdx, startIdx + PAGES_PER_PAGE);
-      const head = `<thead><tr><th class="left">Page</th><th>Views</th><th>Users</th><th>Key events</th><th>Avg engt</th></tr></thead>`;
-      const body = pageRows.map(p => {{
-        const sub = p.page_group ? ` <span class="muted">${{esc(p.page_group)}}</span>` : '';
-        const engt = p.users ? p.engagement_seconds / p.users : 0;
-        return `<tr><td class="left"><span class="page-path">${{esc(p.page_path)}}</span>${{sub}}</td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;
-      }}).join('');
-      el.innerHTML = head + `<tbody>${{body}}</tbody>`;
-      setStatus('pagesStatus', `${{startIdx + 1}}\\u2013${{startIdx + pageRows.length}} of ${{base.length}} page(s)` + (pageFiltersActive() ? ' (filtered)' : '') + '.');
-      renderPagesPager(totalPages);
-    }}
-    function renderPagesPager(totalPages) {{
-      const pager = document.getElementById('pagesPager');
-      if (totalPages <= 1) {{ pager.innerHTML = ''; return; }}
-      pager.innerHTML =
-        `<button type="button" class="pager-btn" id="pagesPrev"${{pagesPageNum <= 1 ? ' disabled' : ''}}>\\u2039 Prev</button>` +
-        `<span class="pager-info">Page ${{pagesPageNum}} of ${{totalPages}}</span>` +
-        `<button type="button" class="pager-btn" id="pagesNext"${{pagesPageNum >= totalPages ? ' disabled' : ''}}>Next \\u203a</button>`;
-      const prev = document.getElementById('pagesPrev');
-      const next = document.getElementById('pagesNext');
-      if (prev) prev.onclick = () => {{ if (pagesPageNum > 1) {{ pagesPageNum--; renderPages(); }} }};
-      if (next) next.onclick = () => {{ if (pagesPageNum < totalPages) {{ pagesPageNum++; renderPages(); }} }};
-    }}
-    // Render a multi-select chip group with an "All" reset. `entries` is a list
-    // of [value, label]; the active set stores values. Rebuilt each load.
-    function buildMultiChips(containerId, entries, stateSet) {{
-      const el = document.getElementById(containerId);
-      el.innerHTML = [['__all__', 'All'], ...entries].map(([v, l]) => `<button type="button" class="chip" data-key="${{esc(v)}}">${{esc(l)}}</button>`).join('');
-      const sync = () => el.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.key === '__all__' ? stateSet.size === 0 : stateSet.has(b.dataset.key)));
-      el.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {{
-        const key = btn.dataset.key;
-        if (key === '__all__') stateSet.clear();
-        else if (stateSet.has(key)) stateSet.delete(key);
-        else stateSet.add(key);
-        sync(); pagesPageNum = 1; renderPages();
-      }}));
-      sync();
-    }}
-    function buildPageFilters() {{
-      const aiPlatforms = [...new Set(pagesSourceRows.map(r => r.ai_platform).filter(Boolean))].sort();
-      buildMultiChips('aiChips', aiPlatforms.map(p => [p, p]), aiPlatformFilter);
-      const paidSources = [...new Set(pagesSourceRows.map(r => r.source_platform).filter(s => s && s.startsWith('paid_')))].sort();
-      buildMultiChips('sourceChips', paidSources.map(s => [s, paidLabel(s)]), paidSourceFilter);
-    }}
-    async function loadPages() {{
-      setStatus('pagesStatus', 'Loading page performance...');
-      const [top, src] = await Promise.all([
-        getJson(withDates(PAGES_TOP_API)).catch(() => ({{ rows: [] }})),
-        getJson(withDates(PAGES_SOURCES_API)).catch(() => ({{ rows: [] }})),
-      ]);
-      pagesTopRows = top.rows || [];
-      pagesSourceRows = src.rows || [];
-      pagesPageNum = 1;
-      buildPageFilters();
-      renderPages();
-      setRaw('pagesJson', {{ top, sources: src }});
-    }}
-    // ---- Traffic acquisition ----
-    function pctBar(pct) {{
-      return `<div class="bar-track"><div class="bar-fill" style="width:${{Math.min(100, pct).toFixed(1)}}%"></div></div>`;
-    }}
-    function drawSessionsTrend(daily) {{
-      const svg = document.getElementById('sessionsTrendChart');
-      const W = 800, H = 130, padL = 10, padR = 10, padT = 8, padB = 24;
-      const plotW = W - padL - padR, plotH = H - padT - padB;
-      const n = daily.length;
-      svg.setAttribute('viewBox', `0 0 ${{W}} ${{H}}`);
-      if (!n) {{ svg.innerHTML = ''; return; }}
-      const vals = daily.map(d => num(d.sessions));
-      const mn = Math.min(...vals), mx = Math.max(...vals), span = (mx - mn) || 1;
-      const xAt = i => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
-      const yAt = v => padT + (1 - (v - mn) / span) * plotH;
-      const pts = vals.map((v, i) => `${{xAt(i).toFixed(1)}},${{yAt(v).toFixed(1)}}`).join(' ');
-      const fillPts = `${{padL}},${{padT + plotH}} ${{pts}} ${{(padL + plotW).toFixed(1)}},${{padT + plotH}}`;
-      const lblIdx = n === 1 ? [0] : [0, Math.floor((n - 1) / 2), n - 1];
-      svg.innerHTML = [
-        `<line x1="${{padL}}" y1="${{padT}}" x2="${{padL}}" y2="${{padT + plotH}}" stroke="#eef2f7"/>`,
-        `<line x1="${{padL}}" y1="${{padT + plotH}}" x2="${{padL + plotW}}" y2="${{padT + plotH}}" stroke="#e3e9f1"/>`,
-        `<polygon fill="rgba(29,111,208,.1)" points="${{fillPts}}"/>`,
-        `<polyline fill="none" stroke="#1d6fd0" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${{pts}}"/>`,
-        ...lblIdx.map(i => {{
-          const anchor = i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle');
-          return `<text x="${{xAt(i).toFixed(1)}}" y="${{H - 5}}" font-size="10" fill="#66758f" text-anchor="${{anchor}}">${{esc(String(daily[i].date).slice(5))}}</text>`;
-        }}),
-      ].join('');
-    }}
-    function renderChannels(rows) {{
-      const el = document.getElementById('channelBars');
-      if (!rows || !rows.length) {{ el.innerHTML = '<div class="empty">No data.</div>'; return; }}
-      const total = rows.reduce((s, r) => s + num(r.sessions), 0);
-      el.innerHTML = rows.map(r => {{
-        const pct = total ? num(r.sessions) / total * 100 : 0;
-        return `<div class="bar-row"><div class="bar-label">${{esc(r.channel)}}</div>${{pctBar(pct)}}<div class="bar-count">${{count(r.sessions)}}<span class="bar-pct">${{pct.toFixed(0)}}%</span></div></div>`;
-      }}).join('');
-    }}
-    async function loadTrafficAcq() {{
-      setStatus('trafficAcqStatus', 'Loading traffic data...');
-      try {{
-        const payload = await getJson(withDates(TRAFFIC_ACQ_API));
-        renderChannels(payload.by_channel || []);
-        drawSessionsTrend(payload.daily || []);
-        renderTable('sourcesTable', [
-          {{ key:'source', label:'Source', left:true }},
-          {{ key:'medium', label:'Medium', left:true }},
-          {{ key:'sessions', label:'Sessions', format:count }},
-          {{ key:'engaged_sessions', label:'Engaged', format:count }},
-          {{ key:'engagement_rate', label:'Eng. rate', format:v => v != null ? v + '%' : '\\u2014' }},
-          {{ key:'key_events', label:'Key events', format:count }},
-        ], payload.by_source || [], 'No source data.');
-        setStatus('trafficAcqStatus', '');
-        setRaw('trafficAcqJson', payload);
-      }} catch (err) {{
-        setStatus('trafficAcqStatus', err.message || String(err), true);
-      }}
-    }}
-    // ---- Device split ----
-    function renderDeviceSplit(rows) {{
-      const el = document.getElementById('deviceBars');
-      if (!rows || !rows.length) {{ el.innerHTML = '<div class="empty">No data.</div>'; return; }}
-      const total = rows.reduce((s, r) => s + num(r.users), 0);
-      el.innerHTML = rows.map(r => {{
-        const pct = total ? num(r.users) / total * 100 : 0;
-        return `<div class="bar-row"><div class="bar-label">${{esc(r.device)}}</div>${{pctBar(pct)}}<div class="bar-count">${{count(r.users)}}<span class="bar-pct">${{pct.toFixed(0)}}%</span></div></div>`;
-      }}).join('');
-    }}
-    async function loadDeviceSplit() {{
-      setStatus('deviceStatus', 'Loading device data...');
-      try {{
-        const payload = await getJson(withDates(DEVICE_SPLIT_API));
-        renderDeviceSplit(payload.rows || []);
-        setStatus('deviceStatus', '');
-        setRaw('deviceJson', payload);
-      }} catch (err) {{
-        setStatus('deviceStatus', err.message || String(err), true);
-      }}
-    }}
-    // ---- Landing pages ----
-    const LANDING_PER_PAGE = 15;
-    let landingPageNum = 1;
-    let landingRows = [];
-    function renderLanding() {{
-      const totalPages = Math.max(1, Math.ceil(landingRows.length / LANDING_PER_PAGE));
-      if (landingPageNum > totalPages) landingPageNum = totalPages;
-      const startIdx = (landingPageNum - 1) * LANDING_PER_PAGE;
-      const rows = landingRows.slice(startIdx, startIdx + LANDING_PER_PAGE);
-      const el = document.getElementById('landingTable');
-      if (!rows.length) {{
-        el.innerHTML = `<tbody><tr><td class="empty">No landing page data for this range.</td></tr></tbody>`;
-        document.getElementById('landingPager').innerHTML = '';
-        return;
-      }}
-      const head = `<thead><tr><th class="left">Landing page</th><th>Sessions</th><th>Users</th><th>New users</th><th>Key events</th><th>KE rate</th><th>Avg engt</th></tr></thead>`;
-      const body = rows.map(r =>
-        `<tr><td class="left"><span class="page-path">${{esc(r.page_path)}}</span></td><td>${{count(r.sessions)}}</td><td>${{count(r.users)}}</td><td>${{count(r.new_users)}}</td><td>${{count(r.key_events)}}</td><td>${{r.key_event_rate != null ? r.key_event_rate + '%' : '\\u2014'}}</td><td>${{fmtDuration(r.avg_engagement_seconds)}}</td></tr>`
-      ).join('');
-      el.innerHTML = head + `<tbody>${{body}}</tbody>`;
-      setStatus('landingStatus', `${{startIdx + 1}}\\u2013${{startIdx + rows.length}} of ${{landingRows.length}} page(s).`);
-      renderLandingPager(totalPages);
-    }}
-    function renderLandingPager(totalPages) {{
-      const pager = document.getElementById('landingPager');
-      if (totalPages <= 1) {{ pager.innerHTML = ''; return; }}
-      pager.innerHTML =
-        `<button type="button" class="pager-btn" id="landingPrev"${{landingPageNum <= 1 ? ' disabled' : ''}}>\\u2039 Prev</button>` +
-        `<span class="pager-info">Page ${{landingPageNum}} of ${{totalPages}}</span>` +
-        `<button type="button" class="pager-btn" id="landingNext"${{landingPageNum >= totalPages ? ' disabled' : ''}}>Next \\u203a</button>`;
-      const prev = document.getElementById('landingPrev');
-      const next = document.getElementById('landingNext');
-      if (prev) prev.onclick = () => {{ if (landingPageNum > 1) {{ landingPageNum--; renderLanding(); }} }};
-      if (next) next.onclick = () => {{ if (landingPageNum < totalPages) {{ landingPageNum++; renderLanding(); }} }};
-    }}
-    async function loadLandingPages() {{
-      setStatus('landingStatus', 'Loading landing pages...');
-      try {{
-        const payload = await getJson(withDates(LANDING_PAGES_API));
-        landingRows = payload.rows || [];
-        landingPageNum = 1;
-        renderLanding();
-        setRaw('landingJson', payload);
-      }} catch (err) {{
-        setStatus('landingStatus', err.message || String(err), true);
-      }}
-    }}
     function loadAll() {{
       loadSummary();
       loadHealth();
       loadExplorer();
-      loadPages();
-      loadTrafficAcq();
-      loadDeviceSplit();
-      loadLandingPages();
     }}
     buildChips('productChips', ['Apparel', 'Scrubs', 'Linens'], productFilter);
     buildChips('regionChips', ['TX', 'FL', 'MA'], regionFilter);
