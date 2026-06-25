@@ -16,6 +16,7 @@ import nixon_marketing_service
 import web_auth
 import web_users
 from dashboard.renderers.nixon_bq_settings_renderer import render_nixon_bq_settings_page
+from dashboard.renderers.arg_bq_test_renderer import render_arg_bigquery_test_page
 from dashboard.renderers.nixon_bq_test_renderer import render_nixon_bigquery_test_page
 from dashboard.routes.helpers import penn_html_session_kwargs
 from security import configured_api_key, is_production
@@ -105,6 +106,30 @@ def nixon_bigquery_test_dashboard(request: Request, key: str | None = None):
         raise HTTPException(status_code=401, detail="Invalid or missing dashboard key.")
     return HTMLResponse(
         render_nixon_bigquery_test_page(
+            access_key=key,
+            use_session=False,
+            session_email=None,
+            session_is_admin=False,
+        )
+    )
+
+
+@router.get(
+    "/dashboard/arg-bq-test",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def arg_bigquery_test_dashboard(request: Request, key: str | None = None):
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug="arg-bq-test", key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        return HTMLResponse(render_arg_bigquery_test_page(**penn_html_session_kwargs(auth)))
+
+    if not web_auth.legacy_dashboard_key_ok(key):
+        raise HTTPException(status_code=401, detail="Invalid or missing dashboard key.")
+    return HTMLResponse(
+        render_arg_bigquery_test_page(
             access_key=key,
             use_session=False,
             session_email=None,

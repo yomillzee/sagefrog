@@ -33,6 +33,13 @@ _BUILTIN_CLIENTS: dict[str, dict[str, Any]] = {
         "ga4_client_key": "penn",
         "platform_sources": {"linkedin": "bigquery"},
     },
+    "arg-bq-test": {
+        "label": "ARG — BQ Test",
+        "google_customer_id": "",
+        "linkedin_account_id": "",
+        "meta_account_id": "",
+        "ga4_client_key": "arg",
+    },
 }
 
 
