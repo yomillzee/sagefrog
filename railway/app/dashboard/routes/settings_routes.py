@@ -35,7 +35,7 @@ def _config_updated_at(client_slug: str) -> str | None:
 # Settings forms may carry a `next` path so save/credential redirects return to a
 # focused page (e.g. the nixon-bq-test settings) instead of the generic settings.
 # Only an explicit allow-list of relative paths is honoured (no open redirects).
-_SETTINGS_NEXT_ALLOW = ("/dashboard/nixon-bq-test/settings",)
+_SETTINGS_NEXT_ALLOW = ("/dashboard/nixon-bq-test/settings", "/dashboard/arg-bq-test/settings")
 
 
 def _resolve_settings_next(next_url: str, slug: str) -> str:

@@ -15,6 +15,7 @@ import bigquery_service
 import nixon_marketing_service
 import web_auth
 import web_users
+from dashboard.renderers.arg_bq_settings_renderer import render_arg_bq_settings_page
 from dashboard.renderers.nixon_bq_settings_renderer import render_nixon_bq_settings_page
 from dashboard.renderers.arg_bq_test_renderer import render_arg_bigquery_test_page
 from dashboard.renderers.nixon_bq_test_renderer import render_nixon_bigquery_test_page
@@ -136,6 +137,153 @@ def arg_bigquery_test_dashboard(request: Request, key: str | None = None):
             session_is_admin=False,
         )
     )
+
+
+def _arg_settings_context() -> tuple[str, str, dict]:
+    """Load saved BQ project + dataset + account IDs for the ARG client."""
+    import client_config
+    import client_dashboard_config
+
+    bq_project_id = ""
+    bq_dataset_id = ""
+    account_ids: dict = {}
+    try:
+        row = client_dashboard_config.get_config("arg-bq-test")
+        if row:
+            bq_project_id = row.gcp_project_id or ""
+            bq_dataset_id = row.bq_mart_dataset_id or ""
+    except Exception:
+        pass
+    try:
+        cfg = client_config.load_client_config("arg-bq-test")
+        account_ids = {
+            "google_customer_id": cfg.google_customer_id or "",
+            "linkedin_account_id": cfg.linkedin_account_id or "",
+            "meta_account_id": cfg.meta_account_id or "",
+            "ga4_client_key": cfg.ga4_client_key or "",
+        }
+    except Exception:
+        pass
+    return bq_project_id, bq_dataset_id, account_ids
+
+
+@router.get(
+    "/dashboard/arg-bq-test/settings",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def arg_bq_settings_page(
+    request: Request,
+    key: str | None = None,
+    saved: str | None = None,
+    bq_saved: str | None = None,
+    error: str | None = None,
+):
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug="arg-bq-test", key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        html_kw = penn_html_session_kwargs(auth)
+    else:
+        if not web_auth.legacy_dashboard_key_ok(key):
+            raise HTTPException(status_code=401, detail="Invalid or missing dashboard key.")
+        html_kw = {"access_key": key, "use_session": False, "session_email": None, "session_is_admin": False}
+
+    bq_project_id, bq_dataset_id, account_ids = _arg_settings_context()
+    flash = "BQ connection saved." if bq_saved else ("Account IDs saved." if saved else None)
+    flash_error = str(error)[:300] if error else None
+    return HTMLResponse(
+        render_arg_bq_settings_page(
+            bq_project_id=bq_project_id,
+            bq_dataset_id=bq_dataset_id,
+            account_ids=account_ids,
+            flash=flash,
+            flash_error=flash_error,
+            **html_kw,
+        )
+    )
+
+
+@router.post(
+    "/dashboard/arg-bq-test/settings",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def arg_bq_settings_post(
+    request: Request,
+    action: str = Form("save_bq"),
+    key: str | None = None,
+    gcp_project_id: str = Form(""),
+    bq_mart_dataset_id: str = Form(""),
+    linkedin_account_id: str = Form(""),
+    google_customer_id: str = Form(""),
+    meta_account_id: str = Form(""),
+    ga4_client_key: str = Form(""),
+):
+    import client_dashboard_config
+
+    use_session = False
+    access_key = key
+    session_email = None
+
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug="arg-bq-test", key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        access_key = auth.access_key
+        use_session = auth.use_session
+        session_email = auth.user.email if auth.user else None
+
+    from urllib.parse import quote as _quote
+    base = "/dashboard/arg-bq-test/settings"
+
+    def _redirect(params: str) -> RedirectResponse:
+        url = f"{base}?{params}"
+        if not use_session and access_key:
+            url = f"{base}?key={_quote(access_key, safe='')}&{params}"
+        return RedirectResponse(url=url, status_code=303)
+
+    act = (action or "save_bq").strip().lower()
+
+    if act == "save_bq":
+        if not client_dashboard_config.enabled():
+            return _redirect("error=" + _quote("DATABASE_URL is required to save settings."))
+        try:
+            client_dashboard_config.save_config(
+                "arg-bq-test",
+                label="ARG — BQ Test",
+                google_customer_id=None,
+                linkedin_account_id=None,
+                meta_account_id=None,
+                ga4_client_key=None,
+                updated_by=session_email or "dashboard_key",
+                gcp_project_id=gcp_project_id.strip() or None,
+                bq_mart_dataset_id=bq_mart_dataset_id.strip() or None,
+                dashboard_mode="bigquery",
+            )
+        except Exception as exc:
+            return _redirect("error=" + _quote(str(exc)[:200]))
+        return _redirect("bq_saved=1")
+
+    if act == "save_accounts":
+        if not client_dashboard_config.enabled():
+            return _redirect("error=" + _quote("DATABASE_URL is required to save settings."))
+        try:
+            client_dashboard_config.save_config(
+                "arg-bq-test",
+                label="ARG — BQ Test",
+                google_customer_id=google_customer_id.replace("-", "").strip() or None,
+                linkedin_account_id=linkedin_account_id.strip() or None,
+                meta_account_id=meta_account_id.strip() or None,
+                ga4_client_key=ga4_client_key.strip() or None,
+                updated_by=session_email or "dashboard_key",
+                dashboard_mode="bigquery",
+            )
+        except Exception as exc:
+            return _redirect("error=" + _quote(str(exc)[:200]))
+        return _redirect("saved=1")
+
+    raise HTTPException(status_code=400, detail="Unknown action.")
 
 
 def _nixon_settings_context() -> tuple[dict, dict, str | None]:
