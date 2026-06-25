@@ -812,8 +812,8 @@ def render_nixon_bigquery_test_page(
       const map = new Map();
       for (const r of rows) {{
         let g = map.get(r.page_path);
-        if (!g) {{ g = {{ page_path:r.page_path, page_group:r.page_group, page_topic:r.page_topic, page_views:0, users:0, sessions:0, engagement_seconds:0 }}; map.set(r.page_path, g); }}
-        g.page_views += num(r.page_views); g.users += num(r.users); g.sessions += num(r.sessions); g.engagement_seconds += num(r.engagement_seconds);
+        if (!g) {{ g = {{ page_path:r.page_path, page_group:r.page_group, page_topic:r.page_topic, page_views:0, users:0, sessions:0, engagement_seconds:0, key_events:0 }}; map.set(r.page_path, g); }}
+        g.page_views += num(r.page_views); g.users += num(r.users); g.sessions += num(r.sessions); g.engagement_seconds += num(r.engagement_seconds); g.key_events += num(r.key_events);
       }}
       return [...map.values()].sort((a, b) => b.page_views - a.page_views);
     }}
@@ -832,11 +832,11 @@ def render_nixon_bigquery_test_page(
       if (pagesPageNum > totalPages) pagesPageNum = totalPages;
       const startIdx = (pagesPageNum - 1) * PAGES_PER_PAGE;
       const pageRows = base.slice(startIdx, startIdx + PAGES_PER_PAGE);
-      const head = `<thead><tr><th class="left">Page</th><th>Views</th><th>Users</th><th>Avg engt</th></tr></thead>`;
+      const head = `<thead><tr><th class="left">Page</th><th>Views</th><th>Users</th><th>Key events</th><th>Avg engt</th></tr></thead>`;
       const body = pageRows.map(p => {{
         const sub = p.page_group ? ` <span class="muted">${{esc(p.page_group)}}</span>` : '';
         const engt = p.users ? p.engagement_seconds / p.users : 0;
-        return `<tr><td class="left"><span class="page-path">${{esc(p.page_path)}}</span>${{sub}}</td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;
+        return `<tr><td class="left"><span class="page-path">${{esc(p.page_path)}}</span>${{sub}}</td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;
       }}).join('');
       el.innerHTML = head + `<tbody>${{body}}</tbody>`;
       setStatus('pagesStatus', `${{startIdx + 1}}\\u2013${{startIdx + pageRows.length}} of ${{base.length}} page(s)` + (pageFiltersActive() ? ' (filtered)' : '') + '.');

@@ -386,7 +386,8 @@ def fetch_nixon_pages_top(
       SUM(page_views) AS page_views,
       SUM(users) AS users,
       SUM(sessions) AS sessions,
-      ROUND(SUM(engagement_seconds), 1) AS engagement_seconds
+      ROUND(SUM(engagement_seconds), 1) AS engagement_seconds,
+      SUM(key_events) AS key_events
     FROM {_PAGE_PATH_DAILY_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY page_path
@@ -542,7 +543,8 @@ def fetch_nixon_pages_sources(
       SUM(page_views) AS page_views,
       SUM(users) AS users,
       SUM(sessions) AS sessions,
-      ROUND(SUM(engagement_seconds), 1) AS engagement_seconds
+      ROUND(SUM(engagement_seconds), 1) AS engagement_seconds,
+      SUM(key_events) AS key_events
     FROM {_PAGE_PATH_SOURCE_DAILY_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY page_path, source_platform, is_ai_referral, ai_platform, utm_campaign
