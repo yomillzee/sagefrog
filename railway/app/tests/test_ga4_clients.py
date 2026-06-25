@@ -66,7 +66,7 @@ class Ga4ClientCredentialResolutionTests(unittest.TestCase):
                     "nixon": {
                         "label": "Nixon Medical",
                         "bq_project_id": "nixon-medical",
-                        "bq_dataset_id": "analytics_256372599",
+                        "bq_dataset_id": "analytics_test",
                     }
                 }
             ),

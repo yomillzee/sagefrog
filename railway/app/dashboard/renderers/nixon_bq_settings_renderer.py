@@ -124,6 +124,12 @@ def render_nixon_bq_settings_page(
     th {{ background:#f4f7fb; color:#5a6b82; text-transform:uppercase; font-size:.68rem; letter-spacing:.04em; font-weight:800; }}
     th.left,td.left {{ text-align:left; }}
     .empty {{ color:var(--muted); padding:18px; text-align:center; }}
+    .badge {{ display:inline-block; font-size:.6rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; padding:2px 6px; border-radius:4px; vertical-align:middle; margin-left:5px; }}
+    .badge-view {{ background:#eef4fb; color:#1d6fd0; }}
+    .badge-tbl {{ background:#eef7f2; color:#0a7f3f; }}
+    .pipe-table td.left {{ vertical-align:top; }}
+    .pipe-table .module-label {{ font-weight:600; color:var(--navy); font-size:.88rem; }}
+    .pipe-table .module-sub {{ font-size:.76rem; color:var(--muted); margin-top:1px; }}
   </style>
 </head>
 <body>
@@ -177,6 +183,54 @@ def render_nixon_bq_settings_page(
         <input type="file" name="credentials_file" accept="application/json,.json" required{_disabled}>
         <button type="submit" class="primary"{_disabled}>Upload &amp; set credential</button>
       </form>
+    </section>
+
+    <section>
+      <h2>Data pipeline map</h2>
+      <p class="hint">Each dashboard module calls one API endpoint that reads one mart table or view in <code>{_esc(marts_dataset)}</code> on <code>{_esc(project)}</code>.</p>
+      <div class="table-wrap" style="margin-top:14px">
+        <table class="pipe-table">
+          <thead>
+            <tr>
+              <th class="left">Module</th>
+              <th class="left">API endpoint</th>
+              <th class="left">BQ mart</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="left"><div class="module-label">Overview</div><div class="module-sub">Paid media summary + daily trend</div></td>
+              <td class="left mono">/api/clients/nixon/summary</td>
+              <td class="left mono">vw_paid_media_daily<span class="badge badge-view">VIEW</span></td>
+            </tr>
+            <tr>
+              <td class="left"><div class="module-label">Campaign Explorer — Google</div><div class="module-sub">Ad-level creative drill-down</div></td>
+              <td class="left mono">/api/clients/nixon/google-ads/explorer</td>
+              <td class="left mono">explorer_google_ads_daily<span class="badge badge-tbl">TABLE</span></td>
+            </tr>
+            <tr>
+              <td class="left"><div class="module-label">Campaign Explorer — LinkedIn</div><div class="module-sub">Creative thumbnails + spend</div></td>
+              <td class="left mono">/api/clients/nixon/linkedin/explorer</td>
+              <td class="left mono">fact_linkedin_ads_creative_daily<span class="badge badge-tbl">TABLE</span></td>
+            </tr>
+            <tr>
+              <td class="left"><div class="module-label">Website Analytics — Top Pages</div><div class="module-sub">Page views, users, sessions</div></td>
+              <td class="left mono">/api/clients/nixon/pages/top</td>
+              <td class="left mono">vw_page_path_daily<span class="badge badge-view">VIEW</span></td>
+            </tr>
+            <tr>
+              <td class="left"><div class="module-label">Website Analytics — By Source</div><div class="module-sub">Source / AI referral breakdown</div></td>
+              <td class="left mono">/api/clients/nixon/pages/sources</td>
+              <td class="left mono">vw_page_path_source_daily<span class="badge badge-view">VIEW</span></td>
+            </tr>
+            <tr>
+              <td class="left"><div class="module-label">Mart Health</div><div class="module-sub">Row counts + date freshness per source</div></td>
+              <td class="left mono">/api/clients/nixon/marketing/health</td>
+              <td class="left mono">mart_health<span class="badge badge-tbl">TABLE</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <section>

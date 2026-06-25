@@ -96,7 +96,7 @@ Railway `BQ_PROJECT_ID` / `BQ_DATASET_ID` stay the **default** (e.g. Penn). Add 
    "nixon": {
      "label": "Nixon Medical",
      "bq_project_id": "nixon-medical",
-     "bq_dataset_id": "analytics_256372599",
+     "bq_dataset_id": "analytics_test",
      "credentials_env": "GCP_CREDS_NIXON_BASE64"
    }
    ```
