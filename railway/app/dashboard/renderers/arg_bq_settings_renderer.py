@@ -153,6 +153,15 @@ def render_arg_bq_settings_page(
         <div class="form-actions"><button type="submit" class="primary">Save account IDs</button></div>
       </form>
     </section>
+
+    <section>
+      <h2>Provision BQ tables</h2>
+      <p class="hint">Creates the <code>marketing_marts</code> dataset and all 6 mart tables in your configured GCP project (safe to re-run — existing tables are left untouched). Uses the agency service account. Save your BQ connection above first.</p>
+      <form method="post" action="{save_action}">
+        <input type="hidden" name="action" value="provision_bq">
+        <button type="submit" class="primary">Provision mart tables</button>
+      </form>
+    </section>
   </main>
     </div>
   </div>

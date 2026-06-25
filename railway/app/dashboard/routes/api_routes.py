@@ -336,6 +336,23 @@ def arg_bq_settings_post(
             return _redirect("error=" + _quote(str(exc)[:200]))
         return _redirect("saved=1")
 
+    if act == "provision_bq":
+        try:
+            row = client_dashboard_config.get_config("arg-bq-test") if client_dashboard_config.enabled() else None
+            project_id = (row.gcp_project_id if row else None) or ""
+            dataset_id = (row.bq_mart_dataset_id if row else None) or "marketing_marts"
+            if not project_id:
+                return _redirect("error=" + _quote("Save a GCP project ID first before provisioning."))
+            result = client_bq_service.provision_mart_tables(
+                project_id=project_id,
+                dataset_id=dataset_id,
+            )
+            created = len(result.get("tables_created", []))
+            existed = len(result.get("tables_already_existed", []))
+            return _redirect("bq_saved=1&provision_ok=1&created=" + str(created) + "&existed=" + str(existed))
+        except Exception as exc:
+            return _redirect("error=" + _quote(str(exc)[:300]))
+
     raise HTTPException(status_code=400, detail="Unknown action.")
 
 

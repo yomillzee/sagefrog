@@ -22,6 +22,7 @@ _DEFAULT_DATASET = "marketing_marts"
 
 # Mart table / view names (must match the BQ mart schema).
 _PAID_MEDIA_VIEW = "vw_paid_media_daily"
+
 _HEALTH_TABLE = "mart_health"
 _GOOGLE_ADS_EXPLORER_TABLE = "explorer_google_ads_daily"
 _LINKEDIN_CREATIVE_TABLE = "fact_linkedin_ads_creative_daily"
@@ -358,4 +359,122 @@ def fetch_pages_sources(
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "row_count": len(rows),
         "rows": rows,
+    }
+
+
+# ---------------------------------------------------------------------------
+# BQ mart provisioning
+# ---------------------------------------------------------------------------
+
+def _bq_field(name: str, field_type: str) -> "bigquery.SchemaField":
+    from google.cloud import bigquery as _bq
+    return _bq.SchemaField(name, field_type, mode="NULLABLE")
+
+
+_MART_SCHEMAS: dict[str, list] = {}
+
+
+def _mart_schemas() -> dict[str, list]:
+    """Schema definitions for the 6 mart tables the dashboard expects."""
+    from google.cloud import bigquery as _bq
+    F = _bq.SchemaField
+
+    def N(name: str, t: str) -> _bq.SchemaField:
+        return F(name, t, mode="NULLABLE")
+
+    return {
+        _PAID_MEDIA_VIEW: [
+            N("date", "DATE"), N("source_platform", "STRING"),
+            N("spend", "FLOAT64"), N("impressions", "INT64"),
+            N("clicks", "INT64"), N("conversions", "FLOAT64"),
+        ],
+        _HEALTH_TABLE: [
+            N("source", "STRING"), N("row_count", "INT64"),
+            N("earliest_date", "DATE"), N("latest_date", "DATE"),
+            N("spend", "FLOAT64"), N("impressions", "INT64"),
+            N("clicks", "INT64"), N("conversions", "FLOAT64"),
+        ],
+        _GOOGLE_ADS_EXPLORER_TABLE: [
+            N("date", "DATE"), N("source", "STRING"),
+            N("campaign_id", "STRING"), N("campaign_name", "STRING"),
+            N("ad_group_id", "STRING"), N("ad_group_name", "STRING"),
+            N("ad_id", "STRING"), N("ad_label", "STRING"),
+            N("headline_1", "STRING"), N("headline_2", "STRING"),
+            N("headline_3", "STRING"), N("description_1", "STRING"),
+            N("description_2", "STRING"), N("image_ad_name", "STRING"),
+            N("ad_name", "STRING"), N("final_url", "STRING"),
+            N("ad_type", "STRING"), N("spend", "FLOAT64"),
+            N("impressions", "INT64"), N("clicks", "INT64"),
+            N("conversions", "FLOAT64"), N("conversion_value", "FLOAT64"),
+        ],
+        _LINKEDIN_CREATIVE_TABLE: [
+            N("date", "DATE"),
+            N("campaign_group_name", "STRING"), N("campaign_name", "STRING"),
+            N("creative_id", "INT64"), N("creative_name", "STRING"),
+            N("media_type", "STRING"), N("thumbnail_url", "STRING"),
+            N("image_url", "STRING"), N("spend", "FLOAT64"),
+            N("impressions", "INT64"), N("clicks", "INT64"),
+            N("conversions", "FLOAT64"), N("conversion_value", "FLOAT64"),
+        ],
+        _PAGE_PATH_DAILY_TABLE: [
+            N("date", "DATE"), N("page_path", "STRING"),
+            N("page_group", "STRING"), N("page_topic", "STRING"),
+            N("page_views", "INT64"), N("users", "INT64"),
+            N("sessions", "INT64"), N("engagement_seconds", "FLOAT64"),
+        ],
+        _PAGE_PATH_SOURCE_DAILY_TABLE: [
+            N("date", "DATE"), N("page_path", "STRING"),
+            N("page_group", "STRING"), N("page_topic", "STRING"),
+            N("source_platform", "STRING"), N("is_ai_referral", "BOOL"),
+            N("ai_platform", "STRING"), N("utm_campaign", "STRING"),
+            N("page_views", "INT64"), N("users", "INT64"),
+            N("sessions", "INT64"), N("engagement_seconds", "FLOAT64"),
+        ],
+    }
+
+
+def provision_mart_tables(
+    *,
+    project_id: str,
+    dataset_id: str = _DEFAULT_DATASET,
+    credentials_env: str | None = None,
+) -> dict[str, Any]:
+    """Create the marketing_marts dataset and all 6 mart tables (if they don't exist).
+
+    Uses the global service account by default (credentials_env=None).
+    Tables are created with the correct schema but empty — the data pipeline
+    populates them later. Safe to re-run; existing tables are left untouched.
+    """
+    from google.cloud import bigquery
+
+    client = bigquery_service.build_client(
+        project_id=project_id,
+        credentials_env=credentials_env,
+    )
+
+    full_dataset = f"{project_id}.{dataset_id}"
+    ds = bigquery.Dataset(full_dataset)
+    client.create_dataset(ds, exists_ok=True)
+
+    schemas = _mart_schemas()
+    created: list[str] = []
+    already_existed: list[str] = []
+
+    for table_name, schema in schemas.items():
+        full_table = f"{full_dataset}.{table_name}"
+        table = bigquery.Table(full_table, schema=schema)
+        try:
+            client.get_table(full_table)
+            already_existed.append(table_name)
+        except Exception:
+            client.create_table(table)
+            created.append(table_name)
+
+    return {
+        "ok": True,
+        "project_id": project_id,
+        "dataset_id": dataset_id,
+        "dataset": full_dataset,
+        "tables_created": created,
+        "tables_already_existed": already_existed,
     }
