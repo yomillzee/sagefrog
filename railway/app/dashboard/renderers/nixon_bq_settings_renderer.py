@@ -130,6 +130,17 @@ def render_nixon_bq_settings_page(
     .pipe-table td.left {{ vertical-align:top; }}
     .pipe-table .module-label {{ font-weight:600; color:var(--navy); font-size:.88rem; }}
     .pipe-table .module-sub {{ font-size:.76rem; color:var(--muted); margin-top:1px; }}
+    .module-toggle-row {{ display:flex; align-items:center; justify-content:space-between; padding:10px 14px; border:1px solid var(--line-soft); border-radius:var(--radius-sm); background:#fafcff; }}
+    .module-toggle-info {{ display:flex; flex-direction:column; gap:2px; }}
+    .module-toggle-label {{ font-size:.9rem; font-weight:650; color:var(--navy); }}
+    .module-toggle-desc {{ font-size:.76rem; color:var(--muted); }}
+    .toggle-switch {{ position:relative; display:inline-block; width:42px; height:24px; flex-shrink:0; }}
+    .toggle-switch input {{ opacity:0; width:0; height:0; position:absolute; }}
+    .toggle-track {{ position:absolute; cursor:pointer; inset:0; background:#c5cdd9; border-radius:24px; transition:background .2s; }}
+    .toggle-track:before {{ content:''; position:absolute; left:3px; top:3px; width:18px; height:18px; background:#fff; border-radius:50%; transition:transform .2s; box-shadow:0 1px 3px rgba(0,0,0,.2); }}
+    .toggle-switch input:checked + .toggle-track {{ background:var(--accent); }}
+    .toggle-switch input:checked + .toggle-track:before {{ transform:translateX(18px); }}
+    .toggle-switch input:focus-visible + .toggle-track {{ outline:2px solid #bcd4f0; outline-offset:2px; }}
   </style>
 </head>
 <body>
@@ -145,9 +156,9 @@ def render_nixon_bq_settings_page(
         <span class="dash-sidebar-beta">Beta</span>
       </div>
       <nav class="dash-sidebar-nav" aria-label="Sections">
-        <a class="dash-view-btn" href="{dash_url}#sec-overview">{_ICON_OVERVIEW}<span>Overview</span></a>
-        <a class="dash-view-btn" href="{dash_url}#sec-explorer">{_ICON_EXPLORER}<span>Campaign Explorer</span></a>
-        <a class="dash-view-btn" href="{dash_url}#sec-pages">{_ICON_WEBSITE}<span>Website Analytics</span></a>
+        <a class="dash-view-btn" href="{dash_url}">{_ICON_OVERVIEW}<span>Overview</span></a>
+        <a class="dash-view-btn" href="{dash_url}">{_ICON_EXPLORER}<span>Explorer</span></a>
+        <a class="dash-view-btn" href="{dash_url}">{_ICON_WEBSITE}<span>Website Analytics</span></a>
       </nav>
       <div class="dash-sidebar-footer">
         <div class="dash-sidebar-client"><span class="topbar-client-label">Nixon — BQ Test</span></div>
@@ -224,12 +235,51 @@ def render_nixon_bq_settings_page(
               <td class="left mono">vw_page_path_source_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
+              <td class="left"><div class="module-label">Website Analytics — Traffic</div><div class="module-sub">Sessions by channel + daily trend</div></td>
+              <td class="left mono">/api/clients/nixon/pages/traffic-acquisition</td>
+              <td class="left mono">ga4_TrafficAcquisition_*<span class="badge badge-tbl">TABLE</span></td>
+            </tr>
+            <tr>
+              <td class="left"><div class="module-label">Website Analytics — Audience</div><div class="module-sub">Device type split</div></td>
+              <td class="left mono">/api/clients/nixon/pages/device-split</td>
+              <td class="left mono">ga4_TechDetails_*<span class="badge badge-tbl">TABLE</span></td>
+            </tr>
+            <tr>
+              <td class="left"><div class="module-label">Website Analytics — Landing Pages</div><div class="module-sub">Session + key event rate by first URL</div></td>
+              <td class="left mono">/api/clients/nixon/pages/landing</td>
+              <td class="left mono">ga4_LandingPage_*<span class="badge badge-tbl">TABLE</span></td>
+            </tr>
+            <tr>
+              <td class="left"><div class="module-label">Website Analytics — Conversions</div><div class="module-sub">Custom events + form funnel</div></td>
+              <td class="left mono">/api/clients/nixon/analytics/conversions</td>
+              <td class="left mono">ga4_Events_*<span class="badge badge-tbl">TABLE</span></td>
+            </tr>
+            <tr>
+              <td class="left"><div class="module-label">Website Analytics — User Acquisition</div><div class="module-sub">First-touch channel + source/medium</div></td>
+              <td class="left mono">/api/clients/nixon/analytics/user-acquisition</td>
+              <td class="left mono">ga4_UserAcquisition_*<span class="badge badge-tbl">TABLE</span></td>
+            </tr>
+            <tr>
+              <td class="left"><div class="module-label">Website Analytics — Demographics</div><div class="module-sub">City/region, age bracket, gender</div></td>
+              <td class="left mono">/api/clients/nixon/analytics/demographics</td>
+              <td class="left mono">ga4_DemographicDetails_*<span class="badge badge-tbl">TABLE</span></td>
+            </tr>
+            <tr>
               <td class="left"><div class="module-label">Mart Health</div><div class="module-sub">Row counts + date freshness per source</div></td>
               <td class="left mono">/api/clients/nixon/marketing/health</td>
               <td class="left mono">mart_health<span class="badge badge-tbl">TABLE</span></td>
             </tr>
           </tbody>
         </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Website Analytics modules</h2>
+      <p class="hint">Toggle which sections appear on the Website Analytics tab. Saved in your browser only (no server state).</p>
+      <div id="moduleToggles" style="margin-top:14px; display:flex; flex-direction:column; gap:12px;"></div>
+      <div class="btn-row" style="margin-top:16px;">
+        <button type="button" class="primary ghost" id="resetModulesBtn">Reset to defaults (all on)</button>
       </div>
     </section>
 
@@ -315,6 +365,44 @@ def render_nixon_bq_settings_page(
       }}
     }}
     loadHealth();
+
+    // ---- Website Analytics module toggles ----
+    const ALL_MODULES = ['top_pages','traffic','audience','landing','conversions','user_acquisition','demographics'];
+    const MODULE_LABELS = {{
+      top_pages:'Top Pages', traffic:'Traffic', audience:'Audience', landing:'Landing Pages',
+      conversions:'Conversions', user_acquisition:'User Acquisition', demographics:'Demographics',
+    }};
+    const MODULE_DESCS = {{
+      top_pages:'Page views, users, sessions and engagement time per URL.',
+      traffic:'Sessions by channel group + daily trend + source/medium table.',
+      audience:'Device type split (desktop, mobile, tablet).',
+      landing:'Landing page sessions, new users, key event rate and engagement.',
+      conversions:'Custom GA4 event counts and form funnel (form_start → generate_lead).',
+      user_acquisition:'First-touch channel, source and medium for new users.',
+      demographics:'Top cities, age bracket bars, and gender split.',
+    }};
+    const LS_KEY = 'nixon_analytics_modules';
+    function getModules() {{
+      try {{ const s = localStorage.getItem(LS_KEY); const saved = s ? JSON.parse(s) : {{}}; return ALL_MODULES.reduce((o,k) => ({{...o,[k]:k in saved?saved[k]:true}}),{{}}); }} catch {{ return ALL_MODULES.reduce((o,k)=>({{...o,[k]:true}}),{{}}); }}
+    }}
+    function saveModules(m) {{ try {{ localStorage.setItem(LS_KEY, JSON.stringify(m)); }} catch {{}} }}
+    function renderModuleToggles() {{
+      const m = getModules();
+      const container = document.getElementById('moduleToggles');
+      container.innerHTML = ALL_MODULES.map(key => {{
+        const checked = m[key] ? ' checked' : '';
+        return `<div class="module-toggle-row"><div class="module-toggle-info"><span class="module-toggle-label">${{esc(MODULE_LABELS[key])}}</span><span class="module-toggle-desc">${{esc(MODULE_DESCS[key])}}</span></div><label class="toggle-switch" title="${{m[key]?'On':'Off'}}"><input type="checkbox" data-module="${{key}}"${{checked}}><span class="toggle-track"></span></label></div>`;
+      }}).join('');
+      container.querySelectorAll('input[data-module]').forEach(inp => inp.addEventListener('change', () => {{
+        const cur = getModules(); cur[inp.dataset.module] = inp.checked; saveModules(cur);
+        inp.closest('label').title = inp.checked ? 'On' : 'Off';
+      }}));
+    }}
+    document.getElementById('resetModulesBtn').addEventListener('click', () => {{
+      const all = ALL_MODULES.reduce((o,k)=>({{...o,[k]:true}}),{{}}); saveModules(all); renderModuleToggles();
+    }});
+    renderModuleToggles();
+
     (function() {{
       const shell = document.querySelector('.app-shell');
       const toggle = document.getElementById('sidebarToggle');

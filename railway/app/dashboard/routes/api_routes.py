@@ -810,6 +810,57 @@ def nixon_landing_pages(
         raise _nixon_endpoint_failure(exc) from exc
 
 
+@router.get("/api/clients/nixon/analytics/conversions", summary="Nixon GA4 conversion events breakdown")
+def nixon_conversion_events(
+    request: Request,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        return nixon_marketing_service.fetch_nixon_conversion_events(start_date=start, end_date=end)
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get("/api/clients/nixon/analytics/user-acquisition", summary="Nixon GA4 first-touch user acquisition")
+def nixon_user_acquisition(
+    request: Request,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        return nixon_marketing_service.fetch_nixon_user_acquisition(start_date=start, end_date=end)
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get("/api/clients/nixon/analytics/demographics", summary="Nixon GA4 demographic & geographic breakdown")
+def nixon_demographics(
+    request: Request,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        return nixon_marketing_service.fetch_nixon_demographics(start_date=start, end_date=end)
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
 @router.get(
     "/api/clients/{client_key}/marketing/health",
     summary="Client paid media mart health from BigQuery (generic BQ-test clients)",

@@ -25,6 +25,9 @@ _PROPERTY_SUFFIX = "256372599"
 _TRAFFIC_ACQ_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_TrafficAcquisition_{_PROPERTY_SUFFIX}`"
 _TECH_DETAILS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_TechDetails_{_PROPERTY_SUFFIX}`"
 _LANDING_PAGE_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_LandingPage_{_PROPERTY_SUFFIX}`"
+_EVENTS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_Events_{_PROPERTY_SUFFIX}`"
+_USER_ACQ_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_UserAcquisition_{_PROPERTY_SUFFIX}`"
+_DEMOGRAPHICS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_DemographicDetails_{_PROPERTY_SUFFIX}`"
 
 
 def _job_config(**params: bigquery.ScalarQueryParameter) -> bigquery.QueryJobConfig:
@@ -563,4 +566,155 @@ def fetch_nixon_pages_sources(
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "row_count": len(rows),
         "rows": rows,
+    }
+
+
+def fetch_nixon_conversion_events(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Event breakdown from ga4_Events, filtered to non-automatic events."""
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    sql = f"""
+    SELECT
+      eventName AS event_name,
+      SUM(eventCount) AS event_count,
+      SUM(totalUsers) AS total_users,
+      ROUND(AVG(eventCountPerUser), 2) AS event_count_per_user
+    FROM {_EVENTS_TABLE}
+    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+      AND eventName NOT IN (
+        'page_view', 'session_start', 'user_engagement', 'first_visit',
+        'scroll', 'click', 'Click', 'trackOptanonEvent',
+        'Banner Accept Cookies', 'Banner Close Button'
+      )
+    GROUP BY event_name
+    ORDER BY event_count DESC
+    """
+    rows = _run_query(sql, params=params, max_rows=100)
+    # Form funnel subset
+    funnel_names = {"form_start", "form_submit", "generate_lead"}
+    funnel_map = {r["event_name"]: r["event_count"] for r in rows if r["event_name"] in funnel_names}
+    funnel = [
+        {"step": "Form start", "event": "form_start", "count": funnel_map.get("form_start", 0)},
+        {"step": "Form submit", "event": "form_submit", "count": funnel_map.get("form_submit", 0)},
+        {"step": "Lead generated", "event": "generate_lead", "count": funnel_map.get("generate_lead", 0)},
+    ]
+    return {
+        "client": "nixon",
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "rows": rows,
+        "funnel": funnel,
+    }
+
+
+def fetch_nixon_user_acquisition(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """First-touch attribution for new users from ga4_UserAcquisition."""
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    channel_sql = f"""
+    SELECT
+      COALESCE(firstUserDefaultChannelGroup, '(not set)') AS channel,
+      SUM(newUsers) AS new_users,
+      SUM(activeUsers) AS active_users,
+      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events,
+      ROUND(SAFE_DIVIDE(SUM(keyEvents), NULLIF(SUM(totalUsers), 0)) * 100, 1) AS key_event_rate
+    FROM {_USER_ACQ_TABLE}
+    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    GROUP BY channel
+    ORDER BY new_users DESC
+    LIMIT 15
+    """
+    source_sql = f"""
+    SELECT
+      COALESCE(firstUserSource, '(direct)') AS source,
+      COALESCE(firstUserMedium, '(none)') AS medium,
+      SUM(newUsers) AS new_users,
+      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events,
+      ROUND(SAFE_DIVIDE(SUM(keyEvents), NULLIF(SUM(totalUsers), 0)) * 100, 1) AS key_event_rate
+    FROM {_USER_ACQ_TABLE}
+    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    GROUP BY source, medium
+    ORDER BY new_users DESC
+    LIMIT 30
+    """
+    by_channel = _run_query(channel_sql, params=params, max_rows=15)
+    by_source = _run_query(source_sql, params=params, max_rows=30)
+    return {
+        "client": "nixon",
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "by_channel": by_channel,
+        "by_source": by_source,
+    }
+
+
+def fetch_nixon_demographics(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Geographic and demographic breakdown from ga4_DemographicDetails."""
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    city_sql = f"""
+    SELECT
+      COALESCE(city, '(not set)') AS city,
+      COALESCE(region, '') AS region,
+      SUM(activeUsers) AS users,
+      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events,
+      ROUND(AVG(engagementRate) * 100, 1) AS engagement_rate
+    FROM {_DEMOGRAPHICS_TABLE}
+    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+      AND city IS NOT NULL AND city != '(not set)'
+    GROUP BY city, region
+    ORDER BY users DESC
+    LIMIT 20
+    """
+    age_sql = f"""
+    SELECT
+      COALESCE(userAgeBracket, 'unknown') AS age_bracket,
+      SUM(activeUsers) AS users,
+      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
+    FROM {_DEMOGRAPHICS_TABLE}
+    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+      AND userAgeBracket IS NOT NULL AND userAgeBracket != '(not set)'
+    GROUP BY age_bracket
+    ORDER BY
+      CASE age_bracket
+        WHEN '18-24' THEN 1 WHEN '25-34' THEN 2 WHEN '35-44' THEN 3
+        WHEN '45-54' THEN 4 WHEN '55-64' THEN 5 WHEN '65+' THEN 6
+        ELSE 7 END
+    """
+    gender_sql = f"""
+    SELECT
+      COALESCE(userGender, 'unknown') AS gender,
+      SUM(activeUsers) AS users,
+      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
+    FROM {_DEMOGRAPHICS_TABLE}
+    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+      AND userGender IS NOT NULL AND userGender NOT IN ('(not set)', 'unknown')
+    GROUP BY gender
+    ORDER BY users DESC
+    """
+    by_city = _run_query(city_sql, params=params, max_rows=20)
+    by_age = _run_query(age_sql, params=params, max_rows=10)
+    by_gender = _run_query(gender_sql, params=params, max_rows=5)
+    return {
+        "client": "nixon",
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "by_city": by_city,
+        "by_age": by_age,
+        "by_gender": by_gender,
     }
