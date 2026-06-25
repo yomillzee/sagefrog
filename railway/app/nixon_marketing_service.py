@@ -20,6 +20,12 @@ _LINKEDIN_CREATIVE_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.fact_linkedin_ads_crea
 _PAGE_PATH_DAILY_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_page_path_daily`"
 _PAGE_PATH_SOURCE_DAILY_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_page_path_source_daily`"
 
+_GA4_DATASET = "analytics_test"
+_PROPERTY_SUFFIX = "256372599"
+_TRAFFIC_ACQ_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_TrafficAcquisition_{_PROPERTY_SUFFIX}`"
+_TECH_DETAILS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_TechDetails_{_PROPERTY_SUFFIX}`"
+_LANDING_PAGE_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_LandingPage_{_PROPERTY_SUFFIX}`"
+
 
 def _job_config(**params: bigquery.ScalarQueryParameter) -> bigquery.QueryJobConfig:
     config = bigquery_service.make_job_config()
@@ -394,6 +400,121 @@ def fetch_nixon_pages_top(
         },
         max_rows=20000,
     )
+    return {
+        "client": "nixon",
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
+def fetch_nixon_traffic_acquisition(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    by_channel_sql = f"""
+    SELECT
+      COALESCE(sessionDefaultChannelGroup, '(other)') AS channel,
+      SUM(sessions) AS sessions,
+      SUM(engagedSessions) AS engaged_sessions,
+      ROUND(SAFE_DIVIDE(SUM(engagedSessions), NULLIF(SUM(sessions), 0)) * 100, 1) AS engagement_rate,
+      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
+    FROM {_TRAFFIC_ACQ_TABLE}
+    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    GROUP BY channel
+    ORDER BY sessions DESC
+    """
+    daily_sql = f"""
+    SELECT
+      CAST(_DATA_DATE AS STRING) AS date,
+      SUM(sessions) AS sessions,
+      SUM(engagedSessions) AS engaged_sessions
+    FROM {_TRAFFIC_ACQ_TABLE}
+    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    GROUP BY date
+    ORDER BY date ASC
+    """
+    by_source_sql = f"""
+    SELECT
+      COALESCE(sessionSource, '(direct)') AS source,
+      COALESCE(sessionMedium, '(none)') AS medium,
+      SUM(sessions) AS sessions,
+      SUM(engagedSessions) AS engaged_sessions,
+      ROUND(SAFE_DIVIDE(SUM(engagedSessions), NULLIF(SUM(sessions), 0)) * 100, 1) AS engagement_rate,
+      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
+    FROM {_TRAFFIC_ACQ_TABLE}
+    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    GROUP BY source, medium
+    ORDER BY sessions DESC
+    LIMIT 25
+    """
+    return {
+        "client": "nixon",
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "by_channel": _run_query(by_channel_sql, params=params, max_rows=50),
+        "daily": _run_query(daily_sql, params=params, max_rows=2000),
+        "by_source": _run_query(by_source_sql, params=params, max_rows=50),
+    }
+
+
+def fetch_nixon_device_split(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    sql = f"""
+    SELECT
+      COALESCE(deviceCategory, 'unknown') AS device,
+      SUM(activeUsers) AS users,
+      SUM(engagedSessions) AS engaged_sessions,
+      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
+    FROM {_TECH_DETAILS_TABLE}
+    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    GROUP BY device
+    ORDER BY users DESC
+    """
+    rows = _run_query(sql, params=params, max_rows=20)
+    return {
+        "client": "nixon",
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "rows": rows,
+    }
+
+
+def fetch_nixon_landing_pages(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    sql = f"""
+    SELECT
+      COALESCE(landingPage, '/') AS page_path,
+      SUM(sessions) AS sessions,
+      SUM(activeUsers) AS users,
+      SUM(newUsers) AS new_users,
+      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events,
+      ROUND(SAFE_DIVIDE(SUM(keyEvents), NULLIF(SUM(sessions), 0)) * 100, 1) AS key_event_rate,
+      ROUND(AVG(userEngagementDurationPerSession), 1) AS avg_engagement_seconds
+    FROM {_LANDING_PAGE_TABLE}
+    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    GROUP BY page_path
+    ORDER BY sessions DESC
+    LIMIT 100
+    """
+    rows = _run_query(sql, params=params, max_rows=100)
     return {
         "client": "nixon",
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},

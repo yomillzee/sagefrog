@@ -118,7 +118,10 @@ def render_nixon_bigquery_test_page(
       <nav class="dash-sidebar-nav" aria-label="Sections">
         <a class="dash-view-btn active" href="#sec-overview" data-nav="sec-overview">{_ICON_OVERVIEW}<span>Overview</span></a>
         <a class="dash-view-btn" href="#sec-explorer" data-nav="sec-explorer">{_ICON_EXPLORER}<span>Campaign Explorer</span></a>
-        <a class="dash-view-btn" href="#sec-pages" data-nav="sec-pages">{_ICON_WEBSITE}<span>Website Analytics</span></a>
+        <a class="dash-view-btn" href="#sec-pages" data-nav="sec-pages">{_ICON_WEBSITE}<span>Top Pages</span></a>
+        <a class="dash-view-btn" href="#sec-traffic" data-nav="sec-traffic">{_ICON_WEBSITE}<span>Traffic</span></a>
+        <a class="dash-view-btn" href="#sec-audience" data-nav="sec-audience">{_ICON_WEBSITE}<span>Audience</span></a>
+        <a class="dash-view-btn" href="#sec-landing" data-nav="sec-landing">{_ICON_WEBSITE}<span>Landing Pages</span></a>
       </nav>
       <div class="dash-sidebar-footer">
         <div class="dash-sidebar-client"><span class="topbar-client-label">Nixon — BQ Test</span></div>
@@ -217,6 +220,19 @@ def render_nixon_bigquery_test_page(
     .caret {{ display:inline-block; width:14px; color:var(--muted); font-size:.8rem; }}
     .tree-row[data-expandable] .caret::before {{ content:'\\25B8'; }}
     .tree-row[data-expandable].open .caret::before {{ content:'\\25BE'; }}
+    .bar-row {{ display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--line-soft); }}
+    .bar-row:last-child {{ border-bottom:0; }}
+    .bar-label {{ flex:0 0 160px; font-size:.84rem; color:var(--navy); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+    .bar-track {{ flex:1 1 auto; height:8px; background:var(--line-soft); border-radius:4px; overflow:hidden; }}
+    .bar-fill {{ height:100%; background:var(--accent); border-radius:4px; transition:width .3s; }}
+    .bar-count {{ flex:0 0 100px; font-size:.82rem; color:var(--navy); text-align:right; font-variant-numeric:tabular-nums; }}
+    .bar-pct {{ color:var(--muted); font-size:.76rem; margin-left:4px; }}
+    .two-col {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:14px; }}
+    .col-panel {{ border:1px solid var(--line-soft); border-radius:var(--radius-sm); padding:14px 16px; }}
+    .col-panel h3 {{ margin:0 0 12px; font-size:.88rem; font-weight:750; color:var(--navy); }}
+    .subsec-h3 {{ margin:16px 0 10px; font-size:.88rem; font-weight:750; color:var(--navy); }}
+    .trend-sm-svg {{ width:100%; height:130px; display:block; }}
+    @media (max-width:900px) {{ .two-col {{ grid-template-columns:1fr; }} }}
     .indent1 {{ display:inline-block; width:18px; }}
     .indent2 {{ display:inline-block; width:36px; }}
     .lvl-campaign .tree-name {{ font-weight:800; color:var(--navy); }}
@@ -337,6 +353,45 @@ def render_nixon_bigquery_test_page(
       <div class="pager" id="pagesPager"></div>
       <details class="raw-json"><summary>Raw page JSON</summary><pre id="pagesJson">{{}}</pre></details>
     </section>
+
+    <section id="sec-traffic">
+      <h2>Traffic overview</h2>
+      <p class="src-note"><code>GET .../pages/traffic-acquisition</code><span class="arrow">→</span><code>analytics_test.ga4_TrafficAcquisition_*</code></p>
+      <div class="status" id="trafficAcqStatus">Waiting…</div>
+      <div class="two-col">
+        <div class="col-panel">
+          <h3>Sessions over time</h3>
+          <svg id="sessionsTrendChart" class="trend-sm-svg" preserveAspectRatio="none"></svg>
+        </div>
+        <div class="col-panel">
+          <h3>By channel</h3>
+          <div id="channelBars"></div>
+        </div>
+      </div>
+      <h3 class="subsec-h3">Top sources / medium</h3>
+      <div class="table-wrap"><table id="sourcesTable" class="compact"></table></div>
+      <details class="raw-json"><summary>Raw traffic JSON</summary><pre id="trafficAcqJson">{{}}</pre></details>
+    </section>
+
+    <section id="sec-audience">
+      <h2>Audience</h2>
+      <p class="src-note"><code>GET .../pages/device-split</code><span class="arrow">→</span><code>analytics_test.ga4_TechDetails_*</code></p>
+      <div class="status" id="deviceStatus">Waiting…</div>
+      <div class="col-panel" style="max-width:440px">
+        <h3>Device type</h3>
+        <div id="deviceBars"></div>
+      </div>
+      <details class="raw-json"><summary>Raw device JSON</summary><pre id="deviceJson">{{}}</pre></details>
+    </section>
+
+    <section id="sec-landing">
+      <h2>Landing pages</h2>
+      <p class="src-note"><code>GET .../pages/landing</code><span class="arrow">→</span><code>analytics_test.ga4_LandingPage_*</code></p>
+      <div class="status" id="landingStatus">Waiting…</div>
+      <div class="table-wrap"><table id="landingTable" class="compact"></table></div>
+      <div class="pager" id="landingPager"></div>
+      <details class="raw-json"><summary>Raw landing JSON</summary><pre id="landingJson">{{}}</pre></details>
+    </section>
   </main>
     </div>
   </div>
@@ -347,6 +402,9 @@ def render_nixon_bigquery_test_page(
     const LINKEDIN_EXPLORER_API = "{_api_url('/api/clients/nixon/linkedin/explorer', access_key=access_key)}";
     const PAGES_TOP_API = "{_api_url('/api/clients/nixon/pages/top', access_key=access_key)}";
     const PAGES_SOURCES_API = "{_api_url('/api/clients/nixon/pages/sources', access_key=access_key)}";
+    const TRAFFIC_ACQ_API = "{_api_url('/api/clients/nixon/pages/traffic-acquisition', access_key=access_key)}";
+    const DEVICE_SPLIT_API = "{_api_url('/api/clients/nixon/pages/device-split', access_key=access_key)}";
+    const LANDING_PAGES_API = "{_api_url('/api/clients/nixon/pages/landing', access_key=access_key)}";
     const BACKFILL_API = "{_api_url('/api/clients/nixon/backfill-linkedin', access_key=access_key)}";
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
     const nums = new Intl.NumberFormat('en-US');
@@ -830,11 +888,140 @@ def render_nixon_bigquery_test_page(
       renderPages();
       setRaw('pagesJson', {{ top, sources: src }});
     }}
+    // ---- Traffic acquisition ----
+    function pctBar(pct) {{
+      return `<div class="bar-track"><div class="bar-fill" style="width:${{Math.min(100, pct).toFixed(1)}}%"></div></div>`;
+    }}
+    function drawSessionsTrend(daily) {{
+      const svg = document.getElementById('sessionsTrendChart');
+      const W = 800, H = 130, padL = 10, padR = 10, padT = 8, padB = 24;
+      const plotW = W - padL - padR, plotH = H - padT - padB;
+      const n = daily.length;
+      svg.setAttribute('viewBox', `0 0 ${{W}} ${{H}}`);
+      if (!n) {{ svg.innerHTML = ''; return; }}
+      const vals = daily.map(d => num(d.sessions));
+      const mn = Math.min(...vals), mx = Math.max(...vals), span = (mx - mn) || 1;
+      const xAt = i => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+      const yAt = v => padT + (1 - (v - mn) / span) * plotH;
+      const pts = vals.map((v, i) => `${{xAt(i).toFixed(1)}},${{yAt(v).toFixed(1)}}`).join(' ');
+      const fillPts = `${{padL}},${{padT + plotH}} ${{pts}} ${{(padL + plotW).toFixed(1)}},${{padT + plotH}}`;
+      const lblIdx = n === 1 ? [0] : [0, Math.floor((n - 1) / 2), n - 1];
+      svg.innerHTML = [
+        `<line x1="${{padL}}" y1="${{padT}}" x2="${{padL}}" y2="${{padT + plotH}}" stroke="#eef2f7"/>`,
+        `<line x1="${{padL}}" y1="${{padT + plotH}}" x2="${{padL + plotW}}" y2="${{padT + plotH}}" stroke="#e3e9f1"/>`,
+        `<polygon fill="rgba(29,111,208,.1)" points="${{fillPts}}"/>`,
+        `<polyline fill="none" stroke="#1d6fd0" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${{pts}}"/>`,
+        ...lblIdx.map(i => {{
+          const anchor = i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle');
+          return `<text x="${{xAt(i).toFixed(1)}}" y="${{H - 5}}" font-size="10" fill="#66758f" text-anchor="${{anchor}}">${{esc(String(daily[i].date).slice(5))}}</text>`;
+        }}),
+      ].join('');
+    }}
+    function renderChannels(rows) {{
+      const el = document.getElementById('channelBars');
+      if (!rows || !rows.length) {{ el.innerHTML = '<div class="empty">No data.</div>'; return; }}
+      const total = rows.reduce((s, r) => s + num(r.sessions), 0);
+      el.innerHTML = rows.map(r => {{
+        const pct = total ? num(r.sessions) / total * 100 : 0;
+        return `<div class="bar-row"><div class="bar-label">${{esc(r.channel)}}</div>${{pctBar(pct)}}<div class="bar-count">${{count(r.sessions)}}<span class="bar-pct">${{pct.toFixed(0)}}%</span></div></div>`;
+      }}).join('');
+    }}
+    async function loadTrafficAcq() {{
+      setStatus('trafficAcqStatus', 'Loading traffic data...');
+      try {{
+        const payload = await getJson(withDates(TRAFFIC_ACQ_API));
+        renderChannels(payload.by_channel || []);
+        drawSessionsTrend(payload.daily || []);
+        renderTable('sourcesTable', [
+          {{ key:'source', label:'Source', left:true }},
+          {{ key:'medium', label:'Medium', left:true }},
+          {{ key:'sessions', label:'Sessions', format:count }},
+          {{ key:'engaged_sessions', label:'Engaged', format:count }},
+          {{ key:'engagement_rate', label:'Eng. rate', format:v => v != null ? v + '%' : '\\u2014' }},
+          {{ key:'key_events', label:'Key events', format:count }},
+        ], payload.by_source || [], 'No source data.');
+        setStatus('trafficAcqStatus', '');
+        setRaw('trafficAcqJson', payload);
+      }} catch (err) {{
+        setStatus('trafficAcqStatus', err.message || String(err), true);
+      }}
+    }}
+    // ---- Device split ----
+    function renderDeviceSplit(rows) {{
+      const el = document.getElementById('deviceBars');
+      if (!rows || !rows.length) {{ el.innerHTML = '<div class="empty">No data.</div>'; return; }}
+      const total = rows.reduce((s, r) => s + num(r.users), 0);
+      el.innerHTML = rows.map(r => {{
+        const pct = total ? num(r.users) / total * 100 : 0;
+        return `<div class="bar-row"><div class="bar-label">${{esc(r.device)}}</div>${{pctBar(pct)}}<div class="bar-count">${{count(r.users)}}<span class="bar-pct">${{pct.toFixed(0)}}%</span></div></div>`;
+      }}).join('');
+    }}
+    async function loadDeviceSplit() {{
+      setStatus('deviceStatus', 'Loading device data...');
+      try {{
+        const payload = await getJson(withDates(DEVICE_SPLIT_API));
+        renderDeviceSplit(payload.rows || []);
+        setStatus('deviceStatus', '');
+        setRaw('deviceJson', payload);
+      }} catch (err) {{
+        setStatus('deviceStatus', err.message || String(err), true);
+      }}
+    }}
+    // ---- Landing pages ----
+    const LANDING_PER_PAGE = 15;
+    let landingPageNum = 1;
+    let landingRows = [];
+    function renderLanding() {{
+      const totalPages = Math.max(1, Math.ceil(landingRows.length / LANDING_PER_PAGE));
+      if (landingPageNum > totalPages) landingPageNum = totalPages;
+      const startIdx = (landingPageNum - 1) * LANDING_PER_PAGE;
+      const rows = landingRows.slice(startIdx, startIdx + LANDING_PER_PAGE);
+      const el = document.getElementById('landingTable');
+      if (!rows.length) {{
+        el.innerHTML = `<tbody><tr><td class="empty">No landing page data for this range.</td></tr></tbody>`;
+        document.getElementById('landingPager').innerHTML = '';
+        return;
+      }}
+      const head = `<thead><tr><th class="left">Landing page</th><th>Sessions</th><th>Users</th><th>New users</th><th>Key events</th><th>KE rate</th><th>Avg engt</th></tr></thead>`;
+      const body = rows.map(r =>
+        `<tr><td class="left"><span class="page-path">${{esc(r.page_path)}}</span></td><td>${{count(r.sessions)}}</td><td>${{count(r.users)}}</td><td>${{count(r.new_users)}}</td><td>${{count(r.key_events)}}</td><td>${{r.key_event_rate != null ? r.key_event_rate + '%' : '\\u2014'}}</td><td>${{fmtDuration(r.avg_engagement_seconds)}}</td></tr>`
+      ).join('');
+      el.innerHTML = head + `<tbody>${{body}}</tbody>`;
+      setStatus('landingStatus', `${{startIdx + 1}}\\u2013${{startIdx + rows.length}} of ${{landingRows.length}} page(s).`);
+      renderLandingPager(totalPages);
+    }}
+    function renderLandingPager(totalPages) {{
+      const pager = document.getElementById('landingPager');
+      if (totalPages <= 1) {{ pager.innerHTML = ''; return; }}
+      pager.innerHTML =
+        `<button type="button" class="pager-btn" id="landingPrev"${{landingPageNum <= 1 ? ' disabled' : ''}}>\\u2039 Prev</button>` +
+        `<span class="pager-info">Page ${{landingPageNum}} of ${{totalPages}}</span>` +
+        `<button type="button" class="pager-btn" id="landingNext"${{landingPageNum >= totalPages ? ' disabled' : ''}}>Next \\u203a</button>`;
+      const prev = document.getElementById('landingPrev');
+      const next = document.getElementById('landingNext');
+      if (prev) prev.onclick = () => {{ if (landingPageNum > 1) {{ landingPageNum--; renderLanding(); }} }};
+      if (next) next.onclick = () => {{ if (landingPageNum < totalPages) {{ landingPageNum++; renderLanding(); }} }};
+    }}
+    async function loadLandingPages() {{
+      setStatus('landingStatus', 'Loading landing pages...');
+      try {{
+        const payload = await getJson(withDates(LANDING_PAGES_API));
+        landingRows = payload.rows || [];
+        landingPageNum = 1;
+        renderLanding();
+        setRaw('landingJson', payload);
+      }} catch (err) {{
+        setStatus('landingStatus', err.message || String(err), true);
+      }}
+    }}
     function loadAll() {{
       loadSummary();
       loadHealth();
       loadExplorer();
       loadPages();
+      loadTrafficAcq();
+      loadDeviceSplit();
+      loadLandingPages();
     }}
     buildChips('productChips', ['Apparel', 'Scrubs', 'Linens'], productFilter);
     buildChips('regionChips', ['TX', 'FL', 'MA'], regionFilter);

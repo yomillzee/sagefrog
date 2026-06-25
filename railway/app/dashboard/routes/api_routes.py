@@ -720,6 +720,72 @@ def nixon_pages_sources(
 
 
 @router.get(
+    "/api/clients/nixon/pages/traffic-acquisition",
+    summary="Nixon GA4 traffic acquisition breakdown from BigQuery",
+)
+def nixon_traffic_acquisition(
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(
+        request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        return nixon_marketing_service.fetch_nixon_traffic_acquisition(start_date=start, end_date=end)
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/nixon/pages/device-split",
+    summary="Nixon GA4 device category breakdown from BigQuery",
+)
+def nixon_device_split(
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(
+        request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        return nixon_marketing_service.fetch_nixon_device_split(start_date=start, end_date=end)
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/nixon/pages/landing",
+    summary="Nixon GA4 landing page performance from BigQuery",
+)
+def nixon_landing_pages(
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(
+        request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        return nixon_marketing_service.fetch_nixon_landing_pages(start_date=start, end_date=end)
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
     "/api/clients/{client_key}/marketing/health",
     summary="Client paid media mart health from BigQuery (generic BQ-test clients)",
 )
