@@ -258,6 +258,20 @@ def render_nixon_bigquery_test_page(
     .ad-copy {{ display:flex; flex-direction:column; gap:1px; margin-top:3px; }}
     .ad-copy-line {{ font-size:.78rem; color:var(--muted); white-space:normal; }}
     .ad-copy-tag {{ display:inline-block; min-width:34px; color:#9aa7bd; font-weight:700; font-size:.66rem; text-transform:uppercase; margin-right:5px; }}
+    .page-search {{ width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:9px 13px; font:inherit; font-size:.88rem; background:#fff; color:#102033; margin-bottom:10px; }}
+    .page-search:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
+    .nr-wrap {{ display:flex; align-items:center; gap:20px; padding:12px 14px; border:1px solid var(--line-soft); border-radius:var(--radius-sm); background:#f9fbff; margin-bottom:14px; flex-wrap:wrap; }}
+    .nr-stat {{ display:flex; flex-direction:column; gap:2px; min-width:80px; }}
+    .nr-stat-label {{ font-size:.68rem; text-transform:uppercase; letter-spacing:.05em; font-weight:800; color:var(--muted); }}
+    .nr-stat-value {{ font-size:1.2rem; font-weight:800; color:var(--navy); line-height:1.1; }}
+    .nr-stat-pct {{ font-size:.76rem; color:var(--muted); }}
+    .nr-bar-wrap {{ flex:1 1 180px; }}
+    .nr-bar {{ height:10px; border-radius:5px; overflow:hidden; display:flex; }}
+    .nr-bar-new {{ background:#1d6fd0; height:100%; transition:width .3s; }}
+    .nr-bar-ret {{ background:#c3d9f5; height:100%; transition:width .3s; }}
+    .nr-legend {{ display:flex; gap:14px; margin-top:5px; }}
+    .nr-legend-item {{ display:flex; align-items:center; gap:5px; font-size:.74rem; color:var(--muted); }}
+    .nr-legend-swatch {{ width:10px; height:10px; border-radius:2px; }}
     @media (max-width:900px) {{ .cards {{ grid-template-columns:repeat(2,minmax(120px,1fr)); }} .two-col,.three-col {{ grid-template-columns:1fr; }} }}
   </style>
 </head>
@@ -361,6 +375,7 @@ def render_nixon_bigquery_test_page(
           <div class="filter-group"><span class="filter-label">AI platform</span><div class="chips" id="aiChips"></div></div>
           <div class="filter-group"><span class="filter-label">Paid source</span><div class="chips" id="sourceChips"></div></div>
         </div>
+        <input class="page-search" id="pagesSearch" type="search" placeholder="Filter pages by path…" autocomplete="off">
         <div class="status" id="pagesStatus">Waiting…</div>
         <div class="table-wrap"><table id="pagesTable" class="compact"></table></div>
         <div class="pager" id="pagesPager"></div>
@@ -412,6 +427,7 @@ def render_nixon_bigquery_test_page(
         <h2>New user acquisition</h2>
         <p class="src-note"><code>GET .../analytics/user-acquisition</code><span class="arrow">→</span><code>analytics_test.ga4_UserAcquisition_*</code></p>
         <div class="status" id="userAcqStatus">Waiting…</div>
+        <div id="newVsReturning"></div>
         <div class="two-col">
           <div class="col-panel"><h3>By first channel</h3><div id="userAcqChannelBars"></div></div>
           <div class="col-panel">
@@ -817,7 +833,7 @@ def render_nixon_bigquery_test_page(
     }}
 
     // ---- GA4: Top pages ----
-    let pagesTopRows=[], pagesSourceRows=[];
+    let pagesTopRows=[], pagesSourceRows=[], pagesSearchQuery='';
     const paidSourceFilter=new Set(), aiPlatformFilter=new Set();
     const PAGES_PER_PAGE=10; let pagesPageNum=1;
     const PAID_SOURCE_LABELS={{paid_google:'Google',paid_bing:'Bing',paid_linkedin:'LinkedIn',paid_meta:'Meta',paid_facebook:'Facebook'}};
@@ -838,16 +854,18 @@ def render_nixon_bigquery_test_page(
       return [...map.values()].sort((a,b)=>b.page_views-a.page_views);
     }}
     function renderPages() {{
-      const base=pageFiltersActive()?aggregatePages(pagesSourceRows.filter(pageSourceRowMatches)):pagesTopRows;
+      let base=pageFiltersActive()?aggregatePages(pagesSourceRows.filter(pageSourceRowMatches)):pagesTopRows;
+      if (pagesSearchQuery) {{ const q=pagesSearchQuery.toLowerCase(); base=base.filter(p=>p.page_path.toLowerCase().includes(q)); }}
       const el=document.getElementById('pagesTable');
-      if (!base.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No pages for this range.</td></tr></tbody>`; setStatus('pagesStatus','No pages for this range.'); document.getElementById('pagesPager').innerHTML=''; return; }}
+      if (!base.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No pages match${{pagesSearchQuery?' "'+esc(pagesSearchQuery)+'"':''}}.</td></tr></tbody>`; setStatus('pagesStatus','No results.'); document.getElementById('pagesPager').innerHTML=''; return; }}
       const totalPages=Math.max(1,Math.ceil(base.length/PAGES_PER_PAGE));
       if (pagesPageNum>totalPages) pagesPageNum=totalPages;
       const startIdx=(pagesPageNum-1)*PAGES_PER_PAGE;
       const pageRows=base.slice(startIdx,startIdx+PAGES_PER_PAGE);
       el.innerHTML=`<thead><tr><th class="left">Page</th><th>Views</th><th>Users</th><th>Key events</th><th>Avg engt</th></tr></thead>`+
         `<tbody>${{pageRows.map(p=>{{const sub=p.page_group?` <span class="muted">${{esc(p.page_group)}}</span>`:'';const engt=p.users?p.engagement_seconds/p.users:0;return`<tr><td class="left"><span class="page-path">${{esc(p.page_path)}}</span>${{sub}}</td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;}}). join('')}}</tbody>`;
-      setStatus('pagesStatus', `${{startIdx+1}}–${{startIdx+pageRows.length}} of ${{base.length}} page(s)${{pageFiltersActive()?' (filtered)':''}}.`);
+      const filterNote=(pageFiltersActive()?'filtered':'')+(pagesSearchQuery?'searched':'');
+      setStatus('pagesStatus', `${{startIdx+1}}–${{startIdx+pageRows.length}} of ${{base.length}} page(s)${{filterNote?' ('+filterNote+')':''}}.`);
       renderPagesPager(totalPages);
     }}
     function renderPagesPager(totalPages) {{
@@ -885,6 +903,12 @@ def render_nixon_bigquery_test_page(
       buildPageFilters(); renderPages();
       setRaw('pagesJson',{{top,sources:src}});
     }}
+    (function(){{
+      const inp=document.getElementById('pagesSearch');
+      if (!inp) return;
+      let debounce;
+      inp.addEventListener('input',()=>{{ clearTimeout(debounce); debounce=setTimeout(()=>{{pagesSearchQuery=inp.value.trim();pagesPageNum=1;renderPages();}},180); }});
+    }})();
 
     // ---- GA4: Traffic acquisition ----
     function drawSessionsTrend(daily) {{
@@ -995,10 +1019,31 @@ def render_nixon_bigquery_test_page(
     }}
 
     // ---- GA4: User acquisition ----
+    function renderNewVsReturning(byChannel) {{
+      const el=document.getElementById('newVsReturning');
+      if (!el) return;
+      const totalNew=byChannel.reduce((s,r)=>s+num(r.new_users),0);
+      const totalActive=byChannel.reduce((s,r)=>s+num(r.active_users),0);
+      const totalRet=Math.max(0,totalActive-totalNew);
+      const total=totalNew+totalRet||1;
+      const newPct=totalNew/total*100, retPct=totalRet/total*100;
+      el.innerHTML=`<div class="nr-wrap">
+        <div class="nr-stat"><span class="nr-stat-label">New users</span><span class="nr-stat-value">${{count(totalNew)}}</span><span class="nr-stat-pct">${{newPct.toFixed(0)}}%</span></div>
+        <div class="nr-stat"><span class="nr-stat-label">Returning</span><span class="nr-stat-value">${{count(totalRet)}}</span><span class="nr-stat-pct">${{retPct.toFixed(0)}}%</span></div>
+        <div class="nr-bar-wrap">
+          <div class="nr-bar"><div class="nr-bar-new" style="width:${{newPct.toFixed(1)}}%"></div><div class="nr-bar-ret" style="width:${{retPct.toFixed(1)}}%"></div></div>
+          <div class="nr-legend">
+            <span class="nr-legend-item"><span class="nr-legend-swatch" style="background:#1d6fd0"></span>New</span>
+            <span class="nr-legend-item"><span class="nr-legend-swatch" style="background:#c3d9f5"></span>Returning</span>
+          </div>
+        </div>
+      </div>`;
+    }}
     async function loadUserAcquisition() {{
       setStatus('userAcqStatus','Loading user acquisition...');
       try {{
         const payload=await getJson(withDates(USER_ACQ_API));
+        renderNewVsReturning(payload.by_channel||[]);
         renderBarList('userAcqChannelBars',payload.by_channel||[],'new_users','channel');
         renderTable('userAcqSourceTable',[
           {{key:'source',label:'Source',left:true}},
