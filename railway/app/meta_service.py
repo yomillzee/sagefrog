@@ -212,6 +212,30 @@ def list_ad_accounts(
     return sorted(merged.values(), key=lambda item: (item.get("name") or item["id"]).lower())
 
 
+def list_user_ad_accounts(
+    *,
+    access_token: str,
+    env: MetaEnv | None = None,
+) -> list[dict[str, Any]]:
+    """List ad accounts via /me/adaccounts — requires only ads_read, not business_management.
+
+    Use as a fallback when the app lacks business_management Advanced Access.
+    """
+    env = env or load_meta_env()
+    rows = _graph_get_all(
+        "/me/adaccounts",
+        access_token=access_token,
+        params={"fields": _ACCOUNT_FIELDS, "limit": 500},
+        env=env,
+    )
+    result = {}
+    for row in rows:
+        normalized = _normalize_account_row(row, ownership="user")
+        if normalized["id"]:
+            result[normalized["id"]] = normalized
+    return sorted(result.values(), key=lambda item: (item.get("name") or item["id"]).lower())
+
+
 def test_access_token(env: MetaEnv | None = None) -> dict[str, Any]:
     env = env or load_meta_env()
     try:

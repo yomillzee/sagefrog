@@ -22,7 +22,15 @@ class MetaAdsConnector(ConnectorHandler):
         token = oauth_store.get_access_token("meta", client_slug=client_slug)
         if not token:
             raise RuntimeError(f"No Meta token for client '{client_slug}'.")
-        return meta_service.list_ad_accounts(access_token=token)
+        try:
+            return meta_service.list_ad_accounts(access_token=token)
+        except RuntimeError as exc:
+            # business_management Advanced Access not approved — fall back to
+            # /me/adaccounts which only requires ads_read.
+            if "business_management" in str(exc) or "#100" in str(exc):
+                _log.info("Meta business manager unavailable, falling back to /me/adaccounts")
+                return meta_service.list_user_ad_accounts(access_token=token)
+            raise
 
     def run_sync(self, *, client_slug: str, date_range: str = "LAST_30_DAYS") -> SyncResult:
         import bq_meta_ads_service
