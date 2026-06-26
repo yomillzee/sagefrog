@@ -43,9 +43,13 @@ class MetaAdsConnector(ConnectorHandler):
             return SyncResult(rows_loaded=0, error="No Meta account configured.")
 
         bq_project_id = cfg.bq_project_id if cfg else None
+        raw_dataset_id = cfg.raw_dataset_id if cfg else None
         start, end, _ = resolve_date_range(date_range)
         try:
-            with bq_meta_ads_service.route(bq_project_id=bq_project_id):
+            with bq_meta_ads_service.route(
+                bq_project_id=bq_project_id,
+                meta_dataset_id=raw_dataset_id,
+            ):
                 result = bq_meta_ads_service.sync_meta_to_bq(
                     account_id, start=start, end=end
                 )

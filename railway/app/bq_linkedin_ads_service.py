@@ -53,20 +53,26 @@ _route_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
 
 
 @contextlib.contextmanager
-def route(*, bq_project_id: str | None = None, credentials_env: str | None = None):
-    """Scope LinkedIn BigQuery reads to a specific project/credentials."""
+def route(
+    *,
+    bq_project_id: str | None = None,
+    credentials_env: str | None = None,
+    linkedin_dataset_id: str | None = None,
+):
+    """Scope LinkedIn BigQuery reads to a specific project/credentials/dataset."""
     payload = {
         "project": (bq_project_id or "").strip() or None,
         "credentials_env": (credentials_env or "").strip() or None,
     }
     token = _route_ctx.set(payload if (payload["project"] or payload["credentials_env"]) else None)
+    resolved_dataset = (linkedin_dataset_id or "").strip() or _dataset_id()
     try:
         import bigquery_warehouse
 
         with bigquery_warehouse.route(
             bq_project_id=payload["project"],
             credentials_env=payload["credentials_env"],
-            linkedin_dataset_id=_dataset_id(),
+            linkedin_dataset_id=resolved_dataset,
         ):
             yield
     finally:

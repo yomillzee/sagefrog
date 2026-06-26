@@ -30,21 +30,31 @@ _route_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
 
 
 @contextlib.contextmanager
-def route(*, bq_project_id: str | None = None, credentials_env: str | None = None):
-    """Scope Meta BigQuery reads/writes to a specific project/credentials."""
+def route(
+    *,
+    bq_project_id: str | None = None,
+    credentials_env: str | None = None,
+    meta_dataset_id: str | None = None,
+):
+    """Scope Meta BigQuery reads/writes to a specific project/credentials/dataset."""
+    import os
     payload = {
         "project": (bq_project_id or "").strip() or None,
         "credentials_env": (credentials_env or "").strip() or None,
     }
     token = _route_ctx.set(payload if (payload["project"] or payload["credentials_env"]) else None)
+    resolved_dataset = (
+        (meta_dataset_id or "").strip()
+        or (os.getenv("BQ_META_DATASET_ID") or "").strip()
+        or "raw_meta_ads"
+    )
     try:
         import bigquery_warehouse
-        import os
 
         with bigquery_warehouse.route(
             bq_project_id=payload["project"],
             credentials_env=payload["credentials_env"],
-            meta_dataset_id=(os.getenv("BQ_META_DATASET_ID") or "raw_meta_ads").strip(),
+            meta_dataset_id=resolved_dataset,
         ):
             yield
     finally:

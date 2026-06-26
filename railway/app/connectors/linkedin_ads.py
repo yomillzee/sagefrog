@@ -34,10 +34,14 @@ class LinkedInAdsConnector(ConnectorHandler):
             return SyncResult(rows_loaded=0, error="No LinkedIn account configured.")
 
         bq_project_id = cfg.bq_project_id if cfg else None
+        raw_dataset_id = cfg.raw_dataset_id if cfg else None
         start, end, _ = resolve_date_range(date_range)
         rows_written = 0
         try:
-            with bq_linkedin_ads_service.route(bq_project_id=bq_project_id):
+            with bq_linkedin_ads_service.route(
+                bq_project_id=bq_project_id,
+                linkedin_dataset_id=raw_dataset_id,
+            ):
                 daily_rows = linkedin_service.fetch_campaign_daily_metrics(
                     account_id, start=start, end=end
                 )
