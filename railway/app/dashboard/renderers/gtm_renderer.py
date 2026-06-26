@@ -50,7 +50,7 @@ def render_gtm_page(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Nixon — GTM Tags</title>
+  <title>Nixon — Event Tracking</title>
   {favicon_head_html()}
   <style>
     :root {{ --bg:#eef2f7; --card:#fff; --line:#e2e8f0; --navy:#0a2540; --blue:#1769aa; --accent:#1d6fd0; --muted:#6b7a90; --bad:#b42318; --ok:#0a7f3f; --sidebar-from:#0a2540; --sidebar-to:#123456; --radius:14px; --radius-sm:9px; --shadow:0 1px 2px rgba(16,33,67,.04),0 4px 16px rgba(16,33,67,.05); }}
@@ -74,9 +74,11 @@ def render_gtm_page(
     .tag-table-wrap {{ overflow-x:auto; }}
     table {{ width:100%; border-collapse:collapse; font-size:.875rem; }}
     th {{ text-align:left; padding:10px 14px; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); border-bottom:2px solid var(--line); white-space:nowrap; }}
-    td {{ padding:11px 14px; border-bottom:1px solid var(--line); vertical-align:middle; }}
+    td {{ padding:12px 14px; border-bottom:1px solid var(--line); vertical-align:top; }}
     tr:last-child td {{ border-bottom:0; }}
     tr:hover td {{ background:#f7fafc; }}
+    .tag-name {{ font-weight:600; font-size:.9rem; color:#0f172a; }}
+    .tag-meta {{ display:flex; flex-wrap:wrap; gap:5px; margin-top:5px; }}
     .badge {{ display:inline-flex; align-items:center; padding:3px 9px; border-radius:6px; font-size:.72rem; font-weight:700; white-space:nowrap; }}
     .badge-ga4    {{ background:#e8f0fe; color:#1a56db; }}
     .badge-gads   {{ background:#e6f4ea; color:#137333; }}
@@ -86,18 +88,20 @@ def render_gtm_page(
     .badge-html   {{ background:#f3f4f6; color:#374151; }}
     .badge-img    {{ background:#fef3c7; color:#92400e; }}
     .badge-default {{ background:#f1f5f9; color:#475569; }}
-    .status-paused {{ color:var(--bad); font-size:.8rem; font-weight:600; }}
-    .status-active {{ color:var(--ok); font-size:.8rem; font-weight:600; }}
-    .trigger-block {{ margin-bottom:8px; }}
-    .trigger-block:last-child {{ margin-bottom:0; }}
-    .trigger-header {{ display:flex; align-items:center; gap:6px; margin-bottom:4px; }}
-    .trigger-name-label {{ font-size:.8rem; font-weight:600; color:#1e293b; }}
-    .trigger-type-label {{ font-size:.72rem; color:var(--muted); background:#f1f5f9; padding:1px 7px; border-radius:5px; }}
-    .criteria-list {{ display:flex; flex-direction:column; gap:3px; padding-left:10px; border-left:2px solid #e2e8f0; }}
-    .criteria-row {{ display:flex; align-items:baseline; gap:5px; font-size:.78rem; flex-wrap:wrap; }}
-    .criteria-var {{ font-family:monospace; font-size:.76rem; color:#1d4ed8; background:#eff6ff; padding:1px 6px; border-radius:4px; white-space:nowrap; }}
-    .criteria-op {{ color:var(--muted); font-weight:600; font-size:.72rem; text-transform:uppercase; letter-spacing:.03em; white-space:nowrap; }}
-    .criteria-val {{ font-family:monospace; font-size:.76rem; color:#166534; background:#f0fdf4; padding:1px 6px; border-radius:4px; word-break:break-all; }}
+    .badge-consent-req {{ background:#fef3c7; color:#92400e; }}
+    .badge-consent-ok  {{ background:#f0fdf4; color:#166534; }}
+    .status-paused {{ color:var(--bad); font-size:.82rem; font-weight:600; }}
+    .status-active {{ color:var(--ok); font-size:.82rem; font-weight:600; }}
+    .trigger-block {{ margin-bottom:10px; padding-bottom:10px; border-bottom:1px dashed #e9eef5; }}
+    .trigger-block:last-child {{ margin-bottom:0; padding-bottom:0; border-bottom:0; }}
+    .trigger-header {{ display:flex; align-items:center; gap:6px; margin-bottom:5px; }}
+    .trigger-name-label {{ font-size:.82rem; font-weight:600; color:#1e293b; }}
+    .trigger-type-label {{ font-size:.7rem; color:var(--muted); background:#f1f5f9; padding:2px 7px; border-radius:5px; }}
+    .criteria-list {{ display:flex; flex-direction:column; gap:4px; padding-left:8px; border-left:2px solid #cbd5e1; }}
+    .criteria-row {{ display:flex; align-items:center; gap:6px; font-size:.78rem; flex-wrap:wrap; }}
+    .criteria-var {{ font-family:monospace; font-size:.76rem; color:#1d4ed8; background:#eff6ff; padding:2px 7px; border-radius:4px; white-space:nowrap; }}
+    .criteria-op {{ color:#64748b; font-size:.72rem; font-style:italic; white-space:nowrap; }}
+    .criteria-val {{ font-family:monospace; font-size:.76rem; color:#166534; background:#f0fdf4; padding:2px 7px; border-radius:4px; word-break:break-all; max-width:260px; overflow:hidden; text-overflow:ellipsis; }}
     .loading-msg {{ padding:40px; text-align:center; color:var(--muted); }}
     .error-msg {{ padding:20px; color:var(--bad); background:#fef2f2; border-radius:9px; border:1px solid #fecaca; }}
     .empty-state {{ padding:48px 20px; text-align:center; color:var(--muted); }}
@@ -120,7 +124,7 @@ def render_gtm_page(
         <a class="dash-view-btn active" href="#">{_ICON_TAGS}<span>GTM Tags</span></a>
       </nav>
       <div class="dash-sidebar-footer">
-        <div class="dash-sidebar-client"><span class="topbar-client-label">Nixon — GTM Audit</span></div>
+        <div class="dash-sidebar-client"><span class="topbar-client-label">Nixon — Event Tracking</span></div>
         <nav class="dash-sidebar-links">
           <a href="{main_url}" class="dash-sidebar-link">{_ICON_BACK}<span>Paid Media</span></a>
           <a href="{settings_url}" class="dash-sidebar-link">{_ICON_SETTINGS}<span>Settings</span></a>
@@ -133,7 +137,7 @@ def render_gtm_page(
       <main>
         <div class="page-head">
           <div>
-            <h1 class="page-title">GTM Live Tags</h1>
+            <h1 class="page-title">Event Tracking</h1>
             <p class="page-meta" id="pageMeta">Loading container…</p>
           </div>
           <button class="btn btn-secondary" id="refreshBtn" onclick="loadTags(true)">
@@ -194,13 +198,22 @@ function badgeClass(type) {{
   return 'badge-default';
 }}
 
+function consentBadge(status) {{
+  if (!status || status === 'not_set') return '';
+  if (status === 'required') return '<span class="badge badge-consent-req" title="Tag requires user consent before firing">Consent required</span>';
+  if (status === 'not_required') return '<span class="badge badge-consent-ok" title="Tag explicitly set: no consent required">No consent req</span>';
+  return '';
+}}
+
 function renderCriteria(criteria) {{
   if (!criteria || !criteria.length) return '';
   return criteria.map(c => {{
-    const v   = esc(c.variable || '');
+    // Strip {{...}} wrappers so "{{Page Path}}" shows as "Page Path"
+    const raw = c.variable || '';
+    const v   = esc(raw.replace(/^\{\{|\}\}$/g, ''));
     const op  = esc(c.operator_label || c.operator || '');
     const val = esc(c.value || '');
-    return `<div class="criteria-row"><span class="criteria-var">${{v}}</span><span class="criteria-op">${{op}}</span><span class="criteria-val">${{val}}</span></div>`;
+    return `<div class="criteria-row"><span class="criteria-var">${{v}}</span><span class="criteria-op">${{op}}</span>${{val ? `<span class="criteria-val">${{val}}</span>` : ''}}</div>`;
   }}).join('');
 }}
 
@@ -221,7 +234,7 @@ function renderTable(rows) {{
   if (!rows.length) {{
     return '<div class="empty-state">No tags found in this container.</div>';
   }}
-  const ths = ['Tag Name','Type','Status','Firing Triggers &amp; Logic'];
+  const ths = ['Tag','Type','Status','Triggers'];
   const head = '<tr>' + ths.map(h => `<th>${{h}}</th>`).join('') + '</tr>';
   const body = rows.map(r => {{
     const bc  = badgeClass(r.friendly_type || '');
@@ -229,8 +242,10 @@ function renderTable(rows) {{
     const st  = r.paused
       ? '<span class="status-paused">⏸ Paused</span>'
       : '<span class="status-active">● Active</span>';
+    const consent = consentBadge(r.consent_status);
+    const name = `<div class="tag-name">${{esc(r.tag_name || '')}}</div>${{consent ? `<div class="tag-meta">${{consent}}</div>` : ''}}`;
     const trig = renderTriggers(r.triggers || []);
-    return `<tr><td><strong>${{esc(r.tag_name || '')}}</strong></td><td>${{typ}}</td><td>${{st}}</td><td>${{trig}}</td></tr>`;
+    return `<tr><td>${{name}}</td><td>${{typ}}</td><td>${{st}}</td><td>${{trig}}</td></tr>`;
   }}).join('');
   return `<table><thead>${{head}}</thead><tbody>${{body}}</tbody></table>`;
 }}
