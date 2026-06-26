@@ -66,5 +66,4 @@ CONNECTOR_ORDER = [
     "ga4",
     "gsc",
     "hubspot",
-    "circle",
 ]
