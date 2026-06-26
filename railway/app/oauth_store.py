@@ -16,7 +16,7 @@ import db
 import web_users
 from security import is_production
 
-PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc"})
+PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc", "google_analytics"})
 
 SCHEMA_SQL_STATEMENTS = [
     """

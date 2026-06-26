@@ -162,6 +162,8 @@ def save_config(
     dashboard_mode: str | None = None,
     gsc_site_url: str | None = None,
     semrush_domain: str | None = None,
+    gtm_account_id: str | None = None,
+    gtm_container_id: str | None = None,
 ) -> ClientConfigRow:
     slug = (client_slug or "").strip().lower()
     if not slug:
@@ -187,6 +189,10 @@ def save_config(
         _optional.append(("gsc_site_url", _clean(gsc_site_url)))
     if semrush_domain is not None:
         _optional.append(("semrush_domain", _clean(semrush_domain)))
+    if gtm_account_id is not None:
+        _optional.append(("gtm_account_id", _clean(gtm_account_id)))
+    if gtm_container_id is not None:
+        _optional.append(("gtm_container_id", _clean(gtm_container_id)))
 
     gcp_set_clause = "".join(
         f",\n              {col} = EXCLUDED.{col}" for col, _ in _optional

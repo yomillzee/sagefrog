@@ -1305,6 +1305,8 @@ def render_settings_html(
     except Exception:
         _db_cfg = None
     _gsc_url_val = (_db_cfg.gsc_site_url if _db_cfg else None) or ""
+    _gtm_account_val = (_db_cfg.gtm_account_id if _db_cfg else None) or ""
+    _gtm_container_val = (_db_cfg.gtm_container_id if _db_cfg else None) or ""
     try:
         _gsc_connected = oauth_store.public_status("gsc").connected
     except Exception:
@@ -1364,6 +1366,20 @@ def render_settings_html(
                   value="{_esc(_semrush_val)}"
                   placeholder="example.com">
                 <p class="hint">Root domain (no www, no https://) for SEMrush lookups.</p>
+              </div>
+              <div>
+                <label for="gtm_account_id">GTM account ID</label>
+                <input id="gtm_account_id" name="gtm_account_id" type="text"
+                  value="{_esc(_gtm_account_val)}"
+                  placeholder="123456789">
+                <p class="hint">Found in GTM → Admin URL: accounts/<strong>ID</strong>/containers/…</p>
+              </div>
+              <div>
+                <label for="gtm_container_id">GTM container ID</label>
+                <input id="gtm_container_id" name="gtm_container_id" type="text"
+                  value="{_esc(_gtm_container_val)}"
+                  placeholder="987654321">
+                <p class="hint">Found in GTM → Admin URL: …/containers/<strong>ID</strong></p>
               </div>
             </div>
             <button type="submit" class="btn primary">Save settings</button>

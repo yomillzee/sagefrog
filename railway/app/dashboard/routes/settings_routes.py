@@ -200,6 +200,8 @@ def dashboard_client_settings_post(
     monthly_budget_usd: str = Form(""),
     gsc_site_url: str = Form(""),
     semrush_domain: str = Form(""),
+    gtm_account_id: str = Form(""),
+    gtm_container_id: str = Form(""),
     business_line_rules_text: str = Form("", alias="business_line_rules"),
     sidebar_from: str = Form(""),
     sidebar_to: str = Form(""),
@@ -284,6 +286,8 @@ def dashboard_client_settings_post(
                 dashboard_mode="bigquery",
                 gsc_site_url=gsc_site_url.strip() or None,
                 semrush_domain=semrush_domain.strip() or None,
+                gtm_account_id=gtm_account_id.strip() or None,
+                gtm_container_id=gtm_container_id.strip() or None,
             )
             budget = dashboard_service.parse_monthly_budget_input(monthly_budget_usd)
             client_dashboard_config.save_monthly_budget(
