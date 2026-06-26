@@ -53,6 +53,12 @@ SCHEMA_SQL_STATEMENTS = [
     """
     ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS semrush_domain TEXT
     """,
+    """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS gtm_account_id TEXT
+    """,
+    """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS gtm_container_id TEXT
+    """,
 ]
 
 
@@ -72,6 +78,8 @@ class ClientConfigRow:
     dashboard_mode: str = "api"
     gsc_site_url: str | None = None
     semrush_domain: str | None = None
+    gtm_account_id: str | None = None
+    gtm_container_id: str | None = None
 
 
 def _get_db_url() -> str | None:
@@ -105,7 +113,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    meta_account_id, ga4_client_key,
                    monthly_budget_usd, updated_at, updated_by,
                    gcp_project_id, bq_mart_dataset_id,
-                   dashboard_mode, gsc_site_url, semrush_domain
+                   dashboard_mode, gsc_site_url, semrush_domain,
+                   gtm_account_id, gtm_container_id
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -134,6 +143,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         dashboard_mode=str(row[11] or "api").strip() or "api",
         gsc_site_url=_s(row[12]),
         semrush_domain=_s(row[13]),
+        gtm_account_id=_s(row[14]),
+        gtm_container_id=_s(row[15]),
     )
 
 

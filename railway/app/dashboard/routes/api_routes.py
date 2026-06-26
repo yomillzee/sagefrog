@@ -1215,3 +1215,90 @@ def debug_bigquery_identity(
         }
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
+
+
+# ── GTM live-tags audit ───────────────────────────────────────────────────────
+
+@router.get(
+    "/api/clients/{client_slug}/gtm/live-tags",
+    summary="GTM live container version — normalised tag + trigger audit",
+)
+def gtm_live_tags(
+    client_slug: str,
+    request: Request,
+    refresh: bool = Query(default=False, description="Bypass 15-minute cache."),
+    account_id: str | None = Query(default=None, description="GTM account ID override."),
+    container_id: str | None = Query(default=None, description="GTM container ID override."),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    """
+    Returns the live GTM container version normalised into per-tag rows.
+
+    Each row includes tag_name, raw_type, friendly_type, paused, consent_status,
+    firing_trigger_ids/names, trigger_types, trigger_criteria, trigger_settings,
+    and trigger_logic.  The response is cached per client/container for 15 minutes;
+    pass refresh=true to force a live fetch.
+    """
+    slug = (client_slug or "").strip().lower()
+    _authorize_bq_client_api(
+        request,
+        client_slug=slug,
+        key=key,
+        bearer_credentials=bearer_credentials,
+        x_api_key=x_api_key,
+    )
+
+    import client_dashboard_config as cdc
+    import gtm_service
+    import oauth_store
+
+    # Resolve GTM account + container from DB config; query params act as override
+    db_cfg = cdc.get_config(slug)
+    resolved_account = (account_id or "").strip() or (
+        db_cfg.gtm_account_id if db_cfg else None
+    )
+    resolved_container = (container_id or "").strip() or (
+        db_cfg.gtm_container_id if db_cfg else None
+    )
+    if not resolved_account or not resolved_container:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "GTM account_id and container_id are required. "
+                "Set them in the client config or pass as query params."
+            ),
+        )
+
+    # google_analytics OAuth token; GA4_SCOPE now includes tagmanager.readonly
+    refresh_token = oauth_store.get_refresh_token(
+        "google_analytics", client_slug=slug
+    ) or oauth_store.get_refresh_token("google_analytics")
+    if not refresh_token:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "No Google Analytics OAuth token found for this client. "
+                "Connect Google Analytics in the connector wizard — it grants "
+                "both analytics.readonly and tagmanager.readonly."
+            ),
+        )
+
+    try:
+        result = gtm_service.get_live_tags(
+            slug,
+            resolved_account,
+            resolved_container,
+            refresh_token,
+            force_refresh=refresh,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning("GTM live-tags error [%s]: %s", slug, exc)
+        raise HTTPException(status_code=502, detail=str(exc)[:300]) from exc
+
+    return result

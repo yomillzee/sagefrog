@@ -24,7 +24,10 @@ GOOGLE_ADS_SCOPE = "https://www.googleapis.com/auth/adwords"
 # Cloud Console app is required.
 GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 # GA4 also reuses the same Google Cloud OAuth client.
-GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
+GA4_SCOPE = (
+    "https://www.googleapis.com/auth/analytics.readonly "
+    "https://www.googleapis.com/auth/tagmanager.readonly"
+)
 
 LINKEDIN_AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization"
 LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
