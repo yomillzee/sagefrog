@@ -316,6 +316,16 @@ def render_nixon_bigquery_test_page(
         </form>
       </div>
       <div class="date-bar-bottom">
+        <div class="filter-group">
+          <span class="filter-label">Range</span>
+          <div class="chips" id="datePresets">
+            <button type="button" class="chip" data-preset="this_month">This month</button>
+            <button type="button" class="chip" data-preset="last_month">Last month</button>
+            <button type="button" class="chip" data-preset="last_7">Last 7d</button>
+            <button type="button" class="chip" data-preset="last_30">Last 30d</button>
+            <button type="button" class="chip" data-preset="last_90">Last 90d</button>
+          </div>
+        </div>
         <div class="filter-group" id="platformFilterGroup">
           <span class="filter-label">Platform</span>
           <div class="chips" id="platformChips"></div>
@@ -1092,9 +1102,32 @@ def render_nixon_bigquery_test_page(
       else if (currentTab==='analytics') {{ analyticsLoaded=false; applyModules(); loadAllAnalytics(); analyticsLoaded=true; }}
     }}
 
-    // ---- Date inputs ----
+    // ---- Date inputs + presets ----
     const startDate=document.getElementById('startDate'), endDate=document.getElementById('endDate');
-    document.getElementById('filters').addEventListener('submit',ev=>{{ev.preventDefault();loadCurrentTab();}});
+    const fmtDate=d=>`${{d.getFullYear()}}-${{String(d.getMonth()+1).padStart(2,'0')}}-${{String(d.getDate()).padStart(2,'0')}}`;
+    function presetRange(name) {{
+      const today=new Date(); let s, e=today;
+      const lastN=n=>{{e=new Date(today);e.setDate(today.getDate()-1);s=new Date(today);s.setDate(today.getDate()-n);}};
+      if (name==='this_month') s=new Date(today.getFullYear(),today.getMonth(),1);
+      else if (name==='last_month') {{s=new Date(today.getFullYear(),today.getMonth()-1,1);e=new Date(today.getFullYear(),today.getMonth(),0);}}
+      else if (name==='last_7') lastN(7);
+      else if (name==='last_30') lastN(30);
+      else if (name==='last_90') lastN(90);
+      else return null;
+      return {{start:fmtDate(s),end:fmtDate(e)}};
+    }}
+    function highlightPreset(name) {{
+      document.querySelectorAll('#datePresets .chip').forEach(b=>b.classList.toggle('active',b.dataset.preset===name));
+    }}
+    document.getElementById('datePresets').addEventListener('click',ev=>{{
+      const btn=ev.target.closest('[data-preset]'); if (!btn) return;
+      const range=presetRange(btn.dataset.preset); if (!range) return;
+      startDate.value=range.start; endDate.value=range.end;
+      highlightPreset(btn.dataset.preset);
+      loadCurrentTab();
+    }});
+    [startDate,endDate].forEach(inp=>inp.addEventListener('change',()=>highlightPreset(null)));
+    document.getElementById('filters').addEventListener('submit',ev=>{{ev.preventDefault();highlightPreset(null);loadCurrentTab();}});
 
     // ---- Platform chips ----
     buildChips('platformChips',['Google','LinkedIn'],platformFilter,()=>{{renderSummary();renderChart();renderExplorer();}});
