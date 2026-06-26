@@ -14,20 +14,14 @@ import auth as google_auth
 import linkedin_auth
 import meta_auth
 
-PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc", "google_analytics"})
+PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc", "google_analytics", "google_tag_manager"})
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_ADS_SCOPE = "https://www.googleapis.com/auth/adwords"
-# GSC reuses the same Google Cloud OAuth client (GOOGLE_ADS_CLIENT_ID/SECRET) as
-# Google Ads — it's just a different scope on the same login, so no separate
-# Cloud Console app is required.
 GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
-# GA4 also reuses the same Google Cloud OAuth client.
-GA4_SCOPE = (
-    "https://www.googleapis.com/auth/analytics.readonly "
-    "https://www.googleapis.com/auth/tagmanager.readonly"
-)
+GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
+GTM_SCOPE = "https://www.googleapis.com/auth/tagmanager.readonly"
 
 LINKEDIN_AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization"
 LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
@@ -137,6 +131,23 @@ def connect_prerequisites(platform: str) -> dict[str, Any]:
                 "that has Viewer access to the GA4 property."
             ),
         }
+    if slug == "google_tag_manager":
+        summary = google_auth.env_summary()
+        return {
+            "ready": bool(summary.get("has_client_id") and summary.get("has_client_secret")),
+            "missing": [
+                label
+                for key, label in (
+                    ("has_client_id", "GOOGLE_ADS_CLIENT_ID"),
+                    ("has_client_secret", "GOOGLE_ADS_CLIENT_SECRET"),
+                )
+                if not summary.get(key)
+            ],
+            "note": (
+                "Reuses the Google Ads OAuth client. Connect with the Google account "
+                "that has Read access to the GTM container."
+            ),
+        }
     if slug == "linkedin":
         summary = linkedin_auth.env_summary()
         return {
@@ -179,7 +190,7 @@ def build_authorize_url(platform: str, *, state: str) -> str:
             "response_type": "code",
             "scope": GOOGLE_ADS_SCOPE,
             "access_type": "offline",
-            "prompt": "consent",
+            "prompt": "select_account consent",
             "state": state,
         }
         return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
@@ -193,7 +204,7 @@ def build_authorize_url(platform: str, *, state: str) -> str:
             "response_type": "code",
             "scope": GSC_SCOPE,
             "access_type": "offline",
-            "prompt": "consent",
+            "prompt": "select_account consent",
             "state": state,
         }
         return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
@@ -207,7 +218,21 @@ def build_authorize_url(platform: str, *, state: str) -> str:
             "response_type": "code",
             "scope": GA4_SCOPE,
             "access_type": "offline",
-            "prompt": "consent",
+            "prompt": "select_account consent",
+            "state": state,
+        }
+        return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
+    if slug == "google_tag_manager":
+        client_id = google_auth._get_env(*google_auth._ENV_ALIASES["client_id"])
+        if not client_id:
+            raise RuntimeError("Set GOOGLE_ADS_CLIENT_ID before connecting Google Tag Manager.")
+        params = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": GTM_SCOPE,
+            "access_type": "offline",
+            "prompt": "select_account consent",
             "state": state,
         }
         return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
@@ -246,6 +271,8 @@ def exchange_code(platform: str, *, code: str) -> dict[str, Any]:
         return _exchange_google_code(code, redirect_uri=redirect_uri, scope_label=GSC_SCOPE)
     if slug == "google_analytics":
         return _exchange_google_code(code, redirect_uri=redirect_uri, scope_label=GA4_SCOPE)
+    if slug == "google_tag_manager":
+        return _exchange_google_code(code, redirect_uri=redirect_uri, scope_label=GTM_SCOPE)
     if slug == "linkedin":
         return _exchange_linkedin_code(code, redirect_uri=redirect_uri)
     return _exchange_meta_code(code, redirect_uri=redirect_uri)

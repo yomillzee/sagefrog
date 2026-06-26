@@ -16,15 +16,15 @@ _log = logging.getLogger(__name__)
 class GTMConnector(ConnectorHandler):
     connector_type = "gtm"
     display_name = "Google Tag Manager"
-    oauth_platform = "google_analytics"
+    oauth_platform = "google_tag_manager"
     default_raw_dataset = "raw_gtm"
 
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
         refresh_token = oauth_store.get_refresh_token(
-            "google_analytics", client_slug=client_slug
+            "google_tag_manager", client_slug=client_slug
         )
         if not refresh_token:
-            raise RuntimeError("No google_analytics token found for this client.")
+            raise RuntimeError("No google_tag_manager token found for this client.")
         return gtm_service.list_containers(refresh_token)
 
     def run_sync(self, *, client_slug: str, date_range: str = "LAST_30_DAYS") -> SyncResult:
@@ -38,10 +38,10 @@ class GTMConnector(ConnectorHandler):
 
         account_id, container_id = parts[0], parts[1]
         refresh_token = oauth_store.get_refresh_token(
-            "google_analytics", client_slug=client_slug
+            "google_tag_manager", client_slug=client_slug
         )
         if not refresh_token:
-            return SyncResult(rows_loaded=0, error="No google_analytics token found.")
+            return SyncResult(rows_loaded=0, error="No google_tag_manager token found.")
 
         try:
             result = gtm_service.get_live_tags(

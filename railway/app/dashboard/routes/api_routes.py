@@ -1273,17 +1273,15 @@ def gtm_live_tags(
             ),
         )
 
-    # google_analytics OAuth token; GA4_SCOPE now includes tagmanager.readonly
     refresh_token = oauth_store.get_refresh_token(
-        "google_analytics", client_slug=slug
-    ) or oauth_store.get_refresh_token("google_analytics")
+        "google_tag_manager", client_slug=slug
+    ) or oauth_store.get_refresh_token("google_tag_manager")
     if not refresh_token:
         raise HTTPException(
             status_code=403,
             detail=(
-                "No Google Analytics OAuth token found for this client. "
-                "Connect Google Analytics in the connector wizard — it grants "
-                "both analytics.readonly and tagmanager.readonly."
+                "No Google Tag Manager OAuth token found for this client. "
+                "Connect Google Tag Manager in the connector wizard."
             ),
         )
 
