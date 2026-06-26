@@ -920,7 +920,8 @@ def _render_management_view(
 
       <div class="mgmt-actions">
         <button class="btn-secondary" id="syncNowBtn" onclick="runSyncNow()">Run sync now</button>
-        <a href="/dashboard/{client_slug}/connectors/{handler.connector_type}" class="btn-secondary">Reconnect</a>
+        {'<a href="/dashboard/' + client_slug + '/connectors/' + handler.connector_type + '/reauth" class="btn-secondary">Re-authorize</a>' if not handler.no_oauth else ''}
+        <a href="/dashboard/{client_slug}/connectors/{handler.connector_type}" class="btn-secondary">Change account</a>
         <button class="btn-danger" onclick="showDisconnectModal()">Disconnect</button>
       </div>
 

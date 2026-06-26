@@ -93,6 +93,39 @@ def connectors_directory(
 # Connector detail page (wizard or management)
 # ──────────────────────────────────────────────────────────────────────────────
 
+@router.get("/dashboard/{client_slug}/connectors/{connector_type}/reauth", response_class=HTMLResponse)
+def connector_reauth(
+    client_slug: str,
+    connector_type: str,
+    request: Request,
+    key: str | None = None,
+):
+    """Redirect straight to the OAuth consent screen, bypassing the wizard.
+    Useful when a token needs refreshing without changing the connected account."""
+    from urllib.parse import quote as _q
+    slug = validate_client_slug(client_slug)
+    ctype = connector_type.strip().lower()
+    handler = get_handler(ctype)
+    if not handler:
+        raise HTTPException(status_code=404, detail=f"Unknown connector '{connector_type}'.")
+    if handler.no_oauth:
+        raise HTTPException(status_code=400, detail="This connector does not use OAuth.")
+
+    redirect, access_key, *_ = _auth(request, slug, key)
+    if redirect:
+        return redirect
+
+    return_to = f"/dashboard/{slug}/connectors/{ctype}?reauth_done=1"
+    if access_key:
+        return_to += f"&key={_q(access_key, safe='')}"
+    oauth_start = (
+        f"/oauth/{handler.oauth_platform}/connect"
+        f"?return_to={_q(return_to, safe='')}"
+        f"&client={_q(slug, safe='')}"
+    )
+    return RedirectResponse(url=oauth_start, status_code=302)
+
+
 @router.get("/dashboard/{client_slug}/connectors/{connector_type}", response_class=HTMLResponse)
 def connector_detail(
     client_slug: str,
@@ -102,6 +135,7 @@ def connector_detail(
     oauth_done: str | None = None,
     oauth_error: str | None = None,
     connected: str | None = None,
+    reauth_done: str | None = None,
     flash: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
@@ -124,6 +158,8 @@ def connector_detail(
     flash_message = flash
     if connected:
         flash_message = f"{handler.display_name} is now connected and syncing."
+    elif reauth_done:
+        flash_message = f"{handler.display_name} re-authorized successfully."
 
     return HTMLResponse(connectors_renderer.render_connector_detail(
         client_slug=slug,

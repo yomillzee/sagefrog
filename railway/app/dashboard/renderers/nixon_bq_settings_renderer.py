@@ -284,20 +284,6 @@ def render_nixon_bq_settings_page(
     </section>
 
     <section>
-      <h2>Account mapping</h2>
-      <p class="hint">Account IDs that control what gets ingested into BigQuery for Nixon.</p>
-      <form class="form-grid" method="post" action="{settings_action}">
-        <input type="hidden" name="action" value="save">
-        <input type="hidden" name="next" value="/dashboard/nixon-bq-test/settings">
-        <label>LinkedIn account ID<input name="linkedin_account_id" value="{_esc(account_ids.get('linkedin_account_id') or '')}" placeholder="503285948"></label>
-        <label>Google customer ID<input name="google_customer_id" value="{_esc(account_ids.get('google_customer_id') or '')}" placeholder="8032778786"></label>
-        <label>Meta account ID<input name="meta_account_id" value="{_esc(account_ids.get('meta_account_id') or '')}"></label>
-        <label>GA4 client key<input name="ga4_client_key" value="{_esc(account_ids.get('ga4_client_key') or '')}" placeholder="nixon"></label>
-        <div class="form-actions"><button type="submit" class="primary">Save account IDs</button></div>
-      </form>
-    </section>
-
-    <section>
       <h2>Data</h2>
       <p class="hint">Pull recent data, or backfill history, into BigQuery for Nixon.</p>
       <div class="btn-row">
