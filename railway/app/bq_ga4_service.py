@@ -234,10 +234,6 @@ _TABLE_SCHEMAS = {
 # Legacy table names that have been renamed — dropped on first ensure_ga4_tables run.
 _LEGACY_TABLES = ["ga4_pages_daily"]
 
-# Canary column from the old camelCase schema. If a table has this column,
-# it predates the snake_case migration and must be dropped + recreated.
-_OLD_SCHEMA_CANARY = "sessionDefaultChannelGroup"
-
 
 def ensure_ga4_tables() -> None:
     bq = _bq()
@@ -255,13 +251,14 @@ def ensure_ga4_tables() -> None:
         table_id = f"{dataset_ref}.{table_name}"
         schema = schema_fn()
 
-        # Detect old camelCase schema and drop for recreation.
+        # Any table missing client_key predates the snake_case migration — drop and recreate.
         try:
             existing = client.get_table(table_id)
             existing_cols = {f.name for f in existing.schema}
-            if _OLD_SCHEMA_CANARY in existing_cols:
+            if "client_key" not in existing_cols:
                 _log.info(
-                    "GA4 %s has old camelCase schema — dropping for migration", table_name
+                    "GA4 %s missing client_key (pre-migration schema) — dropping for recreation",
+                    table_name,
                 )
                 client.delete_table(table_id)
         except Exception:
