@@ -24,7 +24,7 @@ class GA4Connector(ConnectorHandler):
             raise RuntimeError(f"No GA4 refresh token for '{client_slug}'. Reconnect via the wizard.")
         return ga4_reporting_service.list_properties(refresh_token)
 
-    def run_sync(self, *, client_slug: str, date_range: str = "LAST_30_DAYS") -> SyncResult:
+    def run_sync(self, *, client_slug: str, date_range: str = "LAST_5_DAYS") -> SyncResult:
         import bq_ga4_service
         import connector_config_store
         import oauth_store

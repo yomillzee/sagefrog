@@ -134,7 +134,10 @@ def fetch_sessions_daily(
 ) -> list[dict[str, Any]]:
     rows = _run_report(
         property_id,
-        dimensions=["date", "sessionDefaultChannelGroup", "sessionSource", "sessionMedium"],
+        dimensions=[
+            "date", "sessionDefaultChannelGroup", "sessionSource",
+            "sessionMedium", "sessionCampaignName",
+        ],
         metrics=[
             "sessions", "engagedSessions", "keyEvents",
             "totalUsers", "newUsers", "bounceRate", "engagementRate", "screenPageViews",
@@ -148,9 +151,10 @@ def fetch_sessions_daily(
             "sessionDefaultChannelGroup": r.get("sessionDefaultChannelGroup") or "(other)",
             "sessionSource": r.get("sessionSource") or "(direct)",
             "sessionMedium": r.get("sessionMedium") or "(none)",
+            "sessionCampaignName": r.get("sessionCampaignName") or "(not set)",
             "sessions": int(r.get("sessions") or 0),
             "engagedSessions": int(r.get("engagedSessions") or 0),
-            "keyEvents": float(r.get("keyEvents") or 0),
+            "keyEvents": int(float(r.get("keyEvents") or 0)),
             "totalUsers": int(r.get("totalUsers") or 0),
             "newUsers": int(r.get("newUsers") or 0),
             "bounceRate": float(r.get("bounceRate") or 0),
@@ -178,7 +182,7 @@ def fetch_tech_daily(
             "operatingSystem": r.get("operatingSystem") or "(not set)",
             "activeUsers": int(r.get("activeUsers") or 0),
             "engagedSessions": int(r.get("engagedSessions") or 0),
-            "keyEvents": float(r.get("keyEvents") or 0),
+            "keyEvents": int(float(r.get("keyEvents") or 0)),
         })
     return out
 
@@ -200,9 +204,8 @@ def fetch_pages_daily(
             "sessions": int(r.get("sessions") or 0),
             "activeUsers": int(r.get("activeUsers") or 0),
             "newUsers": int(r.get("newUsers") or 0),
-            "keyEvents": float(r.get("keyEvents") or 0),
-            # stored under the name the queries expect
-            "userEngagementDurationPerSession": float(r.get("averageSessionDuration") or 0),
+            "keyEvents": int(float(r.get("keyEvents") or 0)),
+            "averageSessionDuration": float(r.get("averageSessionDuration") or 0),
         })
     return out
 
@@ -246,7 +249,7 @@ def fetch_user_acq_daily(
             "firstUserMedium": r.get("firstUserMedium") or "(none)",
             "newUsers": int(r.get("newUsers") or 0),
             "activeUsers": int(r.get("activeUsers") or 0),
-            "keyEvents": float(r.get("keyEvents") or 0),
+            "keyEvents": int(float(r.get("keyEvents") or 0)),
             "totalUsers": int(r.get("totalUsers") or 0),
         })
     return out
@@ -269,7 +272,7 @@ def fetch_demographics_daily(
             "userAgeBracket": r.get("userAgeBracket") or "(not set)",
             "userGender": r.get("userGender") or "(not set)",
             "activeUsers": int(r.get("activeUsers") or 0),
-            "keyEvents": float(r.get("keyEvents") or 0),
+            "keyEvents": int(float(r.get("keyEvents") or 0)),
             "engagementRate": float(r.get("engagementRate") or 0),
         })
     return out
@@ -294,7 +297,7 @@ def fetch_geo_daily(
             "city": r.get("city") or "(not set)",
             "activeUsers": int(r.get("activeUsers") or 0),
             "sessions": int(r.get("sessions") or 0),
-            "keyEvents": float(r.get("keyEvents") or 0),
+            "keyEvents": int(float(r.get("keyEvents") or 0)),
         })
     return out
 
@@ -317,7 +320,7 @@ def fetch_pageviews_daily(
             "screenPageViews": int(r.get("screenPageViews") or 0),
             "activeUsers": int(r.get("activeUsers") or 0),
             "newUsers": int(r.get("newUsers") or 0),
-            "keyEvents": float(r.get("keyEvents") or 0),
+            "keyEvents": int(float(r.get("keyEvents") or 0)),
             "averageSessionDuration": float(r.get("averageSessionDuration") or 0),
         })
     return out

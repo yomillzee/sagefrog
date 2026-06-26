@@ -86,9 +86,10 @@ def _schema_sessions():
         bq.SchemaField("sessionDefaultChannelGroup", "STRING", mode="NULLABLE"),
         bq.SchemaField("sessionSource", "STRING", mode="NULLABLE"),
         bq.SchemaField("sessionMedium", "STRING", mode="NULLABLE"),
+        bq.SchemaField("sessionCampaignName", "STRING", mode="NULLABLE"),
         bq.SchemaField("sessions", "INT64", mode="NULLABLE"),
         bq.SchemaField("engagedSessions", "INT64", mode="NULLABLE"),
-        bq.SchemaField("keyEvents", "FLOAT64", mode="NULLABLE"),
+        bq.SchemaField("keyEvents", "INT64", mode="NULLABLE"),
         bq.SchemaField("totalUsers", "INT64", mode="NULLABLE"),
         bq.SchemaField("newUsers", "INT64", mode="NULLABLE"),
         bq.SchemaField("bounceRate", "FLOAT64", mode="NULLABLE"),
@@ -106,7 +107,7 @@ def _schema_tech():
         bq.SchemaField("operatingSystem", "STRING", mode="NULLABLE"),
         bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
         bq.SchemaField("engagedSessions", "INT64", mode="NULLABLE"),
-        bq.SchemaField("keyEvents", "FLOAT64", mode="NULLABLE"),
+        bq.SchemaField("keyEvents", "INT64", mode="NULLABLE"),
     ]
 
 
@@ -118,8 +119,8 @@ def _schema_pages():
         bq.SchemaField("sessions", "INT64", mode="NULLABLE"),
         bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
         bq.SchemaField("newUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("keyEvents", "FLOAT64", mode="NULLABLE"),
-        bq.SchemaField("userEngagementDurationPerSession", "FLOAT64", mode="NULLABLE"),
+        bq.SchemaField("keyEvents", "INT64", mode="NULLABLE"),
+        bq.SchemaField("averageSessionDuration", "FLOAT64", mode="NULLABLE"),
     ]
 
 
@@ -143,7 +144,7 @@ def _schema_user_acq():
         bq.SchemaField("firstUserMedium", "STRING", mode="NULLABLE"),
         bq.SchemaField("newUsers", "INT64", mode="NULLABLE"),
         bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("keyEvents", "FLOAT64", mode="NULLABLE"),
+        bq.SchemaField("keyEvents", "INT64", mode="NULLABLE"),
         bq.SchemaField("totalUsers", "INT64", mode="NULLABLE"),
     ]
 
@@ -155,7 +156,7 @@ def _schema_demographics():
         bq.SchemaField("userAgeBracket", "STRING", mode="NULLABLE"),
         bq.SchemaField("userGender", "STRING", mode="NULLABLE"),
         bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("keyEvents", "FLOAT64", mode="NULLABLE"),
+        bq.SchemaField("keyEvents", "INT64", mode="NULLABLE"),
         bq.SchemaField("engagementRate", "FLOAT64", mode="NULLABLE"),
     ]
 
@@ -169,7 +170,7 @@ def _schema_geo():
         bq.SchemaField("city", "STRING", mode="NULLABLE"),
         bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
         bq.SchemaField("sessions", "INT64", mode="NULLABLE"),
-        bq.SchemaField("keyEvents", "FLOAT64", mode="NULLABLE"),
+        bq.SchemaField("keyEvents", "INT64", mode="NULLABLE"),
     ]
 
 
@@ -181,7 +182,7 @@ def _schema_pageviews():
         bq.SchemaField("screenPageViews", "INT64", mode="NULLABLE"),
         bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
         bq.SchemaField("newUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("keyEvents", "FLOAT64", mode="NULLABLE"),
+        bq.SchemaField("keyEvents", "INT64", mode="NULLABLE"),
         bq.SchemaField("averageSessionDuration", "FLOAT64", mode="NULLABLE"),
     ]
 
@@ -214,13 +215,16 @@ def ensure_ga4_tables() -> None:
 
     # Add new columns to existing tables (idempotent — IF NOT EXISTS)
     _alter_cols = [
-        ("ga4_sessions_daily", "totalUsers",      "INT64"),
-        ("ga4_sessions_daily", "newUsers",         "INT64"),
-        ("ga4_sessions_daily", "bounceRate",       "FLOAT64"),
-        ("ga4_sessions_daily", "engagementRate",   "FLOAT64"),
-        ("ga4_sessions_daily", "screenPageViews",  "INT64"),
-        ("ga4_tech_daily",     "browser",          "STRING"),
-        ("ga4_tech_daily",     "operatingSystem",  "STRING"),
+        ("ga4_sessions_daily", "totalUsers",           "INT64"),
+        ("ga4_sessions_daily", "newUsers",              "INT64"),
+        ("ga4_sessions_daily", "bounceRate",            "FLOAT64"),
+        ("ga4_sessions_daily", "engagementRate",        "FLOAT64"),
+        ("ga4_sessions_daily", "screenPageViews",       "INT64"),
+        ("ga4_sessions_daily", "sessionCampaignName",   "STRING"),
+        ("ga4_tech_daily",     "browser",               "STRING"),
+        ("ga4_tech_daily",     "operatingSystem",       "STRING"),
+        # averageSessionDuration replaces userEngagementDurationPerSession
+        ("ga4_pages_daily",    "averageSessionDuration", "FLOAT64"),
     ]
     for tbl, col, dtype in _alter_cols:
         try:

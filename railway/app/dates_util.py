@@ -9,6 +9,8 @@ def resolve_date_range(preset: str) -> tuple[date, date, str]:
     today = date.today()
     key = str(preset or "LAST_30_DAYS").strip().upper().replace("-", "_")
 
+    if key == "LAST_5_DAYS":
+        return today - timedelta(days=4), today, key
     if key == "LAST_7_DAYS":
         return today - timedelta(days=6), today, key
     if key == "LAST_30_DAYS":

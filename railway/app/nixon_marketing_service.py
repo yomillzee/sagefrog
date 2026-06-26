@@ -21,7 +21,7 @@ _META_AD_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.fact_meta_ads_ad_daily`"
 _PAGE_PATH_DAILY_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_page_path_daily`"
 _PAGE_PATH_SOURCE_DAILY_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_page_path_source_daily`"
 
-_GA4_DATASET = "analytics_test"
+_GA4_DATASET = "raw_ga4"
 _TRAFFIC_ACQ_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_sessions_daily`"
 _TECH_DETAILS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_tech_daily`"
 _LANDING_PAGE_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_pages_daily`"
@@ -557,7 +557,7 @@ def fetch_nixon_landing_pages(
       SUM(newUsers) AS new_users,
       CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events,
       ROUND(SAFE_DIVIDE(SUM(keyEvents), NULLIF(SUM(sessions), 0)) * 100, 1) AS key_event_rate,
-      ROUND(AVG(userEngagementDurationPerSession), 1) AS avg_engagement_seconds
+      ROUND(AVG(averageSessionDuration), 1) AS avg_engagement_seconds
     FROM {_LANDING_PAGE_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY page_path
