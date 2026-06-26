@@ -464,8 +464,12 @@ def _render_wizard(
     is_disconnected = status == "disconnected"
     has_oauth = config is not None and config.oauth_client_slug == client_slug
 
-    # has_oauth is true if a token already exists for this client or OAuth just finished
-    has_oauth = has_oauth or oauth_done
+    # no_oauth connectors (GA4, GSC service-account) don't need authorization —
+    # treat step 1 as always done.
+    if handler.no_oauth:
+        has_oauth = True
+    else:
+        has_oauth = has_oauth or oauth_done
 
     # Determine starting step
     start_step = 1
@@ -510,15 +514,12 @@ def _render_wizard(
           <div class="wizard-step-num">{'✓' if has_oauth else '1'}</div>
           <div>
             <div class="wizard-step-title">Connect {_esc(handler.display_name)}</div>
-            {'<div class="wizard-step-summary">Authorized</div>' if has_oauth else ''}
+            {'<div class="wizard-step-summary">' + ('Service account configured' if handler.no_oauth else 'Authorized') + '</div>' if has_oauth else ''}
           </div>
         </div>
         <div class="wizard-step-body">
           {oauth_error_html}
-          <p style="color:var(--muted);font-size:.9rem;margin-bottom:16px">
-            Authorize Sagefrog to access your {_esc(handler.display_name)} account.
-          </p>
-          <a href="{_esc(oauth_start_url)}" class="btn-connect">Authorize {_esc(handler.display_name)}</a>
+          {'<p style="color:var(--muted);font-size:.9rem">This connector uses a server-side service account — no authorization needed.</p>' if handler.no_oauth else f'<p style="color:var(--muted);font-size:.9rem;margin-bottom:16px">Authorize Sagefrog to access your {_esc(handler.display_name)} account.</p><a href="{_esc(oauth_start_url)}" class="btn-connect">Authorize {_esc(handler.display_name)}</a>'}
         </div>
       </div>
 
@@ -681,7 +682,7 @@ def _render_wizard(
         }});
         list.style.display = 'flex';
         if (!data.accounts || !data.accounts.length) {{
-          list.innerHTML = '<p style="color:var(--muted);font-size:.9rem">No ad accounts found for this connection.</p>';
+          list.innerHTML = '<p style="color:var(--muted);font-size:.9rem">No accounts found for this connection.</p>';
         }}
       }}).catch(err => {{
         document.getElementById('accountLoading').style.display = 'none';

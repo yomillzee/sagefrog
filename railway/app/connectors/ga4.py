@@ -15,8 +15,16 @@ class GA4Connector(ConnectorHandler):
     no_oauth = True  # GA4 uses service-account JSON, not user OAuth
 
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
-        # GA4 properties are configured via the GA4 client registry, not account selection
-        return []
+        import ga4_clients
+        rows = ga4_clients.list_clients_public()
+        return [
+            {
+                "id": r.get("client_key") or r.get("account_id") or "",
+                "name": r.get("label") or r.get("client_key") or r.get("account_id") or "",
+            }
+            for r in rows
+            if r.get("client_key") or r.get("account_id")
+        ]
 
 
 register(GA4Connector())
