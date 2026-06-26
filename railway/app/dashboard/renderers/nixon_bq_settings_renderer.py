@@ -293,6 +293,8 @@ def render_nixon_bq_settings_page(
         <label>Google customer ID<input name="google_customer_id" value="{_esc(account_ids.get('google_customer_id') or '')}" placeholder="8032778786"></label>
         <label>Meta account ID<input name="meta_account_id" value="{_esc(account_ids.get('meta_account_id') or '')}"></label>
         <label>GA4 client key<input name="ga4_client_key" value="{_esc(account_ids.get('ga4_client_key') or '')}" placeholder="nixon"></label>
+        <label>GTM account ID<input name="gtm_account_id" value="{_esc(account_ids.get('gtm_account_id') or '')}" placeholder="123456789"><span class="hint">GTM Admin URL → accounts/<strong>ID</strong>/containers/…</span></label>
+        <label>GTM container ID<input name="gtm_container_id" value="{_esc(account_ids.get('gtm_container_id') or '')}" placeholder="987654321"><span class="hint">GTM Admin URL → …/containers/<strong>ID</strong></span></label>
         <div class="form-actions"><button type="submit" class="primary">Save account IDs</button></div>
       </form>
     </section>

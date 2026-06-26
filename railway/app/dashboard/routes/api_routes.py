@@ -412,6 +412,14 @@ def _nixon_settings_context() -> tuple[dict, dict, str | None]:
         }
     except Exception:
         pass
+    try:
+        import client_dashboard_config as _cdc
+        db_cfg = _cdc.get_config("nixon")
+        if db_cfg:
+            account_ids["gtm_account_id"] = db_cfg.gtm_account_id or ""
+            account_ids["gtm_container_id"] = db_cfg.gtm_container_id or ""
+    except Exception:
+        pass
     return routing, account_ids, sa_email
 
 
