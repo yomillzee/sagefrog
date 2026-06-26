@@ -276,6 +276,10 @@ def render_nixon_bigquery_test_page(
     .nr-legend-item {{ display:flex; align-items:center; gap:5px; font-size:.74rem; color:var(--muted); }}
     .nr-legend-swatch {{ width:10px; height:10px; border-radius:2px; }}
     @media (max-width:900px) {{ .cards {{ grid-template-columns:repeat(2,minmax(120px,1fr)); }} .two-col,.three-col {{ grid-template-columns:1fr; }} }}
+    /* ---- Skeleton loaders ---- */
+    @keyframes shimmer {{ 0%{{background-position:-200% 0}} 100%{{background-position:200% 0}} }}
+    .skel {{ display:block; background:linear-gradient(90deg,#eef2f7 25%,#e4eaf2 50%,#eef2f7 75%); background-size:200% 100%; animation:shimmer 1.4s ease-in-out infinite; border-radius:5px; }}
+    .skel-chart {{ border-radius:10px; }}
   </style>
 </head>
 <body>
@@ -429,6 +433,14 @@ def render_nixon_bigquery_test_page(
     </div>
   </div>
   <script>
+    // ---- Skeleton helpers ----
+    const _SW=['50%','76%','38%','90%','62%','44%','70%'];
+    function skelCards(n){{return Array.from({{length:n}},()=>`<div class="card" style="display:flex;flex-direction:column;gap:10px"><div class="skel" style="height:10px;width:52%"></div><div class="skel" style="height:24px;width:66%"></div></div>`).join('');}}
+    function skelBars(n){{return Array.from({{length:n}},(_,i)=>`<div class="bar-row"><div class="skel" style="height:12px;width:${{_SW[i%_SW.length]}};flex:0 0 auto;min-width:60px"></div><div class="skel bar-track" style="height:7px"></div><div class="skel" style="height:12px;width:40px;flex-shrink:0"></div></div>`).join('');}}
+    function skelTable(cols,rows){{const ths=Array.from({{length:cols}},()=>`<th></th>`).join('');const ws=['55%','80%','40%','92%','65%'];const trs=Array.from({{length:rows}},(_,i)=>`<tr>${{Array.from({{length:cols}},(_,j)=>`<td><div class="skel" style="height:12px;width:${{ws[(i*cols+j)%ws.length]}}"></div></td>`).join('')}}</tr>`).join('');return`<thead><tr>${{ths}}</tr></thead><tbody>${{trs}}</tbody>`;}}
+    function skelChart(svgId,cssClass){{const svg=document.getElementById(svgId);if(!svg)return;const d=document.createElement('div');d.id='sk_'+svgId;d.className='skel skel-chart '+cssClass;svg.parentElement.insertBefore(d,svg);svg.style.visibility='hidden';}}
+    function clearSkelChart(svgId){{const s=document.getElementById('sk_'+svgId);if(s)s.remove();const svg=document.getElementById(svgId);if(svg)svg.style.visibility='';}}
+
     // ---- API constants ----
     const SUMMARY_API          = "{_aurl('/api/clients/nixon/summary')}";
     const HEALTH_API           = "{_aurl('/api/clients/nixon/marketing/health')}";
@@ -598,6 +610,7 @@ def render_nixon_bigquery_test_page(
     }}
     function renderChart() {{
       chartDaily = buildChartDaily();
+      clearSkelChart('trendChart');
       const svg = document.getElementById('trendChart');
       const W=800, H=260, padL=12, padR=12, padT=14, padB=26, plotW=W-padL-padR, plotH=H-padT-padB, n=chartDaily.length;
       svg.setAttribute('viewBox', `0 0 ${{W}} ${{H}}`);
@@ -652,6 +665,8 @@ def render_nixon_bigquery_test_page(
     }}
     async function loadSummary() {{
       setStatus('summaryStatus','Loading…');
+      summaryCards.innerHTML = skelCards(7);
+      skelChart('trendChart','trend-svg');
       try {{
         summaryPayload = await getJson(withDates(SUMMARY_API));
         renderSummary(); renderChart();
@@ -664,6 +679,7 @@ def render_nixon_bigquery_test_page(
     }}
     async function loadHealth() {{
       setStatus('healthStatus','Loading…');
+      document.getElementById('healthTable').innerHTML = skelTable(8,5);
       try {{
         const payload = await getJson(withDates(HEALTH_API));
         const rows = payload.rows||[];
@@ -791,6 +807,7 @@ def render_nixon_bigquery_test_page(
     }}
     async function loadExplorer() {{
       setStatus('explorerStatus','Loading…');
+      document.getElementById('explorerTable').innerHTML = skelTable(6,8);
       const [g,l]=await Promise.all([
         getJson(withDates(EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(LINKEDIN_EXPLORER_API)).catch(()=>({{rows:[]}})),
@@ -862,6 +879,7 @@ def render_nixon_bigquery_test_page(
     }}
     async function loadPages() {{
       setStatus('pagesStatus','Loading…');
+      document.getElementById('pagesTable').innerHTML = skelTable(5,8);
       const [top,src]=await Promise.all([
         getJson(withDates(PAGES_TOP_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(PAGES_SOURCES_API)).catch(()=>({{rows:[]}})),
@@ -878,6 +896,7 @@ def render_nixon_bigquery_test_page(
 
     // ---- GA4: Traffic acquisition ----
     function drawSessionsTrend(daily) {{
+      clearSkelChart('sessionsTrendChart');
       const svg=document.getElementById('sessionsTrendChart');
       const W=800,H=130,padL=10,padR=10,padT=8,padB=24,plotW=W-padL-padR,plotH=H-padT-padB,n=daily.length;
       svg.setAttribute('viewBox',`0 0 ${{W}} ${{H}}`);
@@ -905,6 +924,9 @@ def render_nixon_bigquery_test_page(
     }}
     async function loadTrafficAcq() {{
       setStatus('trafficAcqStatus','Loading…');
+      document.getElementById('channelBars').innerHTML = skelBars(5);
+      skelChart('sessionsTrendChart','trend-sm-svg');
+      document.getElementById('sourcesTable').innerHTML = skelTable(6,6);
       try {{
         const payload=await getJson(withDates(TRAFFIC_ACQ_API));
         renderBarList('channelBars',payload.by_channel||[],'sessions','channel');
@@ -924,6 +946,7 @@ def render_nixon_bigquery_test_page(
     // ---- GA4: Device split ----
     async function loadDeviceSplit() {{
       setStatus('deviceStatus','Loading…');
+      document.getElementById('deviceBars').innerHTML = skelBars(3);
       try {{
         const payload=await getJson(withDates(DEVICE_SPLIT_API));
         renderBarList('deviceBars',payload.rows||[],'users','device');
@@ -951,6 +974,7 @@ def render_nixon_bigquery_test_page(
     }}
     async function loadLandingPages() {{
       setStatus('landingStatus','Loading…');
+      document.getElementById('landingTable').innerHTML = skelTable(7,7);
       try {{
         const payload=await getJson(withDates(LANDING_PAGES_API));
         landingRows=payload.rows||[]; landingPageNum=1; renderLanding();
@@ -960,6 +984,8 @@ def render_nixon_bigquery_test_page(
     // ---- GA4: Conversions ----
     async function loadConversions() {{
       setStatus('conversionsStatus','Loading…');
+      document.getElementById('eventBars').innerHTML = skelBars(5);
+      document.getElementById('funnelChart').innerHTML = skelBars(4);
       try {{
         const payload=await getJson(withDates(CONVERSIONS_API));
         const rows=payload.rows||[];
@@ -1003,6 +1029,9 @@ def render_nixon_bigquery_test_page(
     }}
     async function loadUserAcquisition() {{
       setStatus('userAcqStatus','Loading…');
+      document.getElementById('newVsReturning').innerHTML=`<div class="nr-wrap"><div class="skel" style="height:42px;width:90px;border-radius:8px"></div><div class="skel" style="height:42px;width:90px;border-radius:8px"></div><div class="nr-bar-wrap"><div class="skel" style="height:10px;border-radius:5px"></div></div></div>`;
+      document.getElementById('userAcqChannelBars').innerHTML = skelBars(5);
+      document.getElementById('userAcqSourceTable').innerHTML = skelTable(5,5);
       try {{
         const payload=await getJson(withDates(USER_ACQ_API));
         renderNewVsReturning(payload.by_channel||[]);
@@ -1021,6 +1050,9 @@ def render_nixon_bigquery_test_page(
     // ---- GA4: Demographics ----
     async function loadDemographics() {{
       setStatus('demoStatus','Loading…');
+      document.getElementById('citiesTable').innerHTML = skelTable(5,5);
+      document.getElementById('ageBars').innerHTML = skelBars(5);
+      document.getElementById('genderBars').innerHTML = skelBars(2);
       try {{
         const payload=await getJson(withDates(DEMOGRAPHICS_API));
         renderTable('citiesTable',[
