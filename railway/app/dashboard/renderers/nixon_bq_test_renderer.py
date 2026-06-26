@@ -132,12 +132,21 @@ def render_nixon_bigquery_test_page(
     </aside>"""
 
     admin_class = "is-admin" if session_is_admin else ""
-    backfill_html = ""
+    _ICON_ADMIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
+    admin_panel_html = ""
     if session_is_admin:
-        backfill_html = """
-    <div class="admin-bar">
-      <button type="button" class="primary" id="backfillBtn">Backfill LinkedIn — 180 days</button>
-      <span class="status" id="backfillStatus">Admin only · pulls ~180 days of LinkedIn into BigQuery and rebuilds the marts.</span>
+        admin_panel_html = f"""
+    <button class="admin-fab" id="adminFab" title="Admin tools" aria-label="Admin tools">{_ICON_ADMIN}</button>
+    <div class="admin-panel" id="adminPanel">
+      <div class="admin-panel-head">
+        <span class="admin-panel-title">Admin tools</span>
+        <button class="admin-panel-close" id="adminPanelClose" aria-label="Close">&#x2715;</button>
+      </div>
+      <div class="admin-panel-body">
+        <p class="admin-panel-note">Nixon Medical · admin only</p>
+        <button type="button" class="primary" id="backfillBtn" style="width:100%">Backfill LinkedIn — 180 days</button>
+        <span class="status" id="backfillStatus" style="display:block;margin-top:8px">Pulls ~180 days of LinkedIn into BigQuery and rebuilds the marts (1–2 min).</span>
+      </div>
     </div>"""
 
     def _aurl(path: str) -> str:
@@ -155,13 +164,23 @@ def render_nixon_bigquery_test_page(
     * {{ box-sizing:border-box; }}
     body {{ margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:#102033; -webkit-font-smoothing:antialiased; }}
     {_SIDEBAR_CSS}
-    .admin-bar {{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px; padding:11px 16px; border:1px solid #ecd9a6; border-radius:var(--radius-sm); background:linear-gradient(180deg,#fffaf0,#fff6e3); }}
-    .admin-bar .status {{ margin:0; }}
     main {{ max-width:1320px; margin:0 auto; padding:24px 28px 56px; }}
     h2 {{ margin:0; color:var(--navy); font-size:1.05rem; font-weight:750; letter-spacing:-.005em; }}
     p {{ margin:6px 0 0; color:var(--muted); }}
-    /* ---- Date bar ---- */
-    .date-bar {{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:14px 18px 12px; margin-bottom:20px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:10px; }}
+    /* ---- Date bar (sticky) ---- */
+    .date-bar {{ position:sticky; top:0; z-index:40; background:var(--card); border:1px solid var(--line); border-bottom-left-radius:var(--radius); border-bottom-right-radius:var(--radius); border-top-left-radius:0; border-top-right-radius:0; padding:14px 18px 12px; margin-bottom:20px; box-shadow:0 4px 16px rgba(16,33,67,.08); display:flex; flex-direction:column; gap:10px; }}
+    /* ---- Admin FAB + slideout panel ---- */
+    .admin-fab {{ position:fixed; bottom:24px; right:24px; z-index:200; width:42px; height:42px; border-radius:50%; background:var(--navy); color:#fff; border:0; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 3px 14px rgba(0,0,0,.28); transition:transform .15s,box-shadow .15s; }}
+    .admin-fab:hover {{ transform:scale(1.08); box-shadow:0 5px 20px rgba(0,0,0,.35); }}
+    .admin-fab svg {{ width:18px; height:18px; }}
+    .admin-panel {{ position:fixed; bottom:0; right:0; z-index:199; width:300px; background:var(--card); border:1px solid var(--line); border-radius:14px 0 0 0; box-shadow:-4px 0 28px rgba(0,0,0,.12); transform:translateY(calc(100% + 4px)); transition:transform .25s cubic-bezier(.4,0,.2,1); }}
+    .admin-panel.open {{ transform:translateY(0); }}
+    .admin-panel-head {{ display:flex; align-items:center; justify-content:space-between; padding:12px 16px 10px; border-bottom:1px solid var(--line); }}
+    .admin-panel-title {{ font-weight:700; font-size:.82rem; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }}
+    .admin-panel-close {{ background:none; border:0; cursor:pointer; color:var(--muted); font-size:1rem; line-height:1; padding:2px 4px; border-radius:4px; }}
+    .admin-panel-close:hover {{ background:var(--row-alt); color:var(--text); }}
+    .admin-panel-body {{ padding:16px; display:flex; flex-direction:column; gap:8px; }}
+    .admin-panel-note {{ margin:0; font-size:.76rem; color:var(--muted); }}
     .date-bar-top {{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }}
     .date-bar-bottom {{ display:flex; flex-wrap:wrap; gap:20px; align-items:center; }}
     label {{ display:grid; gap:5px; color:var(--muted); font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }}
@@ -317,7 +336,6 @@ def render_nixon_bigquery_test_page(
 
     <!-- ===== OVERVIEW TAB ===== -->
     <div id="pane-overview">
-      {backfill_html}
       <section id="sec-overview">
         <div class="sec-head"><h2>Summary</h2><span class="status" id="summaryStatus"></span></div>
         <div class="cards" id="summaryCards"></div>
@@ -1174,6 +1192,18 @@ def render_nixon_bigquery_test_page(
         }});
       }},{{rootMargin:'-40% 0px -55% 0px'}});
       links.forEach(a=>{{const el=document.getElementById(a.dataset.nav);if(el)obs.observe(el);}});
+    }})();
+  </script>
+  {admin_panel_html}
+  <script>
+    (function(){{
+      const fab=document.getElementById('adminFab');
+      const panel=document.getElementById('adminPanel');
+      const close=document.getElementById('adminPanelClose');
+      if (!fab||!panel) return;
+      fab.addEventListener('click',()=>panel.classList.toggle('open'));
+      if (close) close.addEventListener('click',()=>panel.classList.remove('open'));
+      document.addEventListener('keydown',e=>{{if(e.key==='Escape')panel.classList.remove('open');}});
     }})();
   </script>
 </body>
