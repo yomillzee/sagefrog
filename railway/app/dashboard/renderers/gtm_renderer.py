@@ -7,6 +7,7 @@ from dashboard.renderers.nixon_analytics_renderer import _SIDEBAR_CSS
 from dashboard.utils.formatting import esc as _esc
 
 _ICON_TAGS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9.293 2.293a1 1 0 011.414 0l7 7A1 1 0 0117 11H3a1 1 0 01-.707-1.707l7-7zM10 14v3m-3-3h6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+_ICON_SHIELD = '<svg viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="1.8" width="15" height="15"><path d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.955 11.955 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 _ICON_ANALYTICS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 17l4-7 3 4 3-6 4 9" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 _ICON_BACK = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 6l-4 4 4 4m5-8l-4 4 4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 _ICON_SETTINGS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="3"/><path d="M10 2v2m0 12v2M2 10h2m12 0h2m-3.17-5.66-1.42 1.42M5.59 14.24l-1.42 1.42M14.83 14.24l-1.42-1.42M5.59 5.66l-1.42-1.42" stroke-linecap="round"/></svg>'
@@ -74,11 +75,13 @@ def render_gtm_page(
     .tag-table-wrap {{ overflow-x:auto; }}
     table {{ width:100%; border-collapse:collapse; font-size:.875rem; }}
     th {{ text-align:left; padding:10px 14px; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); border-bottom:2px solid var(--line); white-space:nowrap; }}
-    td {{ padding:12px 14px; border-bottom:1px solid var(--line); vertical-align:top; }}
+    td {{ padding:10px 14px; border-bottom:1px solid var(--line); vertical-align:middle; }}
+    td.td-top {{ vertical-align:top; }}
     tr:last-child td {{ border-bottom:0; }}
     tr:hover td {{ background:#f7fafc; }}
-    .tag-name {{ font-weight:600; font-size:.9rem; color:#0f172a; }}
-    .tag-meta {{ display:flex; flex-wrap:wrap; gap:5px; margin-top:5px; }}
+    .col-dot {{ width:28px; padding:0 8px 0 14px; text-align:center; }}
+    .col-consent {{ width:32px; padding:0 6px; text-align:center; }}
+    .tag-name {{ font-weight:600; font-size:.88rem; color:#0f172a; }}
     .badge {{ display:inline-flex; align-items:center; padding:3px 9px; border-radius:6px; font-size:.72rem; font-weight:700; white-space:nowrap; }}
     .badge-ga4    {{ background:#e8f0fe; color:#1a56db; }}
     .badge-gads   {{ background:#e6f4ea; color:#137333; }}
@@ -88,20 +91,17 @@ def render_gtm_page(
     .badge-html   {{ background:#f3f4f6; color:#374151; }}
     .badge-img    {{ background:#fef3c7; color:#92400e; }}
     .badge-default {{ background:#f1f5f9; color:#475569; }}
-    .badge-consent-req {{ background:#fef3c7; color:#92400e; }}
-    .badge-consent-ok  {{ background:#f0fdf4; color:#166534; }}
-    .status-paused {{ color:var(--bad); font-size:.82rem; font-weight:600; }}
-    .status-active {{ color:var(--ok); font-size:.82rem; font-weight:600; }}
-    .trigger-block {{ margin-bottom:10px; padding-bottom:10px; border-bottom:1px dashed #e9eef5; }}
-    .trigger-block:last-child {{ margin-bottom:0; padding-bottom:0; border-bottom:0; }}
-    .trigger-header {{ display:flex; align-items:center; gap:6px; margin-bottom:5px; }}
-    .trigger-name-label {{ font-size:.82rem; font-weight:600; color:#1e293b; }}
-    .trigger-type-label {{ font-size:.7rem; color:var(--muted); background:#f1f5f9; padding:2px 7px; border-radius:5px; }}
-    .criteria-list {{ display:flex; flex-direction:column; gap:4px; padding-left:8px; border-left:2px solid #cbd5e1; }}
-    .criteria-row {{ display:flex; align-items:center; gap:6px; font-size:.78rem; flex-wrap:wrap; }}
-    .criteria-var {{ font-family:monospace; font-size:.76rem; color:#1d4ed8; background:#eff6ff; padding:2px 7px; border-radius:4px; white-space:nowrap; }}
-    .criteria-op {{ color:#64748b; font-size:.72rem; font-style:italic; white-space:nowrap; }}
-    .criteria-val {{ font-family:monospace; font-size:.76rem; color:#166534; background:#f0fdf4; padding:2px 7px; border-radius:4px; word-break:break-all; max-width:260px; overflow:hidden; text-overflow:ellipsis; }}
+    .status-dot {{ display:inline-block; width:9px; height:9px; border-radius:50%; }}
+    .status-dot.active {{ background:#16a34a; box-shadow:0 0 0 2px #dcfce7; }}
+    .status-dot.paused {{ background:#94a3b8; box-shadow:0 0 0 2px #f1f5f9; }}
+    .consent-icon {{ display:inline-flex; align-items:center; opacity:.9; }}
+    .trigger-chip {{ display:inline-flex; align-items:center; padding:2px 8px; background:#f1f5f9; border-radius:5px; font-size:.74rem; color:#334155; margin:2px 3px 2px 0; white-space:nowrap; }}
+    .criteria-list {{ display:flex; flex-direction:column; gap:4px; }}
+    .criteria-row {{ display:flex; align-items:center; gap:5px; font-size:.77rem; flex-wrap:wrap; margin-bottom:3px; }}
+    .criteria-row:last-child {{ margin-bottom:0; }}
+    .criteria-var {{ font-family:monospace; font-size:.75rem; color:#1d4ed8; background:#eff6ff; padding:2px 7px; border-radius:4px; white-space:nowrap; }}
+    .criteria-op {{ color:#64748b; font-size:.71rem; font-style:italic; white-space:nowrap; }}
+    .criteria-val {{ font-family:monospace; font-size:.75rem; color:#166534; background:#f0fdf4; padding:2px 7px; border-radius:4px; word-break:break-all; max-width:200px; overflow:hidden; text-overflow:ellipsis; }}
     .loading-msg {{ padding:40px; text-align:center; color:var(--muted); }}
     .error-msg {{ padding:20px; color:var(--bad); background:#fef2f2; border-radius:9px; border:1px solid #fecaca; }}
     .empty-state {{ padding:48px 20px; text-align:center; color:var(--muted); }}
@@ -198,54 +198,58 @@ function badgeClass(type) {{
   return 'badge-default';
 }}
 
-function consentBadge(status) {{
-  if (!status || status === 'not_set') return '';
-  if (status === 'required') return '<span class="badge badge-consent-req" title="Tag requires user consent before firing">Consent required</span>';
-  if (status === 'not_required') return '<span class="badge badge-consent-ok" title="Tag explicitly set: no consent required">No consent req</span>';
-  return '';
-}}
+const SHIELD_SVG = {repr(_ICON_SHIELD)};
 
 function renderCriteria(criteria) {{
   if (!criteria || !criteria.length) return '';
-  return criteria.map(c => {{
-    // Strip {{...}} wrappers: "{{Page Path}}" → "Page Path"
+  return '<div class="criteria-list">' + criteria.map(c => {{
     const raw = c.variable || '';
     const v   = esc(raw.startsWith('{{{{') && raw.endsWith('}}}}') ? raw.slice(2, -2) : raw);
     const op  = esc(c.operator_label || c.operator || '');
     const val = esc(c.value || '');
     return `<div class="criteria-row"><span class="criteria-var">${{v}}</span><span class="criteria-op">${{op}}</span>${{val ? `<span class="criteria-val">${{val}}</span>` : ''}}</div>`;
-  }}).join('');
-}}
-
-function renderTriggers(triggers) {{
-  if (!triggers || !triggers.length) {{
-    return '<span style="color:var(--muted);font-size:.8rem">—</span>';
-  }}
-  return triggers.map(t => {{
-    const hasCriteria = t.criteria && t.criteria.length;
-    return `<div class="trigger-block">
-      <div class="trigger-header"><span class="trigger-name-label">${{esc(t.name)}}</span><span class="trigger-type-label">${{esc(t.type)}}</span></div>
-      ${{hasCriteria ? '<div class="criteria-list">' + renderCriteria(t.criteria) + '</div>' : ''}}
-    </div>`;
-  }}).join('');
+  }}).join('') + '</div>';
 }}
 
 function renderTable(rows) {{
   if (!rows.length) {{
     return '<div class="empty-state">No tags found in this container.</div>';
   }}
-  const ths = ['Tag','Type','Status','Triggers'];
-  const head = '<tr>' + ths.map(h => `<th>${{h}}</th>`).join('') + '</tr>';
+  const ths = ['', 'Tag', '', 'Type', 'Triggers', 'Logic'];
+  const head = '<tr>'
+    + '<th class="col-dot"></th>'
+    + '<th>Tag</th>'
+    + '<th class="col-consent"></th>'
+    + '<th>Type</th>'
+    + '<th>Triggers</th>'
+    + '<th>Logic</th>'
+    + '</tr>';
   const body = rows.map(r => {{
+    const dot = r.paused
+      ? '<span class="status-dot paused" title="Paused"></span>'
+      : '<span class="status-dot active" title="Active"></span>';
+    const name = `<span class="tag-name">${{esc(r.tag_name || '')}}</span>`;
+    const shield = r.consent_status === 'required'
+      ? `<span class="consent-icon" title="Consent required before firing">${{SHIELD_SVG}}</span>`
+      : '';
     const bc  = badgeClass(r.friendly_type || '');
     const typ = `<span class="badge ${{bc}}">${{esc(r.friendly_type || r.raw_type || 'Unknown')}}</span>`;
-    const st  = r.paused
-      ? '<span class="status-paused">⏸ Paused</span>'
-      : '<span class="status-active">● Active</span>';
-    const consent = consentBadge(r.consent_status);
-    const name = `<div class="tag-name">${{esc(r.tag_name || '')}}</div>${{consent ? `<div class="tag-meta">${{consent}}</div>` : ''}}`;
-    const trig = renderTriggers(r.triggers || []);
-    return `<tr><td>${{name}}</td><td>${{typ}}</td><td>${{st}}</td><td>${{trig}}</td></tr>`;
+    const triggers = r.triggers || [];
+    const chips = triggers.length
+      ? triggers.map(t => `<span class="trigger-chip">${{esc(t.name)}}</span>`).join('')
+      : '<span style="color:var(--muted);font-size:.8rem">—</span>';
+    const allCriteria = triggers.flatMap(t => t.criteria || []);
+    const logic = allCriteria.length
+      ? renderCriteria(allCriteria)
+      : '<span style="color:var(--muted);font-size:.8rem">—</span>';
+    return `<tr>
+      <td class="col-dot">${{dot}}</td>
+      <td>${{name}}</td>
+      <td class="col-consent">${{shield}}</td>
+      <td>${{typ}}</td>
+      <td class="td-top">${{chips}}</td>
+      <td class="td-top">${{logic}}</td>
+    </tr>`;
   }}).join('');
   return `<table><thead>${{head}}</thead><tbody>${{body}}</tbody></table>`;
 }}
