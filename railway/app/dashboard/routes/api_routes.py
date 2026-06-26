@@ -20,6 +20,7 @@ from dashboard.renderers.arg_bq_settings_renderer import render_arg_bq_settings_
 from dashboard.renderers.nixon_bq_settings_renderer import render_nixon_bq_settings_page
 from dashboard.renderers.arg_bq_test_renderer import render_arg_bigquery_test_page
 from dashboard.renderers.nixon_analytics_renderer import render_nixon_analytics_page
+from dashboard.renderers.gtm_renderer import render_gtm_page
 from dashboard.renderers.nixon_bq_test_renderer import render_nixon_bigquery_test_page
 from dashboard.routes.helpers import penn_html_session_kwargs
 from security import configured_api_key, is_production
@@ -185,6 +186,32 @@ def nixon_analytics_dashboard(request: Request, key: str | None = None):
         raise HTTPException(status_code=401, detail="Invalid or missing dashboard key.")
     return HTMLResponse(
         render_nixon_analytics_page(
+            access_key=key,
+            use_session=False,
+            session_email=None,
+            session_is_admin=False,
+        )
+    )
+
+
+@router.get(
+    "/dashboard/nixon-bq-test/gtm",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def nixon_gtm_dashboard(request: Request, key: str | None = None):
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug="nixon", key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        kw = penn_html_session_kwargs(auth)
+        return HTMLResponse(render_gtm_page(client_slug="nixon-bq-test", **kw))
+
+    if not web_auth.legacy_dashboard_key_ok(key):
+        raise HTTPException(status_code=401, detail="Invalid or missing dashboard key.")
+    return HTMLResponse(
+        render_gtm_page(
+            client_slug="nixon-bq-test",
             access_key=key,
             use_session=False,
             session_email=None,
