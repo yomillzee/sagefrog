@@ -653,7 +653,23 @@ def _render_wizard(
       }});
       var target = document.getElementById('wizStep' + n);
       if (target) target.scrollIntoView({{behavior:'smooth', block:'nearest'}});
+      if (n === 2) loadAccounts();
     }}
+
+    // Allow clicking a completed step header to go back and change the selection
+    document.addEventListener('DOMContentLoaded', function() {{
+      document.querySelectorAll('.wizard-step').forEach(function(stepEl, i) {{
+        var stepNum = i + 1;
+        var header = stepEl.querySelector('.wizard-step-header');
+        if (!header) return;
+        header.style.cursor = 'pointer';
+        header.addEventListener('click', function() {{
+          if (stepEl.classList.contains('step-done')) {{
+            activateStep(stepNum);
+          }}
+        }});
+      }});
+    }});
 
     function loadAccounts() {{
       var url = '/dashboard/' + _clientSlug + '/connectors/' + _connType + '/accounts';
