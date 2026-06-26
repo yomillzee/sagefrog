@@ -116,6 +116,23 @@ def dashboard_penn_bq_test(
 
 
 @router.post(
+    "/internal/sync-hubspot",
+    summary="Cron: sync HubSpot MQL/SQL contacts into BigQuery",
+    dependencies=[Depends(require_cron_secret)],
+)
+def internal_sync_hubspot(lookback_days: int = 7) -> dict:
+    days = max(1, min(int(lookback_days), 365))
+    try:
+        import hubspot_sync_service
+        result = hubspot_sync_service.sync_hubspot_contacts(lookback_days=days)
+        return {"hubspot_sync": result}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post(
     "/internal/sync-bq/{client_slug}",
     summary="Cron: refresh any BigQuery-mode client dashboard snapshot",
     dependencies=[Depends(require_cron_secret)],

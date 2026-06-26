@@ -1,0 +1,11 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "python run_sync_hubspot.py"
+# 12:00 UTC — after cron-sync-bq (11:30) so they don't overlap.
+cronSchedule = "0 12 * * *"
+restartPolicyType = "never"
+# One-shot worker — no HTTP server; disable health checks.
+healthcheckPath = ""
+healthcheckTimeout = 0
