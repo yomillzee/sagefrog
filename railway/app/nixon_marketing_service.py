@@ -17,6 +17,7 @@ _PAID_MEDIA_VIEW = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_paid_media_daily`"
 _HEALTH_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.mart_health`"
 _GOOGLE_ADS_EXPLORER_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.explorer_google_ads_daily`"
 _LINKEDIN_CREATIVE_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.fact_linkedin_ads_creative_daily`"
+_META_AD_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.fact_meta_ads_ad_daily`"
 _PAGE_PATH_DAILY_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_page_path_daily`"
 _PAGE_PATH_SOURCE_DAILY_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_page_path_source_daily`"
 
@@ -354,6 +355,50 @@ def fetch_nixon_linkedin_explorer(
     FROM {_LINKEDIN_CREATIVE_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY campaign_group_name, campaign_name, creative_id
+    ORDER BY spend DESC
+    """
+    rows = _run_query(
+        sql,
+        params={
+            "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+            "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+        },
+        max_rows=20000,
+    )
+    return {
+        "client": "nixon",
+        "date_range": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
+def fetch_nixon_meta_explorer(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Meta ad-level explorer (campaign → adset → ad with thumbnails)."""
+    sql = f"""
+    SELECT
+      campaign_name,
+      adset_name,
+      ad_id,
+      ANY_VALUE(ad_name)        AS ad_name,
+      ANY_VALUE(media_type)     AS media_type,
+      ANY_VALUE(thumbnail_url)  AS thumbnail_url,
+      ANY_VALUE(image_url)      AS image_url,
+      ROUND(SUM(spend), 2)      AS spend,
+      SUM(impressions)          AS impressions,
+      SUM(clicks)               AS clicks,
+      SUM(conversions)          AS conversions,
+      ROUND(SUM(conversion_value), 2) AS conversion_value
+    FROM {_META_AD_TABLE}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY campaign_name, adset_name, ad_id
     ORDER BY spend DESC
     """
     rows = _run_query(

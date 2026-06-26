@@ -273,6 +273,7 @@ def render_nixon_bigquery_test_page(
     .pill {{ display:inline-block; padding:1px 7px; border-radius:999px; font-size:.64rem; font-weight:800; letter-spacing:.03em; text-transform:uppercase; vertical-align:middle; margin-right:7px; }}
     .pill-google {{ background:#e8f0fe; color:#1a73e8; }}
     .pill-linkedin {{ background:#e6f0f8; color:#0a66c2; }}
+    .pill-meta {{ background:#f0e8fe; color:#7b2ff7; }}
     .ad-cell {{ display:inline-flex; align-items:center; gap:9px; vertical-align:middle; }}
     .ad-thumb {{ width:34px; height:34px; border-radius:5px; object-fit:cover; border:1px solid var(--line); background:#f0f3f8; flex:0 0 auto; }}
     .ad-meta {{ display:flex; flex-direction:column; line-height:1.25; }}
@@ -460,6 +461,7 @@ def render_nixon_bigquery_test_page(
     const HEALTH_API           = "{_aurl('/api/clients/nixon/marketing/health')}";
     const EXPLORER_API         = "{_aurl('/api/clients/nixon/google-ads/explorer')}";
     const LINKEDIN_EXPLORER_API= "{_aurl('/api/clients/nixon/linkedin/explorer')}";
+    const META_EXPLORER_API    = "{_aurl('/api/clients/nixon/meta/explorer')}";
     const BACKFILL_API         = "{_aurl('/api/clients/nixon/backfill-linkedin')}";
     const PAGES_TOP_API        = "{_aurl('/api/clients/nixon/pages/top')}";
     const PAGES_SOURCES_API    = "{_aurl('/api/clients/nixon/pages/sources')}";
@@ -767,7 +769,12 @@ def render_nixon_bigquery_test_page(
       return new Map([...campaigns.entries()].sort((a,b)=>b[1].metrics.spend-a[1].metrics.spend));
     }}
     function metricCells(m) {{ const wc=withCtr(m); return METRIC_COLS.map(c=>`<td>${{c.format(wc[c.key])}}</td>`).join(''); }}
-    function platformPill(p) {{ const key=(p||'google').toLowerCase()==='linkedin'?'linkedin':'google'; return `<span class="pill pill-${{key}}">${{key==='linkedin'?'LinkedIn':'Google'}}</span>`; }}
+    function platformPill(p) {{
+      const k=(p||'google').toLowerCase();
+      const key=k==='linkedin'?'linkedin':k==='meta'?'meta':'google';
+      const label=key==='linkedin'?'LinkedIn':key==='meta'?'Meta':'Google';
+      return `<span class="pill pill-${{key}}">${{label}}</span>`;
+    }}
     function adCell(ad) {{
       const label=esc(ad.ad_label||ad.ad_name||'—');
       const type=ad.media_type?`<span class="ad-type">${{esc(ad.media_type)}}</span>`:'';
@@ -809,7 +816,7 @@ def render_nixon_bigquery_test_page(
         while (stack.length) {{ const pid=stack.pop(); table.querySelectorAll(`tr[data-parent="${{pid}}"]`).forEach(c=>{{c.hidden=true;c.classList.remove('open');if(c.dataset.id)stack.push(c.dataset.id);}}); }}
       }}
     }}
-    function normalizeExplorerRows(google, linkedin) {{
+    function normalizeExplorerRows(google, linkedin, meta) {{
       const out=[];
       for (const r of (google&&google.rows?google.rows:[])) {{
         out.push({{platform:'google',campaign_name:r.campaign_name,ad_group_name:r.ad_group_name,ad_label:r.ad_label,headline_1:r.headline_1,headline_2:r.headline_2,headline_3:r.headline_3,description_1:r.description_1,description_2:r.description_2,ad_name:r.ad_name,final_url:r.final_url,ad_type:r.ad_type,thumbnail_url:'',media_type:r.ad_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
@@ -817,16 +824,20 @@ def render_nixon_bigquery_test_page(
       for (const r of (linkedin&&linkedin.rows?linkedin.rows:[])) {{
         out.push({{platform:'linkedin',campaign_name:r.campaign_group_name||r.campaign_name,ad_group_name:r.campaign_name,ad_label:r.creative_name,thumbnail_url:r.thumbnail_url||r.image_url||'',media_type:r.media_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
       }}
+      for (const r of (meta&&meta.rows?meta.rows:[])) {{
+        out.push({{platform:'meta',campaign_name:r.campaign_name,ad_group_name:r.adset_name,ad_label:r.ad_name,thumbnail_url:r.thumbnail_url||r.image_url||'',media_type:r.media_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
+      }}
       return out;
     }}
     async function loadExplorer() {{
       setStatus('explorerStatus','Loading…');
       document.getElementById('explorerTable').innerHTML = skelTable(6,8);
-      const [g,l]=await Promise.all([
+      const [g,l,m]=await Promise.all([
         getJson(withDates(EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(LINKEDIN_EXPLORER_API)).catch(()=>({{rows:[]}})),
+        getJson(withDates(META_EXPLORER_API)).catch(()=>({{rows:[]}})),
       ]);
-      explorerRows=normalizeExplorerRows(g,l);
+      explorerRows=normalizeExplorerRows(g,l,m);
       renderExplorer();
     }}
 
@@ -1120,7 +1131,7 @@ def render_nixon_bigquery_test_page(
     }});
 
     // ---- Platform chips ----
-    buildChips('platformChips',['Google','LinkedIn'],platformFilter,()=>{{renderSummary();renderChart();renderExplorer();}});
+    buildChips('platformChips',['Google','LinkedIn','Meta'],platformFilter,()=>{{renderSummary();renderChart();renderExplorer();}});
 
     // ---- Explorer chips ----
     buildChips('productChips',['Apparel','Scrubs','Linens'],productFilter);
