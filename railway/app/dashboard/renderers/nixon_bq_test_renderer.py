@@ -490,6 +490,7 @@ def render_nixon_bigquery_test_page(
     const TABS = ['overview', 'explorer', 'analytics'];
     let currentTab = 'overview';
     let analyticsLoaded = false;
+    let explorerLoaded = false;
 
     function switchTab(tab) {{
       TABS.forEach(t => {{ document.getElementById('pane-' + t).hidden = t !== tab; }});
@@ -499,6 +500,10 @@ def render_nixon_bigquery_test_page(
       const pf = document.getElementById('platformFilterGroup');
       if (pf) pf.hidden = tab === 'analytics';
       currentTab = tab;
+      if (tab === 'explorer' && !explorerLoaded) {{
+        explorerLoaded = true;
+        loadExplorer();
+      }}
       if (tab === 'analytics' && !analyticsLoaded) {{
         analyticsLoaded = true;
         applyModules();
@@ -1044,7 +1049,7 @@ def render_nixon_bigquery_test_page(
     }}
     function loadCurrentTab() {{
       if (currentTab==='overview')   {{ loadSummary(); loadHealth(); }}
-      else if (currentTab==='explorer') loadExplorer();
+      else if (currentTab==='explorer') {{ explorerLoaded=false; loadExplorer(); explorerLoaded=true; }}
       else if (currentTab==='analytics') {{ analyticsLoaded=false; applyModules(); loadAllAnalytics(); analyticsLoaded=true; }}
     }}
 
