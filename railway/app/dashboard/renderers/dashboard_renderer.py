@@ -25,6 +25,7 @@ from penn_business_lines import (
 )
 
 from dashboard.renderers.base_layout import (
+    CONNECTORS_PILOT_SLUGS as _CONNECTORS_PILOT_SLUGS,
     SIDEBAR_CSS as _SIDEBAR_CSS,
     dashboard_topbar_js as _dashboard_topbar_js,
     favicon_head_html as _favicon_head_html,
@@ -729,6 +730,7 @@ def render_penn_html(
         session_is_admin=session_is_admin,
         session_email=session_email,
         show_files=docs.enabled(),
+        show_connectors=client_slug.lower() in _CONNECTORS_PILOT_SLUGS,
         view_nav_html=view_nav_html,
     )
     if use_session:

@@ -385,6 +385,8 @@ def sidebar_view_nav_html(
     )
 
 
+CONNECTORS_PILOT_SLUGS: frozenset[str] = frozenset({"nixon-bq-test"})
+
 _NAV_ICON_FILES = (
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
     'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -441,6 +443,7 @@ def render_sidebar(
     session_is_admin: bool,
     session_email: str | None,
     show_files: bool,
+    show_connectors: bool = False,
     view_nav_html: str,
 ) -> str:
     """Navy drawer sidebar shared by the dashboard, settings, files, and connectors pages."""
@@ -475,12 +478,14 @@ def render_sidebar(
             f'{_NAV_ICON_FILES}<span>Files</span></a>'
         )
 
-    connectors_active = " active" if active_nav == "connectors" else ""
-    connectors_aria = ' aria-current="page"' if connectors_active else ""
-    connectors_btn = (
-        f'<a href="{_esc(connectors_url)}" class="dash-sidebar-link{connectors_active}"{connectors_aria}>'
-        f'{_NAV_ICON_CONNECTORS}<span>Connectors</span></a>'
-    )
+    connectors_btn = ""
+    if show_connectors or active_nav == "connectors":
+        connectors_active = " active" if active_nav == "connectors" else ""
+        connectors_aria = ' aria-current="page"' if connectors_active else ""
+        connectors_btn = (
+            f'<a href="{_esc(connectors_url)}" class="dash-sidebar-link{connectors_active}"{connectors_aria}>'
+            f'{_NAV_ICON_CONNECTORS}<span>Connectors</span></a>'
+        )
 
     settings_active = " active" if active_nav == "settings" else ""
     settings_aria = ' aria-current="page"' if settings_active else ""
@@ -532,6 +537,7 @@ def render_client_shell_page(
     extra_css: str = "",
     show_business_line: bool | None = None,
     show_files: bool | None = None,
+    show_connectors: bool | None = None,
     show_campaigns: bool = True,
     show_website: bool = True,
     show_gsc: bool = False,
@@ -544,6 +550,8 @@ def render_client_shell_page(
         import client_insight_documents as docs
 
         show_files = docs.enabled()
+    if show_connectors is None:
+        show_connectors = client_slug.lower() in CONNECTORS_PILOT_SLUGS
     # Child pages have no in-page views, so the primary nav links back to the
     # dashboard's tabs (the dashboard gracefully falls back to Overview if a
     # linked view isn't available for this client).
@@ -566,6 +574,7 @@ def render_client_shell_page(
         session_is_admin=session_is_admin,
         session_email=session_email,
         show_files=show_files,
+        show_connectors=show_connectors,
         view_nav_html=view_nav_html,
     )
     return f"""<!DOCTYPE html>
