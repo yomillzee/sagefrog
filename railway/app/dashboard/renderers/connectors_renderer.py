@@ -280,6 +280,11 @@ _CONNECTOR_CSS = """
   .run-status-ok { color: #16a34a; font-weight: 600; }
   .run-status-failed { color: #dc2626; font-weight: 600; }
   .run-status-running { color: #3b82f6; }
+  .run-status-cancelled { color: #92400e; }
+  .run-status-running .run-status-label { margin-right: 8px; }
+  .cancel-run-btn { font-size: .72rem; font-weight: 600; padding: 2px 9px; border-radius: 5px; border: 1px solid #dc2626; color: #dc2626; background: #fff; cursor: pointer; vertical-align: middle; }
+  .cancel-run-btn:hover { background: #fef2f2; }
+  .cancel-run-btn:disabled { opacity: .5; cursor: default; }
 
   /* Disconnect modal */
   .modal-overlay {
@@ -417,6 +422,7 @@ def render_connector_detail(
             dir_url=dir_url,
             flash_message=flash_message,
             flash_error=flash_error,
+            access_key=access_key,
         )
     else:
         content = _render_wizard(
@@ -827,6 +833,7 @@ def _render_management_view(
     dir_url: str,
     flash_message: str | None,
     flash_error: str | None,
+    access_key: str | None = None,
 ) -> str:
     status = config.status
     status_label = _STATUS_LABELS.get(status, status)
@@ -841,6 +848,7 @@ def _render_management_view(
         error_row = f'<div class="test-result err" style="margin-bottom:16px">{_esc(config.last_error_message[:300])}</div>'
 
     runs_rows = ""
+    has_running = False
     for run in sync_runs:
         ts = _fmt_dt(run.started_at)
         dur = ""
@@ -848,10 +856,29 @@ def _render_management_view(
             secs = int((run.completed_at - run.started_at).total_seconds())
             dur = f"{secs}s"
         rows_col = str(run.rows_loaded) if run.rows_loaded is not None else "—"
-        status_map = {"completed": "run-status-ok", "failed": "run-status-failed", "running": "run-status-running"}
+        status_map = {
+            "completed":  "run-status-ok",
+            "failed":     "run-status-failed",
+            "running":    "run-status-running",
+            "cancelled":  "run-status-cancelled",
+        }
         status_cls_run = status_map.get(run.status, "")
         err_col = _esc(run.error_message[:60]) if run.error_message else ""
-        runs_rows += f"<tr><td>{_esc(ts)}</td><td>{_esc(run.run_type)}</td><td class='{status_cls_run}'>{_esc(run.status)}</td><td>{rows_col}</td><td>{dur}</td><td style='color:#dc2626;font-size:.78rem'>{err_col}</td></tr>"
+        if run.status == "running":
+            has_running = True
+            from urllib.parse import quote as _q
+            cancel_url = f"/dashboard/{client_slug}/connectors/{handler.connector_type}/sync/{run.id}/cancel"
+            if access_key:
+                cancel_url += f"?key={_q(access_key, safe='')}"
+            status_cell = (
+                f"<td class='{status_cls_run}'>"
+                f"<span class='run-status-label'>{_esc(run.status)}</span>"
+                f"<button class='cancel-run-btn' data-url='{_esc(cancel_url)}' onclick='cancelRun(this)'>Cancel</button>"
+                f"</td>"
+            )
+        else:
+            status_cell = f"<td class='{status_cls_run}'>{_esc(run.status)}</td>"
+        runs_rows += f"<tr><td>{_esc(ts)}</td><td>{_esc(run.run_type)}</td>{status_cell}<td>{rows_col}</td><td>{dur}</td><td style='color:#dc2626;font-size:.78rem'>{err_col}</td></tr>"
 
     runs_section = ""
     if sync_runs:
@@ -977,12 +1004,34 @@ def _render_management_view(
             statusEl.className = 'test-result ' + (data.ok ? 'ok' : 'err');
             statusEl.textContent = data.message || (data.ok ? 'Sync started.' : (data.error || 'Sync failed.'));
             statusEl.style.display = 'block';
+            if (data.ok) setTimeout(() => location.reload(), 1500);
           }}).catch(err => {{
             btn.disabled = false; btn.textContent = 'Run sync now';
             statusEl.className = 'test-result err';
             statusEl.textContent = 'Sync failed: ' + err.message;
             statusEl.style.display = 'block';
           }});
+      }}
+
+      async function cancelRun(btn) {{
+        btn.disabled = true;
+        btn.textContent = 'Cancelling…';
+        try {{
+          const resp = await fetch(btn.dataset.url, {{method: 'POST'}});
+          const data = await resp.json();
+          if (data.ok) {{
+            const td = btn.closest('td');
+            td.className = 'run-status-cancelled';
+            td.textContent = 'cancelled';
+          }} else {{
+            btn.disabled = false;
+            btn.textContent = 'Cancel';
+            alert('Cancel failed: ' + (data.error || 'unknown error'));
+          }}
+        }} catch(e) {{
+          btn.disabled = false;
+          btn.textContent = 'Cancel';
+        }}
       }}
       </script>
     """

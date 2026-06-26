@@ -350,6 +350,28 @@ async def connector_sync(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Cancel a running sync
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.post("/dashboard/{client_slug}/connectors/{connector_type}/sync/{run_id}/cancel")
+async def connector_sync_cancel(
+    client_slug: str,
+    connector_type: str,
+    run_id: int,
+    request: Request,
+    key: str | None = None,
+):
+    slug = validate_client_slug(client_slug)
+    redirect, *_ = _auth(request, slug, key)
+    if redirect:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+
+    connector_config_store.cancel_sync_run(run_id)
+    _log.info("sync run %s cancelled by user [%s/%s]", run_id, slug, connector_type)
+    return JSONResponse({"ok": True, "message": "Sync cancelled."})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Disconnect (form POST)
 # ──────────────────────────────────────────────────────────────────────────────
 

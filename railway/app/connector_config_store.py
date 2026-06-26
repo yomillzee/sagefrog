@@ -342,9 +342,25 @@ def finish_sync_run(
             """
             UPDATE connector_sync_runs
             SET status = %s, completed_at = %s, rows_loaded = %s, error_message = %s
-            WHERE id = %s
+            WHERE id = %s AND status != 'cancelled'
             """,
             (status, now, rows_loaded, error_message, run_id),
+        )
+
+
+def cancel_sync_run(run_id: int) -> None:
+    """Mark a running sync as cancelled. Does not stop the background thread."""
+    if not enabled() or not run_id:
+        return
+    ensure_schema()
+    with db.connection() as conn:
+        conn.execute(
+            """
+            UPDATE connector_sync_runs
+            SET status = 'cancelled', completed_at = %s
+            WHERE id = %s AND status = 'running'
+            """,
+            (datetime.now(tz=UTC), run_id),
         )
 
 
