@@ -602,6 +602,7 @@ def render_admin_oauth_section(
           <li>{base}/oauth/linkedin/callback</li>
           <li>{base}/oauth/meta/callback</li>
           <li>{base}/oauth/gsc/callback</li>
+          <li>{base}/oauth/google_analytics/callback</li>
         </ul>
       </details>
     </section>"""

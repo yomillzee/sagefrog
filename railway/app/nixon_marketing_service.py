@@ -22,13 +22,12 @@ _PAGE_PATH_DAILY_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_page_path_daily`"
 _PAGE_PATH_SOURCE_DAILY_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_page_path_source_daily`"
 
 _GA4_DATASET = "analytics_test"
-_PROPERTY_SUFFIX = "256372599"
-_TRAFFIC_ACQ_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_TrafficAcquisition_{_PROPERTY_SUFFIX}`"
-_TECH_DETAILS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_TechDetails_{_PROPERTY_SUFFIX}`"
-_LANDING_PAGE_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_LandingPage_{_PROPERTY_SUFFIX}`"
-_EVENTS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_Events_{_PROPERTY_SUFFIX}`"
-_USER_ACQ_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_UserAcquisition_{_PROPERTY_SUFFIX}`"
-_DEMOGRAPHICS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_DemographicDetails_{_PROPERTY_SUFFIX}`"
+_TRAFFIC_ACQ_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_sessions_daily`"
+_TECH_DETAILS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_tech_daily`"
+_LANDING_PAGE_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_pages_daily`"
+_EVENTS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_events_daily`"
+_USER_ACQ_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_user_acq_daily`"
+_DEMOGRAPHICS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_demographics_daily`"
 
 
 def _job_config(**params: bigquery.ScalarQueryParameter) -> bigquery.QueryJobConfig:
@@ -474,17 +473,17 @@ def fetch_nixon_traffic_acquisition(
       ROUND(SAFE_DIVIDE(SUM(engagedSessions), NULLIF(SUM(sessions), 0)) * 100, 1) AS engagement_rate,
       CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
     FROM {_TRAFFIC_ACQ_TABLE}
-    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date
     GROUP BY channel
     ORDER BY sessions DESC
     """
     daily_sql = f"""
     SELECT
-      CAST(_DATA_DATE AS STRING) AS date,
+      CAST(date AS STRING) AS date,
       SUM(sessions) AS sessions,
       SUM(engagedSessions) AS engaged_sessions
     FROM {_TRAFFIC_ACQ_TABLE}
-    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date
     GROUP BY date
     ORDER BY date ASC
     """
@@ -497,7 +496,7 @@ def fetch_nixon_traffic_acquisition(
       ROUND(SAFE_DIVIDE(SUM(engagedSessions), NULLIF(SUM(sessions), 0)) * 100, 1) AS engagement_rate,
       CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
     FROM {_TRAFFIC_ACQ_TABLE}
-    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date
     GROUP BY source, medium
     ORDER BY sessions DESC
     LIMIT 25
@@ -527,7 +526,7 @@ def fetch_nixon_device_split(
       SUM(engagedSessions) AS engaged_sessions,
       CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
     FROM {_TECH_DETAILS_TABLE}
-    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date
     GROUP BY device
     ORDER BY users DESC
     """
@@ -558,7 +557,7 @@ def fetch_nixon_landing_pages(
       ROUND(SAFE_DIVIDE(SUM(keyEvents), NULLIF(SUM(sessions), 0)) * 100, 1) AS key_event_rate,
       ROUND(AVG(userEngagementDurationPerSession), 1) AS avg_engagement_seconds
     FROM {_LANDING_PAGE_TABLE}
-    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date
     GROUP BY page_path
     ORDER BY sessions DESC
     LIMIT 100
@@ -631,7 +630,7 @@ def fetch_nixon_conversion_events(
       SUM(totalUsers) AS total_users,
       ROUND(AVG(eventCountPerUser), 2) AS event_count_per_user
     FROM {_EVENTS_TABLE}
-    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date
       AND eventName NOT IN (
         'page_view', 'session_start', 'user_engagement', 'first_visit',
         'scroll', 'click', 'Click', 'trackOptanonEvent',
@@ -675,7 +674,7 @@ def fetch_nixon_user_acquisition(
       CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events,
       ROUND(SAFE_DIVIDE(SUM(keyEvents), NULLIF(SUM(totalUsers), 0)) * 100, 1) AS key_event_rate
     FROM {_USER_ACQ_TABLE}
-    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date
     GROUP BY channel
     ORDER BY new_users DESC
     LIMIT 15
@@ -688,7 +687,7 @@ def fetch_nixon_user_acquisition(
       CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events,
       ROUND(SAFE_DIVIDE(SUM(keyEvents), NULLIF(SUM(totalUsers), 0)) * 100, 1) AS key_event_rate
     FROM {_USER_ACQ_TABLE}
-    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date
     GROUP BY source, medium
     ORDER BY new_users DESC
     LIMIT 30
@@ -721,7 +720,7 @@ def fetch_nixon_demographics(
       CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events,
       ROUND(AVG(engagementRate) * 100, 1) AS engagement_rate
     FROM {_DEMOGRAPHICS_TABLE}
-    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date
       AND city IS NOT NULL AND city != '(not set)'
     GROUP BY city, region
     ORDER BY users DESC
@@ -733,7 +732,7 @@ def fetch_nixon_demographics(
       SUM(activeUsers) AS users,
       CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
     FROM {_DEMOGRAPHICS_TABLE}
-    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date
       AND userAgeBracket IS NOT NULL AND userAgeBracket != '(not set)'
     GROUP BY age_bracket
     ORDER BY
@@ -748,7 +747,7 @@ def fetch_nixon_demographics(
       SUM(activeUsers) AS users,
       CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
     FROM {_DEMOGRAPHICS_TABLE}
-    WHERE _DATA_DATE BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date
       AND userGender IS NOT NULL AND userGender NOT IN ('(not set)', 'unknown')
     GROUP BY gender
     ORDER BY users DESC

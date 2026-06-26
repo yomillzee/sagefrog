@@ -14,7 +14,7 @@ import auth as google_auth
 import linkedin_auth
 import meta_auth
 
-PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc"})
+PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc", "google_analytics"})
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -23,6 +23,8 @@ GOOGLE_ADS_SCOPE = "https://www.googleapis.com/auth/adwords"
 # Google Ads — it's just a different scope on the same login, so no separate
 # Cloud Console app is required.
 GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
+# GA4 also reuses the same Google Cloud OAuth client.
+GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
 
 LINKEDIN_AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization"
 LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
@@ -115,6 +117,23 @@ def connect_prerequisites(platform: str) -> dict[str, Any]:
                 "account that has access to every client's Search Console property."
             ),
         }
+    if slug == "google_analytics":
+        summary = google_auth.env_summary()
+        return {
+            "ready": bool(summary.get("has_client_id") and summary.get("has_client_secret")),
+            "missing": [
+                label
+                for key, label in (
+                    ("has_client_id", "GOOGLE_ADS_CLIENT_ID"),
+                    ("has_client_secret", "GOOGLE_ADS_CLIENT_SECRET"),
+                )
+                if not summary.get(key)
+            ],
+            "note": (
+                "Reuses the Google Ads OAuth client. Connect with the Google account "
+                "that has Viewer access to the GA4 property."
+            ),
+        }
     if slug == "linkedin":
         summary = linkedin_auth.env_summary()
         return {
@@ -175,6 +194,20 @@ def build_authorize_url(platform: str, *, state: str) -> str:
             "state": state,
         }
         return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
+    if slug == "google_analytics":
+        client_id = google_auth._get_env(*google_auth._ENV_ALIASES["client_id"])
+        if not client_id:
+            raise RuntimeError("Set GOOGLE_ADS_CLIENT_ID before connecting Google Analytics.")
+        params = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": GA4_SCOPE,
+            "access_type": "offline",
+            "prompt": "consent",
+            "state": state,
+        }
+        return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
     if slug == "linkedin":
         client_id = linkedin_auth._get_env(*linkedin_auth._ENV_ALIASES["client_id"])
         if not client_id:
@@ -208,6 +241,8 @@ def exchange_code(platform: str, *, code: str) -> dict[str, Any]:
         return _exchange_google_code(code, redirect_uri=redirect_uri, scope_label=GOOGLE_ADS_SCOPE)
     if slug == "gsc":
         return _exchange_google_code(code, redirect_uri=redirect_uri, scope_label=GSC_SCOPE)
+    if slug == "google_analytics":
+        return _exchange_google_code(code, redirect_uri=redirect_uri, scope_label=GA4_SCOPE)
     if slug == "linkedin":
         return _exchange_linkedin_code(code, redirect_uri=redirect_uri)
     return _exchange_meta_code(code, redirect_uri=redirect_uri)
