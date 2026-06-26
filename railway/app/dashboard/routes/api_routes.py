@@ -701,6 +701,85 @@ def nixon_linkedin_explorer(
 
 
 @router.get(
+    "/api/clients/nixon/meta/debug-insights",
+    summary="Debug: probe Meta Insights API for Nixon ad account (no BQ write)",
+    include_in_schema=False,
+)
+def nixon_meta_debug_insights(
+    request: Request,
+    level: str = Query(default="campaign", description="campaign | adset | ad"),
+    days: int = Query(default=7, description="How many trailing days to probe"),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(
+        request, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    import oauth_store, meta_service
+    from datetime import date, timedelta
+    from meta_auth import load_meta_env
+
+    end = date.today()
+    start = end - timedelta(days=days - 1)
+
+    # Prefer the Nixon-scoped connector token, fall back to global
+    token = (
+        oauth_store.get_access_token("meta", client_slug="nixon-bq-test")
+        or oauth_store.get_access_token("meta")
+    )
+    env = load_meta_env()
+    account_id = "3566409366740666"
+
+    try:
+        import json as _json
+        from meta_service import _act_id, _normalize_account_id, _time_range, _INSIGHT_FIELDS, _ADSET_INSIGHT_FIELDS, _AD_INSIGHT_FIELDS
+
+        field_map = {
+            "campaign": _INSIGHT_FIELDS,
+            "adset": _ADSET_INSIGHT_FIELDS,
+            "ad": _AD_INSIGHT_FIELDS,
+        }
+        fields = field_map.get(level, _INSIGHT_FIELDS)
+        act = _act_id(_normalize_account_id(account_id))
+
+        # raw first call — return what Meta actually sends before any parsing
+        from meta_service import _graph_get
+        raw = _graph_get(
+            f"/{act}/insights",
+            access_token=token or env.access_token,
+            params={
+                "fields": fields,
+                "time_range": _time_range(start, end),
+                "time_increment": 1,
+                "level": level,
+                "limit": 10,
+            },
+            env=env,
+        )
+        top_keys = list(raw.keys())
+        data_len = len(raw.get("data") or [])
+        sample = (raw.get("data") or [])[:2]
+        return {
+            "account_id": account_id,
+            "act_id": act,
+            "token_source": "client-scoped" if (token and oauth_store.get_access_token("meta", client_slug="nixon-bq-test")) else "global-fallback",
+            "token_present": bool(token),
+            "level": level,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "raw_top_keys": top_keys,
+            "data_rows_in_first_page": data_len,
+            "sample_rows": sample,
+            "report_run_id": raw.get("report_run_id"),
+            "error": raw.get("error"),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get(
     "/api/clients/nixon/meta/explorer",
     summary="Nixon Meta Ads ad-level explorer from BigQuery marketing mart",
 )

@@ -137,6 +137,67 @@ def _graph_get_all(
     return rows
 
 
+def _graph_insights(
+    path: str,
+    *,
+    access_token: str,
+    params: dict[str, Any] | None = None,
+    env: MetaEnv | None = None,
+    poll_timeout: int = 300,
+) -> list[dict[str, Any]]:
+    """Call Meta Insights endpoint, transparently handling async report jobs.
+
+    Meta may return {"report_run_id": "..."} instead of {"data": [...]} when it
+    decides to run the query asynchronously. This function polls until the job
+    completes (up to poll_timeout seconds) and then fetches the results.
+    """
+    import logging
+    import time
+
+    _log = logging.getLogger(__name__)
+    payload = _graph_get(path, access_token=access_token, params=params, env=env)
+
+    # Synchronous response — normal pagination path
+    if "data" in payload:
+        rows = list(payload["data"])
+        while payload.get("paging", {}).get("next"):
+            payload = _graph_get(payload["paging"]["next"], access_token=access_token, env=env)
+            rows.extend(payload.get("data") or [])
+        return rows
+
+    # Async report — Meta returned a report_run_id
+    report_run_id = payload.get("report_run_id") or payload.get("id")
+    if not report_run_id:
+        _log.warning("Meta insights returned unexpected payload (no data, no report_run_id): %s", payload)
+        return []
+
+    _log.info("Meta insights async job started: report_run_id=%s", report_run_id)
+    deadline = time.monotonic() + poll_timeout
+    while time.monotonic() < deadline:
+        status_payload = _graph_get(
+            f"/{report_run_id}",
+            access_token=access_token,
+            params={"fields": "async_status,async_percent_completion"},
+            env=env,
+        )
+        async_status = status_payload.get("async_status", "")
+        pct = status_payload.get("async_percent_completion", 0)
+        _log.info("Meta async job %s: status=%s pct=%s", report_run_id, async_status, pct)
+        if async_status == "Job Complete":
+            return _graph_get_all(
+                f"/{report_run_id}/insights",
+                access_token=access_token,
+                env=env,
+            )
+        if async_status in ("Job Failed", "Job Skipped"):
+            raise RuntimeError(f"Meta async insights job {report_run_id} failed: {status_payload}")
+        time.sleep(5)
+
+    raise RuntimeError(
+        f"Meta async insights job {report_run_id} timed out after {poll_timeout}s"
+    )
+
+
 def _account_status_label(value: Any) -> str:
     try:
         return _ACCOUNT_STATUS.get(int(value), str(value or ""))
@@ -399,11 +460,15 @@ def fetch_campaign_daily_metrics(
     Returns list of {campaign_id, campaign_name, metric_date, spend, clicks, impressions,
     conversions, conversion_value}. One row per (campaign, day).
     """
+    import logging
+    _log = logging.getLogger(__name__)
+
     env = env or load_meta_env()
     access_token = access_token or env.access_token
     account_id_clean = _normalize_account_id(account_id)
 
-    rows = _graph_get_all(
+    _log.info("Meta insights campaign: account=%s range=%s/%s", account_id_clean, start, end)
+    rows = _graph_insights(
         f"/{_act_id(account_id_clean)}/insights",
         access_token=access_token,
         params={
@@ -415,6 +480,7 @@ def fetch_campaign_daily_metrics(
         },
         env=env,
     )
+    _log.info("Meta insights campaign: api_rows=%d", len(rows))
 
     out: list[dict[str, Any]] = []
     for row in rows:
@@ -429,6 +495,7 @@ def fetch_campaign_daily_metrics(
             "metric_date": metric_day,
             **parsed,
         })
+    _log.info("Meta insights campaign: parsed_rows=%d", len(out))
     return out
 
 
@@ -441,11 +508,15 @@ def fetch_adset_daily_metrics(
     env: MetaEnv | None = None,
 ) -> list[dict[str, Any]]:
     """Per-adset daily metrics for BQ warehouse storage."""
+    import logging
+    _log = logging.getLogger(__name__)
+
     env = env or load_meta_env()
     access_token = access_token or env.access_token
     account_id_clean = _normalize_account_id(account_id)
 
-    rows = _graph_get_all(
+    _log.info("Meta insights adset: account=%s range=%s/%s", account_id_clean, start, end)
+    rows = _graph_insights(
         f"/{_act_id(account_id_clean)}/insights",
         access_token=access_token,
         params={
@@ -457,6 +528,7 @@ def fetch_adset_daily_metrics(
         },
         env=env,
     )
+    _log.info("Meta insights adset: api_rows=%d", len(rows))
 
     out: list[dict[str, Any]] = []
     for row in rows:
@@ -485,11 +557,15 @@ def fetch_ad_daily_metrics(
     env: MetaEnv | None = None,
 ) -> list[dict[str, Any]]:
     """Per-ad daily metrics for BQ warehouse storage."""
+    import logging
+    _log = logging.getLogger(__name__)
+
     env = env or load_meta_env()
     access_token = access_token or env.access_token
     account_id_clean = _normalize_account_id(account_id)
 
-    rows = _graph_get_all(
+    _log.info("Meta insights ad: account=%s range=%s/%s", account_id_clean, start, end)
+    rows = _graph_insights(
         f"/{_act_id(account_id_clean)}/insights",
         access_token=access_token,
         params={
@@ -501,6 +577,7 @@ def fetch_ad_daily_metrics(
         },
         env=env,
     )
+    _log.info("Meta insights ad: api_rows=%d", len(rows))
 
     out: list[dict[str, Any]] = []
     for row in rows:
