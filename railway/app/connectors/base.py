@@ -61,5 +61,6 @@ CONNECTOR_ORDER = [
     "google_ads",
     "ga4",
     "gsc",
+    "gtm",
     "hubspot",
 ]

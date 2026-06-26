@@ -89,6 +89,47 @@ def _get_access_token(refresh_token: str) -> str:
     return _ga4_refresh(refresh_token)
 
 
+def list_containers(refresh_token: str) -> list[dict[str, Any]]:
+    """Return one entry per GTM container the token can access.
+
+    Each entry: {"id": "accountId:containerId", "name": "Container (Account) • GTM-XXXXX"}
+    """
+    access_token = _get_access_token(refresh_token)
+    with httpx.Client(timeout=30) as http:
+        resp = http.get(
+            f"{_GTM_BASE}/accounts",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    if resp.status_code in (401, 403):
+        raise PermissionError(
+            f"Google returned {resp.status_code} listing GTM accounts. "
+            "Ensure tagmanager.readonly scope is granted."
+        )
+    resp.raise_for_status()
+    accounts = resp.json().get("account", [])
+
+    containers: list[dict[str, Any]] = []
+    with httpx.Client(timeout=30) as http:
+        for acct in accounts:
+            acct_id = str(acct.get("accountId", ""))
+            acct_name = str(acct.get("name", acct_id))
+            cr = http.get(
+                f"{_GTM_BASE}/accounts/{acct_id}/containers",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if cr.status_code >= 400:
+                continue
+            for cont in cr.json().get("container", []):
+                cid = str(cont.get("containerId", ""))
+                cname = str(cont.get("name", cid))
+                public_id = str(cont.get("publicId", ""))
+                label = f"{cname} ({acct_name})"
+                if public_id:
+                    label += f" • {public_id}"
+                containers.append({"id": f"{acct_id}:{cid}", "name": label})
+    return containers
+
+
 def _fetch_live_version(
     account_id: str,
     container_id: str,

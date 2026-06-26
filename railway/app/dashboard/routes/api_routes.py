@@ -412,14 +412,6 @@ def _nixon_settings_context() -> tuple[dict, dict, str | None]:
         }
     except Exception:
         pass
-    try:
-        import client_dashboard_config as _cdc
-        db_cfg = _cdc.get_config("nixon")
-        if db_cfg:
-            account_ids["gtm_account_id"] = db_cfg.gtm_account_id or ""
-            account_ids["gtm_container_id"] = db_cfg.gtm_container_id or ""
-    except Exception:
-        pass
     return routing, account_ids, sa_email
 
 
@@ -1258,24 +1250,26 @@ def gtm_live_tags(
         x_api_key=x_api_key,
     )
 
-    import client_dashboard_config as cdc
+    import connector_config_store
     import gtm_service
     import oauth_store
 
-    # Resolve GTM account + container from DB config; query params act as override
-    db_cfg = cdc.get_config(slug)
-    resolved_account = (account_id or "").strip() or (
-        db_cfg.gtm_account_id if db_cfg else None
+    # Resolve GTM account + container from connector config; query params act as override
+    conn_cfg = connector_config_store.get_config(slug, "gtm")
+    stored_parts = (
+        ((conn_cfg.source_account_id or "") if conn_cfg else "").split(":")
     )
-    resolved_container = (container_id or "").strip() or (
-        db_cfg.gtm_container_id if db_cfg else None
-    )
+    stored_account = stored_parts[0] if len(stored_parts) == 2 and stored_parts[0] else None
+    stored_container = stored_parts[1] if len(stored_parts) == 2 and stored_parts[1] else None
+
+    resolved_account = (account_id or "").strip() or stored_account
+    resolved_container = (container_id or "").strip() or stored_container
     if not resolved_account or not resolved_container:
         raise HTTPException(
             status_code=422,
             detail=(
-                "GTM account_id and container_id are required. "
-                "Set them in the client config or pass as query params."
+                "GTM container not configured. "
+                "Connect GTM in the connector wizard (Settings → Connectors)."
             ),
         )
 
