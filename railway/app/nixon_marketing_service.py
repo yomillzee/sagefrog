@@ -25,8 +25,10 @@ _GA4_DATASET = "analytics_test"
 _TRAFFIC_ACQ_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_sessions_daily`"
 _TECH_DETAILS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_tech_daily`"
 _LANDING_PAGE_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_pages_daily`"
+_PAGEVIEWS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_pageviews_daily`"
 _EVENTS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_events_daily`"
 _USER_ACQ_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_user_acq_daily`"
+_GEO_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_geo_daily`"
 _DEMOGRAPHICS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_demographics_daily`"
 
 
@@ -716,13 +718,14 @@ def fetch_nixon_demographics(
     SELECT
       COALESCE(city, '(not set)') AS city,
       COALESCE(region, '') AS region,
+      COALESCE(country, '') AS country,
       SUM(activeUsers) AS users,
-      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events,
-      ROUND(AVG(engagementRate) * 100, 1) AS engagement_rate
-    FROM {_DEMOGRAPHICS_TABLE}
+      SUM(sessions) AS sessions,
+      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
+    FROM {_GEO_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
       AND city IS NOT NULL AND city != '(not set)'
-    GROUP BY city, region
+    GROUP BY city, region, country
     ORDER BY users DESC
     LIMIT 20
     """

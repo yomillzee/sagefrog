@@ -89,6 +89,11 @@ def _schema_sessions():
         bq.SchemaField("sessions", "INT64", mode="NULLABLE"),
         bq.SchemaField("engagedSessions", "INT64", mode="NULLABLE"),
         bq.SchemaField("keyEvents", "FLOAT64", mode="NULLABLE"),
+        bq.SchemaField("totalUsers", "INT64", mode="NULLABLE"),
+        bq.SchemaField("newUsers", "INT64", mode="NULLABLE"),
+        bq.SchemaField("bounceRate", "FLOAT64", mode="NULLABLE"),
+        bq.SchemaField("engagementRate", "FLOAT64", mode="NULLABLE"),
+        bq.SchemaField("screenPageViews", "INT64", mode="NULLABLE"),
     ]
 
 
@@ -97,6 +102,8 @@ def _schema_tech():
     return [
         bq.SchemaField("date", "DATE", mode="REQUIRED"),
         bq.SchemaField("deviceCategory", "STRING", mode="NULLABLE"),
+        bq.SchemaField("browser", "STRING", mode="NULLABLE"),
+        bq.SchemaField("operatingSystem", "STRING", mode="NULLABLE"),
         bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
         bq.SchemaField("engagedSessions", "INT64", mode="NULLABLE"),
         bq.SchemaField("keyEvents", "FLOAT64", mode="NULLABLE"),
@@ -145,13 +152,37 @@ def _schema_demographics():
     bq = _bq()
     return [
         bq.SchemaField("date", "DATE", mode="REQUIRED"),
-        bq.SchemaField("city", "STRING", mode="NULLABLE"),
-        bq.SchemaField("region", "STRING", mode="NULLABLE"),
         bq.SchemaField("userAgeBracket", "STRING", mode="NULLABLE"),
         bq.SchemaField("userGender", "STRING", mode="NULLABLE"),
         bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
         bq.SchemaField("keyEvents", "FLOAT64", mode="NULLABLE"),
         bq.SchemaField("engagementRate", "FLOAT64", mode="NULLABLE"),
+    ]
+
+
+def _schema_geo():
+    bq = _bq()
+    return [
+        bq.SchemaField("date", "DATE", mode="REQUIRED"),
+        bq.SchemaField("country", "STRING", mode="NULLABLE"),
+        bq.SchemaField("region", "STRING", mode="NULLABLE"),
+        bq.SchemaField("city", "STRING", mode="NULLABLE"),
+        bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
+        bq.SchemaField("sessions", "INT64", mode="NULLABLE"),
+        bq.SchemaField("keyEvents", "FLOAT64", mode="NULLABLE"),
+    ]
+
+
+def _schema_pageviews():
+    bq = _bq()
+    return [
+        bq.SchemaField("date", "DATE", mode="REQUIRED"),
+        bq.SchemaField("pagePath", "STRING", mode="NULLABLE"),
+        bq.SchemaField("screenPageViews", "INT64", mode="NULLABLE"),
+        bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
+        bq.SchemaField("newUsers", "INT64", mode="NULLABLE"),
+        bq.SchemaField("keyEvents", "FLOAT64", mode="NULLABLE"),
+        bq.SchemaField("averageSessionDuration", "FLOAT64", mode="NULLABLE"),
     ]
 
 
@@ -162,6 +193,8 @@ _TABLE_SCHEMAS = {
     "ga4_events_daily": _schema_events,
     "ga4_user_acq_daily": _schema_user_acq,
     "ga4_demographics_daily": _schema_demographics,
+    "ga4_geo_daily": _schema_geo,
+    "ga4_pageviews_daily": _schema_pageviews,
 }
 
 
@@ -178,6 +211,25 @@ def ensure_ga4_tables() -> None:
         table = bq.Table(table_id, schema=schema)
         table.time_partitioning = bq.TimePartitioning(field="date")
         client.create_table(table, exists_ok=True)
+
+    # Add new columns to existing tables (idempotent — IF NOT EXISTS)
+    _alter_cols = [
+        ("ga4_sessions_daily", "totalUsers",      "INT64"),
+        ("ga4_sessions_daily", "newUsers",         "INT64"),
+        ("ga4_sessions_daily", "bounceRate",       "FLOAT64"),
+        ("ga4_sessions_daily", "engagementRate",   "FLOAT64"),
+        ("ga4_sessions_daily", "screenPageViews",  "INT64"),
+        ("ga4_tech_daily",     "browser",          "STRING"),
+        ("ga4_tech_daily",     "operatingSystem",  "STRING"),
+    ]
+    for tbl, col, dtype in _alter_cols:
+        try:
+            client.query(
+                f"ALTER TABLE `{dataset_ref}.{tbl}` ADD COLUMN IF NOT EXISTS {col} {dtype}"
+            ).result()
+        except Exception as exc:
+            _log.warning("ALTER TABLE %s.%s skipped: %s", tbl, col, exc)
+
     _log.info("GA4 tables ensured in %s", dataset_ref)
 
 
@@ -235,11 +287,13 @@ def sync_ga4_to_bq(
     counts: dict[str, int] = {}
 
     fetchers = [
-        ("sessions", ga4.fetch_sessions_daily, "ga4_sessions_daily", _schema_sessions),
-        ("tech", ga4.fetch_tech_daily, "ga4_tech_daily", _schema_tech),
-        ("pages", ga4.fetch_pages_daily, "ga4_pages_daily", _schema_pages),
-        ("events", ga4.fetch_events_daily, "ga4_events_daily", _schema_events),
-        ("user_acq", ga4.fetch_user_acq_daily, "ga4_user_acq_daily", _schema_user_acq),
+        ("sessions",     ga4.fetch_sessions_daily,    "ga4_sessions_daily",    _schema_sessions),
+        ("tech",         ga4.fetch_tech_daily,         "ga4_tech_daily",         _schema_tech),
+        ("pages",        ga4.fetch_pages_daily,        "ga4_pages_daily",        _schema_pages),
+        ("pageviews",    ga4.fetch_pageviews_daily,    "ga4_pageviews_daily",    _schema_pageviews),
+        ("events",       ga4.fetch_events_daily,       "ga4_events_daily",       _schema_events),
+        ("user_acq",     ga4.fetch_user_acq_daily,     "ga4_user_acq_daily",     _schema_user_acq),
+        ("geo",          ga4.fetch_geo_daily,          "ga4_geo_daily",          _schema_geo),
         ("demographics", ga4.fetch_demographics_daily, "ga4_demographics_daily", _schema_demographics),
     ]
 
@@ -254,9 +308,11 @@ def sync_ga4_to_bq(
             counts[key] = 0
 
     _log.info(
-        "GA4 sync complete: sessions=%d tech=%d pages=%d events=%d user_acq=%d demographics=%d errors=%s",
+        "GA4 sync complete: sessions=%d tech=%d pages=%d pageviews=%d events=%d "
+        "user_acq=%d geo=%d demographics=%d errors=%s",
         counts.get("sessions", 0), counts.get("tech", 0), counts.get("pages", 0),
-        counts.get("events", 0), counts.get("user_acq", 0), counts.get("demographics", 0),
+        counts.get("pageviews", 0), counts.get("events", 0), counts.get("user_acq", 0),
+        counts.get("geo", 0), counts.get("demographics", 0),
         list(errors.keys()) or "none",
     )
 

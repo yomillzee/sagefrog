@@ -135,7 +135,10 @@ def fetch_sessions_daily(
     rows = _run_report(
         property_id,
         dimensions=["date", "sessionDefaultChannelGroup", "sessionSource", "sessionMedium"],
-        metrics=["sessions", "engagedSessions", "keyEvents"],
+        metrics=[
+            "sessions", "engagedSessions", "keyEvents",
+            "totalUsers", "newUsers", "bounceRate", "engagementRate", "screenPageViews",
+        ],
         start=start, end=end, access_token=access_token,
     )
     out = []
@@ -148,6 +151,11 @@ def fetch_sessions_daily(
             "sessions": int(r.get("sessions") or 0),
             "engagedSessions": int(r.get("engagedSessions") or 0),
             "keyEvents": float(r.get("keyEvents") or 0),
+            "totalUsers": int(r.get("totalUsers") or 0),
+            "newUsers": int(r.get("newUsers") or 0),
+            "bounceRate": float(r.get("bounceRate") or 0),
+            "engagementRate": float(r.get("engagementRate") or 0),
+            "screenPageViews": int(r.get("screenPageViews") or 0),
         })
     return out
 
@@ -157,7 +165,7 @@ def fetch_tech_daily(
 ) -> list[dict[str, Any]]:
     rows = _run_report(
         property_id,
-        dimensions=["date", "deviceCategory"],
+        dimensions=["date", "deviceCategory", "browser", "operatingSystem"],
         metrics=["activeUsers", "engagedSessions", "keyEvents"],
         start=start, end=end, access_token=access_token,
     )
@@ -166,6 +174,8 @@ def fetch_tech_daily(
         out.append({
             "date": _parse_date(r.get("date", "")),
             "deviceCategory": r.get("deviceCategory") or "unknown",
+            "browser": r.get("browser") or "(not set)",
+            "operatingSystem": r.get("operatingSystem") or "(not set)",
             "activeUsers": int(r.get("activeUsers") or 0),
             "engagedSessions": int(r.get("engagedSessions") or 0),
             "keyEvents": float(r.get("keyEvents") or 0),
@@ -245,9 +255,10 @@ def fetch_user_acq_daily(
 def fetch_demographics_daily(
     property_id: str, start: str, end: str, access_token: str
 ) -> list[dict[str, Any]]:
+    """Age + gender breakdown. Requires Google Signals enabled on the property."""
     rows = _run_report(
         property_id,
-        dimensions=["date", "city", "region", "userAgeBracket", "userGender"],
+        dimensions=["date", "userAgeBracket", "userGender"],
         metrics=["activeUsers", "keyEvents", "engagementRate"],
         start=start, end=end, access_token=access_token,
     )
@@ -255,12 +266,58 @@ def fetch_demographics_daily(
     for r in rows:
         out.append({
             "date": _parse_date(r.get("date", "")),
-            "city": r.get("city") or "(not set)",
-            "region": r.get("region") or "",
             "userAgeBracket": r.get("userAgeBracket") or "(not set)",
             "userGender": r.get("userGender") or "(not set)",
             "activeUsers": int(r.get("activeUsers") or 0),
             "keyEvents": float(r.get("keyEvents") or 0),
             "engagementRate": float(r.get("engagementRate") or 0),
+        })
+    return out
+
+
+def fetch_geo_daily(
+    property_id: str, start: str, end: str, access_token: str
+) -> list[dict[str, Any]]:
+    """Geographic breakdown by country/region/city. Does not require Google Signals."""
+    rows = _run_report(
+        property_id,
+        dimensions=["date", "country", "region", "city"],
+        metrics=["activeUsers", "sessions", "keyEvents"],
+        start=start, end=end, access_token=access_token,
+    )
+    out = []
+    for r in rows:
+        out.append({
+            "date": _parse_date(r.get("date", "")),
+            "country": r.get("country") or "(not set)",
+            "region": r.get("region") or "(not set)",
+            "city": r.get("city") or "(not set)",
+            "activeUsers": int(r.get("activeUsers") or 0),
+            "sessions": int(r.get("sessions") or 0),
+            "keyEvents": float(r.get("keyEvents") or 0),
+        })
+    return out
+
+
+def fetch_pageviews_daily(
+    property_id: str, start: str, end: str, access_token: str
+) -> list[dict[str, Any]]:
+    """Page-level view counts by pagePath."""
+    rows = _run_report(
+        property_id,
+        dimensions=["date", "pagePath"],
+        metrics=["screenPageViews", "activeUsers", "newUsers", "keyEvents", "averageSessionDuration"],
+        start=start, end=end, access_token=access_token,
+    )
+    out = []
+    for r in rows:
+        out.append({
+            "date": _parse_date(r.get("date", "")),
+            "pagePath": r.get("pagePath") or "/",
+            "screenPageViews": int(r.get("screenPageViews") or 0),
+            "activeUsers": int(r.get("activeUsers") or 0),
+            "newUsers": int(r.get("newUsers") or 0),
+            "keyEvents": float(r.get("keyEvents") or 0),
+            "averageSessionDuration": float(r.get("averageSessionDuration") or 0),
         })
     return out
