@@ -48,7 +48,6 @@ _SIDEBAR_CSS = """
     .dash-sidebar-account-actions { display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: .8rem; }
     .dash-sidebar-account-link { appearance: none; border: 0; background: none; padding: 0; font: inherit; color: #9ecbf5; text-decoration: none; cursor: pointer; }
     .dash-sidebar-account-link:hover { text-decoration: underline; color: #cfe5fb; }
-    .dash-sidebar-account-sep { color: #64768f; }
     .dash-sidebar-logout-form { display: inline; margin: 0; }
     .dash-sidebar-toggle { display: none; position: fixed; top: 12px; left: 12px; z-index: 95; width: 42px; height: 42px; align-items: center; justify-content: center; border-radius: 10px; border: 1px solid var(--line); background: #fff; color: var(--navy); cursor: pointer; box-shadow: 0 1px 3px rgba(16,33,67,.12); }
     .dash-sidebar-toggle svg { width: 20px; height: 20px; }
@@ -156,98 +155,100 @@ def render_nixon_bigquery_test_page(
     * {{ box-sizing:border-box; }}
     body {{ margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:#102033; -webkit-font-smoothing:antialiased; }}
     {_SIDEBAR_CSS}
-    .debug-only, .src-note, .raw-json {{ display:none; }}
-    .is-admin .debug-only, .is-admin .src-note, .is-admin .raw-json {{ display:block; }}
-    .page-head {{ margin-bottom:24px; }}
-    .src-note {{ margin:0 0 14px; font-size:.72rem; color:var(--muted); }}
-    .src-note code {{ background:#eef4fb; padding:1px 6px; border-radius:5px; font-size:.7rem; color:#33506f; }}
-    .src-note .arrow {{ color:#9aa7bd; margin:0 4px; }}
-    .admin-bar {{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:20px; padding:12px 16px; border:1px solid #ecd9a6; border-radius:var(--radius-sm); background:linear-gradient(180deg,#fffaf0,#fff6e3); }}
+    .admin-bar {{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px; padding:11px 16px; border:1px solid #ecd9a6; border-radius:var(--radius-sm); background:linear-gradient(180deg,#fffaf0,#fff6e3); }}
     .admin-bar .status {{ margin:0; }}
-    main {{ max-width:1320px; margin:0 auto; padding:30px 28px 56px; }}
-    h1 {{ margin:0; color:var(--navy); font-size:1.5rem; font-weight:800; letter-spacing:-.01em; }}
-    h2 {{ margin:0; color:var(--navy); font-size:1.1rem; font-weight:750; letter-spacing:-.005em; }}
+    main {{ max-width:1320px; margin:0 auto; padding:24px 28px 56px; }}
+    h2 {{ margin:0; color:var(--navy); font-size:1.05rem; font-weight:750; letter-spacing:-.005em; }}
     p {{ margin:6px 0 0; color:var(--muted); }}
-    .page-head p {{ font-size:.9rem; }}
-    .toolbar {{ display:flex; flex-wrap:wrap; gap:14px; align-items:end; margin-bottom:14px; }}
-    label {{ display:grid; gap:6px; color:var(--muted); font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }}
-    input {{ border:1px solid var(--line); border-radius:var(--radius-sm); padding:9px 12px; font:inherit; background:#fff; color:#102033; }}
-    input:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
-    button.primary {{ border:0; border-radius:var(--radius-sm); padding:10px 16px; background:var(--accent); color:#fff; font-weight:700; cursor:pointer; box-shadow:0 1px 2px rgba(16,33,67,.12); transition:background .15s; }}
+    /* ---- Date bar ---- */
+    .date-bar {{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:14px 18px 12px; margin-bottom:20px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:10px; }}
+    .date-bar-top {{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }}
+    .date-bar-bottom {{ display:flex; flex-wrap:wrap; gap:20px; align-items:center; }}
+    label {{ display:grid; gap:5px; color:var(--muted); font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }}
+    input[type=date] {{ border:1px solid var(--line); border-radius:var(--radius-sm); padding:8px 11px; font:inherit; font-size:.88rem; background:#fff; color:#102033; }}
+    input[type=date]:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
+    button.primary {{ border:0; border-radius:var(--radius-sm); padding:9px 16px; background:var(--accent); color:#fff; font-weight:700; font-size:.88rem; cursor:pointer; box-shadow:0 1px 2px rgba(16,33,67,.12); transition:background .15s; }}
     button.primary:hover {{ background:#1a62b8; }}
     button.primary:disabled {{ opacity:.55; cursor:default; }}
-    section {{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:20px 22px; margin-bottom:20px; box-shadow:var(--shadow); }}
-    section > h2 {{ margin-bottom:14px; }}
-    .cards {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:12px; margin-top:2px; }}
-    .card {{ border:1px solid var(--line-soft); border-radius:var(--radius-sm); padding:14px 15px; background:linear-gradient(180deg,#fbfdff,#f5f9fd); }}
-    .card-title {{ color:var(--muted); font-size:.67rem; text-transform:uppercase; font-weight:800; letter-spacing:.05em; }}
-    .card-value {{ margin-top:8px; font-size:1.45rem; line-height:1.1; color:var(--navy); font-weight:800; letter-spacing:-.01em; }}
-    .status {{ color:var(--muted); font-size:.84rem; margin:0 0 14px; }}
+    .filter-group {{ display:flex; align-items:center; gap:8px; }}
+    .filter-label {{ color:var(--muted); font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }}
+    .chips {{ display:flex; flex-wrap:wrap; gap:5px; }}
+    .chip {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:4px 12px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s, color .12s; }}
+    .chip:hover {{ border-color:#b9c8dc; background:#f4f8fd; }}
+    .chip.active {{ background:var(--navy); color:#fff; border-color:var(--navy); }}
+    .chip.active:hover {{ background:#0d2c4d; }}
+    /* ---- Sections ---- */
+    section {{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:18px 20px 20px; margin-bottom:16px; box-shadow:var(--shadow); }}
+    .sec-head {{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:16px; }}
+    .sec-head h2 {{ margin:0; }}
+    .sec-head .status {{ margin:0; font-size:.76rem; text-align:right; flex-shrink:0; }}
+    .status {{ color:var(--muted); font-size:.82rem; margin:0 0 12px; }}
     .status.error {{ color:var(--bad); }}
+    /* ---- Metric cards ---- */
+    .cards {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); gap:10px; }}
+    .card {{ border:1px solid var(--line-soft); border-top:3px solid var(--accent); border-radius:var(--radius-sm); padding:13px 14px 14px; background:#fff; }}
+    .card-title {{ color:var(--muted); font-size:.65rem; text-transform:uppercase; font-weight:800; letter-spacing:.06em; }}
+    .card-value {{ margin-top:7px; font-size:1.5rem; line-height:1.1; color:var(--navy); font-weight:800; letter-spacing:-.02em; }}
+    /* ---- Tables ---- */
     .table-wrap {{ overflow:auto; border:1px solid var(--line-soft); border-radius:var(--radius-sm); }}
     table {{ border-collapse:collapse; width:100%; min-width:600px; font-size:.86rem; }}
-    th,td {{ padding:11px 13px; border-bottom:1px solid var(--line-soft); text-align:right; white-space:nowrap; }}
+    th,td {{ padding:10px 13px; border-bottom:1px solid var(--line-soft); text-align:right; white-space:nowrap; }}
     tbody tr:last-child td {{ border-bottom:0; }}
     tbody tr:hover td {{ background:#f7faff; }}
-    th {{ background:#f4f7fb; color:#5a6b82; text-transform:uppercase; font-size:.68rem; letter-spacing:.04em; font-weight:800; position:sticky; top:0; }}
+    th {{ background:#f4f7fb; color:#5a6b82; text-transform:uppercase; font-size:.67rem; letter-spacing:.05em; font-weight:800; position:sticky; top:0; }}
     th.left,td.left {{ text-align:left; }}
     .empty {{ color:var(--muted); padding:26px; text-align:center; }}
-    details.raw-json {{ margin-top:14px; }}
-    summary {{ color:var(--accent); cursor:pointer; font-weight:700; font-size:.82rem; }}
-    pre {{ max-height:360px; overflow:auto; background:#0b1020; color:#d7e3ff; border-radius:var(--radius-sm); padding:12px; font-size:.78rem; margin-top:10px; }}
-    code {{ background:#eef4fb; padding:2px 5px; border-radius:4px; }}
+    code {{ background:#eef4fb; padding:2px 5px; border-radius:4px; font-size:.85em; }}
     .muted {{ color:var(--muted); font-size:.78rem; margin-left:6px; }}
     .page-path {{ font-weight:600; color:#1f2d40; word-break:break-all; }}
     table.compact {{ min-width:0; font-size:.84rem; }}
     table.compact th, table.compact td {{ padding:8px 12px; }}
+    /* ---- Pager ---- */
     .pager {{ display:flex; align-items:center; justify-content:flex-end; gap:12px; margin-top:12px; }}
     .pager-btn {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:var(--radius-sm); padding:6px 13px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s; }}
     .pager-btn:hover:not(:disabled) {{ border-color:#b9c8dc; background:#f4f8fd; }}
     .pager-btn:disabled {{ opacity:.45; cursor:default; }}
     .pager-info {{ font-size:.8rem; color:var(--muted); font-weight:600; }}
-    .chart-wrap {{ position:relative; border:1px solid var(--line); border-radius:10px; padding:10px 12px; background:#fff; }}
+    /* ---- Trend chart ---- */
+    .chart-wrap {{ position:relative; border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px; background:#fafcff; }}
     .trend-svg {{ width:100%; height:260px; display:block; }}
-    .chart-note {{ font-size:.76rem; color:var(--muted); margin-top:8px; }}
+    .chart-note {{ font-size:.74rem; color:var(--muted); margin-top:8px; }}
     .chart-tip {{ position:absolute; pointer-events:none; background:#0b1020; color:#e8eefc; font-size:.74rem; line-height:1.5; padding:7px 9px; border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.25); transform:translate(-50%,-112%); white-space:nowrap; z-index:5; }}
     .metric-swatch {{ width:10px; height:10px; border-radius:2px; display:inline-block; vertical-align:middle; margin-right:4px; }}
-    .filter-row {{ display:flex; flex-wrap:wrap; gap:20px; margin-bottom:12px; align-items:center; }}
-    .filter-group {{ display:flex; align-items:center; gap:8px; }}
-    .filter-label {{ color:var(--muted); font-size:.74rem; font-weight:800; text-transform:uppercase; }}
-    .chips {{ display:flex; flex-wrap:wrap; gap:6px; }}
-    .chip {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:5px 13px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s, color .12s; }}
-    .chip:hover {{ border-color:#b9c8dc; background:#f4f8fd; }}
-    .chip.active {{ background:var(--navy); color:#fff; border-color:var(--navy); }}
-    .chip.active:hover {{ background:#0d2c4d; }}
+    /* ---- Bar lists ---- */
+    .bar-row {{ display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--line-soft); }}
+    .bar-row:last-child {{ border-bottom:0; }}
+    .bar-label {{ flex:0 0 160px; font-size:.84rem; color:var(--navy); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+    .bar-track {{ flex:1 1 auto; height:7px; background:var(--line-soft); border-radius:4px; overflow:hidden; }}
+    .bar-fill {{ height:100%; background:var(--accent); border-radius:4px; transition:width .3s; }}
+    .bar-count {{ flex:0 0 100px; font-size:.82rem; color:var(--navy); text-align:right; font-variant-numeric:tabular-nums; }}
+    .bar-pct {{ color:var(--muted); font-size:.74rem; margin-left:4px; }}
+    /* ---- Layout cols ---- */
+    .two-col {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px; }}
+    .three-col {{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; margin-top:14px; }}
+    .col-panel {{ border:1px solid var(--line-soft); border-radius:var(--radius-sm); padding:14px 15px; background:#fafcff; }}
+    .col-panel h3 {{ margin:0 0 12px; font-size:.86rem; font-weight:750; color:var(--navy); }}
+    .subsec-h3 {{ margin:16px 0 10px; font-size:.86rem; font-weight:750; color:var(--navy); }}
+    .trend-sm-svg {{ width:100%; height:130px; display:block; }}
+    /* ---- Funnel ---- */
+    .funnel-bar {{ display:flex; flex-direction:column; gap:8px; }}
+    .funnel-step {{ display:flex; align-items:center; gap:12px; }}
+    .funnel-step-label {{ flex:0 0 110px; font-size:.82rem; color:var(--navy); font-weight:600; }}
+    .funnel-step-track {{ flex:1 1 auto; height:22px; background:var(--line-soft); border-radius:6px; overflow:hidden; }}
+    .funnel-step-fill {{ height:100%; background:var(--accent); border-radius:6px; display:flex; align-items:center; padding-left:10px; font-size:.76rem; color:#fff; font-weight:700; min-width:2px; }}
+    .funnel-step-count {{ flex:0 0 56px; font-size:.82rem; color:var(--navy); text-align:right; font-weight:700; }}
+    /* ---- Explorer tree ---- */
+    .indent1 {{ display:inline-block; width:18px; }}
+    .indent2 {{ display:inline-block; width:36px; }}
     .tree-row[data-expandable] {{ cursor:pointer; }}
     .tree-row[data-expandable]:hover {{ background:#f3f8ff; }}
     .caret {{ display:inline-block; width:14px; color:var(--muted); font-size:.8rem; }}
     .tree-row[data-expandable] .caret::before {{ content:'\25B8'; }}
     .tree-row[data-expandable].open .caret::before {{ content:'\25BE'; }}
-    .bar-row {{ display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--line-soft); }}
-    .bar-row:last-child {{ border-bottom:0; }}
-    .bar-label {{ flex:0 0 160px; font-size:.84rem; color:var(--navy); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
-    .bar-track {{ flex:1 1 auto; height:8px; background:var(--line-soft); border-radius:4px; overflow:hidden; }}
-    .bar-fill {{ height:100%; background:var(--accent); border-radius:4px; transition:width .3s; }}
-    .bar-count {{ flex:0 0 100px; font-size:.82rem; color:var(--navy); text-align:right; font-variant-numeric:tabular-nums; }}
-    .bar-pct {{ color:var(--muted); font-size:.76rem; margin-left:4px; }}
-    .two-col {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:14px; }}
-    .three-col {{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-top:14px; }}
-    .col-panel {{ border:1px solid var(--line-soft); border-radius:var(--radius-sm); padding:14px 16px; }}
-    .col-panel h3 {{ margin:0 0 12px; font-size:.88rem; font-weight:750; color:var(--navy); }}
-    .subsec-h3 {{ margin:16px 0 10px; font-size:.88rem; font-weight:750; color:var(--navy); }}
-    .trend-sm-svg {{ width:100%; height:130px; display:block; }}
-    .funnel-bar {{ display:flex; flex-direction:column; gap:8px; }}
-    .funnel-step {{ display:flex; align-items:center; gap:12px; }}
-    .funnel-step-label {{ flex:0 0 120px; font-size:.84rem; color:var(--navy); font-weight:600; }}
-    .funnel-step-track {{ flex:1 1 auto; height:24px; background:var(--line-soft); border-radius:6px; overflow:hidden; }}
-    .funnel-step-fill {{ height:100%; background:var(--accent); border-radius:6px; display:flex; align-items:center; padding-left:10px; font-size:.78rem; color:#fff; font-weight:700; min-width:2px; }}
-    .funnel-step-count {{ flex:0 0 60px; font-size:.82rem; color:var(--navy); text-align:right; font-weight:700; }}
-    .indent1 {{ display:inline-block; width:18px; }}
-    .indent2 {{ display:inline-block; width:36px; }}
     .lvl-campaign .tree-name {{ font-weight:800; color:var(--navy); }}
     .lvl-group .tree-name {{ font-weight:600; }}
     .lvl-ad td.left {{ color:var(--muted); }}
-    .pill {{ display:inline-block; padding:1px 7px; border-radius:999px; font-size:.66rem; font-weight:800; letter-spacing:.03em; text-transform:uppercase; vertical-align:middle; margin-right:7px; }}
+    .pill {{ display:inline-block; padding:1px 7px; border-radius:999px; font-size:.64rem; font-weight:800; letter-spacing:.03em; text-transform:uppercase; vertical-align:middle; margin-right:7px; }}
     .pill-google {{ background:#e8f0fe; color:#1a73e8; }}
     .pill-linkedin {{ background:#e6f0f8; color:#0a66c2; }}
     .ad-cell {{ display:inline-flex; align-items:center; gap:9px; vertical-align:middle; }}
@@ -258,13 +259,15 @@ def render_nixon_bigquery_test_page(
     .ad-copy {{ display:flex; flex-direction:column; gap:1px; margin-top:3px; }}
     .ad-copy-line {{ font-size:.78rem; color:var(--muted); white-space:normal; }}
     .ad-copy-tag {{ display:inline-block; min-width:34px; color:#9aa7bd; font-weight:700; font-size:.66rem; text-transform:uppercase; margin-right:5px; }}
-    .page-search {{ width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:9px 13px; font:inherit; font-size:.88rem; background:#fff; color:#102033; margin-bottom:10px; }}
+    /* ---- Pages search ---- */
+    .page-search {{ width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:8px 12px; font:inherit; font-size:.88rem; background:#fff; color:#102033; margin-bottom:10px; }}
     .page-search:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
+    /* ---- New vs returning ---- */
     .nr-wrap {{ display:flex; align-items:center; gap:20px; padding:12px 14px; border:1px solid var(--line-soft); border-radius:var(--radius-sm); background:#f9fbff; margin-bottom:14px; flex-wrap:wrap; }}
     .nr-stat {{ display:flex; flex-direction:column; gap:2px; min-width:80px; }}
-    .nr-stat-label {{ font-size:.68rem; text-transform:uppercase; letter-spacing:.05em; font-weight:800; color:var(--muted); }}
+    .nr-stat-label {{ font-size:.67rem; text-transform:uppercase; letter-spacing:.05em; font-weight:800; color:var(--muted); }}
     .nr-stat-value {{ font-size:1.2rem; font-weight:800; color:var(--navy); line-height:1.1; }}
-    .nr-stat-pct {{ font-size:.76rem; color:var(--muted); }}
+    .nr-stat-pct {{ font-size:.74rem; color:var(--muted); }}
     .nr-bar-wrap {{ flex:1 1 180px; }}
     .nr-bar {{ height:10px; border-radius:5px; overflow:hidden; display:flex; }}
     .nr-bar-new {{ background:#1d6fd0; height:100%; transition:width .3s; }}
@@ -280,30 +283,31 @@ def render_nixon_bigquery_test_page(
     {sidebar_html}
     <div class="dash-main">
   <main>
-    <div class="page-head">
-      <h1>Nixon Medical</h1>
-    </div>
 
-    <!-- Shared date toolbar -->
-    <form class="toolbar" id="filters">
-      <label>Start date<input id="startDate" type="date" value="{start.isoformat()}"></label>
-      <label>End date<input id="endDate" type="date" value="{end.isoformat()}"></label>
-      <button class="primary" type="submit">Refetch</button>
-    </form>
-    <div class="filter-row" id="datePresetsRow">
-      <div class="filter-group">
-        <span class="filter-label">Quick range</span>
-        <div class="chips" id="datePresets">
-          <button type="button" class="chip" data-preset="this_month">This month</button>
-          <button type="button" class="chip" data-preset="last_month">Last month</button>
-          <button type="button" class="chip" data-preset="last_7">Last 7 days</button>
-          <button type="button" class="chip" data-preset="last_30">Last 30 days</button>
-          <button type="button" class="chip" data-preset="last_90">Last 90 days</button>
-        </div>
+    <!-- Date / filter bar -->
+    <div class="date-bar">
+      <div class="date-bar-top">
+        <form id="filters" style="display:contents">
+          <label>From<input id="startDate" type="date" value="{start.isoformat()}"></label>
+          <label>To<input id="endDate" type="date" value="{end.isoformat()}"></label>
+          <button class="primary" type="submit" style="align-self:flex-end">Refresh</button>
+        </form>
       </div>
-      <div class="filter-group" id="platformFilterGroup">
-        <span class="filter-label">Platform</span>
-        <div class="chips" id="platformChips"></div>
+      <div class="date-bar-bottom">
+        <div class="filter-group">
+          <span class="filter-label">Range</span>
+          <div class="chips" id="datePresets">
+            <button type="button" class="chip" data-preset="this_month">This month</button>
+            <button type="button" class="chip" data-preset="last_month">Last month</button>
+            <button type="button" class="chip" data-preset="last_7">Last 7d</button>
+            <button type="button" class="chip" data-preset="last_30">Last 30d</button>
+            <button type="button" class="chip" data-preset="last_90">Last 90d</button>
+          </div>
+        </div>
+        <div class="filter-group" id="platformFilterGroup">
+          <span class="filter-label">Platform</span>
+          <div class="chips" id="platformChips"></div>
+        </div>
       </div>
     </div>
 
@@ -311,23 +315,16 @@ def render_nixon_bigquery_test_page(
     <div id="pane-overview">
       {backfill_html}
       <section id="sec-overview">
-        <h2>Summary</h2>
-        <p class="src-note"><code>GET /api/clients/nixon/summary</code><span class="arrow">→</span><code>marketing_marts.vw_paid_media_daily</code></p>
-        <div class="status" id="summaryStatus">Waiting…</div>
+        <div class="sec-head"><h2>Summary</h2><span class="status" id="summaryStatus"></span></div>
         <div class="cards" id="summaryCards"></div>
-        <details class="raw-json"><summary>Raw summary JSON</summary><pre id="summaryJson">{{}}</pre></details>
       </section>
 
       <section>
-        <h2>Trends</h2>
-        <p class="src-note"><code>GET /api/clients/nixon/summary</code> (daily)<span class="arrow">→</span><code>marketing_marts.vw_paid_media_daily</code></p>
-        <div class="filter-row">
-          <div class="filter-group">
-            <span class="filter-label">Metrics</span>
-            <div class="chips" id="metricChips"></div>
-          </div>
+        <div class="sec-head"><h2>Trends</h2><span class="status" id="chartStatus"></span></div>
+        <div class="filter-group" style="margin-bottom:12px">
+          <span class="filter-label">Metrics</span>
+          <div class="chips" id="metricChips"></div>
         </div>
-        <div class="status" id="chartStatus">Waiting…</div>
         <div class="chart-wrap" id="trendChartWrap">
           <svg id="trendChart" class="trend-svg" preserveAspectRatio="none"></svg>
           <div id="chartTip" class="chart-tip" hidden></div>
@@ -336,20 +333,16 @@ def render_nixon_bigquery_test_page(
       </section>
 
       <section>
-        <h2>Mart health</h2>
-        <p class="src-note"><code>GET /api/clients/nixon/marketing/health</code><span class="arrow">→</span><code>marketing_marts.mart_health</code></p>
-        <div class="status" id="healthStatus">Waiting…</div>
+        <div class="sec-head"><h2>Data health</h2><span class="status" id="healthStatus"></span></div>
         <div class="table-wrap"><table id="healthTable"></table></div>
-        <details class="raw-json"><summary>Raw health JSON</summary><pre id="healthJson">{{}}</pre></details>
       </section>
     </div>
 
     <!-- ===== EXPLORER TAB ===== -->
     <div id="pane-explorer" hidden>
       <section id="sec-explorer">
-        <h2>Campaign explorer</h2>
-        <p class="src-note"><code>GET .../google-ads/explorer</code><span class="arrow">→</span><code>explorer_google_ads_daily</code> · <code>GET .../linkedin/explorer</code><span class="arrow">→</span><code>fact_linkedin_ads_creative_daily</code></p>
-        <div class="filter-row" id="explorerFilters">
+        <div class="sec-head"><h2>Campaign explorer</h2><span class="status" id="explorerStatus"></span></div>
+        <div style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:12px;" id="explorerFilters">
           <div class="filter-group">
             <span class="filter-label">Product</span>
             <div class="chips" id="productChips"></div>
@@ -359,9 +352,7 @@ def render_nixon_bigquery_test_page(
             <div class="chips" id="regionChips"></div>
           </div>
         </div>
-        <div class="status" id="explorerStatus">Waiting…</div>
         <div class="table-wrap"><table id="explorerTable"></table></div>
-        <details class="raw-json"><summary>Raw explorer JSON</summary><pre id="explorerJson">{{}}</pre></details>
       </section>
     </div>
 
@@ -369,64 +360,47 @@ def render_nixon_bigquery_test_page(
     <div id="pane-analytics" hidden>
 
       <section id="sec-pages">
-        <h2>Top pages</h2>
-        <p class="src-note"><code>GET .../pages/top</code><span class="arrow">→</span><code>vw_page_path_daily</code> · <code>GET .../pages/sources</code><span class="arrow">→</span><code>vw_page_path_source_daily</code></p>
-        <div class="filter-row" id="pageFilters">
+        <div class="sec-head"><h2>Top pages</h2><span class="status" id="pagesStatus"></span></div>
+        <div style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:10px;" id="pageFilters">
           <div class="filter-group"><span class="filter-label">AI platform</span><div class="chips" id="aiChips"></div></div>
           <div class="filter-group"><span class="filter-label">Paid source</span><div class="chips" id="sourceChips"></div></div>
         </div>
-        <input class="page-search" id="pagesSearch" type="search" placeholder="Filter pages by path…" autocomplete="off">
-        <div class="status" id="pagesStatus">Waiting…</div>
+        <input class="page-search" id="pagesSearch" type="search" placeholder="Filter by path…" autocomplete="off">
         <div class="table-wrap"><table id="pagesTable" class="compact"></table></div>
         <div class="pager" id="pagesPager"></div>
-        <details class="raw-json"><summary>Raw page JSON</summary><pre id="pagesJson">{{}}</pre></details>
       </section>
 
       <section id="sec-traffic">
-        <h2>Traffic overview</h2>
-        <p class="src-note"><code>GET .../pages/traffic-acquisition</code><span class="arrow">→</span><code>analytics_test.ga4_TrafficAcquisition_*</code></p>
-        <div class="status" id="trafficAcqStatus">Waiting…</div>
+        <div class="sec-head"><h2>Traffic</h2><span class="status" id="trafficAcqStatus"></span></div>
         <div class="two-col">
           <div class="col-panel"><h3>Sessions over time</h3><svg id="sessionsTrendChart" class="trend-sm-svg" preserveAspectRatio="none"></svg></div>
           <div class="col-panel"><h3>By channel</h3><div id="channelBars"></div></div>
         </div>
         <h3 class="subsec-h3">Top sources / medium</h3>
         <div class="table-wrap"><table id="sourcesTable" class="compact"></table></div>
-        <details class="raw-json"><summary>Raw traffic JSON</summary><pre id="trafficAcqJson">{{}}</pre></details>
       </section>
 
       <section id="sec-audience">
-        <h2>Audience</h2>
-        <p class="src-note"><code>GET .../pages/device-split</code><span class="arrow">→</span><code>analytics_test.ga4_TechDetails_*</code></p>
-        <div class="status" id="deviceStatus">Waiting…</div>
-        <div class="col-panel" style="max-width:440px"><h3>Device type</h3><div id="deviceBars"></div></div>
-        <details class="raw-json"><summary>Raw device JSON</summary><pre id="deviceJson">{{}}</pre></details>
+        <div class="sec-head"><h2>Audience</h2><span class="status" id="deviceStatus"></span></div>
+        <div class="col-panel" style="max-width:420px"><h3>Device type</h3><div id="deviceBars"></div></div>
       </section>
 
       <section id="sec-landing">
-        <h2>Landing pages</h2>
-        <p class="src-note"><code>GET .../pages/landing</code><span class="arrow">→</span><code>analytics_test.ga4_LandingPage_*</code></p>
-        <div class="status" id="landingStatus">Waiting…</div>
+        <div class="sec-head"><h2>Landing pages</h2><span class="status" id="landingStatus"></span></div>
         <div class="table-wrap"><table id="landingTable" class="compact"></table></div>
         <div class="pager" id="landingPager"></div>
-        <details class="raw-json"><summary>Raw landing JSON</summary><pre id="landingJson">{{}}</pre></details>
       </section>
 
       <section id="sec-conversions">
-        <h2>Conversions</h2>
-        <p class="src-note"><code>GET .../analytics/conversions</code><span class="arrow">→</span><code>analytics_test.ga4_Events_*</code></p>
-        <div class="status" id="conversionsStatus">Waiting…</div>
+        <div class="sec-head"><h2>Conversions</h2><span class="status" id="conversionsStatus"></span></div>
         <div class="two-col">
           <div class="col-panel"><h3>Key events</h3><div id="eventBars"></div></div>
           <div class="col-panel"><h3>Form funnel</h3><div id="funnelChart" class="funnel-bar"></div></div>
         </div>
-        <details class="raw-json"><summary>Raw conversions JSON</summary><pre id="conversionsJson">{{}}</pre></details>
       </section>
 
       <section id="sec-useracq">
-        <h2>New user acquisition</h2>
-        <p class="src-note"><code>GET .../analytics/user-acquisition</code><span class="arrow">→</span><code>analytics_test.ga4_UserAcquisition_*</code></p>
-        <div class="status" id="userAcqStatus">Waiting…</div>
+        <div class="sec-head"><h2>New user acquisition</h2><span class="status" id="userAcqStatus"></span></div>
         <div id="newVsReturning"></div>
         <div class="two-col">
           <div class="col-panel"><h3>By first channel</h3><div id="userAcqChannelBars"></div></div>
@@ -435,13 +409,10 @@ def render_nixon_bigquery_test_page(
             <div class="table-wrap"><table id="userAcqSourceTable" class="compact"></table></div>
           </div>
         </div>
-        <details class="raw-json"><summary>Raw user acquisition JSON</summary><pre id="userAcqJson">{{}}</pre></details>
       </section>
 
       <section id="sec-demographics">
-        <h2>Demographics</h2>
-        <p class="src-note"><code>GET .../analytics/demographics</code><span class="arrow">→</span><code>analytics_test.ga4_DemographicDetails_*</code></p>
-        <div class="status" id="demoStatus">Waiting…</div>
+        <div class="sec-head"><h2>Demographics</h2><span class="status" id="demoStatus"></span></div>
         <div class="three-col">
           <div class="col-panel">
             <h3>Top cities</h3>
@@ -450,7 +421,6 @@ def render_nixon_bigquery_test_page(
           <div class="col-panel"><h3>Age bracket</h3><div id="ageBars"></div></div>
           <div class="col-panel"><h3>Gender</h3><div id="genderBars"></div></div>
         </div>
-        <details class="raw-json"><summary>Raw demographics JSON</summary><pre id="demoJson">{{}}</pre></details>
       </section>
 
     </div><!-- /pane-analytics -->
@@ -504,10 +474,6 @@ def render_nixon_bigquery_test_page(
       el.textContent = text;
       el.className = isError ? 'status error' : 'status';
       el.style.display = text ? '' : 'none';
-    }}
-    function setRaw(id, payload) {{
-      const el = document.getElementById(id);
-      if (el) el.textContent = JSON.stringify(payload, null, 2);
     }}
     function renderTable(id, columns, rows, emptyText) {{
       const el = document.getElementById(id);
@@ -649,7 +615,7 @@ def render_nixon_bigquery_test_page(
         parts.push(`<text x="${{xAt(i).toFixed(1)}}" y="${{H-8}}" font-size="10" fill="#66758f" text-anchor="${{anchor}}">${{esc(String(chartDaily[i].date).slice(5))}}</text>`);
       }}
       svg.innerHTML = parts.join('');
-      setStatus('chartStatus', `${{n}} day(s) · ${{active.length}} metric(s).`);
+      setStatus('chartStatus', `${{n}} day(s) · ${{active.length}} metric(s)`);
     }}
     function buildMetricChips() {{
       const el = document.getElementById('metricChips');
@@ -680,21 +646,19 @@ def render_nixon_bigquery_test_page(
       svg.addEventListener('mouseleave', () => {{ tip.hidden=true; }});
     }}
     async function loadSummary() {{
-      setStatus('summaryStatus','Loading summary...');
+      setStatus('summaryStatus','Loading…');
       try {{
         summaryPayload = await getJson(withDates(SUMMARY_API));
         renderSummary(); renderChart();
-        setRaw('summaryJson', summaryPayload);
-        const note = summaryPayload.by_source ? '' : ' (combined — no per-platform breakdown)';
-        setStatus('summaryStatus', `Loaded ${{summaryPayload.start_date}} to ${{summaryPayload.end_date}}.${{note}}`);
+        const note = summaryPayload.by_source ? '' : ' · combined';
+        setStatus('summaryStatus', `${{summaryPayload.start_date}} – ${{summaryPayload.end_date}}${{note}}`);
       }} catch(err) {{
         summaryPayload=null;
         setStatus('summaryStatus', err.message||String(err), true);
-        setRaw('summaryJson', {{error:err.message||String(err)}});
       }}
     }}
     async function loadHealth() {{
-      setStatus('healthStatus','Loading mart health...');
+      setStatus('healthStatus','Loading…');
       try {{
         const payload = await getJson(withDates(HEALTH_API));
         const rows = payload.rows||[];
@@ -712,8 +676,7 @@ def render_nixon_bigquery_test_page(
           {{key:'clicks',label:'Clicks',format:countD}},
           {{key:'conversions',label:'Conv.',format:countD}},
         ], rows, 'No mart health rows found.');
-        setRaw('healthJson', payload);
-        setStatus('healthStatus', rows.length ? `${{rows.length}} source(s).` : 'No health rows found.');
+        setStatus('healthStatus', rows.length ? `${{rows.length}} source(s)` : 'No data');
       }} catch(err) {{
         setStatus('healthStatus', err.message||String(err), true);
       }}
@@ -800,8 +763,8 @@ def render_nixon_bigquery_test_page(
       const filterActive=productFilter.size||regionFilter.size;
       const totalCampaigns=new Set(explorerRows.map(r=>r.campaign_name||'—')).size;
       setStatus('explorerStatus', explorerRows.length
-        ? (filterActive ? `Showing ${{tree.size}} of ${{totalCampaigns}} campaign(s).` : `Loaded ${{tree.size}} campaign(s) across ${{explorerRows.length}} ads.`)
-        : 'No explorer rows found.');
+        ? (filterActive ? `${{tree.size}} of ${{totalCampaigns}} campaign(s)` : `${{tree.size}} campaign(s) · ${{explorerRows.length}} ads`)
+        : 'No campaigns found');
     }}
     function toggleExplorerRow(row) {{
       const id=row.dataset.id, table=row.closest('table'), expanded=row.classList.toggle('open');
@@ -822,14 +785,13 @@ def render_nixon_bigquery_test_page(
       return out;
     }}
     async function loadExplorer() {{
-      setStatus('explorerStatus','Loading campaign explorer...');
+      setStatus('explorerStatus','Loading…');
       const [g,l]=await Promise.all([
         getJson(withDates(EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(LINKEDIN_EXPLORER_API)).catch(()=>({{rows:[]}})),
       ]);
       explorerRows=normalizeExplorerRows(g,l);
       renderExplorer();
-      setRaw('explorerJson',{{google:g,linkedin:l}});
     }}
 
     // ---- GA4: Top pages ----
@@ -857,15 +819,15 @@ def render_nixon_bigquery_test_page(
       let base=pageFiltersActive()?aggregatePages(pagesSourceRows.filter(pageSourceRowMatches)):pagesTopRows;
       if (pagesSearchQuery) {{ const q=pagesSearchQuery.toLowerCase(); base=base.filter(p=>p.page_path.toLowerCase().includes(q)); }}
       const el=document.getElementById('pagesTable');
-      if (!base.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No pages match${{pagesSearchQuery?' "'+esc(pagesSearchQuery)+'"':''}}.</td></tr></tbody>`; setStatus('pagesStatus','No results.'); document.getElementById('pagesPager').innerHTML=''; return; }}
+      if (!base.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No pages match${{pagesSearchQuery?' "'+esc(pagesSearchQuery)+'"':''}}.</td></tr></tbody>`; setStatus('pagesStatus','No results'); document.getElementById('pagesPager').innerHTML=''; return; }}
       const totalPages=Math.max(1,Math.ceil(base.length/PAGES_PER_PAGE));
       if (pagesPageNum>totalPages) pagesPageNum=totalPages;
       const startIdx=(pagesPageNum-1)*PAGES_PER_PAGE;
       const pageRows=base.slice(startIdx,startIdx+PAGES_PER_PAGE);
       el.innerHTML=`<thead><tr><th class="left">Page</th><th>Views</th><th>Users</th><th>Key events</th><th>Avg engt</th></tr></thead>`+
         `<tbody>${{pageRows.map(p=>{{const sub=p.page_group?` <span class="muted">${{esc(p.page_group)}}</span>`:'';const engt=p.users?p.engagement_seconds/p.users:0;return`<tr><td class="left"><span class="page-path">${{esc(p.page_path)}}</span>${{sub}}</td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;}}). join('')}}</tbody>`;
-      const filterNote=(pageFiltersActive()?'filtered':'')+(pagesSearchQuery?'searched':'');
-      setStatus('pagesStatus', `${{startIdx+1}}–${{startIdx+pageRows.length}} of ${{base.length}} page(s)${{filterNote?' ('+filterNote+')':''}}.`);
+      const tag=pageFiltersActive()||pagesSearchQuery?' (filtered)':'';
+      setStatus('pagesStatus', `${{startIdx+1}}–${{startIdx+pageRows.length}} of ${{base.length}}${{tag}}`);
       renderPagesPager(totalPages);
     }}
     function renderPagesPager(totalPages) {{
@@ -894,14 +856,13 @@ def render_nixon_bigquery_test_page(
       buildMultiChips('sourceChips',paidSources.map(s=>[s,paidLabel(s)]),paidSourceFilter);
     }}
     async function loadPages() {{
-      setStatus('pagesStatus','Loading page performance...');
+      setStatus('pagesStatus','Loading…');
       const [top,src]=await Promise.all([
         getJson(withDates(PAGES_TOP_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(PAGES_SOURCES_API)).catch(()=>({{rows:[]}})),
       ]);
       pagesTopRows=top.rows||[]; pagesSourceRows=src.rows||[]; pagesPageNum=1;
       buildPageFilters(); renderPages();
-      setRaw('pagesJson',{{top,sources:src}});
     }}
     (function(){{
       const inp=document.getElementById('pagesSearch');
@@ -938,7 +899,7 @@ def render_nixon_bigquery_test_page(
       el.innerHTML=rows.map(r=>{{const p=total?num(r[valueKey])/total*100:0;return`<div class="bar-row"><div class="bar-label">${{esc(r[labelKey])}}</div>${{pctBar(p)}}<div class="bar-count">${{count(r[valueKey])}}<span class="bar-pct">${{p.toFixed(0)}}%</span></div></div>`;}}).join('');
     }}
     async function loadTrafficAcq() {{
-      setStatus('trafficAcqStatus','Loading traffic data...');
+      setStatus('trafficAcqStatus','Loading…');
       try {{
         const payload=await getJson(withDates(TRAFFIC_ACQ_API));
         renderBarList('channelBars',payload.by_channel||[],'sessions','channel');
@@ -952,18 +913,16 @@ def render_nixon_bigquery_test_page(
           {{key:'key_events',label:'Key events',format:count}},
         ], payload.by_source||[], 'No source data.');
         setStatus('trafficAcqStatus','');
-        setRaw('trafficAcqJson',payload);
       }} catch(err) {{ setStatus('trafficAcqStatus',err.message||String(err),true); }}
     }}
 
     // ---- GA4: Device split ----
     async function loadDeviceSplit() {{
-      setStatus('deviceStatus','Loading device data...');
+      setStatus('deviceStatus','Loading…');
       try {{
         const payload=await getJson(withDates(DEVICE_SPLIT_API));
         renderBarList('deviceBars',payload.rows||[],'users','device');
         setStatus('deviceStatus','');
-        setRaw('deviceJson',payload);
       }} catch(err) {{ setStatus('deviceStatus',err.message||String(err),true); }}
     }}
 
@@ -977,7 +936,7 @@ def render_nixon_bigquery_test_page(
       if (!rows.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No landing page data for this range.</td></tr></tbody>`; document.getElementById('landingPager').innerHTML=''; return; }}
       el.innerHTML=`<thead><tr><th class="left">Landing page</th><th>Sessions</th><th>Users</th><th>New users</th><th>Key events</th><th>KE rate</th><th>Avg engt</th></tr></thead>`+
         `<tbody>${{rows.map(r=>`<tr><td class="left"><span class="page-path">${{esc(r.page_path)}}</span></td><td>${{count(r.sessions)}}</td><td>${{count(r.users)}}</td><td>${{count(r.new_users)}}</td><td>${{count(r.key_events)}}</td><td>${{r.key_event_rate!=null?r.key_event_rate+'%':'—'}}</td><td>${{fmtDuration(r.avg_engagement_seconds)}}</td></tr>`).join('')}}</tbody>`;
-      setStatus('landingStatus',`${{startIdx+1}}–${{startIdx+rows.length}} of ${{landingRows.length}} page(s).`);
+      setStatus('landingStatus',`${{startIdx+1}}–${{startIdx+rows.length}} of ${{landingRows.length}}`);
       const pager=document.getElementById('landingPager');
       if (totalPages<=1) {{ pager.innerHTML=''; return; }}
       pager.innerHTML=`<button type="button" class="pager-btn" id="landingPrev"${{landingPageNum<=1?' disabled':''}}>‹ Prev</button><span class="pager-info">Page ${{landingPageNum}} of ${{totalPages}}</span><button type="button" class="pager-btn" id="landingNext"${{landingPageNum>=totalPages?' disabled':''}}>Next ›</button>`;
@@ -986,17 +945,16 @@ def render_nixon_bigquery_test_page(
       if (next) next.onclick=()=>{{if(landingPageNum<totalPages){{landingPageNum++;renderLanding();}}}};
     }}
     async function loadLandingPages() {{
-      setStatus('landingStatus','Loading landing pages...');
+      setStatus('landingStatus','Loading…');
       try {{
         const payload=await getJson(withDates(LANDING_PAGES_API));
         landingRows=payload.rows||[]; landingPageNum=1; renderLanding();
-        setRaw('landingJson',payload);
       }} catch(err) {{ setStatus('landingStatus',err.message||String(err),true); }}
     }}
 
     // ---- GA4: Conversions ----
     async function loadConversions() {{
-      setStatus('conversionsStatus','Loading conversion events...');
+      setStatus('conversionsStatus','Loading…');
       try {{
         const payload=await getJson(withDates(CONVERSIONS_API));
         const rows=payload.rows||[];
@@ -1014,7 +972,6 @@ def render_nixon_bigquery_test_page(
           return`<div class="funnel-step"><div class="funnel-step-label">${{esc(s.step)}}</div><div class="funnel-step-track"><div class="funnel-step-fill" style="width:${{p.toFixed(1)}}%">${{p>15?count(s.count):''}}</div></div><div class="funnel-step-count">${{count(s.count)}}</div></div>`;
         }}).join('');
         setStatus('conversionsStatus','');
-        setRaw('conversionsJson',payload);
       }} catch(err) {{ setStatus('conversionsStatus',err.message||String(err),true); }}
     }}
 
@@ -1040,7 +997,7 @@ def render_nixon_bigquery_test_page(
       </div>`;
     }}
     async function loadUserAcquisition() {{
-      setStatus('userAcqStatus','Loading user acquisition...');
+      setStatus('userAcqStatus','Loading…');
       try {{
         const payload=await getJson(withDates(USER_ACQ_API));
         renderNewVsReturning(payload.by_channel||[]);
@@ -1053,13 +1010,12 @@ def render_nixon_bigquery_test_page(
           {{key:'key_event_rate',label:'KE rate',format:v=>v!=null?v+'%':'—'}},
         ], payload.by_source||[], 'No source data.');
         setStatus('userAcqStatus','');
-        setRaw('userAcqJson',payload);
       }} catch(err) {{ setStatus('userAcqStatus',err.message||String(err),true); }}
     }}
 
     // ---- GA4: Demographics ----
     async function loadDemographics() {{
-      setStatus('demoStatus','Loading demographics...');
+      setStatus('demoStatus','Loading…');
       try {{
         const payload=await getJson(withDates(DEMOGRAPHICS_API));
         renderTable('citiesTable',[
@@ -1072,23 +1028,22 @@ def render_nixon_bigquery_test_page(
         renderBarList('ageBars',payload.by_age||[],'users','age_bracket');
         renderBarList('genderBars',payload.by_gender||[],'users','gender');
         setStatus('demoStatus','');
-        setRaw('demoJson',payload);
       }} catch(err) {{ setStatus('demoStatus',err.message||String(err),true); }}
     }}
 
     // ---- Loaders ----
     function loadAllAnalytics() {{
       const modules=getModules();
-      if (modules.top_pages)       loadPages();
-      if (modules.traffic)         loadTrafficAcq();
-      if (modules.audience)        loadDeviceSplit();
-      if (modules.landing)         loadLandingPages();
-      if (modules.conversions)     loadConversions();
+      if (modules.top_pages)        loadPages();
+      if (modules.traffic)          loadTrafficAcq();
+      if (modules.audience)         loadDeviceSplit();
+      if (modules.landing)          loadLandingPages();
+      if (modules.conversions)      loadConversions();
       if (modules.user_acquisition) loadUserAcquisition();
-      if (modules.demographics)    loadDemographics();
+      if (modules.demographics)     loadDemographics();
     }}
     function loadCurrentTab() {{
-      if (currentTab==='overview')  {{ loadSummary(); loadHealth(); }}
+      if (currentTab==='overview')   {{ loadSummary(); loadHealth(); }}
       else if (currentTab==='explorer') loadExplorer();
       else if (currentTab==='analytics') {{ analyticsLoaded=false; applyModules(); loadAllAnalytics(); analyticsLoaded=true; }}
     }}
