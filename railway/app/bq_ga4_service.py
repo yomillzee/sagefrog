@@ -241,11 +241,11 @@ def ensure_ga4_tables() -> None:
     project = _project_id()
     dataset = _dataset_id()
     dataset_ref = f"{project}.{dataset}"
-    client.create_dataset(bq.Dataset(dataset_ref), exists_ok=True)
+    client.create_dataset(bq.Dataset(dataset_ref), exists_ok=True, timeout=30)
 
     # Drop renamed legacy tables.
     for old_name in _LEGACY_TABLES:
-        client.delete_table(f"{dataset_ref}.{old_name}", not_found_ok=True)
+        client.delete_table(f"{dataset_ref}.{old_name}", not_found_ok=True, timeout=30)
 
     for table_name, schema_fn in _TABLE_SCHEMAS.items():
         table_id = f"{dataset_ref}.{table_name}"
@@ -253,20 +253,20 @@ def ensure_ga4_tables() -> None:
 
         # Any table missing client_key predates the snake_case migration — drop and recreate.
         try:
-            existing = client.get_table(table_id)
+            existing = client.get_table(table_id, timeout=30)
             existing_cols = {f.name for f in existing.schema}
             if "client_key" not in existing_cols:
                 _log.info(
                     "GA4 %s missing client_key (pre-migration schema) — dropping for recreation",
                     table_name,
                 )
-                client.delete_table(table_id)
+                client.delete_table(table_id, timeout=30)
         except Exception:
             pass  # Table doesn't exist yet — create below.
 
         table = bq.Table(table_id, schema=schema)
         table.time_partitioning = bq.TimePartitioning(field="date")
-        client.create_table(table, exists_ok=True)
+        client.create_table(table, exists_ok=True, timeout=30)
 
     _log.info("GA4 tables ensured in %s", dataset_ref)
 
@@ -294,12 +294,12 @@ def _write_table(
         f"WHERE client_key = '{client_key}' "
         f"  AND property_id = '{property_id}' "
         f"  AND date BETWEEN '{start}' AND '{end}'"
-    ).result()
+    ).result(timeout=120)
     job_config = bq.LoadJobConfig(
         schema=schema_fn(),
         write_disposition="WRITE_APPEND",
     )
-    client.load_table_from_json(rows, table_id, job_config=job_config).result()
+    client.load_table_from_json(rows, table_id, job_config=job_config).result(timeout=180)
     _log.info("GA4 wrote %d rows → %s [client=%s property=%s]", len(rows), table_name, client_key, property_id)
     return len(rows)
 
