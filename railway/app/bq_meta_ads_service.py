@@ -91,12 +91,23 @@ def sync_meta_to_bq(
     *,
     start: date,
     end: date,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
-    """Fetch Meta campaign/adset/ad daily metrics + ad creatives and upsert into BigQuery."""
+    """Fetch Meta campaign/adset/ad daily metrics + ad creatives and upsert into BigQuery.
+
+    access_token: explicit token to use. When omitted, falls back to load_meta_env()
+    which reads the global OAuth store (no client_slug). Always pass an explicit token
+    when syncing a client-scoped connector so the right account is used.
+    """
+    import logging
     from concurrent.futures import ThreadPoolExecutor
 
+    _log = logging.getLogger(__name__)
     account_id_clean = meta_service._normalize_account_id(account_id)
     bigquery_warehouse.ensure_meta_tables()
+
+    _log.info("sync_meta_to_bq: account=%s start=%s end=%s has_token=%s",
+              account_id_clean, start, end, bool(access_token))
 
     campaign_rows: list[dict[str, Any]] = []
     adset_rows: list[dict[str, Any]] = []
@@ -105,10 +116,14 @@ def sync_meta_to_bq(
     errors: dict[str, str] = {}
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        _cf = pool.submit(meta_service.fetch_campaign_daily_metrics, account_id_clean, start=start, end=end)
-        _af = pool.submit(meta_service.fetch_adset_daily_metrics, account_id_clean, start=start, end=end)
-        _adf = pool.submit(meta_service.fetch_ad_daily_metrics, account_id_clean, start=start, end=end)
-        _crf = pool.submit(meta_service.fetch_ad_creative_metadata, account_id_clean)
+        _cf = pool.submit(meta_service.fetch_campaign_daily_metrics, account_id_clean,
+                          start=start, end=end, access_token=access_token)
+        _af = pool.submit(meta_service.fetch_adset_daily_metrics, account_id_clean,
+                          start=start, end=end, access_token=access_token)
+        _adf = pool.submit(meta_service.fetch_ad_daily_metrics, account_id_clean,
+                           start=start, end=end, access_token=access_token)
+        _crf = pool.submit(meta_service.fetch_ad_creative_metadata, account_id_clean,
+                           access_token=access_token)
         try:
             campaign_rows = _cf.result()
         except Exception as exc:
@@ -126,10 +141,18 @@ def sync_meta_to_bq(
         except Exception as exc:
             errors["meta_creative_fetch"] = str(exc)[:400]
 
+    _log.info("sync_meta_to_bq fetch: campaign=%d adset=%d ad=%d creative=%d errors=%s",
+              len(campaign_rows), len(adset_rows), len(ad_rows), len(creative_rows),
+              list(errors.keys()) or "none")
+
     campaign_mirror = bigquery_warehouse.mirror_meta_campaign_daily_batch(account_id_clean, campaign_rows)
     adset_mirror = bigquery_warehouse.mirror_meta_adset_daily_batch(account_id_clean, adset_rows)
     ad_mirror = bigquery_warehouse.mirror_meta_ad_daily_batch(account_id_clean, ad_rows)
     creative_mirror = bigquery_warehouse.mirror_meta_ad_creative_batch(account_id_clean, creative_rows)
+
+    _log.info("sync_meta_to_bq bq: campaign=%d adset=%d ad=%d creative=%d",
+              campaign_mirror.get("rows_upserted", 0), adset_mirror.get("rows_upserted", 0),
+              ad_mirror.get("rows_upserted", 0), creative_mirror.get("rows_upserted", 0))
 
     views = bigquery_warehouse.create_meta_mart_views()
 
