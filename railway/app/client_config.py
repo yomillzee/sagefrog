@@ -40,6 +40,14 @@ _BUILTIN_CLIENTS: dict[str, dict[str, Any]] = {
         "meta_account_id": "",
         "ga4_client_key": "arg",
     },
+    "nixon-bq-test": {
+        "label": "Nixon Medical",
+        "google_customer_id": "",
+        "linkedin_account_id": "503285948",
+        "meta_account_id": "",
+        "ga4_client_key": "nixon",
+        "platform_sources": {"linkedin": "bigquery"},
+    },
 }
 
 
