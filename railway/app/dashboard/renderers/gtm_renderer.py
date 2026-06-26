@@ -88,8 +88,16 @@ def render_gtm_page(
     .badge-default {{ background:#f1f5f9; color:#475569; }}
     .status-paused {{ color:var(--bad); font-size:.8rem; font-weight:600; }}
     .status-active {{ color:var(--ok); font-size:.8rem; font-weight:600; }}
-    .trigger-list {{ display:flex; flex-wrap:wrap; gap:4px; }}
-    .trigger-chip {{ display:inline-flex; align-items:center; padding:2px 7px; background:#f0f4fa; border-radius:5px; font-size:.72rem; color:#374151; }}
+    .trigger-block {{ margin-bottom:8px; }}
+    .trigger-block:last-child {{ margin-bottom:0; }}
+    .trigger-header {{ display:flex; align-items:center; gap:6px; margin-bottom:4px; }}
+    .trigger-name-label {{ font-size:.8rem; font-weight:600; color:#1e293b; }}
+    .trigger-type-label {{ font-size:.72rem; color:var(--muted); background:#f1f5f9; padding:1px 7px; border-radius:5px; }}
+    .criteria-list {{ display:flex; flex-direction:column; gap:3px; padding-left:10px; border-left:2px solid #e2e8f0; }}
+    .criteria-row {{ display:flex; align-items:baseline; gap:5px; font-size:.78rem; flex-wrap:wrap; }}
+    .criteria-var {{ font-family:monospace; font-size:.76rem; color:#1d4ed8; background:#eff6ff; padding:1px 6px; border-radius:4px; white-space:nowrap; }}
+    .criteria-op {{ color:var(--muted); font-weight:600; font-size:.72rem; text-transform:uppercase; letter-spacing:.03em; white-space:nowrap; }}
+    .criteria-val {{ font-family:monospace; font-size:.76rem; color:#166534; background:#f0fdf4; padding:1px 6px; border-radius:4px; word-break:break-all; }}
     .loading-msg {{ padding:40px; text-align:center; color:var(--muted); }}
     .error-msg {{ padding:20px; color:var(--bad); background:#fef2f2; border-radius:9px; border:1px solid #fecaca; }}
     .empty-state {{ padding:48px 20px; text-align:center; color:var(--muted); }}
@@ -186,11 +194,34 @@ function badgeClass(type) {{
   return 'badge-default';
 }}
 
+function renderCriteria(criteria) {{
+  if (!criteria || !criteria.length) return '';
+  return criteria.map(c => {{
+    const v   = esc(c.variable || '');
+    const op  = esc(c.operator_label || c.operator || '');
+    const val = esc(c.value || '');
+    return `<div class="criteria-row"><span class="criteria-var">${{v}}</span><span class="criteria-op">${{op}}</span><span class="criteria-val">${{val}}</span></div>`;
+  }}).join('');
+}}
+
+function renderTriggers(triggers) {{
+  if (!triggers || !triggers.length) {{
+    return '<span style="color:var(--muted);font-size:.8rem">—</span>';
+  }}
+  return triggers.map(t => {{
+    const hasCriteria = t.criteria && t.criteria.length;
+    return `<div class="trigger-block">
+      <div class="trigger-header"><span class="trigger-name-label">${{esc(t.name)}}</span><span class="trigger-type-label">${{esc(t.type)}}</span></div>
+      ${{hasCriteria ? '<div class="criteria-list">' + renderCriteria(t.criteria) + '</div>' : ''}}
+    </div>`;
+  }}).join('');
+}}
+
 function renderTable(rows) {{
   if (!rows.length) {{
     return '<div class="empty-state">No tags found in this container.</div>';
   }}
-  const ths = ['Tag Name','Type','Status','Firing Triggers'];
+  const ths = ['Tag Name','Type','Status','Firing Triggers &amp; Logic'];
   const head = '<tr>' + ths.map(h => `<th>${{h}}</th>`).join('') + '</tr>';
   const body = rows.map(r => {{
     const bc  = badgeClass(r.friendly_type || '');
@@ -198,10 +229,7 @@ function renderTable(rows) {{
     const st  = r.paused
       ? '<span class="status-paused">⏸ Paused</span>'
       : '<span class="status-active">● Active</span>';
-    const triggers = (r.firing_trigger_names || []);
-    const trig = triggers.length
-      ? '<div class="trigger-list">' + triggers.map(t => `<span class="trigger-chip">${{esc(t)}}</span>`).join('') + '</div>'
-      : '<span style="color:var(--muted);font-size:.8rem">—</span>';
+    const trig = renderTriggers(r.triggers || []);
     return `<tr><td><strong>${{esc(r.tag_name || '')}}</strong></td><td>${{typ}}</td><td>${{st}}</td><td>${{trig}}</td></tr>`;
   }}).join('');
   return `<table><thead>${{head}}</thead><tbody>${{body}}</tbody></table>`;

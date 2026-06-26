@@ -162,14 +162,31 @@ def _fetch_live_version(
 
 # ── Normalisation helpers ─────────────────────────────────────────────────────
 
+_OPERATOR_LABELS: dict[str, str] = {
+    "contains":       "contains",
+    "equals":         "equals",
+    "startsWith":     "starts with",
+    "endsWith":       "ends with",
+    "matchRegex":     "matches regex",
+    "greater":        "greater than",
+    "greaterOrEquals": "≥",
+    "less":           "less than",
+    "lessOrEquals":   "≤",
+    "cssSelector":    "matches CSS selector",
+    "negate":         "negation",
+}
+
+
 def _parse_conditions(conditions: list[dict[str, Any]]) -> list[dict[str, str]]:
     out = []
     for cond in conditions:
         params = {p["key"]: p.get("value", "") for p in cond.get("parameter", [])}
+        op = cond.get("type", "")
         out.append({
-            "operator": cond.get("type", ""),
-            "variable": params.get("arg0", ""),
-            "value": params.get("arg1", ""),
+            "operator":       op,
+            "operator_label": _OPERATOR_LABELS.get(op, op),
+            "variable":       params.get("arg0", ""),
+            "value":          params.get("arg1", ""),
         })
     return out
 
@@ -281,22 +298,27 @@ def _normalise_tag(
 
     consent_raw = (tag.get("consentSettings") or {}).get("consentStatus", "notSet")
 
+    triggers = [
+        {
+            "id":       tr["trigger_id"],
+            "name":     tr["trigger_name"],
+            "type":     tr["trigger_friendly_type"],
+            "criteria": tr["trigger_criteria"],  # [{operator, operator_label, variable, value}]
+            "logic":    "all",  # GTM ANDs conditions within a trigger
+        }
+        for tr in trigger_rows
+    ]
+
     return {
-        "tag_name": tag.get("name", ""),
-        "raw_type": raw_type,
+        "tag_name":     tag.get("name", ""),
+        "raw_type":     raw_type,
         "friendly_type": _TAG_TYPES.get(raw_type, raw_type or "Unknown"),
-        "paused": bool(tag.get("paused", False)),
+        "paused":       bool(tag.get("paused", False)),
         "consent_status": _CONSENT_STATUS.get(consent_raw, consent_raw),
-        "firing_trigger_ids": firing_ids,
+        "triggers":     triggers,
+        # convenience flat lists kept for backward compat
         "firing_trigger_names": [tr["trigger_name"] for tr in trigger_rows],
-        "trigger_types": [tr["trigger_friendly_type"] for tr in trigger_rows],
-        "trigger_criteria": [c for tr in trigger_rows for c in tr["trigger_criteria"]],
-        "trigger_settings": {
-            tr["trigger_name"]: tr["trigger_settings"]
-            for tr in trigger_rows
-            if tr["trigger_settings"]
-        },
-        "trigger_logic": "all",
+        "trigger_types":        [tr["trigger_friendly_type"] for tr in trigger_rows],
     }
 
 
