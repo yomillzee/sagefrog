@@ -1122,6 +1122,14 @@ def mirror_meta_ad_creative_batch(account_id: str, rows: list[dict[str, Any]]) -
     return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
 
 
+def ensure_meta_tables() -> None:
+    """Create all Meta raw tables if they don't exist. Call before create_meta_mart_views."""
+    _ensure_meta_table(_DEFAULT_META_CAMPAIGN_TABLE, _meta_campaign_daily_schema())
+    _ensure_meta_table(_DEFAULT_META_ADSET_TABLE, _meta_adset_daily_schema())
+    _ensure_meta_table(_DEFAULT_META_AD_TABLE, _meta_ad_daily_schema())
+    _ensure_meta_table(_DEFAULT_META_AD_CREATIVE_TABLE, _meta_ad_creative_schema())
+
+
 def create_meta_mart_views() -> dict[str, Any]:
     """Create or replace Meta mart views in marketing_marts (ad view joins creative metadata)."""
     project_id = _meta_project_id()

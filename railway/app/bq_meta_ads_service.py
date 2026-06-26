@@ -96,6 +96,7 @@ def sync_meta_to_bq(
     from concurrent.futures import ThreadPoolExecutor
 
     account_id_clean = meta_service._normalize_account_id(account_id)
+    bigquery_warehouse.ensure_meta_tables()
 
     campaign_rows: list[dict[str, Any]] = []
     adset_rows: list[dict[str, Any]] = []
