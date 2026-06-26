@@ -32,6 +32,23 @@ SCHEMA_SQL_STATEMENTS = [
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
+    # Migrate platform-only PK to (client_slug, platform) composite PK so tokens
+    # can be scoped to individual clients. Existing rows get client_slug = '' which
+    # means "global / agency-wide" and remains the fallback for callers that don't
+    # pass a client_slug.
+    """
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'oauth_credentials' AND column_name = 'client_slug'
+      ) THEN
+        ALTER TABLE oauth_credentials ADD COLUMN client_slug TEXT NOT NULL DEFAULT '';
+        ALTER TABLE oauth_credentials DROP CONSTRAINT oauth_credentials_pkey;
+        ALTER TABLE oauth_credentials ADD PRIMARY KEY (client_slug, platform);
+      END IF;
+    END $$
+    """,
 ]
 
 
@@ -119,21 +136,34 @@ def _decrypt(value: str | None) -> str | None:
         return None
 
 
-def get_refresh_token(platform: str) -> str | None:
-    row = _get_row(platform)
-    if not row:
-        return None
-    return _decrypt(row.get("refresh_token_enc"))
+def get_refresh_token(platform: str, client_slug: str = "") -> str | None:
+    """Return refresh token. Falls back to the global (client_slug='') token if a client-specific one isn't found."""
+    row = _get_row(platform, client_slug=client_slug)
+    if row:
+        tok = _decrypt(row.get("refresh_token_enc"))
+        if tok:
+            return tok
+    if client_slug:
+        row = _get_row(platform, client_slug="")
+        if row:
+            return _decrypt(row.get("refresh_token_enc"))
+    return None
 
 
-def get_access_token(platform: str) -> str | None:
-    row = _get_row(platform)
-    if not row:
-        return None
-    return _decrypt(row.get("access_token_enc"))
+def get_access_token(platform: str, client_slug: str = "") -> str | None:
+    row = _get_row(platform, client_slug=client_slug)
+    if row:
+        tok = _decrypt(row.get("access_token_enc"))
+        if tok:
+            return tok
+    if client_slug:
+        row = _get_row(platform, client_slug="")
+        if row:
+            return _decrypt(row.get("access_token_enc"))
+    return None
 
 
-def _get_row(platform: str) -> dict[str, Any] | None:
+def _get_row(platform: str, client_slug: str = "") -> dict[str, Any] | None:
     slug = _normalize_platform(platform)
     if not slug or not enabled():
         return None
@@ -144,9 +174,9 @@ def _get_row(platform: str) -> dict[str, Any] | None:
             SELECT refresh_token_enc, access_token_enc, token_expires_at, scopes,
                    metadata_json, connected_by, connected_at, updated_at
             FROM oauth_credentials
-            WHERE platform = %s
+            WHERE platform = %s AND client_slug = %s
             """,
-            (slug,),
+            (slug, (client_slug or "").strip()),
         ).fetchone()
     if not row:
         return None
@@ -186,13 +216,15 @@ def save_tokens(
     scopes: str | None = None,
     metadata: dict[str, Any] | None = None,
     connected_by: str | None = None,
+    client_slug: str = "",
 ) -> None:
     slug = _normalize_platform(platform)
+    cs = (client_slug or "").strip()
     if not enabled():
         raise RuntimeError("DATABASE_URL is required to store OAuth tokens.")
     ensure_schema()
     now = datetime.now(tz=UTC)
-    existing = _get_row(slug) or {}
+    existing = _get_row(slug, client_slug=cs) or {}
     refresh_enc = _encrypt(refresh_token) if refresh_token else existing.get("refresh_token_enc")
     access_enc = _encrypt(access_token) if access_token else existing.get("access_token_enc")
     if not refresh_enc and not access_enc:
@@ -202,11 +234,11 @@ def save_tokens(
         conn.execute(
             """
             INSERT INTO oauth_credentials (
-              platform, refresh_token_enc, access_token_enc, token_expires_at,
+              client_slug, platform, refresh_token_enc, access_token_enc, token_expires_at,
               scopes, metadata_json, connected_by, connected_at, updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
-            ON CONFLICT (platform)
+            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
+            ON CONFLICT (client_slug, platform)
             DO UPDATE SET
               refresh_token_enc = COALESCE(EXCLUDED.refresh_token_enc, oauth_credentials.refresh_token_enc),
               access_token_enc = COALESCE(EXCLUDED.access_token_enc, oauth_credentials.access_token_enc),
@@ -217,6 +249,7 @@ def save_tokens(
               updated_at = EXCLUDED.updated_at
             """,
             (
+                cs,
                 slug,
                 refresh_enc,
                 access_enc,
@@ -230,19 +263,23 @@ def save_tokens(
         )
 
 
-def delete_platform(platform: str) -> bool:
+def delete_platform(platform: str, client_slug: str = "") -> bool:
     slug = _normalize_platform(platform)
+    cs = (client_slug or "").strip()
     if not enabled():
         return False
     ensure_schema()
     with db.connection() as conn:
-        cur = conn.execute("DELETE FROM oauth_credentials WHERE platform = %s", (slug,))
+        cur = conn.execute(
+            "DELETE FROM oauth_credentials WHERE platform = %s AND client_slug = %s",
+            (slug, cs),
+        )
         return bool(getattr(cur, "rowcount", 0))
 
 
-def public_status(platform: str) -> OAuthCredentialPublic:
+def public_status(platform: str, client_slug: str = "") -> OAuthCredentialPublic:
     slug = _normalize_platform(platform)
-    row = _get_row(slug)
+    row = _get_row(slug, client_slug=client_slug)
     return _public_status_from_row(slug, row)
 
 
@@ -283,7 +320,7 @@ def all_public_status() -> dict[str, OAuthCredentialPublic]:
             SELECT platform, refresh_token_enc, access_token_enc, token_expires_at,
                    scopes, metadata_json, connected_by, connected_at, updated_at
             FROM oauth_credentials
-            WHERE platform = ANY(%s)
+            WHERE platform = ANY(%s) AND client_slug = ''
             """,
             (list(PLATFORMS),),
         ).fetchall()

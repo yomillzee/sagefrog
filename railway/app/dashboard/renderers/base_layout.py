@@ -11,6 +11,7 @@ from dashboard.utils.auth import min_refresh_seconds, refresh_cooldown_status
 from dashboard.utils.formatting import esc as _esc
 from dashboard.utils.urls import (
     client_switch_target_url as _client_switch_target_url,
+    connectors_page_url as _connectors_page_url,
     dashboard_page_url as _dashboard_page_url,
     files_page_url as _files_page_url,
     refresh_action_url as _refresh_action_url,
@@ -390,6 +391,12 @@ _NAV_ICON_FILES = (
     '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>'
     '<path d="M14 2v6h6"/></svg>'
 )
+_NAV_ICON_CONNECTORS = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M18 3a3 3 0 00-3 3v1H9V6a3 3 0 10-3 3v1H3v2h3v1a3 3 0 103 3v-1h6v1a3 3 0 103-3v-1h3v-2h-3V9a3 3 0 000-6z"/>'
+    '</svg>'
+)
 _NAV_ICON_SETTINGS = (
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
     'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -436,11 +443,7 @@ def render_sidebar(
     show_files: bool,
     view_nav_html: str,
 ) -> str:
-    """Navy drawer sidebar shared by the dashboard, settings, and files pages.
-
-    Top: logo + primary view navigation (``view_nav_html``). Bottom: client
-    selector, Files, Settings, and the signed-in account controls.
-    """
+    """Navy drawer sidebar shared by the dashboard, settings, files, and connectors pages."""
     overview_url = _dashboard_page_url(
         client_slug=client_slug, access_key=access_key, use_session=use_session
     ) or "#"
@@ -448,6 +451,9 @@ def render_sidebar(
         client_slug=client_slug, access_key=access_key, use_session=use_session
     ) or "#"
     files_url = _files_page_url(
+        client_slug=client_slug, access_key=access_key, use_session=use_session
+    ) or "#"
+    connectors_url = _connectors_page_url(
         client_slug=client_slug, access_key=access_key, use_session=use_session
     ) or "#"
 
@@ -468,6 +474,13 @@ def render_sidebar(
             f'<a href="{_esc(files_url)}" class="dash-sidebar-link{files_active}"{aria}>'
             f'{_NAV_ICON_FILES}<span>Files</span></a>'
         )
+
+    connectors_active = " active" if active_nav == "connectors" else ""
+    connectors_aria = ' aria-current="page"' if connectors_active else ""
+    connectors_btn = (
+        f'<a href="{_esc(connectors_url)}" class="dash-sidebar-link{connectors_active}"{connectors_aria}>'
+        f'{_NAV_ICON_CONNECTORS}<span>Connectors</span></a>'
+    )
 
     settings_active = " active" if active_nav == "settings" else ""
     settings_aria = ' aria-current="page"' if settings_active else ""
@@ -495,6 +508,7 @@ def render_sidebar(
         <div class="dash-sidebar-client">{client_selector}</div>
         <nav class="dash-sidebar-links" aria-label="Account navigation">
           {files_btn}
+          {connectors_btn}
           {settings_btn}
         </nav>
         {account_html}

@@ -1,0 +1,419 @@
+"""Connector setup wizard, management, and sync routes."""
+
+from __future__ import annotations
+
+import logging
+from datetime import UTC, date, datetime, timedelta
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+
+import audit_log
+import client_dashboard_config
+import connector_config_store
+import connectors  # noqa: F401 — triggers handler registration
+import oauth_store
+import web_auth
+import web_users
+from connectors.base import get as get_handler
+from dashboard.renderers import connectors_renderer
+from dashboard.routes.helpers import validate_client_slug
+
+_log = logging.getLogger(__name__)
+router = APIRouter(include_in_schema=False)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Auth helpers (mirrors settings_routes pattern)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _auth(request: Request, client_slug: str, key: str | None):
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug=client_slug, key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth, None, None, None, None
+        user = auth.user
+        return (
+            None,
+            auth.access_key,
+            auth.use_session,
+            user.email if user else None,
+            bool(user and user.role == "admin"),
+        )
+    return None, key, False, None, False
+
+
+def _session_kw(access_key, use_session, session_email, session_is_admin) -> dict:
+    return {
+        "access_key": access_key,
+        "use_session": use_session,
+        "session_email": session_email,
+        "session_is_admin": session_is_admin,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Directory page
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("/dashboard/{client_slug}/connectors", response_class=HTMLResponse)
+def connectors_directory(
+    client_slug: str,
+    request: Request,
+    key: str | None = None,
+    connected: str | None = None,
+    disconnected: str | None = None,
+):
+    slug = validate_client_slug(client_slug)
+    redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug, key)
+    if redirect:
+        return redirect
+
+    import client_config
+    cfg = client_config.load_client_config(slug)
+    label = cfg.label if cfg else slug
+
+    configs = connector_config_store.list_configs(slug)
+    flash = None
+    if connected:
+        flash = f"{connected} connected successfully."
+    if disconnected:
+        flash = f"{disconnected} disconnected."
+
+    return HTMLResponse(connectors_renderer.render_connectors_directory(
+        client_slug=slug,
+        label=label,
+        configs=configs,
+        flash_message=flash,
+        **_session_kw(access_key, use_session, session_email, session_is_admin),
+    ))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Connector detail page (wizard or management)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("/dashboard/{client_slug}/connectors/{connector_type}", response_class=HTMLResponse)
+def connector_detail(
+    client_slug: str,
+    connector_type: str,
+    request: Request,
+    key: str | None = None,
+    oauth_done: str | None = None,
+    oauth_error: str | None = None,
+    connected: str | None = None,
+    flash: str | None = None,
+):
+    slug = validate_client_slug(client_slug)
+    ctype = connector_type.strip().lower()
+    handler = get_handler(ctype)
+    if not handler:
+        raise HTTPException(status_code=404, detail=f"Unknown connector '{connector_type}'.")
+
+    redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug, key)
+    if redirect:
+        return redirect
+
+    import client_config
+    cfg_obj = client_config.load_client_config(slug)
+    label = cfg_obj.label if cfg_obj else slug
+    db_config = client_dashboard_config.get_config(slug)
+    config = connector_config_store.get_config(slug, ctype)
+    runs = connector_config_store.list_sync_runs(config.id) if config else []
+
+    flash_message = flash
+    if connected:
+        flash_message = f"{handler.display_name} is now connected and syncing."
+
+    return HTMLResponse(connectors_renderer.render_connector_detail(
+        client_slug=slug,
+        label=label,
+        connector_type=ctype,
+        handler=handler,
+        config=config,
+        sync_runs=runs,
+        db_config=db_config,
+        oauth_done=bool(oauth_done),
+        oauth_error=(oauth_error or "").strip()[:300] or None,
+        flash_message=flash_message,
+        **_session_kw(access_key, use_session, session_email, session_is_admin),
+    ))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Account list (JSON)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("/dashboard/{client_slug}/connectors/{connector_type}/accounts")
+async def connector_accounts(
+    client_slug: str,
+    connector_type: str,
+    request: Request,
+    key: str | None = None,
+):
+    slug = validate_client_slug(client_slug)
+    ctype = connector_type.strip().lower()
+    handler = get_handler(ctype)
+    if not handler:
+        return JSONResponse({"ok": False, "error": f"Unknown connector '{connector_type}'."}, status_code=404)
+
+    redirect, *_ = _auth(request, slug, key)
+    if redirect:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+
+    try:
+        accounts = handler.list_accounts(client_slug=slug)
+        return JSONResponse({"ok": True, "accounts": accounts})
+    except Exception as exc:
+        _log.warning("connector accounts error [%s/%s]: %s", slug, ctype, exc)
+        return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Configure (step-by-step JSON POST)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.post("/dashboard/{client_slug}/connectors/{connector_type}/configure")
+async def connector_configure(
+    client_slug: str,
+    connector_type: str,
+    request: Request,
+    key: str | None = None,
+):
+    slug = validate_client_slug(client_slug)
+    ctype = connector_type.strip().lower()
+    handler = get_handler(ctype)
+    if not handler:
+        return JSONResponse({"ok": False, "error": f"Unknown connector."}, status_code=404)
+
+    redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug, key)
+    if redirect:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON body."}, status_code=400)
+
+    try:
+        kwargs: dict = {
+            "oauth_platform": handler.oauth_platform,
+            "oauth_client_slug": slug,
+        }
+        if "source_account_id" in body:
+            kwargs["source_account_id"] = str(body["source_account_id"]).strip() or None
+        if "source_account_name" in body:
+            kwargs["source_account_name"] = str(body["source_account_name"]).strip() or None
+        if "bq_project_id" in body:
+            kwargs["bq_project_id"] = str(body["bq_project_id"]).strip() or None
+        if "raw_dataset_id" in body:
+            kwargs["raw_dataset_id"] = str(body["raw_dataset_id"]).strip() or handler.default_raw_dataset
+        if "mart_dataset_id" in body:
+            kwargs["mart_dataset_id"] = str(body["mart_dataset_id"]).strip() or handler.default_mart_dataset
+        if "sync_enabled" in body:
+            kwargs["sync_enabled"] = bool(body["sync_enabled"])
+        if "status" in body:
+            kwargs["status"] = str(body["status"])
+        if "backfill_days" in body:
+            days = int(body["backfill_days"])
+            kwargs["backfill_start_date"] = (datetime.now(tz=UTC) - timedelta(days=days)).date()
+
+        connector_config_store.upsert_config(slug, ctype, **kwargs)
+        return JSONResponse({"ok": True})
+    except Exception as exc:
+        _log.warning("connector configure error [%s/%s]: %s", slug, ctype, exc)
+        return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Test connection (JSON POST)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.post("/dashboard/{client_slug}/connectors/{connector_type}/test")
+async def connector_test(
+    client_slug: str,
+    connector_type: str,
+    request: Request,
+    key: str | None = None,
+):
+    slug = validate_client_slug(client_slug)
+    ctype = connector_type.strip().lower()
+    handler = get_handler(ctype)
+    if not handler:
+        return JSONResponse({"ok": False, "error": "Unknown connector."}, status_code=404)
+
+    redirect, *_ = _auth(request, slug, key)
+    if redirect:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+
+    try:
+        accounts = handler.list_accounts(client_slug=slug)
+        config = connector_config_store.get_config(slug, ctype)
+        acct_name = (config and config.source_account_name) or (accounts[0]["name"] if accounts else "")
+        return JSONResponse({
+            "ok": True,
+            "message": f"Connection verified. Account: {acct_name}" if acct_name else "Connection verified.",
+        })
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Manual sync (JSON POST)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.post("/dashboard/{client_slug}/connectors/{connector_type}/sync")
+async def connector_sync(
+    client_slug: str,
+    connector_type: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    key: str | None = None,
+):
+    slug = validate_client_slug(client_slug)
+    ctype = connector_type.strip().lower()
+    handler = get_handler(ctype)
+    if not handler:
+        return JSONResponse({"ok": False, "error": "Unknown connector."}, status_code=404)
+
+    redirect, _ak, _us, session_email, _is_admin = _auth(request, slug, key)
+    if redirect:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+
+    config = connector_config_store.get_config(slug, ctype)
+    if not config:
+        return JSONResponse({"ok": False, "error": "Connector not configured."}, status_code=400)
+
+    run_id = connector_config_store.start_sync_run(
+        config.id, run_type="manual", triggered_by=session_email or "user"
+    )
+    connector_config_store.update_sync_timestamps(slug, ctype, started=True)
+
+    def _run():
+        try:
+            result = handler.run_sync(client_slug=slug)
+            connector_config_store.finish_sync_run(
+                run_id,
+                status="completed" if result.ok else "failed",
+                rows_loaded=result.rows_loaded,
+                error_message=result.error,
+            )
+            connector_config_store.update_sync_timestamps(
+                slug, ctype,
+                completed=True,
+                success=result.ok,
+                error=result.error,
+            )
+        except Exception as exc:
+            err = str(exc)[:500]
+            connector_config_store.finish_sync_run(run_id, status="failed", error_message=err)
+            connector_config_store.update_sync_timestamps(slug, ctype, completed=True, error=err)
+
+    background_tasks.add_task(_run)
+    return JSONResponse({"ok": True, "message": "Sync started in the background.", "run_id": run_id})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Disconnect (form POST)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.post("/dashboard/{client_slug}/connectors/{connector_type}/disconnect")
+async def connector_disconnect(
+    client_slug: str,
+    connector_type: str,
+    request: Request,
+    key: str | None = None,
+):
+    slug = validate_client_slug(client_slug)
+    ctype = connector_type.strip().lower()
+    handler = get_handler(ctype)
+    if not handler:
+        raise HTTPException(status_code=404, detail="Unknown connector.")
+
+    redirect, access_key, use_session, session_email, *_ = _auth(request, slug, key)
+    if redirect:
+        return redirect
+
+    config = connector_config_store.get_config(slug, ctype)
+    if config:
+        # Revoke/remove the client-scoped OAuth token (best-effort)
+        try:
+            oauth_store.delete_platform(handler.oauth_platform, client_slug=slug)
+        except Exception as exc:
+            _log.warning("OAuth token deletion failed [%s/%s]: %s", slug, ctype, exc)
+
+        connector_config_store.update_status(
+            slug, ctype,
+            status="disconnected",
+            sync_enabled=False,
+            disconnected_at=datetime.now(tz=UTC),
+        )
+        audit_log.record(
+            action="connector.disconnected",
+            actor_email=session_email,
+            detail={"client_slug": slug, "connector_type": ctype},
+            **audit_log.request_context(request),
+        )
+
+    dest = f"/dashboard/{slug}/connectors"
+    if not use_session and access_key:
+        from urllib.parse import quote
+        dest += f"?key={quote(access_key, safe='')}"
+    return RedirectResponse(url=dest + ("&" if "?" in dest else "?") + f"disconnected={handler.display_name}", status_code=303)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Delete data (destructive — requires confirmation token in body)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.post("/dashboard/{client_slug}/connectors/{connector_type}/delete-data")
+async def connector_delete_data(
+    client_slug: str,
+    connector_type: str,
+    request: Request,
+    key: str | None = None,
+):
+    slug = validate_client_slug(client_slug)
+    ctype = connector_type.strip().lower()
+    handler = get_handler(ctype)
+    if not handler:
+        return JSONResponse({"ok": False, "error": "Unknown connector."}, status_code=404)
+
+    redirect, _ak, _us, session_email, session_is_admin = _auth(request, slug, key)
+    if redirect:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    if not session_is_admin:
+        return JSONResponse({"ok": False, "error": "Admin access required."}, status_code=403)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON body."}, status_code=400)
+
+    if body.get("confirmation") != "DELETE":
+        return JSONResponse({"ok": False, "error": "Type DELETE to confirm data deletion."}, status_code=400)
+
+    # Hard-delete the connector config row
+    config = connector_config_store.get_config(slug, ctype)
+    if config:
+        try:
+            import db
+            with db.connection() as conn:
+                conn.execute(
+                    "DELETE FROM connector_sync_runs WHERE connector_config_id = %s",
+                    (config.id,),
+                )
+                conn.execute(
+                    "DELETE FROM connector_configs WHERE id = %s",
+                    (config.id,),
+                )
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": f"DB deletion failed: {exc}"}, status_code=500)
+
+    audit_log.record(
+        action="connector.data_deleted",
+        actor_email=session_email,
+        detail={"client_slug": slug, "connector_type": ctype},
+        **audit_log.request_context(request),
+    )
+    return JSONResponse({"ok": True, "message": f"{handler.display_name} connector data deleted."})

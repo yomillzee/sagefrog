@@ -57,17 +57,20 @@ def make_state() -> str:
     return secrets.token_urlsafe(32)
 
 
-def store_oauth_state(request, *, platform: str, state: str, return_to: str) -> None:
+def store_oauth_state(request, *, platform: str, state: str, return_to: str, client_slug: str = "") -> None:
     slug = _normalize_platform(platform)
     request.session[f"oauth_state_{slug}"] = state
     request.session["oauth_return_to"] = (return_to or "/admin").strip() or "/admin"
+    request.session["oauth_client_slug"] = (client_slug or "").strip()
 
 
-def pop_oauth_state(request, *, platform: str) -> tuple[str | None, str]:
+def pop_oauth_state(request, *, platform: str) -> tuple[str | None, str, str]:
+    """Returns (state, return_to, client_slug). client_slug='' means agency-wide global token."""
     slug = _normalize_platform(platform)
     state = request.session.pop(f"oauth_state_{slug}", None)
     return_to = request.session.pop("oauth_return_to", "/admin") or "/admin"
-    return state, return_to
+    client_slug = request.session.pop("oauth_client_slug", "") or ""
+    return state, return_to, client_slug
 
 
 def validate_return_to(path: str) -> str:

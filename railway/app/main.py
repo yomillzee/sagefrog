@@ -46,6 +46,7 @@ import dashboard_features
 import dashboard_theme
 import login_rate_limit
 import not_found_page
+import connector_config_store
 import oauth_flows
 import oauth_store
 import web_auth
@@ -191,6 +192,7 @@ try:
     admin_dev_notes.ensure_schema()
     client_insight_documents.ensure_schema()
     oauth_store.ensure_schema()
+    connector_config_store.ensure_schema()
     login_rate_limit.ensure_schema()
     boot = web_users.bootstrap_admin_from_env()
     if boot:
@@ -2126,7 +2128,7 @@ def admin_delete_dev_note(
     summary="Start OAuth connect flow (admin)",
     include_in_schema=False,
 )
-async def oauth_connect(platform: str, request: Request, return_to: str = "/admin"):
+async def oauth_connect(platform: str, request: Request, return_to: str = "/admin", client: str = ""):
     slug = platform.strip().lower()
     if slug not in oauth_flows.PLATFORMS:
         raise HTTPException(status_code=404, detail="Unknown OAuth platform.")
@@ -2142,7 +2144,7 @@ async def oauth_connect(platform: str, request: Request, return_to: str = "/admi
     if not oauth_store.enabled():
         raise HTTPException(status_code=503, detail="DATABASE_URL is required to store OAuth tokens.")
     state = oauth_flows.make_state()
-    oauth_flows.store_oauth_state(request, platform=slug, state=state, return_to=dest)
+    oauth_flows.store_oauth_state(request, platform=slug, state=state, return_to=dest, client_slug=client.strip())
     try:
         url = oauth_flows.build_authorize_url(slug, state=state)
     except Exception as exc:
@@ -2166,7 +2168,7 @@ async def oauth_callback(
     slug = platform.strip().lower()
     if slug not in oauth_flows.PLATFORMS:
         raise HTTPException(status_code=404, detail="Unknown OAuth platform.")
-    expected_state, return_to = oauth_flows.pop_oauth_state(request, platform=slug)
+    expected_state, return_to, oauth_client_slug = oauth_flows.pop_oauth_state(request, platform=slug)
     dest = oauth_flows.validate_return_to(return_to)
     sep = "&" if "?" in dest else "?"
     if error:
@@ -2189,11 +2191,12 @@ async def oauth_callback(
             scopes=tokens.get("scopes"),
             metadata=tokens.get("metadata"),
             connected_by=actor,
+            client_slug=oauth_client_slug,
         )
         audit_log.record(
             action="oauth.connected",
             actor_email=actor,
-            detail={"platform": slug},
+            detail={"platform": slug, "client_slug": oauth_client_slug or "global"},
             **audit_log.request_context(request),
         )
     except Exception as exc:
