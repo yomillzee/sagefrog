@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote as _url_quote
 
 import connector_config_store
 import connectors  # noqa: F401 — triggers handler registration
@@ -463,11 +464,14 @@ def _render_wizard(
     is_disconnected = status == "disconnected"
     has_oauth = config is not None and config.oauth_client_slug == client_slug
 
+    # has_oauth is true if a token already exists for this client or OAuth just finished
+    has_oauth = has_oauth or oauth_done
+
     # Determine starting step
     start_step = 1
-    if oauth_done or has_oauth:
+    if has_oauth:
         start_step = 2
-    if config and config.source_account_id and (oauth_done or has_oauth):
+    if config and config.source_account_id and has_oauth:
         start_step = 3
 
     oauth_error_html = ""
@@ -476,11 +480,16 @@ def _render_wizard(
 
     flash_html = _flash_html(flash_message, flash_error)
 
-    # OAuth start URL
+    # OAuth start URL — return_to must be URL-encoded so ?oauth_done=1 isn't
+    # parsed as an extra outer query param by the connect endpoint.
+    _return_to = _url_quote(
+        f"/dashboard/{client_slug}/connectors/{handler.connector_type}?oauth_done=1",
+        safe="",
+    )
     oauth_start_url = (
         f"/oauth/{handler.oauth_platform}/connect"
-        f"?return_to={_esc(f'/dashboard/{client_slug}/connectors/{handler.connector_type}')}"
-        f"&client={_esc(client_slug)}"
+        f"?return_to={_return_to}"
+        f"&client={_url_quote(client_slug, safe='')}"
     )
 
     # Pre-fill destination from existing config or db_config
