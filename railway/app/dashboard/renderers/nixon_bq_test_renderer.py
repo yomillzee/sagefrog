@@ -309,12 +309,6 @@ def render_nixon_bigquery_test_page(
 
     <!-- Date / filter bar -->
     <div class="date-bar">
-      <div class="date-bar-top">
-        <form id="filters" style="display:contents">
-          <label>From<input id="startDate" type="date" value="{start.isoformat()}"></label>
-          <label>To<input id="endDate" type="date" value="{end.isoformat()}"></label>
-        </form>
-      </div>
       <div class="date-bar-bottom">
         <div class="filter-group">
           <span class="filter-label">Range</span>
@@ -489,7 +483,7 @@ def render_nixon_bigquery_test_page(
     }}
     function withDates(base) {{
       const sep = base.includes('?') ? '&' : '?';
-      return base + sep + 'start_date=' + startDate.value + '&end_date=' + endDate.value;
+      return base + sep + 'start_date=' + currentStart + '&end_date=' + currentEnd;
     }}
     async function getJson(url) {{
       const resp = await fetch(url, {{ credentials:'same-origin' }});
@@ -1102,10 +1096,10 @@ def render_nixon_bigquery_test_page(
       else if (currentTab==='analytics') {{ analyticsLoaded=false; applyModules(); loadAllAnalytics(); analyticsLoaded=true; }}
     }}
 
-    // ---- Date inputs + presets ----
-    const startDate=document.getElementById('startDate'), endDate=document.getElementById('endDate');
+    // ---- Date presets ----
+    let currentStart='{start.isoformat()}', currentEnd='{end.isoformat()}';
     const fmtDate=d=>`${{d.getFullYear()}}-${{String(d.getMonth()+1).padStart(2,'0')}}-${{String(d.getDate()).padStart(2,'0')}}`;
-    function presetRange(name) {{
+    function applyPreset(name) {{
       const today=new Date(); let s, e=today;
       const lastN=n=>{{e=new Date(today);e.setDate(today.getDate()-1);s=new Date(today);s.setDate(today.getDate()-n);}};
       if (name==='this_month') s=new Date(today.getFullYear(),today.getMonth(),1);
@@ -1113,21 +1107,14 @@ def render_nixon_bigquery_test_page(
       else if (name==='last_7') lastN(7);
       else if (name==='last_30') lastN(30);
       else if (name==='last_90') lastN(90);
-      else return null;
-      return {{start:fmtDate(s),end:fmtDate(e)}};
-    }}
-    function highlightPreset(name) {{
+      else return;
+      currentStart=fmtDate(s); currentEnd=fmtDate(e);
       document.querySelectorAll('#datePresets .chip').forEach(b=>b.classList.toggle('active',b.dataset.preset===name));
+      loadCurrentTab();
     }}
     document.getElementById('datePresets').addEventListener('click',ev=>{{
-      const btn=ev.target.closest('[data-preset]'); if (!btn) return;
-      const range=presetRange(btn.dataset.preset); if (!range) return;
-      startDate.value=range.start; endDate.value=range.end;
-      highlightPreset(btn.dataset.preset);
-      loadCurrentTab();
+      const btn=ev.target.closest('[data-preset]'); if (btn) applyPreset(btn.dataset.preset);
     }});
-    [startDate,endDate].forEach(inp=>inp.addEventListener('change',()=>highlightPreset(null)));
-    document.getElementById('filters').addEventListener('submit',ev=>{{ev.preventDefault();highlightPreset(null);loadCurrentTab();}});
 
     // ---- Platform chips ----
     buildChips('platformChips',['Google','LinkedIn'],platformFilter,()=>{{renderSummary();renderChart();renderExplorer();}});
