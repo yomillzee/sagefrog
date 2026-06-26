@@ -32,14 +32,10 @@ class ConnectorHandler(ABC):
         """Return [{"id": ..., "name": ..., "status": ...}, ...] for the authenticated user."""
         ...
 
+    @abstractmethod
     def run_sync(self, *, client_slug: str, date_range: str = "LAST_30_DAYS") -> SyncResult:
-        """Trigger a sync run. Default implementation delegates to the BQ refresh pipeline."""
-        try:
-            import dashboard_service
-            result = dashboard_service.refresh_bq_client(client_slug, date_range=date_range, sync_trigger="connector")
-            return SyncResult(rows_loaded=result.get("rows_loaded") or 0)
-        except Exception as exc:
-            return SyncResult(rows_loaded=0, error=str(exc)[:500])
+        """Trigger a source-specific sync run for this platform."""
+        ...
 
 
 # Global registry
