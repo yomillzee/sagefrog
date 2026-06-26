@@ -117,7 +117,7 @@ def render_nixon_analytics_page(
         <a class="dash-view-btn"        href="#sec-traffic"  data-nav="sec-traffic">{_ICON_TRAFFIC}<span>Traffic</span></a>
         <a class="dash-view-btn"        href="#sec-audience" data-nav="sec-audience">{_ICON_AUDIENCE}<span>Audience</span></a>
         <a class="dash-view-btn"        href="#sec-landing"  data-nav="sec-landing">{_ICON_LANDING}<span>Landing Pages</span></a>
-        <a class="dash-view-btn"        href="/dashboard/nixon-bq-test/gtm{('?key=' + access_key) if access_key else ''}" style="margin-top:8px;border-top:1px solid rgba(255,255,255,.1);padding-top:14px">{_ICON_TAGS}<span>GTM Tags</span></a>
+        <a class="dash-view-btn"        href="/dashboard/nixon-bq-test/gtm{('?key=' + access_key) if access_key else ''}" style="margin-top:8px;border-top:1px solid rgba(255,255,255,.1);padding-top:14px">{_ICON_TAGS}<span>Event Tracking</span></a>
       </nav>
       <div class="dash-sidebar-footer">
         <div class="dash-sidebar-client"><span class="topbar-client-label">Nixon — Website Analytics</span></div>

@@ -125,7 +125,7 @@ def render_nixon_bigquery_test_page(
           <a class="dash-view-btn analytics-sub" href="#sec-useracq"  data-nav="sec-useracq"  data-module="user_acquisition">User Acquisition</a>
           <a class="dash-view-btn analytics-sub" href="#sec-demographics" data-nav="sec-demographics" data-module="demographics">Demographics</a>
         </div>
-        <a class="dash-view-btn" href="{gtm_url}" style="margin-top:6px;border-top:1px solid rgba(255,255,255,.1);padding-top:14px">{_ICON_TAGS}<span>GTM Tags</span></a>
+        <a class="dash-view-btn" href="{gtm_url}" style="margin-top:6px;border-top:1px solid rgba(255,255,255,.1);padding-top:14px">{_ICON_TAGS}<span>Event Tracking</span></a>
       </nav>
       <div class="dash-sidebar-footer">
         <div class="dash-sidebar-client"><span class="topbar-client-label">Nixon Medical</span></div>

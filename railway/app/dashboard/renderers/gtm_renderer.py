@@ -6,10 +6,15 @@ from dashboard.renderers.base_layout import favicon_head_html
 from dashboard.renderers.nixon_analytics_renderer import _SIDEBAR_CSS
 from dashboard.utils.formatting import esc as _esc
 
-_ICON_TAGS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9.293 2.293a1 1 0 011.414 0l7 7A1 1 0 0117 11H3a1 1 0 01-.707-1.707l7-7zM10 14v3m-3-3h6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-_ICON_SHIELD = '<svg viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="1.8" width="15" height="15"><path d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.955 11.955 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-_ICON_ANALYTICS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 17l4-7 3 4 3-6 4 9" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-_ICON_BACK = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 6l-4 4 4 4m5-8l-4 4 4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+_ICON_TAGS     = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>'
+_ICON_OVERVIEW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>'
+_ICON_EXPLORER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>'
+_ICON_WEBSITE  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>'
+_ICON_SETTINGS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
+_ICON_CONNECTORS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 3a3 3 0 00-3 3v1H9V6a3 3 0 10-3 3v1H3v2h3v1a3 3 0 103 3v-1h6v1a3 3 0 103-3v-1h3v-2h-3V9a3 3 0 000-6z"/></svg>'
+_ICON_SHIELD   = '<svg viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="1.8" width="15" height="15"><path d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.955 11.955 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+_ICON_MENU     = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h14M3 10h14M3 14h14" stroke-linecap="round"/></svg>'
+_ICON_REFRESH  = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4v5h5M16 16v-5h-5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.05 14.44A8 8 0 1015.95 5.56" stroke-linecap="round"/></svg>'
 _ICON_SETTINGS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="3"/><path d="M10 2v2m0 12v2M2 10h2m12 0h2m-3.17-5.66-1.42 1.42M5.59 14.24l-1.42 1.42M14.83 14.24l-1.42-1.42M5.59 5.66l-1.42-1.42" stroke-linecap="round"/></svg>'
 _ICON_MENU = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h14M3 10h14M3 14h14" stroke-linecap="round"/></svg>'
 _ICON_REFRESH = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4v5h5M16 16v-5h-5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.05 14.44A8 8 0 1015.95 5.56" stroke-linecap="round"/></svg>'
@@ -30,9 +35,9 @@ def render_gtm_page(
             return path
         return f"{path}?{urlencode({'key': access_key})}"
 
-    analytics_url = _url("/dashboard/nixon-bq-test/analytics")
-    settings_url  = _url("/dashboard/nixon-bq-test/settings")
-    main_url      = _url("/dashboard/nixon-bq-test")
+    main_url       = _url("/dashboard/nixon-bq-test")
+    connectors_url = _url("/dashboard/nixon-bq-test/connectors")
+    settings_url   = _url("/dashboard/nixon-bq-test/settings")
     api_url       = f"/api/clients/{client_slug}/gtm/live-tags"
     api_refresh   = f"{api_url}?refresh=true"
     if access_key:
@@ -68,10 +73,6 @@ def render_gtm_page(
     .btn-secondary:hover {{ background:#f0f4fa; }}
     .btn svg {{ width:16px; height:16px; }}
     .card {{ background:var(--card); border-radius:var(--radius); border:1px solid var(--line); box-shadow:var(--shadow); }}
-    .summary-bar {{ display:flex; gap:20px; flex-wrap:wrap; margin-bottom:20px; }}
-    .stat-chip {{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 20px; }}
-    .stat-chip-label {{ font-size:.75rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }}
-    .stat-chip-value {{ font-size:1.5rem; font-weight:700; color:var(--navy); line-height:1.2; margin-top:2px; }}
     .tag-table-wrap {{ overflow-x:auto; }}
     table {{ width:100%; border-collapse:collapse; font-size:.875rem; }}
     th {{ text-align:left; padding:10px 14px; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); border-bottom:2px solid var(--line); white-space:nowrap; }}
@@ -113,20 +114,22 @@ def render_gtm_page(
     <div class="dash-sidebar-backdrop" id="sidebarBackdrop" hidden></div>
     <aside class="dash-sidebar" id="dashSidebar">
       <div class="dash-sidebar-head">
-        <a href="{analytics_url}" class="dash-sidebar-logo">
+        <a href="{main_url}" class="dash-sidebar-logo">
           <img class="dash-sidebar-logo-icon" src="/static/apple-touch-icon.png" alt="" width="34" height="34" onerror="this.remove()" />
           <span class="dash-sidebar-wordmark">Sagefrog</span>
         </a>
         <span class="dash-sidebar-beta">Beta</span>
       </div>
       <nav class="dash-sidebar-nav" aria-label="Sections">
-        <a class="dash-view-btn" href="{analytics_url}">{_ICON_ANALYTICS}<span>Analytics</span></a>
-        <a class="dash-view-btn active" href="#">{_ICON_TAGS}<span>GTM Tags</span></a>
+        <a class="dash-view-btn" href="{main_url}">{_ICON_OVERVIEW}<span>Overview</span></a>
+        <a class="dash-view-btn" href="{main_url}">{_ICON_EXPLORER}<span>Explorer</span></a>
+        <a class="dash-view-btn" href="{main_url}">{_ICON_WEBSITE}<span>Website Analytics</span></a>
+        <a class="dash-view-btn active" href="#" style="margin-top:6px;border-top:1px solid rgba(255,255,255,.1);padding-top:14px">{_ICON_TAGS}<span>Event Tracking</span></a>
       </nav>
       <div class="dash-sidebar-footer">
-        <div class="dash-sidebar-client"><span class="topbar-client-label">Nixon — Event Tracking</span></div>
+        <div class="dash-sidebar-client"><span class="topbar-client-label">Nixon Medical</span></div>
         <nav class="dash-sidebar-links">
-          <a href="{main_url}" class="dash-sidebar-link">{_ICON_BACK}<span>Paid Media</span></a>
+          <a href="{connectors_url}" class="dash-sidebar-link">{_ICON_CONNECTORS}<span>Connectors</span></a>
           <a href="{settings_url}" class="dash-sidebar-link">{_ICON_SETTINGS}<span>Settings</span></a>
         </nav>
         {account_html}
@@ -143,25 +146,6 @@ def render_gtm_page(
           <button class="btn btn-secondary" id="refreshBtn" onclick="loadTags(true)">
             {_ICON_REFRESH}Refresh
           </button>
-        </div>
-
-        <div class="summary-bar" id="summaryBar" style="display:none">
-          <div class="stat-chip">
-            <div class="stat-chip-label">Total Tags</div>
-            <div class="stat-chip-value" id="statTotal">—</div>
-          </div>
-          <div class="stat-chip">
-            <div class="stat-chip-label">Active</div>
-            <div class="stat-chip-value" id="statActive" style="color:var(--ok)">—</div>
-          </div>
-          <div class="stat-chip">
-            <div class="stat-chip-label">Paused</div>
-            <div class="stat-chip-value" id="statPaused" style="color:var(--bad)">—</div>
-          </div>
-          <div class="stat-chip">
-            <div class="stat-chip-label">Container Version</div>
-            <div class="stat-chip-value" id="statVersion">—</div>
-          </div>
         </div>
 
         <div class="card">
@@ -260,12 +244,11 @@ function esc(s) {{
 
 async function loadTags(forceRefresh = false) {{
   const container = document.getElementById('tableContainer');
-  const summaryBar = document.getElementById('summaryBar');
-  const pageMeta = document.getElementById('pageMeta');
+  const pageMeta  = document.getElementById('pageMeta');
   const btn = document.getElementById('refreshBtn');
   btn.disabled = true;
   container.innerHTML = '<div class="loading-msg">Loading tags…</div>';
-  summaryBar.style.display = 'none';
+  pageMeta.textContent = 'Loading…';
   try {{
     const url = forceRefresh ? API_REFRESH : API_URL;
     const resp = await fetch(url);
@@ -278,14 +261,15 @@ async function loadTags(forceRefresh = false) {{
     const data = await resp.json();
     const rows = data.rows || [];
     const active = rows.filter(r => !r.paused).length;
-    const paused = rows.filter(r => r.paused).length;
-    document.getElementById('statTotal').textContent  = rows.length;
-    document.getElementById('statActive').textContent = active;
-    document.getElementById('statPaused').textContent = paused;
-    document.getElementById('statVersion').textContent = data.container_version || '—';
-    summaryBar.style.display = 'flex';
+    const ver   = data.container_version ? `v${{data.container_version}}` : '';
     const fetched = data.fetched_at ? new Date(data.fetched_at).toLocaleString() : '';
-    pageMeta.textContent = fetched ? `Container data as of ${{fetched}}` : '';
+    const parts = [
+      `${{rows.length}} tags`,
+      `${{active}} active`,
+      ver,
+      fetched ? `updated ${{fetched}}` : '',
+    ].filter(Boolean);
+    pageMeta.textContent = parts.join('  ·  ');
     container.innerHTML = renderTable(rows);
   }} catch(e) {{
     container.innerHTML = `<div class="error-msg">Network error: ${{esc(e.message)}}</div>`;
