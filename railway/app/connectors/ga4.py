@@ -54,6 +54,7 @@ class GA4Connector(ConnectorHandler):
                     start=start.isoformat(),
                     end=end.isoformat(),
                     refresh_token=refresh_token,
+                    client_key=client_slug,
                 )
             total = result.get("total_rows") or 0
             errors = result.get("errors") or {}

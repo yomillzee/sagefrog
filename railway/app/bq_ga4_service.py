@@ -1,4 +1,10 @@
-"""Sync GA4 Reporting API → BigQuery raw tables."""
+"""Sync GA4 Reporting API → BigQuery raw tables.
+
+All tables live in {project}.raw_ga4. Schema uses snake_case column names.
+Every table includes client_key, property_id, and synced_at for multi-tenant
+idempotency. DELETE is scoped to client_key + property_id + date range so
+multiple clients can share a dataset without collisions.
+"""
 
 from __future__ import annotations
 
@@ -77,126 +83,160 @@ def _table_ref(table_name: str) -> str:
     return f"{_project_id()}.{_dataset_id()}.{table_name}"
 
 
+# ── Common columns added to every table ──────────────────────────────────────
+
+def _common_fields(bq):
+    return [
+        bq.SchemaField("client_key",   "STRING",    mode="REQUIRED"),
+        bq.SchemaField("property_id",  "STRING",    mode="REQUIRED"),
+        bq.SchemaField("date",         "DATE",      mode="REQUIRED"),
+        bq.SchemaField("synced_at",    "TIMESTAMP", mode="NULLABLE"),
+    ]
+
+
 # ── Schema helpers ────────────────────────────────────────────────────────────
 
 def _schema_sessions():
     bq = _bq()
-    return [
-        bq.SchemaField("date", "DATE", mode="REQUIRED"),
-        bq.SchemaField("sessionDefaultChannelGroup", "STRING", mode="NULLABLE"),
-        bq.SchemaField("sessionSource", "STRING", mode="NULLABLE"),
-        bq.SchemaField("sessionMedium", "STRING", mode="NULLABLE"),
-        bq.SchemaField("sessionCampaignName", "STRING", mode="NULLABLE"),
-        bq.SchemaField("sessions", "INT64", mode="NULLABLE"),
-        bq.SchemaField("engagedSessions", "INT64", mode="NULLABLE"),
-        bq.SchemaField("keyEvents", "INT64", mode="NULLABLE"),
-        bq.SchemaField("totalUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("newUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("bounceRate", "FLOAT64", mode="NULLABLE"),
-        bq.SchemaField("engagementRate", "FLOAT64", mode="NULLABLE"),
-        bq.SchemaField("screenPageViews", "INT64", mode="NULLABLE"),
+    return _common_fields(bq) + [
+        bq.SchemaField("session_default_channel_group", "STRING",  mode="NULLABLE"),
+        bq.SchemaField("session_source",                "STRING",  mode="NULLABLE"),
+        bq.SchemaField("session_medium",                "STRING",  mode="NULLABLE"),
+        bq.SchemaField("session_campaign_name",         "STRING",  mode="NULLABLE"),
+        bq.SchemaField("sessions",                      "INT64",   mode="NULLABLE"),
+        bq.SchemaField("engaged_sessions",              "INT64",   mode="NULLABLE"),
+        bq.SchemaField("key_events",                    "INT64",   mode="NULLABLE"),
+        bq.SchemaField("total_users",                   "INT64",   mode="NULLABLE"),
+        bq.SchemaField("new_users",                     "INT64",   mode="NULLABLE"),
+        bq.SchemaField("bounce_rate",                   "FLOAT64", mode="NULLABLE"),
+        bq.SchemaField("engagement_rate",               "FLOAT64", mode="NULLABLE"),
+        bq.SchemaField("screen_page_views",             "INT64",   mode="NULLABLE"),
     ]
 
 
-def _schema_tech():
+def _schema_landing_pages():
     bq = _bq()
-    return [
-        bq.SchemaField("date", "DATE", mode="REQUIRED"),
-        bq.SchemaField("deviceCategory", "STRING", mode="NULLABLE"),
-        bq.SchemaField("browser", "STRING", mode="NULLABLE"),
-        bq.SchemaField("operatingSystem", "STRING", mode="NULLABLE"),
-        bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("engagedSessions", "INT64", mode="NULLABLE"),
-        bq.SchemaField("keyEvents", "INT64", mode="NULLABLE"),
-    ]
-
-
-def _schema_pages():
-    bq = _bq()
-    return [
-        bq.SchemaField("date", "DATE", mode="REQUIRED"),
-        bq.SchemaField("landingPage", "STRING", mode="NULLABLE"),
-        bq.SchemaField("sessions", "INT64", mode="NULLABLE"),
-        bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("newUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("keyEvents", "INT64", mode="NULLABLE"),
-        bq.SchemaField("averageSessionDuration", "FLOAT64", mode="NULLABLE"),
-    ]
-
-
-def _schema_events():
-    bq = _bq()
-    return [
-        bq.SchemaField("date", "DATE", mode="REQUIRED"),
-        bq.SchemaField("eventName", "STRING", mode="NULLABLE"),
-        bq.SchemaField("eventCount", "INT64", mode="NULLABLE"),
-        bq.SchemaField("totalUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("eventCountPerUser", "FLOAT64", mode="NULLABLE"),
-    ]
-
-
-def _schema_user_acq():
-    bq = _bq()
-    return [
-        bq.SchemaField("date", "DATE", mode="REQUIRED"),
-        bq.SchemaField("firstUserDefaultChannelGroup", "STRING", mode="NULLABLE"),
-        bq.SchemaField("firstUserSource", "STRING", mode="NULLABLE"),
-        bq.SchemaField("firstUserMedium", "STRING", mode="NULLABLE"),
-        bq.SchemaField("newUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("keyEvents", "INT64", mode="NULLABLE"),
-        bq.SchemaField("totalUsers", "INT64", mode="NULLABLE"),
-    ]
-
-
-def _schema_demographics():
-    bq = _bq()
-    return [
-        bq.SchemaField("date", "DATE", mode="REQUIRED"),
-        bq.SchemaField("userAgeBracket", "STRING", mode="NULLABLE"),
-        bq.SchemaField("userGender", "STRING", mode="NULLABLE"),
-        bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("keyEvents", "INT64", mode="NULLABLE"),
-        bq.SchemaField("engagementRate", "FLOAT64", mode="NULLABLE"),
-    ]
-
-
-def _schema_geo():
-    bq = _bq()
-    return [
-        bq.SchemaField("date", "DATE", mode="REQUIRED"),
-        bq.SchemaField("country", "STRING", mode="NULLABLE"),
-        bq.SchemaField("region", "STRING", mode="NULLABLE"),
-        bq.SchemaField("city", "STRING", mode="NULLABLE"),
-        bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("sessions", "INT64", mode="NULLABLE"),
-        bq.SchemaField("keyEvents", "INT64", mode="NULLABLE"),
+    return _common_fields(bq) + [
+        bq.SchemaField("landing_page",             "STRING",  mode="NULLABLE"),
+        bq.SchemaField("sessions",                 "INT64",   mode="NULLABLE"),
+        bq.SchemaField("active_users",             "INT64",   mode="NULLABLE"),
+        bq.SchemaField("new_users",                "INT64",   mode="NULLABLE"),
+        bq.SchemaField("key_events",               "INT64",   mode="NULLABLE"),
+        bq.SchemaField("average_session_duration", "FLOAT64", mode="NULLABLE"),
     ]
 
 
 def _schema_pageviews():
     bq = _bq()
-    return [
-        bq.SchemaField("date", "DATE", mode="REQUIRED"),
-        bq.SchemaField("pagePath", "STRING", mode="NULLABLE"),
-        bq.SchemaField("screenPageViews", "INT64", mode="NULLABLE"),
-        bq.SchemaField("activeUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("newUsers", "INT64", mode="NULLABLE"),
-        bq.SchemaField("keyEvents", "INT64", mode="NULLABLE"),
-        bq.SchemaField("averageSessionDuration", "FLOAT64", mode="NULLABLE"),
+    return _common_fields(bq) + [
+        bq.SchemaField("page_path",                "STRING",  mode="NULLABLE"),
+        bq.SchemaField("page_title",               "STRING",  mode="NULLABLE"),
+        bq.SchemaField("screen_page_views",        "INT64",   mode="NULLABLE"),
+        bq.SchemaField("active_users",             "INT64",   mode="NULLABLE"),
+        bq.SchemaField("new_users",                "INT64",   mode="NULLABLE"),
+        bq.SchemaField("key_events",               "INT64",   mode="NULLABLE"),
+        bq.SchemaField("average_session_duration", "FLOAT64", mode="NULLABLE"),
+    ]
+
+
+def _schema_page_source():
+    bq = _bq()
+    return _common_fields(bq) + [
+        bq.SchemaField("page_path",                     "STRING",  mode="NULLABLE"),
+        bq.SchemaField("page_title",                    "STRING",  mode="NULLABLE"),
+        bq.SchemaField("session_default_channel_group", "STRING",  mode="NULLABLE"),
+        bq.SchemaField("session_source",                "STRING",  mode="NULLABLE"),
+        bq.SchemaField("session_medium",                "STRING",  mode="NULLABLE"),
+        bq.SchemaField("session_campaign_name",         "STRING",  mode="NULLABLE"),
+        bq.SchemaField("sessions",                      "INT64",   mode="NULLABLE"),
+        bq.SchemaField("active_users",                  "INT64",   mode="NULLABLE"),
+        bq.SchemaField("screen_page_views",             "INT64",   mode="NULLABLE"),
+        bq.SchemaField("engaged_sessions",              "INT64",   mode="NULLABLE"),
+        bq.SchemaField("key_events",                    "INT64",   mode="NULLABLE"),
+        bq.SchemaField("user_engagement_duration",      "FLOAT64", mode="NULLABLE"),
+    ]
+
+
+def _schema_events():
+    bq = _bq()
+    return _common_fields(bq) + [
+        bq.SchemaField("event_name",                    "STRING", mode="NULLABLE"),
+        bq.SchemaField("session_default_channel_group", "STRING", mode="NULLABLE"),
+        bq.SchemaField("session_source",                "STRING", mode="NULLABLE"),
+        bq.SchemaField("session_medium",                "STRING", mode="NULLABLE"),
+        bq.SchemaField("session_campaign_name",         "STRING", mode="NULLABLE"),
+        bq.SchemaField("event_count",                   "INT64",  mode="NULLABLE"),
+        bq.SchemaField("key_events",                    "INT64",  mode="NULLABLE"),
+        bq.SchemaField("total_users",                   "INT64",  mode="NULLABLE"),
+    ]
+
+
+def _schema_tech():
+    bq = _bq()
+    return _common_fields(bq) + [
+        bq.SchemaField("device_category",  "STRING", mode="NULLABLE"),
+        bq.SchemaField("browser",          "STRING", mode="NULLABLE"),
+        bq.SchemaField("operating_system", "STRING", mode="NULLABLE"),
+        bq.SchemaField("active_users",     "INT64",  mode="NULLABLE"),
+        bq.SchemaField("engaged_sessions", "INT64",  mode="NULLABLE"),
+        bq.SchemaField("key_events",       "INT64",  mode="NULLABLE"),
+    ]
+
+
+def _schema_user_acq():
+    bq = _bq()
+    return _common_fields(bq) + [
+        bq.SchemaField("first_user_default_channel_group", "STRING", mode="NULLABLE"),
+        bq.SchemaField("first_user_source",                "STRING", mode="NULLABLE"),
+        bq.SchemaField("first_user_medium",                "STRING", mode="NULLABLE"),
+        bq.SchemaField("new_users",                        "INT64",  mode="NULLABLE"),
+        bq.SchemaField("active_users",                     "INT64",  mode="NULLABLE"),
+        bq.SchemaField("key_events",                       "INT64",  mode="NULLABLE"),
+        bq.SchemaField("total_users",                      "INT64",  mode="NULLABLE"),
+    ]
+
+
+def _schema_geo():
+    bq = _bq()
+    return _common_fields(bq) + [
+        bq.SchemaField("country",      "STRING", mode="NULLABLE"),
+        bq.SchemaField("region",       "STRING", mode="NULLABLE"),
+        bq.SchemaField("city",         "STRING", mode="NULLABLE"),
+        bq.SchemaField("active_users", "INT64",  mode="NULLABLE"),
+        bq.SchemaField("sessions",     "INT64",  mode="NULLABLE"),
+        bq.SchemaField("key_events",   "INT64",  mode="NULLABLE"),
+    ]
+
+
+def _schema_demographics():
+    bq = _bq()
+    return _common_fields(bq) + [
+        bq.SchemaField("user_age_bracket", "STRING",  mode="NULLABLE"),
+        bq.SchemaField("user_gender",      "STRING",  mode="NULLABLE"),
+        bq.SchemaField("active_users",     "INT64",   mode="NULLABLE"),
+        bq.SchemaField("key_events",       "INT64",   mode="NULLABLE"),
+        bq.SchemaField("engagement_rate",  "FLOAT64", mode="NULLABLE"),
     ]
 
 
 _TABLE_SCHEMAS = {
-    "ga4_sessions_daily": _schema_sessions,
-    "ga4_tech_daily": _schema_tech,
-    "ga4_pages_daily": _schema_pages,
-    "ga4_events_daily": _schema_events,
-    "ga4_user_acq_daily": _schema_user_acq,
+    "ga4_sessions_daily":     _schema_sessions,
+    "ga4_landing_pages_daily": _schema_landing_pages,
+    "ga4_pageviews_daily":    _schema_pageviews,
+    "ga4_page_source_daily":  _schema_page_source,
+    "ga4_events_daily":       _schema_events,
+    "ga4_tech_daily":         _schema_tech,
+    "ga4_user_acq_daily":     _schema_user_acq,
+    "ga4_geo_daily":          _schema_geo,
     "ga4_demographics_daily": _schema_demographics,
-    "ga4_geo_daily": _schema_geo,
-    "ga4_pageviews_daily": _schema_pageviews,
 }
+
+# Legacy table names that have been renamed — dropped on first ensure_ga4_tables run.
+_LEGACY_TABLES = ["ga4_pages_daily"]
+
+# Canary column from the old camelCase schema. If a table has this column,
+# it predates the snake_case migration and must be dropped + recreated.
+_OLD_SCHEMA_CANARY = "sessionDefaultChannelGroup"
 
 
 def ensure_ga4_tables() -> None:
@@ -206,33 +246,30 @@ def ensure_ga4_tables() -> None:
     dataset = _dataset_id()
     dataset_ref = f"{project}.{dataset}"
     client.create_dataset(bq.Dataset(dataset_ref), exists_ok=True)
+
+    # Drop renamed legacy tables.
+    for old_name in _LEGACY_TABLES:
+        client.delete_table(f"{dataset_ref}.{old_name}", not_found_ok=True)
+
     for table_name, schema_fn in _TABLE_SCHEMAS.items():
-        schema = schema_fn()
         table_id = f"{dataset_ref}.{table_name}"
+        schema = schema_fn()
+
+        # Detect old camelCase schema and drop for recreation.
+        try:
+            existing = client.get_table(table_id)
+            existing_cols = {f.name for f in existing.schema}
+            if _OLD_SCHEMA_CANARY in existing_cols:
+                _log.info(
+                    "GA4 %s has old camelCase schema — dropping for migration", table_name
+                )
+                client.delete_table(table_id)
+        except Exception:
+            pass  # Table doesn't exist yet — create below.
+
         table = bq.Table(table_id, schema=schema)
         table.time_partitioning = bq.TimePartitioning(field="date")
         client.create_table(table, exists_ok=True)
-
-    # Add new columns to existing tables (idempotent — IF NOT EXISTS)
-    _alter_cols = [
-        ("ga4_sessions_daily", "totalUsers",           "INT64"),
-        ("ga4_sessions_daily", "newUsers",              "INT64"),
-        ("ga4_sessions_daily", "bounceRate",            "FLOAT64"),
-        ("ga4_sessions_daily", "engagementRate",        "FLOAT64"),
-        ("ga4_sessions_daily", "screenPageViews",       "INT64"),
-        ("ga4_sessions_daily", "sessionCampaignName",   "STRING"),
-        ("ga4_tech_daily",     "browser",               "STRING"),
-        ("ga4_tech_daily",     "operatingSystem",       "STRING"),
-        # averageSessionDuration replaces userEngagementDurationPerSession
-        ("ga4_pages_daily",    "averageSessionDuration", "FLOAT64"),
-    ]
-    for tbl, col, dtype in _alter_cols:
-        try:
-            client.query(
-                f"ALTER TABLE `{dataset_ref}.{tbl}` ADD COLUMN IF NOT EXISTS {col} {dtype}"
-            ).result()
-        except Exception as exc:
-            _log.warning("ALTER TABLE %s.%s skipped: %s", tbl, col, exc)
 
     _log.info("GA4 tables ensured in %s", dataset_ref)
 
@@ -243,24 +280,30 @@ def _write_table(
     table_name: str,
     rows: list[dict[str, Any]],
     schema_fn,
+    *,
+    client_key: str,
+    property_id: str,
     start: str,
     end: str,
 ) -> int:
     if not rows:
+        _log.info("GA4 %s — 0 rows from API, skipping write", table_name)
         return 0
     bq = _bq()
     client = _client()
     table_id = _table_ref(table_name)
-    # Delete existing rows for this date range (idempotent re-runs)
     client.query(
-        f"DELETE FROM `{table_id}` WHERE date BETWEEN '{start}' AND '{end}'"
+        f"DELETE FROM `{table_id}` "
+        f"WHERE client_key = '{client_key}' "
+        f"  AND property_id = '{property_id}' "
+        f"  AND date BETWEEN '{start}' AND '{end}'"
     ).result()
     job_config = bq.LoadJobConfig(
         schema=schema_fn(),
         write_disposition="WRITE_APPEND",
     )
     client.load_table_from_json(rows, table_id, job_config=job_config).result()
-    _log.info("GA4 wrote %d rows → %s", len(rows), table_name)
+    _log.info("GA4 wrote %d rows → %s [client=%s property=%s]", len(rows), table_name, client_key, property_id)
     return len(rows)
 
 
@@ -272,53 +315,86 @@ def sync_ga4_to_bq(
     start: str,
     end: str,
     refresh_token: str,
+    client_key: str,
 ) -> dict[str, Any]:
-    """
-    Pull all 6 GA4 report types and write to BQ.
-    Returns row counts per table.
-    """
+    """Pull all GA4 report types and write to BQ. Returns row counts per table."""
     import ga4_reporting_service as ga4
 
     ensure_ga4_tables()
 
     access_token = ga4._get_access_token(refresh_token)
     _log.info(
-        "GA4 sync: property=%s start=%s end=%s dataset=%s",
-        property_id, start, end, _dataset_id(),
+        "GA4 sync: client=%s property=%s start=%s end=%s dataset=%s",
+        client_key, property_id, start, end, _dataset_id(),
     )
+
+    fetchers = [
+        ("sessions",      ga4.fetch_sessions_daily,      "ga4_sessions_daily",      _schema_sessions),
+        ("landing_pages", ga4.fetch_landing_pages_daily,  "ga4_landing_pages_daily", _schema_landing_pages),
+        ("pageviews",     ga4.fetch_pageviews_daily,      "ga4_pageviews_daily",     _schema_pageviews),
+        ("page_source",   ga4.fetch_page_source_daily,    "ga4_page_source_daily",   _schema_page_source),
+        ("events",        ga4.fetch_events_daily,         "ga4_events_daily",        _schema_events),
+        ("tech",          ga4.fetch_tech_daily,           "ga4_tech_daily",          _schema_tech),
+        ("user_acq",      ga4.fetch_user_acq_daily,       "ga4_user_acq_daily",      _schema_user_acq),
+        ("geo",           ga4.fetch_geo_daily,            "ga4_geo_daily",           _schema_geo),
+        ("demographics",  ga4.fetch_demographics_daily,   "ga4_demographics_daily",  _schema_demographics),
+    ]
 
     errors: dict[str, str] = {}
     counts: dict[str, int] = {}
 
-    fetchers = [
-        ("sessions",     ga4.fetch_sessions_daily,    "ga4_sessions_daily",    _schema_sessions),
-        ("tech",         ga4.fetch_tech_daily,         "ga4_tech_daily",         _schema_tech),
-        ("pages",        ga4.fetch_pages_daily,        "ga4_pages_daily",        _schema_pages),
-        ("pageviews",    ga4.fetch_pageviews_daily,    "ga4_pageviews_daily",    _schema_pageviews),
-        ("events",       ga4.fetch_events_daily,       "ga4_events_daily",       _schema_events),
-        ("user_acq",     ga4.fetch_user_acq_daily,     "ga4_user_acq_daily",     _schema_user_acq),
-        ("geo",          ga4.fetch_geo_daily,          "ga4_geo_daily",          _schema_geo),
-        ("demographics", ga4.fetch_demographics_daily, "ga4_demographics_daily", _schema_demographics),
-    ]
-
     for key, fetch_fn, table_name, schema_fn in fetchers:
         try:
-            rows = fetch_fn(property_id, start, end, access_token)
-            n = _write_table(table_name, rows, schema_fn, start, end)
+            rows = fetch_fn(property_id, start, end, access_token, client_key=client_key)
+            n = _write_table(
+                table_name, rows, schema_fn,
+                client_key=client_key, property_id=property_id,
+                start=start, end=end,
+            )
             counts[key] = n
         except Exception as exc:
             _log.warning("GA4 sync error [%s]: %s", key, exc)
             errors[key] = str(exc)[:300]
             counts[key] = 0
 
+    total = sum(counts.values())
     _log.info(
-        "GA4 sync complete: sessions=%d tech=%d pages=%d pageviews=%d events=%d "
-        "user_acq=%d geo=%d demographics=%d errors=%s",
-        counts.get("sessions", 0), counts.get("tech", 0), counts.get("pages", 0),
-        counts.get("pageviews", 0), counts.get("events", 0), counts.get("user_acq", 0),
-        counts.get("geo", 0), counts.get("demographics", 0),
+        "GA4 sync complete [%s]: %s | errors=%s",
+        client_key,
+        " ".join(f"{k}={v}" for k, v in counts.items()),
         list(errors.keys()) or "none",
     )
-
-    total = sum(counts.values())
     return {"total_rows": total, "counts": counts, "errors": errors}
+
+
+# ── Health check ──────────────────────────────────────────────────────────────
+
+def check_ga4_health(*, client_key: str, property_id: str) -> dict[str, Any]:
+    """Validation query: row counts, date range, and yesterday coverage per table."""
+    from datetime import date, timedelta
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    client = _client()
+    dataset_ref = f"{_project_id()}.{_dataset_id()}"
+    results = {}
+    for table_name in _TABLE_SCHEMAS:
+        try:
+            sql = f"""
+            SELECT
+              COUNT(*) AS row_count,
+              MIN(date) AS earliest_date,
+              MAX(date) AS latest_date,
+              COUNTIF(date = '{yesterday}') AS yesterday_rows
+            FROM `{dataset_ref}.{table_name}`
+            WHERE client_key = '{client_key}' AND property_id = '{property_id}'
+            """
+            rows = list(client.query(sql).result())
+            r = dict(rows[0]) if rows else {}
+            results[table_name] = {
+                "row_count": r.get("row_count", 0),
+                "earliest_date": str(r.get("earliest_date") or ""),
+                "latest_date": str(r.get("latest_date") or ""),
+                "has_yesterday": int(r.get("yesterday_rows") or 0) > 0,
+            }
+        except Exception as exc:
+            results[table_name] = {"error": str(exc)[:200]}
+    return results

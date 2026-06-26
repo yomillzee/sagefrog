@@ -24,7 +24,7 @@ _PAGE_PATH_SOURCE_DAILY_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_page_path_sour
 _GA4_DATASET = "raw_ga4"
 _TRAFFIC_ACQ_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_sessions_daily`"
 _TECH_DETAILS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_tech_daily`"
-_LANDING_PAGE_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_pages_daily`"
+_LANDING_PAGE_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_landing_pages_daily`"
 _PAGEVIEWS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_pageviews_daily`"
 _EVENTS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_events_daily`"
 _USER_ACQ_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_user_acq_daily`"
@@ -469,11 +469,11 @@ def fetch_nixon_traffic_acquisition(
     }
     by_channel_sql = f"""
     SELECT
-      COALESCE(sessionDefaultChannelGroup, '(other)') AS channel,
+      COALESCE(session_default_channel_group, '(other)') AS channel,
       SUM(sessions) AS sessions,
-      SUM(engagedSessions) AS engaged_sessions,
-      ROUND(SAFE_DIVIDE(SUM(engagedSessions), NULLIF(SUM(sessions), 0)) * 100, 1) AS engagement_rate,
-      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
+      SUM(engaged_sessions) AS engaged_sessions,
+      ROUND(SAFE_DIVIDE(SUM(engaged_sessions), NULLIF(SUM(sessions), 0)) * 100, 1) AS engagement_rate,
+      SUM(key_events) AS key_events
     FROM {_TRAFFIC_ACQ_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY channel
@@ -483,7 +483,7 @@ def fetch_nixon_traffic_acquisition(
     SELECT
       CAST(date AS STRING) AS date,
       SUM(sessions) AS sessions,
-      SUM(engagedSessions) AS engaged_sessions
+      SUM(engaged_sessions) AS engaged_sessions
     FROM {_TRAFFIC_ACQ_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY date
@@ -491,12 +491,12 @@ def fetch_nixon_traffic_acquisition(
     """
     by_source_sql = f"""
     SELECT
-      COALESCE(sessionSource, '(direct)') AS source,
-      COALESCE(sessionMedium, '(none)') AS medium,
+      COALESCE(session_source, '(direct)') AS source,
+      COALESCE(session_medium, '(none)') AS medium,
       SUM(sessions) AS sessions,
-      SUM(engagedSessions) AS engaged_sessions,
-      ROUND(SAFE_DIVIDE(SUM(engagedSessions), NULLIF(SUM(sessions), 0)) * 100, 1) AS engagement_rate,
-      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
+      SUM(engaged_sessions) AS engaged_sessions,
+      ROUND(SAFE_DIVIDE(SUM(engaged_sessions), NULLIF(SUM(sessions), 0)) * 100, 1) AS engagement_rate,
+      SUM(key_events) AS key_events
     FROM {_TRAFFIC_ACQ_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY source, medium
@@ -523,10 +523,10 @@ def fetch_nixon_device_split(
     }
     sql = f"""
     SELECT
-      COALESCE(deviceCategory, 'unknown') AS device,
-      SUM(activeUsers) AS users,
-      SUM(engagedSessions) AS engaged_sessions,
-      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
+      COALESCE(device_category, 'unknown') AS device,
+      SUM(active_users) AS users,
+      SUM(engaged_sessions) AS engaged_sessions,
+      SUM(key_events) AS key_events
     FROM {_TECH_DETAILS_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY device
@@ -551,13 +551,13 @@ def fetch_nixon_landing_pages(
     }
     sql = f"""
     SELECT
-      COALESCE(landingPage, '/') AS page_path,
+      COALESCE(landing_page, '/') AS page_path,
       SUM(sessions) AS sessions,
-      SUM(activeUsers) AS users,
-      SUM(newUsers) AS new_users,
-      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events,
-      ROUND(SAFE_DIVIDE(SUM(keyEvents), NULLIF(SUM(sessions), 0)) * 100, 1) AS key_event_rate,
-      ROUND(AVG(averageSessionDuration), 1) AS avg_engagement_seconds
+      SUM(active_users) AS users,
+      SUM(new_users) AS new_users,
+      SUM(key_events) AS key_events,
+      ROUND(SAFE_DIVIDE(SUM(key_events), NULLIF(SUM(sessions), 0)) * 100, 1) AS key_event_rate,
+      ROUND(AVG(average_session_duration), 1) AS avg_engagement_seconds
     FROM {_LANDING_PAGE_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY page_path
@@ -627,13 +627,13 @@ def fetch_nixon_conversion_events(
     }
     sql = f"""
     SELECT
-      eventName AS event_name,
-      SUM(eventCount) AS event_count,
-      SUM(totalUsers) AS total_users,
-      ROUND(AVG(eventCountPerUser), 2) AS event_count_per_user
+      event_name,
+      SUM(event_count) AS event_count,
+      SUM(total_users) AS total_users,
+      ROUND(SAFE_DIVIDE(SUM(event_count), NULLIF(SUM(total_users), 0)), 2) AS event_count_per_user
     FROM {_EVENTS_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
-      AND eventName NOT IN (
+      AND event_name NOT IN (
         'page_view', 'session_start', 'user_engagement', 'first_visit',
         'scroll', 'click', 'Click', 'trackOptanonEvent',
         'Banner Accept Cookies', 'Banner Close Button'
@@ -642,7 +642,6 @@ def fetch_nixon_conversion_events(
     ORDER BY event_count DESC
     """
     rows = _run_query(sql, params=params, max_rows=100)
-    # Form funnel subset
     funnel_names = {"form_start", "form_submit", "generate_lead"}
     funnel_map = {r["event_name"]: r["event_count"] for r in rows if r["event_name"] in funnel_names}
     funnel = [
@@ -670,11 +669,11 @@ def fetch_nixon_user_acquisition(
     }
     channel_sql = f"""
     SELECT
-      COALESCE(firstUserDefaultChannelGroup, '(not set)') AS channel,
-      SUM(newUsers) AS new_users,
-      SUM(activeUsers) AS active_users,
-      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events,
-      ROUND(SAFE_DIVIDE(SUM(keyEvents), NULLIF(SUM(totalUsers), 0)) * 100, 1) AS key_event_rate
+      COALESCE(first_user_default_channel_group, '(not set)') AS channel,
+      SUM(new_users) AS new_users,
+      SUM(active_users) AS active_users,
+      SUM(key_events) AS key_events,
+      ROUND(SAFE_DIVIDE(SUM(key_events), NULLIF(SUM(total_users), 0)) * 100, 1) AS key_event_rate
     FROM {_USER_ACQ_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY channel
@@ -683,11 +682,11 @@ def fetch_nixon_user_acquisition(
     """
     source_sql = f"""
     SELECT
-      COALESCE(firstUserSource, '(direct)') AS source,
-      COALESCE(firstUserMedium, '(none)') AS medium,
-      SUM(newUsers) AS new_users,
-      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events,
-      ROUND(SAFE_DIVIDE(SUM(keyEvents), NULLIF(SUM(totalUsers), 0)) * 100, 1) AS key_event_rate
+      COALESCE(first_user_source, '(direct)') AS source,
+      COALESCE(first_user_medium, '(none)') AS medium,
+      SUM(new_users) AS new_users,
+      SUM(key_events) AS key_events,
+      ROUND(SAFE_DIVIDE(SUM(key_events), NULLIF(SUM(total_users), 0)) * 100, 1) AS key_event_rate
     FROM {_USER_ACQ_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY source, medium
@@ -719,9 +718,9 @@ def fetch_nixon_demographics(
       COALESCE(city, '(not set)') AS city,
       COALESCE(region, '') AS region,
       COALESCE(country, '') AS country,
-      SUM(activeUsers) AS users,
+      SUM(active_users) AS users,
       SUM(sessions) AS sessions,
-      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
+      SUM(key_events) AS key_events
     FROM {_GEO_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
       AND city IS NOT NULL AND city != '(not set)'
@@ -731,12 +730,12 @@ def fetch_nixon_demographics(
     """
     age_sql = f"""
     SELECT
-      COALESCE(userAgeBracket, 'unknown') AS age_bracket,
-      SUM(activeUsers) AS users,
-      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
+      COALESCE(user_age_bracket, 'unknown') AS age_bracket,
+      SUM(active_users) AS users,
+      SUM(key_events) AS key_events
     FROM {_DEMOGRAPHICS_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
-      AND userAgeBracket IS NOT NULL AND userAgeBracket != '(not set)'
+      AND user_age_bracket IS NOT NULL AND user_age_bracket != '(not set)'
     GROUP BY age_bracket
     ORDER BY
       CASE age_bracket
@@ -746,12 +745,12 @@ def fetch_nixon_demographics(
     """
     gender_sql = f"""
     SELECT
-      COALESCE(userGender, 'unknown') AS gender,
-      SUM(activeUsers) AS users,
-      CAST(ROUND(SUM(keyEvents)) AS INT64) AS key_events
+      COALESCE(user_gender, 'unknown') AS gender,
+      SUM(active_users) AS users,
+      SUM(key_events) AS key_events
     FROM {_DEMOGRAPHICS_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
-      AND userGender IS NOT NULL AND userGender NOT IN ('(not set)', 'unknown')
+      AND user_gender IS NOT NULL AND user_gender NOT IN ('(not set)', 'unknown')
     GROUP BY gender
     ORDER BY users DESC
     """

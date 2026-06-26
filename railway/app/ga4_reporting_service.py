@@ -1,8 +1,15 @@
-"""GA4 Data API v1beta — pull reports and list properties via OAuth refresh token."""
+"""GA4 Data API v1beta — pull reports and list properties via OAuth refresh token.
+
+This is GA4 Data API *report-level* ingestion — aggregated daily metrics by
+dimension combinations. It is NOT the native GA4 BigQuery event-level export
+(events_* tables from ga4_export). Column names and available dimensions differ
+from the BQ export schema. Do not join these tables to event-level data.
+"""
 
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -127,10 +134,18 @@ def _parse_date(yyyymmdd: str) -> str:
     return s
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 # ── Per-table fetchers ────────────────────────────────────────────────────────
+# All output dicts use snake_case keys matching BQ column names.
+# Every row includes client_key, property_id, and synced_at for multi-tenant
+# idempotency and audit.
 
 def fetch_sessions_daily(
-    property_id: str, start: str, end: str, access_token: str
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
 ) -> list[dict[str, Any]]:
     rows = _run_report(
         property_id,
@@ -144,51 +159,33 @@ def fetch_sessions_daily(
         ],
         start=start, end=end, access_token=access_token,
     )
+    synced_at = _now()
     out = []
     for r in rows:
         out.append({
+            "client_key": client_key,
+            "property_id": property_id,
             "date": _parse_date(r.get("date", "")),
-            "sessionDefaultChannelGroup": r.get("sessionDefaultChannelGroup") or "(other)",
-            "sessionSource": r.get("sessionSource") or "(direct)",
-            "sessionMedium": r.get("sessionMedium") or "(none)",
-            "sessionCampaignName": r.get("sessionCampaignName") or "(not set)",
+            "session_default_channel_group": r.get("sessionDefaultChannelGroup") or "(other)",
+            "session_source": r.get("sessionSource") or "(direct)",
+            "session_medium": r.get("sessionMedium") or "(none)",
+            "session_campaign_name": r.get("sessionCampaignName") or "(not set)",
             "sessions": int(r.get("sessions") or 0),
-            "engagedSessions": int(r.get("engagedSessions") or 0),
-            "keyEvents": int(float(r.get("keyEvents") or 0)),
-            "totalUsers": int(r.get("totalUsers") or 0),
-            "newUsers": int(r.get("newUsers") or 0),
-            "bounceRate": float(r.get("bounceRate") or 0),
-            "engagementRate": float(r.get("engagementRate") or 0),
-            "screenPageViews": int(r.get("screenPageViews") or 0),
+            "engaged_sessions": int(r.get("engagedSessions") or 0),
+            "key_events": int(float(r.get("keyEvents") or 0)),
+            "total_users": int(r.get("totalUsers") or 0),
+            "new_users": int(r.get("newUsers") or 0),
+            "bounce_rate": float(r.get("bounceRate") or 0),
+            "engagement_rate": float(r.get("engagementRate") or 0),
+            "screen_page_views": int(r.get("screenPageViews") or 0),
+            "synced_at": synced_at,
         })
     return out
 
 
-def fetch_tech_daily(
-    property_id: str, start: str, end: str, access_token: str
-) -> list[dict[str, Any]]:
-    rows = _run_report(
-        property_id,
-        dimensions=["date", "deviceCategory", "browser", "operatingSystem"],
-        metrics=["activeUsers", "engagedSessions", "keyEvents"],
-        start=start, end=end, access_token=access_token,
-    )
-    out = []
-    for r in rows:
-        out.append({
-            "date": _parse_date(r.get("date", "")),
-            "deviceCategory": r.get("deviceCategory") or "unknown",
-            "browser": r.get("browser") or "(not set)",
-            "operatingSystem": r.get("operatingSystem") or "(not set)",
-            "activeUsers": int(r.get("activeUsers") or 0),
-            "engagedSessions": int(r.get("engagedSessions") or 0),
-            "keyEvents": int(float(r.get("keyEvents") or 0)),
-        })
-    return out
-
-
-def fetch_pages_daily(
-    property_id: str, start: str, end: str, access_token: str
+def fetch_landing_pages_daily(
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
 ) -> list[dict[str, Any]]:
     rows = _run_report(
         property_id,
@@ -196,43 +193,176 @@ def fetch_pages_daily(
         metrics=["sessions", "activeUsers", "newUsers", "keyEvents", "averageSessionDuration"],
         start=start, end=end, access_token=access_token,
     )
+    synced_at = _now()
     out = []
     for r in rows:
         out.append({
+            "client_key": client_key,
+            "property_id": property_id,
             "date": _parse_date(r.get("date", "")),
-            "landingPage": r.get("landingPage") or "/",
+            "landing_page": r.get("landingPage") or "/",
             "sessions": int(r.get("sessions") or 0),
-            "activeUsers": int(r.get("activeUsers") or 0),
-            "newUsers": int(r.get("newUsers") or 0),
-            "keyEvents": int(float(r.get("keyEvents") or 0)),
-            "averageSessionDuration": float(r.get("averageSessionDuration") or 0),
+            "active_users": int(r.get("activeUsers") or 0),
+            "new_users": int(r.get("newUsers") or 0),
+            "key_events": int(float(r.get("keyEvents") or 0)),
+            "average_session_duration": float(r.get("averageSessionDuration") or 0),
+            "synced_at": synced_at,
+        })
+    return out
+
+
+def fetch_pageviews_daily(
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
+) -> list[dict[str, Any]]:
+    rows = _run_report(
+        property_id,
+        dimensions=["date", "pagePath", "pageTitle"],
+        metrics=["screenPageViews", "activeUsers", "newUsers", "keyEvents", "averageSessionDuration"],
+        start=start, end=end, access_token=access_token,
+    )
+    synced_at = _now()
+    out = []
+    for r in rows:
+        out.append({
+            "client_key": client_key,
+            "property_id": property_id,
+            "date": _parse_date(r.get("date", "")),
+            "page_path": r.get("pagePath") or "/",
+            "page_title": r.get("pageTitle") or "(not set)",
+            "screen_page_views": int(r.get("screenPageViews") or 0),
+            "active_users": int(r.get("activeUsers") or 0),
+            "new_users": int(r.get("newUsers") or 0),
+            "key_events": int(float(r.get("keyEvents") or 0)),
+            "average_session_duration": float(r.get("averageSessionDuration") or 0),
+            "synced_at": synced_at,
+        })
+    return out
+
+
+def fetch_page_source_daily(
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
+) -> list[dict[str, Any]]:
+    """Page performance broken out by traffic source.
+
+    This is a cross-dimension report (page × source). The GA4 Data API supports
+    this combination, but cardinality can be very high for large properties.
+    If the API rejects the combination, returns [] and logs a warning instead of
+    raising — the table will be empty for this sync but the rest continue.
+
+    IMPORTANT: Do not simulate page-by-source data by joining ga4_pageviews_daily
+    to ga4_sessions_daily on date. That creates false attribution.
+    """
+    try:
+        rows = _run_report(
+            property_id,
+            dimensions=[
+                "date", "pagePath", "pageTitle",
+                "sessionDefaultChannelGroup", "sessionSource",
+                "sessionMedium", "sessionCampaignName",
+            ],
+            metrics=[
+                "sessions", "activeUsers", "screenPageViews",
+                "engagedSessions", "keyEvents", "userEngagementDuration",
+            ],
+            start=start, end=end, access_token=access_token,
+        )
+    except RuntimeError as exc:
+        _log.warning(
+            "GA4 page_source_daily skipped — API rejected dimension/metric combination "
+            "or returned error. Table will be empty for this sync. Error: %s", exc,
+        )
+        return []
+    synced_at = _now()
+    out = []
+    for r in rows:
+        out.append({
+            "client_key": client_key,
+            "property_id": property_id,
+            "date": _parse_date(r.get("date", "")),
+            "page_path": r.get("pagePath") or "/",
+            "page_title": r.get("pageTitle") or "(not set)",
+            "session_default_channel_group": r.get("sessionDefaultChannelGroup") or "(other)",
+            "session_source": r.get("sessionSource") or "(direct)",
+            "session_medium": r.get("sessionMedium") or "(none)",
+            "session_campaign_name": r.get("sessionCampaignName") or "(not set)",
+            "sessions": int(r.get("sessions") or 0),
+            "active_users": int(r.get("activeUsers") or 0),
+            "screen_page_views": int(r.get("screenPageViews") or 0),
+            "engaged_sessions": int(r.get("engagedSessions") or 0),
+            "key_events": int(float(r.get("keyEvents") or 0)),
+            "user_engagement_duration": float(r.get("userEngagementDuration") or 0),
+            "synced_at": synced_at,
         })
     return out
 
 
 def fetch_events_daily(
-    property_id: str, start: str, end: str, access_token: str
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
 ) -> list[dict[str, Any]]:
     rows = _run_report(
         property_id,
-        dimensions=["date", "eventName"],
-        metrics=["eventCount", "totalUsers", "eventCountPerUser"],
+        dimensions=[
+            "date", "eventName",
+            "sessionDefaultChannelGroup", "sessionSource",
+            "sessionMedium", "sessionCampaignName",
+        ],
+        metrics=["eventCount", "keyEvents", "totalUsers"],
         start=start, end=end, access_token=access_token,
     )
+    synced_at = _now()
     out = []
     for r in rows:
         out.append({
+            "client_key": client_key,
+            "property_id": property_id,
             "date": _parse_date(r.get("date", "")),
-            "eventName": r.get("eventName") or "(unknown)",
-            "eventCount": int(r.get("eventCount") or 0),
-            "totalUsers": int(r.get("totalUsers") or 0),
-            "eventCountPerUser": float(r.get("eventCountPerUser") or 0),
+            "event_name": r.get("eventName") or "(unknown)",
+            "session_default_channel_group": r.get("sessionDefaultChannelGroup") or "(other)",
+            "session_source": r.get("sessionSource") or "(direct)",
+            "session_medium": r.get("sessionMedium") or "(none)",
+            "session_campaign_name": r.get("sessionCampaignName") or "(not set)",
+            "event_count": int(r.get("eventCount") or 0),
+            "key_events": int(float(r.get("keyEvents") or 0)),
+            "total_users": int(r.get("totalUsers") or 0),
+            "synced_at": synced_at,
+        })
+    return out
+
+
+def fetch_tech_daily(
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
+) -> list[dict[str, Any]]:
+    rows = _run_report(
+        property_id,
+        dimensions=["date", "deviceCategory", "browser", "operatingSystem"],
+        metrics=["activeUsers", "engagedSessions", "keyEvents"],
+        start=start, end=end, access_token=access_token,
+    )
+    synced_at = _now()
+    out = []
+    for r in rows:
+        out.append({
+            "client_key": client_key,
+            "property_id": property_id,
+            "date": _parse_date(r.get("date", "")),
+            "device_category": r.get("deviceCategory") or "unknown",
+            "browser": r.get("browser") or "(not set)",
+            "operating_system": r.get("operatingSystem") or "(not set)",
+            "active_users": int(r.get("activeUsers") or 0),
+            "engaged_sessions": int(r.get("engagedSessions") or 0),
+            "key_events": int(float(r.get("keyEvents") or 0)),
+            "synced_at": synced_at,
         })
     return out
 
 
 def fetch_user_acq_daily(
-    property_id: str, start: str, end: str, access_token: str
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
 ) -> list[dict[str, Any]]:
     rows = _run_report(
         property_id,
@@ -240,46 +370,28 @@ def fetch_user_acq_daily(
         metrics=["newUsers", "activeUsers", "keyEvents", "totalUsers"],
         start=start, end=end, access_token=access_token,
     )
+    synced_at = _now()
     out = []
     for r in rows:
         out.append({
+            "client_key": client_key,
+            "property_id": property_id,
             "date": _parse_date(r.get("date", "")),
-            "firstUserDefaultChannelGroup": r.get("firstUserDefaultChannelGroup") or "(other)",
-            "firstUserSource": r.get("firstUserSource") or "(direct)",
-            "firstUserMedium": r.get("firstUserMedium") or "(none)",
-            "newUsers": int(r.get("newUsers") or 0),
-            "activeUsers": int(r.get("activeUsers") or 0),
-            "keyEvents": int(float(r.get("keyEvents") or 0)),
-            "totalUsers": int(r.get("totalUsers") or 0),
-        })
-    return out
-
-
-def fetch_demographics_daily(
-    property_id: str, start: str, end: str, access_token: str
-) -> list[dict[str, Any]]:
-    """Age + gender breakdown. Requires Google Signals enabled on the property."""
-    rows = _run_report(
-        property_id,
-        dimensions=["date", "userAgeBracket", "userGender"],
-        metrics=["activeUsers", "keyEvents", "engagementRate"],
-        start=start, end=end, access_token=access_token,
-    )
-    out = []
-    for r in rows:
-        out.append({
-            "date": _parse_date(r.get("date", "")),
-            "userAgeBracket": r.get("userAgeBracket") or "(not set)",
-            "userGender": r.get("userGender") or "(not set)",
-            "activeUsers": int(r.get("activeUsers") or 0),
-            "keyEvents": int(float(r.get("keyEvents") or 0)),
-            "engagementRate": float(r.get("engagementRate") or 0),
+            "first_user_default_channel_group": r.get("firstUserDefaultChannelGroup") or "(other)",
+            "first_user_source": r.get("firstUserSource") or "(direct)",
+            "first_user_medium": r.get("firstUserMedium") or "(none)",
+            "new_users": int(r.get("newUsers") or 0),
+            "active_users": int(r.get("activeUsers") or 0),
+            "key_events": int(float(r.get("keyEvents") or 0)),
+            "total_users": int(r.get("totalUsers") or 0),
+            "synced_at": synced_at,
         })
     return out
 
 
 def fetch_geo_daily(
-    property_id: str, start: str, end: str, access_token: str
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
 ) -> list[dict[str, Any]]:
     """Geographic breakdown by country/region/city. Does not require Google Signals."""
     rows = _run_report(
@@ -288,39 +400,136 @@ def fetch_geo_daily(
         metrics=["activeUsers", "sessions", "keyEvents"],
         start=start, end=end, access_token=access_token,
     )
+    synced_at = _now()
     out = []
     for r in rows:
         out.append({
+            "client_key": client_key,
+            "property_id": property_id,
             "date": _parse_date(r.get("date", "")),
             "country": r.get("country") or "(not set)",
             "region": r.get("region") or "(not set)",
             "city": r.get("city") or "(not set)",
-            "activeUsers": int(r.get("activeUsers") or 0),
+            "active_users": int(r.get("activeUsers") or 0),
             "sessions": int(r.get("sessions") or 0),
-            "keyEvents": int(float(r.get("keyEvents") or 0)),
+            "key_events": int(float(r.get("keyEvents") or 0)),
+            "synced_at": synced_at,
         })
     return out
 
 
-def fetch_pageviews_daily(
-    property_id: str, start: str, end: str, access_token: str
+def fetch_demographics_daily(
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
 ) -> list[dict[str, Any]]:
-    """Page-level view counts by pagePath."""
+    """Age + gender breakdown. Requires Google Signals enabled on the property."""
     rows = _run_report(
         property_id,
-        dimensions=["date", "pagePath"],
-        metrics=["screenPageViews", "activeUsers", "newUsers", "keyEvents", "averageSessionDuration"],
+        dimensions=["date", "userAgeBracket", "userGender"],
+        metrics=["activeUsers", "keyEvents", "engagementRate"],
         start=start, end=end, access_token=access_token,
     )
+    synced_at = _now()
     out = []
     for r in rows:
         out.append({
+            "client_key": client_key,
+            "property_id": property_id,
             "date": _parse_date(r.get("date", "")),
-            "pagePath": r.get("pagePath") or "/",
-            "screenPageViews": int(r.get("screenPageViews") or 0),
-            "activeUsers": int(r.get("activeUsers") or 0),
-            "newUsers": int(r.get("newUsers") or 0),
-            "keyEvents": int(float(r.get("keyEvents") or 0)),
-            "averageSessionDuration": float(r.get("averageSessionDuration") or 0),
+            "user_age_bracket": r.get("userAgeBracket") or "(not set)",
+            "user_gender": r.get("userGender") or "(not set)",
+            "active_users": int(r.get("activeUsers") or 0),
+            "key_events": int(float(r.get("keyEvents") or 0)),
+            "engagement_rate": float(r.get("engagementRate") or 0),
+            "synced_at": synced_at,
         })
     return out
+
+
+# ── Report catalogue ──────────────────────────────────────────────────────────
+# Documents the grain and API contract for each table. Source of truth for the
+# marketing_marts view layer.
+
+GA4_REPORTS = [
+    {
+        "report_key": "sessions",
+        "table_name": "ga4_sessions_daily",
+        "dimensions": ["date", "sessionDefaultChannelGroup", "sessionSource", "sessionMedium", "sessionCampaignName"],
+        "metrics": ["sessions", "engagedSessions", "keyEvents", "totalUsers", "newUsers", "bounceRate", "engagementRate", "screenPageViews"],
+        "grain": ["date", "session_default_channel_group", "session_source", "session_medium", "session_campaign_name"],
+        "required": True,
+        "notes": "Session-scoped traffic acquisition. One row per date × source × medium × campaign × channel group.",
+    },
+    {
+        "report_key": "landing_pages",
+        "table_name": "ga4_landing_pages_daily",
+        "dimensions": ["date", "landingPage"],
+        "metrics": ["sessions", "activeUsers", "newUsers", "keyEvents", "averageSessionDuration"],
+        "grain": ["date", "landing_page"],
+        "required": True,
+        "notes": "Entry page quality. landing_page is the first page seen in a session.",
+    },
+    {
+        "report_key": "pageviews",
+        "table_name": "ga4_pageviews_daily",
+        "dimensions": ["date", "pagePath", "pageTitle"],
+        "metrics": ["screenPageViews", "activeUsers", "newUsers", "keyEvents", "averageSessionDuration"],
+        "grain": ["date", "page_path", "page_title"],
+        "required": True,
+        "notes": "All-traffic page view counts. Use for content performance. Combine with page_source for attribution.",
+    },
+    {
+        "report_key": "page_source",
+        "table_name": "ga4_page_source_daily",
+        "dimensions": ["date", "pagePath", "pageTitle", "sessionDefaultChannelGroup", "sessionSource", "sessionMedium", "sessionCampaignName"],
+        "metrics": ["sessions", "activeUsers", "screenPageViews", "engagedSessions", "keyEvents", "userEngagementDuration"],
+        "grain": ["date", "page_path", "session_source", "session_medium", "session_campaign_name"],
+        "required": False,
+        "notes": "True page-by-source without date-join fabrication. High cardinality — skipped if API rejects.",
+    },
+    {
+        "report_key": "events",
+        "table_name": "ga4_events_daily",
+        "dimensions": ["date", "eventName", "sessionDefaultChannelGroup", "sessionSource", "sessionMedium", "sessionCampaignName"],
+        "metrics": ["eventCount", "keyEvents", "totalUsers"],
+        "grain": ["date", "event_name", "session_source", "session_medium", "session_campaign_name"],
+        "required": True,
+        "notes": "Events with source attribution. Filter out automatic events (page_view, session_start etc.) in views.",
+    },
+    {
+        "report_key": "tech",
+        "table_name": "ga4_tech_daily",
+        "dimensions": ["date", "deviceCategory", "browser", "operatingSystem"],
+        "metrics": ["activeUsers", "engagedSessions", "keyEvents"],
+        "grain": ["date", "device_category", "browser", "operating_system"],
+        "required": True,
+        "notes": "Device / browser / OS breakdown.",
+    },
+    {
+        "report_key": "user_acq",
+        "table_name": "ga4_user_acq_daily",
+        "dimensions": ["date", "firstUserDefaultChannelGroup", "firstUserSource", "firstUserMedium"],
+        "metrics": ["newUsers", "activeUsers", "keyEvents", "totalUsers"],
+        "grain": ["date", "first_user_default_channel_group", "first_user_source", "first_user_medium"],
+        "required": True,
+        "notes": "First-touch attribution. Distinct from session-scoped ga4_sessions_daily.",
+    },
+    {
+        "report_key": "geo",
+        "table_name": "ga4_geo_daily",
+        "dimensions": ["date", "country", "region", "city"],
+        "metrics": ["activeUsers", "sessions", "keyEvents"],
+        "grain": ["date", "country", "region", "city"],
+        "required": True,
+        "notes": "Geographic breakdown. Does not require Google Signals.",
+    },
+    {
+        "report_key": "demographics",
+        "table_name": "ga4_demographics_daily",
+        "dimensions": ["date", "userAgeBracket", "userGender"],
+        "metrics": ["activeUsers", "keyEvents", "engagementRate"],
+        "grain": ["date", "user_age_bracket", "user_gender"],
+        "required": False,
+        "notes": "Requires Google Signals enabled on the property. Empty table is expected when Signals is off.",
+    },
+]
