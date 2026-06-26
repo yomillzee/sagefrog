@@ -144,8 +144,8 @@ def render_nixon_bigquery_test_page(
       </div>
       <div class="admin-panel-body">
         <p class="admin-panel-note">Nixon Medical · admin only</p>
-        <button type="button" class="primary" id="backfillBtn" style="width:100%">Backfill LinkedIn — 180 days</button>
-        <span class="status" id="backfillStatus" style="display:block;margin-top:8px">Pulls ~180 days of LinkedIn into BigQuery and rebuilds the marts (1–2 min).</span>
+        <button type="button" class="primary" id="adminRefreshBtn" style="width:100%">Refresh data</button>
+        <span class="status" id="adminRefreshStatus" style="display:block;margin-top:8px">Re-runs all BQ queries for the current date range.</span>
       </div>
     </div>"""
 
@@ -313,7 +313,6 @@ def render_nixon_bigquery_test_page(
         <form id="filters" style="display:contents">
           <label>From<input id="startDate" type="date" value="{start.isoformat()}"></label>
           <label>To<input id="endDate" type="date" value="{end.isoformat()}"></label>
-          <button class="primary" type="submit" style="align-self:flex-end">Refresh</button>
         </form>
       </div>
       <div class="date-bar-bottom">
@@ -1148,23 +1147,21 @@ def render_nixon_bigquery_test_page(
     loadSummary();
     loadHealth();
 
-    // ---- Admin backfill ----
+    // ---- Admin FAB — Refresh ----
     (function(){{
-      const btn=document.getElementById('backfillBtn');
-      if (!btn) return;
-      const st=document.getElementById('backfillStatus');
-      btn.addEventListener('click',async()=>{{
-        if (!confirm('Backfill ~180 days of LinkedIn into BigQuery for Nixon?\\nThis calls the LinkedIn API and rebuilds the marts (1–2 min).')) return;
-        btn.disabled=true; st.className='status'; st.textContent='Backfilling… leave this tab open.';
-        const t0=Date.now();
-        try {{
-          const r=await fetch(BACKFILL_API,{{method:'POST',credentials:'same-origin'}});
-          const body=await r.json().catch(()=>({{}}));
-          if (!r.ok) throw new Error((body&&(body.detail&&body.detail.error||body.detail))||r.statusText);
-          const li=body.linkedin||{{}};
-          st.textContent=`Done in ${{Math.round((Date.now()-t0)/1000)}}s · LinkedIn ${{li.status||'ok'}} — ${{li.rows_fetched??'—'}} rows fetched.`;
-          loadSummary(); loadHealth();
-        }} catch(err) {{ st.className='status error'; st.textContent='Backfill failed: '+(err.message||err); }} finally {{ btn.disabled=false; }}
+      const fab=document.getElementById('adminFab');
+      const panel=document.getElementById('adminPanel');
+      const close=document.getElementById('adminPanelClose');
+      if (!fab||!panel) return;
+      fab.addEventListener('click',()=>panel.classList.toggle('open'));
+      if (close) close.addEventListener('click',()=>panel.classList.remove('open'));
+      document.addEventListener('keydown',e=>{{if(e.key==='Escape')panel.classList.remove('open');}});
+      const refreshBtn=document.getElementById('adminRefreshBtn');
+      const refreshSt=document.getElementById('adminRefreshStatus');
+      if (refreshBtn) refreshBtn.addEventListener('click',()=>{{
+        panel.classList.remove('open');
+        if (refreshSt) {{ refreshSt.className='status'; refreshSt.textContent='Refreshing…'; setTimeout(()=>{{refreshSt.textContent='Re-runs all BQ queries for the current date range.';}},2500); }}
+        loadCurrentTab();
       }});
     }})();
 
@@ -1195,16 +1192,5 @@ def render_nixon_bigquery_test_page(
     }})();
   </script>
   {admin_panel_html}
-  <script>
-    (function(){{
-      const fab=document.getElementById('adminFab');
-      const panel=document.getElementById('adminPanel');
-      const close=document.getElementById('adminPanelClose');
-      if (!fab||!panel) return;
-      fab.addEventListener('click',()=>panel.classList.toggle('open'));
-      if (close) close.addEventListener('click',()=>panel.classList.remove('open'));
-      document.addEventListener('keydown',e=>{{if(e.key==='Escape')panel.classList.remove('open');}});
-    }})();
-  </script>
 </body>
 </html>"""
