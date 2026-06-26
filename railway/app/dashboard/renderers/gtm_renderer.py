@@ -208,9 +208,9 @@ function consentBadge(status) {{
 function renderCriteria(criteria) {{
   if (!criteria || !criteria.length) return '';
   return criteria.map(c => {{
-    // Strip {{...}} wrappers so "{{Page Path}}" shows as "Page Path"
+    // Strip {{...}} wrappers: "{{Page Path}}" → "Page Path"
     const raw = c.variable || '';
-    const v   = esc(raw.replace(/^\{\{|\}\}$/g, ''));
+    const v   = esc(raw.startsWith('{{{{') && raw.endsWith('}}}}') ? raw.slice(2, -2) : raw);
     const op  = esc(c.operator_label || c.operator || '');
     const val = esc(c.value || '');
     return `<div class="criteria-row"><span class="criteria-var">${{v}}</span><span class="criteria-op">${{op}}</span>${{val ? `<span class="criteria-val">${{val}}</span>` : ''}}</div>`;
