@@ -514,7 +514,7 @@ def _render_wizard(
           <div class="wizard-step-num">{'✓' if has_oauth else '1'}</div>
           <div>
             <div class="wizard-step-title">Connect {_esc(handler.display_name)}</div>
-            {'<div class="wizard-step-summary">' + ('Service account configured' if handler.no_oauth else 'Authorized') + '</div>' if has_oauth else ''}
+            {'<div class="wizard-step-summary">Authorized · <a href="/dashboard/' + client_slug + '/connectors/' + handler.connector_type + '/reauth" style="color:var(--muted);font-size:.85em">Re-authorize</a></div>' if has_oauth and not handler.no_oauth else ('<div class="wizard-step-summary">Service account configured</div>' if has_oauth and handler.no_oauth else '')}
           </div>
         </div>
         <div class="wizard-step-body">
