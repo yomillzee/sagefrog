@@ -825,6 +825,7 @@ def _meta_client():
 def _meta_adset_daily_schema() -> list[Any]:
     bigquery = _bigquery()
     return [
+        bigquery.SchemaField("client_key", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("account_id", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("adset_id", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("adset_name", "STRING", mode="NULLABLE"),
@@ -843,6 +844,7 @@ def _meta_adset_daily_schema() -> list[Any]:
 def _meta_ad_daily_schema() -> list[Any]:
     bigquery = _bigquery()
     return [
+        bigquery.SchemaField("client_key", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("account_id", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("ad_id", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("ad_name", "STRING", mode="NULLABLE"),
@@ -863,6 +865,7 @@ def _meta_ad_daily_schema() -> list[Any]:
 def _meta_campaign_daily_schema() -> list[Any]:
     bigquery = _bigquery()
     return [
+        bigquery.SchemaField("client_key", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("account_id", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("campaign_id", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("campaign_name", "STRING", mode="NULLABLE"),
@@ -883,8 +886,20 @@ def _ensure_meta_table(table_name: str, schema: list[Any]) -> str:
     dataset_id = _meta_dataset_id()
     table_id = f"{project_id}.{dataset_id}.{table_name}"
     client.create_dataset(bigquery.Dataset(f"{project_id}.{dataset_id}"), exists_ok=True)
-    table = bigquery.Table(table_id, schema=schema)
     field_names = {f.name for f in schema}
+
+    # Add any columns the live table lacks (e.g. client_key) without dropping
+    # data — create_table(exists_ok) alone never alters an existing schema.
+    try:
+        existing = client.get_table(table_id)
+        existing_cols = {f.name for f in existing.schema}
+        if not field_names.issubset(existing_cols):
+            obj = bigquery.Table(table_id, schema=schema)
+            client.update_table(obj, ["schema"])
+    except Exception:
+        pass  # Table doesn't exist yet — create below.
+
+    table = bigquery.Table(table_id, schema=schema)
     if "metric_date" in field_names:
         table.time_partitioning = bigquery.TimePartitioning(field="metric_date")
     table.clustering_fields = ["account_id"]
@@ -892,7 +907,7 @@ def _ensure_meta_table(table_name: str, schema: list[Any]) -> str:
     return table_id
 
 
-def mirror_meta_campaign_daily_batch(account_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+def mirror_meta_campaign_daily_batch(account_id: str, rows: list[dict[str, Any]], *, client_key: str = "") -> dict[str, Any]:
     """Upsert per-campaign daily Meta metrics to meta_data.campaign_daily."""
     if not rows:
         return {"enabled": True, "rows_upserted": 0, "table": None}
@@ -908,6 +923,7 @@ def mirror_meta_campaign_daily_batch(account_id: str, rows: list[dict[str, Any]]
         if not cid or not md:
             continue
         payload.append({
+            "client_key": client_key or None,
             "account_id": account_id_clean,
             "campaign_id": cid,
             "campaign_name": str(row.get("campaign_name") or ""),
@@ -929,14 +945,15 @@ def mirror_meta_campaign_daily_batch(account_id: str, rows: list[dict[str, Any]]
     USING `{temp_id}` S
     ON T.account_id = S.account_id AND T.campaign_id = S.campaign_id AND T.metric_date = S.metric_date
     WHEN MATCHED THEN UPDATE SET
+      client_key = S.client_key,
       campaign_name = S.campaign_name, spend = S.spend, clicks = S.clicks,
       impressions = S.impressions, conversions = S.conversions,
       conversion_value = S.conversion_value, synced_at = S.synced_at
     WHEN NOT MATCHED THEN INSERT (
-      account_id, campaign_id, campaign_name, metric_date,
+      client_key, account_id, campaign_id, campaign_name, metric_date,
       spend, clicks, impressions, conversions, conversion_value, synced_at
     ) VALUES (
-      S.account_id, S.campaign_id, S.campaign_name, S.metric_date,
+      S.client_key, S.account_id, S.campaign_id, S.campaign_name, S.metric_date,
       S.spend, S.clicks, S.impressions, S.conversions, S.conversion_value, S.synced_at
     )
     """
@@ -947,7 +964,7 @@ def mirror_meta_campaign_daily_batch(account_id: str, rows: list[dict[str, Any]]
     return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
 
 
-def mirror_meta_adset_daily_batch(account_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+def mirror_meta_adset_daily_batch(account_id: str, rows: list[dict[str, Any]], *, client_key: str = "") -> dict[str, Any]:
     """Upsert per-adset daily Meta metrics to meta_data.adset_daily."""
     if not rows:
         return {"enabled": True, "rows_upserted": 0, "table": None}
@@ -963,6 +980,7 @@ def mirror_meta_adset_daily_batch(account_id: str, rows: list[dict[str, Any]]) -
         if not asid or not md:
             continue
         payload.append({
+            "client_key": client_key or None,
             "account_id": account_id_clean,
             "adset_id": asid,
             "adset_name": str(row.get("adset_name") or ""),
@@ -986,14 +1004,15 @@ def mirror_meta_adset_daily_batch(account_id: str, rows: list[dict[str, Any]]) -
     USING `{temp_id}` S
     ON T.account_id = S.account_id AND T.adset_id = S.adset_id AND T.metric_date = S.metric_date
     WHEN MATCHED THEN UPDATE SET
+      client_key = S.client_key,
       adset_name = S.adset_name, campaign_id = S.campaign_id, campaign_name = S.campaign_name,
       spend = S.spend, clicks = S.clicks, impressions = S.impressions,
       conversions = S.conversions, conversion_value = S.conversion_value, synced_at = S.synced_at
     WHEN NOT MATCHED THEN INSERT (
-      account_id, adset_id, adset_name, campaign_id, campaign_name, metric_date,
+      client_key, account_id, adset_id, adset_name, campaign_id, campaign_name, metric_date,
       spend, clicks, impressions, conversions, conversion_value, synced_at
     ) VALUES (
-      S.account_id, S.adset_id, S.adset_name, S.campaign_id, S.campaign_name, S.metric_date,
+      S.client_key, S.account_id, S.adset_id, S.adset_name, S.campaign_id, S.campaign_name, S.metric_date,
       S.spend, S.clicks, S.impressions, S.conversions, S.conversion_value, S.synced_at
     )
     """
@@ -1004,7 +1023,7 @@ def mirror_meta_adset_daily_batch(account_id: str, rows: list[dict[str, Any]]) -
     return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
 
 
-def mirror_meta_ad_daily_batch(account_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+def mirror_meta_ad_daily_batch(account_id: str, rows: list[dict[str, Any]], *, client_key: str = "") -> dict[str, Any]:
     """Upsert per-ad daily Meta metrics to meta_data.ad_daily."""
     if not rows:
         return {"enabled": True, "rows_upserted": 0, "table": None}
@@ -1020,6 +1039,7 @@ def mirror_meta_ad_daily_batch(account_id: str, rows: list[dict[str, Any]]) -> d
         if not aid or not md:
             continue
         payload.append({
+            "client_key": client_key or None,
             "account_id": account_id_clean,
             "ad_id": aid,
             "ad_name": str(row.get("ad_name") or ""),
@@ -1045,15 +1065,16 @@ def mirror_meta_ad_daily_batch(account_id: str, rows: list[dict[str, Any]]) -> d
     USING `{temp_id}` S
     ON T.account_id = S.account_id AND T.ad_id = S.ad_id AND T.metric_date = S.metric_date
     WHEN MATCHED THEN UPDATE SET
+      client_key = S.client_key,
       ad_name = S.ad_name, adset_id = S.adset_id, adset_name = S.adset_name,
       campaign_id = S.campaign_id, campaign_name = S.campaign_name,
       spend = S.spend, clicks = S.clicks, impressions = S.impressions,
       conversions = S.conversions, conversion_value = S.conversion_value, synced_at = S.synced_at
     WHEN NOT MATCHED THEN INSERT (
-      account_id, ad_id, ad_name, adset_id, adset_name, campaign_id, campaign_name, metric_date,
+      client_key, account_id, ad_id, ad_name, adset_id, adset_name, campaign_id, campaign_name, metric_date,
       spend, clicks, impressions, conversions, conversion_value, synced_at
     ) VALUES (
-      S.account_id, S.ad_id, S.ad_name, S.adset_id, S.adset_name, S.campaign_id, S.campaign_name, S.metric_date,
+      S.client_key, S.account_id, S.ad_id, S.ad_name, S.adset_id, S.adset_name, S.campaign_id, S.campaign_name, S.metric_date,
       S.spend, S.clicks, S.impressions, S.conversions, S.conversion_value, S.synced_at
     )
     """
@@ -1067,6 +1088,7 @@ def mirror_meta_ad_daily_batch(account_id: str, rows: list[dict[str, Any]]) -> d
 def _meta_ad_creative_schema() -> list[Any]:
     bigquery = _bigquery()
     return [
+        bigquery.SchemaField("client_key", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("account_id", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("ad_id", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("ad_name", "STRING", mode="NULLABLE"),
@@ -1081,7 +1103,7 @@ def _meta_ad_creative_schema() -> list[Any]:
     ]
 
 
-def mirror_meta_ad_creative_batch(account_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+def mirror_meta_ad_creative_batch(account_id: str, rows: list[dict[str, Any]], *, client_key: str = "") -> dict[str, Any]:
     """Upsert Meta ad creative metadata (thumbnails) to meta_data.ad_creative."""
     if not rows:
         return {"enabled": True, "rows_upserted": 0, "table": None}
@@ -1096,6 +1118,7 @@ def mirror_meta_ad_creative_batch(account_id: str, rows: list[dict[str, Any]]) -
         if not aid:
             continue
         payload.append({
+            "client_key": client_key or None,
             "account_id": account_id_clean,
             "ad_id": aid,
             "ad_name": str(row.get("ad_name") or ""),
@@ -1118,15 +1141,16 @@ def mirror_meta_ad_creative_batch(account_id: str, rows: list[dict[str, Any]]) -
     USING `{temp_id}` S
     ON T.account_id = S.account_id AND T.ad_id = S.ad_id
     WHEN MATCHED THEN UPDATE SET
+      client_key = S.client_key,
       ad_name = S.ad_name, adset_id = S.adset_id, adset_name = S.adset_name,
       campaign_id = S.campaign_id, campaign_name = S.campaign_name,
       thumbnail_url = S.thumbnail_url, image_url = S.image_url,
       media_type = S.media_type, synced_at = S.synced_at
     WHEN NOT MATCHED THEN INSERT (
-      account_id, ad_id, ad_name, adset_id, adset_name,
+      client_key, account_id, ad_id, ad_name, adset_id, adset_name,
       campaign_id, campaign_name, thumbnail_url, image_url, media_type, synced_at
     ) VALUES (
-      S.account_id, S.ad_id, S.ad_name, S.adset_id, S.adset_name,
+      S.client_key, S.account_id, S.ad_id, S.ad_name, S.adset_id, S.adset_name,
       S.campaign_id, S.campaign_name, S.thumbnail_url, S.image_url, S.media_type, S.synced_at
     )
     """
@@ -1177,6 +1201,7 @@ def create_meta_mart_views() -> dict[str, Any]:
         sql = f"""
         CREATE OR REPLACE VIEW `{table_id}` AS
         SELECT
+          client_key,
           account_id,
           {parent_cols}
           {id_col},
@@ -1197,6 +1222,7 @@ def create_meta_mart_views() -> dict[str, Any]:
     ad_sql = f"""
     CREATE OR REPLACE VIEW `{ad_fact_id}` AS
     SELECT
+      ad.client_key,
       ad.account_id,
       ad.adset_id,
       ad.adset_name,

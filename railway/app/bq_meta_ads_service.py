@@ -92,6 +92,7 @@ def sync_meta_to_bq(
     start: date,
     end: date,
     access_token: str | None = None,
+    client_key: str = "",
 ) -> dict[str, Any]:
     """Fetch Meta campaign/adset/ad daily metrics + ad creatives and upsert into BigQuery.
 
@@ -145,10 +146,10 @@ def sync_meta_to_bq(
               len(campaign_rows), len(adset_rows), len(ad_rows), len(creative_rows),
               list(errors.keys()) or "none")
 
-    campaign_mirror = bigquery_warehouse.mirror_meta_campaign_daily_batch(account_id_clean, campaign_rows)
-    adset_mirror = bigquery_warehouse.mirror_meta_adset_daily_batch(account_id_clean, adset_rows)
-    ad_mirror = bigquery_warehouse.mirror_meta_ad_daily_batch(account_id_clean, ad_rows)
-    creative_mirror = bigquery_warehouse.mirror_meta_ad_creative_batch(account_id_clean, creative_rows)
+    campaign_mirror = bigquery_warehouse.mirror_meta_campaign_daily_batch(account_id_clean, campaign_rows, client_key=client_key)
+    adset_mirror = bigquery_warehouse.mirror_meta_adset_daily_batch(account_id_clean, adset_rows, client_key=client_key)
+    ad_mirror = bigquery_warehouse.mirror_meta_ad_daily_batch(account_id_clean, ad_rows, client_key=client_key)
+    creative_mirror = bigquery_warehouse.mirror_meta_ad_creative_batch(account_id_clean, creative_rows, client_key=client_key)
 
     _log.info("sync_meta_to_bq bq: campaign=%d adset=%d ad=%d creative=%d",
               campaign_mirror.get("rows_upserted", 0), adset_mirror.get("rows_upserted", 0),

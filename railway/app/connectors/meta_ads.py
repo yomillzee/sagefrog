@@ -62,7 +62,8 @@ class MetaAdsConnector(ConnectorHandler):
                 meta_dataset_id=raw_dataset_id,
             ):
                 result = bq_meta_ads_service.sync_meta_to_bq(
-                    account_id, start=start, end=end, access_token=access_token
+                    account_id, start=start, end=end, access_token=access_token,
+                    client_key=client_slug,
                 )
             rows = (
                 (result.get("campaign_rows") or 0)
