@@ -137,13 +137,60 @@ def default_target(client_slug: str | None = None) -> GscClientTarget:
     )
 
 
+def _client_creds_env(slug: str) -> str | None:
+    """The client's BigQuery credentials env (same one its GA4/ads data uses)."""
+    try:
+        import client_config
+        import ga4_clients
+        ck = client_config.load_client_config(slug).ga4_client_key or slug
+        return ga4_clients.resolve_client_config(client_key=ck).credentials_env or None
+    except Exception:
+        return None
+
+
+def _connector_target(slug: str, base: GscClientTarget) -> GscClientTarget | None:
+    """Build a target from the per-client GSC connector config, if one exists.
+
+    The connector wizard is the source of truth for project + raw dataset (so GSC
+    lands in `raw_gsc` like every other connector, not the separate GSC registry's
+    dataset). Credentials reuse the client's BQ creds (via ga4_clients), falling
+    back to the registry/default target's creds. Returns None when the client has
+    no GSC connector configured, so Penn/registry clients are unaffected.
+    """
+    try:
+        import connector_config_store
+        cfg = connector_config_store.get_config(slug, "gsc")
+    except Exception:
+        cfg = None
+    if not cfg or not (cfg.bq_project_id or "").strip() or not (cfg.raw_dataset_id or "").strip():
+        return None
+    return GscClientTarget(
+        client_slug=slug,
+        bq_project_id=cfg.bq_project_id.strip(),
+        bq_dataset_id=cfg.raw_dataset_id.strip(),  # e.g. "raw_gsc"
+        credentials_env=_client_creds_env(slug) or base.credentials_env,
+        site_url=(cfg.source_account_id or "").strip() or base.site_url,
+        label=base.label or slug,
+        native_dataset_id=base.native_dataset_id,
+        is_default_fallback=False,
+    )
+
+
 def resolve_target(client_slug: str) -> GscClientTarget:
-    """Registry entry for this client if one exists, else the legacy Penn default."""
+    """GSC -> BigQuery destination for this client.
+
+    Precedence: per-client GSC connector config (writes to raw_gsc in the client's
+    project, consistent with the other connectors) > GSC registry entry > legacy
+    Penn default. Both the sync (write) and bq_gsc_service (read) paths resolve
+    through here, so the two always agree.
+    """
     slug = (client_slug or "").strip().lower()
     registry = load_client_registry()
-    if slug in registry:
-        return registry[slug]
-    return default_target(slug)
+    base = registry.get(slug) or default_target(slug)
+    conn = _connector_target(slug, base)
+    if conn is not None:
+        return conn
+    return base if slug in registry else default_target(slug)
 
 
 def list_clients_public() -> list[dict[str, Any]]:
