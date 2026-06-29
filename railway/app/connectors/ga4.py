@@ -25,6 +25,7 @@ class GA4Connector(ConnectorHandler):
         return ga4_reporting_service.list_properties(refresh_token)
 
     def run_sync(self, *, client_slug: str, date_range: str = "LAST_5_DAYS") -> SyncResult:
+        import bq_ga4_mart_service
         import bq_ga4_service
         import connector_config_store
         import oauth_store
@@ -63,6 +64,22 @@ class GA4Connector(ConnectorHandler):
                 "GA4 sync [%s] rows: %s",
                 client_slug, result.get("counts", {}),
             )
+
+            # Refresh the GA4 presentation layer (UDF + views) so it tracks any
+            # schema changes and a brand-new client gets its marts on first sync.
+            # Idempotent CREATE OR REPLACE; non-fatal — raw rows already landed.
+            try:
+                prov = bq_ga4_mart_service.provision_ga4_mart_views(
+                    project=bq_project_id or "nixon-medical",
+                    raw_dataset=raw_dataset_id or self.default_raw_dataset,
+                    client_key=client_slug,
+                )
+                failed = [k for k, v in prov.get("results", {}).items() if str(v).startswith("error")]
+                if failed:
+                    _log.warning("GA4 mart provision [%s] partial: %s", client_slug, failed)
+            except Exception as exc:
+                _log.warning("GA4 mart provision failed [%s]: %s", client_slug, exc)
+
             return SyncResult(rows_loaded=total, error=error_msg)
         except Exception as exc:
             _log.warning("GA4 sync failed [%s]: %s", client_slug, exc)

@@ -1462,6 +1462,7 @@ def ga4_provision_views(
             project=bq_project_id,
             raw_project=bq_project_id,
             raw_dataset=raw_dataset_id,
+            client_key=slug,
             views=requested_views,
         )
         return result
