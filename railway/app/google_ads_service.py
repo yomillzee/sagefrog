@@ -1314,3 +1314,149 @@ def account_summary(customer_id: str, date_range: str = "LAST_30_DAYS", *, clien
         "spend": spend,
         "ctr": ctr,
     }
+
+
+def fetch_ad_daily_metrics(
+    customer_id: str,
+    *,
+    start: date,
+    end: date,
+    client: GoogleAdsClient | None = None,
+) -> list[dict[str, Any]]:
+    """Per-ad per-day metrics with creative fields for warehouse storage.
+
+    Two-pass: (1) daily performance segmented by ad+date, (2) creative metadata
+    (headlines, descriptions, ad type, URL) fetched without date segmentation to
+    avoid GAQL field-compatibility issues with repeated sub-message fields.
+    """
+    customer_id = str(customer_id).replace("-", "").strip()
+    start_key = start.isoformat()
+    end_key = end.isoformat()
+    client = client or build_client()
+
+    perf_query = f"""
+        SELECT
+          campaign.id,
+          campaign.name,
+          ad_group.id,
+          ad_group.name,
+          ad_group_ad.ad.id,
+          ad_group_ad.ad.name,
+          ad_group_ad.status,
+          segments.date,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.conversions,
+          metrics.conversions_value,
+          metrics.cost_micros
+        FROM ad_group_ad
+        WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
+          AND ad_group_ad.status != 'REMOVED'
+    """
+    perf_rows = search(customer_id, perf_query, client=client)
+
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    ad_meta: dict[str, dict[str, Any]] = {}
+
+    for row in perf_rows:
+        cid = str(_dig(row, "campaign", "id") or "").strip()
+        agid = str(_dig(row, "ad_group", "id") or "").strip()
+        aid = str(_dig(row, "ad_group_ad", "ad", "id") or "").strip()
+        day = str(_dig(row, "segments", "date") or "").strip()
+        if not aid or not day:
+            continue
+        if aid not in ad_meta:
+            ad_meta[aid] = {
+                "campaign_id": cid,
+                "campaign_name": _dig(row, "campaign", "name") or "",
+                "ad_group_id": agid,
+                "ad_group_name": _dig(row, "ad_group", "name") or "",
+                "ad_name": _dig(row, "ad_group_ad", "ad", "name") or "",
+                "ad_status": str(_dig(row, "ad_group_ad", "status") or ""),
+            }
+        key = (aid, day)
+        if key not in by_key:
+            by_key[key] = {
+                "ad_id": aid,
+                "metric_date": day,
+                "spend": 0.0, "impressions": 0, "clicks": 0,
+                "conversions": 0.0, "conversion_value": 0.0,
+            }
+        rec = by_key[key]
+        rec["spend"] += int(_dig(row, "metrics", "cost_micros") or 0) / 1_000_000
+        rec["clicks"] += int(_dig(row, "metrics", "clicks") or 0)
+        rec["impressions"] += int(_dig(row, "metrics", "impressions") or 0)
+        rec["conversions"] += float(_dig(row, "metrics", "conversions") or 0)
+        rec["conversion_value"] += float(_dig(row, "metrics", "conversions_value") or 0)
+
+    if not by_key:
+        return []
+
+    # Pass 2: creative metadata — no date segment so repeated sub-message fields work.
+    creative_index: dict[str, dict[str, Any]] = {}
+    try:
+        creative_query = """
+            SELECT
+              ad_group_ad.ad.id,
+              ad_group_ad.ad.type,
+              ad_group_ad.ad.final_urls,
+              ad_group_ad.ad.responsive_search_ad.headlines,
+              ad_group_ad.ad.responsive_search_ad.descriptions,
+              ad_group_ad.ad.image_ad.name
+            FROM ad_group_ad
+            WHERE ad_group_ad.status != 'REMOVED'
+        """
+        for crow in search(customer_id, creative_query, client=client):
+            aid_c = str(_dig(crow, "ad_group_ad", "ad", "id") or "").strip()
+            if not aid_c:
+                continue
+            headlines_raw = _dig(crow, "ad_group_ad", "ad", "responsive_search_ad", "headlines") or []
+            descs_raw = _dig(crow, "ad_group_ad", "ad", "responsive_search_ad", "descriptions") or []
+            headlines = _ordered_headline_texts(headlines_raw)
+            descriptions = [
+                str(d.get("text") or "")
+                for d in descs_raw
+                if isinstance(d, dict) and d.get("text")
+            ]
+            final_urls = _dig(crow, "ad_group_ad", "ad", "final_urls") or []
+            creative_index[aid_c] = {
+                "ad_type": str(_dig(crow, "ad_group_ad", "ad", "type") or ""),
+                "final_url": str(final_urls[0]) if final_urls else "",
+                "headline_1": headlines[0] if len(headlines) > 0 else "",
+                "headline_2": headlines[1] if len(headlines) > 1 else "",
+                "headline_3": headlines[2] if len(headlines) > 2 else "",
+                "description_1": descriptions[0] if len(descriptions) > 0 else "",
+                "description_2": descriptions[1] if len(descriptions) > 1 else "",
+                "image_ad_name": str(_dig(crow, "ad_group_ad", "ad", "image_ad", "name") or ""),
+            }
+    except Exception as exc:
+        _log.warning("Google Ads creative fetch skipped (creative fields will be empty): %s", exc)
+
+    out: list[dict[str, Any]] = []
+    for (aid, day), metrics in by_key.items():
+        meta = ad_meta.get(aid, {})
+        creative = creative_index.get(aid, {})
+        out.append({
+            "campaign_id": meta.get("campaign_id", ""),
+            "campaign_name": meta.get("campaign_name") or None,
+            "ad_group_id": meta.get("ad_group_id", ""),
+            "ad_group_name": meta.get("ad_group_name") or None,
+            "ad_id": aid,
+            "ad_name": meta.get("ad_name") or None,
+            "ad_status": meta.get("ad_status") or None,
+            "ad_type": creative.get("ad_type") or None,
+            "final_url": creative.get("final_url") or None,
+            "headline_1": creative.get("headline_1") or None,
+            "headline_2": creative.get("headline_2") or None,
+            "headline_3": creative.get("headline_3") or None,
+            "description_1": creative.get("description_1") or None,
+            "description_2": creative.get("description_2") or None,
+            "image_ad_name": creative.get("image_ad_name") or None,
+            "metric_date": day,
+            "spend": metrics["spend"],
+            "impressions": metrics["impressions"],
+            "clicks": metrics["clicks"],
+            "conversions": metrics["conversions"],
+            "conversion_value": metrics["conversion_value"],
+        })
+    return out
