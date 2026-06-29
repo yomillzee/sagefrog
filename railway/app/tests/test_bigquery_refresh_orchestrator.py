@@ -52,7 +52,12 @@ class BigQueryRefreshOrchestratorTests(unittest.TestCase):
         self.assertEqual(statuses["google"]["status"], "pending_data")
         self.assertEqual(statuses["ga4"]["status"], "success")
 
-    def test_platform_failure_does_not_block_successful_platform_storage(self) -> None:
+    def test_connector_failure_does_not_block_other_connectors(self) -> None:
+        """One connector failing leaves the others (and the unified mart) intact.
+
+        The refresh now drives each connector's run_sync (the single sync path)
+        rather than calling per-source bq services directly.
+        """
         cfg = SimpleNamespace(
             ga4_client_key="client",
             google_customer_id=None,
@@ -65,19 +70,27 @@ class BigQueryRefreshOrchestratorTests(unittest.TestCase):
             credentials={"client_email": "svc@example.test"},
             credentials_env="GCP_CLIENT",
         )
-        meta_sync = Mock(
-            return_value={
-                "campaign_rows": 10,
-                "adset_rows": 8,
-                "ad_rows": 6,
-                "creative_rows": 4,
-                "errors": {},
-            }
+
+        def _sync_result(ok: bool, rows: int = 0, error: str | None = None):
+            return SimpleNamespace(
+                ok=ok, rows_loaded=rows, error=error,
+                range_start=date(2026, 5, 24), range_end=date(2026, 6, 22),
+            )
+
+        meta_handler = SimpleNamespace(run_sync=Mock(return_value=_sync_result(True, rows=28)))
+        linkedin_handler = SimpleNamespace(
+            run_sync=Mock(return_value=_sync_result(False, error="LinkedIn down"))
         )
+        fake_handlers = {"meta_ads": meta_handler, "linkedin_ads": linkedin_handler}
+
+        configs = [
+            SimpleNamespace(connector_type="meta_ads", status="connected", id=1),
+            SimpleNamespace(connector_type="linkedin_ads", status="connected", id=2),
+        ]
+
         fake_modules = {
             "client_config": SimpleNamespace(load_client_config=lambda _: cfg),
             "ga4_clients": SimpleNamespace(resolve_client_config=lambda client_key: target),
-            "bigquery_service": SimpleNamespace(build_client=lambda *a, **k: object()),
             "client_bigquery_setup": SimpleNamespace(
                 ensure_client_bq_resources=lambda **kwargs: {"status": "success", "ok": True},
                 dataset_ids=lambda: {
@@ -89,41 +102,34 @@ class BigQueryRefreshOrchestratorTests(unittest.TestCase):
             ),
             "bigquery_warehouse": SimpleNamespace(
                 route=lambda **kwargs: contextlib.nullcontext(),
-                mirror_campaign_daily_batch=lambda *a, **k: {"rows_upserted": 0},
-                create_google_campaign_mart_view=lambda: {"status": "not_configured"},
-                rebuild_unified_marketing_mart=lambda: {"status": "success", "table": "mart"},
+                rebuild_unified_marketing_mart=lambda *a, **k: {"status": "success", "table": "mart"},
             ),
-            "bq_linkedin_ads_service": SimpleNamespace(
-                route=lambda **kwargs: contextlib.nullcontext(),
-                sync_campaign_metadata_and_rebuild_mart=Mock()
+            "connector_config_store": SimpleNamespace(
+                list_configs=lambda _slug: configs,
+                start_sync_run=lambda *a, **k: 1,
+                finish_sync_run=lambda *a, **k: None,
+                update_sync_timestamps=lambda *a, **k: None,
             ),
-            "bq_meta_ads_service": SimpleNamespace(
-                route=lambda **kwargs: contextlib.nullcontext(),
-                sync_meta_to_bq=meta_sync,
-            ),
-            "linkedin_service": SimpleNamespace(
-                fetch_campaign_daily_metrics=Mock(side_effect=RuntimeError("LinkedIn down"))
-            ),
+            "connectors": SimpleNamespace(),
+            "connectors.base": SimpleNamespace(get=lambda ctype: fake_handlers.get(ctype)),
             "dashboard_snapshots": SimpleNamespace(delete_snapshot=lambda _: True),
         }
-        with patch.dict(sys.modules, fake_modules), patch.object(
-            orchestrator,
-            "verify_native_sources",
-            return_value={
-                "google": {"status": "not_configured"},
-                "ga4": {"status": "success"},
-                "search_console": {"status": "success"},
-            },
-        ):
+        with patch.dict(sys.modules, fake_modules):
             result = orchestrator.run_client_bigquery_refresh(
                 client_slug="client", trigger="cron", today=date(2026, 6, 22)
             )
 
         self.assertEqual(result["status"], "partial_failure")
-        self.assertEqual(result["sources"]["linkedin"]["status"], "failed")
-        self.assertEqual(result["sources"]["meta"]["status"], "success")
-        meta_sync.assert_called_once_with(
-            "meta-1", start=date(2026, 5, 24), end=date(2026, 6, 22)
+        self.assertEqual(result["sources"]["linkedin_ads"]["status"], "failed")
+        self.assertEqual(result["sources"]["meta_ads"]["status"], "success")
+        self.assertEqual(result["sources"]["meta_ads"]["data_through"], "2026-06-22")
+        # Unconfigured connectors are reported, not synced.
+        self.assertEqual(result["sources"]["google_ads"]["status"], "not_configured")
+        self.assertEqual(result["sources"]["ga4"]["status"], "not_configured")
+        # The unified mart still rebuilds despite the LinkedIn failure.
+        self.assertEqual(result["transformations"]["unified_mart"]["status"], "success")
+        meta_handler.run_sync.assert_called_once_with(
+            client_slug="client", date_range="LAST_30_DAYS"
         )
 
 

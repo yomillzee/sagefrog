@@ -22,6 +22,16 @@ def ingestion_window(trigger: str, *, today: date | None = None) -> tuple[date, 
     return end - timedelta(days=days - 1), end
 
 
+# Marketing data connectors that feed the BigQuery marts, in sync order.
+# GSC/GTM/HubSpot keep their own sync paths; this is the paid-media + GA4 set.
+_SYNC_CONNECTORS = ["ga4", "google_ads", "meta_ads", "linkedin_ads"]
+
+
+def _trigger_date_range(trigger: str) -> str:
+    """Connector date_range preset for a given refresh trigger."""
+    return "LAST_180_DAYS" if str(trigger).strip().lower() == "onboarding" else "LAST_30_DAYS"
+
+
 def _status(status: str, **details: Any) -> dict[str, Any]:
     return {"status": status, **details}
 
@@ -128,27 +138,26 @@ def verify_native_sources(
 def run_client_bigquery_refresh(
     *, client_slug: str, trigger: str = "manual_full", today: date | None = None
 ) -> dict[str, Any]:
-    """Provision, ingest, transform, and report each source independently."""
-    import bigquery_service
+    """Provision, drive each connector's sync, rebuild the unified mart, report."""
     import bigquery_warehouse
-    import bq_linkedin_ads_service
-    import bq_meta_ads_service
     import client_bigquery_setup
     import client_config
+    import connector_config_store
+    import connectors  # noqa: F401 — importing registers the connector handlers
     import dashboard_snapshots
     import ga4_clients
-    import linkedin_service
+    from connectors.base import get as get_handler
 
     cfg = client_config.load_client_config(client_slug)
     client_key = cfg.ga4_client_key or client_slug
     target = ga4_clients.resolve_client_config(client_key=client_key)
-    start, end = ingestion_window(trigger, today=today)
+    date_range = _trigger_date_range(trigger)
     run_started = datetime.now(tz=UTC)
     result: dict[str, Any] = {
         "status": "running",
         "client_key": client_key,
         "trigger": trigger,
-        "date_range": {"start": start.isoformat(), "end": end.isoformat()},
+        "date_range": date_range,
         "started_at": run_started.isoformat(),
         "sources": {},
         "transformations": {},
@@ -171,19 +180,47 @@ def run_client_bigquery_refresh(
         result.update(status="failed", finished_at=datetime.now(tz=UTC).isoformat())
         return result
 
-    client = bigquery_service.build_client(
-        target.bq_project_id, credentials_info=target.credentials
-    )
-    result["sources"].update(
-        verify_native_sources(
-            client=client,
-            project_id=target.bq_project_id,
-            ga4_dataset_id=target.bq_dataset_id,
-            google_required=bool(cfg.google_customer_id),
-            client_slug=client_slug,
-        )
-    )
+    # One sync path: drive each connected connector's run_sync (API → BigQuery +
+    # its own mart views), recording results to connector_configs so the
+    # connector cards reflect cron runs too. This replaces the old hardcoded
+    # per-source ingest and brings GA4 into the automated daily refresh. Each
+    # connector self-routes to the client's BQ project from its stored config.
+    configs = {c.connector_type: c for c in connector_config_store.list_configs(client_slug)}
+    for ctype in _SYNC_CONNECTORS:
+        conf = configs.get(ctype)
+        handler = get_handler(ctype)
+        if not handler or not conf or conf.status not in ("connected", "error", "syncing"):
+            result["sources"][ctype] = _status("not_configured")
+            continue
 
+        def _sync(ctype: str = ctype, handler: Any = handler, conf: Any = conf) -> dict[str, Any]:
+            run_id = connector_config_store.start_sync_run(
+                conf.id, run_type="cron", triggered_by="cron"
+            )
+            connector_config_store.update_sync_timestamps(client_slug, ctype, started=True)
+            res = handler.run_sync(client_slug=client_slug, date_range=date_range)
+            connector_config_store.finish_sync_run(
+                run_id,
+                status="completed" if res.ok else "failed",
+                rows_loaded=res.rows_loaded,
+                error_message=res.error,
+            )
+            connector_config_store.update_sync_timestamps(
+                client_slug, ctype,
+                completed=True, success=res.ok, error=res.error,
+                range_start=res.range_start, range_end=res.range_end,
+            )
+            return {
+                "status": "success" if res.ok else "failed",
+                "rows_loaded": res.rows_loaded,
+                "error": res.error,
+                "data_through": res.range_end.isoformat() if (res.ok and res.range_end) else None,
+            }
+
+        result["sources"][ctype] = _run_step(ctype, _sync)
+
+    # Cross-source transform: rebuild the unified daily fact from whatever
+    # per-platform marts the connectors produced.
     ids = client_bigquery_setup.dataset_ids()
     with bigquery_warehouse.route(
         bq_project_id=target.bq_project_id,
@@ -193,90 +230,9 @@ def run_client_bigquery_refresh(
         meta_dataset_id=ids["meta"],
         mart_dataset_id=ids["mart"],
     ):
-        if cfg.linkedin_account_id:
-            def ingest_linkedin() -> dict[str, Any]:
-                with bq_linkedin_ads_service.route(
-                    bq_project_id=target.bq_project_id,
-                    credentials_env=target.credentials_env,
-                ):
-                    rows = linkedin_service.fetch_campaign_daily_metrics(
-                        cfg.linkedin_account_id, start=start, end=end
-                    )
-                    raw = bigquery_warehouse.mirror_campaign_daily_batch(
-                        "linkedin", cfg.linkedin_account_id, rows
-                    )
-                    transformed = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(
-                        account_id=cfg.linkedin_account_id, start=start, end=end
-                    )
-                return {
-                    "status": "success",
-                    "rows_fetched": len(rows),
-                    "rows_merged": raw.get("rows_upserted", 0),
-                    "transform": transformed,
-                    "data_through": end.isoformat() if rows else None,
-                }
-
-            result["sources"]["linkedin"] = _run_step("linkedin", ingest_linkedin)
-        else:
-            result["sources"]["linkedin"] = _status("not_configured")
-
-        if cfg.meta_account_id:
-            def ingest_meta() -> dict[str, Any]:
-                with bq_meta_ads_service.route(
-                    bq_project_id=target.bq_project_id,
-                    credentials_env=target.credentials_env,
-                ):
-                    synced = bq_meta_ads_service.sync_meta_to_bq(
-                        cfg.meta_account_id, start=start, end=end
-                    )
-                return {
-                    "status": "partial_failure" if synced.get("errors") else "success",
-                    **synced,
-                    "data_through": end.isoformat()
-                    if int(synced.get("campaign_rows") or 0) > 0
-                    else None,
-                }
-
-            result["sources"]["meta"] = _run_step(
-                "meta", ingest_meta
-            )
-        else:
-            result["sources"]["meta"] = _status("not_configured")
-
-        if cfg.google_customer_id:
-            def ingest_google() -> dict[str, Any]:
-                import bq_google_ads_service
-                import oauth_store as _oauth
-
-                refresh = _oauth.get_refresh_token("google_ads", client_slug=client_slug)
-                if not refresh:
-                    raise RuntimeError("No Google Ads refresh token for this client.")
-                with bq_google_ads_service.route(
-                    bq_project_id=target.bq_project_id,
-                    credentials_env=target.credentials_env,
-                ):
-                    synced = bq_google_ads_service.sync_google_ads_to_bq(
-                        cfg.google_customer_id,
-                        start=start.isoformat(),
-                        end=end.isoformat(),
-                        refresh_token=refresh,
-                        client_key=client_key,
-                    )
-                return {
-                    "status": "partial_failure" if synced.get("errors") else "success",
-                    "campaign_rows": synced.get("campaign_rows", 0),
-                    "data_through": end.isoformat() if synced.get("campaign_rows", 0) > 0 else None,
-                }
-
-            result["sources"]["google"] = _run_step("google", ingest_google)
-        else:
-            result["sources"]["google"] = _status("not_configured")
-
-        result["transformations"]["google_fact"] = _run_step(
-            "google_fact", bigquery_warehouse.create_google_campaign_mart_view
-        ) if cfg.google_customer_id else _status("not_configured")
         result["transformations"]["unified_mart"] = _run_step(
-            "unified_mart", lambda: bigquery_warehouse.rebuild_unified_marketing_mart(client_key)
+            "unified_mart",
+            lambda: bigquery_warehouse.rebuild_unified_marketing_mart(client_key),
         )
 
     if result["transformations"]["unified_mart"].get("status") == "success":
