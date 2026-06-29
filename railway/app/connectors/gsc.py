@@ -15,7 +15,8 @@ class GSCConnector(ConnectorHandler):
     display_name = "Search Console"
     oauth_platform = "gsc"
     default_raw_dataset = "raw_gsc"
-    no_oauth = True  # uses service-account credentials
+    no_oauth = True       # service account works headless as the fallback
+    agency_oauth = True   # prefers one shared agency Google OAuth (gsc_read_creds)
 
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
         try:

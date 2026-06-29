@@ -515,6 +515,49 @@ def _render_wizard(
     if is_disconnected:
         reconnect_note = '<p style="color:var(--muted);font-size:.9rem;margin-bottom:20px">This connector was previously set up. Complete the steps below to reconnect.</p>'
 
+    # Step 1 (auth) presentation:
+    #  - agency_oauth (GSC): one shared agency Google OAuth (global token), SA fallback
+    #  - no_oauth: pure server-side service account
+    #  - otherwise: per-client OAuth authorize
+    if getattr(handler, "agency_oauth", False):
+        import oauth_store as _oauth_store
+        try:
+            _agency_connected = _oauth_store.public_status(handler.oauth_platform).connected
+        except Exception:
+            _agency_connected = False
+        # No &client= → the connect route stores a GLOBAL token (client_slug=''),
+        # which is what _gsc_read_creds reads. Admin-gated.
+        _agency_connect_url = f"/oauth/{handler.oauth_platform}/connect?return_to={_return_to}"
+        if _agency_connected:
+            step1_summary = '<div class="wizard-step-summary">Connected · agency Google account</div>'
+            step1_body = (
+                '<p style="color:var(--muted);font-size:.9rem">Authorized via the shared agency '
+                'Google account — one connection covers every client. '
+                f'<a href="{_esc(_agency_connect_url)}">Re-authorize</a></p>'
+            )
+        else:
+            step1_summary = '<div class="wizard-step-summary">Service account (fallback)</div>'
+            step1_body = (
+                '<p style="color:var(--muted);font-size:.9rem;margin-bottom:16px">Currently using the '
+                'server-side service account. Connect the agency Google account to authorize via OAuth '
+                'instead — one connection covers every client.</p>'
+                f'<a href="{_esc(_agency_connect_url)}" class="btn-connect">Connect agency Google account</a>'
+            )
+    elif handler.no_oauth:
+        step1_summary = '<div class="wizard-step-summary">Service account configured</div>' if has_oauth else ''
+        step1_body = '<p style="color:var(--muted);font-size:.9rem">This connector uses a server-side service account — no authorization needed.</p>'
+    else:
+        step1_summary = (
+            '<div class="wizard-step-summary">Authorized · <a href="/dashboard/'
+            + client_slug + '/connectors/' + handler.connector_type
+            + '/reauth" style="color:var(--muted);font-size:.85em">Re-authorize</a></div>'
+        ) if has_oauth else ''
+        step1_body = (
+            f'<p style="color:var(--muted);font-size:.9rem;margin-bottom:16px">Authorize Sagefrog to '
+            f'access your {_esc(handler.display_name)} account.</p>'
+            f'<a href="{_esc(oauth_start_url)}" class="btn-connect">Authorize {_esc(handler.display_name)}</a>'
+        )
+
     steps_html = f"""
     {reconnect_note}
     <div class="wizard-stepper" id="wizardStepper">
@@ -524,12 +567,12 @@ def _render_wizard(
           <div class="wizard-step-num">{'✓' if has_oauth else '1'}</div>
           <div>
             <div class="wizard-step-title">Connect {_esc(handler.display_name)}</div>
-            {'<div class="wizard-step-summary">Authorized · <a href="/dashboard/' + client_slug + '/connectors/' + handler.connector_type + '/reauth" style="color:var(--muted);font-size:.85em">Re-authorize</a></div>' if has_oauth and not handler.no_oauth else ('<div class="wizard-step-summary">Service account configured</div>' if has_oauth and handler.no_oauth else '')}
+            {step1_summary}
           </div>
         </div>
         <div class="wizard-step-body">
           {oauth_error_html}
-          {'<p style="color:var(--muted);font-size:.9rem">This connector uses a server-side service account — no authorization needed.</p>' if handler.no_oauth else f'<p style="color:var(--muted);font-size:.9rem;margin-bottom:16px">Authorize Sagefrog to access your {_esc(handler.display_name)} account.</p><a href="{_esc(oauth_start_url)}" class="btn-connect">Authorize {_esc(handler.display_name)}</a>'}
+          {step1_body}
         </div>
       </div>
 

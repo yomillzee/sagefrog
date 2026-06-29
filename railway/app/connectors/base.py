@@ -28,6 +28,11 @@ class ConnectorHandler(ABC):
     default_mart_dataset: str = "marketing_marts"
     # Set to True for connectors that don't need OAuth (e.g. Circle manual import)
     no_oauth: bool = False
+    # Set to True for connectors authorized once at the agency level (a single
+    # global OAuth token shared across all clients), with the server-side service
+    # account as fallback — e.g. GSC. The wizard surfaces the agency connection
+    # instead of a per-client authorize step.
+    agency_oauth: bool = False
 
     @abstractmethod
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
