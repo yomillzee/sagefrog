@@ -476,7 +476,7 @@ def fetch_nixon_traffic_acquisition(
     }
     by_channel_sql = f"""
     SELECT
-      COALESCE(session_default_channel_group, '(other)') AS channel,
+      COALESCE(default_channel_group, '(other)') AS channel,
       SUM(sessions) AS sessions,
       SUM(engaged_sessions) AS engaged_sessions,
       ROUND(SAFE_DIVIDE(SUM(engaged_sessions), NULLIF(SUM(sessions), 0)) * 100, 1) AS engagement_rate,
@@ -498,8 +498,8 @@ def fetch_nixon_traffic_acquisition(
     """
     by_source_sql = f"""
     SELECT
-      COALESCE(session_source, '(direct)') AS source,
-      COALESCE(session_medium, '(none)') AS medium,
+      COALESCE(source, '(direct)') AS source,
+      COALESCE(medium, '(none)') AS medium,
       SUM(sessions) AS sessions,
       SUM(engaged_sessions) AS engaged_sessions,
       ROUND(SAFE_DIVIDE(SUM(engaged_sessions), NULLIF(SUM(sessions), 0)) * 100, 1) AS engagement_rate,
@@ -531,8 +531,8 @@ def fetch_nixon_device_split(
     sql = f"""
     SELECT
       COALESCE(device_category, 'unknown') AS device,
-      SUM(active_users) AS users,
-      SUM(engaged_sessions) AS engaged_sessions,
+      SUM(users) AS users,
+      SUM(sessions) AS engaged_sessions,
       SUM(key_events) AS key_events
     FROM {_TECH_DETAILS_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
@@ -639,8 +639,8 @@ def fetch_nixon_conversion_events(
     SELECT
       event_name,
       SUM(event_count) AS event_count,
-      SUM(total_users) AS total_users,
-      ROUND(SAFE_DIVIDE(SUM(event_count), NULLIF(SUM(total_users), 0)), 2) AS event_count_per_user
+      SUM(users) AS total_users,
+      ROUND(SAFE_DIVIDE(SUM(event_count), NULLIF(SUM(users), 0)), 2) AS event_count_per_user
     FROM {_EVENTS_TABLE}
     WHERE date BETWEEN @start_date AND @end_date
       AND event_name NOT IN (
@@ -679,9 +679,9 @@ def fetch_nixon_user_acquisition(
     }
     channel_sql = f"""
     SELECT
-      COALESCE(first_user_default_channel_group, '(not set)') AS channel,
+      COALESCE(default_channel_group, '(not set)') AS channel,
       SUM(new_users) AS new_users,
-      SUM(active_users) AS active_users,
+      SUM(users) AS active_users,
       SUM(key_events) AS key_events,
       ROUND(SAFE_DIVIDE(SUM(key_events), NULLIF(SUM(total_users), 0)) * 100, 1) AS key_event_rate
     FROM {_USER_ACQ_TABLE}
@@ -692,8 +692,8 @@ def fetch_nixon_user_acquisition(
     """
     source_sql = f"""
     SELECT
-      COALESCE(first_user_source, '(direct)') AS source,
-      COALESCE(first_user_medium, '(none)') AS medium,
+      COALESCE(source, '(direct)') AS source,
+      COALESCE(medium, '(none)') AS medium,
       SUM(new_users) AS new_users,
       SUM(key_events) AS key_events,
       ROUND(SAFE_DIVIDE(SUM(key_events), NULLIF(SUM(total_users), 0)) * 100, 1) AS key_event_rate
