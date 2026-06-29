@@ -84,6 +84,9 @@ def fetch_summary(
         "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
     }
 
+    ck_param = bigquery.ScalarQueryParameter("client_key", "STRING", client_key)
+    all_params = {**date_params, "client_key": ck_param}
+
     totals_sql = f"""
     WITH totals AS (
       SELECT
@@ -93,6 +96,7 @@ def fetch_summary(
         COALESCE(SUM(COALESCE(conversions, 0)), 0) AS conversions
       FROM {view}
       WHERE `date` BETWEEN @start_date AND @end_date
+        AND client_key = @client_key
     )
     SELECT
       ROUND(spend, 2) AS spend,
@@ -104,7 +108,7 @@ def fetch_summary(
       COALESCE(ROUND(SAFE_DIVIDE(clicks, impressions) * 100, 2), 0) AS ctr
     FROM totals
     """
-    rows = _run(totals_sql, params=date_params, project_id=project_id, credentials_env=credentials_env, max_rows=1)
+    rows = _run(totals_sql, params=all_params, project_id=project_id, credentials_env=credentials_env, max_rows=1)
     summary = rows[0] if rows else {
         "spend": 0.0, "impressions": 0, "clicks": 0,
         "conversions": 0.0, "cpc": 0.0, "cpa": 0.0, "ctr": 0.0,
@@ -119,10 +123,11 @@ def fetch_summary(
       SUM(COALESCE(conversions, 0)) AS conversions
     FROM {view}
     WHERE `date` BETWEEN @start_date AND @end_date
+      AND client_key = @client_key
     GROUP BY source_platform
     ORDER BY spend DESC
     """
-    source_rows = _run(by_source_sql, params=dict(date_params), project_id=project_id, credentials_env=credentials_env, max_rows=50)
+    source_rows = _run(by_source_sql, params=dict(all_params), project_id=project_id, credentials_env=credentials_env, max_rows=50)
     by_source = {
         str(r.get("source_platform") or "").lower(): {
             "spend": r.get("spend"),
@@ -143,10 +148,11 @@ def fetch_summary(
       SUM(COALESCE(conversions, 0)) AS conversions
     FROM {view}
     WHERE `date` BETWEEN @start_date AND @end_date
+      AND client_key = @client_key
     GROUP BY `date`, source_platform
     ORDER BY `date`, source_platform
     """
-    daily = _run(daily_sql, params=dict(date_params), project_id=project_id, credentials_env=credentials_env, max_rows=20000)
+    daily = _run(daily_sql, params=dict(all_params), project_id=project_id, credentials_env=credentials_env, max_rows=20000)
 
     return {
         "client_key": client_key,
@@ -167,10 +173,26 @@ def fetch_health(
     credentials_env: str | None = None,
 ) -> dict[str, Any]:
     health_tbl = _t(_HEALTH_TABLE, project_id, dataset_id)
-    sql = f"SELECT * FROM {health_tbl} LIMIT @limit"
+    sql = f"""
+    SELECT
+      source,
+      row_count,
+      earliest_date,
+      latest_date,
+      spend,
+      impressions,
+      clicks,
+      conversions
+    FROM {health_tbl}
+    WHERE client_key = @client_key
+    LIMIT @limit
+    """
     rows = _run(
         sql,
-        params={"limit": bigquery.ScalarQueryParameter("limit", "INT64", int(limit))},
+        params={
+            "client_key": bigquery.ScalarQueryParameter("client_key", "STRING", client_key),
+            "limit": bigquery.ScalarQueryParameter("limit", "INT64", int(limit)),
+        },
         project_id=project_id,
         credentials_env=credentials_env,
         max_rows=limit,
@@ -188,9 +210,16 @@ def fetch_health(
       CAST(NULL AS INT64) AS clicks,
       CAST(NULL AS FLOAT64) AS conversions
     FROM {page_tbl}
+    WHERE client_key = @client_key
     """
     try:
-        ga4_rows = _run(ga4_sql, params={}, project_id=project_id, credentials_env=credentials_env, max_rows=1)
+        ga4_rows = _run(
+            ga4_sql,
+            params={"client_key": bigquery.ScalarQueryParameter("client_key", "STRING", client_key)},
+            project_id=project_id,
+            credentials_env=credentials_env,
+            max_rows=1,
+        )
         rows = list(rows) + [r for r in ga4_rows if r.get("row_count")]
     except Exception:
         pass

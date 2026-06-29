@@ -148,7 +148,15 @@ def fetch_nixon_marketing(
 
 def fetch_nixon_marketing_health(*, limit: int = 100) -> dict[str, Any]:
     sql = f"""
-    SELECT *
+    SELECT
+      source,
+      row_count,
+      earliest_date,
+      latest_date,
+      spend,
+      impressions,
+      clicks,
+      conversions
     FROM {_HEALTH_TABLE}
     LIMIT @limit
     """
@@ -531,7 +539,10 @@ def fetch_nixon_device_split(
     GROUP BY device
     ORDER BY users DESC
     """
-    rows = _run_query(sql, params=params, max_rows=20)
+    try:
+        rows = _run_query(sql, params=params, max_rows=20)
+    except Exception:
+        rows = []
     return {
         "client": "nixon",
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},

@@ -76,6 +76,7 @@ def fetch_campaign_daily(
     days: int = 30,
     start: date | None = None,
     end: date | None = None,
+    client_key: str | None = None,
     bq_project_id: str | None = None,
     bq_dataset_id: str | None = None,
     credentials_env: str | None = None,
@@ -87,10 +88,11 @@ def fetch_campaign_daily(
     """
     table = _resolve_table(os.getenv("BQ_MART_TABLE") or _DEFAULT_TABLE, bq_project_id, bq_dataset_id)
     proj = _resolve_project(bq_project_id)
+    ck_filter = f" AND client_key = '{client_key}'" if client_key else ""
     if start and end:
-        where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
+        where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'{ck_filter}"
     else:
-        where_clause = f"date >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(days)} DAY)"
+        where_clause = f"date >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(days)} DAY){ck_filter}"
     sql = f"""
     SELECT
       CAST(date AS STRING) AS metric_date,
@@ -113,6 +115,7 @@ def fetch_linkedin_campaign_daily(
     days: int = 30,
     start: date | None = None,
     end: date | None = None,
+    client_key: str | None = None,
     bq_project_id: str | None = None,
     bq_dataset_id: str | None = None,
     credentials_env: str | None = None,
@@ -120,10 +123,11 @@ def fetch_linkedin_campaign_daily(
     """Return per-campaign per-day rows (LinkedIn Ads mart)."""
     table = _resolve_table(os.getenv("BQ_MART_LINKEDIN_TABLE") or _DEFAULT_LINKEDIN_TABLE, bq_project_id, bq_dataset_id)
     proj = _resolve_project(bq_project_id)
+    ck_filter = f" AND client_key = '{client_key}'" if client_key else ""
     if start and end:
-        where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
+        where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'{ck_filter}"
     else:
-        where_clause = f"date >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(days)} DAY)"
+        where_clause = f"date >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(days)} DAY){ck_filter}"
     sql = f"""
     SELECT
       CAST(date AS STRING) AS metric_date,
@@ -149,16 +153,18 @@ def fetch_google_ad_group_daily(
     days: int = 30,
     start: date | None = None,
     end: date | None = None,
+    client_key: str | None = None,
     bq_project_id: str | None = None,
     bq_dataset_id: str | None = None,
     credentials_env: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return per-ad-group per-day rows from the Google Ads ad group mart."""
     table = _resolve_table(_DEFAULT_GOOGLE_AD_GROUP_TABLE, bq_project_id, bq_dataset_id)
+    ck_filter = f" AND client_key = '{client_key}'" if client_key else ""
     if start and end:
-        where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
+        where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'{ck_filter}"
     else:
-        where_clause = f"date >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(days)} DAY)"
+        where_clause = f"date >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(days)} DAY){ck_filter}"
     sql = f"""
     SELECT
       CAST(date AS STRING) AS metric_date,
@@ -184,16 +190,18 @@ def fetch_google_ad_daily(
     days: int = 30,
     start: date | None = None,
     end: date | None = None,
+    client_key: str | None = None,
     bq_project_id: str | None = None,
     bq_dataset_id: str | None = None,
     credentials_env: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return per-ad per-day rows from the Google Ads ad mart."""
     table = _resolve_table(_DEFAULT_GOOGLE_AD_TABLE, bq_project_id, bq_dataset_id)
+    ck_filter = f" AND client_key = '{client_key}'" if client_key else ""
     if start and end:
-        where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
+        where_clause = f"date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'{ck_filter}"
     else:
-        where_clause = f"date >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(days)} DAY)"
+        where_clause = f"date >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(days)} DAY){ck_filter}"
     sql = f"""
     SELECT
       CAST(date AS STRING) AS metric_date,
@@ -516,12 +524,51 @@ def _build_linkedin_mart_breakdowns(
     }
 
 
+def fetch_marketing_daily_totals(
+    *,
+    start: date,
+    end: date,
+    client_key: str | None = None,
+    bq_project_id: str | None = None,
+    bq_dataset_id: str | None = None,
+    credentials_env: str | None = None,
+) -> dict[str, Any]:
+    """Unified paid media totals from fact_marketing_daily (all platforms)."""
+    table = _resolve_table("fact_marketing_daily", bq_project_id, bq_dataset_id)
+    ck_filter = f" AND client_key = '{client_key}'" if client_key else ""
+    sql = f"""
+    SELECT
+      SUM(CAST(spend AS FLOAT64)) AS spend,
+      SUM(CAST(impressions AS INT64)) AS impressions,
+      SUM(CAST(clicks AS INT64)) AS clicks,
+      SUM(CAST(conversions AS FLOAT64)) AS conversions
+    FROM {table}
+    WHERE date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'{ck_filter}
+    """
+    rows = bigquery_service.run_query(
+        sql,
+        project_id=_resolve_project(bq_project_id),
+        credentials_env=credentials_env,
+        max_rows=1,
+    )
+    if rows and rows[0]:
+        r = rows[0]
+        return {
+            "spend": float(r.get("spend") or 0),
+            "impressions": int(r.get("impressions") or 0),
+            "clicks": int(r.get("clicks") or 0),
+            "conversions": float(r.get("conversions") or 0),
+        }
+    return {}
+
+
 def build_snapshot(
     *,
     days: int = 30,
     start: date | None = None,
     end: date | None = None,
     preset: str = "LAST_30_DAYS",
+    client_key: str | None = None,
     bq_project_id: str | None = None,
     bq_dataset_id: str | None = None,
     credentials_env: str | None = None,
@@ -544,7 +591,7 @@ def build_snapshot(
     google_ad_rows: list[dict[str, Any]] = []
     linkedin_rows: list[dict[str, Any]] = []
 
-    _bq_kwargs = dict(bq_project_id=bq_project_id, bq_dataset_id=bq_dataset_id, credentials_env=credentials_env)
+    _bq_kwargs = dict(client_key=client_key, bq_project_id=bq_project_id, bq_dataset_id=bq_dataset_id, credentials_env=credentials_env)
 
     def _collect(fut, error_key: str) -> list[dict[str, Any]]:
         """Resolve a mart future; missing table → empty, real error → recorded."""
@@ -595,6 +642,27 @@ def build_snapshot(
     if start is None:
         start = end - timedelta(days=days - 1)
 
+    try:
+        agg = fetch_marketing_daily_totals(
+            start=start,
+            end=end,
+            client_key=client_key,
+            bq_project_id=bq_project_id,
+            bq_dataset_id=bq_dataset_id,
+            credentials_env=credentials_env,
+        )
+        if not agg:
+            raise ValueError("empty")
+    except Exception as exc:
+        if not _is_table_not_found(exc):
+            errors["fact_marketing_daily"] = str(exc)[:300]
+        agg = {
+            "spend": totals_g["spend"] + totals_li["spend"],
+            "clicks": totals_g["clicks"] + totals_li["clicks"],
+            "impressions": totals_g["impressions"] + totals_li["impressions"],
+            "conversions": totals_g["conversions"] + totals_li["conversions"],
+        }
+
     return {
         "date_range": {
             "start": start.isoformat(),
@@ -623,12 +691,7 @@ def build_snapshot(
             },
             "linkedin": li_breakdowns,
         },
-        "aggregated_paid_media": {
-            "spend": totals_g["spend"] + totals_li["spend"],
-            "clicks": totals_g["clicks"] + totals_li["clicks"],
-            "impressions": totals_g["impressions"] + totals_li["impressions"],
-            "conversions": totals_g["conversions"] + totals_li["conversions"],
-        },
+        "aggregated_paid_media": agg,
         "business_line_campaigns": [],
         "warehouse_sync": {},
         "ga4_attribution": None,

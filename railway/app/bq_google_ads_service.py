@@ -175,6 +175,7 @@ def create_google_ads_mart_views() -> dict[str, Any]:
     views = {
         "fact_google_ads_ad_daily": f"""
             SELECT
+              client_key,
               metric_date AS date,
               account_id,
               campaign_id,
@@ -202,6 +203,7 @@ def create_google_ads_mart_views() -> dict[str, Any]:
         """,
         "fact_google_ads_ad_group_daily": f"""
             SELECT
+              client_key,
               metric_date AS date,
               account_id,
               campaign_id,
@@ -214,11 +216,12 @@ def create_google_ads_mart_views() -> dict[str, Any]:
               SUM(conversions) AS conversions,
               SUM(conversion_value) AS conversion_value
             FROM {raw_ad_table}
-            GROUP BY 1, 2, 3, 5
+            GROUP BY 1, 2, 3, 4, 6
         """,
         "explorer_google_ads_daily": f"""
             SELECT
               'google_ads' AS source,
+              client_key,
               account_id,
               campaign_id,
               campaign_name,
