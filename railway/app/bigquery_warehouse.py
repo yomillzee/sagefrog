@@ -386,6 +386,7 @@ def create_google_campaign_mart_view() -> dict[str, Any]:
     sql = f"""
     {create_statement} `{table_id}` AS
     SELECT
+      client_key,
       metric_date AS date,
       account_id,
       campaign_id,
@@ -402,8 +403,14 @@ def create_google_campaign_mart_view() -> dict[str, Any]:
     return {"status": "success", "table": table_id, "raw_table": raw_table_id}
 
 
-def rebuild_unified_marketing_mart() -> dict[str, Any]:
-    """Build the dashboard's single daily fact from available normalized facts."""
+def rebuild_unified_marketing_mart(client_key: str | None = None) -> dict[str, Any]:
+    """Build the dashboard's single daily fact from available normalized facts.
+
+    fact_marketing_daily carries client_key for multi-tenant filtering. Sources
+    whose fact view exposes client_key (e.g. Google) are read directly; sources
+    that don't yet (Meta/LinkedIn raw tables lack it) fall back to the run's
+    client_key literal so the column is always present and filterable.
+    """
     project_id = _route_value("project") or (
         os.getenv("BQ_WAREHOUSE_PROJECT_ID") or os.getenv("BQ_PROJECT_ID") or ""
     ).strip()
@@ -418,17 +425,25 @@ def rebuild_unified_marketing_mart() -> dict[str, Any]:
         "meta": _DEFAULT_META_CAMPAIGN_FACT_TABLE,
         "linkedin": _DEFAULT_LINKEDIN_CAMPAIGN_FACT_TABLE,
     }
+    ck_literal = (client_key or "").strip()
     selects: list[str] = []
     included: list[str] = []
     for source, table in candidates.items():
         source_id = f"{project_id}.{mart_dataset}.{table}"
         try:
-            client.get_table(source_id)
+            tbl = client.get_table(source_id)
         except Exception:
             continue
+        has_ck = any(f.name == "client_key" for f in tbl.schema)
+        if has_ck:
+            ck_expr = "client_key"
+        elif ck_literal:
+            ck_expr = f"'{ck_literal}' AS client_key"
+        else:
+            ck_expr = "CAST(NULL AS STRING) AS client_key"
         included.append(source)
         selects.append(
-            f"SELECT '{source}' AS source, account_id, date, campaign_id, "
+            f"SELECT {ck_expr}, '{source}' AS source, account_id, date, campaign_id, "
             f"campaign_name, spend, impressions, clicks, conversions, "
             f"conversion_value FROM `{source_id}`"
         )

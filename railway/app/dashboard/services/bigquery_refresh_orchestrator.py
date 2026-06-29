@@ -276,7 +276,7 @@ def run_client_bigquery_refresh(
             "google_fact", bigquery_warehouse.create_google_campaign_mart_view
         ) if cfg.google_customer_id else _status("not_configured")
         result["transformations"]["unified_mart"] = _run_step(
-            "unified_mart", bigquery_warehouse.rebuild_unified_marketing_mart
+            "unified_mart", lambda: bigquery_warehouse.rebuild_unified_marketing_mart(client_key)
         )
 
     if result["transformations"]["unified_mart"].get("status") == "success":
