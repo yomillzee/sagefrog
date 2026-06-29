@@ -251,16 +251,25 @@ def ensure_ga4_tables() -> None:
         table_id = f"{dataset_ref}.{table_name}"
         schema = schema_fn()
 
-        # Any table missing client_key predates the snake_case migration — drop and recreate.
         try:
             existing = client.get_table(table_id, timeout=30)
             existing_cols = {f.name for f in existing.schema}
+            required_cols = {f.name for f in schema}
+
             if "client_key" not in existing_cols:
+                # Predates the snake_case migration — drop and recreate.
                 _log.info(
                     "GA4 %s missing client_key (pre-migration schema) — dropping for recreation",
                     table_name,
                 )
                 client.delete_table(table_id, timeout=30)
+            elif not required_cols.issubset(existing_cols):
+                # Schema has new columns the live table lacks — add them non-destructively.
+                missing = required_cols - existing_cols
+                _log.info("GA4 %s: adding missing columns %s via schema update", table_name, missing)
+                table_obj = bq.Table(table_id, schema=schema)
+                table_obj.time_partitioning = bq.TimePartitioning(field="date")
+                client.update_table(table_obj, ["schema"])
         except Exception:
             pass  # Table doesn't exist yet — create below.
 
