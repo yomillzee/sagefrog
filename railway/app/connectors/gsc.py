@@ -21,7 +21,14 @@ class GSCConnector(ConnectorHandler):
         try:
             import gsc_sync_service
             props = gsc_sync_service.list_accessible_properties()
-            return [{"id": p.get("siteUrl", ""), "name": p.get("siteUrl", "")} for p in props]
+            # list_accessible_properties returns dicts keyed "site_url" (not "siteUrl");
+            # using the wrong key collapsed every property to an empty id → the wizard
+            # showed "No accounts found" even when the service account had access.
+            return [
+                {"id": p.get("site_url", ""), "name": p.get("site_url", "")}
+                for p in props
+                if p.get("site_url")
+            ]
         except Exception as exc:
             _log.warning("GSC list_accounts failed: %s", exc)
             return []
