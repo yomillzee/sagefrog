@@ -243,16 +243,38 @@ def run_client_bigquery_refresh(
         else:
             result["sources"]["meta"] = _status("not_configured")
 
-        # Google normalization only uses a native-transfer raw table.  It never
-        # calls Google Ads or mirrors a generic API campaign snapshot.
+        if cfg.google_customer_id:
+            def ingest_google() -> dict[str, Any]:
+                import bq_google_ads_service
+                import oauth_store as _oauth
+
+                refresh = _oauth.get_refresh_token("google_ads", client_slug=client_slug)
+                if not refresh:
+                    raise RuntimeError("No Google Ads refresh token for this client.")
+                with bq_google_ads_service.route(
+                    bq_project_id=target.bq_project_id,
+                    credentials_env=target.credentials_env,
+                ):
+                    synced = bq_google_ads_service.sync_google_ads_to_bq(
+                        cfg.google_customer_id,
+                        start=start.isoformat(),
+                        end=end.isoformat(),
+                        refresh_token=refresh,
+                        client_key=client_key,
+                    )
+                return {
+                    "status": "partial_failure" if synced.get("errors") else "success",
+                    "campaign_rows": synced.get("campaign_rows", 0),
+                    "data_through": end.isoformat() if synced.get("campaign_rows", 0) > 0 else None,
+                }
+
+            result["sources"]["google"] = _run_step("google", ingest_google)
+        else:
+            result["sources"]["google"] = _status("not_configured")
+
         result["transformations"]["google_fact"] = _run_step(
             "google_fact", bigquery_warehouse.create_google_campaign_mart_view
         ) if cfg.google_customer_id else _status("not_configured")
-        google_fact = result["transformations"]["google_fact"]
-        if google_fact.get("status") == "success" and google_fact.get("table"):
-            result["sources"]["google"] = _table_freshness(
-                client, str(google_fact["table"])
-            )
         result["transformations"]["unified_mart"] = _run_step(
             "unified_mart", bigquery_warehouse.rebuild_unified_marketing_mart
         )

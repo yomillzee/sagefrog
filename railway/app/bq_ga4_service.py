@@ -336,6 +336,10 @@ def sync_ga4_to_bq(
         ("geo",           ga4.fetch_geo_daily,            "ga4_geo_daily",           _schema_geo),
         ("demographics",  ga4.fetch_demographics_daily,   "ga4_demographics_daily",  _schema_demographics),
     ]
+    # Geo and demographics may return 0 rows (Google Signals not enabled, no
+    # audience data) or a 400 from the API — treat as optional so they don't
+    # surface as errors in the sync run status.
+    _OPTIONAL_KEYS = {"geo", "demographics"}
 
     errors: dict[str, str] = {}
     counts: dict[str, int] = {}
@@ -343,6 +347,10 @@ def sync_ga4_to_bq(
     for key, fetch_fn, table_name, schema_fn in fetchers:
         try:
             rows = fetch_fn(property_id, start, end, access_token, client_key=client_key)
+            if not rows and key in _OPTIONAL_KEYS:
+                _log.info("GA4 %s — 0 rows (optional), skipping", key)
+                counts[key] = 0
+                continue
             n = _write_table(
                 table_name, rows, schema_fn,
                 client_key=client_key, property_id=property_id,
@@ -350,9 +358,13 @@ def sync_ga4_to_bq(
             )
             counts[key] = n
         except Exception as exc:
-            _log.warning("GA4 sync error [%s]: %s", key, exc)
-            errors[key] = str(exc)[:300]
-            counts[key] = 0
+            if key in _OPTIONAL_KEYS:
+                _log.info("GA4 %s — optional fetch skipped: %s", key, exc)
+                counts[key] = 0
+            else:
+                _log.warning("GA4 sync error [%s]: %s", key, exc)
+                errors[key] = str(exc)[:300]
+                counts[key] = 0
 
     total = sum(counts.values())
     _log.info(

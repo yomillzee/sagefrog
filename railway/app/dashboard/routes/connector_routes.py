@@ -320,6 +320,12 @@ async def connector_sync(
     if not config:
         return JSONResponse({"ok": False, "error": "Connector not configured."}, status_code=400)
 
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    date_range: str = str(body.get("date_range") or "LAST_5_DAYS").strip().upper()
+
     run_id = connector_config_store.start_sync_run(
         config.id, run_type="manual", triggered_by=session_email or "user"
     )
@@ -327,7 +333,7 @@ async def connector_sync(
 
     def _run():
         try:
-            result = handler.run_sync(client_slug=slug)
+            result = handler.run_sync(client_slug=slug, date_range=date_range)
             connector_config_store.finish_sync_run(
                 run_id,
                 status="completed" if result.ok else "failed",

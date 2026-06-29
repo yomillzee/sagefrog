@@ -961,7 +961,14 @@ def _render_management_view(
 
       {runs_section}
 
-      <div class="mgmt-actions">
+      <div class="mgmt-actions" style="align-items:center;flex-wrap:wrap;gap:8px">
+        <select id="syncDateRange" style="padding:7px 10px;border:1px solid var(--border);border-radius:6px;font:inherit;font-size:.875rem;background:#fff;color:var(--navy);cursor:pointer" title="Date range for this sync run">
+          <option value="LAST_5_DAYS">Last 5 days</option>
+          <option value="LAST_30_DAYS">Last 30 days</option>
+          <option value="LAST_90_DAYS">Last 90 days</option>
+          <option value="LAST_180_DAYS">Last 180 days</option>
+          <option value="LAST_365_DAYS">Last 365 days (full backfill)</option>
+        </select>
         <button class="btn-secondary" id="syncNowBtn" onclick="runSyncNow()">Run sync now</button>
         {'<a href="/dashboard/' + client_slug + '/connectors/' + handler.connector_type + '/reauth" class="btn-secondary">Re-authorize</a>' if not handler.no_oauth else ''}
         <a href="/dashboard/{client_slug}/connectors/{handler.connector_type}" class="btn-secondary">Change account</a>
@@ -996,9 +1003,14 @@ def _render_management_view(
       function runSyncNow() {{
         var btn = document.getElementById('syncNowBtn');
         var statusEl = document.getElementById('syncNowStatus');
+        var dateRange = (document.getElementById('syncDateRange') || {{}}).value || 'LAST_5_DAYS';
         btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Syncing…';
         statusEl.style.display = 'none';
-        fetch('/dashboard/{client_slug}/connectors/{handler.connector_type}/sync', {{method:'POST'}})
+        fetch('/dashboard/{client_slug}/connectors/{handler.connector_type}/sync', {{
+          method: 'POST',
+          headers: {{'Content-Type': 'application/json'}},
+          body: JSON.stringify({{date_range: dateRange}})
+        }})
           .then(r => r.json()).then(data => {{
             btn.disabled = false; btn.textContent = 'Run sync now';
             statusEl.className = 'test-result ' + (data.ok ? 'ok' : 'err');

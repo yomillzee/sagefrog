@@ -19,6 +19,8 @@ def resolve_date_range(preset: str) -> tuple[date, date, str]:
         return today - timedelta(days=89), today, key
     if key == "LAST_180_DAYS":
         return today - timedelta(days=179), today, key
+    if key == "LAST_365_DAYS":
+        return today - timedelta(days=364), today, key
     if key == "THIS_MONTH":
         return today.replace(day=1), today, key
     if key == "LAST_MONTH":

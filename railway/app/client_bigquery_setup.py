@@ -60,12 +60,7 @@ def ensure_client_bq_resources(
     needs_meta: bool,
     needs_mart: bool,
 ) -> dict[str, Any]:
-    """Idempotently provision app-owned datasets and validate client access.
-
-    The Google raw dataset belongs to BigQuery Data Transfer Service.  It is
-    deliberately verified elsewhere and is never created here, because an
-    empty app-created dataset would falsely imply that the transfer exists.
-    """
+    """Idempotently provision app-owned datasets and validate client access."""
     import bigquery_service
     import ga4_clients
 
@@ -94,6 +89,8 @@ def ensure_client_bq_resources(
 
     ids = dataset_ids()
     requested: list[str] = []
+    if needs_google:
+        requested.append(ids["google"])
     if needs_linkedin:
         requested.append(ids["linkedin"])
     if needs_meta:
@@ -119,11 +116,6 @@ def ensure_client_bq_resources(
         "location": location,
         "datasets": ready,
         "native_sources": {
-            "google": {
-                "required": bool(needs_google),
-                "dataset": f"{project_id}.{ids['google']}",
-                "managed_by": "bigquery_data_transfer_service",
-            },
             "ga4": {
                 "required": True,
                 "dataset": f"{project_id}.{resolved.bq_dataset_id}",

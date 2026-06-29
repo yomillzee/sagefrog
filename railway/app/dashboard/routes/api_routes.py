@@ -1329,3 +1329,141 @@ def gtm_live_tags(
         raise HTTPException(status_code=502, detail=str(exc)[:300]) from exc
 
     return result
+
+
+# ── GA4 raw table health (task 1 — confirm backfill coverage) ─────────────────
+
+@router.get(
+    "/api/clients/{client_slug}/ga4/health/raw",
+    summary="GA4 raw table health: row counts, date range, yesterday coverage",
+)
+def ga4_raw_health(
+    client_slug: str,
+    request: Request,
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    slug = (client_slug or "").strip().lower()
+    _authorize_bq_client_api(
+        request, client_slug=slug, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    import bq_ga4_service
+    import connector_config_store
+
+    cfg = connector_config_store.get_config(slug, "ga4")
+    if not cfg:
+        raise HTTPException(status_code=404, detail="No GA4 connector configured for this client.")
+
+    property_id = cfg.source_account_id or ""
+    bq_project_id = cfg.bq_project_id
+    raw_dataset_id = cfg.raw_dataset_id or "raw_ga4"
+
+    try:
+        with bq_ga4_service.route(
+            bq_project_id=bq_project_id,
+            ga4_dataset_id=raw_dataset_id,
+        ):
+            health = bq_ga4_service.check_ga4_health(
+                client_key=slug, property_id=property_id
+            )
+        return {
+            "client_slug": slug,
+            "property_id": property_id,
+            "bq_project": bq_project_id,
+            "raw_dataset": raw_dataset_id,
+            "tables": health,
+        }
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+# ── GA4 mart view health (task 8) ─────────────────────────────────────────────
+
+@router.get(
+    "/api/clients/{client_slug}/ga4/health/mart",
+    summary="GA4 mart view health: row counts, date range, latest synced_at",
+)
+def ga4_mart_health(
+    client_slug: str,
+    request: Request,
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    slug = (client_slug or "").strip().lower()
+    _authorize_bq_client_api(
+        request, client_slug=slug, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    import bq_ga4_mart_service
+    import connector_config_store
+
+    cfg = connector_config_store.get_config(slug, "ga4")
+    if not cfg:
+        raise HTTPException(status_code=404, detail="No GA4 connector configured for this client.")
+
+    bq_project_id = cfg.bq_project_id or "nixon-medical"
+    property_id = cfg.source_account_id or None
+
+    try:
+        health = bq_ga4_mart_service.check_ga4_mart_health(
+            project=bq_project_id,
+            client_key=slug,
+            property_id=property_id,
+        )
+        return health
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+# ── GA4 mart view provisioning (tasks 2–4, 6) ────────────────────────────────
+
+@router.post(
+    "/api/clients/{client_slug}/ga4/provision-views",
+    summary="CREATE OR REPLACE GA4 mart views in marketing_marts",
+)
+def ga4_provision_views(
+    client_slug: str,
+    request: Request,
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    """Idempotent — safe to re-run.  Rebuilds all GA4 mart views from raw_ga4.
+
+    Query params:
+      views — comma-separated list to rebuild only specific views (default: all)
+    """
+    slug = (client_slug or "").strip().lower()
+    _authorize_bq_client_api(
+        request, client_slug=slug, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    import bq_ga4_mart_service
+    import connector_config_store
+
+    cfg = connector_config_store.get_config(slug, "ga4")
+    if not cfg:
+        raise HTTPException(status_code=404, detail="No GA4 connector configured for this client.")
+
+    bq_project_id = cfg.bq_project_id or "nixon-medical"
+    raw_dataset_id = cfg.raw_dataset_id or "raw_ga4"
+
+    # Optional ?views= filter (comma-separated view names)
+    from urllib.parse import parse_qs, urlparse
+    qs = parse_qs(str(request.url.query))
+    requested_views_raw = qs.get("views", [""])[0]
+    requested_views = [v.strip() for v in requested_views_raw.split(",") if v.strip()] or None
+
+    try:
+        result = bq_ga4_mart_service.provision_ga4_mart_views(
+            project=bq_project_id,
+            raw_project=bq_project_id,
+            raw_dataset=raw_dataset_id,
+            views=requested_views,
+        )
+        return result
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc

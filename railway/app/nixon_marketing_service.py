@@ -21,15 +21,14 @@ _META_AD_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.fact_meta_ads_ad_daily`"
 _PAGE_PATH_DAILY_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_page_path_daily`"
 _PAGE_PATH_SOURCE_DAILY_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_page_path_source_daily`"
 
-_GA4_DATASET = "raw_ga4"
-_TRAFFIC_ACQ_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_sessions_daily`"
-_TECH_DETAILS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_tech_daily`"
-_LANDING_PAGE_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_landing_pages_daily`"
-_PAGEVIEWS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_pageviews_daily`"
-_EVENTS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_events_daily`"
-_USER_ACQ_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_user_acq_daily`"
-_GEO_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_geo_daily`"
-_DEMOGRAPHICS_TABLE = f"`{_PROJECT_ID}.{_GA4_DATASET}.ga4_demographics_daily`"
+# All GA4 reads go through marketing_marts views — never raw_ga4 directly.
+_TRAFFIC_ACQ_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_ga4_traffic_acq_daily`"
+_TECH_DETAILS_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_ga4_tech_daily`"
+_LANDING_PAGE_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_ga4_landing_pages_daily`"
+_EVENTS_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_ga4_events_daily`"
+_USER_ACQ_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_ga4_user_acq_daily`"
+_GEO_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_ga4_geo_daily`"
+_DEMOGRAPHICS_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_ga4_demographics_daily`"
 
 
 def _job_config(**params: bigquery.ScalarQueryParameter) -> bigquery.QueryJobConfig:
