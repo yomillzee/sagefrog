@@ -302,6 +302,8 @@ def fetch_nixon_google_ads_explorer(
       ANY_VALUE(headline_3) AS headline_3,
       ANY_VALUE(description_1) AS description_1,
       ANY_VALUE(description_2) AS description_2,
+      ANY_VALUE(headlines) AS headlines,
+      ANY_VALUE(descriptions) AS descriptions,
       ANY_VALUE(image_ad_name) AS image_ad_name,
       ANY_VALUE(ad_name) AS ad_name,
       ANY_VALUE(final_url) AS final_url,

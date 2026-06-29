@@ -64,6 +64,8 @@ class GoogleAdsConnector(ConnectorHandler):
             return SyncResult(
                 rows_loaded=rows,
                 error=str(next(iter(errors.values()))) if errors else None,
+                range_start=start,
+                range_end=end,
             )
         except Exception as exc:
             _log.warning("Google Ads sync failed [%s]: %s", client_slug, exc)

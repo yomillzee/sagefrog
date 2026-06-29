@@ -268,8 +268,8 @@ def render_nixon_bigquery_test_page(
     .tree-row[data-expandable] {{ cursor:pointer; }}
     .tree-row[data-expandable]:hover {{ background:#f3f8ff; }}
     .caret {{ display:inline-block; width:14px; color:var(--muted); font-size:.8rem; }}
-    .tree-row[data-expandable] .caret::before {{ content:'\25B8'; }}
-    .tree-row[data-expandable].open .caret::before {{ content:'\25BE'; }}
+    .tree-row[data-expandable] .caret::before {{ content:'\\25B8'; }}
+    .tree-row[data-expandable].open .caret::before {{ content:'\\25BE'; }}
     .lvl-campaign .tree-name {{ font-weight:800; color:var(--navy); }}
     .lvl-group .tree-name {{ font-weight:600; }}
     .lvl-ad td.left {{ color:var(--muted); }}
@@ -778,11 +778,21 @@ def render_nixon_bigquery_test_page(
       const label=key==='linkedin'?'LinkedIn':key==='meta'?'Meta':'Google';
       return `<span class="pill pill-${{key}}">${{label}}</span>`;
     }}
+    function parseCopyList(v) {{
+      if (Array.isArray(v)) return v.filter(Boolean);
+      if (typeof v==='string' && v) {{ try {{ const a=JSON.parse(v); return Array.isArray(a)?a.filter(Boolean):[]; }} catch(e) {{ return []; }} }}
+      return [];
+    }}
     function adCell(ad) {{
       const label=esc(ad.ad_label||ad.ad_name||'—');
       const type=ad.media_type?`<span class="ad-type">${{esc(ad.media_type)}}</span>`:'';
       const thumb=ad.thumbnail_url?`<img class="ad-thumb" src="${{esc(ad.thumbnail_url)}}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none'">` :'';
-      const copyLines=[['H1',ad.headline_1],['H2',ad.headline_2],['H3',ad.headline_3],['Desc',ad.description_1]].filter(([,v])=>v).map(([tag,v])=>`<span class="ad-copy-line"><span class="ad-copy-tag">${{tag}}</span>${{esc(v)}}</span>`).join('');
+      // Full RSA copy (up to 15 headlines / 4 descriptions) from the JSON arrays;
+      // fall back to the legacy flat columns for rows synced before the repull.
+      let hs=parseCopyList(ad.headlines); if(!hs.length) hs=[ad.headline_1,ad.headline_2,ad.headline_3].filter(Boolean);
+      let ds=parseCopyList(ad.descriptions); if(!ds.length) ds=[ad.description_1,ad.description_2].filter(Boolean);
+      const pairs=[...hs.map((v,i)=>['H'+(i+1),v]),...ds.map((v,i)=>['D'+(i+1),v])];
+      const copyLines=pairs.filter(([,v])=>v).map(([tag,v])=>`<span class="ad-copy-line"><span class="ad-copy-tag">${{tag}}</span>${{esc(v)}}</span>`).join('');
       const copy=copyLines?`<div class="ad-copy">${{copyLines}}</div>`:'';
       return `<div class="ad-cell">${{thumb}}<span class="ad-meta"><span class="ad-label">${{label}}</span>${{type}}${{copy}}</span></div>`;
     }}
@@ -822,7 +832,7 @@ def render_nixon_bigquery_test_page(
     function normalizeExplorerRows(google, linkedin, meta) {{
       const out=[];
       for (const r of (google&&google.rows?google.rows:[])) {{
-        out.push({{platform:'google',campaign_name:r.campaign_name,ad_group_name:r.ad_group_name,ad_label:r.ad_label,headline_1:r.headline_1,headline_2:r.headline_2,headline_3:r.headline_3,description_1:r.description_1,description_2:r.description_2,ad_name:r.ad_name,final_url:r.final_url,ad_type:r.ad_type,thumbnail_url:'',media_type:r.ad_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
+        out.push({{platform:'google',campaign_name:r.campaign_name,ad_group_name:r.ad_group_name,ad_label:r.ad_label,headlines:r.headlines,descriptions:r.descriptions,headline_1:r.headline_1,headline_2:r.headline_2,headline_3:r.headline_3,description_1:r.description_1,description_2:r.description_2,ad_name:r.ad_name,final_url:r.final_url,ad_type:r.ad_type,thumbnail_url:'',media_type:r.ad_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
       }}
       for (const r of (linkedin&&linkedin.rows?linkedin.rows:[])) {{
         out.push({{platform:'linkedin',campaign_name:r.campaign_group_name||r.campaign_name,ad_group_name:r.campaign_name,ad_label:r.creative_name,thumbnail_url:r.thumbnail_url||r.image_url||'',media_type:r.media_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});

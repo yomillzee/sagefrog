@@ -12,6 +12,8 @@ from typing import Any
 class SyncResult:
     rows_loaded: int
     error: str | None = None
+    range_start: date | None = None
+    range_end: date | None = None
 
     @property
     def ok(self) -> bool:

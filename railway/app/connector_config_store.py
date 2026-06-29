@@ -54,6 +54,9 @@ SCHEMA_SQL_STATEMENTS = [
       triggered_by TEXT NOT NULL DEFAULT 'user'
     )
     """,
+    # Date range covered by the most recent successful sync (added post-launch).
+    "ALTER TABLE connector_configs ADD COLUMN IF NOT EXISTS last_sync_range_start DATE",
+    "ALTER TABLE connector_configs ADD COLUMN IF NOT EXISTS last_sync_range_end DATE",
 ]
 
 
@@ -80,6 +83,8 @@ class ConnectorConfig:
     disconnected_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    last_sync_range_start: date | None = None
+    last_sync_range_end: date | None = None
 
 
 @dataclass(frozen=True)
@@ -113,7 +118,8 @@ _SELECT = """
            source_account_id, source_account_name, bq_project_id, raw_dataset_id,
            mart_dataset_id, sync_enabled, sync_frequency, backfill_start_date,
            last_sync_started_at, last_sync_completed_at, last_success_at,
-           last_error_message, disconnected_at, created_at, updated_at
+           last_error_message, disconnected_at, created_at, updated_at,
+           last_sync_range_start, last_sync_range_end
     FROM connector_configs
 """
 
@@ -141,6 +147,8 @@ def _row_to_config(row: tuple) -> ConnectorConfig:
         disconnected_at=row[18],
         created_at=row[19],
         updated_at=row[20],
+        last_sync_range_start=row[21] if len(row) > 21 else None,
+        last_sync_range_end=row[22] if len(row) > 22 else None,
     )
 
 
@@ -276,6 +284,8 @@ def update_sync_timestamps(
     completed: bool = False,
     success: bool = False,
     error: str | None = None,
+    range_start: date | None = None,
+    range_end: date | None = None,
 ) -> None:
     if not enabled():
         return
@@ -292,6 +302,9 @@ def update_sync_timestamps(
     if success:
         sets += ["last_success_at = %s", "last_error_message = %s", "status = %s"]
         vals += [now, None, "connected"]
+        if range_start and range_end:
+            sets += ["last_sync_range_start = %s", "last_sync_range_end = %s"]
+            vals += [range_start, range_end]
     if error:
         sets += ["last_error_message = %s", "status = %s"]
         vals += [error[:500], "error"]

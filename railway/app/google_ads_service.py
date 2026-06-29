@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import date, timedelta
@@ -1419,9 +1420,16 @@ def fetch_ad_daily_metrics(
                 if isinstance(d, dict) and d.get("text")
             ]
             final_urls = _dig(crow, "ad_group_ad", "ad", "final_urls") or []
+            # Google RSAs allow up to 15 headlines / 4 descriptions. Store the full
+            # ordered lists as JSON; keep the first 3/2 as flat columns for any
+            # legacy reader / mart view that still selects headline_1..3.
+            headlines = [h for h in headlines if h]
+            descriptions = [d for d in descriptions if d]
             creative_index[aid_c] = {
                 "ad_type": str(_dig(crow, "ad_group_ad", "ad", "type") or ""),
                 "final_url": str(final_urls[0]) if final_urls else "",
+                "headlines": json.dumps(headlines, ensure_ascii=False) if headlines else None,
+                "descriptions": json.dumps(descriptions, ensure_ascii=False) if descriptions else None,
                 "headline_1": headlines[0] if len(headlines) > 0 else "",
                 "headline_2": headlines[1] if len(headlines) > 1 else "",
                 "headline_3": headlines[2] if len(headlines) > 2 else "",
@@ -1446,6 +1454,8 @@ def fetch_ad_daily_metrics(
             "ad_status": meta.get("ad_status") or None,
             "ad_type": creative.get("ad_type") or None,
             "final_url": creative.get("final_url") or None,
+            "headlines": creative.get("headlines"),
+            "descriptions": creative.get("descriptions"),
             "headline_1": creative.get("headline_1") or None,
             "headline_2": creative.get("headline_2") or None,
             "headline_3": creative.get("headline_3") or None,

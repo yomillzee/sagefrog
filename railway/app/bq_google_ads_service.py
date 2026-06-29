@@ -120,6 +120,8 @@ def _schema_ad_daily(bq):
         bq.SchemaField("headline_3",       "STRING",    mode="NULLABLE"),
         bq.SchemaField("description_1",    "STRING",    mode="NULLABLE"),
         bq.SchemaField("description_2",    "STRING",    mode="NULLABLE"),
+        bq.SchemaField("headlines",        "STRING",    mode="NULLABLE"),
+        bq.SchemaField("descriptions",     "STRING",    mode="NULLABLE"),
         bq.SchemaField("image_ad_name",    "STRING",    mode="NULLABLE"),
         bq.SchemaField("metric_date",      "DATE",      mode="REQUIRED"),
         bq.SchemaField("spend",            "FLOAT64",   mode="NULLABLE"),
@@ -144,7 +146,24 @@ def ensure_google_ads_tables() -> None:
         ("ad_daily", _schema_ad_daily),
     ]:
         table_id = f"{dataset_ref}.{table_name}"
-        table = bq.Table(table_id, schema=schema_fn(bq))
+        schema = schema_fn(bq)
+
+        # Add any columns the live table lacks (e.g. headlines/descriptions JSON)
+        # without dropping data — create_table(exists_ok) alone never alters schema.
+        try:
+            existing = client.get_table(table_id, timeout=30)
+            existing_cols = {f.name for f in existing.schema}
+            required_cols = {f.name for f in schema}
+            if not required_cols.issubset(existing_cols):
+                missing = required_cols - existing_cols
+                _log.info("Google Ads %s: adding missing columns %s", table_name, missing)
+                table_obj = bq.Table(table_id, schema=schema)
+                table_obj.time_partitioning = bq.TimePartitioning(field="metric_date")
+                client.update_table(table_obj, ["schema"])
+        except Exception:
+            pass  # Table doesn't exist yet — create below.
+
+        table = bq.Table(table_id, schema=schema)
         table.time_partitioning = bq.TimePartitioning(field="metric_date")
         client.create_table(table, exists_ok=True, timeout=30)
     _log.info("Google Ads tables ensured in %s", dataset_ref)
@@ -192,6 +211,8 @@ def create_google_ads_mart_views() -> dict[str, Any]:
               headline_3,
               description_1,
               description_2,
+              headlines,
+              descriptions,
               image_ad_name,
               spend,
               impressions,
@@ -234,6 +255,8 @@ def create_google_ads_mart_views() -> dict[str, Any]:
               NULLIF(headline_3, '') AS headline_3,
               NULLIF(description_1, '') AS description_1,
               NULLIF(description_2, '') AS description_2,
+              headlines,
+              descriptions,
               NULLIF(image_ad_name, '') AS image_ad_name,
               NULLIF(ad_name, '') AS ad_name,
               NULLIF(final_url, '') AS final_url,

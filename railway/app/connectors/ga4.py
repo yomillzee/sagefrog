@@ -80,7 +80,7 @@ class GA4Connector(ConnectorHandler):
             except Exception as exc:
                 _log.warning("GA4 mart provision failed [%s]: %s", client_slug, exc)
 
-            return SyncResult(rows_loaded=total, error=error_msg)
+            return SyncResult(rows_loaded=total, error=error_msg, range_start=start, range_end=end)
         except Exception as exc:
             _log.warning("GA4 sync failed [%s]: %s", client_slug, exc)
             return SyncResult(rows_loaded=0, error=str(exc)[:500])
