@@ -127,6 +127,7 @@ def render_nixon_bq_settings_page(
     .badge {{ display:inline-block; font-size:.6rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; padding:2px 6px; border-radius:4px; vertical-align:middle; margin-left:5px; }}
     .badge-view {{ background:#eef4fb; color:#1d6fd0; }}
     .badge-tbl {{ background:#eef7f2; color:#0a7f3f; }}
+    .badge-opt {{ background:#fff8e7; color:#8a6500; }}
     .pipe-table td.left {{ vertical-align:top; }}
     .pipe-table .module-label {{ font-weight:600; color:var(--navy); font-size:.88rem; }}
     .pipe-table .module-sub {{ font-size:.76rem; color:var(--muted); margin-top:1px; }}
@@ -217,12 +218,12 @@ def render_nixon_bq_settings_page(
             <tr>
               <td class="left"><div class="module-label">Campaign Explorer — Google</div><div class="module-sub">Ad-level creative drill-down</div></td>
               <td class="left mono">/api/clients/nixon/google-ads/explorer</td>
-              <td class="left mono">explorer_google_ads_daily<span class="badge badge-tbl">TABLE</span></td>
+              <td class="left mono">explorer_google_ads_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Campaign Explorer — LinkedIn</div><div class="module-sub">Creative thumbnails + spend</div></td>
               <td class="left mono">/api/clients/nixon/linkedin/explorer</td>
-              <td class="left mono">fact_linkedin_ads_creative_daily<span class="badge badge-tbl">TABLE</span></td>
+              <td class="left mono">fact_linkedin_ads_creative_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Website Analytics — Top Pages</div><div class="module-sub">Page views, users, sessions</div></td>
@@ -237,32 +238,32 @@ def render_nixon_bq_settings_page(
             <tr>
               <td class="left"><div class="module-label">Website Analytics — Traffic</div><div class="module-sub">Sessions by channel + daily trend</div></td>
               <td class="left mono">/api/clients/nixon/pages/traffic-acquisition</td>
-              <td class="left mono">ga4_TrafficAcquisition_*<span class="badge badge-tbl">TABLE</span></td>
+              <td class="left mono">vw_ga4_traffic_acq_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Website Analytics — Audience</div><div class="module-sub">Device type split</div></td>
               <td class="left mono">/api/clients/nixon/pages/device-split</td>
-              <td class="left mono">ga4_TechDetails_*<span class="badge badge-tbl">TABLE</span></td>
+              <td class="left mono">vw_ga4_tech_daily<span class="badge badge-view">VIEW</span><span class="badge badge-opt">optional</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Website Analytics — Landing Pages</div><div class="module-sub">Session + key event rate by first URL</div></td>
               <td class="left mono">/api/clients/nixon/pages/landing</td>
-              <td class="left mono">ga4_LandingPage_*<span class="badge badge-tbl">TABLE</span></td>
+              <td class="left mono">vw_ga4_landing_pages_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Website Analytics — Conversions</div><div class="module-sub">Custom events + form funnel</div></td>
               <td class="left mono">/api/clients/nixon/analytics/conversions</td>
-              <td class="left mono">ga4_Events_*<span class="badge badge-tbl">TABLE</span></td>
+              <td class="left mono">vw_ga4_events_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Website Analytics — User Acquisition</div><div class="module-sub">First-touch channel + source/medium</div></td>
               <td class="left mono">/api/clients/nixon/analytics/user-acquisition</td>
-              <td class="left mono">ga4_UserAcquisition_*<span class="badge badge-tbl">TABLE</span></td>
+              <td class="left mono">vw_ga4_user_acq_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Website Analytics — Demographics</div><div class="module-sub">City/region, age bracket, gender</div></td>
               <td class="left mono">/api/clients/nixon/analytics/demographics</td>
-              <td class="left mono">ga4_DemographicDetails_*<span class="badge badge-tbl">TABLE</span></td>
+              <td class="left mono">vw_ga4_demographics_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Mart Health</div><div class="module-sub">Row counts + date freshness per source</div></td>
