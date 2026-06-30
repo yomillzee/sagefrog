@@ -17,8 +17,32 @@ class HubSpotConnector(ConnectorHandler):
     default_raw_dataset = "raw_hubspot"
 
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
-        # HubSpot portals are identified by the OAuth connection, not a separate account list
-        return []
+        # The "account" is the HubSpot portal behind this client's OAuth token.
+        import json
+        import urllib.request
+
+        import oauth_flows
+        import oauth_store
+
+        refresh = oauth_store.get_refresh_token("hubspot", client_slug=client_slug)
+        if not refresh:
+            return []
+        try:
+            token = oauth_flows.refresh_hubspot_access_token(refresh)
+            req = urllib.request.Request(
+                "https://api.hubapi.com/account-info/v3/details",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                info = json.loads(resp.read().decode("utf-8"))
+            pid = str(info.get("portalId") or "").strip()
+            if not pid:
+                return []
+            name = info.get("companyName") or f"Portal {pid}"
+            return [{"id": pid, "name": f"{name} ({pid})"}]
+        except Exception as exc:
+            _log.warning("HubSpot list_accounts failed [%s]: %s", client_slug, exc)
+            return []
 
     def run_sync(self, *, client_slug: str, date_range: str = "LAST_30_DAYS") -> SyncResult:
         import json
@@ -40,12 +64,26 @@ class HubSpotConnector(ConnectorHandler):
             except Exception:
                 pass
 
+        # Per-client HubSpot OAuth: refresh the stored token into an access token.
+        # Falls back to the global HUBSPOT_ACCESS_TOKEN env when no client token
+        # is connected (so existing single-portal setups keep working).
+        access_token = None
+        try:
+            import oauth_store
+            refresh = oauth_store.get_refresh_token("hubspot", client_slug=client_slug)
+            if refresh:
+                import oauth_flows
+                access_token = oauth_flows.refresh_hubspot_access_token(refresh)
+        except Exception as exc:
+            _log.warning("HubSpot token refresh failed [%s]: %s", client_slug, exc)
+
         try:
             result = hubspot_sync_service.sync_hubspot_contacts(
                 project_id=project_id or None,
                 dataset_id=dataset_id or None,
                 lifecycle_stage=lifecycle_stage,
                 lookback_days=lookback_days,
+                access_token=access_token,
             )
             rows = result.get("rows_synced") or 0
             ok = result.get("status") == "ok"

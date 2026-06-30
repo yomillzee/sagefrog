@@ -14,7 +14,11 @@ import auth as google_auth
 import linkedin_auth
 import meta_auth
 
-PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc", "google_analytics", "google_tag_manager"})
+PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc", "google_analytics", "google_tag_manager", "hubspot"})
+
+HUBSPOT_AUTH_URL = "https://app.hubspot.com/oauth/authorize"
+HUBSPOT_TOKEN_URL = "https://api.hubapi.com/oauth/v1/token"
+HUBSPOT_SCOPES = "oauth crm.objects.contacts.read"
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -162,6 +166,19 @@ def connect_prerequisites(platform: str) -> dict[str, Any]:
             ],
             "note": "Connect stores the refresh token in Postgres.",
         }
+    if slug == "hubspot":
+        cid = (os.getenv("HUBSPOT_CLIENT_ID") or "").strip()
+        secret = (os.getenv("HUBSPOT_CLIENT_SECRET") or "").strip()
+        return {
+            "ready": bool(cid and secret),
+            "missing": [
+                label for val, label in (
+                    (cid, "HUBSPOT_CLIENT_ID"),
+                    (secret, "HUBSPOT_CLIENT_SECRET"),
+                ) if not val
+            ],
+            "note": "Connect each client's own HubSpot portal; stores the refresh token in Postgres.",
+        }
     summary = meta_auth.env_summary()
     return {
         "ready": bool(summary.get("has_app_id") and summary.get("has_app_secret")),
@@ -248,6 +265,17 @@ def build_authorize_url(platform: str, *, state: str) -> str:
             "scope": LINKEDIN_SCOPES,
         }
         return f"{LINKEDIN_AUTH_URL}?{urlencode(params)}"
+    if slug == "hubspot":
+        client_id = (os.getenv("HUBSPOT_CLIENT_ID") or "").strip()
+        if not client_id:
+            raise RuntimeError("Set HUBSPOT_CLIENT_ID before connecting HubSpot.")
+        params = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "scope": HUBSPOT_SCOPES,
+            "state": state,
+        }
+        return f"{HUBSPOT_AUTH_URL}?{urlencode(params)}"
     env = meta_auth._get_env(*meta_auth._ENV_ALIASES["app_id"])
     api_version = meta_auth._get_env(*meta_auth._ENV_ALIASES["api_version"]) or "v21.0"
     if not env:
@@ -275,7 +303,67 @@ def exchange_code(platform: str, *, code: str) -> dict[str, Any]:
         return _exchange_google_code(code, redirect_uri=redirect_uri, scope_label=GTM_SCOPE)
     if slug == "linkedin":
         return _exchange_linkedin_code(code, redirect_uri=redirect_uri)
+    if slug == "hubspot":
+        return _exchange_hubspot_code(code, redirect_uri=redirect_uri)
     return _exchange_meta_code(code, redirect_uri=redirect_uri)
+
+
+def _exchange_hubspot_code(code: str, *, redirect_uri: str) -> dict[str, Any]:
+    client_id = (os.getenv("HUBSPOT_CLIENT_ID") or "").strip()
+    client_secret = (os.getenv("HUBSPOT_CLIENT_SECRET") or "").strip()
+    if not client_id or not client_secret:
+        raise RuntimeError("Set HUBSPOT_CLIENT_ID and HUBSPOT_CLIENT_SECRET before connecting HubSpot.")
+    body = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": redirect_uri,
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }
+    with httpx.Client(timeout=60.0) as client:
+        response = client.post(
+            HUBSPOT_TOKEN_URL, data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+    if response.status_code >= 400:
+        raise RuntimeError(f"HubSpot token exchange failed ({response.status_code}): {response.text[:500]}")
+    data = response.json()
+    refresh = (data.get("refresh_token") or "").strip()
+    if not refresh:
+        raise RuntimeError("HubSpot did not return a refresh token.")
+    expires_in = int(data.get("expires_in") or 0)
+    expires_at = datetime.now(tz=UTC) + timedelta(seconds=expires_in) if expires_in else None
+    return {
+        "refresh_token": refresh,
+        "access_token": data.get("access_token"),
+        "token_expires_at": expires_at,
+        "scopes": HUBSPOT_SCOPES,
+    }
+
+
+def refresh_hubspot_access_token(refresh_token: str) -> str:
+    """Exchange a stored HubSpot refresh token for a fresh access token."""
+    client_id = (os.getenv("HUBSPOT_CLIENT_ID") or "").strip()
+    client_secret = (os.getenv("HUBSPOT_CLIENT_SECRET") or "").strip()
+    if not client_id or not client_secret:
+        raise RuntimeError("HUBSPOT_CLIENT_ID / HUBSPOT_CLIENT_SECRET not set.")
+    body = {
+        "grant_type": "refresh_token",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": refresh_token,
+    }
+    with httpx.Client(timeout=60.0) as client:
+        response = client.post(
+            HUBSPOT_TOKEN_URL, data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+    if response.status_code >= 400:
+        raise RuntimeError(f"HubSpot token refresh failed ({response.status_code}): {response.text[:400]}")
+    access = (response.json().get("access_token") or "").strip()
+    if not access:
+        raise RuntimeError("HubSpot refresh returned no access token.")
+    return access
 
 
 def _exchange_google_code(code: str, *, redirect_uri: str, scope_label: str = GOOGLE_ADS_SCOPE) -> dict[str, Any]:

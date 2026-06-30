@@ -268,6 +268,7 @@ def sync_hubspot_contacts(
     dataset_id: str | None = None,
     lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
     lifecycle_stage: str | None = None,
+    access_token: str | None = None,
     bq_client: bigquery.Client | None = None,
 ) -> dict[str, Any]:
     """Backfill contacts that reached a lifecycle stage into BigQuery.
@@ -294,7 +295,7 @@ def sync_hubspot_contacts(
     date_property = _STAGE_DATE_PROP[stage]
     props = _HS_PROPS + [date_property]
 
-    token  = _token()
+    token  = (access_token or "").strip() or _token()
     client = bq_client or bigquery_service.build_client(project_id=project)
     _ensure_table(client, project, dataset)
 
