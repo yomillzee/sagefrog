@@ -93,6 +93,7 @@ def render_nixon_bigquery_test_page(
     _ICON_OVERVIEW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>'
     _ICON_EXPLORER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>'
     _ICON_WEBSITE  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>'
+    _ICON_SEARCH   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
     _ICON_SETTINGS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
     _ICON_CONNECTORS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 3a3 3 0 00-3 3v1H9V6a3 3 0 10-3 3v1H3v2h3v1a3 3 0 103 3v-1h6v1a3 3 0 103-3v-1h3v-2h-3V9a3 3 0 000-6z"/></svg>'
     _ICON_TAGS       = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>'
@@ -116,6 +117,7 @@ def render_nixon_bigquery_test_page(
         <button class="dash-view-btn tab-btn active" data-tab="overview">{_ICON_OVERVIEW}<span>Overview</span></button>
         <button class="dash-view-btn tab-btn" data-tab="explorer">{_ICON_EXPLORER}<span>Explorer</span></button>
         <button class="dash-view-btn tab-btn" data-tab="analytics">{_ICON_WEBSITE}<span>Website Analytics</span></button>
+        <button class="dash-view-btn tab-btn" data-tab="gsc">{_ICON_SEARCH}<span>Search Console</span></button>
         <div id="analyticsSubnav" hidden>
           <a class="dash-view-btn analytics-sub" href="#sec-pages"   data-nav="sec-pages"   data-module="top_pages">Top Pages</a>
           <a class="dash-view-btn analytics-sub" href="#sec-traffic"  data-nav="sec-traffic"  data-module="traffic">Traffic</a>
@@ -447,6 +449,23 @@ def render_nixon_bigquery_test_page(
 
     </div><!-- /pane-analytics -->
 
+    <div id="pane-gsc" hidden>
+      <section id="sec-gsc-overview">
+        <h2>Search Console</h2>
+        <p class="src-note"><code>GET /api/clients/nixon/gsc/summary</code><span class="arrow">→</span><code>raw_gsc.fact_gsc_query_daily / fact_gsc_page_daily</code></p>
+        <div class="status" id="gscStatus">Waiting…</div>
+        <div class="cards" id="gscKpis"></div>
+      </section>
+      <section>
+        <h2>Top queries</h2>
+        <div class="table-wrap"><table id="gscQueriesTable" class="compact"></table></div>
+      </section>
+      <section>
+        <h2>Top pages</h2>
+        <div class="table-wrap"><table id="gscPagesTable" class="compact"></table></div>
+      </section>
+    </div><!-- /pane-gsc -->
+
   </main>
     </div>
   </div>
@@ -474,6 +493,7 @@ def render_nixon_bigquery_test_page(
     const CONVERSIONS_API      = "{_aurl('/api/clients/nixon/analytics/conversions')}";
     const USER_ACQ_API         = "{_aurl('/api/clients/nixon/analytics/user-acquisition')}";
     const DEMOGRAPHICS_API     = "{_aurl('/api/clients/nixon/analytics/demographics')}";
+    const GSC_API              = "{_aurl('/api/clients/nixon/gsc/summary')}";
 
     // ---- Formatters ----
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
@@ -518,10 +538,11 @@ def render_nixon_bigquery_test_page(
     }}
 
     // ---- Tab system ----
-    const TABS = ['overview', 'explorer', 'analytics'];
+    const TABS = ['overview', 'explorer', 'analytics', 'gsc'];
     let currentTab = 'overview';
     let analyticsLoaded = false;
     let explorerLoaded = false;
+    let gscLoaded = false;
 
     function switchTab(tab) {{
       TABS.forEach(t => {{ document.getElementById('pane-' + t).hidden = t !== tab; }});
@@ -529,7 +550,7 @@ def render_nixon_bigquery_test_page(
       const subnav = document.getElementById('analyticsSubnav');
       if (subnav) subnav.hidden = tab !== 'analytics';
       const pf = document.getElementById('platformFilterGroup');
-      if (pf) pf.hidden = tab === 'analytics';
+      if (pf) pf.hidden = tab === 'analytics' || tab === 'gsc';
       currentTab = tab;
       if (tab === 'explorer' && !explorerLoaded) {{
         explorerLoaded = true;
@@ -539,6 +560,10 @@ def render_nixon_bigquery_test_page(
         analyticsLoaded = true;
         applyModules();
         loadAllAnalytics();
+      }}
+      if (tab === 'gsc' && !gscLoaded) {{
+        gscLoaded = true;
+        loadGsc();
       }}
     }}
 
@@ -694,6 +719,50 @@ def render_nixon_bigquery_test_page(
       }} catch(err) {{
         summaryPayload=null;
         setStatus('summaryStatus', err.message||String(err), true);
+      }}
+    }}
+    // ---- Search Console ----
+    const gscPos = v => v==null ? '—' : num(v).toFixed(1);
+    const gscPct = v => v==null ? '—' : (num(v)).toFixed(2) + '%';
+    function renderGscKpis(k) {{
+      k = k || {{}};
+      const cards = [
+        ['Clicks', count(k.clicks)],
+        ['Impressions', count(k.impressions)],
+        ['CTR', gscPct(k.ctr)],
+        ['Avg position', gscPos(k.avg_position)],
+      ];
+      document.getElementById('gscKpis').innerHTML = cards.map(([label,val]) =>
+        `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{val}}</div></div>`).join('');
+    }}
+    async function loadGsc() {{
+      setStatus('gscStatus','Loading…');
+      document.getElementById('gscKpis').innerHTML = skelCards(4);
+      document.getElementById('gscQueriesTable').innerHTML = skelTable(5,6);
+      document.getElementById('gscPagesTable').innerHTML = skelTable(5,6);
+      try {{
+        const p = await getJson(withDates(GSC_API));
+        if (!p || (!p.kpis && !(p.top_queries||[]).length && !(p.top_pages||[]).length)) {{
+          renderGscKpis({{}});
+          renderTable('gscQueriesTable', [{{key:'query',label:'Query',left:true}}], [], 'No Search Console data yet — it appears after the first sync backfills.');
+          renderTable('gscPagesTable', [{{key:'page_url',label:'Page',left:true}}], [], 'No Search Console data yet.');
+          setStatus('gscStatus','No data for this range yet.');
+          return;
+        }}
+        renderGscKpis(p.kpis);
+        const cols = (labelKey, label) => [
+          {{key:labelKey,label:label,left:true}},
+          {{key:'clicks',label:'Clicks',format:count}},
+          {{key:'impressions',label:'Impr.',format:count}},
+          {{key:'ctr',label:'CTR',format:gscPct}},
+          {{key:'avg_position',label:'Position',format:gscPos}},
+        ];
+        renderTable('gscQueriesTable', cols('query','Query'), p.top_queries||[], 'No queries in this range.');
+        renderTable('gscPagesTable', cols('page_url','Page'), p.top_pages||[], 'No pages in this range.');
+        const k = p.kpis||{{}};
+        setStatus('gscStatus', `${{count(k.clicks)}} clicks · ${{count(k.impressions)}} impressions`);
+      }} catch(err) {{
+        setStatus('gscStatus', err.message||String(err), true);
       }}
     }}
     async function loadHealth() {{

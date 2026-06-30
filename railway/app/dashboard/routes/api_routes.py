@@ -694,6 +694,38 @@ def nixon_google_ads_explorer(
 
 
 @router.get(
+    "/api/clients/nixon/gsc/summary",
+    summary="Nixon Search Console summary (KPIs, daily, top queries + pages) from BigQuery",
+)
+def nixon_gsc_summary(
+    request: Request,
+    start_date: date | None = Query(
+        default=None,
+        description="Inclusive start date. Defaults to 29 days before end_date/today.",
+    ),
+    end_date: date | None = Query(
+        default=None,
+        description="Inclusive end date. Defaults to today.",
+    ),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(
+        request,
+        key=key,
+        bearer_credentials=bearer_credentials,
+        x_api_key=x_api_key,
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        import bq_gsc_service
+        return bq_gsc_service.build_gsc_snapshot(start=start, end=end, client_slug="nixon")
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
     "/api/clients/nixon/linkedin/explorer",
     summary="Nixon LinkedIn creative explorer from BigQuery marketing mart",
 )
