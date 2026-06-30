@@ -407,9 +407,10 @@ def sync_range(
     *,
     site_url: str | None = None,
     client_slug: str | None = None,
+    target=None,
 ) -> dict[str, Any]:
     """Fetch and write GSC data for start..end. Returns summary dict."""
-    target = _resolve(client_slug=client_slug)
+    target = target if target is not None else _resolve(client_slug=client_slug)
     site_url = (site_url or "").strip() or (target.site_url or "") or _site_url()
     if not site_url:
         return {"ok": False, "error": "GSC_SITE_URL env var not set"}
@@ -474,18 +475,20 @@ def sync_range(
 # Refresh-pipeline entry point
 # ---------------------------------------------------------------------------
 
-def sync_for_refresh(site_url: str | None = None, client_slug: str | None = None) -> dict[str, Any]:
+def sync_for_refresh(site_url: str | None = None, client_slug: str | None = None, target=None) -> dict[str, Any]:
     """Called automatically from the dashboard refresh pipeline.
 
     site_url: override the GSC_SITE_URL env var (for per-client config).
-    client_slug: which client's BigQuery destination (project/dataset/creds)
-        to route into, via gsc_clients.resolve_target(). Omit to keep the
-        legacy Penn-only behaviour.
+    client_slug: which client's BigQuery destination to route into, via
+        gsc_clients.resolve_target(). Omit to keep the legacy Penn-only behaviour.
+    target: an explicit GscClientTarget (the connector builds one from its config
+        so routing never depends on re-resolution). Threaded all the way through
+        the background backfill so it can't silently fall back to Penn.
     - Tables up to date → no-op (fast)
     - Small gap (≤ 30 days) → sync synchronously; fresh data in this snapshot
     - Large gap / empty tables → spawn background thread; data available next refresh
     """
-    target = _resolve(client_slug=client_slug)
+    target = target if target is not None else _resolve(client_slug=client_slug)
     site_url = (site_url or "").strip() or (target.site_url or "") or _site_url()
     if not site_url:
         return {"ok": False, "error": "GSC_SITE_URL not configured (set it in Settings → GSC Site URL)"}
@@ -512,10 +515,11 @@ def sync_for_refresh(site_url: str | None = None, client_slug: str | None = None
         # Full backfill — don't block the refresh
         _url = site_url  # capture for closure
         _slug = client_slug
+        _tgt = target
 
         def _bg():
             try:
-                result = sync_range(start, end, site_url=_url, client_slug=_slug)
+                result = sync_range(start, end, site_url=_url, client_slug=_slug, target=_tgt)
                 log.info("GSC background backfill complete: %s", result)
             except Exception as exc:
                 log.error("GSC background backfill failed: %s", exc)
@@ -531,6 +535,6 @@ def sync_for_refresh(site_url: str | None = None, client_slug: str | None = None
         }
     else:
         # Small gap — sync now so this snapshot has fresh data
-        result = sync_range(start, end, site_url=site_url, client_slug=client_slug)
+        result = sync_range(start, end, site_url=site_url, client_slug=client_slug, target=target)
         result["status"] = "synced"
         return result

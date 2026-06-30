@@ -37,6 +37,7 @@ class GSCConnector(ConnectorHandler):
     def run_sync(self, *, client_slug: str, date_range: str = "LAST_30_DAYS") -> SyncResult:
         import client_dashboard_config
         import connector_config_store
+        import gsc_clients
         import gsc_sync_service
 
         cfg = connector_config_store.get_config(client_slug, "gsc")
@@ -46,10 +47,16 @@ class GSCConnector(ConnectorHandler):
             db_cfg = client_dashboard_config.get_config(client_slug)
             site_url = (db_cfg.gsc_site_url if db_cfg else None) or ""
 
+        # Build the BQ destination explicitly from this connector's config so the
+        # sync writes to THIS client's project/raw_gsc — never the Penn default,
+        # regardless of how resolve_target's lookups behave.
+        target = gsc_clients.target_from_config(client_slug, cfg) if cfg else None
+
         try:
             result = gsc_sync_service.sync_for_refresh(
                 site_url=site_url or None,
                 client_slug=client_slug,
+                target=target,
             )
             ok = result.get("ok", True)
             rows = result.get("rows_synced") or result.get("rows_written") or 0

@@ -137,38 +137,53 @@ def default_target(client_slug: str | None = None) -> GscClientTarget:
     )
 
 
-def _client_creds_env(slug: str) -> str | None:
-    """The client's BigQuery credentials env (same one its GA4/ads data uses)."""
+def _ga4_bq(slug: str) -> tuple[str | None, str | None]:
+    """The client's BigQuery project + credentials env (where its GA4/ads data lives)."""
     try:
         import client_config
         import ga4_clients
         ck = client_config.load_client_config(slug).ga4_client_key or slug
-        return ga4_clients.resolve_client_config(client_key=ck).credentials_env or None
+        t = ga4_clients.resolve_client_config(client_key=ck)
+        return (t.bq_project_id or "").strip() or None, (t.credentials_env or "").strip() or None
     except Exception:
-        return None
+        return None, None
+
+
+def _client_creds_env(slug: str) -> str | None:
+    return _ga4_bq(slug)[1]
 
 
 def _connector_target(slug: str, base: GscClientTarget) -> GscClientTarget | None:
     """Build a target from the per-client GSC connector config, if one exists.
 
-    The connector wizard is the source of truth for project + raw dataset (so GSC
-    lands in `raw_gsc` like every other connector, not the separate GSC registry's
-    dataset). Credentials reuse the client's BQ creds (via ga4_clients), falling
-    back to the registry/default target's creds. Returns None when the client has
-    no GSC connector configured, so Penn/registry clients are unaffected.
+    A GSC connector means this client manages Search Console through the wizard,
+    so route to the client's OWN BigQuery project — never the Penn default. The
+    project comes from the connector config (cfg.bq_project_id) and, when that
+    wasn't filled in, falls back to the client's GA4 BQ project via ga4_clients
+    (the same project its other connector data lands in). Dataset defaults to
+    raw_gsc. Returns None only when the client has no GSC connector at all, so
+    Penn/registry clients are completely unaffected.
     """
     try:
         import connector_config_store
         cfg = connector_config_store.get_config(slug, "gsc")
     except Exception:
         cfg = None
-    if not cfg or not (cfg.bq_project_id or "").strip() or not (cfg.raw_dataset_id or "").strip():
+    if not cfg:
+        return None  # no GSC connector → leave registry/Penn behaviour untouched
+
+    ga4_project, ga4_creds = _ga4_bq(slug)
+    project = (cfg.bq_project_id or "").strip() or ga4_project
+    if not project:
+        # A GSC connector exists but we can't resolve the client's project — refuse
+        # to silently fall back to Penn; let the caller surface "not configured".
         return None
+    dataset = (cfg.raw_dataset_id or "").strip() or "raw_gsc"
     return GscClientTarget(
         client_slug=slug,
-        bq_project_id=cfg.bq_project_id.strip(),
-        bq_dataset_id=cfg.raw_dataset_id.strip(),  # e.g. "raw_gsc"
-        credentials_env=_client_creds_env(slug) or base.credentials_env,
+        bq_project_id=project,
+        bq_dataset_id=dataset,  # e.g. "raw_gsc"
+        credentials_env=ga4_creds or base.credentials_env,
         site_url=(cfg.source_account_id or "").strip() or base.site_url,
         label=base.label or slug,
         native_dataset_id=base.native_dataset_id,
@@ -191,6 +206,37 @@ def resolve_target(client_slug: str) -> GscClientTarget:
     if conn is not None:
         return conn
     return base if slug in registry else default_target(slug)
+
+
+def target_from_config(client_slug: str, cfg: Any) -> GscClientTarget:
+    """Build a GSC target directly from a connector config object.
+
+    The connector already holds its config, so it can route explicitly instead of
+    relying on resolve_target re-fetching it. Project = cfg.bq_project_id, else the
+    client's GA4 BQ project (ga4_clients), else the registry base — but NEVER the
+    Penn default for a real client. Dataset defaults to raw_gsc.
+    """
+    slug = (client_slug or "").strip().lower()
+    base = load_client_registry().get(slug) or default_target(slug)
+    ga4_project, ga4_creds = _ga4_bq(slug)
+    project = (
+        (getattr(cfg, "bq_project_id", "") or "").strip()
+        or ga4_project
+        or (base.bq_project_id if not base.is_default_fallback else "")
+        or ga4_project
+        or base.bq_project_id
+    )
+    dataset = (getattr(cfg, "raw_dataset_id", "") or "").strip() or "raw_gsc"
+    return GscClientTarget(
+        client_slug=slug,
+        bq_project_id=project,
+        bq_dataset_id=dataset,
+        credentials_env=ga4_creds or base.credentials_env,
+        site_url=(getattr(cfg, "source_account_id", "") or "").strip() or base.site_url,
+        label=base.label or slug,
+        native_dataset_id=base.native_dataset_id,
+        is_default_fallback=False,
+    )
 
 
 def list_clients_public() -> list[dict[str, Any]]:
