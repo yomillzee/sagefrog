@@ -720,7 +720,9 @@ def nixon_gsc_summary(
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
         import bq_gsc_service
-        return bq_gsc_service.build_gsc_mart_summary(start=start, end=end, client_slug="nixon")
+        # GSC routes by client_slug; the Nixon dashboard's BQ client is
+        # "nixon-bq-test" (where the GSC connector + raw_gsc/mart views live).
+        return bq_gsc_service.build_gsc_mart_summary(start=start, end=end, client_slug="nixon-bq-test")
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
 
