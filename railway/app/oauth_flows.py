@@ -60,6 +60,59 @@ def make_state() -> str:
     return secrets.token_urlsafe(32)
 
 
+# ---------------------------------------------------------------------------
+# Signed connect links — let a client/specialist authorize one client's
+# connector (e.g. HubSpot, which has no agency-wide business manager) without a
+# login. The signed token carries the client_slug + platform so the OAuth state
+# round-trips cryptographically instead of via session.
+# ---------------------------------------------------------------------------
+
+import base64 as _base64
+import hashlib as _hashlib
+import hmac as _hmac
+import json as _json
+import time as _time
+
+
+def _connect_secret() -> bytes:
+    s = (os.getenv("AUTH_SESSION_SECRET") or os.getenv("CRON_SECRET") or "").strip()
+    if not s:
+        raise RuntimeError("AUTH_SESSION_SECRET or CRON_SECRET required for connect links.")
+    return s.encode()
+
+
+def sign_connect_state(client_slug: str, platform: str, *, ttl_seconds: int = 7 * 86400) -> str:
+    """Signed, expiring token carrying (client_slug, platform). Serves as both the
+    connect-link token and the OAuth `state` param."""
+    payload = {
+        "c": (client_slug or "").strip().lower(),
+        "p": _normalize_platform(platform),
+        "exp": int(_time.time()) + int(ttl_seconds),
+    }
+    raw = _base64.urlsafe_b64encode(_json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
+    sig = _hmac.new(_connect_secret(), raw.encode(), _hashlib.sha256).hexdigest()[:32]
+    return f"{raw}.{sig}"
+
+
+def verify_connect_state(token: str) -> tuple[str, str] | None:
+    """Return (client_slug, platform) for a valid, unexpired token, else None."""
+    try:
+        raw, sig = (token or "").rsplit(".", 1)
+        expect = _hmac.new(_connect_secret(), raw.encode(), _hashlib.sha256).hexdigest()[:32]
+        if not _hmac.compare_digest(sig, expect):
+            return None
+        payload = _json.loads(_base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        if int(payload.get("exp", 0)) < int(_time.time()):
+            return None
+        slug = str(payload.get("c") or "").strip().lower()
+        plat = str(payload.get("p") or "").strip().lower()
+        if not slug or plat not in PLATFORMS:
+            return None
+        return slug, plat
+    except Exception:
+        return None
+
+
 def store_oauth_state(request, *, platform: str, state: str, return_to: str, client_slug: str = "") -> None:
     slug = _normalize_platform(platform)
     request.session[f"oauth_state_{slug}"] = state

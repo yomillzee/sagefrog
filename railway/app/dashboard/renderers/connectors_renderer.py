@@ -557,6 +557,19 @@ def _render_wizard(
             f'access your {_esc(handler.display_name)} account.</p>'
             f'<a href="{_esc(oauth_start_url)}" class="btn-connect">Authorize {_esc(handler.display_name)}</a>'
         )
+        if handler.connector_type == "hubspot":
+            step1_body += (
+                '<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--line)">'
+                '<p style="color:var(--muted);font-size:.9rem;margin-bottom:10px">No HubSpot access yourself? '
+                'Generate a link to send the specialist or client who manages this portal — they authorize it with '
+                'their own login, no account here needed.</p>'
+                '<button type="button" class="btn-secondary" onclick="genConnectLink()">Generate connect link</button>'
+                '<div id="connectLinkBox" style="display:none;margin-top:10px">'
+                '<input id="connectLinkInput" readonly style="width:100%;padding:8px;border:1px solid var(--line);'
+                'border-radius:6px;font-size:.8rem;font-family:monospace" onclick="this.select()">'
+                '<div id="connectLinkMsg" style="font-size:.8rem;color:var(--muted);margin-top:5px"></div></div>'
+                '</div>'
+            )
 
     steps_html = f"""
     {reconnect_note}
@@ -688,6 +701,22 @@ def _render_wizard(
     var _configuredBqProject = null;
     var _configuredRawDs = null;
     var _configuredMartDs = null;
+
+    function genConnectLink() {{
+      var box = document.getElementById('connectLinkBox');
+      var inp = document.getElementById('connectLinkInput');
+      var msg = document.getElementById('connectLinkMsg');
+      if (box) box.style.display = 'block';
+      if (msg) msg.textContent = 'Generating…';
+      fetch('/dashboard/' + _clientSlug + '/connectors/' + _connType + '/connect-link', {{
+        method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: '{{}}'
+      }}).then(r => r.json()).then(d => {{
+        if (d.ok) {{
+          if (inp) {{ inp.value = d.link; inp.select(); }}
+          if (msg) msg.textContent = 'Expires in ' + (d.expires_days || 7) + ' days. Send it to whoever can sign into this client\\'s HubSpot.';
+        }} else if (msg) {{ msg.textContent = d.error || 'Could not generate link.'; }}
+      }}).catch(e => {{ if (msg) msg.textContent = 'Error: ' + e.message; }});
+    }}
 
     function activateStep(n) {{
       document.querySelectorAll('.wizard-step').forEach((el, i) => {{

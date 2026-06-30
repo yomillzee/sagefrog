@@ -2153,6 +2153,45 @@ async def oauth_connect(platform: str, request: Request, return_to: str = "/admi
 
 
 @app.get(
+    "/connect/{platform}/{client_slug}",
+    summary="No-login connect link (signed) — start OAuth for one client",
+    include_in_schema=False,
+)
+async def connect_link(platform: str, client_slug: str, request: Request, t: str = ""):
+    """Public, signed-token connect link. Lets a specialist/client authorize one
+    client's connector (e.g. their HubSpot portal) without a portal login."""
+    slug = platform.strip().lower()
+    if slug not in oauth_flows.PLATFORMS:
+        raise HTTPException(status_code=404, detail="Unknown OAuth platform.")
+    verified = oauth_flows.verify_connect_state(t)
+    if not verified or verified[0] != client_slug.strip().lower() or verified[1] != slug:
+        return HTMLResponse(
+            "<div style='font-family:system-ui;max-width:520px;margin:80px auto;text-align:center'>"
+            "<h2>This connect link is invalid or has expired.</h2>"
+            "<p style='color:#555'>Ask your Sagefrog contact for a fresh link.</p></div>",
+            status_code=400,
+        )
+    prereq = oauth_flows.connect_prerequisites(slug)
+    if not prereq.get("ready"):
+        missing = ", ".join(prereq.get("missing") or [])
+        return HTMLResponse(
+            f"<div style='font-family:system-ui;max-width:520px;margin:80px auto;text-align:center'>"
+            f"<h2>{slug.title()} isn't configured yet.</h2><p style='color:#555'>Missing: {missing}</p></div>",
+            status_code=503,
+        )
+    try:
+        # Reuse the signed token as the OAuth state; the callback verifies it.
+        url = oauth_flows.build_authorize_url(slug, state=t)
+    except Exception as exc:
+        return HTMLResponse(
+            f"<div style='font-family:system-ui;max-width:520px;margin:80px auto;text-align:center'>"
+            f"<h2>Couldn't start the connection.</h2><p style='color:#555'>{quote(str(exc)[:200])}</p></div>",
+            status_code=400,
+        )
+    return RedirectResponse(url=url, status_code=303)
+
+
+@app.get(
     "/oauth/{platform}/callback",
     summary="OAuth provider callback",
     include_in_schema=False,
@@ -2168,6 +2207,41 @@ async def oauth_callback(
     slug = platform.strip().lower()
     if slug not in oauth_flows.PLATFORMS:
         raise HTTPException(status_code=404, detail="Unknown OAuth platform.")
+
+    # Signed connect-link flow (no session): the OAuth `state` is a signed token
+    # carrying the client_slug, so a specialist/client can authorize without login.
+    link_state = oauth_flows.verify_connect_state(state or "")
+    if link_state and link_state[1] == slug:
+        link_slug = link_state[0]
+        dest = f"/dashboard/{link_slug}/connectors/{slug}"
+        sep = "?"
+        if error:
+            msg = (error_description or error or "OAuth denied")[:200]
+            return RedirectResponse(url=f"{dest}{sep}oauth_error={quote(msg)}", status_code=303)
+        if not code:
+            return RedirectResponse(url=f"{dest}{sep}oauth_error={quote('Missing authorization code.')}", status_code=303)
+        try:
+            tokens = oauth_flows.exchange_code(slug, code=code.strip())
+            oauth_store.save_tokens(
+                slug,
+                refresh_token=tokens.get("refresh_token"),
+                access_token=tokens.get("access_token"),
+                token_expires_at=tokens.get("token_expires_at"),
+                scopes=tokens.get("scopes"),
+                metadata=tokens.get("metadata"),
+                connected_by="connect-link",
+                client_slug=link_slug,
+            )
+            audit_log.record(
+                action="oauth.connected",
+                actor_email="connect-link",
+                detail={"platform": slug, "client_slug": link_slug, "via": "connect_link"},
+                **audit_log.request_context(request),
+            )
+        except Exception as exc:
+            return RedirectResponse(url=f"{dest}{sep}oauth_error={quote(str(exc)[:200])}", status_code=303)
+        return RedirectResponse(url=f"{dest}{sep}oauth_connected={quote(slug)}", status_code=303)
+
     expected_state, return_to, oauth_client_slug = oauth_flows.pop_oauth_state(request, platform=slug)
     dest = oauth_flows.validate_return_to(return_to)
     sep = "&" if "?" in dest else "?"

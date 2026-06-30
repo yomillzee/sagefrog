@@ -399,6 +399,33 @@ async def connector_sync_options(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Generate a signed, no-login connect link for one client (e.g. HubSpot portal)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.post("/dashboard/{client_slug}/connectors/{connector_type}/connect-link")
+async def connector_connect_link(
+    client_slug: str,
+    connector_type: str,
+    request: Request,
+    key: str | None = None,
+):
+    import oauth_flows
+    slug = validate_client_slug(client_slug)
+    ctype = connector_type.strip().lower()
+    redirect, _ak, _us, _email, _is_admin = _auth(request, slug, key)
+    if redirect:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    if ctype not in oauth_flows.PLATFORMS:
+        return JSONResponse({"ok": False, "error": "This connector doesn't support connect links."}, status_code=400)
+    try:
+        token = oauth_flows.sign_connect_state(slug, ctype)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=500)
+    link = f"{oauth_flows.public_base_url()}/connect/{ctype}/{slug}?t={token}"
+    return JSONResponse({"ok": True, "link": link, "expires_days": 7})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Cancel a running sync
 # ──────────────────────────────────────────────────────────────────────────────
 
