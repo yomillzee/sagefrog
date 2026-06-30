@@ -568,17 +568,33 @@ def _is_penn_slug(client_slug: str | None) -> bool:
     return bool(client_slug) and (client_slug == "penn" or client_slug.startswith("penn-"))
 
 
+def _reporting_mart_ds() -> str:
+    """The reporting mart dataset (marketing_marts) — where the vw_gsc_* views live.
+
+    Distinct from _mart_ds()/the GSC routing dataset, which for connector clients
+    is the raw dataset (raw_gsc) where the fact_gsc_* tables are written.
+    """
+    return (os.getenv("BQ_MART_DATASET_ID") or _DEFAULT_MART_DS).strip()
+
+
 def create_gsc_mart_views(client_slug: str | None = None) -> dict[str, Any]:
-    """Create/replace the GSC mart views in the client's GSC dataset (raw_gsc)."""
+    """Create/replace the GSC mart views in marketing_marts, reading from raw_gsc."""
     with _client_context(client_slug):
         target = _resolved_target()
         if target.is_default_fallback and not _is_penn_slug(client_slug):
             return {"ok": False, "reason": "no_gsc_target", "views": {}}
-        project, ds = _project_id(), _mart_ds()
+        project = _project_id()
+        raw_ds = _mart_ds()              # GSC routing dataset — fact_gsc_* live here (raw_gsc)
+        mart_ds = _reporting_mart_ds()   # reporting mart — views go here (marketing_marts)
         creds_env = None if target.is_default_fallback else target.credentials_env
         client = bigquery_service.build_client(project, credentials_env=creds_env)
-        q = f"`{project}.{ds}.{_QUERY_HIST_TABLE}`"
-        p = f"`{project}.{ds}.{_PAGE_HIST_TABLE}`"
+        try:
+            from google.cloud import bigquery as _bq
+            client.create_dataset(_bq.Dataset(f"{project}.{mart_ds}"), exists_ok=True)
+        except Exception:
+            pass
+        q = f"`{project}.{raw_ds}.{_QUERY_HIST_TABLE}`"
+        p = f"`{project}.{raw_ds}.{_PAGE_HIST_TABLE}`"
         views = {
             _QUERY_VIEW: f"""
                 SELECT
@@ -605,18 +621,18 @@ def create_gsc_mart_views(client_slug: str | None = None) -> dict[str, Any]:
                   SUM(impressions) AS impressions,
                   ROUND(SAFE_DIVIDE(SUM(clicks), NULLIF(SUM(impressions), 0)) * 100, 2) AS ctr,
                   ROUND(SAFE_DIVIDE(SUM(pos_sum), NULLIF(SUM(impressions), 0)) + 1, 1)  AS avg_position
-                FROM `{project}.{ds}.{_QUERY_VIEW}`
+                FROM `{project}.{mart_ds}.{_QUERY_VIEW}`
                 GROUP BY date
             """,
         }
         results: dict[str, str] = {}
         for name, sql in views.items():
             try:
-                client.query(f"CREATE OR REPLACE VIEW `{project}.{ds}.{name}` AS\n{sql}").result(timeout=60)
+                client.query(f"CREATE OR REPLACE VIEW `{project}.{mart_ds}.{name}` AS\n{sql}").result(timeout=60)
                 results[name] = "ok"
             except Exception as exc:
                 results[name] = f"error: {str(exc)[:200]}"
-        return {"ok": True, "project": project, "dataset": ds, "views": results}
+        return {"ok": True, "project": project, "raw_dataset": raw_ds, "mart_dataset": mart_ds, "views": results}
 
 
 def _gsc_metric_cols() -> str:
@@ -636,7 +652,7 @@ def build_gsc_mart_summary(*, start: date, end: date, client_slug: str | None = 
         target = _resolved_target()
         if target.is_default_fallback and not _is_penn_slug(client_slug):
             return {}
-        project, ds = _project_id(), _mart_ds()
+        project, ds = _project_id(), _reporting_mart_ds()
         s, e = start.isoformat(), end.isoformat()
         qv = f"`{project}.{ds}.{_QUERY_VIEW}`"
         pv = f"`{project}.{ds}.{_PAGE_VIEW}`"
