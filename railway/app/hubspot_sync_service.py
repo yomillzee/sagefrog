@@ -45,12 +45,41 @@ _HS_PROPS = [
 
 _MQL_STAGES = ["marketingqualifiedlead", "salesqualifiedlead"]
 
+# Lifecycle funnel: stage key → (label, "date entered stage" property). Filtering
+# by the date property captures contacts who REACHED the stage at any point — even
+# if they've since progressed — i.e. "is or has been an MQL".
+_LIFECYCLE_FUNNEL = [
+    ("subscriber",             "Subscriber",                       "hs_lifecyclestage_subscriber_date"),
+    ("lead",                   "Lead",                             "hs_lifecyclestage_lead_date"),
+    ("marketingqualifiedlead", "Marketing Qualified Lead (MQL)",   "hs_lifecyclestage_marketingqualifiedlead_date"),
+    ("salesqualifiedlead",     "Sales Qualified Lead (SQL)",       "hs_lifecyclestage_salesqualifiedlead_date"),
+    ("opportunity",            "Opportunity",                      "hs_lifecyclestage_opportunity_date"),
+    ("customer",               "Customer",                         "hs_lifecyclestage_customer_date"),
+]
+_STAGE_DATE_PROP = {k: prop for k, _label, prop in _LIFECYCLE_FUNNEL}
+_STAGE_LABELS    = {k: label for k, label, _prop in _LIFECYCLE_FUNNEL}
+_DEFAULT_STAGE   = "marketingqualifiedlead"
+_DEFAULT_LOOKBACK_DAYS = 90
+
+
+def lifecycle_options() -> list[dict[str, str]]:
+    """Funnel stages for the connector's lifecycle-stage dropdown."""
+    return [{"value": k, "label": label} for k, label, _prop in _LIFECYCLE_FUNNEL]
+
+
+def normalize_stage(stage: str | None) -> str:
+    s = (stage or "").strip()
+    return s if s in _STAGE_DATE_PROP else _DEFAULT_STAGE
+
+
 _SCHEMA = [
     bigquery.SchemaField("contact_id",              "STRING",    mode="REQUIRED"),
     bigquery.SchemaField("createdate",              "TIMESTAMP"),
     bigquery.SchemaField("lastmodifieddate",        "TIMESTAMP"),
     bigquery.SchemaField("email",                   "STRING"),
     bigquery.SchemaField("lifecyclestage",          "STRING"),
+    bigquery.SchemaField("stage_filter",            "STRING"),   # the funnel stage this row was pulled for
+    bigquery.SchemaField("became_stage_date",       "TIMESTAMP"),# when the contact entered that stage
     bigquery.SchemaField("hs_lead_status",          "STRING"),
     bigquery.SchemaField("hs_analytics_source",     "STRING"),
     bigquery.SchemaField("hs_latest_source",        "STRING"),
@@ -82,23 +111,22 @@ def _search_page(
     token: str,
     after: str | None,
     lookback_ms: int,
+    date_property: str,
+    properties: list[str],
 ) -> dict[str, Any]:
+    # Filter on the "date entered stage" property so we capture every contact that
+    # reached the stage within the window — including those who've since moved on.
     body: dict[str, Any] = {
         "filterGroups": [{
             "filters": [
                 {
-                    "propertyName": "lifecyclestage",
-                    "operator": "IN",
-                    "values": _MQL_STAGES,
-                },
-                {
-                    "propertyName": "lastmodifieddate",
+                    "propertyName": date_property,
                     "operator": "GTE",
                     "value": str(lookback_ms),
                 },
             ]
         }],
-        "properties": _HS_PROPS,
+        "properties": properties,
         "limit": _PAGE_SIZE,
     }
     if after:
@@ -118,7 +146,7 @@ def _search_page(
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _parse_row(result: dict[str, Any], synced_at: str) -> dict[str, Any]:
+def _parse_row(result: dict[str, Any], synced_at: str, *, stage: str, date_property: str) -> dict[str, Any]:
     p = result.get("properties") or {}
     return {
         "contact_id":              str(result["id"]),
@@ -126,6 +154,8 @@ def _parse_row(result: dict[str, Any], synced_at: str) -> dict[str, Any]:
         "lastmodifieddate":        p.get("lastmodifieddate") or None,
         "email":                   p.get("email") or None,
         "lifecyclestage":          p.get("lifecyclestage") or None,
+        "stage_filter":            stage,
+        "became_stage_date":       p.get(date_property) or None,
         "hs_lead_status":          p.get("hs_lead_status") or None,
         "hs_analytics_source":     p.get("hs_analytics_source") or None,
         "hs_latest_source":        p.get("hs_latest_source") or None,
@@ -140,6 +170,18 @@ def _parse_row(result: dict[str, Any], synced_at: str) -> dict[str, Any]:
 
 def _ensure_table(client: bigquery.Client, project: str, dataset: str) -> None:
     ref = f"{project}.{dataset}.{_TARGET_TABLE}"
+    # Add any columns the live table lacks (stage_filter / became_stage_date) without
+    # dropping data — create_table(exists_ok) never alters an existing schema.
+    try:
+        existing = client.get_table(ref)
+        existing_cols = {f.name for f in existing.schema}
+        if not {f.name for f in _SCHEMA}.issubset(existing_cols):
+            obj = bigquery.Table(ref, schema=_SCHEMA)
+            client.update_table(obj, ["schema"])
+            LOGGER.info("Updated %s schema with new columns", ref)
+            return
+    except Exception:
+        pass  # table doesn't exist yet — create below
     tbl = bigquery.Table(ref, schema=_SCHEMA)
     tbl.time_partitioning = bigquery.TimePartitioning(
         type_=bigquery.TimePartitioningType.DAY,
@@ -193,10 +235,14 @@ WHEN NOT MATCHED THEN
 
 
 def _rebuild_view(client: bigquery.Client, project: str, dataset: str) -> None:
+    # Daily counts keyed on the date the contact ENTERED the filtered stage
+    # (became_stage_date), falling back to last-modified for rows synced before
+    # that column existed. Grouped by stage_filter so any funnel stage works.
     sql = f"""
 CREATE OR REPLACE VIEW `{project}.{dataset}.{_MQL_VIEW}` AS
 SELECT
-  DATE(COALESCE(lastmodifieddate, createdate)) AS date,
+  DATE(COALESCE(became_stage_date, lastmodifieddate, createdate)) AS date,
+  stage_filter,
   lifecyclestage,
   hs_lead_status,
   hs_latest_source,
@@ -206,8 +252,7 @@ SELECT
   COUNT(*)         AS contacts,
   MAX(synced_at)   AS latest_synced_at
 FROM `{project}.{dataset}.{_TARGET_TABLE}`
-WHERE lifecyclestage IN ('marketingqualifiedlead', 'salesqualifiedlead')
-GROUP BY 1, 2, 3, 4, 5, 6, 7
+GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
 """
     client.query(sql).result()
     LOGGER.info("Rebuilt view %s.%s.%s", project, dataset, _MQL_VIEW)
@@ -221,19 +266,22 @@ def sync_hubspot_contacts(
     *,
     project_id: str | None = None,
     dataset_id: str | None = None,
-    lookback_days: int = 7,
+    lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
+    lifecycle_stage: str | None = None,
     bq_client: bigquery.Client | None = None,
 ) -> dict[str, Any]:
-    """Fetch recent MQL/SQL contacts from HubSpot and upsert into BigQuery.
+    """Backfill contacts that reached a lifecycle stage into BigQuery.
+
+    Pulls every contact whose "date entered <stage>" falls within the lookback
+    window — so MQL means "is or has been an MQL", even if they've since
+    progressed — and upserts them into fact_hubspot_contacts.
 
     Args:
-        project_id:    GCP project (default: HUBSPOT_SYNC_PROJECT_ID env).
-        dataset_id:    BQ dataset  (default: HUBSPOT_SYNC_DATASET env, then "marketing_marts").
-        lookback_days: How far back to filter by lastmodifieddate (default 7).
-        bq_client:     Inject an existing BQ client (testing / reuse).
-
-    Returns:
-        Summary dict: status, rows_synced, pages, elapsed_s, synced_at.
+        project_id:      GCP project (default: HUBSPOT_SYNC_PROJECT_ID env).
+        dataset_id:      BQ dataset  (default: HUBSPOT_SYNC_DATASET env, then "marketing_marts").
+        lookback_days:   Backfill window in days (default 90).
+        lifecycle_stage: Funnel stage to pull (default marketingqualifiedlead).
+        bq_client:       Inject an existing BQ client (testing / reuse).
     """
     project = (project_id or os.getenv("HUBSPOT_SYNC_PROJECT_ID") or "").strip()
     dataset = (dataset_id or os.getenv("HUBSPOT_SYNC_DATASET") or "marketing_marts").strip()
@@ -241,6 +289,10 @@ def sync_hubspot_contacts(
         raise RuntimeError(
             "BQ project not set — provide project_id or set HUBSPOT_SYNC_PROJECT_ID"
         )
+
+    stage = normalize_stage(lifecycle_stage)
+    date_property = _STAGE_DATE_PROP[stage]
+    props = _HS_PROPS + [date_property]
 
     token  = _token()
     client = bq_client or bigquery_service.build_client(project_id=project)
@@ -252,8 +304,8 @@ def sync_hubspot_contacts(
     synced_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
 
     LOGGER.info(
-        "HubSpot sync start — lookback=%d days, project=%s, dataset=%s",
-        lookback_days, project, dataset,
+        "HubSpot sync start — stage=%s, lookback=%d days, project=%s, dataset=%s",
+        stage, lookback_days, project, dataset,
     )
     t0     = time.monotonic()
     rows:  list[dict[str, Any]] = []
@@ -262,14 +314,17 @@ def sync_hubspot_contacts(
 
     while True:
         try:
-            resp = _search_page(token=token, after=after, lookback_ms=cutoff_ms)
+            resp = _search_page(
+                token=token, after=after, lookback_ms=cutoff_ms,
+                date_property=date_property, properties=props,
+            )
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"HubSpot search API {exc.code}: {body[:400]}") from exc
 
         pages  += 1
         batch   = resp.get("results") or []
-        rows   += [_parse_row(r, synced_at) for r in batch]
+        rows   += [_parse_row(r, synced_at, stage=stage, date_property=date_property) for r in batch]
         LOGGER.info("Page %d: %d results (%d total)", pages, len(batch), len(rows))
 
         next_after = ((resp.get("paging") or {}).get("next") or {}).get("after")

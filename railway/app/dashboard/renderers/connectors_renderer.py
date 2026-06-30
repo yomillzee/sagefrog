@@ -890,6 +890,50 @@ def _render_management_view(
     if config.last_success_at:
         last_sync_html = _fmt_dt(config.last_success_at)
 
+    # HubSpot-specific pull settings: lifecycle stage + backfill window.
+    hubspot_config_html = ""
+    if handler.connector_type == "hubspot":
+        import json as _json
+        _hs_stage, _hs_lookback = "marketingqualifiedlead", 90
+        if config.sync_options:
+            try:
+                _o = _json.loads(config.sync_options)
+                _hs_stage = _o.get("lifecycle_stage") or _hs_stage
+                _hs_lookback = int(_o.get("lookback_days") or 90)
+            except Exception:
+                pass
+        try:
+            import hubspot_sync_service as _hs
+            _stage_opts = _hs.lifecycle_options()
+        except Exception:
+            _stage_opts = [{"value": "marketingqualifiedlead", "label": "Marketing Qualified Lead (MQL)"}]
+        _opts_html = "".join(
+            f'<option value="{_esc(o["value"])}"{" selected" if o["value"] == _hs_stage else ""}>{_esc(o["label"])}</option>'
+            for o in _stage_opts
+        )
+        _fld_css = "padding:7px 10px;border:1px solid var(--border);border-radius:6px;font:inherit;font-size:.875rem;background:#fff;color:var(--navy);cursor:pointer"
+        hubspot_config_html = f"""
+      <div class="mgmt-section">
+        <div class="mgmt-section-title">HubSpot pull settings</div>
+        <div class="mgmt-row">
+          <span class="mgmt-label">Lifecycle stage</span>
+          <select id="hsStage" style="{_fld_css}">{_opts_html}</select>
+        </div>
+        <div class="mgmt-row">
+          <span class="mgmt-label">Backfill window (days)</span>
+          <input id="hsLookback" type="number" min="1" max="3650" value="{int(_hs_lookback)}" style="{_fld_css};width:110px">
+        </div>
+        <div class="mgmt-row" style="font-size:.8rem;color:var(--muted)">
+          <span class="mgmt-label"></span>
+          <span>Pulls contacts that <em>reached</em> the selected stage within the window — i.e. is or has been that stage.</span>
+        </div>
+        <div style="margin-top:10px">
+          <button class="btn-secondary" id="hsSaveBtn" onclick="saveHubspotOptions()">Save settings</button>
+          <span id="hsSaveStatus" style="margin-left:10px;font-size:.85rem"></span>
+        </div>
+      </div>
+"""
+
     error_row = ""
     if config.last_error_message:
         error_row = f'<div class="test-result err" style="margin-bottom:16px">{_esc(config.last_error_message[:300])}</div>'
@@ -1010,6 +1054,8 @@ def _render_management_view(
         </div>
       </div>
 
+      {hubspot_config_html}
+
       {runs_section}
 
       <div class="mgmt-actions" style="align-items:center;flex-wrap:wrap;gap:8px">
@@ -1050,6 +1096,23 @@ def _render_management_view(
       document.getElementById('disconnectModal').addEventListener('click', function(e) {{
         if (e.target === this) hideDisconnectModal();
       }});
+
+      function saveHubspotOptions() {{
+        var btn = document.getElementById('hsSaveBtn');
+        var st = document.getElementById('hsSaveStatus');
+        var stage = (document.getElementById('hsStage') || {{}}).value || 'marketingqualifiedlead';
+        var lookback = parseInt((document.getElementById('hsLookback') || {{}}).value || '90', 10) || 90;
+        btn.disabled = true; st.textContent = 'Saving…';
+        fetch('/dashboard/{client_slug}/connectors/{handler.connector_type}/sync-options', {{
+          method: 'POST',
+          headers: {{'Content-Type': 'application/json'}},
+          body: JSON.stringify({{lifecycle_stage: stage, lookback_days: lookback}})
+        }})
+          .then(r => r.json()).then(data => {{
+            btn.disabled = false;
+            st.textContent = data.ok ? 'Saved.' : (data.error || 'Save failed.');
+          }}).catch(err => {{ btn.disabled = false; st.textContent = 'Save failed: ' + err.message; }});
+      }}
 
       function runSyncNow() {{
         var btn = document.getElementById('syncNowBtn');

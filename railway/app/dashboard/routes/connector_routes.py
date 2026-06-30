@@ -358,6 +358,47 @@ async def connector_sync(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Save connector sync options (e.g. HubSpot lifecycle stage + backfill window)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.post("/dashboard/{client_slug}/connectors/{connector_type}/sync-options")
+async def connector_sync_options(
+    client_slug: str,
+    connector_type: str,
+    request: Request,
+    key: str | None = None,
+):
+    import json as _json
+    slug = validate_client_slug(client_slug)
+    ctype = connector_type.strip().lower()
+    redirect, _ak, _us, _email, _is_admin = _auth(request, slug, key)
+    if redirect:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    config = connector_config_store.get_config(slug, ctype)
+    if not config:
+        return JSONResponse({"ok": False, "error": "Connector not configured."}, status_code=400)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    options: dict = {}
+    if ctype == "hubspot":
+        stage = str(body.get("lifecycle_stage") or "marketingqualifiedlead").strip()
+        try:
+            lookback = max(1, min(int(body.get("lookback_days") or 90), 3650))
+        except Exception:
+            lookback = 90
+        options = {"lifecycle_stage": stage, "lookback_days": lookback}
+    else:
+        # Generic: store whatever JSON-able options were posted.
+        options = {k: v for k, v in (body or {}).items()}
+
+    connector_config_store.set_sync_options(slug, ctype, _json.dumps(options))
+    return JSONResponse({"ok": True, "sync_options": options})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Cancel a running sync
 # ──────────────────────────────────────────────────────────────────────────────
 

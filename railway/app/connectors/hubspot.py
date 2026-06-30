@@ -21,6 +21,7 @@ class HubSpotConnector(ConnectorHandler):
         return []
 
     def run_sync(self, *, client_slug: str, date_range: str = "LAST_30_DAYS") -> SyncResult:
+        import json
         import connector_config_store
         import hubspot_sync_service
 
@@ -28,10 +29,23 @@ class HubSpotConnector(ConnectorHandler):
         project_id = cfg.bq_project_id if cfg else None
         dataset_id = cfg.mart_dataset_id if cfg else None
 
+        # Lifecycle stage + backfill window come from the connector's saved options.
+        lifecycle_stage = None
+        lookback_days = 90
+        if cfg and cfg.sync_options:
+            try:
+                opts = json.loads(cfg.sync_options)
+                lifecycle_stage = opts.get("lifecycle_stage") or None
+                lookback_days = int(opts.get("lookback_days") or 90)
+            except Exception:
+                pass
+
         try:
             result = hubspot_sync_service.sync_hubspot_contacts(
                 project_id=project_id or None,
                 dataset_id=dataset_id or None,
+                lifecycle_stage=lifecycle_stage,
+                lookback_days=lookback_days,
             )
             rows = result.get("rows_synced") or 0
             ok = result.get("status") == "ok"

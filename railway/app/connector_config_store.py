@@ -57,6 +57,8 @@ SCHEMA_SQL_STATEMENTS = [
     # Date range covered by the most recent successful sync (added post-launch).
     "ALTER TABLE connector_configs ADD COLUMN IF NOT EXISTS last_sync_range_start DATE",
     "ALTER TABLE connector_configs ADD COLUMN IF NOT EXISTS last_sync_range_end DATE",
+    # Per-connector sync options as JSON (e.g. HubSpot lifecycle_stage + lookback_days).
+    "ALTER TABLE connector_configs ADD COLUMN IF NOT EXISTS sync_options TEXT",
 ]
 
 
@@ -85,6 +87,7 @@ class ConnectorConfig:
     updated_at: datetime
     last_sync_range_start: date | None = None
     last_sync_range_end: date | None = None
+    sync_options: str | None = None
 
 
 @dataclass(frozen=True)
@@ -119,7 +122,7 @@ _SELECT = """
            mart_dataset_id, sync_enabled, sync_frequency, backfill_start_date,
            last_sync_started_at, last_sync_completed_at, last_success_at,
            last_error_message, disconnected_at, created_at, updated_at,
-           last_sync_range_start, last_sync_range_end
+           last_sync_range_start, last_sync_range_end, sync_options
     FROM connector_configs
 """
 
@@ -149,7 +152,21 @@ def _row_to_config(row: tuple) -> ConnectorConfig:
         updated_at=row[20],
         last_sync_range_start=row[21] if len(row) > 21 else None,
         last_sync_range_end=row[22] if len(row) > 22 else None,
+        sync_options=str(row[23]) if len(row) > 23 and row[23] else None,
     )
+
+
+def set_sync_options(client_slug: str, connector_type: str, sync_options: str | None) -> None:
+    """Persist a connector's JSON sync options (e.g. HubSpot lifecycle_stage)."""
+    if not enabled():
+        return
+    ensure_schema()
+    with db.connection() as conn:
+        conn.execute(
+            "UPDATE connector_configs SET sync_options = %s, updated_at = %s "
+            "WHERE client_slug = %s AND connector_type = %s",
+            (sync_options, datetime.now(tz=UTC), client_slug.strip().lower(), connector_type.strip().lower()),
+        )
 
 
 def get_config(client_slug: str, connector_type: str) -> ConnectorConfig | None:
