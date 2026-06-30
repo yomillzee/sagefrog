@@ -35,6 +35,7 @@ import contextvars
 import os
 from contextlib import contextmanager
 from datetime import date, timedelta
+from decimal import Decimal
 from typing import Any
 
 import bigquery_service
@@ -549,3 +550,138 @@ def env_summary(client_slug: str | None = None) -> dict[str, str]:
             "hist_query_table": _QUERY_HIST_TABLE,
             "hist_page_table":  _PAGE_HIST_TABLE,
         }
+
+
+# ---------------------------------------------------------------------------
+# GSC mart views — normalised reporting surface over the raw hist tables.
+# vw_gsc_query_daily / vw_gsc_page_daily: one clean per-day-per-dimension grain
+# (date, dimension, clicks, impressions, pos_sum). vw_gsc_daily: per-day totals.
+# These are what the Search Console dashboard reads.
+# ---------------------------------------------------------------------------
+
+_QUERY_VIEW = "vw_gsc_query_daily"
+_PAGE_VIEW  = "vw_gsc_page_daily"
+_DAILY_VIEW = "vw_gsc_daily"
+
+
+def _is_penn_slug(client_slug: str | None) -> bool:
+    return bool(client_slug) and (client_slug == "penn" or client_slug.startswith("penn-"))
+
+
+def create_gsc_mart_views(client_slug: str | None = None) -> dict[str, Any]:
+    """Create/replace the GSC mart views in the client's GSC dataset (raw_gsc)."""
+    with _client_context(client_slug):
+        target = _resolved_target()
+        if target.is_default_fallback and not _is_penn_slug(client_slug):
+            return {"ok": False, "reason": "no_gsc_target", "views": {}}
+        project, ds = _project_id(), _mart_ds()
+        creds_env = None if target.is_default_fallback else target.credentials_env
+        client = bigquery_service.build_client(project, credentials_env=creds_env)
+        q = f"`{project}.{ds}.{_QUERY_HIST_TABLE}`"
+        p = f"`{project}.{ds}.{_PAGE_HIST_TABLE}`"
+        views = {
+            _QUERY_VIEW: f"""
+                SELECT
+                  date,
+                  IF(is_anonymized_query, '(anonymized query)', query) AS query,
+                  organic_clicks       AS clicks,
+                  organic_impressions  AS impressions,
+                  organic_sum_position AS pos_sum
+                FROM {q}
+            """,
+            _PAGE_VIEW: f"""
+                SELECT
+                  date,
+                  page_url,
+                  organic_clicks       AS clicks,
+                  organic_impressions  AS impressions,
+                  organic_sum_position AS pos_sum
+                FROM {p}
+            """,
+            _DAILY_VIEW: f"""
+                SELECT
+                  date,
+                  SUM(clicks)      AS clicks,
+                  SUM(impressions) AS impressions,
+                  ROUND(SAFE_DIVIDE(SUM(clicks), NULLIF(SUM(impressions), 0)) * 100, 2) AS ctr,
+                  ROUND(SAFE_DIVIDE(SUM(pos_sum), NULLIF(SUM(impressions), 0)) + 1, 1)  AS avg_position
+                FROM `{project}.{ds}.{_QUERY_VIEW}`
+                GROUP BY date
+            """,
+        }
+        results: dict[str, str] = {}
+        for name, sql in views.items():
+            try:
+                client.query(f"CREATE OR REPLACE VIEW `{project}.{ds}.{name}` AS\n{sql}").result(timeout=60)
+                results[name] = "ok"
+            except Exception as exc:
+                results[name] = f"error: {str(exc)[:200]}"
+        return {"ok": True, "project": project, "dataset": ds, "views": results}
+
+
+def _gsc_metric_cols() -> str:
+    return (
+        "SUM(clicks) AS clicks, SUM(impressions) AS impressions, "
+        "ROUND(SAFE_DIVIDE(SUM(clicks), NULLIF(SUM(impressions), 0)) * 100, 2) AS ctr, "
+        "ROUND(SAFE_DIVIDE(SUM(pos_sum), NULLIF(SUM(impressions), 0)) + 1, 1) AS avg_position"
+    )
+
+
+def build_gsc_mart_summary(*, start: date, end: date, client_slug: str | None = None) -> dict[str, Any]:
+    """Read the GSC mart views and return {kpis, daily, top_queries, top_pages}.
+
+    Same shape build_gsc_snapshot returns, so the dashboard tab is unchanged.
+    """
+    with _client_context(client_slug):
+        target = _resolved_target()
+        if target.is_default_fallback and not _is_penn_slug(client_slug):
+            return {}
+        project, ds = _project_id(), _mart_ds()
+        s, e = start.isoformat(), end.isoformat()
+        qv = f"`{project}.{ds}.{_QUERY_VIEW}`"
+        pv = f"`{project}.{ds}.{_PAGE_VIEW}`"
+        dv = f"`{project}.{ds}.{_DAILY_VIEW}`"
+        where = f"date BETWEEN '{s}' AND '{e}'"
+        m = _gsc_metric_cols()
+
+        def _clean(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            out = []
+            for r in rows:
+                rr = {}
+                for k, v in r.items():
+                    if isinstance(v, Decimal):
+                        v = float(v)
+                    elif isinstance(v, date):
+                        v = v.isoformat()
+                    rr[k] = v
+                out.append(rr)
+            return out
+
+        errors: dict[str, str] = {}
+        result: dict[str, Any] = {"kpis": {}, "daily": [], "top_queries": [], "top_pages": []}
+        try:
+            kpi = _clean(_run(f"SELECT {m} FROM {qv} WHERE {where}", max_rows=1))
+            result["kpis"] = kpi[0] if kpi else {}
+        except Exception as exc:
+            errors["kpis"] = str(exc)[:300]
+        try:
+            result["daily"] = _clean(_run(
+                f"SELECT CAST(date AS STRING) AS date, clicks, impressions, ctr, avg_position "
+                f"FROM {dv} WHERE {where} ORDER BY date", max_rows=2000))
+        except Exception as exc:
+            errors["daily"] = str(exc)[:300]
+        try:
+            result["top_queries"] = _clean(_run(
+                f"SELECT query, {m} FROM {qv} WHERE {where} GROUP BY query "
+                f"ORDER BY clicks DESC, impressions DESC LIMIT 25", max_rows=30))
+        except Exception as exc:
+            errors["top_queries"] = str(exc)[:300]
+        try:
+            result["top_pages"] = _clean(_run(
+                f"SELECT page_url, {m} FROM {pv} WHERE {where} GROUP BY page_url "
+                f"ORDER BY clicks DESC, impressions DESC LIMIT 25", max_rows=30))
+        except Exception as exc:
+            errors["top_pages"] = str(exc)[:300]
+        if errors:
+            result["errors"] = errors
+        return result

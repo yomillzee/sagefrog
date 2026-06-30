@@ -60,6 +60,13 @@ class GSCConnector(ConnectorHandler):
             )
             ok = result.get("ok", True)
             rows = result.get("rows_synced") or result.get("rows_written") or 0
+            # Refresh the GSC mart views over raw_gsc so the reporting tab has a
+            # clean surface. Idempotent CREATE OR REPLACE; non-fatal.
+            try:
+                import bq_gsc_service
+                bq_gsc_service.create_gsc_mart_views(client_slug=client_slug)
+            except Exception as exc:
+                _log.warning("GSC mart view provision failed [%s]: %s", client_slug, exc)
             return SyncResult(
                 rows_loaded=rows,
                 error=result.get("error") if not ok else None,

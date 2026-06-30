@@ -720,7 +720,7 @@ def nixon_gsc_summary(
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
         import bq_gsc_service
-        return bq_gsc_service.build_gsc_snapshot(start=start, end=end, client_slug="nixon")
+        return bq_gsc_service.build_gsc_mart_summary(start=start, end=end, client_slug="nixon")
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
 
