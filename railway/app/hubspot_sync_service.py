@@ -1,9 +1,14 @@
 """HubSpot CRM → BigQuery sync service.
 
-Calls POST /crm/v3/objects/contacts/search to pull MQL/SQL contacts
-and upserts them into marketing_marts.fact_hubspot_contacts via a MERGE
-over a disposable staging table.  No HubSpot native BQ transfer — we
-only pull the properties the dashboard actually uses.
+Two pipelines, both direct API → mart (no raw layer, no HubSpot native BQ
+transfer — we only pull the properties the dashboard actually uses):
+
+  * Contacts: POST /crm/v3/objects/contacts/search — contacts that reached a
+    lifecycle stage within the window, upserted into fact_hubspot_contacts.
+  * Deals:    POST /crm/v3/objects/deals/search — deals created OR closed within
+    the window, upserted into fact_hubspot_deals.
+
+Both MERGE over a disposable staging table so re-runs are idempotent.
 """
 
 from __future__ import annotations
@@ -24,7 +29,8 @@ import bigquery_service
 
 LOGGER = logging.getLogger(__name__)
 
-_SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/contacts/search"
+_CONTACTS_SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/contacts/search"
+_DEALS_SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/deals/search"
 _PAGE_SIZE = 200
 _RATE_DELAY = 0.22   # ~4.5 req/s, well under HubSpot's 5/s search limit
 
@@ -32,18 +38,56 @@ _HS_PROPS = [
     "createdate",
     "lastmodifieddate",
     "email",
+    "firstname",
+    "lastname",
+    "company",
+    "jobtitle",
     "lifecyclestage",
     "hs_lead_status",
+    "hubspot_owner_id",
     "hs_analytics_source",
+    "hs_analytics_source_data_1",
+    "hs_analytics_source_data_2",
     "hs_latest_source",
     "hs_latest_source_data_1",
     "hs_latest_source_data_2",
+    "first_conversion_event_name",
+    "first_conversion_date",
+    "recent_conversion_event_name",
+    "recent_conversion_date",
+    "num_associated_deals",
     "utm_source",
     "utm_medium",
     "utm_campaign",
 ]
 
-_MQL_STAGES = ["marketingqualifiedlead", "salesqualifiedlead"]
+# Deal properties. hs_analytics_source on a deal = original source of the
+# earliest-activity contact for that deal, so revenue attributes to a channel
+# without a manual contact join. Pipeline/dealstage come back as opaque IDs —
+# use the is_closed / is_closed_won booleans for reliable won/revenue logic.
+_DEAL_PROPS = [
+    "dealname",
+    "createdate",
+    "closedate",
+    "hs_lastmodifieddate",
+    "pipeline",
+    "dealstage",
+    "dealtype",
+    "hs_is_closed",
+    "hs_is_closed_won",
+    "amount",
+    "amount_in_home_currency",
+    "deal_currency_code",
+    "hs_forecast_amount",
+    "hs_deal_stage_probability",
+    "hs_analytics_source",
+    "hs_analytics_source_data_1",
+    "hs_analytics_source_data_2",
+    "hs_analytics_latest_source",
+    "hubspot_owner_id",
+    "days_to_close",
+    "num_associated_contacts",
+]
 
 # Lifecycle funnel: stage key → (label, "date entered stage" property). Filtering
 # by the date property captures contacts who REACHED the stage at any point — even
@@ -76,7 +120,7 @@ def normalize_stage(stage: str | None) -> str:
     return s if s in _STAGE_DATE_PROP else _DEFAULT_STAGE
 
 
-_SCHEMA = [
+_CONTACT_SCHEMA = [
     bigquery.SchemaField("contact_id",              "STRING",    mode="REQUIRED"),
     bigquery.SchemaField("createdate",              "TIMESTAMP"),
     bigquery.SchemaField("lastmodifieddate",        "TIMESTAMP"),
@@ -93,10 +137,76 @@ _SCHEMA = [
     bigquery.SchemaField("utm_medium",              "STRING"),
     bigquery.SchemaField("utm_campaign",            "STRING"),
     bigquery.SchemaField("synced_at",               "TIMESTAMP"),
+    # --- appended post-launch (kept after synced_at so BQ schema updates on the
+    # existing table stay additive / prefix-preserving) ---
+    bigquery.SchemaField("firstname",                    "STRING"),
+    bigquery.SchemaField("lastname",                     "STRING"),
+    bigquery.SchemaField("company",                      "STRING"),
+    bigquery.SchemaField("jobtitle",                     "STRING"),
+    bigquery.SchemaField("hubspot_owner_id",             "STRING"),
+    bigquery.SchemaField("hs_analytics_source_data_1",   "STRING"),
+    bigquery.SchemaField("hs_analytics_source_data_2",   "STRING"),
+    bigquery.SchemaField("first_conversion_event_name",  "STRING"),
+    bigquery.SchemaField("first_conversion_date",        "TIMESTAMP"),
+    bigquery.SchemaField("recent_conversion_event_name", "STRING"),
+    bigquery.SchemaField("recent_conversion_date",       "TIMESTAMP"),
+    bigquery.SchemaField("num_associated_deals",         "INTEGER"),
 ]
 
-_TARGET_TABLE  = "fact_hubspot_contacts"
+_DEAL_SCHEMA = [
+    bigquery.SchemaField("deal_id",                  "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("dealname",                 "STRING"),
+    bigquery.SchemaField("createdate",               "TIMESTAMP"),
+    bigquery.SchemaField("closedate",                "TIMESTAMP"),
+    bigquery.SchemaField("lastmodifieddate",         "TIMESTAMP"),
+    bigquery.SchemaField("pipeline",                 "STRING"),   # opaque pipeline id
+    bigquery.SchemaField("dealstage",                "STRING"),   # opaque stage id
+    bigquery.SchemaField("dealtype",                 "STRING"),
+    bigquery.SchemaField("is_closed",                "BOOLEAN"),
+    bigquery.SchemaField("is_closed_won",            "BOOLEAN"),
+    bigquery.SchemaField("amount",                   "FLOAT"),
+    bigquery.SchemaField("amount_in_home_currency",  "FLOAT"),
+    bigquery.SchemaField("deal_currency_code",       "STRING"),
+    bigquery.SchemaField("forecast_amount",          "FLOAT"),
+    bigquery.SchemaField("deal_stage_probability",   "FLOAT"),
+    bigquery.SchemaField("hs_analytics_source",      "STRING"),
+    bigquery.SchemaField("hs_analytics_source_data_1", "STRING"),
+    bigquery.SchemaField("hs_analytics_source_data_2", "STRING"),
+    bigquery.SchemaField("hs_analytics_latest_source", "STRING"),
+    bigquery.SchemaField("hubspot_owner_id",         "STRING"),
+    bigquery.SchemaField("days_to_close",            "INTEGER"),
+    bigquery.SchemaField("num_associated_contacts",  "INTEGER"),
+    bigquery.SchemaField("synced_at",                "TIMESTAMP"),
+]
+
+_CONTACT_TABLE = "fact_hubspot_contacts"
+_DEAL_TABLE    = "fact_hubspot_deals"
 _MQL_VIEW      = "fact_hubspot_mql_daily"
+_DEALS_VIEW    = "fact_hubspot_deals_daily"
+
+
+# ---------------------------------------------------------------------------
+# Value coercion — HubSpot returns every property value as a string.
+# ---------------------------------------------------------------------------
+
+def _to_float(v: Any) -> float | None:
+    try:
+        return float(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int(v: Any) -> int | None:
+    try:
+        return int(float(v)) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_bool(v: Any) -> bool | None:
+    if v in (None, ""):
+        return None
+    return str(v).strip().lower() == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -110,34 +220,9 @@ def _token() -> str:
     return t
 
 
-def _search_page(
-    *,
-    token: str,
-    after: str | None,
-    lookback_ms: int,
-    date_property: str,
-    properties: list[str],
-) -> dict[str, Any]:
-    # Filter on the "date entered stage" property so we capture every contact that
-    # reached the stage within the window — including those who've since moved on.
-    body: dict[str, Any] = {
-        "filterGroups": [{
-            "filters": [
-                {
-                    "propertyName": date_property,
-                    "operator": "GTE",
-                    "value": str(lookback_ms),
-                },
-            ]
-        }],
-        "properties": properties,
-        "limit": _PAGE_SIZE,
-    }
-    if after:
-        body["after"] = after
-
+def _search(url: str, *, token: str, body: dict[str, Any]) -> dict[str, Any]:
     req = urllib.request.Request(
-        _SEARCH_URL,
+        url,
         data=json.dumps(body).encode(),
         method="POST",
         headers={
@@ -150,48 +235,98 @@ def _search_page(
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _parse_row(result: dict[str, Any], synced_at: str, *, stage: str, date_property: str) -> dict[str, Any]:
+def _parse_contact_row(result: dict[str, Any], synced_at: str, *, stage: str, date_property: str) -> dict[str, Any]:
     p = result.get("properties") or {}
     return {
-        "contact_id":              str(result["id"]),
-        "createdate":              p.get("createdate") or None,
-        "lastmodifieddate":        p.get("lastmodifieddate") or None,
-        "email":                   p.get("email") or None,
-        "lifecyclestage":          p.get("lifecyclestage") or None,
-        "stage_filter":            stage,
-        "became_stage_date":       p.get(date_property) or None,
-        "hs_lead_status":          p.get("hs_lead_status") or None,
-        "hs_analytics_source":     p.get("hs_analytics_source") or None,
-        "hs_latest_source":        p.get("hs_latest_source") or None,
-        "hs_latest_source_data_1": p.get("hs_latest_source_data_1") or None,
-        "hs_latest_source_data_2": p.get("hs_latest_source_data_2") or None,
-        "utm_source":              p.get("utm_source") or None,
-        "utm_medium":              p.get("utm_medium") or None,
-        "utm_campaign":            p.get("utm_campaign") or None,
-        "synced_at":               synced_at,
+        "contact_id":                  str(result["id"]),
+        "createdate":                  p.get("createdate") or None,
+        "lastmodifieddate":            p.get("lastmodifieddate") or None,
+        "email":                       p.get("email") or None,
+        "lifecyclestage":              p.get("lifecyclestage") or None,
+        "stage_filter":                stage,
+        "became_stage_date":           p.get(date_property) or None,
+        "hs_lead_status":              p.get("hs_lead_status") or None,
+        "hs_analytics_source":         p.get("hs_analytics_source") or None,
+        "hs_latest_source":            p.get("hs_latest_source") or None,
+        "hs_latest_source_data_1":     p.get("hs_latest_source_data_1") or None,
+        "hs_latest_source_data_2":     p.get("hs_latest_source_data_2") or None,
+        "utm_source":                  p.get("utm_source") or None,
+        "utm_medium":                  p.get("utm_medium") or None,
+        "utm_campaign":                p.get("utm_campaign") or None,
+        "synced_at":                   synced_at,
+        "firstname":                   p.get("firstname") or None,
+        "lastname":                    p.get("lastname") or None,
+        "company":                     p.get("company") or None,
+        "jobtitle":                    p.get("jobtitle") or None,
+        "hubspot_owner_id":            p.get("hubspot_owner_id") or None,
+        "hs_analytics_source_data_1":  p.get("hs_analytics_source_data_1") or None,
+        "hs_analytics_source_data_2":  p.get("hs_analytics_source_data_2") or None,
+        "first_conversion_event_name": p.get("first_conversion_event_name") or None,
+        "first_conversion_date":       p.get("first_conversion_date") or None,
+        "recent_conversion_event_name": p.get("recent_conversion_event_name") or None,
+        "recent_conversion_date":      p.get("recent_conversion_date") or None,
+        "num_associated_deals":        _to_int(p.get("num_associated_deals")),
     }
 
 
-def _ensure_table(client: bigquery.Client, project: str, dataset: str) -> None:
-    ref = f"{project}.{dataset}.{_TARGET_TABLE}"
-    # Add any columns the live table lacks (stage_filter / became_stage_date) without
-    # dropping data — create_table(exists_ok) never alters an existing schema.
+def _parse_deal_row(result: dict[str, Any], synced_at: str) -> dict[str, Any]:
+    p = result.get("properties") or {}
+    return {
+        "deal_id":                   str(result["id"]),
+        "dealname":                  p.get("dealname") or None,
+        "createdate":                p.get("createdate") or None,
+        "closedate":                 p.get("closedate") or None,
+        "lastmodifieddate":          p.get("hs_lastmodifieddate") or None,
+        "pipeline":                  p.get("pipeline") or None,
+        "dealstage":                 p.get("dealstage") or None,
+        "dealtype":                  p.get("dealtype") or None,
+        "is_closed":                 _to_bool(p.get("hs_is_closed")),
+        "is_closed_won":             _to_bool(p.get("hs_is_closed_won")),
+        "amount":                    _to_float(p.get("amount")),
+        "amount_in_home_currency":   _to_float(p.get("amount_in_home_currency")),
+        "deal_currency_code":        p.get("deal_currency_code") or None,
+        "forecast_amount":           _to_float(p.get("hs_forecast_amount")),
+        "deal_stage_probability":    _to_float(p.get("hs_deal_stage_probability")),
+        "hs_analytics_source":       p.get("hs_analytics_source") or None,
+        "hs_analytics_source_data_1": p.get("hs_analytics_source_data_1") or None,
+        "hs_analytics_source_data_2": p.get("hs_analytics_source_data_2") or None,
+        "hs_analytics_latest_source": p.get("hs_analytics_latest_source") or None,
+        "hubspot_owner_id":          p.get("hubspot_owner_id") or None,
+        "days_to_close":             _to_int(p.get("days_to_close")),
+        "num_associated_contacts":   _to_int(p.get("num_associated_contacts")),
+        "synced_at":                 synced_at,
+    }
+
+
+def _ensure_table(
+    client: bigquery.Client,
+    project: str,
+    dataset: str,
+    *,
+    table_name: str,
+    schema: list[bigquery.SchemaField],
+    partition_field: str,
+    clustering_fields: list[str],
+) -> None:
+    ref = f"{project}.{dataset}.{table_name}"
+    # Add any columns the live table lacks without dropping data — create_table
+    # (exists_ok) never alters an existing schema, so we update_table to append.
     try:
         existing = client.get_table(ref)
         existing_cols = {f.name for f in existing.schema}
-        if not {f.name for f in _SCHEMA}.issubset(existing_cols):
-            obj = bigquery.Table(ref, schema=_SCHEMA)
+        if not {f.name for f in schema}.issubset(existing_cols):
+            obj = bigquery.Table(ref, schema=schema)
             client.update_table(obj, ["schema"])
             LOGGER.info("Updated %s schema with new columns", ref)
-            return
+        return
     except Exception:
         pass  # table doesn't exist yet — create below
-    tbl = bigquery.Table(ref, schema=_SCHEMA)
+    tbl = bigquery.Table(ref, schema=schema)
     tbl.time_partitioning = bigquery.TimePartitioning(
         type_=bigquery.TimePartitioningType.DAY,
-        field="lastmodifieddate",
+        field=partition_field,
     )
-    tbl.clustering_fields = ["lifecyclestage", "contact_id"]
+    tbl.clustering_fields = clustering_fields
     client.create_table(tbl, exists_ok=True)
     LOGGER.debug("Ensured table %s", ref)
 
@@ -200,16 +335,19 @@ def _upsert(
     client: bigquery.Client,
     project: str,
     dataset: str,
+    *,
+    table_name: str,
+    schema: list[bigquery.SchemaField],
+    id_col: str,
     rows: list[dict[str, Any]],
 ) -> None:
-    stg_id = f"{project}.{dataset}._hs_contacts_stg_{uuid4().hex[:12]}"
-    stg_tbl = bigquery.Table(stg_id, schema=_SCHEMA)
+    stg_id = f"{project}.{dataset}._hs_stg_{uuid4().hex[:12]}"
     try:
         job = client.load_table_from_json(
             rows,
             stg_id,
             job_config=bigquery.LoadJobConfig(
-                schema=_SCHEMA,
+                schema=schema,
                 write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
                 source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
             ),
@@ -217,28 +355,28 @@ def _upsert(
         job.result()
         LOGGER.info("Staged %d rows → %s", len(rows), stg_id)
 
-        target  = f"`{project}.{dataset}.{_TARGET_TABLE}`"
+        target  = f"`{project}.{dataset}.{table_name}`"
         staging = f"`{stg_id}`"
-        upd_cols = [f.name for f in _SCHEMA if f.name != "contact_id"]
-        set_clause    = ", ".join(f"{c} = S.{c}" for c in upd_cols)
-        insert_cols   = ", ".join(f.name for f in _SCHEMA)
-        insert_vals   = ", ".join(f"S.{f.name}" for f in _SCHEMA)
+        upd_cols = [f.name for f in schema if f.name != id_col]
+        set_clause  = ", ".join(f"{c} = S.{c}" for c in upd_cols)
+        insert_cols = ", ".join(f.name for f in schema)
+        insert_vals = ", ".join(f"S.{f.name}" for f in schema)
 
         merge_sql = f"""
 MERGE {target} T
-USING {staging} S ON T.contact_id = S.contact_id
+USING {staging} S ON T.{id_col} = S.{id_col}
 WHEN MATCHED THEN
   UPDATE SET {set_clause}
 WHEN NOT MATCHED THEN
   INSERT ({insert_cols}) VALUES ({insert_vals})
 """
         client.query(merge_sql).result()
-        LOGGER.info("MERGE complete: %d rows upserted", len(rows))
+        LOGGER.info("MERGE complete: %d rows upserted into %s", len(rows), table_name)
     finally:
         client.delete_table(stg_id, not_found_ok=True)
 
 
-def _rebuild_view(client: bigquery.Client, project: str, dataset: str) -> None:
+def _rebuild_contact_view(client: bigquery.Client, project: str, dataset: str) -> None:
     # Daily counts keyed on the date the contact ENTERED the filtered stage
     # (became_stage_date), falling back to last-modified for rows synced before
     # that column existed. Grouped by stage_filter so any funnel stage works.
@@ -249,21 +387,54 @@ SELECT
   stage_filter,
   lifecyclestage,
   hs_lead_status,
+  hs_analytics_source,
   hs_latest_source,
   utm_source,
   utm_medium,
   utm_campaign,
   COUNT(*)         AS contacts,
   MAX(synced_at)   AS latest_synced_at
-FROM `{project}.{dataset}.{_TARGET_TABLE}`
-GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+FROM `{project}.{dataset}.{_CONTACT_TABLE}`
+GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9
 """
     client.query(sql).result()
     LOGGER.info("Rebuilt view %s.%s.%s", project, dataset, _MQL_VIEW)
 
 
+def _rebuild_deal_view(client: bigquery.Client, project: str, dataset: str) -> None:
+    # Deals keyed on create date + original source, with won revenue broken out
+    # via the reliable is_closed_won boolean (dealstage is an opaque id).
+    sql = f"""
+CREATE OR REPLACE VIEW `{project}.{dataset}.{_DEALS_VIEW}` AS
+SELECT
+  DATE(createdate)             AS created_date,
+  DATE(closedate)              AS close_date,
+  pipeline,
+  dealtype,
+  hs_analytics_source          AS original_source,
+  is_closed,
+  is_closed_won,
+  COUNT(*)                     AS deals,
+  SUM(amount)                  AS amount,
+  SUM(IF(is_closed_won, amount, 0)) AS won_amount,
+  MAX(synced_at)               AS latest_synced_at
+FROM `{project}.{dataset}.{_DEAL_TABLE}`
+GROUP BY 1, 2, 3, 4, 5, 6, 7
+"""
+    client.query(sql).result()
+    LOGGER.info("Rebuilt view %s.%s.%s", project, dataset, _DEALS_VIEW)
+
+
+def _resolve_target(project_id: str | None, dataset_id: str | None) -> tuple[str, str]:
+    project = (project_id or os.getenv("HUBSPOT_SYNC_PROJECT_ID") or "").strip()
+    dataset = (dataset_id or os.getenv("HUBSPOT_SYNC_DATASET") or "marketing_marts").strip()
+    if not project:
+        raise RuntimeError("BQ project not set — provide project_id or set HUBSPOT_SYNC_PROJECT_ID")
+    return project, dataset
+
+
 # ---------------------------------------------------------------------------
-# Public entry point
+# Public entry points
 # ---------------------------------------------------------------------------
 
 def sync_hubspot_contacts(
@@ -280,79 +451,157 @@ def sync_hubspot_contacts(
     Pulls every contact whose "date entered <stage>" falls within the lookback
     window — so MQL means "is or has been an MQL", even if they've since
     progressed — and upserts them into fact_hubspot_contacts.
-
-    Args:
-        project_id:      GCP project (default: HUBSPOT_SYNC_PROJECT_ID env).
-        dataset_id:      BQ dataset  (default: HUBSPOT_SYNC_DATASET env, then "marketing_marts").
-        lookback_days:   Backfill window in days (default 90).
-        lifecycle_stage: Funnel stage to pull (default marketingqualifiedlead).
-        bq_client:       Inject an existing BQ client (testing / reuse).
     """
-    project = (project_id or os.getenv("HUBSPOT_SYNC_PROJECT_ID") or "").strip()
-    dataset = (dataset_id or os.getenv("HUBSPOT_SYNC_DATASET") or "marketing_marts").strip()
-    if not project:
-        raise RuntimeError(
-            "BQ project not set — provide project_id or set HUBSPOT_SYNC_PROJECT_ID"
-        )
-
+    project, dataset = _resolve_target(project_id, dataset_id)
     stage = normalize_stage(lifecycle_stage)
     date_property = _STAGE_DATE_PROP[stage]
     props = _HS_PROPS + [date_property]
 
     token  = (access_token or "").strip() or _token()
     client = bq_client or bigquery_service.build_client(project_id=project)
-    _ensure_table(client, project, dataset)
-
-    cutoff_ms = int(
-        (datetime.now(timezone.utc) - timedelta(days=lookback_days)).timestamp() * 1000
+    _ensure_table(
+        client, project, dataset,
+        table_name=_CONTACT_TABLE, schema=_CONTACT_SCHEMA,
+        partition_field="lastmodifieddate", clustering_fields=["lifecyclestage", "contact_id"],
     )
+
+    cutoff_ms = int((datetime.now(timezone.utc) - timedelta(days=lookback_days)).timestamp() * 1000)
     synced_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
 
-    LOGGER.info(
-        "HubSpot sync start — stage=%s, lookback=%d days, project=%s, dataset=%s",
-        stage, lookback_days, project, dataset,
-    )
-    t0     = time.monotonic()
-    rows:  list[dict[str, Any]] = []
+    LOGGER.info("HubSpot contacts sync — stage=%s, lookback=%dd, project=%s, dataset=%s",
+                stage, lookback_days, project, dataset)
+    t0 = time.monotonic()
+    rows: list[dict[str, Any]] = []
     after: str | None = None
     pages = 0
 
     while True:
+        body: dict[str, Any] = {
+            "filterGroups": [{"filters": [
+                {"propertyName": date_property, "operator": "GTE", "value": str(cutoff_ms)},
+            ]}],
+            "properties": props,
+            "limit": _PAGE_SIZE,
+        }
+        if after:
+            body["after"] = after
         try:
-            resp = _search_page(
-                token=token, after=after, lookback_ms=cutoff_ms,
-                date_property=date_property, properties=props,
-            )
+            resp = _search(_CONTACTS_SEARCH_URL, token=token, body=body)
         except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"HubSpot search API {exc.code}: {body[:400]}") from exc
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"HubSpot search API {exc.code}: {detail[:400]}") from exc
 
-        pages  += 1
-        batch   = resp.get("results") or []
-        rows   += [_parse_row(r, synced_at, stage=stage, date_property=date_property) for r in batch]
-        LOGGER.info("Page %d: %d results (%d total)", pages, len(batch), len(rows))
+        pages += 1
+        batch = resp.get("results") or []
+        rows += [_parse_contact_row(r, synced_at, stage=stage, date_property=date_property) for r in batch]
+        LOGGER.info("Contacts page %d: %d results (%d total)", pages, len(batch), len(rows))
 
         next_after = ((resp.get("paging") or {}).get("next") or {}).get("after")
         if not next_after or not batch:
             break
-
         after = next_after
         time.sleep(_RATE_DELAY)
 
     if rows:
-        _upsert(client, project, dataset, rows)
+        _upsert(client, project, dataset, table_name=_CONTACT_TABLE,
+                schema=_CONTACT_SCHEMA, id_col="contact_id", rows=rows)
     else:
-        LOGGER.info("No contacts modified in the last %d days — nothing to upsert", lookback_days)
+        LOGGER.info("No contacts reached %s in the last %dd — nothing to upsert", stage, lookback_days)
 
-    _rebuild_view(client, project, dataset)
+    _rebuild_contact_view(client, project, dataset)
 
-    elapsed = round(time.monotonic() - t0, 1)
     summary = {
-        "status":      "ok",
+        "status": "ok",
         "rows_synced": len(rows),
-        "pages":       pages,
-        "elapsed_s":   elapsed,
-        "synced_at":   synced_at,
+        "pages": pages,
+        "elapsed_s": round(time.monotonic() - t0, 1),
+        "synced_at": synced_at,
     }
-    LOGGER.info("HubSpot sync done: %s", summary)
+    LOGGER.info("HubSpot contacts sync done: %s", summary)
+    return summary
+
+
+def sync_hubspot_deals(
+    *,
+    project_id: str | None = None,
+    dataset_id: str | None = None,
+    lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
+    access_token: str | None = None,
+    bq_client: bigquery.Client | None = None,
+) -> dict[str, Any]:
+    """Backfill deals created OR closed within the lookback window.
+
+    Two OR'd filter groups: deals created in the window (new pipeline) plus deals
+    that actually closed in the window (won or lost) regardless of when they were
+    created — so recent revenue on older deals is captured. Upserts into
+    fact_hubspot_deals.
+    """
+    project, dataset = _resolve_target(project_id, dataset_id)
+    token  = (access_token or "").strip() or _token()
+    client = bq_client or bigquery_service.build_client(project_id=project)
+    _ensure_table(
+        client, project, dataset,
+        table_name=_DEAL_TABLE, schema=_DEAL_SCHEMA,
+        partition_field="createdate", clustering_fields=["pipeline", "dealstage"],
+    )
+
+    cutoff_ms = int((datetime.now(timezone.utc) - timedelta(days=lookback_days)).timestamp() * 1000)
+    synced_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+
+    LOGGER.info("HubSpot deals sync — lookback=%dd, project=%s, dataset=%s",
+                lookback_days, project, dataset)
+    t0 = time.monotonic()
+    rows: list[dict[str, Any]] = []
+    after: str | None = None
+    pages = 0
+
+    while True:
+        body: dict[str, Any] = {
+            "filterGroups": [
+                {"filters": [
+                    {"propertyName": "createdate", "operator": "GTE", "value": str(cutoff_ms)},
+                ]},
+                {"filters": [
+                    {"propertyName": "closedate", "operator": "GTE", "value": str(cutoff_ms)},
+                    {"propertyName": "hs_is_closed", "operator": "EQ", "value": "true"},
+                ]},
+            ],
+            "properties": _DEAL_PROPS,
+            "limit": _PAGE_SIZE,
+        }
+        if after:
+            body["after"] = after
+        try:
+            resp = _search(_DEALS_SEARCH_URL, token=token, body=body)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"HubSpot deals search API {exc.code}: {detail[:400]}") from exc
+
+        pages += 1
+        batch = resp.get("results") or []
+        rows += [_parse_deal_row(r, synced_at) for r in batch]
+        LOGGER.info("Deals page %d: %d results (%d total)", pages, len(batch), len(rows))
+
+        next_after = ((resp.get("paging") or {}).get("next") or {}).get("after")
+        if not next_after or not batch:
+            break
+        after = next_after
+        time.sleep(_RATE_DELAY)
+
+    if rows:
+        _upsert(client, project, dataset, table_name=_DEAL_TABLE,
+                schema=_DEAL_SCHEMA, id_col="deal_id", rows=rows)
+    else:
+        LOGGER.info("No deals created/closed in the last %dd — nothing to upsert", lookback_days)
+
+    _rebuild_deal_view(client, project, dataset)
+
+    summary = {
+        "status": "ok",
+        "rows_synced": len(rows),
+        "pages": pages,
+        "elapsed_s": round(time.monotonic() - t0, 1),
+        "synced_at": synced_at,
+    }
+    LOGGER.info("HubSpot deals sync done: %s", summary)
     return summary

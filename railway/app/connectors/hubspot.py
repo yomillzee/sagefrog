@@ -69,23 +69,36 @@ class HubSpotConnector(ConnectorHandler):
         except Exception as exc:
             _log.warning("HubSpot token refresh failed [%s]: %s", client_slug, exc)
 
+        rows = 0
+        errors: list[str] = []
+
+        # Contacts (lifecycle-filtered) then deals (created/closed in window).
         try:
-            result = hubspot_sync_service.sync_hubspot_contacts(
+            c = hubspot_sync_service.sync_hubspot_contacts(
                 project_id=project_id or None,
                 dataset_id=dataset_id or None,
                 lifecycle_stage=lifecycle_stage,
                 lookback_days=lookback_days,
                 access_token=access_token,
             )
-            rows = result.get("rows_synced") or 0
-            ok = result.get("status") == "ok"
-            return SyncResult(
-                rows_loaded=rows,
-                error=result.get("error") if not ok else None,
-            )
+            rows += c.get("rows_synced") or 0
         except Exception as exc:
-            _log.warning("HubSpot sync failed [%s]: %s", client_slug, exc)
-            return SyncResult(rows_loaded=0, error=str(exc)[:500])
+            _log.warning("HubSpot contacts sync failed [%s]: %s", client_slug, exc)
+            errors.append(f"contacts: {str(exc)[:200]}")
+
+        try:
+            d = hubspot_sync_service.sync_hubspot_deals(
+                project_id=project_id or None,
+                dataset_id=dataset_id or None,
+                lookback_days=lookback_days,
+                access_token=access_token,
+            )
+            rows += d.get("rows_synced") or 0
+        except Exception as exc:
+            _log.warning("HubSpot deals sync failed [%s]: %s", client_slug, exc)
+            errors.append(f"deals: {str(exc)[:200]}")
+
+        return SyncResult(rows_loaded=rows, error="; ".join(errors) if errors else None)
 
 
 register(HubSpotConnector())
