@@ -2222,6 +2222,15 @@ async def oauth_callback(
             return RedirectResponse(url=f"{dest}{sep}oauth_error={quote('Missing authorization code.')}", status_code=303)
         try:
             tokens = oauth_flows.exchange_code(slug, code=code.strip())
+            verify_error = oauth_flows.verify_connected_account(slug, tokens, client_slug=link_slug)
+            if verify_error:
+                audit_log.record(
+                    action="oauth.rejected",
+                    actor_email="connect-link",
+                    detail={"platform": slug, "client_slug": link_slug, "via": "connect_link", "reason": verify_error},
+                    **audit_log.request_context(request),
+                )
+                return RedirectResponse(url=f"{dest}{sep}oauth_error={quote(verify_error[:200])}", status_code=303)
             oauth_store.save_tokens(
                 slug,
                 refresh_token=tokens.get("refresh_token"),
@@ -2257,6 +2266,15 @@ async def oauth_callback(
     actor = user.email if user else None
     try:
         tokens = oauth_flows.exchange_code(slug, code=code.strip())
+        verify_error = oauth_flows.verify_connected_account(slug, tokens, client_slug=oauth_client_slug)
+        if verify_error:
+            audit_log.record(
+                action="oauth.rejected",
+                actor_email=actor,
+                detail={"platform": slug, "client_slug": oauth_client_slug or "global", "reason": verify_error},
+                **audit_log.request_context(request),
+            )
+            return RedirectResponse(url=f"{dest}{sep}oauth_error={quote(verify_error[:200])}", status_code=303)
         oauth_store.save_tokens(
             slug,
             refresh_token=tokens.get("refresh_token"),

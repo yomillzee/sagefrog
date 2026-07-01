@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -13,6 +14,8 @@ import httpx
 import auth as google_auth
 import linkedin_auth
 import meta_auth
+
+_log = logging.getLogger(__name__)
 
 PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc", "google_analytics", "google_tag_manager", "hubspot"})
 
@@ -386,12 +389,82 @@ def _exchange_hubspot_code(code: str, *, redirect_uri: str) -> dict[str, Any]:
         raise RuntimeError("HubSpot did not return a refresh token.")
     expires_in = int(data.get("expires_in") or 0)
     expires_at = datetime.now(tz=UTC) + timedelta(seconds=expires_in) if expires_in else None
+    access = data.get("access_token")
+    # Capture the connected portal's identity so the callback can verify it matches
+    # the client being configured (and so we have a tamper-evident record of which
+    # HubSpot account a client's token belongs to).
+    portal = fetch_hubspot_portal_info(access) if access else {}
     return {
         "refresh_token": refresh,
-        "access_token": data.get("access_token"),
+        "access_token": access,
         "token_expires_at": expires_at,
         "scopes": HUBSPOT_SCOPES,
+        "metadata": portal or None,
     }
+
+
+def fetch_hubspot_portal_info(access_token: str) -> dict[str, Any]:
+    """Return the connected HubSpot portal's identity (portal_id, hub_domain, company).
+
+    Best-effort: returns {} on any failure so it never blocks a token exchange.
+    """
+    import json as _json
+    import urllib.request
+
+    try:
+        req = urllib.request.Request(
+            "https://api.hubapi.com/account-info/v3/details",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            info = _json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        _log.warning("HubSpot portal-info fetch failed: %s", exc)
+        return {}
+    out: dict[str, Any] = {}
+    portal_id = str(info.get("portalId") or "").strip()
+    if portal_id:
+        out["portal_id"] = portal_id
+    if info.get("companyName"):
+        out["company_name"] = str(info["companyName"])
+    domain = info.get("uiDomain") or info.get("domain")
+    if domain:
+        out["hub_domain"] = str(domain)
+    return out
+
+
+def verify_connected_account(platform: str, tokens: dict[str, Any], *, client_slug: str) -> str | None:
+    """Guard against wiring the wrong external account into a client's connection.
+
+    Returns a user-facing error message if the just-authorized account doesn't match
+    the account this client is already configured for, else None. Best-effort: if the
+    connected account can't be determined, or the client has no configured account yet
+    (first connect), it does not block.
+    """
+    slug = _normalize_platform(platform)
+    if slug != "hubspot" or not (client_slug or "").strip():
+        return None
+    meta = tokens.get("metadata") or {}
+    connected_portal = str(meta.get("portal_id") or "").strip()
+    if not connected_portal:
+        return None  # couldn't determine the portal — don't block the connect
+    try:
+        import connector_config_store
+
+        cfg = connector_config_store.get_config(client_slug, "hubspot")
+    except Exception as exc:
+        _log.warning("HubSpot portal verification skipped [%s]: %s", client_slug, exc)
+        return None
+    expected = str(cfg.source_account_id or "").strip() if cfg else ""
+    if expected and expected != connected_portal:
+        connected_label = meta.get("hub_domain") or connected_portal
+        return (
+            f"This HubSpot login is connected to portal {connected_label} "
+            f"(id {connected_portal}), but this client is configured for portal "
+            f"{expected}. Connect the correct HubSpot account, or update the client's "
+            f"portal in connector settings before reconnecting."
+        )
+    return None
 
 
 def refresh_hubspot_access_token(refresh_token: str) -> str:

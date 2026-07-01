@@ -48,13 +48,17 @@ _MQL_STAGES = ["marketingqualifiedlead", "salesqualifiedlead"]
 # Lifecycle funnel: stage key → (label, "date entered stage" property). Filtering
 # by the date property captures contacts who REACHED the stage at any point — even
 # if they've since progressed — i.e. "is or has been an MQL".
+#
+# NOTE: use HubSpot's current `hs_v2_date_entered_<stage>` properties. The legacy
+# `hs_lifecyclestage_<stage>_date` names were deprecated and now raise a 400
+# "Invalid property name" from the CRM search API.
 _LIFECYCLE_FUNNEL = [
-    ("subscriber",             "Subscriber",                       "hs_lifecyclestage_subscriber_date"),
-    ("lead",                   "Lead",                             "hs_lifecyclestage_lead_date"),
-    ("marketingqualifiedlead", "Marketing Qualified Lead (MQL)",   "hs_lifecyclestage_marketingqualifiedlead_date"),
-    ("salesqualifiedlead",     "Sales Qualified Lead (SQL)",       "hs_lifecyclestage_salesqualifiedlead_date"),
-    ("opportunity",            "Opportunity",                      "hs_lifecyclestage_opportunity_date"),
-    ("customer",               "Customer",                         "hs_lifecyclestage_customer_date"),
+    ("subscriber",             "Subscriber",                       "hs_v2_date_entered_subscriber"),
+    ("lead",                   "Lead",                             "hs_v2_date_entered_lead"),
+    ("marketingqualifiedlead", "Marketing Qualified Lead (MQL)",   "hs_v2_date_entered_marketingqualifiedlead"),
+    ("salesqualifiedlead",     "Sales Qualified Lead (SQL)",       "hs_v2_date_entered_salesqualifiedlead"),
+    ("opportunity",            "Opportunity",                      "hs_v2_date_entered_opportunity"),
+    ("customer",               "Customer",                         "hs_v2_date_entered_customer"),
 ]
 _STAGE_DATE_PROP = {k: prop for k, _label, prop in _LIFECYCLE_FUNNEL}
 _STAGE_LABELS    = {k: label for k, label, _prop in _LIFECYCLE_FUNNEL}
