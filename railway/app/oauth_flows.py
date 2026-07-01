@@ -21,7 +21,7 @@ PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc", "google_analytic
 
 HUBSPOT_AUTH_URL = "https://app.hubspot.com/oauth/authorize"
 HUBSPOT_TOKEN_URL = "https://api.hubapi.com/oauth/v1/token"
-HUBSPOT_SCOPES = "oauth crm.objects.contacts.read"
+HUBSPOT_SCOPES = "oauth crm.objects.contacts.read crm.objects.deals.read"
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
