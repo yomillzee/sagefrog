@@ -14,6 +14,7 @@ from dashboard.utils.urls import (
     connectors_page_url as _connectors_page_url,
     dashboard_page_url as _dashboard_page_url,
     files_page_url as _files_page_url,
+    lead_tracking_page_url as _lead_tracking_page_url,
     refresh_action_url as _refresh_action_url,
     settings_page_url as _settings_page_url,
 )
@@ -399,6 +400,11 @@ _NAV_ICON_CONNECTORS = (
     '<path d="M18 3a3 3 0 00-3 3v1H9V6a3 3 0 10-3 3v1H3v2h3v1a3 3 0 103 3v-1h6v1a3 3 0 103-3v-1h3v-2h-3V9a3 3 0 000-6z"/>'
     '</svg>'
 )
+_NAV_ICON_LEADS = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>'
+)
 _NAV_ICON_SETTINGS = (
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
     'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -487,6 +493,18 @@ def render_sidebar(
             f'{_NAV_ICON_CONNECTORS}<span>Connectors</span></a>'
         )
 
+    lead_tracking_btn = ""
+    if show_connectors or active_nav == "lead-tracking":
+        lt_url = _lead_tracking_page_url(
+            client_slug=client_slug, access_key=access_key, use_session=use_session
+        ) or "#"
+        lt_active = " active" if active_nav == "lead-tracking" else ""
+        lt_aria = ' aria-current="page"' if lt_active else ""
+        lead_tracking_btn = (
+            f'<a href="{_esc(lt_url)}" class="dash-sidebar-link{lt_active}"{lt_aria}>'
+            f'{_NAV_ICON_LEADS}<span>Lead Tracking</span></a>'
+        )
+
     settings_active = " active" if active_nav == "settings" else ""
     settings_aria = ' aria-current="page"' if settings_active else ""
     settings_btn = (
@@ -514,6 +532,7 @@ def render_sidebar(
         <nav class="dash-sidebar-links" aria-label="Account navigation">
           {files_btn}
           {connectors_btn}
+          {lead_tracking_btn}
           {settings_btn}
         </nav>
         {account_html}

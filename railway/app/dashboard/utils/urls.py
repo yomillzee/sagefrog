@@ -51,6 +51,20 @@ def connectors_page_url(
     return base
 
 
+def lead_tracking_page_url(
+    *,
+    client_slug: str = "penn",
+    access_key: str | None,
+    use_session: bool,
+) -> str | None:
+    base = f"/dashboard/{client_slug}/lead-tracking"
+    if use_session:
+        return base
+    if access_key:
+        return f"{base}?key={quote(access_key, safe='')}"
+    return base
+
+
 def files_page_url(
     *,
     client_slug: str = "penn",

@@ -90,6 +90,37 @@ def connectors_directory(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Lead Tracking page (HubSpot reports)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("/dashboard/{client_slug}/lead-tracking", response_class=HTMLResponse)
+def lead_tracking_page(
+    client_slug: str,
+    request: Request,
+    key: str | None = None,
+):
+    slug = validate_client_slug(client_slug)
+    redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug, key)
+    if redirect:
+        return redirect
+
+    import client_config
+    import hubspot_reports_service
+    from dashboard.renderers import lead_tracking_renderer
+
+    cfg = client_config.load_client_config(slug)
+    label = cfg.label if cfg else slug
+
+    report = hubspot_reports_service.build_report(slug)
+    return HTMLResponse(lead_tracking_renderer.render_lead_tracking(
+        client_slug=slug,
+        label=label,
+        report=report,
+        **_session_kw(access_key, use_session, session_email, session_is_admin),
+    ))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Connector detail page (wizard or management)
 # ──────────────────────────────────────────────────────────────────────────────
 
