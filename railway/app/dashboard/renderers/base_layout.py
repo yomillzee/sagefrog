@@ -294,7 +294,7 @@ def dashboard_view_tabs_html(
     if show_gsc:
         gsc_tab = (
             '<button type="button" class="dash-view-btn" data-view="gsc" role="tab" '
-            'aria-selected="false">GSC</button>'
+            'aria-selected="false">Search Console</button>'
         )
     semrush_tab = ""
     if show_semrush:
@@ -306,8 +306,8 @@ def dashboard_view_tabs_html(
       <nav class="dash-view-nav" role="tablist" aria-label="Dashboard views">
         <button type="button" class="dash-view-btn active" data-view="overview" role="tab" aria-selected="true">Overview</button>
         {campaigns_tab}
-        {gsc_tab}
         {website_tab}
+        {gsc_tab}
         {semrush_tab}
       </nav>"""
 
@@ -319,13 +319,14 @@ _VIEW_ICONS: dict[str, str] = {
     "gsc": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
     "website": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><path d="M12 3a14 14 0 010 18 14 14 0 010-18z"/></svg>',
     "semrush": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg>',
+    "lead-tracking": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>',
 }
 
 _VIEW_LABELS: tuple[tuple[str, str], ...] = (
     ("overview", "Overview"),
     ("campaigns", "Campaign Explorer"),
-    ("gsc", "GSC"),
     ("website", "Website Analytics"),
+    ("gsc", "Search Console"),
     ("semrush", "SEMrush"),
 )
 
@@ -336,10 +337,12 @@ def sidebar_view_nav_html(
     show_campaigns: bool = True,
     show_gsc: bool = False,
     show_semrush: bool = False,
+    show_lead_tracking: bool = False,
     as_links: bool = False,
     client_slug: str = "penn",
     access_key: str | None = None,
     use_session: bool = False,
+    active_view: str | None = None,
 ) -> str:
     """Primary view navigation for the sidebar.
 
@@ -379,6 +382,18 @@ def sidebar_view_nav_html(
                 f'<button type="button" class="dash-view-btn{active}" data-view="{view}" '
                 f'role="tab" aria-selected="{selected}">{inner}</button>'
             )
+    # Lead Tracking is a standalone page, so it is ALWAYS an anchor link (even on
+    # the dashboard where the other items are JS tabs) and appears last.
+    if show_lead_tracking:
+        lt_url = _lead_tracking_page_url(
+            client_slug=client_slug, access_key=access_key, use_session=use_session
+        ) or "#"
+        lt_active = " active" if active_view == "lead-tracking" else ""
+        lt_icon = _VIEW_ICONS.get("lead-tracking", "")
+        items.append(
+            f'<a class="dash-view-btn{lt_active}" href="{_esc(lt_url)}">'
+            f'{lt_icon}<span class="dash-view-label">Lead Tracking</span></a>'
+        )
     role = "" if as_links else ' role="tablist"'
     return (
         f'<nav class="dash-sidebar-nav"{role} aria-label="Dashboard views">'
@@ -386,7 +401,29 @@ def sidebar_view_nav_html(
     )
 
 
-CONNECTORS_PILOT_SLUGS: frozenset[str] = frozenset({"nixon-bq-test"})
+def platform_nav_flags(client_slug: str) -> dict[str, bool]:
+    """Per-client platform nav visibility, derived from connector state.
+
+    Replaces the hardcoded CONNECTORS_PILOT_SLUGS gating so the connectors +
+    Lead Tracking platform scales to any client: an item appears once its source
+    connector is connected ("show only what has data"). Onboarding a new client
+    is then just connecting their sources — no code change.
+    """
+    try:
+        import connector_config_store
+        configs = connector_config_store.list_configs(client_slug)
+    except Exception:
+        return {"show_connectors": False, "show_lead_tracking": False, "show_gsc": False}
+    status_by_type = {c.connector_type: c.status for c in configs}
+
+    def _connected(ctype: str) -> bool:
+        return status_by_type.get(ctype) in ("connected", "syncing")
+
+    return {
+        "show_connectors": bool(configs),
+        "show_lead_tracking": _connected("hubspot"),
+        "show_gsc": _connected("gsc"),
+    }
 
 _NAV_ICON_FILES = (
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
@@ -493,18 +530,6 @@ def render_sidebar(
             f'{_NAV_ICON_CONNECTORS}<span>Connectors</span></a>'
         )
 
-    lead_tracking_btn = ""
-    if show_connectors or active_nav == "lead-tracking":
-        lt_url = _lead_tracking_page_url(
-            client_slug=client_slug, access_key=access_key, use_session=use_session
-        ) or "#"
-        lt_active = " active" if active_nav == "lead-tracking" else ""
-        lt_aria = ' aria-current="page"' if lt_active else ""
-        lead_tracking_btn = (
-            f'<a href="{_esc(lt_url)}" class="dash-sidebar-link{lt_active}"{lt_aria}>'
-            f'{_NAV_ICON_LEADS}<span>Lead Tracking</span></a>'
-        )
-
     settings_active = " active" if active_nav == "settings" else ""
     settings_aria = ' aria-current="page"' if settings_active else ""
     settings_btn = (
@@ -532,7 +557,6 @@ def render_sidebar(
         <nav class="dash-sidebar-links" aria-label="Account navigation">
           {files_btn}
           {connectors_btn}
-          {lead_tracking_btn}
           {settings_btn}
         </nav>
         {account_html}
@@ -557,10 +581,10 @@ def render_client_shell_page(
     show_business_line: bool | None = None,
     show_files: bool | None = None,
     show_connectors: bool | None = None,
-    show_campaigns: bool = True,
-    show_website: bool = True,
-    show_gsc: bool = False,
-    show_semrush: bool = False,
+    show_campaigns: bool | None = None,
+    show_website: bool | None = None,
+    show_gsc: bool | None = None,
+    show_semrush: bool | None = None,
 ) -> str:
     """Shared dashboard chrome for settings, files, and other child pages."""
     del page_subtitle, client_meta_tip, show_business_line
@@ -569,20 +593,40 @@ def render_client_shell_page(
         import client_insight_documents as docs
 
         show_files = docs.enabled()
+
+    # Resolve the sidebar flags the SAME way the dashboard does so the sidebar is
+    # identical on every page for a given client (fixes items appearing/vanishing
+    # between pages). Platform items come from connector state; view tabs from the
+    # per-client feature config.
+    pflags = platform_nav_flags(client_slug)
     if show_connectors is None:
-        show_connectors = client_slug.lower() in CONNECTORS_PILOT_SLUGS
-    # Child pages have no in-page views, so the primary nav links back to the
-    # dashboard's tabs (the dashboard gracefully falls back to Overview if a
-    # linked view isn't available for this client).
+        show_connectors = pflags["show_connectors"]
+    if show_campaigns is None or show_website is None:
+        try:
+            import dashboard_features
+            feats = dashboard_features.resolve_features(client_slug)
+        except Exception:
+            feats = None
+        if show_campaigns is None:
+            show_campaigns = bool(getattr(feats, "campaign_explorer", True)) if feats else True
+        if show_website is None:
+            show_website = bool(getattr(feats, "website_analytics", True)) if feats else True
+    if show_gsc is None:
+        show_gsc = pflags["show_gsc"]
+    if show_semrush is None:
+        show_semrush = False
+
     view_nav_html = sidebar_view_nav_html(
         show_website=show_website,
         show_campaigns=show_campaigns,
         show_gsc=show_gsc,
         show_semrush=show_semrush,
+        show_lead_tracking=pflags["show_lead_tracking"],
         as_links=True,
         client_slug=client_slug,
         access_key=access_key,
         use_session=use_session,
+        active_view=active_nav,
     )
     sidebar = render_sidebar(
         client_slug=client_slug,

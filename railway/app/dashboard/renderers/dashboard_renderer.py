@@ -25,10 +25,10 @@ from penn_business_lines import (
 )
 
 from dashboard.renderers.base_layout import (
-    CONNECTORS_PILOT_SLUGS as _CONNECTORS_PILOT_SLUGS,
     SIDEBAR_CSS as _SIDEBAR_CSS,
     dashboard_topbar_js as _dashboard_topbar_js,
     favicon_head_html as _favicon_head_html,
+    platform_nav_flags as _platform_nav_flags,
     render_client_shell_page,
     render_sidebar as _render_sidebar,
     sidebar_view_nav_html as _sidebar_view_nav_html,
@@ -711,15 +711,18 @@ def render_penn_html(
             except Exception:
                 pass
     _semrush_data = snapshot.get("semrush")
+    _pflags = _platform_nav_flags(client_slug)
     view_nav_html = _sidebar_view_nav_html(
         show_website=show_website_tab,
         show_campaigns=features.campaign_explorer,
         show_gsc=bool(_gsc_data),
         show_semrush=bool(_semrush_data),
+        show_lead_tracking=_pflags["show_lead_tracking"],
         as_links=False,
         client_slug=client_slug,
         access_key=access_key,
         use_session=use_session,
+        active_view="overview",
     )
     sidebar = _render_sidebar(
         client_slug=client_slug,
@@ -730,7 +733,7 @@ def render_penn_html(
         session_is_admin=session_is_admin,
         session_email=session_email,
         show_files=docs.enabled(),
-        show_connectors=client_slug.lower() in _CONNECTORS_PILOT_SLUGS,
+        show_connectors=_pflags["show_connectors"],
         view_nav_html=view_nav_html,
     )
     if use_session:
