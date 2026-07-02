@@ -65,15 +65,6 @@ def render_nixon_bigquery_test_page(
         <button class="dash-view-btn tab-btn" data-tab="explorer">{_ICON_EXPLORER}<span>Explorer</span></button>
         <button class="dash-view-btn tab-btn" data-tab="analytics">{_ICON_WEBSITE}<span>Website Analytics</span></button>
         <button class="dash-view-btn tab-btn" data-tab="gsc">{_ICON_SEARCH}<span>Search Console</span></button>
-        <div id="analyticsSubnav" hidden>
-          <a class="dash-view-btn analytics-sub" href="#sec-pages"   data-nav="sec-pages"   data-module="top_pages">Top Pages</a>
-          <a class="dash-view-btn analytics-sub" href="#sec-traffic"  data-nav="sec-traffic"  data-module="traffic">Traffic</a>
-          <a class="dash-view-btn analytics-sub" href="#sec-audience" data-nav="sec-audience" data-module="audience">Audience</a>
-          <a class="dash-view-btn analytics-sub" href="#sec-landing"  data-nav="sec-landing"  data-module="landing">Landing Pages</a>
-          <a class="dash-view-btn analytics-sub" href="#sec-conversions" data-nav="sec-conversions" data-module="conversions">Conversions</a>
-          <a class="dash-view-btn analytics-sub" href="#sec-useracq"  data-nav="sec-useracq"  data-module="user_acquisition">User Acquisition</a>
-          <a class="dash-view-btn analytics-sub" href="#sec-demographics" data-nav="sec-demographics" data-module="demographics">Demographics</a>
-        </div>
         {lead_tracking_link}
         <a class="dash-view-btn" href="{gtm_url}"{'' if lead_tracking_link else ' style="margin-top:6px;border-top:1px solid rgba(255,255,255,.1);padding-top:14px"'}>{_ICON_TAGS}<span>Event Tracking</span></a>
       </nav>
@@ -507,8 +498,6 @@ def render_nixon_bigquery_test_page(
     function switchTab(tab) {{
       TABS.forEach(t => {{ document.getElementById('pane-' + t).hidden = t !== tab; }});
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-      const subnav = document.getElementById('analyticsSubnav');
-      if (subnav) subnav.hidden = tab !== 'analytics';
       const pf = document.getElementById('platformFilterGroup');
       if (pf) pf.hidden = tab === 'analytics' || tab === 'gsc';
       currentTab = tab;
@@ -552,9 +541,6 @@ def render_nixon_bigquery_test_page(
       ALL_MODULES.forEach(key => {{
         const sec = document.getElementById(MODULE_SECTIONS[key]);
         if (sec) sec.hidden = !modules[key];
-      }});
-      document.querySelectorAll('#analyticsSubnav [data-module]').forEach(a => {{
-        a.hidden = !modules[a.dataset.module];
       }});
     }}
 
@@ -1188,21 +1174,6 @@ def render_nixon_bigquery_test_page(
     }});
     loadSummary();
     loadHealth();
-
-    // ---- Analytics sub-nav scrollspy ----
-    (function(){{
-      const links=[...document.querySelectorAll('#analyticsSubnav [data-nav]')];
-      const map=new Map(links.map(a=>[a.dataset.nav,a]));
-      const obs=new IntersectionObserver(entries=>{{
-        entries.forEach(en=>{{
-          if (en.isIntersecting&&currentTab==='analytics') {{
-            links.forEach(l=>l.classList.remove('active'));
-            const a=map.get(en.target.id); if (a) a.classList.add('active');
-          }}
-        }});
-      }},{{rootMargin:'-40% 0px -55% 0px'}});
-      links.forEach(a=>{{const el=document.getElementById(a.dataset.nav);if(el)obs.observe(el);}});
-    }})();
   </script>
   {admin_panel_html}
   <script>
