@@ -97,9 +97,24 @@ def render_nixon_analytics_page(
     _ICON_BACK     = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>'
     _ICON_SETTINGS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
     _ICON_TAGS     = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>'
+    _ICON_CONNECTORS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 3a3 3 0 00-3 3v1H9V6a3 3 0 10-3 3v1H3v2h3v1a3 3 0 103 3v-1h6v1a3 3 0 103-3v-1h3v-2h-3V9a3 3 0 000-6z"/></svg>'
+    _ICON_LEADS    = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>'
 
-    main_url     = _api_url("/dashboard/nixon-bq-test", access_key=access_key)
-    settings_url = _api_url("/dashboard/nixon-bq-test/settings", access_key=access_key)
+    main_url       = _api_url("/dashboard/nixon-bq-test", access_key=access_key)
+    settings_url   = _api_url("/dashboard/nixon-bq-test/settings", access_key=access_key)
+    connectors_url = _api_url("/dashboard/nixon-bq-test/connectors", access_key=access_key)
+    lead_tracking_url = _api_url("/dashboard/nixon-bq-test/lead-tracking", access_key=access_key)
+    try:
+        from dashboard.renderers.base_layout import platform_nav_flags as _platform_nav_flags
+        _pflags = _platform_nav_flags("nixon-bq-test")
+    except Exception:
+        _pflags = {"show_lead_tracking": False}
+    lead_tracking_link = ""
+    if _pflags.get("show_lead_tracking"):
+        lead_tracking_link = (
+            f'<a class="dash-view-btn" href="{lead_tracking_url}">'
+            f'{_ICON_LEADS}<span>Lead Tracking</span></a>'
+        )
 
     sidebar_html = f"""
     <button type="button" class="dash-sidebar-toggle" id="sidebarToggle" aria-label="Open navigation" aria-expanded="false" aria-controls="dashSidebar">{_ICON_MENU}</button>
@@ -117,12 +132,14 @@ def render_nixon_analytics_page(
         <a class="dash-view-btn"        href="#sec-traffic"  data-nav="sec-traffic">{_ICON_TRAFFIC}<span>Traffic</span></a>
         <a class="dash-view-btn"        href="#sec-audience" data-nav="sec-audience">{_ICON_AUDIENCE}<span>Audience</span></a>
         <a class="dash-view-btn"        href="#sec-landing"  data-nav="sec-landing">{_ICON_LANDING}<span>Landing Pages</span></a>
+        {lead_tracking_link}
         <a class="dash-view-btn"        href="/dashboard/nixon-bq-test/gtm{('?key=' + access_key) if access_key else ''}" style="margin-top:8px;border-top:1px solid rgba(255,255,255,.1);padding-top:14px">{_ICON_TAGS}<span>Event Tracking</span></a>
       </nav>
       <div class="dash-sidebar-footer">
         <div class="dash-sidebar-client"><span class="topbar-client-label">Nixon — Website Analytics</span></div>
         <nav class="dash-sidebar-links" aria-label="Account navigation">
           <a href="{main_url}" class="dash-sidebar-link">{_ICON_BACK}<span>Paid Media</span></a>
+          <a href="{connectors_url}" class="dash-sidebar-link">{_ICON_CONNECTORS}<span>Connectors</span></a>
           <a href="{settings_url}" class="dash-sidebar-link">{_ICON_SETTINGS}<span>Settings</span></a>
         </nav>
         {account_html}
