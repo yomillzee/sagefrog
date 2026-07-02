@@ -728,6 +728,34 @@ def nixon_gsc_summary(
 
 
 @router.get(
+    "/api/clients/nixon/semrush/summary",
+    summary="Nixon SEMrush domain snapshot (overview, keywords, backlinks) from BigQuery",
+)
+def nixon_semrush_summary(
+    request: Request,
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(
+        request,
+        key=key,
+        bearer_credentials=bearer_credentials,
+        x_api_key=x_api_key,
+    )
+    try:
+        import bq_semrush_service
+        # SEMrush is synced by the "semrush" connector under client_slug "nixon"
+        # (see connectors/semrush.py); reads go straight to nixon-medical's mart,
+        # matching every other Nixon read path in this module.
+        return bq_semrush_service.fetch_latest_snapshot(
+            client_key="nixon", project="nixon-medical", mart_dataset="marketing_marts",
+        )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
     "/api/clients/nixon/linkedin/explorer",
     summary="Nixon LinkedIn creative explorer from BigQuery marketing mart",
 )

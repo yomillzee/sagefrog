@@ -65,6 +65,11 @@ _PLATFORM_ICONS: dict[str, str] = {
         '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>'
         '</svg>'
     ),
+    "semrush": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="#ff642d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<path d="M3 17l5-6 4 4 5-8 4 5"/>'
+        '</svg>'
+    ),
 }
 
 _STATUS_LABELS = {
@@ -591,11 +596,21 @@ def _render_wizard(
         <div class="wizard-step-header">
           <div class="wizard-step-num">{'✓' if config and config.source_account_id else '2'}</div>
           <div>
-            <div class="wizard-step-title">Select account</div>
+            <div class="wizard-step-title">{'Select account' if not handler.manual_account_entry else handler.manual_account_label}</div>
             {'<div class="wizard-step-summary">' + _esc(config.source_account_name or config.source_account_id or '') + '</div>' if config and config.source_account_id else ''}
           </div>
         </div>
         <div class="wizard-step-body">
+          {f'''
+          <div class="dest-field">
+            <label for="manualAccountInput">{_esc(handler.manual_account_label)}</label>
+            <input id="manualAccountInput" type="text" value="{_esc((config.source_account_id if config else '') or '')}" placeholder="example.com" />
+          </div>
+          <div id="accountError" class="test-result err" style="display:none"></div>
+          <div class="wizard-actions">
+            <button class="btn-primary" onclick="confirmManualAccount()">Continue</button>
+          </div>
+          ''' if handler.manual_account_entry else f'''
           <div id="accountLoading" style="color:var(--muted);font-size:.9rem">
             <span class="spinner"></span>Loading accounts…
           </div>
@@ -604,6 +619,7 @@ def _render_wizard(
           <div class="wizard-actions" style="display:none" id="step2Actions">
             <button class="btn-primary" id="step2Next" onclick="confirmAccount()">Continue</button>
           </div>
+          '''}
         </div>
       </div>
 
@@ -693,6 +709,7 @@ def _render_wizard(
     <script>
     var _clientSlug = {_js_str(client_slug)};
     var _connType = {_js_str(handler.connector_type)};
+    var _manualAccountEntry = {'true' if handler.manual_account_entry else 'false'};
     var _selectedAccountId = null;
     var _selectedAccountName = null;
     var _selectedBackfillDays = 30;
@@ -733,7 +750,7 @@ def _render_wizard(
       }});
       var target = document.getElementById('wizStep' + n);
       if (target) target.scrollIntoView({{behavior:'smooth', block:'nearest'}});
-      if (n === 2) loadAccounts();
+      if (n === 2 && !_manualAccountEntry) loadAccounts();
     }}
 
     // Allow clicking a completed step header to go back and change the selection
@@ -798,6 +815,27 @@ def _render_wizard(
       }}).then(r => r.json()).then(data => {{
         if (data.ok) activateStep(3);
         else alert(data.error || 'Failed to save account selection.');
+      }});
+    }}
+
+    function confirmManualAccount() {{
+      var input = document.getElementById('manualAccountInput');
+      var value = (input.value || '').trim().replace(/^https?:\\/\\//, '').replace(/^www\\./, '').replace(/\\/$/, '');
+      var errEl = document.getElementById('accountError');
+      if (!value) {{
+        errEl.textContent = 'Enter a value first.';
+        errEl.style.display = 'block';
+        return;
+      }}
+      errEl.style.display = 'none';
+      var url = '/dashboard/' + _clientSlug + '/connectors/' + _connType + '/configure';
+      fetch(url, {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{source_account_id: value, source_account_name: value}})
+      }}).then(r => r.json()).then(data => {{
+        if (data.ok) activateStep(3);
+        else {{ errEl.textContent = data.error || 'Failed to save.'; errEl.style.display = 'block'; }}
       }});
     }}
 
@@ -873,7 +911,7 @@ def _render_wizard(
     (function() {{
       var startStep = {start_step};
       activateStep(startStep);
-      if (startStep === 2) loadAccounts();
+      if (startStep === 2 && !_manualAccountEntry) loadAccounts();
     }})();
     </script>
     """

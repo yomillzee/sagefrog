@@ -419,6 +419,16 @@ def render_nixon_bigquery_test_page(
         <h2>Top pages</h2>
         <div class="table-wrap"><table id="gscPagesTable" class="compact"></table></div>
       </section>
+      <section id="sec-semrush">
+        <h2>SEMrush — Organic Search Intelligence</h2>
+        <p class="src-note"><code>GET /api/clients/nixon/semrush/summary</code><span class="arrow">→</span><code>marketing_marts.vw_semrush_overview_latest / vw_semrush_keywords_latest</code></p>
+        <div class="status" id="semrushStatus">Waiting…</div>
+        <div class="cards" id="semrushKpis"></div>
+      </section>
+      <section>
+        <h2>Top organic keywords</h2>
+        <div class="table-wrap"><table id="semrushKeywordsTable" class="compact"></table></div>
+      </section>
     </div><!-- /pane-gsc -->
 
   </main>
@@ -450,6 +460,7 @@ def render_nixon_bigquery_test_page(
     const USER_ACQ_API         = "{_aurl('/api/clients/nixon/analytics/user-acquisition')}";
     const DEMOGRAPHICS_API     = "{_aurl('/api/clients/nixon/analytics/demographics')}";
     const GSC_API              = "{_aurl('/api/clients/nixon/gsc/summary')}";
+    const SEMRUSH_API          = "{_aurl('/api/clients/nixon/semrush/summary')}";
 
     // ---- Formatters ----
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
@@ -518,6 +529,7 @@ def render_nixon_bigquery_test_page(
       if (tab === 'gsc' && !gscLoaded) {{
         gscLoaded = true;
         loadGsc();
+        loadSemrush();
       }}
     }}
 
@@ -714,6 +726,45 @@ def render_nixon_bigquery_test_page(
         setStatus('gscStatus', `${{count(k.clicks)}} clicks · ${{count(k.impressions)}} impressions`);
       }} catch(err) {{
         setStatus('gscStatus', err.message||String(err), true);
+      }}
+    }}
+
+    // ---- SEMrush (domain-level snapshot — not date-range scoped) ----
+    function renderSemrushKpis(ov, bl) {{
+      ov = ov || {{}}; bl = bl || {{}};
+      const cards = [
+        ['Organic Traffic (est.)', count(ov.organic_traffic)],
+        ['Organic Keywords', count(ov.organic_keywords)],
+        ['Authority Score', bl.authority_score != null ? bl.authority_score + '/100' : '—'],
+        ['Referring Domains', count(bl.referring_domains)],
+      ];
+      document.getElementById('semrushKpis').innerHTML = cards.map(([label,val]) =>
+        `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{val}}</div></div>`).join('');
+    }}
+    async function loadSemrush() {{
+      setStatus('semrushStatus','Loading…');
+      document.getElementById('semrushKpis').innerHTML = skelCards(4);
+      document.getElementById('semrushKeywordsTable').innerHTML = skelTable(5,6);
+      try {{
+        const p = await getJson(SEMRUSH_API);
+        if (!p || !p.domain) {{
+          renderSemrushKpis({{}}, {{}});
+          renderTable('semrushKeywordsTable', [{{key:'keyword',label:'Keyword',left:true}}], [], 'No SEMrush data yet — connect the SEMrush connector to enable this.');
+          setStatus('semrushStatus','No SEMrush data yet.');
+          return;
+        }}
+        renderSemrushKpis(p.overview, p.backlinks);
+        const semrushCols = [
+          {{key:'keyword',label:'Keyword',left:true}},
+          {{key:'position',label:'Position',format:count}},
+          {{key:'search_volume',label:'Search Vol.',format:count}},
+          {{key:'traffic_pct',label:'Traffic %',format:pct}},
+          {{key:'cpc',label:'CPC',format:money}},
+        ];
+        renderTable('semrushKeywordsTable', semrushCols, p.keywords||[], 'No keyword data available.');
+        setStatus('semrushStatus', `${{esc(p.domain)}} · ${{count((p.keywords||[]).length)}} keywords tracked`);
+      }} catch(err) {{
+        setStatus('semrushStatus', err.message||String(err), true);
       }}
     }}
     async function loadHealth() {{

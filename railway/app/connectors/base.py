@@ -33,6 +33,13 @@ class ConnectorHandler(ABC):
     # account as fallback — e.g. GSC. The wizard surfaces the agency connection
     # instead of a per-client authorize step.
     agency_oauth: bool = False
+    # Set to True for connectors with no "list accounts" API — the wizard's step 2
+    # renders a plain text field (saved as source_account_id) instead of fetching
+    # and rendering a picker. e.g. SEMrush, where the "account" is just a domain
+    # the user types in.
+    manual_account_entry: bool = False
+    # Label for the manual entry field when manual_account_entry is True.
+    manual_account_label: str = "Account ID"
 
     @abstractmethod
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
@@ -70,4 +77,5 @@ CONNECTOR_ORDER = [
     "gsc",
     "gtm",
     "hubspot",
+    "semrush",
 ]
