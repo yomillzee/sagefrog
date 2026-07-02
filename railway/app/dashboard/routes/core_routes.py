@@ -151,6 +151,44 @@ def internal_sync_bq_client(client_slug: str, date_range: str = "LAST_30_DAYS") 
 
 
 @router.post(
+    "/internal/sync-bq-all",
+    summary="Cron: refresh every client that has at least one connector configured",
+    dependencies=[Depends(require_cron_secret)],
+)
+def internal_sync_bq_all(date_range: str = "LAST_30_DAYS") -> dict:
+    """Hands-off daily sync: no per-client cron provisioning required.
+
+    Connecting a source via the Connectors wizard is enough — this endpoint
+    re-derives the client list from connector_configs on every run, so a
+    newly connected client is picked up on the next cron tick automatically.
+    sync_enabled still gates which connectors within each client actually
+    run (bigquery_refresh_orchestrator); a client with zero enabled
+    connectors just no-ops for that run.
+    """
+    import connector_config_store
+
+    preset = (date_range or "LAST_30_DAYS").strip().upper().replace("-", "_")
+    if preset not in WAREHOUSE_DATE_RANGES:
+        raise HTTPException(status_code=400, detail="Invalid date_range.")
+
+    slugs = sorted(connector_config_store.client_slugs_with_configs())
+    results: dict[str, dict] = {}
+    failed: list[str] = []
+    for slug in slugs:
+        try:
+            results[slug] = dashboard_service.refresh_bq_client(
+                slug, date_range=preset, sync_trigger="cron"
+            )
+        except Exception as exc:
+            # One client failing (bad credentials, BQ outage, etc.) must not
+            # block every other client's daily sync.
+            LOGGER.exception("sync-bq-all failed for client=%s", slug)
+            failed.append(slug)
+            results[slug] = {"status": "failed", "error": str(exc)[:500]}
+    return {"clients_synced": len(slugs), "failed": failed, "results": results}
+
+
+@router.post(
     "/internal/backfill-bq/{client_slug}",
     summary="Onboarding: ingest 180 days for a BigQuery-mode client",
     dependencies=[Depends(require_cron_secret)],

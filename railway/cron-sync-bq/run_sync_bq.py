@@ -1,8 +1,13 @@
 """One-shot cron worker: POST /internal/sync-bq/{CLIENT_SLUG} on the sagefrog API.
 
 Generic BigQuery-mode client refresh. Mirrors cron-sync-penn, but targets the
-generic /internal/sync-bq/{slug} endpoint so one codebase serves any client —
-set CLIENT_SLUG per Railway service (defaults to 'nixon').
+generic /internal/sync-bq/{slug} endpoint so one codebase serves any client.
+
+Hands-off mode: leave CLIENT_SLUG UNSET and this hits /internal/sync-bq-all
+instead, which re-derives the full client list from connector_configs on
+every run — connecting a source via the Connectors wizard is then the only
+setup step; no per-client Railway cron provisioning needed. Set CLIENT_SLUG
+only if you want a dedicated service scoped to one specific client.
 """
 
 from __future__ import annotations
@@ -30,10 +35,13 @@ def main() -> int:
         print("CRON_SECRET is not set on the cron service.", file=sys.stderr)
         return 1
 
-    slug = _strip_env(os.getenv("CLIENT_SLUG")) or "nixon"
+    slug = _strip_env(os.getenv("CLIENT_SLUG"))
     base = _strip_env(os.getenv("SYNC_BASE_URL")) or "https://sagefrog-production.up.railway.app"
     date_range = _strip_env(os.getenv("SYNC_DATE_RANGE")) or "LAST_30_DAYS"
-    url = f"{base.rstrip('/')}/internal/sync-bq/{slug}?date_range={date_range}"
+    if slug:
+        url = f"{base.rstrip('/')}/internal/sync-bq/{slug}?date_range={date_range}"
+    else:
+        url = f"{base.rstrip('/')}/internal/sync-bq-all?date_range={date_range}"
 
     print(f"POST {url}", flush=True)
     req = urllib.request.Request(
@@ -42,8 +50,12 @@ def main() -> int:
         headers={"X-Cron-Secret": secret, "Accept": "application/json"},
     )
     started = time.monotonic()
+    # sync-bq-all loops every client in one request; give it more headroom
+    # than the single-client 900s ceiling. Revisit (background/async) if the
+    # client count grows enough that this starts running long.
+    timeout = 900 if slug else 1800
     try:
-        with urllib.request.urlopen(req, timeout=900) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8", errors="replace")
             elapsed = time.monotonic() - started
             print(f"HTTP {resp.status} in {elapsed:.1f}s", flush=True)
@@ -52,11 +64,17 @@ def main() -> int:
                 return 1
             try:
                 data = json.loads(body)
-                run = data.get("refresh_run") or {}
-                print(
-                    f"refresh_run: status={run.get('status')} date_range={run.get('date_range')}",
-                    flush=True,
-                )
+                if slug:
+                    run = data.get("refresh_run") or {}
+                    print(
+                        f"refresh_run: status={run.get('status')} date_range={run.get('date_range')}",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"clients_synced={data.get('clients_synced')} failed={data.get('failed')}",
+                        flush=True,
+                    )
             except json.JSONDecodeError:
                 pass
             return 0
