@@ -233,10 +233,14 @@ def render_nixon_bigquery_test_page(
     .ad-thumb {{ width:34px; height:34px; border-radius:5px; object-fit:cover; border:1px solid var(--line); background:#f0f3f8; flex:0 0 auto; }}
     .ad-meta {{ display:flex; flex-direction:column; line-height:1.25; }}
     .ad-label {{ font-weight:600; color:#1f2d40; }}
+    .ad-id {{ margin-left:6px; font-family:monospace; font-size:.68rem; font-weight:400; color:var(--muted); }}
     .ad-type {{ font-size:.68rem; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }}
     .ad-copy {{ display:flex; flex-direction:column; gap:1px; margin-top:3px; }}
     .ad-copy-line {{ font-size:.78rem; color:var(--muted); white-space:normal; }}
     .ad-copy-tag {{ display:inline-block; min-width:34px; color:#9aa7bd; font-weight:700; font-size:.66rem; text-transform:uppercase; margin-right:5px; }}
+    .ad-copy-more {{ align-self:flex-start; margin:2px 0 1px 39px; padding:0; border:0; background:none; color:var(--accent, #2563eb); font-size:.72rem; font-weight:600; cursor:pointer; }}
+    .ad-copy-more:hover {{ text-decoration:underline; }}
+    .ad-copy-extra {{ display:flex; flex-direction:column; gap:1px; }}
     /* ---- Pages search ---- */
     .page-search {{ width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:8px 12px; font:inherit; font-size:.88rem; background:#fff; color:#102033; margin-bottom:10px; }}
     .page-search:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
@@ -798,18 +802,32 @@ def render_nixon_bigquery_test_page(
       if (typeof v==='string' && v) {{ try {{ const a=JSON.parse(v); return Array.isArray(a)?a.filter(Boolean):[]; }} catch(e) {{ return []; }} }}
       return [];
     }}
+    const HEADLINES_VISIBLE = 5;
     function adCell(ad) {{
-      const label=esc(ad.ad_label||ad.ad_name||'—');
       const type=ad.media_type?`<span class="ad-type">${{esc(ad.media_type)}}</span>`:'';
       const thumb=ad.thumbnail_url?`<img class="ad-thumb" src="${{esc(ad.thumbnail_url)}}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none'">` :'';
       // Full RSA copy (up to 15 headlines / 4 descriptions) from the JSON arrays;
       // fall back to the legacy flat columns for rows synced before the repull.
       let hs=parseCopyList(ad.headlines); if(!hs.length) hs=[ad.headline_1,ad.headline_2,ad.headline_3].filter(Boolean);
       let ds=parseCopyList(ad.descriptions); if(!ds.length) ds=[ad.description_1,ad.description_2].filter(Boolean);
-      const pairs=[...hs.map((v,i)=>['H'+(i+1),v]),...ds.map((v,i)=>['D'+(i+1),v])];
-      const copyLines=pairs.filter(([,v])=>v).map(([tag,v])=>`<span class="ad-copy-line"><span class="ad-copy-tag">${{tag}}</span>${{esc(v)}}</span>`).join('');
+      // ad_name is often blank for RSAs; prefer it, then the first headline, then
+      // the raw ad ID as a last resort (shown small/muted, not as the headline label).
+      const label=esc(ad.ad_name || hs[0] || ad.ad_label || '—');
+      const idTag=ad.ad_id?`<span class="ad-id">#${{esc(ad.ad_id)}}</span>`:'';
+      const visible=hs.slice(0, HEADLINES_VISIBLE), extra=hs.slice(HEADLINES_VISIBLE);
+      const visibleLines=visible.map((v,i)=>['H'+(i+1),v]);
+      const extraLines=extra.map((v,i)=>['H'+(i+1+HEADLINES_VISIBLE),v]);
+      const descLines=ds.map((v,i)=>['D'+(i+1),v]);
+      const line=([tag,v])=>`<span class="ad-copy-line"><span class="ad-copy-tag">${{tag}}</span>${{esc(v)}}</span>`;
+      const visibleHtml=visibleLines.filter(([,v])=>v).map(line).join('');
+      const extraHtml=extraLines.filter(([,v])=>v).map(line).join('');
+      const descHtml=descLines.filter(([,v])=>v).map(line).join('');
+      const more=extra.length
+        ? `<button type="button" class="ad-copy-more" data-more-label="+${{extra.length}} more">+${{extra.length}} more</button><div class="ad-copy-extra" hidden>${{extraHtml}}</div>`
+        : '';
+      const copyLines=visibleHtml+more+descHtml;
       const copy=copyLines?`<div class="ad-copy">${{copyLines}}</div>`:'';
-      return `<div class="ad-cell">${{thumb}}<span class="ad-meta"><span class="ad-label">${{label}}</span>${{type}}${{copy}}</span></div>`;
+      return `<div class="ad-cell">${{thumb}}<span class="ad-meta"><span class="ad-label">${{label}}${{idTag}}</span>${{type}}${{copy}}</span></div>`;
     }}
     function renderExplorer() {{
       const filtered=explorerRows.filter(explorerRowMatches);
@@ -847,7 +865,7 @@ def render_nixon_bigquery_test_page(
     function normalizeExplorerRows(google, linkedin, meta) {{
       const out=[];
       for (const r of (google&&google.rows?google.rows:[])) {{
-        out.push({{platform:'google',campaign_name:r.campaign_name,ad_group_name:r.ad_group_name,ad_label:r.ad_label,headlines:r.headlines,descriptions:r.descriptions,headline_1:r.headline_1,headline_2:r.headline_2,headline_3:r.headline_3,description_1:r.description_1,description_2:r.description_2,ad_name:r.ad_name,final_url:r.final_url,ad_type:r.ad_type,thumbnail_url:'',media_type:r.ad_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
+        out.push({{platform:'google',campaign_name:r.campaign_name,ad_group_name:r.ad_group_name,ad_label:r.ad_label,ad_id:r.ad_id,headlines:r.headlines,descriptions:r.descriptions,headline_1:r.headline_1,headline_2:r.headline_2,headline_3:r.headline_3,description_1:r.description_1,description_2:r.description_2,ad_name:r.ad_name,final_url:r.final_url,ad_type:r.ad_type,thumbnail_url:'',media_type:r.ad_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
       }}
       for (const r of (linkedin&&linkedin.rows?linkedin.rows:[])) {{
         out.push({{platform:'linkedin',campaign_name:r.campaign_group_name||r.campaign_name,ad_group_name:r.campaign_name,ad_label:r.creative_name,thumbnail_url:r.thumbnail_url||r.image_url||'',media_type:r.media_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
@@ -1169,6 +1187,13 @@ def render_nixon_bigquery_test_page(
     buildMetricChips();
     setupChartHover();
     document.getElementById('explorerTable').addEventListener('click',ev=>{{
+      const moreBtn=ev.target.closest('.ad-copy-more');
+      if (moreBtn) {{
+        const extra=moreBtn.nextElementSibling;
+        extra.hidden=!extra.hidden;
+        moreBtn.textContent = extra.hidden ? moreBtn.dataset.moreLabel : 'Show less';
+        return;
+      }}
       const row=ev.target.closest('tr[data-expandable]');
       if (row) toggleExplorerRow(row);
     }});
