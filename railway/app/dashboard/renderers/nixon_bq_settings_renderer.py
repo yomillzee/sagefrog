@@ -9,15 +9,27 @@ and previewable offline via .preview/gen.py.
 
 from __future__ import annotations
 
-from dashboard.renderers.base_layout import favicon_head_html
-from dashboard.renderers.nixon_bq_test_renderer import _SIDEBAR_CSS, _api_url
+from dashboard.renderers.base_layout import (
+    SIDEBAR_CSS,
+    dashboard_topbar_js,
+    favicon_head_html,
+    platform_nav_flags,
+    render_sidebar,
+)
+from dashboard.renderers.nixon_bq_test_renderer import _api_url
 from dashboard.utils.formatting import esc as _esc
 
-_ICON_MENU = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>'
 _ICON_OVERVIEW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>'
 _ICON_EXPLORER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>'
 _ICON_WEBSITE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>'
-_ICON_SETTINGS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
+_ICON_SEARCH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
+_ICON_TAGS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>'
+_ICON_LEADS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>'
+
+
+def _docs_enabled() -> bool:
+    import client_insight_documents as docs
+    return docs.enabled()
 
 
 def render_nixon_bq_settings_page(
@@ -42,24 +54,48 @@ def render_nixon_bq_settings_page(
 
     admin_class = "is-admin" if session_is_admin else ""
     dash_url = _api_url("/dashboard/nixon-bq-test", access_key=access_key)
-    this_url = _api_url("/dashboard/nixon-bq-test/settings", access_key=access_key)
     cred_action = _api_url("/dashboard/nixon/gcp-credentials", access_key=access_key)
     settings_action = _api_url("/dashboard/nixon/settings", access_key=access_key)
 
-    account_html = ""
-    if use_session and session_email:
-        admin_link = (
-            '<a class="dash-sidebar-account-link" href="/admin">Admin</a>'
-            '<span class="dash-sidebar-account-sep">·</span>' if session_is_admin else ""
+    pflags = platform_nav_flags("nixon-bq-test")
+    lead_tracking_link = ""
+    if pflags.get("show_lead_tracking"):
+        lead_tracking_url = _api_url("/dashboard/nixon-bq-test/lead-tracking", access_key=access_key)
+        lead_tracking_link = (
+            f'<a class="dash-view-btn" href="{lead_tracking_url}">'
+            f'{_ICON_LEADS}<span>Lead Tracking</span></a>'
         )
-        account_html = f"""
-        <div class="dash-sidebar-account">
-          <span class="dash-sidebar-account-email">{_esc(session_email)}</span>
-          <div class="dash-sidebar-account-actions">
-            {admin_link}
-            <form class="dash-sidebar-logout-form" method="post" action="/logout"><button type="submit" class="dash-sidebar-account-link">Sign out</button></form>
-          </div>
-        </div>"""
+    event_tracking_link = ""
+    if pflags.get("show_gtm"):
+        gtm_url = _api_url("/dashboard/nixon-bq-test/gtm", access_key=access_key)
+        event_tracking_link = (
+            f'<a class="dash-view-btn" href="{gtm_url}">'
+            f'{_ICON_TAGS}<span>Event Tracking</span></a>'
+        )
+
+    view_nav_html = f"""
+      <nav class="dash-sidebar-nav" aria-label="Sections">
+        <a class="dash-view-btn" href="{dash_url}">{_ICON_OVERVIEW}<span>Overview</span></a>
+        <a class="dash-view-btn" href="{dash_url}">{_ICON_EXPLORER}<span>Explorer</span></a>
+        <a class="dash-view-btn" href="{dash_url}">{_ICON_WEBSITE}<span>Website Analytics</span></a>
+        <a class="dash-view-btn" href="{dash_url}">{_ICON_SEARCH}<span>Search Console</span></a>
+        {lead_tracking_link}
+        {event_tracking_link}
+      </nav>
+    """
+
+    sidebar_html = render_sidebar(
+        client_slug="nixon-bq-test",
+        label="Nixon Medical",
+        active_nav="settings",
+        access_key=access_key,
+        use_session=use_session,
+        session_is_admin=session_is_admin,
+        session_email=session_email,
+        show_files=_docs_enabled(),
+        show_connectors=pflags["show_connectors"],
+        view_nav_html=view_nav_html,
+    )
 
     flash_html = ""
     if flash:
@@ -84,7 +120,7 @@ def render_nixon_bq_settings_page(
     :root {{ --bg:#eef2f7; --card:#fff; --line:#e2e8f0; --line-soft:#eff3f8; --navy:#0a2540; --accent:#1d6fd0; --muted:#6b7a90; --bad:#b42318; --ok:#0a7f3f; --sidebar-from:#0a2540; --sidebar-to:#123456; --radius:14px; --radius-sm:9px; --shadow:0 1px 2px rgba(16,33,67,.04), 0 4px 16px rgba(16,33,67,.05); }}
     * {{ box-sizing:border-box; }}
     body {{ margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:#102033; -webkit-font-smoothing:antialiased; }}
-    {_SIDEBAR_CSS}
+    {SIDEBAR_CSS}
     .debug-only {{ display:none; }} .is-admin .debug-only {{ display:block; }}
     main {{ max-width:1000px; margin:0 auto; padding:30px 28px 56px; }}
     .page-head {{ margin-bottom:24px; }}
@@ -146,29 +182,7 @@ def render_nixon_bq_settings_page(
 </head>
 <body>
   <div class="app-shell {admin_class}" id="appShell">
-    <button type="button" class="dash-sidebar-toggle" id="sidebarToggle" aria-label="Open navigation" aria-expanded="false" aria-controls="dashSidebar">{_ICON_MENU}</button>
-    <div class="dash-sidebar-backdrop" id="sidebarBackdrop" hidden></div>
-    <aside class="dash-sidebar" id="dashSidebar" aria-label="Primary navigation">
-      <div class="dash-sidebar-head">
-        <a href="{dash_url}" class="dash-sidebar-logo" aria-label="Sagefrog home">
-          <img class="dash-sidebar-logo-icon" src="/static/apple-touch-icon.png" alt="" width="34" height="34" onerror="this.remove()" />
-          <span class="dash-sidebar-wordmark">Sagefrog</span>
-        </a>
-        <span class="dash-sidebar-beta">Beta</span>
-      </div>
-      <nav class="dash-sidebar-nav" aria-label="Sections">
-        <a class="dash-view-btn" href="{dash_url}">{_ICON_OVERVIEW}<span>Overview</span></a>
-        <a class="dash-view-btn" href="{dash_url}">{_ICON_EXPLORER}<span>Explorer</span></a>
-        <a class="dash-view-btn" href="{dash_url}">{_ICON_WEBSITE}<span>Website Analytics</span></a>
-      </nav>
-      <div class="dash-sidebar-footer">
-        <div class="dash-sidebar-client"><span class="topbar-client-label">Nixon — BQ Test</span></div>
-        <nav class="dash-sidebar-links" aria-label="Account navigation">
-          <a href="{this_url}" class="dash-sidebar-link active">{_ICON_SETTINGS}<span>Settings</span></a>
-        </nav>
-        {account_html}
-      </div>
-    </aside>
+    {sidebar_html}
     <div class="dash-main">
   <main>
     <div class="page-head">
@@ -389,17 +403,7 @@ def render_nixon_bq_settings_page(
       const all = ALL_MODULES.reduce((o,k)=>({{...o,[k]:true}}),{{}}); saveModules(all); renderModuleToggles();
     }});
     renderModuleToggles();
-
-    (function() {{
-      const shell = document.querySelector('.app-shell');
-      const toggle = document.getElementById('sidebarToggle');
-      const backdrop = document.getElementById('sidebarBackdrop');
-      if (!shell || !toggle) return;
-      const setOpen = open => {{ shell.classList.toggle('sidebar-open', open); toggle.setAttribute('aria-expanded', open ? 'true' : 'false'); if (backdrop) backdrop.hidden = !open; }};
-      toggle.addEventListener('click', () => setOpen(!shell.classList.contains('sidebar-open')));
-      if (backdrop) backdrop.addEventListener('click', () => setOpen(false));
-      document.addEventListener('keydown', e => {{ if (e.key === 'Escape') setOpen(false); }});
-    }})();
   </script>
+  <script>{dashboard_topbar_js()}</script>
 </body>
 </html>"""
