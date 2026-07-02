@@ -87,6 +87,12 @@ def render_gtm_page(
     :root {{ --bg:#eef2f7; --card:#fff; --line:#e2e8f0; --navy:#0a2540; --blue:#1769aa; --accent:#1d6fd0; --muted:#6b7a90; --bad:#b42318; --ok:#0a7f3f; --sidebar-from:#0a2540; --sidebar-to:#123456; --radius:14px; --radius-sm:9px; --shadow:0 1px 2px rgba(16,33,67,.04),0 4px 16px rgba(16,33,67,.05); }}
     * {{ box-sizing:border-box; }}
     body {{ margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:#102033; -webkit-font-smoothing:antialiased; }}
+    /* SIDEBAR_CSS (shared) covers .dash-sidebar* only — the flex-container
+       rules that lay the sidebar and content side by side normally live in
+       render_client_shell_page's own style block, which this standalone page
+       doesn't use, so they're declared explicitly here instead. */
+    .app-shell {{ display: flex; flex-direction: row; min-height: 100vh; }}
+    .dash-main {{ flex: 1 1 auto; min-width: 0; }}
     {SIDEBAR_CSS}
     main {{ padding: 28px 32px; max-width: 1200px; }}
     @media (max-width:900px) {{ main {{ padding: 24px 16px; }} }}
