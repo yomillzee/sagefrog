@@ -9,14 +9,10 @@ from typing import Any
 from penn_config import PennDashboardConfig, load_penn_config
 
 # Built-in clients besides Penn (account IDs optional — set in Settings or DASHBOARD_CLIENTS).
+# Trimmed to just the two portals still in use (nixon-bq-test, and "nixon" which
+# backs its connector configs) — demo, penn-bq-test, and arg-bq-test were removed
+# along with their dashboards, connector configs, and GA4/GSC registry rows.
 _BUILTIN_CLIENTS: dict[str, dict[str, Any]] = {
-    "demo": {
-        "label": "Demo Client",
-        "google_customer_id": "",
-        "linkedin_account_id": "",
-        "meta_account_id": "",
-        "ga4_client_key": "",
-    },
     "nixon": {
         "label": "Nixon Medical",
         "google_customer_id": "",
@@ -24,21 +20,6 @@ _BUILTIN_CLIENTS: dict[str, dict[str, Any]] = {
         "meta_account_id": "",
         "ga4_client_key": "nixon",
         "platform_sources": {"linkedin": "bigquery"},
-    },
-    "penn-bq-test": {
-        "label": "Penn BQ Test",
-        "google_customer_id": "",
-        "linkedin_account_id": "",
-        "meta_account_id": "",
-        "ga4_client_key": "penn",
-        "platform_sources": {"linkedin": "bigquery"},
-    },
-    "arg-bq-test": {
-        "label": "ARG — BQ Test",
-        "google_customer_id": "",
-        "linkedin_account_id": "",
-        "meta_account_id": "",
-        "ga4_client_key": "arg",
     },
     "nixon-bq-test": {
         "label": "Nixon Medical",
