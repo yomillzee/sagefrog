@@ -148,6 +148,22 @@ def get_cached(source: str, payload: dict[str, Any]) -> CacheHit | None:
         )
 
 
+def invalidate_prefix(prefix: str) -> int:
+    """Delete every cache row whose `source` starts with `prefix`.
+
+    Used to drop stale reads the moment a sync completes, rather than waiting
+    out the TTL — e.g. invalidate_prefix("nixon.") after a Nixon connector
+    sync finishes. Best-effort: returns 0 (no error) if DATABASE_URL is unset.
+    """
+    url = _get_db_url()
+    if not url:
+        return 0
+    like_pattern = prefix.replace("%", r"\%").replace("_", r"\_") + "%"
+    with db.connection() as conn:
+        cur = conn.execute("DELETE FROM api_cache WHERE source LIKE %s ESCAPE '\\'", (like_pattern,))
+        return cur.rowcount if cur.rowcount is not None else 0
+
+
 def put_cached(
     source: str,
     payload: dict[str, Any],

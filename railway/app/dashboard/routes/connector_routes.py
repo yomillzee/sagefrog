@@ -380,6 +380,14 @@ async def connector_sync(
                 range_end=result.range_end,
                 rows_loaded=result.rows_loaded,
             )
+            if result.ok:
+                try:
+                    import db_cache
+                    db_cache.invalidate_prefix(f"{slug}.")
+                    if slug.startswith("nixon"):
+                        db_cache.invalidate_prefix("nixon.")
+                except Exception:
+                    _log.warning("cache invalidation failed [%s/%s]", slug, ctype, exc_info=True)
         except Exception as exc:
             err = str(exc)[:500]
             connector_config_store.finish_sync_run(run_id, status="failed", error_message=err)

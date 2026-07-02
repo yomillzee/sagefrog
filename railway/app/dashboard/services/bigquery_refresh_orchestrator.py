@@ -217,6 +217,20 @@ def run_client_bigquery_refresh(
                 range_start=res.range_start, range_end=res.range_end,
                 rows_loaded=res.rows_loaded,
             )
+            if res.ok:
+                # Drop cached API reads for this client immediately rather than
+                # waiting out their TTL — new data just landed in BQ.
+                try:
+                    import db_cache
+                    db_cache.invalidate_prefix(f"{client_slug}.")
+                    # The Nixon dashboard's read endpoints are cached under a
+                    # literal "nixon." prefix regardless of which BQ-routing
+                    # client_slug (e.g. "nixon-bq-test" for GSC/SEMrush) a
+                    # given connector syncs under.
+                    if client_slug.startswith("nixon"):
+                        db_cache.invalidate_prefix("nixon.")
+                except Exception:
+                    LOGGER.warning("cache invalidation failed [%s/%s]", client_slug, ctype, exc_info=True)
             return {
                 "status": "success" if res.ok else "failed",
                 "rows_loaded": res.rows_loaded,
