@@ -1362,58 +1362,6 @@ def render_settings_html(
       </p>
     </section>"""
 
-    # --- GCP service account upload (admin only) ---
-    credentials_section = ""
-    if db_editable:
-        import ga4_credentials as _gc
-        import railway_api as _rw_api
-        try:
-            _cred_env = ga4_clients.resolve_target(
-                client_key=cfg.ga4_client_key or slug
-            ).credentials_env
-        except Exception:
-            _cred_env = None
-        _cred_env = (_cred_env or "").strip() or _gc.default_client_credentials_env(slug)
-        _cred_post = f"/dashboard/{slug}/gcp-credentials{key_param}"
-        _rw = _rw_api.env_summary()
-        if _rw["ready"]:
-            _rw_status = (
-                '<p class="hint">Uploads the key to Railway as the variable below and '
-                "redeploys this service (~1–2 min).</p>"
-            )
-            _rw_disabled = ""
-        else:
-            _rw_status = (
-                '<div class="notice err">Railway API not configured — set RAILWAY_API_TOKEN / '
-                "RAILWAY_PROJECT_ID / RAILWAY_ENVIRONMENT_ID / RAILWAY_SERVICE_ID to enable uploads.</div>"
-            )
-            _rw_disabled = " disabled"
-        credentials_section = f"""
-    <section class="panel">
-      <h2>GCP service account</h2>
-      <p class="muted">Upload this client's Google service account JSON. It's validated,
-      base64-encoded, and written to Railway as <span class="mono">{_esc(_cred_env)}</span> —
-      the credential this dashboard's BigQuery / GA4 reads use.</p>
-      {_rw_status}
-      <form method="post" action="{_esc(_cred_post)}" enctype="multipart/form-data"
-        onsubmit="return confirm('Set {_esc(_cred_env)} on Railway? The service will redeploy.');">
-        <div class="form-grid">
-          <div>
-            <label for="cred_env_var">Railway variable</label>
-            <input id="cred_env_var" name="env_var" type="text" value="{_esc(_cred_env)}"
-              pattern="GCP_SERVICE_ACCOUNT_JSON|GCP_CREDS_[A-Z0-9_]+_BASE64">
-            <p class="hint">Defaults to this client's credentials_env from the GA4 registry.</p>
-          </div>
-          <div>
-            <label for="cred_file">Service account JSON</label>
-            <input id="cred_file" name="credentials_file" type="file"
-              accept="application/json,.json" required>
-          </div>
-        </div>
-        <button type="submit" class="btn primary"{_rw_disabled}>Upload &amp; set credential</button>
-      </form>
-    </section>"""
-
     # --- Data source status (lazy-loaded BQ feed health) ---
     status_url = f"/dashboard/{slug}/data-source-status{key_param}"
     data_source_status_section = f"""
@@ -1602,7 +1550,6 @@ def render_settings_html(
 
     <h2 class="settings-section-title">Configuration</h2>
     {edit_form}
-    {credentials_section}
 
     <h2 class="settings-section-title">Data &amp; sync</h2>
     {refresh_panel}

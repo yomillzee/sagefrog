@@ -1558,11 +1558,12 @@ def logout(request: Request) -> RedirectResponse:
     return RedirectResponse(url="/login", status_code=303)
 
 
-def _is_allowed_cred_env_var(name: str) -> bool:
-    return ga4_credentials.is_allowed_credentials_env_var(name)
-
-
 def _gcp_credentials_section_html() -> str:
+    # One shared service account (marketing-data-reader@sagefrog.iam.gserviceaccount.com)
+    # is granted BigQuery access on every client's GCP project via IAM, so there is
+    # exactly one credential to manage. No per-client override — if a client ever
+    # genuinely needs an isolated service account, set that env var directly in
+    # Railway and pass credentials_env explicitly wherever that client's data is read.
     summary = railway_api.env_summary()
     if summary["ready"]:
         status = (
@@ -1589,30 +1590,17 @@ def _gcp_credentials_section_html() -> str:
     return f"""
     <section>
       <h2>GCP service account credentials</h2>
-      <p class="muted">Upload a Google service account JSON. The app validates it,
-      base64-encodes it, and writes it to Railway as the named variable. Railway then
-      redeploys this service so the credential goes live (~1–2 min).</p>
+      <p class="muted">Upload the shared agency service account's JSON key
+      (<span class="mono">{ga4_credentials.GLOBAL_GCP_CREDENTIALS_ENV}</span>). It's validated,
+      base64-encoded, and written to Railway. Railway then redeploys this service so the
+      credential goes live (~1–2 min).</p>
       {status}
       <form method="post" action="/admin/gcp-credentials" enctype="multipart/form-data"
-        onsubmit="return confirm('Set this variable on Railway? The service will redeploy.');">
-        <div class="row">
-          <div>
-            <label for="cred_env_var">Environment variable</label>
-            <input id="cred_env_var" name="env_var" type="text" required
-              placeholder="GCP_CREDS_ANDESA_BASE64"
-              pattern="GCP_SERVICE_ACCOUNT_JSON|GCP_CREDS_[A-Z0-9_]+_BASE64">
-            <span class="muted" style="font-size:.85rem">Convention:
-              <span class="mono">GCP_CREDS_&lt;CLIENT&gt;_BASE64</span> (matches the
-              credentials_env in the GA4/GSC registry), or
-              <span class="mono">GCP_SERVICE_ACCOUNT_JSON</span> for the global default.</span>
-          </div>
-          <div>
-            <label for="cred_file">Service account JSON</label>
-            <input id="cred_file" name="credentials_file" type="file"
-              accept="application/json,.json" required>
-          </div>
-        </div>
-        <button type="submit" class="primary"{disabled}>Upload &amp; set variable</button>
+        onsubmit="return confirm('Set {ga4_credentials.GLOBAL_GCP_CREDENTIALS_ENV} on Railway? The service will redeploy.');">
+        <label for="cred_file">Service account JSON</label>
+        <input id="cred_file" name="credentials_file" type="file"
+          accept="application/json,.json" required>
+        <button type="submit" class="primary"{disabled}>Upload &amp; set credential</button>
       </form>
     </section>"""
 
@@ -1657,21 +1645,13 @@ def admin_home(
 @app.post("/admin/gcp-credentials", include_in_schema=False)
 async def admin_set_gcp_credentials(
     request: Request,
-    env_var: str = Form(...),
     credentials_file: UploadFile = File(...),
 ):
     user = web_auth.get_current_user(request)
     if not user or user.role != "admin":
         return web_auth.redirect_to_login(request, next_path="/admin")
 
-    name = (env_var or "").strip()
-    if not _is_allowed_cred_env_var(name):
-        return RedirectResponse(
-            url="/admin?err=" + quote(
-                "Variable must be GCP_SERVICE_ACCOUNT_JSON or GCP_CREDS_<CLIENT>_BASE64."
-            ),
-            status_code=303,
-        )
+    name = ga4_credentials.GLOBAL_GCP_CREDENTIALS_ENV
     if not railway_api.enabled():
         return RedirectResponse(
             url="/admin?err=" + quote(
