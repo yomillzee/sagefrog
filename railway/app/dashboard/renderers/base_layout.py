@@ -14,6 +14,7 @@ from dashboard.utils.urls import (
     connectors_page_url as _connectors_page_url,
     dashboard_page_url as _dashboard_page_url,
     files_page_url as _files_page_url,
+    gtm_page_url as _gtm_page_url,
     lead_tracking_page_url as _lead_tracking_page_url,
     refresh_action_url as _refresh_action_url,
     settings_page_url as _settings_page_url,
@@ -331,6 +332,7 @@ _VIEW_ICONS: dict[str, str] = {
     "website": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><path d="M12 3a14 14 0 010 18 14 14 0 010-18z"/></svg>',
     "semrush": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg>',
     "lead-tracking": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>',
+    "event-tracking": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
 }
 
 _VIEW_LABELS: tuple[tuple[str, str], ...] = (
@@ -349,6 +351,7 @@ def sidebar_view_nav_html(
     show_gsc: bool = False,
     show_semrush: bool = False,
     show_lead_tracking: bool = False,
+    show_event_tracking: bool = False,
     as_links: bool = False,
     client_slug: str = "penn",
     access_key: str | None = None,
@@ -405,6 +408,17 @@ def sidebar_view_nav_html(
             f'<a class="dash-view-btn{lt_active}" href="{_esc(lt_url)}">'
             f'{lt_icon}<span class="dash-view-label">Lead Tracking</span></a>'
         )
+    # Event Tracking (GTM) is likewise a standalone page → always an anchor link.
+    if show_event_tracking:
+        et_url = _gtm_page_url(
+            client_slug=client_slug, access_key=access_key, use_session=use_session
+        ) or "#"
+        et_active = " active" if active_view == "event-tracking" else ""
+        et_icon = _VIEW_ICONS.get("event-tracking", "")
+        items.append(
+            f'<a class="dash-view-btn{et_active}" href="{_esc(et_url)}">'
+            f'{et_icon}<span class="dash-view-label">Event Tracking</span></a>'
+        )
     role = "" if as_links else ' role="tablist"'
     return (
         f'<nav class="dash-sidebar-nav"{role} aria-label="Dashboard views">'
@@ -434,6 +448,7 @@ def platform_nav_flags(client_slug: str) -> dict[str, bool]:
         "show_connectors": bool(configs),
         "show_lead_tracking": _connected("hubspot"),
         "show_gsc": _connected("gsc"),
+        "show_gtm": _connected("gtm"),
     }
 
 _NAV_ICON_FILES = (
@@ -633,6 +648,7 @@ def render_client_shell_page(
         show_gsc=show_gsc,
         show_semrush=show_semrush,
         show_lead_tracking=pflags["show_lead_tracking"],
+        show_event_tracking=pflags["show_gtm"],
         as_links=True,
         client_slug=client_slug,
         access_key=access_key,

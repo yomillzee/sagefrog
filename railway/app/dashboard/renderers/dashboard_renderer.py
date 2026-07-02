@@ -722,6 +722,7 @@ def render_penn_html(
         show_gsc=bool(_gsc_data),
         show_semrush=bool(_semrush_data),
         show_lead_tracking=_pflags["show_lead_tracking"],
+        show_event_tracking=_pflags["show_gtm"],
         as_links=False,
         client_slug=client_slug,
         access_key=access_key,
