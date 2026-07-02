@@ -109,9 +109,20 @@ def topbar_client_selector_html(
     if session_is_admin and use_session:
         import client_config
 
+        # Scope the switcher to new-build (connector platform) clients; legacy
+        # dashboards drop out of the dropdown but stay reachable by URL. Always
+        # keep the current client so visiting a legacy page directly still works.
+        try:
+            import connector_config_store
+            _platform_slugs = connector_config_store.client_slugs_with_configs()
+        except Exception:
+            _platform_slugs = set()
+
         options = []
         current = (client_slug or "").strip().lower()
         for slug, client_label in client_config.list_dashboard_clients():
+            if _platform_slugs and slug not in _platform_slugs and slug != current:
+                continue
             selected = " selected" if slug == current else ""
             dest = _client_switch_target_url(
                 client_slug=slug,

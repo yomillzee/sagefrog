@@ -711,7 +711,11 @@ def render_penn_html(
             except Exception:
                 pass
     _semrush_data = snapshot.get("semrush")
-    _pflags = _platform_nav_flags(client_slug)
+    # Use the URL slug (not the snapshot's client_key, which can differ) so the
+    # connector lookup matches where the connectors are actually configured —
+    # otherwise Lead Tracking/Connectors go missing on the dashboard while still
+    # showing on the child pages that key off the URL slug.
+    _pflags = _platform_nav_flags(slug)
     view_nav_html = _sidebar_view_nav_html(
         show_website=show_website_tab,
         show_campaigns=features.campaign_explorer,

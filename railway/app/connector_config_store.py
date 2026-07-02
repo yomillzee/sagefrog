@@ -181,6 +181,21 @@ def get_config(client_slug: str, connector_type: str) -> ConnectorConfig | None:
     return _row_to_config(row) if row else None
 
 
+def client_slugs_with_configs() -> set[str]:
+    """Distinct client slugs that have at least one connector configured.
+
+    Cheap single-query signal for "this client is on the new connector platform"
+    — used to scope the client selector to new-build clients and treat everything
+    else as legacy.
+    """
+    if not enabled():
+        return set()
+    ensure_schema()
+    with db.connection() as conn:
+        rows = conn.execute("SELECT DISTINCT client_slug FROM connector_configs").fetchall()
+    return {str(r[0]).strip().lower() for r in rows if r[0]}
+
+
 def list_configs(client_slug: str) -> list[ConnectorConfig]:
     if not enabled():
         return []
