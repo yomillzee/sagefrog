@@ -146,15 +146,17 @@ def _nixon_endpoint_failure(exc: Exception) -> HTTPException:
     )
 
 
-def _cached_nixon(source: str, payload: dict, *, ttl_seconds: int, fetch) -> dict:
-    """DB-backed cache for Nixon read endpoints.
+def _cached_bq_read(source: str, payload: dict, *, ttl_seconds: int, fetch) -> dict:
+    """DB-backed cache for BigQuery-mart dashboard read endpoints (any client).
 
     Every underlying BQ table here is only updated by a daily (or slower)
     connector sync, so re-querying BigQuery on every page load/refresh never
     returns fresher data — it just re-pays the same query cost. ttl_seconds
-    is a worst-case staleness bound; bigquery_refresh_orchestrator calls
-    db_cache.invalidate_prefix("nixon.") right after a sync completes, so in
-    practice a fresh sync is visible immediately rather than after the TTL.
+    is a worst-case staleness bound; bigquery_refresh_orchestrator (and the
+    manual "Run sync now" button) call db_cache.invalidate_prefix(f"{slug}.")
+    right after a sync completes, so in practice a fresh sync is visible
+    immediately rather than after the TTL. `source` should be namespaced
+    "{client_slug}.{thing}" so invalidation only clears that client's cache.
     """
     import db_cache
     hit = db_cache.get_cached(source, payload)
@@ -548,7 +550,7 @@ def nixon_marketing(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_nixon(
+        return _cached_bq_read(
             "nixon.marketing",
             {"start": start.isoformat(), "end": end.isoformat(), "top_limit": top_limit},
             ttl_seconds=900,
@@ -591,7 +593,7 @@ def client_summary(
         )
         start, end = _resolve_nixon_marketing_dates(start_date, end_date)
         try:
-            return _cached_nixon(
+            return _cached_bq_read(
                 "nixon.summary",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
@@ -609,12 +611,17 @@ def client_summary(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return client_bq_service.fetch_summary(
-            client_key=normalized,
-            start_date=start,
-            end_date=end,
-            project_id=project_id,
-            dataset_id=dataset_id,
+        return _cached_bq_read(
+            f"{normalized}.summary",
+            {"start": start.isoformat(), "end": end.isoformat()},
+            ttl_seconds=900,
+            fetch=lambda: client_bq_service.fetch_summary(
+                client_key=normalized,
+                start_date=start,
+                end_date=end,
+                project_id=project_id,
+                dataset_id=dataset_id,
+            ),
         )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
@@ -643,7 +650,7 @@ def nixon_marketing_health(
         x_api_key=x_api_key,
     )
     try:
-        return _cached_nixon(
+        return _cached_bq_read(
             "nixon.marketing.health", {"limit": limit}, ttl_seconds=900,
             fetch=lambda: nixon_marketing_service.fetch_nixon_marketing_health(limit=limit),
         )
@@ -677,7 +684,7 @@ def client_health(
             x_api_key=x_api_key,
         )
         try:
-            return _cached_nixon(
+            return _cached_bq_read(
                 "nixon.marketing.health", {"limit": limit}, ttl_seconds=900,
                 fetch=lambda: nixon_marketing_service.fetch_nixon_marketing_health(limit=limit),
             )
@@ -692,11 +699,14 @@ def client_health(
         x_api_key=x_api_key,
     )
     try:
-        return client_bq_service.fetch_health(
-            client_key=normalized,
-            limit=limit,
-            project_id=project_id,
-            dataset_id=dataset_id,
+        return _cached_bq_read(
+            f"{normalized}.health", {"limit": limit}, ttl_seconds=900,
+            fetch=lambda: client_bq_service.fetch_health(
+                client_key=normalized,
+                limit=limit,
+                project_id=project_id,
+                dataset_id=dataset_id,
+            ),
         )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
@@ -728,7 +738,7 @@ def nixon_google_ads_explorer(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_nixon(
+        return _cached_bq_read(
             "nixon.explorer.google_ads",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
@@ -770,7 +780,7 @@ def nixon_gsc_summary(
         import bq_gsc_service
         # GSC routes by client_slug; the Nixon dashboard's BQ client is
         # "nixon-bq-test" (where the GSC connector + raw_gsc/mart views live).
-        return _cached_nixon(
+        return _cached_bq_read(
             "nixon.gsc.summary",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
@@ -805,7 +815,7 @@ def nixon_semrush_summary(
         # nixon_gsc_summary above), not the marketing client_slug "nixon".
         # No date range and the underlying data only resyncs ~once/day, so
         # this gets a much longer TTL than the range-scoped endpoints.
-        return _cached_nixon(
+        return _cached_bq_read(
             "nixon.semrush.summary", {}, ttl_seconds=6 * 3600,
             fetch=lambda: bq_semrush_service.fetch_latest_snapshot(
                 client_key="nixon-bq-test", project="nixon-medical", mart_dataset="marketing_marts",
@@ -841,7 +851,7 @@ def nixon_linkedin_explorer(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_nixon(
+        return _cached_bq_read(
             "nixon.explorer.linkedin",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
@@ -959,7 +969,7 @@ def nixon_meta_explorer(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_nixon(
+        return _cached_bq_read(
             "nixon.explorer.meta",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
@@ -989,7 +999,7 @@ def nixon_pages_top(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_nixon(
+        return _cached_bq_read(
             "nixon.pages.top",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
@@ -1016,7 +1026,7 @@ def nixon_pages_sources(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_nixon(
+        return _cached_bq_read(
             "nixon.pages.sources",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
@@ -1043,7 +1053,7 @@ def nixon_traffic_acquisition(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_nixon(
+        return _cached_bq_read(
             "nixon.pages.traffic_acquisition",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
@@ -1070,7 +1080,7 @@ def nixon_device_split(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_nixon(
+        return _cached_bq_read(
             "nixon.pages.device_split",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
@@ -1097,7 +1107,7 @@ def nixon_landing_pages(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_nixon(
+        return _cached_bq_read(
             "nixon.pages.landing",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
@@ -1119,7 +1129,7 @@ def nixon_conversion_events(
     _authorize_nixon_api(request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_nixon(
+        return _cached_bq_read(
             "nixon.analytics.conversions",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
@@ -1141,7 +1151,7 @@ def nixon_user_acquisition(
     _authorize_nixon_api(request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_nixon(
+        return _cached_bq_read(
             "nixon.analytics.user_acquisition",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
@@ -1163,7 +1173,7 @@ def nixon_demographics(
     _authorize_nixon_api(request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_nixon(
+        return _cached_bq_read(
             "nixon.analytics.demographics",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
@@ -1192,9 +1202,12 @@ def client_marketing_health(
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
     try:
-        return client_bq_service.fetch_health(
-            client_key=normalized, limit=limit,
-            project_id=project_id, dataset_id=dataset_id,
+        return _cached_bq_read(
+            f"{normalized}.marketing.health", {"limit": limit}, ttl_seconds=900,
+            fetch=lambda: client_bq_service.fetch_health(
+                client_key=normalized, limit=limit,
+                project_id=project_id, dataset_id=dataset_id,
+            ),
         )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
@@ -1221,9 +1234,14 @@ def client_google_ads_explorer(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return client_bq_service.fetch_google_ads_explorer(
-            client_key=normalized, start_date=start, end_date=end,
-            project_id=project_id, dataset_id=dataset_id,
+        return _cached_bq_read(
+            f"{normalized}.explorer.google_ads",
+            {"start": start.isoformat(), "end": end.isoformat()},
+            ttl_seconds=900,
+            fetch=lambda: client_bq_service.fetch_google_ads_explorer(
+                client_key=normalized, start_date=start, end_date=end,
+                project_id=project_id, dataset_id=dataset_id,
+            ),
         )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
@@ -1250,9 +1268,14 @@ def client_linkedin_explorer(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return client_bq_service.fetch_linkedin_explorer(
-            client_key=normalized, start_date=start, end_date=end,
-            project_id=project_id, dataset_id=dataset_id,
+        return _cached_bq_read(
+            f"{normalized}.explorer.linkedin",
+            {"start": start.isoformat(), "end": end.isoformat()},
+            ttl_seconds=900,
+            fetch=lambda: client_bq_service.fetch_linkedin_explorer(
+                client_key=normalized, start_date=start, end_date=end,
+                project_id=project_id, dataset_id=dataset_id,
+            ),
         )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
@@ -1279,9 +1302,14 @@ def client_pages_top(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return client_bq_service.fetch_pages_top(
-            client_key=normalized, start_date=start, end_date=end,
-            project_id=project_id, dataset_id=dataset_id,
+        return _cached_bq_read(
+            f"{normalized}.pages.top",
+            {"start": start.isoformat(), "end": end.isoformat()},
+            ttl_seconds=900,
+            fetch=lambda: client_bq_service.fetch_pages_top(
+                client_key=normalized, start_date=start, end_date=end,
+                project_id=project_id, dataset_id=dataset_id,
+            ),
         )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
@@ -1308,9 +1336,14 @@ def client_pages_sources(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return client_bq_service.fetch_pages_sources(
-            client_key=normalized, start_date=start, end_date=end,
-            project_id=project_id, dataset_id=dataset_id,
+        return _cached_bq_read(
+            f"{normalized}.pages.sources",
+            {"start": start.isoformat(), "end": end.isoformat()},
+            ttl_seconds=900,
+            fetch=lambda: client_bq_service.fetch_pages_sources(
+                client_key=normalized, start_date=start, end_date=end,
+                project_id=project_id, dataset_id=dataset_id,
+            ),
         )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
