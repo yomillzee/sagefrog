@@ -745,11 +745,11 @@ def nixon_semrush_summary(
     )
     try:
         import bq_semrush_service
-        # SEMrush is synced by the "semrush" connector under client_slug "nixon"
-        # (see connectors/semrush.py); reads go straight to nixon-medical's mart,
-        # matching every other Nixon read path in this module.
+        # SEMrush routes by client_slug; the Nixon dashboard's BQ client is
+        # "nixon-bq-test" (same slug the GSC connector uses — see
+        # nixon_gsc_summary above), not the marketing client_slug "nixon".
         return bq_semrush_service.fetch_latest_snapshot(
-            client_key="nixon", project="nixon-medical", mart_dataset="marketing_marts",
+            client_key="nixon-bq-test", project="nixon-medical", mart_dataset="marketing_marts",
         )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
