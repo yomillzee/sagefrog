@@ -241,6 +241,7 @@ def render_nixon_bigquery_test_page(
     .ad-copy-more {{ align-self:flex-start; margin:2px 0 1px 39px; padding:0; border:0; background:none; color:var(--accent, #2563eb); font-size:.72rem; font-weight:600; cursor:pointer; }}
     .ad-copy-more:hover {{ text-decoration:underline; }}
     .ad-copy-extra {{ display:flex; flex-direction:column; gap:1px; }}
+    .ad-copy-extra[hidden] {{ display:none; }}
     /* ---- Pages search ---- */
     .page-search {{ width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:8px 12px; font:inherit; font-size:.88rem; background:#fff; color:#102033; margin-bottom:10px; }}
     .page-search:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
