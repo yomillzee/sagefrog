@@ -276,35 +276,20 @@ def _oauth_platform_card_html(
     label: str,
     return_url: str,
     can_manage_oauth: bool = True,
-    connection_details: list[str] | None = None,
-    status_message: str | None = None,
     pub: oauth_store.OAuthCredentialPublic | None = None,
 ) -> str:
     prereq = oauth_flows.connect_prerequisites(platform)
     pub = pub or oauth_store.public_status(platform)
     return_to = quote(return_url, safe="")
     status_badge = _status_badge(pub.connected, ok_label="Connected", fail_label="Not connected")
-    source = _esc(pub.source)
-    connected_meta = ""
-    if pub.connected_by or pub.connected_at:
-        who = _esc(pub.connected_by or "—")
-        when = _esc((pub.connected_at or "")[:19])
-        connected_meta = f'<p class="muted">Connected by {who} · {when} UTC · source {source}</p>'
-
-    details_html = ""
-    if status_message:
-        details_html += f'<p class="oauth-status-msg">{_esc(status_message)}</p>'
-    if connection_details:
-        items = "".join(f"<li>{_esc(line)}</li>" for line in connection_details)
-        details_html += f'<ul class="oauth-details">{items}</ul>'
 
     actions = ""
     if can_manage_oauth and oauth_store.enabled():
         connect_url = f"/oauth/{platform}/connect?return_to={return_to}"
         if pub.connected:
-            actions += f'<a class="btn secondary" href="{connect_url}">Reconnect {label}</a> '
+            actions += f'<a class="btn secondary btn-sm" href="{connect_url}">Reconnect</a>'
         elif prereq.get("ready"):
-            actions += f'<a class="btn primary" href="{connect_url}">Connect {label}</a> '
+            actions += f'<a class="btn primary btn-sm" href="{connect_url}">Connect</a>'
         else:
             missing = ", ".join(prereq.get("missing") or [])
             actions += f'<p class="muted">Set {_esc(missing)} in Railway before connecting.</p>'
@@ -313,30 +298,21 @@ def _oauth_platform_card_html(
             <form method="post" action="/oauth/{platform}/disconnect" class="inline-form"
               onsubmit="return confirm('Disconnect {label}? The stored token will be removed.');">
               <input type="hidden" name="return_to" value="{_esc(return_url)}">
-              <button type="submit" class="btn secondary">Disconnect</button>
+              <button type="submit" class="btn secondary btn-sm">Disconnect</button>
             </form>
             """
     elif can_manage_oauth and not oauth_store.enabled():
         actions = '<p class="muted">Attach Postgres (DATABASE_URL) to store OAuth tokens.</p>'
 
     note = _esc(prereq.get("note") or "")
-    callback = _esc(oauth_flows.callback_url(platform))
-    dev_details = f"""
-      <details class="settings-fold settings-fold--inline">
-        <summary>Developer details</summary>
-        <p class="hint mono">Callback: {callback}</p>
-      </details>"""
     return f"""
     <div class="oauth-card">
       <div class="oauth-card-head">
         <h3>{_esc(label)}</h3>
         {status_badge}
       </div>
-      {connected_meta}
-      {details_html}
-      <p class="muted">{note}</p>
+      {f'<p class="muted">{note}</p>' if note else ''}
       <div class="oauth-actions">{actions}</div>
-      {dev_details}
     </div>
     """
 
@@ -529,7 +505,6 @@ def render_admin_oauth_section(
     return_url: str = "/admin",
     oauth_connected: str | None = None,
     oauth_error: str | None = None,
-    live_probe: bool = False,
 ) -> str:
     notice = ""
     if oauth_connected:
@@ -547,23 +522,6 @@ def render_admin_oauth_section(
         notice += f'<div class="notice err">{_esc(oauth_error)}</div>'
 
     oauth_status = oauth_store.all_public_status()
-    live_results: dict[str, dict[str, Any]] = {}
-    if live_probe:
-        live_results = {
-            platform: probe_agency_oauth_platform(platform)
-            for platform in ("google_ads", "linkedin", "meta", "gsc")
-        }
-
-    refresh_href = _esc(f"{return_url}?oauth_refresh=1")
-    refresh_bar = (
-        f'<div class="toolbar">'
-        f'<a class="btn secondary" href="{refresh_href}">Refresh connection status</a>'
-        f'<span class="muted">Live account lists load on demand — page opens instantly.</span>'
-        f"</div>"
-        if not live_probe
-        else '<p class="muted">Showing live connection status (refreshed just now).</p>'
-    )
-
     cards = []
     for platform, label in (
         ("google_ads", "Google Ads"),
@@ -571,40 +529,21 @@ def render_admin_oauth_section(
         ("meta", "Meta"),
         ("gsc", "Google Search Console"),
     ):
-        pub = oauth_status[platform]
-        probe = live_results.get(platform) if live_probe else None
         cards.append(
             _oauth_platform_card_html(
                 platform=platform,
                 label=label,
                 return_url=return_url,
                 can_manage_oauth=True,
-                pub=pub,
-                connection_details=(probe.get("details") if probe else None) or None,
-                status_message=str(
-                    (probe or {}).get("message") or cached_agency_oauth_message(platform, pub)
-                ),
+                pub=oauth_status[platform],
             )
         )
 
-    base = _esc(oauth_flows.public_base_url())
     return f"""
     {notice}
     <section class="admin-oauth-section">
       <h2>Platform connections</h2>
-      <p class="muted">Connect once here for the whole agency. Each client dashboard then maps its own account IDs.</p>
-      {refresh_bar}
       <div class="oauth-grid">{"".join(cards)}</div>
-      <details class="admin-fold">
-        <summary>OAuth callback URLs (developer setup)</summary>
-        <ul class="checklist mono">
-          <li>{base}/oauth/google_ads/callback</li>
-          <li>{base}/oauth/linkedin/callback</li>
-          <li>{base}/oauth/meta/callback</li>
-          <li>{base}/oauth/gsc/callback</li>
-          <li>{base}/oauth/google_analytics/callback</li>
-        </ul>
-      </details>
     </section>"""
 
 

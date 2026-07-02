@@ -36,7 +36,6 @@ import client_config
 import client_dashboard_config
 import dashboard_registry
 import business_line_rules
-import admin_dev_notes
 import client_insight_documents
 import dashboard_settings
 import ga4_credentials
@@ -188,7 +187,6 @@ try:
     client_dashboard_config.ensure_schema()
     dashboard_registry.ensure_schema()
     business_line_rules.ensure_schema()
-    admin_dev_notes.ensure_schema()
     client_insight_documents.ensure_schema()
     oauth_store.ensure_schema()
     connector_config_store.ensure_schema()
@@ -1560,12 +1558,6 @@ def logout(request: Request) -> RedirectResponse:
     return RedirectResponse(url="/login", status_code=303)
 
 
-def _admin_dev_notes_for_page():
-    if admin_dev_notes.enabled():
-        return admin_dev_notes.list_notes()
-    return None
-
-
 def _is_allowed_cred_env_var(name: str) -> bool:
     return ga4_credentials.is_allowed_credentials_env_var(name)
 
@@ -1633,7 +1625,6 @@ def admin_home(
     oauth_connected: str | None = None,
     oauth_error: str | None = None,
     oauth_disconnected: str | None = None,
-    oauth_refresh: str | None = None,
 ):
     user = web_auth.get_current_user(request)
     if not user or user.role != "admin":
@@ -1644,7 +1635,6 @@ def admin_home(
         return_url="/admin",
         oauth_connected=oauth_connected,
         oauth_error=(oauth_error or "").strip()[:300] or None,
-        live_probe=bool(oauth_refresh),
     )
     flash = msg
     if oauth_disconnected and not flash:
@@ -1656,7 +1646,6 @@ def admin_home(
             user=user,
             users=users,
             audit_events=events,
-            dev_notes=_admin_dev_notes_for_page(),
             message=flash,
             error=err,
             oauth_section_html=oauth_html,
@@ -1740,8 +1729,7 @@ def admin_create_user(
                 user=user,
                 users=users,
                 audit_events=events,
-                dev_notes=_admin_dev_notes_for_page(),
-                error=str(e),
+                    error=str(e),
             ),
             status_code=400,
         )
@@ -1803,8 +1791,7 @@ def admin_create_dashboard(
                 user=user,
                 users=users,
                 audit_events=events,
-                dev_notes=_admin_dev_notes_for_page(),
-                error=str(exc),
+                    error=str(exc),
                 oauth_section_html=oauth_html,
             ),
             status_code=400,
@@ -1849,8 +1836,7 @@ def admin_delete_dashboard(
                 user=user,
                 users=users,
                 audit_events=events,
-                dev_notes=_admin_dev_notes_for_page(),
-                error=str(exc),
+                    error=str(exc),
                 oauth_section_html=oauth_html,
             ),
             status_code=400,
@@ -1886,83 +1872,6 @@ def admin_delete_snapshot(
         url=f"/admin?msg=Snapshot+cleared+for+{quote(slug)}",
         status_code=303,
     )
-
-
-@app.post("/admin/dev-notes", include_in_schema=False)
-def admin_create_dev_note(
-    request: Request,
-    title: str = Form(...),
-    body: str = Form(""),
-    category: str = Form("note"),
-    user: web_users.WebUser = Depends(web_auth.require_admin),
-):
-    ctx = audit_log.request_context(request)
-    try:
-        note = admin_dev_notes.create_note(
-            title=title,
-            body=body,
-            category=category,
-            created_by=user.email,
-        )
-    except ValueError as exc:
-        return RedirectResponse(url=f"/admin?err={quote(str(exc))}", status_code=303)
-    audit_log.record(
-        action="dev_note.created",
-        actor_user_id=user.id,
-        actor_email=user.email,
-        detail={"note_id": note.id, "title": note.title, "category": note.category},
-        **ctx,
-    )
-    return RedirectResponse(url="/admin?msg=Dev+note+added", status_code=303)
-
-
-@app.post("/admin/dev-notes/{note_id}", include_in_schema=False)
-def admin_update_dev_note(
-    note_id: int,
-    request: Request,
-    title: str = Form(...),
-    body: str = Form(""),
-    category: str = Form("note"),
-    user: web_users.WebUser = Depends(web_auth.require_admin),
-):
-    ctx = audit_log.request_context(request)
-    try:
-        note = admin_dev_notes.update_note(
-            note_id,
-            title=title,
-            body=body,
-            category=category,
-            updated_by=user.email,
-        )
-    except ValueError as exc:
-        return RedirectResponse(url=f"/admin?err={quote(str(exc))}", status_code=303)
-    audit_log.record(
-        action="dev_note.updated",
-        actor_user_id=user.id,
-        actor_email=user.email,
-        detail={"note_id": note.id, "title": note.title, "category": note.category},
-        **ctx,
-    )
-    return RedirectResponse(url="/admin?msg=Dev+note+updated", status_code=303)
-
-
-@app.post("/admin/dev-notes/{note_id}/delete", include_in_schema=False)
-def admin_delete_dev_note(
-    note_id: int,
-    request: Request,
-    user: web_users.WebUser = Depends(web_auth.require_admin),
-):
-    ctx = audit_log.request_context(request)
-    existing = admin_dev_notes.get_note(note_id)
-    if existing and admin_dev_notes.delete_note(note_id):
-        audit_log.record(
-            action="dev_note.deleted",
-            actor_user_id=user.id,
-            actor_email=user.email,
-            detail={"note_id": existing.id, "title": existing.title},
-            **ctx,
-        )
-    return RedirectResponse(url="/admin?msg=Dev+note+deleted", status_code=303)
 
 
 @app.get(
