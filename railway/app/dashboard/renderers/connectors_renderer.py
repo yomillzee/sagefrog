@@ -343,9 +343,6 @@ def render_connectors_directory(
             ts = cfg.last_success_at
             rows_suffix = f" · {cfg.last_rows_loaded:,} rows" if cfg.last_rows_loaded is not None else ""
             last_sync_html = f'<div class="connector-last-sync">Last sync: {_fmt_dt(ts)}{rows_suffix}</div>'
-            range_line = _sync_range_html(cfg)
-            if range_line:
-                last_sync_html += range_line
         elif cfg and cfg.last_error_message:
             last_sync_html = f'<div class="connector-last-sync" style="color:#dc2626">Error: {_esc(cfg.last_error_message[:80])}</div>'
 
@@ -1079,10 +1076,6 @@ def _render_management_view(
           <span class="mgmt-value">{f"{config.last_rows_loaded:,}" if config.last_rows_loaded is not None else "—"}</span>
         </div>
         <div class="mgmt-row">
-          <span class="mgmt-label">Sync range</span>
-          <span class="mgmt-value">{_esc(_sync_range_label(config) or '—')}</span>
-        </div>
-        <div class="mgmt-row">
           <span class="mgmt-label">Auto-sync enabled</span>
           <span class="mgmt-value">{'Yes' if config.sync_enabled else 'No'}</span>
         </div>
@@ -1207,31 +1200,6 @@ def _flash_html(message: str | None, error: str | None) -> str:
     if message:
         return f'<div class="test-result ok" style="margin-bottom:16px">{_esc(str(message)[:300])}</div>'
     return ""
-
-
-def _sync_range_label(cfg: Any) -> str:
-    """'Jun 1 – Jun 29, 2026 (29 days)' from the last successful sync's range."""
-    start = getattr(cfg, "last_sync_range_start", None)
-    end = getattr(cfg, "last_sync_range_end", None)
-    if not start or not end:
-        return ""
-    days = (end - start).days + 1
-
-    def _md(d: Any) -> str:  # 'Jun 1' — portable (no %-d)
-        return f"{d.strftime('%b')} {d.day}"
-
-    if start.year == end.year:
-        span = f"{_md(start)} – {_md(end)}, {end.year}"
-    else:
-        span = f"{_md(start)}, {start.year} – {_md(end)}, {end.year}"
-    return f"{span} ({days} day{'s' if days != 1 else ''})"
-
-
-def _sync_range_html(cfg: Any) -> str:
-    label = _sync_range_label(cfg)
-    if not label:
-        return ""
-    return f'<div class="connector-sync-range">Sync range: {_esc(label)}</div>'
 
 
 def _fmt_dt(dt: datetime | None) -> str:
