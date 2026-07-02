@@ -447,6 +447,8 @@ def sync_google_ads_to_bq(
                 "headline_3": r.get("headline_3"),
                 "description_1": r.get("description_1"),
                 "description_2": r.get("description_2"),
+                "headlines": r.get("headlines"),
+                "descriptions": r.get("descriptions"),
                 "image_ad_name": r.get("image_ad_name"),
                 "metric_date": r.get("metric_date") or "",
                 "spend": float(r.get("spend") or 0.0),
