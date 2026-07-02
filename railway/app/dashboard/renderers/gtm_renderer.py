@@ -2,24 +2,22 @@
 
 from __future__ import annotations
 
-from dashboard.renderers.base_layout import favicon_head_html
-from dashboard.renderers.nixon_analytics_renderer import _SIDEBAR_CSS
-from dashboard.utils.formatting import esc as _esc
+from dashboard.renderers.base_layout import (
+    SIDEBAR_CSS,
+    dashboard_topbar_js,
+    favicon_head_html,
+    platform_nav_flags,
+    render_sidebar,
+)
 
 _ICON_TAGS     = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>'
 _ICON_OVERVIEW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>'
 _ICON_EXPLORER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>'
 _ICON_WEBSITE  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>'
-_ICON_SETTINGS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
-_ICON_CONNECTORS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 3a3 3 0 00-3 3v1H9V6a3 3 0 10-3 3v1H3v2h3v1a3 3 0 103 3v-1h6v1a3 3 0 103-3v-1h3v-2h-3V9a3 3 0 000-6z"/></svg>'
 _ICON_SEARCH   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
 _ICON_LEADS    = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>'
 _ICON_SHIELD   = '<svg viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="1.8" width="15" height="15"><path d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.955 11.955 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-_ICON_MENU     = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h14M3 10h14M3 14h14" stroke-linecap="round"/></svg>'
 _ICON_REFRESH  = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4v5h5M16 16v-5h-5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.05 14.44A8 8 0 1015.95 5.56" stroke-linecap="round"/></svg>'
-_ICON_SETTINGS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="3"/><path d="M10 2v2m0 12v2M2 10h2m12 0h2m-3.17-5.66-1.42 1.42M5.59 14.24l-1.42 1.42M14.83 14.24l-1.42-1.42M5.59 5.66l-1.42-1.42" stroke-linecap="round"/></svg>'
-_ICON_MENU = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h14M3 10h14M3 14h14" stroke-linecap="round"/></svg>'
-_ICON_REFRESH = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4v5h5M16 16v-5h-5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.05 14.44A8 8 0 1015.95 5.56" stroke-linecap="round"/></svg>'
 
 
 def render_gtm_page(
@@ -37,33 +35,46 @@ def render_gtm_page(
             return path
         return f"{path}?{urlencode({'key': access_key})}"
 
-    main_url       = _url("/dashboard/nixon-bq-test")
-    connectors_url = _url("/dashboard/nixon-bq-test/connectors")
-    settings_url   = _url("/dashboard/nixon-bq-test/settings")
-    lead_tracking_url = _url("/dashboard/nixon-bq-test/lead-tracking")
-    try:
-        from dashboard.renderers.base_layout import platform_nav_flags as _platform_nav_flags
-        _pflags = _platform_nav_flags("nixon-bq-test")
-    except Exception:
-        _pflags = {"show_lead_tracking": False}
+    main_url = _url("/dashboard/nixon-bq-test")
+
+    pflags = platform_nav_flags("nixon-bq-test")
     lead_tracking_link = ""
-    if _pflags.get("show_lead_tracking"):
+    if pflags.get("show_lead_tracking"):
+        lead_tracking_url = _url("/dashboard/nixon-bq-test/lead-tracking")
         lead_tracking_link = (
             f'<a class="dash-view-btn" href="{lead_tracking_url}">'
             f'{_ICON_LEADS}<span>Lead Tracking</span></a>'
         )
+
+    view_nav_html = f"""
+      <nav class="dash-sidebar-nav" aria-label="Sections">
+        <a class="dash-view-btn" href="{main_url}">{_ICON_OVERVIEW}<span>Overview</span></a>
+        <a class="dash-view-btn" href="{main_url}">{_ICON_EXPLORER}<span>Explorer</span></a>
+        <a class="dash-view-btn" href="{main_url}">{_ICON_WEBSITE}<span>Website Analytics</span></a>
+        <a class="dash-view-btn" href="{main_url}">{_ICON_SEARCH}<span>Search Console</span></a>
+        {lead_tracking_link}
+        <a class="dash-view-btn active" href="#" style="margin-top:6px;border-top:1px solid rgba(255,255,255,.1);padding-top:14px">{_ICON_TAGS}<span>Event Tracking</span></a>
+      </nav>
+    """
+
+    sidebar_html = render_sidebar(
+        client_slug="nixon-bq-test",
+        label="Nixon Medical",
+        active_nav="event-tracking",
+        access_key=access_key,
+        use_session=use_session,
+        session_is_admin=session_is_admin,
+        session_email=session_email,
+        show_files=_docs_enabled(),
+        show_connectors=pflags["show_connectors"],
+        view_nav_html=view_nav_html,
+    )
+
     api_url       = f"/api/clients/{client_slug}/gtm/live-tags"
     api_refresh   = f"{api_url}?refresh=true"
     if access_key:
         api_url     = f"{api_url}?key={access_key}"
         api_refresh = f"{api_refresh}&key={access_key}"
-
-    account_html = ""
-    if use_session and session_email:
-        account_html = f"""
-        <div class="dash-sidebar-account">
-          <span class="dash-sidebar-account-email">{_esc(session_email)}</span>
-        </div>"""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -76,7 +87,7 @@ def render_gtm_page(
     :root {{ --bg:#eef2f7; --card:#fff; --line:#e2e8f0; --navy:#0a2540; --blue:#1769aa; --accent:#1d6fd0; --muted:#6b7a90; --bad:#b42318; --ok:#0a7f3f; --sidebar-from:#0a2540; --sidebar-to:#123456; --radius:14px; --radius-sm:9px; --shadow:0 1px 2px rgba(16,33,67,.04),0 4px 16px rgba(16,33,67,.05); }}
     * {{ box-sizing:border-box; }}
     body {{ margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:#102033; -webkit-font-smoothing:antialiased; }}
-    {_SIDEBAR_CSS}
+    {SIDEBAR_CSS}
     main {{ padding: 28px 32px; max-width: 1200px; }}
     @media (max-width:900px) {{ main {{ padding: 24px 16px; }} }}
     .page-head {{ display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:24px; }}
@@ -124,33 +135,7 @@ def render_gtm_page(
 </head>
 <body>
   <div class="app-shell" id="appShell">
-    <button type="button" class="dash-sidebar-toggle" id="sidebarToggle" aria-label="Open navigation">{_ICON_MENU}</button>
-    <div class="dash-sidebar-backdrop" id="sidebarBackdrop" hidden></div>
-    <aside class="dash-sidebar" id="dashSidebar">
-      <div class="dash-sidebar-head">
-        <a href="{main_url}" class="dash-sidebar-logo">
-          <img class="dash-sidebar-logo-icon" src="/static/apple-touch-icon.png" alt="" width="34" height="34" onerror="this.remove()" />
-          <span class="dash-sidebar-wordmark">Sagefrog</span>
-        </a>
-        <span class="dash-sidebar-beta">Beta</span>
-      </div>
-      <nav class="dash-sidebar-nav" aria-label="Sections">
-        <a class="dash-view-btn" href="{main_url}">{_ICON_OVERVIEW}<span>Overview</span></a>
-        <a class="dash-view-btn" href="{main_url}">{_ICON_EXPLORER}<span>Explorer</span></a>
-        <a class="dash-view-btn" href="{main_url}">{_ICON_WEBSITE}<span>Website Analytics</span></a>
-        <a class="dash-view-btn" href="{main_url}">{_ICON_SEARCH}<span>Search Console</span></a>
-        {lead_tracking_link}
-        <a class="dash-view-btn active" href="#" style="margin-top:6px;border-top:1px solid rgba(255,255,255,.1);padding-top:14px">{_ICON_TAGS}<span>Event Tracking</span></a>
-      </nav>
-      <div class="dash-sidebar-footer">
-        <div class="dash-sidebar-client"><span class="topbar-client-label">Nixon Medical</span></div>
-        <nav class="dash-sidebar-links">
-          <a href="{connectors_url}" class="dash-sidebar-link">{_ICON_CONNECTORS}<span>Connectors</span></a>
-          <a href="{settings_url}" class="dash-sidebar-link">{_ICON_SETTINGS}<span>Settings</span></a>
-        </nav>
-        {account_html}
-      </div>
-    </aside>
+    {sidebar_html}
 
     <div class="dash-main">
       <main>
@@ -173,6 +158,7 @@ def render_gtm_page(
     </div>
   </div>
 
+<script>{dashboard_topbar_js()}</script>
 <script>
 const API_URL     = {repr(api_url)};
 const API_REFRESH = {repr(api_refresh)};
@@ -295,21 +281,12 @@ async function loadTags(forceRefresh = false) {{
   }}
 }}
 
-// Sidebar toggle
-document.getElementById('sidebarToggle').addEventListener('click', () => {{
-  const shell = document.getElementById('appShell');
-  const open = shell.classList.toggle('sidebar-open');
-  document.getElementById('sidebarToggle').setAttribute('aria-expanded', open);
-  const backdrop = document.getElementById('sidebarBackdrop');
-  backdrop.hidden = !open;
-}});
-document.getElementById('sidebarBackdrop').addEventListener('click', () => {{
-  document.getElementById('appShell').classList.remove('sidebar-open');
-  document.getElementById('sidebarToggle').setAttribute('aria-expanded', false);
-  document.getElementById('sidebarBackdrop').hidden = true;
-}});
-
 loadTags();
 </script>
 </body>
 </html>"""
+
+
+def _docs_enabled() -> bool:
+    import client_insight_documents as docs
+    return docs.enabled()

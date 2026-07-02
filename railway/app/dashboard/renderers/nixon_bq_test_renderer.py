@@ -5,8 +5,13 @@ from __future__ import annotations
 from datetime import date, timedelta
 from urllib.parse import urlencode
 
-from dashboard.renderers.base_layout import favicon_head_html
-from dashboard.utils.formatting import esc as _esc
+from dashboard.renderers.base_layout import (
+    SIDEBAR_CSS,
+    dashboard_topbar_js,
+    favicon_head_html,
+    platform_nav_flags,
+    render_sidebar,
+)
 
 
 def _api_url(path: str, *, access_key: str | None) -> str:
@@ -15,51 +20,9 @@ def _api_url(path: str, *, access_key: str | None) -> str:
     return f"{path}?{urlencode({'key': access_key})}"
 
 
-_SIDEBAR_CSS = """
-    .app-shell { display: flex; flex-direction: row; min-height: 100vh; }
-    .dash-main { flex: 1 1 auto; min-width: 0; }
-    .dash-sidebar {
-      flex-shrink: 0; width: 252px; align-self: flex-start; position: sticky; top: 0;
-      height: 100vh; display: flex; flex-direction: column;
-      background: linear-gradient(180deg, var(--sidebar-from), var(--sidebar-to));
-      color: #e6edf6; z-index: 90; overflow: hidden;
-    }
-    .dash-sidebar-head { display: flex; align-items: center; gap: 10px; padding: 20px 20px 16px; flex-shrink: 0; }
-    .dash-sidebar-logo { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; min-width: 0; }
-    .dash-sidebar-logo-icon { width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
-    .dash-sidebar-wordmark { font-size: 1.18rem; font-weight: 700; letter-spacing: -.01em; color: #fff; white-space: nowrap; }
-    .dash-sidebar-beta { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 7px; background: rgba(255,255,255,.14); color: #ffd9a8; font-size: .66rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; line-height: 1; }
-    .dash-sidebar-nav { display: flex; flex-direction: column; gap: 3px; padding: 8px 12px; flex: 1 1 auto; overflow-y: auto; min-height: 0; }
-    .dash-sidebar-nav .dash-view-btn { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 13px; border: 0; border-radius: 9px; background: transparent; color: #c3d2e6; font-size: .92rem; font-weight: 600; text-align: left; text-decoration: none; cursor: pointer; transition: background .15s, color .15s; }
-    .dash-sidebar-nav .dash-view-btn svg { width: 19px; height: 19px; flex-shrink: 0; opacity: .85; }
-    .dash-sidebar-nav .dash-view-btn:hover { background: rgba(255,255,255,.08); color: #fff; }
-    .dash-sidebar-nav .dash-view-btn.active { background: rgba(255,255,255,.15); color: #fff; box-shadow: inset 3px 0 0 #7dd3fc; }
-    .dash-sidebar-nav .dash-view-btn.active svg { opacity: 1; }
-    .dash-sidebar-nav .analytics-sub { font-size: .84rem; padding: 7px 13px 7px 28px; }
-    .dash-sidebar-footer { margin-top: auto; flex-shrink: 0; padding: 14px 14px 16px; border-top: 1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.12); }
-    .dash-sidebar-client { margin-bottom: 10px; }
-    .dash-sidebar-client .topbar-client-label { display: block; width: 100%; box-sizing: border-box; border-radius: 9px; border: 1px solid rgba(255,255,255,.18); background-color: rgba(255,255,255,.1); color: #fff; font-size: .9rem; font-weight: 650; padding: 9px 13px; }
-    .dash-sidebar-links { display: flex; flex-direction: column; gap: 2px; }
-    .dash-sidebar-link { display: flex; align-items: center; gap: 11px; padding: 9px 12px; border-radius: 9px; color: #c3d2e6; font-size: .9rem; font-weight: 600; text-decoration: none; transition: background .15s, color .15s; }
-    .dash-sidebar-link svg { width: 18px; height: 18px; flex-shrink: 0; opacity: .85; }
-    .dash-sidebar-link:hover { background: rgba(255,255,255,.08); color: #fff; }
-    .dash-sidebar-account { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.12); }
-    .dash-sidebar-account-email { display: block; font-size: .76rem; color: #9fb3cc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .dash-sidebar-account-actions { display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: .8rem; }
-    .dash-sidebar-account-link { appearance: none; border: 0; background: none; padding: 0; font: inherit; color: #9ecbf5; text-decoration: none; cursor: pointer; }
-    .dash-sidebar-account-link:hover { text-decoration: underline; color: #cfe5fb; }
-    .dash-sidebar-logout-form { display: inline; margin: 0; }
-    .dash-sidebar-toggle { display: none; position: fixed; top: 12px; left: 12px; z-index: 95; width: 42px; height: 42px; align-items: center; justify-content: center; border-radius: 10px; border: 1px solid var(--line); background: #fff; color: var(--navy); cursor: pointer; box-shadow: 0 1px 3px rgba(16,33,67,.12); }
-    .dash-sidebar-toggle svg { width: 20px; height: 20px; }
-    .dash-sidebar-backdrop { display: none; }
-    @media (max-width: 900px) {
-      .dash-sidebar { position: fixed; top: 0; left: 0; height: 100vh; width: 264px; transform: translateX(-100%); transition: transform .25s ease; box-shadow: 4px 0 24px rgba(0,0,0,.28); }
-      .app-shell.sidebar-open .dash-sidebar { transform: translateX(0); }
-      .app-shell.sidebar-open .dash-sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 88; background: rgba(8,18,33,.5); }
-      .dash-sidebar-toggle { display: inline-flex; }
-      main { padding-top: 60px; }
-    }
-"""
+def _docs_enabled() -> bool:
+    import client_insight_documents as docs
+    return docs.enabled()
 
 
 def render_nixon_bigquery_test_page(
@@ -73,60 +36,30 @@ def render_nixon_bigquery_test_page(
     end = today - timedelta(days=1)
     start = today - timedelta(days=30)
 
-    account_html = ""
-    if use_session and session_email:
-        admin_link = (
-            '<a class="dash-sidebar-account-link" href="/admin">Admin</a>'
-            '<span class="dash-sidebar-account-sep">·</span>'
-            if session_is_admin else ""
-        )
-        account_html = f"""
-        <div class="dash-sidebar-account">
-          <span class="dash-sidebar-account-email">{_esc(session_email)}</span>
-          <div class="dash-sidebar-account-actions">
-            {admin_link}
-            <form class="dash-sidebar-logout-form" method="post" action="/logout"><button type="submit" class="dash-sidebar-account-link">Sign out</button></form>
-          </div>
-        </div>"""
-
-    _ICON_MENU     = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>'
     _ICON_OVERVIEW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>'
     _ICON_EXPLORER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>'
     _ICON_WEBSITE  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>'
     _ICON_SEARCH   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
-    _ICON_SETTINGS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
-    _ICON_CONNECTORS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 3a3 3 0 00-3 3v1H9V6a3 3 0 10-3 3v1H3v2h3v1a3 3 0 103 3v-1h6v1a3 3 0 103-3v-1h3v-2h-3V9a3 3 0 000-6z"/></svg>'
     _ICON_TAGS       = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>'
     _ICON_LEADS      = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>'
 
-    settings_url   = _api_url("/dashboard/nixon-bq-test/settings",   access_key=access_key)
-    connectors_url = _api_url("/dashboard/nixon-bq-test/connectors", access_key=access_key)
-    gtm_url        = _api_url("/dashboard/nixon-bq-test/gtm",        access_key=access_key)
-    lead_tracking_url = _api_url("/dashboard/nixon-bq-test/lead-tracking", access_key=access_key)
-    try:
-        from dashboard.renderers.base_layout import platform_nav_flags as _platform_nav_flags
-        _pflags = _platform_nav_flags("nixon-bq-test")
-    except Exception:
-        _pflags = {"show_lead_tracking": False}
+    gtm_url = _api_url("/dashboard/nixon-bq-test/gtm", access_key=access_key)
+
+    pflags = platform_nav_flags("nixon-bq-test")
     lead_tracking_link = ""
-    if _pflags.get("show_lead_tracking"):
+    if pflags.get("show_lead_tracking"):
+        lead_tracking_url = _api_url("/dashboard/nixon-bq-test/lead-tracking", access_key=access_key)
         lead_tracking_link = (
             f'<a class="dash-view-btn" href="{lead_tracking_url}" '
             'style="margin-top:6px;border-top:1px solid rgba(255,255,255,.1);padding-top:14px">'
             f'{_ICON_LEADS}<span>Lead Tracking</span></a>'
         )
 
-    sidebar_html = f"""
-    <button type="button" class="dash-sidebar-toggle" id="sidebarToggle" aria-label="Open navigation" aria-expanded="false" aria-controls="dashSidebar">{_ICON_MENU}</button>
-    <div class="dash-sidebar-backdrop" id="sidebarBackdrop" hidden></div>
-    <aside class="dash-sidebar" id="dashSidebar" aria-label="Primary navigation">
-      <div class="dash-sidebar-head">
-        <a href="#" class="dash-sidebar-logo" aria-label="Sagefrog home">
-          <img class="dash-sidebar-logo-icon" src="/static/apple-touch-icon.png" alt="" width="34" height="34" onerror="this.remove()" />
-          <span class="dash-sidebar-wordmark">Sagefrog</span>
-        </a>
-        <span class="dash-sidebar-beta">Beta</span>
-      </div>
+    # Page-specific JS tab buttons (Overview/Explorer/Analytics/GSC, driven by
+    # switchTab() further down) + the Website-Analytics sub-nav, passed straight
+    # through to the shared sidebar via view_nav_html — render_sidebar() inserts
+    # this raw, so it must supply its own <nav class="dash-sidebar-nav"> wrapper.
+    view_nav_html = f"""
       <nav class="dash-sidebar-nav" aria-label="Sections">
         <button class="dash-view-btn tab-btn active" data-tab="overview">{_ICON_OVERVIEW}<span>Overview</span></button>
         <button class="dash-view-btn tab-btn" data-tab="explorer">{_ICON_EXPLORER}<span>Explorer</span></button>
@@ -144,15 +77,20 @@ def render_nixon_bigquery_test_page(
         {lead_tracking_link}
         <a class="dash-view-btn" href="{gtm_url}"{'' if lead_tracking_link else ' style="margin-top:6px;border-top:1px solid rgba(255,255,255,.1);padding-top:14px"'}>{_ICON_TAGS}<span>Event Tracking</span></a>
       </nav>
-      <div class="dash-sidebar-footer">
-        <div class="dash-sidebar-client"><span class="topbar-client-label">Nixon Medical</span></div>
-        <nav class="dash-sidebar-links" aria-label="Account navigation">
-          <a href="{connectors_url}" class="dash-sidebar-link">{_ICON_CONNECTORS}<span>Connectors</span></a>
-          <a href="{settings_url}" class="dash-sidebar-link">{_ICON_SETTINGS}<span>Settings</span></a>
-        </nav>
-        {account_html}
-      </div>
-    </aside>"""
+    """
+
+    sidebar_html = render_sidebar(
+        client_slug="nixon-bq-test",
+        label="Nixon Medical",
+        active_nav="overview",
+        access_key=access_key,
+        use_session=use_session,
+        session_is_admin=session_is_admin,
+        session_email=session_email,
+        show_files=_docs_enabled(),
+        show_connectors=pflags["show_connectors"],
+        view_nav_html=view_nav_html,
+    )
 
     admin_class = "is-admin" if session_is_admin else ""
     _ICON_ADMIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
@@ -186,7 +124,7 @@ def render_nixon_bigquery_test_page(
     :root {{ --bg:#eef2f7; --card:#fff; --line:#e2e8f0; --line-soft:#eff3f8; --navy:#0a2540; --blue:#1769aa; --accent:#1d6fd0; --muted:#6b7a90; --bad:#b42318; --ok:#0a7f3f; --sidebar-from:#0a2540; --sidebar-to:#123456; --radius:14px; --radius-sm:9px; --shadow:0 1px 2px rgba(16,33,67,.04), 0 4px 16px rgba(16,33,67,.05); }}
     * {{ box-sizing:border-box; }}
     body {{ margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:#102033; -webkit-font-smoothing:antialiased; }}
-    {_SIDEBAR_CSS}
+    {SIDEBAR_CSS}
     main {{ max-width:1320px; margin:0 auto; padding:24px 28px 56px; }}
     h2 {{ margin:0; color:var(--navy); font-size:1.05rem; font-weight:750; letter-spacing:-.005em; }}
     p {{ margin:6px 0 0; color:var(--muted); }}
@@ -484,6 +422,7 @@ def render_nixon_bigquery_test_page(
   </main>
     </div>
   </div>
+  <script>{dashboard_topbar_js()}</script>
   <script>
     // ---- Skeleton helpers ----
     const _SW=['50%','76%','38%','90%','62%','44%','70%'];
@@ -1243,17 +1182,6 @@ def render_nixon_bigquery_test_page(
     }});
     loadSummary();
     loadHealth();
-
-    // ---- Mobile sidebar toggle ----
-    (function(){{
-      const shell=document.querySelector('.app-shell'), toggle=document.getElementById('sidebarToggle'), backdrop=document.getElementById('sidebarBackdrop');
-      if (!shell||!toggle) return;
-      const setOpen=open=>{{shell.classList.toggle('sidebar-open',open);toggle.setAttribute('aria-expanded',open?'true':'false');if(backdrop)backdrop.hidden=!open;}};
-      toggle.addEventListener('click',()=>setOpen(!shell.classList.contains('sidebar-open')));
-      if (backdrop) backdrop.addEventListener('click',()=>setOpen(false));
-      document.addEventListener('keydown',e=>{{if(e.key==='Escape')setOpen(false);}});
-      shell.querySelectorAll('.dash-sidebar a').forEach(a=>a.addEventListener('click',()=>{{if(window.innerWidth<=900)setOpen(false);}}));
-    }})();
 
     // ---- Analytics sub-nav scrollspy ----
     (function(){{
