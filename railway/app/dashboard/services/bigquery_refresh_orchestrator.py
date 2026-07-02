@@ -236,9 +236,16 @@ def run_client_bigquery_refresh(
         meta_dataset_id=ids["meta"],
         mart_dataset_id=ids["mart"],
     ):
+        # client_slug (not client_key) here deliberately — client_key above is
+        # resolved from cfg.ga4_client_key purely for the GA4 registry lookup
+        # (line ~154) and can differ from the connector system's actual tenant
+        # id. The unified mart's client_key COLUMN must be the connectors'
+        # real identifier (client_slug) so every source is tagged consistently
+        # — a source whose per-platform mart lacks its own client_key column
+        # (e.g. LinkedIn) falls back to this value as a literal in the view.
         result["transformations"]["unified_mart"] = _run_step(
             "unified_mart",
-            lambda: bigquery_warehouse.rebuild_unified_marketing_mart(client_key),
+            lambda: bigquery_warehouse.rebuild_unified_marketing_mart(client_slug),
         )
 
     if result["transformations"]["unified_mart"].get("status") == "success":
