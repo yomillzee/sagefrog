@@ -84,8 +84,8 @@ class BigQueryRefreshOrchestratorTests(unittest.TestCase):
         fake_handlers = {"meta_ads": meta_handler, "linkedin_ads": linkedin_handler}
 
         configs = [
-            SimpleNamespace(connector_type="meta_ads", status="connected", id=1),
-            SimpleNamespace(connector_type="linkedin_ads", status="connected", id=2),
+            SimpleNamespace(connector_type="meta_ads", status="connected", id=1, sync_enabled=True),
+            SimpleNamespace(connector_type="linkedin_ads", status="connected", id=2, sync_enabled=True),
         ]
 
         fake_modules = {
@@ -131,6 +131,69 @@ class BigQueryRefreshOrchestratorTests(unittest.TestCase):
         meta_handler.run_sync.assert_called_once_with(
             client_slug="client", date_range="LAST_30_DAYS"
         )
+
+    def test_sync_enabled_gates_cron_but_not_manual_refresh(self) -> None:
+        """A connector with sync_enabled=False is skipped by the daily cron, but
+        an explicit manual/onboarding refresh still runs it regardless — the
+        toggle only controls whether cron picks the connector up automatically.
+        """
+        cfg = SimpleNamespace(
+            ga4_client_key="client",
+            google_customer_id=None,
+            linkedin_account_id=None,
+            meta_account_id="meta-1",
+        )
+        target = SimpleNamespace(
+            bq_project_id="client-project",
+            bq_dataset_id="analytics_123",
+            credentials={"client_email": "svc@example.test"},
+            credentials_env="GCP_CLIENT",
+        )
+        meta_handler = SimpleNamespace(run_sync=Mock(return_value=SimpleNamespace(
+            ok=True, rows_loaded=1, error=None,
+            range_start=date(2026, 5, 24), range_end=date(2026, 6, 22),
+        )))
+        configs = [
+            SimpleNamespace(connector_type="meta_ads", status="connected", id=1, sync_enabled=False),
+        ]
+        fake_modules = {
+            "client_config": SimpleNamespace(load_client_config=lambda _: cfg),
+            "ga4_clients": SimpleNamespace(resolve_client_config=lambda client_key: target),
+            "client_bigquery_setup": SimpleNamespace(
+                ensure_client_bq_resources=lambda **kwargs: {"status": "success", "ok": True},
+                dataset_ids=lambda: {
+                    "google": "raw_google_ads", "linkedin": "raw_linkedin_ads",
+                    "meta": "raw_meta_ads", "mart": "marketing_marts",
+                },
+            ),
+            "bigquery_warehouse": SimpleNamespace(
+                route=lambda **kwargs: contextlib.nullcontext(),
+                rebuild_unified_marketing_mart=lambda *a, **k: {"status": "success", "table": "mart"},
+            ),
+            "connector_config_store": SimpleNamespace(
+                list_configs=lambda _slug: configs,
+                start_sync_run=lambda *a, **k: 1,
+                finish_sync_run=lambda *a, **k: None,
+                update_sync_timestamps=lambda *a, **k: None,
+            ),
+            "connectors": SimpleNamespace(),
+            "connectors.base": SimpleNamespace(get=lambda ctype: meta_handler if ctype == "meta_ads" else None),
+            "dashboard_snapshots": SimpleNamespace(delete_snapshot=lambda _: True),
+        }
+        with patch.dict(sys.modules, fake_modules):
+            cron_result = orchestrator.run_client_bigquery_refresh(
+                client_slug="client", trigger="cron", today=date(2026, 6, 22)
+            )
+            self.assertEqual(cron_result["sources"]["meta_ads"]["status"], "sync_disabled")
+            meta_handler.run_sync.assert_not_called()
+
+            manual_result = orchestrator.run_client_bigquery_refresh(
+                client_slug="client", trigger="manual_full", today=date(2026, 6, 22)
+            )
+            self.assertEqual(manual_result["sources"]["meta_ads"]["status"], "success")
+            meta_handler.run_sync.assert_called_once_with(
+                client_slug="client", date_range="LAST_30_DAYS"
+            )
 
 
 if __name__ == "__main__":

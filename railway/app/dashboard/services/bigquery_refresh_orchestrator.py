@@ -193,6 +193,11 @@ def run_client_bigquery_refresh(
         if not handler or not conf or conf.status not in ("connected", "error", "syncing"):
             result["sources"][ctype] = _status("not_configured")
             continue
+        # sync_enabled only gates the automated cron trigger — an explicit
+        # manual/onboarding refresh always runs regardless of the toggle.
+        if trigger == "cron" and not conf.sync_enabled:
+            result["sources"][ctype] = _status("sync_disabled")
+            continue
 
         def _sync(ctype: str = ctype, handler: Any = handler, conf: Any = conf) -> dict[str, Any]:
             run_id = connector_config_store.start_sync_run(
