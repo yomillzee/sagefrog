@@ -215,6 +215,7 @@ def run_client_bigquery_refresh(
                 client_slug, ctype,
                 completed=True, success=res.ok, error=res.error,
                 range_start=res.range_start, range_end=res.range_end,
+                rows_loaded=res.rows_loaded,
             )
             return {
                 "status": "success" if res.ok else "failed",

@@ -59,6 +59,8 @@ SCHEMA_SQL_STATEMENTS = [
     "ALTER TABLE connector_configs ADD COLUMN IF NOT EXISTS last_sync_range_end DATE",
     # Per-connector sync options as JSON (e.g. HubSpot lifecycle_stage + lookback_days).
     "ALTER TABLE connector_configs ADD COLUMN IF NOT EXISTS sync_options TEXT",
+    # Rows loaded by the most recent successful sync (shown next to "Last sync").
+    "ALTER TABLE connector_configs ADD COLUMN IF NOT EXISTS last_rows_loaded INTEGER",
 ]
 
 
@@ -88,6 +90,7 @@ class ConnectorConfig:
     last_sync_range_start: date | None = None
     last_sync_range_end: date | None = None
     sync_options: str | None = None
+    last_rows_loaded: int | None = None
 
 
 @dataclass(frozen=True)
@@ -122,7 +125,7 @@ _SELECT = """
            mart_dataset_id, sync_enabled, sync_frequency, backfill_start_date,
            last_sync_started_at, last_sync_completed_at, last_success_at,
            last_error_message, disconnected_at, created_at, updated_at,
-           last_sync_range_start, last_sync_range_end, sync_options
+           last_sync_range_start, last_sync_range_end, sync_options, last_rows_loaded
     FROM connector_configs
 """
 
@@ -153,6 +156,7 @@ def _row_to_config(row: tuple) -> ConnectorConfig:
         last_sync_range_start=row[21] if len(row) > 21 else None,
         last_sync_range_end=row[22] if len(row) > 22 else None,
         sync_options=str(row[23]) if len(row) > 23 and row[23] else None,
+        last_rows_loaded=int(row[24]) if len(row) > 24 and row[24] is not None else None,
     )
 
 
@@ -318,6 +322,7 @@ def update_sync_timestamps(
     error: str | None = None,
     range_start: date | None = None,
     range_end: date | None = None,
+    rows_loaded: int | None = None,
 ) -> None:
     if not enabled():
         return
@@ -337,6 +342,9 @@ def update_sync_timestamps(
         if range_start and range_end:
             sets += ["last_sync_range_start = %s", "last_sync_range_end = %s"]
             vals += [range_start, range_end]
+        if rows_loaded is not None:
+            sets += ["last_rows_loaded = %s"]
+            vals += [rows_loaded]
     if error:
         sets += ["last_error_message = %s", "status = %s"]
         vals += [error[:500], "error"]

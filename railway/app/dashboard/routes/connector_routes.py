@@ -378,6 +378,7 @@ async def connector_sync(
                 error=result.error,
                 range_start=result.range_start,
                 range_end=result.range_end,
+                rows_loaded=result.rows_loaded,
             )
         except Exception as exc:
             err = str(exc)[:500]

@@ -341,7 +341,8 @@ def render_connectors_directory(
         last_sync_html = ""
         if cfg and cfg.last_success_at:
             ts = cfg.last_success_at
-            last_sync_html = f'<div class="connector-last-sync">Last sync: {_fmt_dt(ts)}</div>'
+            rows_suffix = f" · {cfg.last_rows_loaded:,} rows" if cfg.last_rows_loaded is not None else ""
+            last_sync_html = f'<div class="connector-last-sync">Last sync: {_fmt_dt(ts)}{rows_suffix}</div>'
             range_line = _sync_range_html(cfg)
             if range_line:
                 last_sync_html += range_line
@@ -1072,6 +1073,10 @@ def _render_management_view(
         <div class="mgmt-row">
           <span class="mgmt-label">Last successful sync</span>
           <span class="mgmt-value">{_esc(last_sync_html)}</span>
+        </div>
+        <div class="mgmt-row">
+          <span class="mgmt-label">Rows loaded</span>
+          <span class="mgmt-value">{f"{config.last_rows_loaded:,}" if config.last_rows_loaded is not None else "—"}</span>
         </div>
         <div class="mgmt-row">
           <span class="mgmt-label">Sync range</span>
