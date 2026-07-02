@@ -6,7 +6,7 @@ from urllib.parse import quote
 
 import logging
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import dashboard_service
@@ -155,7 +155,7 @@ def internal_sync_bq_client(client_slug: str, date_range: str = "LAST_30_DAYS") 
     summary="Cron: refresh every client that has at least one connector configured",
     dependencies=[Depends(require_cron_secret)],
 )
-def internal_sync_bq_all(date_range: str = "LAST_30_DAYS") -> dict:
+def internal_sync_bq_all(background_tasks: BackgroundTasks, date_range: str = "LAST_30_DAYS") -> dict:
     """Hands-off daily sync: no per-client cron provisioning required.
 
     Connecting a source via the Connectors wizard is enough — this endpoint
@@ -164,6 +164,16 @@ def internal_sync_bq_all(date_range: str = "LAST_30_DAYS") -> dict:
     sync_enabled still gates which connectors within each client actually
     run (bigquery_refresh_orchestrator); a client with zero enabled
     connectors just no-ops for that run.
+
+    Looping every client's every connector (live external API calls + BQ
+    writes) can run well past a few minutes once there's more than a
+    handful of clients — long enough to exceed Railway's edge proxy timeout
+    on a synchronous request/response. So, same pattern as the manual
+    "Run sync now" button (connector_routes.connector_sync): queue the real
+    work as a background task and return immediately. Per-client,
+    per-connector results land in connector_configs (last_success_at /
+    last_error_message, visible on each client's Connectors page) — not in
+    this response, since nothing is listening for it after the fact.
     """
     import connector_config_store
 
@@ -172,20 +182,18 @@ def internal_sync_bq_all(date_range: str = "LAST_30_DAYS") -> dict:
         raise HTTPException(status_code=400, detail="Invalid date_range.")
 
     slugs = sorted(connector_config_store.client_slugs_with_configs())
-    results: dict[str, dict] = {}
-    failed: list[str] = []
-    for slug in slugs:
-        try:
-            results[slug] = dashboard_service.refresh_bq_client(
-                slug, date_range=preset, sync_trigger="cron"
-            )
-        except Exception as exc:
-            # One client failing (bad credentials, BQ outage, etc.) must not
-            # block every other client's daily sync.
-            LOGGER.exception("sync-bq-all failed for client=%s", slug)
-            failed.append(slug)
-            results[slug] = {"status": "failed", "error": str(exc)[:500]}
-    return {"clients_synced": len(slugs), "failed": failed, "results": results}
+
+    def _run_all() -> None:
+        for slug in slugs:
+            try:
+                dashboard_service.refresh_bq_client(slug, date_range=preset, sync_trigger="cron")
+            except Exception:
+                # One client failing (bad credentials, BQ outage, etc.) must
+                # not block every other client's daily sync.
+                LOGGER.exception("sync-bq-all failed for client=%s", slug)
+
+    background_tasks.add_task(_run_all)
+    return {"status": "started", "clients_queued": len(slugs), "slugs": slugs}
 
 
 @router.post(

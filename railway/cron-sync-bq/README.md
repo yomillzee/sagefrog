@@ -42,11 +42,20 @@ unless you specifically need one client on a separate schedule.
   still works regardless).
 - For a one-time deep history pull use the backfill (`/internal/backfill-bq/{slug}`,
   180 days) or the "Backfill" step in the connector setup wizard.
-- After **Run now**, deploy logs should show `HTTP 200` and, in hands-off
-  mode, `clients_synced=N failed=[]`.
-- If any client fails (bad credentials, BQ outage, etc.) the run continues
-  for every other client — check the `failed` list and `results` in the
-  response body for per-client detail.
+- **Hands-off mode returns immediately** — `/internal/sync-bq-all` queues the
+  actual sync as a background task (looping every client's every connector
+  with live external API calls + BQ writes can run well past a few minutes
+  once there's more than a handful of clients, long enough to hit Railway's
+  edge proxy timeout on a synchronous request). After **Run now**, the
+  deploy log just confirms `HTTP 200` and `queued N client(s): [...]` — it
+  does **not** wait for the sync to finish or report success/failure.
+- **To check whether a sync actually succeeded**, look at each client's
+  Connectors page (`/dashboard/{client_slug}/connectors`) — per-connector
+  `last_success_at` / `last_error_message` are updated there as each one
+  completes, independent of this cron log. One client failing (bad
+  credentials, BQ outage, etc.) never blocks any other client's sync.
+- Single-client mode (`CLIENT_SLUG` set) is unchanged and still runs
+  synchronously — its response includes `refresh_run: status=...` directly.
 
 ## Manual run (local)
 

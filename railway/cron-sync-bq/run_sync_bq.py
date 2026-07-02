@@ -50,10 +50,13 @@ def main() -> int:
         headers={"X-Cron-Secret": secret, "Accept": "application/json"},
     )
     started = time.monotonic()
-    # sync-bq-all loops every client in one request; give it more headroom
-    # than the single-client 900s ceiling. Revisit (background/async) if the
-    # client count grows enough that this starts running long.
-    timeout = 900 if slug else 1800
+    # sync-bq-all queues the real work as a FastAPI background task and
+    # returns immediately (see /internal/sync-bq-all) — the actual per-client
+    # sync can run well past a few minutes once there's more than a handful
+    # of clients, long enough to hit Railway's edge proxy timeout on a
+    # synchronous response. The single-client path still runs synchronously
+    # (that's existing, unbroken behavior), so it keeps the longer timeout.
+    timeout = 900 if slug else 60
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8", errors="replace")
@@ -72,7 +75,8 @@ def main() -> int:
                     )
                 else:
                     print(
-                        f"clients_synced={data.get('clients_synced')} failed={data.get('failed')}",
+                        f"queued {data.get('clients_queued')} client(s): {data.get('slugs')} "
+                        "— results land in each client's Connectors page, not here.",
                         flush=True,
                     )
             except json.JSONDecodeError:
