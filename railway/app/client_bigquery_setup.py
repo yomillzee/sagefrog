@@ -128,3 +128,46 @@ def ensure_client_bq_resources(
 def ensure_client_bigquery(**kwargs: Any) -> dict[str, Any]:
     """Backward-compatible alias for callers deployed before the refactor."""
     return ensure_client_bq_resources(**kwargs)
+
+
+def ensure_client_datasets(
+    *,
+    project_id: str,
+    credentials_env: str | None = None,
+) -> dict[str, Any]:
+    """Idempotently provision the standard app-owned datasets for a client's
+    BigQuery project directly, with no GA4 registry lookup.
+
+    Every connector (GA4, Google Ads, LinkedIn, Meta, GSC, SEMrush) already
+    self-routes to its own bq_project_id/raw_dataset_id, stored per-client in
+    connector_config_store via the Connectors wizard. The only thing this
+    still needs to resolve is "which GCP project", which for a connector-based
+    client is just client_dashboard_config.gcp_project_id — set once (or
+    auto-backfilled from the first connector's destination step) with no
+    separate GA4/GSC registry entry required.
+
+    Always ensures all four standard datasets exist (idempotent, cheap) rather
+    than computing which platforms are "needed" — a client may have any subset
+    of connectors connected, and create_dataset(exists_ok=True) is a no-op for
+    ones it doesn't use yet.
+    """
+    import bigquery_service
+
+    project = (project_id or "").strip()
+    if not project:
+        raise RuntimeError("This client has no GCP project configured yet (gcp_project_id).")
+
+    client = bigquery_service.build_client(project, credentials_env=credentials_env)
+    list(client.query("SELECT 1 AS ok", job_config=bigquery_service.make_job_config()).result(max_results=1))
+
+    ids = dataset_ids()
+    ready = [
+        _ensure_writable_dataset(client, project_id=project, dataset_id=dataset_id, location=None)
+        for dataset_id in dict.fromkeys(ids.values())
+    ]
+    return {
+        "ok": True,
+        "project_id": project,
+        "credentials_env": credentials_env,
+        "datasets": ready,
+    }

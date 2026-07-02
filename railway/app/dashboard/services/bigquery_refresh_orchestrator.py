@@ -143,15 +143,31 @@ def run_client_bigquery_refresh(
     import bigquery_warehouse
     import client_bigquery_setup
     import client_config
+    import client_dashboard_config
     import connector_config_store
     import connectors  # noqa: F401 — importing registers the connector handlers
     import dashboard_snapshots
-    import ga4_clients
     from connectors.base import get as get_handler
 
     cfg = client_config.load_client_config(client_slug)
     client_key = cfg.ga4_client_key or client_slug
-    target = ga4_clients.resolve_client_config(client_key=client_key)
+
+    # BQ routing: prefer client_dashboard_config.gcp_project_id (set once via
+    # the dashboard-creation flow, or auto-backfilled from the first
+    # connector's "Confirm destination" step — see connector_routes.py). This
+    # is the only thing a connector-based client needs configured; it does
+    # NOT require a GA4/GSC registry entry (ga4_clients / client_registry_store).
+    # Fall back to the older GA4-registry resolution only for clients that
+    # predate the connector system and never got gcp_project_id set.
+    db_cfg = client_dashboard_config.get_config(client_slug)
+    bq_project_id = (db_cfg.gcp_project_id if db_cfg else None) or None
+    bq_credentials_env: str | None = None
+    if not bq_project_id:
+        import ga4_clients
+        target = ga4_clients.resolve_client_config(client_key=client_key)
+        bq_project_id = target.bq_project_id
+        bq_credentials_env = target.credentials_env
+
     date_range = _trigger_date_range(trigger)
     run_started = datetime.now(tz=UTC)
     result: dict[str, Any] = {
@@ -164,18 +180,26 @@ def run_client_bigquery_refresh(
         "transformations": {},
     }
 
-    provision = _run_step(
-        "provision",
-        lambda: client_bigquery_setup.ensure_client_bq_resources(
-            client_key=client_key,
-            needs_google=bool(cfg.google_customer_id),
-            needs_linkedin=bool(cfg.linkedin_account_id),
-            needs_meta=bool(cfg.meta_account_id),
-            needs_mart=bool(
-                cfg.google_customer_id or cfg.linkedin_account_id or cfg.meta_account_id
+    if db_cfg and db_cfg.gcp_project_id:
+        provision = _run_step(
+            "provision",
+            lambda: client_bigquery_setup.ensure_client_datasets(
+                project_id=db_cfg.gcp_project_id,
             ),
-        ),
-    )
+        )
+    else:
+        provision = _run_step(
+            "provision",
+            lambda: client_bigquery_setup.ensure_client_bq_resources(
+                client_key=client_key,
+                needs_google=bool(cfg.google_customer_id),
+                needs_linkedin=bool(cfg.linkedin_account_id),
+                needs_meta=bool(cfg.meta_account_id),
+                needs_mart=bool(
+                    cfg.google_customer_id or cfg.linkedin_account_id or cfg.meta_account_id
+                ),
+            ),
+        )
     result["provision"] = provision
     if provision["status"] == "failed":
         result.update(status="failed", finished_at=datetime.now(tz=UTC).isoformat())
@@ -244,16 +268,16 @@ def run_client_bigquery_refresh(
     # per-platform marts the connectors produced.
     ids = client_bigquery_setup.dataset_ids()
     with bigquery_warehouse.route(
-        bq_project_id=target.bq_project_id,
-        credentials_env=target.credentials_env,
+        bq_project_id=bq_project_id,
+        credentials_env=bq_credentials_env,
         google_dataset_id=ids["google"],
         linkedin_dataset_id=ids["linkedin"],
         meta_dataset_id=ids["meta"],
         mart_dataset_id=ids["mart"],
     ):
         # client_slug (not client_key) here deliberately — client_key above is
-        # resolved from cfg.ga4_client_key purely for the GA4 registry lookup
-        # (line ~154) and can differ from the connector system's actual tenant
+        # resolved from cfg.ga4_client_key purely for the legacy GA4-registry
+        # fallback and can differ from the connector system's actual tenant
         # id. The unified mart's client_key COLUMN must be the connectors'
         # real identifier (client_slug) so every source is tagged consistently
         # — a source whose per-platform mart lacks its own client_key column

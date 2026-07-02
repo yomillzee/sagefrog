@@ -286,6 +286,29 @@ async def connector_configure(
             kwargs["backfill_start_date"] = (datetime.now(tz=UTC) - timedelta(days=days)).date()
 
         connector_config_store.upsert_config(slug, ctype, **kwargs)
+
+        # Backfill client_dashboard_config.gcp_project_id from the first
+        # connector's destination step, so a brand-new client needs no
+        # separate "register this client's GCP project" admin step — the
+        # orchestrator's provisioning gate reads gcp_project_id directly
+        # (see bigquery_refresh_orchestrator.run_client_bigquery_refresh).
+        if kwargs.get("bq_project_id"):
+            try:
+                import client_dashboard_config as _cdc
+                existing = _cdc.get_config(slug)
+                if not (existing and existing.gcp_project_id):
+                    _cdc.save_config(
+                        slug,
+                        label=(existing.label if existing else slug),
+                        google_customer_id=existing.google_customer_id if existing else None,
+                        linkedin_account_id=existing.linkedin_account_id if existing else None,
+                        meta_account_id=existing.meta_account_id if existing else None,
+                        ga4_client_key=existing.ga4_client_key if existing else None,
+                        gcp_project_id=kwargs["bq_project_id"],
+                    )
+            except Exception:
+                _log.warning("gcp_project_id backfill failed [%s/%s]", slug, ctype, exc_info=True)
+
         return JSONResponse({"ok": True})
     except Exception as exc:
         _log.warning("connector configure error [%s/%s]: %s", slug, ctype, exc)
