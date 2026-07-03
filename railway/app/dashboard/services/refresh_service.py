@@ -369,12 +369,6 @@ def refresh_penn_quick(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = 
     return refresh_client_quick(client_slug="penn", date_range=date_range, sync_trigger=sync_trigger)
 
 
-def refresh_penn_bq_test(*, date_range: str = "LAST_30_DAYS", sync_trigger: str = "manual_full") -> dict[str, Any]:
-    """Run Penn through the same orchestrated BigQuery pipeline as every client."""
-    return refresh_bq_client(
-        "penn-bq-test", date_range=date_range, sync_trigger=sync_trigger
-    )
-
 def refresh_bq_client(
     slug: str,
     *,
@@ -384,8 +378,7 @@ def refresh_bq_client(
     """Generic BigQuery-sourced refresh for any client with dashboard_mode='bigquery'.
 
     Reads all configuration (account IDs, GSC URL, SEMrush domain) from the
-    client_dashboard_config table.  Penn BQ Test keeps its own refresh_penn_bq_test()
-    function; this function is for new clients going forward.
+    client_dashboard_config table.
     """
     import bq_gsc_service
     import bq_linkedin_ads_service

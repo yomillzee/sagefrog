@@ -437,24 +437,16 @@ def arg_bq_settings_post(
     raise HTTPException(status_code=400, detail="Unknown action.")
 
 
-def _nixon_settings_context() -> tuple[dict, dict, str | None]:
-    """Routing + account-id config + service-account email for the settings page."""
+def _nixon_settings_context() -> tuple[dict, dict]:
+    """Routing + account-id config for the settings page."""
     import client_config
     import ga4_clients
-    import railway_api
 
-    routing: dict = {"marts_dataset": "marketing_marts", "railway_ready": railway_api.enabled()}
-    sa_email: str | None = None
+    routing: dict = {"marts_dataset": "marketing_marts"}
     try:
         target = ga4_clients.resolve_target(client_key="nixon")
         routing["project"] = target.bq_project_id
         routing["ga4_dataset"] = target.bq_dataset_id
-        routing["creds_env"] = target.credentials_env or "GCP_SERVICE_ACCOUNT_JSON"
-    except Exception:
-        pass
-    try:
-        resolved = ga4_clients.resolve_client_config(client_key="nixon")
-        sa_email = str((resolved.credentials or {}).get("client_email") or "") or None
     except Exception:
         pass
     account_ids: dict = {}
@@ -468,7 +460,7 @@ def _nixon_settings_context() -> tuple[dict, dict, str | None]:
         }
     except Exception:
         pass
-    return routing, account_ids, sa_email
+    return routing, account_ids
 
 
 @router.get(
@@ -480,8 +472,6 @@ def nixon_bq_settings_page(
     request: Request,
     key: str | None = None,
     saved: str | None = None,
-    cred_saved: str | None = None,
-    cred_error: str | None = None,
     bq_error: str | None = None,
 ):
     if web_users.enabled():
@@ -494,23 +484,18 @@ def nixon_bq_settings_page(
             raise HTTPException(status_code=401, detail="Invalid or missing dashboard key.")
         html_kw = {"access_key": key, "use_session": False, "session_email": None, "session_is_admin": False}
 
-    routing, account_ids, sa_email = _nixon_settings_context()
+    routing, account_ids = _nixon_settings_context()
     flash = None
     flash_error = None
     if saved:
         flash = "Account IDs saved."
-    elif cred_saved:
-        flash = "Service-account credential set on Railway — the service is redeploying."
-    if cred_error:
-        flash_error = str(cred_error)[:300]
-    elif bq_error:
+    if bq_error:
         flash_error = str(bq_error)[:300]
 
     return HTMLResponse(
         render_nixon_bq_settings_page(
             routing=routing,
             account_ids=account_ids,
-            sa_email=sa_email,
             flash=flash,
             flash_error=flash_error,
             **html_kw,

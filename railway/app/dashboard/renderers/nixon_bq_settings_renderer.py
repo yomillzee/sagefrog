@@ -40,7 +40,6 @@ def render_nixon_bq_settings_page(
     session_is_admin: bool = False,
     routing: dict | None = None,
     account_ids: dict | None = None,
-    sa_email: str | None = None,
     flash: str | None = None,
     flash_error: str | None = None,
 ) -> str:
@@ -49,12 +48,9 @@ def render_nixon_bq_settings_page(
     project = routing.get("project") or "—"
     ga4_dataset = routing.get("ga4_dataset") or "—"
     marts_dataset = routing.get("marts_dataset") or "marketing_marts"
-    creds_env = routing.get("creds_env") or "GCP_SERVICE_ACCOUNT_JSON"
-    railway_ready = bool(routing.get("railway_ready"))
 
     admin_class = "is-admin" if session_is_admin else ""
     dash_url = _api_url("/dashboard/nixon-bq-test", access_key=access_key)
-    cred_action = _api_url("/dashboard/nixon/gcp-credentials", access_key=access_key)
     settings_action = _api_url("/dashboard/nixon/settings", access_key=access_key)
 
     pflags = platform_nav_flags("nixon-bq-test")
@@ -102,12 +98,6 @@ def render_nixon_bq_settings_page(
         flash_html = f'<div class="flash">{_esc(flash)}</div>'
     elif flash_error:
         flash_html = f'<div class="flash err">{_esc(flash_error)}</div>'
-
-    railway_note = "" if railway_ready else (
-        '<p class="hint err-hint">Railway API not configured — credential upload is disabled until the '
-        'RAILWAY_* variables are set on this service.</p>'
-    )
-    _disabled = "" if railway_ready else " disabled"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -203,18 +193,8 @@ def render_nixon_bq_settings_page(
         <div><span class="kv-label">Project</span><span class="kv-val mono">{_esc(project)}</span></div>
         <div><span class="kv-label">GA4 dataset</span><span class="kv-val mono">{_esc(ga4_dataset)}</span></div>
         <div><span class="kv-label">Marts dataset</span><span class="kv-val mono">{_esc(marts_dataset)}</span></div>
-        <div><span class="kv-label">Credentials env</span><span class="kv-val mono">{_esc(creds_env)}</span></div>
-        <div><span class="kv-label">Service account</span><span class="kv-val mono">{_esc(sa_email or '—')}</span></div>
       </div>
-      <h3 class="sub">Service account key</h3>
-      <p class="hint">Upload the GCP service-account JSON; it's validated, base64-encoded, and written to <code>{_esc(creds_env)}</code> on Railway (triggers a redeploy).</p>
-      {railway_note}
-      <form class="stack" method="post" action="{cred_action}" enctype="multipart/form-data" onsubmit="return confirm('Set {_esc(creds_env)} on Railway? The service will redeploy.');">
-        <input type="hidden" name="env_var" value="{_esc(creds_env)}">
-        <input type="hidden" name="next" value="/dashboard/nixon-bq-test/settings">
-        <input type="file" name="credentials_file" accept="application/json,.json" required{_disabled}>
-        <button type="submit" class="primary"{_disabled}>Upload &amp; set credential</button>
-      </form>
+      <p class="hint">Reads use the shared agency service account (managed once in <a href="/admin">Admin</a>), which is granted BigQuery access on this project directly in GCP.</p>
     </section>
 
     <section>

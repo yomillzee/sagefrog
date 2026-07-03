@@ -57,7 +57,6 @@ from dashboard.services.refresh_service import (
     refresh_client,
     refresh_client_quick,
     refresh_penn,
-    refresh_penn_bq_test,
     refresh_penn_quick,
     save_penn_insights,
 )
