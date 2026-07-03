@@ -79,6 +79,11 @@ def internal_sync_bq_client(client_slug: str, date_range: str = "LAST_30_DAYS") 
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
+_SYNC_BQ_ALL_LOCK = "sync-bq-all"
+_SYNC_BQ_ALL_MAX_WORKERS = 4
+_SYNC_BQ_ALL_PER_CLIENT_TIMEOUT_SECONDS = 600  # 10 min/client before it's abandoned, not blocking the batch
+
+
 @router.post(
     "/internal/sync-bq-all",
     summary="Cron: refresh every client that has at least one connector configured",
@@ -103,8 +108,18 @@ def internal_sync_bq_all(background_tasks: BackgroundTasks, date_range: str = "L
     per-connector results land in connector_configs (last_success_at /
     last_error_message, visible on each client's Connectors page) — not in
     this response, since nothing is listening for it after the fact.
+
+    Clients sync concurrently (bounded pool, not one-at-a-time) so the total
+    run time scales with client_count / _SYNC_BQ_ALL_MAX_WORKERS instead of
+    client_count outright — at 20 clients that's the difference between one
+    long serial run and a handful of short overlapping batches. A per-client
+    timeout keeps one hung sync from silently absorbing the whole run. A
+    Postgres-backed lock (cron_locks) skips starting a new run entirely if
+    the previous tick's background task hasn't finished yet, so a slow day
+    can't stack two full runs on top of each other.
     """
     import connector_config_store
+    import cron_locks
 
     preset = (date_range or "LAST_30_DAYS").strip().upper().replace("-", "_")
     if preset not in WAREHOUSE_DATE_RANGES:
@@ -112,14 +127,38 @@ def internal_sync_bq_all(background_tasks: BackgroundTasks, date_range: str = "L
 
     slugs = sorted(connector_config_store.client_slugs_with_configs())
 
+    if not cron_locks.try_acquire(_SYNC_BQ_ALL_LOCK, ttl_seconds=3 * 3600, locked_by="sync-bq-all"):
+        LOGGER.info("sync-bq-all skipped: previous run still holds the lock")
+        return {"status": "skipped", "reason": "previous run still in progress", "slugs": slugs}
+
     def _run_all() -> None:
-        for slug in slugs:
-            try:
-                dashboard_service.refresh_bq_client(slug, date_range=preset, sync_trigger="cron")
-            except Exception:
-                # One client failing (bad credentials, BQ outage, etc.) must
-                # not block every other client's daily sync.
-                LOGGER.exception("sync-bq-all failed for client=%s", slug)
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeout
+
+        def _sync_one(slug: str) -> None:
+            dashboard_service.refresh_bq_client(slug, date_range=preset, sync_trigger="cron")
+
+        # Not a `with` block deliberately: ThreadPoolExecutor.__exit__ calls
+        # shutdown(wait=True), which would block this function -- and the lock
+        # release below -- until every submitted thread finishes, including one
+        # that already timed out and is hung. shutdown(wait=False) lets a hung
+        # client's thread keep running in the background (leaked, but Python
+        # can't forcibly cancel a running thread) without blocking the batch
+        # from finishing and releasing the lock for tomorrow's cron tick.
+        pool = ThreadPoolExecutor(max_workers=_SYNC_BQ_ALL_MAX_WORKERS)
+        try:
+            futures = {pool.submit(_sync_one, slug): slug for slug in slugs}
+            for future, slug in futures.items():
+                try:
+                    future.result(timeout=_SYNC_BQ_ALL_PER_CLIENT_TIMEOUT_SECONDS)
+                except _FutureTimeout:
+                    LOGGER.error("sync-bq-all timed out for client=%s (>%ss)", slug, _SYNC_BQ_ALL_PER_CLIENT_TIMEOUT_SECONDS)
+                except Exception:
+                    # One client failing (bad credentials, BQ outage, etc.) must
+                    # not block every other client's daily sync.
+                    LOGGER.exception("sync-bq-all failed for client=%s", slug)
+        finally:
+            pool.shutdown(wait=False)
+            cron_locks.release(_SYNC_BQ_ALL_LOCK)
 
     background_tasks.add_task(_run_all)
     return {"status": "started", "clients_queued": len(slugs), "slugs": slugs}
