@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import contextvars
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -8,27 +10,128 @@ from google.cloud import bigquery
 
 import bigquery_service
 
-_PROJECT_ID = "nixon-medical"
-_DATASET_ID = "marketing_marts"
-_FACT_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.fact_marketing_daily`"
-# Paid-media reads use the normalized view (source_platform = paid_google /
-# paid_linkedin); raw_source is debug-only. Supersedes fact_marketing_daily here.
-_PAID_MEDIA_VIEW = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_paid_media_daily`"
-_HEALTH_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.mart_health`"
-_GOOGLE_ADS_EXPLORER_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.explorer_google_ads_daily`"
-_LINKEDIN_CREATIVE_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.fact_linkedin_ads_creative_daily`"
-_META_AD_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.fact_meta_ads_ad_daily`"
-_PAGE_PATH_DAILY_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_page_path_daily`"
-_PAGE_PATH_SOURCE_DAILY_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_page_path_source_daily`"
+# This module started as Nixon-only (hardcoded project/dataset/client_key).
+# route() lets any other BigQuery-mode client reuse the exact same queries
+# against their own project/dataset — default (no route() context) preserves
+# the original Nixon-only behavior unchanged, so Nixon's existing routes and
+# bookmarks keep working exactly as before.
+_DEFAULT_CLIENT_KEY = "nixon"
+_DEFAULT_PROJECT_ID = "nixon-medical"
+_DEFAULT_DATASET_ID = "marketing_marts"
+
+_route_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "nixon_marketing_route", default=None
+)
+
+
+@contextlib.contextmanager
+def route(
+    *,
+    client_key: str | None = None,
+    project_id: str | None = None,
+    mart_dataset_id: str | None = None,
+    credentials_env: str | None = None,
+):
+    """Scope every fetch_* call in this module to one client's BQ destination.
+
+    All four params are optional and independently overridable; anything left
+    unset falls back to Nixon's own defaults, not to whatever the last route()
+    call set — each call starts from the same baseline.
+    """
+    payload = {
+        "client_key": (client_key or "").strip() or None,
+        "project_id": (project_id or "").strip() or None,
+        "dataset_id": (mart_dataset_id or "").strip() or None,
+        "credentials_env": (credentials_env or "").strip() or None,
+    }
+    token = _route_ctx.set(payload if any(payload.values()) else None)
+    try:
+        yield
+    finally:
+        _route_ctx.reset(token)
+
+
+def _ctx() -> dict:
+    return _route_ctx.get() or {}
+
+
+def _client_key() -> str:
+    return _ctx().get("client_key") or _DEFAULT_CLIENT_KEY
+
+
+def _project_id() -> str:
+    return _ctx().get("project_id") or _DEFAULT_PROJECT_ID
+
+
+def _dataset_id() -> str:
+    return _ctx().get("dataset_id") or _DEFAULT_DATASET_ID
+
+
+def _credentials_env() -> str | None:
+    return _ctx().get("credentials_env")
+
+
+def _fact_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.fact_marketing_daily`"
+
+
+def _paid_media_view() -> str:
+    # Paid-media reads use the normalized view (source_platform = paid_google /
+    # paid_linkedin); raw_source is debug-only. Supersedes fact_marketing_daily.
+    return f"`{_project_id()}.{_dataset_id()}.vw_paid_media_daily`"
+
+
+def _health_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.mart_health`"
+
+
+def _google_ads_explorer_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.explorer_google_ads_daily`"
+
+
+def _linkedin_creative_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.fact_linkedin_ads_creative_daily`"
+
+
+def _meta_ad_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.fact_meta_ads_ad_daily`"
+
+
+def _page_path_daily_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.vw_page_path_daily`"
+
+
+def _page_path_source_daily_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.vw_page_path_source_daily`"
+
 
 # All GA4 reads go through marketing_marts views — never raw_ga4 directly.
-_TRAFFIC_ACQ_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_ga4_traffic_acq_daily`"
-_TECH_DETAILS_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_ga4_tech_daily`"
-_LANDING_PAGE_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_ga4_landing_pages_daily`"
-_EVENTS_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_ga4_events_daily`"
-_USER_ACQ_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_ga4_user_acq_daily`"
-_GEO_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_ga4_geo_daily`"
-_DEMOGRAPHICS_TABLE = f"`{_PROJECT_ID}.{_DATASET_ID}.vw_ga4_demographics_daily`"
+def _traffic_acq_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.vw_ga4_traffic_acq_daily`"
+
+
+def _tech_details_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.vw_ga4_tech_daily`"
+
+
+def _landing_page_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.vw_ga4_landing_pages_daily`"
+
+
+def _events_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.vw_ga4_events_daily`"
+
+
+def _user_acq_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.vw_ga4_user_acq_daily`"
+
+
+def _geo_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.vw_ga4_geo_daily`"
+
+
+def _demographics_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.vw_ga4_demographics_daily`"
 
 
 def _job_config(**params: bigquery.ScalarQueryParameter) -> bigquery.QueryJobConfig:
@@ -55,7 +158,7 @@ def _run_query(
     params: dict[str, bigquery.ScalarQueryParameter],
     max_rows: int,
 ) -> list[dict[str, Any]]:
-    client = bigquery_service.build_client(project_id=_PROJECT_ID)
+    client = bigquery_service.build_client(project_id=_project_id(), credentials_env=_credentials_env())
     rows = client.query(sql, job_config=_job_config(**params)).result(max_results=max_rows)
     return [_clean_row(row) for row in rows]
 
@@ -77,7 +180,7 @@ def fetch_nixon_marketing(
       COALESCE(SUM(COALESCE(clicks, 0)), 0) AS clicks,
       COALESCE(SUM(COALESCE(conversions, 0)), 0) AS conversions,
       COALESCE(SUM(COALESCE(conversion_value, 0)), 0) AS conversion_value
-    FROM {_FACT_TABLE}
+    FROM {_fact_table()}
     WHERE `date` BETWEEN @start_date AND @end_date
     """
     by_source_sql = f"""
@@ -88,7 +191,7 @@ def fetch_nixon_marketing(
       SUM(COALESCE(clicks, 0)) AS clicks,
       SUM(COALESCE(conversions, 0)) AS conversions,
       SUM(COALESCE(conversion_value, 0)) AS conversion_value
-    FROM {_FACT_TABLE}
+    FROM {_fact_table()}
     WHERE `date` BETWEEN @start_date AND @end_date
     GROUP BY source
     ORDER BY spend DESC
@@ -102,7 +205,7 @@ def fetch_nixon_marketing(
       SUM(COALESCE(clicks, 0)) AS clicks,
       SUM(COALESCE(conversions, 0)) AS conversions,
       SUM(COALESCE(conversion_value, 0)) AS conversion_value
-    FROM {_FACT_TABLE}
+    FROM {_fact_table()}
     WHERE `date` BETWEEN @start_date AND @end_date
     GROUP BY `date`, source
     ORDER BY `date` ASC, source ASC
@@ -117,7 +220,7 @@ def fetch_nixon_marketing(
       SUM(COALESCE(clicks, 0)) AS clicks,
       SUM(COALESCE(conversions, 0)) AS conversions,
       SUM(COALESCE(conversion_value, 0)) AS conversion_value
-    FROM {_FACT_TABLE}
+    FROM {_fact_table()}
     WHERE `date` BETWEEN @start_date AND @end_date
     GROUP BY source, campaign_id
     ORDER BY spend DESC
@@ -128,7 +231,7 @@ def fetch_nixon_marketing(
     top_params = dict(params)
     top_params["top_limit"] = bigquery.ScalarQueryParameter("top_limit", "INT64", int(top_limit))
     return {
-        "client": "nixon",
+        "client": _client_key(),
         "date_range": {
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
@@ -157,7 +260,7 @@ def fetch_nixon_marketing_health(*, limit: int = 100) -> dict[str, Any]:
       impressions,
       clicks,
       conversions
-    FROM {_HEALTH_TABLE}
+    FROM {_health_table()}
     LIMIT @limit
     """
     rows = _run_query(
@@ -179,7 +282,7 @@ def fetch_nixon_marketing_health(*, limit: int = 100) -> dict[str, Any]:
       CAST(NULL AS INT64) AS impressions,
       CAST(NULL AS INT64) AS clicks,
       CAST(NULL AS FLOAT64) AS conversions
-    FROM {_PAGE_PATH_DAILY_TABLE}
+    FROM {_page_path_daily_table()}
     """
     try:
         ga4_rows = _run_query(ga4_sql, params={}, max_rows=1)
@@ -187,7 +290,7 @@ def fetch_nixon_marketing_health(*, limit: int = 100) -> dict[str, Any]:
     except Exception:
         pass
 
-    return {"client": "nixon", "row_count": len(rows), "rows": rows}
+    return {"client": _client_key(), "row_count": len(rows), "rows": rows}
 
 
 def fetch_nixon_summary(
@@ -202,7 +305,7 @@ def fetch_nixon_summary(
         COALESCE(SUM(COALESCE(impressions, 0)), 0) AS impressions,
         COALESCE(SUM(COALESCE(clicks, 0)), 0) AS clicks,
         COALESCE(SUM(COALESCE(conversions, 0)), 0) AS conversions
-      FROM {_PAID_MEDIA_VIEW}
+      FROM {_paid_media_view()}
       WHERE `date` BETWEEN @start_date AND @end_date
     )
     SELECT
@@ -239,7 +342,7 @@ def fetch_nixon_summary(
       CAST(SUM(COALESCE(impressions, 0)) AS INT64) AS impressions,
       CAST(SUM(COALESCE(clicks, 0)) AS INT64) AS clicks,
       SUM(COALESCE(conversions, 0)) AS conversions
-    FROM {_PAID_MEDIA_VIEW}
+    FROM {_paid_media_view()}
     WHERE `date` BETWEEN @start_date AND @end_date
     GROUP BY source_platform
     ORDER BY spend DESC
@@ -266,7 +369,7 @@ def fetch_nixon_summary(
       CAST(SUM(COALESCE(impressions, 0)) AS INT64) AS impressions,
       CAST(SUM(COALESCE(clicks, 0)) AS INT64) AS clicks,
       SUM(COALESCE(conversions, 0)) AS conversions
-    FROM {_PAID_MEDIA_VIEW}
+    FROM {_paid_media_view()}
     WHERE `date` BETWEEN @start_date AND @end_date
     GROUP BY `date`, source_platform
     ORDER BY `date`, source_platform
@@ -274,7 +377,7 @@ def fetch_nixon_summary(
     daily = _run_query(daily_sql, params=dict(params), max_rows=20000)
 
     return {
-        "client_key": "nixon",
+        "client_key": _client_key(),
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "summary": summary,
@@ -313,7 +416,7 @@ def fetch_nixon_google_ads_explorer(
       SUM(clicks) AS clicks,
       SUM(conversions) AS conversions,
       SUM(conversion_value) AS conversion_value
-    FROM {_GOOGLE_ADS_EXPLORER_TABLE}
+    FROM {_google_ads_explorer_table()}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY
       source, campaign_id, campaign_name, ad_group_id, ad_group_name, ad_id, ad_label
@@ -328,7 +431,7 @@ def fetch_nixon_google_ads_explorer(
         max_rows=20000,
     )
     return {
-        "client": "nixon",
+        "client": _client_key(),
         "date_range": {
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
@@ -362,7 +465,7 @@ def fetch_nixon_linkedin_explorer(
       SUM(clicks) AS clicks,
       SUM(conversions) AS conversions,
       ROUND(SUM(conversion_value), 2) AS conversion_value
-    FROM {_LINKEDIN_CREATIVE_TABLE}
+    FROM {_linkedin_creative_table()}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY campaign_group_name, campaign_name, creative_id
     ORDER BY spend DESC
@@ -376,7 +479,7 @@ def fetch_nixon_linkedin_explorer(
         max_rows=20000,
     )
     return {
-        "client": "nixon",
+        "client": _client_key(),
         "date_range": {
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
@@ -406,7 +509,7 @@ def fetch_nixon_meta_explorer(
       SUM(clicks)               AS clicks,
       SUM(conversions)          AS conversions,
       ROUND(SUM(conversion_value), 2) AS conversion_value
-    FROM {_META_AD_TABLE}
+    FROM {_meta_ad_table()}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY campaign_name, adset_name, ad_id
     ORDER BY spend DESC
@@ -420,7 +523,7 @@ def fetch_nixon_meta_explorer(
         max_rows=20000,
     )
     return {
-        "client": "nixon",
+        "client": _client_key(),
         "date_range": {
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
@@ -446,7 +549,7 @@ def fetch_nixon_pages_top(
       SUM(sessions) AS sessions,
       ROUND(SUM(engagement_seconds), 1) AS engagement_seconds,
       CAST(0 AS INT64) AS key_events
-    FROM {_PAGE_PATH_DAILY_TABLE}
+    FROM {_page_path_daily_table()}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY page_path
     ORDER BY page_views DESC
@@ -460,7 +563,7 @@ def fetch_nixon_pages_top(
         max_rows=20000,
     )
     return {
-        "client": "nixon",
+        "client": _client_key(),
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "row_count": len(rows),
         "rows": rows,
@@ -483,7 +586,7 @@ def fetch_nixon_traffic_acquisition(
       SUM(engaged_sessions) AS engaged_sessions,
       ROUND(SAFE_DIVIDE(SUM(engaged_sessions), NULLIF(SUM(sessions), 0)) * 100, 1) AS engagement_rate,
       SUM(key_events) AS key_events
-    FROM {_TRAFFIC_ACQ_TABLE}
+    FROM {_traffic_acq_table()}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY channel
     ORDER BY sessions DESC
@@ -493,7 +596,7 @@ def fetch_nixon_traffic_acquisition(
       CAST(date AS STRING) AS date,
       SUM(sessions) AS sessions,
       SUM(engaged_sessions) AS engaged_sessions
-    FROM {_TRAFFIC_ACQ_TABLE}
+    FROM {_traffic_acq_table()}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY date
     ORDER BY date ASC
@@ -506,14 +609,14 @@ def fetch_nixon_traffic_acquisition(
       SUM(engaged_sessions) AS engaged_sessions,
       ROUND(SAFE_DIVIDE(SUM(engaged_sessions), NULLIF(SUM(sessions), 0)) * 100, 1) AS engagement_rate,
       SUM(key_events) AS key_events
-    FROM {_TRAFFIC_ACQ_TABLE}
+    FROM {_traffic_acq_table()}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY source, medium
     ORDER BY sessions DESC
     LIMIT 25
     """
     return {
-        "client": "nixon",
+        "client": _client_key(),
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "by_channel": _run_query(by_channel_sql, params=params, max_rows=50),
         "daily": _run_query(daily_sql, params=params, max_rows=2000),
@@ -536,7 +639,7 @@ def fetch_nixon_device_split(
       SUM(users) AS users,
       SUM(sessions) AS engaged_sessions,
       SUM(key_events) AS key_events
-    FROM {_TECH_DETAILS_TABLE}
+    FROM {_tech_details_table()}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY device
     ORDER BY users DESC
@@ -546,7 +649,7 @@ def fetch_nixon_device_split(
     except Exception:
         rows = []
     return {
-        "client": "nixon",
+        "client": _client_key(),
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "rows": rows,
     }
@@ -570,7 +673,7 @@ def fetch_nixon_landing_pages(
       SUM(key_events) AS key_events,
       ROUND(SAFE_DIVIDE(SUM(key_events), NULLIF(SUM(sessions), 0)) * 100, 1) AS key_event_rate,
       ROUND(AVG(average_session_duration), 1) AS avg_engagement_seconds
-    FROM {_LANDING_PAGE_TABLE}
+    FROM {_landing_page_table()}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY page_path
     ORDER BY sessions DESC
@@ -578,7 +681,7 @@ def fetch_nixon_landing_pages(
     """
     rows = _run_query(sql, params=params, max_rows=100)
     return {
-        "client": "nixon",
+        "client": _client_key(),
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "row_count": len(rows),
         "rows": rows,
@@ -606,7 +709,7 @@ def fetch_nixon_pages_sources(
       SUM(sessions) AS sessions,
       ROUND(SUM(engagement_seconds), 1) AS engagement_seconds,
       CAST(0 AS INT64) AS key_events
-    FROM {_PAGE_PATH_SOURCE_DAILY_TABLE}
+    FROM {_page_path_source_daily_table()}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY page_path, source_platform, is_ai_referral, ai_platform, utm_campaign
     ORDER BY page_views DESC
@@ -620,7 +723,7 @@ def fetch_nixon_pages_sources(
         max_rows=50000,
     )
     return {
-        "client": "nixon",
+        "client": _client_key(),
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "row_count": len(rows),
         "rows": rows,
@@ -643,7 +746,7 @@ def fetch_nixon_conversion_events(
       SUM(event_count) AS event_count,
       SUM(users) AS total_users,
       ROUND(SAFE_DIVIDE(SUM(event_count), NULLIF(SUM(users), 0)), 2) AS event_count_per_user
-    FROM {_EVENTS_TABLE}
+    FROM {_events_table()}
     WHERE date BETWEEN @start_date AND @end_date
       AND event_name NOT IN (
         'page_view', 'session_start', 'user_engagement', 'first_visit',
@@ -662,7 +765,7 @@ def fetch_nixon_conversion_events(
         {"step": "Lead generated", "event": "generate_lead", "count": funnel_map.get("generate_lead", 0)},
     ]
     return {
-        "client": "nixon",
+        "client": _client_key(),
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "rows": rows,
         "funnel": funnel,
@@ -686,7 +789,7 @@ def fetch_nixon_user_acquisition(
       SUM(users) AS active_users,
       SUM(key_events) AS key_events,
       ROUND(SAFE_DIVIDE(SUM(key_events), NULLIF(SUM(total_users), 0)) * 100, 1) AS key_event_rate
-    FROM {_USER_ACQ_TABLE}
+    FROM {_user_acq_table()}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY channel
     ORDER BY new_users DESC
@@ -699,7 +802,7 @@ def fetch_nixon_user_acquisition(
       SUM(new_users) AS new_users,
       SUM(key_events) AS key_events,
       ROUND(SAFE_DIVIDE(SUM(key_events), NULLIF(SUM(total_users), 0)) * 100, 1) AS key_event_rate
-    FROM {_USER_ACQ_TABLE}
+    FROM {_user_acq_table()}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY source, medium
     ORDER BY new_users DESC
@@ -708,7 +811,7 @@ def fetch_nixon_user_acquisition(
     by_channel = _run_query(channel_sql, params=params, max_rows=15)
     by_source = _run_query(source_sql, params=params, max_rows=30)
     return {
-        "client": "nixon",
+        "client": _client_key(),
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "by_channel": by_channel,
         "by_source": by_source,
@@ -733,7 +836,7 @@ def fetch_nixon_demographics(
       SUM(active_users) AS users,
       SUM(sessions) AS sessions,
       SUM(key_events) AS key_events
-    FROM {_GEO_TABLE}
+    FROM {_geo_table()}
     WHERE date BETWEEN @start_date AND @end_date
       AND city IS NOT NULL AND city != '(not set)'
     GROUP BY city, region, country
@@ -745,7 +848,7 @@ def fetch_nixon_demographics(
       COALESCE(user_age_bracket, 'unknown') AS age_bracket,
       SUM(active_users) AS users,
       SUM(key_events) AS key_events
-    FROM {_DEMOGRAPHICS_TABLE}
+    FROM {_demographics_table()}
     WHERE date BETWEEN @start_date AND @end_date
       AND user_age_bracket IS NOT NULL AND user_age_bracket != '(not set)'
     GROUP BY age_bracket
@@ -760,7 +863,7 @@ def fetch_nixon_demographics(
       COALESCE(user_gender, 'unknown') AS gender,
       SUM(active_users) AS users,
       SUM(key_events) AS key_events
-    FROM {_DEMOGRAPHICS_TABLE}
+    FROM {_demographics_table()}
     WHERE date BETWEEN @start_date AND @end_date
       AND user_gender IS NOT NULL AND user_gender NOT IN ('(not set)', 'unknown')
     GROUP BY gender
@@ -770,7 +873,7 @@ def fetch_nixon_demographics(
     by_age = _run_query(age_sql, params=params, max_rows=10)
     by_gender = _run_query(gender_sql, params=params, max_rows=5)
     return {
-        "client": "nixon",
+        "client": _client_key(),
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "by_city": by_city,
         "by_age": by_age,

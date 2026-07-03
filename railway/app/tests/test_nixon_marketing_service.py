@@ -256,6 +256,47 @@ class NixonMarketingServiceTests(unittest.TestCase):
         self.assertEqual(params["start_date"], date(2026, 5, 25))
         self.assertEqual(params["end_date"], date(2026, 6, 23))
 
+    def test_route_scopes_queries_to_another_clients_project_and_dataset(self) -> None:
+        fake_client = _FakeClient()
+
+        with patch.object(
+            nixon_marketing_service.bigquery_service,
+            "build_client",
+            return_value=fake_client,
+        ), nixon_marketing_service.route(
+            client_key="acme",
+            project_id="acme-project",
+            mart_dataset_id="acme_marts",
+        ):
+            payload = nixon_marketing_service.fetch_nixon_google_ads_explorer(
+                start_date=date(2026, 6, 1),
+                end_date=date(2026, 6, 30),
+            )
+
+        self.assertEqual(payload["client"], "acme")
+        sql = fake_client.calls[0]["sql"]
+        self.assertIn("`acme-project.acme_marts.explorer_google_ads_daily`", sql)
+        self.assertNotIn("nixon-medical", sql)
+
+    def test_route_context_does_not_leak_across_calls(self) -> None:
+        fake_client = _FakeClient()
+
+        with patch.object(
+            nixon_marketing_service.bigquery_service,
+            "build_client",
+            return_value=fake_client,
+        ):
+            with nixon_marketing_service.route(project_id="acme-project", mart_dataset_id="acme_marts"):
+                pass
+            payload = nixon_marketing_service.fetch_nixon_google_ads_explorer(
+                start_date=date(2026, 6, 1),
+                end_date=date(2026, 6, 30),
+            )
+
+        self.assertEqual(payload["client"], "nixon")
+        sql = fake_client.calls[0]["sql"]
+        self.assertIn("`nixon-medical.marketing_marts.explorer_google_ads_daily`", sql)
+
 
 if __name__ == "__main__":
     unittest.main()
