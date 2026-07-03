@@ -14,6 +14,7 @@ import dashboard_snapshots
 import web_auth
 import web_users
 from cron_security import require_cron_secret
+from dashboard.renderers.nixon_bq_test_renderer import render_nixon_bigquery_test_page
 from dashboard.routes.helpers import (
     penn_html_session_kwargs,
     validate_client_slug,
@@ -214,13 +215,33 @@ def dashboard_client(
         flash = None
     import client_dashboard_config as _cdc
 
+    db_cfg = _cdc.get_config(slug)
+    # "bigquery_nixon" clients get the full Nixon-style template (self-fetches
+    # everything client-side from /api/clients/{slug}/*) instead of the
+    # server-rendered snapshot dashboard -- no snapshot/cache-miss refresh
+    # needed here, same as Nixon's own /dashboard/nixon-bq-test route.
+    if db_cfg and db_cfg.dashboard_mode == "bigquery_nixon":
+        label = (db_cfg.label or slug).strip() or slug
+        if web_users.enabled():
+            auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+            if isinstance(auth, RedirectResponse):
+                return auth
+            return HTMLResponse(render_nixon_bigquery_test_page(
+                client_slug=slug, api_client_key=slug, label=label,
+                **penn_html_session_kwargs(auth),
+            ))
+        dashboard_service.verify_dashboard_key(key)
+        return HTMLResponse(render_nixon_bigquery_test_page(
+            client_slug=slug, api_client_key=slug, label=label,
+            access_key=key, use_session=False, session_email=None, session_is_admin=False,
+        ))
+
     if web_users.enabled():
         auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
         if isinstance(auth, RedirectResponse):
             return auth
         snapshot = dashboard_snapshots.get_snapshot(slug)
         if not snapshot:
-            db_cfg = _cdc.get_config(slug)
             if db_cfg and db_cfg.dashboard_mode == "bigquery":
                 try:
                     snapshot = dashboard_service.refresh_bq_client(slug, sync_trigger="cache_miss")
@@ -239,7 +260,6 @@ def dashboard_client(
     dashboard_service.verify_dashboard_key(key)
     snapshot = dashboard_snapshots.get_snapshot(slug)
     if not snapshot:
-        db_cfg = _cdc.get_config(slug)
         if db_cfg and db_cfg.dashboard_mode == "bigquery":
             try:
                 snapshot = dashboard_service.refresh_bq_client(slug, sync_trigger="cache_miss")

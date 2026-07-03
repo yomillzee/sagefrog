@@ -31,7 +31,19 @@ def render_nixon_bigquery_test_page(
     use_session: bool = False,
     session_email: str | None = None,
     session_is_admin: bool = False,
+    client_slug: str = "nixon-bq-test",
+    api_client_key: str = "nixon",
+    label: str = "Nixon Medical",
 ) -> str:
+    """Render this BigQuery-mart dashboard for any client.
+
+    client_slug drives dashboard-facing URLs (sidebar, GTM, lead tracking) and
+    label is the display name. api_client_key drives the /api/clients/*
+    endpoints -- kept separate from client_slug because Nixon's own routes
+    still split these (marketing reads under "nixon", GSC/SEMrush/BQ routing
+    under "nixon-bq-test"); any client onboarded through the generic
+    /api/clients/{client_key}/* routes uses the same value for both.
+    """
     today = date.today()
     end = today - timedelta(days=1)
     start = today - timedelta(days=30)
@@ -43,12 +55,12 @@ def render_nixon_bigquery_test_page(
     _ICON_TAGS       = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>'
     _ICON_LEADS      = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>'
 
-    gtm_url = _api_url("/dashboard/nixon-bq-test/gtm", access_key=access_key)
+    gtm_url = _api_url(f"/dashboard/{client_slug}/gtm", access_key=access_key)
 
-    pflags = platform_nav_flags("nixon-bq-test")
+    pflags = platform_nav_flags(client_slug)
     lead_tracking_link = ""
     if pflags.get("show_lead_tracking"):
-        lead_tracking_url = _api_url("/dashboard/nixon-bq-test/lead-tracking", access_key=access_key)
+        lead_tracking_url = _api_url(f"/dashboard/{client_slug}/lead-tracking", access_key=access_key)
         lead_tracking_link = (
             f'<a class="dash-view-btn" href="{lead_tracking_url}" '
             'style="margin-top:6px;border-top:1px solid rgba(255,255,255,.1);padding-top:14px">'
@@ -71,8 +83,8 @@ def render_nixon_bigquery_test_page(
     """
 
     sidebar_html = render_sidebar(
-        client_slug="nixon-bq-test",
-        label="Nixon Medical",
+        client_slug=client_slug,
+        label=label,
         active_nav="overview",
         access_key=access_key,
         use_session=use_session,
@@ -95,7 +107,7 @@ def render_nixon_bigquery_test_page(
         <button class="admin-panel-close" id="adminPanelClose" aria-label="Close">&#x2715;</button>
       </div>
       <div class="admin-panel-body">
-        <p class="admin-panel-note">Nixon Medical · admin only</p>
+        <p class="admin-panel-note">{label} · admin only</p>
         <button type="button" class="primary" id="adminRefreshBtn" style="width:100%">Refresh data</button>
         <span class="status" id="adminRefreshStatus" style="display:block;margin-top:8px">Re-runs all BQ queries for the current date range.</span>
       </div>
@@ -109,7 +121,7 @@ def render_nixon_bigquery_test_page(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Nixon Medical</title>
+  <title>{label}</title>
   {favicon_head_html()}
   <style>
     :root {{ --bg:#eef2f7; --card:#fff; --line:#e2e8f0; --line-soft:#eff3f8; --navy:#0a2540; --blue:#1769aa; --accent:#1d6fd0; --muted:#6b7a90; --bad:#b42318; --ok:#0a7f3f; --sidebar-from:#0a2540; --sidebar-to:#123456; --radius:14px; --radius-sm:9px; --shadow:0 1px 2px rgba(16,33,67,.04), 0 4px 16px rgba(16,33,67,.05); }}
@@ -407,7 +419,7 @@ def render_nixon_bigquery_test_page(
     <div id="pane-gsc" hidden>
       <section id="sec-gsc-overview">
         <h2>Search Console</h2>
-        <p class="src-note"><code>GET /api/clients/nixon/gsc/summary</code><span class="arrow">→</span><code>raw_gsc.fact_gsc_query_daily / fact_gsc_page_daily</code></p>
+        <p class="src-note"><code>GET /api/clients/{api_client_key}/gsc/summary</code><span class="arrow">→</span><code>raw_gsc.fact_gsc_query_daily / fact_gsc_page_daily</code></p>
         <div class="status" id="gscStatus">Waiting…</div>
         <div class="cards" id="gscKpis"></div>
       </section>
@@ -421,7 +433,7 @@ def render_nixon_bigquery_test_page(
       </section>
       <section id="sec-semrush">
         <h2>SEMrush — Organic Search Intelligence</h2>
-        <p class="src-note"><code>GET /api/clients/nixon/semrush/summary</code><span class="arrow">→</span><code>marketing_marts.vw_semrush_overview_latest / vw_semrush_keywords_latest</code></p>
+        <p class="src-note"><code>GET /api/clients/{api_client_key}/semrush/summary</code><span class="arrow">→</span><code>marketing_marts.vw_semrush_overview_latest / vw_semrush_keywords_latest</code></p>
         <div class="status" id="semrushStatus">Waiting…</div>
         <div class="cards" id="semrushKpis"></div>
       </section>
@@ -445,22 +457,22 @@ def render_nixon_bigquery_test_page(
     function clearSkelChart(svgId){{const s=document.getElementById('sk_'+svgId);if(s)s.remove();const svg=document.getElementById(svgId);if(svg)svg.style.visibility='';}}
 
     // ---- API constants ----
-    const SUMMARY_API          = "{_aurl('/api/clients/nixon/summary')}";
-    const HEALTH_API           = "{_aurl('/api/clients/nixon/marketing/health')}";
-    const EXPLORER_API         = "{_aurl('/api/clients/nixon/google-ads/explorer')}";
-    const LINKEDIN_EXPLORER_API= "{_aurl('/api/clients/nixon/linkedin/explorer')}";
-    const META_EXPLORER_API    = "{_aurl('/api/clients/nixon/meta/explorer')}";
-    const BACKFILL_API         = "{_aurl('/api/clients/nixon/backfill-linkedin')}";
-    const PAGES_TOP_API        = "{_aurl('/api/clients/nixon/pages/top')}";
-    const PAGES_SOURCES_API    = "{_aurl('/api/clients/nixon/pages/sources')}";
-    const TRAFFIC_ACQ_API      = "{_aurl('/api/clients/nixon/pages/traffic-acquisition')}";
-    const DEVICE_SPLIT_API     = "{_aurl('/api/clients/nixon/pages/device-split')}";
-    const LANDING_PAGES_API    = "{_aurl('/api/clients/nixon/pages/landing')}";
-    const CONVERSIONS_API      = "{_aurl('/api/clients/nixon/analytics/conversions')}";
-    const USER_ACQ_API         = "{_aurl('/api/clients/nixon/analytics/user-acquisition')}";
-    const DEMOGRAPHICS_API     = "{_aurl('/api/clients/nixon/analytics/demographics')}";
-    const GSC_API              = "{_aurl('/api/clients/nixon/gsc/summary')}";
-    const SEMRUSH_API          = "{_aurl('/api/clients/nixon/semrush/summary')}";
+    const SUMMARY_API          = "{_aurl(f'/api/clients/{api_client_key}/summary')}";
+    const HEALTH_API           = "{_aurl(f'/api/clients/{api_client_key}/marketing/health')}";
+    const EXPLORER_API         = "{_aurl(f'/api/clients/{api_client_key}/google-ads/explorer')}";
+    const LINKEDIN_EXPLORER_API= "{_aurl(f'/api/clients/{api_client_key}/linkedin/explorer')}";
+    const META_EXPLORER_API    = "{_aurl(f'/api/clients/{api_client_key}/meta/explorer')}";
+    const BACKFILL_API         = "{_aurl(f'/api/clients/{api_client_key}/backfill-linkedin')}";
+    const PAGES_TOP_API        = "{_aurl(f'/api/clients/{api_client_key}/pages/top')}";
+    const PAGES_SOURCES_API    = "{_aurl(f'/api/clients/{api_client_key}/pages/sources')}";
+    const TRAFFIC_ACQ_API      = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-acquisition')}";
+    const DEVICE_SPLIT_API     = "{_aurl(f'/api/clients/{api_client_key}/pages/device-split')}";
+    const LANDING_PAGES_API    = "{_aurl(f'/api/clients/{api_client_key}/pages/landing')}";
+    const CONVERSIONS_API      = "{_aurl(f'/api/clients/{api_client_key}/analytics/conversions')}";
+    const USER_ACQ_API         = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acquisition')}";
+    const DEMOGRAPHICS_API     = "{_aurl(f'/api/clients/{api_client_key}/analytics/demographics')}";
+    const GSC_API              = "{_aurl(f'/api/clients/{api_client_key}/gsc/summary')}";
+    const SEMRUSH_API          = "{_aurl(f'/api/clients/{api_client_key}/semrush/summary')}";
 
     // ---- Formatters ----
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
