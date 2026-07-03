@@ -643,7 +643,7 @@ def _render_wizard(
             <input id="martDataset" type="text" value="{_esc(mart_ds)}" placeholder="marketing_marts" />
           </div>
           <div class="wizard-actions">
-            <button class="btn-primary" onclick="confirmDestination()">Continue</button>
+            <button class="btn-primary" id="destContinueBtn" onclick="confirmDestination()">Continue</button>
           </div>
         </div>
       </div>
@@ -845,14 +845,23 @@ def _render_wizard(
       var mart = document.getElementById('martDataset').value.trim();
       if (!proj) {{ alert('GCP project ID is required.'); return; }}
       _configuredBqProject = proj; _configuredRawDs = raw; _configuredMartDs = mart;
+      // Saving here also provisions + verifies the BigQuery datasets server-side,
+      // which does a few BigQuery calls -- show a loading state so it doesn't look
+      // frozen, and re-enable on error so the user can fix GCP and retry.
+      var btn = document.getElementById('destContinueBtn');
+      var _label = btn ? btn.innerHTML : 'Continue';
+      if (btn) {{ btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Setting up BigQuery…'; }}
       var url = '/dashboard/' + _clientSlug + '/connectors/' + _connType + '/configure';
       fetch(url, {{
         method: 'POST',
         headers: {{'Content-Type': 'application/json'}},
         body: JSON.stringify({{bq_project_id: proj, raw_dataset_id: raw, mart_dataset_id: mart}})
       }}).then(r => r.json()).then(data => {{
-        if (data.ok) activateStep(4);
-        else alert(data.error || 'Failed to save destination.');
+        if (data.ok) {{ activateStep(4); }}
+        else {{ if (btn) {{ btn.disabled = false; btn.innerHTML = _label; }} alert(data.error || 'Failed to save destination.'); }}
+      }}).catch(err => {{
+        if (btn) {{ btn.disabled = false; btn.innerHTML = _label; }}
+        alert('Failed to save destination: ' + err.message);
       }});
     }}
 

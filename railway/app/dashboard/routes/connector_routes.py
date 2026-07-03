@@ -309,6 +309,32 @@ async def connector_configure(
             except Exception:
                 _log.warning("gcp_project_id backfill failed [%s/%s]", slug, ctype, exc_info=True)
 
+            # Provision + verify BigQuery up front, on the destination step,
+            # instead of deferring to the first sync. The GCP *project* must
+            # already exist (created out-of-band with the shared service account
+            # granted access -- the app can't create projects); this creates the
+            # datasets inside it and confirms the service account can write, so
+            # a missing/inaccessible project fails fast here with a clear,
+            # actionable message rather than a silent sync failure later.
+            # Idempotent (create_dataset exists_ok=True), so re-running is cheap.
+            try:
+                import client_bigquery_setup
+                client_bigquery_setup.ensure_client_datasets(project_id=kwargs["bq_project_id"])
+            except Exception as exc:
+                _log.warning("BQ provisioning failed on configure [%s/%s]: %s", slug, ctype, exc)
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "error": (
+                            f"BigQuery setup check failed: {str(exc)[:200]} — make sure the GCP "
+                            f"project '{kwargs['bq_project_id']}' exists and "
+                            "marketing-data-reader@sagefrog.iam.gserviceaccount.com has BigQuery "
+                            "Data Editor access on it, then try again."
+                        ),
+                    },
+                    status_code=400,
+                )
+
         return JSONResponse({"ok": True})
     except Exception as exc:
         _log.warning("connector configure error [%s/%s]: %s", slug, ctype, exc)
