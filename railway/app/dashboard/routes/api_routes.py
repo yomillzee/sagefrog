@@ -12,7 +12,6 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 import bigquery_service
-import client_bq_service
 import nixon_marketing_service
 import web_auth
 import web_users
@@ -98,30 +97,24 @@ def _authorize_bq_client_api(
     raise HTTPException(status_code=401, detail="Sign in or provide a valid API key.")
 
 
-# URL slug → DB config key mapping for generic BQ-test clients. Both entries
-# that ever lived here (arg -> arg-bq-test, penn-bq-test) have been deleted;
-# left empty rather than removing the /api/clients/{client_key}/* generic
-# routes entirely, in case a future client is onboarded through this path.
-_BQ_TEST_CLIENT_CONFIG_KEYS: dict[str, str] = {}
-_BQ_TEST_CLIENTS: frozenset[str] = frozenset(_BQ_TEST_CLIENT_CONFIG_KEYS)
-
-
 def _load_bq_test_config(slug: str) -> tuple[str, str]:
-    """Return (gcp_project_id, bq_mart_dataset_id) for a BQ-test client.
+    """Return (gcp_project_id, bq_mart_dataset_id) for a BigQuery-mode client.
 
-    Raises 404 if slug is not a recognised BQ-test client, or 503 if the
-    client has no GCP project configured yet.
+    Reads directly from client_dashboard_config -- any client with a
+    dashboard row and a configured GCP project can use the generic BQ
+    dashboard template, no separate allowlist to maintain per client.
+    Raises 404 if the client has no dashboard config at all, or 503 if it
+    has one but no GCP project configured yet.
     """
-    if slug not in _BQ_TEST_CLIENTS:
-        raise HTTPException(status_code=404, detail=f"No BQ data available for client '{slug}'.")
-    config_key = _BQ_TEST_CLIENT_CONFIG_KEYS[slug]
     try:
         import client_dashboard_config as cdc
-        row = cdc.get_config(config_key)
+        row = cdc.get_config(slug)
     except Exception:
         row = None
-    project_id = (row.gcp_project_id if row else None) or ""
-    dataset_id = (row.bq_mart_dataset_id if row else None) or "marketing_marts"
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No dashboard configured for client '{slug}'.")
+    project_id = (row.gcp_project_id or "").strip()
+    dataset_id = (row.bq_mart_dataset_id or "").strip() or "marketing_marts"
     if not project_id:
         raise HTTPException(
             status_code=503,
@@ -404,18 +397,15 @@ def client_summary(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_bq_read(
-            f"{normalized}.summary",
-            {"start": start.isoformat(), "end": end.isoformat()},
-            ttl_seconds=900,
-            fetch=lambda: client_bq_service.fetch_summary(
-                client_key=normalized,
-                start_date=start,
-                end_date=end,
-                project_id=project_id,
-                dataset_id=dataset_id,
-            ),
-        )
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.summary",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_summary(start_date=start, end_date=end),
+            )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
 
@@ -492,15 +482,13 @@ def client_health(
         x_api_key=x_api_key,
     )
     try:
-        return _cached_bq_read(
-            f"{normalized}.health", {"limit": limit}, ttl_seconds=900,
-            fetch=lambda: client_bq_service.fetch_health(
-                client_key=normalized,
-                limit=limit,
-                project_id=project_id,
-                dataset_id=dataset_id,
-            ),
-        )
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.health", {"limit": limit}, ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_marketing_health(limit=limit),
+            )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
 
@@ -995,13 +983,13 @@ def client_marketing_health(
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
     try:
-        return _cached_bq_read(
-            f"{normalized}.marketing.health", {"limit": limit}, ttl_seconds=900,
-            fetch=lambda: client_bq_service.fetch_health(
-                client_key=normalized, limit=limit,
-                project_id=project_id, dataset_id=dataset_id,
-            ),
-        )
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.marketing.health", {"limit": limit}, ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_marketing_health(limit=limit),
+            )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
 
@@ -1027,15 +1015,17 @@ def client_google_ads_explorer(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_bq_read(
-            f"{normalized}.explorer.google_ads",
-            {"start": start.isoformat(), "end": end.isoformat()},
-            ttl_seconds=900,
-            fetch=lambda: client_bq_service.fetch_google_ads_explorer(
-                client_key=normalized, start_date=start, end_date=end,
-                project_id=project_id, dataset_id=dataset_id,
-            ),
-        )
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer.google_ads",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_google_ads_explorer(
+                    start_date=start, end_date=end,
+                ),
+            )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
 
@@ -1061,15 +1051,17 @@ def client_linkedin_explorer(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_bq_read(
-            f"{normalized}.explorer.linkedin",
-            {"start": start.isoformat(), "end": end.isoformat()},
-            ttl_seconds=900,
-            fetch=lambda: client_bq_service.fetch_linkedin_explorer(
-                client_key=normalized, start_date=start, end_date=end,
-                project_id=project_id, dataset_id=dataset_id,
-            ),
-        )
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer.linkedin",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_linkedin_explorer(
+                    start_date=start, end_date=end,
+                ),
+            )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
 
@@ -1095,15 +1087,15 @@ def client_pages_top(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
-        return _cached_bq_read(
-            f"{normalized}.pages.top",
-            {"start": start.isoformat(), "end": end.isoformat()},
-            ttl_seconds=900,
-            fetch=lambda: client_bq_service.fetch_pages_top(
-                client_key=normalized, start_date=start, end_date=end,
-                project_id=project_id, dataset_id=dataset_id,
-            ),
-        )
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.pages.top",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_pages_top(start_date=start, end_date=end),
+            )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
 
@@ -1129,13 +1121,317 @@ def client_pages_sources(
     )
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     try:
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.pages.sources",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_pages_sources(start_date=start, end_date=end),
+            )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/meta/explorer",
+    summary="Client Meta Ads ad-level explorer from BigQuery marketing mart (generic BQ-test clients)",
+)
+def client_meta_explorer(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer.meta",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_meta_explorer(
+                    start_date=start, end_date=end,
+                ),
+            )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/pages/traffic-acquisition",
+    summary="Client GA4 traffic acquisition breakdown from BigQuery (generic BQ-test clients)",
+)
+def client_traffic_acquisition(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.pages.traffic_acquisition",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_traffic_acquisition(
+                    start_date=start, end_date=end,
+                ),
+            )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/pages/device-split",
+    summary="Client GA4 device category breakdown from BigQuery (generic BQ-test clients)",
+)
+def client_device_split(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.pages.device_split",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_device_split(start_date=start, end_date=end),
+            )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/pages/landing",
+    summary="Client GA4 landing page performance from BigQuery (generic BQ-test clients)",
+)
+def client_landing_pages(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.pages.landing",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_landing_pages(start_date=start, end_date=end),
+            )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/analytics/conversions",
+    summary="Client GA4 conversion events breakdown (generic BQ-test clients)",
+)
+def client_conversion_events(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.analytics.conversions",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_conversion_events(start_date=start, end_date=end),
+            )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/analytics/user-acquisition",
+    summary="Client GA4 first-touch user acquisition (generic BQ-test clients)",
+)
+def client_user_acquisition(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.analytics.user_acquisition",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_user_acquisition(start_date=start, end_date=end),
+            )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/analytics/demographics",
+    summary="Client GA4 demographic & geographic breakdown (generic BQ-test clients)",
+)
+def client_demographics(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.analytics.demographics",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_demographics(start_date=start, end_date=end),
+            )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/gsc/summary",
+    summary="Client Search Console summary from BigQuery (generic BQ-test clients)",
+)
+def client_gsc_summary(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        import bq_gsc_service
         return _cached_bq_read(
-            f"{normalized}.pages.sources",
+            f"{normalized}.gsc.summary",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: client_bq_service.fetch_pages_sources(
-                client_key=normalized, start_date=start, end_date=end,
-                project_id=project_id, dataset_id=dataset_id,
+            fetch=lambda: bq_gsc_service.build_gsc_mart_summary(
+                start=start, end=end, client_slug=normalized,
+            ),
+        )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/semrush/summary",
+    summary="Client SEMrush domain snapshot from BigQuery (generic BQ-test clients)",
+)
+def client_semrush_summary(
+    client_key: str,
+    request: Request,
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    try:
+        import bq_semrush_service
+        return _cached_bq_read(
+            f"{normalized}.semrush.summary", {}, ttl_seconds=6 * 3600,
+            fetch=lambda: bq_semrush_service.fetch_latest_snapshot(
+                client_key=normalized, project=project_id, mart_dataset=dataset_id,
             ),
         )
     except Exception as exc:
