@@ -13,18 +13,11 @@ from dashboard.renderers.base_layout import (
     SIDEBAR_CSS,
     dashboard_topbar_js,
     favicon_head_html,
-    platform_nav_flags,
+    nixon_sidebar_view_nav_html,
     render_sidebar,
 )
 from dashboard.renderers.nixon_bq_test_renderer import _api_url
 from dashboard.utils.formatting import esc as _esc
-
-_ICON_OVERVIEW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>'
-_ICON_EXPLORER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>'
-_ICON_WEBSITE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>'
-_ICON_SEARCH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
-_ICON_TAGS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>'
-_ICON_LEADS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>'
 
 
 def _docs_enabled() -> bool:
@@ -63,34 +56,15 @@ def render_nixon_bq_settings_page(
     marts_dataset = routing.get("marts_dataset") or "marketing_marts"
 
     admin_class = "is-admin" if session_is_admin else ""
-    dash_url = _api_url(f"/dashboard/{client_slug}", access_key=access_key)
 
-    pflags = platform_nav_flags(client_slug)
-    lead_tracking_link = ""
-    if pflags.get("show_lead_tracking"):
-        lead_tracking_url = _api_url(f"/dashboard/{client_slug}/lead-tracking", access_key=access_key)
-        lead_tracking_link = (
-            f'<a class="dash-view-btn" href="{lead_tracking_url}">'
-            f'{_ICON_LEADS}<span>Lead Tracking</span></a>'
-        )
-    event_tracking_link = ""
-    if pflags.get("show_gtm"):
-        gtm_url = _api_url(f"/dashboard/{client_slug}/gtm", access_key=access_key)
-        event_tracking_link = (
-            f'<a class="dash-view-btn" href="{gtm_url}">'
-            f'{_ICON_TAGS}<span>Event Tracking</span></a>'
-        )
-
-    view_nav_html = f"""
-      <nav class="dash-sidebar-nav" aria-label="Sections">
-        <a class="dash-view-btn" href="{dash_url}">{_ICON_OVERVIEW}<span>Overview</span></a>
-        <a class="dash-view-btn" href="{dash_url}">{_ICON_EXPLORER}<span>Explorer</span></a>
-        <a class="dash-view-btn" href="{dash_url}">{_ICON_WEBSITE}<span>Website Analytics</span></a>
-        <a class="dash-view-btn" href="{dash_url}">{_ICON_SEARCH}<span>Search Console</span></a>
-        {lead_tracking_link}
-        {event_tracking_link}
-      </nav>
-    """
+    # Same canonical section nav as the dashboard (as links back to it), so the
+    # sidebar is identical across the dashboard, settings, connectors, and files.
+    view_nav_html = nixon_sidebar_view_nav_html(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+        as_tabs=False,
+    )
 
     sidebar_html = render_sidebar(
         client_slug=client_slug,

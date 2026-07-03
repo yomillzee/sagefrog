@@ -426,6 +426,61 @@ def sidebar_view_nav_html(
     )
 
 
+def nixon_sidebar_view_nav_html(
+    *,
+    client_slug: str,
+    access_key: str | None,
+    use_session: bool,
+    as_tabs: bool,
+) -> str:
+    """Canonical section nav for Nixon-style (bigquery_nixon) dashboards.
+
+    Renders the SAME four sections on every page so the sidebar never changes
+    shape between the dashboard, settings, connectors, and files pages. On the
+    dashboard itself the four are JS tab buttons (as_tabs=True, driven by
+    switchTab); on every other page they are links back to the dashboard
+    (as_tabs=False). Lead / Event Tracking are standalone pages, so they are
+    always links and appear only when their connector is connected.
+    """
+    pflags = platform_nav_flags(client_slug)
+    dash_url = _dashboard_page_url(
+        client_slug=client_slug, access_key=access_key, use_session=use_session
+    ) or "#"
+    core = (
+        ("overview", "Overview", _VIEW_ICONS["overview"]),
+        ("explorer", "Explorer", _VIEW_ICONS["campaigns"]),
+        ("analytics", "Website Analytics", _VIEW_ICONS["website"]),
+        ("gsc", "Search Console", _VIEW_ICONS["gsc"]),
+    )
+    items: list[str] = []
+    for i, (tab, label, icon) in enumerate(core):
+        inner = f'{icon}<span>{_esc(label)}</span>'
+        if as_tabs:
+            active = " active" if i == 0 else ""
+            items.append(
+                f'<button type="button" class="dash-view-btn tab-btn{active}" data-tab="{tab}">{inner}</button>'
+            )
+        else:
+            items.append(f'<a class="dash-view-btn" href="{_esc(dash_url)}">{inner}</a>')
+    if pflags.get("show_lead_tracking"):
+        lt = _lead_tracking_page_url(
+            client_slug=client_slug, access_key=access_key, use_session=use_session
+        ) or "#"
+        items.append(
+            f'<a class="dash-view-btn" href="{_esc(lt)}">'
+            f'{_VIEW_ICONS["lead-tracking"]}<span>Lead Tracking</span></a>'
+        )
+    if pflags.get("show_gtm"):
+        et = _gtm_page_url(
+            client_slug=client_slug, access_key=access_key, use_session=use_session
+        ) or "#"
+        items.append(
+            f'<a class="dash-view-btn" href="{_esc(et)}">'
+            f'{_VIEW_ICONS["event-tracking"]}<span>Event Tracking</span></a>'
+        )
+    return f'<nav class="dash-sidebar-nav" aria-label="Sections">{"".join(items)}</nav>'
+
+
 def platform_nav_flags(client_slug: str) -> dict[str, bool]:
     """Per-client platform nav visibility, derived from connector state.
 
@@ -642,19 +697,39 @@ def render_client_shell_page(
     if show_semrush is None:
         show_semrush = False
 
-    view_nav_html = sidebar_view_nav_html(
-        show_website=show_website,
-        show_campaigns=show_campaigns,
-        show_gsc=show_gsc,
-        show_semrush=show_semrush,
-        show_lead_tracking=pflags["show_lead_tracking"],
-        show_event_tracking=pflags["show_gtm"],
-        as_links=True,
-        client_slug=client_slug,
-        access_key=access_key,
-        use_session=use_session,
-        active_view=active_nav,
-    )
+    # Nixon-style (bigquery_nixon) clients use one canonical section nav on every
+    # child page so the sidebar is identical to their dashboard's (same four
+    # sections + Connectors always reachable), rather than the feature-flag-driven
+    # nav which would show a different item set per page.
+    try:
+        import client_dashboard_config as _cdc
+        _row = _cdc.get_config(client_slug)
+        _is_nixon_mode = bool(_row and _row.dashboard_mode == "bigquery_nixon")
+    except Exception:
+        _is_nixon_mode = False
+
+    if _is_nixon_mode:
+        show_connectors = True
+        view_nav_html = nixon_sidebar_view_nav_html(
+            client_slug=client_slug,
+            access_key=access_key,
+            use_session=use_session,
+            as_tabs=False,
+        )
+    else:
+        view_nav_html = sidebar_view_nav_html(
+            show_website=show_website,
+            show_campaigns=show_campaigns,
+            show_gsc=show_gsc,
+            show_semrush=show_semrush,
+            show_lead_tracking=pflags["show_lead_tracking"],
+            show_event_tracking=pflags["show_gtm"],
+            as_links=True,
+            client_slug=client_slug,
+            access_key=access_key,
+            use_session=use_session,
+            active_view=active_nav,
+        )
     sidebar = render_sidebar(
         client_slug=client_slug,
         label=label,

@@ -9,7 +9,7 @@ from dashboard.renderers.base_layout import (
     SIDEBAR_CSS,
     dashboard_topbar_js,
     favicon_head_html,
-    platform_nav_flags,
+    nixon_sidebar_view_nav_html,
     render_sidebar,
 )
 
@@ -48,39 +48,16 @@ def render_nixon_bigquery_test_page(
     end = today - timedelta(days=1)
     start = today - timedelta(days=30)
 
-    _ICON_OVERVIEW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>'
-    _ICON_EXPLORER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>'
-    _ICON_WEBSITE  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>'
-    _ICON_SEARCH   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
-    _ICON_TAGS       = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>'
-    _ICON_LEADS      = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>'
-
-    gtm_url = _api_url(f"/dashboard/{client_slug}/gtm", access_key=access_key)
-
-    pflags = platform_nav_flags(client_slug)
-    lead_tracking_link = ""
-    if pflags.get("show_lead_tracking"):
-        lead_tracking_url = _api_url(f"/dashboard/{client_slug}/lead-tracking", access_key=access_key)
-        lead_tracking_link = (
-            f'<a class="dash-view-btn" href="{lead_tracking_url}" '
-            'style="margin-top:6px;border-top:1px solid rgba(255,255,255,.1);padding-top:14px">'
-            f'{_ICON_LEADS}<span>Lead Tracking</span></a>'
-        )
-
-    # Page-specific JS tab buttons (Overview/Explorer/Analytics/GSC, driven by
-    # switchTab() further down) + the Website-Analytics sub-nav, passed straight
-    # through to the shared sidebar via view_nav_html — render_sidebar() inserts
-    # this raw, so it must supply its own <nav class="dash-sidebar-nav"> wrapper.
-    view_nav_html = f"""
-      <nav class="dash-sidebar-nav" aria-label="Sections">
-        <button class="dash-view-btn tab-btn active" data-tab="overview">{_ICON_OVERVIEW}<span>Overview</span></button>
-        <button class="dash-view-btn tab-btn" data-tab="explorer">{_ICON_EXPLORER}<span>Explorer</span></button>
-        <button class="dash-view-btn tab-btn" data-tab="analytics">{_ICON_WEBSITE}<span>Website Analytics</span></button>
-        <button class="dash-view-btn tab-btn" data-tab="gsc">{_ICON_SEARCH}<span>Search Console</span></button>
-        {lead_tracking_link}
-        <a class="dash-view-btn" href="{gtm_url}"{'' if lead_tracking_link else ' style="margin-top:6px;border-top:1px solid rgba(255,255,255,.1);padding-top:14px"'}>{_ICON_TAGS}<span>Event Tracking</span></a>
-      </nav>
-    """
+    # Section nav (Overview/Explorer/Website Analytics/Search Console as JS tabs
+    # driven by switchTab() below, + connected Lead/Event Tracking as links).
+    # Shared with the settings/connectors/files pages via nixon_sidebar_view_nav_html
+    # so the sidebar is identical on every page of a Nixon-style dashboard.
+    view_nav_html = nixon_sidebar_view_nav_html(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+        as_tabs=True,
+    )
 
     sidebar_html = render_sidebar(
         client_slug=client_slug,
