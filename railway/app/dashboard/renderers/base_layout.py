@@ -1016,7 +1016,10 @@ SIDEBAR_CSS = """
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 20px 20px 16px;
+      /* Left padding pins the logo icon to the same 25px rail as the section-nav
+         and footer icons below it, so the Sagefrog mark lines up with the nav
+         instead of sitting a few px to its left. */
+      padding: 20px 20px 16px 25px;
       flex-shrink: 0;
     }
     .dash-sidebar-logo {
@@ -1113,7 +1116,9 @@ SIDEBAR_CSS = """
     .dash-sidebar-footer {
       margin-top: auto;
       flex-shrink: 0;
-      padding: 14px 14px 16px;
+      /* 13px left so the footer items' icons land on the same 25px rail as the
+         section nav (13 + the link's 12px inner padding = 25). */
+      padding: 14px 13px 16px;
       border-top: 1px solid rgba(255, 255, 255, 0.12);
       background: rgba(0, 0, 0, 0.12);
     }
@@ -1132,7 +1137,7 @@ SIDEBAR_CSS = """
       font: inherit;
       font-size: 0.9rem;
       font-weight: 650;
-      padding: 9px 34px 9px 13px;
+      padding: 9px 34px 9px 12px;
     }
     .dash-sidebar-client .topbar-client-switcher {
       appearance: none;
@@ -1161,12 +1166,12 @@ SIDEBAR_CSS = """
       white-space: nowrap;
       border: 0;
     }
-    .dash-sidebar-links { display: flex; flex-direction: column; gap: 2px; }
+    .dash-sidebar-links { display: flex; flex-direction: column; gap: 3px; }
     .dash-sidebar-link {
       display: flex;
       align-items: center;
-      gap: 11px;
-      padding: 9px 12px;
+      gap: 12px;
+      padding: 10px 12px;
       border-radius: 9px;
       color: #c3d2e6;
       font-family: inherit;
