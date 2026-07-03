@@ -114,11 +114,17 @@ def render_nixon_bigquery_test_page(
     .app-shell {{ display: flex; flex-direction: row; min-height: 100vh; }}
     .dash-main {{ flex: 1 1 auto; min-width: 0; }}
     {SIDEBAR_CSS}
-    main {{ max-width:1320px; margin:0 auto; padding:24px 28px 56px; }}
+    main {{ max-width:1320px; margin:0 auto; padding:20px 28px 56px; }}
     h2 {{ margin:0; color:var(--navy); font-size:1.05rem; font-weight:750; letter-spacing:-.005em; }}
     p {{ margin:6px 0 0; color:var(--muted); }}
     /* ---- Date bar (sticky) ---- */
-    .date-bar {{ position:sticky; top:0; z-index:40; background:var(--card); border:1px solid var(--line); border-bottom-left-radius:var(--radius); border-bottom-right-radius:var(--radius); border-top-left-radius:0; border-top-right-radius:0; padding:14px 18px 12px; margin-bottom:20px; box-shadow:0 4px 16px rgba(16,33,67,.08); display:flex; flex-direction:column; gap:10px; }}
+    /* Full-bleed sticky filter header — flush to the very top of the content
+       area (no gap above), spanning the full width of the main column, with an
+       inner wrapper that keeps the chips aligned to the same 1320px/28px grid
+       as the cards below. A hairline border + soft shadow separate it from the
+       scrolling content. */
+    .date-bar {{ position:sticky; top:0; z-index:50; background:var(--card); border-bottom:1px solid var(--line); box-shadow:0 1px 0 rgba(16,33,67,.04), 0 6px 16px -12px rgba(16,33,67,.28); }}
+    .date-bar-inner {{ max-width:1320px; margin:0 auto; padding:13px 28px; display:flex; flex-direction:column; gap:10px; }}
     /* ---- Admin FAB + slideout panel ---- */
     .admin-fab {{ position:fixed; bottom:24px; right:24px; z-index:200; width:42px; height:42px; border-radius:50%; background:var(--navy); color:#fff; border:0; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 3px 14px rgba(0,0,0,.28); transition:transform .15s,box-shadow .15s; }}
     .admin-fab:hover {{ transform:scale(1.08); box-shadow:0 5px 20px rgba(0,0,0,.35); }}
@@ -261,10 +267,10 @@ def render_nixon_bigquery_test_page(
   <div class="app-shell {admin_class}" id="appShell">
     {sidebar_html}
     <div class="dash-main">
-  <main>
 
-    <!-- Date / filter bar -->
+    <!-- Sticky filter header (full-bleed, flush to top) -->
     <div class="date-bar">
+      <div class="date-bar-inner">
       <div class="date-bar-bottom">
         <div class="filter-group">
           <span class="filter-label">Range</span>
@@ -281,7 +287,10 @@ def render_nixon_bigquery_test_page(
           <div class="chips" id="platformChips"></div>
         </div>
       </div>
+      </div>
     </div>
+
+  <main>
 
     <!-- ===== OVERVIEW TAB ===== -->
     <div id="pane-overview">
