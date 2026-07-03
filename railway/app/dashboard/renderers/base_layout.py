@@ -752,7 +752,7 @@ def render_client_shell_page(
   <style>
     {dashboard_theme.root_css_block(theme)}
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }}
+    body {{ margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; -webkit-font-smoothing: antialiased; }}
     .app-shell {{ display: flex; flex-direction: row; min-height: 100vh; }}
     .dash-main {{ flex: 1; min-width: 0; display: flex; flex-direction: column; width: 100%; }}
     .dash-content {{ flex: 1; width: 100%; padding: 28px 32px 48px; }}
