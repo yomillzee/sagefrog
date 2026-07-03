@@ -42,7 +42,20 @@ def render_nixon_bq_settings_page(
     account_ids: dict | None = None,
     flash: str | None = None,
     flash_error: str | None = None,
+    client_slug: str = "nixon-bq-test",
+    api_client_key: str = "nixon",
+    label: str = "Nixon Medical",
+    show_linkedin_backfill: bool = True,
 ) -> str:
+    """Settings page for any BigQuery-mart (Nixon-style) client.
+
+    Defaults preserve Nixon's exact page. client_slug drives dashboard-facing
+    URLs + the connectors nav; api_client_key drives the /api/clients/* refresh
+    + health endpoints (see render_nixon_bigquery_test_page for why these are
+    separate for Nixon itself). show_linkedin_backfill hides the LinkedIn-only
+    onboarding button for generic clients, whose full refresh already syncs
+    every connected platform.
+    """
     routing = routing or {}
     account_ids = account_ids or {}
     project = routing.get("project") or "—"
@@ -50,20 +63,19 @@ def render_nixon_bq_settings_page(
     marts_dataset = routing.get("marts_dataset") or "marketing_marts"
 
     admin_class = "is-admin" if session_is_admin else ""
-    dash_url = _api_url("/dashboard/nixon-bq-test", access_key=access_key)
-    settings_action = _api_url("/dashboard/nixon/settings", access_key=access_key)
+    dash_url = _api_url(f"/dashboard/{client_slug}", access_key=access_key)
 
-    pflags = platform_nav_flags("nixon-bq-test")
+    pflags = platform_nav_flags(client_slug)
     lead_tracking_link = ""
     if pflags.get("show_lead_tracking"):
-        lead_tracking_url = _api_url("/dashboard/nixon-bq-test/lead-tracking", access_key=access_key)
+        lead_tracking_url = _api_url(f"/dashboard/{client_slug}/lead-tracking", access_key=access_key)
         lead_tracking_link = (
             f'<a class="dash-view-btn" href="{lead_tracking_url}">'
             f'{_ICON_LEADS}<span>Lead Tracking</span></a>'
         )
     event_tracking_link = ""
     if pflags.get("show_gtm"):
-        gtm_url = _api_url("/dashboard/nixon-bq-test/gtm", access_key=access_key)
+        gtm_url = _api_url(f"/dashboard/{client_slug}/gtm", access_key=access_key)
         event_tracking_link = (
             f'<a class="dash-view-btn" href="{gtm_url}">'
             f'{_ICON_TAGS}<span>Event Tracking</span></a>'
@@ -81,15 +93,18 @@ def render_nixon_bq_settings_page(
     """
 
     sidebar_html = render_sidebar(
-        client_slug="nixon-bq-test",
-        label="Nixon Medical",
+        client_slug=client_slug,
+        label=label,
         active_nav="settings",
         access_key=access_key,
         use_session=use_session,
         session_is_admin=session_is_admin,
         session_email=session_email,
         show_files=_docs_enabled(),
-        show_connectors=pflags["show_connectors"],
+        # Connector-driven dashboards always expose the connectors nav so a
+        # brand-new client can reach the setup wizards before any connector
+        # exists (otherwise the link only appears once one is connected).
+        show_connectors=True,
         view_nav_html=view_nav_html,
     )
 
@@ -104,7 +119,7 @@ def render_nixon_bq_settings_page(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Nixon Medical — Settings</title>
+  <title>{_esc(label)} — Settings</title>
   {favicon_head_html()}
   <style>
     :root {{ --bg:#eef2f7; --card:#fff; --line:#e2e8f0; --line-soft:#eff3f8; --navy:#0a2540; --accent:#1d6fd0; --muted:#6b7a90; --bad:#b42318; --ok:#0a7f3f; --sidebar-from:#0a2540; --sidebar-to:#123456; --radius:14px; --radius-sm:9px; --shadow:0 1px 2px rgba(16,33,67,.04), 0 4px 16px rgba(16,33,67,.05); }}
@@ -182,7 +197,7 @@ def render_nixon_bq_settings_page(
     <div class="dash-main">
   <main>
     <div class="page-head">
-      <h1>Nixon Medical — Settings</h1>
+      <h1>{_esc(label)} — Settings</h1>
       <p class="debug-only">Configure the BigQuery account connection and push / pull data.</p>
     </div>
     {flash_html}
@@ -212,62 +227,62 @@ def render_nixon_bq_settings_page(
           <tbody>
             <tr>
               <td class="left"><div class="module-label">Overview</div><div class="module-sub">Paid media summary + daily trend</div></td>
-              <td class="left mono">/api/clients/nixon/summary</td>
+              <td class="left mono">/api/clients/{api_client_key}/summary</td>
               <td class="left mono">vw_paid_media_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Campaign Explorer — Google</div><div class="module-sub">Ad-level creative drill-down</div></td>
-              <td class="left mono">/api/clients/nixon/google-ads/explorer</td>
+              <td class="left mono">/api/clients/{api_client_key}/google-ads/explorer</td>
               <td class="left mono">explorer_google_ads_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Campaign Explorer — LinkedIn</div><div class="module-sub">Creative thumbnails + spend</div></td>
-              <td class="left mono">/api/clients/nixon/linkedin/explorer</td>
+              <td class="left mono">/api/clients/{api_client_key}/linkedin/explorer</td>
               <td class="left mono">fact_linkedin_ads_creative_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Website Analytics — Top Pages</div><div class="module-sub">Page views, users, sessions</div></td>
-              <td class="left mono">/api/clients/nixon/pages/top</td>
+              <td class="left mono">/api/clients/{api_client_key}/pages/top</td>
               <td class="left mono">vw_page_path_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Website Analytics — By Source</div><div class="module-sub">Source / AI referral breakdown</div></td>
-              <td class="left mono">/api/clients/nixon/pages/sources</td>
+              <td class="left mono">/api/clients/{api_client_key}/pages/sources</td>
               <td class="left mono">vw_page_path_source_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Website Analytics — Traffic</div><div class="module-sub">Sessions by channel + daily trend</div></td>
-              <td class="left mono">/api/clients/nixon/pages/traffic-acquisition</td>
+              <td class="left mono">/api/clients/{api_client_key}/pages/traffic-acquisition</td>
               <td class="left mono">vw_ga4_traffic_acq_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Website Analytics — Audience</div><div class="module-sub">Device type split</div></td>
-              <td class="left mono">/api/clients/nixon/pages/device-split</td>
+              <td class="left mono">/api/clients/{api_client_key}/pages/device-split</td>
               <td class="left mono">vw_ga4_tech_daily<span class="badge badge-view">VIEW</span><span class="badge badge-opt">optional</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Website Analytics — Landing Pages</div><div class="module-sub">Session + key event rate by first URL</div></td>
-              <td class="left mono">/api/clients/nixon/pages/landing</td>
+              <td class="left mono">/api/clients/{api_client_key}/pages/landing</td>
               <td class="left mono">vw_ga4_landing_pages_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Website Analytics — Conversions</div><div class="module-sub">Custom events + form funnel</div></td>
-              <td class="left mono">/api/clients/nixon/analytics/conversions</td>
+              <td class="left mono">/api/clients/{api_client_key}/analytics/conversions</td>
               <td class="left mono">vw_ga4_events_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Website Analytics — User Acquisition</div><div class="module-sub">First-touch channel + source/medium</div></td>
-              <td class="left mono">/api/clients/nixon/analytics/user-acquisition</td>
+              <td class="left mono">/api/clients/{api_client_key}/analytics/user-acquisition</td>
               <td class="left mono">vw_ga4_user_acq_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Website Analytics — Demographics</div><div class="module-sub">City/region, age bracket, gender</div></td>
-              <td class="left mono">/api/clients/nixon/analytics/demographics</td>
+              <td class="left mono">/api/clients/{api_client_key}/analytics/demographics</td>
               <td class="left mono">vw_ga4_demographics_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
               <td class="left"><div class="module-label">Mart Health</div><div class="module-sub">Row counts + date freshness per source</div></td>
-              <td class="left mono">/api/clients/nixon/marketing/health</td>
+              <td class="left mono">/api/clients/{api_client_key}/marketing/health</td>
               <td class="left mono">mart_health<span class="badge badge-tbl">TABLE</span></td>
             </tr>
           </tbody>
@@ -286,10 +301,10 @@ def render_nixon_bq_settings_page(
 
     <section>
       <h2>Data</h2>
-      <p class="hint">Pull recent data, or backfill history, into BigQuery for Nixon.</p>
+      <p class="hint">Pull recent data, or backfill history, into BigQuery for {_esc(label)}.</p>
       <div class="btn-row">
         <button type="button" class="primary" id="refreshBtn">Refresh — last 30 days</button>
-        <button type="button" class="primary ghost" id="backfillBtn">Backfill LinkedIn — 180 days</button>
+        {'<button type="button" class="primary ghost" id="backfillBtn">Backfill LinkedIn — 180 days</button>' if show_linkedin_backfill else ''}
         <span class="status" id="dataStatus"></span>
       </div>
       <h3 class="sub">Freshness — mart health</h3>
@@ -300,9 +315,9 @@ def render_nixon_bq_settings_page(
     </div>
   </div>
   <script>
-    const REFRESH_API = "{_api_url('/api/clients/nixon/refresh', access_key=access_key)}";
-    const BACKFILL_API = "{_api_url('/api/clients/nixon/backfill-linkedin', access_key=access_key)}";
-    const HEALTH_API = "{_api_url('/api/clients/nixon/marketing/health', access_key=access_key)}";
+    const REFRESH_API = "{_api_url(f'/api/clients/{api_client_key}/refresh', access_key=access_key)}";
+    const BACKFILL_API = "{_api_url(f'/api/clients/{api_client_key}/backfill-linkedin', access_key=access_key)}";
+    const HEALTH_API = "{_api_url(f'/api/clients/{api_client_key}/marketing/health', access_key=access_key)}";
     const nums = new Intl.NumberFormat('en-US');
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({{ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }}[c]));
@@ -314,7 +329,7 @@ def render_nixon_bq_settings_page(
     function setStatus(id, text, isErr) {{ const el = document.getElementById(id); el.textContent = text; el.className = isErr ? 'status error' : 'status'; }}
     async function runJob(url, confirmMsg, label) {{
       if (confirmMsg && !confirm(confirmMsg)) return;
-      const buttons = [document.getElementById('refreshBtn'), document.getElementById('backfillBtn')];
+      const buttons = [document.getElementById('refreshBtn'), document.getElementById('backfillBtn')].filter(Boolean);
       buttons.forEach(b => b.disabled = true);
       setStatus('dataStatus', label + '… this can take 1–2 minutes. Leave this tab open.');
       const t0 = Date.now();
@@ -334,7 +349,7 @@ def render_nixon_bq_settings_page(
       }}
     }}
     document.getElementById('refreshBtn').addEventListener('click', () => runJob(REFRESH_API, null, 'Refresh'));
-    document.getElementById('backfillBtn').addEventListener('click', () => runJob(BACKFILL_API, 'Backfill ~180 days of LinkedIn into BigQuery for Nixon?', 'Backfill'));
+    (function(){{ const b = document.getElementById('backfillBtn'); if (b) b.addEventListener('click', () => runJob(BACKFILL_API, 'Backfill ~180 days of LinkedIn into BigQuery?', 'Backfill')); }})();
     async function loadHealth() {{
       setStatus('healthStatus', 'Loading mart health…');
       try {{

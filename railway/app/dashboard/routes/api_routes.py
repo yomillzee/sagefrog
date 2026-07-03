@@ -1514,6 +1514,41 @@ def nixon_refresh(
     }
 
 
+@router.post(
+    "/api/clients/{client_key}/refresh",
+    summary="Client: refresh BigQuery (last 30 days), session-authed (generic BQ clients)",
+)
+def client_refresh(
+    client_key: str,
+    request: Request,
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    """Generic sibling of nixon_refresh -- pulls the last 30 days into BigQuery
+    for any bigquery_nixon-mode client by running its connector syncs. Same
+    session/API-key auth as the read endpoints."""
+    normalized = (client_key or "").strip().lower()
+    # Ensure the client actually has a BQ dashboard configured before running
+    # a (potentially slow) refresh; raises 404/503 the same way the reads do.
+    _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    try:
+        import dashboard_service
+
+        result = dashboard_service.refresh_bq_client(
+            normalized, date_range="LAST_30_DAYS", sync_trigger="manual_full"
+        )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+    run = (result or {}).get("refresh_run") or {}
+    return {"ok": True, "date_range": run.get("date_range")}
+
+
 @router.get("/api/debug/bq", summary="Debug BigQuery client identity")
 def debug_bigquery_identity(
     request: Request,

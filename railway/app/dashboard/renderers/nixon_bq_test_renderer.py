@@ -91,7 +91,10 @@ def render_nixon_bigquery_test_page(
         session_is_admin=session_is_admin,
         session_email=session_email,
         show_files=_docs_enabled(),
-        show_connectors=pflags["show_connectors"],
+        # Always expose the connectors nav on connector-driven dashboards so a
+        # brand-new client can reach the setup wizards before any connector is
+        # connected (pflags only turns it on once one already exists).
+        show_connectors=True,
         view_nav_html=view_nav_html,
     )
 

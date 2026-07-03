@@ -30,6 +30,32 @@ def _config_updated_at(client_slug: str) -> str | None:
     return row.updated_at if row else None
 
 
+def _bq_nixon_routing(db_cfg) -> dict:
+    """BigQuery routing context for the Nixon-style settings page: which GCP
+    project + marts dataset this client's dashboard reads from."""
+    project = (getattr(db_cfg, "gcp_project_id", None) or "").strip() or "—"
+    marts = (getattr(db_cfg, "bq_mart_dataset_id", None) or "").strip() or "marketing_marts"
+    return {"project": project, "ga4_dataset": "—", "marts_dataset": marts}
+
+
+def _render_bq_nixon_settings(slug: str, db_cfg, *, flash, flash_err, html_kw) -> HTMLResponse:
+    from dashboard.renderers.nixon_bq_settings_renderer import render_nixon_bq_settings_page
+
+    label = (getattr(db_cfg, "label", None) or slug).strip() or slug
+    return HTMLResponse(
+        render_nixon_bq_settings_page(
+            client_slug=slug,
+            api_client_key=slug,
+            label=label,
+            routing=_bq_nixon_routing(db_cfg),
+            flash=flash,
+            flash_error=flash_err,
+            show_linkedin_backfill=False,
+            **html_kw,
+        )
+    )
+
+
 # Settings forms may carry a `next` path so save/credential redirects return to a
 # focused page (e.g. the nixon-bq-test settings) instead of the generic settings.
 # Only an explicit allow-list of relative paths is honoured (no open redirects).
@@ -80,10 +106,18 @@ def dashboard_client_settings(
     flash_err = cred_error or (
         f"Settings saved, but BigQuery setup needs attention: {bq_error}" if bq_error else None
     )
+    db_cfg = client_dashboard_config.get_config(slug)
+    is_nixon_mode = bool(db_cfg and db_cfg.dashboard_mode == "bigquery_nixon")
+
     if web_users.enabled():
         auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
         if isinstance(auth, RedirectResponse):
             return auth
+        if is_nixon_mode:
+            return _render_bq_nixon_settings(
+                slug, db_cfg, flash=flash, flash_err=flash_err,
+                html_kw=dashboard_settings_session_kwargs(auth),
+            )
         cfg = dashboard_settings.load_settings_config(slug)
         return HTMLResponse(
             dashboard_settings.render_settings_html(
@@ -96,6 +130,12 @@ def dashboard_client_settings(
             )
         )
     dashboard_service.verify_dashboard_key(key)
+    if is_nixon_mode:
+        return _render_bq_nixon_settings(
+            slug, db_cfg, flash=flash, flash_err=flash_err,
+            html_kw={"access_key": key, "use_session": False,
+                     "session_email": None, "session_is_admin": False},
+        )
     cfg = dashboard_settings.load_settings_config(slug)
     return HTMLResponse(
         dashboard_settings.render_settings_html(
