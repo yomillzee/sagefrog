@@ -48,7 +48,15 @@ def _linkedin_full_table() -> str:
 
 
 def _resolve_project(bq_project_id: str | None) -> str:
-    return (bq_project_id or os.getenv("BQ_MART_PROJECT_ID") or _DEFAULT_PROJECT).strip()
+    project = (bq_project_id or os.getenv("BQ_MART_PROJECT_ID") or "").strip()
+    if not project:
+        raise RuntimeError(
+            "No BigQuery project resolved for this client's marketing mart. "
+            "Set gcp_project_id in the client's dashboard settings, or BQ_MART_PROJECT_ID "
+            "for a single-tenant deployment. Refusing to silently fall back to another "
+            "client's project."
+        )
+    return project
 
 
 def _resolve_table(name: str, bq_project_id: str | None, bq_dataset_id: str | None) -> str:

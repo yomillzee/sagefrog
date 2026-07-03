@@ -246,6 +246,29 @@ def sync_campaign_daily(
 
     start, end, _ = resolve_date_range(preset)
 
+    # This is the one caller of bigquery_warehouse's LinkedIn mirror/mart-rebuild
+    # functions that never went through bigquery_warehouse.route() -- it relied
+    # on those functions' own hardcoded default project (which happens to be
+    # this client's project only for Penn). Resolve and route explicitly here so
+    # this stops being an implicit, coincidental match and starts being a real
+    # routing decision -- required now that the module-level default has been
+    # removed in favor of raising when no project is routed.
+    bq_project_id = credentials_env = None
+    try:
+        import client_dashboard_config as _cdc
+        db_cfg = _cdc.get_config(cfg.client_key)
+        bq_project_id = (db_cfg.gcp_project_id if db_cfg else None) or None
+    except Exception:
+        pass
+    if not bq_project_id:
+        try:
+            import ga4_clients
+            target = ga4_clients.resolve_target(client_key=cfg.ga4_client_key or cfg.client_key)
+            bq_project_id = target.bq_project_id or None
+            credentials_env = target.credentials_env or None
+        except Exception:
+            pass
+
     for source, account_id, fetch_fn in (
         ("google", cfg.google_customer_id, google_ads_service.fetch_campaign_daily_metrics),
         ("linkedin", cfg.linkedin_account_id, linkedin_service.fetch_campaign_daily_metrics),
@@ -262,10 +285,18 @@ def sync_campaign_daily(
                     # BigQuery transfer.  Legacy Postgres snapshots may remain,
                     # but they must never be promoted into normalized BQ facts.
                     continue
-                bigquery_warehouse.mirror_campaign_daily_batch(source, account_id, rows)
-                if source == "linkedin":
-                    bigquery_warehouse.ensure_linkedin_campaigns_table()
-                    bigquery_warehouse.rebuild_linkedin_campaign_daily_mart()
+                if not bq_project_id:
+                    raise RuntimeError(
+                        "No BigQuery project resolved for this client -- skipping BQ mirror "
+                        "rather than risk writing into another client's project."
+                    )
+                with bigquery_warehouse.route(
+                    bq_project_id=bq_project_id, credentials_env=credentials_env
+                ):
+                    bigquery_warehouse.mirror_campaign_daily_batch(source, account_id, rows)
+                    if source == "linkedin":
+                        bigquery_warehouse.ensure_linkedin_campaigns_table()
+                        bigquery_warehouse.rebuild_linkedin_campaign_daily_mart()
             except Exception as exc:
                 # Surface a failed BQ mirror as a refresh warning instead of
                 # swallowing it. A silent except here is exactly what made a

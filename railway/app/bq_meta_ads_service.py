@@ -12,7 +12,6 @@ import bigquery_warehouse
 import meta_service
 
 
-_DEFAULT_PROJECT = "penn-community-b-1699391543298"
 _DEFAULT_MART_DATASET = "marketing_marts"
 _DEFAULT_CAMPAIGN_FACT = "fact_meta_ads_campaign_daily"
 _DEFAULT_ADSET_FACT = "fact_meta_ads_adset_daily"
@@ -71,7 +70,14 @@ def _project_id() -> str:
     r = _route_ctx.get()
     if r and r.get("project"):
         return r["project"]
-    return (os.getenv("BQ_META_PROJECT_ID") or _DEFAULT_PROJECT).strip()
+    project = (os.getenv("BQ_META_PROJECT_ID") or "").strip()
+    if not project:
+        raise RuntimeError(
+            "No BigQuery project routed for Meta reads. Call bq_meta_ads_service.route("
+            "bq_project_id=...) for this client, or set BQ_META_PROJECT_ID for a single-tenant "
+            "deployment. Refusing to silently fall back to another client's project."
+        )
+    return project
 
 
 def _mart_table(name: str) -> str:

@@ -33,7 +33,6 @@ _CREATIVE_METADATA_FIELDS = (
     "asset_url",
 )
 
-_DEFAULT_PROJECT = "penn-community-b-1699391543298"
 _DEFAULT_DATASET = "raw_linkedin_ads"
 _CAMPAIGN_TABLE = "campaign_daily"
 _DEFAULT_MART_DATASET = "marketing_marts"
@@ -88,7 +87,14 @@ def _project_id() -> str:
     r = _route_ctx.get()
     if r and r.get("project"):
         return r["project"]
-    return (os.getenv("PENN_BQ_LINKEDIN_PROJECT_ID") or _DEFAULT_PROJECT).strip()
+    project = (os.getenv("PENN_BQ_LINKEDIN_PROJECT_ID") or "").strip()
+    if not project:
+        raise RuntimeError(
+            "No BigQuery project routed for LinkedIn reads. Call bq_linkedin_ads_service.route("
+            "bq_project_id=...) for this client, or set PENN_BQ_LINKEDIN_PROJECT_ID for a "
+            "single-tenant deployment. Refusing to silently fall back to another client's project."
+        )
+    return project
 
 
 def _dataset_id() -> str:

@@ -123,7 +123,20 @@ def load_client_registry() -> dict[str, GscClientTarget]:
 
 
 def default_target(client_slug: str | None = None) -> GscClientTarget:
-    """Legacy Penn-only fallback -- unchanged behaviour for clients not in GSC_CLIENTS."""
+    """Legacy Penn-only fallback -- unchanged behaviour for Penn itself.
+
+    Only ever returned for Penn (client_slug in (None, "", "penn")). Any other
+    slug with no GSC connector and no registry entry means GSC genuinely isn't
+    configured for that client yet -- returning Penn's real project/dataset
+    here would silently show Penn's Search Console data on someone else's
+    dashboard, so that case raises instead.
+    """
+    slug = (client_slug or "").strip().lower()
+    if slug not in ("", "penn"):
+        raise RuntimeError(
+            f"GSC is not configured for client '{slug}' (no connector, no registry entry). "
+            "Refusing to fall back to Penn's BigQuery project."
+        )
     return GscClientTarget(
         client_slug=client_slug or "default",
         bq_project_id=_strip_env(os.getenv("GSC_BQ_PROJECT_ID")) or _DEFAULT_PROJECT,
@@ -191,6 +204,22 @@ def _connector_target(slug: str, base: GscClientTarget) -> GscClientTarget | Non
     )
 
 
+def _neutral_base(slug: str) -> GscClientTarget:
+    """Placeholder target with no real project -- used only to supply optional
+    defaults (credentials_env, label, ...) while building a connector-derived
+    target for a slug that isn't Penn and isn't in the registry. Deliberately
+    NOT default_target(slug): that raises for non-Penn slugs, and calling it
+    here (before we've even checked for a connector config) would break the
+    connector > registry > Penn-default precedence by raising too early.
+    """
+    return GscClientTarget(
+        client_slug=slug,
+        bq_project_id="",
+        bq_dataset_id="",
+        credentials_env="GCP_SERVICE_ACCOUNT_JSON",
+    )
+
+
 def resolve_target(client_slug: str) -> GscClientTarget:
     """GSC -> BigQuery destination for this client.
 
@@ -201,11 +230,13 @@ def resolve_target(client_slug: str) -> GscClientTarget:
     """
     slug = (client_slug or "").strip().lower()
     registry = load_client_registry()
-    base = registry.get(slug) or default_target(slug)
+    base = registry.get(slug) or _neutral_base(slug)
     conn = _connector_target(slug, base)
     if conn is not None:
         return conn
-    return base if slug in registry else default_target(slug)
+    if slug in registry:
+        return base
+    return default_target(slug)
 
 
 def target_from_config(client_slug: str, cfg: Any) -> GscClientTarget:
@@ -217,7 +248,7 @@ def target_from_config(client_slug: str, cfg: Any) -> GscClientTarget:
     Penn default for a real client. Dataset defaults to raw_gsc.
     """
     slug = (client_slug or "").strip().lower()
-    base = load_client_registry().get(slug) or default_target(slug)
+    base = load_client_registry().get(slug) or _neutral_base(slug)
     ga4_project, ga4_creds = _ga4_bq(slug)
     project = (
         (getattr(cfg, "bq_project_id", "") or "").strip()

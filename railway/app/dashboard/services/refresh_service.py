@@ -57,14 +57,32 @@ def _apply_mart_google_daily(
     except Exception:
         return
 
+    # Prefer this client's own gcp_project_id (client_dashboard_config) — the
+    # ga4_clients registry lookup below is a legacy fallback for clients that
+    # predate it. Resolving via ga4_clients alone and silently continuing with
+    # bq_project_id=None on failure previously meant a resolution failure fell
+    # through to bq_mart_service's own hardcoded default project (Penn's) --
+    # i.e. this client's dashboard would silently read Penn's Google Ads mart
+    # data. Returning early here instead of proceeding with an unresolved
+    # project is what actually delivers the "skip silently" behavior this
+    # function's docstring already promises.
     bq_project_id = credentials_env = None
     try:
-        import ga4_clients
-        target = ga4_clients.resolve_target(client_key=cfg.ga4_client_key or cfg.client_key)
-        bq_project_id = target.bq_project_id or None
-        credentials_env = target.credentials_env or None
+        import client_dashboard_config as _cdc
+        db_cfg = _cdc.get_config(cfg.client_key)
+        bq_project_id = (db_cfg.gcp_project_id if db_cfg else None) or None
     except Exception:
         pass
+    if not bq_project_id:
+        try:
+            import ga4_clients
+            target = ga4_clients.resolve_target(client_key=cfg.ga4_client_key or cfg.client_key)
+            bq_project_id = target.bq_project_id or None
+            credentials_env = target.credentials_env or None
+        except Exception:
+            pass
+    if not bq_project_id:
+        return
 
     try:
         series = bq_mart_service.google_daily_series(
@@ -416,18 +434,23 @@ def refresh_bq_client(
     repair_bq_sources = False
     _bq_setup_error: str | None = None
 
-    # Resolve client-specific BQ project/credentials for mart queries.
-    # Mart tables (fact_google_ads_campaign_daily etc.) live in the same GCP project
-    # as the client's GA4 export â€” use the GA4 registry to find the right project.
-    _mart_bq_project: str | None = None
+    # Resolve client-specific BQ project/credentials for mart queries. Prefer
+    # this client's own gcp_project_id (client_dashboard_config) -- resolving
+    # via the ga4_clients registry alone and silently continuing with
+    # bq_project_id=None on failure meant every mart read below
+    # (bq_mart_service, bq_linkedin_ads_service, bq_meta_ads_service) fell
+    # through to those modules' own hardcoded default project (Penn's), i.e.
+    # this client's dashboard could silently render Penn's BigQuery data.
+    _mart_bq_project: str | None = (db_cfg.gcp_project_id if db_cfg else None) or None
     _mart_credentials_env: str | None = None
-    try:
-        import ga4_clients as _ga4c
-        _ga4_target = _ga4c.resolve_target(client_key=ga4_client_key)
-        _mart_bq_project = _ga4_target.bq_project_id or None
-        _mart_credentials_env = _ga4_target.credentials_env or None
-    except Exception:
-        pass
+    if not _mart_bq_project:
+        try:
+            import ga4_clients as _ga4c
+            _ga4_target = _ga4c.resolve_target(client_key=ga4_client_key)
+            _mart_bq_project = _ga4_target.bq_project_id or None
+            _mart_credentials_env = _ga4_target.credentials_env or None
+        except Exception:
+            pass
 
     # Reuse cached SEMrush data if it's under 24 hours old â€” SEMrush scores
     # update at most daily and cost API tokens on every call.

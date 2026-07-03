@@ -20,7 +20,6 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
-_DEFAULT_PROJECT = "penn-community-b-1699391543298"
 _DEFAULT_GOOGLE_DATASET = "raw_google_ads"
 
 _route_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
@@ -61,7 +60,14 @@ def _ctx() -> dict:
 
 def _project_id() -> str:
     r = _ctx()
-    return (r.get("project") or "").strip() or _DEFAULT_PROJECT
+    project = (r.get("project") or "").strip()
+    if not project:
+        raise RuntimeError(
+            "No BigQuery project routed for Google Ads reads/writes. Call "
+            "bq_google_ads_service.route(bq_project_id=...) for this client. Refusing to "
+            "silently fall back to another client's project."
+        )
+    return project
 
 
 def _dataset_id() -> str:

@@ -40,27 +40,53 @@ class GscClientRoutingTests(unittest.TestCase):
         self.assertEqual(target.native_dataset_id, "searchconsole_nixon")
         self.assertFalse(target.is_default_fallback)
 
-    def test_client_not_in_registry_falls_back_to_legacy_penn_defaults(self) -> None:
+    def test_client_not_in_registry_raises_instead_of_leaking_penn_project(self) -> None:
+        """A client with no GSC connector and no registry entry must never
+        silently resolve to Penn's real BigQuery project — that would show
+        Penn's Search Console data on someone else's dashboard."""
         env = {
             "GSC_CLIENTS": json.dumps(
                 {"nixon": {"bq_project_id": "nixon-proj", "bq_dataset_id": "marketing_marts"}}
             )
         }
         with patch.dict(os.environ, env, clear=True):
-            target = gsc_clients.resolve_target("some-other-client")
+            with self.assertRaisesRegex(RuntimeError, "GSC is not configured for client"):
+                gsc_clients.resolve_target("some-other-client")
 
-        self.assertTrue(target.is_default_fallback)
-        self.assertEqual(target.bq_project_id, "penn-community-b-1699391543298")
-        self.assertEqual(target.bq_dataset_id, "marketing_marts")
-
-    def test_no_registry_at_all_falls_back_to_legacy_penn_defaults(self) -> None:
+    def test_default_target_raises_for_any_slug_other_than_penn(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
-            target = gsc_clients.default_target("penn-bq-test")
+            with self.assertRaisesRegex(RuntimeError, "GSC is not configured for client"):
+                gsc_clients.default_target("penn-bq-test")
+
+    def test_default_target_still_works_for_penn_itself(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            target = gsc_clients.default_target("penn")
 
         self.assertTrue(target.is_default_fallback)
         self.assertEqual(target.bq_project_id, "penn-community-b-1699391543298")
         self.assertEqual(target.bq_dataset_id, "marketing_marts")
         self.assertEqual(target.credentials_env, "GCP_SERVICE_ACCOUNT_JSON")
+
+    def test_connector_config_still_resolves_for_a_client_not_in_registry(self) -> None:
+        """A client with a GSC connector but no registry entry must still resolve
+        to its own project via the connector -- the raise-for-unconfigured fix
+        must not short-circuit before this precedence check runs."""
+        import types
+        fake_cfg = types.SimpleNamespace(
+            bq_project_id="brand-new-client-project",
+            raw_dataset_id=None,
+            source_account_id="sc-domain:example.com",
+        )
+        fake_store = types.SimpleNamespace(get_config=lambda slug, kind: fake_cfg)
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.dict(sys.modules, {"connector_config_store": fake_store}), \
+             patch.object(gsc_clients, "_ga4_bq", return_value=(None, None)):
+            target = gsc_clients.resolve_target("brand-new-client")
+
+        self.assertFalse(target.is_default_fallback)
+        self.assertEqual(target.bq_project_id, "brand-new-client-project")
+        self.assertEqual(target.bq_dataset_id, "raw_gsc")
+        self.assertEqual(target.site_url, "sc-domain:example.com")
 
     def test_default_target_prefers_penn_credential_when_set(self) -> None:
         env = {"GCP_CREDS_PENN_BASE64": "dummy-value"}

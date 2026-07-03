@@ -24,7 +24,6 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
-_DEFAULT_PROJECT = "penn-community-b-1699391543298"
 _DEFAULT_SEMRUSH_DATASET = "raw_semrush"
 
 _route_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
@@ -65,7 +64,14 @@ def _ctx() -> dict:
 
 def _project_id() -> str:
     r = _ctx()
-    return (r.get("project") or "").strip() or _DEFAULT_PROJECT
+    project = (r.get("project") or "").strip()
+    if not project:
+        raise RuntimeError(
+            "No BigQuery project routed for SEMrush reads/writes. Call bq_semrush_service.route("
+            "bq_project_id=...) for this client. Refusing to silently fall back to another "
+            "client's project."
+        )
+    return project
 
 
 def _dataset_id() -> str:
@@ -322,7 +328,12 @@ def fetch_latest_snapshot(*, client_key: str, project: str | None = None, mart_d
     """
     import bigquery_service
 
-    proj = (project or "").strip() or _DEFAULT_PROJECT
+    proj = (project or "").strip()
+    if not proj:
+        raise RuntimeError(
+            "fetch_latest_snapshot requires an explicit project — refusing to silently fall "
+            "back to another client's project."
+        )
     mart_ds = (mart_dataset or "").strip() or _mart_dataset_id()
     client = bigquery_service.build_client(proj)
 

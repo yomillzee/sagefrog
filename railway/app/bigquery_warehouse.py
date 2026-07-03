@@ -10,7 +10,6 @@ from typing import Any
 from uuid import uuid4
 
 
-_DEFAULT_LINKEDIN_PROJECT = "penn-community-b-1699391543298"
 _DEFAULT_LINKEDIN_DATASET = "raw_linkedin_ads"
 _DEFAULT_GOOGLE_DATASET = "raw_google_ads"
 _DEFAULT_TABLE = "metrics_daily"
@@ -155,11 +154,14 @@ def enabled(source: str | None = None) -> bool:
 
 
 def _linkedin_project_id() -> str:
-    return (
-        _route_value("project")
-        or os.getenv("BQ_LINKEDIN_PROJECT_ID")
-        or _DEFAULT_LINKEDIN_PROJECT
-    ).strip()
+    project = (_route_value("project") or os.getenv("BQ_LINKEDIN_PROJECT_ID") or "").strip()
+    if not project:
+        raise RuntimeError(
+            "No BigQuery project routed for LinkedIn reads/writes. Call bigquery_warehouse.route("
+            "bq_project_id=...) for this client, or set BQ_LINKEDIN_PROJECT_ID for a single-tenant "
+            "deployment. Refusing to silently fall back to another client's project."
+        )
+    return project
 
 
 def _dataset_id(source: str) -> str:
@@ -791,7 +793,6 @@ def mirror_linkedin_creative_metadata(rows: list[dict[str, Any]]) -> dict[str, A
     return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
 
 
-_DEFAULT_META_PROJECT = "penn-community-b-1699391543298"
 _DEFAULT_META_DATASET = "raw_meta_ads"
 _DEFAULT_META_CAMPAIGN_TABLE = "campaign_daily"
 _DEFAULT_META_ADSET_TABLE = "adset_daily"
@@ -803,11 +804,14 @@ _DEFAULT_META_AD_FACT_TABLE = "fact_meta_ads_ad_daily"
 
 
 def _meta_project_id() -> str:
-    return (
-        _route_value("project")
-        or os.getenv("BQ_META_PROJECT_ID")
-        or _DEFAULT_META_PROJECT
-    ).strip()
+    project = (_route_value("project") or os.getenv("BQ_META_PROJECT_ID") or "").strip()
+    if not project:
+        raise RuntimeError(
+            "No BigQuery project routed for Meta reads/writes. Call bigquery_warehouse.route("
+            "bq_project_id=...) for this client, or set BQ_META_PROJECT_ID for a single-tenant "
+            "deployment. Refusing to silently fall back to another client's project."
+        )
+    return project
 
 
 def _meta_dataset_id() -> str:
