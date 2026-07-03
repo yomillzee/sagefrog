@@ -1074,8 +1074,15 @@ SIDEBAR_CSS = """
       border-radius: 9px;
       background: transparent;
       color: #c3d2e6;
+      /* font-family + line-height are pinned (not inherited) so a <button> item
+         (dashboard tabs) and an <a> item (settings/connectors/files) render
+         identically, regardless of the host page's body line-height. Without
+         these, buttons fell back to the UA font ("thicker") and shell pages
+         with body line-height:1.5 made the rows taller. */
+      font-family: inherit;
       font-size: 0.92rem;
       font-weight: 600;
+      line-height: 1.2;
       text-align: left;
       text-decoration: none;
       cursor: pointer;
@@ -1162,8 +1169,10 @@ SIDEBAR_CSS = """
       padding: 9px 12px;
       border-radius: 9px;
       color: #c3d2e6;
+      font-family: inherit;
       font-size: 0.9rem;
       font-weight: 600;
+      line-height: 1.2;
       text-decoration: none;
       transition: background 0.15s, color 0.15s;
     }
