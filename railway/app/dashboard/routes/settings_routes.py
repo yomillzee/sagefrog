@@ -213,7 +213,13 @@ def dashboard_client_settings_post(
                 meta_account_id=meta_account_id,
                 ga4_client_key=ga4_client_key,
                 updated_by=session_email or "dashboard_key",
-                dashboard_mode="bigquery",
+                # Every non-Penn client that saves settings here gets the
+                # connector-based Nixon-style dashboard (dashboard_client()
+                # in core_routes.py dispatches on this value) -- plain
+                # "bigquery" mode rendered the older Penn-style snapshot
+                # template, which is what left new dashboards without
+                # connectors visible.
+                dashboard_mode="bigquery_nixon",
                 gsc_site_url=gsc_site_url.strip() or None,
                 semrush_domain=semrush_domain.strip() or None,
                 gtm_account_id=gtm_account_id.strip() or None,

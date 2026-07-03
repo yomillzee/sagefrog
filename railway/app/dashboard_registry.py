@@ -253,6 +253,13 @@ def create_client(
         meta_account_id=None,
         ga4_client_key=slug,
         updated_by=created_by or "admin",
+        # New dashboards go straight to the connector-based Nixon-style
+        # template (empty/"no data yet" until a connector is connected),
+        # not the older Penn-style snapshot dashboard -- previously this was
+        # left unset here, defaulting to "api" mode, so every freshly
+        # created dashboard showed the old template until a settings save
+        # (which itself used to hardcode plain "bigquery" mode) happened.
+        dashboard_mode="bigquery_nixon",
     )
     row = get_client(slug)
     if not row:
