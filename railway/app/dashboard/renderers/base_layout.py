@@ -461,7 +461,13 @@ def nixon_sidebar_view_nav_html(
                 f'<button type="button" class="dash-view-btn tab-btn{active}" data-tab="{tab}">{inner}</button>'
             )
         else:
-            items.append(f'<a class="dash-view-btn" href="{_esc(dash_url)}">{inner}</a>')
+            # Deep-link to the specific dashboard tab (?view=…) so clicking e.g.
+            # "Search Console" from Settings/Files/Connectors lands on that tab,
+            # not always Overview. The dashboard reads ?view= on load.
+            href = dash_url if tab == "overview" else (
+                f"{dash_url}{'&' if '?' in dash_url else '?'}view={tab}"
+            )
+            items.append(f'<a class="dash-view-btn" href="{_esc(href)}">{inner}</a>')
     if pflags.get("show_lead_tracking"):
         lt = _lead_tracking_page_url(
             client_slug=client_slug, access_key=access_key, use_session=use_session

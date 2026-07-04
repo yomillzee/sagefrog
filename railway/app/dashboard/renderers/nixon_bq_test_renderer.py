@@ -199,6 +199,9 @@ def render_nixon_bigquery_test_page(
     tbody tr:hover td {{ background:#f7faff; }}
     th {{ background:#f4f7fb; color:#5a6b82; text-transform:uppercase; font-size:.67rem; letter-spacing:.05em; font-weight:800; position:sticky; top:0; }}
     th.left,td.left {{ text-align:left; }}
+    th.gsc-sort {{ cursor:pointer; user-select:none; white-space:nowrap; transition:background .12s,color .12s; }}
+    th.gsc-sort:hover {{ background:#e9eef5; color:#33455e; }}
+    th.gsc-sort.active {{ color:var(--accent); }}
     .empty {{ color:var(--muted); padding:26px; text-align:center; }}
     code {{ background:#eef4fb; padding:2px 5px; border-radius:4px; font-size:.85em; }}
     .muted {{ color:var(--muted); font-size:.78rem; margin-left:6px; }}
@@ -434,29 +437,27 @@ def render_nixon_bigquery_test_page(
     </div><!-- /pane-analytics -->
 
     <div id="pane-gsc" hidden>
-      <section id="sec-gsc-overview">
-        <h2>Search Console</h2>
-        <p class="src-note"><code>GET /api/clients/{api_client_key}/gsc/summary</code><span class="arrow">→</span><code>raw_gsc.fact_gsc_query_daily / fact_gsc_page_daily</code></p>
-        <div class="status" id="gscStatus">Waiting…</div>
-        <div class="cards" id="gscKpis"></div>
-      </section>
-      <section>
-        <h2>Top queries</h2>
-        <div class="table-wrap"><table id="gscQueriesTable" class="compact"></table></div>
-      </section>
-      <section>
-        <h2>Top pages</h2>
-        <div class="table-wrap"><table id="gscPagesTable" class="compact"></table></div>
-      </section>
       <section id="sec-semrush">
-        <h2>SEMrush — Organic Search Intelligence</h2>
-        <p class="src-note"><code>GET /api/clients/{api_client_key}/semrush/summary</code><span class="arrow">→</span><code>marketing_marts.vw_semrush_overview_latest / vw_semrush_keywords_latest</code></p>
-        <div class="status" id="semrushStatus">Waiting…</div>
+        <div class="sec-head"><h2>Organic Search Intelligence</h2><span class="status" id="semrushStatus"></span></div>
         <div class="cards" id="semrushKpis"></div>
       </section>
-      <section>
-        <h2>Top organic keywords</h2>
-        <div class="table-wrap"><table id="semrushKeywordsTable" class="compact"></table></div>
+      <section id="sec-gsc-overview">
+        <div class="sec-head"><h2>Search Console</h2><span class="status" id="gscStatus"></span></div>
+        <div class="cards" id="gscKpis"></div>
+      </section>
+      <section id="sec-gsc-tables">
+        <div class="two-col">
+          <div class="col-panel">
+            <h3>Top queries</h3>
+            <div class="table-wrap"><table id="gscQueriesTable" class="compact"></table></div>
+            <div class="pager" id="gscQueriesPager"></div>
+          </div>
+          <div class="col-panel">
+            <h3>Top pages</h3>
+            <div class="table-wrap"><table id="gscPagesTable" class="compact"></table></div>
+            <div class="pager" id="gscPagesPager"></div>
+          </div>
+        </div>
       </section>
     </div><!-- /pane-gsc -->
 
@@ -750,6 +751,44 @@ def render_nixon_bigquery_test_page(
       document.getElementById('gscKpis').innerHTML = cards.map(([label,val]) =>
         `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{val}}</div></div>`).join('');
     }}
+    // ---- GSC queries/pages: sortable + paginated (top 10/page) ----
+    const GSC_PER_PAGE = 10;
+    const GSC_SORT_COLS = [
+      {{key:'clicks', label:'Clicks', format:count, defDir:'desc'}},
+      {{key:'impressions', label:'Impr.', format:count, defDir:'desc'}},
+      {{key:'ctr', label:'CTR', format:gscPct, defDir:'desc'}},
+      {{key:'avg_position', label:'Position', format:gscPos, defDir:'asc'}},
+    ];
+    const gscTables = {{
+      queries: {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'query', labelText:'Query', tableId:'gscQueriesTable', pagerId:'gscQueriesPager'}},
+      pages:   {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'page_url', labelText:'Page', tableId:'gscPagesTable', pagerId:'gscPagesPager'}},
+    }};
+    function renderGscTable(which) {{
+      const st = gscTables[which];
+      const el = document.getElementById(st.tableId);
+      const pager = document.getElementById(st.pagerId);
+      if (!st.rows.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No data for this range.</td></tr></tbody>`; pager.innerHTML=''; return; }}
+      const sorted=[...st.rows].sort((a,b)=>{{const va=num(a[st.sortKey]),vb=num(b[st.sortKey]);return st.sortDir==='asc'?va-vb:vb-va;}});
+      const totalPages=Math.max(1,Math.ceil(sorted.length/GSC_PER_PAGE));
+      if (st.page>totalPages) st.page=totalPages;
+      const start=(st.page-1)*GSC_PER_PAGE, pageRows=sorted.slice(start,start+GSC_PER_PAGE);
+      const arrow=k=>st.sortKey===k?(st.sortDir==='asc'?' \\u25B4':' \\u25BE'):'';
+      const head=`<thead><tr><th class="left">${{esc(st.labelText)}}</th>`+GSC_SORT_COLS.map(c=>`<th class="gsc-sort${{st.sortKey===c.key?' active':''}}" data-which="${{which}}" data-key="${{c.key}}">${{c.label}}${{arrow(c.key)}}</th>`).join('')+`</tr></thead>`;
+      const body=`<tbody>`+pageRows.map(r=>`<tr><td class="left"><span class="page-path">${{esc(r[st.labelKey])}}</span></td>`+GSC_SORT_COLS.map(c=>`<td>${{c.format(r[c.key])}}</td>`).join('')+`</tr>`).join('')+`</tbody>`;
+      el.innerHTML=head+body;
+      if (totalPages<=1) {{ pager.innerHTML=''; }}
+      else {{ pager.innerHTML=`<button type="button" class="pager-btn" data-which="${{which}}" data-dir="prev"${{st.page<=1?' disabled':''}}>\\u2039 Prev</button><span class="pager-info">Page ${{st.page}} of ${{totalPages}}</span><button type="button" class="pager-btn" data-which="${{which}}" data-dir="next"${{st.page>=totalPages?' disabled':''}}>Next \\u203A</button>`; }}
+    }}
+    document.getElementById('pane-gsc').addEventListener('click', ev => {{
+      const th=ev.target.closest('th.gsc-sort');
+      if (th) {{ const st=gscTables[th.dataset.which], key=th.dataset.key;
+        if (st.sortKey===key) st.sortDir=st.sortDir==='asc'?'desc':'asc';
+        else {{ st.sortKey=key; st.sortDir=(GSC_SORT_COLS.find(c=>c.key===key)||{{}}).defDir||'desc'; }}
+        st.page=1; renderGscTable(th.dataset.which); return;
+      }}
+      const pb=ev.target.closest('.pager-btn[data-which]');
+      if (pb && !pb.disabled) {{ const st=gscTables[pb.dataset.which]; st.page+=(pb.dataset.dir==='next'?1:-1); renderGscTable(pb.dataset.which); }}
+    }});
     async function loadGsc() {{
       setStatus('gscStatus','Loading…');
       document.getElementById('gscKpis').innerHTML = skelCards(4);
@@ -757,25 +796,14 @@ def render_nixon_bigquery_test_page(
       document.getElementById('gscPagesTable').innerHTML = skelTable(5,6);
       try {{
         const p = await getJson(withDates(GSC_API));
-        if (!p || (!p.kpis && !(p.top_queries||[]).length && !(p.top_pages||[]).length)) {{
-          renderGscKpis({{}});
-          renderTable('gscQueriesTable', [{{key:'query',label:'Query',left:true}}], [], 'No Search Console data yet — it appears after the first sync backfills.');
-          renderTable('gscPagesTable', [{{key:'page_url',label:'Page',left:true}}], [], 'No Search Console data yet.');
-          setStatus('gscStatus','No data for this range yet.');
-          return;
+        renderGscKpis((p&&p.kpis)||{{}});
+        for (const which of ['queries','pages']) {{
+          const st=gscTables[which]; st.rows = (p && (which==='queries'?p.top_queries:p.top_pages)) || [];
+          st.page=1; st.sortKey='clicks'; st.sortDir='desc'; renderGscTable(which);
         }}
-        renderGscKpis(p.kpis);
-        const cols = (labelKey, label) => [
-          {{key:labelKey,label:label,left:true}},
-          {{key:'clicks',label:'Clicks',format:count}},
-          {{key:'impressions',label:'Impr.',format:count}},
-          {{key:'ctr',label:'CTR',format:gscPct}},
-          {{key:'avg_position',label:'Position',format:gscPos}},
-        ];
-        renderTable('gscQueriesTable', cols('query','Query'), p.top_queries||[], 'No queries in this range.');
-        renderTable('gscPagesTable', cols('page_url','Page'), p.top_pages||[], 'No pages in this range.');
-        const k = p.kpis||{{}};
-        setStatus('gscStatus', `${{count(k.clicks)}} clicks · ${{count(k.impressions)}} impressions`);
+        const k=(p&&p.kpis)||{{}};
+        const empty = !p || (!p.kpis && !(p.top_queries||[]).length && !(p.top_pages||[]).length);
+        setStatus('gscStatus', empty ? 'No data for this range yet.' : `${{count(k.clicks)}} clicks · ${{count(k.impressions)}} impressions`);
       }} catch(err) {{
         setStatus('gscStatus', err.message||String(err), true);
       }}
@@ -796,25 +824,15 @@ def render_nixon_bigquery_test_page(
     async function loadSemrush() {{
       setStatus('semrushStatus','Loading…');
       document.getElementById('semrushKpis').innerHTML = skelCards(4);
-      document.getElementById('semrushKeywordsTable').innerHTML = skelTable(5,6);
       try {{
         const p = await getJson(SEMRUSH_API);
         if (!p || !p.domain) {{
           renderSemrushKpis({{}}, {{}});
-          renderTable('semrushKeywordsTable', [{{key:'keyword',label:'Keyword',left:true}}], [], 'No SEMrush data yet — connect the SEMrush connector to enable this.');
           setStatus('semrushStatus','No SEMrush data yet.');
           return;
         }}
         renderSemrushKpis(p.overview, p.backlinks);
-        const semrushCols = [
-          {{key:'keyword',label:'Keyword',left:true}},
-          {{key:'position',label:'Position',format:count}},
-          {{key:'search_volume',label:'Search Vol.',format:count}},
-          {{key:'traffic_pct',label:'Traffic %',format:pct}},
-          {{key:'cpc',label:'CPC',format:money}},
-        ];
-        renderTable('semrushKeywordsTable', semrushCols, p.keywords||[], 'No keyword data available.');
-        setStatus('semrushStatus', `${{esc(p.domain)}} · ${{count((p.keywords||[]).length)}} keywords tracked`);
+        setStatus('semrushStatus', esc(p.domain));
       }} catch(err) {{
         setStatus('semrushStatus', err.message||String(err), true);
       }}
@@ -1306,6 +1324,14 @@ def render_nixon_bigquery_test_page(
     }});
     loadSummary();
     loadHealth();
+
+    // Deep-link: land on the tab named in ?view= (set by the sidebar links on
+    // Settings/Files/Connectors) so those links don't always open Overview.
+    // Runs last, after currentStart/currentEnd and all loaders are initialized.
+    (function(){{
+      const v = new URLSearchParams(location.search).get('view');
+      if (v && TABS.includes(v) && v !== 'overview') switchTab(v);
+    }})();
   </script>
   {admin_panel_html}
   <script>
