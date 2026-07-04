@@ -774,7 +774,7 @@ def render_nixon_bigquery_test_page(
       try {{
         const payload = await getJson(withDates(HEALTH_API));
         const rows = payload.rows||[];
-        const SRC = {{google:'Google Ads',linkedin:'LinkedIn',google_analytics:'Google Analytics'}};
+        const SRC = {{google:'Google Ads',linkedin:'LinkedIn',meta:'Meta',google_analytics:'Google Analytics'}};
         const srcLabel = v => SRC[String(v||'').toLowerCase()]||v;
         const moneyD = v => v==null ? '—' : money(v);
         const countD = v => v==null ? '—' : count(v);

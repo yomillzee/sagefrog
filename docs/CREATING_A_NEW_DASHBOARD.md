@@ -155,19 +155,17 @@ different places.
 | `fact_meta_ads_ad_daily` | Meta connector → `bq_meta_ads_service` | Meta Explorer |
 | `vw_semrush_overview_latest`, `vw_semrush_keywords_latest` | SEMrush connector → `bq_semrush_service` | Search Console tab → SEMrush |
 | GSC mart | GSC connector / `bq_gsc_service` | Search Console |
-| **`vw_paid_media_daily`** | Google Ads + LinkedIn connector → `bigquery_warehouse.create_paid_media_mart_views` | **Overview → Summary cards + Trend chart** |
-| **`mart_health`** | Google Ads + LinkedIn connector → `bigquery_warehouse.create_paid_media_mart_views` | **Overview → Data health** (+ a GA4 freshness row appended at read time) |
+| **`vw_paid_media_daily`** | Google Ads + LinkedIn + Meta connector → `bigquery_warehouse.create_paid_media_mart_views` | **Overview → Summary cards + Trend chart** |
+| **`mart_health`** | Google Ads + LinkedIn + Meta connector → `bigquery_warehouse.create_paid_media_mart_views` | **Overview → Data health** (+ a GA4 freshness row appended at read time) |
 
 `vw_paid_media_daily` and `mart_health` used to be Dataform-only (see history
-below); they are now built by the app on every Google Ads / LinkedIn sync, so
-the Overview populates with no Dataform dependency. The builder includes
-whichever of the two raw `campaign_daily` tables exist, so a Google-only or
-LinkedIn-only client still gets a working Overview.
-
-> **Meta note:** `vw_paid_media_daily` covers Google + LinkedIn only (a faithful
-> port of the original Dataform view). Meta spend is **not** in the Overview
-> Summary today — Meta lands in `fact_meta_ads_campaign_daily`, not a raw
-> `campaign_daily`. Adding `paid_meta` is a small follow-up.
+below); they are now built by the app on every Google Ads / LinkedIn / Meta
+sync, so the Overview populates with no Dataform dependency. All three platforms
+write an identically-shaped `raw_*.campaign_daily` (campaign-per-day grain), and
+the builder `UNION ALL`s whichever of the three exist — so a client with any
+subset of paid connectors still gets a correct Overview (`source_platform`
+values `paid_google` / `paid_linkedin` / `paid_meta`). No double counting, since
+ad-level facts are not included here.
 
 ### Dataform is no longer required for the Overview
 
@@ -187,8 +185,8 @@ After setup, confirm:
 - [ ] `/dashboard/{slug}` loads the Nixon template (not the old snapshot page).
 - [ ] Sidebar is identical across Overview / Settings / Connectors / Files.
 - [ ] Each connected connector card shows a successful last sync.
-- [ ] Overview **Summary** + **Trend** show numbers → confirms a Google Ads or
-      LinkedIn sync ran (builds `vw_paid_media_daily`).
+- [ ] Overview **Summary** + **Trend** show numbers → confirms a Google Ads,
+      LinkedIn, or Meta sync ran (builds `vw_paid_media_daily`).
 - [ ] Website Analytics panels show data → confirms GA4 sync + app views.
 - [ ] Explorer tabs (Google/LinkedIn/Meta) show ads → confirms ad connectors.
 - [ ] Search Console / SEMrush panels populate (if those connectors are used).
@@ -203,13 +201,12 @@ its raw `campaign_daily` table has rows for the selected date range.
 These are known gaps between the "create dashboard + connect connectors" ideal
 and what's actually automated today. **Flagged for follow-up — not yet fixed.**
 
-1. **✅ RESOLVED — `vw_paid_media_daily` + `mart_health` are now app-built.**
-   These were Dataform-only, which forced a manual per-client Dataform workspace.
-   They're now built by `bigquery_warehouse.create_paid_media_mart_views`, called
-   from the Google Ads and LinkedIn connector syncs (so they rebuild on every
-   sync, refresh, and cron run). No Dataform workspace is required for the
-   Overview. *Remaining sub-item: `vw_paid_media_daily` still excludes Meta —
-   add `paid_meta` (from `fact_meta_ads_campaign_daily`) as a follow-up.*
+1. **✅ RESOLVED — `vw_paid_media_daily` + `mart_health` are now app-built
+   (Google + LinkedIn + Meta).** These were Dataform-only, which forced a manual
+   per-client Dataform workspace. They're now built by
+   `bigquery_warehouse.create_paid_media_mart_views`, called from the Google Ads,
+   LinkedIn, and Meta connector syncs (so they rebuild on every sync, refresh,
+   and cron run). No Dataform workspace is required for the Overview.
 
 2. **🟠 Retire / archive `sagefrog-dataform` (now redundant + drift risk).**
    Every mart the dashboard reads is now app-built, but `sagefrog-dataform` still

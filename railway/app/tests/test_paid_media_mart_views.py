@@ -64,18 +64,27 @@ class PaidMediaMartViewsTests(unittest.TestCase):
             result = bigquery_warehouse.create_paid_media_mart_views(client_key="acme")
         return result, fake
 
-    def test_builds_both_views_when_google_and_linkedin_present(self):
-        result, fake = self._run({"raw_google_ads", "raw_linkedin_ads"})
+    def test_builds_both_views_when_all_three_present(self):
+        result, fake = self._run({"raw_google_ads", "raw_linkedin_ads", "raw_meta_ads"})
         self.assertEqual(result["status"], "success")
-        self.assertEqual(sorted(result["sources"]), ["google", "linkedin"])
+        self.assertEqual(sorted(result["sources"]), ["google", "linkedin", "meta"])
         joined = "\n".join(fake.queries)
         self.assertIn("vw_paid_media_daily", joined)
         self.assertIn("mart_health", joined)
         self.assertIn("paid_google", joined)
         self.assertIn("paid_linkedin", joined)
-        # Each view is a single UNION ALL of the two sources.
+        self.assertIn("paid_meta", joined)
+        # Each view is a UNION ALL across the three sources (2 UNION ALLs).
         paid_sql = next(q for q in fake.queries if "vw_paid_media_daily" in q)
-        self.assertEqual(paid_sql.count("UNION ALL"), 1)
+        self.assertEqual(paid_sql.count("UNION ALL"), 2)
+
+    def test_meta_only_client_still_gets_a_working_view(self):
+        result, fake = self._run({"raw_meta_ads"})
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["sources"], ["meta"])
+        paid_sql = next(q for q in fake.queries if "vw_paid_media_daily" in q)
+        self.assertIn("paid_meta", paid_sql)
+        self.assertNotIn("UNION ALL", paid_sql)
 
     def test_google_only_client_still_gets_a_working_view(self):
         result, fake = self._run({"raw_google_ads"})

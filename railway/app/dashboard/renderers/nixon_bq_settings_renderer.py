@@ -297,7 +297,7 @@ def render_nixon_bq_settings_page(
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({{ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }}[c]));
     const count = v => nums.format(Math.round(Number(v || 0)));
     const money = v => dollars.format(Number(v || 0));
-    const SOURCE_LABELS = {{ google:'Google Ads', linkedin:'LinkedIn', google_analytics:'Google Analytics' }};
+    const SOURCE_LABELS = {{ google:'Google Ads', linkedin:'LinkedIn', meta:'Meta', google_analytics:'Google Analytics' }};
     const srcLabel = v => SOURCE_LABELS[String(v || '').toLowerCase()] || v;
     const moneyD = v => (v == null ? '\\u2014' : money(v));
     function setStatus(id, text, isErr) {{ const el = document.getElementById(id); el.textContent = text; el.className = isErr ? 'status error' : 'status'; }}

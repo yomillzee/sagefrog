@@ -499,10 +499,16 @@ def create_paid_media_mart_views(client_key: str | None = None) -> dict[str, Any
     client.create_dataset(bigquery.Dataset(f"{project_id}.{mart_dataset}"), exists_ok=True)
 
     raw_table = "campaign_daily"
-    # (raw dataset, paid-media source_platform label, mart_health source label)
+    # (raw dataset, paid-media source_platform label, mart_health source label).
+    # All three write an identically-shaped campaign_daily (metric_date, spend,
+    # impressions, clicks, conversions, conversion_value) at campaign-per-day
+    # grain, so UNION ALL gives correct cross-platform totals with no double
+    # counting. Meta uses _meta_dataset_id() (defaults to raw_meta_ads) — note
+    # _dataset_id("meta") has no default and would return "".
     sources = [
         (_dataset_id("google"), "paid_google", "google"),
         (_dataset_id("linkedin"), "paid_linkedin", "linkedin"),
+        (_meta_dataset_id(), "paid_meta", "meta"),
     ]
 
     paid_selects: list[str] = []

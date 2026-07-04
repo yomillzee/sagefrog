@@ -33,6 +33,7 @@ class MetaAdsConnector(ConnectorHandler):
             raise
 
     def run_sync(self, *, client_slug: str, date_range: str = "LAST_30_DAYS") -> SyncResult:
+        import bigquery_warehouse
         import bq_meta_ads_service
         import connector_config_store
         import oauth_store
@@ -65,6 +66,13 @@ class MetaAdsConnector(ConnectorHandler):
                     account_id, start=start, end=end, access_token=access_token,
                     client_key=client_slug,
                 )
+            # Rebuild the unified paid-media view + data-health mart so Meta
+            # spend shows in the dashboard Overview. Idempotent; includes
+            # whichever of Google/LinkedIn/Meta raw campaign_daily tables exist.
+            with bigquery_warehouse.route(
+                bq_project_id=bq_project_id, meta_dataset_id=raw_dataset_id
+            ):
+                bigquery_warehouse.create_paid_media_mart_views(client_key=client_slug)
             rows = (
                 (result.get("campaign_rows") or 0)
                 + (result.get("adset_rows") or 0)
