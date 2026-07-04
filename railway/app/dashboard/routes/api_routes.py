@@ -1549,6 +1549,49 @@ def client_refresh(
     return {"ok": True, "date_range": run.get("date_range")}
 
 
+@router.post(
+    "/api/clients/{client_key}/bq-verify",
+    summary="Client: verify BigQuery project access + provision datasets (generic BQ clients)",
+)
+def client_bq_verify(
+    client_key: str,
+    request: Request,
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    """Run the same provision + access check the connector wizard does, on
+    demand — so an admin can confirm the GCP project exists and the shared
+    service account has both required roles (Data Editor + Job User) at any
+    time, not just during connector setup, and diagnose 'data stopped showing'
+    (e.g. access revoked). Idempotent (create_dataset exists_ok=True)."""
+    normalized = (client_key or "").strip().lower()
+    project_id, _dataset_id = _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    try:
+        import client_bigquery_setup
+        result = client_bigquery_setup.ensure_client_datasets(project_id=project_id)
+        return {
+            "ok": True,
+            "project_id": project_id,
+            "datasets": result.get("datasets") or [],
+            "message": f"Access verified — service account can read/write in '{project_id}'.",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "project_id": project_id,
+            "error": (
+                f"{str(exc)[:200]} — make sure the GCP project '{project_id}' exists and "
+                "marketing-data-reader@sagefrog.iam.gserviceaccount.com has BOTH the "
+                "'BigQuery Data Editor' and 'BigQuery Job User' roles on it."
+            ),
+        }
+
+
 @router.get("/api/debug/bq", summary="Debug BigQuery client identity")
 def debug_bigquery_identity(
     request: Request,

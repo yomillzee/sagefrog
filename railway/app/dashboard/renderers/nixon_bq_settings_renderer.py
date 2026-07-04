@@ -57,6 +57,20 @@ def render_nixon_bq_settings_page(
 
     admin_class = "is-admin" if session_is_admin else ""
 
+    # The "Verify BigQuery access" control uses /api/clients/{api_client_key}/bq-verify,
+    # which resolves the project from client_dashboard_config. That only holds for
+    # generic bigquery_nixon clients (where api_client_key == client_slug); Nixon
+    # itself uses a hardcoded project under a different slug, so hide it there.
+    show_bq_verify = client_slug == api_client_key
+    verify_html = (
+        """
+      <div class="btn-row" style="margin-top:14px">
+        <button type="button" class="primary ghost" id="bqVerifyBtn">Verify BigQuery access</button>
+        <span class="status" id="bqVerifyStatus"></span>
+      </div>"""
+        if show_bq_verify else ""
+    )
+
     # Same canonical section nav as the dashboard (as links back to it), so the
     # sidebar is identical across the dashboard, settings, connectors, and files.
     view_nav_html = nixon_sidebar_view_nav_html(
@@ -183,7 +197,8 @@ def render_nixon_bq_settings_page(
         <div><span class="kv-label">GA4 dataset</span><span class="kv-val mono">{_esc(ga4_dataset)}</span></div>
         <div><span class="kv-label">Marts dataset</span><span class="kv-val mono">{_esc(marts_dataset)}</span></div>
       </div>
-      <p class="hint">Reads use the shared agency service account (managed once in <a href="/admin">Admin</a>), which is granted BigQuery access on this project directly in GCP.</p>
+      <p class="hint">Reads use the shared agency service account (managed once in <a href="/admin">Admin</a>), which needs the <strong>BigQuery Data Editor</strong> and <strong>BigQuery Job User</strong> roles on this project in GCP.</p>
+      {verify_html}
     </section>
 
     <section>
@@ -292,6 +307,7 @@ def render_nixon_bq_settings_page(
     const REFRESH_API = "{_api_url(f'/api/clients/{api_client_key}/refresh', access_key=access_key)}";
     const BACKFILL_API = "{_api_url(f'/api/clients/{api_client_key}/backfill-linkedin', access_key=access_key)}";
     const HEALTH_API = "{_api_url(f'/api/clients/{api_client_key}/marketing/health', access_key=access_key)}";
+    const BQ_VERIFY_API = "{_api_url(f'/api/clients/{api_client_key}/bq-verify', access_key=access_key)}";
     const nums = new Intl.NumberFormat('en-US');
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({{ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }}[c]));
@@ -324,6 +340,20 @@ def render_nixon_bq_settings_page(
     }}
     document.getElementById('refreshBtn').addEventListener('click', () => runJob(REFRESH_API, null, 'Refresh'));
     (function(){{ const b = document.getElementById('backfillBtn'); if (b) b.addEventListener('click', () => runJob(BACKFILL_API, 'Backfill ~180 days of LinkedIn into BigQuery?', 'Backfill')); }})();
+    (function(){{
+      const b = document.getElementById('bqVerifyBtn'); if (!b) return;
+      b.addEventListener('click', async () => {{
+        b.disabled = true; setStatus('bqVerifyStatus', 'Checking…');
+        try {{
+          const r = await fetch(BQ_VERIFY_API, {{ method:'POST', credentials:'same-origin' }});
+          const body = await r.json().catch(() => ({{}}));
+          if (body.ok) setStatus('bqVerifyStatus', body.message || 'Access verified.');
+          else setStatus('bqVerifyStatus', body.error || 'Verification failed.', true);
+        }} catch (err) {{
+          setStatus('bqVerifyStatus', 'Verification failed: ' + (err.message || err), true);
+        }} finally {{ b.disabled = false; }}
+      }});
+    }})();
     async function loadHealth() {{
       setStatus('healthStatus', 'Loading mart health…');
       try {{

@@ -217,11 +217,15 @@ and what's actually automated today. **Flagged for follow-up — not yet fixed.*
    linked to a client project — a workspace pinned to an older commit could still
    run the old definitions until its schedule is stopped.
 
-3. **🟠 GCP project + IAM is manual.** Creating the project and granting the two
-   roles (Data Editor + Job User) is unavoidably GCP-side, but there's no
-   in-portal checklist or "test access" button outside the connector wizard, and
-   the roles requirement is easy to get wrong (Data Editor alone is not enough —
-   Job User is also required).
+3. **🟠 GCP project + IAM is manual (inherent) — now verifiable in-portal.**
+   Creating the project and granting the two roles (Data Editor + Job User) is
+   unavoidably GCP-side — the app cannot create projects. Mitigations now in
+   place: the connector wizard verifies access on the destination step, and the
+   settings page has a **Verify BigQuery access** button
+   (`POST /api/clients/{slug}/bq-verify`) that re-runs the same check any time
+   (pre-flight before setup, or diagnosing "data stopped showing"). The error
+   message names both required roles. *Only the project creation + IAM grant
+   itself remains manual, by GCP design.*
 
 4. **✅ RESOLVED — admin convert-to-new-template action.** The `/admin`
    Dashboards table now shows a **Template** column: `bigquery_nixon` dashboards
