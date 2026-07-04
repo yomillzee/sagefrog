@@ -328,8 +328,9 @@ async def connector_configure(
                         "error": (
                             f"BigQuery setup check failed: {str(exc)[:200]} — make sure the GCP "
                             f"project '{kwargs['bq_project_id']}' exists and "
-                            "marketing-data-reader@sagefrog.iam.gserviceaccount.com has BigQuery "
-                            "Data Editor access on it, then try again."
+                            "marketing-data-reader@sagefrog.iam.gserviceaccount.com has BOTH the "
+                            "'BigQuery Data Editor' and 'BigQuery Job User' roles on it (Job User "
+                            "is what grants permission to run queries), then try again."
                         ),
                     },
                     status_code=400,

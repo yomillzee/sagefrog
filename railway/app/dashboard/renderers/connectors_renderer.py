@@ -629,7 +629,8 @@ def _render_wizard(
           <div><div class="wizard-step-title">Confirm destination</div></div>
         </div>
         <div class="wizard-step-body">
-          <p style="color:var(--muted);font-size:.9rem;margin-bottom:18px">Where should synced data be written in BigQuery?</p>
+          <p style="color:var(--muted);font-size:.9rem;margin-bottom:10px">Where should synced data be written in BigQuery?</p>
+          <p style="color:var(--muted);font-size:.82rem;margin-bottom:18px;line-height:1.5">The GCP project must already exist, with <code>marketing-data-reader@sagefrog.iam.gserviceaccount.com</code> granted both <strong>BigQuery Data Editor</strong> and <strong>BigQuery Job User</strong> roles. Continuing creates the datasets and verifies access.</p>
           <div class="dest-field">
             <label for="bqProject">GCP project ID</label>
             <input id="bqProject" type="text" value="{_esc(bq_project)}" placeholder="your-gcp-project" />
