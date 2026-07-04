@@ -169,12 +169,13 @@ ad-level facts are not included here.
 
 ### Dataform is no longer required for the Overview
 
-The `sagefrog-dataform` project is now redundant for the dashboard — every mart
-it defined is app-built (`vw_paid_media_daily`/`mart_health` above; the page-path
-views via `bq_ga4_mart_service`; `explorer_google_ads_daily`/
-`fact_linkedin_ads_creative_daily` via the ad connectors). You do **not** need to
-set up a Dataform workspace per client. (The repo still exists; retiring or
-archiving it is a cleanup follow-up — see gap #2.)
+The `sagefrog-dataform` project has been **retired** — every mart it defined is
+app-built (`vw_paid_media_daily`/`mart_health` above; the page-path views via
+`bq_ga4_mart_service`; `explorer_google_ads_daily`/
+`fact_linkedin_ads_creative_daily` via the ad connectors). Its definitions were
+removed (repo kept as a deprecated archive), so you do **not** set up a Dataform
+workspace per client. If any client project still has a **scheduled** Dataform
+workflow, disable it in GCP Console → Dataform (see gap #2).
 
 ---
 
@@ -208,14 +209,13 @@ and what's actually automated today. **Flagged for follow-up — not yet fixed.*
    LinkedIn, and Meta connector syncs (so they rebuild on every sync, refresh,
    and cron run). No Dataform workspace is required for the Overview.
 
-2. **🟠 Retire / archive `sagefrog-dataform` (now redundant + drift risk).**
-   Every mart the dashboard reads is now app-built, but `sagefrog-dataform` still
-   contains competing definitions of several (`vw_paid_media_daily`, `mart_health`,
-   `explorer_google_ads_daily`, `fact_linkedin_ads_creative_daily`, the page-path
-   views). If a Dataform workspace is still scheduled against a client project, it
-   will `CREATE OR REPLACE` those marts and can diverge from the app's schema
-   (this has bitten the GA4 views before). *Follow-up: stop/delete any scheduled
-   Dataform workflows and archive the repo, so the app is the single owner.*
+2. **✅ RESOLVED (repo side) — `sagefrog-dataform` retired.** All its mart +
+   source definitions were removed and its README replaced with a deprecation
+   notice, so a stray Dataform run is now a no-op and can't overwrite the
+   app-built marts. **⚠️ One manual GCP-side action remains:** in GCP Console →
+   Dataform, **delete or disable any scheduled workflow / release configuration**
+   linked to a client project — a workspace pinned to an older commit could still
+   run the old definitions until its schedule is stopped.
 
 3. **🟠 GCP project + IAM is manual.** Creating the project and granting the two
    roles (Data Editor + Job User) is unavoidably GCP-side, but there's no
@@ -230,11 +230,12 @@ and what's actually automated today. **Flagged for follow-up — not yet fixed.*
    Dashboards created before this default was added must be migrated by hand.
 
 5. **🟡 First-sync data latency isn't surfaced.** After connecting connectors,
-   the Overview stays empty until (a) a sync runs and (b) Dataform runs. There's
-   no in-dashboard "provisioning in progress / waiting for first sync" state —
-   it just looks empty, which is easy to mistake for a bug.
+   the Overview stays empty until the first sync runs. There's no in-dashboard
+   "connect a source / waiting for first sync" state — it just looks empty, which
+   is easy to mistake for a bug. *A self-contained UX polish; not a data
+   correctness issue.*
 
-6. **🟡 GA4 dual path.** The app pulls GA4 via the Data API and builds the GA4
-   views, but `sagefrog-dataform` also references a native-export `ga4_dataset`
-   var for its page-path views. Confirm which path is authoritative per client
-   to avoid two sources for the same panel.
+6. **✅ RESOLVED — GA4 is single-path.** The app pulls GA4 via the Data API and
+   builds the GA4 views; with `sagefrog-dataform` retired there is no longer a
+   competing native-export definition, so there's one authoritative source per
+   GA4 panel.
