@@ -179,7 +179,8 @@ class NixonMarketingServiceTests(unittest.TestCase):
 
         self.assertEqual(payload["client"], "nixon")
         self.assertEqual(payload["row_count"], 1)
-        self.assertEqual(len(fake_client.calls), 1)
+        # Two queries: mart_health, then a GA4 freshness row from vw_page_path_daily.
+        self.assertEqual(len(fake_client.calls), 2)
         sql = fake_client.calls[0]["sql"]
         self.assertIn("`nixon-medical.marketing_marts.mart_health`", sql)
         self.assertNotIn("raw_google_ads", sql)
@@ -242,9 +243,11 @@ class NixonMarketingServiceTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["conversions"], 44)
         self.assertEqual(payload["summary"]["cpa"], 120.41)
         self.assertEqual(payload["summary"]["ctr"], 1.97)
-        self.assertEqual(len(fake_client.calls), 1)
+        # Three queries: totals, per-platform by_source, and the daily series.
+        self.assertEqual(len(fake_client.calls), 3)
         sql = fake_client.calls[0]["sql"]
-        self.assertIn("`nixon-medical.marketing_marts.fact_marketing_daily`", sql)
+        # Summary reads the unified paid-media view, not the legacy fact table.
+        self.assertIn("`nixon-medical.marketing_marts.vw_paid_media_daily`", sql)
         self.assertIn("WHERE `date` BETWEEN @start_date AND @end_date", sql)
         self.assertNotIn("raw_google_ads", sql)
         self.assertNotIn("raw_linkedin_ads", sql)

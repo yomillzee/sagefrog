@@ -122,15 +122,18 @@ class ClientBigQuerySetupTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(build_calls[0][0], "client-project")
-        # Google is native-transfer-owned and is verified, never fabricated.
-        self.assertEqual(len(result["datasets"]), 3)
+        # All four app-owned datasets are provisioned (google/linkedin/meta/mart).
+        # Google Ads is now app-pulled by the connector (not a native transfer),
+        # so raw_google_ads is created here too.
+        self.assertEqual(len(result["datasets"]), 4)
         self.assertEqual(result["datasets"], repeated["datasets"])
-        self.assertEqual(len(client.created_tables), 6)
+        # 4 write-check tables per call × 2 calls (result + repeated) = 8.
+        self.assertEqual(len(client.created_tables), 8)
         self.assertEqual(client.created_tables, client.deleted_tables)
-        self.assertEqual(
-            result["native_sources"]["google"]["dataset"],
-            "client-project.raw_google_ads",
-        )
+        # GA4 is the only native (Google-managed BQ export) source; Google Ads is
+        # app-pulled now, so it's a provisioned dataset, not a native source.
+        self.assertIn("ga4", result["native_sources"])
+        self.assertNotIn("google", result["native_sources"])
 
 
 if __name__ == "__main__":
