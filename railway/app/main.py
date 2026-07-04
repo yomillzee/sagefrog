@@ -1793,6 +1793,48 @@ def admin_create_dashboard(
     )
 
 
+@app.post("/admin/dashboards/{client_slug}/mode", include_in_schema=False)
+def admin_convert_dashboard_mode(
+    client_slug: str,
+    request: Request,
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    """Convert a legacy dashboard to the connector-driven Nixon template.
+
+    New dashboards get dashboard_mode='bigquery_nixon' at creation; this is the
+    one-click equivalent for dashboards created before that default (avoids a
+    manual DB update). Preserves all other config fields.
+    """
+    slug = (client_slug or "").strip().lower()
+    ctx = audit_log.request_context(request)
+    try:
+        import client_dashboard_config as cdc
+        existing = cdc.get_config(slug)
+        cdc.save_config(
+            slug,
+            label=(existing.label if existing else slug),
+            google_customer_id=existing.google_customer_id if existing else None,
+            linkedin_account_id=existing.linkedin_account_id if existing else None,
+            meta_account_id=existing.meta_account_id if existing else None,
+            ga4_client_key=existing.ga4_client_key if existing else None,
+            updated_by=user.email,
+            dashboard_mode="bigquery_nixon",
+        )
+    except Exception as exc:
+        return RedirectResponse(
+            url=f"/admin?msg=Convert+failed:+{quote(str(exc)[:120])}", status_code=303
+        )
+    audit_log.record(
+        action="dashboard.mode_changed",
+        actor_email=user.email,
+        detail={"client_slug": slug, "dashboard_mode": "bigquery_nixon"},
+        **ctx,
+    )
+    return RedirectResponse(
+        url=f"/admin?msg=Dashboard+{quote(slug)}+now+uses+the+new+template", status_code=303
+    )
+
+
 @app.post("/admin/dashboards/{client_slug}/delete", include_in_schema=False)
 def admin_delete_dashboard(
     client_slug: str,

@@ -303,12 +303,35 @@ def render_admin_page(
     dash_delete_js = ""
     try:
         import dashboard_registry
+        import client_dashboard_config as _cdc
 
         if dashboard_registry.enabled():
             dash_rows = []
             for row in dashboard_registry.list_clients():
                 slug = row.client_slug
                 label = row.label
+
+                # Template column: bigquery_nixon = the connector-driven Nixon
+                # template; anything else (api/bigquery) is the older snapshot
+                # dashboard. Offer a one-click convert for legacy dashboards so
+                # they don't need a manual DB update.
+                try:
+                    _mode = (_cdc.get_config(slug).dashboard_mode or "api")
+                except Exception:
+                    _mode = "api"
+                if _mode == "bigquery_nixon":
+                    template_cell = '<span class="badge ok">New template</span>'
+                elif slug == "penn":
+                    template_cell = '<span class="muted">Snapshot (protected)</span>'
+                else:
+                    template_cell = (
+                        f'<span class="muted">Snapshot</span> · '
+                        f'<form method="post" action="/admin/dashboards/{_esc(slug)}/mode" style="display:inline">'
+                        f'<button type="submit" class="link" '
+                        f"onclick=\"return confirm('Convert {_esc(label)} to the new connector template?')\">"
+                        f'Use new template</button></form>'
+                    )
+
                 delete_cell = ""
                 if slug == "penn":
                     delete_cell = '<span class="muted">Protected</span>'
@@ -335,6 +358,7 @@ def render_admin_page(
                     f"<tr>"
                     f'<td class="mono">{_esc(slug)}</td>'
                     f"<td>{_esc(label)}</td>"
+                    f"<td>{template_cell}</td>"
                     f'<td><a href="/dashboard/{_esc(slug)}">Open</a> · '
                     f'<a href="/dashboard/{_esc(slug)}/settings">Settings</a> · '
                     f"{clear_snapshot_form}</td>"
@@ -343,7 +367,7 @@ def render_admin_page(
                 )
             dash_table = (
                 "\n".join(dash_rows)
-                or '<tr><td colspan="4" class="muted">No dashboards yet.</td></tr>'
+                or '<tr><td colspan="5" class="muted">No dashboards yet.</td></tr>'
             )
             for slug, _label in client_config.list_dashboard_clients():
                 client_slug_options += f'<option value="{_esc(slug)}"></option>\n'
@@ -374,7 +398,7 @@ def render_admin_page(
         </details>
       </div>
       <table class="dash-table">
-        <thead><tr><th>Slug</th><th>Name</th><th>Links</th><th></th></tr></thead>
+        <thead><tr><th>Slug</th><th>Name</th><th>Template</th><th>Links</th><th></th></tr></thead>
         <tbody>{dash_table}</tbody>
       </table>
     </section>"""

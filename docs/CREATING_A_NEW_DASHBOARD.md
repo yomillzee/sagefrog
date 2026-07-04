@@ -223,11 +223,12 @@ and what's actually automated today. **Flagged for follow-up — not yet fixed.*
    the roles requirement is easy to get wrong (Data Editor alone is not enough —
    Job User is also required).
 
-4. **🟡 No settings-UI control for `dashboard_mode`.** New dashboards get
-   `bigquery_nixon` automatically at creation, but there's no admin toggle to
-   change a dashboard's mode later — it requires a direct DB update
-   (`UPDATE client_dashboard_config SET dashboard_mode='bigquery_nixon' WHERE client_slug=…`).
-   Dashboards created before this default was added must be migrated by hand.
+4. **✅ RESOLVED — admin convert-to-new-template action.** The `/admin`
+   Dashboards table now shows a **Template** column: `bigquery_nixon` dashboards
+   show a "New template" badge; legacy ones show a **Use new template** button
+   (`POST /admin/dashboards/{slug}/mode`) that converts them in one click
+   (preserving all other config). No more manual DB update to migrate a legacy
+   dashboard. (Penn stays on the snapshot template, protected.)
 
 5. **✅ RESOLVED — first-run onboarding state.** A dashboard with no connectors
    now shows a "Connect your first data source" card (with a **Set up connectors**
