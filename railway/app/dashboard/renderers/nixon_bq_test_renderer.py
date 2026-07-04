@@ -48,6 +48,25 @@ def render_nixon_bigquery_test_page(
     end = today - timedelta(days=1)
     start = today - timedelta(days=30)
 
+    # First-run onboarding: a client with no connectors yet would otherwise see
+    # a bare "no data" Overview. Show a clear call-to-action instead. Fail open
+    # (assume connected) on any error so an established client never sees it.
+    has_connectors = True
+    try:
+        import connector_config_store
+        has_connectors = bool(connector_config_store.list_configs(client_slug))
+    except Exception:
+        has_connectors = True
+    connectors_url = _api_url(f"/dashboard/{client_slug}/connectors", access_key=access_key)
+    onboarding_html = "" if has_connectors else f"""
+      <section class="onboarding-card">
+        <div class="onboarding-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 3a3 3 0 00-3 3v1H9V6a3 3 0 10-3 3v1H3v2h3v1a3 3 0 103 3v-1h6v1a3 3 0 103-3v-1h3v-2h-3V9a3 3 0 000-6z"/></svg></div>
+        <h2>Connect your first data source</h2>
+        <p>This dashboard is ready to go. Connect a marketing platform to start pulling data in — metrics appear here after the first sync.</p>
+        <a class="onboarding-cta" href="{connectors_url}">Set up connectors →</a>
+      </section>
+    """
+
     # Section nav (Overview/Explorer/Website Analytics/Search Console as JS tabs
     # driven by switchTab() below, + connected Lead/Event Tracking as links).
     # Shared with the settings/connectors/files pages via nixon_sidebar_view_nav_html
@@ -154,6 +173,14 @@ def render_nixon_bigquery_test_page(
     .chip.active:hover {{ background:#0d2c4d; }}
     /* ---- Sections ---- */
     section {{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:18px 20px 20px; margin-bottom:16px; box-shadow:var(--shadow); }}
+    /* ---- First-run onboarding card ---- */
+    .onboarding-card {{ text-align:center; padding:40px 24px; }}
+    .onboarding-icon {{ width:52px; height:52px; margin:0 auto 14px; border-radius:14px; background:#eaf2fd; color:var(--accent); display:flex; align-items:center; justify-content:center; }}
+    .onboarding-icon svg {{ width:26px; height:26px; }}
+    .onboarding-card h2 {{ font-size:1.15rem; margin:0 0 6px; }}
+    .onboarding-card p {{ max-width:440px; margin:0 auto 18px; color:var(--muted); font-size:.9rem; line-height:1.5; }}
+    .onboarding-cta {{ display:inline-block; background:var(--accent); color:#fff; text-decoration:none; font-weight:700; font-size:.9rem; padding:10px 20px; border-radius:var(--radius-sm); box-shadow:0 1px 2px rgba(16,33,67,.12); transition:background .15s; }}
+    .onboarding-cta:hover {{ background:#1a62b8; }}
     .sec-head {{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:16px; }}
     .sec-head h2 {{ margin:0; }}
     .sec-head .status {{ margin:0; font-size:.76rem; text-align:right; flex-shrink:0; }}
@@ -294,6 +321,7 @@ def render_nixon_bigquery_test_page(
 
     <!-- ===== OVERVIEW TAB ===== -->
     <div id="pane-overview">
+      {onboarding_html}
       <section id="sec-overview">
         <div class="sec-head"><h2>Summary</h2><span class="status" id="summaryStatus"></span></div>
         <div class="cards" id="summaryCards"></div>

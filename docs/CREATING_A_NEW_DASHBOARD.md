@@ -229,11 +229,12 @@ and what's actually automated today. **Flagged for follow-up — not yet fixed.*
    (`UPDATE client_dashboard_config SET dashboard_mode='bigquery_nixon' WHERE client_slug=…`).
    Dashboards created before this default was added must be migrated by hand.
 
-5. **🟡 First-sync data latency isn't surfaced.** After connecting connectors,
-   the Overview stays empty until the first sync runs. There's no in-dashboard
-   "connect a source / waiting for first sync" state — it just looks empty, which
-   is easy to mistake for a bug. *A self-contained UX polish; not a data
-   correctness issue.*
+5. **✅ RESOLVED — first-run onboarding state.** A dashboard with no connectors
+   now shows a "Connect your first data source" card (with a **Set up connectors**
+   CTA) at the top of the Overview instead of a bare empty page. Renders only when
+   the client has zero connector configs; fails open (never shown to an
+   established client). *Remaining nicety: a "sync running / waiting for first
+   data" state after connectors exist but before the first sync completes.*
 
 6. **✅ RESOLVED — GA4 is single-path.** The app pulls GA4 via the Data API and
    builds the GA4 views; with `sagefrog-dataform` retired there is no longer a
