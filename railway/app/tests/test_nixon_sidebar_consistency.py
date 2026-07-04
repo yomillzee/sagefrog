@@ -76,7 +76,7 @@ class NixonSidebarConsistencyTests(unittest.TestCase):
 
     def test_section_nav_identical_on_every_page(self) -> None:
         pages = self._render_all()
-        expected = ["Overview", "Explorer", "Website Analytics", "Search Console"]
+        expected = ["Overview", "Campaign Explorer", "Website Analytics", "Search Console"]
         for name, html in pages.items():
             self.assertEqual(_section_items(html), expected, f"section nav differs on {name}")
 

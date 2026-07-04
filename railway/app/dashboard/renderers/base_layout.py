@@ -448,7 +448,7 @@ def nixon_sidebar_view_nav_html(
     ) or "#"
     core = (
         ("overview", "Overview", _VIEW_ICONS["overview"]),
-        ("explorer", "Explorer", _VIEW_ICONS["campaigns"]),
+        ("explorer", "Campaign Explorer", _VIEW_ICONS["campaigns"]),
         ("analytics", "Website Analytics", _VIEW_ICONS["website"]),
         ("gsc", "Search Console", _VIEW_ICONS["gsc"]),
     )

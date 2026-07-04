@@ -74,68 +74,89 @@ def build_report(client_slug: str) -> LeadTrackingReport:
     ct = f"`{project}.{dataset}.{_CONTACT_TABLE}`"
     dt = f"`{project}.{dataset}.{_DEAL_TABLE}`"
 
-    # ---- Contacts ----
-    try:
-        summary = _rows(client, f"""
+    # These 6 queries are independent, so run them concurrently instead of
+    # back-to-back — the page was slow because it blocked the HTML render on ~6
+    # sequential BigQuery jobs. The client is safe to share across query threads;
+    # wall time drops from the sum of all jobs to roughly the slowest one.
+    from concurrent.futures import ThreadPoolExecutor
+
+    sqls = {
+        "contacts_summary": f"""
             SELECT
               COUNTIF(stage_filter = '{_MQL_STAGE}')        AS mql_count,
               COUNT(DISTINCT contact_id)                    AS contact_count
             FROM {ct}
-        """)
-        if summary:
-            report.mql_count = int(summary[0].get("mql_count") or 0)
-            report.contact_count = int(summary[0].get("contact_count") or 0)
-
-        report.mqls_by_month = _rows(client, f"""
+        """,
+        "mqls_by_month": f"""
             SELECT FORMAT_DATE('%Y-%m', DATE(became_stage_date)) AS month,
                    COUNT(*) AS contacts
             FROM {ct}
             WHERE stage_filter = '{_MQL_STAGE}' AND became_stage_date IS NOT NULL
             GROUP BY month ORDER BY month
-        """)
-        report.leads_by_source = _rows(client, f"""
+        """,
+        "leads_by_source": f"""
             SELECT COALESCE(hs_analytics_source, 'Unknown') AS source,
                    COUNT(*) AS contacts
             FROM {ct}
             WHERE stage_filter = '{_MQL_STAGE}'
             GROUP BY source ORDER BY contacts DESC
-        """)
-        report.recent_mqls = _rows(client, f"""
+        """,
+        "recent_mqls": f"""
             SELECT email, company, hs_analytics_source AS source,
                    became_stage_date
             FROM {ct}
             WHERE stage_filter = '{_MQL_STAGE}'
             ORDER BY became_stage_date DESC
             LIMIT 20
-        """)
-        report.contacts_available = True
-    except Exception as exc:
-        LOGGER.info("Lead Tracking contacts query skipped [%s]: %s", client_slug, exc)
-
-    # ---- Deals ----
-    try:
-        dsummary = _rows(client, f"""
+        """,
+        "deals_summary": f"""
             SELECT
               COUNT(*)                            AS deal_count,
               SUM(amount)                         AS pipeline_amount,
               SUM(IF(is_closed_won, amount, 0))   AS won_amount
             FROM {dt}
-        """)
-        if dsummary:
-            report.deal_count = int(dsummary[0].get("deal_count") or 0)
-            report.pipeline_amount = float(dsummary[0].get("pipeline_amount") or 0.0)
-            report.won_amount = float(dsummary[0].get("won_amount") or 0.0)
-
-        report.deals_by_source = _rows(client, f"""
+        """,
+        "deals_by_source": f"""
             SELECT COALESCE(hs_analytics_source, 'Unknown') AS source,
                    COUNT(*)                          AS deals,
                    SUM(amount)                       AS amount,
                    SUM(IF(is_closed_won, amount, 0)) AS won_amount
             FROM {dt}
             GROUP BY source ORDER BY deals DESC
-        """)
+        """,
+    }
+
+    def _q(name: str) -> list[dict[str, Any]] | None:
+        """Run one query; None marks a failure (e.g. table not created yet)."""
+        try:
+            return _rows(client, sqls[name])
+        except Exception as exc:
+            LOGGER.info("Lead Tracking query '%s' skipped [%s]: %s", name, client_slug, exc)
+            return None
+
+    with ThreadPoolExecutor(max_workers=len(sqls)) as pool:
+        res = {name: fut.result() for name, fut in
+               {name: pool.submit(_q, name) for name in sqls}.items()}
+
+    # ---- Contacts ---- (available if its core query succeeded)
+    csum = res["contacts_summary"]
+    if csum is not None:
+        report.contacts_available = True
+        if csum:
+            report.mql_count = int(csum[0].get("mql_count") or 0)
+            report.contact_count = int(csum[0].get("contact_count") or 0)
+        report.mqls_by_month = res["mqls_by_month"] or []
+        report.leads_by_source = res["leads_by_source"] or []
+        report.recent_mqls = res["recent_mqls"] or []
+
+    # ---- Deals ----
+    dsum = res["deals_summary"]
+    if dsum is not None:
         report.deals_available = True
-    except Exception as exc:
-        LOGGER.info("Lead Tracking deals query skipped [%s]: %s", client_slug, exc)
+        if dsum:
+            report.deal_count = int(dsum[0].get("deal_count") or 0)
+            report.pipeline_amount = float(dsum[0].get("pipeline_amount") or 0.0)
+            report.won_amount = float(dsum[0].get("won_amount") or 0.0)
+        report.deals_by_source = res["deals_by_source"] or []
 
     return report
