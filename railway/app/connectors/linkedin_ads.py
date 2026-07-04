@@ -53,6 +53,12 @@ class LinkedInAdsConnector(ConnectorHandler):
                     account_id=account_id, start=start, end=end
                 )
                 rows_written += meta.get("rows_upserted") or 0
+            # Rebuild the unified paid-media view + data-health mart (app's own
+            # replacement for the Dataform marts) so the dashboard Overview
+            # populates from this sync. Idempotent; includes whichever of
+            # Google/LinkedIn raw tables currently exist.
+            with bigquery_warehouse.route(bq_project_id=bq_project_id):
+                bigquery_warehouse.create_paid_media_mart_views(client_key=client_slug)
             return SyncResult(rows_loaded=rows_written)
         except Exception as exc:
             _log.warning("LinkedIn sync failed [%s]: %s", client_slug, exc)

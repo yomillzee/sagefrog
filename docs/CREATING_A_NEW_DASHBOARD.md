@@ -30,12 +30,12 @@ real client — some required steps are **not** automated yet.
                               dashboard (HTML + JSON API, DB-cached)
 ```
 
-Two systems write into `marketing_marts`:
-
-| System | What it does | Trigger |
-|---|---|---|
-| **Railway app connector syncs** | Pull from platform APIs → write `raw_*` datasets → build most marts | Per-connector "Sync now", the dashboard refresh, or the daily cron |
-| **`sagefrog-dataform` project** (separate repo, runs in GCP Dataform) | Transform `raw_*` → `vw_paid_media_daily`, `mart_health`, page-path views, etc. | Manual/scheduled Dataform workflow **per client workspace** |
+The **Railway app connector syncs** own the whole pipeline: they pull from
+platform APIs → write `raw_*` datasets → build **all** the marts the dashboard
+reads (including `vw_paid_media_daily` and `mart_health`, as of the app-build
+port). Trigger: per-connector "Sync now", the dashboard refresh, or the daily
+cron. The separate `sagefrog-dataform` project is now **redundant** and not
+required — see §7 and gap #2.
 
 The dashboard's HTML never queries BigQuery directly — it calls the app's
 `/api/clients/{slug}/*` JSON endpoints ([api_routes.py](../railway/app/dashboard/routes/api_routes.py)),
@@ -155,30 +155,28 @@ different places.
 | `fact_meta_ads_ad_daily` | Meta connector → `bq_meta_ads_service` | Meta Explorer |
 | `vw_semrush_overview_latest`, `vw_semrush_keywords_latest` | SEMrush connector → `bq_semrush_service` | Search Console tab → SEMrush |
 | GSC mart | GSC connector / `bq_gsc_service` | Search Console |
+| **`vw_paid_media_daily`** | Google Ads + LinkedIn connector → `bigquery_warehouse.create_paid_media_mart_views` | **Overview → Summary cards + Trend chart** |
+| **`mart_health`** | Google Ads + LinkedIn connector → `bigquery_warehouse.create_paid_media_mart_views` | **Overview → Data health** (+ a GA4 freshness row appended at read time) |
 
-### Built ONLY by the `sagefrog-dataform` project (manual per client) ⚠️
+`vw_paid_media_daily` and `mart_health` used to be Dataform-only (see history
+below); they are now built by the app on every Google Ads / LinkedIn sync, so
+the Overview populates with no Dataform dependency. The builder includes
+whichever of the two raw `campaign_daily` tables exist, so a Google-only or
+LinkedIn-only client still gets a working Overview.
 
-| Mart | Dashboard panel | Notes |
-|---|---|---|
-| **`vw_paid_media_daily`** | **Overview → Summary cards + Trend chart** | The first panel users see. No app code builds this. |
-| **`mart_health`** | **Overview → Data health** | (A GA4 freshness row is appended by the app, but the paid-media rows come from Dataform.) |
+> **Meta note:** `vw_paid_media_daily` covers Google + LinkedIn only (a faithful
+> port of the original Dataform view). Meta spend is **not** in the Overview
+> Summary today — Meta lands in `fact_meta_ads_campaign_daily`, not a raw
+> `campaign_daily`. Adding `paid_meta` is a small follow-up.
 
-**Consequence:** with only the portal steps above, a new client's **Overview
-Summary and Trend chart will be empty/error** until Dataform is set up for that
-client's project.
+### Dataform is no longer required for the Overview
 
-### Dataform setup per client (from `sagefrog-dataform/README.md`)
-
-1. In **GCP Console → Dataform**, link the `sagefrog-dataform` repo and create a
-   **workspace for the client's GCP project**.
-2. Set **compilation variables**: `raw_google_dataset`, `raw_linkedin_dataset`,
-   `ga4_dataset` (= the GA4 property dataset, e.g. `analytics_123456789`),
-   `mart_dataset` (`marketing_marts`).
-3. Grant the **Dataform service account** BigQuery access (Data Editor on
-   `marketing_marts`, Data Viewer on the raw/GA4 datasets, Job User on the
-   project).
-4. **Run** (Execute all) and **schedule** a daily workflow (after the 11:30 UTC
-   Railway cron, e.g. 12:00 UTC).
+The `sagefrog-dataform` project is now redundant for the dashboard — every mart
+it defined is app-built (`vw_paid_media_daily`/`mart_health` above; the page-path
+views via `bq_ga4_mart_service`; `explorer_google_ads_daily`/
+`fact_linkedin_ads_creative_daily` via the ad connectors). You do **not** need to
+set up a Dataform workspace per client. (The repo still exists; retiring or
+archiving it is a cleanup follow-up — see gap #2.)
 
 ---
 
@@ -189,13 +187,14 @@ After setup, confirm:
 - [ ] `/dashboard/{slug}` loads the Nixon template (not the old snapshot page).
 - [ ] Sidebar is identical across Overview / Settings / Connectors / Files.
 - [ ] Each connected connector card shows a successful last sync.
-- [ ] Overview **Summary** + **Trend** show numbers → confirms **Dataform ran**.
+- [ ] Overview **Summary** + **Trend** show numbers → confirms a Google Ads or
+      LinkedIn sync ran (builds `vw_paid_media_daily`).
 - [ ] Website Analytics panels show data → confirms GA4 sync + app views.
 - [ ] Explorer tabs (Google/LinkedIn/Meta) show ads → confirms ad connectors.
 - [ ] Search Console / SEMrush panels populate (if those connectors are used).
 
-If Summary is empty but Explorer/Analytics work, **Dataform hasn't run** for the
-project (see §7).
+If Summary is empty but a paid connector shows a successful sync, check that
+its raw `campaign_daily` table has rows for the selected date range.
 
 ---
 
@@ -204,21 +203,22 @@ project (see §7).
 These are known gaps between the "create dashboard + connect connectors" ideal
 and what's actually automated today. **Flagged for follow-up — not yet fixed.**
 
-1. **🔴 Dataform is a manual, per-client, out-of-band step.** `vw_paid_media_daily`
-   (Overview Summary/Trend) and `mart_health` are Dataform-only, and Dataform
-   requires a hand-created workspace + compilation vars + service-account grants
-   + a schedule **per client GCP project**. Nothing in the portal creates or
-   triggers this. This is the single biggest blocker to true self-serve
-   onboarding. *Follow-up: either port `vw_paid_media_daily`/`mart_health` into
-   an app-built provisioner (like the GA4/Google/Meta marts already are), or
-   automate Dataform workspace creation + runs via the Dataform API.*
+1. **✅ RESOLVED — `vw_paid_media_daily` + `mart_health` are now app-built.**
+   These were Dataform-only, which forced a manual per-client Dataform workspace.
+   They're now built by `bigquery_warehouse.create_paid_media_mart_views`, called
+   from the Google Ads and LinkedIn connector syncs (so they rebuild on every
+   sync, refresh, and cron run). No Dataform workspace is required for the
+   Overview. *Remaining sub-item: `vw_paid_media_daily` still excludes Meta —
+   add `paid_meta` (from `fact_meta_ads_campaign_daily`) as a follow-up.*
 
-2. **🟠 Duplicate/competing mart definitions (drift risk).**
-   `explorer_google_ads_daily`, `fact_linkedin_ads_creative_daily`,
-   `vw_page_path_daily`, and `vw_page_path_source_daily` are defined in **both**
-   the app connector syncs **and** `sagefrog-dataform`. Whichever runs last wins,
-   and the two definitions can diverge in schema (this has bitten the GA4 views
-   before). *Follow-up: pick one owner per mart and delete the other definition.*
+2. **🟠 Retire / archive `sagefrog-dataform` (now redundant + drift risk).**
+   Every mart the dashboard reads is now app-built, but `sagefrog-dataform` still
+   contains competing definitions of several (`vw_paid_media_daily`, `mart_health`,
+   `explorer_google_ads_daily`, `fact_linkedin_ads_creative_daily`, the page-path
+   views). If a Dataform workspace is still scheduled against a client project, it
+   will `CREATE OR REPLACE` those marts and can diverge from the app's schema
+   (this has bitten the GA4 views before). *Follow-up: stop/delete any scheduled
+   Dataform workflows and archive the repo, so the app is the single owner.*
 
 3. **🟠 GCP project + IAM is manual.** Creating the project and granting the two
    roles (Data Editor + Job User) is unavoidably GCP-side, but there's no

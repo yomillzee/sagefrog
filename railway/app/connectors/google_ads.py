@@ -59,6 +59,11 @@ class GoogleAdsConnector(ConnectorHandler):
                 )
             with bigquery_warehouse.route(bq_project_id=bq_project_id):
                 bigquery_warehouse.create_google_campaign_mart_view()
+                # Rebuild the unified paid-media view + data-health mart (app's
+                # own replacement for the Dataform marts) so the dashboard
+                # Overview populates from this sync. Idempotent; includes
+                # whichever of Google/LinkedIn raw tables currently exist.
+                bigquery_warehouse.create_paid_media_mart_views(client_key=client_slug)
             rows = int(result.get("total_rows") or 0)
             errors = result.get("errors") or {}
             return SyncResult(

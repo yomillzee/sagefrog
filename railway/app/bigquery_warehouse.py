@@ -458,6 +458,101 @@ def rebuild_unified_marketing_mart(client_key: str | None = None) -> dict[str, A
     return {"status": "success", "sources": included, "table": table_id}
 
 
+def _replace_object_with_view(client: Any, object_id: str, select_sql: str) -> None:
+    """CREATE OR REPLACE a view, first dropping any pre-existing TABLE of the
+    same name (BigQuery won't let CREATE OR REPLACE VIEW replace a table, and
+    both vw_paid_media_daily and mart_health may already exist as tables — from
+    a prior Dataform run, where mart_health is a table, or the unused
+    client_bq_service.provision_mart_tables schema)."""
+    try:
+        existing = client.get_table(object_id)
+        if str(getattr(existing, "table_type", "TABLE")).upper() == "TABLE":
+            client.delete_table(object_id, not_found_ok=True)
+    except Exception:
+        pass
+    client.query(f"CREATE OR REPLACE VIEW `{object_id}` AS\n{select_sql}").result()
+
+
+def create_paid_media_mart_views(client_key: str | None = None) -> dict[str, Any]:
+    """Build vw_paid_media_daily + mart_health from the raw Google/LinkedIn
+    campaign_daily tables the connectors already write.
+
+    This replaces the Dataform definitions of the same name so the dashboard
+    Overview (summary cards, trend chart, data-health panel) populates from the
+    app's own syncs — no separate per-client Dataform workspace required. The
+    logic is a faithful port of sagefrog-dataform/definitions/marts/
+    vw_paid_media_daily.sqlx + mart_health.sqlx (Google Ads + LinkedIn, source_
+    platform paid_google/paid_linkedin).
+
+    Dynamically includes whichever paid sources' raw campaign_daily tables exist,
+    so a client with only Google (or only LinkedIn) connected still gets a
+    working Overview. Returns pending_data if neither raw table exists yet.
+    """
+    project_id = _route_value("project") or (
+        os.getenv("BQ_WAREHOUSE_PROJECT_ID") or os.getenv("BQ_PROJECT_ID") or ""
+    ).strip()
+    if not project_id:
+        return {"status": "failed", "error": "missing_project"}
+    mart_dataset = _mart_dataset_id()
+    client = _client(project_id)
+    bigquery = _bigquery()
+    client.create_dataset(bigquery.Dataset(f"{project_id}.{mart_dataset}"), exists_ok=True)
+
+    raw_table = "campaign_daily"
+    # (raw dataset, paid-media source_platform label, mart_health source label)
+    sources = [
+        (_dataset_id("google"), "paid_google", "google"),
+        (_dataset_id("linkedin"), "paid_linkedin", "linkedin"),
+    ]
+
+    paid_selects: list[str] = []
+    health_selects: list[str] = []
+    included: list[str] = []
+    for raw_dataset, platform_label, health_label in sources:
+        raw_id = f"{project_id}.{raw_dataset}.{raw_table}"
+        try:
+            client.get_table(raw_id)
+        except Exception:
+            continue
+        included.append(health_label)
+        paid_selects.append(
+            f"""SELECT
+              metric_date                          AS date,
+              '{platform_label}'                   AS source_platform,
+              CAST(spend AS FLOAT64)               AS spend,
+              CAST(impressions AS INT64)           AS impressions,
+              CAST(clicks AS INT64)                AS clicks,
+              CAST(conversions AS FLOAT64)         AS conversions,
+              CAST(conversion_value AS FLOAT64)    AS conversion_value
+            FROM `{raw_id}`"""
+        )
+        health_selects.append(
+            f"""SELECT
+              '{health_label}'                     AS source,
+              COUNT(*)                             AS row_count,
+              MIN(metric_date)                     AS earliest_date,
+              MAX(metric_date)                     AS latest_date,
+              ROUND(SUM(spend), 2)                 AS spend,
+              SUM(impressions)                     AS impressions,
+              SUM(clicks)                          AS clicks,
+              SUM(conversions)                     AS conversions
+            FROM `{raw_id}`"""
+        )
+
+    if not paid_selects:
+        return {"status": "pending_data", "sources": [], "views": []}
+
+    paid_view_id = f"{project_id}.{mart_dataset}.vw_paid_media_daily"
+    health_view_id = f"{project_id}.{mart_dataset}.mart_health"
+    _replace_object_with_view(client, paid_view_id, "\nUNION ALL\n".join(paid_selects))
+    _replace_object_with_view(client, health_view_id, "\nUNION ALL\n".join(health_selects))
+    return {
+        "status": "success",
+        "sources": included,
+        "views": [paid_view_id, health_view_id],
+    }
+
+
 def mirror_linkedin_campaign_metadata(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Upsert LinkedIn campaign metadata rows into linkedin_ads.campaigns."""
     if not rows or not enabled("linkedin"):
