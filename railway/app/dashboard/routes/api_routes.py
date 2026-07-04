@@ -1618,6 +1618,27 @@ def debug_bigquery_identity(
 
 # ── GTM live-tags audit ───────────────────────────────────────────────────────
 
+def _record_gtm_health(slug: str, *, ok: bool, err: Exception | None, prev_status: str | None) -> None:
+    """Write the GTM connector's status back on a live read.
+
+    GTM is the one connector not in the daily BigQuery sync (it's read live on
+    the Event Tracking page), so nothing else updates its status — without this
+    the card shows a stale "connected" even after its OAuth token dies. Only
+    writes on a status *change* to avoid a DB write on every page load.
+    """
+    try:
+        import connector_config_store
+        if ok:
+            if prev_status == "error":
+                connector_config_store.update_status(slug, "gtm", status="connected")
+        elif prev_status != "error":
+            connector_config_store.update_status(
+                slug, "gtm", status="error", error_message=str(err or "")[:300],
+            )
+    except Exception:
+        logger.warning("Failed to record GTM health [%s]", slug, exc_info=True)
+
+
 @router.get(
     "/api/clients/{client_slug}/gtm/live-tags",
     summary="GTM live container version — normalised tag + trigger audit",
@@ -1672,10 +1693,12 @@ def gtm_live_tags(
             ),
         )
 
+    prev_status = conn_cfg.status if conn_cfg else None
     refresh_token = oauth_store.get_refresh_token(
         "google_tag_manager", client_slug=slug
     ) or oauth_store.get_refresh_token("google_tag_manager")
     if not refresh_token:
+        _record_gtm_health(slug, ok=False, err=Exception("No Google Tag Manager OAuth token."), prev_status=prev_status)
         raise HTTPException(
             status_code=403,
             detail=(
@@ -1693,13 +1716,18 @@ def gtm_live_tags(
             force_refresh=refresh,
         )
     except PermissionError as exc:
+        _record_gtm_health(slug, ok=False, err=exc, prev_status=prev_status)
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except LookupError as exc:
+        _record_gtm_health(slug, ok=False, err=exc, prev_status=prev_status)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         logger.warning("GTM live-tags error [%s]: %s", slug, exc)
+        _record_gtm_health(slug, ok=False, err=exc, prev_status=prev_status)
         raise HTTPException(status_code=502, detail=str(exc)[:300]) from exc
 
+    # Live read succeeded — clear a stale "error" so the card recovers.
+    _record_gtm_health(slug, ok=True, err=None, prev_status=prev_status)
     return result
 
 
