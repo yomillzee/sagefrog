@@ -166,6 +166,28 @@ Data does not appear until a sync runs. Either:
 Each connector's `run_sync` writes its `raw_*` data **and rebuilds its own marts**
 (see the ownership table below).
 
+### Scalability (audited for 15–20 clients)
+
+The connector sync is safe to run across many clients concurrently:
+
+- **Isolation:** each sync builds a **fresh** BigQuery client scoped to its own
+  project, routing is set per-sync via contextvars (never inherited across
+  threads), handlers are stateless, and there are no module-level caches. If a
+  project isn't routed, the code **raises** rather than falling back to another
+  tenant's project.
+- **Bounded concurrency:** the cron runs at most **4 clients in parallel**
+  (`_SYNC_BQ_ALL_MAX_WORKERS`), each syncing its connectors **sequentially**, with
+  a **600 s per-client timeout** and an overlap lock — one slow/hung client can't
+  block or starve the batch. A 20-client run is ~5 waves.
+- **No shared BQ bottleneck:** each client has its own GCP project, so BigQuery
+  job quotas are per-project. DB pool (≥10, or direct) comfortably exceeds 4
+  workers.
+
+Two things to watch **beyond ~20 clients** (not issues now): the shared agency
+OAuth means platform **API rate limits** are the real ceiling (would need
+per-platform throttling at large scale), and the sync runs as background threads
+on the web process (I/O-bound; minor request-latency impact during a run).
+
 ---
 
 ## 7. Mart ownership — all app-built

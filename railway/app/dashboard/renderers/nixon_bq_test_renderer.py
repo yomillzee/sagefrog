@@ -644,31 +644,54 @@ def render_nixon_bigquery_test_page(
       for (const d of out) {{ d.cpc = d.clicks ? d.spend/d.clicks : 0; d.cpa = d.conversions ? d.spend/d.conversions : 0; d.ctr = d.impressions ? d.clicks/d.impressions*100 : 0; }}
       return out;
     }}
+    // Catmull-Rom spline → cubic-bezier path for smooth (not jagged) lines.
+    function smoothPath(pts) {{
+      if (!pts.length) return '';
+      if (pts.length < 3) return 'M' + pts.map(p => `${{p[0].toFixed(1)}},${{p[1].toFixed(1)}}`).join(' L');
+      let d = `M${{pts[0][0].toFixed(1)}},${{pts[0][1].toFixed(1)}}`;
+      for (let i = 0; i < pts.length - 1; i++) {{
+        const p0 = pts[i-1] || pts[i], p1 = pts[i], p2 = pts[i+1], p3 = pts[i+2] || p2;
+        const c1x = p1[0] + (p2[0]-p0[0])/6, c1y = p1[1] + (p2[1]-p0[1])/6;
+        const c2x = p2[0] - (p3[0]-p1[0])/6, c2y = p2[1] - (p3[1]-p1[1])/6;
+        d += ` C${{c1x.toFixed(1)}},${{c1y.toFixed(1)}} ${{c2x.toFixed(1)}},${{c2y.toFixed(1)}} ${{p2[0].toFixed(1)}},${{p2[1].toFixed(1)}}`;
+      }}
+      return d;
+    }}
     function renderChart() {{
       chartDaily = buildChartDaily();
       clearSkelChart('trendChart');
       const svg = document.getElementById('trendChart');
-      const W=800, H=260, padL=12, padR=12, padT=14, padB=26, plotW=W-padL-padR, plotH=H-padT-padB, n=chartDaily.length;
+      const W=800, H=260, padL=12, padR=12, padT=16, padB=28, plotW=W-padL-padR, plotH=H-padT-padB, n=chartDaily.length;
       svg.setAttribute('viewBox', `0 0 ${{W}} ${{H}}`);
       if (!n) {{ svg.innerHTML=''; setStatus('chartStatus','No data for this range.'); return; }}
       const active = CHART_METRICS.filter(m => chartMetrics.has(m.key));
       const xAt = i => padL + (n===1 ? plotW/2 : (i/(n-1))*plotW);
+      const baseY = padT + plotH;
+      const defs = [];
       const parts = [
-        `<line x1="${{padL}}" y1="${{padT}}" x2="${{padL}}" y2="${{padT+plotH}}" stroke="#eef2f7"/>`,
-        `<line x1="${{padL}}" y1="${{padT+plotH}}" x2="${{padL+plotW}}" y2="${{padT+plotH}}" stroke="#e3e9f1"/>`,
+        `<line x1="${{padL}}" y1="${{padT}}" x2="${{padL}}" y2="${{baseY}}" stroke="#eef2f7"/>`,
+        `<line x1="${{padL}}" y1="${{baseY}}" x2="${{padL+plotW}}" y2="${{baseY}}" stroke="#e3e9f1"/>`,
       ];
-      for (const m of active) {{
+      const single = active.length === 1;
+      active.forEach((m, mi) => {{
         const vals = chartDaily.map(d => num(d[m.key]));
         const mn=Math.min(...vals), mx=Math.max(...vals), span=(mx-mn)||1;
-        const pts = vals.map((v,i) => `${{xAt(i).toFixed(1)}},${{(padT+(1-(v-mn)/span)*plotH).toFixed(1)}}`).join(' ');
-        parts.push(`<polyline fill="none" stroke="${{m.color}}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${{pts}}"/>`);
-      }}
+        const pts = vals.map((v,i) => [xAt(i), padT+(1-(v-mn)/span)*plotH]);
+        const line = smoothPath(pts);
+        // A single-metric view gets a soft gradient fill under the smooth line.
+        if (single && pts.length > 1) {{
+          const gid = 'trendGrad'+mi;
+          defs.push(`<linearGradient id="${{gid}}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${{m.color}}" stop-opacity="0.20"/><stop offset="100%" stop-color="${{m.color}}" stop-opacity="0"/></linearGradient>`);
+          parts.push(`<path fill="url(#${{gid}})" stroke="none" d="${{line}} L${{pts[pts.length-1][0].toFixed(1)}},${{baseY.toFixed(1)}} L${{pts[0][0].toFixed(1)}},${{baseY.toFixed(1)}} Z"/>`);
+        }}
+        parts.push(`<path fill="none" stroke="${{m.color}}" stroke-width="2.25" stroke-linejoin="round" stroke-linecap="round" d="${{line}}"/>`);
+      }});
       const lblIdx = n===1 ? [0] : [0, Math.floor((n-1)/2), n-1];
       for (const i of lblIdx) {{
         const anchor = i===0 ? 'start' : (i===n-1 ? 'end' : 'middle');
-        parts.push(`<text x="${{xAt(i).toFixed(1)}}" y="${{H-8}}" font-size="10" fill="#66758f" text-anchor="${{anchor}}">${{esc(String(chartDaily[i].date).slice(5))}}</text>`);
+        parts.push(`<text x="${{xAt(i).toFixed(1)}}" y="${{H-9}}" font-size="11" font-weight="600" fill="var(--muted)" text-anchor="${{anchor}}" style="letter-spacing:.02em">${{esc(String(chartDaily[i].date).slice(5))}}</text>`);
       }}
-      svg.innerHTML = parts.join('');
+      svg.innerHTML = (defs.length ? `<defs>${{defs.join('')}}</defs>` : '') + parts.join('');
       setStatus('chartStatus', `${{n}} day(s) · ${{active.length}} metric(s)`);
     }}
     function buildMetricChips() {{
@@ -1057,15 +1080,18 @@ def render_nixon_bigquery_test_page(
       const mn=Math.min(...vals),mx=Math.max(...vals),span=(mx-mn)||1;
       const xAt=i=>padL+(n===1?plotW/2:(i/(n-1))*plotW);
       const yAt=v=>padT+(1-(v-mn)/span)*plotH;
-      const pts=vals.map((v,i)=>`${{xAt(i).toFixed(1)}},${{yAt(v).toFixed(1)}}`).join(' ');
-      const fillPts=`${{padL}},${{padT+plotH}} ${{pts}} ${{(padL+plotW).toFixed(1)}},${{padT+plotH}}`;
+      const baseY=padT+plotH;
+      const pts=vals.map((v,i)=>[xAt(i),yAt(v)]);
+      const line=smoothPath(pts);
+      const area=pts.length>1?`${{line}} L${{pts[pts.length-1][0].toFixed(1)}},${{baseY.toFixed(1)}} L${{pts[0][0].toFixed(1)}},${{baseY.toFixed(1)}} Z`:'';
       const lblIdx=n===1?[0]:[0,Math.floor((n-1)/2),n-1];
       svg.innerHTML=[
-        `<line x1="${{padL}}" y1="${{padT}}" x2="${{padL}}" y2="${{padT+plotH}}" stroke="#eef2f7"/>`,
-        `<line x1="${{padL}}" y1="${{padT+plotH}}" x2="${{padL+plotW}}" y2="${{padT+plotH}}" stroke="#e3e9f1"/>`,
-        `<polygon fill="rgba(29,111,208,.1)" points="${{fillPts}}"/>`,
-        `<polyline fill="none" stroke="#1d6fd0" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${{pts}}"/>`,
-        ...lblIdx.map(i=>{{const anchor=i===0?'start':(i===n-1?'end':'middle');return`<text x="${{xAt(i).toFixed(1)}}" y="${{H-5}}" font-size="10" fill="#66758f" text-anchor="${{anchor}}">${{esc(String(daily[i].date).slice(5))}}</text>`;}}),
+        `<defs><linearGradient id="sessGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#1d6fd0" stop-opacity="0.20"/><stop offset="100%" stop-color="#1d6fd0" stop-opacity="0"/></linearGradient></defs>`,
+        `<line x1="${{padL}}" y1="${{padT}}" x2="${{padL}}" y2="${{baseY}}" stroke="#eef2f7"/>`,
+        `<line x1="${{padL}}" y1="${{baseY}}" x2="${{padL+plotW}}" y2="${{baseY}}" stroke="#e3e9f1"/>`,
+        area?`<path fill="url(#sessGrad)" stroke="none" d="${{area}}"/>`:'',
+        `<path fill="none" stroke="#1d6fd0" stroke-width="2.25" stroke-linejoin="round" stroke-linecap="round" d="${{line}}"/>`,
+        ...lblIdx.map(i=>{{const anchor=i===0?'start':(i===n-1?'end':'middle');return`<text x="${{xAt(i).toFixed(1)}}" y="${{H-6}}" font-size="11" font-weight="600" fill="var(--muted)" text-anchor="${{anchor}}" style="letter-spacing:.02em">${{esc(String(daily[i].date).slice(5))}}</text>`;}}),
       ].join('');
     }}
     function renderBarList(containerId, rows, valueKey, labelKey) {{
