@@ -1,13 +1,37 @@
 # Creating a New Client Dashboard
 
 This is the exact, end-to-end process for standing up a new client dashboard on
-the Sagefrog portal, mapped to the actual code paths. Read the **[Critical
-gaps](#critical-gaps--follow-ups)** section at the bottom before onboarding a
-real client — some required steps are **not** automated yet.
+the Sagefrog portal, mapped to the actual code paths.
 
 > Scope: this describes the **`bigquery_nixon`** dashboard (the Nixon-style
 > connector-driven dashboard). New dashboards created via `/admin` use this mode
 > automatically. The older Penn snapshot dashboard is not covered here.
+
+> **Status (audited):** the onboarding path is production-ready. Every dashboard
+> panel is populated by an app-built mart (no Dataform dependency), a finished
+> connector is picked up by the daily cron automatically, and the app builds all
+> raw/mart datasets on sync. The only steps that are **not** automated are the
+> two that inherently can't be — see [Manual steps](#manual-steps-that-cant-be-automated).
+
+---
+
+## 0. Quick checklist (per new client)
+
+1. **GCP (manual):** create/confirm the client's GCP project; grant
+   `marketing-data-reader@sagefrog.iam.gserviceaccount.com` **BigQuery Data
+   Editor** + **BigQuery Job User** on it. (§3)
+2. **Create the dashboard:** `/admin` → Dashboards → **Add** (slug + label). (§4)
+3. **Connect each platform:** dashboard → **Connectors** → run each wizard to the
+   end (Connect → account → destination → backfill → test → **finish**). The
+   destination step verifies BigQuery access on the spot; finishing enables the
+   daily sync. (§5)
+4. **First data:** click **Sync now** on a connector (or wait for the 11:30 UTC
+   cron). Overview fills once a paid sync runs; other panels as their connectors
+   sync. (§6)
+5. **Verify:** run the [checklist](#8-verification-checklist) — Overview,
+   Analytics, and Explorer panels should populate.
+
+Everything else (datasets, marts, views) is created automatically by the app.
 
 ---
 
@@ -35,7 +59,7 @@ platform APIs → write `raw_*` datasets → build **all** the marts the dashboa
 reads (including `vw_paid_media_daily` and `mart_health`, as of the app-build
 port). Trigger: per-connector "Sync now", the dashboard refresh, or the daily
 cron. The separate `sagefrog-dataform` project is now **redundant** and not
-required — see §7 and gap #2.
+required — see §7 and [Manual steps](#manual-steps-that-cant-be-automated).
 
 The dashboard's HTML never queries BigQuery directly — it calls the app's
 `/api/clients/{slug}/*` JSON endpoints ([api_routes.py](../railway/app/dashboard/routes/api_routes.py)),
@@ -115,6 +139,11 @@ these steps:
    The project ID is also back-filled onto `client_dashboard_config.gcp_project_id`.
 4. **Backfill** — choose how many days of history to pull on the first sync.
 5. **Test** — verifies the source connection.
+6. **Finish** — sets the connector to `connected` and, via the "Sync
+   automatically" toggle (**on by default**), `sync_enabled = true`. **This is
+   what enrolls the connector in the daily cron** — a connector left mid-wizard
+   (never "finished") stays `sync_enabled = false` and the cron skips it (you'd
+   have to sync it manually). So always run the wizard to the end.
 
 Repeat per platform the client uses. The connectors nav and each platform's
 panel appear as connectors are connected.
@@ -139,10 +168,10 @@ Each connector's `run_sync` writes its `raw_*` data **and rebuilds its own marts
 
 ---
 
-## 7. Mart ownership — what's automatic vs. manual
+## 7. Mart ownership — all app-built
 
-This is the part to watch. The dashboard reads ~13 marts; they come from two
-different places.
+The dashboard reads ~13 marts; **every one is built by the Railway app** on
+connector sync (idempotent `CREATE OR REPLACE`). Nothing here needs Dataform.
 
 ### Built automatically by the Railway app connector syncs
 
@@ -175,7 +204,8 @@ app-built (`vw_paid_media_daily`/`mart_health` above; the page-path views via
 `fact_linkedin_ads_creative_daily` via the ad connectors). Its definitions were
 removed (repo kept as a deprecated archive), so you do **not** set up a Dataform
 workspace per client. If any client project still has a **scheduled** Dataform
-workflow, disable it in GCP Console → Dataform (see gap #2).
+workflow, disable it in GCP Console → Dataform (see
+[Manual steps](#manual-steps-that-cant-be-automated)).
 
 ---
 
@@ -197,51 +227,44 @@ its raw `campaign_daily` table has rows for the selected date range.
 
 ---
 
-## Critical gaps / follow-ups
+## Manual steps that can't be automated
 
-These are known gaps between the "create dashboard + connect connectors" ideal
-and what's actually automated today. **Flagged for follow-up — not yet fixed.**
+The onboarding path is otherwise fully automated; these two are inherent to GCP
+and must be done by a human, once per client:
 
-1. **✅ RESOLVED — `vw_paid_media_daily` + `mart_health` are now app-built
-   (Google + LinkedIn + Meta).** These were Dataform-only, which forced a manual
-   per-client Dataform workspace. They're now built by
-   `bigquery_warehouse.create_paid_media_mart_views`, called from the Google Ads,
-   LinkedIn, and Meta connector syncs (so they rebuild on every sync, refresh,
-   and cron run). No Dataform workspace is required for the Overview.
+1. **Create the GCP project + grant IAM.** The app cannot create GCP projects
+   (needs org admin + billing). Create the project and grant
+   `marketing-data-reader@sagefrog.iam.gserviceaccount.com` **both** BigQuery
+   **Data Editor** and **Job User**. The connector wizard and the settings-page
+   **Verify BigQuery access** button both check this and fail with an actionable
+   message naming the roles.
+2. **Stop any old Dataform schedule.** `sagefrog-dataform` is retired (definitions
+   removed), but if a client project still has a **scheduled** Dataform workflow,
+   disable/delete it in **GCP Console → Dataform** so it can't overwrite the
+   app-built marts.
 
-2. **✅ RESOLVED (repo side) — `sagefrog-dataform` retired.** All its mart +
-   source definitions were removed and its README replaced with a deprecation
-   notice, so a stray Dataform run is now a no-op and can't overwrite the
-   app-built marts. **⚠️ One manual GCP-side action remains:** in GCP Console →
-   Dataform, **delete or disable any scheduled workflow / release configuration**
-   linked to a client project — a workspace pinned to an older commit could still
-   run the old definitions until its schedule is stopped.
+## Known limitations (non-blocking)
 
-3. **🟠 GCP project + IAM is manual (inherent) — now verifiable in-portal.**
-   Creating the project and granting the two roles (Data Editor + Job User) is
-   unavoidably GCP-side — the app cannot create projects. Mitigations now in
-   place: the connector wizard verifies access on the destination step, and the
-   settings page has a **Verify BigQuery access** button
-   (`POST /api/clients/{slug}/bq-verify`) that re-runs the same check any time
-   (pre-flight before setup, or diagnosing "data stopped showing"). The error
-   message names both required roles. *Only the project creation + IAM grant
-   itself remains manual, by GCP design.*
+- **Some GA4 sub-panels may be empty.** Device split (`vw_ga4_tech_daily`) is an
+  empty placeholder stub, and Geo/Demographics are optional (depend on those GA4
+  dimensions being present). These panels degrade gracefully (no error), just
+  show no data. Not a blocker — the core Analytics panels (traffic, pages,
+  landing, conversions, user acquisition) populate normally.
+- **Meta only appears in the Overview at campaign grain.** `vw_paid_media_daily`
+  unions the campaign-daily tables; Meta ad-level detail lives in its Explorer.
+- **First-data lag.** After finishing a connector there's a gap until the first
+  sync completes; the onboarding card only covers the "no connectors yet" state,
+  not "connected, first sync pending."
 
-4. **✅ RESOLVED — admin convert-to-new-template action.** The `/admin`
-   Dashboards table now shows a **Template** column: `bigquery_nixon` dashboards
-   show a "New template" badge; legacy ones show a **Use new template** button
-   (`POST /admin/dashboards/{slug}/mode`) that converts them in one click
-   (preserving all other config). No more manual DB update to migrate a legacy
-   dashboard. (Penn stays on the snapshot template, protected.)
+## Audit gaps — all closed ✅
 
-5. **✅ RESOLVED — first-run onboarding state.** A dashboard with no connectors
-   now shows a "Connect your first data source" card (with a **Set up connectors**
-   CTA) at the top of the Overview instead of a bare empty page. Renders only when
-   the client has zero connector configs; fails open (never shown to an
-   established client). *Remaining nicety: a "sync running / waiting for first
-   data" state after connectors exist but before the first sync completes.*
+The six gaps from the scalability audit are resolved:
 
-6. **✅ RESOLVED — GA4 is single-path.** The app pulls GA4 via the Data API and
-   builds the GA4 views; with `sagefrog-dataform` retired there is no longer a
-   competing native-export definition, so there's one authoritative source per
-   GA4 panel.
+| # | Gap | Resolution |
+|---|---|---|
+| 1 | `vw_paid_media_daily` + `mart_health` Dataform-only | App-built via `bigquery_warehouse.create_paid_media_mart_views` (Google + LinkedIn + Meta) |
+| 2 | `sagefrog-dataform` drift risk | Repo retired (definitions removed); one manual GCP action to stop schedules (above) |
+| 3 | GCP project + IAM manual | Inherent; mitigated by wizard verify + settings "Verify BigQuery access" button |
+| 4 | No `dashboard_mode` UI toggle | Admin "Use new template" one-click convert + Template column |
+| 5 | Empty dashboard looks broken | First-run "Connect your first data source" onboarding card |
+| 6 | GA4 dual path | Resolved by retiring Dataform — app is the single source |
