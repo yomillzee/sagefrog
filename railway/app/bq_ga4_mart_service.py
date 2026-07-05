@@ -50,6 +50,7 @@ MART_VIEWS = [
     "vw_ga4_landing_pages_daily",
     "vw_ga4_landing_page_events_daily",
     "vw_ga4_user_acq_events_daily",
+    "vw_ga4_page_events_daily",
     "vw_ga4_tech_daily",
     "vw_ga4_demographics_daily",
     "vw_ga4_geo_daily",
@@ -294,6 +295,23 @@ def _view_sql(view_name: str, *, raw: str, marts: str, taxonomy: dict[str, str])
           SUM(key_events)  AS key_events
         FROM `{raw}.ga4_user_acq_events_daily`
         GROUP BY client_key, property_id, date, default_channel_group, source, medium, event_name
+        """
+
+    if view_name == "vw_ga4_page_events_daily":
+        # Per page_path × event breakdown across ALL traffic (not just
+        # entrances), so the Top Pages panel can recompute "key events" for a
+        # client-selected set of events. Normalizes the trailing slash the same
+        # way vw_page_path_source_daily does, so page_path matches Top Pages' rows.
+        return f"""
+        SELECT
+          client_key, property_id, date,
+          CASE WHEN page_path = '/' THEN '/'
+               ELSE REGEXP_REPLACE(page_path, r'/$', '') END AS page_path,
+          event_name,
+          SUM(event_count) AS event_count,
+          SUM(key_events)  AS key_events
+        FROM `{raw}.ga4_page_events_daily`
+        GROUP BY client_key, property_id, date, page_path, event_name
         """
 
     if view_name == "vw_ga4_demographics_daily":

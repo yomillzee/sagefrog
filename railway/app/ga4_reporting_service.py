@@ -276,6 +276,35 @@ def fetch_user_acq_events_daily(
     return out
 
 
+def fetch_page_events_daily(
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
+) -> list[dict[str, Any]]:
+    """Page path × event breakdown across ALL traffic (not just entrances) —
+    the Top Pages equivalent of the landing-page events report, so its
+    key-events column can honour a client-selected event set."""
+    rows = _run_report(
+        property_id,
+        dimensions=["date", "pagePath", "eventName"],
+        metrics=["eventCount", "keyEvents"],
+        start=start, end=end, access_token=access_token,
+    )
+    synced_at = _now()
+    out = []
+    for r in rows:
+        out.append({
+            "client_key": client_key,
+            "property_id": property_id,
+            "date": _parse_date(r.get("date", "")),
+            "page_path": r.get("pagePath") or "/",
+            "event_name": r.get("eventName") or "(unknown)",
+            "event_count": int(r.get("eventCount") or 0),
+            "key_events": int(float(r.get("keyEvents") or 0)),
+            "synced_at": synced_at,
+        })
+    return out
+
+
 def fetch_pageviews_daily(
     property_id: str, start: str, end: str, access_token: str,
     *, client_key: str = "",

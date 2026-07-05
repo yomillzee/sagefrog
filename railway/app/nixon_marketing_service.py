@@ -738,6 +738,47 @@ def fetch_nixon_landing_page_events(
     }
 
 
+def _page_events_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.vw_ga4_page_events_daily`"
+
+
+def fetch_nixon_page_key_events(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Per page_path × event breakdown across ALL traffic (not just entrances)
+    so the Top Pages panel can recompute 'key events' for a client-selected
+    set of events, same as Landing/Traffic/User acquisition."""
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    rows_sql = f"""
+    SELECT
+      COALESCE(page_path, '/') AS page_path,
+      event_name,
+      SUM(event_count) AS event_count,
+      SUM(key_events)  AS key_events
+    FROM {_page_events_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY page_path, event_name
+    """
+    events_sql = f"""
+    SELECT event_name, SUM(event_count) AS event_count, SUM(key_events) AS key_events
+    FROM {_page_events_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY event_name
+    ORDER BY event_count DESC
+    """
+    try:
+        rows = _run_query(rows_sql, params=params, max_rows=100000)
+        events = _run_query(events_sql, params=dict(params), max_rows=1000)
+    except Exception:
+        rows, events = [], []
+    return {"client": _client_key(), "rows": rows, "events": events}
+
+
 def _user_acq_events_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.vw_ga4_user_acq_events_daily`"
 

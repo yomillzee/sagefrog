@@ -451,7 +451,7 @@ def render_nixon_bigquery_test_page(
           <button type="button" class="chip debug-only" id="keyEventSaveBtn" style="border-color:var(--accent); color:var(--accent)">Save as default</button>
           <span class="status debug-only" id="keyEventSaveStatus"></span>
         </div>
-        <span class="ke-global-hint">Choose which GA4 events count as “key events.” Applies across Traffic, Landing pages &amp; New user acquisition below.</span>
+        <span class="ke-global-hint">Choose which GA4 events count as “key events.” Applies across Top pages, Traffic, Landing pages &amp; New user acquisition below.</span>
       </div>
 
       <section id="sec-pages">
@@ -585,6 +585,7 @@ def render_nixon_bigquery_test_page(
     const BACKFILL_API         = "{_aurl(f'/api/clients/{api_client_key}/backfill-linkedin')}";
     const PAGES_TOP_API        = "{_aurl(f'/api/clients/{api_client_key}/pages/top')}";
     const PAGES_SOURCES_API    = "{_aurl(f'/api/clients/{api_client_key}/pages/sources')}";
+    const TOP_PAGES_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/top-key-events')}";
     const TRAFFIC_ACQ_API      = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-acquisition')}";
     const DEVICE_SPLIT_API     = "{_aurl(f'/api/clients/{api_client_key}/pages/device-split')}";
     const LANDING_PAGES_API    = "{_aurl(f'/api/clients/{api_client_key}/pages/landing')}";
@@ -701,9 +702,9 @@ def render_nixon_bigquery_test_page(
         const sec = document.getElementById(MODULE_SECTIONS[key]);
         if (sec) sec.hidden = !modules[key];
       }});
-      // The global key-event selector only drives Traffic / Landing / User acquisition.
+      // The global key-event selector drives Top pages / Traffic / Landing / User acquisition.
       const keBar = document.getElementById('keyEventFilterGroup');
-      if (keBar) keBar.hidden = !(modules.traffic || modules.landing || modules.user_acquisition);
+      if (keBar) keBar.hidden = !(modules.top_pages || modules.traffic || modules.landing || modules.user_acquisition);
     }}
 
     // ---- Paid media: Summary ----
@@ -1219,6 +1220,14 @@ def render_nixon_bigquery_test_page(
 
     // ---- GA4: Top pages ----
     let pagesTopRows=[], pagesSourceRows=[], pagesSearchQuery='';
+    let pagesEventMap={{}};   // page_path -> {{ event_name: count }}, from TOP_PAGES_KEY_EVENTS_API
+    // Recompute key_events per row from the global key-event selection, same
+    // fallback rule as Traffic/User acquisition: only override once our own
+    // event map actually has data, otherwise keep the base report's real value.
+    function applyPageEvents(rows) {{
+      if (!Object.keys(pagesEventMap).length) return rows;
+      return rows.map(r=>({{...r, key_events:keSum(pagesEventMap, r.page_path)}}));
+    }}
     const paidSourceFilter=new Set(), aiPlatformFilter=new Set();
     const PAGES_PER_PAGE=10; let pagesPageNum=1;
     const PAID_SOURCE_LABELS={{paid_google:'Google',paid_bing:'Bing',paid_linkedin:'LinkedIn',paid_meta:'Meta',paid_facebook:'Facebook'}};
@@ -1240,6 +1249,7 @@ def render_nixon_bigquery_test_page(
     }}
     function renderPages() {{
       let base=pageFiltersActive()?aggregatePages(pagesSourceRows.filter(pageSourceRowMatches)):pagesTopRows;
+      base=applyPageEvents(base);
       if (pagesSearchQuery) {{ const q=pagesSearchQuery.toLowerCase(); base=base.filter(p=>p.page_path.toLowerCase().includes(q)); }}
       const el=document.getElementById('pagesTable');
       if (!base.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No pages match${{pagesSearchQuery?' "'+esc(pagesSearchQuery)+'"':''}}.</td></tr></tbody>`; setStatus('pagesStatus','No results'); document.getElementById('pagesPager').innerHTML=''; return; }}
@@ -1281,11 +1291,17 @@ def render_nixon_bigquery_test_page(
     async function loadPages() {{
       setStatus('pagesStatus','Loading…');
       document.getElementById('pagesTable').innerHTML = skelTable(5,8);
-      const [top,src]=await Promise.all([
+      const [top,src,ev]=await Promise.all([
         getJson(withDates(PAGES_TOP_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(PAGES_SOURCES_API)).catch(()=>({{rows:[]}})),
+        getJson(withDates(TOP_PAGES_KEY_EVENTS_API)).catch(()=>({{rows:[],events:[]}})),
       ]);
       pagesTopRows=top.rows||[]; pagesSourceRows=src.rows||[]; pagesPageNum=1;
+      pagesEventMap={{}};
+      for (const r of (ev.rows||[])) {{
+        (pagesEventMap[r.page_path]=pagesEventMap[r.page_path]||{{}})[r.event_name]=num(r.event_count);
+      }}
+      mergeEvents(ev.events);
       buildPageFilters(); renderPages();
     }}
     (function(){{
@@ -1437,6 +1453,7 @@ def render_nixon_bigquery_test_page(
     }}
     // Re-run every loaded panel against the current selection.
     function applyKeyEventsAll() {{
+      if (pagesTopRows.length || pagesSourceRows.length) {{ pagesPageNum=1; renderPages(); }}
       if (landingBaseRows.length) {{ applyLanding(); landingPageNum=1; renderLanding(); }}
       if (trafficBaseSources.length) {{ applyTrafficSources(); renderTrafficSources(); }}
       if (userAcqBaseSources.length) {{ applyUserAcqSources(); renderUserAcqSources(); }}

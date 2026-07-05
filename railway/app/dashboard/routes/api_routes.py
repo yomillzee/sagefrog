@@ -923,6 +923,27 @@ def nixon_landing_page_events(
         raise _nixon_endpoint_failure(exc) from exc
 
 
+@router.get("/api/clients/nixon/pages/top-key-events", summary="Nixon GA4 page path × event breakdown (all traffic)")
+def nixon_top_pages_key_events(
+    request: Request,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        return _cached_bq_read(
+            "nixon.pages.top_key_events", {"start": start.isoformat(), "end": end.isoformat()},
+            ttl_seconds=900,
+            fetch=lambda: nixon_marketing_service.fetch_nixon_page_key_events(start_date=start, end_date=end),
+        )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
 @router.get("/api/clients/nixon/pages/traffic-key-events", summary="Nixon GA4 traffic source × event breakdown")
 def nixon_traffic_key_events(
     request: Request,
@@ -1370,6 +1391,40 @@ def client_landing_page_events(
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
                 fetch=lambda: nixon_marketing_service.fetch_nixon_landing_page_events(start_date=start, end_date=end),
+            )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/pages/top-key-events",
+    summary="Client GA4 page path × event breakdown, all traffic (generic BQ-test clients)",
+)
+def client_top_pages_key_events(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.pages.top_key_events",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_page_key_events(start_date=start, end_date=end),
             )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
