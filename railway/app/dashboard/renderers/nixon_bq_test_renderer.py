@@ -62,12 +62,14 @@ def render_nixon_bigquery_test_page(
     # by the "Branded & Target Keywords" section. Stored one per line.
     gsc_branded_roots = ""
     gsc_target_keywords = ""
+    ga4_key_events = ""
     try:
         import client_dashboard_config as _cdc
         _kwcfg = _cdc.get_config(api_client_key) or _cdc.get_config(client_slug)
         if _kwcfg:
             gsc_branded_roots = _kwcfg.gsc_branded_roots or ""
             gsc_target_keywords = _kwcfg.gsc_target_keywords or ""
+            ga4_key_events = _kwcfg.ga4_key_events or ""
     except Exception:
         pass
 
@@ -216,6 +218,9 @@ def render_nixon_bigquery_test_page(
     th.gsc-sort {{ cursor:pointer; user-select:none; white-space:nowrap; transition:background .12s,color .12s; }}
     th.gsc-sort:hover {{ background:#e9eef5; color:#33455e; }}
     th.gsc-sort.active {{ color:var(--accent); }}
+    /* Admin-only controls (shown when the app-shell has .is-admin) */
+    .debug-only {{ display:none !important; }}
+    .is-admin .debug-only {{ display:inline-block !important; }}
     /* Branded/target keyword editor (admin only) */
     .kw-editor {{ display:none; margin-bottom:6px; }}
     .is-admin .kw-editor {{ display:block; }}
@@ -422,6 +427,12 @@ def render_nixon_bigquery_test_page(
 
       <section id="sec-landing">
         <div class="sec-head"><h2>Landing pages</h2><span class="status" id="landingStatus"></span></div>
+        <div class="filter-group" id="keyEventFilterGroup" style="margin-bottom:12px; align-items:flex-start; flex-wrap:wrap">
+          <span class="filter-label" style="margin-top:6px">Key events</span>
+          <div class="chips" id="keyEventChips"></div>
+          <button type="button" class="chip debug-only" id="keyEventSaveBtn" style="border-color:var(--accent); color:var(--accent)">Save as default</button>
+          <span class="status debug-only" id="keyEventSaveStatus" style="margin-top:6px"></span>
+        </div>
         <div class="table-wrap"><table id="landingTable" class="compact"></table></div>
         <div class="pager" id="landingPager"></div>
       </section>
@@ -546,6 +557,9 @@ def render_nixon_bigquery_test_page(
     const GSC_TARGET_KEYWORDS = {json.dumps([s.strip() for s in gsc_target_keywords.splitlines() if s.strip()])};
     const GSC_BRANDED_RAW = {json.dumps(gsc_branded_roots)};
     const GSC_TARGET_RAW = {json.dumps(gsc_target_keywords)};
+    const LANDING_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/landing-events')}";
+    const KEY_EVENTS_CONFIG_API = "{_aurl(f'/api/clients/{api_client_key}/ga4/key-events')}";
+    const GA4_KEY_EVENTS_SAVED = {json.dumps([s.strip() for s in ga4_key_events.splitlines() if s.strip()])};
 
     // ---- Formatters ----
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
@@ -1255,6 +1269,33 @@ def render_nixon_bigquery_test_page(
 
     // ---- GA4: Landing pages ----
     const LANDING_PER_PAGE=15; let landingPageNum=1, landingRows=[];
+    // Key-event override: choose which GA4 events count as "key events" for the
+    // landing-page column. Default = GA4's own key events; the selection persists
+    // per client (admin "Save as default").
+    let landingBaseRows=[];            // from LANDING_PAGES_API
+    let landingEventMap={{}};            // page_path -> {{ event_name: count }}
+    let keyEventCatalog=[];            // [{{event_name,event_count,is_key}}]
+    let selectedKeyEvents=new Set(GA4_KEY_EVENTS_SAVED);
+    function applyKeyEvents() {{
+      if (!keyEventCatalog.length) {{ landingRows = landingBaseRows.slice(); return; }}
+      const sel=[...selectedKeyEvents];
+      landingRows = landingBaseRows.map(r => {{
+        const evs=landingEventMap[r.page_path]||{{}};
+        const ke=sel.reduce((s,ev)=>s+(evs[ev]||0),0);
+        const rate=r.sessions?Math.round(ke/r.sessions*1000)/10:0;
+        return {{...r, key_events:ke, key_event_rate:rate}};
+      }});
+    }}
+    function renderKeyEventChips() {{
+      const el=document.getElementById('keyEventChips');
+      if (!keyEventCatalog.length) {{ el.innerHTML='<span class="muted" style="margin-top:6px">Per-event data appears after the next GA4 sync.</span>'; return; }}
+      el.innerHTML=keyEventCatalog.map(e=>`<button type="button" class="chip${{selectedKeyEvents.has(e.event_name)?' active':''}}" data-ev="${{esc(e.event_name)}}">${{esc(e.event_name)}} <span class="muted">${{count(e.event_count)}}</span></button>`).join('');
+      el.querySelectorAll('.chip').forEach(b=>b.addEventListener('click',()=>{{
+        const ev=b.dataset.ev;
+        if (selectedKeyEvents.has(ev)) selectedKeyEvents.delete(ev); else selectedKeyEvents.add(ev);
+        renderKeyEventChips(); applyKeyEvents(); landingPageNum=1; renderLanding();
+      }}));
+    }}
     function renderLanding() {{
       const totalPages=Math.max(1,Math.ceil(landingRows.length/LANDING_PER_PAGE));
       if (landingPageNum>totalPages) landingPageNum=totalPages;
@@ -1275,10 +1316,37 @@ def render_nixon_bigquery_test_page(
       setStatus('landingStatus','Loading…');
       document.getElementById('landingTable').innerHTML = skelTable(7,7);
       try {{
-        const payload=await getJson(withDates(LANDING_PAGES_API));
-        landingRows=payload.rows||[]; landingPageNum=1; renderLanding();
+        const [pages, ev] = await Promise.all([
+          getJson(withDates(LANDING_PAGES_API)),
+          getJson(withDates(LANDING_EVENTS_API)).catch(()=>({{rows:[],events:[]}})),
+        ]);
+        landingBaseRows = pages.rows||[];
+        // Build per-page event map + the event catalog (with GA4 key flag).
+        landingEventMap={{}};
+        for (const r of (ev.rows||[])) {{
+          (landingEventMap[r.page_path]=landingEventMap[r.page_path]||{{}})[r.event_name]=num(r.event_count);
+        }}
+        keyEventCatalog=(ev.events||[]).map(e=>({{event_name:e.event_name, event_count:num(e.event_count), is_key:num(e.key_events)>0}}));
+        // Default selection = GA4's own key events, unless the client saved one.
+        if (!selectedKeyEvents.size && keyEventCatalog.length) {{
+          selectedKeyEvents = new Set(keyEventCatalog.filter(e=>e.is_key).map(e=>e.event_name));
+        }}
+        renderKeyEventChips(); applyKeyEvents(); landingPageNum=1; renderLanding();
       }} catch(err) {{ setStatus('landingStatus',err.message||String(err),true); }}
     }}
+    (function initKeyEventSave(){{
+      const btn=document.getElementById('keyEventSaveBtn'); if (!btn) return;
+      btn.addEventListener('click', async () => {{
+        btn.disabled=true; setStatus('keyEventSaveStatus','Saving…');
+        try {{
+          const r=await fetch(KEY_EVENTS_CONFIG_API, {{method:'POST', headers:{{'Content-Type':'application/json'}}, credentials:'same-origin', body:JSON.stringify({{event_names:[...selectedKeyEvents].join('\\n')}})}});
+          const b=await r.json().catch(()=>({{}}));
+          if (!r.ok||!b.ok) throw new Error((b&&b.detail&&(b.detail.error||b.detail))||r.statusText);
+          setStatus('keyEventSaveStatus','Saved as default.'); setTimeout(()=>setStatus('keyEventSaveStatus',''),2500);
+        }} catch(err) {{ setStatus('keyEventSaveStatus','Save failed: '+(err.message||err), true); }}
+        finally {{ btn.disabled=false; }}
+      }});
+    }})();
 
     // ---- GA4: Conversions ----
     async function loadConversions() {{

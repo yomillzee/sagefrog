@@ -898,6 +898,31 @@ def nixon_landing_pages(
         raise _nixon_endpoint_failure(exc) from exc
 
 
+@router.get(
+    "/api/clients/nixon/pages/landing-events",
+    summary="Nixon GA4 landing page × event breakdown (for key-event selection)",
+)
+def nixon_landing_page_events(
+    request: Request,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        return _cached_bq_read(
+            "nixon.pages.landing_events",
+            {"start": start.isoformat(), "end": end.isoformat()},
+            ttl_seconds=900,
+            fetch=lambda: nixon_marketing_service.fetch_nixon_landing_page_events(start_date=start, end_date=end),
+        )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
 @router.get("/api/clients/nixon/analytics/conversions", summary="Nixon GA4 conversion events breakdown")
 def nixon_conversion_events(
     request: Request,
@@ -1272,6 +1297,70 @@ def client_landing_pages(
             )
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/pages/landing-events",
+    summary="Client GA4 landing page × event breakdown (generic BQ-test clients)",
+)
+def client_landing_page_events(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.pages.landing_events",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_landing_page_events(start_date=start, end_date=end),
+            )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.post(
+    "/api/clients/{client_key}/ga4/key-events",
+    summary="Save the client's selected GA4 key events (which events count)",
+)
+async def save_ga4_key_events(
+    client_key: str,
+    request: Request,
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        import client_dashboard_config as cdc
+        cdc.update_ga4_key_events(
+            normalized, event_names=str(body.get("event_names") or ""), updated_by="dashboard",
+        )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+    return {"ok": True}
 
 
 @router.get(

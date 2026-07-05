@@ -65,6 +65,9 @@ SCHEMA_SQL_STATEMENTS = [
     """
     ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS gsc_target_keywords TEXT
     """,
+    """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS ga4_key_events TEXT
+    """,
 ]
 
 
@@ -88,6 +91,7 @@ class ClientConfigRow:
     gtm_container_id: str | None = None
     gsc_branded_roots: str | None = None
     gsc_target_keywords: str | None = None
+    ga4_key_events: str | None = None
 
 
 def _get_db_url() -> str | None:
@@ -123,7 +127,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    gcp_project_id, bq_mart_dataset_id,
                    dashboard_mode, gsc_site_url, semrush_domain,
                    gtm_account_id, gtm_container_id,
-                   gsc_branded_roots, gsc_target_keywords
+                   gsc_branded_roots, gsc_target_keywords, ga4_key_events
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -156,6 +160,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         gtm_container_id=_s(row[15]),
         gsc_branded_roots=_s(row[16]),
         gsc_target_keywords=_s(row[17]),
+        ga4_key_events=_s(row[18]),
     )
 
 
@@ -290,6 +295,42 @@ def update_gsc_keywords(
             """,
             (slug, slug, now, _clean(updated_by),
              _clean(branded_roots), _clean(target_keywords)),
+        )
+
+
+def update_ga4_key_events(
+    client_slug: str,
+    *,
+    event_names: str | None,
+    updated_by: str | None = None,
+) -> None:
+    """Set the client's selected GA4 key events (newline-separated event names).
+    Empty = fall back to GA4's own key-event designation. Touches only that
+    column."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save key-event config.")
+
+    def _clean(val: str | None) -> str | None:
+        return (val or "").strip() or None
+
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, updated_at, updated_by, ga4_key_events
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (client_slug) DO UPDATE SET
+              ga4_key_events = EXCLUDED.ga4_key_events,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, slug, now, _clean(updated_by), _clean(event_names)),
         )
 
 

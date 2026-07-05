@@ -688,6 +688,56 @@ def fetch_nixon_landing_pages(
     }
 
 
+def _landing_page_events_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.vw_ga4_landing_page_events_daily`"
+
+
+def fetch_nixon_landing_page_events(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Per landing_page × event breakdown so the dashboard can recompute the
+    landing-page 'key events' column for a client-selected set of events.
+    `events` lists every event with its total + GA4 key-event count (the
+    default selection is the events where key_events > 0)."""
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    rows_sql = f"""
+    SELECT
+      COALESCE(landing_page, '/') AS page_path,
+      event_name,
+      SUM(event_count) AS event_count,
+      SUM(key_events)  AS key_events
+    FROM {_landing_page_events_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY page_path, event_name
+    """
+    events_sql = f"""
+    SELECT
+      event_name,
+      SUM(event_count) AS event_count,
+      SUM(key_events)  AS key_events
+    FROM {_landing_page_events_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY event_name
+    ORDER BY event_count DESC
+    """
+    try:
+        rows = _run_query(rows_sql, params=params, max_rows=100000)
+        events = _run_query(events_sql, params=dict(params), max_rows=1000)
+    except Exception:
+        rows, events = [], []
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "rows": rows,
+        "events": events,
+    }
+
+
 def fetch_nixon_pages_sources(
     *,
     start_date: date,

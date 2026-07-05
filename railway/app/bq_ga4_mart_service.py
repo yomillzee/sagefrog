@@ -48,6 +48,7 @@ MART_VIEWS = [
     "vw_ga4_user_acq_daily",
     "vw_ga4_events_daily",
     "vw_ga4_landing_pages_daily",
+    "vw_ga4_landing_page_events_daily",
     "vw_ga4_tech_daily",
     "vw_ga4_demographics_daily",
     "vw_ga4_geo_daily",
@@ -263,6 +264,22 @@ def _view_sql(view_name: str, *, raw: str, marts: str, taxonomy: dict[str, str])
           AVG(average_session_duration) AS average_session_duration
         FROM `{raw}.ga4_landing_pages_daily`
         GROUP BY client_key, property_id, date, landing_page
+        """
+
+    if view_name == "vw_ga4_landing_page_events_daily":
+        # Per landing_page × event breakdown, so the dashboard can recompute
+        # "key events" for a client-selected set of events. key_events carries
+        # GA4's own designation (the default set); event_count powers overrides.
+        return f"""
+        SELECT
+          client_key, property_id, date,
+          CASE WHEN landing_page = '/' THEN '/'
+               ELSE REGEXP_REPLACE(landing_page, r'/$', '') END AS landing_page,
+          event_name,
+          SUM(event_count) AS event_count,
+          SUM(key_events)  AS key_events
+        FROM `{raw}.ga4_landing_page_events_daily`
+        GROUP BY client_key, property_id, date, landing_page, event_name
         """
 
     if view_name == "vw_ga4_demographics_daily":

@@ -63,6 +63,23 @@ class GscKeywordConfigTests(unittest.TestCase):
         # Both cleaned to None (cleared).
         self.assertIn(None, params)
 
+    def test_update_ga4_key_events_upserts_only_that_column(self):
+        fake = _FakeConn()
+
+        @contextmanager
+        def fake_connection():
+            yield fake
+
+        with patch.object(cdc, "enabled", return_value=True), \
+             patch.object(cdc, "ensure_schema", return_value=True), \
+             patch.object(cdc.db, "connection", fake_connection):
+            cdc.update_ga4_key_events("acme", event_names="form_submit\ngenerate_lead")
+
+        sql, params = fake.calls[0]
+        self.assertIn("ga4_key_events = EXCLUDED.ga4_key_events", sql)
+        self.assertNotIn("gsc_branded_roots", sql)
+        self.assertIn("form_submit\ngenerate_lead", params)
+
 
 if __name__ == "__main__":
     unittest.main()
