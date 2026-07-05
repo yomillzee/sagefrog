@@ -17,12 +17,29 @@ class GoogleAdsConnector(ConnectorHandler):
     default_raw_dataset = "raw_google_ads"
 
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
+        import os
+
         import google_ads_service
         import oauth_store
+        from auth import GoogleAdsEnv
+
         refresh = oauth_store.get_refresh_token("google_ads", client_slug=client_slug)
         if not refresh:
             raise RuntimeError(f"No Google Ads token for client '{client_slug}'.")
-        accounts = google_ads_service.list_accessible_customer_accounts()
+        # Build the client from THIS client's refresh token — list_accessible_customer_accounts()
+        # defaults to the global/agency-wide token (auth._resolve_refresh_token(), which
+        # ignores client_slug) when no client is passed, which silently ignores the token
+        # just looked up above. Mirrors the pattern already used correctly in
+        # bq_google_ads_service.sync_google_ads_to_bq for the same reason.
+        env = GoogleAdsEnv(
+            developer_token=(os.getenv("GOOGLE_ADS_DEVELOPER_TOKEN") or os.getenv("GOOGLE_DEVELOPER_TOKEN") or "").strip(),
+            client_id=(os.getenv("GOOGLE_ADS_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID") or "").strip(),
+            client_secret=(os.getenv("GOOGLE_ADS_CLIENT_SECRET") or os.getenv("GOOGLE_CLIENT_SECRET") or "").strip(),
+            refresh_token=refresh,
+            login_customer_id=(os.getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID") or os.getenv("GOOGLE_LOGIN_CUSTOMER_ID") or "").strip() or None,
+        )
+        client = google_ads_service.build_client(env)
+        accounts = google_ads_service.list_accessible_customer_accounts(client=client)
         return [{"id": a.get("customer_id", ""), "name": a.get("descriptive_name", "")} for a in accounts]
 
     def run_sync(self, *, client_slug: str, date_range: str = "LAST_30_DAYS") -> SyncResult:
