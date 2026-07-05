@@ -287,16 +287,20 @@ async def connector_configure(
 
         connector_config_store.upsert_config(slug, ctype, **kwargs)
 
-        # Backfill client_dashboard_config.gcp_project_id from the first
-        # connector's destination step, so a brand-new client needs no
-        # separate "register this client's GCP project" admin step — the
-        # orchestrator's provisioning gate reads gcp_project_id directly
-        # (see bigquery_refresh_orchestrator.run_client_bigquery_refresh).
+        # Keep client_dashboard_config.gcp_project_id synced with whatever a
+        # connector's destination step last saved, so a brand-new client needs
+        # no separate "register this client's GCP project" admin step — the
+        # orchestrator's provisioning gate and every dashboard read resolve
+        # gcp_project_id directly (see bigquery_refresh_orchestrator and
+        # settings_routes._bq_nixon_routing). Deliberately not a one-time
+        # backfill: if an admin fixes a typo'd bq_project_id later by re-saving
+        # a connector's destination step, this must propagate too, or the
+        # dashboard silently keeps reading the stale/wrong project forever.
         if kwargs.get("bq_project_id"):
             try:
                 import client_dashboard_config as _cdc
                 existing = _cdc.get_config(slug)
-                if not (existing and existing.gcp_project_id):
+                if not existing or existing.gcp_project_id != kwargs["bq_project_id"]:
                     _cdc.save_config(
                         slug,
                         label=(existing.label if existing else slug),
@@ -307,7 +311,7 @@ async def connector_configure(
                         gcp_project_id=kwargs["bq_project_id"],
                     )
             except Exception:
-                _log.warning("gcp_project_id backfill failed [%s/%s]", slug, ctype, exc_info=True)
+                _log.warning("gcp_project_id sync failed [%s/%s]", slug, ctype, exc_info=True)
 
             # Provision + verify BigQuery up front, on the destination step,
             # instead of deferring to the first sync. The GCP *project* must
