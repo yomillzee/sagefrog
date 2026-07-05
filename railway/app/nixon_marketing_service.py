@@ -548,7 +548,7 @@ def fetch_nixon_pages_top(
       SUM(users) AS users,
       SUM(sessions) AS sessions,
       ROUND(SUM(engagement_seconds), 1) AS engagement_seconds,
-      CAST(0 AS INT64) AS key_events
+      SUM(key_events) AS key_events
     FROM {_page_path_daily_table()}
     WHERE date BETWEEN @start_date AND @end_date
     GROUP BY page_path
