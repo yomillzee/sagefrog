@@ -205,6 +205,8 @@ def render_nixon_bigquery_test_page(
     .ke-dd-name {{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
     .ke-dd-count {{ color:var(--muted); font-size:.74rem; font-weight:600; }}
     .ke-dd-empty {{ color:var(--muted); font-size:.8rem; padding:14px 8px; text-align:center; }}
+    .ke-global-bar {{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:16px; padding:13px 18px; background:linear-gradient(180deg,#f4f9ff,#eef4fc); border:1px solid #d7e3f4; border-radius:var(--radius); box-shadow:var(--shadow); }}
+    .ke-global-hint {{ color:var(--muted); font-size:.78rem; line-height:1.35; max-width:440px; }}
     /* ---- Sections ---- */
     section {{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:18px 20px 20px; margin-bottom:16px; box-shadow:var(--shadow); }}
     /* ---- First-run onboarding card ---- */
@@ -242,6 +244,13 @@ def render_nixon_bigquery_test_page(
     #gscBrandedTable td.left, #gscTargetTable td.left {{ max-width:0; }}
     #gscQueriesTable td.left > *, #gscPagesTable td.left > *,
     #gscBrandedTable td.left > *, #gscTargetTable td.left > * {{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; word-break:normal; }}
+    /* Drag-to-resize handle on the label column of the GSC/keyword tables. */
+    th.col-resizable {{ position:relative; }}
+    .col-resizer {{ position:absolute; top:0; right:0; width:9px; height:100%; cursor:col-resize; user-select:none; touch-action:none; }}
+    .col-resizer::after {{ content:''; position:absolute; top:18%; right:3px; height:64%; width:2px; border-radius:1px; background:transparent; transition:background .12s; }}
+    .col-resizer:hover::after {{ background:#b9c8dc; }}
+    body.col-resizing {{ cursor:col-resize; user-select:none; }}
+    body.col-resizing .col-resizer::after {{ background:var(--accent); }}
     /* Admin-only controls (shown when the app-shell has .is-admin) */
     .debug-only {{ display:none !important; }}
     .is-admin .debug-only {{ display:inline-block !important; }}
@@ -426,6 +435,25 @@ def render_nixon_bigquery_test_page(
     <!-- ===== WEBSITE ANALYTICS TAB ===== -->
     <div id="pane-analytics" hidden>
 
+      <div class="ke-global-bar" id="keyEventFilterGroup">
+        <div class="filter-group" style="align-items:center; flex-wrap:wrap">
+          <span class="filter-label">Key events</span>
+          <div class="ke-dropdown" id="keyEventDropdown">
+            <button type="button" class="ke-dd-toggle" id="keyEventToggle" aria-haspopup="listbox" aria-expanded="false">
+              <span id="keyEventToggleLabel">All key events</span>
+              <span class="ke-dd-caret">▾</span>
+            </button>
+            <div class="ke-dd-panel" id="keyEventPanel" hidden>
+              <input type="text" class="ke-dd-search" id="keyEventSearch" placeholder="Search events…" autocomplete="off">
+              <div class="ke-dd-list" id="keyEventList"></div>
+            </div>
+          </div>
+          <button type="button" class="chip debug-only" id="keyEventSaveBtn" style="border-color:var(--accent); color:var(--accent)">Save as default</button>
+          <span class="status debug-only" id="keyEventSaveStatus"></span>
+        </div>
+        <span class="ke-global-hint">Choose which GA4 events count as “key events.” Applies across Traffic, Landing pages &amp; New user acquisition below.</span>
+      </div>
+
       <section id="sec-pages">
         <div class="sec-head"><h2>Top pages</h2><span class="status" id="pagesStatus"></span></div>
         <div style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:10px;" id="pageFilters">
@@ -454,21 +482,6 @@ def render_nixon_bigquery_test_page(
 
       <section id="sec-landing">
         <div class="sec-head"><h2>Landing pages</h2><span class="status" id="landingStatus"></span></div>
-        <div class="filter-group" id="keyEventFilterGroup" style="margin-bottom:12px; align-items:flex-start; flex-wrap:wrap">
-          <span class="filter-label" style="margin-top:8px">Key events</span>
-          <div class="ke-dropdown" id="keyEventDropdown">
-            <button type="button" class="ke-dd-toggle" id="keyEventToggle" aria-haspopup="listbox" aria-expanded="false">
-              <span id="keyEventToggleLabel">All key events</span>
-              <span class="ke-dd-caret">▾</span>
-            </button>
-            <div class="ke-dd-panel" id="keyEventPanel" hidden>
-              <input type="text" class="ke-dd-search" id="keyEventSearch" placeholder="Search events…" autocomplete="off">
-              <div class="ke-dd-list" id="keyEventList"></div>
-            </div>
-          </div>
-          <button type="button" class="chip debug-only" id="keyEventSaveBtn" style="border-color:var(--accent); color:var(--accent); margin-top:2px">Save as default</button>
-          <span class="status debug-only" id="keyEventSaveStatus" style="margin-top:8px"></span>
-        </div>
         <div class="table-wrap"><table id="landingTable" class="compact"></table></div>
         <div class="pager" id="landingPager"></div>
       </section>
@@ -586,6 +599,8 @@ def render_nixon_bigquery_test_page(
     const GSC_BRANDED_RAW = {json.dumps(gsc_branded_roots)};
     const GSC_TARGET_RAW = {json.dumps(gsc_target_keywords)};
     const LANDING_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/landing-events')}";
+    const TRAFFIC_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-key-events')}";
+    const USER_ACQ_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acq-key-events')}";
     const KEY_EVENTS_CONFIG_API = "{_aurl(f'/api/clients/{api_client_key}/ga4/key-events')}";
     const GA4_KEY_EVENTS_SAVED = {json.dumps([s.strip() for s in ga4_key_events.splitlines() if s.strip()])};
 
@@ -686,6 +701,9 @@ def render_nixon_bigquery_test_page(
         const sec = document.getElementById(MODULE_SECTIONS[key]);
         if (sec) sec.hidden = !modules[key];
       }});
+      // The global key-event selector only drives Traffic / Landing / User acquisition.
+      const keBar = document.getElementById('keyEventFilterGroup');
+      if (keBar) keBar.hidden = !(modules.traffic || modules.landing || modules.user_acquisition);
     }}
 
     // ---- Paid media: Summary ----
@@ -862,6 +880,14 @@ def render_nixon_bigquery_test_page(
       branded: {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'query', labelText:'Query', tableId:'gscBrandedTable', pagerId:'gscBrandedPager'}},
       target:  {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'query', labelText:'Query', tableId:'gscTargetTable', pagerId:'gscTargetPager'}},
     }};
+    // Reapply a user-chosen label-column width after each (re)render, since the
+    // table is rebuilt on sort/paginate. Overrides the default max-width:0 clamp.
+    function applyGscColWidth(el, st) {{
+      if (!el || !st.labelWidth) return;
+      const w=st.labelWidth+'px';
+      const th=el.querySelector('th.left'); if (th) th.style.width=w;
+      el.querySelectorAll('td.left').forEach(td=>{{ td.style.maxWidth=w; td.style.width=w; }});
+    }}
     function renderGscTable(which) {{
       const st = gscTables[which];
       const el = document.getElementById(st.tableId);
@@ -872,9 +898,10 @@ def render_nixon_bigquery_test_page(
       if (st.page>totalPages) st.page=totalPages;
       const start=(st.page-1)*GSC_PER_PAGE, pageRows=sorted.slice(start,start+GSC_PER_PAGE);
       const arrow=k=>st.sortKey===k?(st.sortDir==='asc'?' \\u25B4':' \\u25BE'):'';
-      const head=`<thead><tr><th class="left">${{esc(st.labelText)}}</th>`+GSC_SORT_COLS.map(c=>`<th class="gsc-sort${{st.sortKey===c.key?' active':''}}" data-which="${{which}}" data-key="${{c.key}}">${{c.label}}${{arrow(c.key)}}</th>`).join('')+`</tr></thead>`;
+      const head=`<thead><tr><th class="left col-resizable">${{esc(st.labelText)}}<span class="col-resizer" data-which="${{which}}"></span></th>`+GSC_SORT_COLS.map(c=>`<th class="gsc-sort${{st.sortKey===c.key?' active':''}}" data-which="${{which}}" data-key="${{c.key}}">${{c.label}}${{arrow(c.key)}}</th>`).join('')+`</tr></thead>`;
       const body=`<tbody>`+pageRows.map(r=>`<tr><td class="left"><span class="page-path" title="${{esc(r[st.labelKey])}}">${{esc(r[st.labelKey])}}</span></td>`+GSC_SORT_COLS.map(c=>`<td>${{c.format(r[c.key])}}</td>`).join('')+`</tr>`).join('')+`</tbody>`;
       el.innerHTML=head+body;
+      applyGscColWidth(el, st);
       if (totalPages<=1) {{ pager.innerHTML=''; }}
       else {{ pager.innerHTML=`<button type="button" class="pager-btn" data-which="${{which}}" data-dir="prev"${{st.page<=1?' disabled':''}}>\\u2039 Prev</button><span class="pager-info">Page ${{st.page}} of ${{totalPages}}</span><button type="button" class="pager-btn" data-which="${{which}}" data-dir="next"${{st.page>=totalPages?' disabled':''}}>Next \\u203A</button>`; }}
     }}
@@ -888,6 +915,27 @@ def render_nixon_bigquery_test_page(
       const pb=ev.target.closest('.pager-btn[data-which]');
       if (pb && !pb.disabled) {{ const st=gscTables[pb.dataset.which]; st.page+=(pb.dataset.dir==='next'?1:-1); renderGscTable(pb.dataset.which); }}
     }});
+    // Drag the label column edge to widen/narrow it (persists across sort/paginate).
+    (function initGscColResize(){{
+      const pane=document.getElementById('pane-gsc'); if (!pane) return;
+      let active=null;
+      pane.addEventListener('mousedown', ev => {{
+        const h=ev.target.closest('.col-resizer'); if (!h) return;
+        ev.preventDefault(); ev.stopPropagation();
+        const st=gscTables[h.dataset.which], table=h.closest('table');
+        const th=table.querySelector('th.left');
+        active={{st, table, startX:ev.clientX, startW:th.getBoundingClientRect().width}};
+        document.body.classList.add('col-resizing');
+      }});
+      document.addEventListener('mousemove', ev => {{
+        if (!active) return;
+        active.st.labelWidth=Math.max(90, Math.round(active.startW+(ev.clientX-active.startX)));
+        applyGscColWidth(active.table, active.st);
+      }});
+      document.addEventListener('mouseup', () => {{
+        if (!active) return; active=null; document.body.classList.remove('col-resizing');
+      }});
+    }})();
     async function loadGsc() {{
       setStatus('gscStatus','Loading…');
       document.getElementById('gscKpis').innerHTML = skelCards(4);
@@ -1278,23 +1326,36 @@ def render_nixon_bigquery_test_page(
       const total=rows.reduce((s,r)=>s+num(r[valueKey]),0);
       el.innerHTML=rows.map(r=>{{const p=total?num(r[valueKey])/total*100:0;return`<div class="bar-row"><div class="bar-label">${{esc(r[labelKey])}}</div>${{pctBar(p)}}<div class="bar-count">${{count(r[valueKey])}}<span class="bar-pct">${{p.toFixed(0)}}%</span></div></div>`;}}).join('');
     }}
+    function renderTrafficSources() {{
+      renderTable('sourcesTable',[
+        {{key:'source',label:'Source',left:true}},
+        {{key:'medium',label:'Medium',left:true}},
+        {{key:'sessions',label:'Sessions',format:count}},
+        {{key:'engaged_sessions',label:'Engaged',format:count}},
+        {{key:'engagement_rate',label:'Eng. rate',format:v=>v!=null?v+'%':'—'}},
+        {{key:'key_events',label:'Key events',format:count}},
+      ], trafficSources, 'No source data.');
+    }}
     async function loadTrafficAcq() {{
       setStatus('trafficAcqStatus','Loading…');
       document.getElementById('channelBars').innerHTML = skelBars(5);
       skelChart('sessionsTrendChart','trend-sm-svg');
       document.getElementById('sourcesTable').innerHTML = skelTable(6,6);
       try {{
-        const payload=await getJson(withDates(TRAFFIC_ACQ_API));
+        const [payload, ev] = await Promise.all([
+          getJson(withDates(TRAFFIC_ACQ_API)),
+          getJson(withDates(TRAFFIC_KEY_EVENTS_API)).catch(()=>({{by_source_events:[],events:[]}})),
+        ]);
         renderBarList('channelBars',payload.by_channel||[],'sessions','channel');
         drawSessionsTrend(payload.daily||[]);
-        renderTable('sourcesTable',[
-          {{key:'source',label:'Source',left:true}},
-          {{key:'medium',label:'Medium',left:true}},
-          {{key:'sessions',label:'Sessions',format:count}},
-          {{key:'engaged_sessions',label:'Engaged',format:count}},
-          {{key:'engagement_rate',label:'Eng. rate',format:v=>v!=null?v+'%':'—'}},
-          {{key:'key_events',label:'Key events',format:count}},
-        ], payload.by_source||[], 'No source data.');
+        trafficBaseSources = payload.by_source||[];
+        trafficSourceEventMap={{}};
+        for (const r of (ev.by_source_events||[])) {{
+          const k=srcKey(r.source,r.medium);
+          (trafficSourceEventMap[k]=trafficSourceEventMap[k]||{{}})[r.event_name]=num(r.event_count);
+        }}
+        mergeEvents(ev.events);
+        applyTrafficSources(); renderTrafficSources();
         setStatus('trafficAcqStatus','');
       }} catch(err) {{ setStatus('trafficAcqStatus',err.message||String(err),true); }}
     }}
@@ -1310,33 +1371,78 @@ def render_nixon_bigquery_test_page(
       }} catch(err) {{ setStatus('deviceStatus',err.message||String(err),true); }}
     }}
 
-    // ---- GA4: Landing pages ----
+    // ---- GA4: Global key-event selector (Traffic + Landing pages + User acquisition) ----
+    // One control at the top of Website Analytics chooses which GA4 events count as
+    // "key events." Default = GA4's own key events; the selection persists per client
+    // (admin "Save as default"). Each panel keeps a base row set + a per-row event map
+    // so the key-events column recomputes instantly when the selection changes.
     const LANDING_PER_PAGE=15; let landingPageNum=1, landingRows=[];
-    // Key-event override: choose which GA4 events count as "key events" for the
-    // landing-page column. Default = GA4's own key events; the selection persists
-    // per client (admin "Save as default").
     let landingBaseRows=[];            // from LANDING_PAGES_API
     let landingEventMap={{}};            // page_path -> {{ event_name: count }}
-    let keyEventCatalog=[];            // [{{event_name,event_count,is_key}}]
+    let trafficSources=[], trafficBaseSources=[], trafficSourceEventMap={{}};   // srcKey -> {{ event_name: count }}
+    let userAcqSources=[], userAcqBaseSources=[], userAcqSourceEventMap={{}};
+    let keyEventCatalog=[];            // [{{event_name,event_count,is_key}}] unioned across panels
+    let keyEventCounts={{}};             // event_name -> total count (union)
+    let keyEventKeys=new Set();        // GA4-flagged key events (union)
     let selectedKeyEvents=new Set(GA4_KEY_EVENTS_SAVED);
-    function applyKeyEvents() {{
-      if (!keyEventCatalog.length) {{ landingRows = landingBaseRows.slice(); return; }}
-      const sel=[...selectedKeyEvents];
-      landingRows = landingBaseRows.map(r => {{
-        const evs=landingEventMap[r.page_path]||{{}};
-        const ke=sel.reduce((s,ev)=>s+(evs[ev]||0),0);
+    let keyEventUserTouched=false;     // once true, stop auto-tracking GA4's key set
+    let keyEventSearchTerm='';
+    const srcKey=(s,m)=>(s||'')+'\\u0000'+(m||'');
+
+    // Fold one panel's event catalog into the shared union + refresh the dropdown.
+    function mergeEvents(events) {{
+      for (const e of (events||[])) {{
+        const n=e.event_name; if (!n) continue;
+        keyEventCounts[n]=(keyEventCounts[n]||0)+num(e.event_count);
+        if (num(e.key_events)>0) keyEventKeys.add(n);
+      }}
+      keyEventCatalog=Object.keys(keyEventCounts)
+        .map(n=>({{event_name:n, event_count:keyEventCounts[n], is_key:keyEventKeys.has(n)}}))
+        .sort((a,b)=>b.event_count-a.event_count);
+      // Until the client saved a set or the user edits it, mirror GA4's own key events.
+      if (!keyEventUserTouched && !GA4_KEY_EVENTS_SAVED.length && keyEventKeys.size) {{
+        selectedKeyEvents=new Set(keyEventKeys);
+      }}
+      renderKeyEventDropdown();
+    }}
+    function keSum(map, key) {{
+      const evs=map[key]||{{}};
+      let s=0; for (const ev of selectedKeyEvents) s+=(evs[ev]||0); return s;
+    }}
+    function applyLanding() {{
+      if (!keyEventCatalog.length) {{ landingRows=landingBaseRows.slice(); return; }}
+      landingRows=landingBaseRows.map(r=>{{
+        const ke=keSum(landingEventMap, r.page_path);
         const rate=r.sessions?Math.round(ke/r.sessions*1000)/10:0;
         return {{...r, key_events:ke, key_event_rate:rate}};
       }});
     }}
-    let keyEventSearchTerm='';
+    function applyTrafficSources() {{
+      trafficSources=trafficBaseSources.map(r=>{{
+        const ke=keyEventCatalog.length?keSum(trafficSourceEventMap, srcKey(r.source,r.medium)):num(r.key_events);
+        return {{...r, key_events:ke}};
+      }});
+    }}
+    function applyUserAcqSources() {{
+      userAcqSources=userAcqBaseSources.map(r=>{{
+        const ke=keyEventCatalog.length?keSum(userAcqSourceEventMap, srcKey(r.source,r.medium)):num(r.key_events);
+        const rate=r.new_users?Math.round(ke/r.new_users*1000)/10:0;
+        return {{...r, key_events:ke, key_event_rate:rate}};
+      }});
+    }}
+    // Re-run every loaded panel against the current selection.
+    function applyKeyEventsAll() {{
+      if (landingBaseRows.length) {{ applyLanding(); landingPageNum=1; renderLanding(); }}
+      if (trafficBaseSources.length) {{ applyTrafficSources(); renderTrafficSources(); }}
+      if (userAcqBaseSources.length) {{ applyUserAcqSources(); renderUserAcqSources(); }}
+    }}
     function keyEventToggleLabel() {{
       const n=selectedKeyEvents.size;
       if (!n) return 'All key events';
       if (n===1) return [...selectedKeyEvents][0];
       return n+' events selected';
     }}
-    function renderKeyEventChips() {{
+    function renderKeyEventDropdown() {{
       const label=document.getElementById('keyEventToggleLabel');
       const list=document.getElementById('keyEventList');
       if (label) label.textContent=keyEventToggleLabel();
@@ -1348,10 +1454,11 @@ def render_nixon_bigquery_test_page(
       list.innerHTML=matches.map(e=>`<label class="ke-dd-option${{selectedKeyEvents.has(e.event_name)?' active':''}}"><input type="checkbox"${{selectedKeyEvents.has(e.event_name)?' checked':''}} data-ev="${{esc(e.event_name)}}"><span class="ke-dd-name">${{esc(e.event_name)}}</span><span class="ke-dd-count">${{count(e.event_count)}}</span></label>`).join('');
       list.querySelectorAll('input[data-ev]').forEach(cb=>cb.addEventListener('change',()=>{{
         const ev=cb.dataset.ev;
+        keyEventUserTouched=true;
         if (selectedKeyEvents.has(ev)) selectedKeyEvents.delete(ev); else selectedKeyEvents.add(ev);
         if (label) label.textContent=keyEventToggleLabel();
         const opt=cb.closest('.ke-dd-option'); if (opt) opt.classList.toggle('active', selectedKeyEvents.has(ev));
-        applyKeyEvents(); landingPageNum=1; renderLanding();
+        applyKeyEventsAll();
       }}));
     }}
     (function initKeyEventDropdown(){{
@@ -1363,7 +1470,7 @@ def render_nixon_bigquery_test_page(
       const open=()=>{{ panel.hidden=false; dd.classList.add('open'); toggle.setAttribute('aria-expanded','true'); if (search) {{ search.value=keyEventSearchTerm; search.focus(); }} }};
       const close=()=>{{ panel.hidden=true; dd.classList.remove('open'); toggle.setAttribute('aria-expanded','false'); }};
       toggle.addEventListener('click', e=>{{ e.stopPropagation(); if (panel.hidden) open(); else close(); }});
-      if (search) search.addEventListener('input', ()=>{{ keyEventSearchTerm=search.value; renderKeyEventChips(); }});
+      if (search) search.addEventListener('input', ()=>{{ keyEventSearchTerm=search.value; renderKeyEventDropdown(); }});
       document.addEventListener('click', e=>{{ if (!dd.contains(e.target)) close(); }});
       document.addEventListener('keydown', e=>{{ if (e.key==='Escape' && !panel.hidden) {{ close(); toggle.focus(); }} }});
     }})();
@@ -1392,17 +1499,13 @@ def render_nixon_bigquery_test_page(
           getJson(withDates(LANDING_EVENTS_API)).catch(()=>({{rows:[],events:[]}})),
         ]);
         landingBaseRows = pages.rows||[];
-        // Build per-page event map + the event catalog (with GA4 key flag).
+        // Build per-page event map, then fold this panel's events into the shared catalog.
         landingEventMap={{}};
         for (const r of (ev.rows||[])) {{
           (landingEventMap[r.page_path]=landingEventMap[r.page_path]||{{}})[r.event_name]=num(r.event_count);
         }}
-        keyEventCatalog=(ev.events||[]).map(e=>({{event_name:e.event_name, event_count:num(e.event_count), is_key:num(e.key_events)>0}}));
-        // Default selection = GA4's own key events, unless the client saved one.
-        if (!selectedKeyEvents.size && keyEventCatalog.length) {{
-          selectedKeyEvents = new Set(keyEventCatalog.filter(e=>e.is_key).map(e=>e.event_name));
-        }}
-        renderKeyEventChips(); applyKeyEvents(); landingPageNum=1; renderLanding();
+        mergeEvents(ev.events);
+        applyLanding(); landingPageNum=1; renderLanding();
       }} catch(err) {{ setStatus('landingStatus',err.message||String(err),true); }}
     }}
     (function initKeyEventSave(){{
@@ -1465,22 +1568,35 @@ def render_nixon_bigquery_test_page(
         </div>
       </div>`;
     }}
+    function renderUserAcqSources() {{
+      renderTable('userAcqSourceTable',[
+        {{key:'source',label:'Source',left:true}},
+        {{key:'medium',label:'Medium',left:true}},
+        {{key:'new_users',label:'New users',format:count}},
+        {{key:'key_events',label:'Key events',format:count}},
+        {{key:'key_event_rate',label:'KE rate',format:v=>v!=null?v+'%':'—'}},
+      ], userAcqSources, 'No source data.');
+    }}
     async function loadUserAcquisition() {{
       setStatus('userAcqStatus','Loading…');
       document.getElementById('newVsReturning').innerHTML=`<div class="nr-wrap"><div class="skel" style="height:42px;width:90px;border-radius:8px"></div><div class="skel" style="height:42px;width:90px;border-radius:8px"></div><div class="nr-bar-wrap"><div class="skel" style="height:10px;border-radius:5px"></div></div></div>`;
       document.getElementById('userAcqChannelBars').innerHTML = skelBars(5);
       document.getElementById('userAcqSourceTable').innerHTML = skelTable(5,5);
       try {{
-        const payload=await getJson(withDates(USER_ACQ_API));
+        const [payload, ev] = await Promise.all([
+          getJson(withDates(USER_ACQ_API)),
+          getJson(withDates(USER_ACQ_KEY_EVENTS_API)).catch(()=>({{by_source_events:[],events:[]}})),
+        ]);
         renderNewVsReturning(payload.by_channel||[]);
         renderBarList('userAcqChannelBars',payload.by_channel||[],'new_users','channel');
-        renderTable('userAcqSourceTable',[
-          {{key:'source',label:'Source',left:true}},
-          {{key:'medium',label:'Medium',left:true}},
-          {{key:'new_users',label:'New users',format:count}},
-          {{key:'key_events',label:'Key events',format:count}},
-          {{key:'key_event_rate',label:'KE rate',format:v=>v!=null?v+'%':'—'}},
-        ], payload.by_source||[], 'No source data.');
+        userAcqBaseSources = payload.by_source||[];
+        userAcqSourceEventMap={{}};
+        for (const r of (ev.by_source_events||[])) {{
+          const k=srcKey(r.source,r.medium);
+          (userAcqSourceEventMap[k]=userAcqSourceEventMap[k]||{{}})[r.event_name]=num(r.event_count);
+        }}
+        mergeEvents(ev.events);
+        applyUserAcqSources(); renderUserAcqSources();
         setStatus('userAcqStatus','');
       }} catch(err) {{ setStatus('userAcqStatus',err.message||String(err),true); }}
     }}

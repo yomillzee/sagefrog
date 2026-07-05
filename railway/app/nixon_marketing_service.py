@@ -738,6 +738,60 @@ def fetch_nixon_landing_page_events(
     }
 
 
+def _user_acq_events_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.vw_ga4_user_acq_events_daily`"
+
+
+def _key_events_by_source(table_expr: str, params: dict) -> dict[str, Any]:
+    """Shared shape for the Traffic / User-Acquisition key-event overrides:
+    per (source, medium, event) counts + a catalog of events (with GA4 key
+    flag), so the dashboard can recompute the source table's key-events column
+    for a client-selected event set."""
+    rows_sql = f"""
+    SELECT
+      COALESCE(source, '(direct)') AS source,
+      COALESCE(medium, '(none)') AS medium,
+      event_name,
+      SUM(event_count) AS event_count,
+      SUM(key_events)  AS key_events
+    FROM {table_expr}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY source, medium, event_name
+    """
+    events_sql = f"""
+    SELECT event_name, SUM(event_count) AS event_count, SUM(key_events) AS key_events
+    FROM {table_expr}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY event_name
+    ORDER BY event_count DESC
+    """
+    try:
+        rows = _run_query(rows_sql, params=params, max_rows=100000)
+        events = _run_query(events_sql, params=dict(params), max_rows=1000)
+    except Exception:
+        rows, events = [], []
+    return {"client": _client_key(), "by_source_events": rows, "events": events}
+
+
+def fetch_nixon_traffic_key_events(*, start_date: date, end_date: date) -> dict[str, Any]:
+    """Session-scoped source/medium × event (from vw_ga4_events_daily) so the
+    Traffic panel's source table can honour the selected key-event set."""
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    return _key_events_by_source(_events_table(), params)
+
+
+def fetch_nixon_user_acq_key_events(*, start_date: date, end_date: date) -> dict[str, Any]:
+    """First-user source/medium × event (from vw_ga4_user_acq_events_daily)."""
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    return _key_events_by_source(_user_acq_events_table(), params)
+
+
 def fetch_nixon_pages_sources(
     *,
     start_date: date,

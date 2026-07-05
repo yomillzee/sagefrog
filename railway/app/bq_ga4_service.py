@@ -142,6 +142,18 @@ def _schema_landing_page_events():
     ]
 
 
+def _schema_user_acq_events():
+    bq = _bq()
+    return _common_fields(bq) + [
+        bq.SchemaField("default_channel_group",    "STRING",  mode="NULLABLE"),
+        bq.SchemaField("source",                   "STRING",  mode="NULLABLE"),
+        bq.SchemaField("medium",                   "STRING",  mode="NULLABLE"),
+        bq.SchemaField("event_name",               "STRING",  mode="NULLABLE"),
+        bq.SchemaField("event_count",              "INT64",   mode="NULLABLE"),
+        bq.SchemaField("key_events",               "INT64",   mode="NULLABLE"),
+    ]
+
+
 def _schema_pageviews():
     bq = _bq()
     return _common_fields(bq) + [
@@ -239,6 +251,7 @@ _TABLE_SCHEMAS = {
     "ga4_sessions_daily":     _schema_sessions,
     "ga4_landing_pages_daily": _schema_landing_pages,
     "ga4_landing_page_events_daily": _schema_landing_page_events,
+    "ga4_user_acq_events_daily": _schema_user_acq_events,
     "ga4_pageviews_daily":    _schema_pageviews,
     "ga4_page_source_daily":  _schema_page_source,
     "ga4_events_daily":       _schema_events,
@@ -355,6 +368,7 @@ def sync_ga4_to_bq(
         ("sessions",      ga4.fetch_sessions_daily,      "ga4_sessions_daily",      _schema_sessions),
         ("landing_pages", ga4.fetch_landing_pages_daily,  "ga4_landing_pages_daily", _schema_landing_pages),
         ("landing_page_events", ga4.fetch_landing_page_events_daily, "ga4_landing_page_events_daily", _schema_landing_page_events),
+        ("user_acq_events", ga4.fetch_user_acq_events_daily, "ga4_user_acq_events_daily", _schema_user_acq_events),
         ("pageviews",     ga4.fetch_pageviews_daily,      "ga4_pageviews_daily",     _schema_pageviews),
         ("page_source",   ga4.fetch_page_source_daily,    "ga4_page_source_daily",   _schema_page_source),
         ("events",        ga4.fetch_events_daily,         "ga4_events_daily",        _schema_events),

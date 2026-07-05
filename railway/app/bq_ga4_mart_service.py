@@ -49,6 +49,7 @@ MART_VIEWS = [
     "vw_ga4_events_daily",
     "vw_ga4_landing_pages_daily",
     "vw_ga4_landing_page_events_daily",
+    "vw_ga4_user_acq_events_daily",
     "vw_ga4_tech_daily",
     "vw_ga4_demographics_daily",
     "vw_ga4_geo_daily",
@@ -280,6 +281,19 @@ def _view_sql(view_name: str, *, raw: str, marts: str, taxonomy: dict[str, str])
           SUM(key_events)  AS key_events
         FROM `{raw}.ga4_landing_page_events_daily`
         GROUP BY client_key, property_id, date, landing_page, event_name
+        """
+
+    if view_name == "vw_ga4_user_acq_events_daily":
+        # First-user channel/source/medium × event, so the User Acquisition
+        # panel can recompute key events for a client-selected event set.
+        return f"""
+        SELECT
+          client_key, property_id, date,
+          default_channel_group, source, medium, event_name,
+          SUM(event_count) AS event_count,
+          SUM(key_events)  AS key_events
+        FROM `{raw}.ga4_user_acq_events_daily`
+        GROUP BY client_key, property_id, date, default_channel_group, source, medium, event_name
         """
 
     if view_name == "vw_ga4_demographics_daily":

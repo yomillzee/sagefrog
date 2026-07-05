@@ -242,6 +242,40 @@ def fetch_landing_page_events_daily(
     return out
 
 
+def fetch_user_acq_events_daily(
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
+) -> list[dict[str, Any]]:
+    """First-user channel/source/medium × event breakdown — the user-acquisition
+    equivalent of the landing-page events report, so the User Acquisition panel's
+    key-events column can honour a client-selected event set. (Traffic uses the
+    session-scoped ga4_events_daily; user acquisition is first-user attributed,
+    so it needs its own firstUser* dimensions.)"""
+    rows = _run_report(
+        property_id,
+        dimensions=["date", "firstUserDefaultChannelGroup", "firstUserSource",
+                    "firstUserMedium", "eventName"],
+        metrics=["eventCount", "keyEvents"],
+        start=start, end=end, access_token=access_token,
+    )
+    synced_at = _now()
+    out = []
+    for r in rows:
+        out.append({
+            "client_key": client_key,
+            "property_id": property_id,
+            "date": _parse_date(r.get("date", "")),
+            "default_channel_group": r.get("firstUserDefaultChannelGroup") or "(not set)",
+            "source": r.get("firstUserSource") or "(direct)",
+            "medium": r.get("firstUserMedium") or "(none)",
+            "event_name": r.get("eventName") or "(unknown)",
+            "event_count": int(r.get("eventCount") or 0),
+            "key_events": int(float(r.get("keyEvents") or 0)),
+            "synced_at": synced_at,
+        })
+    return out
+
+
 def fetch_pageviews_daily(
     property_id: str, start: str, end: str, access_token: str,
     *, client_key: str = "",
