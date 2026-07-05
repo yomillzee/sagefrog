@@ -59,6 +59,12 @@ SCHEMA_SQL_STATEMENTS = [
     """
     ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS gtm_container_id TEXT
     """,
+    """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS gsc_branded_roots TEXT
+    """,
+    """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS gsc_target_keywords TEXT
+    """,
 ]
 
 
@@ -80,6 +86,8 @@ class ClientConfigRow:
     semrush_domain: str | None = None
     gtm_account_id: str | None = None
     gtm_container_id: str | None = None
+    gsc_branded_roots: str | None = None
+    gsc_target_keywords: str | None = None
 
 
 def _get_db_url() -> str | None:
@@ -114,7 +122,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    monthly_budget_usd, updated_at, updated_by,
                    gcp_project_id, bq_mart_dataset_id,
                    dashboard_mode, gsc_site_url, semrush_domain,
-                   gtm_account_id, gtm_container_id
+                   gtm_account_id, gtm_container_id,
+                   gsc_branded_roots, gsc_target_keywords
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -145,6 +154,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         semrush_domain=_s(row[13]),
         gtm_account_id=_s(row[14]),
         gtm_container_id=_s(row[15]),
+        gsc_branded_roots=_s(row[16]),
+        gsc_target_keywords=_s(row[17]),
     )
 
 
@@ -164,6 +175,8 @@ def save_config(
     semrush_domain: str | None = None,
     gtm_account_id: str | None = None,
     gtm_container_id: str | None = None,
+    gsc_branded_roots: str | None = None,
+    gsc_target_keywords: str | None = None,
 ) -> ClientConfigRow:
     slug = (client_slug or "").strip().lower()
     if not slug:
@@ -193,6 +206,10 @@ def save_config(
         _optional.append(("gtm_account_id", _clean(gtm_account_id)))
     if gtm_container_id is not None:
         _optional.append(("gtm_container_id", _clean(gtm_container_id)))
+    if gsc_branded_roots is not None:
+        _optional.append(("gsc_branded_roots", _clean(gsc_branded_roots)))
+    if gsc_target_keywords is not None:
+        _optional.append(("gsc_target_keywords", _clean(gsc_target_keywords)))
 
     gcp_set_clause = "".join(
         f",\n              {col} = EXCLUDED.{col}" for col, _ in _optional
@@ -235,6 +252,45 @@ def save_config(
     if not saved:
         raise RuntimeError("Failed to load saved client config.")
     return saved
+
+
+def update_gsc_keywords(
+    client_slug: str,
+    *,
+    branded_roots: str | None,
+    target_keywords: str | None,
+    updated_by: str | None = None,
+) -> None:
+    """Set the Search Console branded roots + target keywords for a client,
+    touching only those columns (label/accounts are left untouched)."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save keyword config.")
+
+    def _clean(val: str | None) -> str | None:
+        return (val or "").strip() or None
+
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, updated_at, updated_by,
+              gsc_branded_roots, gsc_target_keywords
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (client_slug) DO UPDATE SET
+              gsc_branded_roots = EXCLUDED.gsc_branded_roots,
+              gsc_target_keywords = EXCLUDED.gsc_target_keywords,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, slug, now, _clean(updated_by),
+             _clean(branded_roots), _clean(target_keywords)),
+        )
 
 
 def save_monthly_budget(

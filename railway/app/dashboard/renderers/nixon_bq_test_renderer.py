@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 from urllib.parse import urlencode
 
@@ -57,6 +58,19 @@ def render_nixon_bigquery_test_page(
         has_connectors = bool(connector_config_store.list_configs(client_slug))
     except Exception:
         has_connectors = True
+    # Search Console branded roots + target keywords (client-configurable), used
+    # by the "Branded & Target Keywords" section. Stored one per line.
+    gsc_branded_roots = ""
+    gsc_target_keywords = ""
+    try:
+        import client_dashboard_config as _cdc
+        _kwcfg = _cdc.get_config(api_client_key) or _cdc.get_config(client_slug)
+        if _kwcfg:
+            gsc_branded_roots = _kwcfg.gsc_branded_roots or ""
+            gsc_target_keywords = _kwcfg.gsc_target_keywords or ""
+    except Exception:
+        pass
+
     connectors_url = _api_url(f"/dashboard/{client_slug}/connectors", access_key=access_key)
     onboarding_html = "" if has_connectors else f"""
       <section class="onboarding-card">
@@ -202,6 +216,16 @@ def render_nixon_bigquery_test_page(
     th.gsc-sort {{ cursor:pointer; user-select:none; white-space:nowrap; transition:background .12s,color .12s; }}
     th.gsc-sort:hover {{ background:#e9eef5; color:#33455e; }}
     th.gsc-sort.active {{ color:var(--accent); }}
+    /* Branded/target keyword editor (admin only) */
+    .kw-editor {{ display:none; margin-bottom:6px; }}
+    .is-admin .kw-editor {{ display:block; }}
+    .kw-editor > summary {{ cursor:pointer; font-size:.78rem; font-weight:700; color:var(--accent); list-style:none; }}
+    .kw-editor > summary::-webkit-details-marker {{ display:none; }}
+    .kw-editor-body {{ display:grid; gap:14px; margin-top:14px; }}
+    .kw-editor-body label {{ display:grid; gap:6px; font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }}
+    .kw-editor-body label .muted {{ text-transform:none; font-weight:500; letter-spacing:0; font-size:.9em; }}
+    .kw-editor-body textarea {{ border:1px solid var(--line); border-radius:var(--radius-sm); padding:9px 12px; font:inherit; font-size:.86rem; background:#fff; color:#102033; resize:vertical; }}
+    .kw-editor-body textarea:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
     .empty {{ color:var(--muted); padding:26px; text-align:center; }}
     code {{ background:#eef4fb; padding:2px 5px; border-radius:4px; font-size:.85em; }}
     .muted {{ color:var(--muted); font-size:.78rem; margin-left:6px; }}
@@ -459,6 +483,32 @@ def render_nixon_bigquery_test_page(
           </div>
         </div>
       </section>
+
+      <section id="sec-gsc-keywords">
+        <div class="sec-head"><h2>Branded &amp; Target Keywords</h2><span class="status" id="gscKwStatus"></span></div>
+        <details class="kw-editor" id="gscKwEditorFold">
+          <summary>Edit branded roots &amp; target keywords</summary>
+          <div class="kw-editor-body">
+            <label>Branded roots <span class="muted">— one per line; a query counts as branded if it contains any of these (e.g. your brand name)</span>
+              <textarea id="gscBrandedInput" rows="4" placeholder="acme&#10;acme co"></textarea></label>
+            <label>Target keywords <span class="muted">— one per line; a query counts as target if it contains any of these</span>
+              <textarea id="gscTargetInput" rows="4" placeholder="running shoes&#10;trail sneakers"></textarea></label>
+            <div class="btn-row"><button type="button" class="primary" id="gscKwSaveBtn">Save keywords</button><span class="status" id="gscKwSaveStatus"></span></div>
+          </div>
+        </details>
+        <div class="two-col" style="margin-top:14px">
+          <div class="col-panel">
+            <h3>Branded queries <span class="muted" id="gscBrandedCount"></span></h3>
+            <div class="table-wrap"><table id="gscBrandedTable" class="compact"></table></div>
+            <div class="pager" id="gscBrandedPager"></div>
+          </div>
+          <div class="col-panel">
+            <h3>Target queries <span class="muted" id="gscTargetCount"></span></h3>
+            <div class="table-wrap"><table id="gscTargetTable" class="compact"></table></div>
+            <div class="pager" id="gscTargetPager"></div>
+          </div>
+        </div>
+      </section>
     </div><!-- /pane-gsc -->
 
   </main>
@@ -491,6 +541,11 @@ def render_nixon_bigquery_test_page(
     const DEMOGRAPHICS_API     = "{_aurl(f'/api/clients/{api_client_key}/analytics/demographics')}";
     const GSC_API              = "{_aurl(f'/api/clients/{api_client_key}/gsc/summary')}";
     const SEMRUSH_API          = "{_aurl(f'/api/clients/{api_client_key}/semrush/summary')}";
+    const GSC_KEYWORD_CONFIG_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/keyword-config')}";
+    const GSC_BRANDED_ROOTS = {json.dumps([s.strip() for s in gsc_branded_roots.splitlines() if s.strip()])};
+    const GSC_TARGET_KEYWORDS = {json.dumps([s.strip() for s in gsc_target_keywords.splitlines() if s.strip()])};
+    const GSC_BRANDED_RAW = {json.dumps(gsc_branded_roots)};
+    const GSC_TARGET_RAW = {json.dumps(gsc_target_keywords)};
 
     // ---- Formatters ----
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
@@ -762,6 +817,8 @@ def render_nixon_bigquery_test_page(
     const gscTables = {{
       queries: {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'query', labelText:'Query', tableId:'gscQueriesTable', pagerId:'gscQueriesPager'}},
       pages:   {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'page_url', labelText:'Page', tableId:'gscPagesTable', pagerId:'gscPagesPager'}},
+      branded: {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'query', labelText:'Query', tableId:'gscBrandedTable', pagerId:'gscBrandedPager'}},
+      target:  {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'query', labelText:'Query', tableId:'gscTargetTable', pagerId:'gscTargetPager'}},
     }};
     function renderGscTable(which) {{
       const st = gscTables[which];
@@ -801,6 +858,7 @@ def render_nixon_bigquery_test_page(
           const st=gscTables[which]; st.rows = (p && (which==='queries'?p.top_queries:p.top_pages)) || [];
           st.page=1; st.sortKey='clicks'; st.sortDir='desc'; renderGscTable(which);
         }}
+        renderGscKeywordTables();
         const k=(p&&p.kpis)||{{}};
         const empty = !p || (!p.kpis && !(p.top_queries||[]).length && !(p.top_pages||[]).length);
         setStatus('gscStatus', empty ? 'No data for this range yet.' : `${{count(k.clicks)}} clicks · ${{count(k.impressions)}} impressions`);
@@ -808,6 +866,51 @@ def render_nixon_bigquery_test_page(
         setStatus('gscStatus', err.message||String(err), true);
       }}
     }}
+
+    // ---- Branded / target keyword filtering (GSC queries only) ----
+    let gscBrandedRoots = GSC_BRANDED_ROOTS.slice();
+    let gscTargetKeywords = GSC_TARGET_KEYWORDS.slice();
+    function matchesAny(q, terms) {{
+      const s = String(q||'').toLowerCase();
+      return terms.some(t => t && s.includes(String(t).toLowerCase()));
+    }}
+    function renderGscKeywordTables() {{
+      const all = gscTables.queries.rows || [];
+      gscTables.branded.rows = gscBrandedRoots.length ? all.filter(r => matchesAny(r.query, gscBrandedRoots)) : [];
+      gscTables.target.rows  = gscTargetKeywords.length ? all.filter(r => matchesAny(r.query, gscTargetKeywords)) : [];
+      gscTables.branded.page = 1; gscTables.target.page = 1;
+      renderGscTable('branded'); renderGscTable('target');
+      const setCount=(id,n,configured)=>{{const el=document.getElementById(id); if(el) el.textContent = configured ? `(${{n}})` : '';}};
+      setCount('gscBrandedCount', gscTables.branded.rows.length, gscBrandedRoots.length);
+      setCount('gscTargetCount', gscTables.target.rows.length, gscTargetKeywords.length);
+      const none = !gscBrandedRoots.length && !gscTargetKeywords.length;
+      setStatus('gscKwStatus', none ? 'Set branded roots and target keywords to see matching queries.' : '');
+      // Empty-state hint when configured but nothing matched in the loaded queries.
+      if (gscBrandedRoots.length && !gscTables.branded.rows.length) document.getElementById('gscBrandedTable').innerHTML=`<tbody><tr><td class="empty">No top queries match these branded roots.</td></tr></tbody>`;
+      if (gscTargetKeywords.length && !gscTables.target.rows.length) document.getElementById('gscTargetTable').innerHTML=`<tbody><tr><td class="empty">No top queries match these target keywords.</td></tr></tbody>`;
+      if (!gscBrandedRoots.length) document.getElementById('gscBrandedTable').innerHTML=`<tbody><tr><td class="empty">No branded roots set.</td></tr></tbody>`;
+      if (!gscTargetKeywords.length) document.getElementById('gscTargetTable').innerHTML=`<tbody><tr><td class="empty">No target keywords set.</td></tr></tbody>`;
+    }}
+    (function initGscKwEditor(){{
+      const b=document.getElementById('gscBrandedInput'), t=document.getElementById('gscTargetInput'), btn=document.getElementById('gscKwSaveBtn');
+      if (b) b.value = GSC_BRANDED_RAW; if (t) t.value = GSC_TARGET_RAW;
+      if (!btn) return;
+      btn.addEventListener('click', async () => {{
+        btn.disabled=true; setStatus('gscKwSaveStatus','Saving…');
+        const branded_roots=b.value, target_keywords=t.value;
+        try {{
+          const r=await fetch(GSC_KEYWORD_CONFIG_API, {{method:'POST', headers:{{'Content-Type':'application/json'}}, credentials:'same-origin', body:JSON.stringify({{branded_roots, target_keywords}})}});
+          const body=await r.json().catch(()=>({{}}));
+          if (!r.ok || !body.ok) throw new Error((body&&body.detail&&(body.detail.error||body.detail))||r.statusText);
+          gscBrandedRoots = branded_roots.split('\\n').map(s=>s.trim()).filter(Boolean);
+          gscTargetKeywords = target_keywords.split('\\n').map(s=>s.trim()).filter(Boolean);
+          renderGscKeywordTables();
+          setStatus('gscKwSaveStatus','Saved.');
+          setTimeout(()=>setStatus('gscKwSaveStatus',''), 2500);
+        }} catch(err) {{ setStatus('gscKwSaveStatus', 'Save failed: '+(err.message||err), true); }}
+        finally {{ btn.disabled=false; }}
+      }});
+    }})();
 
     // ---- SEMrush (domain-level snapshot — not date-range scoped) ----
     function renderSemrushKpis(ov, bl) {{

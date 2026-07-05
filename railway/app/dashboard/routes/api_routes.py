@@ -1409,6 +1409,42 @@ def client_gsc_summary(
         raise _nixon_endpoint_failure(exc) from exc
 
 
+@router.post(
+    "/api/clients/{client_key}/gsc/keyword-config",
+    summary="Save Search Console branded roots + target keywords for a client",
+)
+async def save_gsc_keyword_config(
+    client_key: str,
+    request: Request,
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    """Persist the branded roots (brand-name stems) + specific target keywords
+    used by the Search Console 'Branded & Target Keywords' section. Stored one
+    per line in client_dashboard_config."""
+    normalized = (client_key or "").strip().lower()
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        import client_dashboard_config as cdc
+        cdc.update_gsc_keywords(
+            normalized,
+            branded_roots=str(body.get("branded_roots") or ""),
+            target_keywords=str(body.get("target_keywords") or ""),
+            updated_by="dashboard",
+        )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+    return {"ok": True}
+
+
 @router.get(
     "/api/clients/{client_key}/semrush/summary",
     summary="Client SEMrush domain snapshot from BigQuery (generic BQ-test clients)",
