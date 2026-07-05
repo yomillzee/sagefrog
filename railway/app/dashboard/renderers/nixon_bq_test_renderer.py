@@ -1410,7 +1410,7 @@ def render_nixon_bigquery_test_page(
       let s=0; for (const ev of selectedKeyEvents) s+=(evs[ev]||0); return s;
     }}
     function applyLanding() {{
-      if (!keyEventCatalog.length) {{ landingRows=landingBaseRows.slice(); return; }}
+      if (!Object.keys(landingEventMap).length) {{ landingRows=landingBaseRows.slice(); return; }}
       landingRows=landingBaseRows.map(r=>{{
         const ke=keSum(landingEventMap, r.page_path);
         const rate=r.sessions?Math.round(ke/r.sessions*1000)/10:0;
@@ -1418,14 +1418,19 @@ def render_nixon_bigquery_test_page(
       }});
     }}
     function applyTrafficSources() {{
+      // Only trust the override map once its own fetch actually returned rows —
+      // a missing/unprovisioned events view must fall back to the base report's
+      // key_events, not silently zero everything out.
+      const hasOverride=Object.keys(trafficSourceEventMap).length>0;
       trafficSources=trafficBaseSources.map(r=>{{
-        const ke=keyEventCatalog.length?keSum(trafficSourceEventMap, srcKey(r.source,r.medium)):num(r.key_events);
+        const ke=hasOverride?keSum(trafficSourceEventMap, srcKey(r.source,r.medium)):num(r.key_events);
         return {{...r, key_events:ke}};
       }});
     }}
     function applyUserAcqSources() {{
+      const hasOverride=Object.keys(userAcqSourceEventMap).length>0;
       userAcqSources=userAcqBaseSources.map(r=>{{
-        const ke=keyEventCatalog.length?keSum(userAcqSourceEventMap, srcKey(r.source,r.medium)):num(r.key_events);
+        const ke=hasOverride?keSum(userAcqSourceEventMap, srcKey(r.source,r.medium)):num(r.key_events);
         const rate=r.new_users?Math.round(ke/r.new_users*1000)/10:0;
         return {{...r, key_events:ke, key_event_rate:rate}};
       }});
