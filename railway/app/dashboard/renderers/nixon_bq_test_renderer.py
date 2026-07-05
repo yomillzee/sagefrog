@@ -187,6 +187,24 @@ def render_nixon_bigquery_test_page(
     .chip:hover {{ border-color:#b9c8dc; background:#f4f8fd; }}
     .chip.active {{ background:var(--navy); color:#fff; border-color:var(--navy); }}
     .chip.active:hover {{ background:#0d2c4d; }}
+    /* ---- Key-event searchable dropdown ---- */
+    .ke-dropdown {{ position:relative; display:inline-block; }}
+    .ke-dd-toggle {{ display:inline-flex; align-items:center; gap:8px; min-width:190px; justify-content:space-between; border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:var(--radius-sm); padding:6px 12px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; transition:border-color .12s; }}
+    .ke-dd-toggle:hover {{ border-color:#b9c8dc; }}
+    .ke-dropdown.open .ke-dd-toggle {{ border-color:var(--accent); }}
+    .ke-dd-caret {{ color:var(--muted); font-size:.7rem; transition:transform .12s; }}
+    .ke-dropdown.open .ke-dd-caret {{ transform:rotate(180deg); }}
+    .ke-dd-panel {{ position:absolute; z-index:30; top:calc(100% + 4px); left:0; width:280px; background:#fff; border:1px solid var(--line); border-radius:var(--radius-sm); box-shadow:var(--shadow); padding:8px; }}
+    .ke-dd-search {{ width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:6px; padding:7px 10px; font:inherit; font-size:.82rem; color:var(--navy); margin-bottom:6px; }}
+    .ke-dd-search:focus {{ outline:none; border-color:var(--accent); }}
+    .ke-dd-list {{ max-height:260px; overflow-y:auto; display:flex; flex-direction:column; gap:1px; }}
+    .ke-dd-option {{ display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:.82rem; font-weight:600; color:var(--navy); text-transform:none; letter-spacing:0; }}
+    .ke-dd-option:hover {{ background:#f4f8fd; }}
+    .ke-dd-option.active {{ background:#eaf2fd; }}
+    .ke-dd-option input {{ margin:0; accent-color:var(--accent); cursor:pointer; }}
+    .ke-dd-name {{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+    .ke-dd-count {{ color:var(--muted); font-size:.74rem; font-weight:600; }}
+    .ke-dd-empty {{ color:var(--muted); font-size:.8rem; padding:14px 8px; text-align:center; }}
     /* ---- Sections ---- */
     section {{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:18px 20px 20px; margin-bottom:16px; box-shadow:var(--shadow); }}
     /* ---- First-run onboarding card ---- */
@@ -218,19 +236,25 @@ def render_nixon_bigquery_test_page(
     th.gsc-sort {{ cursor:pointer; user-select:none; white-space:nowrap; transition:background .12s,color .12s; }}
     th.gsc-sort:hover {{ background:#e9eef5; color:#33455e; }}
     th.gsc-sort.active {{ color:var(--accent); }}
+    /* GSC/keyword tables: truncate the long query/URL label instead of letting
+       the table overflow its column and push off the page. */
+    #gscQueriesTable td.left, #gscPagesTable td.left,
+    #gscBrandedTable td.left, #gscTargetTable td.left {{ max-width:0; }}
+    #gscQueriesTable td.left > *, #gscPagesTable td.left > *,
+    #gscBrandedTable td.left > *, #gscTargetTable td.left > * {{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; word-break:normal; }}
     /* Admin-only controls (shown when the app-shell has .is-admin) */
     .debug-only {{ display:none !important; }}
     .is-admin .debug-only {{ display:inline-block !important; }}
-    /* Branded/target keyword editor (admin only) */
-    .kw-editor {{ display:none; margin-bottom:6px; }}
-    .is-admin .kw-editor {{ display:block; }}
-    .kw-editor > summary {{ cursor:pointer; font-size:.78rem; font-weight:700; color:var(--accent); list-style:none; }}
-    .kw-editor > summary::-webkit-details-marker {{ display:none; }}
-    .kw-editor-body {{ display:grid; gap:14px; margin-top:14px; }}
-    .kw-editor-body label {{ display:grid; gap:6px; font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }}
-    .kw-editor-body label .muted {{ text-transform:none; font-weight:500; letter-spacing:0; font-size:.9em; }}
-    .kw-editor-body textarea {{ border:1px solid var(--line); border-radius:var(--radius-sm); padding:9px 12px; font:inherit; font-size:.86rem; background:#fff; color:#102033; resize:vertical; }}
-    .kw-editor-body textarea:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
+    /* Inline branded/target keyword tag editor (admin only) */
+    .tag-editor {{ display:none; }}
+    .is-admin .tag-editor {{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:7px 9px; margin-bottom:10px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; }}
+    .tag-editor:focus-within {{ border-color:#9bbfe6; box-shadow:0 0 0 2px #e2eefb; }}
+    .tag-editor-label {{ width:100%; font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }}
+    .tag-chip {{ display:inline-flex; align-items:center; gap:6px; background:#eef4fb; color:var(--navy); border-radius:999px; padding:3px 5px 3px 11px; font-size:.8rem; font-weight:650; }}
+    .tag-chip button {{ border:0; background:rgba(10,37,64,.14); color:var(--navy); width:16px; height:16px; border-radius:50%; cursor:pointer; font-size:.72rem; line-height:1; display:flex; align-items:center; justify-content:center; padding:0; }}
+    .tag-chip button:hover {{ background:var(--bad); color:#fff; }}
+    .tag-input {{ border:0; outline:none; font:inherit; font-size:.84rem; padding:4px 2px; min-width:110px; flex:1; background:transparent; color:#102033; }}
+    .tag-input::placeholder {{ color:#9aa7bd; }}
     .empty {{ color:var(--muted); padding:26px; text-align:center; }}
     code {{ background:#eef4fb; padding:2px 5px; border-radius:4px; font-size:.85em; }}
     .muted {{ color:var(--muted); font-size:.78rem; margin-left:6px; }}
@@ -259,6 +283,9 @@ def render_nixon_bigquery_test_page(
     .bar-pct {{ color:var(--muted); font-size:.74rem; margin-left:4px; }}
     /* ---- Layout cols ---- */
     .two-col {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px; }}
+    /* Grid items must be allowed to shrink below their content, or a wide table
+       (long GSC page URLs) forces the column past the viewport. */
+    .two-col > * {{ min-width:0; }}
     .three-col {{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; margin-top:14px; }}
     .col-panel {{ border:1px solid var(--line-soft); border-radius:var(--radius-sm); padding:14px 15px; background:#fafcff; }}
     .col-panel h3 {{ margin:0 0 12px; font-size:.86rem; font-weight:750; color:var(--navy); }}
@@ -428,10 +455,19 @@ def render_nixon_bigquery_test_page(
       <section id="sec-landing">
         <div class="sec-head"><h2>Landing pages</h2><span class="status" id="landingStatus"></span></div>
         <div class="filter-group" id="keyEventFilterGroup" style="margin-bottom:12px; align-items:flex-start; flex-wrap:wrap">
-          <span class="filter-label" style="margin-top:6px">Key events</span>
-          <div class="chips" id="keyEventChips"></div>
-          <button type="button" class="chip debug-only" id="keyEventSaveBtn" style="border-color:var(--accent); color:var(--accent)">Save as default</button>
-          <span class="status debug-only" id="keyEventSaveStatus" style="margin-top:6px"></span>
+          <span class="filter-label" style="margin-top:8px">Key events</span>
+          <div class="ke-dropdown" id="keyEventDropdown">
+            <button type="button" class="ke-dd-toggle" id="keyEventToggle" aria-haspopup="listbox" aria-expanded="false">
+              <span id="keyEventToggleLabel">All key events</span>
+              <span class="ke-dd-caret">▾</span>
+            </button>
+            <div class="ke-dd-panel" id="keyEventPanel" hidden>
+              <input type="text" class="ke-dd-search" id="keyEventSearch" placeholder="Search events…" autocomplete="off">
+              <div class="ke-dd-list" id="keyEventList"></div>
+            </div>
+          </div>
+          <button type="button" class="chip debug-only" id="keyEventSaveBtn" style="border-color:var(--accent); color:var(--accent); margin-top:2px">Save as default</button>
+          <span class="status debug-only" id="keyEventSaveStatus" style="margin-top:8px"></span>
         </div>
         <div class="table-wrap"><table id="landingTable" class="compact"></table></div>
         <div class="pager" id="landingPager"></div>
@@ -497,24 +533,16 @@ def render_nixon_bigquery_test_page(
 
       <section id="sec-gsc-keywords">
         <div class="sec-head"><h2>Branded &amp; Target Keywords</h2><span class="status" id="gscKwStatus"></span></div>
-        <details class="kw-editor" id="gscKwEditorFold">
-          <summary>Edit branded roots &amp; target keywords</summary>
-          <div class="kw-editor-body">
-            <label>Branded roots <span class="muted">— one per line; a query counts as branded if it contains any of these (e.g. your brand name)</span>
-              <textarea id="gscBrandedInput" rows="4" placeholder="acme&#10;acme co"></textarea></label>
-            <label>Target keywords <span class="muted">— one per line; a query counts as target if it contains any of these</span>
-              <textarea id="gscTargetInput" rows="4" placeholder="running shoes&#10;trail sneakers"></textarea></label>
-            <div class="btn-row"><button type="button" class="primary" id="gscKwSaveBtn">Save keywords</button><span class="status" id="gscKwSaveStatus"></span></div>
-          </div>
-        </details>
-        <div class="two-col" style="margin-top:14px">
+        <div class="two-col">
           <div class="col-panel">
             <h3>Branded queries <span class="muted" id="gscBrandedCount"></span></h3>
+            <div class="tag-editor" id="gscBrandedTags"></div>
             <div class="table-wrap"><table id="gscBrandedTable" class="compact"></table></div>
             <div class="pager" id="gscBrandedPager"></div>
           </div>
           <div class="col-panel">
             <h3>Target queries <span class="muted" id="gscTargetCount"></span></h3>
+            <div class="tag-editor" id="gscTargetTags"></div>
             <div class="table-wrap"><table id="gscTargetTable" class="compact"></table></div>
             <div class="pager" id="gscTargetPager"></div>
           </div>
@@ -845,7 +873,7 @@ def render_nixon_bigquery_test_page(
       const start=(st.page-1)*GSC_PER_PAGE, pageRows=sorted.slice(start,start+GSC_PER_PAGE);
       const arrow=k=>st.sortKey===k?(st.sortDir==='asc'?' \\u25B4':' \\u25BE'):'';
       const head=`<thead><tr><th class="left">${{esc(st.labelText)}}</th>`+GSC_SORT_COLS.map(c=>`<th class="gsc-sort${{st.sortKey===c.key?' active':''}}" data-which="${{which}}" data-key="${{c.key}}">${{c.label}}${{arrow(c.key)}}</th>`).join('')+`</tr></thead>`;
-      const body=`<tbody>`+pageRows.map(r=>`<tr><td class="left"><span class="page-path">${{esc(r[st.labelKey])}}</span></td>`+GSC_SORT_COLS.map(c=>`<td>${{c.format(r[c.key])}}</td>`).join('')+`</tr>`).join('')+`</tbody>`;
+      const body=`<tbody>`+pageRows.map(r=>`<tr><td class="left"><span class="page-path" title="${{esc(r[st.labelKey])}}">${{esc(r[st.labelKey])}}</span></td>`+GSC_SORT_COLS.map(c=>`<td>${{c.format(r[c.key])}}</td>`).join('')+`</tr>`).join('')+`</tbody>`;
       el.innerHTML=head+body;
       if (totalPages<=1) {{ pager.innerHTML=''; }}
       else {{ pager.innerHTML=`<button type="button" class="pager-btn" data-which="${{which}}" data-dir="prev"${{st.page<=1?' disabled':''}}>\\u2039 Prev</button><span class="pager-info">Page ${{st.page}} of ${{totalPages}}</span><button type="button" class="pager-btn" data-which="${{which}}" data-dir="next"${{st.page>=totalPages?' disabled':''}}>Next \\u203A</button>`; }}
@@ -905,26 +933,41 @@ def render_nixon_bigquery_test_page(
       if (!gscBrandedRoots.length) document.getElementById('gscBrandedTable').innerHTML=`<tbody><tr><td class="empty">No branded roots set.</td></tr></tbody>`;
       if (!gscTargetKeywords.length) document.getElementById('gscTargetTable').innerHTML=`<tbody><tr><td class="empty">No target keywords set.</td></tr></tbody>`;
     }}
-    (function initGscKwEditor(){{
-      const b=document.getElementById('gscBrandedInput'), t=document.getElementById('gscTargetInput'), btn=document.getElementById('gscKwSaveBtn');
-      if (b) b.value = GSC_BRANDED_RAW; if (t) t.value = GSC_TARGET_RAW;
-      if (!btn) return;
-      btn.addEventListener('click', async () => {{
-        btn.disabled=true; setStatus('gscKwSaveStatus','Saving…');
-        const branded_roots=b.value, target_keywords=t.value;
+    // Inline tag editors for branded roots + target keywords. Add with Enter or
+    // comma, remove with the chip ×; changes re-filter live and auto-save.
+    let _kwSaveTimer=null;
+    function saveKwConfig() {{
+      clearTimeout(_kwSaveTimer);
+      _kwSaveTimer=setTimeout(async () => {{
+        setStatus('gscKwStatus','Saving…');
         try {{
-          const r=await fetch(GSC_KEYWORD_CONFIG_API, {{method:'POST', headers:{{'Content-Type':'application/json'}}, credentials:'same-origin', body:JSON.stringify({{branded_roots, target_keywords}})}});
+          const r=await fetch(GSC_KEYWORD_CONFIG_API, {{method:'POST', headers:{{'Content-Type':'application/json'}}, credentials:'same-origin', body:JSON.stringify({{branded_roots:gscBrandedRoots.join('\\n'), target_keywords:gscTargetKeywords.join('\\n')}})}});
           const body=await r.json().catch(()=>({{}}));
-          if (!r.ok || !body.ok) throw new Error((body&&body.detail&&(body.detail.error||body.detail))||r.statusText);
-          gscBrandedRoots = branded_roots.split('\\n').map(s=>s.trim()).filter(Boolean);
-          gscTargetKeywords = target_keywords.split('\\n').map(s=>s.trim()).filter(Boolean);
-          renderGscKeywordTables();
-          setStatus('gscKwSaveStatus','Saved.');
-          setTimeout(()=>setStatus('gscKwSaveStatus',''), 2500);
-        }} catch(err) {{ setStatus('gscKwSaveStatus', 'Save failed: '+(err.message||err), true); }}
-        finally {{ btn.disabled=false; }}
-      }});
-    }})();
+          if (!r.ok||!body.ok) throw new Error((body&&body.detail&&(body.detail.error||body.detail))||r.statusText);
+          setStatus('gscKwStatus','Saved.'); setTimeout(()=>{{const el=document.getElementById('gscKwStatus'); if(el&&el.textContent==='Saved.') el.textContent='';}}, 2000);
+        }} catch(err) {{ setStatus('gscKwStatus','Save failed: '+(err.message||err), true); }}
+      }}, 700);
+    }}
+    function makeTagEditor(containerId, label, getTerms, setTerms) {{
+      const el=document.getElementById(containerId); if(!el) return;
+      function commit(v) {{ v=v.trim(); if(!v) return false; const t=getTerms().slice(); if(t.some(x=>x.toLowerCase()===v.toLowerCase())) return false; t.push(v); setTerms(t); return true; }}
+      function render() {{
+        const terms=getTerms();
+        el.innerHTML=`<span class="tag-editor-label">${{esc(label)}}</span>`
+          + terms.map((t,i)=>`<span class="tag-chip">${{esc(t)}}<button type="button" data-i="${{i}}" aria-label="Remove ${{esc(t)}}">×</button></span>`).join('')
+          + `<input class="tag-input" type="text" placeholder="${{terms.length?'Add…':'Add a '+label.toLowerCase().replace(/s$/,'')+'…'}}">`;
+        el.querySelectorAll('.tag-chip button').forEach(btn=>btn.addEventListener('click',()=>{{
+          const t=getTerms().slice(); t.splice(+btn.dataset.i,1); setTerms(t); render(); renderGscKeywordTables(); saveKwConfig();
+        }}));
+        const inp=el.querySelector('.tag-input');
+        const add=(refocus)=>{{ if(commit(inp.value)){{ render(); renderGscKeywordTables(); saveKwConfig(); if(refocus){{const ni=el.querySelector('.tag-input'); if(ni) ni.focus();}} }} else {{ inp.value=''; }} }};
+        inp.addEventListener('keydown',e=>{{ if(e.key==='Enter'||e.key===','){{ e.preventDefault(); add(true); }} else if(e.key==='Backspace'&&!inp.value){{ const t=getTerms().slice(); if(t.length){{ t.pop(); setTerms(t); render(); renderGscKeywordTables(); saveKwConfig(); const ni=el.querySelector('.tag-input'); if(ni) ni.focus(); }} }} }});
+        inp.addEventListener('blur',()=>add(false));
+      }}
+      render();
+    }}
+    makeTagEditor('gscBrandedTags','Branded roots', ()=>gscBrandedRoots, t=>{{gscBrandedRoots=t;}});
+    makeTagEditor('gscTargetTags','Target keywords', ()=>gscTargetKeywords, t=>{{gscTargetKeywords=t;}});
 
     // ---- SEMrush (domain-level snapshot — not date-range scoped) ----
     function renderSemrushKpis(ov, bl) {{
@@ -1286,16 +1329,44 @@ def render_nixon_bigquery_test_page(
         return {{...r, key_events:ke, key_event_rate:rate}};
       }});
     }}
+    let keyEventSearchTerm='';
+    function keyEventToggleLabel() {{
+      const n=selectedKeyEvents.size;
+      if (!n) return 'All key events';
+      if (n===1) return [...selectedKeyEvents][0];
+      return n+' events selected';
+    }}
     function renderKeyEventChips() {{
-      const el=document.getElementById('keyEventChips');
-      if (!keyEventCatalog.length) {{ el.innerHTML='<span class="muted" style="margin-top:6px">Per-event data appears after the next GA4 sync.</span>'; return; }}
-      el.innerHTML=keyEventCatalog.map(e=>`<button type="button" class="chip${{selectedKeyEvents.has(e.event_name)?' active':''}}" data-ev="${{esc(e.event_name)}}">${{esc(e.event_name)}} <span class="muted">${{count(e.event_count)}}</span></button>`).join('');
-      el.querySelectorAll('.chip').forEach(b=>b.addEventListener('click',()=>{{
-        const ev=b.dataset.ev;
+      const label=document.getElementById('keyEventToggleLabel');
+      const list=document.getElementById('keyEventList');
+      if (label) label.textContent=keyEventToggleLabel();
+      if (!list) return;
+      if (!keyEventCatalog.length) {{ list.innerHTML='<div class="ke-dd-empty">Per-event data appears after the next GA4 sync.</div>'; return; }}
+      const term=keyEventSearchTerm.trim().toLowerCase();
+      const matches=keyEventCatalog.filter(e=>!term||e.event_name.toLowerCase().includes(term));
+      if (!matches.length) {{ list.innerHTML='<div class="ke-dd-empty">No events match your search.</div>'; return; }}
+      list.innerHTML=matches.map(e=>`<label class="ke-dd-option${{selectedKeyEvents.has(e.event_name)?' active':''}}"><input type="checkbox"${{selectedKeyEvents.has(e.event_name)?' checked':''}} data-ev="${{esc(e.event_name)}}"><span class="ke-dd-name">${{esc(e.event_name)}}</span><span class="ke-dd-count">${{count(e.event_count)}}</span></label>`).join('');
+      list.querySelectorAll('input[data-ev]').forEach(cb=>cb.addEventListener('change',()=>{{
+        const ev=cb.dataset.ev;
         if (selectedKeyEvents.has(ev)) selectedKeyEvents.delete(ev); else selectedKeyEvents.add(ev);
-        renderKeyEventChips(); applyKeyEvents(); landingPageNum=1; renderLanding();
+        if (label) label.textContent=keyEventToggleLabel();
+        const opt=cb.closest('.ke-dd-option'); if (opt) opt.classList.toggle('active', selectedKeyEvents.has(ev));
+        applyKeyEvents(); landingPageNum=1; renderLanding();
       }}));
     }}
+    (function initKeyEventDropdown(){{
+      const dd=document.getElementById('keyEventDropdown');
+      const toggle=document.getElementById('keyEventToggle');
+      const panel=document.getElementById('keyEventPanel');
+      const search=document.getElementById('keyEventSearch');
+      if (!dd||!toggle||!panel) return;
+      const open=()=>{{ panel.hidden=false; dd.classList.add('open'); toggle.setAttribute('aria-expanded','true'); if (search) {{ search.value=keyEventSearchTerm; search.focus(); }} }};
+      const close=()=>{{ panel.hidden=true; dd.classList.remove('open'); toggle.setAttribute('aria-expanded','false'); }};
+      toggle.addEventListener('click', e=>{{ e.stopPropagation(); if (panel.hidden) open(); else close(); }});
+      if (search) search.addEventListener('input', ()=>{{ keyEventSearchTerm=search.value; renderKeyEventChips(); }});
+      document.addEventListener('click', e=>{{ if (!dd.contains(e.target)) close(); }});
+      document.addEventListener('keydown', e=>{{ if (e.key==='Escape' && !panel.hidden) {{ close(); toggle.focus(); }} }});
+    }})();
     function renderLanding() {{
       const totalPages=Math.max(1,Math.ceil(landingRows.length/LANDING_PER_PAGE));
       if (landingPageNum>totalPages) landingPageNum=totalPages;
