@@ -710,7 +710,13 @@ def render_nixon_bigquery_test_page(
     async function getJson(url) {{
       const resp = await fetch(url, {{ credentials:'same-origin' }});
       const body = await resp.json().catch(() => ({{ detail:resp.statusText }}));
-      if (!resp.ok) throw new Error(body.detail || resp.statusText || 'Request failed');
+      if (!resp.ok) {{
+        // FastAPI error bodies here are {{detail: {{error, type}}}} -- surface the
+        // actual message instead of stringifying the whole object.
+        const d = body && body.detail;
+        const msg = (d && typeof d === 'object') ? (d.error || JSON.stringify(d)) : d;
+        throw new Error(msg || resp.statusText || 'Request failed');
+      }}
       return body;
     }}
     function setStatus(id, text, isError) {{
@@ -946,6 +952,7 @@ def render_nixon_bigquery_test_page(
       }} catch(err) {{
         summaryPayload=null;
         compareSummaryPayload=null;
+        summaryCards.innerHTML = '';
         setStatus('summaryStatus', err.message||String(err), true);
       }}
     }}
@@ -957,8 +964,10 @@ def render_nixon_bigquery_test_page(
         `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{fmt(curr)}}</div>${{deltaHtml(curr,prev)}}</div>`).join('');
     }}
     async function ga4TrafficTotals(s, e) {{
+      // Each sub-request is caught independently -- one endpoint erroring
+      // (e.g. a transient BQ hiccup) shouldn't blank out the whole card group.
       const [traffic, pages] = await Promise.all([
-        getJson(withDatesRange(TRAFFIC_ACQ_API, s, e)),
+        getJson(withDatesRange(TRAFFIC_ACQ_API, s, e)).catch(()=>({{by_channel:[]}})),
         getJson(withDatesRange(PAGES_TOP_API, s, e)).catch(()=>({{rows:[]}})),
       ]);
       const sessions = (traffic.by_channel||[]).reduce((sum,r)=>sum+num(r.sessions),0);
@@ -985,6 +994,7 @@ def render_nixon_bigquery_test_page(
         setCmpWarn('ga4SnapshotCmpWarn', ['google_analytics']);
         setStatus('ga4SnapshotStatus', curr.sessions || curr.pageViews ? '' : 'No data for this range yet.');
       }} catch(err) {{
+        document.getElementById('ga4SnapshotCards').innerHTML = '';
         setStatus('ga4SnapshotStatus', err.message||String(err), true);
       }}
       setStatus('gscSnapshotStatus','Loading…');
@@ -1006,6 +1016,7 @@ def render_nixon_bigquery_test_page(
         const empty = !p || (!p.kpis && !(p.top_queries||[]).length && !(p.top_pages||[]).length);
         setStatus('gscSnapshotStatus', empty ? 'No data for this range yet.' : '');
       }} catch(err) {{
+        document.getElementById('gscSnapshotCards').innerHTML = '';
         setStatus('gscSnapshotStatus', err.message||String(err), true);
       }}
     }}
