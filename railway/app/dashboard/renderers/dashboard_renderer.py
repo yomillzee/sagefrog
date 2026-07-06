@@ -650,8 +650,9 @@ def render_penn_html(
     summary_platform_ids = _platforms_with_summary_data(totals, chart_data, breakdowns)
     if not features.organic_channel:
         summary_platform_ids = [pid for pid in summary_platform_ids if pid != "organic"]
+    has_paid_media = bool(summary_platform_ids)
     platform_catalog_json = _json_for_html_script(platform_catalog_list)
-    overview_paid_html = _paid_ad_overview_html(aggregated, ga4_attr)
+    overview_paid_html = _paid_ad_overview_html(aggregated, ga4_attr) if has_paid_media else ""
     paid_overview_metrics_json = _json_for_html_script(
         _paid_ad_overview_metrics(aggregated, ga4_attr)
     )
@@ -826,7 +827,7 @@ def render_penn_html(
     )
     budget_pacing_html = ""
     budget_pacing_json = _json_for_html_script({})
-    if show_budget_pacing:
+    if show_budget_pacing and has_paid_media:
         pacing_cfg = client_cfg
         if pacing_cfg is None:
             try:
@@ -860,7 +861,7 @@ def render_penn_html(
         )
 
     performance_trend_html = ""
-    if features.performance_trend:
+    if features.performance_trend and has_paid_media:
         performance_trend_html = """
             <section class="panel performance-trend-panel">
               <div class="panel-head performance-trend-head">
@@ -2954,8 +2955,8 @@ def render_penn_html(
     const SHOW_SEGMENT_FILTERS = {'true' if show_segment_filters else 'false'};
     const SHOW_PRODUCT_LINE_FILTERS = {'true' if show_product_line_filters else 'false'};
     const GA4_SEGMENT_FILTER_LABEL = {_json_for_html_script(seg_filter_label)};
-    const SHOW_BUDGET_PACING = {'true' if show_budget_pacing else 'false'};
-    const SHOW_PERFORMANCE_TREND = {'true' if features.performance_trend else 'false'};
+    const SHOW_BUDGET_PACING = {'true' if (show_budget_pacing and has_paid_media) else 'false'};
+    const SHOW_PERFORMANCE_TREND = {'true' if (features.performance_trend and has_paid_media) else 'false'};
     const SHOW_CAMPAIGN_EXPLORER = {'true' if features.campaign_explorer else 'false'};
     const SHOW_WEBSITE_ANALYTICS = {'true' if show_website_tab else 'false'};
     const GA4_BACKFILL_URL = {_json_for_html_script(_ga4_backfill_url)};
