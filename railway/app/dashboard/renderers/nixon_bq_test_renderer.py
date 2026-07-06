@@ -958,24 +958,31 @@ def render_nixon_bigquery_test_page(
     }}
 
     // ---- No-paid-ads Overview snapshot (GA4 traffic + GSC search) ----
-    // cards: [label, currentRaw, prevRawOrNull, formatFn]
+    // cards: [label, currentRaw, prevRawOrNull, formatFn, ok]. ok===false means
+    // the underlying request failed -- render "--" rather than a misleading 0,
+    // which is indistinguishable from genuinely-zero activity.
     function renderSnapshotCards(containerId, cards) {{
-      document.getElementById(containerId).innerHTML = cards.map(([label,curr,prev,fmt]) =>
-        `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{fmt(curr)}}</div>${{deltaHtml(curr,prev)}}</div>`).join('');
+      document.getElementById(containerId).innerHTML = cards.map(([label,curr,prev,fmt,ok]) => {{
+        const valueHtml = ok===false
+          ? `<span title="This metric failed to load -- try switching ranges or refreshing.">—</span>`
+          : fmt(curr);
+        const deltaOrNote = ok===false ? '' : deltaHtml(curr,prev);
+        return `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{valueHtml}}</div>${{deltaOrNote}}</div>`;
+      }}).join('');
     }}
     async function ga4TrafficTotals(s, e) {{
-      // Each sub-request is caught independently -- one endpoint erroring
-      // (e.g. a transient BQ hiccup) shouldn't blank out the whole card group.
-      const [traffic, pages] = await Promise.all([
-        getJson(withDatesRange(TRAFFIC_ACQ_API, s, e)).catch(()=>({{by_channel:[]}})),
-        getJson(withDatesRange(PAGES_TOP_API, s, e)).catch(()=>({{rows:[]}})),
-      ]);
+      // Sequential (not parallel) to keep concurrent BQ query load down --
+      // and each sub-request tracks its own success so a failure renders as
+      // "unavailable" rather than a misleading zero.
+      let trafficOk = true, pagesOk = true;
+      const traffic = await getJson(withDatesRange(TRAFFIC_ACQ_API, s, e)).catch(()=>{{ trafficOk=false; return {{by_channel:[]}}; }});
+      const pages = await getJson(withDatesRange(PAGES_TOP_API, s, e)).catch(()=>{{ pagesOk=false; return {{rows:[]}}; }});
       const sessions = (traffic.by_channel||[]).reduce((sum,r)=>sum+num(r.sessions),0);
       const engaged = (traffic.by_channel||[]).reduce((sum,r)=>sum+num(r.engaged_sessions),0);
       const rows = pages.rows||[];
       const pageViews = rows.reduce((sum,r)=>sum+num(r.page_views),0);
       const keyEvents = rows.reduce((sum,r)=>sum+num(r.key_events),0);
-      return {{sessions, engaged, pageViews, keyEvents}};
+      return {{sessions, engaged, pageViews, keyEvents, trafficOk, pagesOk}};
     }}
     async function loadOverviewSnapshot() {{
       setStatus('ga4SnapshotStatus','Loading…');
@@ -986,13 +993,17 @@ def render_nixon_bigquery_test_page(
           ga4TrafficTotals(compareStart, compareEnd).catch(()=>null),
         ]);
         renderSnapshotCards('ga4SnapshotCards', [
-          ['Sessions', curr.sessions, prev&&prev.sessions, count],
-          ['Engaged sessions', curr.engaged, prev&&prev.engaged, count],
-          ['Page views', curr.pageViews, prev&&prev.pageViews, count],
-          ['Key events', curr.keyEvents, prev&&prev.keyEvents, count],
+          ['Sessions', curr.sessions, prev&&prev.sessions, count, curr.trafficOk],
+          ['Engaged sessions', curr.engaged, prev&&prev.engaged, count, curr.trafficOk],
+          ['Page views', curr.pageViews, prev&&prev.pageViews, count, curr.pagesOk],
+          ['Key events', curr.keyEvents, prev&&prev.keyEvents, count, curr.pagesOk],
         ]);
         setCmpWarn('ga4SnapshotCmpWarn', ['google_analytics']);
-        setStatus('ga4SnapshotStatus', curr.sessions || curr.pageViews ? '' : 'No data for this range yet.');
+        if (!curr.trafficOk || !curr.pagesOk) {{
+          setStatus('ga4SnapshotStatus', 'Some metrics failed to load — try switching ranges or refreshing.', true);
+        }} else {{
+          setStatus('ga4SnapshotStatus', curr.sessions || curr.pageViews ? '' : 'No data for this range yet.');
+        }}
       }} catch(err) {{
         document.getElementById('ga4SnapshotCards').innerHTML = '';
         setStatus('ga4SnapshotStatus', err.message||String(err), true);
