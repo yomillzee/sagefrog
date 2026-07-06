@@ -552,6 +552,7 @@ def render_admin_page(
             <label for="role">Role</label>
             <select id="role" name="role">
               <option value="client">client</option>
+              <option value="standard">standard (Sagefrog staff, view-only)</option>
               <option value="admin">admin</option>
             </select>
           </div>

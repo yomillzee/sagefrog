@@ -20,7 +20,7 @@ SCHEMA_SQL_STATEMENTS = [
       id BIGSERIAL PRIMARY KEY,
       email TEXT NOT NULL,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL CHECK (role IN ('admin', 'client')),
+      role TEXT NOT NULL CHECK (role IN ('admin', 'client', 'standard')),
       client_slug TEXT,
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -37,6 +37,14 @@ SCHEMA_SQL_STATEMENTS = [
     """
     CREATE INDEX IF NOT EXISTS web_users_role_idx ON web_users (role)
     """,
+    # Widen the role CHECK on tables created before the 'standard' role existed.
+    """
+    ALTER TABLE web_users DROP CONSTRAINT IF EXISTS web_users_role_check
+    """,
+    """
+    ALTER TABLE web_users ADD CONSTRAINT web_users_role_check
+      CHECK (role IN ('admin', 'client', 'standard'))
+    """,
 ]
 
 
@@ -51,7 +59,7 @@ class WebUser:
     def can_access_client(self, slug: str) -> bool:
         if not self.is_active:
             return False
-        if self.role == "admin":
+        if self.role in ("admin", "standard"):
             return True
         return self.role == "client" and (self.client_slug or "").strip() == slug
 
@@ -214,12 +222,12 @@ def create_user(
     if not _EMAIL_RE.match(normalized_email):
         raise ValueError("Invalid email address.")
     role = role.strip().lower()
-    if role not in ("admin", "client"):
-        raise ValueError("role must be admin or client.")
+    if role not in ("admin", "client", "standard"):
+        raise ValueError("role must be admin, client, or standard.")
     slug = (client_slug or "").strip().lower() or None
     if role == "client" and not slug:
         raise ValueError("client_slug is required for client users.")
-    if role == "admin":
+    if role in ("admin", "standard"):
         slug = None
     if len(password) < 10:
         raise ValueError("Password must be at least 10 characters.")
