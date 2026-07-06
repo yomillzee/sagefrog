@@ -957,11 +957,18 @@ def render_nixon_bigquery_test_page(
       {{key:'ctr', label:'CTR', format:gscPct, defDir:'desc'}},
       {{key:'avg_position', label:'Position', format:gscPos, defDir:'asc'}},
     ];
+    // page_url rows come back as full URLs (https://host/path) -- show just the
+    // path in the table (full URL stays in the title tooltip on hover).
+    function pathOnly(url) {{
+      try {{ const u = new URL(url); return (u.pathname || '/') + (u.search || ''); }}
+      catch {{ return url; }}
+    }}
+    const GSC_LABEL_COL_WIDTH = 240;
     const gscTables = {{
-      queries: {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'query', labelText:'Query', tableId:'gscQueriesTable', pagerId:'gscQueriesPager'}},
-      pages:   {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'page_url', labelText:'Page', tableId:'gscPagesTable', pagerId:'gscPagesPager'}},
-      branded: {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'query', labelText:'Query', tableId:'gscBrandedTable', pagerId:'gscBrandedPager'}},
-      target:  {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'query', labelText:'Query', tableId:'gscTargetTable', pagerId:'gscTargetPager'}},
+      queries: {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'query', labelText:'Query', tableId:'gscQueriesTable', pagerId:'gscQueriesPager', labelWidth:GSC_LABEL_COL_WIDTH}},
+      pages:   {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'page_url', labelText:'Page', tableId:'gscPagesTable', pagerId:'gscPagesPager', labelWidth:GSC_LABEL_COL_WIDTH, labelFormat:pathOnly}},
+      branded: {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'query', labelText:'Query', tableId:'gscBrandedTable', pagerId:'gscBrandedPager', labelWidth:GSC_LABEL_COL_WIDTH}},
+      target:  {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'query', labelText:'Query', tableId:'gscTargetTable', pagerId:'gscTargetPager', labelWidth:GSC_LABEL_COL_WIDTH}},
     }};
     // Reapply a user-chosen label-column width after each (re)render, since the
     // table is rebuilt on sort/paginate. Overrides the default max-width:0 clamp.
@@ -982,7 +989,7 @@ def render_nixon_bigquery_test_page(
       const start=(st.page-1)*GSC_PER_PAGE, pageRows=sorted.slice(start,start+GSC_PER_PAGE);
       const arrow=k=>st.sortKey===k?(st.sortDir==='asc'?' \\u25B4':' \\u25BE'):'';
       const head=`<thead><tr><th class="left col-resizable">${{esc(st.labelText)}}<span class="col-resizer" data-which="${{which}}"></span></th>`+GSC_SORT_COLS.map(c=>`<th class="gsc-sort${{st.sortKey===c.key?' active':''}}" data-which="${{which}}" data-key="${{c.key}}">${{c.label}}${{arrow(c.key)}}</th>`).join('')+`</tr></thead>`;
-      const body=`<tbody>`+pageRows.map(r=>`<tr><td class="left"><span class="page-path" title="${{esc(r[st.labelKey])}}">${{esc(r[st.labelKey])}}</span></td>`+GSC_SORT_COLS.map(c=>`<td>${{c.format(r[c.key])}}</td>`).join('')+`</tr>`).join('')+`</tbody>`;
+      const body=`<tbody>`+pageRows.map(r=>{{const raw=r[st.labelKey];const label=st.labelFormat?st.labelFormat(raw):raw;return`<tr><td class="left"><span class="page-path" title="${{esc(raw)}}">${{esc(label)}}</span></td>`+GSC_SORT_COLS.map(c=>`<td>${{c.format(r[c.key])}}</td>`).join('')+`</tr>`;}}).join('')+`</tbody>`;
       el.innerHTML=head+body;
       applyGscColWidth(el, st);
       if (totalPages<=1) {{ pager.innerHTML=''; }}
