@@ -1748,6 +1748,35 @@ def admin_deactivate_user(
     return RedirectResponse(url="/admin?msg=User+deactivated", status_code=303)
 
 
+@app.post("/admin/users/{user_id}/reset-password", include_in_schema=False)
+def admin_reset_password(
+    user_id: int,
+    request: Request,
+    new_password: str = Form(...),
+    admin: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    ctx = audit_log.request_context(request)
+    target = web_users.get_user_record(user_id)
+    if not target:
+        return RedirectResponse(url="/admin?err=User+not+found", status_code=303)
+    try:
+        ok = web_users.set_password(user_id, new_password)
+    except ValueError as exc:
+        return RedirectResponse(url=f"/admin?err={quote(str(exc))}", status_code=303)
+    if ok:
+        audit_log.record(
+            action="user.password_reset",
+            actor_user_id=admin.id,
+            actor_email=admin.email,
+            subject_email=target.email,
+            **ctx,
+        )
+        return RedirectResponse(
+            url=f"/admin?msg=Password+reset+for+{quote(target.email)}", status_code=303
+        )
+    return RedirectResponse(url="/admin?err=Password+reset+failed", status_code=303)
+
+
 @app.post("/admin/dashboards", include_in_schema=False)
 def admin_create_dashboard(
     request: Request,

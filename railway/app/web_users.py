@@ -276,6 +276,25 @@ def create_user(
     return _row_to_user(row)
 
 
+def set_password(user_id: int, new_password: str) -> bool:
+    if not enabled():
+        return False
+    if len(new_password) < 10:
+        raise ValueError("Password must be at least 10 characters.")
+    ensure_schema()
+    pw_hash = hash_password(new_password)
+    with db.connection() as conn:
+        cur = conn.execute(
+            """
+            UPDATE web_users
+            SET password_hash = %s, updated_at = NOW()
+            WHERE id = %s AND is_active = TRUE
+            """,
+            (pw_hash, user_id),
+        )
+        return cur.rowcount > 0
+
+
 def deactivate_user(user_id: int) -> bool:
     if not enabled():
         return False

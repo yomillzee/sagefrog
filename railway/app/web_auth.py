@@ -266,13 +266,25 @@ def render_admin_page(
     rows = []
     for u in users:
         slug = u.get("client_slug") or "—"
-        actions = ""
-        if int(u["id"]) != user.id:
-            actions = (
-                f'<form method="post" action="/admin/users/{int(u["id"])}/deactivate" '
+        uid = int(u["id"])
+        reset_html = f"""
+        <details class="dash-delete-fold">
+          <summary class="link">Reset password…</summary>
+          <form method="post" action="/admin/users/{uid}/reset-password" class="dash-delete-form"
+            onsubmit="return confirm('Reset this user\'s password?');">
+            <input type="password" name="new_password" placeholder="New password (min 10 chars)"
+              minlength="10" required autocomplete="new-password">
+            <button type="submit" class="link">Reset</button>
+          </form>
+        </details>"""
+        deactivate_html = ""
+        if uid != user.id:
+            deactivate_html = (
+                f'<form method="post" action="/admin/users/{uid}/deactivate" '
                 f'onsubmit="return confirm(\'Deactivate this user?\');">'
                 f'<button type="submit" class="link danger">Deactivate</button></form>'
             )
+        actions = reset_html + deactivate_html
         rows.append(
             f"<tr><td>{_esc(u['email'])}</td><td>{_esc(u['role'])}</td>"
             f"<td>{_esc(str(slug))}</td>"
