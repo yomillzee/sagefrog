@@ -290,6 +290,17 @@ def fetch_nixon_marketing_health(*, limit: int = 100) -> dict[str, Any]:
     except Exception:
         pass
 
+    # Append a Search Console freshness row too -- same reasoning as GA4 above,
+    # and lets the Overview date-comparison feature warn when the requested
+    # comparison period predates GSC's synced history.
+    try:
+        import bq_gsc_service
+        gsc_row = bq_gsc_service.gsc_health_row(client_slug=_client_key())
+        if gsc_row:
+            rows = list(rows) + [gsc_row]
+    except Exception:
+        pass
+
     return {"client": _client_key(), "row_count": len(rows), "rows": rows}
 
 

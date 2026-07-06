@@ -156,7 +156,7 @@ def render_nixon_bigquery_test_page(
     if has_paid_ads:
         overview_summary_html = """
       <section id="sec-overview">
-        <div class="sec-head"><h2>Summary</h2><span class="status" id="summaryStatus"></span></div>
+        <div class="sec-head"><h2>Summary <span class="cmp-warn" id="summaryCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="summaryStatus"></span></div>
         <div class="cards" id="summaryCards"></div>
       </section>
 
@@ -175,12 +175,12 @@ def render_nixon_bigquery_test_page(
     else:
         overview_summary_html = """
       <section id="sec-overview">
-        <div class="sec-head"><h2>Website traffic</h2><span class="status" id="ga4SnapshotStatus"></span></div>
+        <div class="sec-head"><h2>Website traffic <span class="cmp-warn" id="ga4SnapshotCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="ga4SnapshotStatus"></span></div>
         <div class="cards" id="ga4SnapshotCards"></div>
       </section>
 
       <section>
-        <div class="sec-head"><h2>Search performance</h2><span class="status" id="gscSnapshotStatus"></span></div>
+        <div class="sec-head"><h2>Search performance <span class="cmp-warn" id="gscSnapshotCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="gscSnapshotStatus"></span></div>
         <div class="cards" id="gscSnapshotCards"></div>
       </section>"""
 
@@ -280,6 +280,11 @@ def render_nixon_bigquery_test_page(
     .card {{ border:1px solid var(--line-soft); border-top:3px solid var(--accent); border-radius:var(--radius-sm); padding:13px 14px 14px; background:#fff; }}
     .card-title {{ color:var(--muted); font-size:.65rem; text-transform:uppercase; font-weight:800; letter-spacing:.06em; }}
     .card-value {{ margin-top:7px; font-size:1.5rem; line-height:1.1; color:var(--navy); font-weight:800; letter-spacing:-.02em; }}
+    .card-delta {{ margin-top:4px; font-size:.76rem; font-weight:700; }}
+    .card-delta.up {{ color:var(--ok); }}
+    .card-delta.down {{ color:var(--bad); }}
+    .card-delta.flat {{ color:var(--muted); font-weight:600; }}
+    .cmp-warn {{ display:inline-block; margin-left:6px; font-size:.85rem; cursor:help; color:#b78103; }}
     /* ---- Tables ---- */
     .table-wrap {{ overflow:auto; border:1px solid var(--line-soft); border-radius:var(--radius-sm); }}
     table {{ border-collapse:collapse; width:100%; min-width:600px; font-size:.86rem; }}
@@ -423,6 +428,8 @@ def render_nixon_bigquery_test_page(
         <div class="filter-group">
           <span class="filter-label">Range</span>
           <div class="chips" id="datePresets">
+            <button type="button" class="chip active" data-preset="this_week">This week</button>
+            <button type="button" class="chip" data-preset="last_week">Last week</button>
             <button type="button" class="chip" data-preset="this_month">This month</button>
             <button type="button" class="chip" data-preset="last_month">Last month</button>
             <button type="button" class="chip" data-preset="last_7">Last 7d</button>
@@ -659,6 +666,46 @@ def render_nixon_bigquery_test_page(
       const sep = base.includes('?') ? '&' : '?';
       return base + sep + 'start_date=' + currentStart + '&end_date=' + currentEnd;
     }}
+    function withDatesRange(base, s, e) {{
+      const sep = base.includes('?') ? '&' : '?';
+      return base + sep + 'start_date=' + s + '&end_date=' + e;
+    }}
+    // ---- Period-over-period comparison helpers ----
+    function deltaHtml(curr, prev) {{
+      curr = num(curr);
+      if (prev == null) return '';
+      prev = num(prev);
+      if (!prev) {{
+        if (!curr) return `<div class="card-delta flat">No change vs prior period</div>`;
+        return `<div class="card-delta up">New vs prior period</div>`;
+      }}
+      const change = ((curr - prev) / Math.abs(prev)) * 100;
+      const dir = change > 0.05 ? 'up' : (change < -0.05 ? 'down' : 'flat');
+      const arrow = dir==='up' ? '\\u25B2' : (dir==='down' ? '\\u25BC' : '\\u2014');
+      return `<div class="card-delta ${{dir}}">${{arrow}} ${{Math.abs(change).toFixed(1)}}% vs prior period</div>`;
+    }}
+    // True if the comparison window (compareStart/compareEnd) reaches back
+    // before any of the given sources' synced history -- earliestDates is
+    // populated from the /marketing/health payload by loadHealth().
+    function cmpBlockedBy(sourceKeys) {{
+      for (const k of sourceKeys) {{
+        const earliest = earliestDates[k];
+        if (earliest && compareStart < earliest) return earliest;
+      }}
+      return null;
+    }}
+    function setCmpWarn(elId, sourceKeys) {{
+      const el = document.getElementById(elId);
+      if (!el) return;
+      const blockedSince = cmpBlockedBy(sourceKeys);
+      if (blockedSince) {{
+        el.hidden = false;
+        el.title = `Comparison period (${{compareStart}} to ${{compareEnd}}) starts before synced data begins (${{blockedSince}}). The "vs prior period" figures above may be incomplete.`;
+      }} else {{
+        el.hidden = true;
+        el.title = '';
+      }}
+    }}
     async function getJson(url) {{
       const resp = await fetch(url, {{ credentials:'same-origin' }});
       const body = await resp.json().catch(() => ({{ detail:resp.statusText }}));
@@ -750,12 +797,13 @@ def render_nixon_bigquery_test_page(
     ];
     const platformFilter = new Set();
     let summaryPayload = null;
+    let compareSummaryPayload = null;
     const summaryCards = document.getElementById('summaryCards');
 
-    function selectedSummary() {{
-      if (!summaryPayload) return {{}};
-      const by = summaryPayload.by_source || null;
-      if (!by || platformFilter.size === 0) return summaryPayload.summary || {{}};
+    function selectedSummaryFrom(payload) {{
+      if (!payload) return {{}};
+      const by = payload.by_source || null;
+      if (!by || platformFilter.size === 0) return payload.summary || {{}};
       const acc = {{ spend:0, impressions:0, clicks:0, conversions:0 }};
       const needles = [...platformFilter].map(p => p.toLowerCase());
       for (const k of Object.keys(by)) {{
@@ -766,9 +814,14 @@ def render_nixon_bigquery_test_page(
       }}
       return {{ ...acc, cpc: acc.clicks ? acc.spend/acc.clicks : 0, cpa: acc.conversions ? acc.spend/acc.conversions : 0, ctr: acc.impressions ? acc.clicks/acc.impressions*100 : 0 }};
     }}
+    function selectedSummary() {{ return selectedSummaryFrom(summaryPayload); }}
     function renderSummary() {{
       const s = selectedSummary();
-      summaryCards.innerHTML = SUMMARY_CARDS.map(([key,label,format]) => `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{format(s[key])}}</div></div>`).join('');
+      const p = selectedSummaryFrom(compareSummaryPayload);
+      summaryCards.innerHTML = SUMMARY_CARDS.map(([key,label,format]) =>
+        `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{format(s[key])}}</div>${{deltaHtml(s[key], compareSummaryPayload ? p[key] : null)}}</div>`).join('');
+      const sources = platformFilter.size ? [...platformFilter].map(p=>p.toLowerCase()) : ['google','linkedin','meta'];
+      setCmpWarn('summaryCmpWarn', sources);
     }}
 
     // ---- Trend chart ----
@@ -880,55 +933,75 @@ def render_nixon_bigquery_test_page(
       summaryCards.innerHTML = skelCards(7);
       skelChart('trendChart','trend-svg');
       try {{
-        summaryPayload = await getJson(withDates(SUMMARY_API));
+        const [curr, prev] = await Promise.all([
+          getJson(withDates(SUMMARY_API)),
+          getJson(withDatesRange(SUMMARY_API, compareStart, compareEnd)).catch(()=>null),
+        ]);
+        summaryPayload = curr;
+        compareSummaryPayload = prev;
         renderSummary(); renderChart();
         const note = summaryPayload.by_source ? '' : ' · combined';
         setStatus('summaryStatus', `${{summaryPayload.start_date}} – ${{summaryPayload.end_date}}${{note}}`);
       }} catch(err) {{
         summaryPayload=null;
+        compareSummaryPayload=null;
         setStatus('summaryStatus', err.message||String(err), true);
       }}
     }}
 
     // ---- No-paid-ads Overview snapshot (GA4 traffic + GSC search) ----
+    // cards: [label, currentRaw, prevRawOrNull, formatFn]
     function renderSnapshotCards(containerId, cards) {{
-      document.getElementById(containerId).innerHTML = cards.map(([label,val]) =>
-        `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{val}}</div></div>`).join('');
+      document.getElementById(containerId).innerHTML = cards.map(([label,curr,prev,fmt]) =>
+        `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{fmt(curr)}}</div>${{deltaHtml(curr,prev)}}</div>`).join('');
+    }}
+    async function ga4TrafficTotals(s, e) {{
+      const [traffic, pages] = await Promise.all([
+        getJson(withDatesRange(TRAFFIC_ACQ_API, s, e)),
+        getJson(withDatesRange(PAGES_TOP_API, s, e)).catch(()=>({{rows:[]}})),
+      ]);
+      const sessions = (traffic.by_channel||[]).reduce((sum,r)=>sum+num(r.sessions),0);
+      const engaged = (traffic.by_channel||[]).reduce((sum,r)=>sum+num(r.engaged_sessions),0);
+      const rows = pages.rows||[];
+      const pageViews = rows.reduce((sum,r)=>sum+num(r.page_views),0);
+      const keyEvents = rows.reduce((sum,r)=>sum+num(r.key_events),0);
+      return {{sessions, engaged, pageViews, keyEvents}};
     }}
     async function loadOverviewSnapshot() {{
       setStatus('ga4SnapshotStatus','Loading…');
       document.getElementById('ga4SnapshotCards').innerHTML = skelCards(4);
       try {{
-        const [traffic, pages] = await Promise.all([
-          getJson(withDates(TRAFFIC_ACQ_API)),
-          getJson(withDates(PAGES_TOP_API)).catch(()=>({{rows:[]}})),
+        const [curr, prev] = await Promise.all([
+          ga4TrafficTotals(currentStart, currentEnd),
+          ga4TrafficTotals(compareStart, compareEnd).catch(()=>null),
         ]);
-        const sessions = (traffic.by_channel||[]).reduce((s,r)=>s+num(r.sessions),0);
-        const engaged = (traffic.by_channel||[]).reduce((s,r)=>s+num(r.engaged_sessions),0);
-        const rows = pages.rows||[];
-        const pageViews = rows.reduce((s,r)=>s+num(r.page_views),0);
-        const keyEvents = rows.reduce((s,r)=>s+num(r.key_events),0);
         renderSnapshotCards('ga4SnapshotCards', [
-          ['Sessions', count(sessions)],
-          ['Engaged sessions', count(engaged)],
-          ['Page views', count(pageViews)],
-          ['Key events', count(keyEvents)],
+          ['Sessions', curr.sessions, prev&&prev.sessions, count],
+          ['Engaged sessions', curr.engaged, prev&&prev.engaged, count],
+          ['Page views', curr.pageViews, prev&&prev.pageViews, count],
+          ['Key events', curr.keyEvents, prev&&prev.keyEvents, count],
         ]);
-        setStatus('ga4SnapshotStatus', sessions || pageViews ? '' : 'No data for this range yet.');
+        setCmpWarn('ga4SnapshotCmpWarn', ['google_analytics']);
+        setStatus('ga4SnapshotStatus', curr.sessions || curr.pageViews ? '' : 'No data for this range yet.');
       }} catch(err) {{
         setStatus('ga4SnapshotStatus', err.message||String(err), true);
       }}
       setStatus('gscSnapshotStatus','Loading…');
       document.getElementById('gscSnapshotCards').innerHTML = skelCards(4);
       try {{
-        const p = await getJson(withDates(GSC_API));
-        const k = (p&&p.kpis)||{{}};
-        renderSnapshotCards('gscSnapshotCards', [
-          ['Clicks', count(k.clicks)],
-          ['Impressions', count(k.impressions)],
-          ['CTR', k.ctr==null?'—':num(k.ctr).toFixed(2)+'%'],
-          ['Avg position', k.avg_position==null?'—':num(k.avg_position).toFixed(1)],
+        const [p, prevP] = await Promise.all([
+          getJson(withDatesRange(GSC_API, currentStart, currentEnd)),
+          getJson(withDatesRange(GSC_API, compareStart, compareEnd)).catch(()=>null),
         ]);
+        const k = (p&&p.kpis)||{{}};
+        const pk = (prevP&&prevP.kpis)||null;
+        renderSnapshotCards('gscSnapshotCards', [
+          ['Clicks', k.clicks, pk&&pk.clicks, count],
+          ['Impressions', k.impressions, pk&&pk.impressions, count],
+          ['CTR', k.ctr, pk&&pk.ctr, v=>v==null?'—':num(v).toFixed(2)+'%'],
+          ['Avg position', k.avg_position, pk&&pk.avg_position, v=>v==null?'—':num(v).toFixed(1)],
+        ]);
+        setCmpWarn('gscSnapshotCmpWarn', ['gsc']);
         const empty = !p || (!p.kpis && !(p.top_queries||[]).length && !(p.top_pages||[]).length);
         setStatus('gscSnapshotStatus', empty ? 'No data for this range yet.' : '');
       }} catch(err) {{
@@ -1135,13 +1208,22 @@ def render_nixon_bigquery_test_page(
         setStatus('semrushStatus', err.message||String(err), true);
       }}
     }}
+    // Earliest synced date per source (google/linkedin/meta/google_analytics/gsc),
+    // populated by loadHealth() below. Used to warn when a comparison period
+    // (see compareStart/compareEnd) falls before the data actually starts.
+    let earliestDates = {{}};
     async function loadHealth() {{
       setStatus('healthStatus','Loading…');
       document.getElementById('healthTable').innerHTML = skelTable(8,5);
       try {{
         const payload = await getJson(withDates(HEALTH_API));
         const rows = payload.rows||[];
-        const SRC = {{google:'Google Ads',linkedin:'LinkedIn',meta:'Meta',google_analytics:'Google Analytics'}};
+        earliestDates = {{}};
+        for (const r of rows) {{
+          const k = String(r.source||'').toLowerCase();
+          if (k && r.earliest_date) earliestDates[k] = r.earliest_date;
+        }}
+        const SRC = {{google:'Google Ads',linkedin:'LinkedIn',meta:'Meta',google_analytics:'Google Analytics',gsc:'Search Console'}};
         const srcLabel = v => SRC[String(v||'').toLowerCase()]||v;
         const moneyD = v => v==null ? '—' : money(v);
         const countD = v => v==null ? '—' : count(v);
@@ -1745,24 +1827,54 @@ def render_nixon_bigquery_test_page(
       if (modules.demographics)     loadDemographics();
     }}
     function loadCurrentTab() {{
-      if (currentTab==='overview')   {{ (HAS_PAID_ADS ? loadSummary() : loadOverviewSnapshot()); loadHealth(); }}
+      if (currentTab==='overview')   {{ loadHealth().then(()=>{{ HAS_PAID_ADS ? loadSummary() : loadOverviewSnapshot(); }}); }}
       else if (currentTab==='explorer') {{ explorerLoaded=false; loadExplorer(); explorerLoaded=true; }}
       else if (currentTab==='analytics') {{ analyticsLoaded=false; applyModules(); loadAllAnalytics(); analyticsLoaded=true; }}
     }}
 
     // ---- Date presets ----
     let currentStart='{start.isoformat()}', currentEnd='{end.isoformat()}';
+    // The equivalent prior period for the currently selected preset (e.g.
+    // "This month" July 1-6 -> compareStart/compareEnd June 1-6), computed
+    // alongside currentStart/currentEnd in applyPreset() below.
+    let compareStart='', compareEnd='';
     const fmtDate=d=>`${{d.getFullYear()}}-${{String(d.getMonth()+1).padStart(2,'0')}}-${{String(d.getDate()).padStart(2,'0')}}`;
+    function mondayOf(d) {{
+      const day=d.getDay(); const diff=(day===0?-6:1)-day;
+      const m=new Date(d); m.setDate(d.getDate()+diff); return m;
+    }}
     function applyPreset(name) {{
-      const today=new Date(); let s, e=today;
-      const lastN=n=>{{e=new Date(today);e.setDate(today.getDate()-1);s=new Date(today);s.setDate(today.getDate()-n);}};
-      if (name==='this_month') s=new Date(today.getFullYear(),today.getMonth(),1);
-      else if (name==='last_month') {{s=new Date(today.getFullYear(),today.getMonth()-1,1);e=new Date(today.getFullYear(),today.getMonth(),0);}}
-      else if (name==='last_7') lastN(7);
+      const today=new Date(); let s, e=today, cs, ce;
+      const lastN=n=>{{
+        e=new Date(today);e.setDate(today.getDate()-1);
+        s=new Date(today);s.setDate(today.getDate()-n);
+        ce=new Date(s); ce.setDate(s.getDate()-1);
+        cs=new Date(ce); cs.setDate(ce.getDate()-(n-1));
+      }};
+      if (name==='this_week') {{
+        s=mondayOf(today); e=today;
+        cs=new Date(s); cs.setDate(s.getDate()-7);
+        ce=new Date(e); ce.setDate(e.getDate()-7);
+      }} else if (name==='last_week') {{
+        const lw=new Date(today); lw.setDate(today.getDate()-7);
+        s=mondayOf(lw); e=new Date(s); e.setDate(s.getDate()+6);
+        cs=new Date(s); cs.setDate(s.getDate()-7);
+        ce=new Date(e); ce.setDate(e.getDate()-7);
+      }} else if (name==='this_month') {{
+        s=new Date(today.getFullYear(),today.getMonth(),1); e=today;
+        const dom=today.getDate();
+        const daysInPrevMonth=new Date(today.getFullYear(),today.getMonth(),0).getDate();
+        cs=new Date(today.getFullYear(),today.getMonth()-1,1);
+        ce=new Date(today.getFullYear(),today.getMonth()-1,Math.min(dom,daysInPrevMonth));
+      }} else if (name==='last_month') {{
+        s=new Date(today.getFullYear(),today.getMonth()-1,1); e=new Date(today.getFullYear(),today.getMonth(),0);
+        cs=new Date(today.getFullYear(),today.getMonth()-2,1); ce=new Date(today.getFullYear(),today.getMonth()-1,0);
+      }} else if (name==='last_7') lastN(7);
       else if (name==='last_30') lastN(30);
       else if (name==='last_90') lastN(90);
       else return;
       currentStart=fmtDate(s); currentEnd=fmtDate(e);
+      compareStart=fmtDate(cs); compareEnd=fmtDate(ce);
       document.querySelectorAll('#datePresets .chip').forEach(b=>b.classList.toggle('active',b.dataset.preset===name));
       loadCurrentTab();
     }}
@@ -1795,8 +1907,7 @@ def render_nixon_bigquery_test_page(
       const row=ev.target.closest('tr[data-expandable]');
       if (row) toggleExplorerRow(row);
     }});
-    if (HAS_PAID_ADS) {{ loadSummary(); }} else {{ loadOverviewSnapshot(); }}
-    loadHealth();
+    applyPreset('this_week');
 
     // Deep-link: land on the tab named in ?view= (set by the sidebar links on
     // Settings/Files/Connectors) so those links don't always open Overview.

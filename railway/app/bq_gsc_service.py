@@ -701,3 +701,38 @@ def build_gsc_mart_summary(*, start: date, end: date, client_slug: str | None = 
         if errors:
             result["errors"] = errors
         return result
+
+
+def gsc_health_row(client_slug: str | None = None) -> dict[str, Any]:
+    """MIN/MAX(date) + row count over the GSC mart, for the marketing/health
+    endpoint's data-availability check (mirrors the GA4 row it already adds).
+    """
+    with _client_context(client_slug):
+        target = _resolved_target()
+        if target.is_default_fallback and not _is_penn_slug(client_slug):
+            return {}
+        project, ds = _project_id(), _reporting_mart_ds()
+        dv = f"`{project}.{ds}.{_DAILY_VIEW}`"
+        try:
+            rows = _run(
+                f"SELECT COUNT(*) AS row_count, MIN(date) AS earliest_date, "
+                f"MAX(date) AS latest_date FROM {dv}",
+                max_rows=1,
+            )
+        except Exception:
+            return {}
+        if not rows or not rows[0].get("row_count"):
+            return {}
+        r = rows[0]
+        earliest = r.get("earliest_date")
+        latest = r.get("latest_date")
+        return {
+            "source": "gsc",
+            "row_count": int(r["row_count"]),
+            "earliest_date": earliest.isoformat() if isinstance(earliest, date) else earliest,
+            "latest_date": latest.isoformat() if isinstance(latest, date) else latest,
+            "spend": None,
+            "impressions": None,
+            "clicks": None,
+            "conversions": None,
+        }
