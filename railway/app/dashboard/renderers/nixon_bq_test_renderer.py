@@ -285,6 +285,7 @@ def render_nixon_bigquery_test_page(
     .card-delta.down {{ color:var(--bad); }}
     .card-delta.flat {{ color:var(--muted); font-weight:600; }}
     .cmp-warn {{ display:inline-block; margin-left:6px; font-size:.85rem; cursor:help; color:#b78103; }}
+    .cmp-warn[hidden] {{ display:none; }}
     /* ---- Tables ---- */
     .table-wrap {{ overflow:auto; border:1px solid var(--line-soft); border-radius:var(--radius-sm); }}
     table {{ border-collapse:collapse; width:100%; min-width:600px; font-size:.86rem; }}
