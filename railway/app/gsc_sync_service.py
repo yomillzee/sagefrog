@@ -475,7 +475,13 @@ def sync_range(
 # Refresh-pipeline entry point
 # ---------------------------------------------------------------------------
 
-def sync_for_refresh(site_url: str | None = None, client_slug: str | None = None, target=None) -> dict[str, Any]:
+def sync_for_refresh(
+    site_url: str | None = None,
+    client_slug: str | None = None,
+    target=None,
+    *,
+    wait_for_backfill: bool = False,
+) -> dict[str, Any]:
     """Called automatically from the dashboard refresh pipeline.
 
     site_url: override the GSC_SITE_URL env var (for per-client config).
@@ -484,9 +490,18 @@ def sync_for_refresh(site_url: str | None = None, client_slug: str | None = None
     target: an explicit GscClientTarget (the connector builds one from its config
         so routing never depends on re-resolution). Threaded all the way through
         the background backfill so it can't silently fall back to Penn.
+    wait_for_backfill: run a large/full backfill synchronously instead of handing
+        it to a daemon thread. Set this from callers that are themselves already
+        off the request/response cycle (e.g. the connector's run_sync(), invoked
+        via FastAPI BackgroundTasks) -- a raw daemon thread has no run tracking
+        and gets silently killed if the worker process recycles before a
+        multi-minute backfill finishes, which left raw_gsc permanently empty
+        for at least one client despite "completed" sync runs every day.
     - Tables up to date → no-op (fast)
     - Small gap (≤ 30 days) → sync synchronously; fresh data in this snapshot
-    - Large gap / empty tables → spawn background thread; data available next refresh
+    - Large gap / empty tables, wait_for_backfill=False → spawn background
+      thread; data available next refresh (dashboard cache-miss path only)
+    - Large gap / empty tables, wait_for_backfill=True → sync synchronously
     """
     target = target if target is not None else _resolve(client_slug=client_slug)
     site_url = (site_url or "").strip() or (target.site_url or "") or _site_url()
@@ -511,7 +526,7 @@ def sync_for_refresh(site_url: str | None = None, client_slug: str | None = None
 
     days_missing = (end - start).days + 1
 
-    if days_missing > _BACKGROUND_THRESHOLD:
+    if days_missing > _BACKGROUND_THRESHOLD and not wait_for_backfill:
         # Full backfill — don't block the refresh
         _url = site_url  # capture for closure
         _slug = client_slug

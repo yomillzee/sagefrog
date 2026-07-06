@@ -57,9 +57,24 @@ class GSCConnector(ConnectorHandler):
                 site_url=site_url or None,
                 client_slug=client_slug,
                 target=target,
+                # This call is already off the request/response cycle (invoked
+                # via FastAPI BackgroundTasks in connector_routes.py), so block
+                # for the full backfill instead of handing a large gap to an
+                # untracked daemon thread -- that thread has no run tracking
+                # and gets silently killed if the worker recycles before a
+                # multi-minute backfill finishes, which left raw_gsc
+                # permanently empty for at least one client (0 rows on every
+                # "completed" sync, forever, with no error surfaced anywhere).
+                wait_for_backfill=True,
             )
             ok = result.get("ok", True)
-            rows = result.get("rows_synced") or result.get("rows_written") or 0
+            # sync_range() (what actually runs here) reports query_rows/page_rows,
+            # not rows_synced/rows_written -- those were always 0, masking real
+            # sync results even when the sync succeeded.
+            rows = (
+                result.get("query_rows", 0) + result.get("page_rows", 0)
+                or result.get("rows_synced") or result.get("rows_written") or 0
+            )
             # Refresh the GSC mart views over raw_gsc so the reporting tab has a
             # clean surface. Idempotent CREATE OR REPLACE; non-fatal.
             try:
