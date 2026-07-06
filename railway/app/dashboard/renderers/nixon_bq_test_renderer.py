@@ -1886,8 +1886,14 @@ def render_nixon_bigquery_test_page(
         ce=new Date(s); ce.setDate(s.getDate()-1);
         cs=new Date(ce); cs.setDate(ce.getDate()-(n-1));
       }};
+      // GA4/GSC syncs typically lag a day or more, so "today" itself is
+      // usually incomplete or entirely unsynced -- these presets end at
+      // yesterday like the trailing (last_N) ones do, falling back to the
+      // period start when yesterday would fall outside it (e.g. Monday for
+      // "this_week", the 1st for "this_month").
+      const yesterday=new Date(today); yesterday.setDate(today.getDate()-1);
       if (name==='this_week') {{
-        s=mondayOf(today); e=today;
+        s=mondayOf(today); e=(yesterday>=s)?yesterday:s;
         cs=new Date(s); cs.setDate(s.getDate()-7);
         ce=new Date(e); ce.setDate(e.getDate()-7);
       }} else if (name==='last_week') {{
@@ -1896,8 +1902,9 @@ def render_nixon_bigquery_test_page(
         cs=new Date(s); cs.setDate(s.getDate()-7);
         ce=new Date(e); ce.setDate(e.getDate()-7);
       }} else if (name==='this_month') {{
-        s=new Date(today.getFullYear(),today.getMonth(),1); e=today;
-        const dom=today.getDate();
+        s=new Date(today.getFullYear(),today.getMonth(),1);
+        e=(yesterday>=s)?yesterday:s;
+        const dom=e.getDate();
         const daysInPrevMonth=new Date(today.getFullYear(),today.getMonth(),0).getDate();
         cs=new Date(today.getFullYear(),today.getMonth()-1,1);
         ce=new Date(today.getFullYear(),today.getMonth()-1,Math.min(dom,daysInPrevMonth));
