@@ -53,11 +53,23 @@ def render_nixon_bigquery_test_page(
     # a bare "no data" Overview. Show a clear call-to-action instead. Fail open
     # (assume connected) on any error so an established client never sees it.
     has_connectors = True
+    # Paid-ad platforms specifically -- distinct from has_connectors, which is
+    # true for GA4/GSC-only clients too. Gates the paid Summary/Trends cards
+    # below so a client with no google/linkedin/meta connector (e.g. GA4+GSC
+    # only) doesn't see a broken paid-media panel that has no BQ mart to read.
+    has_paid_ads = True
     try:
         import connector_config_store
-        has_connectors = bool(connector_config_store.list_configs(client_slug))
+        configs = connector_config_store.list_configs(client_slug)
+        has_connectors = bool(configs)
+        has_paid_ads = any(
+            c.connector_type in ("google_ads", "linkedin_ads", "meta_ads")
+            and c.status not in ("not_connected", "disconnected")
+            for c in configs
+        )
     except Exception:
         has_connectors = True
+        has_paid_ads = True
     # Search Console branded roots + target keywords (client-configurable), used
     # by the "Branded & Target Keywords" section. Stored one per line.
     gsc_branded_roots = ""
@@ -130,6 +142,47 @@ def render_nixon_bigquery_test_page(
 
     def _aurl(path: str) -> str:
         return _api_url(path, access_key=access_key)
+
+    # No paid-ad connector (google/linkedin/meta) -- the paid Summary/Trends
+    # cards have no BQ mart to read and would otherwise render a zeroed-out
+    # panel with a table-not-found error (see e.g. Andesa: GA4 + GSC only).
+    # Show a lightweight traffic/search snapshot in their place instead.
+    platform_filter_group_html = "" if not has_paid_ads else """
+        <div class="filter-group" id="platformFilterGroup">
+          <span class="filter-label">Platform</span>
+          <div class="chips" id="platformChips"></div>
+        </div>"""
+
+    if has_paid_ads:
+        overview_summary_html = """
+      <section id="sec-overview">
+        <div class="sec-head"><h2>Summary</h2><span class="status" id="summaryStatus"></span></div>
+        <div class="cards" id="summaryCards"></div>
+      </section>
+
+      <section>
+        <div class="sec-head"><h2>Trends</h2><span class="status" id="chartStatus"></span></div>
+        <div class="filter-group" style="margin-bottom:12px">
+          <span class="filter-label">Metrics</span>
+          <div class="chips" id="metricChips"></div>
+        </div>
+        <div class="chart-wrap" id="trendChartWrap">
+          <svg id="trendChart" class="trend-svg" preserveAspectRatio="none"></svg>
+          <div id="chartTip" class="chart-tip" hidden></div>
+        </div>
+        <p class="chart-note">Each line is normalized to its own min–max. Hover for actual values.</p>
+      </section>"""
+    else:
+        overview_summary_html = """
+      <section id="sec-overview">
+        <div class="sec-head"><h2>Website traffic</h2><span class="status" id="ga4SnapshotStatus"></span></div>
+        <div class="cards" id="ga4SnapshotCards"></div>
+      </section>
+
+      <section>
+        <div class="sec-head"><h2>Search performance</h2><span class="status" id="gscSnapshotStatus"></span></div>
+        <div class="cards" id="gscSnapshotCards"></div>
+      </section>"""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -377,10 +430,7 @@ def render_nixon_bigquery_test_page(
             <button type="button" class="chip" data-preset="last_90">Last 90d</button>
           </div>
         </div>
-        <div class="filter-group" id="platformFilterGroup">
-          <span class="filter-label">Platform</span>
-          <div class="chips" id="platformChips"></div>
-        </div>
+        {platform_filter_group_html}
       </div>
       </div>
     </div>
@@ -390,23 +440,7 @@ def render_nixon_bigquery_test_page(
     <!-- ===== OVERVIEW TAB ===== -->
     <div id="pane-overview">
       {onboarding_html}
-      <section id="sec-overview">
-        <div class="sec-head"><h2>Summary</h2><span class="status" id="summaryStatus"></span></div>
-        <div class="cards" id="summaryCards"></div>
-      </section>
-
-      <section>
-        <div class="sec-head"><h2>Trends</h2><span class="status" id="chartStatus"></span></div>
-        <div class="filter-group" style="margin-bottom:12px">
-          <span class="filter-label">Metrics</span>
-          <div class="chips" id="metricChips"></div>
-        </div>
-        <div class="chart-wrap" id="trendChartWrap">
-          <svg id="trendChart" class="trend-svg" preserveAspectRatio="none"></svg>
-          <div id="chartTip" class="chart-tip" hidden></div>
-        </div>
-        <p class="chart-note">Each line is normalized to its own min–max. Hover for actual values.</p>
-      </section>
+      {overview_summary_html}
 
       <section>
         <div class="sec-head"><h2>Data health</h2><span class="status" id="healthStatus"></span></div>
@@ -575,6 +609,8 @@ def render_nixon_bigquery_test_page(
     function skelTable(cols,rows){{const ths=Array.from({{length:cols}},()=>`<th></th>`).join('');const ws=['55%','80%','40%','92%','65%'];const trs=Array.from({{length:rows}},(_,i)=>`<tr>${{Array.from({{length:cols}},(_,j)=>`<td><div class="skel" style="height:12px;width:${{ws[(i*cols+j)%ws.length]}}"></div></td>`).join('')}}</tr>`).join('');return`<thead><tr>${{ths}}</tr></thead><tbody>${{trs}}</tbody>`;}}
     function skelChart(svgId,cssClass){{const svg=document.getElementById(svgId);if(!svg)return;const d=document.createElement('div');d.id='sk_'+svgId;d.className='skel skel-chart '+cssClass;svg.parentElement.insertBefore(d,svg);svg.style.visibility='hidden';}}
     function clearSkelChart(svgId){{const s=document.getElementById('sk_'+svgId);if(s)s.remove();const svg=document.getElementById(svgId);if(svg)svg.style.visibility='';}}
+
+    const HAS_PAID_ADS = {'true' if has_paid_ads else 'false'};
 
     // ---- API constants ----
     const SUMMARY_API          = "{_aurl(f'/api/clients/{api_client_key}/summary')}";
@@ -851,6 +887,52 @@ def render_nixon_bigquery_test_page(
       }} catch(err) {{
         summaryPayload=null;
         setStatus('summaryStatus', err.message||String(err), true);
+      }}
+    }}
+
+    // ---- No-paid-ads Overview snapshot (GA4 traffic + GSC search) ----
+    function renderSnapshotCards(containerId, cards) {{
+      document.getElementById(containerId).innerHTML = cards.map(([label,val]) =>
+        `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{val}}</div></div>`).join('');
+    }}
+    async function loadOverviewSnapshot() {{
+      setStatus('ga4SnapshotStatus','Loading…');
+      document.getElementById('ga4SnapshotCards').innerHTML = skelCards(4);
+      try {{
+        const [traffic, pages] = await Promise.all([
+          getJson(withDates(TRAFFIC_ACQ_API)),
+          getJson(withDates(PAGES_TOP_API)).catch(()=>({{rows:[]}})),
+        ]);
+        const sessions = (traffic.by_channel||[]).reduce((s,r)=>s+num(r.sessions),0);
+        const engaged = (traffic.by_channel||[]).reduce((s,r)=>s+num(r.engaged_sessions),0);
+        const rows = pages.rows||[];
+        const pageViews = rows.reduce((s,r)=>s+num(r.page_views),0);
+        const keyEvents = rows.reduce((s,r)=>s+num(r.key_events),0);
+        renderSnapshotCards('ga4SnapshotCards', [
+          ['Sessions', count(sessions)],
+          ['Engaged sessions', count(engaged)],
+          ['Page views', count(pageViews)],
+          ['Key events', count(keyEvents)],
+        ]);
+        setStatus('ga4SnapshotStatus', sessions || pageViews ? '' : 'No data for this range yet.');
+      }} catch(err) {{
+        setStatus('ga4SnapshotStatus', err.message||String(err), true);
+      }}
+      setStatus('gscSnapshotStatus','Loading…');
+      document.getElementById('gscSnapshotCards').innerHTML = skelCards(4);
+      try {{
+        const p = await getJson(withDates(GSC_API));
+        const k = (p&&p.kpis)||{{}};
+        renderSnapshotCards('gscSnapshotCards', [
+          ['Clicks', count(k.clicks)],
+          ['Impressions', count(k.impressions)],
+          ['CTR', k.ctr==null?'—':num(k.ctr).toFixed(2)+'%'],
+          ['Avg position', k.avg_position==null?'—':num(k.avg_position).toFixed(1)],
+        ]);
+        const empty = !p || (!p.kpis && !(p.top_queries||[]).length && !(p.top_pages||[]).length);
+        setStatus('gscSnapshotStatus', empty ? 'No data for this range yet.' : '');
+      }} catch(err) {{
+        setStatus('gscSnapshotStatus', err.message||String(err), true);
       }}
     }}
     // ---- Search Console ----
@@ -1656,7 +1738,7 @@ def render_nixon_bigquery_test_page(
       if (modules.demographics)     loadDemographics();
     }}
     function loadCurrentTab() {{
-      if (currentTab==='overview')   {{ loadSummary(); loadHealth(); }}
+      if (currentTab==='overview')   {{ (HAS_PAID_ADS ? loadSummary() : loadOverviewSnapshot()); loadHealth(); }}
       else if (currentTab==='explorer') {{ explorerLoaded=false; loadExplorer(); explorerLoaded=true; }}
       else if (currentTab==='analytics') {{ analyticsLoaded=false; applyModules(); loadAllAnalytics(); analyticsLoaded=true; }}
     }}
@@ -1682,15 +1764,19 @@ def render_nixon_bigquery_test_page(
     }});
 
     // ---- Platform chips ----
-    buildChips('platformChips',['Google','LinkedIn','Meta'],platformFilter,()=>{{renderSummary();renderChart();renderExplorer();}});
+    if (HAS_PAID_ADS) {{
+      buildChips('platformChips',['Google','LinkedIn','Meta'],platformFilter,()=>{{renderSummary();renderChart();renderExplorer();}});
+    }}
 
     // ---- Explorer chips ----
     buildChips('productChips',['Apparel','Scrubs','Linens'],productFilter);
     buildChips('regionChips',['TX','FL','MA'],regionFilter);
 
     // ---- Init ----
-    buildMetricChips();
-    setupChartHover();
+    if (HAS_PAID_ADS) {{
+      buildMetricChips();
+      setupChartHover();
+    }}
     document.getElementById('explorerTable').addEventListener('click',ev=>{{
       const moreBtn=ev.target.closest('.ad-copy-more');
       if (moreBtn) {{
@@ -1702,7 +1788,7 @@ def render_nixon_bigquery_test_page(
       const row=ev.target.closest('tr[data-expandable]');
       if (row) toggleExplorerRow(row);
     }});
-    loadSummary();
+    if (HAS_PAID_ADS) {{ loadSummary(); }} else {{ loadOverviewSnapshot(); }}
     loadHealth();
 
     // Deep-link: land on the tab named in ?view= (set by the sidebar links on
