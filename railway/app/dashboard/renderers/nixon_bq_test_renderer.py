@@ -429,13 +429,13 @@ def render_nixon_bigquery_test_page(
         <div class="filter-group">
           <span class="filter-label">Range</span>
           <div class="chips" id="datePresets">
-            <button type="button" class="chip active" data-preset="this_week">This week</button>
+            <button type="button" class="chip active" data-preset="last_7">Last 7d</button>
+            <button type="button" class="chip" data-preset="last_30">Last 30d</button>
+            <button type="button" class="chip" data-preset="last_90">Last 90d</button>
+            <button type="button" class="chip" data-preset="this_week">This week</button>
             <button type="button" class="chip" data-preset="last_week">Last week</button>
             <button type="button" class="chip" data-preset="this_month">This month</button>
             <button type="button" class="chip" data-preset="last_month">Last month</button>
-            <button type="button" class="chip" data-preset="last_7">Last 7d</button>
-            <button type="button" class="chip" data-preset="last_30">Last 30d</button>
-            <button type="button" class="chip" data-preset="last_90">Last 90d</button>
           </div>
         </div>
         {platform_filter_group_html}
@@ -1949,7 +1949,7 @@ def render_nixon_bigquery_test_page(
       const row=ev.target.closest('tr[data-expandable]');
       if (row) toggleExplorerRow(row);
     }});
-    applyPreset('this_week');
+    applyPreset('last_7');
 
     // Deep-link: land on the tab named in ?view= (set by the sidebar links on
     // Settings/Files/Connectors) so those links don't always open Overview.
