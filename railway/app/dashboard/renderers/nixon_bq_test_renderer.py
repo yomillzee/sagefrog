@@ -707,8 +707,14 @@ def render_nixon_bigquery_test_page(
         el.title = '';
       }}
     }}
-    async function getJson(url) {{
+    async function getJson(url, _retried) {{
       const resp = await fetch(url, {{ credentials:'same-origin' }});
+      if (!resp.ok && resp.status >= 500 && !_retried) {{
+        // 5xx here has mostly been transient BQ concurrency pressure, not a
+        // real failure -- one retry after a short delay clears most of them.
+        await new Promise(r => setTimeout(r, 400 + Math.random()*400));
+        return getJson(url, true);
+      }}
       const body = await resp.json().catch(() => ({{ detail:resp.statusText }}));
       if (!resp.ok) {{
         // FastAPI error bodies here are {{detail: {{error, type}}}} -- surface the
@@ -1840,14 +1846,20 @@ def render_nixon_bigquery_test_page(
 
     // ---- Loaders ----
     function loadAllAnalytics() {{
+      // Staggered, not simultaneous: 7 modules x 1-3 sub-fetches each means
+      // ~12-14 concurrent BigQuery queries if fired all at once, which was
+      // intermittently tripping transient 500s under load. Spreading module
+      // starts out keeps peak concurrency down without a noticeable delay.
       const modules=getModules();
-      if (modules.top_pages)        loadPages();
-      if (modules.traffic)          loadTrafficAcq();
-      if (modules.audience)         loadDeviceSplit();
-      if (modules.landing)          loadLandingPages();
-      if (modules.conversions)      loadConversions();
-      if (modules.user_acquisition) loadUserAcquisition();
-      if (modules.demographics)     loadDemographics();
+      const loaders=[];
+      if (modules.top_pages)        loaders.push(loadPages);
+      if (modules.traffic)          loaders.push(loadTrafficAcq);
+      if (modules.audience)         loaders.push(loadDeviceSplit);
+      if (modules.landing)          loaders.push(loadLandingPages);
+      if (modules.conversions)      loaders.push(loadConversions);
+      if (modules.user_acquisition) loaders.push(loadUserAcquisition);
+      if (modules.demographics)     loaders.push(loadDemographics);
+      loaders.forEach((fn,i)=>setTimeout(fn, i*250));
     }}
     function loadCurrentTab() {{
       if (currentTab==='overview')   {{ loadHealth().then(()=>{{ HAS_PAID_ADS ? loadSummary() : loadOverviewSnapshot(); }}); }}
