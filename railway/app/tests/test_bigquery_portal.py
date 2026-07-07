@@ -7,7 +7,7 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parents[1]
 
 
-class NixonBigQueryPortalTests(unittest.TestCase):
+class BigQueryPortalTests(unittest.TestCase):
     def test_nixon_bq_test_route_is_registered_before_snapshot_dashboard_route(self) -> None:
         init_source = (APP_DIR / "dashboard" / "routes" / "__init__.py").read_text(encoding="utf-8")
         self.assertLess(
@@ -19,7 +19,7 @@ class NixonBigQueryPortalTests(unittest.TestCase):
         self.assertIn('"/dashboard/nixon-bq-test"', api_source)
         self.assertNotIn('"/dashboard/nixon"', api_source)
         self.assertIn('"/api/clients/{client_key}/summary"', api_source)
-        self.assertIn("render_nixon_bigquery_test_page", api_source)
+        self.assertIn("render_bigquery_dashboard_page", api_source)
         self.assertNotIn("dashboard_snapshots", api_source)
 
 

@@ -426,7 +426,7 @@ def sidebar_view_nav_html(
     )
 
 
-def nixon_sidebar_view_nav_html(
+def dashboard_sidebar_view_nav_html(
     *,
     client_slug: str,
     access_key: str | None,
@@ -734,7 +734,7 @@ def render_client_shell_page(
 
     if _is_nixon_mode:
         show_connectors = True
-        view_nav_html = nixon_sidebar_view_nav_html(
+        view_nav_html = dashboard_sidebar_view_nav_html(
             client_slug=client_slug,
             access_key=access_key,
             use_session=use_session,

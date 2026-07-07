@@ -43,7 +43,7 @@ def classify_page_segment(
     custom_rules = _load_custom_business_line_rules(client_slug)
 
     if profile == "nixon":
-        from nixon_regions import classify_regions
+        from dashboard_regions import classify_regions
 
         region_ids, label = classify_regions(primary, extra_names=extras)
         primary_id = region_ids[0] if region_ids else "other"

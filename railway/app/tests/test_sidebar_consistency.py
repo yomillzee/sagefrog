@@ -30,7 +30,7 @@ def _footer_items(html: str) -> list[str]:
     return re.findall(r'<span>([^<]+)</span>', m.group(1))
 
 
-class NixonSidebarConsistencyTests(unittest.TestCase):
+class SidebarConsistencyTests(unittest.TestCase):
     def setUp(self) -> None:
         import connector_config_store as ccs
         self._orig_list = ccs.list_configs
@@ -56,14 +56,14 @@ class NixonSidebarConsistencyTests(unittest.TestCase):
         docs.enabled = self._orig_docs
 
     def _render_all(self) -> dict[str, str]:
-        from dashboard.renderers.nixon_bq_test_renderer import render_nixon_bigquery_test_page
-        from dashboard.renderers.nixon_bq_settings_renderer import render_nixon_bq_settings_page
+        from dashboard.renderers.bigquery_dashboard_renderer import render_bigquery_dashboard_page
+        from dashboard.renderers.bigquery_settings_renderer import render_bigquery_settings_page
         from dashboard.renderers.base_layout import render_client_shell_page
         kw = dict(access_key="k", session_is_admin=True)
         return {
-            "dashboard": render_nixon_bigquery_test_page(
+            "dashboard": render_bigquery_dashboard_page(
                 client_slug="test", api_client_key="test", label="Test Co", **kw),
-            "settings": render_nixon_bq_settings_page(
+            "settings": render_bigquery_settings_page(
                 client_slug="test", api_client_key="test", label="Test Co",
                 routing={"project": "p"}, show_linkedin_backfill=False, **kw),
             "connectors": render_client_shell_page(

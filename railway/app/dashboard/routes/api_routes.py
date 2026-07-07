@@ -12,13 +12,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 import bigquery_service
-import nixon_marketing_service
+import marketing_service
 import web_auth
 import web_users
-from dashboard.renderers.nixon_bq_settings_renderer import render_nixon_bq_settings_page
-from dashboard.renderers.nixon_analytics_renderer import render_nixon_analytics_page
+from dashboard.renderers.bigquery_settings_renderer import render_bigquery_settings_page
+from dashboard.renderers.analytics_renderer import render_analytics_page
 from dashboard.renderers.gtm_renderer import render_gtm_page
-from dashboard.renderers.nixon_bq_test_renderer import render_nixon_bigquery_test_page
+from dashboard.renderers.bigquery_dashboard_renderer import render_bigquery_dashboard_page
 from dashboard.routes.helpers import penn_html_session_kwargs
 from security import configured_api_key, is_production
 
@@ -33,7 +33,7 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 _KEYWORD_TREND_DAYS = 90
 
 
-def _resolve_nixon_marketing_dates(
+def _resolve_marketing_dates(
     start_date: date | None,
     end_date: date | None,
 ) -> tuple[date, date]:
@@ -128,7 +128,7 @@ def _load_bq_test_config(slug: str) -> tuple[str, str]:
     return project_id, dataset_id
 
 
-def _nixon_endpoint_failure(exc: Exception) -> HTTPException:
+def _bq_endpoint_failure(exc: Exception) -> HTTPException:
     logger.exception("Nixon endpoint failed")
     logger.error("Nixon endpoint traceback:\n%s", traceback.format_exc())
     return HTTPException(
@@ -179,12 +179,12 @@ def nixon_bigquery_test_dashboard(request: Request, key: str | None = None):
         auth = web_auth.authenticate_dashboard(request, client_slug="nixon", key=key)
         if isinstance(auth, RedirectResponse):
             return auth
-        return HTMLResponse(render_nixon_bigquery_test_page(**penn_html_session_kwargs(auth)))
+        return HTMLResponse(render_bigquery_dashboard_page(**penn_html_session_kwargs(auth)))
 
     if not web_auth.legacy_dashboard_key_ok(key):
         raise HTTPException(status_code=401, detail="Invalid or missing dashboard key.")
     return HTMLResponse(
-        render_nixon_bigquery_test_page(
+        render_bigquery_dashboard_page(
             access_key=key,
             use_session=False,
             session_email=None,
@@ -203,12 +203,12 @@ def nixon_analytics_dashboard(request: Request, key: str | None = None):
         auth = web_auth.authenticate_dashboard(request, client_slug="nixon", key=key)
         if isinstance(auth, RedirectResponse):
             return auth
-        return HTMLResponse(render_nixon_analytics_page(**penn_html_session_kwargs(auth)))
+        return HTMLResponse(render_analytics_page(**penn_html_session_kwargs(auth)))
 
     if not web_auth.legacy_dashboard_key_ok(key):
         raise HTTPException(status_code=401, detail="Invalid or missing dashboard key.")
     return HTMLResponse(
-        render_nixon_analytics_page(
+        render_analytics_page(
             access_key=key,
             use_session=False,
             session_email=None,
@@ -299,7 +299,7 @@ def nixon_bq_settings_page(
         flash_error = str(bq_error)[:300]
 
     return HTMLResponse(
-        render_nixon_bq_settings_page(
+        render_bigquery_settings_page(
             routing=routing,
             account_ids=account_ids,
             flash=flash,
@@ -339,20 +339,20 @@ def nixon_marketing(
         bearer_credentials=bearer_credentials,
         x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.marketing",
             {"start": start.isoformat(), "end": end.isoformat(), "top_limit": top_limit},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_marketing(
+            fetch=lambda: marketing_service.fetch_marketing(
                 start_date=start,
                 end_date=end,
                 top_limit=top_limit,
             ),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -382,16 +382,16 @@ def client_summary(
             bearer_credentials=bearer_credentials,
             x_api_key=x_api_key,
         )
-        start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+        start, end = _resolve_marketing_dates(start_date, end_date)
         try:
             return _cached_bq_read(
                 "nixon.summary",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_summary(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_summary(start_date=start, end_date=end),
             )
         except Exception as exc:
-            raise _nixon_endpoint_failure(exc) from exc
+            raise _bq_endpoint_failure(exc) from exc
     project_id, dataset_id = _load_bq_test_config(normalized)
     _authorize_bq_client_api(
         request,
@@ -400,19 +400,19 @@ def client_summary(
         bearer_credentials=bearer_credentials,
         x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.summary",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_summary(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_summary(start_date=start, end_date=end),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -440,10 +440,10 @@ def nixon_marketing_health(
     try:
         return _cached_bq_read(
             "nixon.marketing.health", {"limit": limit}, ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_marketing_health(limit=limit),
+            fetch=lambda: marketing_service.fetch_marketing_health(limit=limit),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -474,10 +474,10 @@ def client_health(
         try:
             return _cached_bq_read(
                 "nixon.marketing.health", {"limit": limit}, ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_marketing_health(limit=limit),
+                fetch=lambda: marketing_service.fetch_marketing_health(limit=limit),
             )
         except Exception as exc:
-            raise _nixon_endpoint_failure(exc) from exc
+            raise _bq_endpoint_failure(exc) from exc
     project_id, dataset_id = _load_bq_test_config(normalized)
     _authorize_bq_client_api(
         request,
@@ -487,15 +487,15 @@ def client_health(
         x_api_key=x_api_key,
     )
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.health", {"limit": limit}, ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_marketing_health(limit=limit),
+                fetch=lambda: marketing_service.fetch_marketing_health(limit=limit),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -513,18 +513,18 @@ def nixon_google_ads_keywords(
     _authorize_nixon_api(
         request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.explorer.google_ads_keywords",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_google_ads_keywords(
+            fetch=lambda: marketing_service.fetch_google_ads_keywords(
                 start_date=start, end_date=end,
             ),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -551,19 +551,19 @@ def nixon_google_ads_explorer(
         bearer_credentials=bearer_credentials,
         x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.explorer.google_ads",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_google_ads_explorer(
+            fetch=lambda: marketing_service.fetch_google_ads_explorer(
                 start_date=start,
                 end_date=end,
             ),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -590,7 +590,7 @@ def nixon_gsc_summary(
         bearer_credentials=bearer_credentials,
         x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         import bq_gsc_service
         # GSC routes by client_slug; the Nixon dashboard's BQ client is
@@ -604,7 +604,7 @@ def nixon_gsc_summary(
             ),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -624,7 +624,7 @@ def nixon_gsc_keyword_matches(
         request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
     term_list = [t.strip() for t in terms.split(",") if t.strip()]
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     if not term_list:
         return {"rows": [], "weekly": []}
     # The weekly trend is a "movement over time" chart, so it always spans a
@@ -652,7 +652,7 @@ def nixon_gsc_keyword_matches(
         )
         return {"rows": rows, "weekly": weekly}
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -685,7 +685,7 @@ def nixon_semrush_summary(
             ),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -712,19 +712,19 @@ def nixon_linkedin_explorer(
         bearer_credentials=bearer_credentials,
         x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.explorer.linkedin",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_linkedin_explorer(
+            fetch=lambda: marketing_service.fetch_linkedin_explorer(
                 start_date=start,
                 end_date=end,
             ),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -830,19 +830,19 @@ def nixon_meta_explorer(
         bearer_credentials=bearer_credentials,
         x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.explorer.meta",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_meta_explorer(
+            fetch=lambda: marketing_service.fetch_meta_explorer(
                 start_date=start,
                 end_date=end,
             ),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -860,16 +860,16 @@ def nixon_pages_top(
     _authorize_nixon_api(
         request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.pages.top",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_pages_top(start_date=start, end_date=end),
+            fetch=lambda: marketing_service.fetch_pages_top(start_date=start, end_date=end),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -887,16 +887,16 @@ def nixon_pages_sources(
     _authorize_nixon_api(
         request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.pages.sources",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_pages_sources(start_date=start, end_date=end),
+            fetch=lambda: marketing_service.fetch_pages_sources(start_date=start, end_date=end),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -914,16 +914,16 @@ def nixon_traffic_acquisition(
     _authorize_nixon_api(
         request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.pages.traffic_acquisition",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_traffic_acquisition(start_date=start, end_date=end),
+            fetch=lambda: marketing_service.fetch_traffic_acquisition(start_date=start, end_date=end),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -941,16 +941,16 @@ def nixon_device_split(
     _authorize_nixon_api(
         request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.pages.device_split",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_device_split(start_date=start, end_date=end),
+            fetch=lambda: marketing_service.fetch_device_split(start_date=start, end_date=end),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -968,16 +968,16 @@ def nixon_landing_pages(
     _authorize_nixon_api(
         request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.pages.landing",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_landing_pages(start_date=start, end_date=end),
+            fetch=lambda: marketing_service.fetch_landing_pages(start_date=start, end_date=end),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -993,16 +993,16 @@ def nixon_landing_page_events(
     x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     _authorize_nixon_api(request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.pages.landing_events",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_landing_page_events(start_date=start, end_date=end),
+            fetch=lambda: marketing_service.fetch_landing_page_events(start_date=start, end_date=end),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get("/api/clients/nixon/pages/top-key-events", summary="Nixon GA4 page path × event breakdown (all traffic)")
@@ -1015,15 +1015,15 @@ def nixon_top_pages_key_events(
     x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     _authorize_nixon_api(request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.pages.top_key_events", {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_page_key_events(start_date=start, end_date=end),
+            fetch=lambda: marketing_service.fetch_page_key_events(start_date=start, end_date=end),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get("/api/clients/nixon/pages/traffic-key-events", summary="Nixon GA4 traffic source × event breakdown")
@@ -1036,15 +1036,15 @@ def nixon_traffic_key_events(
     x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     _authorize_nixon_api(request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.pages.traffic_key_events", {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_traffic_key_events(start_date=start, end_date=end),
+            fetch=lambda: marketing_service.fetch_traffic_key_events(start_date=start, end_date=end),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get("/api/clients/nixon/analytics/user-acq-key-events", summary="Nixon GA4 first-user source × event breakdown")
@@ -1057,15 +1057,15 @@ def nixon_user_acq_key_events(
     x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     _authorize_nixon_api(request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.analytics.user_acq_key_events", {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_user_acq_key_events(start_date=start, end_date=end),
+            fetch=lambda: marketing_service.fetch_user_acq_key_events(start_date=start, end_date=end),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get("/api/clients/nixon/analytics/conversions", summary="Nixon GA4 conversion events breakdown")
@@ -1078,16 +1078,16 @@ def nixon_conversion_events(
     x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     _authorize_nixon_api(request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.analytics.conversions",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_conversion_events(start_date=start, end_date=end),
+            fetch=lambda: marketing_service.fetch_conversion_events(start_date=start, end_date=end),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get("/api/clients/nixon/analytics/user-acquisition", summary="Nixon GA4 first-touch user acquisition")
@@ -1100,16 +1100,16 @@ def nixon_user_acquisition(
     x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     _authorize_nixon_api(request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.analytics.user_acquisition",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_user_acquisition(start_date=start, end_date=end),
+            fetch=lambda: marketing_service.fetch_user_acquisition(start_date=start, end_date=end),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get("/api/clients/nixon/analytics/demographics", summary="Nixon GA4 demographic & geographic breakdown")
@@ -1122,16 +1122,16 @@ def nixon_demographics(
     x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     _authorize_nixon_api(request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
             "nixon.analytics.demographics",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: nixon_marketing_service.fetch_nixon_demographics(start_date=start, end_date=end),
+            fetch=lambda: marketing_service.fetch_demographics(start_date=start, end_date=end),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1153,15 +1153,15 @@ def client_marketing_health(
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.marketing.health", {"limit": limit}, ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_marketing_health(limit=limit),
+                fetch=lambda: marketing_service.fetch_marketing_health(limit=limit),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1183,21 +1183,21 @@ def client_google_ads_explorer(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.explorer.google_ads",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_google_ads_explorer(
+                fetch=lambda: marketing_service.fetch_google_ads_explorer(
                     start_date=start, end_date=end,
                 ),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1219,21 +1219,21 @@ def client_google_ads_keywords(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.explorer.google_ads_keywords",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_google_ads_keywords(
+                fetch=lambda: marketing_service.fetch_google_ads_keywords(
                     start_date=start, end_date=end,
                 ),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1255,21 +1255,21 @@ def client_linkedin_explorer(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.explorer.linkedin",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_linkedin_explorer(
+                fetch=lambda: marketing_service.fetch_linkedin_explorer(
                     start_date=start, end_date=end,
                 ),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1291,19 +1291,19 @@ def client_pages_top(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.pages.top",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_pages_top(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_pages_top(start_date=start, end_date=end),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1325,19 +1325,19 @@ def client_pages_sources(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.pages.sources",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_pages_sources(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_pages_sources(start_date=start, end_date=end),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1359,21 +1359,21 @@ def client_meta_explorer(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.explorer.meta",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_meta_explorer(
+                fetch=lambda: marketing_service.fetch_meta_explorer(
                     start_date=start, end_date=end,
                 ),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1395,21 +1395,21 @@ def client_traffic_acquisition(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.pages.traffic_acquisition",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_traffic_acquisition(
+                fetch=lambda: marketing_service.fetch_traffic_acquisition(
                     start_date=start, end_date=end,
                 ),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1431,19 +1431,19 @@ def client_device_split(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.pages.device_split",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_device_split(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_device_split(start_date=start, end_date=end),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1465,19 +1465,19 @@ def client_landing_pages(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.pages.landing",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_landing_pages(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_landing_pages(start_date=start, end_date=end),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1499,19 +1499,19 @@ def client_landing_page_events(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.pages.landing_events",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_landing_page_events(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_landing_page_events(start_date=start, end_date=end),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1533,19 +1533,19 @@ def client_top_pages_key_events(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.pages.top_key_events",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_page_key_events(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_page_key_events(start_date=start, end_date=end),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1567,16 +1567,16 @@ def client_traffic_key_events(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id):
+        with marketing_service.route(client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id):
             return _cached_bq_read(
                 f"{normalized}.pages.traffic_key_events",
                 {"start": start.isoformat(), "end": end.isoformat()}, ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_traffic_key_events(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_traffic_key_events(start_date=start, end_date=end),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1598,16 +1598,16 @@ def client_user_acq_key_events(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id):
+        with marketing_service.route(client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id):
             return _cached_bq_read(
                 f"{normalized}.analytics.user_acq_key_events",
                 {"start": start.isoformat(), "end": end.isoformat()}, ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_user_acq_key_events(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_user_acq_key_events(start_date=start, end_date=end),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.post(
@@ -1636,7 +1636,7 @@ async def save_ga4_key_events(
             normalized, event_names=str(body.get("event_names") or ""), updated_by="dashboard",
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
     return {"ok": True}
 
 
@@ -1669,7 +1669,7 @@ async def save_explorer_filters(
             normalized, filters_text=str(body.get("filters") or ""), updated_by="dashboard",
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
     return {"ok": True}
 
 
@@ -1692,19 +1692,19 @@ def client_conversion_events(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.analytics.conversions",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_conversion_events(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_conversion_events(start_date=start, end_date=end),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1726,19 +1726,19 @@ def client_user_acquisition(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.analytics.user_acquisition",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_user_acquisition(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_user_acquisition(start_date=start, end_date=end),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1760,19 +1760,19 @@ def client_demographics(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with nixon_marketing_service.route(
+        with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
             return _cached_bq_read(
                 f"{normalized}.analytics.demographics",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: nixon_marketing_service.fetch_nixon_demographics(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_demographics(start_date=start, end_date=end),
             )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1793,7 +1793,7 @@ def client_gsc_summary(
         request, client_slug=normalized, key=key,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         import bq_gsc_service
         return _cached_bq_read(
@@ -1805,7 +1805,7 @@ def client_gsc_summary(
             ),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.get(
@@ -1833,7 +1833,7 @@ def client_gsc_keyword_matches(
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
     term_list = [t.strip() for t in terms.split(",") if t.strip()]
-    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    start, end = _resolve_marketing_dates(start_date, end_date)
     if not term_list:
         return {"rows": [], "weekly": []}
     # Trend spans a trailing ~13-week window (see nixon_gsc_keyword_matches);
@@ -1857,7 +1857,7 @@ def client_gsc_keyword_matches(
         )
         return {"rows": rows, "weekly": weekly}
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.post(
@@ -1892,7 +1892,7 @@ async def save_gsc_keyword_config(
             updated_by="dashboard",
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
     return {"ok": True}
 
 
@@ -1922,7 +1922,7 @@ def client_semrush_summary(
             ),
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 @router.post(
@@ -1948,7 +1948,7 @@ def nixon_backfill_linkedin(
             "nixon", date_range="LAST_180_DAYS", sync_trigger="onboarding"
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
     run = (result or {}).get("refresh_run") or {}
     linkedin = ((run.get("sources") or {}).get("linkedin")) or {}
@@ -1986,7 +1986,7 @@ def nixon_refresh(
             "nixon", date_range="LAST_30_DAYS", sync_trigger="manual_full"
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
     run = (result or {}).get("refresh_run") or {}
     linkedin = ((run.get("sources") or {}).get("linkedin")) or {}
@@ -2030,7 +2030,7 @@ def client_refresh(
             normalized, date_range="LAST_30_DAYS", sync_trigger="manual_full"
         )
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
     run = (result or {}).get("refresh_run") or {}
     return {"ok": True, "date_range": run.get("date_range")}
@@ -2100,7 +2100,7 @@ def debug_bigquery_identity(
             "service_account": getattr(credentials, "service_account_email", None),
         }
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 # ── GTM live-tags audit ───────────────────────────────────────────────────────
@@ -2263,7 +2263,7 @@ def ga4_raw_health(
             "tables": health,
         }
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 # ── GA4 mart view health (task 8) ─────────────────────────────────────────────
@@ -2302,7 +2302,7 @@ def ga4_mart_health(
         )
         return health
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc
 
 
 # ── GA4 mart view provisioning (tasks 2–4, 6) ────────────────────────────────
@@ -2354,4 +2354,4 @@ def ga4_provision_views(
         )
         return result
     except Exception as exc:
-        raise _nixon_endpoint_failure(exc) from exc
+        raise _bq_endpoint_failure(exc) from exc

@@ -47,7 +47,7 @@ if "google.cloud.bigquery" not in sys.modules:
     sys.modules["google.oauth2"] = oauth2_mod
     sys.modules["google.oauth2.service_account"] = service_account_mod
 
-import nixon_marketing_service  # noqa: E402
+import marketing_service  # noqa: E402
 
 
 class _FakeQueryJob:
@@ -128,16 +128,16 @@ class _FakeClient:
         }])
 
 
-class NixonMarketingServiceTests(unittest.TestCase):
+class MarketingServiceTests(unittest.TestCase):
     def test_marketing_endpoint_queries_only_parameterized_marketing_mart(self) -> None:
         fake_client = _FakeClient()
 
         with patch.object(
-            nixon_marketing_service.bigquery_service,
+            marketing_service.bigquery_service,
             "build_client",
             return_value=fake_client,
         ):
-            payload = nixon_marketing_service.fetch_nixon_marketing(
+            payload = marketing_service.fetch_marketing(
                 start_date=date(2026, 6, 1),
                 end_date=date(2026, 6, 30),
                 top_limit=5,
@@ -171,11 +171,11 @@ class NixonMarketingServiceTests(unittest.TestCase):
         fake_client = _FakeClient()
 
         with patch.object(
-            nixon_marketing_service.bigquery_service,
+            marketing_service.bigquery_service,
             "build_client",
             return_value=fake_client,
         ):
-            payload = nixon_marketing_service.fetch_nixon_marketing_health(limit=25)
+            payload = marketing_service.fetch_marketing_health(limit=25)
 
         self.assertEqual(payload["client"], "nixon")
         self.assertEqual(payload["row_count"], 1)
@@ -196,11 +196,11 @@ class NixonMarketingServiceTests(unittest.TestCase):
         fake_client = _FakeClient()
 
         with patch.object(
-            nixon_marketing_service.bigquery_service,
+            marketing_service.bigquery_service,
             "build_client",
             return_value=fake_client,
         ):
-            payload = nixon_marketing_service.fetch_nixon_google_ads_explorer(
+            payload = marketing_service.fetch_google_ads_explorer(
                 start_date=date(2026, 6, 1),
                 end_date=date(2026, 6, 30),
             )
@@ -226,11 +226,11 @@ class NixonMarketingServiceTests(unittest.TestCase):
         fake_client = _FakeClient()
 
         with patch.object(
-            nixon_marketing_service.bigquery_service,
+            marketing_service.bigquery_service,
             "build_client",
             return_value=fake_client,
         ):
-            payload = nixon_marketing_service.fetch_nixon_summary(
+            payload = marketing_service.fetch_summary(
                 start_date=date(2026, 5, 25),
                 end_date=date(2026, 6, 23),
             )
@@ -263,15 +263,15 @@ class NixonMarketingServiceTests(unittest.TestCase):
         fake_client = _FakeClient()
 
         with patch.object(
-            nixon_marketing_service.bigquery_service,
+            marketing_service.bigquery_service,
             "build_client",
             return_value=fake_client,
-        ), nixon_marketing_service.route(
+        ), marketing_service.route(
             client_key="acme",
             project_id="acme-project",
             mart_dataset_id="acme_marts",
         ):
-            payload = nixon_marketing_service.fetch_nixon_google_ads_explorer(
+            payload = marketing_service.fetch_google_ads_explorer(
                 start_date=date(2026, 6, 1),
                 end_date=date(2026, 6, 30),
             )
@@ -285,13 +285,13 @@ class NixonMarketingServiceTests(unittest.TestCase):
         fake_client = _FakeClient()
 
         with patch.object(
-            nixon_marketing_service.bigquery_service,
+            marketing_service.bigquery_service,
             "build_client",
             return_value=fake_client,
         ):
-            with nixon_marketing_service.route(project_id="acme-project", mart_dataset_id="acme_marts"):
+            with marketing_service.route(project_id="acme-project", mart_dataset_id="acme_marts"):
                 pass
-            payload = nixon_marketing_service.fetch_nixon_google_ads_explorer(
+            payload = marketing_service.fetch_google_ads_explorer(
                 start_date=date(2026, 6, 1),
                 end_date=date(2026, 6, 30),
             )
