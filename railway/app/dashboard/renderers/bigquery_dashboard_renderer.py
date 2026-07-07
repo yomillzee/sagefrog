@@ -315,6 +315,9 @@ def render_bigquery_dashboard_page(
     button.primary:hover {{ background:#1a62b8; }}
     button.primary:disabled {{ opacity:.55; cursor:default; }}
     .filter-group {{ display:flex; align-items:center; gap:8px; }}
+    /* `hidden` attr must win over the display:flex above — used to scope the
+       Platform filter to Overview/Explorer via switchTab()'s pf.hidden toggle. */
+    .filter-group[hidden] {{ display:none; }}
     .filter-label {{ color:var(--muted); font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }}
     .chips {{ display:flex; flex-wrap:wrap; gap:5px; }}
     .chip {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:4px 12px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s, color .12s; }}
