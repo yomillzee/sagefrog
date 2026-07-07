@@ -48,7 +48,7 @@ class LinkedInAdsConnector(ConnectorHandler):
                 mirrored = bigquery_warehouse.mirror_metrics_daily_batch(
                     "linkedin", account_id, daily_rows
                 )
-                rows_written += mirrored.get("rows_written") or 0
+                rows_written += mirrored.get("rows_upserted") or 0
                 meta = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(
                     account_id=account_id, start=start, end=end
                 )

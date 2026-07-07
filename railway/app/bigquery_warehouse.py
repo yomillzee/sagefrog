@@ -217,6 +217,50 @@ def ensure_table(source: str) -> str:
     return table_id
 
 
+def _aggregate_daily_metrics(
+    source_key: str,
+    account_id_clean: str,
+    rows: list[dict[str, Any]],
+    synced_at: str,
+) -> list[dict[str, Any]]:
+    """Collapse metric rows to one per (source, account_id, metric_date).
+
+    The metrics_daily fact is account+day grain, but callers may hand us finer
+    rows -- e.g. LinkedIn's ``fetch_campaign_daily_metrics`` returns one row per
+    (campaign, day). Summing them to account/day here keeps the totals correct
+    AND guarantees the MERGE staging table has at most one row per target key,
+    which BigQuery requires: a MERGE whose source matches >1 row for a target
+    row fails with "UPDATE/MERGE must match at most one source row for each
+    target row".
+    """
+    agg: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        metric_date = row.get("metric_date") or row.get("metricDate")
+        if not metric_date:
+            continue
+        md = str(metric_date)[:10]
+        rec = agg.get(md)
+        if rec is None:
+            rec = {
+                "source": source_key,
+                "account_id": account_id_clean,
+                "metric_date": md,
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+                "synced_at": synced_at,
+            }
+            agg[md] = rec
+        rec["spend"] += float(row.get("spend") or 0)
+        rec["clicks"] += int(row.get("clicks") or 0)
+        rec["impressions"] += int(row.get("impressions") or 0)
+        rec["conversions"] += float(row.get("conversions") or 0)
+        rec["conversion_value"] += float(row.get("conversion_value") or row.get("conversionValue") or 0)
+    return list(agg.values())
+
+
 def mirror_metrics_daily_batch(source: str, account_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
     if not rows or not enabled(source):
         return {"enabled": False, "rows_upserted": 0, "table": None}
@@ -226,24 +270,7 @@ def mirror_metrics_daily_batch(source: str, account_id: str, rows: list[dict[str
     client, table_id = _target(source_key)
     ensure_table(source_key)
     synced_at = datetime.now(timezone.utc).isoformat()
-    payload = []
-    for row in rows:
-        metric_date = row.get("metric_date") or row.get("metricDate")
-        if not metric_date:
-            continue
-        payload.append(
-            {
-                "source": source_key,
-                "account_id": account_id_clean,
-                "metric_date": str(metric_date)[:10],
-                "spend": float(row.get("spend") or 0),
-                "clicks": int(row.get("clicks") or 0),
-                "impressions": int(row.get("impressions") or 0),
-                "conversions": float(row.get("conversions") or 0),
-                "conversion_value": float(row.get("conversion_value") or row.get("conversionValue") or 0),
-                "synced_at": synced_at,
-            }
-        )
+    payload = _aggregate_daily_metrics(source_key, account_id_clean, rows, synced_at)
     if not payload:
         return {"enabled": True, "rows_upserted": 0, "table": table_id}
 
