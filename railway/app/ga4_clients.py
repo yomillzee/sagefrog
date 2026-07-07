@@ -217,10 +217,14 @@ def resolve_client_config(
         bq_dataset_id=bq_dataset_id,
         account_id=account_id,
     )
-    env_var = (target.credentials_env or "").strip()
+    raw_env_var = (target.credentials_env or "").strip()
+    env_var = raw_env_var or GLOBAL_GCP_CREDENTIALS_ENV
     credentials = load_service_account_info_from_env(
-        env_var or GLOBAL_GCP_CREDENTIALS_ENV,
-        require_base64=bool(env_var),
+        env_var,
+        # Only client-specific vars are base64 -- the shared global default
+        # (GCP_SERVICE_ACCOUNT_JSON) is plain JSON even when a caller resolves
+        # it explicitly. See bigquery_service.build_client() for the same fix.
+        require_base64=(env_var != GLOBAL_GCP_CREDENTIALS_ENV),
     )
     return ResolvedGa4Client(
         label=target.label,
@@ -229,5 +233,5 @@ def resolve_client_config(
         credentials=credentials,
         client_key=target.client_key,
         account_id=target.account_id,
-        credentials_env=env_var or None,
+        credentials_env=raw_env_var or None,
     )

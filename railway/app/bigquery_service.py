@@ -29,9 +29,18 @@ def build_client(
     pid = (project_id or os.getenv("BQ_PROJECT_ID") or "").strip()
     if not pid:
         raise RuntimeError("Missing BigQuery project id (BQ_PROJECT_ID or request override).")
+    env_var = (credentials_env or "").strip() or GLOBAL_GCP_CREDENTIALS_ENV
     info = credentials_info or load_service_account_info_from_env(
-        (credentials_env or "").strip() or GLOBAL_GCP_CREDENTIALS_ENV,
-        require_base64=bool((credentials_env or "").strip()),
+        env_var,
+        # Only client-specific vars (e.g. GCP_CREDS_PENN_BASE64) are base64 --
+        # the shared GLOBAL_GCP_CREDENTIALS_ENV ("GCP_SERVICE_ACCOUNT_JSON") is
+        # plain JSON even when a caller passes it explicitly (e.g. as a
+        # resolved GscClientTarget/ResolvedGa4Client fallback). Treating any
+        # explicit credentials_env as base64 broke every BQ mart read for
+        # clients whose resolved credentials_env is the plain-JSON default,
+        # while the write paths (which check the var name, not "was one
+        # passed") worked fine -- see gsc_sync_service.py's _creds_env().
+        require_base64=(env_var != GLOBAL_GCP_CREDENTIALS_ENV),
     )
     creds = service_account.Credentials.from_service_account_info(
         info,
@@ -67,8 +76,9 @@ def env_summary(credentials_env: str | None = None) -> dict[str, Any]:
         summary["gcp_service_account_json_parse_error"] = f"{env_var} is unset or only whitespace."
         return summary
 
+    expects_base64 = env_var != GLOBAL_GCP_CREDENTIALS_ENV
     lead = raw.lstrip()[:1]
-    if credentials_env:
+    if expects_base64:
         summary["gcp_service_account_json_hint"] = "base64"
     elif lead == "{":
         summary["gcp_service_account_json_hint"] = "raw_json"
@@ -80,7 +90,7 @@ def env_summary(credentials_env: str | None = None) -> dict[str, Any]:
     summary["gcp_service_account_json_suspected_truncated"] = len(raw) < 1800
 
     try:
-        load_service_account_info_from_env(env_var, require_base64=bool(credentials_env))
+        load_service_account_info_from_env(env_var, require_base64=expects_base64)
         summary["gcp_service_account_json_parse_ok"] = True
         summary["gcp_service_account_json_parse_error"] = None
     except Exception as exc:
