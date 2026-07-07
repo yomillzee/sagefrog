@@ -574,6 +574,48 @@ def nixon_gsc_summary(
 
 
 @router.get(
+    "/api/clients/nixon/gsc/keyword-matches",
+    summary="Nixon: queries matching branded/target keyword terms, scanned across the full date range",
+)
+def nixon_gsc_keyword_matches(
+    request: Request,
+    terms: str = Query(default="", description="Comma-separated match terms."),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(
+        request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    term_list = [t.strip() for t in terms.split(",") if t.strip()]
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    if not term_list:
+        return {"rows": [], "weekly": []}
+    try:
+        import bq_gsc_service
+        # Same "nixon" marketing key -> "nixon-bq-test" BQ client_slug split as
+        # nixon_gsc_summary above.
+        cache_key = {"start": start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list)}
+        rows = _cached_bq_read(
+            "nixon.gsc.keyword_matches", cache_key, ttl_seconds=900,
+            fetch=lambda: bq_gsc_service.gsc_keyword_matches(
+                start=start, end=end, terms=term_list, client_slug="nixon-bq-test",
+            ),
+        )
+        weekly = _cached_bq_read(
+            "nixon.gsc.keyword_weekly_trend", cache_key, ttl_seconds=900,
+            fetch=lambda: bq_gsc_service.gsc_keyword_weekly_trend(
+                start=start, end=end, terms=term_list, client_slug="nixon-bq-test",
+            ),
+        )
+        return {"rows": rows, "weekly": weekly}
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
     "/api/clients/nixon/semrush/summary",
     summary="Nixon SEMrush domain snapshot (overview, keywords, backlinks) from BigQuery",
 )
