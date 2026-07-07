@@ -1487,8 +1487,9 @@ def login_page(request: Request, next: str | None = None, error: str | None = No
             status_code=503,
             detail="User login requires DATABASE_URL (Postgres).",
         )
-    if web_auth.get_current_user(request):
-        return RedirectResponse(url=oauth_flows.validate_return_to(next), status_code=303)
+    existing = web_auth.get_current_user(request)
+    if existing:
+        return RedirectResponse(url=_post_login_target(existing, next), status_code=303)
     target = oauth_flows.validate_return_to(next)
     ctx = audit_log.request_context(request)
     rl = login_rate_limit.check_login_allowed(ip=ctx.get("ip_address"))
@@ -1539,7 +1540,7 @@ def login_submit(
         detail={"role": user.role, "client_slug": user.client_slug},
         **ctx,
     )
-    target = oauth_flows.validate_return_to(next)
+    target = _post_login_target(user, next)
     return RedirectResponse(url=target, status_code=303)
 
 
@@ -1605,6 +1606,38 @@ def _gcp_credentials_section_html() -> str:
     </section>"""
 
 
+def _post_login_target(user: web_users.WebUser, next_value: str | None) -> str:
+    """Where to send a user after login. Non-admins can't use /admin (the default
+    `next`), so route them to the dashboards picker instead of a 403 dead-end."""
+    target = oauth_flows.validate_return_to(next_value)
+    if user.role != "admin" and target == "/admin":
+        return "/dashboards"
+    return target
+
+
+@app.get("/dashboards", include_in_schema=False, response_class=HTMLResponse)
+def dashboards_home(request: Request):
+    """Landing page listing the client dashboards the signed-in user can open."""
+    if not web_users.enabled():
+        raise HTTPException(
+            status_code=503, detail="User login requires DATABASE_URL (Postgres)."
+        )
+    user = web_auth.get_current_user(request)
+    if not user:
+        return web_auth.redirect_to_login(request, next_path="/dashboards")
+    import dashboard_registry
+
+    items = [
+        (row.client_slug, row.label or row.client_slug)
+        for row in dashboard_registry.list_clients()
+        if user.can_access_client(row.client_slug)
+    ]
+    # A client user tied to a single dashboard: skip the picker, go straight in.
+    if user.role == "client" and len(items) == 1:
+        return RedirectResponse(url=f"/dashboard/{items[0][0]}", status_code=303)
+    return HTMLResponse(web_auth.render_dashboards_page(user=user, dashboards=items))
+
+
 @app.get("/admin", include_in_schema=False, response_class=HTMLResponse)
 def admin_home(
     request: Request,
@@ -1615,8 +1648,13 @@ def admin_home(
     oauth_disconnected: str | None = None,
 ):
     user = web_auth.get_current_user(request)
-    if not user or user.role != "admin":
+    if not user:
         return web_auth.redirect_to_login(request, next_path="/admin")
+    if user.role != "admin":
+        # Logged in but not an admin: 403, never bounce back to /login. The
+        # login page redirects an already-authenticated user straight to `next`,
+        # so redirecting here would ping-pong /admin <-> /login forever.
+        raise HTTPException(status_code=403, detail="Admin access required.")
     users = web_users.list_users(include_inactive=False)
     events = audit_log.list_recent(limit=40)
     oauth_html = dashboard_settings.render_admin_oauth_section(
@@ -1648,8 +1686,13 @@ async def admin_set_gcp_credentials(
     credentials_file: UploadFile = File(...),
 ):
     user = web_auth.get_current_user(request)
-    if not user or user.role != "admin":
+    if not user:
         return web_auth.redirect_to_login(request, next_path="/admin")
+    if user.role != "admin":
+        # Logged in but not an admin: 403, never bounce back to /login. The
+        # login page redirects an already-authenticated user straight to `next`,
+        # so redirecting here would ping-pong /admin <-> /login forever.
+        raise HTTPException(status_code=403, detail="Admin access required.")
 
     name = ga4_credentials.GLOBAL_GCP_CREDENTIALS_ENV
     if not railway_api.enabled():

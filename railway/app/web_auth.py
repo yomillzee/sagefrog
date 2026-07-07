@@ -234,6 +234,69 @@ def render_login_page(*, error: str | None = None, next_path: str = "/admin") ->
 </html>"""
 
 
+def render_dashboards_page(*, user: WebUser, dashboards: list[tuple[str, str]]) -> str:
+    """Landing page for non-admin users: the client dashboards they can open.
+
+    ``dashboards`` is a list of ``(slug, label)`` the caller has already filtered
+    to what this user may access.
+    """
+    if dashboards:
+        items = "\n".join(
+            f'<li><a class="dash-link" href="/dashboard/{_esc(slug)}">{_esc(label or slug)}</a></li>'
+            for slug, label in dashboards
+        )
+        body = f'<ul class="dash-list">{items}</ul>'
+    else:
+        body = (
+            '<p class="sub">No dashboards are available for your account yet. '
+            "Ask an admin to grant access.</p>"
+        )
+    admin_link = (
+        '<a class="foot-link" href="/admin">Admin</a>' if user.role == "admin" else ""
+    )
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboards · EOS Ads</title>
+  <style>
+    :root {{ --navy: #0a2540; --accent: #0b5cab; --border: #d8dee8; }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center;
+      font-family: system-ui, sans-serif; background: #eef1f5; color: #0f1c2e; }}
+    .card {{ width: min(440px, 92vw); background: #fff; border: 1px solid var(--border);
+      border-radius: 12px; padding: 28px 24px; box-shadow: 0 8px 32px rgba(10,37,64,.08); }}
+    h1 {{ margin: 0 0 8px; font-size: 1.35rem; color: var(--navy); }}
+    p.sub {{ margin: 0 0 20px; color: #5a6578; font-size: .92rem; }}
+    .dash-list {{ list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 8px; }}
+    .dash-link {{ display: block; padding: 12px 14px; border: 1px solid var(--border);
+      border-radius: 8px; text-decoration: none; color: var(--navy); font-weight: 600;
+      background: #fff; }}
+    .dash-link:hover {{ border-color: var(--accent); background: #f4f8fd; }}
+    .foot {{ display: flex; justify-content: space-between; align-items: center;
+      margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }}
+    .foot-link {{ color: var(--accent); font-size: .9rem; text-decoration: none; }}
+    .foot form {{ margin: 0; }}
+    .foot button {{ border: 0; background: none; color: #5a6578; font-size: .9rem;
+      cursor: pointer; padding: 0; }}
+    .foot button:hover {{ color: #b42318; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Your dashboards</h1>
+    <p class="sub">Signed in as {_esc(user.email)}</p>
+    {body}
+    <div class="foot">
+      {admin_link or '<span></span>'}
+      <form method="post" action="/logout"><button type="submit">Sign out</button></form>
+    </div>
+  </div>
+</body>
+</html>"""
+
+
 def _format_audit_time(iso: str | None) -> str:
     if not iso:
         return "—"
