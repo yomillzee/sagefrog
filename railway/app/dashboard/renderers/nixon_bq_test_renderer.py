@@ -382,7 +382,13 @@ def render_nixon_bigquery_test_page(
     .pill-linkedin {{ background:#e6f0f8; color:#0a66c2; }}
     .pill-meta {{ background:#f0e8fe; color:#7b2ff7; }}
     .ad-cell {{ display:inline-flex; align-items:center; gap:9px; vertical-align:middle; }}
-    .ad-thumb {{ width:34px; height:34px; border-radius:5px; object-fit:cover; border:1px solid var(--line); background:#f0f3f8; flex:0 0 auto; }}
+    .ad-thumb {{ width:34px; height:34px; border-radius:5px; object-fit:cover; border:1px solid var(--line); background:#f0f3f8; flex:0 0 auto; cursor:zoom-in; }}
+    .creative-preview {{ position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; }}
+    .creative-preview-backdrop {{ position:absolute; inset:0; background:rgba(10,20,35,.72); }}
+    .creative-preview-dialog {{ position:relative; max-width:min(90vw,760px); max-height:88vh; background:#fff; border-radius:12px; padding:14px; box-shadow:0 20px 60px rgba(0,0,0,.35); display:flex; }}
+    .creative-preview-body {{ display:flex; align-items:center; justify-content:center; max-width:100%; max-height:calc(88vh - 28px); }}
+    .creative-preview-body img, .creative-preview-body video {{ max-width:100%; max-height:calc(88vh - 28px); border-radius:6px; display:block; }}
+    .creative-preview-close {{ position:absolute; top:-14px; right:-14px; width:32px; height:32px; border-radius:50%; border:0; background:#0a2540; color:#fff; font-size:1.1rem; line-height:1; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.25); }}
     .ad-meta {{ display:flex; flex-direction:column; line-height:1.25; }}
     .ad-label {{ font-weight:600; color:#1f2d40; }}
     .ad-id {{ margin-left:6px; font-family:monospace; font-size:.68rem; font-weight:400; color:var(--muted); }}
@@ -614,6 +620,13 @@ def render_nixon_bigquery_test_page(
     </div><!-- /pane-gsc -->
 
   </main>
+    </div>
+  </div>
+  <div id="creativePreview" class="creative-preview" hidden>
+    <div class="creative-preview-backdrop" data-close-preview></div>
+    <div class="creative-preview-dialog" role="dialog" aria-modal="true" aria-label="Creative preview">
+      <button type="button" class="creative-preview-close" data-close-preview aria-label="Close">&times;</button>
+      <div class="creative-preview-body" id="creativePreviewBody"></div>
     </div>
   </div>
   <script>{dashboard_topbar_js()}</script>
@@ -1394,7 +1407,10 @@ def render_nixon_bigquery_test_page(
     const HEADLINES_VISIBLE = 5;
     function adCell(ad) {{
       const type=ad.media_type?`<span class="ad-type">${{esc(ad.media_type)}}</span>`:'';
-      const thumb=ad.thumbnail_url?`<img class="ad-thumb" src="${{esc(ad.thumbnail_url)}}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none'">` :'';
+      // Full-size preview prefers image_url/video_url over the (often smaller/
+      // cropped) thumbnail_url; click opens it in the modal (see creativePreview).
+      const fullImg=ad.image_url||ad.thumbnail_url||'';
+      const thumb=ad.thumbnail_url?`<img class="ad-thumb" src="${{esc(ad.thumbnail_url)}}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none'" data-preview-image="${{esc(fullImg)}}" data-preview-video="${{esc(ad.video_url||'')}}">` :'';
       // Full RSA copy (up to 15 headlines / 4 descriptions) from the JSON arrays;
       // fall back to the legacy flat columns for rows synced before the repull.
       let hs=parseCopyList(ad.headlines); if(!hs.length) hs=[ad.headline_1,ad.headline_2,ad.headline_3].filter(Boolean);
@@ -1457,10 +1473,10 @@ def render_nixon_bigquery_test_page(
         out.push({{platform:'google',campaign_name:r.campaign_name,ad_group_name:r.ad_group_name,ad_label:r.ad_label,ad_id:r.ad_id,headlines:r.headlines,descriptions:r.descriptions,headline_1:r.headline_1,headline_2:r.headline_2,headline_3:r.headline_3,description_1:r.description_1,description_2:r.description_2,ad_name:r.ad_name,final_url:r.final_url,ad_type:r.ad_type,thumbnail_url:'',media_type:r.ad_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
       }}
       for (const r of (linkedin&&linkedin.rows?linkedin.rows:[])) {{
-        out.push({{platform:'linkedin',campaign_name:r.campaign_group_name||r.campaign_name,ad_group_name:r.campaign_name,ad_label:r.creative_name,thumbnail_url:r.thumbnail_url||r.image_url||'',media_type:r.media_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
+        out.push({{platform:'linkedin',campaign_name:r.campaign_group_name||r.campaign_name,ad_group_name:r.campaign_name,ad_label:r.creative_name,thumbnail_url:r.thumbnail_url||r.image_url||'',image_url:r.image_url||'',video_url:r.video_url||'',media_type:r.media_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
       }}
       for (const r of (meta&&meta.rows?meta.rows:[])) {{
-        out.push({{platform:'meta',campaign_name:r.campaign_name,ad_group_name:r.adset_name,ad_label:r.ad_name,thumbnail_url:r.thumbnail_url||r.image_url||'',media_type:r.media_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
+        out.push({{platform:'meta',campaign_name:r.campaign_name,ad_group_name:r.adset_name,ad_label:r.ad_name,thumbnail_url:r.thumbnail_url||r.image_url||'',image_url:r.image_url||'',video_url:r.video_url||'',media_type:r.media_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
       }}
       return out;
     }}
@@ -1997,6 +2013,11 @@ def render_nixon_bigquery_test_page(
       setupChartHover();
     }}
     document.getElementById('explorerTable').addEventListener('click',ev=>{{
+      const thumb=ev.target.closest('.ad-thumb');
+      if (thumb) {{
+        openCreativePreview(thumb.dataset.previewImage||'', thumb.dataset.previewVideo||'');
+        return;
+      }}
       const moreBtn=ev.target.closest('.ad-copy-more');
       if (moreBtn) {{
         const extra=moreBtn.nextElementSibling;
@@ -2007,6 +2028,29 @@ def render_nixon_bigquery_test_page(
       const row=ev.target.closest('tr[data-expandable]');
       if (row) toggleExplorerRow(row);
     }});
+    // ---- Creative preview modal (click a thumbnail to see it full size) ----
+    function openCreativePreview(imageUrl, videoUrl) {{
+      const body=document.getElementById('creativePreviewBody');
+      const modal=document.getElementById('creativePreview');
+      if (!body || !modal) return;
+      if (videoUrl) {{
+        body.innerHTML = `<video src="${{esc(videoUrl)}}" controls autoplay playsinline poster="${{esc(imageUrl)}}"></video>`;
+      }} else if (imageUrl) {{
+        body.innerHTML = `<img src="${{esc(imageUrl)}}" alt="" referrerpolicy="no-referrer">`;
+      }} else {{
+        return;
+      }}
+      modal.hidden = false;
+    }}
+    function closeCreativePreview() {{
+      const modal=document.getElementById('creativePreview');
+      const body=document.getElementById('creativePreviewBody');
+      if (!modal) return;
+      modal.hidden = true;
+      if (body) body.innerHTML = ''; // stop any playing video
+    }}
+    document.querySelectorAll('[data-close-preview]').forEach(el=>el.addEventListener('click', closeCreativePreview));
+    document.addEventListener('keydown', ev=>{{ if (ev.key==='Escape') closeCreativePreview(); }});
     applyPreset('last_7');
 
     // Deep-link: land on the tab named in ?view= (set by the sidebar links on

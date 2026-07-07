@@ -471,6 +471,7 @@ def fetch_nixon_linkedin_explorer(
       ANY_VALUE(media_type) AS media_type,
       ANY_VALUE(thumbnail_url) AS thumbnail_url,
       ANY_VALUE(image_url) AS image_url,
+      ANY_VALUE(video_url) AS video_url,
       ROUND(SUM(spend), 2) AS spend,
       SUM(impressions) AS impressions,
       SUM(clicks) AS clicks,
