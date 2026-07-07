@@ -250,8 +250,11 @@ def global_filters_bar_html(
             </div>"""
     channel_column = ""
     if show_channel_filters:
+        # Platform/channel chips only affect the Overview cards and Campaign
+        # Explorer table — they do nothing on GSC/Website/SEMrush. Tagged so
+        # setActiveView() can hide the column outside those two views.
         channel_column = """
-            <div class="filter-column">
+            <div class="filter-column" data-platform-filter>
               <span class="filter-column-label">Channel</span>
               <div id="channelFilters" class="filter-toggles" role="group" aria-label="Channel"></div>
             </div>"""
@@ -3808,6 +3811,9 @@ def render_penn_html(
       }});
       document.querySelectorAll('[data-campaign-filter]').forEach(control => {{
         control.hidden = view !== 'campaigns';
+      }});
+      document.querySelectorAll('[data-platform-filter]').forEach(control => {{
+        control.hidden = !(view === 'overview' || view === 'campaigns');
       }});
       if (view === 'website') {{
         try {{ loadGa4Backfill(); }} catch (err) {{ /* ignore */ }}
