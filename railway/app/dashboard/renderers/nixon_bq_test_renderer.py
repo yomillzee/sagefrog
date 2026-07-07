@@ -595,7 +595,7 @@ def render_nixon_bigquery_test_page(
             <div class="table-wrap"><table id="gscBrandedTable" class="compact"></table></div>
             <div class="pager" id="gscBrandedPager"></div>
             <div class="chart-wrap" style="margin-top:12px">
-              <div class="muted" style="font-size:.76rem;margin-bottom:6px">Weekly clicks — matching queries</div>
+              <div class="muted" style="font-size:.76rem;margin-bottom:6px">Weekly avg. position — matching queries (lower is better)</div>
               <svg id="gscBrandedTrendChart" class="trend-sm-svg" preserveAspectRatio="none"></svg>
             </div>
           </div>
@@ -605,7 +605,7 @@ def render_nixon_bigquery_test_page(
             <div class="table-wrap"><table id="gscTargetTable" class="compact"></table></div>
             <div class="pager" id="gscTargetPager"></div>
             <div class="chart-wrap" style="margin-top:12px">
-              <div class="muted" style="font-size:.76rem;margin-bottom:6px">Weekly clicks — matching queries</div>
+              <div class="muted" style="font-size:.76rem;margin-bottom:6px">Weekly avg. position — matching queries (lower is better)</div>
               <svg id="gscTargetTrendChart" class="trend-sm-svg" preserveAspectRatio="none"></svg>
             </div>
           </div>
@@ -1179,7 +1179,7 @@ def render_nixon_bigquery_test_page(
     }}
     // Small single-line weekly trend chart, same visual style as
     // drawSessionsTrend but generic over any {{week_start, <valueKey>}} rows.
-    function drawKeywordTrend(svgId, rows, valueKey, color) {{
+    function drawKeywordTrend(svgId, rows, valueKey, color, invert) {{
       clearSkelChart(svgId);
       const svg=document.getElementById(svgId);
       if (!svg) return;
@@ -1189,7 +1189,9 @@ def render_nixon_bigquery_test_page(
       const vals=rows.map(r=>num(r[valueKey]));
       const mn=Math.min(...vals),mx=Math.max(...vals),span=(mx-mn)||1;
       const xAt=i=>padL+(n===1?plotW/2:(i/(n-1))*plotW);
-      const yAt=v=>padT+(1-(v-mn)/span)*plotH;
+      // For position, lower is better -- invert so an improving (falling)
+      // position line visually rises, like a rank chart.
+      const yAt=v=>padT+(invert ? (v-mn)/span : 1-(v-mn)/span)*plotH;
       const baseY=padT+plotH;
       const pts=vals.map((v,i)=>[xAt(i),yAt(v)]);
       const line=smoothPath(pts);
@@ -1216,8 +1218,8 @@ def render_nixon_bigquery_test_page(
       gscTables.target.rows  = target.rows;
       gscTables.branded.page = 1; gscTables.target.page = 1;
       renderGscTable('branded'); renderGscTable('target');
-      drawKeywordTrend('gscBrandedTrendChart', branded.weekly, 'clicks', '#1d6fd0');
-      drawKeywordTrend('gscTargetTrendChart', target.weekly, 'clicks', '#7c3aed');
+      drawKeywordTrend('gscBrandedTrendChart', branded.weekly, 'avg_position', '#1d6fd0', true);
+      drawKeywordTrend('gscTargetTrendChart', target.weekly, 'avg_position', '#7c3aed', true);
       const setCount=(id,n,configured)=>{{const el=document.getElementById(id); if(el) el.textContent = configured ? `(${{n}})` : '';}};
       setCount('gscBrandedCount', gscTables.branded.rows.length, gscBrandedRoots.length);
       setCount('gscTargetCount', gscTables.target.rows.length, gscTargetKeywords.length);
