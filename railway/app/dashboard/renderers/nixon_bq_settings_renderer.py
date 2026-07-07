@@ -280,11 +280,11 @@ def render_nixon_bq_settings_page(
     </section>
 
     <section>
-      <h2>Website Analytics modules</h2>
-      <p class="hint">Toggle which sections appear on the Website Analytics tab. Saved in your browser only (no server state).</p>
-      <div id="moduleToggles" style="margin-top:14px; display:flex; flex-direction:column; gap:12px;"></div>
+      <h2>Sidebar pages</h2>
+      <p class="hint">Toggle which pages appear in the sidebar. Saved in your browser only (no server state).</p>
+      <div id="pageToggles" style="margin-top:14px; display:flex; flex-direction:column; gap:12px;"></div>
       <div class="btn-row" style="margin-top:16px;">
-        <button type="button" class="primary ghost" id="resetModulesBtn">Reset to defaults (all on)</button>
+        <button type="button" class="primary ghost" id="resetPagesBtn">Reset to defaults (all on)</button>
       </div>
     </section>
 
@@ -372,42 +372,44 @@ def render_nixon_bq_settings_page(
     }}
     loadHealth();
 
-    // ---- Website Analytics module toggles ----
-    const ALL_MODULES = ['top_pages','traffic','audience','landing','conversions','user_acquisition','demographics'];
-    const MODULE_LABELS = {{
-      top_pages:'Top Pages', traffic:'Traffic', audience:'Audience', landing:'Landing Pages',
-      conversions:'Conversions', user_acquisition:'User Acquisition', demographics:'Demographics',
+    // ---- Sidebar page toggles ----
+    // Mirrors the tab keys in nixon_bq_test_renderer's TABS + the data-tab
+    // attributes in base_layout.nixon_sidebar_view_nav_html. Stored in
+    // localStorage (client-side only); the sidebar nav on every page reads
+    // this to hide turned-off pages, and the dashboard falls back off a
+    // hidden active tab.
+    const ALL_PAGES = ['overview','explorer','analytics','gsc'];
+    const PAGE_LABELS = {{
+      overview:'Overview', explorer:'Campaign Explorer',
+      analytics:'Website Analytics', gsc:'Search Console',
     }};
-    const MODULE_DESCS = {{
-      top_pages:'Page views, users, sessions and engagement time per URL.',
-      traffic:'Sessions by channel group + daily trend + source/medium table.',
-      audience:'Device type split (desktop, mobile, tablet).',
-      landing:'Landing page sessions, new users, key event rate and engagement.',
-      conversions:'Custom GA4 event counts and form funnel (form_start → generate_lead).',
-      user_acquisition:'First-touch channel, source and medium for new users.',
-      demographics:'Top cities, age bracket bars, and gender split.',
+    const PAGE_DESCS = {{
+      overview:'Paid media / web traffic summary and daily trend.',
+      explorer:'Campaign → ad group → ad drill-down across platforms.',
+      analytics:'GA4 pages, traffic, audience, landing, conversions and more.',
+      gsc:'Search Console clicks, queries, pages and keyword tracking.',
     }};
-    const LS_KEY = 'nixon_analytics_modules';
-    function getModules() {{
-      try {{ const s = localStorage.getItem(LS_KEY); const saved = s ? JSON.parse(s) : {{}}; return ALL_MODULES.reduce((o,k) => ({{...o,[k]:k in saved?saved[k]:true}}),{{}}); }} catch {{ return ALL_MODULES.reduce((o,k)=>({{...o,[k]:true}}),{{}}); }}
+    const LS_KEY = 'nixon_sidebar_pages';
+    function getPages() {{
+      try {{ const s = localStorage.getItem(LS_KEY); const saved = s ? JSON.parse(s) : {{}}; return ALL_PAGES.reduce((o,k) => ({{...o,[k]:k in saved?saved[k]:true}}),{{}}); }} catch {{ return ALL_PAGES.reduce((o,k)=>({{...o,[k]:true}}),{{}}); }}
     }}
-    function saveModules(m) {{ try {{ localStorage.setItem(LS_KEY, JSON.stringify(m)); }} catch {{}} }}
-    function renderModuleToggles() {{
-      const m = getModules();
-      const container = document.getElementById('moduleToggles');
-      container.innerHTML = ALL_MODULES.map(key => {{
+    function savePages(m) {{ try {{ localStorage.setItem(LS_KEY, JSON.stringify(m)); }} catch {{}} }}
+    function renderPageToggles() {{
+      const m = getPages();
+      const container = document.getElementById('pageToggles');
+      container.innerHTML = ALL_PAGES.map(key => {{
         const checked = m[key] ? ' checked' : '';
-        return `<div class="module-toggle-row"><div class="module-toggle-info"><span class="module-toggle-label">${{esc(MODULE_LABELS[key])}}</span><span class="module-toggle-desc">${{esc(MODULE_DESCS[key])}}</span></div><label class="toggle-switch" title="${{m[key]?'On':'Off'}}"><input type="checkbox" data-module="${{key}}"${{checked}}><span class="toggle-track"></span></label></div>`;
+        return `<div class="module-toggle-row"><div class="module-toggle-info"><span class="module-toggle-label">${{esc(PAGE_LABELS[key])}}</span><span class="module-toggle-desc">${{esc(PAGE_DESCS[key])}}</span></div><label class="toggle-switch" title="${{m[key]?'On':'Off'}}"><input type="checkbox" data-page="${{key}}"${{checked}}><span class="toggle-track"></span></label></div>`;
       }}).join('');
-      container.querySelectorAll('input[data-module]').forEach(inp => inp.addEventListener('change', () => {{
-        const cur = getModules(); cur[inp.dataset.module] = inp.checked; saveModules(cur);
+      container.querySelectorAll('input[data-page]').forEach(inp => inp.addEventListener('change', () => {{
+        const cur = getPages(); cur[inp.dataset.page] = inp.checked; savePages(cur);
         inp.closest('label').title = inp.checked ? 'On' : 'Off';
       }}));
     }}
-    document.getElementById('resetModulesBtn').addEventListener('click', () => {{
-      const all = ALL_MODULES.reduce((o,k)=>({{...o,[k]:true}}),{{}}); saveModules(all); renderModuleToggles();
+    document.getElementById('resetPagesBtn').addEventListener('click', () => {{
+      const all = ALL_PAGES.reduce((o,k)=>({{...o,[k]:true}}),{{}}); savePages(all); renderPageToggles();
     }});
-    renderModuleToggles();
+    renderPageToggles();
   </script>
   <script>{dashboard_topbar_js()}</script>
 </body>

@@ -456,11 +456,6 @@ def render_nixon_bigquery_test_page(
     <div id="pane-overview">
       {onboarding_html}
       {overview_summary_html}
-
-      <section>
-        <div class="sec-head"><h2>Data health</h2><span class="status" id="healthStatus"></span></div>
-        <div class="table-wrap"><table id="healthTable"></table></div>
-      </section>
     </div>
 
     <!-- ===== EXPLORER TAB ===== -->
@@ -1316,9 +1311,10 @@ def render_nixon_bigquery_test_page(
     // populated by loadHealth() below. Used to warn when a comparison period
     // (see compareStart/compareEnd) falls before the data actually starts.
     let earliestDates = {{}};
+    // The mart-health TABLE now lives on the Settings page; on the dashboard we
+    // still fetch it (quietly) only to populate earliestDates, which drives the
+    // "comparison period predates synced data" warnings on the summary cards.
     async function loadHealth() {{
-      setStatus('healthStatus','Loading…');
-      document.getElementById('healthTable').innerHTML = skelTable(8,5);
       try {{
         const payload = await getJson(withDates(HEALTH_API));
         const rows = payload.rows||[];
@@ -1327,23 +1323,8 @@ def render_nixon_bigquery_test_page(
           const k = String(r.source||'').toLowerCase();
           if (k && r.earliest_date) earliestDates[k] = r.earliest_date;
         }}
-        const SRC = {{google:'Google Ads',linkedin:'LinkedIn',meta:'Meta',google_analytics:'Google Analytics',gsc:'Search Console'}};
-        const srcLabel = v => SRC[String(v||'').toLowerCase()]||v;
-        const moneyD = v => v==null ? '—' : money(v);
-        const countD = v => v==null ? '—' : count(v);
-        renderTable('healthTable', [
-          {{key:'source',label:'Source',left:true,format:srcLabel}},
-          {{key:'row_count',label:'Rows',format:count}},
-          {{key:'earliest_date',label:'Earliest',left:true}},
-          {{key:'latest_date',label:'Latest',left:true}},
-          {{key:'spend',label:'Spend',format:moneyD}},
-          {{key:'impressions',label:'Impr.',format:countD}},
-          {{key:'clicks',label:'Clicks',format:countD}},
-          {{key:'conversions',label:'Conv.',format:countD}},
-        ], rows, 'No mart health rows found.');
-        setStatus('healthStatus', rows.length ? `${{rows.length}} source(s)` : 'No data');
       }} catch(err) {{
-        setStatus('healthStatus', err.message||String(err), true);
+        // Non-fatal: no earliest-date info just means no comparison warnings.
       }}
     }}
 
@@ -2057,12 +2038,17 @@ def render_nixon_bigquery_test_page(
     document.addEventListener('keydown', ev=>{{ if (ev.key==='Escape') closeCreativePreview(); }});
     applyPreset('last_7');
 
-    // Deep-link: land on the tab named in ?view= (set by the sidebar links on
-    // Settings/Files/Connectors) so those links don't always open Overview.
-    // Runs last, after currentStart/currentEnd and all loaders are initialized.
+    // Deep-link + page-visibility prefs: land on the tab named in ?view= (set
+    // by the sidebar links on Settings/Files/Connectors), unless that page was
+    // turned off in Settings > "Sidebar pages" -- then fall back to the first
+    // enabled page. Runs last, after all loaders are initialized.
     (function(){{
+      let prefs = {{}};
+      try {{ prefs = JSON.parse(localStorage.getItem('nixon_sidebar_pages') || '{{}}'); }} catch(e) {{}}
       const v = new URLSearchParams(location.search).get('view');
-      if (v && TABS.includes(v) && v !== 'overview') switchTab(v);
+      let target = (v && TABS.includes(v)) ? v : 'overview';
+      if (prefs[target] === false) target = TABS.find(t => prefs[t] !== false) || 'overview';
+      if (target !== currentTab) switchTab(target);
     }})();
   </script>
   {admin_panel_html}

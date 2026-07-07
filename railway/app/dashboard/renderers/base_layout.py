@@ -467,7 +467,7 @@ def nixon_sidebar_view_nav_html(
             href = dash_url if tab == "overview" else (
                 f"{dash_url}{'&' if '?' in dash_url else '?'}view={tab}"
             )
-            items.append(f'<a class="dash-view-btn" href="{_esc(href)}">{inner}</a>')
+            items.append(f'<a class="dash-view-btn" data-tab="{tab}" href="{_esc(href)}">{inner}</a>')
     if pflags.get("show_lead_tracking"):
         lt = _lead_tracking_page_url(
             client_slug=client_slug, access_key=access_key, use_session=use_session
@@ -484,7 +484,25 @@ def nixon_sidebar_view_nav_html(
             f'<a class="dash-view-btn" href="{_esc(et)}">'
             f'{_VIEW_ICONS["event-tracking"]}<span>Event Tracking</span></a>'
         )
-    return f'<nav class="dash-sidebar-nav" aria-label="Sections">{"".join(items)}</nav>'
+    # Client-side page-visibility prefs from Settings > "Sidebar pages"
+    # (localStorage 'nixon_sidebar_pages'). Hides the core nav items the user
+    # turned off, on every page that renders this nav so the sidebar stays
+    # consistent. Uses style.display, NOT the hidden attribute, because
+    # .dash-view-btn sets display:flex which would override [hidden]. The
+    # dashboard additionally falls back off a hidden active tab (see its
+    # deep-link init). Lead/Event Tracking items have no data-tab and are
+    # untouched (they gate on connector state instead).
+    prefs_script = (
+        "<script>(function(){try{"
+        "var p=JSON.parse(localStorage.getItem('nixon_sidebar_pages')||'{}');"
+        "document.querySelectorAll('.dash-sidebar-nav .dash-view-btn[data-tab]')"
+        ".forEach(function(el){if(p[el.dataset.tab]===false)el.style.display='none';});"
+        "}catch(e){}})();</script>"
+    )
+    return (
+        f'<nav class="dash-sidebar-nav" aria-label="Sections">{"".join(items)}</nav>'
+        + prefs_script
+    )
 
 
 def platform_nav_flags(client_slug: str) -> dict[str, bool]:
