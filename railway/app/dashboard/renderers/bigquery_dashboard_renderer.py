@@ -1640,6 +1640,9 @@ def render_bigquery_dashboard_page(
     }}
     const paidSourceFilter=new Set(), aiPlatformFilter=new Set();
     const PAGES_PER_PAGE=10; let pagesPageNum=1;
+    // Cap Top pages to the top N by views — the long tail past this is almost
+    // always checkout steps and one-off paths that just add noise.
+    const PAGES_TOP_LIMIT=50;
     const PAID_SOURCE_LABELS={{paid_google:'Google',paid_bing:'Bing',paid_linkedin:'LinkedIn',paid_meta:'Meta',paid_facebook:'Facebook'}};
     function paidLabel(src) {{ return PAID_SOURCE_LABELS[src]||String(src).replace(/^paid_/,'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()); }}
     function pageFiltersActive() {{ return paidSourceFilter.size>0||aiPlatformFilter.size>0; }}
@@ -1660,6 +1663,9 @@ def render_bigquery_dashboard_page(
     function renderPages() {{
       let base=pageFiltersActive()?aggregatePages(pagesSourceRows.filter(pageSourceRowMatches)):pagesTopRows;
       base=applyPageEvents(base);
+      // Rows are already sorted by views desc (server ORDER BY / aggregatePages),
+      // so slicing keeps the top N. Search then filters within that top set.
+      base=base.slice(0, PAGES_TOP_LIMIT);
       if (pagesSearchQuery) {{ const q=pagesSearchQuery.toLowerCase(); base=base.filter(p=>p.page_path.toLowerCase().includes(q)); }}
       const el=document.getElementById('pagesTable');
       if (!base.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No pages match${{pagesSearchQuery?' "'+esc(pagesSearchQuery)+'"':''}}.</td></tr></tbody>`; setStatus('pagesStatus','No results'); document.getElementById('pagesPager').innerHTML=''; return; }}
