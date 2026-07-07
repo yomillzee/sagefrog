@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 _bearer = HTTPBearer(auto_error=False)
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
+# Trailing window for the branded/target keyword weekly-position TREND chart
+# (~13 weeks). Independent of the dashboard's selected date range so a short
+# range like Last 7d still shows a multi-week "movement over time" line.
+_KEYWORD_TREND_DAYS = 90
+
 
 def _resolve_nixon_marketing_dates(
     start_date: date | None,
@@ -593,11 +598,17 @@ def nixon_gsc_keyword_matches(
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     if not term_list:
         return {"rows": [], "weekly": []}
+    # The weekly trend is a "movement over time" chart, so it always spans a
+    # trailing ~13-week window ending at the selected range's end -- otherwise a
+    # short range (e.g. Last 7d) yields a single weekly bucket and no line. The
+    # rows table stays scoped to the actually-selected range.
+    trend_start = min(start, end - timedelta(days=_KEYWORD_TREND_DAYS))
     try:
         import bq_gsc_service
         # Same "nixon" marketing key -> "nixon-bq-test" BQ client_slug split as
         # nixon_gsc_summary above.
         cache_key = {"start": start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list)}
+        trend_cache_key = {"start": trend_start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list)}
         rows = _cached_bq_read(
             "nixon.gsc.keyword_matches", cache_key, ttl_seconds=900,
             fetch=lambda: bq_gsc_service.gsc_keyword_matches(
@@ -605,9 +616,9 @@ def nixon_gsc_keyword_matches(
             ),
         )
         weekly = _cached_bq_read(
-            "nixon.gsc.keyword_weekly_trend", cache_key, ttl_seconds=900,
+            "nixon.gsc.keyword_weekly_trend", trend_cache_key, ttl_seconds=900,
             fetch=lambda: bq_gsc_service.gsc_keyword_weekly_trend(
-                start=start, end=end, terms=term_list, client_slug="nixon-bq-test",
+                start=trend_start, end=end, terms=term_list, client_slug="nixon-bq-test",
             ),
         )
         return {"rows": rows, "weekly": weekly}
@@ -1727,9 +1738,13 @@ def client_gsc_keyword_matches(
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     if not term_list:
         return {"rows": [], "weekly": []}
+    # Trend spans a trailing ~13-week window (see nixon_gsc_keyword_matches);
+    # rows table stays scoped to the selected range.
+    trend_start = min(start, end - timedelta(days=_KEYWORD_TREND_DAYS))
     try:
         import bq_gsc_service
         cache_key = {"start": start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list)}
+        trend_cache_key = {"start": trend_start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list)}
         rows = _cached_bq_read(
             f"{normalized}.gsc.keyword_matches", cache_key, ttl_seconds=900,
             fetch=lambda: bq_gsc_service.gsc_keyword_matches(
@@ -1737,9 +1752,9 @@ def client_gsc_keyword_matches(
             ),
         )
         weekly = _cached_bq_read(
-            f"{normalized}.gsc.keyword_weekly_trend", cache_key, ttl_seconds=900,
+            f"{normalized}.gsc.keyword_weekly_trend", trend_cache_key, ttl_seconds=900,
             fetch=lambda: bq_gsc_service.gsc_keyword_weekly_trend(
-                start=start, end=end, terms=term_list, client_slug=normalized,
+                start=trend_start, end=end, terms=term_list, client_slug=normalized,
             ),
         )
         return {"rows": rows, "weekly": weekly}

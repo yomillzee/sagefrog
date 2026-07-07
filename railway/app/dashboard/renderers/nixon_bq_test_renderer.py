@@ -1218,6 +1218,9 @@ def render_nixon_bigquery_test_page(
         `<line x1="${{padL}}" y1="${{baseY}}" x2="${{padL+plotW}}" y2="${{baseY}}" stroke="#e3e9f1"/>`,
         area?`<path fill="url(#${{gid}})" stroke="none" d="${{area}}"/>`:'',
         `<path fill="none" stroke="${{color}}" stroke-width="2.25" stroke-linejoin="round" stroke-linecap="round" d="${{line}}"/>`,
+        // Dot at each week so the movement is readable and a single-week point
+        // (short ranges) still renders instead of an invisible moveto-only path.
+        ...pts.map(p=>`<circle cx="${{p[0].toFixed(1)}}" cy="${{p[1].toFixed(1)}}" r="${{n===1?4:2.5}}" fill="${{color}}"/>`),
         ...lblIdx.map(i=>{{const anchor=i===0?'start':(i===n-1?'end':'middle');return `<text x="${{xAt(i).toFixed(1)}}" y="${{H-6}}" font-size="11" font-weight="600" fill="var(--muted)" text-anchor="${{anchor}}" style="letter-spacing:.02em">${{esc(String(rows[i].week_start||'').slice(5))}}</text>`;}}),
       ].join('');
     }}
