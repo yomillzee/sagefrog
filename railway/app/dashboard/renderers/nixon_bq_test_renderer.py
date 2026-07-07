@@ -474,6 +474,10 @@ def render_nixon_bigquery_test_page(
         </div>
         <div class="table-wrap"><table id="explorerTable"></table></div>
       </section>
+      <section id="sec-keywords" style="display:none">
+        <div class="sec-head"><h2>Cost by Keyword</h2><span class="status" id="keywordStatus"></span></div>
+        <div class="table-wrap"><table id="keywordTable" class="compact"></table></div>
+      </section>
     </div>
 
     <!-- ===== WEBSITE ANALYTICS TAB ===== -->
@@ -641,6 +645,7 @@ def render_nixon_bigquery_test_page(
     const SUMMARY_API          = "{_aurl(f'/api/clients/{api_client_key}/summary')}";
     const HEALTH_API           = "{_aurl(f'/api/clients/{api_client_key}/marketing/health')}";
     const EXPLORER_API         = "{_aurl(f'/api/clients/{api_client_key}/google-ads/explorer')}";
+    const GOOGLE_ADS_KEYWORDS_API = "{_aurl(f'/api/clients/{api_client_key}/google-ads/keywords')}";
     const LINKEDIN_EXPLORER_API= "{_aurl(f'/api/clients/{api_client_key}/linkedin/explorer')}";
     const META_EXPLORER_API    = "{_aurl(f'/api/clients/{api_client_key}/meta/explorer')}";
     const BACKFILL_API         = "{_aurl(f'/api/clients/{api_client_key}/backfill-linkedin')}";
@@ -1473,16 +1478,41 @@ def render_nixon_bigquery_test_page(
       }}
       return out;
     }}
+    // "Cost by Keyword" flat table below the campaign tree. Google Ads search
+    // keywords only; the section stays hidden for clients with no keyword data.
+    function renderKeywordTable(rows) {{
+      const dim=(_,r)=>`${{r.criterion_id||''}} / ${{r.ad_group_name||''}} / ${{r.keyword_text||''}}`;
+      renderTable('keywordTable', [
+        {{key:'_dim',label:'Keyword',left:true,format:dim}},
+        {{key:'ctr',label:'CTR',format:v=>v==null?'—':num(v).toFixed(2)+'%'}},
+        {{key:'spend',label:'Cost',format:money}},
+        {{key:'clicks',label:'Clicks',format:count}},
+        {{key:'impressions',label:'Impr.',format:count}},
+        {{key:'avg_cpc',label:'Avg CPC',format:v=>v==null?'—':money(v)}},
+      ], rows, 'No keyword data for this range.');
+    }}
     async function loadExplorer() {{
       setStatus('explorerStatus','Loading…');
       document.getElementById('explorerTable').innerHTML = skelTable(6,8);
-      const [g,l,m]=await Promise.all([
+      const [g,l,m,kw]=await Promise.all([
         getJson(withDates(EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(LINKEDIN_EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(META_EXPLORER_API)).catch(()=>({{rows:[]}})),
+        getJson(withDates(GOOGLE_ADS_KEYWORDS_API)).catch(()=>({{rows:[]}})),
       ]);
       explorerRows=normalizeExplorerRows(g,l,m);
       renderExplorer();
+      // Keyword table: only show the section when this client actually has
+      // Google Ads search-keyword data (empty for LinkedIn/Meta-only clients).
+      const kwRows=(kw&&kw.rows)||[];
+      const kwSec=document.getElementById('sec-keywords');
+      if (kwRows.length) {{
+        kwSec.style.display='';
+        renderKeywordTable(kwRows);
+        setStatus('keywordStatus', `${{kwRows.length}} keyword(s)`);
+      }} else {{
+        kwSec.style.display='none';
+      }}
     }}
 
     // ---- GA4: Top pages ----

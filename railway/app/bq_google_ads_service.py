@@ -139,6 +139,27 @@ def _schema_ad_daily(bq):
     ]
 
 
+def _schema_keyword_daily(bq):
+    return [
+        bq.SchemaField("client_key",       "STRING",    mode="REQUIRED"),
+        bq.SchemaField("account_id",       "STRING",    mode="REQUIRED"),
+        bq.SchemaField("campaign_id",      "STRING",    mode="NULLABLE"),
+        bq.SchemaField("campaign_name",    "STRING",    mode="NULLABLE"),
+        bq.SchemaField("ad_group_id",      "STRING",    mode="REQUIRED"),
+        bq.SchemaField("ad_group_name",    "STRING",    mode="NULLABLE"),
+        bq.SchemaField("criterion_id",     "STRING",    mode="REQUIRED"),
+        bq.SchemaField("keyword_text",     "STRING",    mode="NULLABLE"),
+        bq.SchemaField("match_type",       "STRING",    mode="NULLABLE"),
+        bq.SchemaField("metric_date",      "DATE",      mode="REQUIRED"),
+        bq.SchemaField("spend",            "FLOAT64",   mode="NULLABLE"),
+        bq.SchemaField("impressions",      "INT64",     mode="NULLABLE"),
+        bq.SchemaField("clicks",           "INT64",     mode="NULLABLE"),
+        bq.SchemaField("conversions",      "FLOAT64",   mode="NULLABLE"),
+        bq.SchemaField("conversion_value", "FLOAT64",   mode="NULLABLE"),
+        bq.SchemaField("synced_at",        "TIMESTAMP", mode="NULLABLE"),
+    ]
+
+
 def ensure_google_ads_tables() -> None:
     bq = _bq()
     client = _client()
@@ -150,6 +171,7 @@ def ensure_google_ads_tables() -> None:
     for table_name, schema_fn in [
         ("campaign_daily", _schema_campaign_daily),
         ("ad_daily", _schema_ad_daily),
+        ("keyword_daily", _schema_keyword_daily),
     ]:
         table_id = f"{dataset_ref}.{table_name}"
         schema = schema_fn(bq)
@@ -193,9 +215,41 @@ def create_google_ads_mart_views() -> dict[str, Any]:
     raw_dataset = _dataset_id()
     mart_dataset = _mart_dataset_id()
     raw_ad_table = f"`{project}.{raw_dataset}.ad_daily`"
+    raw_kw_table = f"`{project}.{raw_dataset}.keyword_daily`"
     mart_ref = f"{project}.{mart_dataset}"
 
     client.create_dataset(bq.Dataset(mart_ref), exists_ok=True, timeout=30)
+
+    # The keyword mart view is only added when the raw keyword_daily table
+    # exists (clients synced before this feature won't have it until a re-sync);
+    # skip it otherwise so CREATE VIEW doesn't fail on a missing source table.
+    _kw_view: dict[str, str] = {}
+    try:
+        client.get_table(f"{project}.{raw_dataset}.keyword_daily", timeout=15)
+        _kw_view = {
+            "explorer_google_ads_keyword_daily": f"""
+                SELECT
+                  'google_ads' AS source,
+                  client_key,
+                  account_id,
+                  campaign_id,
+                  campaign_name,
+                  ad_group_id,
+                  ad_group_name,
+                  criterion_id,
+                  keyword_text,
+                  match_type,
+                  metric_date AS date,
+                  spend,
+                  impressions,
+                  clicks,
+                  conversions,
+                  conversion_value
+                FROM {raw_kw_table}
+            """,
+        }
+    except Exception:
+        _kw_view = {}
 
     views = {
         "fact_google_ads_ad_daily": f"""
@@ -276,6 +330,7 @@ def create_google_ads_mart_views() -> dict[str, Any]:
             FROM {raw_ad_table}
         """,
     }
+    views.update(_kw_view)
 
     results: dict[str, Any] = {}
     for view_name, select_sql in views.items():
@@ -350,6 +405,38 @@ def _write_ad_daily(
     client.load_table_from_json(rows, table_id, job_config=job_config).result(timeout=180)
     _log.info(
         "Google Ads wrote %d rows → ad_daily [client=%s account=%s]",
+        len(rows), client_key, account_id,
+    )
+    return len(rows)
+
+
+def _write_keyword_daily(
+    rows: list[dict[str, Any]],
+    *,
+    client_key: str,
+    account_id: str,
+    start: str,
+    end: str,
+) -> int:
+    if not rows:
+        _log.info("Google Ads keyword_daily — 0 rows from API, skipping write")
+        return 0
+    bq = _bq()
+    client = _client()
+    table_id = _table_ref("keyword_daily")
+    client.query(
+        f"DELETE FROM `{table_id}` "
+        f"WHERE client_key = '{client_key}' "
+        f"  AND account_id = '{account_id}' "
+        f"  AND metric_date BETWEEN '{start}' AND '{end}'"
+    ).result(timeout=120)
+    job_config = bq.LoadJobConfig(
+        schema=_schema_keyword_daily(bq),
+        write_disposition="WRITE_APPEND",
+    )
+    client.load_table_from_json(rows, table_id, job_config=job_config).result(timeout=180)
+    _log.info(
+        "Google Ads wrote %d rows → keyword_daily [client=%s account=%s]",
         len(rows), client_key, account_id,
     )
     return len(rows)
@@ -474,6 +561,43 @@ def sync_google_ads_to_bq(
         _log.warning("Google Ads ad_daily sync failed [%s]: %s", client_key, exc)
         errors["ad_daily"] = str(exc)[:300]
 
+    # Search-keyword daily metrics (keyword_view report). Non-fatal on failure --
+    # a Display/PMax-only account has no keyword_view rows, and the rest of the
+    # sync should still succeed.
+    n_kw = 0
+    try:
+        kw_raw = google_ads_service.fetch_keyword_daily_metrics(
+            customer_id_clean, start=start_date, end=end_date, client=ads_client
+        )
+        kw_rows = [
+            {
+                "client_key": client_key,
+                "account_id": customer_id_clean,
+                "campaign_id": str(r.get("campaign_id") or "") or None,
+                "campaign_name": r.get("campaign_name"),
+                "ad_group_id": str(r.get("ad_group_id") or ""),
+                "ad_group_name": r.get("ad_group_name"),
+                "criterion_id": str(r.get("criterion_id") or ""),
+                "keyword_text": r.get("keyword_text"),
+                "match_type": r.get("match_type"),
+                "metric_date": r.get("metric_date") or "",
+                "spend": float(r.get("spend") or 0.0),
+                "impressions": int(r.get("impressions") or 0),
+                "clicks": int(r.get("clicks") or 0),
+                "conversions": float(r.get("conversions") or 0.0),
+                "conversion_value": float(r.get("conversion_value") or 0.0),
+                "synced_at": now,
+            }
+            for r in kw_raw
+            if r.get("criterion_id") and r.get("ad_group_id") and r.get("metric_date")
+        ]
+        n_kw = _write_keyword_daily(
+            kw_rows, client_key=client_key, account_id=customer_id_clean, start=start, end=end
+        )
+    except Exception as exc:
+        _log.warning("Google Ads keyword_daily sync failed [%s]: %s", client_key, exc)
+        errors["keyword_daily"] = str(exc)[:300]
+
     # Rebuild mart views (explorer_google_ads_daily + fact_ views)
     mart_errors: dict[str, str] = {}
     try:
@@ -484,9 +608,12 @@ def sync_google_ads_to_bq(
         mart_errors["mart_views"] = str(exc)[:300]
     errors.update(mart_errors)
 
-    total = n_campaign + n_ad
+    total = n_campaign + n_ad + n_kw
     _log.info(
-        "Google Ads sync complete [%s]: campaign_daily=%d ad_daily=%d",
-        client_key, n_campaign, n_ad,
+        "Google Ads sync complete [%s]: campaign_daily=%d ad_daily=%d keyword_daily=%d",
+        client_key, n_campaign, n_ad, n_kw,
     )
-    return {"total_rows": total, "campaign_rows": n_campaign, "ad_rows": n_ad, "errors": errors}
+    return {
+        "total_rows": total, "campaign_rows": n_campaign, "ad_rows": n_ad,
+        "keyword_rows": n_kw, "errors": errors,
+    }

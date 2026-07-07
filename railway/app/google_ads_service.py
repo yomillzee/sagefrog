@@ -595,6 +595,75 @@ def fetch_campaign_daily_metrics(
     return list(by_key.values())
 
 
+def fetch_keyword_daily_metrics(
+    customer_id: str,
+    *,
+    start: date,
+    end: date,
+    client: GoogleAdsClient | None = None,
+) -> list[dict[str, Any]]:
+    """Per-search-keyword daily metrics for warehouse storage.
+
+    One row per (ad_group_criterion, day) from the keyword_view report. Returns
+    {criterion_id, keyword_text, match_type, ad_group_id, ad_group_name,
+    campaign_id, campaign_name, metric_date, spend, clicks, impressions,
+    conversions, conversion_value}.
+    """
+    customer_id = str(customer_id).replace("-", "").strip()
+    start_key = start.isoformat()
+    end_key = end.isoformat()
+    query = f"""
+        SELECT
+          ad_group_criterion.criterion_id,
+          ad_group_criterion.keyword.text,
+          ad_group_criterion.keyword.match_type,
+          ad_group.id,
+          ad_group.name,
+          campaign.id,
+          campaign.name,
+          segments.date,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.conversions,
+          metrics.conversions_value,
+          metrics.cost_micros
+        FROM keyword_view
+        WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
+    """
+    rows = search(customer_id, query, client=client)
+    by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        crit = str(_dig(row, "ad_group_criterion", "criterion_id") or "").strip()
+        agid = str(_dig(row, "ad_group", "id") or "").strip()
+        day = str(_dig(row, "segments", "date") or "").strip()
+        if not crit or not agid or not day:
+            continue
+        key = (agid, crit, day)
+        if key not in by_key:
+            by_key[key] = {
+                "criterion_id": crit,
+                "keyword_text": _dig(row, "ad_group_criterion", "keyword", "text") or "",
+                "match_type": str(_dig(row, "ad_group_criterion", "keyword", "match_type") or ""),
+                "ad_group_id": agid,
+                "ad_group_name": _dig(row, "ad_group", "name") or "",
+                "campaign_id": str(_dig(row, "campaign", "id") or ""),
+                "campaign_name": _dig(row, "campaign", "name") or "",
+                "metric_date": day,
+                "spend": 0.0,
+                "clicks": 0,
+                "impressions": 0,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+            }
+        rec = by_key[key]
+        rec["spend"] += int(_dig(row, "metrics", "cost_micros") or 0) / 1_000_000
+        rec["clicks"] += int(_dig(row, "metrics", "clicks") or 0)
+        rec["impressions"] += int(_dig(row, "metrics", "impressions") or 0)
+        rec["conversions"] += float(_dig(row, "metrics", "conversions") or 0)
+        rec["conversion_value"] += float(_dig(row, "metrics", "conversions_value") or 0)
+    return list(by_key.values())
+
+
 def campaign_performance(
     customer_id: str,
     *,

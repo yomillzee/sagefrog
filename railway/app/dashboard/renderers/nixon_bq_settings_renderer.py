@@ -225,6 +225,11 @@ def render_nixon_bq_settings_page(
               <td class="left mono">explorer_google_ads_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
+              <td class="left"><div class="module-label">Campaign Explorer — Keywords</div><div class="module-sub">Cost by search keyword</div></td>
+              <td class="left mono">/api/clients/{api_client_key}/google-ads/keywords</td>
+              <td class="left mono">explorer_google_ads_keyword_daily<span class="badge badge-view">VIEW</span></td>
+            </tr>
+            <tr>
               <td class="left"><div class="module-label">Campaign Explorer — LinkedIn</div><div class="module-sub">Creative thumbnails + spend</div></td>
               <td class="left mono">/api/clients/{api_client_key}/linkedin/explorer</td>
               <td class="left mono">fact_linkedin_ads_creative_daily<span class="badge badge-view">VIEW</span></td>

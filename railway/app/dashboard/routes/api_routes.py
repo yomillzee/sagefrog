@@ -499,6 +499,35 @@ def client_health(
 
 
 @router.get(
+    "/api/clients/nixon/google-ads/keywords",
+    summary="Nixon Google Ads search-keyword performance (Cost by Keyword) from BigQuery",
+)
+def nixon_google_ads_keywords(
+    request: Request,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(
+        request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        return _cached_bq_read(
+            "nixon.explorer.google_ads_keywords",
+            {"start": start.isoformat(), "end": end.isoformat()},
+            ttl_seconds=900,
+            fetch=lambda: nixon_marketing_service.fetch_nixon_google_ads_keywords(
+                start_date=start, end_date=end,
+            ),
+        )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
     "/api/clients/nixon/google-ads/explorer",
     summary="Nixon Google Ads explorer from BigQuery marketing mart",
 )
@@ -1164,6 +1193,42 @@ def client_google_ads_explorer(
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
                 fetch=lambda: nixon_marketing_service.fetch_nixon_google_ads_explorer(
+                    start_date=start, end_date=end,
+                ),
+            )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/google-ads/keywords",
+    summary="Client Google Ads search-keyword performance (Cost by Keyword) (generic BQ-test clients)",
+)
+def client_google_ads_keywords(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    try:
+        with nixon_marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer.google_ads_keywords",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: nixon_marketing_service.fetch_nixon_google_ads_keywords(
                     start_date=start, end_date=end,
                 ),
             )

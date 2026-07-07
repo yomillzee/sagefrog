@@ -89,6 +89,10 @@ def _google_ads_explorer_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.explorer_google_ads_daily`"
 
 
+def _google_ads_keyword_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.explorer_google_ads_keyword_daily`"
+
+
 def _linkedin_creative_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.fact_linkedin_ads_creative_daily`"
 
@@ -489,6 +493,59 @@ def fetch_nixon_linkedin_explorer(
             "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
         },
         max_rows=20000,
+    )
+    return {
+        "client": _client_key(),
+        "date_range": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
+def fetch_nixon_google_ads_keywords(
+    *,
+    start_date: date,
+    end_date: date,
+    top_limit: int = 200,
+) -> dict[str, Any]:
+    """Search-keyword performance ("Cost by Keyword"), aggregated over the range.
+
+    One row per keyword (criterion), ordered by spend desc. CTR and Avg CPC are
+    derived. Reads explorer_google_ads_keyword_daily, which only exists once a
+    client has synced with the keyword report -- callers treat a missing table
+    as "no keyword data" (empty table).
+    """
+    sql = f"""
+    SELECT
+      criterion_id,
+      ANY_VALUE(keyword_text) AS keyword_text,
+      ANY_VALUE(match_type) AS match_type,
+      ANY_VALUE(ad_group_name) AS ad_group_name,
+      ANY_VALUE(campaign_name) AS campaign_name,
+      ROUND(SUM(spend), 2) AS spend,
+      SUM(impressions) AS impressions,
+      SUM(clicks) AS clicks,
+      SUM(conversions) AS conversions,
+      ROUND(SUM(conversion_value), 2) AS conversion_value,
+      ROUND(SAFE_DIVIDE(SUM(clicks), NULLIF(SUM(impressions), 0)) * 100, 2) AS ctr,
+      ROUND(SAFE_DIVIDE(SUM(spend), NULLIF(SUM(clicks), 0)), 2) AS avg_cpc
+    FROM {_google_ads_keyword_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY criterion_id
+    ORDER BY spend DESC
+    LIMIT @top_limit
+    """
+    rows = _run_query(
+        sql,
+        params={
+            "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+            "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            "top_limit": bigquery.ScalarQueryParameter("top_limit", "INT64", int(top_limit)),
+        },
+        max_rows=top_limit,
     )
     return {
         "client": _client_key(),
