@@ -247,8 +247,7 @@ def render_bigquery_dashboard_page(
           <div class="chips" id="metricChips"></div>
         </div>
         <div class="chart-wrap" id="trendChartWrap">
-          <svg id="trendChart" class="trend-svg" preserveAspectRatio="none"></svg>
-          <div id="chartTip" class="chart-tip" hidden></div>
+          <div class="chart-canvas-host" style="height:260px"><canvas id="trendChart"></canvas></div>
         </div>
         <p class="chart-note">Each line is normalized to its own min–max. Hover for actual values.</p>
       </section>"""
@@ -271,6 +270,8 @@ def render_bigquery_dashboard_page(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{label}</title>
   {favicon_head_html()}
+  <!-- Charts: Chart.js, vendored locally (served from /static/vendor) -->
+  <script src="/static/vendor/chart.umd.min.js"></script>
   <style>
     :root {{ --bg:#eef2f7; --card:#fff; --line:#e2e8f0; --line-soft:#eff3f8; --navy:#0a2540; --blue:#1769aa; --accent:#1d6fd0; --muted:#6b7a90; --bad:#b42318; --ok:#0a7f3f; --sidebar-from:#0a2540; --sidebar-to:#123456; --radius:14px; --radius-sm:9px; --shadow:0 1px 2px rgba(16,33,67,.04), 0 4px 16px rgba(16,33,67,.05); }}
     * {{ box-sizing:border-box; }}
@@ -440,6 +441,10 @@ def render_bigquery_dashboard_page(
     .subsec-h3 {{ margin:16px 0 10px; font-size:.86rem; font-weight:750; color:var(--navy); }}
     .trend-sm-svg {{ width:100%; height:130px; display:block; }}
     .trend-md-svg {{ width:100%; height:200px; display:block; }}
+    /* Chart.js canvas host: a relatively-positioned box of fixed height that
+       the canvas fills (charts run with maintainAspectRatio:false). */
+    .chart-canvas-host {{ position:relative; width:100%; }}
+    .chart-canvas-host canvas {{ display:block; }}
     /* Sessions-over-time current-vs-previous legend */
     .cmp-legend {{ display:flex; flex-wrap:wrap; gap:18px; margin-top:10px; font-size:.78rem; color:var(--muted); }}
     .cmp-item {{ display:inline-flex; align-items:center; gap:7px; }}
@@ -568,7 +573,7 @@ def render_bigquery_dashboard_page(
 
       <section id="sec-sessions">
         <div class="sec-head"><h2>Sessions over time <span class="cmp-warn" id="sessionsCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="sessionsTrendStatus"></span></div>
-        <div class="chart-wrap"><svg id="sessionsTrendChart" class="trend-md-svg" preserveAspectRatio="none"></svg></div>
+        <div class="chart-wrap"><div class="chart-canvas-host" style="height:200px"><canvas id="sessionsTrendChart"></canvas></div></div>
         <div class="cmp-legend" id="sessionsTrendLegend"></div>
       </section>
 
@@ -688,7 +693,7 @@ def render_bigquery_dashboard_page(
             <div class="pager" id="gscBrandedPager"></div>
             <div class="chart-wrap" style="margin-top:12px">
               <div class="muted" style="font-size:.76rem;margin-bottom:6px">Weekly avg. position — matching queries (lower is better)</div>
-              <svg id="gscBrandedTrendChart" class="trend-sm-svg" preserveAspectRatio="none"></svg>
+              <div class="chart-canvas-host" style="height:130px"><canvas id="gscBrandedTrendChart"></canvas></div>
             </div>
           </div>
           <div class="col-panel">
@@ -698,7 +703,7 @@ def render_bigquery_dashboard_page(
             <div class="pager" id="gscTargetPager"></div>
             <div class="chart-wrap" style="margin-top:12px">
               <div class="muted" style="font-size:.76rem;margin-bottom:6px">Weekly avg. position — matching queries (lower is better)</div>
-              <svg id="gscTargetTrendChart" class="trend-sm-svg" preserveAspectRatio="none"></svg>
+              <div class="chart-canvas-host" style="height:130px"><canvas id="gscTargetTrendChart"></canvas></div>
             </div>
           </div>
         </div>
@@ -771,6 +776,71 @@ def render_bigquery_dashboard_page(
       if (secs < 60) return secs + 's';
       const m = Math.floor(secs / 60), s = secs % 60;
       return m + 'm ' + (s < 10 ? '0' : '') + s + 's';
+    }}
+
+    // ---- Chart.js foundation (lib vendored under /static/vendor) ----
+    // Shared theme + small factories keep every chart consistent. Instances are
+    // tracked per canvas id and destroyed before re-creation (Chart.js will not
+    // reuse a canvas that still has a live chart on it).
+    const __charts = {{}};
+    function __chart(id, config) {{
+      const el = document.getElementById(id);
+      if (!el || !window.Chart) return null;
+      if (__charts[id]) __charts[id].destroy();
+      __charts[id] = new Chart(el.getContext('2d'), config);
+      return __charts[id];
+    }}
+    function __destroyChart(id) {{ if (__charts[id]) {{ __charts[id].destroy(); delete __charts[id]; }} }}
+    if (window.Chart) {{
+      Chart.defaults.font.family = 'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+      Chart.defaults.font.size = 11;
+      Chart.defaults.color = '#6b7a90';
+      Chart.defaults.maintainAspectRatio = false;
+      Chart.defaults.animation.duration = 300;
+      Chart.defaults.plugins.legend.display = false;
+      const _tt = Chart.defaults.plugins.tooltip;
+      _tt.backgroundColor = '#0b1020'; _tt.titleColor = '#e8eefc'; _tt.bodyColor = '#e8eefc';
+      _tt.padding = 9; _tt.cornerRadius = 8; _tt.boxPadding = 4; _tt.usePointStyle = true;
+    }}
+    // Vertical gradient fill under an area line, built from the plot geometry.
+    function __areaFill(context, color) {{
+      const c = context.chart.ctx, a = context.chart.chartArea;
+      if (!a) return color + '00';
+      const g = c.createLinearGradient(0, a.top, 0, a.bottom);
+      g.addColorStop(0, color + '33'); g.addColorStop(1, color + '00');
+      return g;
+    }}
+    // Line chart. series: [{{label, data, color, fill?, dashed?, raw?, fmt?}}].
+    // `data` is what's plotted (may be normalized); `raw`/`fmt` drive tooltips.
+    function lineChart(id, labels, series, opts) {{
+      opts = opts || {{}};
+      const datasets = series.map(s => ({{
+        label: s.label, data: s.data, borderColor: s.color,
+        backgroundColor: s.fill ? (ctx => __areaFill(ctx, s.color)) : 'transparent',
+        fill: !!s.fill, borderWidth: 2.25, tension: 0.35,
+        borderDash: s.dashed ? [5, 4] : [],
+        pointRadius: opts.points ? 2.5 : 0, pointHoverRadius: 4, pointBackgroundColor: s.color,
+        _raw: s.raw || s.data, _fmt: s.fmt || count,
+      }}));
+      return __chart(id, {{
+        type: 'line',
+        data: {{ labels, datasets }},
+        options: {{
+          interaction: {{ mode: 'index', intersect: false }},
+          scales: {{
+            x: {{ grid: {{ display: false }}, border: {{ display: false }}, ticks: {{ maxRotation: 0, autoSkip: true, maxTicksLimit: opts.xTicks || 6 }} }},
+            y: {{ display: opts.yDisplay !== false, reverse: !!opts.yReverse, beginAtZero: opts.beginAtZero !== false,
+                 grid: {{ color: '#f1f4f9' }}, border: {{ display: false }},
+                 ticks: {{ maxTicksLimit: 4, callback: opts.yFmt || (v => v) }} }},
+          }},
+          plugins: {{
+            legend: {{ display: false }},
+            tooltip: {{ callbacks: opts.tooltip || {{
+              label: c => `${{c.dataset.label}}: ${{c.dataset._fmt(c.dataset._raw[c.dataIndex])}}`,
+            }} }},
+          }},
+        }},
+      }});
     }}
     function withDates(base) {{
       const sep = base.includes('?') ? '&' : '?';
@@ -972,54 +1042,29 @@ def render_bigquery_dashboard_page(
       for (const d of out) {{ d.cpc = d.clicks ? d.spend/d.clicks : 0; d.cpa = d.conversions ? d.spend/d.conversions : 0; d.ctr = d.impressions ? d.clicks/d.impressions*100 : 0; }}
       return out;
     }}
-    // Catmull-Rom spline → cubic-bezier path for smooth (not jagged) lines.
-    function smoothPath(pts) {{
-      if (!pts.length) return '';
-      if (pts.length < 3) return 'M' + pts.map(p => `${{p[0].toFixed(1)}},${{p[1].toFixed(1)}}`).join(' L');
-      let d = `M${{pts[0][0].toFixed(1)}},${{pts[0][1].toFixed(1)}}`;
-      for (let i = 0; i < pts.length - 1; i++) {{
-        const p0 = pts[i-1] || pts[i], p1 = pts[i], p2 = pts[i+1], p3 = pts[i+2] || p2;
-        const c1x = p1[0] + (p2[0]-p0[0])/6, c1y = p1[1] + (p2[1]-p0[1])/6;
-        const c2x = p2[0] - (p3[0]-p1[0])/6, c2y = p2[1] - (p3[1]-p1[1])/6;
-        d += ` C${{c1x.toFixed(1)}},${{c1y.toFixed(1)}} ${{c2x.toFixed(1)}},${{c2y.toFixed(1)}} ${{p2[0].toFixed(1)}},${{p2[1].toFixed(1)}}`;
-      }}
-      return d;
-    }}
     function renderChart() {{
       chartDaily = buildChartDaily();
       clearSkelChart('trendChart');
-      const svg = document.getElementById('trendChart');
-      const W=800, H=260, padL=12, padR=12, padT=16, padB=28, plotW=W-padL-padR, plotH=H-padT-padB, n=chartDaily.length;
-      svg.setAttribute('viewBox', `0 0 ${{W}} ${{H}}`);
-      if (!n) {{ svg.innerHTML=''; setStatus('chartStatus','No data for this range.'); return; }}
+      const n = chartDaily.length;
+      if (!n) {{ __destroyChart('trendChart'); setStatus('chartStatus','No data for this range.'); return; }}
       const active = CHART_METRICS.filter(m => chartMetrics.has(m.key));
-      const xAt = i => padL + (n===1 ? plotW/2 : (i/(n-1))*plotW);
-      const baseY = padT + plotH;
-      const defs = [];
-      const parts = [
-        `<line x1="${{padL}}" y1="${{padT}}" x2="${{padL}}" y2="${{baseY}}" stroke="#eef2f7"/>`,
-        `<line x1="${{padL}}" y1="${{baseY}}" x2="${{padL+plotW}}" y2="${{baseY}}" stroke="#e3e9f1"/>`,
-      ];
+      const labels = chartDaily.map(d => String(d.date).slice(5));
       const single = active.length === 1;
-      active.forEach((m, mi) => {{
-        const vals = chartDaily.map(d => num(d[m.key]));
-        const mn=Math.min(...vals), mx=Math.max(...vals), span=(mx-mn)||1;
-        const pts = vals.map((v,i) => [xAt(i), padT+(1-(v-mn)/span)*plotH]);
-        const line = smoothPath(pts);
-        // A single-metric view gets a soft gradient fill under the smooth line.
-        if (single && pts.length > 1) {{
-          const gid = 'trendGrad'+mi;
-          defs.push(`<linearGradient id="${{gid}}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${{m.color}}" stop-opacity="0.20"/><stop offset="100%" stop-color="${{m.color}}" stop-opacity="0"/></linearGradient>`);
-          parts.push(`<path fill="url(#${{gid}})" stroke="none" d="${{line}} L${{pts[pts.length-1][0].toFixed(1)}},${{baseY.toFixed(1)}} L${{pts[0][0].toFixed(1)}},${{baseY.toFixed(1)}} Z"/>`);
-        }}
-        parts.push(`<path fill="none" stroke="${{m.color}}" stroke-width="2.25" stroke-linejoin="round" stroke-linecap="round" d="${{line}}"/>`);
+      // Each metric keeps its own min–max scale, so normalize per-metric to 0–1
+      // for plotting and carry the real values (raw) + formatter for tooltips.
+      const series = active.map(m => {{
+        const raw = chartDaily.map(d => num(d[m.key]));
+        const mn = Math.min(...raw), mx = Math.max(...raw), span = (mx - mn) || 1;
+        return {{ label: m.label, data: raw.map(v => (v - mn) / span), raw, fmt: m.fmt,
+                 color: m.color, fill: single }};
       }});
-      const lblIdx = n===1 ? [0] : [0, Math.floor((n-1)/2), n-1];
-      for (const i of lblIdx) {{
-        const anchor = i===0 ? 'start' : (i===n-1 ? 'end' : 'middle');
-        parts.push(`<text x="${{xAt(i).toFixed(1)}}" y="${{H-9}}" font-size="11" font-weight="600" fill="var(--muted)" text-anchor="${{anchor}}" style="letter-spacing:.02em">${{esc(String(chartDaily[i].date).slice(5))}}</text>`);
-      }}
-      svg.innerHTML = (defs.length ? `<defs>${{defs.join('')}}</defs>` : '') + parts.join('');
+      lineChart('trendChart', labels, series, {{
+        yDisplay: false, xTicks: 6,
+        tooltip: {{
+          title: items => items.length ? String(chartDaily[items[0].dataIndex].date) : '',
+          label: c => `${{c.dataset.label}}: ${{c.dataset._fmt(c.dataset._raw[c.dataIndex])}}`,
+        }},
+      }});
       setStatus('chartStatus', `${{n}} day(s) · ${{active.length}} metric(s)`);
     }}
     function buildMetricChips() {{
@@ -1031,24 +1076,6 @@ def render_bigquery_dashboard_page(
         renderChart();
       }}));
       el.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', chartMetrics.has(b.dataset.key)));
-    }}
-    function setupChartHover() {{
-      const wrap = document.getElementById('trendChartWrap');
-      const svg  = document.getElementById('trendChart');
-      const tip  = document.getElementById('chartTip');
-      svg.addEventListener('mousemove', ev => {{
-        if (!chartDaily.length) {{ tip.hidden=true; return; }}
-        const rect=svg.getBoundingClientRect(), W=800, padL=12, padR=12;
-        const frac=((ev.clientX-rect.left)/rect.width*W-padL)/(W-padL-padR);
-        let i=Math.max(0,Math.min(chartDaily.length-1,Math.round(frac*(chartDaily.length-1))));
-        const d=chartDaily[i], active=CHART_METRICS.filter(m=>chartMetrics.has(m.key));
-        if (!active.length) {{ tip.hidden=true; return; }}
-        tip.innerHTML = `<strong>${{esc(d.date)}}</strong>` + active.map(m=>`<br><span class="metric-swatch" style="background:${{m.color}}"></span>${{esc(m.label)}}: ${{m.fmt(d[m.key])}}`).join('');
-        tip.hidden=false;
-        const wr=wrap.getBoundingClientRect();
-        tip.style.left=(ev.clientX-wr.left)+'px'; tip.style.top=(ev.clientY-wr.top)+'px';
-      }});
-      svg.addEventListener('mouseleave', () => {{ tip.hidden=true; }});
     }}
     async function loadSummary() {{
       setStatus('summaryStatus','Loading…');
@@ -1279,44 +1306,21 @@ def render_bigquery_dashboard_page(
     }}
     // Small single-line weekly trend chart, same visual style as
     // drawSessionsTrend but generic over any {{week_start, <valueKey>}} rows.
-    function drawKeywordTrend(svgId, rows, valueKey, color, invert) {{
-      clearSkelChart(svgId);
-      const svg=document.getElementById(svgId);
-      if (!svg) return;
-      // padL widened to fit Y-axis position labels.
-      const W=800,H=130,padL=34,padR=12,padT=8,padB=24,plotW=W-padL-padR,plotH=H-padT-padB,n=rows.length;
-      svg.setAttribute('viewBox',`0 0 ${{W}} ${{H}}`);
-      if (!n) {{ svg.innerHTML=''; return; }}
-      const vals=rows.map(r=>num(r[valueKey]));
-      const mn=Math.min(...vals),mx=Math.max(...vals),span=(mx-mn)||1;
-      const xAt=i=>padL+(n===1?plotW/2:(i/(n-1))*plotW);
-      // For position, lower is better -- invert so an improving (falling)
-      // position line visually rises, like a rank chart.
-      const yAt=v=>padT+(invert ? (v-mn)/span : 1-(v-mn)/span)*plotH;
-      const baseY=padT+plotH;
-      const pts=vals.map((v,i)=>[xAt(i),yAt(v)]);
-      const line=smoothPath(pts);
-      const area=pts.length>1?`${{line}} L${{pts[pts.length-1][0].toFixed(1)}},${{baseY.toFixed(1)}} L${{pts[0][0].toFixed(1)}},${{baseY.toFixed(1)}} Z`:'';
-      const lblIdx=n===1?[0]:[0,Math.floor((n-1)/2),n-1];
-      // Y-axis: label the actual position values so the scale is readable. With
-      // invert, the best (lowest) position sits at the top. Show up to 3 ticks.
+    // Weekly avg-position trend. For position lower is better, so with invert the
+    // y-axis is reversed (best position at the top), like a rank chart.
+    function drawKeywordTrend(canvasId, rows, valueKey, color, invert) {{
+      clearSkelChart(canvasId);
+      if (!document.getElementById(canvasId)) return;
+      const n=rows.length;
+      if (!n) {{ __destroyChart(canvasId); return; }}
+      const labels=rows.map(r=>String(r.week_start||'').slice(5));
+      const data=rows.map(r=>num(r[valueKey]));
       const fmtPos=v=>(Math.round(v*10)/10).toFixed(1);
-      const yTickVals = (mn===mx) ? [mn] : [mn,(mn+mx)/2,mx];
-      const gid='grad_'+svgId;
-      svg.innerHTML=[
-        `<defs><linearGradient id="${{gid}}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${{color}}" stop-opacity="0.20"/><stop offset="100%" stop-color="${{color}}" stop-opacity="0"/></linearGradient></defs>`,
-        // Horizontal gridlines + Y value labels (position).
-        ...yTickVals.map(v=>`<line x1="${{padL}}" y1="${{yAt(v).toFixed(1)}}" x2="${{padL+plotW}}" y2="${{yAt(v).toFixed(1)}}" stroke="#f1f4f9"/>`),
-        ...yTickVals.map(v=>`<text x="${{padL-6}}" y="${{(yAt(v)+3).toFixed(1)}}" font-size="10" fill="var(--muted)" text-anchor="end">${{fmtPos(v)}}</text>`),
-        `<line x1="${{padL}}" y1="${{padT}}" x2="${{padL}}" y2="${{baseY}}" stroke="#eef2f7"/>`,
-        `<line x1="${{padL}}" y1="${{baseY}}" x2="${{padL+plotW}}" y2="${{baseY}}" stroke="#e3e9f1"/>`,
-        area?`<path fill="url(#${{gid}})" stroke="none" d="${{area}}"/>`:'',
-        `<path fill="none" stroke="${{color}}" stroke-width="2.25" stroke-linejoin="round" stroke-linecap="round" d="${{line}}"/>`,
-        // Dot at each week so the movement is readable and a single-week point
-        // (short ranges) still renders instead of an invisible moveto-only path.
-        ...pts.map(p=>`<circle cx="${{p[0].toFixed(1)}}" cy="${{p[1].toFixed(1)}}" r="${{n===1?4:2.5}}" fill="${{color}}"/>`),
-        ...lblIdx.map(i=>{{const anchor=i===0?'start':(i===n-1?'end':'middle');return `<text x="${{xAt(i).toFixed(1)}}" y="${{H-6}}" font-size="11" font-weight="600" fill="var(--muted)" text-anchor="${{anchor}}" style="letter-spacing:.02em">${{esc(String(rows[i].week_start||'').slice(5))}}</text>`;}}),
-      ].join('');
+      lineChart(canvasId, labels, [{{ label:'Avg position', data, color, fill:true }}], {{
+        points:true, yReverse: !!invert, yDisplay:true, beginAtZero:false,
+        yFmt: v => fmtPos(v),
+        tooltip: {{ label: c => `Avg position: ${{fmtPos(c.raw)}}` }},
+      }});
     }}
     async function renderGscKeywordTables() {{
       const reqId = ++_gscKwReqId;
@@ -1715,40 +1719,26 @@ def render_bigquery_dashboard_page(
     }})();
 
     // ---- GA4: Traffic acquisition ----
-    // Draw sessions/day for the current period (solid blue, filled) with the
-    // prior period overlaid (dashed grey), aligned day-for-day by index so the
-    // shapes line up regardless of the actual calendar dates.
+    // Sessions/day for the current period (solid blue, filled) with the prior
+    // period overlaid (dashed grey), aligned day-for-day by index so the shapes
+    // line up regardless of the actual calendar dates.
     function drawSessionsTrend(daily, prevDaily) {{
       clearSkelChart('sessionsTrendChart');
-      const svg=document.getElementById('sessionsTrendChart');
       const legend=document.getElementById('sessionsTrendLegend');
-      const W=800,H=200,padL=10,padR=10,padT=12,padB=26,plotW=W-padL-padR,plotH=H-padT-padB,n=daily.length;
-      svg.setAttribute('viewBox',`0 0 ${{W}} ${{H}}`);
-      if (!n) {{ svg.innerHTML=''; if(legend) legend.innerHTML=''; return; }}
+      const n=daily.length;
+      if (!n) {{ __destroyChart('sessionsTrendChart'); if(legend) legend.innerHTML=''; return; }}
       const vals=daily.map(d=>num(d.sessions));
       const prevVals=(prevDaily||[]).map(d=>num(d.sessions));
       const hasPrev=prevVals.length>0;
-      const scaleVals=hasPrev?vals.concat(prevVals):vals;
-      const mn=Math.min(...scaleVals),mx=Math.max(...scaleVals),span=(mx-mn)||1;
-      const xAt=i=>padL+(n===1?plotW/2:(i/(n-1))*plotW);
-      const yAt=v=>padT+(1-(v-mn)/span)*plotH;
-      const baseY=padT+plotH;
-      const pts=vals.map((v,i)=>[xAt(i),yAt(v)]);
-      const line=smoothPath(pts);
-      const area=pts.length>1?`${{line}} L${{pts[pts.length-1][0].toFixed(1)}},${{baseY.toFixed(1)}} L${{pts[0][0].toFixed(1)}},${{baseY.toFixed(1)}} Z`:'';
-      // Prior period plotted on the same index positions as the current one.
-      const prevPts=[]; for (let i=0;i<n&&i<prevVals.length;i++) prevPts.push([xAt(i),yAt(prevVals[i])]);
-      const prevLine=prevPts.length>1?smoothPath(prevPts):'';
-      const lblIdx=n===1?[0]:[0,Math.floor((n-1)/2),n-1];
-      svg.innerHTML=[
-        `<defs><linearGradient id="sessGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#1d6fd0" stop-opacity="0.20"/><stop offset="100%" stop-color="#1d6fd0" stop-opacity="0"/></linearGradient></defs>`,
-        `<line x1="${{padL}}" y1="${{padT}}" x2="${{padL}}" y2="${{baseY}}" stroke="#eef2f7"/>`,
-        `<line x1="${{padL}}" y1="${{baseY}}" x2="${{padL+plotW}}" y2="${{baseY}}" stroke="#e3e9f1"/>`,
-        area?`<path fill="url(#sessGrad)" stroke="none" d="${{area}}"/>`:'',
-        prevLine?`<path fill="none" stroke="#9aa7bd" stroke-width="1.75" stroke-dasharray="4 3" stroke-linejoin="round" stroke-linecap="round" d="${{prevLine}}"/>`:'',
-        `<path fill="none" stroke="#1d6fd0" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" d="${{line}}"/>`,
-        ...lblIdx.map(i=>{{const anchor=i===0?'start':(i===n-1?'end':'middle');return`<text x="${{xAt(i).toFixed(1)}}" y="${{H-8}}" font-size="11" font-weight="600" fill="var(--muted)" text-anchor="${{anchor}}" style="letter-spacing:.02em">${{esc(String(daily[i].date).slice(5))}}</text>`;}}),
-      ].join('');
+      const labels=daily.map(d=>String(d.date).slice(5));
+      const series=[];
+      // Previous first so the current line renders on top of it.
+      if (hasPrev) series.push({{ label:'Previous', data: prevVals.slice(0,n), color:'#9aa7bd', dashed:true }});
+      series.push({{ label:'Current', data: vals, color:'#1d6fd0', fill:true }});
+      lineChart('sessionsTrendChart', labels, series, {{
+        yFmt: v => count(v),
+        tooltip: {{ label: c => `${{c.dataset.label}}: ${{count(c.raw)}} sessions` }},
+      }});
       if (legend) {{
         const curTot=vals.reduce((a,b)=>a+b,0), prevTot=prevVals.reduce((a,b)=>a+b,0);
         const delta=(hasPrev&&prevTot)?((curTot-prevTot)/prevTot*100):null;
@@ -2171,7 +2161,6 @@ def render_bigquery_dashboard_page(
     // ---- Init ----
     if (HAS_PAID_ADS) {{
       buildMetricChips();
-      setupChartHover();
     }}
     document.getElementById('explorerTable').addEventListener('click',ev=>{{
       const thumb=ev.target.closest('.ad-thumb');
