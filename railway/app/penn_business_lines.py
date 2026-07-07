@@ -363,7 +363,7 @@ def active_client_product_line_catalog(
 ) -> list[dict[str, str]]:
     profile = filter_profile or client_filter_profile(client_slug)
     if profile == "nixon":
-        from nixon_regions import active_product_line_catalog
+        from dashboard_regions import active_product_line_catalog
 
         return active_product_line_catalog(campaigns)
     return []
@@ -378,9 +378,9 @@ def build_client_segment_campaigns(
     slug = (client_slug or "").strip().lower()
     profile = filter_profile or client_filter_profile(slug)
     if profile == "nixon":
-        from nixon_regions import build_nixon_region_campaigns
+        from dashboard_regions import build_region_campaigns
 
-        return build_nixon_region_campaigns(breakdowns)
+        return build_region_campaigns(breakdowns)
     return build_business_line_campaigns(breakdowns, client_slug=slug)
 
 
@@ -392,7 +392,7 @@ def active_client_segment_catalog(
 ) -> list[dict[str, str]]:
     profile = filter_profile or client_filter_profile(client_slug)
     if profile == "nixon":
-        from nixon_regions import active_region_catalog
+        from dashboard_regions import active_region_catalog
 
         return active_region_catalog(campaigns)
     return active_business_line_catalog(campaigns)

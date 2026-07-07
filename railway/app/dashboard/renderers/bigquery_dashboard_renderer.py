@@ -1,4 +1,4 @@
-"""Nixon Medical dashboard — paid media (Overview / Explorer) + Website Analytics tabs."""
+"""BigQuery-mart client dashboard — paid media (Overview / Explorer) + Website Analytics tabs."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from dashboard.renderers.base_layout import (
     SIDEBAR_CSS,
     dashboard_topbar_js,
     favicon_head_html,
-    nixon_sidebar_view_nav_html,
+    dashboard_sidebar_view_nav_html,
     render_sidebar,
 )
 
@@ -98,7 +98,7 @@ def resolve_explorer_filters(text: str | None) -> list[dict]:
     return parsed or DEFAULT_EXPLORER_FILTERS
 
 
-def render_nixon_bigquery_test_page(
+def render_bigquery_dashboard_page(
     *,
     access_key: str | None = None,
     use_session: bool = False,
@@ -177,9 +177,9 @@ def render_nixon_bigquery_test_page(
 
     # Section nav (Overview/Explorer/Website Analytics/Search Console as JS tabs
     # driven by switchTab() below, + connected Lead/Event Tracking as links).
-    # Shared with the settings/connectors/files pages via nixon_sidebar_view_nav_html
+    # Shared with the settings/connectors/files pages via dashboard_sidebar_view_nav_html
     # so the sidebar is identical on every page of a Nixon-style dashboard.
-    view_nav_html = nixon_sidebar_view_nav_html(
+    view_nav_html = dashboard_sidebar_view_nav_html(
         client_slug=client_slug,
         access_key=access_key,
         use_session=use_session,

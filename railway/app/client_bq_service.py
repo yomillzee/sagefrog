@@ -1,6 +1,6 @@
 """Generic BigQuery marketing mart service.
 
-Mirrors nixon_marketing_service but fully parameterized — callers supply
+Mirrors marketing_service but fully parameterized — callers supply
 project_id, dataset_id, and optionally a credentials env-var name so any
 BQ-test client (arg-bq-test, etc.) can reuse the same SQL without forking
 the Nixon service.

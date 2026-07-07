@@ -33,7 +33,7 @@ class DashboardClientBigqueryNixonModeTests(unittest.TestCase):
         )
         captured = {}
 
-        def fake_render_nixon(**kwargs):
+        def fake_render(**kwargs):
             captured.update(kwargs)
             return "<html>nixon-template</html>"
 
@@ -41,7 +41,7 @@ class DashboardClientBigqueryNixonModeTests(unittest.TestCase):
              patch.object(core_routes, "validate_client_slug", side_effect=lambda s: s), \
              patch.object(core_routes.web_users, "enabled", return_value=True), \
              patch.object(core_routes.web_auth, "authenticate_dashboard", return_value=_FakeAuth()), \
-             patch.object(core_routes, "render_nixon_bigquery_test_page", fake_render_nixon), \
+             patch.object(core_routes, "render_bigquery_dashboard_page", fake_render), \
              patch.object(core_routes.dashboard_service, "render_penn_html") as fake_render_penn:
             request = types.SimpleNamespace()
             resp = core_routes.dashboard_client(client_slug="acme", request=request, key=None)
@@ -62,13 +62,13 @@ class DashboardClientBigqueryNixonModeTests(unittest.TestCase):
              patch.object(core_routes.web_users, "enabled", return_value=True), \
              patch.object(core_routes.web_auth, "authenticate_dashboard", return_value=_FakeAuth()), \
              patch.object(core_routes.dashboard_snapshots, "get_snapshot", return_value={"ok": True}), \
-             patch.object(core_routes, "render_nixon_bigquery_test_page") as fake_render_nixon, \
+             patch.object(core_routes, "render_bigquery_dashboard_page") as fake_render, \
              patch.object(core_routes.dashboard_service, "render_penn_html", return_value="<html>penn</html>") as fake_render_penn:
             request = types.SimpleNamespace()
             resp = core_routes.dashboard_client(client_slug="other", request=request, key=None)
 
         self.assertIn("penn", resp.body.decode())
-        fake_render_nixon.assert_not_called()
+        fake_render.assert_not_called()
         fake_render_penn.assert_called_once()
 
 

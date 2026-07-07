@@ -1,4 +1,4 @@
-"""Classify Nixon campaigns into geographic regions from naming conventions."""
+"""Classify campaigns into geographic regions from naming conventions."""
 
 from __future__ import annotations
 
@@ -134,7 +134,7 @@ def classify_regions(
     return ids, labels
 
 
-def build_nixon_region_campaigns(breakdowns: dict[str, Any]) -> list[dict[str, Any]]:
+def build_region_campaigns(breakdowns: dict[str, Any]) -> list[dict[str, Any]]:
     """Campaign rows with region and product line tags for Nixon dashboard filters."""
     out: list[dict[str, Any]] = []
     for row in _campaign_rows_from_breakdowns(breakdowns):

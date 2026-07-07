@@ -1,4 +1,4 @@
-"""Nixon website analytics page — GA4 data from analytics_test."""
+"""Website analytics page — GA4 data from the client's BigQuery mart."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _docs_enabled() -> bool:
     return docs.enabled()
 
 
-def render_nixon_analytics_page(
+def render_analytics_page(
     *,
     access_key: str | None = None,
     use_session: bool = False,

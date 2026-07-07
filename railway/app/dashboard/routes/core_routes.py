@@ -14,7 +14,7 @@ import dashboard_snapshots
 import web_auth
 import web_users
 from cron_security import require_cron_secret
-from dashboard.renderers.nixon_bq_test_renderer import render_nixon_bigquery_test_page
+from dashboard.renderers.bigquery_dashboard_renderer import render_bigquery_dashboard_page
 from dashboard.routes.helpers import (
     penn_html_session_kwargs,
     validate_client_slug,
@@ -226,12 +226,12 @@ def dashboard_client(
             auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
             if isinstance(auth, RedirectResponse):
                 return auth
-            return HTMLResponse(render_nixon_bigquery_test_page(
+            return HTMLResponse(render_bigquery_dashboard_page(
                 client_slug=slug, api_client_key=slug, label=label,
                 **penn_html_session_kwargs(auth),
             ))
         dashboard_service.verify_dashboard_key(key)
-        return HTMLResponse(render_nixon_bigquery_test_page(
+        return HTMLResponse(render_bigquery_dashboard_page(
             client_slug=slug, api_client_key=slug, label=label,
             access_key=key, use_session=False, session_email=None, session_is_admin=False,
         ))

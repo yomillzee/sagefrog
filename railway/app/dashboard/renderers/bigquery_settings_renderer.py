@@ -1,4 +1,4 @@
-"""Focused settings page for the Nixon BQ-test client.
+"""Focused settings page for a BigQuery-mart client.
 
 Only the controls needed to set up the account and push/pull data from
 BigQuery: the BigQuery connection (routing + service-account credential),
@@ -13,10 +13,10 @@ from dashboard.renderers.base_layout import (
     SIDEBAR_CSS,
     dashboard_topbar_js,
     favicon_head_html,
-    nixon_sidebar_view_nav_html,
+    dashboard_sidebar_view_nav_html,
     render_sidebar,
 )
-from dashboard.renderers.nixon_bq_test_renderer import _api_url
+from dashboard.renderers.bigquery_dashboard_renderer import _api_url
 from dashboard.utils.formatting import esc as _esc
 
 
@@ -25,7 +25,7 @@ def _docs_enabled() -> bool:
     return docs.enabled()
 
 
-def render_nixon_bq_settings_page(
+def render_bigquery_settings_page(
     *,
     access_key: str | None = None,
     use_session: bool = False,
@@ -45,7 +45,7 @@ def render_nixon_bq_settings_page(
 
     Defaults preserve Nixon's exact page. client_slug drives dashboard-facing
     URLs + the connectors nav; api_client_key drives the /api/clients/* refresh
-    + health endpoints (see render_nixon_bigquery_test_page for why these are
+    + health endpoints (see render_bigquery_dashboard_page for why these are
     separate for Nixon itself). show_linkedin_backfill hides the LinkedIn-only
     onboarding button for generic clients, whose full refresh already syncs
     every connected platform.
@@ -74,7 +74,7 @@ def render_nixon_bq_settings_page(
 
     # Same canonical section nav as the dashboard (as links back to it), so the
     # sidebar is identical across the dashboard, settings, connectors, and files.
-    view_nav_html = nixon_sidebar_view_nav_html(
+    view_nav_html = dashboard_sidebar_view_nav_html(
         client_slug=client_slug,
         access_key=access_key,
         use_session=use_session,
@@ -415,8 +415,8 @@ def render_nixon_bq_settings_page(
     loadHealth();
 
     // ---- Sidebar page toggles ----
-    // Mirrors the tab keys in nixon_bq_test_renderer's TABS + the data-tab
-    // attributes in base_layout.nixon_sidebar_view_nav_html. Stored in
+    // Mirrors the tab keys in bigquery_dashboard_renderer's TABS + the data-tab
+    // attributes in base_layout.dashboard_sidebar_view_nav_html. Stored in
     // localStorage (client-side only); the sidebar nav on every page reads
     // this to hide turned-off pages, and the dashboard falls back off a
     // hidden active tab.

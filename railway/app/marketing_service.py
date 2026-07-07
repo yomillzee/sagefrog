@@ -167,7 +167,7 @@ def _run_query(
     return [_clean_row(row) for row in rows]
 
 
-def fetch_nixon_marketing(
+def fetch_marketing(
     *,
     start_date: date,
     end_date: date,
@@ -253,7 +253,7 @@ def fetch_nixon_marketing(
     }
 
 
-def fetch_nixon_marketing_health(*, limit: int = 100) -> dict[str, Any]:
+def fetch_marketing_health(*, limit: int = 100) -> dict[str, Any]:
     sql = f"""
     SELECT
       source,
@@ -308,7 +308,7 @@ def fetch_nixon_marketing_health(*, limit: int = 100) -> dict[str, Any]:
     return {"client": _client_key(), "row_count": len(rows), "rows": rows}
 
 
-def fetch_nixon_summary(
+def fetch_summary(
     *,
     start_date: date,
     end_date: date,
@@ -401,7 +401,7 @@ def fetch_nixon_summary(
     }
 
 
-def fetch_nixon_google_ads_explorer(
+def fetch_google_ads_explorer(
     *,
     start_date: date,
     end_date: date,
@@ -456,14 +456,14 @@ def fetch_nixon_google_ads_explorer(
     }
 
 
-def fetch_nixon_linkedin_explorer(
+def fetch_linkedin_explorer(
     *,
     start_date: date,
     end_date: date,
 ) -> dict[str, Any]:
     """LinkedIn creative-level explorer (campaign group > campaign/ad set > creative).
 
-    Mirrors fetch_nixon_google_ads_explorer. The dashboard renderer maps this
+    Mirrors fetch_google_ads_explorer. The dashboard renderer maps this
     onto the Google tree levels and shows each creative's thumbnail.
     """
     sql = f"""
@@ -505,7 +505,7 @@ def fetch_nixon_linkedin_explorer(
     }
 
 
-def fetch_nixon_google_ads_keywords(
+def fetch_google_ads_keywords(
     *,
     start_date: date,
     end_date: date,
@@ -558,7 +558,7 @@ def fetch_nixon_google_ads_keywords(
     }
 
 
-def fetch_nixon_meta_explorer(
+def fetch_meta_explorer(
     *,
     start_date: date,
     end_date: date,
@@ -602,7 +602,7 @@ def fetch_nixon_meta_explorer(
     }
 
 
-def fetch_nixon_pages_top(
+def fetch_pages_top(
     *,
     start_date: date,
     end_date: date,
@@ -639,7 +639,7 @@ def fetch_nixon_pages_top(
     }
 
 
-def fetch_nixon_traffic_acquisition(
+def fetch_traffic_acquisition(
     *,
     start_date: date,
     end_date: date,
@@ -693,7 +693,7 @@ def fetch_nixon_traffic_acquisition(
     }
 
 
-def fetch_nixon_device_split(
+def fetch_device_split(
     *,
     start_date: date,
     end_date: date,
@@ -724,7 +724,7 @@ def fetch_nixon_device_split(
     }
 
 
-def fetch_nixon_landing_pages(
+def fetch_landing_pages(
     *,
     start_date: date,
     end_date: date,
@@ -761,7 +761,7 @@ def _landing_page_events_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.vw_ga4_landing_page_events_daily`"
 
 
-def fetch_nixon_landing_page_events(
+def fetch_landing_page_events(
     *,
     start_date: date,
     end_date: date,
@@ -811,7 +811,7 @@ def _page_events_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.vw_ga4_page_events_daily`"
 
 
-def fetch_nixon_page_key_events(
+def fetch_page_key_events(
     *,
     start_date: date,
     end_date: date,
@@ -883,7 +883,7 @@ def _key_events_by_source(table_expr: str, params: dict) -> dict[str, Any]:
     return {"client": _client_key(), "by_source_events": rows, "events": events}
 
 
-def fetch_nixon_traffic_key_events(*, start_date: date, end_date: date) -> dict[str, Any]:
+def fetch_traffic_key_events(*, start_date: date, end_date: date) -> dict[str, Any]:
     """Session-scoped source/medium × event (from vw_ga4_events_daily) so the
     Traffic panel's source table can honour the selected key-event set."""
     params = {
@@ -893,7 +893,7 @@ def fetch_nixon_traffic_key_events(*, start_date: date, end_date: date) -> dict[
     return _key_events_by_source(_events_table(), params)
 
 
-def fetch_nixon_user_acq_key_events(*, start_date: date, end_date: date) -> dict[str, Any]:
+def fetch_user_acq_key_events(*, start_date: date, end_date: date) -> dict[str, Any]:
     """First-user source/medium × event (from vw_ga4_user_acq_events_daily)."""
     params = {
         "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
@@ -902,7 +902,7 @@ def fetch_nixon_user_acq_key_events(*, start_date: date, end_date: date) -> dict
     return _key_events_by_source(_user_acq_events_table(), params)
 
 
-def fetch_nixon_pages_sources(
+def fetch_pages_sources(
     *,
     start_date: date,
     end_date: date,
@@ -944,7 +944,7 @@ def fetch_nixon_pages_sources(
     }
 
 
-def fetch_nixon_conversion_events(
+def fetch_conversion_events(
     *,
     start_date: date,
     end_date: date,
@@ -986,7 +986,7 @@ def fetch_nixon_conversion_events(
     }
 
 
-def fetch_nixon_user_acquisition(
+def fetch_user_acquisition(
     *,
     start_date: date,
     end_date: date,
@@ -1032,7 +1032,7 @@ def fetch_nixon_user_acquisition(
     }
 
 
-def fetch_nixon_demographics(
+def fetch_demographics(
     *,
     start_date: date,
     end_date: date,

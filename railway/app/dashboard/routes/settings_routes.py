@@ -39,11 +39,11 @@ def _bq_nixon_routing(db_cfg) -> dict:
 
 
 def _render_bq_nixon_settings(slug: str, db_cfg, *, flash, flash_err, html_kw) -> HTMLResponse:
-    from dashboard.renderers.nixon_bq_settings_renderer import render_nixon_bq_settings_page
+    from dashboard.renderers.bigquery_settings_renderer import render_bigquery_settings_page
 
     label = (getattr(db_cfg, "label", None) or slug).strip() or slug
     return HTMLResponse(
-        render_nixon_bq_settings_page(
+        render_bigquery_settings_page(
             client_slug=slug,
             api_client_key=slug,
             label=label,
