@@ -107,6 +107,7 @@ def render_bigquery_dashboard_page(
     client_slug: str = "nixon-bq-test",
     api_client_key: str = "nixon",
     label: str = "Nixon Medical",
+    session_can_switch_clients: bool = False,
 ) -> str:
     """Render this BigQuery-mart dashboard for any client.
 
@@ -200,6 +201,7 @@ def render_bigquery_dashboard_page(
         # connected (pflags only turns it on once one already exists).
         show_connectors=True,
         view_nav_html=view_nav_html,
+        session_can_switch_clients=session_can_switch_clients,
     )
 
     admin_class = "is-admin" if session_is_admin else ""

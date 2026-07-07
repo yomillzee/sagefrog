@@ -19,7 +19,7 @@ from dashboard.renderers.bigquery_settings_renderer import render_bigquery_setti
 from dashboard.renderers.analytics_renderer import render_analytics_page
 from dashboard.renderers.gtm_renderer import render_gtm_page
 from dashboard.renderers.bigquery_dashboard_renderer import render_bigquery_dashboard_page
-from dashboard.routes.helpers import penn_html_session_kwargs
+from dashboard.routes.helpers import penn_html_session_kwargs, session_can_switch_clients
 from security import configured_api_key, is_production
 
 router = APIRouter()
@@ -179,7 +179,10 @@ def nixon_bigquery_test_dashboard(request: Request, key: str | None = None):
         auth = web_auth.authenticate_dashboard(request, client_slug="nixon", key=key)
         if isinstance(auth, RedirectResponse):
             return auth
-        return HTMLResponse(render_bigquery_dashboard_page(**penn_html_session_kwargs(auth)))
+        return HTMLResponse(render_bigquery_dashboard_page(
+            session_can_switch_clients=session_can_switch_clients(auth),
+            **penn_html_session_kwargs(auth),
+        ))
 
     if not web_auth.legacy_dashboard_key_ok(key):
         raise HTTPException(status_code=401, detail="Invalid or missing dashboard key.")

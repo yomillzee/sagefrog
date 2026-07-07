@@ -20,6 +20,17 @@ def penn_html_session_kwargs(auth: web_auth.DashboardAuth) -> dict:
     }
 
 
+def session_can_switch_clients(auth: web_auth.DashboardAuth) -> bool:
+    """True when the signed-in user may switch between client dashboards.
+
+    Admins and agency-wide ``standard`` users can access every client, so they
+    get the sidebar client switcher; single-client ``client`` users stay pinned
+    to their own dashboard (and legacy ?key= sessions have no user at all).
+    """
+    user = auth.user
+    return bool(auth.use_session and user and user.role in ("admin", "standard"))
+
+
 def validate_client_slug(client_slug: str) -> str:
     slug = (client_slug or "").strip().lower()
     known = client_config.list_client_slugs()

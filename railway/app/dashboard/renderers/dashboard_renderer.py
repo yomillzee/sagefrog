@@ -430,6 +430,7 @@ def render_penn_html(
     session_is_admin: bool = False,
     flash_message: str | None = None,
     view_range: str | None = None,
+    session_can_switch_clients: bool = False,
 ) -> str:
     """use_session: refresh forms omit ?key= (cookie auth). access_key: legacy shared secret."""
     from dashboard.services.snapshot_metrics_service import (
@@ -744,6 +745,7 @@ def render_penn_html(
         show_files=docs.enabled(),
         show_connectors=_pflags["show_connectors"],
         view_nav_html=view_nav_html,
+        session_can_switch_clients=session_can_switch_clients,
     )
     if use_session:
         _vr_action = f"/dashboard/{slug}"

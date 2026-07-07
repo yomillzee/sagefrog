@@ -17,6 +17,7 @@ from cron_security import require_cron_secret
 from dashboard.renderers.bigquery_dashboard_renderer import render_bigquery_dashboard_page
 from dashboard.routes.helpers import (
     penn_html_session_kwargs,
+    session_can_switch_clients,
     validate_client_slug,
 )
 from dashboard.utils.dates import WAREHOUSE_DATE_RANGES
@@ -228,6 +229,7 @@ def dashboard_client(
                 return auth
             return HTMLResponse(render_bigquery_dashboard_page(
                 client_slug=slug, api_client_key=slug, label=label,
+                session_can_switch_clients=session_can_switch_clients(auth),
                 **penn_html_session_kwargs(auth),
             ))
         dashboard_service.verify_dashboard_key(key)
@@ -254,6 +256,7 @@ def dashboard_client(
                 client_slug=slug,
                 flash_message=flash,
                 view_range=view_range,
+                session_can_switch_clients=session_can_switch_clients(auth),
                 **penn_html_session_kwargs(auth),
             )
         )

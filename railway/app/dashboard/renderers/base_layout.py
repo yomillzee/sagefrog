@@ -106,8 +106,11 @@ def topbar_client_selector_html(
     access_key: str | None,
     use_session: bool,
     session_is_admin: bool,
+    session_can_switch_clients: bool = False,
 ) -> str:
-    if session_is_admin and use_session:
+    # Admins and `standard` (agency-wide) users can switch between all client
+    # dashboards; `client`-role users stay pinned to their own (plain label).
+    if (session_is_admin or session_can_switch_clients) and use_session:
         import client_config
 
         # Scope the switcher to new-build (connector platform) clients; legacy
@@ -152,6 +155,7 @@ def dash_top_header_html(
     session_is_admin: bool,
     session_email: str | None,
     show_files: bool,
+    session_can_switch_clients: bool = False,
 ) -> str:
     overview_url = _dashboard_page_url(
         client_slug=client_slug,
@@ -176,6 +180,7 @@ def dash_top_header_html(
         access_key=access_key,
         use_session=use_session,
         session_is_admin=session_is_admin,
+        session_can_switch_clients=session_can_switch_clients,
     )
 
     icon_files = (
@@ -593,6 +598,7 @@ def render_sidebar(
     show_files: bool,
     show_connectors: bool = False,
     view_nav_html: str,
+    session_can_switch_clients: bool = False,
 ) -> str:
     """Navy drawer sidebar shared by the dashboard, settings, files, and connectors pages."""
     overview_url = _dashboard_page_url(
@@ -615,6 +621,7 @@ def render_sidebar(
         access_key=access_key,
         use_session=use_session,
         session_is_admin=session_is_admin,
+        session_can_switch_clients=session_can_switch_clients,
     )
 
     files_btn = ""
