@@ -431,7 +431,14 @@ def refresh_bq_client(
         refresh_run = run_client_bigquery_refresh(
             client_slug=slug, trigger=sync_trigger
         )
-    repair_bq_sources = False
+    # Was hardcoded False, so the GSC/LinkedIn/Meta "repair" resyncs below
+    # (creative metadata, thumbnails, etc.) were unreachable dead code --
+    # nothing ever refreshed LinkedIn's creative_metadata automatically,
+    # so its signed thumbnail URLs (which expire) went stale after whatever
+    # one-off manual run last populated them. Tie it to the same gate as
+    # ingestion itself: only do this heavier work on a real refresh cycle
+    # (cron/onboarding/explicit Full Refresh), never on a cache-miss GET.
+    repair_bq_sources = run_ingestion
     _bq_setup_error: str | None = None
 
     # Resolve client-specific BQ project/credentials for mart queries. Prefer
