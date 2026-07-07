@@ -39,6 +39,7 @@ def render_nixon_bq_settings_page(
     api_client_key: str = "nixon",
     label: str = "Nixon Medical",
     show_linkedin_backfill: bool = True,
+    explorer_filters: str = "",
 ) -> str:
     """Settings page for any BigQuery-mart (Nixon-style) client.
 
@@ -143,6 +144,8 @@ def render_nixon_bq_settings_page(
     label {{ display:grid; gap:6px; color:var(--muted); font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }}
     input {{ border:1px solid var(--line); border-radius:var(--radius-sm); padding:9px 12px; font:inherit; font-weight:500; text-transform:none; letter-spacing:0; background:#fff; color:#102033; }}
     input:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
+    textarea {{ width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:10px 12px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.84rem; font-weight:500; text-transform:none; letter-spacing:0; background:#fff; color:#102033; resize:vertical; min-height:150px; }}
+    textarea:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
     .form-actions {{ grid-column:1 / -1; }}
     button.primary {{ border:0; border-radius:var(--radius-sm); padding:10px 16px; background:var(--accent); color:#fff; font-weight:700; cursor:pointer; box-shadow:0 1px 2px rgba(16,33,67,.12); transition:background .15s; }}
     button.primary:hover:not(:disabled) {{ background:#1a62b8; }}
@@ -294,6 +297,20 @@ def render_nixon_bq_settings_page(
     </section>
 
     <section>
+      <h2>Campaign explorer filters</h2>
+      <p class="hint">Define the filter chips on the Campaign Explorer. One rule per line as
+        <code>Chip label = phrase</code>; a chip keeps campaigns whose name contains that phrase
+        (case-insensitive). Separate phrases with commas to match any of them, and group chips into
+        rows with a <code>[Group name]</code> header. Leave blank to use the built-in defaults.</p>
+      <label for="explorerFilters" style="margin-top:14px">Filter rules</label>
+      <textarea id="explorerFilters" spellcheck="false" placeholder="[Product]&#10;Apparel = apparel&#10;Scrubs = scrub&#10;Linens = linen&#10;&#10;[Region]&#10;TX = tx&#10;FL = fl&#10;MA = ma">{_esc(explorer_filters)}</textarea>
+      <div class="btn-row" style="margin-top:12px">
+        <button type="button" class="primary" id="explorerFiltersSaveBtn">Save filters</button>
+        <span class="status" id="explorerFiltersStatus"></span>
+      </div>
+    </section>
+
+    <section>
       <h2>Data</h2>
       <p class="hint">Pull recent data, or backfill history, into BigQuery for {_esc(label)}.</p>
       <div class="btn-row">
@@ -313,6 +330,7 @@ def render_nixon_bq_settings_page(
     const BACKFILL_API = "{_api_url(f'/api/clients/{api_client_key}/backfill-linkedin', access_key=access_key)}";
     const HEALTH_API = "{_api_url(f'/api/clients/{api_client_key}/marketing/health', access_key=access_key)}";
     const BQ_VERIFY_API = "{_api_url(f'/api/clients/{api_client_key}/bq-verify', access_key=access_key)}";
+    const EXPLORER_FILTERS_API = "{_api_url(f'/api/clients/{api_client_key}/explorer/filters', access_key=access_key)}";
     const nums = new Intl.NumberFormat('en-US');
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({{ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }}[c]));
@@ -356,6 +374,25 @@ def render_nixon_bq_settings_page(
           else setStatus('bqVerifyStatus', body.error || 'Verification failed.', true);
         }} catch (err) {{
           setStatus('bqVerifyStatus', 'Verification failed: ' + (err.message || err), true);
+        }} finally {{ b.disabled = false; }}
+      }});
+    }})();
+    (function(){{
+      const b = document.getElementById('explorerFiltersSaveBtn'); if (!b) return;
+      b.addEventListener('click', async () => {{
+        b.disabled = true; setStatus('explorerFiltersStatus', 'Saving…');
+        try {{
+          const filters = document.getElementById('explorerFilters').value;
+          const r = await fetch(EXPLORER_FILTERS_API, {{
+            method:'POST', credentials:'same-origin',
+            headers:{{'Content-Type':'application/json'}},
+            body: JSON.stringify({{ filters }}),
+          }});
+          const body = await r.json().catch(() => ({{}}));
+          if (!r.ok) throw new Error((body && (body.detail && (body.detail.error || body.detail) || body.detail)) || r.statusText);
+          setStatus('explorerFiltersStatus', 'Saved. Reload the dashboard to see the updated chips.');
+        }} catch (err) {{
+          setStatus('explorerFiltersStatus', 'Save failed: ' + (err.message || err), true);
         }} finally {{ b.disabled = false; }}
       }});
     }})();

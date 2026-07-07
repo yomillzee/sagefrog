@@ -68,6 +68,9 @@ SCHEMA_SQL_STATEMENTS = [
     """
     ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS ga4_key_events TEXT
     """,
+    """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS explorer_filters TEXT
+    """,
 ]
 
 
@@ -92,6 +95,7 @@ class ClientConfigRow:
     gsc_branded_roots: str | None = None
     gsc_target_keywords: str | None = None
     ga4_key_events: str | None = None
+    explorer_filters: str | None = None
 
 
 def _get_db_url() -> str | None:
@@ -127,7 +131,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    gcp_project_id, bq_mart_dataset_id,
                    dashboard_mode, gsc_site_url, semrush_domain,
                    gtm_account_id, gtm_container_id,
-                   gsc_branded_roots, gsc_target_keywords, ga4_key_events
+                   gsc_branded_roots, gsc_target_keywords, ga4_key_events,
+                   explorer_filters
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -161,6 +166,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         gsc_branded_roots=_s(row[16]),
         gsc_target_keywords=_s(row[17]),
         ga4_key_events=_s(row[18]),
+        explorer_filters=_s(row[19]),
     )
 
 
@@ -331,6 +337,42 @@ def update_ga4_key_events(
               updated_by = EXCLUDED.updated_by
             """,
             (slug, slug, now, _clean(updated_by), _clean(event_names)),
+        )
+
+
+def update_explorer_filters(
+    client_slug: str,
+    *,
+    filters_text: str | None,
+    updated_by: str | None = None,
+) -> None:
+    """Set the client's Campaign Explorer filter chips (one `Label = phrase`
+    per line, optionally split into `[Group]` sections). Empty = fall back to
+    the renderer's built-in default chips. Touches only that column."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save explorer filters.")
+
+    def _clean(val: str | None) -> str | None:
+        return (val or "").strip() or None
+
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, updated_at, updated_by, explorer_filters
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (client_slug) DO UPDATE SET
+              explorer_filters = EXCLUDED.explorer_filters,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, slug, now, _clean(updated_by), _clean(filters_text)),
         )
 
 

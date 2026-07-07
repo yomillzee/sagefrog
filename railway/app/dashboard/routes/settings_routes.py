@@ -51,6 +51,7 @@ def _render_bq_nixon_settings(slug: str, db_cfg, *, flash, flash_err, html_kw) -
             flash=flash,
             flash_error=flash_err,
             show_linkedin_backfill=False,
+            explorer_filters=(getattr(db_cfg, "explorer_filters", None) or ""),
             **html_kw,
         )
     )

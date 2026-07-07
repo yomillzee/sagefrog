@@ -80,6 +80,23 @@ class GscKeywordConfigTests(unittest.TestCase):
         self.assertNotIn("gsc_branded_roots", sql)
         self.assertIn("form_submit\ngenerate_lead", params)
 
+    def test_update_explorer_filters_upserts_only_that_column(self):
+        fake = _FakeConn()
+
+        @contextmanager
+        def fake_connection():
+            yield fake
+
+        with patch.object(cdc, "enabled", return_value=True), \
+             patch.object(cdc, "ensure_schema", return_value=True), \
+             patch.object(cdc.db, "connection", fake_connection):
+            cdc.update_explorer_filters("acme", filters_text="[Product]\nApparel = apparel")
+
+        sql, params = fake.calls[0]
+        self.assertIn("explorer_filters = EXCLUDED.explorer_filters", sql)
+        self.assertNotIn("ga4_key_events", sql)
+        self.assertIn("[Product]\nApparel = apparel", params)
+
 
 if __name__ == "__main__":
     unittest.main()

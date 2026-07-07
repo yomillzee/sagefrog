@@ -1640,6 +1640,39 @@ async def save_ga4_key_events(
     return {"ok": True}
 
 
+@router.post(
+    "/api/clients/{client_key}/explorer/filters",
+    summary="Save the client's Campaign Explorer filter chips (name-phrase rules)",
+)
+async def save_explorer_filters(
+    client_key: str,
+    request: Request,
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    """Persist the Campaign Explorer filter definition (one `Label = phrase`
+    per line, optionally grouped under `[Group]` headers). Stored verbatim in
+    client_dashboard_config; parsed into chips by the dashboard renderer."""
+    normalized = (client_key or "").strip().lower()
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        import client_dashboard_config as cdc
+        cdc.update_explorer_filters(
+            normalized, filters_text=str(body.get("filters") or ""), updated_by="dashboard",
+        )
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+    return {"ok": True}
+
+
 @router.get(
     "/api/clients/{client_key}/analytics/conversions",
     summary="Client GA4 conversion events breakdown (generic BQ-test clients)",

@@ -26,6 +26,78 @@ def _docs_enabled() -> bool:
     return docs.enabled()
 
 
+# Campaign Explorer filter chips, shown when a client hasn't configured their
+# own. These reproduce Nixon's long-standing chips; every other client should
+# override them from Settings → Campaign explorer filters. Match semantics are
+# case-insensitive substring (see explorerRowMatches in the page JS), so the
+# region phrases here are slightly broader than the old \bTX\b word-boundary
+# regex — acceptable for an opt-in fallback.
+DEFAULT_EXPLORER_FILTERS: list[dict] = [
+    {
+        "id": "g0",
+        "label": "Product",
+        "chips": [
+            {"label": "Apparel", "phrases": ["apparel"]},
+            {"label": "Scrubs", "phrases": ["scrub"]},
+            {"label": "Linens", "phrases": ["linen"]},
+        ],
+    },
+    {
+        "id": "g1",
+        "label": "Region",
+        "chips": [
+            {"label": "TX", "phrases": ["tx"]},
+            {"label": "FL", "phrases": ["fl"]},
+            {"label": "MA", "phrases": ["ma"]},
+        ],
+    },
+]
+
+
+def parse_explorer_filters(text: str | None) -> list[dict]:
+    """Parse a client's Campaign Explorer filter config into chip groups.
+
+    Format (one rule per line):
+        [Group Name]           optional section header; starts a new chip row
+        Chip Label = phrase    a chip that keeps campaigns whose name contains
+                               the phrase (case-insensitive substring)
+        Chip Label = a, b, c   comma-separated phrases are OR'd together
+
+    Lines before the first ``[Group]`` fall into an unnamed leading group.
+    Blank lines and lines starting with ``#`` are ignored. Returns a list of
+    ``{"id", "label", "chips": [{"label", "phrases": [...]}]}`` groups, empty
+    if nothing valid was defined (caller falls back to DEFAULT_EXPLORER_FILTERS).
+    """
+    groups: list[dict] = []
+    current: dict | None = None
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current = {"id": f"g{len(groups)}", "label": line[1:-1].strip() or f"Group {len(groups) + 1}", "chips": []}
+            groups.append(current)
+            continue
+        if "=" not in line:
+            continue
+        label, _, rhs = line.partition("=")
+        label = label.strip()
+        phrases = [p.strip().lower() for p in rhs.split(",") if p.strip()]
+        if not label or not phrases:
+            continue
+        if current is None:
+            current = {"id": "g0", "label": "Filter", "chips": []}
+            groups.append(current)
+        current["chips"].append({"label": label, "phrases": phrases})
+    return [g for g in groups if g["chips"]]
+
+
+def resolve_explorer_filters(text: str | None) -> list[dict]:
+    """Client config if present, otherwise the built-in default chips."""
+    parsed = parse_explorer_filters(text)
+    return parsed or DEFAULT_EXPLORER_FILTERS
+
+
 def render_nixon_bigquery_test_page(
     *,
     access_key: str | None = None,
@@ -75,6 +147,7 @@ def render_nixon_bigquery_test_page(
     gsc_branded_roots = ""
     gsc_target_keywords = ""
     ga4_key_events = ""
+    explorer_filters_cfg = ""
     try:
         import client_dashboard_config as _cdc
         _kwcfg = _cdc.get_config(api_client_key) or _cdc.get_config(client_slug)
@@ -82,8 +155,15 @@ def render_nixon_bigquery_test_page(
             gsc_branded_roots = _kwcfg.gsc_branded_roots or ""
             gsc_target_keywords = _kwcfg.gsc_target_keywords or ""
             ga4_key_events = _kwcfg.ga4_key_events or ""
+            explorer_filters_cfg = _kwcfg.explorer_filters or ""
     except Exception:
         pass
+    # Campaign Explorer filter chips: client config if set, else Nixon defaults.
+    # Injected as JSON for the page JS to build the chip rows + match campaigns.
+    # Escape "<" so a chip label can't break out of the <script> block.
+    explorer_filter_groups_json = json.dumps(
+        resolve_explorer_filters(explorer_filters_cfg)
+    ).replace("<", "\\u003c")
 
     connectors_url = _api_url(f"/dashboard/{client_slug}/connectors", access_key=access_key)
     onboarding_html = "" if has_connectors else f"""
@@ -462,16 +542,9 @@ def render_nixon_bigquery_test_page(
     <div id="pane-explorer" hidden>
       <section id="sec-explorer">
         <div class="sec-head"><h2>Campaign explorer</h2><span class="status" id="explorerStatus"></span></div>
-        <div style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:12px;" id="explorerFilters">
-          <div class="filter-group">
-            <span class="filter-label">Product</span>
-            <div class="chips" id="productChips"></div>
-          </div>
-          <div class="filter-group">
-            <span class="filter-label">Region</span>
-            <div class="chips" id="regionChips"></div>
-          </div>
-        </div>
+        <!-- Filter groups (Product / Region / …) are built by buildExplorerFilters()
+             from the client-configured chip rules; see EXPLORER_FILTER_GROUPS. -->
+        <div style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:12px;" id="explorerFilters"></div>
         <div class="table-wrap"><table id="explorerTable"></table></div>
       </section>
       <section id="sec-keywords" style="display:none">
@@ -1349,13 +1422,15 @@ def render_nixon_bigquery_test_page(
       {{key:'conversions',label:'Conv.',format:count}},
       {{key:'ctr',label:'CTR',format:pct}},
     ];
-    const PRODUCT_RULES = {{Apparel:/apparel/i,Scrubs:/scrub/i,Linens:/linen/i}};
-    const REGION_RULES  = {{TX:/\bTX\b/i,FL:/\bFL\b/i,MA:/\bMA\b/i}};
-    const productFilter = new Set(), regionFilter = new Set();
+    // Client-configured filter chip groups: [{{id,label,chips:[{{label,phrases}}]}}].
+    // phrases are pre-lowercased server-side; a chip matches a campaign whose
+    // (lowercased) name contains any of its phrases.
+    const EXPLORER_FILTER_GROUPS = {explorer_filter_groups_json};
+    const explorerFilterState = new Map(); // groupId -> Set of active chip labels
     let explorerRows = [];
 
-    function buildChips(containerId, keys, stateSet, onChange) {{
-      const el = document.getElementById(containerId);
+    function buildChips(container, keys, stateSet, onChange) {{
+      const el = typeof container==='string' ? document.getElementById(container) : container;
       el.innerHTML = ['All',...keys].map(k=>`<button type="button" class="chip" data-key="${{esc(k)}}">${{esc(k)}}</button>`).join('');
       el.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {{
         const key=btn.dataset.key;
@@ -1365,12 +1440,30 @@ def render_nixon_bigquery_test_page(
       }}));
       el.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.key==='All' ? stateSet.size===0 : stateSet.has(b.dataset.key)));
     }}
+    function buildExplorerFilters() {{
+      const host = document.getElementById('explorerFilters');
+      if (!host) return;
+      explorerFilterState.clear();
+      if (!EXPLORER_FILTER_GROUPS.length) {{ host.innerHTML=''; return; }}
+      host.innerHTML = EXPLORER_FILTER_GROUPS.map((g,i) =>
+        `<div class="filter-group"><span class="filter-label">${{esc(g.label)}}</span><div class="chips" data-group="${{i}}"></div></div>`
+      ).join('');
+      EXPLORER_FILTER_GROUPS.forEach((g,i) => {{
+        const set = new Set();
+        explorerFilterState.set(g.id, set);
+        buildChips(host.querySelector(`.chips[data-group="${{i}}"]`), g.chips.map(c=>c.label), set);
+      }});
+    }}
     function explorerRowMatches(row) {{
-      const name=String(row.campaign_name||'');
-      const prodOk=!productFilter.size||[...productFilter].some(k=>PRODUCT_RULES[k].test(name));
-      const regOk=!regionFilter.size||[...regionFilter].some(k=>REGION_RULES[k].test(name));
+      const name=String(row.campaign_name||'').toLowerCase();
+      for (const g of EXPLORER_FILTER_GROUPS) {{
+        const set=explorerFilterState.get(g.id);
+        if (!set||!set.size) continue;
+        const ok=g.chips.some(c=>set.has(c.label)&&c.phrases.some(p=>p&&name.includes(p)));
+        if (!ok) return false;
+      }}
       const platOk=!platformFilter.size||[...platformFilter].some(k=>k.toLowerCase()===(row.platform||''));
-      return prodOk&&regOk&&platOk;
+      return platOk;
     }}
     function zeroMetrics() {{ return {{spend:0,impressions:0,clicks:0,conversions:0}}; }}
     function addMetrics(acc,r) {{ acc.spend+=num(r.spend);acc.impressions+=num(r.impressions);acc.clicks+=num(r.clicks);acc.conversions+=num(r.conversions); }}
@@ -1451,7 +1544,7 @@ def render_nixon_bigquery_test_page(
         }}
         el.innerHTML=head+`<tbody>${{body}}</tbody>`;
       }}
-      const filterActive=productFilter.size||regionFilter.size;
+      const filterActive=[...explorerFilterState.values()].some(s=>s.size);
       const totalCampaigns=new Set(explorerRows.map(r=>r.campaign_name||'—')).size;
       setStatus('explorerStatus', explorerRows.length
         ? (filterActive ? `${{tree.size}} of ${{totalCampaigns}} campaign(s)` : `${{tree.size}} campaign(s) · ${{explorerRows.length}} ads`)
@@ -2027,8 +2120,7 @@ def render_nixon_bigquery_test_page(
     }}
 
     // ---- Explorer chips ----
-    buildChips('productChips',['Apparel','Scrubs','Linens'],productFilter);
-    buildChips('regionChips',['TX','FL','MA'],regionFilter);
+    buildExplorerFilters();
 
     // ---- Init ----
     if (HAS_PAID_ADS) {{
