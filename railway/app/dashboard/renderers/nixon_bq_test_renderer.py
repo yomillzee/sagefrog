@@ -384,6 +384,7 @@ def render_nixon_bigquery_test_page(
     .ad-cell {{ display:inline-flex; align-items:center; gap:9px; vertical-align:middle; }}
     .ad-thumb {{ width:34px; height:34px; border-radius:5px; object-fit:cover; border:1px solid var(--line); background:#f0f3f8; flex:0 0 auto; cursor:zoom-in; }}
     .creative-preview {{ position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; }}
+    .creative-preview[hidden] {{ display:none; }}
     .creative-preview-backdrop {{ position:absolute; inset:0; background:rgba(10,20,35,.72); }}
     .creative-preview-dialog {{ position:relative; max-width:min(90vw,760px); max-height:88vh; background:#fff; border-radius:12px; padding:14px; box-shadow:0 20px 60px rgba(0,0,0,.35); display:flex; }}
     .creative-preview-body {{ display:flex; align-items:center; justify-content:center; max-width:100%; max-height:calc(88vh - 28px); }}
