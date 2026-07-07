@@ -594,12 +594,20 @@ def render_nixon_bigquery_test_page(
             <div class="tag-editor" id="gscBrandedTags"></div>
             <div class="table-wrap"><table id="gscBrandedTable" class="compact"></table></div>
             <div class="pager" id="gscBrandedPager"></div>
+            <div class="chart-wrap" style="margin-top:12px">
+              <div class="muted" style="font-size:.76rem;margin-bottom:6px">Weekly clicks — matching queries</div>
+              <svg id="gscBrandedTrendChart" class="trend-sm-svg" preserveAspectRatio="none"></svg>
+            </div>
           </div>
           <div class="col-panel">
             <h3>Target queries <span class="muted" id="gscTargetCount"></span></h3>
             <div class="tag-editor" id="gscTargetTags"></div>
             <div class="table-wrap"><table id="gscTargetTable" class="compact"></table></div>
             <div class="pager" id="gscTargetPager"></div>
+            <div class="chart-wrap" style="margin-top:12px">
+              <div class="muted" style="font-size:.76rem;margin-bottom:6px">Weekly clicks — matching queries</div>
+              <svg id="gscTargetTrendChart" class="trend-sm-svg" preserveAspectRatio="none"></svg>
+            </div>
           </div>
         </div>
       </section>
@@ -1160,26 +1168,56 @@ def render_nixon_bigquery_test_page(
     // silently missed).
     let _gscKwReqId = 0;
     async function fetchKeywordMatches(terms) {{
-      if (!terms.length) return [];
+      if (!terms.length) return {{rows:[], weekly:[]}};
       const url = withDates(GSC_KEYWORD_MATCHES_API) + '&terms=' + encodeURIComponent(terms.join(','));
       try {{
         const r = await getJson(url);
-        return r.rows || [];
+        return {{rows: r.rows || [], weekly: r.weekly || []}};
       }} catch (err) {{
-        return [];
+        return {{rows:[], weekly:[]}};
       }}
+    }}
+    // Small single-line weekly trend chart, same visual style as
+    // drawSessionsTrend but generic over any {{week_start, <valueKey>}} rows.
+    function drawKeywordTrend(svgId, rows, valueKey, color) {{
+      clearSkelChart(svgId);
+      const svg=document.getElementById(svgId);
+      if (!svg) return;
+      const W=800,H=130,padL=10,padR=10,padT=8,padB=24,plotW=W-padL-padR,plotH=H-padT-padB,n=rows.length;
+      svg.setAttribute('viewBox',`0 0 ${{W}} ${{H}}`);
+      if (!n) {{ svg.innerHTML=''; return; }}
+      const vals=rows.map(r=>num(r[valueKey]));
+      const mn=Math.min(...vals),mx=Math.max(...vals),span=(mx-mn)||1;
+      const xAt=i=>padL+(n===1?plotW/2:(i/(n-1))*plotW);
+      const yAt=v=>padT+(1-(v-mn)/span)*plotH;
+      const baseY=padT+plotH;
+      const pts=vals.map((v,i)=>[xAt(i),yAt(v)]);
+      const line=smoothPath(pts);
+      const area=pts.length>1?`${{line}} L${{pts[pts.length-1][0].toFixed(1)}},${{baseY.toFixed(1)}} L${{pts[0][0].toFixed(1)}},${{baseY.toFixed(1)}} Z`:'';
+      const lblIdx=n===1?[0]:[0,Math.floor((n-1)/2),n-1];
+      const gid='grad_'+svgId;
+      svg.innerHTML=[
+        `<defs><linearGradient id="${{gid}}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${{color}}" stop-opacity="0.20"/><stop offset="100%" stop-color="${{color}}" stop-opacity="0"/></linearGradient></defs>`,
+        `<line x1="${{padL}}" y1="${{padT}}" x2="${{padL}}" y2="${{baseY}}" stroke="#eef2f7"/>`,
+        `<line x1="${{padL}}" y1="${{baseY}}" x2="${{padL+plotW}}" y2="${{baseY}}" stroke="#e3e9f1"/>`,
+        area?`<path fill="url(#${{gid}})" stroke="none" d="${{area}}"/>`:'',
+        `<path fill="none" stroke="${{color}}" stroke-width="2.25" stroke-linejoin="round" stroke-linecap="round" d="${{line}}"/>`,
+        ...lblIdx.map(i=>{{const anchor=i===0?'start':(i===n-1?'end':'middle');return `<text x="${{xAt(i).toFixed(1)}}" y="${{H-6}}" font-size="11" font-weight="600" fill="var(--muted)" text-anchor="${{anchor}}" style="letter-spacing:.02em">${{esc(String(rows[i].week_start||'').slice(5))}}</text>`;}}),
+      ].join('');
     }}
     async function renderGscKeywordTables() {{
       const reqId = ++_gscKwReqId;
-      const [brandedRows, targetRows] = await Promise.all([
+      const [branded, target] = await Promise.all([
         fetchKeywordMatches(gscBrandedRoots),
         fetchKeywordMatches(gscTargetKeywords),
       ]);
       if (reqId !== _gscKwReqId) return; // a newer call (date range/terms changed) superseded this one
-      gscTables.branded.rows = brandedRows;
-      gscTables.target.rows  = targetRows;
+      gscTables.branded.rows = branded.rows;
+      gscTables.target.rows  = target.rows;
       gscTables.branded.page = 1; gscTables.target.page = 1;
       renderGscTable('branded'); renderGscTable('target');
+      drawKeywordTrend('gscBrandedTrendChart', branded.weekly, 'clicks', '#1d6fd0');
+      drawKeywordTrend('gscTargetTrendChart', target.weekly, 'clicks', '#7c3aed');
       const setCount=(id,n,configured)=>{{const el=document.getElementById(id); if(el) el.textContent = configured ? `(${{n}})` : '';}};
       setCount('gscBrandedCount', gscTables.branded.rows.length, gscBrandedRoots.length);
       setCount('gscTargetCount', gscTables.target.rows.length, gscTargetKeywords.length);

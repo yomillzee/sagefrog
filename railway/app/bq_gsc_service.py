@@ -751,6 +751,54 @@ def gsc_keyword_matches(
         return out
 
 
+def gsc_keyword_weekly_trend(
+    *, start: date, end: date, terms: list[str], client_slug: str | None = None
+) -> list[dict[str, Any]]:
+    """Weekly (Monday-start) clicks/impressions rollup for queries matching
+    `terms`, over the full date range -- same term-matching as
+    gsc_keyword_matches, grouped by week instead of collapsed to one total,
+    so branded/target keyword performance can be plotted over time.
+    """
+    terms = [t.strip().lower() for t in terms if t and t.strip()]
+    if not terms:
+        return []
+    with _client_context(client_slug):
+        target = _resolved_target()
+        if target.is_default_fallback and not _is_penn_slug(client_slug):
+            return []
+        project, ds = _project_id(), _reporting_mart_ds()
+        qv = f"`{project}.{ds}.{_QUERY_VIEW}`"
+        m = _gsc_metric_cols()
+        s, e = start.isoformat(), end.isoformat()
+        sql = f"""
+        SELECT
+          CAST(DATE_TRUNC(date, WEEK(MONDAY)) AS STRING) AS week_start,
+          {m}
+        FROM {qv}
+        WHERE date BETWEEN '{s}' AND '{e}'
+          AND EXISTS (
+            SELECT 1 FROM UNNEST(@terms) AS t
+            WHERE LOWER(query) LIKE CONCAT('%', t, '%')
+          )
+        GROUP BY week_start
+        ORDER BY week_start
+        """
+        from google.cloud import bigquery as _bq
+        rows = _run(
+            sql, max_rows=200,
+            query_parameters=[_bq.ArrayQueryParameter("terms", "STRING", terms)],
+        )
+        out = []
+        for r in rows:
+            rr = {}
+            for k, v in r.items():
+                if isinstance(v, Decimal):
+                    v = float(v)
+                rr[k] = v
+            out.append(rr)
+        return out
+
+
 def gsc_health_row(client_slug: str | None = None) -> dict[str, Any]:
     """MIN/MAX(date) + row count over the GSC mart, for the marketing/health
     endpoint's data-availability check (mirrors the GA4 row it already adds).

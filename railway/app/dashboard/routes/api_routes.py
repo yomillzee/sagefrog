@@ -1673,7 +1673,9 @@ def client_gsc_keyword_matches(
 ) -> dict:
     """Unlike gsc/summary's top_queries (LIMIT 25 by clicks), this scans every
     query in range for the given terms -- so a branded/target keyword that
-    isn't a top-25 performer by raw click volume still shows up."""
+    isn't a top-25 performer by raw click volume still shows up. Also returns
+    a weekly clicks/impressions rollup ("weekly") for trending the same terms
+    over time, computed in the same request rather than a separate round trip."""
     normalized = (client_key or "").strip().lower()
     _authorize_bq_client_api(
         request, client_slug=normalized, key=key,
@@ -1682,18 +1684,23 @@ def client_gsc_keyword_matches(
     term_list = [t.strip() for t in terms.split(",") if t.strip()]
     start, end = _resolve_nixon_marketing_dates(start_date, end_date)
     if not term_list:
-        return {"rows": []}
+        return {"rows": [], "weekly": []}
     try:
         import bq_gsc_service
+        cache_key = {"start": start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list)}
         rows = _cached_bq_read(
-            f"{normalized}.gsc.keyword_matches",
-            {"start": start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list)},
-            ttl_seconds=900,
+            f"{normalized}.gsc.keyword_matches", cache_key, ttl_seconds=900,
             fetch=lambda: bq_gsc_service.gsc_keyword_matches(
                 start=start, end=end, terms=term_list, client_slug=normalized,
             ),
         )
-        return {"rows": rows}
+        weekly = _cached_bq_read(
+            f"{normalized}.gsc.keyword_weekly_trend", cache_key, ttl_seconds=900,
+            fetch=lambda: bq_gsc_service.gsc_keyword_weekly_trend(
+                start=start, end=end, terms=term_list, client_slug=normalized,
+            ),
+        )
+        return {"rows": rows, "weekly": weekly}
     except Exception as exc:
         raise _nixon_endpoint_failure(exc) from exc
 
