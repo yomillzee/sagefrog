@@ -439,6 +439,16 @@ def render_bigquery_dashboard_page(
     .col-panel h3 {{ margin:0 0 12px; font-size:.86rem; font-weight:750; color:var(--navy); }}
     .subsec-h3 {{ margin:16px 0 10px; font-size:.86rem; font-weight:750; color:var(--navy); }}
     .trend-sm-svg {{ width:100%; height:130px; display:block; }}
+    .trend-md-svg {{ width:100%; height:200px; display:block; }}
+    /* Sessions-over-time current-vs-previous legend */
+    .cmp-legend {{ display:flex; flex-wrap:wrap; gap:18px; margin-top:10px; font-size:.78rem; color:var(--muted); }}
+    .cmp-item {{ display:inline-flex; align-items:center; gap:7px; }}
+    .cmp-swatch {{ width:16px; height:0; border-top-width:3px; border-top-style:solid; border-radius:2px; }}
+    .cmp-swatch.cur {{ border-top-color:#1d6fd0; }}
+    .cmp-swatch.prev {{ border-top-color:#9aa7bd; border-top-style:dashed; }}
+    .cmp-delta {{ font-weight:800; }}
+    .cmp-delta.up {{ color:var(--ok); }}
+    .cmp-delta.down {{ color:var(--bad); }}
     /* ---- Funnel ---- */
     .funnel-bar {{ display:flex; flex-direction:column; gap:8px; }}
     .funnel-step {{ display:flex; align-items:center; gap:12px; }}
@@ -556,6 +566,12 @@ def render_bigquery_dashboard_page(
     <!-- ===== WEBSITE ANALYTICS TAB ===== -->
     <div id="pane-analytics" hidden>
 
+      <section id="sec-sessions">
+        <div class="sec-head"><h2>Sessions over time <span class="cmp-warn" id="sessionsCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="sessionsTrendStatus"></span></div>
+        <div class="chart-wrap"><svg id="sessionsTrendChart" class="trend-md-svg" preserveAspectRatio="none"></svg></div>
+        <div class="cmp-legend" id="sessionsTrendLegend"></div>
+      </section>
+
       <div class="ke-global-bar" id="keyEventFilterGroup">
         <div class="filter-group" style="align-items:center; flex-wrap:wrap">
           <span class="filter-label">Key events</span>
@@ -588,10 +604,7 @@ def render_bigquery_dashboard_page(
 
       <section id="sec-traffic">
         <div class="sec-head"><h2>Traffic</h2><span class="status" id="trafficAcqStatus"></span></div>
-        <div class="two-col">
-          <div class="col-panel"><h3>Sessions over time</h3><svg id="sessionsTrendChart" class="trend-sm-svg" preserveAspectRatio="none"></svg></div>
-          <div class="col-panel"><h3>By channel</h3><div id="channelBars"></div></div>
-        </div>
+        <div class="col-panel"><h3>By channel</h3><div id="channelBars"></div></div>
         <h3 class="subsec-h3">Top sources / medium</h3>
         <div class="table-wrap"><table id="sourcesTable" class="compact"></table></div>
       </section>
@@ -873,9 +886,9 @@ def render_bigquery_dashboard_page(
     );
 
     // ---- Module system (localStorage) ----
-    const ALL_MODULES = ['top_pages','traffic','audience','landing','conversions','user_acquisition','demographics'];
+    const ALL_MODULES = ['sessions','top_pages','traffic','audience','landing','conversions','user_acquisition','demographics'];
     const MODULE_SECTIONS = {{
-      top_pages:'sec-pages', traffic:'sec-traffic', audience:'sec-audience',
+      sessions:'sec-sessions', top_pages:'sec-pages', traffic:'sec-traffic', audience:'sec-audience',
       landing:'sec-landing', conversions:'sec-conversions',
       user_acquisition:'sec-useracq', demographics:'sec-demographics'
     }};
@@ -1702,29 +1715,47 @@ def render_bigquery_dashboard_page(
     }})();
 
     // ---- GA4: Traffic acquisition ----
-    function drawSessionsTrend(daily) {{
+    // Draw sessions/day for the current period (solid blue, filled) with the
+    // prior period overlaid (dashed grey), aligned day-for-day by index so the
+    // shapes line up regardless of the actual calendar dates.
+    function drawSessionsTrend(daily, prevDaily) {{
       clearSkelChart('sessionsTrendChart');
       const svg=document.getElementById('sessionsTrendChart');
-      const W=800,H=130,padL=10,padR=10,padT=8,padB=24,plotW=W-padL-padR,plotH=H-padT-padB,n=daily.length;
+      const legend=document.getElementById('sessionsTrendLegend');
+      const W=800,H=200,padL=10,padR=10,padT=12,padB=26,plotW=W-padL-padR,plotH=H-padT-padB,n=daily.length;
       svg.setAttribute('viewBox',`0 0 ${{W}} ${{H}}`);
-      if (!n) {{ svg.innerHTML=''; return; }}
+      if (!n) {{ svg.innerHTML=''; if(legend) legend.innerHTML=''; return; }}
       const vals=daily.map(d=>num(d.sessions));
-      const mn=Math.min(...vals),mx=Math.max(...vals),span=(mx-mn)||1;
+      const prevVals=(prevDaily||[]).map(d=>num(d.sessions));
+      const hasPrev=prevVals.length>0;
+      const scaleVals=hasPrev?vals.concat(prevVals):vals;
+      const mn=Math.min(...scaleVals),mx=Math.max(...scaleVals),span=(mx-mn)||1;
       const xAt=i=>padL+(n===1?plotW/2:(i/(n-1))*plotW);
       const yAt=v=>padT+(1-(v-mn)/span)*plotH;
       const baseY=padT+plotH;
       const pts=vals.map((v,i)=>[xAt(i),yAt(v)]);
       const line=smoothPath(pts);
       const area=pts.length>1?`${{line}} L${{pts[pts.length-1][0].toFixed(1)}},${{baseY.toFixed(1)}} L${{pts[0][0].toFixed(1)}},${{baseY.toFixed(1)}} Z`:'';
+      // Prior period plotted on the same index positions as the current one.
+      const prevPts=[]; for (let i=0;i<n&&i<prevVals.length;i++) prevPts.push([xAt(i),yAt(prevVals[i])]);
+      const prevLine=prevPts.length>1?smoothPath(prevPts):'';
       const lblIdx=n===1?[0]:[0,Math.floor((n-1)/2),n-1];
       svg.innerHTML=[
         `<defs><linearGradient id="sessGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#1d6fd0" stop-opacity="0.20"/><stop offset="100%" stop-color="#1d6fd0" stop-opacity="0"/></linearGradient></defs>`,
         `<line x1="${{padL}}" y1="${{padT}}" x2="${{padL}}" y2="${{baseY}}" stroke="#eef2f7"/>`,
         `<line x1="${{padL}}" y1="${{baseY}}" x2="${{padL+plotW}}" y2="${{baseY}}" stroke="#e3e9f1"/>`,
         area?`<path fill="url(#sessGrad)" stroke="none" d="${{area}}"/>`:'',
-        `<path fill="none" stroke="#1d6fd0" stroke-width="2.25" stroke-linejoin="round" stroke-linecap="round" d="${{line}}"/>`,
-        ...lblIdx.map(i=>{{const anchor=i===0?'start':(i===n-1?'end':'middle');return`<text x="${{xAt(i).toFixed(1)}}" y="${{H-6}}" font-size="11" font-weight="600" fill="var(--muted)" text-anchor="${{anchor}}" style="letter-spacing:.02em">${{esc(String(daily[i].date).slice(5))}}</text>`;}}),
+        prevLine?`<path fill="none" stroke="#9aa7bd" stroke-width="1.75" stroke-dasharray="4 3" stroke-linejoin="round" stroke-linecap="round" d="${{prevLine}}"/>`:'',
+        `<path fill="none" stroke="#1d6fd0" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" d="${{line}}"/>`,
+        ...lblIdx.map(i=>{{const anchor=i===0?'start':(i===n-1?'end':'middle');return`<text x="${{xAt(i).toFixed(1)}}" y="${{H-8}}" font-size="11" font-weight="600" fill="var(--muted)" text-anchor="${{anchor}}" style="letter-spacing:.02em">${{esc(String(daily[i].date).slice(5))}}</text>`;}}),
       ].join('');
+      if (legend) {{
+        const curTot=vals.reduce((a,b)=>a+b,0), prevTot=prevVals.reduce((a,b)=>a+b,0);
+        const delta=(hasPrev&&prevTot)?((curTot-prevTot)/prevTot*100):null;
+        const deltaTxt=delta==null?'':` <span class="cmp-delta ${{delta>=0?'up':'down'}}">${{delta>=0?'+':''}}${{delta.toFixed(0)}}%</span>`;
+        legend.innerHTML=`<span class="cmp-item"><span class="cmp-swatch cur"></span>Current (${{esc(currentStart.slice(5))}} – ${{esc(currentEnd.slice(5))}}) · ${{count(curTot)}} sessions${{deltaTxt}}</span>`
+          + (hasPrev?`<span class="cmp-item"><span class="cmp-swatch prev"></span>Previous (${{esc(compareStart.slice(5))}} – ${{esc(compareEnd.slice(5))}}) · ${{count(prevTot)}}</span>`:'');
+      }}
     }}
     function renderBarList(containerId, rows, valueKey, labelKey) {{
       const el=document.getElementById(containerId);
@@ -1742,10 +1773,25 @@ def render_bigquery_dashboard_page(
         {{key:'key_events',label:'Key events',format:count}},
       ], trafficSources, 'No source data.');
     }}
+    // Sessions-over-time hero chart (top of the analytics tab). Fetches the
+    // current period and the equivalent prior period (compareStart/compareEnd,
+    // always set by applyPreset) and overlays them for an at-a-glance trend.
+    async function loadSessionsTrend() {{
+      setStatus('sessionsTrendStatus','Loading…');
+      skelChart('sessionsTrendChart','trend-md-svg');
+      try {{
+        const [cur, prev] = await Promise.all([
+          getJson(withDatesRange(TRAFFIC_ACQ_API, currentStart, currentEnd)),
+          compareStart ? getJson(withDatesRange(TRAFFIC_ACQ_API, compareStart, compareEnd)).catch(()=>null) : Promise.resolve(null),
+        ]);
+        drawSessionsTrend(cur.daily||[], (prev&&prev.daily)||[]);
+        setCmpWarn('sessionsCmpWarn', ['google_analytics']);
+        setStatus('sessionsTrendStatus','');
+      }} catch(err) {{ setStatus('sessionsTrendStatus',err.message||String(err),true); }}
+    }}
     async function loadTrafficAcq() {{
       setStatus('trafficAcqStatus','Loading…');
       document.getElementById('channelBars').innerHTML = skelBars(5);
-      skelChart('sessionsTrendChart','trend-sm-svg');
       document.getElementById('sourcesTable').innerHTML = skelTable(6,6);
       try {{
         const [payload, ev] = await Promise.all([
@@ -1753,7 +1799,6 @@ def render_bigquery_dashboard_page(
           getJson(withDates(TRAFFIC_KEY_EVENTS_API)).catch(()=>({{by_source_events:[],events:[]}})),
         ]);
         renderBarList('channelBars',payload.by_channel||[],'sessions','channel');
-        drawSessionsTrend(payload.daily||[]);
         trafficBaseSources = payload.by_source||[];
         trafficSourceEventMap={{}};
         for (const r of (ev.by_source_events||[])) {{
@@ -2042,6 +2087,7 @@ def render_bigquery_dashboard_page(
       // starts out keeps peak concurrency down without a noticeable delay.
       const modules=getModules();
       const loaders=[];
+      if (modules.sessions)         loaders.push(loadSessionsTrend);
       if (modules.top_pages)        loaders.push(loadPages);
       if (modules.traffic)          loaders.push(loadTrafficAcq);
       if (modules.audience)         loaders.push(loadDeviceSplit);
