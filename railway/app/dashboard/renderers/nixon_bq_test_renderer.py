@@ -1192,7 +1192,8 @@ def render_nixon_bigquery_test_page(
       clearSkelChart(svgId);
       const svg=document.getElementById(svgId);
       if (!svg) return;
-      const W=800,H=130,padL=10,padR=10,padT=8,padB=24,plotW=W-padL-padR,plotH=H-padT-padB,n=rows.length;
+      // padL widened to fit Y-axis position labels.
+      const W=800,H=130,padL=34,padR=12,padT=8,padB=24,plotW=W-padL-padR,plotH=H-padT-padB,n=rows.length;
       svg.setAttribute('viewBox',`0 0 ${{W}} ${{H}}`);
       if (!n) {{ svg.innerHTML=''; return; }}
       const vals=rows.map(r=>num(r[valueKey]));
@@ -1206,9 +1207,16 @@ def render_nixon_bigquery_test_page(
       const line=smoothPath(pts);
       const area=pts.length>1?`${{line}} L${{pts[pts.length-1][0].toFixed(1)}},${{baseY.toFixed(1)}} L${{pts[0][0].toFixed(1)}},${{baseY.toFixed(1)}} Z`:'';
       const lblIdx=n===1?[0]:[0,Math.floor((n-1)/2),n-1];
+      // Y-axis: label the actual position values so the scale is readable. With
+      // invert, the best (lowest) position sits at the top. Show up to 3 ticks.
+      const fmtPos=v=>(Math.round(v*10)/10).toFixed(1);
+      const yTickVals = (mn===mx) ? [mn] : [mn,(mn+mx)/2,mx];
       const gid='grad_'+svgId;
       svg.innerHTML=[
         `<defs><linearGradient id="${{gid}}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${{color}}" stop-opacity="0.20"/><stop offset="100%" stop-color="${{color}}" stop-opacity="0"/></linearGradient></defs>`,
+        // Horizontal gridlines + Y value labels (position).
+        ...yTickVals.map(v=>`<line x1="${{padL}}" y1="${{yAt(v).toFixed(1)}}" x2="${{padL+plotW}}" y2="${{yAt(v).toFixed(1)}}" stroke="#f1f4f9"/>`),
+        ...yTickVals.map(v=>`<text x="${{padL-6}}" y="${{(yAt(v)+3).toFixed(1)}}" font-size="10" fill="var(--muted)" text-anchor="end">${{fmtPos(v)}}</text>`),
         `<line x1="${{padL}}" y1="${{padT}}" x2="${{padL}}" y2="${{baseY}}" stroke="#eef2f7"/>`,
         `<line x1="${{padL}}" y1="${{baseY}}" x2="${{padL+plotW}}" y2="${{baseY}}" stroke="#e3e9f1"/>`,
         area?`<path fill="url(#${{gid}})" stroke="none" d="${{area}}"/>`:'',
