@@ -1657,6 +1657,47 @@ def client_gsc_summary(
         raise _nixon_endpoint_failure(exc) from exc
 
 
+@router.get(
+    "/api/clients/{client_key}/gsc/keyword-matches",
+    summary="Queries matching branded/target keyword terms, scanned across the full date range",
+)
+def client_gsc_keyword_matches(
+    client_key: str,
+    request: Request,
+    terms: str = Query(default="", description="Comma-separated match terms."),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    """Unlike gsc/summary's top_queries (LIMIT 25 by clicks), this scans every
+    query in range for the given terms -- so a branded/target keyword that
+    isn't a top-25 performer by raw click volume still shows up."""
+    normalized = (client_key or "").strip().lower()
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    term_list = [t.strip() for t in terms.split(",") if t.strip()]
+    start, end = _resolve_nixon_marketing_dates(start_date, end_date)
+    if not term_list:
+        return {"rows": []}
+    try:
+        import bq_gsc_service
+        rows = _cached_bq_read(
+            f"{normalized}.gsc.keyword_matches",
+            {"start": start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list)},
+            ttl_seconds=900,
+            fetch=lambda: bq_gsc_service.gsc_keyword_matches(
+                start=start, end=end, terms=term_list, client_slug=normalized,
+            ),
+        )
+        return {"rows": rows}
+    except Exception as exc:
+        raise _nixon_endpoint_failure(exc) from exc
+
+
 @router.post(
     "/api/clients/{client_key}/gsc/keyword-config",
     summary="Save Search Console branded roots + target keywords for a client",

@@ -117,7 +117,9 @@ def _env_int(name: str) -> int | None:
 _DEFAULT_MAX_BYTES_BILLED = 100 * 1024**3
 
 
-def make_job_config(*, dry_run: bool = False) -> bigquery.QueryJobConfig:
+def make_job_config(
+    *, dry_run: bool = False, query_parameters: list[Any] | None = None
+) -> bigquery.QueryJobConfig:
     """Shared QueryJobConfig so the cost/time cap is universal across the app.
 
     Every BigQuery query should go through this (directly or via run_query) so
@@ -133,6 +135,8 @@ def make_job_config(*, dry_run: bool = False) -> bigquery.QueryJobConfig:
     timeout_ms = _env_int("BQ_JOB_TIMEOUT_MS")
     if timeout_ms and timeout_ms > 0 and hasattr(config, "job_timeout_ms"):
         config.job_timeout_ms = timeout_ms
+    if query_parameters:
+        config.query_parameters = query_parameters
     return config
 
 
@@ -173,8 +177,9 @@ def run_query(
     project_id: str | None = None,
     credentials_env: str | None = None,
     credentials_info: dict[str, Any] | None = None,
+    query_parameters: list[Any] | None = None,
 ) -> list[dict[str, Any]]:
     client = build_client(project_id, credentials_env=credentials_env, credentials_info=credentials_info)
-    query_job = client.query(sql, job_config=make_job_config())
+    query_job = client.query(sql, job_config=make_job_config(query_parameters=query_parameters))
     rows = query_job.result(max_results=max_rows)
     return [dict(row.items()) for row in rows]

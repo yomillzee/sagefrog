@@ -639,6 +639,7 @@ def render_nixon_bigquery_test_page(
     const GSC_API              = "{_aurl(f'/api/clients/{api_client_key}/gsc/summary')}";
     const SEMRUSH_API          = "{_aurl(f'/api/clients/{api_client_key}/semrush/summary')}";
     const GSC_KEYWORD_CONFIG_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/keyword-config')}";
+    const GSC_KEYWORD_MATCHES_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/keyword-matches')}";
     const GSC_BRANDED_ROOTS = {json.dumps([s.strip() for s in gsc_branded_roots.splitlines() if s.strip()])};
     const GSC_TARGET_KEYWORDS = {json.dumps([s.strip() for s in gsc_target_keywords.splitlines() if s.strip()])};
     const GSC_BRANDED_RAW = {json.dumps(gsc_branded_roots)};
@@ -1152,14 +1153,31 @@ def render_nixon_bigquery_test_page(
     // ---- Branded / target keyword filtering (GSC queries only) ----
     let gscBrandedRoots = GSC_BRANDED_ROOTS.slice();
     let gscTargetKeywords = GSC_TARGET_KEYWORDS.slice();
-    function matchesAny(q, terms) {{
-      const s = String(q||'').toLowerCase();
-      return terms.some(t => t && s.includes(String(t).toLowerCase()));
+    // Branded/target queries are matched against the FULL date-range dataset
+    // via a dedicated backend scan (gsc/keyword-matches), not filtered from
+    // the top_queries subset (top_queries is LIMIT 25 by clicks in
+    // gsc/summary, so a real match outside the top 25 would otherwise be
+    // silently missed).
+    let _gscKwReqId = 0;
+    async function fetchKeywordMatches(terms) {{
+      if (!terms.length) return [];
+      const url = withDates(GSC_KEYWORD_MATCHES_API) + '&terms=' + encodeURIComponent(terms.join(','));
+      try {{
+        const r = await getJson(url);
+        return r.rows || [];
+      }} catch (err) {{
+        return [];
+      }}
     }}
-    function renderGscKeywordTables() {{
-      const all = gscTables.queries.rows || [];
-      gscTables.branded.rows = gscBrandedRoots.length ? all.filter(r => matchesAny(r.query, gscBrandedRoots)) : [];
-      gscTables.target.rows  = gscTargetKeywords.length ? all.filter(r => matchesAny(r.query, gscTargetKeywords)) : [];
+    async function renderGscKeywordTables() {{
+      const reqId = ++_gscKwReqId;
+      const [brandedRows, targetRows] = await Promise.all([
+        fetchKeywordMatches(gscBrandedRoots),
+        fetchKeywordMatches(gscTargetKeywords),
+      ]);
+      if (reqId !== _gscKwReqId) return; // a newer call (date range/terms changed) superseded this one
+      gscTables.branded.rows = brandedRows;
+      gscTables.target.rows  = targetRows;
       gscTables.branded.page = 1; gscTables.target.page = 1;
       renderGscTable('branded'); renderGscTable('target');
       const setCount=(id,n,configured)=>{{const el=document.getElementById(id); if(el) el.textContent = configured ? `(${{n}})` : '';}};
@@ -1167,9 +1185,9 @@ def render_nixon_bigquery_test_page(
       setCount('gscTargetCount', gscTables.target.rows.length, gscTargetKeywords.length);
       const none = !gscBrandedRoots.length && !gscTargetKeywords.length;
       setStatus('gscKwStatus', none ? 'Set branded roots and target keywords to see matching queries.' : '');
-      // Empty-state hint when configured but nothing matched in the loaded queries.
-      if (gscBrandedRoots.length && !gscTables.branded.rows.length) document.getElementById('gscBrandedTable').innerHTML=`<tbody><tr><td class="empty">No top queries match these branded roots.</td></tr></tbody>`;
-      if (gscTargetKeywords.length && !gscTables.target.rows.length) document.getElementById('gscTargetTable').innerHTML=`<tbody><tr><td class="empty">No top queries match these target keywords.</td></tr></tbody>`;
+      // Empty-state hint when configured but nothing matched anywhere in range.
+      if (gscBrandedRoots.length && !gscTables.branded.rows.length) document.getElementById('gscBrandedTable').innerHTML=`<tbody><tr><td class="empty">No queries match these branded roots.</td></tr></tbody>`;
+      if (gscTargetKeywords.length && !gscTables.target.rows.length) document.getElementById('gscTargetTable').innerHTML=`<tbody><tr><td class="empty">No queries match these target keywords.</td></tr></tbody>`;
       if (!gscBrandedRoots.length) document.getElementById('gscBrandedTable').innerHTML=`<tbody><tr><td class="empty">No branded roots set.</td></tr></tbody>`;
       if (!gscTargetKeywords.length) document.getElementById('gscTargetTable').innerHTML=`<tbody><tr><td class="empty">No target keywords set.</td></tr></tbody>`;
     }}

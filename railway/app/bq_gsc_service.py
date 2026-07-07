@@ -113,11 +113,12 @@ def _mart_ds() -> str:
     return (os.getenv("BQ_MART_DATASET_ID") or _DEFAULT_MART_DS).strip()
 
 
-def _run(sql: str, max_rows: int = 500) -> list[dict[str, Any]]:
+def _run(sql: str, max_rows: int = 500, *, query_parameters: list[Any] | None = None) -> list[dict[str, Any]]:
     target = _resolved_target()
     credentials_env = None if target.is_default_fallback else target.credentials_env
     return bigquery_service.run_query(
-        sql, project_id=_project_id(), credentials_env=credentials_env, max_rows=max_rows
+        sql, project_id=_project_id(), credentials_env=credentials_env, max_rows=max_rows,
+        query_parameters=query_parameters,
     )
 
 
@@ -701,6 +702,53 @@ def build_gsc_mart_summary(*, start: date, end: date, client_slug: str | None = 
         if errors:
             result["errors"] = errors
         return result
+
+
+def gsc_keyword_matches(
+    *, start: date, end: date, terms: list[str], client_slug: str | None = None
+) -> list[dict[str, Any]]:
+    """Queries whose text contains any of `terms`, aggregated over the full
+    date range -- unlike top_queries in build_gsc_mart_summary (LIMIT 25 by
+    clicks), this scans every matching query regardless of its click rank, so
+    a branded/target keyword that isn't a top performer still shows up.
+    """
+    terms = [t.strip().lower() for t in terms if t and t.strip()]
+    if not terms:
+        return []
+    with _client_context(client_slug):
+        target = _resolved_target()
+        if target.is_default_fallback and not _is_penn_slug(client_slug):
+            return []
+        project, ds = _project_id(), _reporting_mart_ds()
+        qv = f"`{project}.{ds}.{_QUERY_VIEW}`"
+        m = _gsc_metric_cols()
+        s, e = start.isoformat(), end.isoformat()
+        sql = f"""
+        SELECT query, {m}
+        FROM {qv}
+        WHERE date BETWEEN '{s}' AND '{e}'
+          AND EXISTS (
+            SELECT 1 FROM UNNEST(@terms) AS t
+            WHERE LOWER(query) LIKE CONCAT('%', t, '%')
+          )
+        GROUP BY query
+        ORDER BY clicks DESC, impressions DESC
+        LIMIT 500
+        """
+        from google.cloud import bigquery as _bq
+        rows = _run(
+            sql, max_rows=500,
+            query_parameters=[_bq.ArrayQueryParameter("terms", "STRING", terms)],
+        )
+        out = []
+        for r in rows:
+            rr = {}
+            for k, v in r.items():
+                if isinstance(v, Decimal):
+                    v = float(v)
+                rr[k] = v
+            out.append(rr)
+        return out
 
 
 def gsc_health_row(client_slug: str | None = None) -> dict[str, Any]:
