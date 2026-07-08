@@ -243,7 +243,7 @@ def render_bigquery_settings_page(
               <td class="left mono">vw_page_path_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
             <tr>
-              <td class="left"><div class="module-label">Website Analytics — By Source</div><div class="module-sub">Source / AI referral breakdown</div></td>
+              <td class="left"><div class="module-label">AI Traffic + Campaign Explorer paid source</div><div class="module-sub">Source / AI referral breakdown</div></td>
               <td class="left mono">/api/clients/{api_client_key}/pages/sources</td>
               <td class="left mono">vw_page_path_source_daily<span class="badge badge-view">VIEW</span></td>
             </tr>
@@ -420,15 +420,16 @@ def render_bigquery_settings_page(
     // localStorage (client-side only); the sidebar nav on every page reads
     // this to hide turned-off pages, and the dashboard falls back off a
     // hidden active tab.
-    const ALL_PAGES = ['overview','explorer','analytics','gsc'];
+    const ALL_PAGES = ['overview','explorer','analytics','ai_traffic','gsc'];
     const PAGE_LABELS = {{
       overview:'Overview', explorer:'Campaign Explorer',
-      analytics:'Website Analytics', gsc:'Search Console',
+      analytics:'Website Analytics', ai_traffic:'AI Traffic', gsc:'Search Console',
     }};
     const PAGE_DESCS = {{
       overview:'Paid media / web traffic summary and daily trend.',
       explorer:'Campaign → ad group → ad drill-down across platforms.',
       analytics:'GA4 pages, traffic, audience, landing, conversions and more.',
+      ai_traffic:'Website sessions referred by AI assistants, by source and landing page.',
       gsc:'Search Console clicks, queries, pages and keyword tracking.',
     }};
     const LS_KEY = 'nixon_sidebar_pages';

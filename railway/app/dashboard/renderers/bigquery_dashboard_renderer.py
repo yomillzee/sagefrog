@@ -574,6 +574,11 @@ def render_bigquery_dashboard_page(
         <div class="sec-head"><h2>Cost by Keyword</h2><span class="status" id="keywordStatus"></span></div>
         <div class="table-wrap"><table id="keywordTable" class="compact"></table></div>
       </section>
+      <section id="sec-paid-sources" style="display:none">
+        <div class="sec-head"><h2>Paid source traffic</h2><span class="status" id="paidSourceStatus"></span></div>
+        <p class="chart-note" style="margin-top:0">Website sessions attributed to paid channels (GA4). Expand a source to see the pages it drove.</p>
+        <div class="table-wrap"><table id="paidSourceTable" class="compact"></table></div>
+      </section>
     </div>
 
     <!-- ===== WEBSITE ANALYTICS TAB ===== -->
@@ -606,10 +611,6 @@ def render_bigquery_dashboard_page(
 
       <section id="sec-pages">
         <div class="sec-head"><h2>Top pages</h2><span class="status" id="pagesStatus"></span></div>
-        <div style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:10px;" id="pageFilters">
-          <div class="filter-group"><span class="filter-label">AI platform</span><div class="chips" id="aiChips"></div></div>
-          <div class="filter-group"><span class="filter-label">Paid source</span><div class="chips" id="sourceChips"></div></div>
-        </div>
         <input class="page-search" id="pagesSearch" type="search" placeholder="Filter by path…" autocomplete="off">
         <div class="table-wrap"><table id="pagesTable" class="compact"></table></div>
         <div class="pager" id="pagesPager"></div>
@@ -666,6 +667,20 @@ def render_bigquery_dashboard_page(
       </section>
 
     </div><!-- /pane-analytics -->
+
+    <!-- ===== AI TRAFFIC TAB ===== -->
+    <div id="pane-ai_traffic" hidden>
+      <section id="sec-ai-sources">
+        <div class="sec-head"><h2>AI traffic by source</h2><span class="status" id="aiTrafficStatus"></span></div>
+        <p class="chart-note" style="margin-top:0">Website sessions referred by AI assistants (ChatGPT, Perplexity, Gemini, etc.) in this range.</p>
+        <div class="table-wrap"><table id="aiSourcesTable" class="compact"></table></div>
+      </section>
+      <section id="sec-ai-pages">
+        <div class="sec-head"><h2>Top landing pages from AI</h2><span class="status" id="aiPagesStatus"></span></div>
+        <input class="page-search" id="aiPagesSearch" type="search" placeholder="Filter by path…" autocomplete="off">
+        <div class="table-wrap"><table id="aiPagesTable" class="compact"></table></div>
+      </section>
+    </div>
 
     <div id="pane-gsc" hidden>
       <section id="sec-semrush">
@@ -931,21 +946,26 @@ def render_bigquery_dashboard_page(
     }}
 
     // ---- Tab system ----
-    const TABS = ['overview', 'explorer', 'analytics', 'gsc'];
+    const TABS = ['overview', 'explorer', 'analytics', 'ai_traffic', 'gsc'];
     let currentTab = 'overview';
     let analyticsLoaded = false;
     let explorerLoaded = false;
     let gscLoaded = false;
+    let aiTrafficLoaded = false;
 
     function switchTab(tab) {{
       TABS.forEach(t => {{ document.getElementById('pane-' + t).hidden = t !== tab; }});
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
       const pf = document.getElementById('platformFilterGroup');
-      if (pf) pf.hidden = tab === 'analytics' || tab === 'gsc';
+      if (pf) pf.hidden = tab === 'analytics' || tab === 'gsc' || tab === 'ai_traffic';
       currentTab = tab;
       if (tab === 'explorer' && !explorerLoaded) {{
         explorerLoaded = true;
         loadExplorer();
+      }}
+      if (tab === 'ai_traffic' && !aiTrafficLoaded) {{
+        aiTrafficLoaded = true;
+        loadAiTraffic();
       }}
       if (tab === 'analytics' && !analyticsLoaded) {{
         analyticsLoaded = true;
@@ -1632,6 +1652,7 @@ def render_bigquery_dashboard_page(
       }} else {{
         kwSec.style.display='none';
       }}
+      loadPaidSources();
     }}
 
     // ---- GA4: Top pages ----
@@ -1644,33 +1665,27 @@ def render_bigquery_dashboard_page(
       if (!Object.keys(pagesEventMap).length) return rows;
       return rows.map(r=>({{...r, key_events:keSum(pagesEventMap, r.page_path)}}));
     }}
-    const paidSourceFilter=new Set(), aiPlatformFilter=new Set();
     const PAGES_PER_PAGE=10; let pagesPageNum=1;
     // Cap Top pages to the top N by views — the long tail past this is almost
     // always checkout steps and one-off paths that just add noise.
     const PAGES_TOP_LIMIT=50;
     const PAID_SOURCE_LABELS={{paid_google:'Google',paid_bing:'Bing',paid_linkedin:'LinkedIn',paid_meta:'Meta',paid_facebook:'Facebook'}};
     function paidLabel(src) {{ return PAID_SOURCE_LABELS[src]||String(src).replace(/^paid_/,'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()); }}
-    function pageFiltersActive() {{ return paidSourceFilter.size>0||aiPlatformFilter.size>0; }}
-    function pageSourceRowMatches(r) {{
-      if (aiPlatformFilter.size&&!aiPlatformFilter.has(r.ai_platform)) return false;
-      if (paidSourceFilter.size&&!paidSourceFilter.has(r.source_platform)) return false;
-      return true;
-    }}
-    function aggregatePages(rows) {{
-      const map=new Map();
-      for (const r of rows) {{
-        let g=map.get(r.page_path);
-        if (!g) {{ g={{page_path:r.page_path,page_group:r.page_group,page_topic:r.page_topic,page_views:0,users:0,sessions:0,engagement_seconds:0,key_events:0}}; map.set(r.page_path,g); }}
-        g.page_views+=num(r.page_views);g.users+=num(r.users);g.sessions+=num(r.sessions);g.engagement_seconds+=num(r.engagement_seconds);g.key_events+=num(r.key_events);
-      }}
-      return [...map.values()].sort((a,b)=>b.page_views-a.page_views);
+    // Per-page source / AI-referral rows (vw_page_path_source_daily), shared by
+    // the AI Traffic tab and the Campaign Explorer paid-source module. Fetched
+    // once per date range and memoized so switching between them is instant.
+    let pagesSourceLoadedFor=null;
+    async function ensurePagesSources() {{
+      const k=currentStart+'|'+currentEnd;
+      if (pagesSourceLoadedFor===k) return pagesSourceRows;
+      const src=await getJson(withDates(PAGES_SOURCES_API)).catch(()=>({{rows:[]}}));
+      pagesSourceRows=src.rows||[]; pagesSourceLoadedFor=k;
+      return pagesSourceRows;
     }}
     function renderPages() {{
-      let base=pageFiltersActive()?aggregatePages(pagesSourceRows.filter(pageSourceRowMatches)):pagesTopRows;
-      base=applyPageEvents(base);
-      // Rows are already sorted by views desc (server ORDER BY / aggregatePages),
-      // so slicing keeps the top N. Search then filters within that top set.
+      let base=applyPageEvents(pagesTopRows);
+      // Rows are already sorted by views desc (server ORDER BY), so slicing
+      // keeps the top N. Search then filters within that top set.
       base=base.slice(0, PAGES_TOP_LIMIT);
       if (pagesSearchQuery) {{ const q=pagesSearchQuery.toLowerCase(); base=base.filter(p=>p.page_path.toLowerCase().includes(q)); }}
       const el=document.getElementById('pagesTable');
@@ -1681,7 +1696,7 @@ def render_bigquery_dashboard_page(
       const pageRows=base.slice(startIdx,startIdx+PAGES_PER_PAGE);
       el.innerHTML=`<thead><tr><th class="left">Page</th><th>Views</th><th>Users</th><th>Key events</th><th>Avg engt</th></tr></thead>`+
         `<tbody>${{pageRows.map(p=>{{const sub=p.page_group?` <span class="muted">${{esc(p.page_group)}}</span>`:'';const engt=p.users?p.engagement_seconds/p.users:0;return`<tr><td class="left"><span class="page-path">${{esc(p.page_path)}}</span>${{sub}}</td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;}}). join('')}}</tbody>`;
-      const tag=pageFiltersActive()||pagesSearchQuery?' (filtered)':'';
+      const tag=pagesSearchQuery?' (filtered)':'';
       setStatus('pagesStatus', `${{startIdx+1}}–${{startIdx+pageRows.length}} of ${{base.length}}${{tag}}`);
       renderPagesPager(totalPages);
     }}
@@ -1693,44 +1708,110 @@ def render_bigquery_dashboard_page(
       if (prev) prev.onclick=()=>{{if(pagesPageNum>1){{pagesPageNum--;renderPages();}}}};
       if (next) next.onclick=()=>{{if(pagesPageNum<totalPages){{pagesPageNum++;renderPages();}}}};
     }}
-    function buildMultiChips(containerId, entries, stateSet) {{
-      const el=document.getElementById(containerId);
-      el.innerHTML=[['__all__','All'],...entries].map(([v,l])=>`<button type="button" class="chip" data-key="${{esc(v)}}">${{esc(l)}}</button>`).join('');
-      const sync=()=>el.querySelectorAll('.chip').forEach(b=>b.classList.toggle('active',b.dataset.key==='__all__'?stateSet.size===0:stateSet.has(b.dataset.key)));
-      el.querySelectorAll('.chip').forEach(btn=>btn.addEventListener('click',()=>{{
-        const key=btn.dataset.key;
-        if(key==='__all__')stateSet.clear();else if(stateSet.has(key))stateSet.delete(key);else stateSet.add(key);
-        sync();pagesPageNum=1;renderPages();
-      }}));
-      sync();
-    }}
-    function buildPageFilters() {{
-      const aiPlatforms=[...new Set(pagesSourceRows.map(r=>r.ai_platform).filter(Boolean))].sort();
-      buildMultiChips('aiChips',aiPlatforms.map(p=>[p,p]),aiPlatformFilter);
-      const paidSources=[...new Set(pagesSourceRows.map(r=>r.source_platform).filter(s=>s&&s.startsWith('paid_')))].sort();
-      buildMultiChips('sourceChips',paidSources.map(s=>[s,paidLabel(s)]),paidSourceFilter);
-    }}
     async function loadPages() {{
       setStatus('pagesStatus','Loading…');
       document.getElementById('pagesTable').innerHTML = skelTable(5,8);
-      const [top,src,ev]=await Promise.all([
+      const [top,ev]=await Promise.all([
         getJson(withDates(PAGES_TOP_API)).catch(()=>({{rows:[]}})),
-        getJson(withDates(PAGES_SOURCES_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(TOP_PAGES_KEY_EVENTS_API)).catch(()=>({{rows:[],events:[]}})),
       ]);
-      pagesTopRows=top.rows||[]; pagesSourceRows=src.rows||[]; pagesPageNum=1;
+      pagesTopRows=top.rows||[]; pagesPageNum=1;
       pagesEventMap={{}};
       for (const r of (ev.rows||[])) {{
         (pagesEventMap[r.page_path]=pagesEventMap[r.page_path]||{{}})[r.event_name]=num(r.event_count);
       }}
       mergeEvents(ev.events);
-      buildPageFilters(); renderPages();
+      renderPages();
     }}
     (function(){{
       const inp=document.getElementById('pagesSearch');
       if (!inp) return;
       let debounce;
       inp.addEventListener('input',()=>{{ clearTimeout(debounce); debounce=setTimeout(()=>{{pagesSearchQuery=inp.value.trim();pagesPageNum=1;renderPages();}},180); }});
+    }})();
+
+    // ---- AI Traffic tab (from vw_page_path_source_daily, is_ai_referral) ----
+    let aiPagesRows=[], aiPagesSearchQuery='';
+    async function loadAiTraffic() {{
+      setStatus('aiTrafficStatus','Loading…');
+      document.getElementById('aiSourcesTable').innerHTML=skelTable(5,5);
+      document.getElementById('aiPagesTable').innerHTML=skelTable(4,8);
+      const rows=(await ensurePagesSources()).filter(r=>r.is_ai_referral);
+      const bySrc=new Map();
+      for (const r of rows) {{
+        const key=r.ai_platform||'Unknown';
+        let g=bySrc.get(key); if(!g){{g={{source:key,sessions:0,users:0,page_views:0,engagement_seconds:0}};bySrc.set(key,g);}}
+        g.sessions+=num(r.sessions);g.users+=num(r.users);g.page_views+=num(r.page_views);g.engagement_seconds+=num(r.engagement_seconds);
+      }}
+      const srcRows=[...bySrc.values()].sort((a,b)=>b.sessions-a.sessions);
+      renderTable('aiSourcesTable',[
+        {{key:'source',label:'AI source',left:true}},
+        {{key:'sessions',label:'Sessions',format:count}},
+        {{key:'users',label:'Users',format:count}},
+        {{key:'page_views',label:'Page views',format:count}},
+        {{key:'engt',label:'Avg engt',format:(_,r)=>fmtDuration(r.users?r.engagement_seconds/r.users:0)}},
+      ],srcRows,'No AI-referred traffic in this range.');
+      setStatus('aiTrafficStatus', srcRows.length?`${{srcRows.length}} source(s)`:'No AI traffic');
+      const byPage=new Map();
+      for (const r of rows) {{
+        let g=byPage.get(r.page_path); if(!g){{g={{page_path:r.page_path,sessions:0,users:0,page_views:0}};byPage.set(r.page_path,g);}}
+        g.sessions+=num(r.sessions);g.users+=num(r.users);g.page_views+=num(r.page_views);
+      }}
+      aiPagesRows=[...byPage.values()].sort((a,b)=>b.sessions-a.sessions);
+      renderAiPages();
+    }}
+    function renderAiPages() {{
+      let base=aiPagesRows;
+      if (aiPagesSearchQuery) {{ const q=aiPagesSearchQuery.toLowerCase(); base=base.filter(p=>p.page_path.toLowerCase().includes(q)); }}
+      base=base.slice(0,PAGES_TOP_LIMIT);
+      renderTable('aiPagesTable',[
+        {{key:'page_path',label:'Page',left:true}},
+        {{key:'sessions',label:'Sessions',format:count}},
+        {{key:'users',label:'Users',format:count}},
+        {{key:'page_views',label:'Page views',format:count}},
+      ],base,aiPagesSearchQuery?'No pages match.':'No AI-referred pages in this range.');
+      setStatus('aiPagesStatus', base.length?`${{base.length}} page(s)`:'');
+    }}
+    (function(){{
+      const inp=document.getElementById('aiPagesSearch');
+      if (!inp) return;
+      let debounce;
+      inp.addEventListener('input',()=>{{ clearTimeout(debounce); debounce=setTimeout(()=>{{aiPagesSearchQuery=inp.value.trim();renderAiPages();}},180); }});
+    }})();
+
+    // ---- Campaign Explorer: paid-source module (paid_* from source_platform) ----
+    async function loadPaidSources() {{
+      const sec=document.getElementById('sec-paid-sources');
+      setStatus('paidSourceStatus','Loading…');
+      const rows=(await ensurePagesSources()).filter(r=>r.source_platform&&r.source_platform.startsWith('paid_'));
+      if (!rows.length) {{ if(sec) sec.style.display='none'; setStatus('paidSourceStatus',''); return; }}
+      if (sec) sec.style.display='';
+      const bySrc=new Map();
+      for (const r of rows) {{
+        let g=bySrc.get(r.source_platform);
+        if(!g){{g={{source:r.source_platform,sessions:0,users:0,page_views:0,pages:new Map()}};bySrc.set(r.source_platform,g);}}
+        g.sessions+=num(r.sessions);g.users+=num(r.users);g.page_views+=num(r.page_views);
+        let p=g.pages.get(r.page_path);
+        if(!p){{p={{page_path:r.page_path,sessions:0,users:0,page_views:0}};g.pages.set(r.page_path,p);}}
+        p.sessions+=num(r.sessions);p.users+=num(r.users);p.page_views+=num(r.page_views);
+      }}
+      const srcRows=[...bySrc.values()].sort((a,b)=>b.sessions-a.sessions);
+      const head=`<thead><tr><th class="left">Paid source / Page</th><th>Sessions</th><th>Users</th><th>Page views</th></tr></thead>`;
+      let body='', i=0;
+      for (const g of srcRows) {{
+        const id='ps'+(i++), pages=[...g.pages.values()].sort((a,b)=>b.sessions-a.sessions).slice(0,PAGES_TOP_LIMIT);
+        body+=`<tr class="tree-row lvl-campaign" data-id="${{id}}" data-expandable="1"><td class="left"><span class="caret"></span><span class="tree-name">${{esc(paidLabel(g.source))}}</span> <span class="muted">(${{g.pages.size}} page${{g.pages.size===1?'':'s'}})</span></td><td>${{count(g.sessions)}}</td><td>${{count(g.users)}}</td><td>${{count(g.page_views)}}</td></tr>`;
+        for (const p of pages) {{
+          body+=`<tr class="tree-row lvl-ad" data-parent="${{id}}" hidden><td class="left"><span class="indent1"></span><span class="page-path">${{esc(p.page_path)}}</span></td><td>${{count(p.sessions)}}</td><td>${{count(p.users)}}</td><td>${{count(p.page_views)}}</td></tr>`;
+        }}
+      }}
+      document.getElementById('paidSourceTable').innerHTML=head+`<tbody>${{body}}</tbody>`;
+      setStatus('paidSourceStatus', `${{srcRows.length}} source(s)`);
+    }}
+    (function(){{
+      const t=document.getElementById('paidSourceTable');
+      if (!t) return;
+      t.addEventListener('click',ev=>{{ const row=ev.target.closest('tr[data-expandable]'); if (row) toggleExplorerRow(row); }});
     }})();
 
     // ---- GA4: Traffic acquisition ----
@@ -2106,6 +2187,7 @@ def render_bigquery_dashboard_page(
       if (currentTab==='overview')   {{ loadHealth().then(()=>{{ HAS_PAID_ADS ? loadSummary() : loadOverviewSnapshot(); }}); }}
       else if (currentTab==='explorer') {{ explorerLoaded=false; loadExplorer(); explorerLoaded=true; }}
       else if (currentTab==='analytics') {{ analyticsLoaded=false; applyModules(); loadAllAnalytics(); analyticsLoaded=true; }}
+      else if (currentTab==='ai_traffic') {{ aiTrafficLoaded=false; loadAiTraffic(); aiTrafficLoaded=true; }}
     }}
 
     // ---- Date presets ----
