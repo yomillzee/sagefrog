@@ -414,12 +414,17 @@ def render_connector_detail(
     oauth_error: str | None = None,
     flash_message: str | None = None,
     flash_error: str | None = None,
+    force_wizard: bool = False,
 ) -> str:
     icon = _PLATFORM_ICONS.get(connector_type, "")
     dir_url = f"/dashboard/{client_slug}/connectors"
     is_connected = config and config.status in ("connected", "syncing", "error", "disabled")
 
-    if is_connected:
+    # "Change account" (?reconfigure=1) forces the setup wizard even for an
+    # already-connected/errored connector, so the account can be re-picked or the
+    # OAuth re-authorized. Without this, the base URL always re-renders the
+    # read-only management view and there's no path back to the wizard.
+    if is_connected and not force_wizard:
         content = _render_management_view(
             client_slug=client_slug,
             handler=handler,
@@ -1143,7 +1148,7 @@ def _render_management_view(
         </select>
         <button class="btn-secondary" id="syncNowBtn" onclick="runSyncNow()">Run sync now</button>
         {'<a href="/dashboard/' + client_slug + '/connectors/' + handler.connector_type + '/reauth" class="btn-secondary">Re-authorize</a>' if not handler.no_oauth else ''}
-        <a href="/dashboard/{client_slug}/connectors/{handler.connector_type}" class="btn-secondary">Change account</a>
+        <a href="/dashboard/{client_slug}/connectors/{handler.connector_type}?reconfigure=1" class="btn-secondary">Change account</a>
         <button class="btn-danger" onclick="showDisconnectModal()">Disconnect</button>
       </div>
 

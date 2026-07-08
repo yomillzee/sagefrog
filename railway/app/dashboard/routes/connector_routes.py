@@ -167,6 +167,7 @@ def connector_detail(
     oauth_error: str | None = None,
     connected: str | None = None,
     reauth_done: str | None = None,
+    reconfigure: str | None = None,
     flash: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
@@ -203,6 +204,7 @@ def connector_detail(
         oauth_done=bool(oauth_done),
         oauth_error=(oauth_error or "").strip()[:300] or None,
         flash_message=flash_message,
+        force_wizard=bool(reconfigure),
         **_session_kw(access_key, use_session, session_email, session_is_admin),
     ))
 
