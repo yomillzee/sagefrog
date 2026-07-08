@@ -1755,9 +1755,16 @@ def render_bigquery_dashboard_page(
       // Biggest platform first so it sits at the bottom of the stack.
       const ordered=[...pivot.keys()].map(pl=>[pl,[...pivot.get(pl).values()].reduce((a,b)=>a+b,0)]).sort((a,b)=>b[1]-a[1]);
       if (!dates.length || !ordered.length) {{ __destroyChart('aiTrendChart'); setStatus('aiTrendStatus','No AI traffic in this range.'); return; }}
+      // Stack the data ourselves (scales.y.stacked doesn't stack lines in this
+      // Chart.js build): each series plots the running cumulative total and fills
+      // down to the series below it. _raw keeps the per-platform value for tooltips.
+      const cum=dates.map(()=>0);
       const datasets=ordered.map(([pl],i)=>{{
         const color=AI_PALETTE[i%AI_PALETTE.length], m=pivot.get(pl);
-        return {{ label:pl, data:dates.map(d=>m.get(d)||0), borderColor:color, backgroundColor:color+'59', fill:true, borderWidth:2, tension:0.3, pointRadius:0, pointHoverRadius:4 }};
+        const raw=dates.map(d=>m.get(d)||0);
+        const data=raw.map((v,idx)=>(cum[idx]+=v));
+        return {{ label:pl, data, _raw:raw, borderColor:color, backgroundColor:color+'59',
+                  fill:i===0?'origin':'-1', borderWidth:2, tension:0.3, pointRadius:0, pointHoverRadius:4 }};
       }});
       __chart('aiTrendChart', {{
         type:'line',
@@ -1765,10 +1772,13 @@ def render_bigquery_dashboard_page(
         options:{{
           interaction:{{mode:'index',intersect:false}},
           scales:{{
-            x:{{ stacked:true, grid:{{display:false}}, border:{{display:false}}, ticks:{{maxRotation:0,autoSkip:true,maxTicksLimit:8}} }},
-            y:{{ stacked:true, beginAtZero:true, grid:{{color:'#f1f4f9'}}, border:{{display:false}}, ticks:{{maxTicksLimit:5}} }},
+            x:{{ grid:{{display:false}}, border:{{display:false}}, ticks:{{maxRotation:0,autoSkip:true,maxTicksLimit:8}} }},
+            y:{{ beginAtZero:true, grid:{{color:'#f1f4f9'}}, border:{{display:false}}, ticks:{{maxTicksLimit:5}} }},
           }},
-          plugins:{{ legend:{{ display:true, position:'bottom', labels:{{usePointStyle:true, boxWidth:8, padding:12}} }} }},
+          plugins:{{
+            legend:{{ display:true, position:'bottom', labels:{{usePointStyle:true, boxWidth:8, padding:12}} }},
+            tooltip:{{ callbacks:{{ label:c=>`${{c.dataset.label}}: ${{count(c.dataset._raw[c.dataIndex])}}` }} }},
+          }},
         }},
       }});
       setStatus('aiTrendStatus','');
