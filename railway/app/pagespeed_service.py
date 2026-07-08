@@ -28,6 +28,8 @@ Optional env vars:
     PAGESPEED_API_KEY   — API key (create at console.cloud.google.com, enable
                           the PageSpeed Insights API). Raises the daily quota.
     PAGESPEED_STRATEGY  — "desktop" (default) or "mobile".
+    PAGESPEED_TIMEOUT   — per-audit read timeout in seconds (default 90). Raise
+                          for very heavy sites whose mobile audit runs long.
 """
 
 from __future__ import annotations
@@ -84,6 +86,16 @@ def _api_key() -> str:
 def _default_strategy() -> str:
     s = (os.getenv("PAGESPEED_STRATEGY") or _DEFAULT_STRATEGY).strip().lower()
     return s if s in ("desktop", "mobile") else _DEFAULT_STRATEGY
+
+
+def _default_timeout() -> int:
+    """Read timeout for a live audit. Heavy sites (esp. mobile emulation) can take
+    well over a minute, so default generously; the background sync has a 10-min
+    per-client budget. Tunable via PAGESPEED_TIMEOUT."""
+    try:
+        return max(30, int(os.getenv("PAGESPEED_TIMEOUT") or 90))
+    except (TypeError, ValueError):
+        return 90
 
 
 # Cached agency service-account credentials (minted once, refreshed on expiry).
@@ -219,7 +231,7 @@ def _audit_numeric(audits: dict[str, Any], audit_id: str) -> float | None:
 # Public API
 # ---------------------------------------------------------------------------
 
-def fetch_scores(url: str, strategy: str | None = None, *, timeout: int = 60) -> dict[str, Any]:
+def fetch_scores(url: str, strategy: str | None = None, *, timeout: int | None = None) -> dict[str, Any]:
     """Run a single PSI audit for `url`. Raises on failure (used by Test connection).
 
     Returns a flat dict: url, strategy, fetched_at, the four 0–100 category scores,
@@ -237,6 +249,8 @@ def fetch_scores(url: str, strategy: str | None = None, *, timeout: int = 60) ->
     strat = (strategy or _default_strategy()).strip().lower()
     if strat not in ("desktop", "mobile"):
         strat = _DEFAULT_STRATEGY
+    if timeout is None:
+        timeout = _default_timeout()
 
     data = _get(target, strat, timeout=timeout)
     lh = data.get("lighthouseResult") or {}
