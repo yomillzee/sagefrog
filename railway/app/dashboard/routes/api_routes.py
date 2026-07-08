@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import os
 import traceback
 from datetime import date, timedelta
 
@@ -153,6 +154,18 @@ def _cached_bq_read(source: str, payload: dict, *, ttl_seconds: int, fetch) -> d
     "{client_slug}.{thing}" so invalidation only clears that client's cache.
     """
     import db_cache
+    # Optional global TTL floor. These BQ tables only change on a sync, which
+    # invalidates the cache immediately (see invalidate_prefix), so a longer TTL
+    # keeps caches warm between syncs with zero staleness cost — only the first
+    # load after a sync is cold. Set DASH_CACHE_TTL_SECONDS in the environment to
+    # raise every dashboard read's TTL without editing call sites (e.g. 21600 =
+    # 6h, 86400 = 24h). Unset/0 keeps the per-endpoint defaults (15 min).
+    try:
+        _floor = int(os.getenv("DASH_CACHE_TTL_SECONDS") or 0)
+    except ValueError:
+        _floor = 0
+    if _floor > 0:
+        ttl_seconds = max(ttl_seconds, _floor)
     hit = db_cache.get_cached(source, payload)
     if hit is not None:
         return hit.response_json
