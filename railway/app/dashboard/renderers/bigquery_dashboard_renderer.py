@@ -677,6 +677,7 @@ def render_bigquery_dashboard_page(
       </section>
       <section id="sec-ai-pages">
         <div class="sec-head"><h2>Top landing pages from AI</h2><span class="status" id="aiPagesStatus"></span></div>
+        <div class="filter-group" style="margin-bottom:10px"><span class="filter-label">AI source</span><div class="chips" id="aiPageSourceChips"></div></div>
         <input class="page-search" id="aiPagesSearch" type="search" placeholder="Filter by path…" autocomplete="off">
         <div class="table-wrap"><table id="aiPagesTable" class="compact"></table></div>
       </section>
@@ -1731,7 +1732,7 @@ def render_bigquery_dashboard_page(
     }})();
 
     // ---- AI Traffic tab (from vw_page_path_source_daily, is_ai_referral) ----
-    let aiPagesRows=[], aiPagesSearchQuery='';
+    let aiRows=[], aiPagesSearchQuery='', aiSourceFilter=new Set();
     async function loadAiTraffic() {{
       setStatus('aiTrafficStatus','Loading…');
       document.getElementById('aiSourcesTable').innerHTML=skelTable(5,5);
@@ -1752,16 +1753,33 @@ def render_bigquery_dashboard_page(
         {{key:'engt',label:'Avg engt',format:(_,r)=>fmtDuration(r.users?r.engagement_seconds/r.users:0)}},
       ],srcRows,'No AI-referred traffic in this range.');
       setStatus('aiTrafficStatus', srcRows.length?`${{srcRows.length}} source(s)`:'No AI traffic');
+      aiRows=rows;
+      buildAiSourceChips();
+      renderAiPages();
+    }}
+    function buildAiSourceChips() {{
+      const el=document.getElementById('aiPageSourceChips');
+      if (!el) return;
+      const sources=[...new Set(aiRows.map(r=>r.ai_platform).filter(Boolean))].sort();
+      // Drop any selected source no longer present in this range.
+      for (const s of [...aiSourceFilter]) if (!sources.includes(s)) aiSourceFilter.delete(s);
+      el.innerHTML=[['__all__','All'],...sources.map(s=>[s,s])].map(([v,l])=>`<button type="button" class="chip" data-key="${{esc(v)}}">${{esc(l)}}</button>`).join('');
+      const sync=()=>el.querySelectorAll('.chip').forEach(b=>b.classList.toggle('active', b.dataset.key==='__all__'?aiSourceFilter.size===0:aiSourceFilter.has(b.dataset.key)));
+      el.querySelectorAll('.chip').forEach(btn=>btn.addEventListener('click',()=>{{
+        const key=btn.dataset.key;
+        if(key==='__all__')aiSourceFilter.clear();else if(aiSourceFilter.has(key))aiSourceFilter.delete(key);else aiSourceFilter.add(key);
+        sync();renderAiPages();
+      }}));
+      sync();
+    }}
+    function renderAiPages() {{
+      const src=aiSourceFilter.size?aiRows.filter(r=>aiSourceFilter.has(r.ai_platform)):aiRows;
       const byPage=new Map();
-      for (const r of rows) {{
+      for (const r of src) {{
         let g=byPage.get(r.page_path); if(!g){{g={{page_path:r.page_path,sessions:0,users:0,page_views:0}};byPage.set(r.page_path,g);}}
         g.sessions+=num(r.sessions);g.users+=num(r.users);g.page_views+=num(r.page_views);
       }}
-      aiPagesRows=[...byPage.values()].sort((a,b)=>b.sessions-a.sessions);
-      renderAiPages();
-    }}
-    function renderAiPages() {{
-      let base=aiPagesRows;
+      let base=[...byPage.values()].sort((a,b)=>b.sessions-a.sessions);
       if (aiPagesSearchQuery) {{ const q=aiPagesSearchQuery.toLowerCase(); base=base.filter(p=>p.page_path.toLowerCase().includes(q)); }}
       base=base.slice(0,PAGES_TOP_LIMIT);
       renderTable('aiPagesTable',[
@@ -1769,8 +1787,9 @@ def render_bigquery_dashboard_page(
         {{key:'sessions',label:'Sessions',format:count}},
         {{key:'users',label:'Users',format:count}},
         {{key:'page_views',label:'Page views',format:count}},
-      ],base,aiPagesSearchQuery?'No pages match.':'No AI-referred pages in this range.');
-      setStatus('aiPagesStatus', base.length?`${{base.length}} page(s)`:'');
+      ],base,(aiPagesSearchQuery||aiSourceFilter.size)?'No pages match.':'No AI-referred pages in this range.');
+      const tag=aiSourceFilter.size?` · ${{[...aiSourceFilter].join(', ')}}`:'';
+      setStatus('aiPagesStatus', base.length?`${{base.length}} page(s)${{tag}}`:'');
     }}
     (function(){{
       const inp=document.getElementById('aiPagesSearch');
