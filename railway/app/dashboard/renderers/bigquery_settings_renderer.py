@@ -432,7 +432,7 @@ def render_bigquery_settings_page(
       ai_traffic:'Website sessions referred by AI assistants, by source and landing page.',
       gsc:'Search Console clicks, queries, pages and keyword tracking.',
     }};
-    const LS_KEY = 'nixon_sidebar_pages';
+    const LS_KEY = 'nixon_sidebar_pages:{client_slug}';  // scoped per client — a global key leaked toggles across portals
     function getPages() {{
       try {{ const s = localStorage.getItem(LS_KEY); const saved = s ? JSON.parse(s) : {{}}; return ALL_PAGES.reduce((o,k) => ({{...o,[k]:k in saved?saved[k]:true}}),{{}}); }} catch {{ return ALL_PAGES.reduce((o,k)=>({{...o,[k]:true}}),{{}}); }}
     }}

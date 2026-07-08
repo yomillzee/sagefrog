@@ -2517,7 +2517,7 @@ def render_bigquery_dashboard_page(
     // enabled page. Runs last, after all loaders are initialized.
     (function(){{
       let prefs = {{}};
-      try {{ prefs = JSON.parse(localStorage.getItem('nixon_sidebar_pages') || '{{}}'); }} catch(e) {{}}
+      try {{ prefs = JSON.parse(localStorage.getItem('nixon_sidebar_pages:{client_slug}') || '{{}}'); }} catch(e) {{}}
       const v = new URLSearchParams(location.search).get('view');
       let target = (v && TABS.includes(v)) ? v : 'overview';
       if (prefs[target] === false) target = TABS.find(t => prefs[t] !== false) || 'overview';

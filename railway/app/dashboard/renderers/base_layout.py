@@ -499,16 +499,17 @@ def dashboard_sidebar_view_nav_html(
             f'{_VIEW_ICONS["event-tracking"]}<span>Event Tracking</span></a>'
         )
     # Client-side page-visibility prefs from Settings > "Sidebar pages"
-    # (localStorage 'nixon_sidebar_pages'). Hides the core nav items the user
-    # turned off, on every page that renders this nav so the sidebar stays
-    # consistent. Uses style.display, NOT the hidden attribute, because
-    # .dash-view-btn sets display:flex which would override [hidden]. The
-    # dashboard additionally falls back off a hidden active tab (see its
-    # deep-link init). Lead/Event Tracking items have no data-tab and are
+    # (localStorage 'nixon_sidebar_pages:<client_slug>'). Hides the core nav items
+    # the user turned off, on every page that renders this nav so the sidebar stays
+    # consistent. The key is SCOPED PER CLIENT — an unscoped global key leaked a
+    # toggle to every portal in the browser. Uses style.display, NOT the hidden
+    # attribute, because .dash-view-btn sets display:flex which would override
+    # [hidden]. The dashboard additionally falls back off a hidden active tab (see
+    # its deep-link init). Lead/Event Tracking items have no data-tab and are
     # untouched (they gate on connector state instead).
     prefs_script = (
         "<script>(function(){try{"
-        "var p=JSON.parse(localStorage.getItem('nixon_sidebar_pages')||'{}');"
+        f"var p=JSON.parse(localStorage.getItem('nixon_sidebar_pages:{client_slug}')||'{{}}');"
         "document.querySelectorAll('.dash-sidebar-nav .dash-view-btn[data-tab]')"
         ".forEach(function(el){if(p[el.dataset.tab]===false)el.style.display='none';});"
         "}catch(e){}})();</script>"
