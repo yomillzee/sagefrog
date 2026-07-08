@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -45,6 +46,11 @@ _log = logging.getLogger(__name__)
 
 _ENDPOINT = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
 _DEFAULT_STRATEGY = "desktop"
+
+# Retry transient PSI failures (flaky Lighthouse 500s, plus 502/503/429).
+_RETRY_STATUSES = frozenset({500, 502, 503, 429})
+_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = 3
 
 # Lighthouse category id -> the snake_case score key we expose. Note the API
 # spells best practices "best-practices" (hyphen) in its category map.
@@ -162,17 +168,32 @@ def _get(url: str, strategy: str, timeout: int = 60) -> dict[str, Any]:
 
     full_url = _ENDPOINT + "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(full_url, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        # Surface Google's structured error message (quota, invalid URL, etc.).
+
+    # Lighthouse audits are flaky: PSI intermittently returns 500 "Lighthouse
+    # returned error: Something went wrong" (more often on mobile, where the
+    # throttled CPU/network emulation makes the run less stable), plus the usual
+    # transient 502/503/429. Retry those a couple of times with a short backoff;
+    # a persistent failure or any non-transient status (400/403/404) fails fast.
+    last_detail = ""
+    last_code = 0
+    for attempt in range(_MAX_ATTEMPTS):
         try:
-            body = exc.read().decode("utf-8", errors="replace")
-            detail = json.loads(body).get("error", {}).get("message", "") or body[:300]
-        except Exception:
-            detail = ""
-        raise RuntimeError(f"PageSpeed API error (HTTP {exc.code}): {detail}") from exc
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            # Surface Google's structured error message (quota, invalid URL, etc.).
+            try:
+                body = exc.read().decode("utf-8", errors="replace")
+                detail = json.loads(body).get("error", {}).get("message", "") or body[:300]
+            except Exception:
+                detail = ""
+            last_detail, last_code = detail, exc.code
+            if exc.code in _RETRY_STATUSES and attempt < _MAX_ATTEMPTS - 1:
+                time.sleep(_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            raise RuntimeError(f"PageSpeed API error (HTTP {exc.code}): {detail}") from exc
+    # Exhausted retries on a transient status.
+    raise RuntimeError(f"PageSpeed API error (HTTP {last_code}): {last_detail}")
 
 
 def _score_pct(node: dict[str, Any]) -> int | None:
