@@ -575,8 +575,8 @@ def render_bigquery_dashboard_page(
         <div class="table-wrap"><table id="keywordTable" class="compact"></table></div>
       </section>
       <section id="sec-paid-sources" style="display:none">
-        <div class="sec-head"><h2>Paid source traffic</h2><span class="status" id="paidSourceStatus"></span></div>
-        <p class="chart-note" style="margin-top:0">Website sessions attributed to paid channels (GA4). Expand a source to see the pages it drove.</p>
+        <div class="sec-head"><h2>Paid campaign traffic</h2><span class="status" id="paidSourceStatus"></span></div>
+        <p class="chart-note" style="margin-top:0">Website sessions attributed to paid channels (GA4). Expand a channel to see its campaigns, then the pages each campaign drove. Campaigns come from the <code>utm_campaign</code> on the landing session — untagged traffic shows as “(not set).”</p>
         <div class="table-wrap"><table id="paidSourceTable" class="compact"></table></div>
       </section>
     </div>
@@ -1670,7 +1670,8 @@ def render_bigquery_dashboard_page(
     // Cap Top pages to the top N by views — the long tail past this is almost
     // always checkout steps and one-off paths that just add noise.
     const PAGES_TOP_LIMIT=50;
-    const PAID_SOURCE_LABELS={{paid_google:'Google',paid_bing:'Bing',paid_linkedin:'LinkedIn',paid_meta:'Meta',paid_facebook:'Facebook'}};
+    // Keys match fn_ga4_source_platform's paid_* outputs (bq_ga4_mart_service).
+    const PAID_SOURCE_LABELS={{paid_google:'Google Ads',paid_microsoft:'Microsoft Ads',paid_social:'Paid social',paid_linkedin:'LinkedIn',paid_meta:'Meta'}};
     function paidLabel(src) {{ return PAID_SOURCE_LABELS[src]||String(src).replace(/^paid_/,'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()); }}
     // Per-page source / AI-referral rows (vw_page_path_source_daily), shared by
     // the AI Traffic tab and the Campaign Explorer paid-source module. Fetched
@@ -1805,27 +1806,39 @@ def render_bigquery_dashboard_page(
       const rows=(await ensurePagesSources()).filter(r=>r.source_platform&&r.source_platform.startsWith('paid_'));
       if (!rows.length) {{ if(sec) sec.style.display='none'; setStatus('paidSourceStatus',''); return; }}
       if (sec) sec.style.display='';
-      const bySrc=new Map();
+      // Channel -> Campaign (utm_campaign) -> Page, each level summing sessions/users/views.
+      const addMetrics=(g,r)=>{{g.sessions+=num(r.sessions);g.users+=num(r.users);g.page_views+=num(r.page_views);}};
+      const byChan=new Map();
       for (const r of rows) {{
-        let g=bySrc.get(r.source_platform);
-        if(!g){{g={{source:r.source_platform,sessions:0,users:0,page_views:0,pages:new Map()}};bySrc.set(r.source_platform,g);}}
-        g.sessions+=num(r.sessions);g.users+=num(r.users);g.page_views+=num(r.page_views);
-        let p=g.pages.get(r.page_path);
-        if(!p){{p={{page_path:r.page_path,sessions:0,users:0,page_views:0}};g.pages.set(r.page_path,p);}}
-        p.sessions+=num(r.sessions);p.users+=num(r.users);p.page_views+=num(r.page_views);
+        let c=byChan.get(r.source_platform);
+        if(!c){{c={{source:r.source_platform,sessions:0,users:0,page_views:0,camps:new Map()}};byChan.set(r.source_platform,c);}}
+        addMetrics(c,r);
+        const campName=(r.utm_campaign&&String(r.utm_campaign).trim())||'(not set)';
+        let cm=c.camps.get(campName);
+        if(!cm){{cm={{campaign:campName,sessions:0,users:0,page_views:0,pages:new Map()}};c.camps.set(campName,cm);}}
+        addMetrics(cm,r);
+        let p=cm.pages.get(r.page_path);
+        if(!p){{p={{page_path:r.page_path,sessions:0,users:0,page_views:0}};cm.pages.set(r.page_path,p);}}
+        addMetrics(p,r);
       }}
-      const srcRows=[...bySrc.values()].sort((a,b)=>b.sessions-a.sessions);
-      const head=`<thead><tr><th class="left">Paid source / Page</th><th>Sessions</th><th>Users</th><th>Page views</th></tr></thead>`;
-      let body='', i=0;
-      for (const g of srcRows) {{
-        const id='ps'+(i++), pages=[...g.pages.values()].sort((a,b)=>b.sessions-a.sessions).slice(0,PAGES_TOP_LIMIT);
-        body+=`<tr class="tree-row lvl-campaign" data-id="${{id}}" data-expandable="1"><td class="left"><span class="caret"></span><span class="tree-name">${{esc(paidLabel(g.source))}}</span> <span class="muted">(${{g.pages.size}} page${{g.pages.size===1?'':'s'}})</span></td><td>${{count(g.sessions)}}</td><td>${{count(g.users)}}</td><td>${{count(g.page_views)}}</td></tr>`;
-        for (const p of pages) {{
-          body+=`<tr class="tree-row lvl-ad" data-parent="${{id}}" hidden><td class="left"><span class="indent1"></span><span class="page-path">${{esc(p.page_path)}}</span></td><td>${{count(p.sessions)}}</td><td>${{count(p.users)}}</td><td>${{count(p.page_views)}}</td></tr>`;
+      const chanRows=[...byChan.values()].sort((a,b)=>b.sessions-a.sessions);
+      const cells=g=>`<td>${{count(g.sessions)}}</td><td>${{count(g.users)}}</td><td>${{count(g.page_views)}}</td>`;
+      const head=`<thead><tr><th class="left">Paid channel / Campaign / Page</th><th>Sessions</th><th>Users</th><th>Page views</th></tr></thead>`;
+      let body='', ci=0;
+      for (const c of chanRows) {{
+        const cId='pc'+(ci++), camps=[...c.camps.values()].sort((a,b)=>b.sessions-a.sessions);
+        body+=`<tr class="tree-row lvl-campaign" data-id="${{cId}}" data-expandable="1"><td class="left"><span class="caret"></span><span class="tree-name">${{esc(paidLabel(c.source))}}</span> <span class="muted">(${{camps.length}} campaign${{camps.length===1?'':'s'}})</span></td>${{cells(c)}}</tr>`;
+        let mi=0;
+        for (const cm of camps) {{
+          const mId=cId+'m'+(mi++), pages=[...cm.pages.values()].sort((a,b)=>b.sessions-a.sessions).slice(0,PAGES_TOP_LIMIT);
+          body+=`<tr class="tree-row lvl-group" data-id="${{mId}}" data-parent="${{cId}}" data-expandable="1" hidden><td class="left"><span class="indent1"></span><span class="caret"></span><span class="tree-name">${{esc(cm.campaign)}}</span> <span class="muted">(${{cm.pages.size}} page${{cm.pages.size===1?'':'s'}})</span></td>${{cells(cm)}}</tr>`;
+          for (const p of pages) {{
+            body+=`<tr class="tree-row lvl-ad" data-parent="${{mId}}" hidden><td class="left"><span class="indent2"></span><span class="page-path">${{esc(p.page_path)}}</span></td>${{cells(p)}}</tr>`;
+          }}
         }}
       }}
       document.getElementById('paidSourceTable').innerHTML=head+`<tbody>${{body}}</tbody>`;
-      setStatus('paidSourceStatus', `${{srcRows.length}} source(s)`);
+      setStatus('paidSourceStatus', `${{chanRows.length}} channel(s)`);
     }}
     (function(){{
       const t=document.getElementById('paidSourceTable');
