@@ -670,6 +670,11 @@ def render_bigquery_dashboard_page(
 
     <!-- ===== AI TRAFFIC TAB ===== -->
     <div id="pane-ai_traffic" hidden>
+      <section id="sec-ai-trend">
+        <div class="sec-head"><h2>AI traffic over time</h2><span class="status" id="aiTrendStatus"></span></div>
+        <div class="chart-wrap"><div class="chart-canvas-host" style="height:260px"><canvas id="aiTrendChart"></canvas></div></div>
+        <p class="chart-note">Sessions per day, stacked by referring AI assistant.</p>
+      </section>
       <section id="sec-ai-sources">
         <div class="sec-head"><h2>AI traffic by source</h2><span class="status" id="aiTrafficStatus"></span></div>
         <p class="chart-note" style="margin-top:0">Website sessions referred by AI assistants (ChatGPT, Perplexity, Gemini, etc.) in this range.</p>
@@ -766,6 +771,7 @@ def render_bigquery_dashboard_page(
     const BACKFILL_API         = "{_aurl(f'/api/clients/{api_client_key}/backfill-linkedin')}";
     const PAGES_TOP_API        = "{_aurl(f'/api/clients/{api_client_key}/pages/top')}";
     const PAGES_SOURCES_API    = "{_aurl(f'/api/clients/{api_client_key}/pages/sources')}";
+    const AI_TRAFFIC_DAILY_API = "{_aurl(f'/api/clients/{api_client_key}/ai-traffic/daily')}";
     const TOP_PAGES_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/top-key-events')}";
     const TRAFFIC_ACQ_API      = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-acquisition')}";
     const DEVICE_SPLIT_API     = "{_aurl(f'/api/clients/{api_client_key}/pages/device-split')}";
@@ -1734,11 +1740,49 @@ def render_bigquery_dashboard_page(
 
     // ---- AI Traffic tab (from vw_page_path_source_daily, is_ai_referral) ----
     let aiRows=[], aiPagesSearchQuery='', aiSourceFilter=new Set();
+    const AI_PALETTE=['#1d6fd0','#7c3aed','#0a7f3f','#dc2626','#d97706','#0891b2','#be185d','#4b5563'];
+    // Stacked-area trend: sessions/day, one band per AI platform. Data comes from
+    // the daily endpoint (the range-aggregated pages/sources has no time axis).
+    function renderAiTrend(daily) {{
+      const rows=daily||[];
+      const dates=[...new Set(rows.map(r=>String(r.date)))].sort();
+      const pivot=new Map();   // platform -> Map(date -> sessions)
+      for (const r of rows) {{
+        const pl=r.ai_platform||'Unknown';
+        let m=pivot.get(pl); if(!m){{m=new Map();pivot.set(pl,m);}}
+        m.set(String(r.date),(m.get(String(r.date))||0)+num(r.sessions));
+      }}
+      // Biggest platform first so it sits at the bottom of the stack.
+      const ordered=[...pivot.keys()].map(pl=>[pl,[...pivot.get(pl).values()].reduce((a,b)=>a+b,0)]).sort((a,b)=>b[1]-a[1]);
+      if (!dates.length || !ordered.length) {{ __destroyChart('aiTrendChart'); setStatus('aiTrendStatus','No AI traffic in this range.'); return; }}
+      const datasets=ordered.map(([pl],i)=>{{
+        const color=AI_PALETTE[i%AI_PALETTE.length], m=pivot.get(pl);
+        return {{ label:pl, data:dates.map(d=>m.get(d)||0), borderColor:color, backgroundColor:color+'59', fill:true, borderWidth:2, tension:0.3, pointRadius:0, pointHoverRadius:4 }};
+      }});
+      __chart('aiTrendChart', {{
+        type:'line',
+        data:{{ labels:dates.map(d=>d.slice(5)), datasets }},
+        options:{{
+          interaction:{{mode:'index',intersect:false}},
+          scales:{{
+            x:{{ stacked:true, grid:{{display:false}}, border:{{display:false}}, ticks:{{maxRotation:0,autoSkip:true,maxTicksLimit:8}} }},
+            y:{{ stacked:true, beginAtZero:true, grid:{{color:'#f1f4f9'}}, border:{{display:false}}, ticks:{{maxTicksLimit:5}} }},
+          }},
+          plugins:{{ legend:{{ display:true, position:'bottom', labels:{{usePointStyle:true, boxWidth:8, padding:12}} }} }},
+        }},
+      }});
+      setStatus('aiTrendStatus','');
+    }}
     async function loadAiTraffic() {{
       setStatus('aiTrafficStatus','Loading…');
+      setStatus('aiTrendStatus','Loading…');
       document.getElementById('aiSourcesTable').innerHTML=skelTable(5,5);
       document.getElementById('aiPagesTable').innerHTML=skelTable(4,8);
-      const rows=(await ensurePagesSources()).filter(r=>r.is_ai_referral);
+      const [rows, daily]=await Promise.all([
+        ensurePagesSources().then(rs=>rs.filter(r=>r.is_ai_referral)),
+        getJson(withDates(AI_TRAFFIC_DAILY_API)).then(d=>d.rows||[]).catch(()=>[]),
+      ]);
+      renderAiTrend(daily);
       const bySrc=new Map();
       for (const r of rows) {{
         const key=r.ai_platform||'Unknown';

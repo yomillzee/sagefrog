@@ -944,6 +944,43 @@ def fetch_pages_sources(
     }
 
 
+def fetch_ai_traffic_daily(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Daily AI-referral sessions by ai_platform, for the AI Traffic trend chart.
+
+    One row per (date, ai_platform); the range aggregate lives in
+    fetch_pages_sources. Reads vw_page_path_source_daily, which tags AI
+    assistant sessions (is_ai_referral) with the referring platform."""
+    sql = f"""
+    SELECT
+      date,
+      ai_platform,
+      SUM(sessions) AS sessions
+    FROM {_page_path_source_daily_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+      AND is_ai_referral
+    GROUP BY date, ai_platform
+    ORDER BY date
+    """
+    rows = _run_query(
+        sql,
+        params={
+            "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+            "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+        },
+        max_rows=20000,
+    )
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
 def fetch_conversion_events(
     *,
     start_date: date,

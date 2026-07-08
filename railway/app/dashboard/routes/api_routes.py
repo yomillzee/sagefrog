@@ -903,6 +903,33 @@ def nixon_pages_sources(
 
 
 @router.get(
+    "/api/clients/nixon/ai-traffic/daily",
+    summary="Nixon daily AI-referral sessions by platform from BigQuery",
+)
+def nixon_ai_traffic_daily(
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(
+        request, key=key, bearer_credentials=bearer_credentials, x_api_key=x_api_key
+    )
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        return _cached_bq_read(
+            "nixon.ai_traffic.daily",
+            {"start": start.isoformat(), "end": end.isoformat()},
+            ttl_seconds=900,
+            fetch=lambda: marketing_service.fetch_ai_traffic_daily(start_date=start, end_date=end),
+        )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
     "/api/clients/nixon/pages/traffic-acquisition",
     summary="Nixon GA4 traffic acquisition breakdown from BigQuery",
 )
@@ -1338,6 +1365,40 @@ def client_pages_sources(
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
                 fetch=lambda: marketing_service.fetch_pages_sources(start_date=start, end_date=end),
+            )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/ai-traffic/daily",
+    summary="Client daily AI-referral sessions by platform (generic BQ-test clients)",
+)
+def client_ai_traffic_daily(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        with marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.ai_traffic.daily",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: marketing_service.fetch_ai_traffic_daily(start_date=start, end_date=end),
             )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
