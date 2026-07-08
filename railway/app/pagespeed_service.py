@@ -16,8 +16,13 @@ Error handling mirrors semrush_service: build_pagespeed_snapshot() never raises
 (errors surface under the 'error' key) so snapshot refresh is never interrupted.
 fetch_scores() DOES raise — the wizard's "Test connection" step relies on it.
 
-Required env vars:
-    (none — works keyless)
+Auth precedence (all optional — keyless still works at low quota):
+    1. PAGESPEED_API_KEY — API key; quota billed to the key's project.
+    2. Agency service account (GCP_SERVICE_ACCOUNT_JSON, the same SA used for
+       BigQuery/GA4/GSC) — an OAuth bearer token, quota billed to the SA's GCP
+       project. Used when no API key is set (e.g. org policy blocks API keys).
+       Requires the PageSpeed Insights API enabled in that project.
+    3. Keyless — shared anonymous quota (~25k/day globally, routinely exhausted).
 
 Optional env vars:
     PAGESPEED_API_KEY   — API key (create at console.cloud.google.com, enable
@@ -75,6 +80,43 @@ def _default_strategy() -> str:
     return s if s in ("desktop", "mobile") else _DEFAULT_STRATEGY
 
 
+# Cached agency service-account credentials (minted once, refreshed on expiry).
+_sa_creds: Any = None
+_sa_project: str | None = None
+
+
+def _service_account_auth() -> tuple[str, str | None] | None:
+    """OAuth bearer token from the agency service account, so PSI quota is billed
+    to our GCP project rather than the exhausted anonymous pool. Returns
+    (access_token, project_id), or None if no SA is configured (→ keyless).
+
+    Uses the same GCP_SERVICE_ACCOUNT_JSON the BigQuery/GA4/GSC layers use. The
+    x-goog-user-project header pins quota attribution to that project.
+    """
+    global _sa_creds, _sa_project
+    try:
+        from google.auth.transport.requests import Request as _GARequest
+
+        if _sa_creds is None:
+            from google.oauth2 import service_account
+            from ga4_credentials import (
+                GLOBAL_GCP_CREDENTIALS_ENV,
+                load_service_account_info_from_env,
+            )
+
+            info = load_service_account_info_from_env(GLOBAL_GCP_CREDENTIALS_ENV)
+            _sa_creds = service_account.Credentials.from_service_account_info(
+                info, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+            _sa_project = info.get("project_id")
+        if not _sa_creds.valid:
+            _sa_creds.refresh(_GARequest())
+        return _sa_creds.token, _sa_project
+    except Exception as exc:
+        _log.warning("PageSpeed SA auth unavailable, falling back to keyless: %s", exc)
+        return None
+
+
 def normalize_url(url: str) -> str:
     """Coerce a user-entered URL into something PSI accepts (needs a scheme)."""
     u = (url or "").strip()
@@ -98,13 +140,27 @@ def _get(url: str, strategy: str, timeout: int = 60) -> dict[str, Any]:
     # category is a repeated param — request all four scores in one call.
     for cat, _ in _CATEGORY_KEYS:
         params.append(("category", cat.upper().replace("-", "_")))
+
+    headers: dict[str, str] = {}
     key = _api_key()
     if key:
+        # Explicit API key wins; quota billed to the key's project.
         params.append(("key", key))
+    else:
+        # No key → authorize with the agency service account so quota lands on
+        # our GCP project instead of the shared anonymous pool. Keyless if the
+        # SA is unavailable.
+        auth = _service_account_auth()
+        if auth:
+            token, project = auth
+            headers["Authorization"] = f"Bearer {token}"
+            if project:
+                headers["x-goog-user-project"] = project
 
     full_url = _ENDPOINT + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(full_url, headers=headers)
     try:
-        with urllib.request.urlopen(full_url, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         # Surface Google's structured error message (quota, invalid URL, etc.).
