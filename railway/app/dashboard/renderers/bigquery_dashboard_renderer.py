@@ -1602,6 +1602,9 @@ def render_bigquery_dashboard_page(
         {{key:'ctr',label:'CTR',format:v=>v==null?'—':num(v).toFixed(2)+'%'}},
         {{key:'spend',label:'Cost',format:money}},
         {{key:'clicks',label:'Clicks',format:count}},
+        {{key:'conversions',label:'Conv.',format:count}},
+        {{key:'cpa',label:'CPA',format:(_,r)=>num(r.conversions)?money(num(r.spend)/num(r.conversions)):'—'}},
+        {{key:'conversion_value',label:'Conv. value',format:v=>v==null?'—':money(v)}},
         {{key:'impressions',label:'Impr.',format:count}},
         {{key:'avg_cpc',label:'Avg CPC',format:v=>v==null?'—':money(v)}},
       ], rows, 'No keyword data for this range.');
