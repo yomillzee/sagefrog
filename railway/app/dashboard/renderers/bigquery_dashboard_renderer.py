@@ -720,6 +720,13 @@ def render_bigquery_dashboard_page(
     <div id="pane-ai_traffic" hidden>
       <section id="sec-ai-trend">
         <div class="sec-head"><h2>AI traffic over time</h2><span class="status" id="aiTrendStatus"></span></div>
+        <div class="filter-group" style="margin-bottom:10px">
+          <span class="filter-label">Interval</span>
+          <div class="chips" id="aiTrendGranChips">
+            <button type="button" class="chip active" data-gran="daily">Daily</button>
+            <button type="button" class="chip" data-gran="weekly">Weekly</button>
+          </div>
+        </div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:260px"><canvas id="aiTrendChart"></canvas></div></div>
         <p class="chart-note">Sessions per day, stacked by referring AI assistant.</p>
       </section>
@@ -1808,6 +1815,33 @@ def render_bigquery_dashboard_page(
     const AI_PALETTE=['#1d6fd0','#7c3aed','#0a7f3f','#dc2626','#d97706','#0891b2','#be185d','#4b5563'];
     // Stacked-area trend: sessions/day, one band per AI platform. Data comes from
     // the daily endpoint (the range-aggregated pages/sources has no time axis).
+    // AI-traffic trend granularity (Daily/Weekly chips), mirroring the sessions
+    // trend. Daily rows are re-bucketed to Monday-start weeks client-side: each
+    // row's date is remapped to its week start, and renderAiTrend's per-date sum
+    // collapses the days into weeks. Only drives the main tab chart (default
+    // chartId), not the overview mini-chart.
+    let aiTrendGran = 'daily';
+    let aiTrendDailyCache = [];
+    function aggregateAiWeekly(rows) {{
+      return (rows || []).map(function(r) {{
+        const dt = new Date(String(r.date) + 'T00:00:00');
+        const dow = (dt.getDay() + 6) % 7;            // 0 = Monday
+        const mon = new Date(dt); mon.setDate(dt.getDate() - dow);
+        const key = `${{mon.getFullYear()}}-${{String(mon.getMonth()+1).padStart(2,'0')}}-${{String(mon.getDate()).padStart(2,'0')}}`;
+        return Object.assign({{}}, r, {{ date: key }});
+      }});
+    }}
+    function renderAiTrendGran() {{
+      renderAiTrend(aiTrendGran === 'weekly' ? aggregateAiWeekly(aiTrendDailyCache) : aiTrendDailyCache);
+    }}
+    document.querySelectorAll('#aiTrendGranChips .chip').forEach(function(btn) {{
+      btn.addEventListener('click', function() {{
+        if (btn.dataset.gran === aiTrendGran) return;
+        aiTrendGran = btn.dataset.gran;
+        document.querySelectorAll('#aiTrendGranChips .chip').forEach(b => b.classList.toggle('active', b === btn));
+        renderAiTrendGran();
+      }});
+    }});
     function renderAiTrend(daily, chartId, statusId) {{
       chartId=chartId||'aiTrendChart'; statusId=statusId||'aiTrendStatus';
       const rows=daily||[];
@@ -1858,7 +1892,8 @@ def render_bigquery_dashboard_page(
         ensurePagesSources().then(rs=>rs.filter(r=>r.is_ai_referral)),
         getJson(withDates(AI_TRAFFIC_DAILY_API)).then(d=>d.rows||[]).catch(()=>[]),
       ]);
-      renderAiTrend(daily);
+      aiTrendDailyCache = daily;
+      renderAiTrendGran();
       const bySrc=new Map();
       for (const r of rows) {{
         const key=r.ai_platform||'Unknown';
