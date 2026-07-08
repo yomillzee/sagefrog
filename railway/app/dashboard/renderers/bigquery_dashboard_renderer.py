@@ -565,6 +565,7 @@ def render_bigquery_dashboard_page(
     <div id="pane-explorer" hidden>
       <section id="sec-explorer">
         <div class="sec-head"><h2>Campaign explorer</h2><span class="status" id="explorerStatus"></span></div>
+        <div class="cards" id="explorerSummaryCards" style="margin-bottom:14px"></div>
         <!-- Filter groups (Product / Region / …) are built by buildExplorerFilters()
              from the client-configured chip rules; see EXPLORER_FILTER_GROUPS. -->
         <div style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:12px;" id="explorerFilters"></div>
@@ -1577,6 +1578,14 @@ def render_bigquery_dashboard_page(
     }}
     function renderExplorer() {{
       const filtered=explorerRows.filter(explorerRowMatches);
+      // Aggregate summary cards — slice with the same filters as the table
+      // (date range, Platform chips, and the explorer filter chips).
+      const agg=withCtr(filtered.reduce((a,r)=>{{addMetrics(a,r);return a;}}, zeroMetrics()));
+      const scards=document.getElementById('explorerSummaryCards');
+      if (scards) scards.innerHTML=[
+        ['Spend',money(agg.spend)],['Impressions',count(agg.impressions)],['Clicks',count(agg.clicks)],
+        ['Conversions',count(agg.conversions)],['CTR',num(agg.ctr).toFixed(2)+'%'],
+      ].map(([l,v])=>`<div class="card"><div class="card-title">${{l}}</div><div class="card-value">${{v}}</div></div>`).join('');
       const el=document.getElementById('explorerTable');
       const tree=buildExplorerTree(filtered);
       if (!tree.size) {{ el.innerHTML=`<tbody><tr><td class="empty">No campaigns match these filters.</td></tr></tbody>`; }} else {{
