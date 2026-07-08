@@ -238,12 +238,12 @@ def render_bigquery_dashboard_page(
     if has_paid_ads:
         overview_summary_html = """
       <section id="sec-overview">
-        <div class="sec-head"><h2>Summary <span class="cmp-warn" id="summaryCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="summaryStatus"></span></div>
+        <div class="sec-head"><h2>Paid summary</h2><span class="status" id="summaryStatus"></span></div>
         <div class="cards" id="summaryCards"></div>
       </section>
 
       <section>
-        <div class="sec-head"><h2>Trends</h2><span class="status" id="chartStatus"></span></div>
+        <div class="sec-head"><h2>Paid trends</h2><span class="status" id="chartStatus"></span></div>
         <div class="filter-group" style="margin-bottom:12px">
           <span class="filter-label">Metrics</span>
           <div class="chips" id="metricChips"></div>
@@ -1017,11 +1017,9 @@ def render_bigquery_dashboard_page(
     function selectedSummary() {{ return selectedSummaryFrom(summaryPayload); }}
     function renderSummary() {{
       const s = selectedSummary();
-      const p = selectedSummaryFrom(compareSummaryPayload);
+      // Comparison-period deltas removed for now — cards show current values only.
       summaryCards.innerHTML = SUMMARY_CARDS.map(([key,label,format]) =>
-        `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{format(s[key])}}</div>${{deltaHtml(s[key], compareSummaryPayload ? p[key] : null)}}</div>`).join('');
-      const sources = platformFilter.size ? [...platformFilter].map(p=>p.toLowerCase()) : ['google','linkedin','meta'];
-      setCmpWarn('summaryCmpWarn', sources);
+        `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{format(s[key])}}</div></div>`).join('');
     }}
 
     // ---- Trend chart ----
