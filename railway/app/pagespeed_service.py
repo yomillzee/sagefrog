@@ -91,7 +91,9 @@ def _service_account_auth() -> tuple[str, str | None] | None:
     (access_token, project_id), or None if no SA is configured (→ keyless).
 
     Uses the same GCP_SERVICE_ACCOUNT_JSON the BigQuery/GA4/GSC layers use. The
-    x-goog-user-project header pins quota attribution to that project.
+    project_id is returned for optional quota attribution but is not currently
+    sent as x-goog-user-project (that would require the SA to hold
+    roles/serviceusage.serviceUsageConsumer).
     """
     global _sa_creds, _sa_project
     try:
@@ -149,13 +151,14 @@ def _get(url: str, strategy: str, timeout: int = 60) -> dict[str, Any]:
     else:
         # No key → authorize with the agency service account so quota lands on
         # our GCP project instead of the shared anonymous pool. Keyless if the
-        # SA is unavailable.
+        # SA is unavailable. The bearer token already identifies the SA's project
+        # (sagefrog), so quota attributes there without an explicit
+        # x-goog-user-project header (which would require the SA to hold
+        # roles/serviceusage.serviceUsageConsumer).
         auth = _service_account_auth()
         if auth:
-            token, project = auth
+            token, _project = auth
             headers["Authorization"] = f"Bearer {token}"
-            if project:
-                headers["x-goog-user-project"] = project
 
     full_url = _ENDPOINT + "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(full_url, headers=headers)
