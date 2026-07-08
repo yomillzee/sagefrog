@@ -223,6 +223,20 @@ def run_client_bigquery_refresh(
             result["sources"][ctype] = _status("sync_disabled")
             continue
 
+        # Cadence gate: connectors with a minimum interval (e.g. PageSpeed's
+        # slow ~monthly audits) skip the daily cron until enough time has passed
+        # since their last success. First run (no prior success) always proceeds
+        # so a freshly connected client gets data right away; manual/onboarding
+        # triggers ignore the interval entirely.
+        min_days = int(getattr(handler, "min_sync_interval_days", 0) or 0)
+        if trigger == "cron" and min_days > 0 and conf.last_success_at:
+            age = datetime.now(tz=UTC) - conf.last_success_at
+            if age < timedelta(days=min_days):
+                result["sources"][ctype] = _status(
+                    "not_due", days_since_success=age.days, interval_days=min_days
+                )
+                continue
+
         def _sync(ctype: str = ctype, handler: Any = handler, conf: Any = conf) -> dict[str, Any]:
             run_id = connector_config_store.start_sync_run(
                 conf.id, run_type="cron", triggered_by="cron"

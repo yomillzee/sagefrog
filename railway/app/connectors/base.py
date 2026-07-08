@@ -40,6 +40,11 @@ class ConnectorHandler(ABC):
     manual_account_entry: bool = False
     # Label for the manual entry field when manual_account_entry is True.
     manual_account_label: str = "Account ID"
+    # Minimum days between automated (cron) syncs. 0 = run every daily cron tick
+    # (the default for fast, cheap sources). Set higher for slow/expensive
+    # sources whose data barely moves day to day — e.g. PageSpeed (live Lighthouse
+    # audits) runs ~monthly. First run and manual/onboarding syncs ignore this.
+    min_sync_interval_days: int = 0
 
     @abstractmethod
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:

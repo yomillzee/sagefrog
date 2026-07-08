@@ -24,6 +24,10 @@ class PageSpeedConnector(ConnectorHandler):
     no_oauth = True
     manual_account_entry = True
     manual_account_label = "Homepage URL (e.g. https://example.com)"
+    # Live Lighthouse audits are slow/expensive and the scores barely move day to
+    # day, so the cron runs this ~monthly (on connect, then every ~30 days) rather
+    # than every night. Manual "Run sync now" still works any time.
+    min_sync_interval_days = 30
 
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
         """Wizard "Test connection" step — verifies the URL actually returns a
