@@ -627,6 +627,13 @@ def render_bigquery_dashboard_page(
 
       <section id="sec-sessions">
         <div class="sec-head"><h2>Sessions over time <span class="cmp-warn" id="sessionsCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="sessionsTrendStatus"></span></div>
+        <div class="filter-group" style="margin-bottom:10px">
+          <span class="filter-label">Interval</span>
+          <div class="chips" id="sessionsGranChips">
+            <button type="button" class="chip active" data-gran="daily">Daily</button>
+            <button type="button" class="chip" data-gran="weekly">Weekly</button>
+          </div>
+        </div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:200px"><canvas id="sessionsTrendChart"></canvas></div></div>
         <div class="cmp-legend" id="sessionsTrendLegend"></div>
       </section>
@@ -1963,6 +1970,29 @@ def render_bigquery_dashboard_page(
     // Sessions/day for the current period (solid blue, filled) with the prior
     // period overlaid (dashed grey), aligned day-for-day by index so the shapes
     // line up regardless of the actual calendar dates.
+    // Sessions-over-time granularity (Daily/Weekly chips). Daily rows are fetched
+    // once and re-bucketed to weeks client-side, so switching is instant and needs
+    // no extra query. Weeks start Monday; the week's label is its start date.
+    let sessionsGran = 'daily';
+    let sessionsTrendCache = {{ cur: [], prev: [] }};
+    function aggregateWeekly(daily) {{
+      if (!daily || !daily.length) return [];
+      const out = []; let cur = null;
+      for (const d of daily) {{
+        const dt = new Date(String(d.date) + 'T00:00:00');
+        const dow = (dt.getDay() + 6) % 7;            // 0 = Monday
+        const mon = new Date(dt); mon.setDate(dt.getDate() - dow);
+        const key = `${{mon.getFullYear()}}-${{String(mon.getMonth()+1).padStart(2,'0')}}-${{String(mon.getDate()).padStart(2,'0')}}`;
+        if (!cur || cur.date !== key) {{ cur = {{ date: key, sessions: 0 }}; out.push(cur); }}
+        cur.sessions += num(d.sessions);
+      }}
+      return out;
+    }}
+    function renderSessionsTrend() {{
+      const c = sessionsTrendCache;
+      if (sessionsGran === 'weekly') drawSessionsTrend(aggregateWeekly(c.cur), aggregateWeekly(c.prev));
+      else drawSessionsTrend(c.cur, c.prev);
+    }}
     function drawSessionsTrend(daily, prevDaily) {{
       clearSkelChart('sessionsTrendChart');
       const legend=document.getElementById('sessionsTrendLegend');
@@ -2015,11 +2045,21 @@ def render_bigquery_dashboard_page(
           getJson(withDatesRange(TRAFFIC_ACQ_API, currentStart, currentEnd)),
           compareStart ? getJson(withDatesRange(TRAFFIC_ACQ_API, compareStart, compareEnd)).catch(()=>null) : Promise.resolve(null),
         ]);
-        drawSessionsTrend(cur.daily||[], (prev&&prev.daily)||[]);
+        sessionsTrendCache = {{ cur: cur.daily || [], prev: (prev && prev.daily) || [] }};
+        renderSessionsTrend();
         setCmpWarn('sessionsCmpWarn', ['google_analytics']);
         setStatus('sessionsTrendStatus','');
       }} catch(err) {{ setStatus('sessionsTrendStatus',err.message||String(err),true); }}
     }}
+    // Daily/Weekly chips for the sessions trend — re-render from cache, no refetch.
+    document.querySelectorAll('#sessionsGranChips .chip').forEach(btn =>
+      btn.addEventListener('click', () => {{
+        if (btn.dataset.gran === sessionsGran) return;
+        sessionsGran = btn.dataset.gran;
+        document.querySelectorAll('#sessionsGranChips .chip').forEach(b => b.classList.toggle('active', b === btn));
+        renderSessionsTrend();
+      }})
+    );
     async function loadTrafficAcq() {{
       setStatus('trafficAcqStatus','Loading…');
       document.getElementById('channelBars').innerHTML = skelBars(5);
