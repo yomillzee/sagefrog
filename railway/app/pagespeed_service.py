@@ -88,6 +88,23 @@ def _default_strategy() -> str:
     return s if s in ("desktop", "mobile") else _DEFAULT_STRATEGY
 
 
+def synced_strategies() -> list[str]:
+    """Which form factors to audit/show, from PAGESPEED_STRATEGIES (comma-separated).
+
+    Defaults to desktop only — mobile audits of heavy sites frequently exceed
+    even a generous timeout under Lighthouse's throttled emulation. Set
+    PAGESPEED_STRATEGIES="desktop,mobile" to re-enable mobile once a site can
+    sustain it. The dashboard toggle renders exactly these.
+    """
+    raw = (os.getenv("PAGESPEED_STRATEGIES") or "desktop").strip()
+    out: list[str] = []
+    for s in raw.split(","):
+        s = s.strip().lower()
+        if s in ("desktop", "mobile") and s not in out:
+            out.append(s)
+    return out or ["desktop"]
+
+
 def _default_timeout() -> int:
     """Read timeout for a live audit. Heavy sites (esp. mobile emulation) can take
     well over a minute, so default generously; the background sync has a 10-min

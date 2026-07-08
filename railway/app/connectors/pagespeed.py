@@ -57,14 +57,10 @@ class PageSpeedConnector(ConnectorHandler):
         label = f"{scores.get('final_url', url)} — Performance {perf}" if perf is not None else url
         return [{"id": scores.get("url", url), "name": label, "status": "ok"}]
 
-    # Audit both form factors every sync so the dashboard's desktop/mobile
-    # toggle always has data for either. Each strategy is a separate BQ row
-    # (strategy column), so the two never collide.
-    strategies = ("desktop", "mobile")
-
     def run_sync(self, *, client_slug: str, date_range: str = "LAST_30_DAYS") -> SyncResult:
         import bq_pagespeed_service
         import connector_config_store
+        import pagespeed_service
 
         cfg = connector_config_store.get_config(client_slug, "pagespeed")
         url = cfg.source_account_id if cfg else None
@@ -81,7 +77,7 @@ class PageSpeedConnector(ConnectorHandler):
                 bq_project_id=bq_project_id,
                 pagespeed_dataset_id=raw_dataset_id,
             ):
-                for strat in self.strategies:
+                for strat in pagespeed_service.synced_strategies():
                     result = bq_pagespeed_service.sync_pagespeed_to_bq(
                         url, client_key=client_slug, strategy=strat
                     )

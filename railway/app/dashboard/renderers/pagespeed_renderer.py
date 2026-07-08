@@ -55,10 +55,7 @@ def pane_html() -> str:
         <div class="sec-head">
           <h2>Site Performance</h2>
           <div class="ps-controls">
-            <div class="ps-toggle" role="group" aria-label="Device strategy">
-              <button type="button" class="ps-toggle-btn active" data-strategy="desktop">Desktop</button>
-              <button type="button" class="ps-toggle-btn" data-strategy="mobile">Mobile</button>
-            </div>
+            <div class="ps-toggle" id="psToggle" role="group" aria-label="Device strategy"></div>
             <button type="button" class="ps-edit-btn" id="psEditTargets">Edit targets</button>
             <span class="status" id="psStatus"></span>
           </div>
@@ -99,6 +96,7 @@ def pane_css() -> str:
     return """
     .ps-controls { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
     .ps-toggle { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+    .ps-toggle[hidden] { display:none; }
     .ps-toggle-btn { appearance:none; border:0; background:#fff; color:var(--muted); font:inherit; font-size:.82rem; font-weight:600; padding:6px 14px; cursor:pointer; }
     .ps-toggle-btn + .ps-toggle-btn { border-left:1px solid var(--line); }
     .ps-toggle-btn.active { background:var(--navy, #0a2540); color:#fff; }
@@ -126,8 +124,11 @@ def pane_js() -> str:
     """loadSitePerformance() + toggle/editor/render helpers. Emitted in the page <script>."""
     return """
     // ---- Site Performance (PageSpeed Insights) ----
-    let psStrategy = 'desktop';   // desktop/mobile toggle
-    let psLast = {};              // last snapshot, so target edits can re-color live
+    // Strategies actually synced (server-driven); toggle renders exactly these.
+    const PS_STRATEGIES = (typeof PAGESPEED_STRATEGIES !== 'undefined' && PAGESPEED_STRATEGIES.length)
+      ? PAGESPEED_STRATEGIES : ['desktop'];
+    let psStrategy = PS_STRATEGIES[0];   // active device
+    let psLast = {};                     // last snapshot, so target edits can re-color live
 
     // Lighthouse-standard fallback color when a KPI has no target band.
     function psScoreColor(v) {
@@ -213,16 +214,25 @@ def pane_js() -> str:
         setStatus('psStatus', err.message || String(err), true);
       }
     }
-    // Desktop/mobile toggle.
-    document.querySelectorAll('#pane-site_performance .ps-toggle-btn').forEach(btn =>
-      btn.addEventListener('click', () => {
-        if (btn.dataset.strategy === psStrategy) return;
-        psStrategy = btn.dataset.strategy;
-        document.querySelectorAll('#pane-site_performance .ps-toggle-btn')
-          .forEach(b => b.classList.toggle('active', b === btn));
-        loadSitePerformance(psStrategy);
-      })
-    );
+    // Desktop/mobile toggle — built from the synced strategies. Hidden entirely
+    // when only one is synced (e.g. desktop-only), so there's no dead half.
+    (function buildPsToggle() {
+      const host = document.getElementById('psToggle');
+      if (!host) return;
+      if (PS_STRATEGIES.length <= 1) { host.hidden = true; return; }
+      const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+      host.innerHTML = PS_STRATEGIES.map((s, i) =>
+        `<button type="button" class="ps-toggle-btn${i === 0 ? ' active' : ''}" data-strategy="${s}">${cap(s)}</button>`
+      ).join('');
+      host.querySelectorAll('.ps-toggle-btn').forEach(btn =>
+        btn.addEventListener('click', () => {
+          if (btn.dataset.strategy === psStrategy) return;
+          psStrategy = btn.dataset.strategy;
+          host.querySelectorAll('.ps-toggle-btn').forEach(b => b.classList.toggle('active', b === btn));
+          loadSitePerformance(psStrategy);
+        })
+      );
+    })();
     // Per-KPI target editor.
     const PS_KPI_LABELS = { performance: 'Performance', accessibility: 'Accessibility', best_practices: 'Best Practices', seo: 'SEO' };
     function psRenderEditorFields() {

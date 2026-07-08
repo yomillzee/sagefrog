@@ -170,6 +170,14 @@ def render_bigquery_dashboard_page(
     pagespeed_targets_json = json.dumps(
         pagespeed_renderer.effective_targets(pagespeed_targets_stored)
     ).replace("<", "\\u003c")
+    # Which device strategies are synced (PAGESPEED_STRATEGIES, default desktop)
+    # — the Site Performance toggle renders exactly these, hiding itself when
+    # there's only one.
+    try:
+        import pagespeed_service as _ps
+        pagespeed_strategies_json = json.dumps(_ps.synced_strategies())
+    except Exception:
+        pagespeed_strategies_json = '["desktop"]'
     # Campaign Explorer filter chips: client config if set, else Nixon defaults.
     # Injected as JSON for the page JS to build the chip rows + match campaigns.
     # Escape "<" so a chip label can't break out of the <script> block.
@@ -817,6 +825,7 @@ def render_bigquery_dashboard_page(
     const PAGESPEED_API        = "{_aurl(f'/api/clients/{api_client_key}/pagespeed/summary')}";
     const PAGESPEED_TARGETS_API= "{_aurl(f'/api/clients/{api_client_key}/pagespeed/targets')}";
     const PAGESPEED_TARGETS    = {pagespeed_targets_json};
+    const PAGESPEED_STRATEGIES = {pagespeed_strategies_json};
     const GSC_KEYWORD_CONFIG_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/keyword-config')}";
     const GSC_KEYWORD_MATCHES_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/keyword-matches')}";
     const GSC_BRANDED_ROOTS = {json.dumps([s.strip() for s in gsc_branded_roots.splitlines() if s.strip()])};
