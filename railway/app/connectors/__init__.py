@@ -1,3 +1,3 @@
 """Connector handler registry. Import all handlers to trigger registration."""
 
-from connectors import ga4, google_ads, gsc, gtm, hubspot, linkedin_ads, meta_ads, semrush  # noqa: F401
+from connectors import ga4, google_ads, gsc, gtm, hubspot, linkedin_ads, meta_ads, pagespeed, semrush  # noqa: F401

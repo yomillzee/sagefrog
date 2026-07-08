@@ -71,6 +71,9 @@ SCHEMA_SQL_STATEMENTS = [
     """
     ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS explorer_filters TEXT
     """,
+    """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS pagespeed_targets JSONB
+    """,
 ]
 
 
@@ -559,6 +562,65 @@ def save_theme(
     saved = get_theme(slug)
     if not saved:
         raise RuntimeError("Failed to load saved client theme.")
+    return saved
+
+
+def get_pagespeed_targets(client_slug: str) -> dict[str, Any] | None:
+    """Per-KPI PageSpeed target bands ({kpi: {min, max}}), used for the Site
+    Performance tab's traffic-light coloring. None = fall back to defaults."""
+    slug = (client_slug or "").strip().lower()
+    if not slug or not enabled():
+        return None
+    ensure_schema()
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT pagespeed_targets FROM client_dashboard_config WHERE client_slug = %s",
+            (slug,),
+        ).fetchone()
+    if not row or row[0] is None:
+        return None
+    payload = row[0]
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+    return payload if isinstance(payload, dict) else None
+
+
+def save_pagespeed_targets(
+    client_slug: str,
+    targets: dict[str, Any],
+    *,
+    updated_by: str | None = None,
+) -> dict[str, Any]:
+    """Persist per-KPI PageSpeed target bands. Touches only that column."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save PageSpeed targets.")
+
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, pagespeed_targets, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              pagespeed_targets = EXCLUDED.pagespeed_targets,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, slug, json.dumps(targets), now, (updated_by or "").strip() or None),
+        )
+    saved = get_pagespeed_targets(slug)
+    if saved is None:
+        raise RuntimeError("Failed to load saved PageSpeed targets.")
     return saved
 
 

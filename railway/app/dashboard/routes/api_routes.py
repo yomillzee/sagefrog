@@ -692,6 +692,42 @@ def nixon_semrush_summary(
 
 
 @router.get(
+    "/api/clients/nixon/pagespeed/summary",
+    summary="Nixon PageSpeed Insights scores + Core Web Vitals from BigQuery",
+)
+def nixon_pagespeed_summary(
+    request: Request,
+    key: str | None = None,
+    strategy: str = "desktop",
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    _authorize_nixon_api(
+        request,
+        key=key,
+        bearer_credentials=bearer_credentials,
+        x_api_key=x_api_key,
+    )
+    strat = (strategy or "desktop").strip().lower()
+    if strat not in ("desktop", "mobile"):
+        strat = "desktop"
+    try:
+        import bq_pagespeed_service
+        # Like SEMrush/GSC, PageSpeed routes by the Nixon BQ client_slug
+        # "nixon-bq-test" (not the marketing slug "nixon"). Point-in-time data
+        # that resyncs ~once/day, so a long TTL like the other snapshot reads.
+        return _cached_bq_read(
+            f"nixon.pagespeed.summary.{strat}", {}, ttl_seconds=6 * 3600,
+            fetch=lambda: bq_pagespeed_service.fetch_latest_snapshot(
+                client_key="nixon-bq-test", project="nixon-medical", mart_dataset="marketing_marts",
+                strategy=strat,
+            ),
+        )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
     "/api/clients/nixon/linkedin/explorer",
     summary="Nixon LinkedIn creative explorer from BigQuery marketing mart",
 )
@@ -1960,6 +1996,56 @@ async def save_gsc_keyword_config(
     return {"ok": True}
 
 
+@router.post(
+    "/api/clients/{client_key}/pagespeed/targets",
+    summary="Save per-KPI PageSpeed target bands for a client",
+)
+async def save_pagespeed_targets_endpoint(
+    client_key: str,
+    request: Request,
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    """Persist the Site Performance tab's per-KPI target bands. Body is
+    {targets: {performance: {min, max}, ...}}; values are clamped to 0–100 and
+    only the four Lighthouse category keys are kept."""
+    normalized = (client_key or "").strip().lower()
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    raw = (body or {}).get("targets") or {}
+
+    def _band(v: object) -> dict | None:
+        if not isinstance(v, dict):
+            return None
+        try:
+            lo = max(0, min(100, int(round(float(v.get("min"))))))
+            hi = max(0, min(100, int(round(float(v.get("max"))))))
+        except (TypeError, ValueError):
+            return None
+        if hi < lo:
+            lo, hi = hi, lo
+        return {"min": lo, "max": hi}
+
+    cleaned: dict[str, dict] = {}
+    for kpi in ("performance", "accessibility", "best_practices", "seo"):
+        band = _band(raw.get(kpi))
+        if band:
+            cleaned[kpi] = band
+    try:
+        import client_dashboard_config as cdc
+        cdc.save_pagespeed_targets(normalized, cleaned, updated_by="dashboard")
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+    return {"ok": True, "targets": cleaned}
+
+
 @router.get(
     "/api/clients/{client_key}/semrush/summary",
     summary="Client SEMrush domain snapshot from BigQuery (generic BQ-test clients)",
@@ -1983,6 +2069,40 @@ def client_semrush_summary(
             f"{normalized}.semrush.summary", {}, ttl_seconds=6 * 3600,
             fetch=lambda: bq_semrush_service.fetch_latest_snapshot(
                 client_key=normalized, project=project_id, mart_dataset=dataset_id,
+            ),
+        )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/pagespeed/summary",
+    summary="Client PageSpeed Insights scores + Core Web Vitals from BigQuery",
+)
+def client_pagespeed_summary(
+    client_key: str,
+    request: Request,
+    key: str | None = None,
+    strategy: str = "desktop",
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    strat = (strategy or "desktop").strip().lower()
+    if strat not in ("desktop", "mobile"):
+        strat = "desktop"
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    try:
+        import bq_pagespeed_service
+        return _cached_bq_read(
+            f"{normalized}.pagespeed.summary.{strat}", {}, ttl_seconds=6 * 3600,
+            fetch=lambda: bq_pagespeed_service.fetch_latest_snapshot(
+                client_key=normalized, project=project_id, mart_dataset=dataset_id,
+                strategy=strat,
             ),
         )
     except Exception as exc:

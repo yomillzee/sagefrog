@@ -78,4 +78,5 @@ CONNECTOR_ORDER = [
     "gtm",
     "hubspot",
     "semrush",
+    "pagespeed",
 ]

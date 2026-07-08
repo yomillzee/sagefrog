@@ -13,6 +13,7 @@ from dashboard.renderers.base_layout import (
     dashboard_sidebar_view_nav_html,
     render_sidebar,
 )
+from dashboard.renderers import pagespeed_renderer
 
 
 def _api_url(path: str, *, access_key: str | None) -> str:
@@ -149,6 +150,7 @@ def render_bigquery_dashboard_page(
     gsc_target_keywords = ""
     ga4_key_events = ""
     explorer_filters_cfg = ""
+    pagespeed_targets_stored: dict | None = None
     try:
         import client_dashboard_config as _cdc
         _kwcfg = _cdc.get_config(api_client_key) or _cdc.get_config(client_slug)
@@ -157,8 +159,17 @@ def render_bigquery_dashboard_page(
             gsc_target_keywords = _kwcfg.gsc_target_keywords or ""
             ga4_key_events = _kwcfg.ga4_key_events or ""
             explorer_filters_cfg = _kwcfg.explorer_filters or ""
+        pagespeed_targets_stored = (
+            _cdc.get_pagespeed_targets(api_client_key)
+            or _cdc.get_pagespeed_targets(client_slug)
+        )
     except Exception:
         pass
+    # Effective per-KPI PageSpeed target bands (client overrides merged over
+    # defaults), injected for the Site Performance tab's traffic-light coloring.
+    pagespeed_targets_json = json.dumps(
+        pagespeed_renderer.effective_targets(pagespeed_targets_stored)
+    ).replace("<", "\\u003c")
     # Campaign Explorer filter chips: client config if set, else Nixon defaults.
     # Injected as JSON for the page JS to build the chip rows + match campaigns.
     # Escape "<" so a chip label can't break out of the <script> block.
@@ -224,6 +235,13 @@ def render_bigquery_dashboard_page(
 
     def _aurl(path: str) -> str:
         return _api_url(path, access_key=access_key)
+
+    # Site Performance (PageSpeed Insights) tab — HTML/CSS/JS injected below. The
+    # pane is always emitted (like Search Console); the sidebar nav button is what
+    # gates on the pagespeed connector (see base_layout.platform_nav_flags).
+    pagespeed_pane_html = pagespeed_renderer.pane_html()
+    pagespeed_pane_css = pagespeed_renderer.pane_css()
+    pagespeed_pane_js = pagespeed_renderer.pane_js()
 
     # No paid-ad connector (google/linkedin/meta) -- the paid Summary/Trends
     # cards have no BQ mart to read and would otherwise render a zeroed-out
@@ -466,6 +484,7 @@ def render_bigquery_dashboard_page(
        the canvas fills (charts run with maintainAspectRatio:false). */
     .chart-canvas-host {{ position:relative; width:100%; }}
     .chart-canvas-host canvas {{ display:block; }}
+    {pagespeed_pane_css}
     /* Sessions-over-time current-vs-previous legend */
     .cmp-legend {{ display:flex; flex-wrap:wrap; gap:18px; margin-top:10px; font-size:.78rem; color:var(--muted); }}
     .cmp-item {{ display:inline-flex; align-items:center; gap:7px; }}
@@ -752,7 +771,7 @@ def render_bigquery_dashboard_page(
         </div>
       </section>
     </div><!-- /pane-gsc -->
-
+    {pagespeed_pane_html}
   </main>
     </div>
   </div>
@@ -795,6 +814,9 @@ def render_bigquery_dashboard_page(
     const DEMOGRAPHICS_API     = "{_aurl(f'/api/clients/{api_client_key}/analytics/demographics')}";
     const GSC_API              = "{_aurl(f'/api/clients/{api_client_key}/gsc/summary')}";
     const SEMRUSH_API          = "{_aurl(f'/api/clients/{api_client_key}/semrush/summary')}";
+    const PAGESPEED_API        = "{_aurl(f'/api/clients/{api_client_key}/pagespeed/summary')}";
+    const PAGESPEED_TARGETS_API= "{_aurl(f'/api/clients/{api_client_key}/pagespeed/targets')}";
+    const PAGESPEED_TARGETS    = {pagespeed_targets_json};
     const GSC_KEYWORD_CONFIG_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/keyword-config')}";
     const GSC_KEYWORD_MATCHES_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/keyword-matches')}";
     const GSC_BRANDED_ROOTS = {json.dumps([s.strip() for s in gsc_branded_roots.splitlines() if s.strip()])};
@@ -967,7 +989,7 @@ def render_bigquery_dashboard_page(
     }}
 
     // ---- Tab system ----
-    const TABS = ['overview', 'explorer', 'analytics', 'ai_traffic', 'gsc'];
+    const TABS = ['overview', 'explorer', 'analytics', 'ai_traffic', 'gsc', 'site_performance'];
     let currentTab = 'overview';
     let analyticsLoaded = false;
     let explorerLoaded = false;
@@ -997,6 +1019,10 @@ def render_bigquery_dashboard_page(
         gscLoaded = true;
         loadGsc();
         loadSemrush();
+      }}
+      if (tab === 'site_performance' && !sitePerfLoaded) {{
+        sitePerfLoaded = true;
+        loadSitePerformance();
       }}
     }}
 
@@ -1457,6 +1483,7 @@ def render_bigquery_dashboard_page(
         setStatus('semrushStatus', err.message||String(err), true);
       }}
     }}
+    {pagespeed_pane_js}
     // Earliest synced date per source (google/linkedin/meta/google_analytics/gsc),
     // populated by loadHealth() below. Used to warn when a comparison period
     // (see compareStart/compareEnd) falls before the data actually starts.
