@@ -235,10 +235,28 @@ def render_bigquery_dashboard_page(
           <div class="chips" id="platformChips"></div>
         </div>"""
 
+    # Overview is a "home": the top widget from each section, each with a
+    # "See more" that jumps to that tab. Panels below are shared by all clients;
+    # the paid panel is prepended only when the client runs paid ads.
+    ov_panels = """
+      <section class="ov-panel">
+        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><span class="status" id="ovSessionsStatus"></span><button type="button" class="ov-more" data-goto="analytics">See more →</button></div></div>
+        <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovSessionsTrend"></canvas></div></div>
+      </section>
+
+      <section class="ov-panel">
+        <div class="sec-head"><h2>AI traffic</h2><div class="ov-actions"><span class="status" id="ovAiStatus"></span><button type="button" class="ov-more" data-goto="ai_traffic">See more →</button></div></div>
+        <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovAiTrend"></canvas></div></div>
+      </section>
+
+      <section class="ov-panel">
+        <div class="sec-head"><h2>Search Console</h2><div class="ov-actions"><span class="status" id="ovGscStatus"></span><button type="button" class="ov-more" data-goto="gsc">See more →</button></div></div>
+        <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovGscTrend"></canvas></div></div>
+      </section>"""
     if has_paid_ads:
-        overview_summary_html = """
+        paid_panel = """
       <section id="sec-overview">
-        <div class="sec-head"><h2>Paid summary</h2><span class="status" id="summaryStatus"></span></div>
+        <div class="sec-head"><h2>Paid summary</h2><div class="ov-actions"><span class="status" id="summaryStatus"></span><button type="button" class="ov-more" data-goto="explorer">See more →</button></div></div>
         <div class="cards" id="summaryCards"></div>
       </section>
 
@@ -253,17 +271,9 @@ def render_bigquery_dashboard_page(
         </div>
         <p class="chart-note">Each line is normalized to its own min–max. Hover for actual values.</p>
       </section>"""
+        overview_summary_html = paid_panel + ov_panels
     else:
-        overview_summary_html = """
-      <section id="sec-overview">
-        <div class="sec-head"><h2>Website traffic <span class="cmp-warn" id="ga4SnapshotCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="ga4SnapshotStatus"></span></div>
-        <div class="cards" id="ga4SnapshotCards"></div>
-      </section>
-
-      <section>
-        <div class="sec-head"><h2>Search performance <span class="cmp-warn" id="gscSnapshotCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="gscSnapshotStatus"></span></div>
-        <div class="cards" id="gscSnapshotCards"></div>
-      </section>"""
+        overview_summary_html = ov_panels
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -362,6 +372,9 @@ def render_bigquery_dashboard_page(
     .sec-head {{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:16px; }}
     .sec-head h2 {{ margin:0; }}
     .sec-head .status {{ margin:0; font-size:.76rem; text-align:right; flex-shrink:0; }}
+    .ov-actions {{ display:flex; align-items:center; gap:10px; flex-shrink:0; }}
+    .ov-more {{ border:1px solid var(--line); background:#fff; color:var(--accent); border-radius:999px; padding:4px 13px; font:inherit; font-size:.78rem; font-weight:700; cursor:pointer; white-space:nowrap; }}
+    .ov-more:hover {{ border-color:var(--accent); background:#f4f8fd; }}
     .status {{ color:var(--muted); font-size:.82rem; margin:0 0 12px; }}
     .status.error {{ color:var(--bad); }}
     /* ---- Metric cards ---- */
@@ -1752,7 +1765,8 @@ def render_bigquery_dashboard_page(
     const AI_PALETTE=['#1d6fd0','#7c3aed','#0a7f3f','#dc2626','#d97706','#0891b2','#be185d','#4b5563'];
     // Stacked-area trend: sessions/day, one band per AI platform. Data comes from
     // the daily endpoint (the range-aggregated pages/sources has no time axis).
-    function renderAiTrend(daily) {{
+    function renderAiTrend(daily, chartId, statusId) {{
+      chartId=chartId||'aiTrendChart'; statusId=statusId||'aiTrendStatus';
       const rows=daily||[];
       const dates=[...new Set(rows.map(r=>String(r.date)))].sort();
       const pivot=new Map();   // platform -> Map(date -> sessions)
@@ -1763,7 +1777,7 @@ def render_bigquery_dashboard_page(
       }}
       // Biggest platform first so it sits at the bottom of the stack.
       const ordered=[...pivot.keys()].map(pl=>[pl,[...pivot.get(pl).values()].reduce((a,b)=>a+b,0)]).sort((a,b)=>b[1]-a[1]);
-      if (!dates.length || !ordered.length) {{ __destroyChart('aiTrendChart'); setStatus('aiTrendStatus','No AI traffic in this range.'); return; }}
+      if (!dates.length || !ordered.length) {{ __destroyChart(chartId); setStatus(statusId,'No AI traffic in this range.'); return; }}
       // Stack the data ourselves (scales.y.stacked doesn't stack lines in this
       // Chart.js build): each series plots the running cumulative total and fills
       // down to the series below it. _raw keeps the per-platform value for tooltips.
@@ -1775,7 +1789,7 @@ def render_bigquery_dashboard_page(
         return {{ label:pl, data, _raw:raw, borderColor:color, backgroundColor:color+'59',
                   fill:i===0?'origin':'-1', borderWidth:2, tension:0.3, pointRadius:0, pointHoverRadius:4 }};
       }});
-      __chart('aiTrendChart', {{
+      __chart(chartId, {{
         type:'line',
         data:{{ labels:dates.map(d=>d.slice(5)), datasets }},
         options:{{
@@ -1790,7 +1804,7 @@ def render_bigquery_dashboard_page(
           }},
         }},
       }});
-      setStatus('aiTrendStatus','');
+      setStatus(statusId,'');
     }}
     async function loadAiTraffic() {{
       setStatus('aiTrafficStatus','Loading…');
@@ -2278,8 +2292,34 @@ def render_bigquery_dashboard_page(
       if (modules.demographics)     loaders.push(loadDemographics);
       loaders.forEach((fn,i)=>setTimeout(fn, i*250));
     }}
+    // ---- Overview home: one trend per section, each with a "See more" jump ----
+    async function loadOverviewHome() {{
+      setStatus('ovSessionsStatus','Loading…'); setStatus('ovAiStatus','Loading…'); setStatus('ovGscStatus','Loading…');
+      const byDate=rows=>rows.slice().sort((a,b)=>String(a.date)<String(b.date)?-1:1);
+      const [traffic, aiDaily, gsc] = await Promise.all([
+        getJson(withDates(TRAFFIC_ACQ_API)).catch(()=>({{daily:[]}})),
+        getJson(withDates(AI_TRAFFIC_DAILY_API)).then(d=>d.rows||[]).catch(()=>[]),
+        getJson(withDates(GSC_API)).catch(()=>({{daily:[]}})),
+      ]);
+      const sd=byDate(traffic.daily||[]);
+      if (sd.length) {{
+        lineChart('ovSessionsTrend', sd.map(d=>String(d.date).slice(5)),
+          [{{label:'Sessions', data:sd.map(d=>num(d.sessions)), color:'#1769aa', fill:true, fmt:count}}], {{}});
+        setStatus('ovSessionsStatus', count(sd.reduce((s,d)=>s+num(d.sessions),0))+' sessions');
+      }} else {{ __destroyChart('ovSessionsTrend'); setStatus('ovSessionsStatus','No data'); }}
+      renderAiTrend(aiDaily, 'ovAiTrend', 'ovAiStatus');
+      const gd=byDate(gsc.daily||[]);
+      if (gd.length) {{
+        lineChart('ovGscTrend', gd.map(d=>String(d.date).slice(5)),
+          [{{label:'Clicks', data:gd.map(d=>num(d.clicks)), color:'#0a7f3f', fill:true, fmt:count}}], {{}});
+        setStatus('ovGscStatus', count(gd.reduce((s,d)=>s+num(d.clicks),0))+' clicks');
+      }} else {{ __destroyChart('ovGscTrend'); setStatus('ovGscStatus','No data'); }}
+    }}
+    document.querySelectorAll('.ov-more[data-goto]').forEach(btn=>
+      btn.addEventListener('click', ()=>switchTab(btn.dataset.goto))
+    );
     function loadCurrentTab() {{
-      if (currentTab==='overview')   {{ loadHealth().then(()=>{{ HAS_PAID_ADS ? loadSummary() : loadOverviewSnapshot(); }}); }}
+      if (currentTab==='overview')   {{ loadHealth().then(()=>{{ if (HAS_PAID_ADS) loadSummary(); loadOverviewHome(); }}); }}
       else if (currentTab==='explorer') {{ explorerLoaded=false; loadExplorer(); explorerLoaded=true; }}
       else if (currentTab==='analytics') {{ analyticsLoaded=false; applyModules(); loadAllAnalytics(); analyticsLoaded=true; }}
       else if (currentTab==='ai_traffic') {{ aiTrafficLoaded=false; loadAiTraffic(); aiTrafficLoaded=true; }}
