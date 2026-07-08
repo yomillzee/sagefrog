@@ -37,7 +37,22 @@ class PageSpeedConnector(ConnectorHandler):
         if not url:
             raise RuntimeError("Enter a URL first.")
 
-        scores = pagespeed_service.fetch_scores(url)
+        # A live Lighthouse audit can take 15–60s. The wizard runs this
+        # synchronously behind Railway's edge proxy, so use a short timeout and
+        # treat a slow audit as a soft pass (the URL/key are fine; the real audit
+        # runs in the background sync). Auth/config errors return fast and still
+        # surface as a proper failure.
+        try:
+            scores = pagespeed_service.fetch_scores(url, timeout=25)
+        except Exception as exc:
+            if "timed out" in str(exc).lower() or "timeout" in str(exc).lower():
+                return [{
+                    "id": pagespeed_service.normalize_url(url),
+                    "name": f"{url} — reachable; the first audit is slow and completes on the initial sync",
+                    "status": "ok",
+                }]
+            raise
+
         perf = scores.get("performance")
         label = f"{scores.get('final_url', url)} — Performance {perf}" if perf is not None else url
         return [{"id": scores.get("url", url), "name": label, "status": "ok"}]

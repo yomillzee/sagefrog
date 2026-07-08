@@ -198,13 +198,17 @@ def _audit_numeric(audits: dict[str, Any], audit_id: str) -> float | None:
 # Public API
 # ---------------------------------------------------------------------------
 
-def fetch_scores(url: str, strategy: str | None = None) -> dict[str, Any]:
+def fetch_scores(url: str, strategy: str | None = None, *, timeout: int = 60) -> dict[str, Any]:
     """Run a single PSI audit for `url`. Raises on failure (used by Test connection).
 
     Returns a flat dict: url, strategy, fetched_at, the four 0–100 category scores,
     and lab Core Web Vitals (lcp_ms, cls, tbt_ms, fcp_ms, speed_index_ms, tti_ms).
     Also includes field-data CWV percentiles under crux_* when Google has enough
     real-user data (absent for low-traffic sites).
+
+    `timeout` bounds the (slow) live audit. The interactive Test-connection step
+    passes a shorter one so it fails fast instead of hanging behind the edge proxy;
+    the background sync keeps the full 60s.
     """
     target = normalize_url(url)
     if not target:
@@ -213,7 +217,7 @@ def fetch_scores(url: str, strategy: str | None = None) -> dict[str, Any]:
     if strat not in ("desktop", "mobile"):
         strat = _DEFAULT_STRATEGY
 
-    data = _get(target, strat)
+    data = _get(target, strat, timeout=timeout)
     lh = data.get("lighthouseResult") or {}
     categories = lh.get("categories") or {}
     audits = lh.get("audits") or {}
