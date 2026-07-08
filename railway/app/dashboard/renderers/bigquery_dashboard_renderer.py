@@ -321,6 +321,9 @@ def render_bigquery_dashboard_page(
        Platform filter to Overview/Explorer via switchTab()'s pf.hidden toggle. */
     .filter-group[hidden] {{ display:none; }}
     .filter-label {{ color:var(--muted); font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }}
+    .range-select {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:8px; padding:5px 28px 5px 11px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%230a2540' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 9px center; }}
+    .range-select:hover {{ border-color:#b9c8dc; background-color:#f4f8fd; }}
+    .range-select:focus {{ outline:none; border-color:var(--accent); }}
     .chips {{ display:flex; flex-wrap:wrap; gap:5px; }}
     .chip {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:4px 12px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s, color .12s; }}
     .chip:hover {{ border-color:#b9c8dc; background:#f4f8fd; }}
@@ -535,15 +538,15 @@ def render_bigquery_dashboard_page(
       <div class="date-bar-bottom">
         <div class="filter-group">
           <span class="filter-label">Range</span>
-          <div class="chips" id="datePresets">
-            <button type="button" class="chip active" data-preset="last_7">Last 7d</button>
-            <button type="button" class="chip" data-preset="last_30">Last 30d</button>
-            <button type="button" class="chip" data-preset="last_90">Last 90d</button>
-            <button type="button" class="chip" data-preset="this_week">This week</button>
-            <button type="button" class="chip" data-preset="last_week">Last week</button>
-            <button type="button" class="chip" data-preset="this_month">This month</button>
-            <button type="button" class="chip" data-preset="last_month">Last month</button>
-          </div>
+          <select class="range-select" id="datePresets" aria-label="Date range">
+            <option value="last_7">Last 7 days</option>
+            <option value="last_30" selected>Last 30 days</option>
+            <option value="last_90">Last 90 days</option>
+            <option value="this_week">This week</option>
+            <option value="last_week">Last week</option>
+            <option value="this_month">This month</option>
+            <option value="last_month">Last month</option>
+          </select>
         </div>
         {platform_filter_group_html}
       </div>
@@ -2157,11 +2160,11 @@ def render_bigquery_dashboard_page(
       else return;
       currentStart=fmtDate(s); currentEnd=fmtDate(e);
       compareStart=fmtDate(cs); compareEnd=fmtDate(ce);
-      document.querySelectorAll('#datePresets .chip').forEach(b=>b.classList.toggle('active',b.dataset.preset===name));
+      const sel=document.getElementById('datePresets'); if (sel && sel.value!==name) sel.value=name;
       loadCurrentTab();
     }}
-    document.getElementById('datePresets').addEventListener('click',ev=>{{
-      const btn=ev.target.closest('[data-preset]'); if (btn) applyPreset(btn.dataset.preset);
+    document.getElementById('datePresets').addEventListener('change',ev=>{{
+      applyPreset(ev.target.value);
     }});
 
     // ---- Platform chips ----
@@ -2215,7 +2218,7 @@ def render_bigquery_dashboard_page(
     }}
     document.querySelectorAll('[data-close-preview]').forEach(el=>el.addEventListener('click', closeCreativePreview));
     document.addEventListener('keydown', ev=>{{ if (ev.key==='Escape') closeCreativePreview(); }});
-    applyPreset('last_7');
+    applyPreset('last_30');
 
     // Deep-link + page-visibility prefs: land on the tab named in ?view= (set
     // by the sidebar links on Settings/Files/Connectors), unless that page was
