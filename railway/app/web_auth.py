@@ -340,14 +340,30 @@ def render_admin_page(
             <button type="submit" class="link">Reset</button>
           </form>
         </details>"""
+        role_html = ""
         deactivate_html = ""
         if uid != user.id:
+            raw_slug = _esc(u.get("client_slug") or "")
+            role_opts = "".join(
+                f'<option value="{r}"{" selected" if u.get("role") == r else ""}>{r}</option>'
+                for r in ("admin", "client", "standard")
+            )
+            role_html = f"""
+        <details class="dash-delete-fold">
+          <summary class="link">Change role…</summary>
+          <form method="post" action="/admin/users/{uid}/role" class="dash-delete-form">
+            <select name="role" aria-label="Role">{role_opts}</select>
+            <input type="text" name="client_slug" placeholder="client slug (client role only)"
+              value="{raw_slug}" autocomplete="off">
+            <button type="submit" class="link">Update role</button>
+          </form>
+        </details>"""
             deactivate_html = (
                 f'<form method="post" action="/admin/users/{uid}/deactivate" '
                 f'onsubmit="return confirm(\'Deactivate this user?\');">'
                 f'<button type="submit" class="link danger">Deactivate</button></form>'
             )
-        actions = reset_html + deactivate_html
+        actions = reset_html + role_html + deactivate_html
         rows.append(
             f"<tr><td>{_esc(u['email'])}</td><td>{_esc(u['role'])}</td>"
             f"<td>{_esc(str(slug))}</td>"

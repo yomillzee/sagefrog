@@ -295,6 +295,33 @@ def set_password(user_id: int, new_password: str) -> bool:
         return cur.rowcount > 0
 
 
+def set_role(user_id: int, role: str, client_slug: str | None = None) -> WebUser | None:
+    """Change an active user's role (and client scoping). Returns the updated
+    user, or None if no active user matched. Raises ValueError on bad input."""
+    if not enabled():
+        return None
+    role = (role or "").strip().lower()
+    if role not in ("admin", "client", "standard"):
+        raise ValueError("role must be admin, client, or standard.")
+    slug = (client_slug or "").strip().lower() or None
+    if role == "client" and not slug:
+        raise ValueError("client_slug is required for client users.")
+    if role in ("admin", "standard"):
+        slug = None
+    ensure_schema()
+    with db.connection() as conn:
+        row = conn.execute(
+            """
+            UPDATE web_users
+            SET role = %s, client_slug = %s, updated_at = NOW()
+            WHERE id = %s AND is_active = TRUE
+            RETURNING id, email, role, client_slug, is_active
+            """,
+            (role, slug, user_id),
+        ).fetchone()
+    return _row_to_user(row) if row else None
+
+
 def deactivate_user(user_id: int) -> bool:
     if not enabled():
         return False

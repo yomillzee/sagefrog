@@ -1820,6 +1820,43 @@ def admin_reset_password(
     return RedirectResponse(url="/admin?err=Password+reset+failed", status_code=303)
 
 
+@app.post("/admin/users/{user_id}/role", include_in_schema=False)
+def admin_set_user_role(
+    user_id: int,
+    request: Request,
+    role: str = Form(...),
+    client_slug: str | None = Form(None),
+    admin: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    ctx = audit_log.request_context(request)
+    if user_id == admin.id:
+        return RedirectResponse(url="/admin?err=Cannot+change+your+own+role", status_code=303)
+    target = web_users.get_user_record(user_id)
+    if not target:
+        return RedirectResponse(url="/admin?err=User+not+found", status_code=303)
+    new_role = (role or "").strip().lower()
+    # Never let the last remaining admin be demoted out of the admin role.
+    if target.role == "admin" and new_role != "admin" and web_users.count_admins() <= 1:
+        return RedirectResponse(url="/admin?err=Cannot+change+the+only+admin%27s+role", status_code=303)
+    try:
+        updated = web_users.set_role(user_id, new_role, client_slug)
+    except ValueError as exc:
+        return RedirectResponse(url=f"/admin?err={quote(str(exc))}", status_code=303)
+    if not updated:
+        return RedirectResponse(url="/admin?err=Role+update+failed", status_code=303)
+    audit_log.record(
+        action="user.role_changed",
+        actor_user_id=admin.id,
+        actor_email=admin.email,
+        subject_email=updated.email,
+        detail={"role": updated.role, "client_slug": updated.client_slug},
+        **ctx,
+    )
+    return RedirectResponse(
+        url=f"/admin?msg=Role+updated+for+{quote(updated.email)}", status_code=303
+    )
+
+
 @app.post("/admin/dashboards", include_in_schema=False)
 def admin_create_dashboard(
     request: Request,

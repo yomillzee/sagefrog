@@ -42,6 +42,7 @@ _ACTION_LABELS = {
     "logout": "Signed out",
     "user.created": "Created user",
     "user.deactivated": "Deactivated user",
+    "user.role_changed": "Changed role",
     "user.bootstrap_admin": "Bootstrap admin created",
     "dashboard.config_saved": "Saved dashboard config",
     "dashboard.created": "Created dashboard",
@@ -182,6 +183,13 @@ def format_detail(event: dict[str, Any]) -> str:
         role = detail.get("role")
         if role:
             parts.append(f"was {role}")
+    elif action == "user.role_changed":
+        role = detail.get("role")
+        slug = detail.get("client_slug")
+        if role:
+            parts.append(f"role={role}")
+        if slug:
+            parts.append(f"client={slug}")
     elif action == "dashboard.config_saved":
         slug = detail.get("client_slug")
         if slug:
