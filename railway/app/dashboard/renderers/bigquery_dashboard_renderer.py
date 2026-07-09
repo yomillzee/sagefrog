@@ -482,6 +482,9 @@ def render_bigquery_dashboard_page(
     th.gsc-sort {{ cursor:pointer; user-select:none; white-space:nowrap; transition:background .12s,color .12s; }}
     th.gsc-sort:hover {{ background:#e9eef5; color:#33455e; }}
     th.gsc-sort.active {{ color:var(--accent); }}
+    th.expl-sort {{ cursor:pointer; user-select:none; white-space:nowrap; transition:background .12s,color .12s; }}
+    th.expl-sort:hover {{ background:#e9eef5; color:#33455e; }}
+    th.expl-sort.active {{ color:var(--accent); }}
     /* GSC/keyword tables: truncate the long query/URL label instead of letting
        the table overflow its column and push off the page. */
     #gscQueriesTable td.left, #gscPagesTable td.left,
@@ -1656,6 +1659,14 @@ def render_bigquery_dashboard_page(
       {{key:'conversions',label:'Conv.',format:count}},
       {{key:'ctr',label:'CTR',format:pct}},
     ];
+    // Explorer table sort — click a column header to sort every tree level (campaigns,
+    // ad groups, ads) by it. 'name' sorts the label column alphabetically.
+    let explorerSort = {{ key:'spend', dir:'desc' }};
+    function explorerMetricVal(m, key) {{
+      if (key==='ctr') return num(m.impressions) ? num(m.clicks)/num(m.impressions)*100 : 0;
+      return num(m[key]);
+    }}
+    function explorerAdName(a) {{ return String(a.ad_name||a.ad_label||a.ad_id||''); }}
     // Client-configured filter chip groups: [{{id,label,chips:[{{label,phrases}}]}}].
     // phrases are pre-lowercased server-side; a chip matches a campaign whose
     // (lowercased) name contains any of its phrases.
@@ -1755,7 +1766,18 @@ def render_bigquery_dashboard_page(
         addMetrics(grp.metrics,r);
         grp.ads.push(r);
       }}
-      return new Map([...campaigns.entries()].sort((a,b)=>b[1].metrics.spend-a[1].metrics.spend));
+      // Sort every level by the active column / direction.
+      const {{key,dir}}=explorerSort, mul=dir==='asc'?1:-1;
+      const cmpName=(x,y)=>mul*String(x).localeCompare(String(y),undefined,{{numeric:true}});
+      const cmpMetric=(x,y)=>mul*(explorerMetricVal(x,key)-explorerMetricVal(y,key));
+      const cmpNode=(a,b)=> key==='name' ? cmpName(a[1].name,b[1].name) : cmpMetric(a[1].metrics,b[1].metrics);
+      for (const camp of campaigns.values()) {{
+        for (const grp of camp.groups.values()) {{
+          grp.ads.sort((a,b)=> key==='name' ? cmpName(explorerAdName(a),explorerAdName(b)) : cmpMetric(a,b));
+        }}
+        camp.groups=new Map([...camp.groups.entries()].sort(cmpNode));
+      }}
+      return new Map([...campaigns.entries()].sort(cmpNode));
     }}
     function metricCells(m) {{ const wc=withCtr(m); return METRIC_COLS.map(c=>`<td>${{c.format(wc[c.key])}}</td>`).join(''); }}
     function platformPill(p) {{
@@ -1812,7 +1834,8 @@ def render_bigquery_dashboard_page(
       const el=document.getElementById('explorerTable');
       const tree=buildExplorerTree(filtered);
       if (!tree.size) {{ el.innerHTML=`<tbody><tr><td class="empty">No campaigns match these filters.</td></tr></tbody>`; }} else {{
-        const head=`<thead><tr><th class="left">Campaign / Ad group / Ad</th>${{METRIC_COLS.map(c=>`<th>${{esc(c.label)}}</th>`).join('')}}</tr></thead>`;
+        const sArrow=k=>explorerSort.key===k?(explorerSort.dir==='asc'?' ▲':' ▼'):'';
+        const head=`<thead><tr><th class="left expl-sort${{explorerSort.key==='name'?' active':''}}" data-key="name">Campaign / Ad group / Ad${{sArrow('name')}}</th>${{METRIC_COLS.map(c=>`<th class="expl-sort${{explorerSort.key===c.key?' active':''}}" data-key="${{c.key}}">${{esc(c.label)}}${{sArrow(c.key)}}</th>`).join('')}}</tr></thead>`;
         let body='', cIdx=0;
         for (const camp of tree.values()) {{
           const cId='c'+(cIdx++), gCount=camp.groups.size;
@@ -2903,6 +2926,14 @@ def render_bigquery_dashboard_page(
         const extra=moreBtn.nextElementSibling;
         extra.hidden=!extra.hidden;
         moreBtn.textContent = extra.hidden ? moreBtn.dataset.moreLabel : 'Show less';
+        return;
+      }}
+      const sortTh=ev.target.closest('th.expl-sort');
+      if (sortTh) {{
+        const key=sortTh.dataset.key;
+        if (explorerSort.key===key) explorerSort.dir = explorerSort.dir==='asc'?'desc':'asc';
+        else explorerSort = {{ key, dir: key==='name'?'asc':'desc' }};
+        renderExplorer();
         return;
       }}
       const row=ev.target.closest('tr[data-expandable]');
