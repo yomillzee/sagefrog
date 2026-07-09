@@ -544,6 +544,7 @@ def platform_nav_flags(client_slug: str) -> dict[str, bool]:
         "show_gsc": _connected("gsc"),
         "show_gtm": _connected("gtm"),
         "show_pagespeed": _connected("pagespeed"),
+        "show_semrush": _connected("semrush"),
     }
 
 _NAV_ICON_FILES = (

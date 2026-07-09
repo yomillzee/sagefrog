@@ -182,9 +182,19 @@ def render_bigquery_dashboard_page(
     # Whether the Overview home shows the Site Performance scorecard — gated on
     # the pagespeed connector being connected, same as the sidebar nav button.
     try:
-        show_pagespeed = bool(platform_nav_flags(client_slug).get("show_pagespeed"))
+        _pf = platform_nav_flags(client_slug)
+        show_pagespeed = bool(_pf.get("show_pagespeed"))
+        show_semrush = bool(_pf.get("show_semrush"))
     except Exception:
         show_pagespeed = False
+        show_semrush = False
+    # Organic Search Intelligence (SEMrush) — only when the SEMrush connector is
+    # connected; otherwise the whole section is dropped from the GSC tab.
+    semrush_section_html = """
+      <section id="sec-semrush">
+        <div class="sec-head"><h2>Organic Search Intelligence</h2><span class="status" id="semrushStatus"></span></div>
+        <div class="cards" id="semrushKpis"></div>
+      </section>""" if show_semrush else ""
     # Campaign Explorer filter chips: client config if set, else Nixon defaults.
     # Injected as JSON for the page JS to build the chip rows + match campaigns.
     # Escape "<" so a chip label can't break out of the <script> block.
@@ -423,6 +433,10 @@ def render_bigquery_dashboard_page(
     .ke-dd-name {{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
     .ke-dd-count {{ color:var(--muted); font-size:.74rem; font-weight:600; }}
     .ke-dd-empty {{ color:var(--muted); font-size:.8rem; padding:14px 8px; text-align:center; }}
+    /* ---- Explorer filter dropdowns (sticky bar) ---- */
+    #explorerFilterBar {{ gap:8px; flex-wrap:wrap; }}
+    .expl-dd .ke-dd-toggle {{ min-width:0; }}
+    .ke-dd-toggle.has-active {{ border-color:var(--accent); color:var(--accent); }}
     /* ---- Sections ---- */
     section {{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:18px 20px 20px; margin-bottom:16px; box-shadow:var(--shadow); }}
     /* ---- First-run onboarding card ---- */
@@ -446,6 +460,11 @@ def render_bigquery_dashboard_page(
     .card {{ border:1px solid var(--line-soft); border-top:3px solid var(--accent); border-radius:var(--radius-sm); padding:13px 14px 14px; background:#fff; }}
     .card-title {{ color:var(--muted); font-size:.65rem; text-transform:uppercase; font-weight:800; letter-spacing:.06em; }}
     .card-value {{ margin-top:7px; font-size:1.5rem; line-height:1.1; color:var(--navy); font-weight:800; letter-spacing:-.02em; }}
+    .card-foot {{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:9px; min-height:22px; }}
+    .card-foot .cmp-delta {{ font-size:.74rem; white-space:nowrap; }}
+    .cmp-delta.flat {{ color:var(--muted); }}
+    .spark {{ width:66px; height:22px; flex:0 0 auto; opacity:.85; }}
+    .spark-empty {{ width:66px; height:22px; flex:0 0 auto; }}
     .card-delta {{ margin-top:4px; font-size:.76rem; font-weight:700; }}
     .card-delta.up {{ color:var(--ok); }}
     .card-delta.down {{ color:var(--bad); }}
@@ -668,6 +687,7 @@ def render_bigquery_dashboard_page(
           </div>
         </div>
         {platform_filter_group_html}
+        <div class="filter-group" id="explorerFilterBar" hidden></div>
       </div>
       </div>
     </div>
@@ -685,9 +705,9 @@ def render_bigquery_dashboard_page(
       <section id="sec-explorer">
         <div class="sec-head"><h2>Campaign explorer</h2><span class="status" id="explorerStatus"></span></div>
         <div class="cards" id="explorerSummaryCards" style="margin-bottom:14px"></div>
-        <!-- Filter groups (Product / Region / …) are built by buildExplorerFilters()
+        <!-- Filter groups (Product / Region / Business line …) live in the sticky
+             top bar (#explorerFilterBar) as dropdowns; built by buildExplorerFilters()
              from the client-configured chip rules; see EXPLORER_FILTER_GROUPS. -->
-        <div style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:12px;" id="explorerFilters"></div>
         <div class="table-wrap"><table id="explorerTable"></table></div>
       </section>
       <section id="sec-keywords" style="display:none">
@@ -810,10 +830,7 @@ def render_bigquery_dashboard_page(
     </div>
 
     <div id="pane-gsc" hidden>
-      <section id="sec-semrush">
-        <div class="sec-head"><h2>Organic Search Intelligence</h2><span class="status" id="semrushStatus"></span></div>
-        <div class="cards" id="semrushKpis"></div>
-      </section>
+      {semrush_section_html}
       <section id="sec-gsc-overview">
         <div class="sec-head"><h2>Search Console</h2><span class="status" id="gscStatus"></span></div>
         <div class="cards" id="gscKpis"></div>
@@ -1086,6 +1103,8 @@ def render_bigquery_dashboard_page(
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
       const pf = document.getElementById('platformFilterGroup');
       if (pf) pf.hidden = tab === 'analytics' || tab === 'gsc' || tab === 'ai_traffic';
+      const efb = document.getElementById('explorerFilterBar');
+      if (efb) efb.hidden = !(tab === 'explorer' && EXPLORER_FILTER_GROUPS.length);
       currentTab = tab;
       updateKeyEventBar();
       if (tab === 'explorer' && !explorerLoaded) {{
@@ -1152,10 +1171,13 @@ def render_bigquery_dashboard_page(
     }}
 
     // ---- Paid media: Summary ----
+    // 4th field = which direction is "good" for coloring the vs-previous delta:
+    // 'up' (more is better), 'down' (less is better), 'neutral' (just report it).
     const SUMMARY_CARDS = [
-      ['spend','Spend',money],['impressions','Impressions',count],['clicks','Clicks',count],
-      ['conversions','Conversions',count],['cpc','CPC',money],['cpa','CPA',money],['ctr','CTR',pct],
+      ['spend','Spend',money,'neutral'],['impressions','Impressions',count,'up'],['clicks','Clicks',count,'up'],
+      ['conversions','Conversions',count,'up'],['cpc','CPC',money,'down'],['cpa','CPA',money,'down'],['ctr','CTR',pct,'up'],
     ];
+    const SPARK_COLORS = {{ spend:'#1769aa', impressions:'#7c3aed', clicks:'#0a7f3f', conversions:'#0891b2', cpc:'#d97706', cpa:'#dc2626', ctr:'#0891b2' }};
     const platformFilter = new Set();
     let summaryPayload = null;
     let compareSummaryPayload = null;
@@ -1176,11 +1198,36 @@ def render_bigquery_dashboard_page(
       return {{ ...acc, cpc: acc.clicks ? acc.spend/acc.clicks : 0, cpa: acc.conversions ? acc.spend/acc.conversions : 0, ctr: acc.impressions ? acc.clicks/acc.impressions*100 : 0 }};
     }}
     function selectedSummary() {{ return selectedSummaryFrom(summaryPayload); }}
+    // Tiny inline-SVG sparkline of the metric's current-period daily trend.
+    function sparkSvg(vals, color) {{
+      const clean=vals.filter(v=>v!=null&&isFinite(v));
+      if (clean.length<2) return '<span class="spark-empty"></span>';
+      const n=vals.length, w=66, h=22, mn=Math.min(...clean), mx=Math.max(...clean), span=(mx-mn)||1;
+      const pts=vals.map((v,i)=>`${{(n===1?w/2:i/(n-1)*w).toFixed(1)}},${{(h-1-((num(v)-mn)/span)*(h-2)).toFixed(1)}}`).join(' ');
+      return `<svg class="spark" viewBox="0 0 ${{w}} ${{h}}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${{pts}}" fill="none" stroke="${{color}}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+    }}
+    // % change vs the comparison period, colored by whether the move is good for
+    // that metric (dir from SUMMARY_CARDS). Arrow always shows the raw direction.
+    // (Distinct from the snapshot-card deltaHtml above — this one is a compact
+    // inline chip for the paid summary cards.)
+    function summaryDeltaHtml(cur, prev, dir) {{
+      if (prev==null || num(prev)===0 || cur==null) return '<span class="cmp-delta flat">—</span>';
+      const ch=(num(cur)-num(prev))/num(prev)*100;
+      if (Math.abs(ch)<0.5) return '<span class="cmp-delta flat" title="vs previous period">0%</span>';
+      const up=ch>0, arrow=up?'▲':'▼';
+      let cls='flat';
+      if (dir==='up') cls=up?'up':'down'; else if (dir==='down') cls=up?'down':'up';
+      return `<span class="cmp-delta ${{cls}}" title="vs previous period">${{arrow}} ${{Math.abs(ch).toFixed(0)}}%</span>`;
+    }}
     function renderSummary() {{
       const s = selectedSummary();
-      // Comparison-period deltas removed for now — cards show current values only.
-      summaryCards.innerHTML = SUMMARY_CARDS.map(([key,label,format]) =>
-        `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{format(s[key])}}</div></div>`).join('');
+      const prev = selectedSummaryFrom(compareSummaryPayload);
+      const daily = buildChartDaily();
+      summaryCards.innerHTML = SUMMARY_CARDS.map(([key,label,format,dir]) => {{
+        const delta = summaryDeltaHtml(s[key], (prev && prev[key]!=null) ? prev[key] : null, dir);
+        const spark = sparkSvg(daily.map(d=>num(d[key])), SPARK_COLORS[key]||'#1769aa');
+        return `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{format(s[key])}}</div><div class="card-foot">${{delta}}${{spark}}</div></div>`;
+      }}).join('');
     }}
 
     // ---- Trend chart ----
@@ -1562,8 +1609,10 @@ def render_bigquery_dashboard_page(
         `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{val}}</div></div>`).join('');
     }}
     async function loadSemrush() {{
+      const host=document.getElementById('semrushKpis');
+      if (!host) return;   // section omitted when SEMrush isn't connected
       setStatus('semrushStatus','Loading…');
-      document.getElementById('semrushKpis').innerHTML = skelCards(4);
+      host.innerHTML = skelCards(4);
       try {{
         const p = await getJson(SEMRUSH_API);
         if (!p || !p.domain) {{
@@ -1625,20 +1674,60 @@ def render_bigquery_dashboard_page(
       }}));
       el.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.key==='All' ? stateSet.size===0 : stateSet.has(b.dataset.key)));
     }}
+    // Explorer filter groups (Business line / Product / Region …) render as
+    // space-saving dropdowns in the sticky top bar, each holding a multi-select
+    // checkbox list. Reuses the .ke-dd-* dropdown styling.
+    function closeAllExplDropdowns(except) {{
+      document.querySelectorAll('#explorerFilterBar .expl-dd').forEach(dd => {{
+        if (dd===except) return;
+        const p=dd.querySelector('.ke-dd-panel'); if (p) p.hidden=true;
+        dd.classList.remove('open');
+        const t=dd.querySelector('.ke-dd-toggle'); if (t) t.setAttribute('aria-expanded','false');
+      }});
+    }}
+    function wireExplorerDropdown(dd, g, set) {{
+      const toggle=dd.querySelector('.ke-dd-toggle');
+      const panel=dd.querySelector('.ke-dd-panel');
+      const list=dd.querySelector('.ke-dd-list');
+      const label=dd.querySelector('.expl-dd-label');
+      const updateLabel=()=>{{ label.textContent = set.size ? `${{label.dataset.base}} · ${{set.size}}` : label.dataset.base; toggle.classList.toggle('has-active', set.size>0); }};
+      list.innerHTML = g.chips.map(c=>`<label class="ke-dd-option${{set.has(c.label)?' active':''}}"><input type="checkbox"${{set.has(c.label)?' checked':''}} data-val="${{esc(c.label)}}"><span class="ke-dd-name">${{esc(c.label)}}</span></label>`).join('');
+      list.querySelectorAll('input[data-val]').forEach(cb=>cb.addEventListener('change',()=>{{
+        const v=cb.dataset.val;
+        if (set.has(v)) set.delete(v); else set.add(v);
+        const opt=cb.closest('.ke-dd-option'); if (opt) opt.classList.toggle('active', set.has(v));
+        updateLabel();
+        renderExplorer();
+      }}));
+      toggle.addEventListener('click', e=>{{
+        e.stopPropagation();
+        if (panel.hidden) {{ closeAllExplDropdowns(dd); panel.hidden=false; dd.classList.add('open'); toggle.setAttribute('aria-expanded','true'); }}
+        else {{ panel.hidden=true; dd.classList.remove('open'); toggle.setAttribute('aria-expanded','false'); }}
+      }});
+      updateLabel();
+    }}
     function buildExplorerFilters() {{
-      const host = document.getElementById('explorerFilters');
+      const host = document.getElementById('explorerFilterBar');
       if (!host) return;
       explorerFilterState.clear();
-      if (!EXPLORER_FILTER_GROUPS.length) {{ host.innerHTML=''; return; }}
+      if (!EXPLORER_FILTER_GROUPS.length) {{ host.innerHTML=''; host.hidden=true; return; }}
       host.innerHTML = EXPLORER_FILTER_GROUPS.map((g,i) =>
-        `<div class="filter-group"><span class="filter-label">${{esc(g.label)}}</span><div class="chips" data-group="${{i}}"></div></div>`
+        `<div class="ke-dropdown expl-dd" data-group="${{i}}">`+
+          `<button type="button" class="ke-dd-toggle" aria-haspopup="listbox" aria-expanded="false">`+
+            `<span class="expl-dd-label" data-base="${{esc(g.label)}}">${{esc(g.label)}}</span>`+
+            `<span class="ke-dd-caret">▾</span>`+
+          `</button>`+
+          `<div class="ke-dd-panel" hidden><div class="ke-dd-list"></div></div>`+
+        `</div>`
       ).join('');
       EXPLORER_FILTER_GROUPS.forEach((g,i) => {{
         const set = new Set();
         explorerFilterState.set(g.id, set);
-        buildChips(host.querySelector(`.chips[data-group="${{i}}"]`), g.chips.map(c=>c.label), set);
+        wireExplorerDropdown(host.querySelector(`.expl-dd[data-group="${{i}}"]`), g, set);
       }});
     }}
+    document.addEventListener('click', e=>{{ if (!e.target.closest('#explorerFilterBar .expl-dd')) closeAllExplDropdowns(); }});
+    document.addEventListener('keydown', e=>{{ if (e.key==='Escape') closeAllExplDropdowns(); }});
     function explorerRowMatches(row) {{
       const name=String(row.campaign_name||'').toLowerCase();
       for (const g of EXPLORER_FILTER_GROUPS) {{
