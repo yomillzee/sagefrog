@@ -361,12 +361,19 @@ def sync_campaign_metadata_and_rebuild_mart(
     account_id_clean = str(account_id).strip().split(":")[-1]
     project = _project_id()
     creds = _routed_credentials_env()
-    id_rows = bigquery_service.run_query(
-        _campaign_ids_sql(start=start, end=end, account_id=account_id_clean),
-        project_id=project,
-        credentials_env=creds,
-        max_rows=10000,
-    )
+    # The campaign-level tables (campaign_daily / campaigns / creative_metadata)
+    # are produced by the Penn LinkedIn pipeline, not the connector sync — a
+    # connector-onboarded client only has account-level raw_linkedin_ads.metrics_daily.
+    # Guard both seed queries so a missing table doesn't 404 the whole sync.
+    try:
+        id_rows = bigquery_service.run_query(
+            _campaign_ids_sql(start=start, end=end, account_id=account_id_clean),
+            project_id=project,
+            credentials_env=creds,
+            max_rows=10000,
+        )
+    except Exception:
+        id_rows = []
     # Union with campaigns referenced by synced creatives so newly created ad
     # sets (not yet in campaign_daily) still get their name + group fetched.
     try:
@@ -383,6 +390,12 @@ def sync_campaign_metadata_and_rebuild_mart(
         for row in list(id_rows) + list(creative_id_rows)
         if row.get("campaign_id")
     })
+    if not campaign_ids:
+        # No campaign-level source tables for this client (connector-only, account
+        # metrics only). Nothing to enrich or rebuild — skip cleanly so the
+        # surrounding connector sync (metrics_daily + paid-media mart views)
+        # completes instead of failing.
+        return {"enabled": True, "skipped": "no_campaign_level_tables", "campaign_ids": 0, "metadata_rows": 0}
     metadata_by_id = _campaign_metadata_from_postgres(
         account_id=account_id_clean,
         start=start,

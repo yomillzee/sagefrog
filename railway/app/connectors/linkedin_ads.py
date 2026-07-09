@@ -45,7 +45,13 @@ class LinkedInAdsConnector(ConnectorHandler):
                 daily_rows = linkedin_service.fetch_campaign_daily_metrics(
                     account_id, start=start, end=end
                 )
-                mirrored = bigquery_warehouse.mirror_metrics_daily_batch(
+                # Write campaign-level rows to raw_linkedin_ads.campaign_daily
+                # (same table Google writes). Everything downstream — the Overview
+                # mart (create_paid_media_mart_views) and the campaign-metadata /
+                # explorer sync (sync_campaign_metadata_and_rebuild_mart) — reads
+                # campaign_daily, so mirroring to the account-level metrics_daily
+                # left those 404-ing on a table that never got created.
+                mirrored = bigquery_warehouse.mirror_campaign_daily_batch(
                     "linkedin", account_id, daily_rows
                 )
                 rows_written += mirrored.get("rows_upserted") or 0
