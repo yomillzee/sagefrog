@@ -20,7 +20,11 @@ from dashboard.renderers.bigquery_settings_renderer import render_bigquery_setti
 from dashboard.renderers.analytics_renderer import render_analytics_page
 from dashboard.renderers.gtm_renderer import render_gtm_page
 from dashboard.renderers.bigquery_dashboard_renderer import render_bigquery_dashboard_page
-from dashboard.routes.helpers import penn_html_session_kwargs, session_can_switch_clients
+from dashboard.routes.helpers import (
+    penn_html_session_kwargs,
+    session_can_switch_clients,
+    validate_client_slug,
+)
 from security import configured_api_key, is_production
 
 router = APIRouter()
@@ -251,6 +255,47 @@ def nixon_gtm_dashboard(request: Request, key: str | None = None):
     return HTMLResponse(
         render_gtm_page(
             client_slug="nixon-bq-test",
+            access_key=key,
+            use_session=False,
+            session_email=None,
+            session_is_admin=False,
+        )
+    )
+
+
+@router.get(
+    "/dashboard/{client_slug}/gtm",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def client_gtm_dashboard(client_slug: str, request: Request, key: str | None = None):
+    """Event Tracking (GTM live-tags) page for any bigquery_nixon client.
+
+    Registered after the nixon-specific /dashboard/nixon-bq-test/gtm route above,
+    so that literal path still hits its own handler (which auths under "nixon").
+    """
+    slug = validate_client_slug(client_slug)
+    import client_dashboard_config as _cdc
+
+    db_cfg = _cdc.get_config(slug)
+    if not (db_cfg and db_cfg.dashboard_mode == "bigquery_nixon"):
+        raise HTTPException(status_code=404, detail="Not found")
+    label = (db_cfg.label or slug).strip() or slug
+
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        if isinstance(auth, RedirectResponse):
+            return auth
+        return HTMLResponse(
+            render_gtm_page(client_slug=slug, label=label, **penn_html_session_kwargs(auth))
+        )
+
+    if not web_auth.legacy_dashboard_key_ok(key):
+        raise HTTPException(status_code=401, detail="Invalid or missing dashboard key.")
+    return HTMLResponse(
+        render_gtm_page(
+            client_slug=slug,
+            label=label,
             access_key=key,
             use_session=False,
             session_email=None,

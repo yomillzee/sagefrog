@@ -1,4 +1,4 @@
-"""GTM live-tags audit page for nixon-bq-test."""
+"""GTM live-tags audit page for any bigquery_nixon client (client_slug-scoped)."""
 
 from __future__ import annotations
 
@@ -23,11 +23,13 @@ _ICON_REFRESH  = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" str
 def render_gtm_page(
     *,
     client_slug: str = "nixon-bq-test",
+    label: str = "Nixon Medical",
     access_key: str | None = None,
     use_session: bool = False,
     session_email: str | None = None,
     session_is_admin: bool = False,
 ) -> str:
+    import html
     from urllib.parse import urlencode
 
     def _url(path: str) -> str:
@@ -35,12 +37,13 @@ def render_gtm_page(
             return path
         return f"{path}?{urlencode({'key': access_key})}"
 
-    main_url = _url("/dashboard/nixon-bq-test")
+    title_label = html.escape(label or client_slug)
+    main_url = _url(f"/dashboard/{client_slug}")
 
-    pflags = platform_nav_flags("nixon-bq-test")
+    pflags = platform_nav_flags(client_slug)
     lead_tracking_link = ""
     if pflags.get("show_lead_tracking"):
-        lead_tracking_url = _url("/dashboard/nixon-bq-test/lead-tracking")
+        lead_tracking_url = _url(f"/dashboard/{client_slug}/lead-tracking")
         lead_tracking_link = (
             f'<a class="dash-view-btn" href="{lead_tracking_url}">'
             f'{_ICON_LEADS}<span>Lead Tracking</span></a>'
@@ -58,8 +61,8 @@ def render_gtm_page(
     """
 
     sidebar_html = render_sidebar(
-        client_slug="nixon-bq-test",
-        label="Nixon Medical",
+        client_slug=client_slug,
+        label=label,
         active_nav="event-tracking",
         access_key=access_key,
         use_session=use_session,
@@ -81,7 +84,7 @@ def render_gtm_page(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Nixon — Event Tracking</title>
+  <title>{title_label} — Event Tracking</title>
   {favicon_head_html()}
   <style>
     :root {{ --bg:#eef2f7; --card:#fff; --line:#e2e8f0; --navy:#0a2540; --blue:#1769aa; --accent:#1d6fd0; --muted:#6b7a90; --bad:#b42318; --ok:#0a7f3f; --sidebar-from:#0a2540; --sidebar-to:#123456; --radius:14px; --radius-sm:9px; --shadow:0 1px 2px rgba(16,33,67,.04),0 4px 16px rgba(16,33,67,.05); }}
