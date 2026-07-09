@@ -75,11 +75,9 @@ def render_gtm_page(
 
     api_url       = f"/api/clients/{client_slug}/gtm/live-tags"
     api_refresh   = f"{api_url}?refresh=true"
-    active_ke_api = f"/api/clients/{client_slug}/ga4/active-key-events"
     if access_key:
         api_url       = f"{api_url}?key={access_key}"
         api_refresh   = f"{api_refresh}&key={access_key}"
-        active_ke_api = f"{active_ke_api}?key={access_key}"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -151,6 +149,10 @@ def render_gtm_page(
     .badge-ke {{ background:#dcfce7; color:#166534; }}
     .event-name {{ font-family:monospace; font-size:.8rem; color:#0f172a; }}
     .event-none {{ color:var(--muted); font-size:.8rem; }}
+    .col-ke {{ width:78px; text-align:center; white-space:nowrap; }}
+    .col-ke input {{ width:16px; height:16px; cursor:pointer; accent-color:var(--accent); }}
+    tr.is-key-event td {{ background:#f0fdf4; }}
+    tr.is-key-event:hover td {{ background:#e7f9ee; }}
   </style>
 </head>
 <body>
@@ -172,8 +174,7 @@ def render_gtm_page(
         <div class="card">
           <div class="tag-toolbar">
             <div class="chips" id="viewChips">
-              <button type="button" class="chip active" data-view="key">Key-event tags</button>
-              <button type="button" class="chip" data-view="ga4">GA4 events</button>
+              <button type="button" class="chip active" data-view="ga4">GA4 event tags</button>
               <button type="button" class="chip" data-view="all">All tags</button>
             </div>
             <span class="toolbar-note" id="filterNote"></span>
@@ -190,14 +191,22 @@ def render_gtm_page(
 <script>
 const API_URL      = {repr(api_url)};
 const API_REFRESH  = {repr(api_refresh)};
-const ACTIVE_KE_API = {repr(active_ke_api)};
+// localStorage key is client-scoped so key-event marks don't leak across portals.
+const KE_STORAGE_KEY = {repr(f"gtm_key_events_{client_slug}")};
 
-// Shared state: all normalised tags, the client's active GA4 key events, and
-// the current view filter (default: only GA4-event tags firing a key event).
+// Shared state: all normalised tags, the current view, and the set of tag names
+// the user has marked as key events (persisted locally in this browser).
 let allRows = [];
-let keyEvents = new Set();
-let keyEventsOk = false;
-let viewMode = 'key';
+let viewMode = 'ga4';
+let keyEventTags = loadKeyEventTags();
+
+function loadKeyEventTags() {{
+  try {{ const s = localStorage.getItem(KE_STORAGE_KEY); return new Set(s ? JSON.parse(s) : []); }}
+  catch (e) {{ return new Set(); }}
+}}
+function saveKeyEventTags() {{
+  try {{ localStorage.setItem(KE_STORAGE_KEY, JSON.stringify([...keyEventTags])); }} catch (e) {{}}
+}}
 
 const TAG_BADGE = {{
   'Google Analytics': 'ga4',
@@ -239,6 +248,7 @@ function renderTable(rows) {{
   }}
   const head = '<tr>'
     + '<th class="col-dot"></th>'
+    + '<th class="col-ke">Key event</th>'
     + '<th>Tag</th>'
     + '<th class="col-consent"></th>'
     + '<th>Type</th>'
@@ -250,6 +260,11 @@ function renderTable(rows) {{
     const dot = r.paused
       ? '<span class="status-dot paused" title="Paused"></span>'
       : '<span class="status-dot active" title="Active"></span>';
+    const isKey = r.is_ga4_event && keyEventTags.has(r.tag_name);
+    // Only GA4 event tags can be marked as key events.
+    const keCell = r.is_ga4_event
+      ? `<input type="checkbox" data-ke-tag="${{esc(r.tag_name || '')}}"${{isKey ? ' checked' : ''}} aria-label="Mark as key event">`
+      : '';
     const name = `<span class="tag-name">${{esc(r.tag_name || '')}}</span>`;
     const shield = r.consent_status === 'required'
       ? `<span class="consent-icon" title="Consent required before firing">${{SHIELD_SVG}}</span>`
@@ -259,8 +274,7 @@ function renderTable(rows) {{
     let evt = '<span class="event-none">—</span>';
     if (r.is_ga4_event) {{
       const en = r.event_name || '';
-      const isKey = en && keyEvents.has(en);
-      const keBadge = isKey ? ' <span class="badge badge-ke" title="Active GA4 key event">key event</span>' : '';
+      const keBadge = isKey ? ' <span class="badge badge-ke" title="Marked as a key event">key event</span>' : '';
       evt = en ? `<span class="event-name">${{esc(en)}}</span>${{keBadge}}` : '<span class="event-none">(no event name)</span>';
     }}
     const triggers = r.triggers || [];
@@ -271,8 +285,9 @@ function renderTable(rows) {{
     const logic = allCriteria.length
       ? renderCriteria(allCriteria)
       : '<span style="color:var(--muted);font-size:.8rem">—</span>';
-    return `<tr>
+    return `<tr class="${{isKey ? 'is-key-event' : ''}}">
       <td class="col-dot">${{dot}}</td>
+      <td class="col-ke">${{keCell}}</td>
       <td>${{name}}</td>
       <td class="col-consent">${{shield}}</td>
       <td>${{typ}}</td>
@@ -286,27 +301,19 @@ function renderTable(rows) {{
 
 // Filter allRows by the current view and render, with a status note.
 function applyView() {{
-  let rows;
-  if (viewMode === 'key') {{
-    rows = keyEventsOk
-      ? allRows.filter(r => r.is_ga4_event && r.event_name && keyEvents.has(r.event_name))
-      : allRows.filter(r => r.is_ga4_event);
-  }} else if (viewMode === 'ga4') {{
-    rows = allRows.filter(r => r.is_ga4_event);
-  }} else {{
-    rows = allRows;
-  }}
+  const rows = viewMode === 'all' ? allRows : allRows.filter(r => r.is_ga4_event);
   document.getElementById('tableContainer').innerHTML = renderTable(rows);
+  updateNote();
+}}
+
+function updateNote() {{
   const note = document.getElementById('filterNote');
-  if (viewMode === 'key') {{
-    note.textContent = keyEventsOk
-      ? `${{rows.length}} GA4 tag(s) firing an active key event · ${{keyEvents.size}} key event(s) from GA4 (last 90d)`
-      : `Couldn't load GA4 key events — showing all GA4 event tags instead.`;
-  }} else if (viewMode === 'ga4') {{
-    note.textContent = `${{rows.length}} GA4 event tag(s)`;
-  }} else {{
-    note.textContent = `${{rows.length}} tag(s) total`;
-  }}
+  if (!note) return;
+  const ga4 = allRows.filter(r => r.is_ga4_event).length;
+  const marked = allRows.filter(r => r.is_ga4_event && keyEventTags.has(r.tag_name)).length;
+  note.textContent = (viewMode === 'all'
+    ? `${{allRows.length}} tag(s) · ${{ga4}} GA4 event tag(s)`
+    : `${{ga4}} GA4 event tag(s)`) + ` · ${{marked}} marked as key event${{marked === 1 ? '' : 's'}}`;
 }}
 
 document.getElementById('viewChips').addEventListener('click', ev => {{
@@ -315,6 +322,29 @@ document.getElementById('viewChips').addEventListener('click', ev => {{
   viewMode = btn.dataset.view;
   document.querySelectorAll('#viewChips .chip').forEach(b => b.classList.toggle('active', b.dataset.view === viewMode));
   applyView();
+}});
+
+// Delegated so it survives table re-renders: toggle a tag's key-event mark.
+document.getElementById('tableContainer').addEventListener('change', ev => {{
+  const cb = ev.target.closest('input[data-ke-tag]');
+  if (!cb) return;
+  const name = cb.dataset.keTag;
+  if (cb.checked) keyEventTags.add(name); else keyEventTags.delete(name);
+  saveKeyEventTags();
+  const row = cb.closest('tr');
+  if (row) {{
+    row.classList.toggle('is-key-event', cb.checked);
+    const evtCell = row.children[5];  // "GA4 event" column
+    if (evtCell) {{
+      const existing = evtCell.querySelector('.badge-ke');
+      if (cb.checked && !existing) {{
+        evtCell.insertAdjacentHTML('beforeend', ' <span class="badge badge-ke" title="Marked as a key event">key event</span>');
+      }} else if (!cb.checked && existing) {{
+        existing.remove();
+      }}
+    }}
+  }}
+  updateNote();
 }});
 
 function esc(s) {{
@@ -330,10 +360,7 @@ async function loadTags(forceRefresh = false) {{
   pageMeta.textContent = 'Loading…';
   try {{
     const url = forceRefresh ? API_REFRESH : API_URL;
-    const [resp, keResp] = await Promise.all([
-      fetch(url),
-      fetch(ACTIVE_KE_API).catch(() => null),
-    ]);
+    const resp = await fetch(url);
     if (!resp.ok) {{
       const err = await resp.json().catch(() => ({{detail: resp.statusText}}));
       container.innerHTML = `<div class="error-msg">Error ${{resp.status}}: ${{esc(err.detail || err.message || resp.statusText)}}</div>`;
@@ -342,13 +369,6 @@ async function loadTags(forceRefresh = false) {{
     }}
     const data = await resp.json();
     allRows = data.rows || [];
-    // Active GA4 key events (fail-open: view falls back to all GA4 event tags).
-    keyEvents = new Set();
-    keyEventsOk = false;
-    if (keResp && keResp.ok) {{
-      const ke = await keResp.json().catch(() => null);
-      if (ke && Array.isArray(ke.event_names)) {{ keyEvents = new Set(ke.event_names); keyEventsOk = true; }}
-    }}
     const active = allRows.filter(r => !r.paused).length;
     const ver   = data.container_version ? `v${{data.container_version}}` : '';
     const fetched = data.fetched_at ? new Date(data.fetched_at).toLocaleString() : '';
