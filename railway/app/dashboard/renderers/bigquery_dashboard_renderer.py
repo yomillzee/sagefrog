@@ -12,6 +12,7 @@ from dashboard.renderers.base_layout import (
     favicon_head_html,
     dashboard_sidebar_view_nav_html,
     render_sidebar,
+    platform_nav_flags,
 )
 from dashboard.renderers import pagespeed_renderer
 
@@ -178,6 +179,12 @@ def render_bigquery_dashboard_page(
         pagespeed_strategies_json = json.dumps(_ps.synced_strategies())
     except Exception:
         pagespeed_strategies_json = '["desktop"]'
+    # Whether the Overview home shows the Site Performance scorecard — gated on
+    # the pagespeed connector being connected, same as the sidebar nav button.
+    try:
+        show_pagespeed = bool(platform_nav_flags(client_slug).get("show_pagespeed"))
+    except Exception:
+        show_pagespeed = False
     # Campaign Explorer filter chips: client config if set, else Nixon defaults.
     # Injected as JSON for the page JS to build the chip rows + match campaigns.
     # Escape "<" so a chip label can't break out of the <script> block.
@@ -267,17 +274,52 @@ def render_bigquery_dashboard_page(
     ov_panels = """
       <section class="ov-panel">
         <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><span class="status" id="ovSessionsStatus"></span><button type="button" class="ov-more" data-goto="analytics">See more →</button></div></div>
+        <div class="filter-group" style="margin-bottom:10px">
+          <span class="filter-label">Interval</span>
+          <div class="chips" id="ovSessionsGranChips">
+            <button type="button" class="chip active" data-gran="daily">Daily</button>
+            <button type="button" class="chip" data-gran="weekly">Weekly</button>
+          </div>
+        </div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovSessionsTrend"></canvas></div></div>
+        <div class="cmp-legend" id="ovSessionsLegend"></div>
       </section>
 
       <section class="ov-panel">
         <div class="sec-head"><h2>AI traffic</h2><div class="ov-actions"><span class="status" id="ovAiStatus"></span><button type="button" class="ov-more" data-goto="ai_traffic">See more →</button></div></div>
+        <div class="filter-group" style="margin-bottom:10px">
+          <span class="filter-label">Interval</span>
+          <div class="chips" id="ovAiGranChips">
+            <button type="button" class="chip active" data-gran="daily">Daily</button>
+            <button type="button" class="chip" data-gran="weekly">Weekly</button>
+          </div>
+        </div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovAiTrend"></canvas></div></div>
+        <div class="cmp-legend" id="ovAiLegend"></div>
       </section>
 
       <section class="ov-panel">
         <div class="sec-head"><h2>Search Console</h2><div class="ov-actions"><span class="status" id="ovGscStatus"></span><button type="button" class="ov-more" data-goto="gsc">See more →</button></div></div>
-        <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovGscTrend"></canvas></div></div>
+        <div class="two-col" style="margin-top:0">
+          <div class="col-panel">
+            <h3>Branded queries</h3>
+            <div class="muted" style="font-size:.74rem;margin-bottom:6px">Weekly avg. position — lower is better</div>
+            <div class="chart-canvas-host" style="height:180px"><canvas id="ovGscBrandedTrend"></canvas></div>
+            <div class="muted" id="ovGscBrandedNote" style="font-size:.74rem;margin-top:6px"></div>
+          </div>
+          <div class="col-panel">
+            <h3>Target keywords</h3>
+            <div class="muted" style="font-size:.74rem;margin-bottom:6px">Weekly avg. position — lower is better</div>
+            <div class="chart-canvas-host" style="height:180px"><canvas id="ovGscTargetTrend"></canvas></div>
+            <div class="muted" id="ovGscTargetNote" style="font-size:.74rem;margin-top:6px"></div>
+          </div>
+        </div>
+      </section>"""
+    if show_pagespeed:
+        ov_panels += """
+      <section class="ov-panel">
+        <div class="sec-head"><h2>Site performance</h2><div class="ov-actions"><span class="status" id="ovPsStatus"></span><button type="button" class="ov-more" data-goto="site_performance">See more →</button></div></div>
+        <div class="cards" id="ovPsScores"></div>
       </section>"""
     if has_paid_ads:
         paid_panel = """
@@ -2403,29 +2445,138 @@ def render_bigquery_dashboard_page(
       if (modules.demographics)     loaders.push(loadDemographics);
       loaders.forEach((fn,i)=>setTimeout(fn, i*250));
     }}
-    // ---- Overview home: one trend per section, each with a "See more" jump ----
+    // ---- Overview home: a widget per section, each with a "See more" jump ----
+    // The Website analytics + AI traffic panels overlay the equivalent prior
+    // period (compareStart/compareEnd) and support a Daily/Weekly interval
+    // toggle; both re-render from cache without refetching. Search Console shows
+    // branded vs. target keyword weekly avg-position trends side by side.
+    let ovSessionsGran='daily', ovAiGran='daily';
+    let ovSessionsCache={{cur:[],prev:[]}}, ovAiCache={{cur:[],prev:[]}};
+    // Collapse daily rows to one {{date,value}} per date (AI rows are per-platform,
+    // so this also sums sessions across assistants for the total-traffic line).
+    function ovSumByDate(rows, key) {{
+      const m=new Map();
+      for (const r of (rows||[])) {{ const d=String(r.date); m.set(d,(m.get(d)||0)+num(r[key])); }}
+      return [...m.keys()].sort().map(d=>({{date:d, value:m.get(d)}}));
+    }}
+    // Re-bucket {{date,value}} rows into Monday-start weeks (client-side, no refetch).
+    function ovAggregateWeekly(rows) {{
+      if (!rows||!rows.length) return [];
+      const out=[]; let cur=null;
+      for (const r of rows) {{
+        const dt=new Date(String(r.date)+'T00:00:00');
+        const dow=(dt.getDay()+6)%7;                 // 0 = Monday
+        const mon=new Date(dt); mon.setDate(dt.getDate()-dow);
+        const key=`${{mon.getFullYear()}}-${{String(mon.getMonth()+1).padStart(2,'0')}}-${{String(mon.getDate()).padStart(2,'0')}}`;
+        if (!cur||cur.date!==key) {{ cur={{date:key, value:0}}; out.push(cur); }}
+        cur.value+=num(r.value);
+      }}
+      return out;
+    }}
+    // Current-vs-previous line, aligned by index (previous mapped onto the current
+    // labels), mirroring the Website Analytics sessions hero chart.
+    function ovDrawCompareTrend(chartId, legendId, curRows, prevRows, color, unit) {{
+      const n=curRows.length;
+      const lg=document.getElementById(legendId);
+      if (!n) {{ __destroyChart(chartId); if(lg) lg.innerHTML=''; return; }}
+      const vals=curRows.map(d=>num(d.value));
+      const prevVals=(prevRows||[]).map(d=>num(d.value));
+      const hasPrev=prevVals.length>0;
+      const labels=curRows.map(d=>String(d.date).slice(5));
+      const series=[];
+      if (hasPrev) series.push({{label:'Previous', data:prevVals.slice(0,n), color:'#9aa7bd', dashed:true}});
+      series.push({{label:'Current', data:vals, color, fill:true}});
+      lineChart(chartId, labels, series, {{
+        yFmt: v=>count(v),
+        tooltip: {{ label: c=>`${{c.dataset.label}}: ${{count(c.raw)}} ${{unit}}` }},
+      }});
+      if (lg) {{
+        const curTot=vals.reduce((a,b)=>a+b,0), prevTot=prevVals.reduce((a,b)=>a+b,0);
+        const delta=(hasPrev&&prevTot)?((curTot-prevTot)/prevTot*100):null;
+        const deltaTxt=delta==null?'':` <span class="cmp-delta ${{delta>=0?'up':'down'}}">${{delta>=0?'+':''}}${{delta.toFixed(0)}}%</span>`;
+        lg.innerHTML=`<span class="cmp-item"><span class="cmp-swatch cur"></span>Current · ${{count(curTot)}} ${{unit}}${{deltaTxt}}</span>`
+          + (hasPrev?`<span class="cmp-item"><span class="cmp-swatch prev"></span>Previous · ${{count(prevTot)}}</span>`:'');
+      }}
+    }}
+    function ovRenderSessions() {{
+      const c=ovSessionsCache, wk=ovSessionsGran==='weekly';
+      ovDrawCompareTrend('ovSessionsTrend','ovSessionsLegend',
+        wk?ovAggregateWeekly(c.cur):c.cur, wk?ovAggregateWeekly(c.prev):c.prev, '#1769aa', 'sessions');
+    }}
+    function ovRenderAi() {{
+      const c=ovAiCache, wk=ovAiGran==='weekly';
+      ovDrawCompareTrend('ovAiTrend','ovAiLegend',
+        wk?ovAggregateWeekly(c.cur):c.cur, wk?ovAggregateWeekly(c.prev):c.prev, '#7c3aed', 'sessions');
+    }}
+    // Site Performance scorecard (the four Lighthouse scores) — reuses psScoreCard
+    // + PAGESPEED_TARGETS from the Site Performance pane's JS. Emitted only when
+    // the pagespeed connector is present (Python gates the #ovPsScores element).
+    async function loadOverviewPagespeed() {{
+      const host=document.getElementById('ovPsScores');
+      if (!host) return;
+      setStatus('ovPsStatus','Loading…');
+      host.innerHTML=skelCards(4);
+      const strat=(typeof PS_STRATEGIES!=='undefined'&&PS_STRATEGIES.length)?PS_STRATEGIES[0]:'desktop';
+      const url=PAGESPEED_API+(PAGESPEED_API.includes('?')?'&':'?')+'strategy='+strat;
+      try {{
+        const p=await getJson(url);
+        if (!p||!p.url) {{ host.innerHTML=''; setStatus('ovPsStatus','No PageSpeed data yet'); return; }}
+        const scores=[['Performance','performance',p.performance],['Accessibility','accessibility',p.accessibility],
+          ['Best Practices','best_practices',p.best_practices],['SEO','seo',p.seo]];
+        host.innerHTML=scores.map(([l,k,v])=>psScoreCard(l,v,PAGESPEED_TARGETS[k])).join('');
+        setStatus('ovPsStatus', p.metric_date?('measured '+p.metric_date):'');
+      }} catch(err) {{ host.innerHTML=''; setStatus('ovPsStatus', err.message||String(err), true); }}
+    }}
     async function loadOverviewHome() {{
       setStatus('ovSessionsStatus','Loading…'); setStatus('ovAiStatus','Loading…'); setStatus('ovGscStatus','Loading…');
-      const byDate=rows=>rows.slice().sort((a,b)=>String(a.date)<String(b.date)?-1:1);
-      const [traffic, aiDaily, gsc] = await Promise.all([
-        getJson(withDates(TRAFFIC_ACQ_API)).catch(()=>({{daily:[]}})),
-        getJson(withDates(AI_TRAFFIC_DAILY_API)).then(d=>d.rows||[]).catch(()=>[]),
-        getJson(withDates(GSC_API)).catch(()=>({{daily:[]}})),
+      const hasPrev=!!compareStart;
+      const [traffic, trafficPrev, aiCur, aiPrev, branded, target] = await Promise.all([
+        getJson(withDatesRange(TRAFFIC_ACQ_API, currentStart, currentEnd)).catch(()=>({{daily:[]}})),
+        hasPrev ? getJson(withDatesRange(TRAFFIC_ACQ_API, compareStart, compareEnd)).catch(()=>null) : Promise.resolve(null),
+        getJson(withDatesRange(AI_TRAFFIC_DAILY_API, currentStart, currentEnd)).then(d=>d.rows||[]).catch(()=>[]),
+        hasPrev ? getJson(withDatesRange(AI_TRAFFIC_DAILY_API, compareStart, compareEnd)).then(d=>d.rows||[]).catch(()=>[]) : Promise.resolve([]),
+        fetchKeywordMatches(gscBrandedRoots),
+        fetchKeywordMatches(gscTargetKeywords),
       ]);
-      const sd=byDate(traffic.daily||[]);
-      if (sd.length) {{
-        lineChart('ovSessionsTrend', sd.map(d=>String(d.date).slice(5)),
-          [{{label:'Sessions', data:sd.map(d=>num(d.sessions)), color:'#1769aa', fill:true, fmt:count}}], {{}});
-        setStatus('ovSessionsStatus', count(sd.reduce((s,d)=>s+num(d.sessions),0))+' sessions');
-      }} else {{ __destroyChart('ovSessionsTrend'); setStatus('ovSessionsStatus','No data'); }}
-      renderAiTrend(aiDaily, 'ovAiTrend', 'ovAiStatus');
-      const gd=byDate(gsc.daily||[]);
-      if (gd.length) {{
-        lineChart('ovGscTrend', gd.map(d=>String(d.date).slice(5)),
-          [{{label:'Clicks', data:gd.map(d=>num(d.clicks)), color:'#0a7f3f', fill:true, fmt:count}}], {{}});
-        setStatus('ovGscStatus', count(gd.reduce((s,d)=>s+num(d.clicks),0))+' clicks');
-      }} else {{ __destroyChart('ovGscTrend'); setStatus('ovGscStatus','No data'); }}
+      // Website analytics — sessions, current vs previous.
+      ovSessionsCache={{ cur: ovSumByDate(traffic.daily||[],'sessions'), prev: ovSumByDate((trafficPrev&&trafficPrev.daily)||[],'sessions') }};
+      ovRenderSessions();
+      const sTot=ovSessionsCache.cur.reduce((s,d)=>s+num(d.value),0);
+      setStatus('ovSessionsStatus', sTot?count(sTot)+' sessions':'No data');
+      // AI traffic — total AI sessions, current vs previous.
+      ovAiCache={{ cur: ovSumByDate(aiCur,'sessions'), prev: ovSumByDate(aiPrev,'sessions') }};
+      ovRenderAi();
+      const aTot=ovAiCache.cur.reduce((s,d)=>s+num(d.value),0);
+      setStatus('ovAiStatus', aTot?count(aTot)+' sessions':'No AI traffic');
+      // Search Console — branded & target keyword weekly avg-position trends.
+      drawKeywordTrend('ovGscBrandedTrend', branded.weekly, 'avg_position', '#1d6fd0', true);
+      drawKeywordTrend('ovGscTargetTrend', target.weekly, 'avg_position', '#7c3aed', true);
+      const noteFor=(roots, weekly)=> !roots.length ? 'Set keywords on the Search Console tab.'
+        : (!(weekly||[]).length ? 'No matching queries in this range.' : '');
+      const bn=document.getElementById('ovGscBrandedNote'); if(bn) bn.textContent=noteFor(gscBrandedRoots, branded.weekly);
+      const tn=document.getElementById('ovGscTargetNote'); if(tn) tn.textContent=noteFor(gscTargetKeywords, target.weekly);
+      setStatus('ovGscStatus', (!gscBrandedRoots.length && !gscTargetKeywords.length) ? ''
+        : `${{gscBrandedRoots.length}} branded · ${{gscTargetKeywords.length}} target`);
+      // Site performance scorecard (only present when the connector is on).
+      loadOverviewPagespeed();
     }}
+    // Daily/Weekly interval toggles for the two overview trend panels.
+    document.querySelectorAll('#ovSessionsGranChips .chip').forEach(btn=>
+      btn.addEventListener('click',()=>{{
+        if (btn.dataset.gran===ovSessionsGran) return;
+        ovSessionsGran=btn.dataset.gran;
+        document.querySelectorAll('#ovSessionsGranChips .chip').forEach(b=>b.classList.toggle('active', b===btn));
+        ovRenderSessions();
+      }})
+    );
+    document.querySelectorAll('#ovAiGranChips .chip').forEach(btn=>
+      btn.addEventListener('click',()=>{{
+        if (btn.dataset.gran===ovAiGran) return;
+        ovAiGran=btn.dataset.gran;
+        document.querySelectorAll('#ovAiGranChips .chip').forEach(b=>b.classList.toggle('active', b===btn));
+        ovRenderAi();
+      }})
+    );
     document.querySelectorAll('.ov-more[data-goto]').forEach(btn=>
       btn.addEventListener('click', ()=>switchTab(btn.dataset.goto))
     );
