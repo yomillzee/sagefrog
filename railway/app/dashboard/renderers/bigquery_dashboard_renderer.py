@@ -600,14 +600,13 @@ def render_bigquery_dashboard_page(
     .nr-legend {{ display:flex; gap:14px; margin-top:5px; }}
     .nr-legend-item {{ display:flex; align-items:center; gap:5px; font-size:.74rem; color:var(--muted); }}
     .nr-legend-swatch {{ width:10px; height:10px; border-radius:2px; }}
-    /* ---- Traffic: single 100% channel bar ---- */
+    /* ---- Traffic: single 100% channel bar (hover for per-segment label) ---- */
+    .stack-wrap {{ position:relative; }}
     .stack-bar {{ display:flex; width:100%; height:26px; border-radius:6px; overflow:hidden; background:var(--line-soft); }}
     .stack-seg {{ height:100%; min-width:2px; cursor:default; transition:filter .12s; }}
     .stack-seg:hover {{ filter:brightness(1.08); }}
-    .stack-legend {{ display:flex; flex-wrap:wrap; gap:8px 16px; margin-top:12px; }}
-    .stack-legend-item {{ display:inline-flex; align-items:center; gap:7px; font-size:.78rem; color:var(--navy); }}
-    .stack-legend-swatch {{ width:11px; height:11px; border-radius:3px; flex:0 0 auto; }}
-    .stack-legend-pct {{ color:var(--muted); font-variant-numeric:tabular-nums; }}
+    .stack-tip {{ position:absolute; bottom:calc(100% + 7px); transform:translateX(-50%); background:var(--navy); color:#fff; font-size:.74rem; font-weight:700; padding:5px 9px; border-radius:6px; white-space:nowrap; pointer-events:none; box-shadow:var(--shadow); z-index:5; }}
+    .stack-tip[hidden] {{ display:none; }}
     /* ---- Demographics: age toggle, gender split, state tile map ---- */
     .col-panel-head {{ display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:12px; }}
     .col-panel-head h3 {{ margin:0; }}
@@ -2138,6 +2137,8 @@ def render_bigquery_dashboard_page(
     const CHART_PALETTE=['#1d6fd0','#7c3aed','#0a7f3f','#e08a1e','#d6336c','#0d9488','#5661b3','#b4530a','#3b7ddd','#8a4fbe'];
     // Traffic → single 100% bar, one segment per channel; hover shows channel,
     // sessions and share. A legend under the bar lists each channel + %.
+    // Single 100% bar, one segment per channel. No legend — hovering a segment
+    // shows its channel, sessions and share in a floating tooltip.
     function renderChannelStacked(rows) {{
       const el=document.getElementById('channelBars');
       if (!rows||!rows.length) {{ el.innerHTML='<div class="empty">No data.</div>'; return; }}
@@ -2145,13 +2146,19 @@ def render_bigquery_dashboard_page(
       const total=ordered.reduce((s,r)=>s+num(r.sessions),0)||1;
       const seg=ordered.map((r,i)=>{{
         const p=num(r.sessions)/total*100, color=CHART_PALETTE[i%CHART_PALETTE.length];
-        return`<div class="stack-seg" style="width:${{p.toFixed(2)}}%;background:${{color}}" title="${{esc(r.channel)}} — ${{count(r.sessions)}} sessions (${{p.toFixed(1)}}%)"></div>`;
+        return`<div class="stack-seg" style="width:${{p.toFixed(2)}}%;background:${{color}}" data-label="${{esc(r.channel)}}" data-detail="${{count(r.sessions)}} sessions · ${{p.toFixed(1)}}%"></div>`;
       }}).join('');
-      const legend=ordered.map((r,i)=>{{
-        const p=num(r.sessions)/total*100, color=CHART_PALETTE[i%CHART_PALETTE.length];
-        return`<span class="stack-legend-item"><span class="stack-legend-swatch" style="background:${{color}}"></span>${{esc(r.channel)}} <span class="stack-legend-pct">${{count(r.sessions)}} · ${{p.toFixed(0)}}%</span></span>`;
-      }}).join('');
-      el.innerHTML=`<div class="stack-bar">${{seg}}</div><div class="stack-legend">${{legend}}</div>`;
+      el.innerHTML=`<div class="stack-wrap"><div class="stack-bar">${{seg}}</div><div class="stack-tip" hidden></div></div>`;
+      const wrap=el.querySelector('.stack-wrap'), tip=el.querySelector('.stack-tip');
+      wrap.querySelectorAll('.stack-seg').forEach(s=>{{
+        s.addEventListener('mousemove', e=>{{
+          tip.textContent=s.dataset.label+' — '+s.dataset.detail;
+          tip.hidden=false;
+          const rect=wrap.getBoundingClientRect();
+          tip.style.left=Math.max(0,Math.min(e.clientX-rect.left, rect.width))+'px';
+        }});
+        s.addEventListener('mouseleave', ()=>{{ tip.hidden=true; }});
+      }});
     }}
     // Bar list capped to the top N with a Prev/Next pager for the tail. Shares
     // are computed against the full total so pagination doesn't skew percentages.
