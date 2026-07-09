@@ -721,14 +721,15 @@ def render_bigquery_dashboard_page(
 
       <div class="two-col" style="align-items:start">
       <section id="sec-pages">
-        <div class="sec-head"><h2>Top pages</h2><span class="status" id="pagesStatus"></span></div>
+        <div class="sec-head"><h2>Pages</h2><span class="status" id="pagesStatus"></span></div>
         <input class="page-search" id="pagesSearch" type="search" placeholder="Filter by path…" autocomplete="off">
         <div class="table-wrap"><table id="pagesTable" class="compact"></table></div>
         <div class="pager" id="pagesPager"></div>
       </section>
 
       <section id="sec-landing">
-        <div class="sec-head"><h2>Top landing pages</h2><span class="status" id="landingStatus"></span></div>
+        <div class="sec-head"><h2>Landing Pages</h2><span class="status" id="landingStatus"></span></div>
+        <input class="page-search" id="landingSearch" type="search" placeholder="Filter by path…" autocomplete="off">
         <div class="table-wrap"><table id="landingTable" class="compact"></table></div>
         <div class="pager" id="landingPager"></div>
       </section>
@@ -2268,7 +2269,7 @@ def render_bigquery_dashboard_page(
     // "key events." Default = GA4's own key events; the selection persists per client
     // (admin "Save as default"). Each panel keeps a base row set + a per-row event map
     // so the key-events column recomputes instantly when the selection changes.
-    const LANDING_PER_PAGE=10; let landingPageNum=1, landingRows=[];
+    const LANDING_PER_PAGE=10; let landingPageNum=1, landingRows=[], landingSearchQuery='';
     let landingBaseRows=[];            // from LANDING_PAGES_API
     let landingEventMap={{}};            // page_path -> {{ event_name: count }}
     let trafficSources=[], trafficBaseSources=[], trafficSourceEventMap={{}};   // srcKey -> {{ event_name: count }}
@@ -2373,14 +2374,16 @@ def render_bigquery_dashboard_page(
       document.addEventListener('keydown', e=>{{ if (e.key==='Escape' && !panel.hidden) {{ close(); toggle.focus(); }} }});
     }})();
     function renderLanding() {{
-      const totalPages=Math.max(1,Math.ceil(landingRows.length/LANDING_PER_PAGE));
-      if (landingPageNum>totalPages) landingPageNum=totalPages;
-      const startIdx=(landingPageNum-1)*LANDING_PER_PAGE, rows=landingRows.slice(startIdx,startIdx+LANDING_PER_PAGE);
+      let base=landingRows;
+      if (landingSearchQuery) {{ const q=landingSearchQuery.toLowerCase(); base=base.filter(r=>String(r.page_path).toLowerCase().includes(q)); }}
       const el=document.getElementById('landingTable');
-      if (!rows.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No landing page data for this range.</td></tr></tbody>`; document.getElementById('landingPager').innerHTML=''; return; }}
+      if (!base.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No landing pages match${{landingSearchQuery?' "'+esc(landingSearchQuery)+'"':' this range'}}.</td></tr></tbody>`; setStatus('landingStatus', landingSearchQuery?'No results':''); document.getElementById('landingPager').innerHTML=''; return; }}
+      const totalPages=Math.max(1,Math.ceil(base.length/LANDING_PER_PAGE));
+      if (landingPageNum>totalPages) landingPageNum=totalPages;
+      const startIdx=(landingPageNum-1)*LANDING_PER_PAGE, rows=base.slice(startIdx,startIdx+LANDING_PER_PAGE);
       el.innerHTML=`<thead><tr><th class="left">Landing page</th><th>Sessions</th><th>Users</th><th>New users</th><th>Key events</th><th>KE rate</th><th>Avg engt</th></tr></thead>`+
         `<tbody>${{rows.map(r=>`<tr><td class="left"><span class="page-path">${{esc(r.page_path)}}</span></td><td>${{count(r.sessions)}}</td><td>${{count(r.users)}}</td><td>${{count(r.new_users)}}</td><td>${{count(r.key_events)}}</td><td>${{r.key_event_rate!=null?r.key_event_rate+'%':'—'}}</td><td>${{fmtDuration(r.avg_engagement_seconds)}}</td></tr>`).join('')}}</tbody>`;
-      setStatus('landingStatus',`${{startIdx+1}}–${{startIdx+rows.length}} of ${{landingRows.length}}`);
+      setStatus('landingStatus',`${{startIdx+1}}–${{startIdx+rows.length}} of ${{base.length}}`+(landingSearchQuery?' (filtered)':''));
       const pager=document.getElementById('landingPager');
       if (totalPages<=1) {{ pager.innerHTML=''; return; }}
       pager.innerHTML=`<button type="button" class="pager-btn" id="landingPrev"${{landingPageNum<=1?' disabled':''}}>‹ Prev</button><span class="pager-info">Page ${{landingPageNum}} of ${{totalPages}}</span><button type="button" class="pager-btn" id="landingNext"${{landingPageNum>=totalPages?' disabled':''}}>Next ›</button>`;
@@ -2406,6 +2409,12 @@ def render_bigquery_dashboard_page(
         applyLanding(); landingPageNum=1; renderLanding();
       }} catch(err) {{ setStatus('landingStatus',err.message||String(err),true); }}
     }}
+    (function(){{
+      const inp=document.getElementById('landingSearch');
+      if (!inp) return;
+      let debounce;
+      inp.addEventListener('input',()=>{{ clearTimeout(debounce); debounce=setTimeout(()=>{{landingSearchQuery=inp.value.trim();landingPageNum=1;renderLanding();}},180); }});
+    }})();
     // ---- GA4: User acquisition ----
     function renderNewVsReturning(byChannel) {{
       const el=document.getElementById('newVsReturning');
