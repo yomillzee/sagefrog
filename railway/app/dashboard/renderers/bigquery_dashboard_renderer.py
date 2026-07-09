@@ -425,8 +425,6 @@ def render_bigquery_dashboard_page(
     .ke-dd-name {{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
     .ke-dd-count {{ color:var(--muted); font-size:.74rem; font-weight:600; }}
     .ke-dd-empty {{ color:var(--muted); font-size:.8rem; padding:14px 8px; text-align:center; }}
-    .ke-global-bar {{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:16px; padding:13px 18px; background:linear-gradient(180deg,#f4f9ff,#eef4fc); border:1px solid #d7e3f4; border-radius:var(--radius); box-shadow:var(--shadow); }}
-    .ke-global-hint {{ color:var(--muted); font-size:.78rem; line-height:1.35; max-width:440px; }}
     /* ---- Sections ---- */
     section {{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:18px 20px 20px; margin-bottom:16px; box-shadow:var(--shadow); }}
     /* ---- First-run onboarding card ---- */
@@ -659,6 +657,19 @@ def render_bigquery_dashboard_page(
             <option value="last_month">Last month</option>
           </select>
         </div>
+        <div class="filter-group" id="keyEventFilterGroup" hidden>
+          <span class="filter-label">Events</span>
+          <div class="ke-dropdown" id="keyEventDropdown">
+            <button type="button" class="ke-dd-toggle" id="keyEventToggle" aria-haspopup="listbox" aria-expanded="false">
+              <span id="keyEventToggleLabel">All key events</span>
+              <span class="ke-dd-caret">▾</span>
+            </button>
+            <div class="ke-dd-panel" id="keyEventPanel" hidden>
+              <input type="text" class="ke-dd-search" id="keyEventSearch" placeholder="Search events…" autocomplete="off">
+              <div class="ke-dd-list" id="keyEventList"></div>
+            </div>
+          </div>
+        </div>
         {platform_filter_group_html}
       </div>
       </div>
@@ -708,25 +719,6 @@ def render_bigquery_dashboard_page(
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:200px"><canvas id="sessionsTrendChart"></canvas></div></div>
         <div class="cmp-legend" id="sessionsTrendLegend"></div>
       </section>
-
-      <div class="ke-global-bar" id="keyEventFilterGroup">
-        <div class="filter-group" style="align-items:center; flex-wrap:wrap">
-          <span class="filter-label">Key events</span>
-          <div class="ke-dropdown" id="keyEventDropdown">
-            <button type="button" class="ke-dd-toggle" id="keyEventToggle" aria-haspopup="listbox" aria-expanded="false">
-              <span id="keyEventToggleLabel">All key events</span>
-              <span class="ke-dd-caret">▾</span>
-            </button>
-            <div class="ke-dd-panel" id="keyEventPanel" hidden>
-              <input type="text" class="ke-dd-search" id="keyEventSearch" placeholder="Search events…" autocomplete="off">
-              <div class="ke-dd-list" id="keyEventList"></div>
-            </div>
-          </div>
-          <button type="button" class="chip debug-only" id="keyEventSaveBtn" style="border-color:var(--accent); color:var(--accent)">Save as default</button>
-          <span class="status debug-only" id="keyEventSaveStatus"></span>
-        </div>
-        <span class="ke-global-hint">Choose which GA4 events count as “key events.” Applies across Top pages, Traffic, Landing pages &amp; New user acquisition below.</span>
-      </div>
 
       <div class="two-col" style="align-items:start">
       <section id="sec-pages">
@@ -924,7 +916,6 @@ def render_bigquery_dashboard_page(
     const LANDING_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/landing-events')}";
     const TRAFFIC_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-key-events')}";
     const USER_ACQ_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acq-key-events')}";
-    const KEY_EVENTS_CONFIG_API = "{_aurl(f'/api/clients/{api_client_key}/ga4/key-events')}";
     const GA4_KEY_EVENTS_SAVED = {json.dumps([s.strip() for s in ga4_key_events.splitlines() if s.strip()])};
 
     // ---- Formatters ----
@@ -1100,6 +1091,7 @@ def render_bigquery_dashboard_page(
       const pf = document.getElementById('platformFilterGroup');
       if (pf) pf.hidden = tab === 'analytics' || tab === 'gsc' || tab === 'ai_traffic';
       currentTab = tab;
+      updateKeyEventBar();
       if (tab === 'explorer' && !explorerLoaded) {{
         explorerLoaded = true;
         loadExplorer();
@@ -1150,9 +1142,17 @@ def render_bigquery_dashboard_page(
         const sec = document.getElementById(MODULE_SECTIONS[key]);
         if (sec) sec.hidden = !modules[key];
       }});
-      // The global key-event selector drives Top pages / Traffic / Landing / User acquisition.
+      updateKeyEventBar();
+    }}
+    // The Events dropdown now lives in the shared sticky bar, so it must only
+    // show on the Website Analytics tab — and only when a panel it drives
+    // (Top pages / Traffic / Landing / User acquisition) is enabled.
+    function updateKeyEventBar() {{
       const keBar = document.getElementById('keyEventFilterGroup');
-      if (keBar) keBar.hidden = !(modules.top_pages || modules.traffic || modules.landing || modules.user_acquisition);
+      if (!keBar) return;
+      const m = getModules();
+      const anyPanel = m.top_pages || m.traffic || m.landing || m.user_acquisition;
+      keBar.hidden = !(currentTab === 'analytics' && anyPanel);
     }}
 
     // ---- Paid media: Summary ----
@@ -2399,20 +2399,6 @@ def render_bigquery_dashboard_page(
         applyLanding(); landingPageNum=1; renderLanding();
       }} catch(err) {{ setStatus('landingStatus',err.message||String(err),true); }}
     }}
-    (function initKeyEventSave(){{
-      const btn=document.getElementById('keyEventSaveBtn'); if (!btn) return;
-      btn.addEventListener('click', async () => {{
-        btn.disabled=true; setStatus('keyEventSaveStatus','Saving…');
-        try {{
-          const r=await fetch(KEY_EVENTS_CONFIG_API, {{method:'POST', headers:{{'Content-Type':'application/json'}}, credentials:'same-origin', body:JSON.stringify({{event_names:[...selectedKeyEvents].join('\\n')}})}});
-          const b=await r.json().catch(()=>({{}}));
-          if (!r.ok||!b.ok) throw new Error((b&&b.detail&&(b.detail.error||b.detail))||r.statusText);
-          setStatus('keyEventSaveStatus','Saved as default.'); setTimeout(()=>setStatus('keyEventSaveStatus',''),2500);
-        }} catch(err) {{ setStatus('keyEventSaveStatus','Save failed: '+(err.message||err), true); }}
-        finally {{ btn.disabled=false; }}
-      }});
-    }})();
-
     // ---- GA4: User acquisition ----
     function renderNewVsReturning(byChannel) {{
       const el=document.getElementById('newVsReturning');
