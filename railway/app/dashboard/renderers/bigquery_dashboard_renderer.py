@@ -303,13 +303,11 @@ def render_bigquery_dashboard_page(
         <div class="two-col" style="margin-top:0">
           <div class="col-panel">
             <h3>Branded queries</h3>
-            <div class="muted" style="font-size:.74rem;margin-bottom:6px">Weekly avg. position — lower is better</div>
             <div class="chart-canvas-host" style="height:180px"><canvas id="ovGscBrandedTrend"></canvas></div>
             <div class="muted" id="ovGscBrandedNote" style="font-size:.74rem;margin-top:6px"></div>
           </div>
           <div class="col-panel">
             <h3>Target keywords</h3>
-            <div class="muted" style="font-size:.74rem;margin-bottom:6px">Weekly avg. position — lower is better</div>
             <div class="chart-canvas-host" style="height:180px"><canvas id="ovGscTargetTrend"></canvas></div>
             <div class="muted" id="ovGscTargetNote" style="font-size:.74rem;margin-top:6px"></div>
           </div>
@@ -844,7 +842,6 @@ def render_bigquery_dashboard_page(
             <div class="table-wrap"><table id="gscBrandedTable" class="compact"></table></div>
             <div class="pager" id="gscBrandedPager"></div>
             <div class="chart-wrap" style="margin-top:12px">
-              <div class="muted" style="font-size:.76rem;margin-bottom:6px">Weekly avg. position — matching queries (lower is better)</div>
               <div class="chart-canvas-host" style="height:130px"><canvas id="gscBrandedTrendChart"></canvas></div>
             </div>
           </div>
@@ -854,7 +851,6 @@ def render_bigquery_dashboard_page(
             <div class="table-wrap"><table id="gscTargetTable" class="compact"></table></div>
             <div class="pager" id="gscTargetPager"></div>
             <div class="chart-wrap" style="margin-top:12px">
-              <div class="muted" style="font-size:.76rem;margin-bottom:6px">Weekly avg. position — matching queries (lower is better)</div>
               <div class="chart-canvas-host" style="height:130px"><canvas id="gscTargetTrendChart"></canvas></div>
             </div>
           </div>
