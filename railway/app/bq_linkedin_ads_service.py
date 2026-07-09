@@ -260,6 +260,24 @@ def _campaign_ids_sql(*, start: date, end: date, account_id: str) -> str:
     """
 
 
+def _creative_campaign_ids_sql(*, account_id: str) -> str:
+    """Distinct campaign_ids referenced by synced creatives (creative_metadata).
+
+    Newly created ad sets (LinkedIn "campaigns") land in the creative sync before
+    campaign_daily catches them, so seeding campaign-metadata fetches only from
+    campaign_daily leaves the new campaigns without a name/group and the creative
+    mart renders them as a nameless "—" campaign. creative_metadata is not date-
+    scoped (it's metadata), so this surfaces every campaign that has creatives."""
+    safe_account = str(account_id).replace("'", "\'")
+    return f"""
+    SELECT DISTINCT CAST(campaign_id AS STRING) AS campaign_id
+    FROM {_table('creative_metadata')}
+    WHERE source = 'linkedin'
+      AND CAST(account_id AS STRING) = '{safe_account}'
+      AND campaign_id IS NOT NULL
+    """
+
+
 def _campaign_group_map_sql(*, start: date, end: date, account_id: str) -> str:
     """Return campaignâ†’group mapping from the campaigns metadata table."""
     safe_account = str(account_id).replace("'", "\\'")
@@ -342,13 +360,29 @@ def sync_campaign_metadata_and_rebuild_mart(
         return {"enabled": False, "rows_upserted": 0, "reason": "missing_account_id"}
     account_id_clean = str(account_id).strip().split(":")[-1]
     project = _project_id()
+    creds = _routed_credentials_env()
     id_rows = bigquery_service.run_query(
         _campaign_ids_sql(start=start, end=end, account_id=account_id_clean),
         project_id=project,
-        credentials_env=_routed_credentials_env(),
+        credentials_env=creds,
         max_rows=10000,
     )
-    campaign_ids = sorted({str(row.get("campaign_id") or "").strip() for row in id_rows if row.get("campaign_id")})
+    # Union with campaigns referenced by synced creatives so newly created ad
+    # sets (not yet in campaign_daily) still get their name + group fetched.
+    try:
+        creative_id_rows = bigquery_service.run_query(
+            _creative_campaign_ids_sql(account_id=account_id_clean),
+            project_id=project,
+            credentials_env=creds,
+            max_rows=10000,
+        )
+    except Exception:
+        creative_id_rows = []
+    campaign_ids = sorted({
+        str(row.get("campaign_id") or "").strip()
+        for row in list(id_rows) + list(creative_id_rows)
+        if row.get("campaign_id")
+    })
     metadata_by_id = _campaign_metadata_from_postgres(
         account_id=account_id_clean,
         start=start,
