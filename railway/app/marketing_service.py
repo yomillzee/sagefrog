@@ -848,6 +848,34 @@ def fetch_page_key_events(
     return {"client": _client_key(), "rows": rows, "events": events}
 
 
+def fetch_active_key_events(*, start_date: date, end_date: date) -> dict[str, Any]:
+    """GA4's designated key events for this client: distinct event names that
+    GA4 counted as key events (key_events > 0) over the window. Used to cross-
+    reference which GTM GA4-event tags fire a real key event."""
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    sql = f"""
+    SELECT event_name, SUM(key_events) AS key_events
+    FROM {_page_events_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY event_name
+    HAVING SUM(key_events) > 0
+    ORDER BY key_events DESC
+    """
+    try:
+        rows = _run_query(sql, params=params, max_rows=1000)
+    except Exception:
+        rows = []
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "event_names": [r["event_name"] for r in rows if r.get("event_name")],
+        "events": rows,
+    }
+
+
 def _user_acq_events_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.vw_ga4_user_acq_events_daily`"
 

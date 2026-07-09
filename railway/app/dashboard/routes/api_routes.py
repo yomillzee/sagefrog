@@ -1707,6 +1707,39 @@ def client_top_pages_key_events(
 
 
 @router.get(
+    "/api/clients/{client_key}/ga4/active-key-events",
+    summary="Client's active GA4 key events (event names with key_events>0, last 90d)",
+)
+def client_active_key_events(
+    client_key: str,
+    request: Request,
+    key: str | None = None,
+    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    x_api_key: str | None = Security(_api_key_header),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    _authorize_bq_client_api(
+        request, client_slug=normalized, key=key,
+        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
+    )
+    end = date.today() - timedelta(days=1)
+    start = end - timedelta(days=90)
+    try:
+        with marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.ga4.active_key_events",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=3600,
+                fetch=lambda: marketing_service.fetch_active_key_events(start_date=start, end_date=end),
+            )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
     "/api/clients/{client_key}/pages/traffic-key-events",
     summary="Client GA4 traffic source × event breakdown (generic BQ-test clients)",
 )

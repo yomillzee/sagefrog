@@ -75,9 +75,11 @@ def render_gtm_page(
 
     api_url       = f"/api/clients/{client_slug}/gtm/live-tags"
     api_refresh   = f"{api_url}?refresh=true"
+    active_ke_api = f"/api/clients/{client_slug}/ga4/active-key-events"
     if access_key:
-        api_url     = f"{api_url}?key={access_key}"
-        api_refresh = f"{api_refresh}&key={access_key}"
+        api_url       = f"{api_url}?key={access_key}"
+        api_refresh   = f"{api_refresh}&key={access_key}"
+        active_ke_api = f"{active_ke_api}?key={access_key}"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -140,6 +142,15 @@ def render_gtm_page(
     .loading-msg {{ padding:40px; text-align:center; color:var(--muted); }}
     .error-msg {{ padding:20px; color:var(--bad); background:#fef2f2; border-radius:9px; border:1px solid #fecaca; }}
     .empty-state {{ padding:48px 20px; text-align:center; color:var(--muted); }}
+    .tag-toolbar {{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:12px 14px; border-bottom:1px solid var(--line); }}
+    .chips {{ display:flex; gap:6px; flex-wrap:wrap; }}
+    .chip {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:5px 13px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; transition:background .12s,border-color .12s,color .12s; }}
+    .chip:hover {{ border-color:#b9c8dc; background:#f4f8fd; }}
+    .chip.active {{ background:var(--navy); color:#fff; border-color:var(--navy); }}
+    .toolbar-note {{ font-size:.78rem; color:var(--muted); }}
+    .badge-ke {{ background:#dcfce7; color:#166534; }}
+    .event-name {{ font-family:monospace; font-size:.8rem; color:#0f172a; }}
+    .event-none {{ color:var(--muted); font-size:.8rem; }}
   </style>
 </head>
 <body>
@@ -159,6 +170,14 @@ def render_gtm_page(
         </div>
 
         <div class="card">
+          <div class="tag-toolbar">
+            <div class="chips" id="viewChips">
+              <button type="button" class="chip active" data-view="key">Key-event tags</button>
+              <button type="button" class="chip" data-view="ga4">GA4 events</button>
+              <button type="button" class="chip" data-view="all">All tags</button>
+            </div>
+            <span class="toolbar-note" id="filterNote"></span>
+          </div>
           <div id="tableContainer" class="tag-table-wrap">
             <div class="loading-msg">Loading tags…</div>
           </div>
@@ -169,8 +188,16 @@ def render_gtm_page(
 
 <script>{dashboard_topbar_js()}</script>
 <script>
-const API_URL     = {repr(api_url)};
-const API_REFRESH = {repr(api_refresh)};
+const API_URL      = {repr(api_url)};
+const API_REFRESH  = {repr(api_refresh)};
+const ACTIVE_KE_API = {repr(active_ke_api)};
+
+// Shared state: all normalised tags, the client's active GA4 key events, and
+// the current view filter (default: only GA4-event tags firing a key event).
+let allRows = [];
+let keyEvents = new Set();
+let keyEventsOk = false;
+let viewMode = 'key';
 
 const TAG_BADGE = {{
   'Google Analytics': 'ga4',
@@ -208,14 +235,14 @@ function renderCriteria(criteria) {{
 
 function renderTable(rows) {{
   if (!rows.length) {{
-    return '<div class="empty-state">No tags found in this container.</div>';
+    return '<div class="empty-state">No tags match this view.</div>';
   }}
-  const ths = ['', 'Tag', '', 'Type', 'Triggers', 'Logic'];
   const head = '<tr>'
     + '<th class="col-dot"></th>'
     + '<th>Tag</th>'
     + '<th class="col-consent"></th>'
     + '<th>Type</th>'
+    + '<th>GA4 event</th>'
     + '<th>Triggers</th>'
     + '<th>Logic</th>'
     + '</tr>';
@@ -229,6 +256,13 @@ function renderTable(rows) {{
       : '';
     const bc  = badgeClass(r.friendly_type || '');
     const typ = `<span class="badge ${{bc}}">${{esc(r.friendly_type || r.raw_type || 'Unknown')}}</span>`;
+    let evt = '<span class="event-none">—</span>';
+    if (r.is_ga4_event) {{
+      const en = r.event_name || '';
+      const isKey = en && keyEvents.has(en);
+      const keBadge = isKey ? ' <span class="badge badge-ke" title="Active GA4 key event">key event</span>' : '';
+      evt = en ? `<span class="event-name">${{esc(en)}}</span>${{keBadge}}` : '<span class="event-none">(no event name)</span>';
+    }}
     const triggers = r.triggers || [];
     const chips = triggers.length
       ? triggers.map(t => `<span class="trigger-chip">${{esc(t.name)}}</span>`).join('')
@@ -242,12 +276,46 @@ function renderTable(rows) {{
       <td>${{name}}</td>
       <td class="col-consent">${{shield}}</td>
       <td>${{typ}}</td>
+      <td class="td-top">${{evt}}</td>
       <td class="td-top">${{chips}}</td>
       <td class="td-top">${{logic}}</td>
     </tr>`;
   }}).join('');
   return `<table><thead>${{head}}</thead><tbody>${{body}}</tbody></table>`;
 }}
+
+// Filter allRows by the current view and render, with a status note.
+function applyView() {{
+  let rows;
+  if (viewMode === 'key') {{
+    rows = keyEventsOk
+      ? allRows.filter(r => r.is_ga4_event && r.event_name && keyEvents.has(r.event_name))
+      : allRows.filter(r => r.is_ga4_event);
+  }} else if (viewMode === 'ga4') {{
+    rows = allRows.filter(r => r.is_ga4_event);
+  }} else {{
+    rows = allRows;
+  }}
+  document.getElementById('tableContainer').innerHTML = renderTable(rows);
+  const note = document.getElementById('filterNote');
+  if (viewMode === 'key') {{
+    note.textContent = keyEventsOk
+      ? `${{rows.length}} GA4 tag(s) firing an active key event · ${{keyEvents.size}} key event(s) from GA4 (last 90d)`
+      : `Couldn't load GA4 key events — showing all GA4 event tags instead.`;
+  }} else if (viewMode === 'ga4') {{
+    note.textContent = `${{rows.length}} GA4 event tag(s)`;
+  }} else {{
+    note.textContent = `${{rows.length}} tag(s) total`;
+  }}
+}}
+
+document.getElementById('viewChips').addEventListener('click', ev => {{
+  const btn = ev.target.closest('[data-view]');
+  if (!btn) return;
+  viewMode = btn.dataset.view;
+  document.querySelectorAll('#viewChips .chip').forEach(b => b.classList.toggle('active', b.dataset.view === viewMode));
+  applyView();
+}});
 
 function esc(s) {{
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -262,7 +330,10 @@ async function loadTags(forceRefresh = false) {{
   pageMeta.textContent = 'Loading…';
   try {{
     const url = forceRefresh ? API_REFRESH : API_URL;
-    const resp = await fetch(url);
+    const [resp, keResp] = await Promise.all([
+      fetch(url),
+      fetch(ACTIVE_KE_API).catch(() => null),
+    ]);
     if (!resp.ok) {{
       const err = await resp.json().catch(() => ({{detail: resp.statusText}}));
       container.innerHTML = `<div class="error-msg">Error ${{resp.status}}: ${{esc(err.detail || err.message || resp.statusText)}}</div>`;
@@ -270,18 +341,25 @@ async function loadTags(forceRefresh = false) {{
       return;
     }}
     const data = await resp.json();
-    const rows = data.rows || [];
-    const active = rows.filter(r => !r.paused).length;
+    allRows = data.rows || [];
+    // Active GA4 key events (fail-open: view falls back to all GA4 event tags).
+    keyEvents = new Set();
+    keyEventsOk = false;
+    if (keResp && keResp.ok) {{
+      const ke = await keResp.json().catch(() => null);
+      if (ke && Array.isArray(ke.event_names)) {{ keyEvents = new Set(ke.event_names); keyEventsOk = true; }}
+    }}
+    const active = allRows.filter(r => !r.paused).length;
     const ver   = data.container_version ? `v${{data.container_version}}` : '';
     const fetched = data.fetched_at ? new Date(data.fetched_at).toLocaleString() : '';
     const parts = [
-      `${{rows.length}} tags`,
+      `${{allRows.length}} tags`,
       `${{active}} active`,
       ver,
       fetched ? `updated ${{fetched}}` : '',
     ].filter(Boolean);
     pageMeta.textContent = parts.join('  ·  ');
-    container.innerHTML = renderTable(rows);
+    applyView();
   }} catch(e) {{
     container.innerHTML = `<div class="error-msg">Network error: ${{esc(e.message)}}</div>`;
     pageMeta.textContent = 'Failed to load';

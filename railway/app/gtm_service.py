@@ -262,11 +262,25 @@ def _normalise_trigger(trigger: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_GA4_EVENT_TYPES = ("gaawe", "ga4Event")
+
+
+def _tag_event_name(tag: dict[str, Any]) -> str:
+    """The GA4 event name a GA4-event tag sends (its `eventName` parameter).
+    May be a literal ('generate_lead') or a GTM variable ref ('{{dlv - event}}')."""
+    for p in tag.get("parameter", []):
+        if p.get("key") == "eventName":
+            return str(p.get("value", "") or "")
+    return ""
+
+
 def _normalise_tag(
     tag: dict[str, Any],
     trigger_index: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     raw_type = tag.get("type", "")
+    is_ga4_event = raw_type in _GA4_EVENT_TYPES
+    event_name = _tag_event_name(tag) if is_ga4_event else ""
     firing_ids: list[str] = tag.get("firingTriggerId") or []
 
     trigger_rows = []
@@ -313,6 +327,8 @@ def _normalise_tag(
         "tag_name":     tag.get("name", ""),
         "raw_type":     raw_type,
         "friendly_type": _TAG_TYPES.get(raw_type, raw_type or "Unknown"),
+        "is_ga4_event": is_ga4_event,
+        "event_name":   event_name,
         "paused":       bool(tag.get("paused", False)),
         "consent_status": _CONSENT_STATUS.get(consent_raw, consent_raw),
         "triggers":     triggers,
