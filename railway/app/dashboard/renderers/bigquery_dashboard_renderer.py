@@ -602,6 +602,35 @@ def render_bigquery_dashboard_page(
     .nr-legend {{ display:flex; gap:14px; margin-top:5px; }}
     .nr-legend-item {{ display:flex; align-items:center; gap:5px; font-size:.74rem; color:var(--muted); }}
     .nr-legend-swatch {{ width:10px; height:10px; border-radius:2px; }}
+    /* ---- Traffic: single 100% channel bar ---- */
+    .stack-bar {{ display:flex; width:100%; height:26px; border-radius:6px; overflow:hidden; background:var(--line-soft); }}
+    .stack-seg {{ height:100%; min-width:2px; cursor:default; transition:filter .12s; }}
+    .stack-seg:hover {{ filter:brightness(1.08); }}
+    .stack-legend {{ display:flex; flex-wrap:wrap; gap:8px 16px; margin-top:12px; }}
+    .stack-legend-item {{ display:inline-flex; align-items:center; gap:7px; font-size:.78rem; color:var(--navy); }}
+    .stack-legend-swatch {{ width:11px; height:11px; border-radius:3px; flex:0 0 auto; }}
+    .stack-legend-pct {{ color:var(--muted); font-variant-numeric:tabular-nums; }}
+    /* ---- Demographics: age toggle, gender split, state tile map ---- */
+    .col-panel-head {{ display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:12px; }}
+    .col-panel-head h3 {{ margin:0; }}
+    .age-toggle {{ display:inline-flex; align-items:center; gap:5px; font-size:.74rem; font-weight:600; color:var(--muted); cursor:pointer; text-transform:none; letter-spacing:0; }}
+    .age-toggle input {{ accent-color:var(--accent); cursor:pointer; }}
+    .gender-wrap {{ display:flex; flex-direction:column; gap:14px; }}
+    .gender-bar {{ display:flex; width:100%; height:30px; border-radius:8px; overflow:hidden; background:var(--line-soft); }}
+    .gender-seg {{ height:100%; display:flex; align-items:center; justify-content:center; color:#fff; font-size:.8rem; font-weight:800; min-width:2px; }}
+    .gender-stats {{ display:flex; gap:12px; }}
+    .gender-stat {{ flex:1 1 0; border:1px solid var(--line-soft); border-radius:var(--radius-sm); padding:10px 12px; display:flex; align-items:center; gap:10px; }}
+    .gender-dot {{ width:12px; height:12px; border-radius:50%; flex:0 0 auto; }}
+    .gender-stat-label {{ font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; font-weight:800; color:var(--muted); }}
+    .gender-stat-value {{ font-size:1.1rem; font-weight:800; color:var(--navy); line-height:1.1; }}
+    .gender-stat-pct {{ font-size:.74rem; color:var(--muted); }}
+    .state-map {{ width:100%; }}
+    .state-map svg {{ width:100%; height:auto; display:block; }}
+    .state-tile {{ transition:filter .12s; }}
+    .state-tile:hover {{ filter:brightness(.92); }}
+    .state-tile-label {{ font-size:8px; font-weight:700; fill:#5a6b82; pointer-events:none; }}
+    .state-map-scale {{ display:flex; align-items:center; gap:8px; margin-top:10px; font-size:.72rem; color:var(--muted); }}
+    .state-map-scale-bar {{ flex:1 1 auto; height:8px; border-radius:4px; background:linear-gradient(90deg,#eaf1fb,#1d6fd0); }}
     @media (max-width:900px) {{ .cards {{ grid-template-columns:repeat(2,minmax(120px,1fr)); }} .two-col,.three-col {{ grid-template-columns:1fr; }} }}
     /* ---- Skeleton loaders ---- */
     @keyframes shimmer {{ 0%{{background-position:-200% 0}} 100%{{background-position:200% 0}} }}
@@ -699,6 +728,7 @@ def render_bigquery_dashboard_page(
         <span class="ke-global-hint">Choose which GA4 events count as “key events.” Applies across Top pages, Traffic, Landing pages &amp; New user acquisition below.</span>
       </div>
 
+      <div class="two-col" style="align-items:start">
       <section id="sec-pages">
         <div class="sec-head"><h2>Top pages</h2><span class="status" id="pagesStatus"></span></div>
         <input class="page-search" id="pagesSearch" type="search" placeholder="Filter by path…" autocomplete="off">
@@ -706,11 +736,19 @@ def render_bigquery_dashboard_page(
         <div class="pager" id="pagesPager"></div>
       </section>
 
+      <section id="sec-landing">
+        <div class="sec-head"><h2>Top landing pages</h2><span class="status" id="landingStatus"></span></div>
+        <div class="table-wrap"><table id="landingTable" class="compact"></table></div>
+        <div class="pager" id="landingPager"></div>
+      </section>
+      </div>
+
       <section id="sec-traffic">
         <div class="sec-head"><h2>Traffic</h2><span class="status" id="trafficAcqStatus"></span></div>
         <div class="col-panel"><h3>By channel</h3><div id="channelBars"></div></div>
         <h3 class="subsec-h3">Top sources / medium</h3>
         <div class="table-wrap"><table id="sourcesTable" class="compact"></table></div>
+        <div class="pager" id="sourcesPager"></div>
       </section>
 
       <section id="sec-audience">
@@ -718,40 +756,36 @@ def render_bigquery_dashboard_page(
         <div class="col-panel" style="max-width:420px"><h3>Device type</h3><div id="deviceBars"></div></div>
       </section>
 
-      <section id="sec-landing">
-        <div class="sec-head"><h2>Landing pages</h2><span class="status" id="landingStatus"></span></div>
-        <div class="table-wrap"><table id="landingTable" class="compact"></table></div>
-        <div class="pager" id="landingPager"></div>
-      </section>
-
-      <section id="sec-conversions">
-        <div class="sec-head"><h2>Conversions</h2><span class="status" id="conversionsStatus"></span></div>
-        <div class="two-col">
-          <div class="col-panel"><h3>Key events</h3><div id="eventBars"></div></div>
-          <div class="col-panel"><h3>Form funnel</h3><div id="funnelChart" class="funnel-bar"></div></div>
-        </div>
-      </section>
-
       <section id="sec-useracq">
         <div class="sec-head"><h2>New user acquisition</h2><span class="status" id="userAcqStatus"></span></div>
         <div id="newVsReturning"></div>
-        <div class="two-col">
-          <div class="col-panel"><h3>By first channel</h3><div id="userAcqChannelBars"></div></div>
+        <div class="two-col" style="align-items:start">
+          <div class="col-panel"><h3>By first channel</h3><div id="userAcqChannelBars"></div><div class="pager" id="userAcqChannelPager"></div></div>
           <div class="col-panel">
             <h3>By first source / medium</h3>
             <div class="table-wrap"><table id="userAcqSourceTable" class="compact"></table></div>
+            <div class="pager" id="userAcqSourcePager"></div>
           </div>
         </div>
       </section>
 
       <section id="sec-demographics">
         <div class="sec-head"><h2>Demographics</h2><span class="status" id="demoStatus"></span></div>
-        <div class="three-col">
+        <div class="two-col" style="align-items:start">
+          <div class="col-panel">
+            <h3>Users by state</h3>
+            <div id="stateMap" class="state-map"></div>
+          </div>
           <div class="col-panel">
             <h3>Top cities</h3>
             <div class="table-wrap"><table id="citiesTable" class="compact"></table></div>
           </div>
-          <div class="col-panel"><h3>Age bracket</h3><div id="ageBars"></div></div>
+        </div>
+        <div class="two-col" style="align-items:start; margin-top:14px">
+          <div class="col-panel">
+            <div class="col-panel-head"><h3>Age bracket</h3><label class="age-toggle"><input type="checkbox" id="ageUnknownToggle"> Show “unknown”</label></div>
+            <div id="ageBars"></div>
+          </div>
           <div class="col-panel"><h3>Gender</h3><div id="genderBars"></div></div>
         </div>
       </section>
@@ -873,7 +907,6 @@ def render_bigquery_dashboard_page(
     const TRAFFIC_ACQ_API      = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-acquisition')}";
     const DEVICE_SPLIT_API     = "{_aurl(f'/api/clients/{api_client_key}/pages/device-split')}";
     const LANDING_PAGES_API    = "{_aurl(f'/api/clients/{api_client_key}/pages/landing')}";
-    const CONVERSIONS_API      = "{_aurl(f'/api/clients/{api_client_key}/analytics/conversions')}";
     const USER_ACQ_API         = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acquisition')}";
     const DEMOGRAPHICS_API     = "{_aurl(f'/api/clients/{api_client_key}/analytics/demographics')}";
     const GSC_API              = "{_aurl(f'/api/clients/{api_client_key}/gsc/summary')}";
@@ -1096,10 +1129,10 @@ def render_bigquery_dashboard_page(
     );
 
     // ---- Module system (localStorage) ----
-    const ALL_MODULES = ['sessions','top_pages','traffic','audience','landing','conversions','user_acquisition','demographics'];
+    const ALL_MODULES = ['sessions','top_pages','traffic','audience','landing','user_acquisition','demographics'];
     const MODULE_SECTIONS = {{
       sessions:'sec-sessions', top_pages:'sec-pages', traffic:'sec-traffic', audience:'sec-audience',
-      landing:'sec-landing', conversions:'sec-conversions',
+      landing:'sec-landing',
       user_acquisition:'sec-useracq', demographics:'sec-demographics'
     }};
 
@@ -2101,7 +2134,49 @@ def render_bigquery_dashboard_page(
       const total=rows.reduce((s,r)=>s+num(r[valueKey]),0);
       el.innerHTML=rows.map(r=>{{const p=total?num(r[valueKey])/total*100:0;return`<div class="bar-row"><div class="bar-label">${{esc(r[labelKey])}}</div>${{pctBar(p)}}<div class="bar-count">${{count(r[valueKey])}}<span class="bar-pct">${{p.toFixed(0)}}%</span></div></div>`;}}).join('');
     }}
+    // Categorical palette for stacked/segmented charts (channels, gender, etc.).
+    const CHART_PALETTE=['#1d6fd0','#7c3aed','#0a7f3f','#e08a1e','#d6336c','#0d9488','#5661b3','#b4530a','#3b7ddd','#8a4fbe'];
+    // Traffic → single 100% bar, one segment per channel; hover shows channel,
+    // sessions and share. A legend under the bar lists each channel + %.
+    function renderChannelStacked(rows) {{
+      const el=document.getElementById('channelBars');
+      if (!rows||!rows.length) {{ el.innerHTML='<div class="empty">No data.</div>'; return; }}
+      const ordered=[...rows].sort((a,b)=>num(b.sessions)-num(a.sessions));
+      const total=ordered.reduce((s,r)=>s+num(r.sessions),0)||1;
+      const seg=ordered.map((r,i)=>{{
+        const p=num(r.sessions)/total*100, color=CHART_PALETTE[i%CHART_PALETTE.length];
+        return`<div class="stack-seg" style="width:${{p.toFixed(2)}}%;background:${{color}}" title="${{esc(r.channel)}} — ${{count(r.sessions)}} sessions (${{p.toFixed(1)}}%)"></div>`;
+      }}).join('');
+      const legend=ordered.map((r,i)=>{{
+        const p=num(r.sessions)/total*100, color=CHART_PALETTE[i%CHART_PALETTE.length];
+        return`<span class="stack-legend-item"><span class="stack-legend-swatch" style="background:${{color}}"></span>${{esc(r.channel)}} <span class="stack-legend-pct">${{count(r.sessions)}} · ${{p.toFixed(0)}}%</span></span>`;
+      }}).join('');
+      el.innerHTML=`<div class="stack-bar">${{seg}}</div><div class="stack-legend">${{legend}}</div>`;
+    }}
+    // Bar list capped to the top N with a Prev/Next pager for the tail. Shares
+    // are computed against the full total so pagination doesn't skew percentages.
+    function renderBarListPaged(containerId, pagerId, rows, valueKey, labelKey, state) {{
+      const el=document.getElementById(containerId), pager=document.getElementById(pagerId);
+      if (!rows||!rows.length) {{ el.innerHTML='<div class="empty">No data.</div>'; if(pager) pager.innerHTML=''; return; }}
+      const perPage=10, total=rows.reduce((s,r)=>s+num(r[valueKey]),0)||1;
+      const totalPages=Math.max(1,Math.ceil(rows.length/perPage));
+      if (state.page>totalPages) state.page=totalPages;
+      const startIdx=(state.page-1)*perPage, pageRows=rows.slice(startIdx,startIdx+perPage);
+      el.innerHTML=pageRows.map(r=>{{const p=num(r[valueKey])/total*100;return`<div class="bar-row"><div class="bar-label">${{esc(r[labelKey])}}</div>${{pctBar(p)}}<div class="bar-count">${{count(r[valueKey])}}<span class="bar-pct">${{p.toFixed(0)}}%</span></div></div>`;}}).join('');
+      if (!pager) return;
+      if (totalPages<=1) {{ pager.innerHTML=''; return; }}
+      pager.innerHTML=`<button type="button" class="pager-btn" data-dir="prev"${{state.page<=1?' disabled':''}}>‹ Prev</button><span class="pager-info">Page ${{state.page}} of ${{totalPages}}</span><button type="button" class="pager-btn" data-dir="next"${{state.page>=totalPages?' disabled':''}}>Next ›</button>`;
+      pager.querySelectorAll('.pager-btn').forEach(b=>b.onclick=()=>{{ state.page+=b.dataset.dir==='next'?1:-1; renderBarListPaged(containerId,pagerId,rows,valueKey,labelKey,state); }});
+    }}
+    // Top sources/medium: 10 per page, rest behind a pager. Rows arrive already
+    // sorted by sessions desc, so page 1 is the true top 10.
+    const SOURCES_PER_PAGE=10; let sourcesPageNum=1;
     function renderTrafficSources() {{
+      const rows=trafficSources||[];
+      const totalPages=Math.max(1,Math.ceil(rows.length/SOURCES_PER_PAGE));
+      if (sourcesPageNum>totalPages) sourcesPageNum=totalPages;
+      const startIdx=(sourcesPageNum-1)*SOURCES_PER_PAGE;
+      const pageRows=rows.slice(startIdx,startIdx+SOURCES_PER_PAGE);
       renderTable('sourcesTable',[
         {{key:'source',label:'Source',left:true}},
         {{key:'medium',label:'Medium',left:true}},
@@ -2109,7 +2184,12 @@ def render_bigquery_dashboard_page(
         {{key:'engaged_sessions',label:'Engaged',format:count}},
         {{key:'engagement_rate',label:'Eng. rate',format:v=>v!=null?v+'%':'—'}},
         {{key:'key_events',label:'Key events',format:count}},
-      ], trafficSources, 'No source data.');
+      ], pageRows, 'No source data.');
+      const pager=document.getElementById('sourcesPager');
+      if (!pager) return;
+      if (totalPages<=1) {{ pager.innerHTML=''; return; }}
+      pager.innerHTML=`<button type="button" class="pager-btn" data-dir="prev"${{sourcesPageNum<=1?' disabled':''}}>‹ Prev</button><span class="pager-info">Page ${{sourcesPageNum}} of ${{totalPages}}</span><button type="button" class="pager-btn" data-dir="next"${{sourcesPageNum>=totalPages?' disabled':''}}>Next ›</button>`;
+      pager.querySelectorAll('.pager-btn').forEach(b=>b.onclick=()=>{{ sourcesPageNum+=b.dataset.dir==='next'?1:-1; renderTrafficSources(); }});
     }}
     // Sessions-over-time hero chart (top of the analytics tab). Fetches the
     // current period and the equivalent prior period (compareStart/compareEnd,
@@ -2146,7 +2226,8 @@ def render_bigquery_dashboard_page(
           getJson(withDates(TRAFFIC_ACQ_API)),
           getJson(withDates(TRAFFIC_KEY_EVENTS_API)).catch(()=>({{by_source_events:[],events:[]}})),
         ]);
-        renderBarList('channelBars',payload.by_channel||[],'sessions','channel');
+        renderChannelStacked(payload.by_channel||[]);
+        sourcesPageNum=1;
         trafficBaseSources = payload.by_source||[];
         trafficSourceEventMap={{}};
         for (const r of (ev.by_source_events||[])) {{
@@ -2161,11 +2242,16 @@ def render_bigquery_dashboard_page(
 
     // ---- GA4: Device split ----
     async function loadDeviceSplit() {{
+      const sec=document.getElementById('sec-audience');
       setStatus('deviceStatus','Loading…');
       document.getElementById('deviceBars').innerHTML = skelBars(3);
       try {{
         const payload=await getJson(withDates(DEVICE_SPLIT_API));
-        renderBarList('deviceBars',payload.rows||[],'users','device');
+        const rows=payload.rows||[];
+        // Audience only holds the device split — when GA4 returns nothing for the
+        // range, drop the whole section rather than showing an empty panel.
+        if (sec) sec.hidden = !rows.length;
+        renderBarList('deviceBars',rows,'users','device');
         setStatus('deviceStatus','');
       }} catch(err) {{ setStatus('deviceStatus',err.message||String(err),true); }}
     }}
@@ -2175,7 +2261,7 @@ def render_bigquery_dashboard_page(
     // "key events." Default = GA4's own key events; the selection persists per client
     // (admin "Save as default"). Each panel keeps a base row set + a per-row event map
     // so the key-events column recomputes instantly when the selection changes.
-    const LANDING_PER_PAGE=15; let landingPageNum=1, landingRows=[];
+    const LANDING_PER_PAGE=10; let landingPageNum=1, landingRows=[];
     let landingBaseRows=[];            // from LANDING_PAGES_API
     let landingEventMap={{}};            // page_path -> {{ event_name: count }}
     let trafficSources=[], trafficBaseSources=[], trafficSourceEventMap={{}};   // srcKey -> {{ event_name: count }}
@@ -2327,31 +2413,6 @@ def render_bigquery_dashboard_page(
       }});
     }})();
 
-    // ---- GA4: Conversions ----
-    async function loadConversions() {{
-      setStatus('conversionsStatus','Loading…');
-      document.getElementById('eventBars').innerHTML = skelBars(5);
-      document.getElementById('funnelChart').innerHTML = skelBars(4);
-      try {{
-        const payload=await getJson(withDates(CONVERSIONS_API));
-        const rows=payload.rows||[];
-        const el=document.getElementById('eventBars');
-        if (!rows.length) {{ el.innerHTML='<div class="empty">No conversion events for this range.</div>'; }}
-        else {{
-          const maxCount=rows[0].event_count||1;
-          el.innerHTML=rows.map(r=>{{const p=num(r.event_count)/num(maxCount)*100;return`<div class="bar-row"><div class="bar-label">${{esc(r.event_name)}}</div>${{pctBar(p)}}<div class="bar-count">${{count(r.event_count)}}</div></div>`;}}).join('');
-        }}
-        const funnel=payload.funnel||[];
-        const funnelEl=document.getElementById('funnelChart');
-        const maxStep=funnel.reduce((mx,s)=>Math.max(mx,num(s.count)),1);
-        funnelEl.innerHTML=funnel.map(s=>{{
-          const p=maxStep?num(s.count)/maxStep*100:0;
-          return`<div class="funnel-step"><div class="funnel-step-label">${{esc(s.step)}}</div><div class="funnel-step-track"><div class="funnel-step-fill" style="width:${{p.toFixed(1)}}%">${{p>15?count(s.count):''}}</div></div><div class="funnel-step-count">${{count(s.count)}}</div></div>`;
-        }}).join('');
-        setStatus('conversionsStatus','');
-      }} catch(err) {{ setStatus('conversionsStatus',err.message||String(err),true); }}
-    }}
-
     // ---- GA4: User acquisition ----
     function renderNewVsReturning(byChannel) {{
       const el=document.getElementById('newVsReturning');
@@ -2373,14 +2434,25 @@ def render_bigquery_dashboard_page(
         </div>
       </div>`;
     }}
+    const USERACQ_SRC_PER_PAGE=10; let userAcqSrcPage=1;
+    const userAcqChanState={{page:1}};
     function renderUserAcqSources() {{
+      const rows=userAcqSources||[];
+      const totalPages=Math.max(1,Math.ceil(rows.length/USERACQ_SRC_PER_PAGE));
+      if (userAcqSrcPage>totalPages) userAcqSrcPage=totalPages;
+      const startIdx=(userAcqSrcPage-1)*USERACQ_SRC_PER_PAGE;
       renderTable('userAcqSourceTable',[
         {{key:'source',label:'Source',left:true}},
         {{key:'medium',label:'Medium',left:true}},
         {{key:'new_users',label:'New users',format:count}},
         {{key:'key_events',label:'Key events',format:count}},
         {{key:'key_event_rate',label:'KE rate',format:v=>v!=null?v+'%':'—'}},
-      ], userAcqSources, 'No source data.');
+      ], rows.slice(startIdx,startIdx+USERACQ_SRC_PER_PAGE), 'No source data.');
+      const pager=document.getElementById('userAcqSourcePager');
+      if (!pager) return;
+      if (totalPages<=1) {{ pager.innerHTML=''; return; }}
+      pager.innerHTML=`<button type="button" class="pager-btn" data-dir="prev"${{userAcqSrcPage<=1?' disabled':''}}>‹ Prev</button><span class="pager-info">Page ${{userAcqSrcPage}} of ${{totalPages}}</span><button type="button" class="pager-btn" data-dir="next"${{userAcqSrcPage>=totalPages?' disabled':''}}>Next ›</button>`;
+      pager.querySelectorAll('.pager-btn').forEach(b=>b.onclick=()=>{{ userAcqSrcPage+=b.dataset.dir==='next'?1:-1; renderUserAcqSources(); }});
     }}
     async function loadUserAcquisition() {{
       setStatus('userAcqStatus','Loading…');
@@ -2393,7 +2465,9 @@ def render_bigquery_dashboard_page(
           getJson(withDates(USER_ACQ_KEY_EVENTS_API)).catch(()=>({{by_source_events:[],events:[]}})),
         ]);
         renderNewVsReturning(payload.by_channel||[]);
-        renderBarList('userAcqChannelBars',payload.by_channel||[],'new_users','channel');
+        userAcqChanState.page=1;
+        renderBarListPaged('userAcqChannelBars','userAcqChannelPager',payload.by_channel||[],'new_users','channel',userAcqChanState);
+        userAcqSrcPage=1;
         userAcqBaseSources = payload.by_source||[];
         userAcqSourceEventMap={{}};
         for (const r of (ev.by_source_events||[])) {{
@@ -2407,13 +2481,88 @@ def render_bigquery_dashboard_page(
     }}
 
     // ---- GA4: Demographics ----
+    // Age bracket, with a toggle for the "unknown" bucket (hidden by default so
+    // the real brackets read clearly). Rows are cached so toggling is instant.
+    let demoAgeRows=[];
+    function renderAge() {{
+      const showUnknown=!!(document.getElementById('ageUnknownToggle')||{{}}).checked;
+      const rows=demoAgeRows.filter(r=>showUnknown||String(r.age_bracket).toLowerCase()!=='unknown');
+      renderBarList('ageBars',rows,'users','age_bracket');
+    }}
+    {{ const t=document.getElementById('ageUnknownToggle'); if (t) t.addEventListener('change', renderAge); }}
+    // Gender → 100% split bar + per-gender stat cards.
+    const GENDER_COLORS={{male:'#1d6fd0',female:'#d6336c'}};
+    function genderColor(g,i) {{ return GENDER_COLORS[String(g).toLowerCase()]||CHART_PALETTE[i%CHART_PALETTE.length]; }}
+    function renderGender(rows) {{
+      const el=document.getElementById('genderBars');
+      if (!rows||!rows.length) {{ el.innerHTML='<div class="empty">No data.</div>'; return; }}
+      const ordered=[...rows].sort((a,b)=>num(b.users)-num(a.users));
+      const total=ordered.reduce((s,r)=>s+num(r.users),0)||1;
+      const cap=g=>String(g).replace(/\b\w/g,c=>c.toUpperCase());
+      const seg=ordered.map((r,i)=>{{const p=num(r.users)/total*100;return`<div class="gender-seg" style="width:${{p.toFixed(2)}}%;background:${{genderColor(r.gender,i)}}" title="${{esc(cap(r.gender))}} — ${{count(r.users)}} (${{p.toFixed(1)}}%)">${{p>=10?p.toFixed(0)+'%':''}}</div>`;}}).join('');
+      const stats=ordered.map((r,i)=>{{const p=num(r.users)/total*100;return`<div class="gender-stat"><span class="gender-dot" style="background:${{genderColor(r.gender,i)}}"></span><div><div class="gender-stat-label">${{esc(cap(r.gender))}}</div><div class="gender-stat-value">${{count(r.users)}}</div><div class="gender-stat-pct">${{p.toFixed(0)}}% of known</div></div></div>`;}}).join('');
+      el.innerHTML=`<div class="gender-wrap"><div class="gender-bar">${{seg}}</div><div class="gender-stats">${{stats}}</div></div>`;
+    }}
+    // Users-by-state tile-grid heat map. Each state is a labeled square on an
+    // approximate US grid, shaded by its share of users; hover for exact counts.
+    // Unmapped regions (non-US, territories) simply don't appear — they remain
+    // visible in the cities table beside it.
+    const STATE_TILES={{
+      'Alabama':['AL',6,6],'Alaska':['AK',0,0],'Arizona':['AZ',5,1],'Arkansas':['AR',5,4],
+      'California':['CA',4,0],'Colorado':['CO',4,2],'Connecticut':['CT',3,9],'Delaware':['DE',4,9],
+      'Florida':['FL',7,8],'Georgia':['GA',6,7],'Hawaii':['HI',7,0],'Idaho':['ID',2,1],
+      'Illinois':['IL',2,5],'Indiana':['IN',3,5],'Iowa':['IA',3,4],'Kansas':['KS',5,3],
+      'Kentucky':['KY',4,5],'Louisiana':['LA',6,4],'Maine':['ME',0,10],'Maryland':['MD',4,8],
+      'Massachusetts':['MA',2,9],'Michigan':['MI',2,7],'Minnesota':['MN',2,4],'Mississippi':['MS',6,5],
+      'Missouri':['MO',4,4],'Montana':['MT',2,2],'Nebraska':['NE',4,3],'Nevada':['NV',3,1],
+      'New Hampshire':['NH',1,10],'New Jersey':['NJ',3,8],'New Mexico':['NM',5,2],'New York':['NY',2,8],
+      'North Carolina':['NC',5,6],'North Dakota':['ND',2,3],'Ohio':['OH',3,6],'Oklahoma':['OK',6,3],
+      'Oregon':['OR',3,0],'Pennsylvania':['PA',3,7],'Rhode Island':['RI',2,10],'South Carolina':['SC',5,7],
+      'South Dakota':['SD',3,3],'Tennessee':['TN',5,5],'Texas':['TX',7,3],'Utah':['UT',4,1],
+      'Vermont':['VT',1,9],'Virginia':['VA',4,7],'Washington':['WA',2,0],'West Virginia':['WV',4,6],
+      'Wisconsin':['WI',2,6],'Wyoming':['WY',3,2],'District of Columbia':['DC',5,8]
+    }};
+    function lerpColor(t) {{
+      // #eaf1fb (light) → #1d6fd0 (accent), gamma-eased so mid values read.
+      const a=[234,241,251], b=[29,111,208], e=Math.sqrt(Math.max(0,Math.min(1,t)));
+      return 'rgb('+a.map((v,i)=>Math.round(v+(b[i]-v)*e)).join(',')+')';
+    }}
+    function renderStateMap(regionRows) {{
+      const host=document.getElementById('stateMap');
+      if (!host) return;
+      const byState={{}};
+      for (const r of (regionRows||[])) byState[r.region]=(byState[r.region]||0)+num(r.users);
+      const max=Math.max(1,...Object.values(byState));
+      const TS=26, GAP=3, CELL=TS+GAP, COLS=11, ROWS=8;
+      const W=COLS*CELL-GAP, H=ROWS*CELL-GAP;
+      let tiles='';
+      for (const [name,[ab,r,c]] of Object.entries(STATE_TILES)) {{
+        const v=byState[name]||0, x=c*CELL, y=r*CELL;
+        const fill=v>0?lerpColor(v/max):'#eef2f7';
+        const txt=v/max>0.55?'#fff':'#5a6b82';
+        tiles+=`<g class="state-tile"><rect x="${{x}}" y="${{y}}" width="${{TS}}" height="${{TS}}" rx="4" fill="${{fill}}"><title>${{esc(name)}} — ${{count(v)}} users</title></rect>`+
+          `<text class="state-tile-label" x="${{x+TS/2}}" y="${{y+TS/2+3}}" text-anchor="middle" style="fill:${{txt}}">${{ab}}</text></g>`;
+      }}
+      const hasData=Object.keys(byState).length>0;
+      host.innerHTML=`<svg viewBox="0 0 ${{W}} ${{H}}" role="img" aria-label="Users by US state">${{tiles}}</svg>`+
+        (hasData?`<div class="state-map-scale"><span>Fewer</span><span class="state-map-scale-bar"></span><span>More</span></div>`:`<div class="empty" style="padding:12px">No state-level data for this range.</div>`);
+    }}
     async function loadDemographics() {{
       setStatus('demoStatus','Loading…');
+      document.getElementById('stateMap').innerHTML = `<div class="skel" style="height:200px;border-radius:8px"></div>`;
       document.getElementById('citiesTable').innerHTML = skelTable(5,5);
       document.getElementById('ageBars').innerHTML = skelBars(5);
       document.getElementById('genderBars').innerHTML = skelBars(2);
       try {{
         const payload=await getJson(withDates(DEMOGRAPHICS_API));
+        // Prefer the accurate state rollup; fall back to summing the top cities.
+        let regionRows=payload.by_region;
+        if (!regionRows||!regionRows.length) {{
+          const agg={{}};
+          for (const r of (payload.by_city||[])) if (r.region) agg[r.region]=(agg[r.region]||0)+num(r.users);
+          regionRows=Object.entries(agg).map(([region,users])=>({{region,users}}));
+        }}
+        renderStateMap(regionRows);
         renderTable('citiesTable',[
           {{key:'city',label:'City',left:true}},
           {{key:'region',label:'Region',left:true}},
@@ -2421,8 +2570,9 @@ def render_bigquery_dashboard_page(
           {{key:'key_events',label:'Key events',format:count}},
           {{key:'engagement_rate',label:'Eng. rate',format:v=>v!=null?v+'%':'—'}},
         ], payload.by_city||[], 'No city data.');
-        renderBarList('ageBars',payload.by_age||[],'users','age_bracket');
-        renderBarList('genderBars',payload.by_gender||[],'users','gender');
+        demoAgeRows=payload.by_age||[];
+        renderAge();
+        renderGender(payload.by_gender||[]);
         setStatus('demoStatus','');
       }} catch(err) {{ setStatus('demoStatus',err.message||String(err),true); }}
     }}
@@ -2440,7 +2590,6 @@ def render_bigquery_dashboard_page(
       if (modules.traffic)          loaders.push(loadTrafficAcq);
       if (modules.audience)         loaders.push(loadDeviceSplit);
       if (modules.landing)          loaders.push(loadLandingPages);
-      if (modules.conversions)      loaders.push(loadConversions);
       if (modules.user_acquisition) loaders.push(loadUserAcquisition);
       if (modules.demographics)     loaders.push(loadDemographics);
       loaders.forEach((fn,i)=>setTimeout(fn, i*250));

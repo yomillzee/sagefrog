@@ -1120,13 +1120,31 @@ def fetch_demographics(
     GROUP BY gender
     ORDER BY users DESC
     """
+    # State-level rollup for the demographics map. Aggregated straight from the
+    # geo table (not summed from the top-20 cities above) so the map reflects
+    # every user's region, not just the largest cities.
+    region_sql = f"""
+    SELECT
+      region,
+      SUM(active_users) AS users,
+      SUM(sessions) AS sessions,
+      SUM(key_events) AS key_events
+    FROM {_geo_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+      AND region IS NOT NULL AND region != '' AND region != '(not set)'
+    GROUP BY region
+    ORDER BY users DESC
+    LIMIT 70
+    """
     by_city = _run_query(city_sql, params=params, max_rows=20)
     by_age = _run_query(age_sql, params=params, max_rows=10)
     by_gender = _run_query(gender_sql, params=params, max_rows=5)
+    by_region = _run_query(region_sql, params=params, max_rows=70)
     return {
         "client": _client_key(),
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "by_city": by_city,
         "by_age": by_age,
         "by_gender": by_gender,
+        "by_region": by_region,
     }
