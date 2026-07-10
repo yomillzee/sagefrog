@@ -204,11 +204,48 @@ def render_bigquery_dashboard_page(
 
     connectors_url = _api_url(f"/dashboard/{client_slug}/connectors", access_key=access_key)
     onboarding_html = "" if has_connectors else f"""
-      <section class="onboarding-card">
+      <section class="onboarding-card onboarding-steps">
         <div class="onboarding-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 3a3 3 0 00-3 3v1H9V6a3 3 0 10-3 3v1H3v2h3v1a3 3 0 103 3v-1h6v1a3 3 0 103-3v-1h3v-2h-3V9a3 3 0 000-6z"/></svg></div>
-        <h2>Connect your first data source</h2>
-        <p>This dashboard is ready to go. Connect a marketing platform to start pulling data in — metrics appear here after the first sync.</p>
-        <a class="onboarding-cta" href="{connectors_url}">Set up connectors →</a>
+        <h2>Get your dashboard connected</h2>
+        <p>Three steps to start pulling data in. Steps&nbsp;1–2 happen once in Google&nbsp;Cloud (signed in as the agency account); step&nbsp;3 is here in the portal.</p>
+        <ol class="ob-steps">
+          <li class="ob-step">
+            <div class="ob-step-num">1</div>
+            <div class="ob-step-body">
+              <div class="ob-step-title">Create a BigQuery project</div>
+              <div class="ob-step-desc">In Google Cloud — signed in as <strong>sagefrogmarketinggroup@gmail.com</strong> — create a new GCP project for this client (or reuse an existing one). Note its <strong>project ID</strong> for step&nbsp;3.</div>
+              <a class="ob-step-link" href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Open Google Cloud →</a>
+            </div>
+          </li>
+          <li class="ob-step">
+            <div class="ob-step-num">2</div>
+            <div class="ob-step-body">
+              <div class="ob-step-title">Grant access in IAM</div>
+              <div class="ob-step-desc">On that project, open <strong>IAM &amp; Admin → Grant access</strong>. Add the principal below and give it <strong>both</strong> the <strong>BigQuery Data Editor</strong> and <strong>BigQuery Job User</strong> roles (both are required — the connector step verifies them).</div>
+              <div class="ob-copy">
+                <code>marketing-data-reader@sagefrog.iam.gserviceaccount.com</code>
+                <button type="button" class="ob-copy-btn" onclick="obCopy('marketing-data-reader@sagefrog.iam.gserviceaccount.com', this)">Copy</button>
+              </div>
+              <a class="ob-step-link" href="https://console.cloud.google.com/iam-admin/iam" target="_blank" rel="noopener">Open IAM →</a>
+            </div>
+          </li>
+          <li class="ob-step">
+            <div class="ob-step-num">3</div>
+            <div class="ob-step-body">
+              <div class="ob-step-title">Set up connectors</div>
+              <div class="ob-step-desc">Back here, connect a marketing platform and enter your new <strong>project ID</strong> as the destination. We'll create the datasets and verify access — data appears after the first sync.</div>
+              <a class="onboarding-cta" href="{connectors_url}">Set up connectors →</a>
+            </div>
+          </li>
+        </ol>
+        <script>
+        function obCopy(t, btn){{
+          navigator.clipboard.writeText(t).then(function(){{
+            var o = btn.textContent; btn.textContent = 'Copied ✓'; btn.classList.add('ok');
+            setTimeout(function(){{ btn.textContent = o; btn.classList.remove('ok'); }}, 1400);
+          }});
+        }}
+        </script>
       </section>
     """
 
@@ -447,6 +484,24 @@ def render_bigquery_dashboard_page(
     .onboarding-card p {{ max-width:440px; margin:0 auto 18px; color:var(--muted); font-size:.9rem; line-height:1.5; }}
     .onboarding-cta {{ display:inline-block; background:var(--accent); color:#fff; text-decoration:none; font-weight:700; font-size:.9rem; padding:10px 20px; border-radius:var(--radius-sm); box-shadow:0 1px 2px rgba(16,33,67,.12); transition:background .15s; }}
     .onboarding-cta:hover {{ background:#1a62b8; }}
+    /* ---- Step-by-step onboarding checklist ---- */
+    .onboarding-steps {{ text-align:left; padding:28px 26px 26px; }}
+    .onboarding-steps .onboarding-icon {{ margin:0 0 14px; }}
+    .onboarding-steps h2 {{ text-align:left; }}
+    .onboarding-steps > p {{ text-align:left; max-width:600px; margin:0 0 22px; }}
+    .ob-steps {{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:20px; }}
+    .ob-step {{ display:flex; gap:14px; }}
+    .ob-step-num {{ flex:0 0 28px; width:28px; height:28px; border-radius:50%; background:#eaf2fd; color:var(--accent); font-weight:700; font-size:.86rem; display:flex; align-items:center; justify-content:center; }}
+    .ob-step-body {{ flex:1; min-width:0; }}
+    .ob-step-title {{ font-weight:700; font-size:.96rem; margin-bottom:3px; }}
+    .ob-step-desc {{ color:var(--muted); font-size:.86rem; line-height:1.5; margin-bottom:9px; }}
+    .ob-step-link {{ display:inline-block; color:var(--accent); font-weight:600; font-size:.84rem; text-decoration:none; }}
+    .ob-step-link:hover {{ text-decoration:underline; }}
+    .ob-copy {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 10px; }}
+    .ob-copy code {{ background:#f6f8fb; border:1px solid var(--line); border-radius:6px; padding:5px 9px; font-size:.8rem; word-break:break-all; }}
+    .ob-copy-btn {{ border:1px solid var(--line); background:var(--card); color:var(--accent); font-weight:600; font-size:.78rem; padding:5px 11px; border-radius:6px; cursor:pointer; white-space:nowrap; transition:background .15s; }}
+    .ob-copy-btn:hover {{ background:#eaf2fd; }}
+    .ob-copy-btn.ok {{ color:#178a4c; border-color:#178a4c; }}
     .sec-head {{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:16px; }}
     .sec-head h2 {{ margin:0; }}
     .sec-head .status {{ margin:0; font-size:.76rem; text-align:right; flex-shrink:0; }}
