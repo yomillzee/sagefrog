@@ -74,6 +74,10 @@ SCHEMA_SQL_STATEMENTS = [
     """
     ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS pagespeed_targets JSONB
     """,
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS explorer_budget_tracker BOOLEAN NOT NULL DEFAULT TRUE
+    """,
 ]
 
 
@@ -99,6 +103,7 @@ class ClientConfigRow:
     gsc_target_keywords: str | None = None
     ga4_key_events: str | None = None
     explorer_filters: str | None = None
+    explorer_budget_tracker: bool = True
 
 
 def _get_db_url() -> str | None:
@@ -135,7 +140,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    dashboard_mode, gsc_site_url, semrush_domain,
                    gtm_account_id, gtm_container_id,
                    gsc_branded_roots, gsc_target_keywords, ga4_key_events,
-                   explorer_filters
+                   explorer_filters, explorer_budget_tracker
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -170,6 +175,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         gsc_target_keywords=_s(row[17]),
         ga4_key_events=_s(row[18]),
         explorer_filters=_s(row[19]),
+        explorer_budget_tracker=bool(row[20]) if row[20] is not None else True,
     )
 
 
@@ -377,6 +383,43 @@ def update_explorer_filters(
             """,
             (slug, slug, now, _clean(updated_by), _clean(filters_text)),
         )
+
+
+def save_explorer_budget_tracker(
+    client_slug: str,
+    show: bool,
+    *,
+    updated_by: str | None = None,
+) -> ClientConfigRow:
+    """Toggle whether the budget tracker module shows on the Campaign Explorer."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save client dashboard config.")
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    existing = get_config(slug)
+    label = existing.label if existing else slug
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, explorer_budget_tracker, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              explorer_budget_tracker = EXCLUDED.explorer_budget_tracker,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, label, bool(show), now, (updated_by or "").strip() or None),
+        )
+    saved = get_config(slug)
+    if not saved:
+        raise RuntimeError("Failed to load saved client config.")
+    return saved
 
 
 def save_monthly_budget(

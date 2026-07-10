@@ -52,6 +52,8 @@ def _render_bq_nixon_settings(slug: str, db_cfg, *, flash, flash_err, html_kw) -
             flash_error=flash_err,
             show_linkedin_backfill=False,
             explorer_filters=(getattr(db_cfg, "explorer_filters", None) or ""),
+            monthly_budget=getattr(db_cfg, "monthly_budget_usd", None),
+            budget_tracker_enabled=bool(getattr(db_cfg, "explorer_budget_tracker", True)),
             **html_kw,
         )
     )
@@ -627,3 +629,53 @@ def dashboard_client_budget_save(
         **audit_log.request_context(request),
     )
     return JSONResponse({"ok": True, "monthly_budget_usd": saved.monthly_budget_usd})
+
+
+@router.post(
+    "/dashboard/{client_slug}/budget-visibility",
+    summary="Toggle whether the budget tracker shows on the Campaign Explorer (JSON)",
+    include_in_schema=False,
+)
+def dashboard_client_budget_visibility(
+    client_slug: str,
+    request: Request,
+    show: str = Form(""),
+    key: str | None = None,
+):
+    """Admin-only toggle: does the budget tracker module appear on the client's
+    Campaign Explorer? (It always shows on this settings page.)"""
+    slug = validate_client_slug(client_slug)
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard_api(request, client_slug=slug, key=key)
+        user = auth.user
+        session_is_admin = bool(user and user.role == "admin")
+        session_email = user.email if user else None
+    else:
+        dashboard_service.verify_dashboard_key(key)
+        session_is_admin = True
+        session_email = "dashboard_key"
+
+    if web_users.enabled() and not session_is_admin:
+        return JSONResponse(
+            {"ok": False, "error": "Only admins can change this setting."},
+            status_code=403,
+        )
+    if not client_dashboard_config.enabled():
+        return JSONResponse(
+            {"ok": False, "error": "DATABASE_URL is required to save this setting."},
+            status_code=503,
+        )
+    show_on_explorer = str(show).strip().lower() in ("1", "true", "yes", "on")
+    try:
+        saved = client_dashboard_config.save_explorer_budget_tracker(
+            slug, show_on_explorer, updated_by=session_email or "dashboard_key",
+        )
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    audit_log.record(
+        action="dashboard.budget_visibility_saved",
+        actor_email=session_email,
+        detail={"client_slug": slug, "explorer_budget_tracker": saved.explorer_budget_tracker},
+        **audit_log.request_context(request),
+    )
+    return JSONResponse({"ok": True, "explorer_budget_tracker": saved.explorer_budget_tracker})

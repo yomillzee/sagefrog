@@ -111,6 +111,7 @@ def render_bigquery_dashboard_page(
     label: str = "Nixon Medical",
     session_can_switch_clients: bool = False,
     view_as_users: list[dict] | None = None,
+    show_budget_tracker: bool = True,
 ) -> str:
     """Render this BigQuery-mart dashboard for any client.
 
@@ -344,42 +345,28 @@ def render_bigquery_dashboard_page(
           <div class="chips" id="platformChips"></div>
         </div>"""
 
-    # Budget tracking (Campaign Explorer, bottom): cumulative spend stacked by
-    # platform vs the monthly budget goal + a run-rate projection. Only for
-    # clients that actually run paid ads — no spend mart otherwise.
-    budget_section_html = "" if not has_paid_ads else """
-      <section id="sec-budget">
-        <div class="sec-head">
-          <h2>Budget tracking</h2>
-          <div class="ov-actions">
-            <span class="status" id="budgetStatus"></span>
-            <div class="chips" id="budgetRangeChips" role="tablist" aria-label="Budget range">
-              <button type="button" class="chip active" data-range="month">This month</button>
-              <button type="button" class="chip" data-range="last3m">Last 3 months</button>
-            </div>
-          </div>
-        </div>
-        <p class="chart-note" style="margin-top:0">Cumulative paid spend by platform against the monthly budget. Spend resets at the start of each calendar month; the projection extends the current month at its run-rate to month end.</p>
-        {budget_goal_editor_html}
-        <div class="budget-stats" id="budgetStats"></div>
-        <div class="chart-wrap"><div class="chart-canvas-host" style="height:260px"><canvas id="budgetChart"></canvas></div></div>
-      </section>"""
-    # Inline monthly-goal editor — admins only (same permission as Settings).
-    # While impersonating (view-as), session_is_admin is the effective user's,
-    # so a client view correctly hides it.
-    budget_goal_editor_html = "" if not session_is_admin else """
-        <form class="budget-goal-editor" id="budgetGoalForm" autocomplete="off">
-          <label for="budgetGoalInput">Monthly goal (USD)</label>
-          <div class="budget-goal-input">
-            <span class="budget-goal-prefix">$</span>
-            <input type="number" id="budgetGoalInput" name="monthly_budget_usd" min="0" step="100" placeholder="e.g. 25000">
-          </div>
-          <button type="submit" class="chip budget-goal-save">Save goal</button>
-          <span class="status" id="budgetGoalStatus"></span>
-        </form>"""
-    budget_section_html = budget_section_html.format(
-        budget_goal_editor_html=budget_goal_editor_html
-    ) if budget_section_html else ""
+    # Budget tracking (Campaign Explorer, bottom): shared module, also on the
+    # settings page. Only when the client runs paid ads (no spend mart otherwise)
+    # AND the per-client "show on explorer" toggle is on. The inline goal editor
+    # is admin-only (session_is_admin is the effective user, so a view-as client
+    # correctly hides it). Lazy import avoids a circular dependency.
+    from dashboard.renderers import budget_tracker as _budget_tracker
+    show_budget = bool(has_paid_ads and show_budget_tracker)
+    budget_section_html = (
+        _budget_tracker.section_html(can_edit=session_is_admin) if show_budget else ""
+    )
+    budget_css = _budget_tracker.css() if show_budget else ""
+    budget_scripts = (
+        _budget_tracker.scripts(
+            api_client_key=api_client_key,
+            access_key=access_key,
+            monthly_budget=monthly_budget_val,
+            can_edit=session_is_admin,
+            client_slug=client_slug,
+        )
+        if show_budget
+        else ""
+    )
 
     # Overview is a "home": the top widget from each section, each with a
     # "See more" that jumps to that tab. Panels below are shared by all clients;
@@ -651,20 +638,7 @@ def render_bigquery_dashboard_page(
     .chart-wrap {{ position:relative; border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px; background:#fafcff; }}
     .trend-svg {{ width:100%; height:260px; display:block; }}
     .chart-note {{ font-size:.74rem; color:var(--muted); margin-top:8px; }}
-    /* ---- Budget tracking stat pills ---- */
-    .budget-stats {{ display:flex; flex-wrap:wrap; gap:10px; margin:2px 0 12px; }}
-    .budget-stat {{ flex:1 1 120px; min-width:120px; border:1px solid var(--line-soft); border-radius:10px; padding:9px 12px; background:var(--card); }}
-    .budget-stat-label {{ font-size:.68rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); font-weight:700; }}
-    .budget-stat-value {{ font-size:1.12rem; font-weight:750; color:var(--text); margin-top:2px; }}
-    .budget-stat-sub {{ font-size:.72rem; color:var(--muted); margin-top:1px; }}
-    .budget-stat.is-over .budget-stat-value {{ color:#c02626; }}
-    .budget-stat.is-under .budget-stat-value {{ color:#0a7f3f; }}
-    .budget-goal-editor {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 10px; }}
-    .budget-goal-editor label {{ font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }}
-    .budget-goal-input {{ position:relative; display:inline-flex; align-items:center; }}
-    .budget-goal-prefix {{ position:absolute; left:9px; color:var(--muted); font-size:.85rem; pointer-events:none; }}
-    .budget-goal-input input {{ width:130px; padding:6px 10px 6px 18px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--text); font:inherit; font-size:.86rem; }}
-    .budget-goal-save {{ cursor:pointer; }}
+    {budget_css}
     .chart-tip {{ position:absolute; pointer-events:none; background:#0b1020; color:#e8eefc; font-size:.74rem; line-height:1.5; padding:7px 9px; border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.25); transform:translate(-50%,-112%); white-space:nowrap; z-index:5; }}
     .metric-swatch {{ width:10px; height:10px; border-radius:2px; display:inline-block; vertical-align:middle; margin-right:4px; }}
     /* ---- Bar lists ---- */
@@ -1094,12 +1068,6 @@ def render_bigquery_dashboard_page(
     const TRAFFIC_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-key-events')}";
     const USER_ACQ_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acq-key-events')}";
     const GA4_KEY_EVENTS_SAVED = {json.dumps([s.strip() for s in ga4_key_events.splitlines() if s.strip()])};
-    // Monthly paid-media budget (Settings → Configuration). 0 when unset, which
-    // hides the goal/projection lines but still charts cumulative spend. Mutable
-    // so the inline goal editor can update it without a page reload.
-    let MONTHLY_BUDGET = {json.dumps(float(monthly_budget_val) if monthly_budget_val else 0)};
-    const BUDGET_CAN_EDIT = {'true' if session_is_admin else 'false'};
-    const BUDGET_SAVE_URL = "{_aurl(f'/dashboard/{client_slug}/budget')}";
 
     // ---- Formatters ----
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
@@ -2154,234 +2122,7 @@ def render_bigquery_dashboard_page(
         kwSec.style.display='none';
       }}
       loadPaidSources();
-      loadBudget();
     }}
-
-    // ---- Budget tracking (cumulative spend vs monthly goal) ----
-    // Independent of the top date bar: its own This month / Last 3 months toggle.
-    let budgetRange = 'month';
-    const BUDGET_PLATFORMS = [
-      {{ key:'paid_google',   label:'Google Ads', color:'#1d6fd0' }},
-      {{ key:'paid_linkedin', label:'LinkedIn',   color:'#0a7f3f' }},
-      {{ key:'paid_meta',     label:'Meta',       color:'#7c3aed' }},
-    ];
-    const budgetMonthKey = ds => String(ds).slice(0, 7);            // 'YYYY-MM'
-    function budgetDaysInMonth(y, m0) {{ return new Date(y, m0 + 1, 0).getDate(); }}
-    // All calendar days from `from` (inclusive) to `to` (inclusive) as ISO strings.
-    function budgetDayRange(from, to) {{
-      const out = []; const d = new Date(from);
-      while (d <= to) {{ out.push(fmtDate(d)); d.setDate(d.getDate() + 1); }}
-      return out;
-    }}
-    // Resolve the toggle to a data window [start, lastData] plus the axis end
-    // (end of the current month, so the goal + projection span the full month).
-    function budgetWindow() {{
-      const today = new Date();
-      const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-      const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-      let start;
-      if (budgetRange === 'last3m') {{
-        // First day of the month two months back → three whole calendar months
-        // (current + prior two), so every month's cumulative starts clean at day 1.
-        start = new Date(today.getFullYear(), today.getMonth() - 2, 1);
-      }} else {{
-        start = new Date(today.getFullYear(), today.getMonth(), 1);
-      }}
-      // Data lags ~a day; never query past yesterday, and never before start.
-      const lastData = yesterday >= start ? yesterday : start;
-      return {{ start, lastData, axisEnd: monthEnd }};
-    }}
-    async function loadBudget() {{
-      const host = document.getElementById('sec-budget');
-      if (!host) return;
-      syncBudgetGoalInput();
-      setStatus('budgetStatus', 'Loading…');
-      const win = budgetWindow();
-      const startStr = fmtDate(win.start), lastStr = fmtDate(win.lastData);
-      let daily = [];
-      try {{
-        const res = await getJson(withDatesRange(SUMMARY_API, startStr, lastStr));
-        daily = (res && res.daily) || [];
-      }} catch (e) {{ daily = []; }}
-      renderBudget(daily, win);
-    }}
-    function renderBudget(daily, win) {{
-      // Axis: every day from window start to the end of the current month.
-      const axis = budgetDayRange(win.start, win.axisEnd);
-      const lastStr = fmtDate(win.lastData);
-      // spend[platformKey][isoDate] = spend that day.
-      const spend = {{}};
-      BUDGET_PLATFORMS.forEach(p => (spend[p.key] = {{}}));
-      let anySpend = false;
-      for (const r of (daily || [])) {{
-        const k = String(r.source || '').toLowerCase();
-        if (!spend[k]) continue;                    // ignore platforms we don't chart
-        const d = String(r.date);
-        spend[k][d] = (spend[k][d] || 0) + num(r.spend);
-        if (num(r.spend)) anySpend = true;
-      }}
-      // Per-platform cumulative spend, RESET at each calendar-month boundary, and
-      // only up to the last synced day (future days stay undefined so the areas
-      // stop at "today" while the goal/projection lines continue).
-      const perPlatformCum = {{}};    // key -> [values aligned to axis]
-      BUDGET_PLATFORMS.forEach(p => {{
-        let run = 0, curMonth = null;
-        perPlatformCum[p.key] = axis.map(d => {{
-          const mk = budgetMonthKey(d);
-          if (mk !== curMonth) {{ curMonth = mk; run = 0; }}
-          if (d > lastStr) return undefined;        // future — no actual spend yet
-          run += (spend[p.key][d] || 0);
-          return run;
-        }});
-      }});
-      // Stack platforms: each dataset plots the running stack total and fills to
-      // the platform below it (scales.y.stacked doesn't stack lines in this build).
-      const stackAcc = axis.map(() => 0);
-      const platformSets = BUDGET_PLATFORMS.map((p, i) => {{
-        const raw = perPlatformCum[p.key];
-        const data = raw.map((v, idx) => (v === undefined ? undefined : (stackAcc[idx] += v)));
-        return {{
-          label: p.label, data, _raw: raw, _fmt: money,
-          borderColor: p.color, backgroundColor: p.color + '4d',
-          fill: i === 0 ? 'origin' : '-1', borderWidth: 2, tension: 0.25,
-          pointRadius: 0, pointHoverRadius: 4, spanGaps: false,
-        }};
-      }});
-      // Total cumulative (top of the stack) at each axis day, and the last synced
-      // day's total for the projection + stat pills.
-      const totalCum = axis.map((d, idx) => (d > lastStr ? undefined : stackAcc[idx]));
-      const lastIdx = axis.indexOf(lastStr);
-      const spentToDate = lastIdx >= 0 ? (totalCum[lastIdx] || 0) : 0;
-
-      const datasets = [...platformSets];
-
-      // Goal line: flat monthly budget across the whole axis (dashed).
-      const hasGoal = MONTHLY_BUDGET > 0;
-      if (hasGoal) {{
-        datasets.push({{
-          label: 'Goal', data: axis.map(() => MONTHLY_BUDGET),
-          _raw: axis.map(() => MONTHLY_BUDGET), _fmt: money,
-          borderColor: '#64748b', backgroundColor: 'transparent', fill: false,
-          borderWidth: 1.6, borderDash: [6, 5], tension: 0, pointRadius: 0, pointHoverRadius: 0,
-        }});
-      }}
-
-      // Projection: extend the CURRENT month's run-rate to month end. Only the
-      // current month's days participate; it starts at the last actual total and
-      // rises linearly to the projected month-end total.
-      const curMonthKey = budgetMonthKey(fmtDate(new Date()));
-      const curDays = axis.filter(d => budgetMonthKey(d) === curMonthKey);
-      let projectedTotal = null;
-      if (curDays.length) {{
-        const elapsed = curDays.filter(d => d <= lastStr).length;
-        const dim = curDays.length;                 // days in current month on the axis
-        const monthStartIdx = axis.indexOf(curDays[0]);
-        // Cumulative resets per calendar month, so the last synced day's stack
-        // total is exactly the current month's spend to date.
-        const monthSpend = lastIdx >= monthStartIdx ? (totalCum[lastIdx] || 0) : 0;
-        if (elapsed > 0) {{
-          projectedTotal = monthSpend / elapsed * dim;
-          const projData = axis.map((d, idx) => {{
-            if (budgetMonthKey(d) !== curMonthKey) return undefined;
-            const dayNo = idx - monthStartIdx + 1;    // 1-based day within month
-            return monthSpend / elapsed * dayNo;      // straight run-rate line
-          }});
-          datasets.push({{
-            label: 'Projected', data: projData,
-            _raw: projData, _fmt: money,
-            borderColor: '#e08a1e', backgroundColor: 'transparent', fill: false,
-            borderWidth: 1.8, borderDash: [3, 3], tension: 0, pointRadius: 0, pointHoverRadius: 0,
-          }});
-        }}
-      }}
-
-      renderBudgetStats(spentToDate, hasGoal ? MONTHLY_BUDGET : 0, projectedTotal);
-
-      if (!anySpend) {{ __destroyChart('budgetChart'); setStatus('budgetStatus', 'No paid spend in this range.'); return; }}
-      __chart('budgetChart', {{
-        type: 'line',
-        data: {{ labels: axis.map(d => d.slice(5)), datasets }},
-        options: {{
-          interaction: {{ mode: 'index', intersect: false }},
-          scales: {{
-            x: {{ grid: {{ display: false }}, border: {{ display: false }}, ticks: {{ maxRotation: 0, autoSkip: true, maxTicksLimit: 8 }} }},
-            y: {{ beginAtZero: true, grid: {{ color: '#f1f4f9' }}, border: {{ display: false }},
-                 ticks: {{ maxTicksLimit: 5, callback: v => '$' + Math.round(num(v)).toLocaleString() }} }},
-          }},
-          plugins: {{
-            legend: {{ display: true, position: 'bottom', labels: {{ usePointStyle: true, boxWidth: 8, padding: 12 }} }},
-            tooltip: {{
-              filter: item => {{
-                const raw = item.dataset._raw ? item.dataset._raw[item.dataIndex] : item.parsed.y;
-                return raw !== undefined && raw !== null;
-              }},
-              callbacks: {{ label: c => {{
-                const raw = c.dataset._raw ? c.dataset._raw[c.dataIndex] : c.parsed.y;
-                return `${{c.dataset.label}}: ${{(c.dataset._fmt || money)(raw)}}`;
-              }} }},
-            }},
-          }},
-        }},
-      }});
-      setStatus('budgetStatus', '');
-    }}
-    function renderBudgetStats(spent, goal, projected) {{
-      const el = document.getElementById('budgetStats');
-      if (!el) return;
-      const pills = [];
-      pills.push(`<div class="budget-stat"><div class="budget-stat-label">Spent to date</div><div class="budget-stat-value">${{money(spent)}}</div></div>`);
-      if (goal > 0) {{
-        const usePct = spent / goal * 100;
-        pills.push(`<div class="budget-stat"><div class="budget-stat-label">Monthly goal</div><div class="budget-stat-value">${{money(goal)}}</div><div class="budget-stat-sub">${{usePct.toFixed(0)}}% used</div></div>`);
-        if (projected !== null && projected !== undefined) {{
-          const over = projected > goal;
-          const diff = Math.abs(projected - goal);
-          pills.push(`<div class="budget-stat ${{over ? 'is-over' : 'is-under'}}"><div class="budget-stat-label">Projected month end</div><div class="budget-stat-value">${{money(projected)}}</div><div class="budget-stat-sub">${{over ? money(diff) + ' over' : money(diff) + ' under'}} goal</div></div>`);
-        }}
-      }} else {{
-        const hint = BUDGET_CAN_EDIT ? 'Set a goal above' : 'Set one in Settings';
-        pills.push(`<div class="budget-stat"><div class="budget-stat-label">Monthly goal</div><div class="budget-stat-value">—</div><div class="budget-stat-sub">${{hint}}</div></div>`);
-      }}
-      el.innerHTML = pills.join('');
-    }}
-    // Range toggle (This month / Last 3 months).
-    document.getElementById('budgetRangeChips')?.addEventListener('click', e => {{
-      const btn = e.target.closest('.chip[data-range]');
-      if (!btn || btn.classList.contains('active')) return;
-      document.querySelectorAll('#budgetRangeChips .chip').forEach(c => c.classList.toggle('active', c === btn));
-      budgetRange = btn.dataset.range;
-      loadBudget();
-    }});
-    // Prefill the goal editor with the current budget.
-    function syncBudgetGoalInput() {{
-      const inp = document.getElementById('budgetGoalInput');
-      if (inp && !inp.matches(':focus')) inp.value = MONTHLY_BUDGET > 0 ? MONTHLY_BUDGET : '';
-    }}
-    // Inline goal editor (admins only) — POSTs to the same save path as Settings,
-    // then updates the goal + projection in place without a page reload.
-    document.getElementById('budgetGoalForm')?.addEventListener('submit', async e => {{
-      e.preventDefault();
-      if (!BUDGET_CAN_EDIT) return;
-      const inp = document.getElementById('budgetGoalInput');
-      const raw = (inp && inp.value || '').trim();
-      setStatus('budgetGoalStatus', 'Saving…');
-      try {{
-        const res = await fetch(BUDGET_SAVE_URL, {{
-          method: 'POST',
-          headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
-          body: new URLSearchParams({{ monthly_budget_usd: raw }}),
-        }});
-        const data = await res.json().catch(() => ({{}}));
-        if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
-        MONTHLY_BUDGET = Number(data.monthly_budget_usd) || 0;
-        setStatus('budgetGoalStatus', 'Saved ✓');
-        setTimeout(() => setStatus('budgetGoalStatus', ''), 2000);
-        syncBudgetGoalInput();
-        loadBudget();
-      }} catch (err) {{
-        setStatus('budgetGoalStatus', 'Save failed: ' + (err.message || 'error'));
-      }}
-    }});
 
     // ---- GA4: Top pages ----
     let pagesTopRows=[], pagesSourceRows=[], pagesSearchQuery='';
@@ -3462,5 +3203,6 @@ def render_bigquery_dashboard_page(
       document.addEventListener('keydown',e=>{{if(e.key==='Escape')panel.classList.remove('open');}});
     }})();
   </script>
+  {budget_scripts}
 </body>
 </html>"""

@@ -255,12 +255,14 @@ def dashboard_client(
                 client_slug=slug, api_client_key=slug, label=label,
                 session_can_switch_clients=session_can_switch_clients(auth),
                 view_as_users=_view_as_user_options(auth.user),
+                show_budget_tracker=bool(getattr(db_cfg, "explorer_budget_tracker", True)),
                 **penn_html_session_kwargs(auth),
             ))
         dashboard_service.verify_dashboard_key(key)
         return HTMLResponse(render_bigquery_dashboard_page(
             client_slug=slug, api_client_key=slug, label=label,
             access_key=key, use_session=False, session_email=None, session_is_admin=False,
+            show_budget_tracker=bool(getattr(db_cfg, "explorer_budget_tracker", True)),
         ))
 
     if web_users.enabled():

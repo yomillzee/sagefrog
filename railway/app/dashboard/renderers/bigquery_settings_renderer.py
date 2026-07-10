@@ -17,6 +17,7 @@ from dashboard.renderers.base_layout import (
     render_sidebar,
 )
 from dashboard.renderers.bigquery_dashboard_renderer import _api_url
+from dashboard.renderers import budget_tracker
 from dashboard.utils.formatting import esc as _esc
 
 
@@ -40,6 +41,8 @@ def render_bigquery_settings_page(
     label: str = "Nixon Medical",
     show_linkedin_backfill: bool = True,
     explorer_filters: str = "",
+    monthly_budget: float | None = None,
+    budget_tracker_enabled: bool = True,
 ) -> str:
     """Settings page for any BigQuery-mart (Nixon-style) client.
 
@@ -103,6 +106,36 @@ def render_bigquery_settings_page(
     elif flash_error:
         flash_html = f'<div class="flash err">{_esc(flash_error)}</div>'
 
+    # Budget tracker — the shared module, always shown here (admins get the goal
+    # editor). Admins also get a toggle for whether it appears on the client-facing
+    # Campaign Explorer (server-persisted per client).
+    budget_css = budget_tracker.css()
+    budget_module_html = budget_tracker.section_html(can_edit=session_is_admin)
+    budget_scripts = budget_tracker.scripts(
+        api_client_key=api_client_key,
+        access_key=access_key,
+        monthly_budget=monthly_budget,
+        can_edit=session_is_admin,
+        client_slug=client_slug,
+    )
+    budget_visibility_url = _api_url(
+        f"/dashboard/{client_slug}/budget-visibility", access_key=access_key
+    )
+    budget_toggle_checked = " checked" if budget_tracker_enabled else ""
+    budget_visibility_html = "" if not session_is_admin else f"""
+    <section>
+      <h2>Budget tracker visibility</h2>
+      <p class="hint">This tracker always shows on this page. Toggle whether it also appears at the bottom of the client-facing Campaign Explorer.</p>
+      <div class="module-toggle-row" style="margin-top:14px">
+        <div class="module-toggle-info">
+          <span class="module-toggle-label">Show on Campaign Explorer</span>
+          <span class="module-toggle-desc">When on, clients see the budget tracker on their Campaign Explorer.</span>
+        </div>
+        <label class="toggle-switch" title="{'On' if budget_tracker_enabled else 'Off'}"><input type="checkbox" id="budgetVisibilityToggle"{budget_toggle_checked}><span class="toggle-track"></span></label>
+      </div>
+      <span class="status" id="budgetVisibilityStatus" style="display:block;margin-top:8px"></span>
+    </section>"""
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -110,6 +143,8 @@ def render_bigquery_settings_page(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{_esc(label)} — Settings</title>
   {favicon_head_html()}
+  <!-- Charts: Chart.js, vendored locally (served from /static/vendor) -->
+  <script src="/static/vendor/chart.umd.min.js"></script>
   <style>
     :root {{ --bg:#eef2f7; --card:#fff; --line:#e2e8f0; --line-soft:#eff3f8; --navy:#0a2540; --accent:#1d6fd0; --muted:#6b7a90; --bad:#b42318; --ok:#0a7f3f; --sidebar-from:#0a2540; --sidebar-to:#123456; --radius:14px; --radius-sm:9px; --shadow:0 1px 2px rgba(16,33,67,.04), 0 4px 16px rgba(16,33,67,.05); }}
     * {{ box-sizing:border-box; }}
@@ -180,6 +215,7 @@ def render_bigquery_settings_page(
     .toggle-switch input:checked + .toggle-track {{ background:var(--accent); }}
     .toggle-switch input:checked + .toggle-track:before {{ transform:translateX(18px); }}
     .toggle-switch input:focus-visible + .toggle-track {{ outline:2px solid #bcd4f0; outline-offset:2px; }}
+    {budget_css}
   </style>
 </head>
 <body>
@@ -322,6 +358,9 @@ def render_bigquery_settings_page(
       <div class="status" id="healthStatus">Loading…</div>
       <div class="table-wrap"><table id="healthTable"></table></div>
     </section>
+
+    {budget_visibility_html}
+    {budget_module_html}
   </main>
     </div>
   </div>
@@ -453,7 +492,31 @@ def render_bigquery_settings_page(
       const all = ALL_PAGES.reduce((o,k)=>({{...o,[k]:true}}),{{}}); savePages(all); renderPageToggles();
     }});
     renderPageToggles();
+    // ---- Budget tracker: show-on-explorer toggle ----
+    (function(){{
+      const t = document.getElementById('budgetVisibilityToggle');
+      if (!t) return;
+      t.addEventListener('change', async () => {{
+        t.disabled = true;
+        setStatus('budgetVisibilityStatus', 'Saving…');
+        try {{
+          const r = await fetch("{budget_visibility_url}", {{
+            method:'POST', credentials:'same-origin',
+            headers:{{'Content-Type':'application/x-www-form-urlencoded'}},
+            body: new URLSearchParams({{ show: t.checked ? '1' : '0' }}),
+          }});
+          const body = await r.json().catch(() => ({{}}));
+          if (!r.ok || !body.ok) throw new Error(body.error || ('HTTP ' + r.status));
+          t.closest('label').title = t.checked ? 'On' : 'Off';
+          setStatus('budgetVisibilityStatus', t.checked ? 'Shown on the Campaign Explorer.' : 'Hidden from the Campaign Explorer.');
+        }} catch (err) {{
+          t.checked = !t.checked;  // revert on failure
+          setStatus('budgetVisibilityStatus', 'Save failed: ' + (err.message || err), true);
+        }} finally {{ t.disabled = false; }}
+      }});
+    }})();
   </script>
+  {budget_scripts}
   <script>{dashboard_topbar_js()}</script>
 </body>
 </html>"""
