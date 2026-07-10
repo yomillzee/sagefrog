@@ -346,36 +346,76 @@ def render_dashboards_page(*, user: WebUser, dashboards: list[tuple[str, str]]) 
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dashboards · Sagefrog Marketing Group</title>
   <style>
-    :root {{ --navy: #0a2540; --accent: #0b5cab; --border: #d8dee8; }}
-    * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center;
-      font-family: system-ui, sans-serif; background: #eef1f5; color: #0f1c2e; }}
-    .card {{ width: min(440px, 92vw); background: #fff; border: 1px solid var(--border);
-      border-radius: 12px; padding: 28px 24px; box-shadow: 0 8px 32px rgba(10,37,64,.08); }}
-    h1 {{ margin: 0 0 8px; font-size: 1.35rem; color: var(--navy); }}
-    p.sub {{ margin: 0 0 20px; color: #5a6578; font-size: .92rem; }}
-    .dash-list {{ list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 8px; }}
-    .dash-link {{ display: block; padding: 12px 14px; border: 1px solid var(--border);
-      border-radius: 8px; text-decoration: none; color: var(--navy); font-weight: 600;
-      background: #fff; }}
-    .dash-link:hover {{ border-color: var(--accent); background: #f4f8fd; }}
-    .foot {{ display: flex; justify-content: space-between; align-items: center;
-      margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }}
-    .foot-link {{ color: var(--accent); font-size: .9rem; text-decoration: none; }}
-    .foot form {{ margin: 0; }}
-    .foot button {{ border: 0; background: none; color: #5a6578; font-size: .9rem;
-      cursor: pointer; padding: 0; }}
-    .foot button:hover {{ color: #b42318; }}
+    :root {{
+      --navy:#0a2540; --ink:#0f1c2e; --muted:#5a6578; --line:#e3e8f0;
+      --accent:#2563eb; --accent-d:#1d4ed8; --green:#34b27b; --danger:#b42318;
+    }}
+    * {{ box-sizing:border-box; }}
+    html,body {{ height:100%; }}
+    body {{
+      margin:0; padding:24px; color:var(--ink); display:grid; place-items:center;
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+      background:
+        radial-gradient(1100px 560px at 16% -12%, rgba(52,178,123,.20), transparent 60%),
+        radial-gradient(900px 520px at 100% 0%, rgba(37,99,235,.24), transparent 55%),
+        linear-gradient(160deg,#0a2540 0%,#071b30 55%,#05121f 100%);
+    }}
+    .wrap {{ width:min(440px,100%); animation:rise .5s ease both; }}
+    @keyframes rise {{ from {{ opacity:0; transform:translateY(10px); }} to {{ opacity:1; transform:none; }} }}
+    .brand {{ display:flex; flex-direction:column; align-items:center; gap:12px; margin-bottom:22px; }}
+    .logo {{ width:56px; height:56px; border-radius:16px; display:grid; place-items:center;
+      background:linear-gradient(135deg,var(--green),#0a2540); box-shadow:0 10px 26px rgba(5,18,31,.5); }}
+    .logo svg {{ width:30px; height:30px; }}
+    .brand h1 {{ margin:0; font-size:1.05rem; font-weight:700; color:#fff; letter-spacing:.2px; }}
+    .brand > p {{ margin:0; font-size:.84rem; color:rgba(255,255,255,.6); }}
+    .card {{ background:#fff; border-radius:18px; padding:30px 28px;
+      box-shadow:0 24px 60px rgba(3,12,24,.42), 0 2px 6px rgba(3,12,24,.2); }}
+    .card h2 {{ margin:0 0 4px; font-size:1.28rem; color:var(--navy); }}
+    p.sub {{ margin:0 0 20px; color:var(--muted); font-size:.9rem; }}
+    .dash-list {{ list-style:none; margin:0; padding:0; display:grid; gap:9px; }}
+    .dash-link {{ display:flex; align-items:center; justify-content:space-between; padding:13px 15px;
+      border:1px solid var(--line); border-radius:11px; text-decoration:none; color:var(--navy);
+      font-weight:600; background:#fbfcfe; transition:border-color .15s, background .15s, transform .06s; }}
+    .dash-link::after {{ content:"→"; color:var(--accent); opacity:0; transition:opacity .15s; }}
+    .dash-link:hover {{ border-color:var(--accent); background:#f2f7ff; }}
+    .dash-link:hover::after {{ opacity:1; }}
+    .foot {{ display:flex; justify-content:space-between; align-items:center;
+      margin-top:20px; padding-top:16px; border-top:1px solid var(--line); }}
+    .foot-link {{ color:var(--accent); font-size:.9rem; text-decoration:none; font-weight:600; }}
+    .foot-link:hover {{ text-decoration:underline; }}
+    .foot form {{ margin:0; }}
+    .foot button {{ border:0; background:none; color:var(--muted); font-size:.9rem; font-weight:600;
+      cursor:pointer; padding:0; }}
+    .foot button:hover {{ color:var(--danger); }}
+    .pagefoot {{ display:flex; align-items:center; justify-content:center; gap:6px; margin-top:20px;
+      font-size:.75rem; color:rgba(255,255,255,.5); }}
+    .pagefoot svg {{ width:13px; height:13px; }}
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Your dashboards</h1>
-    <p class="sub">Signed in as {_esc(user.email)}</p>
-    {body}
-    <div class="foot">
-      {admin_link or '<span></span>'}
-      <form method="post" action="/logout"><button type="submit">Sign out</button></form>
+  <div class="wrap">
+    <div class="brand">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/>
+          <path d="M2 21c0-3 1.85-5.36 5.08-6"/>
+        </svg>
+      </div>
+      <h1>Sagefrog Marketing Group</h1>
+      <p>Client dashboards</p>
+    </div>
+    <div class="card">
+      <h2>Your dashboards</h2>
+      <p class="sub">Signed in as {_esc(user.email)}</p>
+      {body}
+      <div class="foot">
+        {admin_link or '<span></span>'}
+        <form method="post" action="/logout"><button type="submit">Sign out</button></form>
+      </div>
+    </div>
+    <div class="pagefoot">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+      Secure sign-in · &copy; 2026 Sagefrog Marketing Group
     </div>
   </div>
 </body>
@@ -621,34 +661,50 @@ def render_admin_page(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Admin · Sagefrog Marketing Group</title>
   <style>
-    :root {{ --navy: #0a2540; --accent: #0b5cab; --border: #d8dee8; --muted: #5a6578; }}
+    :root {{
+      --navy:#0a2540; --ink:#0f1c2e; --muted:#5a6578; --border:#e3e8f0; --line:#e3e8f0;
+      --accent:#2563eb; --accent-d:#1d4ed8; --green:#34b27b; --danger:#b42318;
+    }}
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; font-family: system-ui, sans-serif; background: #eef1f5; color: #0f1c2e; }}
-    header {{ background: var(--navy); color: #fff; padding: 16px 24px; display: flex;
-      align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }}
-    header h1 {{ margin: 0; font-size: 1.2rem; }}
-    header .who {{ font-size: .88rem; opacity: .85; }}
+    body {{ margin: 0; color: var(--ink);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+      background: linear-gradient(180deg,#eef2f7 0%,#e6edf5 100%); background-attachment: fixed; min-height: 100vh; }}
+    header {{ color: #fff; padding: 16px 24px; display: flex;
+      align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+      background: linear-gradient(120deg,#0a2540 0%,#0d2f57 100%); box-shadow: 0 2px 14px rgba(5,18,31,.28); }}
+    .brand-head {{ display: flex; align-items: center; gap: 12px; }}
+    .brand-mark {{ width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
+      background: linear-gradient(135deg,var(--green),#0a2540); box-shadow: 0 6px 16px rgba(5,18,31,.4); flex-shrink: 0; }}
+    .brand-mark svg {{ width: 22px; height: 22px; }}
+    header h1 {{ margin: 0; font-size: 1.05rem; letter-spacing: .2px; }}
+    header .who {{ font-size: .82rem; opacity: .7; }}
   header a, header button.link {{ color: #fff; text-decoration: none; background: none; border: 0;
       cursor: pointer; font: inherit; opacity: .9; }}
-    main {{ max-width: 960px; margin: 0 auto; padding: 24px 20px 48px; }}
-    section {{ background: #fff; border: 1px solid var(--border); border-radius: 12px;
-      padding: 20px; margin-bottom: 20px; }}
+    main {{ max-width: 980px; margin: 0 auto; padding: 26px 20px 56px; }}
+    section {{ background: #fff; border: 1px solid var(--line); border-radius: 16px;
+      padding: 22px 24px; margin-bottom: 18px; box-shadow: 0 6px 22px rgba(10,37,64,.06); }}
     h2 {{ margin: 0 0 16px; font-size: 1.05rem; color: var(--navy); }}
     table {{ width: 100%; border-collapse: collapse; font-size: .92rem; }}
-    th, td {{ text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); }}
-    th {{ color: var(--muted); font-weight: 600; font-size: .8rem; text-transform: uppercase; }}
+    th, td {{ text-align: left; padding: 11px 8px; border-bottom: 1px solid var(--line); }}
+    th {{ color: var(--muted); font-weight: 600; font-size: .78rem; text-transform: uppercase; letter-spacing: .3px; }}
     td.mono, th.mono {{ font-family: ui-monospace, monospace; font-size: .82rem; }}
     .audit-wrap {{ max-height: 420px; overflow: auto; }}
-    label {{ display: block; font-size: .85rem; font-weight: 600; margin-bottom: 6px; }}
-    input, select {{ width: 100%; max-width: 320px; padding: 8px 10px; border: 1px solid var(--border);
-      border-radius: 8px; margin-bottom: 12px; }}
+    label {{ display: block; font-size: .8rem; font-weight: 600; color: #334155; margin-bottom: 6px; }}
+    input, select {{ width: 100%; max-width: 320px; padding: 10px 12px; border: 1px solid var(--line);
+      border-radius: 10px; margin-bottom: 12px; font-size: .95rem; background: #fbfcfe;
+      transition: border-color .15s, box-shadow .15s; }}
+    input:focus, select:focus {{ outline: none; border-color: var(--accent); background: #fff;
+      box-shadow: 0 0 0 3px rgba(37,99,235,.15); }}
     .row {{ display: flex; flex-wrap: wrap; gap: 16px; }}
     .row > div {{ flex: 1; min-width: 180px; }}
-    button.primary {{ padding: 10px 18px; border: 0; border-radius: 8px; background: var(--accent);
-      color: #fff; font-weight: 600; cursor: pointer; }}
-    button.link {{ background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; }}
+    button.primary {{ padding: 11px 20px; border: 0; border-radius: 10px; color: #fff; font-weight: 700;
+      cursor: pointer; background: linear-gradient(135deg,var(--accent),var(--accent-d));
+      box-shadow: 0 5px 14px rgba(37,99,235,.3); transition: filter .15s, transform .06s; }}
+    button.primary:hover {{ filter: brightness(1.06); }}
+    button.primary:active {{ transform: translateY(1px); }}
+    button.link {{ background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; font-weight: 600; }}
     button.link.danger {{ color: #b42318; }}
-    .notice {{ padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; font-size: .9rem; }}
+    .notice {{ padding: 11px 14px; border-radius: 10px; margin-bottom: 16px; font-size: .9rem; }}
     .notice.ok {{ background: #e8f5e9; color: #1b5e20; }}
     .notice.err {{ background: #fdecea; color: #b42318; }}
     .muted {{ color: var(--muted); }}
@@ -697,9 +753,17 @@ def render_admin_page(
 </head>
 <body>
   <header>
-    <div>
-      <h1>Admin</h1>
-      <span class="who">Signed in as {_esc(user.email)}</span>
+    <div class="brand-head">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/>
+          <path d="M2 21c0-3 1.85-5.36 5.08-6"/>
+        </svg>
+      </div>
+      <div>
+        <h1>Sagefrog Marketing Group · Admin</h1>
+        <span class="who">Signed in as {_esc(user.email)}</span>
+      </div>
     </div>
     <div>
       <form method="post" action="/logout" style="display:inline"><button type="submit" class="link">Sign out</button></form>
