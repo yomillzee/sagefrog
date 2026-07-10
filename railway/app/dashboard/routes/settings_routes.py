@@ -5,7 +5,7 @@ from __future__ import annotations
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import audit_log
 import business_line_rules
@@ -566,3 +566,64 @@ def dashboard_client_settings_post(
         )
 
     raise HTTPException(status_code=400, detail="Unknown action.")
+
+
+@router.post(
+    "/dashboard/{client_slug}/budget",
+    summary="Set a client's monthly paid-media budget (JSON, from the dashboard)",
+    include_in_schema=False,
+)
+def dashboard_client_budget_save(
+    client_slug: str,
+    request: Request,
+    monthly_budget_usd: str = Form(""),
+    key: str | None = None,
+):
+    """Inline monthly-budget save from the Campaign Explorer budget module.
+
+    Mirrors the Settings page's ``save_budget`` action (admin-only, same
+    validation + audit) but returns JSON so the module can update in place
+    without a full page reload. Saves under the URL slug, which is the same
+    key the Settings page writes and the dashboard reads back.
+    """
+    slug = validate_client_slug(client_slug)
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard_api(request, client_slug=slug, key=key)
+        user = auth.user
+        session_is_admin = bool(user and user.role == "admin")
+        session_email = user.email if user else None
+    else:
+        dashboard_service.verify_dashboard_key(key)
+        session_is_admin = True  # legacy ?key= access implies full control
+        session_email = "dashboard_key"
+
+    if web_users.enabled() and not session_is_admin:
+        return JSONResponse(
+            {"ok": False, "error": "Only admins can set the monthly budget."},
+            status_code=403,
+        )
+    if not client_dashboard_config.enabled():
+        return JSONResponse(
+            {"ok": False, "error": "DATABASE_URL is required to save the budget."},
+            status_code=503,
+        )
+    try:
+        budget = dashboard_service.parse_monthly_budget_input(monthly_budget_usd)
+        saved = client_dashboard_config.save_monthly_budget(
+            slug, budget, updated_by=session_email or "dashboard_key",
+        )
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    audit_log.record(
+        action="dashboard.budget_saved",
+        actor_email=session_email,
+        detail={
+            "client_slug": slug,
+            "monthly_budget_usd": saved.monthly_budget_usd,
+            "source": "explorer_module",
+        },
+        **audit_log.request_context(request),
+    )
+    return JSONResponse({"ok": True, "monthly_budget_usd": saved.monthly_budget_usd})

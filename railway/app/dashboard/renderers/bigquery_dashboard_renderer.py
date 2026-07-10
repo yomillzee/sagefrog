@@ -355,14 +355,31 @@ def render_bigquery_dashboard_page(
             <span class="status" id="budgetStatus"></span>
             <div class="chips" id="budgetRangeChips" role="tablist" aria-label="Budget range">
               <button type="button" class="chip active" data-range="month">This month</button>
-              <button type="button" class="chip" data-range="last90">Last 90 days</button>
+              <button type="button" class="chip" data-range="last3m">Last 3 months</button>
             </div>
           </div>
         </div>
         <p class="chart-note" style="margin-top:0">Cumulative paid spend by platform against the monthly budget. Spend resets at the start of each calendar month; the projection extends the current month at its run-rate to month end.</p>
+        {budget_goal_editor_html}
         <div class="budget-stats" id="budgetStats"></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:260px"><canvas id="budgetChart"></canvas></div></div>
       </section>"""
+    # Inline monthly-goal editor — admins only (same permission as Settings).
+    # While impersonating (view-as), session_is_admin is the effective user's,
+    # so a client view correctly hides it.
+    budget_goal_editor_html = "" if not session_is_admin else """
+        <form class="budget-goal-editor" id="budgetGoalForm" autocomplete="off">
+          <label for="budgetGoalInput">Monthly goal (USD)</label>
+          <div class="budget-goal-input">
+            <span class="budget-goal-prefix">$</span>
+            <input type="number" id="budgetGoalInput" name="monthly_budget_usd" min="0" step="100" placeholder="e.g. 25000">
+          </div>
+          <button type="submit" class="chip budget-goal-save">Save goal</button>
+          <span class="status" id="budgetGoalStatus"></span>
+        </form>"""
+    budget_section_html = budget_section_html.format(
+        budget_goal_editor_html=budget_goal_editor_html
+    ) if budget_section_html else ""
 
     # Overview is a "home": the top widget from each section, each with a
     # "See more" that jumps to that tab. Panels below are shared by all clients;
@@ -642,6 +659,12 @@ def render_bigquery_dashboard_page(
     .budget-stat-sub {{ font-size:.72rem; color:var(--muted); margin-top:1px; }}
     .budget-stat.is-over .budget-stat-value {{ color:#c02626; }}
     .budget-stat.is-under .budget-stat-value {{ color:#0a7f3f; }}
+    .budget-goal-editor {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 10px; }}
+    .budget-goal-editor label {{ font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }}
+    .budget-goal-input {{ position:relative; display:inline-flex; align-items:center; }}
+    .budget-goal-prefix {{ position:absolute; left:9px; color:var(--muted); font-size:.85rem; pointer-events:none; }}
+    .budget-goal-input input {{ width:130px; padding:6px 10px 6px 18px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--text); font:inherit; font-size:.86rem; }}
+    .budget-goal-save {{ cursor:pointer; }}
     .chart-tip {{ position:absolute; pointer-events:none; background:#0b1020; color:#e8eefc; font-size:.74rem; line-height:1.5; padding:7px 9px; border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.25); transform:translate(-50%,-112%); white-space:nowrap; z-index:5; }}
     .metric-swatch {{ width:10px; height:10px; border-radius:2px; display:inline-block; vertical-align:middle; margin-right:4px; }}
     /* ---- Bar lists ---- */
@@ -1050,8 +1073,11 @@ def render_bigquery_dashboard_page(
     const USER_ACQ_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acq-key-events')}";
     const GA4_KEY_EVENTS_SAVED = {json.dumps([s.strip() for s in ga4_key_events.splitlines() if s.strip()])};
     // Monthly paid-media budget (Settings → Configuration). 0 when unset, which
-    // hides the goal/projection lines but still charts cumulative spend.
-    const MONTHLY_BUDGET = {json.dumps(float(monthly_budget_val) if monthly_budget_val else 0)};
+    // hides the goal/projection lines but still charts cumulative spend. Mutable
+    // so the inline goal editor can update it without a page reload.
+    let MONTHLY_BUDGET = {json.dumps(float(monthly_budget_val) if monthly_budget_val else 0)};
+    const BUDGET_CAN_EDIT = {'true' if session_is_admin else 'false'};
+    const BUDGET_SAVE_URL = "{_aurl(f'/dashboard/{client_slug}/budget')}";
 
     // ---- Formatters ----
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
@@ -2043,7 +2069,7 @@ def render_bigquery_dashboard_page(
     }}
 
     // ---- Budget tracking (cumulative spend vs monthly goal) ----
-    // Independent of the top date bar: its own This month / Last 90 days toggle.
+    // Independent of the top date bar: its own This month / Last 3 months toggle.
     let budgetRange = 'month';
     const BUDGET_PLATFORMS = [
       {{ key:'paid_google',   label:'Google Ads', color:'#1d6fd0' }},
@@ -2065,8 +2091,10 @@ def render_bigquery_dashboard_page(
       const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
       const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
       let start;
-      if (budgetRange === 'last90') {{
-        start = new Date(today); start.setDate(today.getDate() - 90);
+      if (budgetRange === 'last3m') {{
+        // First day of the month two months back → three whole calendar months
+        // (current + prior two), so every month's cumulative starts clean at day 1.
+        start = new Date(today.getFullYear(), today.getMonth() - 2, 1);
       }} else {{
         start = new Date(today.getFullYear(), today.getMonth(), 1);
       }}
@@ -2077,6 +2105,7 @@ def render_bigquery_dashboard_page(
     async function loadBudget() {{
       const host = document.getElementById('sec-budget');
       if (!host) return;
+      syncBudgetGoalInput();
       setStatus('budgetStatus', 'Loading…');
       const win = budgetWindow();
       const startStr = fmtDate(win.start), lastStr = fmtDate(win.lastData);
@@ -2221,17 +2250,48 @@ def render_bigquery_dashboard_page(
           pills.push(`<div class="budget-stat ${{over ? 'is-over' : 'is-under'}}"><div class="budget-stat-label">Projected month end</div><div class="budget-stat-value">${{money(projected)}}</div><div class="budget-stat-sub">${{over ? money(diff) + ' over' : money(diff) + ' under'}} goal</div></div>`);
         }}
       }} else {{
-        pills.push(`<div class="budget-stat"><div class="budget-stat-label">Monthly goal</div><div class="budget-stat-value">—</div><div class="budget-stat-sub">Set one in Settings</div></div>`);
+        const hint = BUDGET_CAN_EDIT ? 'Set a goal above' : 'Set one in Settings';
+        pills.push(`<div class="budget-stat"><div class="budget-stat-label">Monthly goal</div><div class="budget-stat-value">—</div><div class="budget-stat-sub">${{hint}}</div></div>`);
       }}
       el.innerHTML = pills.join('');
     }}
-    // Range toggle (This month / Last 90 days).
+    // Range toggle (This month / Last 3 months).
     document.getElementById('budgetRangeChips')?.addEventListener('click', e => {{
       const btn = e.target.closest('.chip[data-range]');
       if (!btn || btn.classList.contains('active')) return;
       document.querySelectorAll('#budgetRangeChips .chip').forEach(c => c.classList.toggle('active', c === btn));
       budgetRange = btn.dataset.range;
       loadBudget();
+    }});
+    // Prefill the goal editor with the current budget.
+    function syncBudgetGoalInput() {{
+      const inp = document.getElementById('budgetGoalInput');
+      if (inp && !inp.matches(':focus')) inp.value = MONTHLY_BUDGET > 0 ? MONTHLY_BUDGET : '';
+    }}
+    // Inline goal editor (admins only) — POSTs to the same save path as Settings,
+    // then updates the goal + projection in place without a page reload.
+    document.getElementById('budgetGoalForm')?.addEventListener('submit', async e => {{
+      e.preventDefault();
+      if (!BUDGET_CAN_EDIT) return;
+      const inp = document.getElementById('budgetGoalInput');
+      const raw = (inp && inp.value || '').trim();
+      setStatus('budgetGoalStatus', 'Saving…');
+      try {{
+        const res = await fetch(BUDGET_SAVE_URL, {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
+          body: new URLSearchParams({{ monthly_budget_usd: raw }}),
+        }});
+        const data = await res.json().catch(() => ({{}}));
+        if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        MONTHLY_BUDGET = Number(data.monthly_budget_usd) || 0;
+        setStatus('budgetGoalStatus', 'Saved ✓');
+        setTimeout(() => setStatus('budgetGoalStatus', ''), 2000);
+        syncBudgetGoalInput();
+        loadBudget();
+      }} catch (err) {{
+        setStatus('budgetGoalStatus', 'Save failed: ' + (err.message || 'error'));
+      }}
     }});
 
     // ---- GA4: Top pages ----
