@@ -17,7 +17,7 @@ _ICON_WEBSITE  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 _ICON_SEARCH   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
 _ICON_LEADS    = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>'
 _ICON_SHIELD   = '<svg viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="1.8" width="15" height="15"><path d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.955 11.955 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-_ICON_REFRESH  = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4v5h5M16 16v-5h-5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.05 14.44A8 8 0 1015.95 5.56" stroke-linecap="round"/></svg>'
+_ICON_REFRESH  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v5h-5"/></svg>'
 
 
 def render_gtm_page(
@@ -99,22 +99,25 @@ def render_gtm_page(
     {SIDEBAR_CSS}
     main {{ padding: 28px 32px; max-width: 1200px; }}
     @media (max-width:900px) {{ main {{ padding: 24px 16px; }} }}
-    .page-head {{ display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:24px; }}
-    .page-title {{ font-size:1.45rem; font-weight:700; color:var(--navy); margin:0; }}
-    .page-meta {{ font-size:.82rem; color:var(--muted); margin-top:3px; }}
-    .btn {{ display:inline-flex; align-items:center; gap:6px; padding:8px 16px; border-radius:9px; font-size:.88rem; font-weight:600; cursor:pointer; border:0; transition:background .15s; text-decoration:none; }}
-    .btn-secondary {{ background:var(--card); color:var(--navy); border:1px solid var(--line); }}
-    .btn-secondary:hover {{ background:#f0f4fa; }}
+    .page-head {{ display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:22px; }}
+    .page-title {{ font-size:1.5rem; font-weight:750; color:var(--navy); margin:0; letter-spacing:-.01em; }}
+    .page-meta {{ font-size:.8rem; color:var(--muted); margin-top:4px; }}
+    .btn {{ display:inline-flex; align-items:center; gap:7px; padding:8px 14px; border-radius:10px; font-size:.85rem; font-weight:600; cursor:pointer; border:1px solid var(--line); background:#fff; color:var(--navy); transition:background .15s,border-color .15s,box-shadow .15s; text-decoration:none; }}
+    .btn:hover {{ background:#f4f8fd; border-color:#cdd9e8; box-shadow:0 1px 2px rgba(16,33,67,.06); }}
+    .btn:disabled {{ opacity:.6; cursor:default; }}
     .btn svg {{ width:16px; height:16px; }}
-    .card {{ background:var(--card); border-radius:var(--radius); border:1px solid var(--line); box-shadow:var(--shadow); }}
+    .btn:disabled svg {{ animation:spin .8s linear infinite; }}
+    @keyframes spin {{ to {{ transform:rotate(360deg); }} }}
+    .card {{ background:var(--card); border-radius:16px; border:1px solid var(--line); box-shadow:0 1px 2px rgba(16,33,67,.04),0 10px 30px -16px rgba(16,33,67,.16); overflow:hidden; }}
     .tag-table-wrap {{ overflow-x:auto; }}
-    table {{ width:100%; border-collapse:collapse; font-size:.875rem; }}
-    th {{ text-align:left; padding:10px 14px; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); border-bottom:2px solid var(--line); white-space:nowrap; }}
-    td {{ padding:10px 14px; border-bottom:1px solid var(--line); vertical-align:middle; }}
+    table {{ width:100%; border-collapse:collapse; font-size:.86rem; }}
+    th {{ text-align:left; padding:11px 16px; font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); background:#f8fafc; border-bottom:1px solid var(--line); white-space:nowrap; }}
+    td {{ padding:12px 16px; border-bottom:1px solid #eef2f7; vertical-align:middle; }}
     td.td-top {{ vertical-align:top; }}
     tr:last-child td {{ border-bottom:0; }}
+    tbody tr {{ transition:background .1s; }}
     tr:hover td {{ background:#f7fafc; }}
-    .col-dot {{ width:28px; padding:0 8px 0 14px; text-align:center; }}
+    .col-dot {{ width:30px; padding:0 6px 0 16px; text-align:center; }}
     .col-consent {{ width:32px; padding:0 6px; text-align:center; }}
     .tag-name {{ font-weight:600; font-size:.88rem; color:#0f172a; }}
     .badge {{ display:inline-flex; align-items:center; padding:3px 9px; border-radius:6px; font-size:.72rem; font-weight:700; white-space:nowrap; }}
@@ -137,19 +140,23 @@ def render_gtm_page(
     .criteria-var {{ font-family:monospace; font-size:.75rem; color:#1d4ed8; background:#eff6ff; padding:2px 7px; border-radius:4px; white-space:nowrap; }}
     .criteria-op {{ color:#64748b; font-size:.71rem; font-style:italic; white-space:nowrap; }}
     .criteria-val {{ font-family:monospace; font-size:.75rem; color:#166534; background:#f0fdf4; padding:2px 7px; border-radius:4px; word-break:break-all; max-width:200px; overflow:hidden; text-overflow:ellipsis; }}
-    .loading-msg {{ padding:40px; text-align:center; color:var(--muted); }}
-    .error-msg {{ padding:20px; color:var(--bad); background:#fef2f2; border-radius:9px; border:1px solid #fecaca; }}
-    .empty-state {{ padding:48px 20px; text-align:center; color:var(--muted); }}
-    .tag-toolbar {{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:12px 14px; border-bottom:1px solid var(--line); }}
-    .chips {{ display:flex; gap:6px; flex-wrap:wrap; }}
-    .chip {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:5px 13px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; transition:background .12s,border-color .12s,color .12s; }}
-    .chip:hover {{ border-color:#b9c8dc; background:#f4f8fd; }}
-    .chip.active {{ background:var(--navy); color:#fff; border-color:var(--navy); }}
+    .loading-msg {{ padding:44px; text-align:center; color:var(--muted); font-size:.88rem; }}
+    .error-msg {{ margin:16px; padding:16px 18px; color:var(--bad); background:#fef2f2; border-radius:10px; border:1px solid #fecaca; font-size:.86rem; }}
+    .empty-state {{ padding:56px 24px; text-align:center; color:var(--muted); font-size:.86rem; line-height:1.5; }}
+    .empty-state .es-title {{ font-size:.98rem; font-weight:650; color:var(--navy); margin-bottom:5px; }}
+    .empty-state strong {{ color:var(--navy); font-weight:650; }}
+    .tabbar {{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:14px 16px; border-bottom:1px solid var(--line); }}
+    .tabs {{ display:inline-flex; background:#eef2f7; border-radius:11px; padding:3px; gap:2px; }}
+    .tab {{ display:inline-flex; align-items:center; gap:8px; border:0; background:transparent; padding:7px 15px; border-radius:8px; font:inherit; font-size:.85rem; font-weight:600; color:var(--muted); cursor:pointer; transition:background .12s,color .12s,box-shadow .12s; }}
+    .tab:hover {{ color:var(--navy); }}
+    .tab.active {{ background:#fff; color:var(--navy); box-shadow:0 1px 2px rgba(16,33,67,.10); }}
+    .tab-count {{ font-size:.72rem; font-weight:700; min-width:20px; text-align:center; background:rgba(10,37,64,.08); color:var(--muted); padding:1px 7px; border-radius:999px; }}
+    .tab.active .tab-count {{ background:var(--accent); color:#fff; }}
     .toolbar-note {{ font-size:.78rem; color:var(--muted); }}
     .badge-ke {{ background:#dcfce7; color:#166534; }}
-    .event-name {{ font-family:monospace; font-size:.8rem; color:#0f172a; }}
+    .event-name {{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8rem; color:#0f172a; }}
     .event-none {{ color:var(--muted); font-size:.8rem; }}
-    .col-ke {{ width:78px; text-align:center; white-space:nowrap; }}
+    .col-ke {{ width:84px; text-align:center; white-space:nowrap; }}
     .col-ke input {{ width:16px; height:16px; cursor:pointer; accent-color:var(--accent); }}
     tr.is-key-event td {{ background:#f0fdf4; }}
     tr.is-key-event:hover td {{ background:#e7f9ee; }}
@@ -166,16 +173,16 @@ def render_gtm_page(
             <h1 class="page-title">Event Tracking</h1>
             <p class="page-meta" id="pageMeta">Loading container…</p>
           </div>
-          <button class="btn btn-secondary" id="refreshBtn" onclick="loadTags(true)">
+          <button class="btn" id="refreshBtn" onclick="loadTags(true)">
             {_ICON_REFRESH}Refresh
           </button>
         </div>
 
         <div class="card">
-          <div class="tag-toolbar">
-            <div class="chips" id="viewChips">
-              <button type="button" class="chip active" data-view="ga4">GA4 event tags</button>
-              <button type="button" class="chip" data-view="all">All tags</button>
+          <div class="tabbar">
+            <div class="tabs" id="viewTabs" role="tablist">
+              <button type="button" class="tab active" data-view="key" role="tab">Key events<span class="tab-count" id="keyCount">0</span></button>
+              <button type="button" class="tab" data-view="all" role="tab">All tags<span class="tab-count" id="allCount">0</span></button>
             </div>
             <span class="toolbar-note" id="filterNote"></span>
           </div>
@@ -195,10 +202,11 @@ const API_REFRESH  = {repr(api_refresh)};
 const KE_STORAGE_KEY = {repr(f"gtm_key_events_{client_slug}")};
 
 // Shared state: all normalised tags, the current view, and the set of tag names
-// the user has marked as key events (persisted locally in this browser).
+// the user has marked as key events (persisted locally in this browser). Land on
+// the Key events tab if any are already marked, otherwise on All tags to curate.
 let allRows = [];
-let viewMode = 'ga4';
 let keyEventTags = loadKeyEventTags();
+let viewMode = keyEventTags.size ? 'key' : 'all';
 
 function loadKeyEventTags() {{
   try {{ const s = localStorage.getItem(KE_STORAGE_KEY); return new Set(s ? JSON.parse(s) : []); }}
@@ -299,28 +307,38 @@ function renderTable(rows) {{
   return `<table><thead>${{head}}</thead><tbody>${{body}}</tbody></table>`;
 }}
 
-// Filter allRows by the current view and render, with a status note.
+// Key events tab = the GA4 event tags the user has checked; All tags = everything.
+function currentRows() {{
+  return viewMode === 'key'
+    ? allRows.filter(r => r.is_ga4_event && keyEventTags.has(r.tag_name))
+    : allRows;
+}}
+function emptyState() {{
+  if (viewMode === 'key') {{
+    return `<div class="empty-state"><div class="es-title">No key events yet</div>Open <strong>All tags</strong> and check the GA4 event tags that count as key events — they'll collect here.</div>`;
+  }}
+  return `<div class="empty-state"><div class="es-title">No tags found</div>This GTM container has no tags.</div>`;
+}}
 function applyView() {{
-  const rows = viewMode === 'all' ? allRows : allRows.filter(r => r.is_ga4_event);
-  document.getElementById('tableContainer').innerHTML = renderTable(rows);
-  updateNote();
+  const rows = currentRows();
+  document.getElementById('tableContainer').innerHTML = rows.length ? renderTable(rows) : emptyState();
+  syncTabs();
 }}
-
-function updateNote() {{
+function syncTabs() {{
+  const keyCount = allRows.filter(r => r.is_ga4_event && keyEventTags.has(r.tag_name)).length;
+  const kc = document.getElementById('keyCount'); if (kc) kc.textContent = keyCount;
+  const ac = document.getElementById('allCount'); if (ac) ac.textContent = allRows.length;
+  document.querySelectorAll('#viewTabs .tab').forEach(b => b.classList.toggle('active', b.dataset.view === viewMode));
   const note = document.getElementById('filterNote');
-  if (!note) return;
-  const ga4 = allRows.filter(r => r.is_ga4_event).length;
-  const marked = allRows.filter(r => r.is_ga4_event && keyEventTags.has(r.tag_name)).length;
-  note.textContent = (viewMode === 'all'
-    ? `${{allRows.length}} tag(s) · ${{ga4}} GA4 event tag(s)`
-    : `${{ga4}} GA4 event tag(s)`) + ` · ${{marked}} marked as key event${{marked === 1 ? '' : 's'}}`;
+  if (note) note.textContent = viewMode === 'key'
+    ? (keyCount ? `${{keyCount}} key event${{keyCount === 1 ? '' : 's'}}` : '')
+    : 'Check the GA4 event tags that count as key events';
 }}
 
-document.getElementById('viewChips').addEventListener('click', ev => {{
+document.getElementById('viewTabs').addEventListener('click', ev => {{
   const btn = ev.target.closest('[data-view]');
   if (!btn) return;
   viewMode = btn.dataset.view;
-  document.querySelectorAll('#viewChips .chip').forEach(b => b.classList.toggle('active', b.dataset.view === viewMode));
   applyView();
 }});
 
@@ -331,6 +349,8 @@ document.getElementById('tableContainer').addEventListener('change', ev => {{
   const name = cb.dataset.keTag;
   if (cb.checked) keyEventTags.add(name); else keyEventTags.delete(name);
   saveKeyEventTags();
+  // On the Key events tab, an unchecked tag should drop out of the list.
+  if (viewMode === 'key' && !cb.checked) {{ applyView(); return; }}
   const row = cb.closest('tr');
   if (row) {{
     row.classList.toggle('is-key-event', cb.checked);
@@ -344,7 +364,7 @@ document.getElementById('tableContainer').addEventListener('change', ev => {{
       }}
     }}
   }}
-  updateNote();
+  syncTabs();
 }});
 
 function esc(s) {{
