@@ -88,6 +88,27 @@ class GscClientRoutingTests(unittest.TestCase):
         self.assertEqual(target.bq_dataset_id, "raw_gsc")
         self.assertEqual(target.site_url, "sc-domain:example.com")
 
+    def test_connector_client_ignores_per_client_ga4_credential_uses_agency_sa(self) -> None:
+        """A connector-based client must ALWAYS write BigQuery as the shared agency
+        SA (GCP_SERVICE_ACCOUNT_JSON), never the legacy per-client GA4 credential --
+        which on some projects points at an under-permissioned project-local SA and
+        caused a bigquery.datasets.create 403 (precise-textiles GSC setup)."""
+        import types
+        fake_cfg = types.SimpleNamespace(
+            bq_project_id="precise-textiles-119581",
+            raw_dataset_id=None,
+            source_account_id="sc-domain:example.com",
+        )
+        fake_store = types.SimpleNamespace(get_config=lambda slug, kind: fake_cfg)
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.dict(sys.modules, {"connector_config_store": fake_store}), \
+             patch.object(gsc_clients, "_ga4_bq", return_value=("precise-textiles-119581", "GCP_CREDS_PRECISE_BASE64")):
+            target = gsc_clients.resolve_target("precise-textiles")
+            from_cfg = gsc_clients.target_from_config("precise-textiles", fake_cfg)
+
+        self.assertEqual(target.credentials_env, "GCP_SERVICE_ACCOUNT_JSON")
+        self.assertEqual(from_cfg.credentials_env, "GCP_SERVICE_ACCOUNT_JSON")
+
     def test_default_target_prefers_penn_credential_when_set(self) -> None:
         env = {"GCP_CREDS_PENN_BASE64": "dummy-value"}
         with patch.dict(os.environ, env, clear=True):

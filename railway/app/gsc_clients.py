@@ -22,6 +22,13 @@ from typing import Any
 _DEFAULT_PROJECT = "penn-community-b-1699391543298"
 _DEFAULT_MART_DATASET = "marketing_marts"
 _DEFAULT_CREDENTIALS_ENV = "GCP_CREDS_PENN_BASE64"
+# The shared agency service account (marketing-data-reader@sagefrog) — the single
+# identity every connector-based client uses for BigQuery. GA4/Ads/LinkedIn/Meta
+# already default to it (bq_*_service.route() passes no per-client credentials_env,
+# so build_client falls back to GLOBAL_GCP_CREDENTIALS_ENV = this). GSC is routed
+# through here explicitly so it matches, instead of inheriting a legacy per-client
+# GA4 credential that may point at an under-permissioned project-local SA.
+_AGENCY_CREDENTIALS_ENV = "GCP_SERVICE_ACCOUNT_JSON"
 
 
 @dataclass(frozen=True)
@@ -185,7 +192,7 @@ def _connector_target(slug: str, base: GscClientTarget) -> GscClientTarget | Non
     if not cfg:
         return None  # no GSC connector → leave registry/Penn behaviour untouched
 
-    ga4_project, ga4_creds = _ga4_bq(slug)
+    ga4_project, _ = _ga4_bq(slug)
     project = (cfg.bq_project_id or "").strip() or ga4_project
     if not project:
         # A GSC connector exists but we can't resolve the client's project — refuse
@@ -196,7 +203,10 @@ def _connector_target(slug: str, base: GscClientTarget) -> GscClientTarget | Non
         client_slug=slug,
         bq_project_id=project,
         bq_dataset_id=dataset,  # e.g. "raw_gsc"
-        credentials_env=ga4_creds or base.credentials_env,
+        # Always the shared agency SA — never the per-client GA4 credential (a GSC
+        # connector means this is a new-build client, which uses the agency SA like
+        # every other connector). See _AGENCY_CREDENTIALS_ENV.
+        credentials_env=_AGENCY_CREDENTIALS_ENV,
         site_url=(cfg.source_account_id or "").strip() or base.site_url,
         label=base.label or slug,
         native_dataset_id=base.native_dataset_id,
@@ -249,7 +259,7 @@ def target_from_config(client_slug: str, cfg: Any) -> GscClientTarget:
     """
     slug = (client_slug or "").strip().lower()
     base = load_client_registry().get(slug) or _neutral_base(slug)
-    ga4_project, ga4_creds = _ga4_bq(slug)
+    ga4_project, _ = _ga4_bq(slug)
     project = (
         (getattr(cfg, "bq_project_id", "") or "").strip()
         or ga4_project
@@ -262,7 +272,10 @@ def target_from_config(client_slug: str, cfg: Any) -> GscClientTarget:
         client_slug=slug,
         bq_project_id=project,
         bq_dataset_id=dataset,
-        credentials_env=ga4_creds or base.credentials_env,
+        # Always the shared agency SA (see _AGENCY_CREDENTIALS_ENV) — not the
+        # per-client GA4 credential, which on some projects points at an
+        # under-permissioned project-local SA (the precise-textiles 403).
+        credentials_env=_AGENCY_CREDENTIALS_ENV,
         site_url=(getattr(cfg, "source_account_id", "") or "").strip() or base.site_url,
         label=base.label or slug,
         native_dataset_id=base.native_dataset_id,
