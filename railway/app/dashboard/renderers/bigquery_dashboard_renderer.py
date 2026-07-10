@@ -212,9 +212,10 @@ def render_bigquery_dashboard_page(
           <li class="ob-step">
             <div class="ob-step-num">1</div>
             <div class="ob-step-body">
-              <div class="ob-step-title">Create a BigQuery project</div>
-              <div class="ob-step-desc">In Google Cloud — signed in as <strong>sagefrogmarketinggroup@gmail.com</strong> — create a new GCP project for this client (or reuse an existing one). Note its <strong>project ID</strong> for step&nbsp;3.</div>
-              <a class="ob-step-link" href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Open Google Cloud →</a>
+              <div class="ob-step-title">Create a BigQuery project &amp; link billing</div>
+              <div class="ob-step-desc">In Google Cloud — signed in as <strong>sagefrogmarketinggroup@gmail.com</strong> — create a new GCP project for this client (or reuse an existing one) and <strong>link a billing account</strong> to it (BigQuery won't run queries without one). Note the <strong>project ID</strong> for step&nbsp;3.</div>
+              <a class="ob-step-link" href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Create project →</a>
+              <a class="ob-step-link" href="https://console.cloud.google.com/billing/linkedaccount" target="_blank" rel="noopener" style="margin-left:14px">Link billing →</a>
             </div>
           </li>
           <li class="ob-step">
