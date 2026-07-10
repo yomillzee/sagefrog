@@ -190,6 +190,16 @@ try:
     client_insight_documents.ensure_schema()
     oauth_store.ensure_schema()
     connector_config_store.ensure_schema()
+    # Close out any sync-run left 'running' by a redeploy/crash mid-sync — the
+    # BackgroundTask that would have finished it died with the old process, so
+    # without this the connector stays stuck showing 'syncing' forever.
+    try:
+        _orphan_min = int((os.getenv("CONNECTOR_SYNC_ORPHAN_MINUTES") or "0").strip() or "0")
+    except ValueError:
+        _orphan_min = 0
+    _orphaned = connector_config_store.fail_orphaned_sync_runs(older_than_minutes=_orphan_min)
+    if _orphaned:
+        print(f"Startup: closed {_orphaned} orphaned connector sync run(s).")
     login_rate_limit.ensure_schema()
     boot = web_users.bootstrap_admin_from_env()
     if boot:

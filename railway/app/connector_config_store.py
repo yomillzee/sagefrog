@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import db
@@ -415,6 +415,59 @@ def cancel_sync_run(run_id: int) -> None:
             """,
             (datetime.now(tz=UTC), run_id),
         )
+
+
+def fail_orphaned_sync_runs(*, older_than_minutes: int = 0) -> int:
+    """Mark leftover 'running' sync-runs as failed. Called once at startup.
+
+    Manual syncs run as in-process FastAPI BackgroundTasks (see
+    connector_routes.connector_sync), which do NOT survive a process exit — a
+    redeploy or crash mid-sync hard-kills the thread, so `finish_sync_run` never
+    fires and the run stays 'running' forever while its connector stays stuck
+    showing 'syncing' in the UI/nav. On a fresh boot this process is running no
+    syncs, so any 'running' row is orphaned and safe to close out.
+
+    `older_than_minutes` guards a zero-downtime-deploy overlap where the draining
+    old replica may still be finishing a sync: only runs started at least that
+    long ago are touched (0 = clear all). If the old replica does finish first,
+    its `finish_sync_run`/`update_sync_timestamps(success=...)` re-corrects the
+    row and connector status, so the race is benign either way.
+
+    Returns the number of runs reset.
+    """
+    if not enabled():
+        return 0
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    cutoff = now - timedelta(minutes=max(0, older_than_minutes))
+    msg = "Sync interrupted by a server restart."
+    with db.connection() as conn:
+        rows = conn.execute(
+            """
+            UPDATE connector_sync_runs
+            SET status = 'failed', completed_at = %s, error_message = %s
+            WHERE status = 'running' AND started_at <= %s
+            RETURNING id
+            """,
+            (now, msg, cutoff),
+        ).fetchall()
+        # Un-stick the parent connectors left flagged 'syncing'. A connector that
+        # had a prior successful sync reverts to 'connected' (its existing data is
+        # still valid); one that never succeeded shows 'error' so it's clearly
+        # actionable (re-run the sync).
+        conn.execute(
+            """
+            UPDATE connector_configs
+            SET status = CASE WHEN last_success_at IS NOT NULL THEN 'connected' ELSE 'error' END,
+                last_error_message = CASE WHEN last_success_at IS NOT NULL
+                                          THEN last_error_message ELSE %s END,
+                updated_at = %s
+            WHERE status = 'syncing'
+              AND (last_sync_started_at IS NULL OR last_sync_started_at <= %s)
+            """,
+            (msg, now, cutoff),
+        )
+    return len(rows)
 
 
 def list_sync_runs(connector_config_id: int, *, limit: int = 10) -> list[ConnectorSyncRun]:
