@@ -226,16 +226,6 @@ _CONNECTOR_CSS = """
   }
   .dest-field input:focus { outline: 2px solid var(--accent); border-color: transparent; }
 
-  /* Backfill buttons */
-  .backfill-options { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
-  .backfill-btn {
-    padding: 9px 18px; border: 1px solid var(--border); border-radius: 8px;
-    background: #fff; color: var(--navy); font: inherit; font-size: 0.9rem; font-weight: 600;
-    cursor: pointer; transition: border-color .12s, background .12s;
-  }
-  .backfill-btn:hover { border-color: var(--accent); background: #f0f7ff; }
-  .backfill-btn.selected { border-color: var(--accent); background: #eff6ff; color: var(--accent); }
-
   /* Action buttons */
   .wizard-actions { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
   .btn-primary {
@@ -668,24 +658,6 @@ def _render_wizard(
       <div class="wizard-step" id="wizStep4">
         <div class="wizard-step-header">
           <div class="wizard-step-num">4</div>
-          <div><div class="wizard-step-title">Choose backfill range</div></div>
-        </div>
-        <div class="wizard-step-body">
-          <p style="color:var(--muted);font-size:.9rem;margin-bottom:14px">How far back should we import historical data?</p>
-          <div class="backfill-options">
-            <button class="backfill-btn selected" data-days="30" onclick="selectBackfill(this, 30)">Last 30 days</button>
-            <button class="backfill-btn" data-days="90" onclick="selectBackfill(this, 90)">Last 90 days</button>
-            <button class="backfill-btn" data-days="180" onclick="selectBackfill(this, 180)">Last 180 days</button>
-          </div>
-          <div class="wizard-actions">
-            <button class="btn-primary" onclick="confirmBackfill()">Continue</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="wizard-step" id="wizStep5">
-        <div class="wizard-step-header">
-          <div class="wizard-step-num">5</div>
           <div><div class="wizard-step-title">Test connection</div></div>
         </div>
         <div class="wizard-step-body">
@@ -694,15 +666,15 @@ def _render_wizard(
             <button class="btn-primary" id="testBtn" onclick="runTest()">Run connection test</button>
           </div>
           <div id="testStatus" style="display:none"></div>
-          <div class="wizard-actions" style="display:none" id="step5Next">
-            <button class="btn-primary" onclick="activateStep(6)">Continue</button>
+          <div class="wizard-actions" style="display:none" id="step4Next">
+            <button class="btn-primary" onclick="activateStep(5)">Continue</button>
           </div>
         </div>
       </div>
 
-      <div class="wizard-step" id="wizStep6">
+      <div class="wizard-step" id="wizStep5">
         <div class="wizard-step-header">
-          <div class="wizard-step-num">6</div>
+          <div class="wizard-step-num">5</div>
           <div><div class="wizard-step-title">Enable daily sync</div></div>
         </div>
         <div class="wizard-step-body">
@@ -729,7 +701,6 @@ def _render_wizard(
     var _manualAccountEntry = {'true' if handler.manual_account_entry else 'false'};
     var _selectedAccountId = null;
     var _selectedAccountName = null;
-    var _selectedBackfillDays = 30;
     var _configuredBqProject = null;
     var _configuredRawDs = null;
     var _configuredMartDs = null;
@@ -901,24 +872,6 @@ def _render_wizard(
       }});
     }}
 
-    function selectBackfill(btn, days) {{
-      document.querySelectorAll('.backfill-btn').forEach(b => b.classList.remove('selected'));
-      btn.classList.add('selected');
-      _selectedBackfillDays = days;
-    }}
-
-    function confirmBackfill() {{
-      var url = '/dashboard/' + _clientSlug + '/connectors/' + _connType + '/configure';
-      fetch(url, {{
-        method: 'POST',
-        headers: {{'Content-Type': 'application/json'}},
-        body: JSON.stringify({{backfill_days: _selectedBackfillDays}})
-      }}).then(r => r.json()).then(data => {{
-        if (data.ok) activateStep(5);
-        else alert(data.error || 'Failed to save backfill range.');
-      }});
-    }}
-
     function runTest() {{
       var btn = document.getElementById('testBtn');
       btn.disabled = true;
@@ -931,7 +884,7 @@ def _render_wizard(
         statusEl.className = 'test-result ' + (data.ok ? 'ok' : 'err');
         statusEl.textContent = data.message || (data.ok ? 'Connection verified.' : (data.error || 'Test failed.'));
         statusEl.style.display = 'block';
-        if (data.ok) document.getElementById('step5Next').style.display = 'flex';
+        if (data.ok) document.getElementById('step4Next').style.display = 'flex';
       }}).catch(err => {{
         btn.disabled = false; btn.textContent = 'Run connection test';
         statusEl.className = 'test-result err';

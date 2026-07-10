@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -283,9 +283,6 @@ async def connector_configure(
             kwargs["sync_enabled"] = bool(body["sync_enabled"])
         if "status" in body:
             kwargs["status"] = str(body["status"])
-        if "backfill_days" in body:
-            days = int(body["backfill_days"])
-            kwargs["backfill_start_date"] = (datetime.now(tz=UTC) - timedelta(days=days)).date()
 
         connector_config_store.upsert_config(slug, ctype, **kwargs)
 
