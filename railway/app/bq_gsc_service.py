@@ -681,6 +681,25 @@ def build_gsc_mart_summary(*, start: date, end: date, client_slug: str | None = 
             result["kpis"] = kpi[0] if kpi else {}
         except Exception as exc:
             errors["kpis"] = str(exc)[:300]
+        # Prior-period KPIs (same-length window immediately before) so the
+        # dashboard can show vs-previous deltas. Additive to the kpis dict; the
+        # frontend computes the % change from these prior_* values.
+        if result["kpis"]:
+            try:
+                ps, pe = _prior_period(start, end)
+                pw = f"date BETWEEN '{ps.isoformat()}' AND '{pe.isoformat()}'"
+                prior = _clean(_run(f"SELECT {m} FROM {qv} WHERE {pw}", max_rows=1))
+                pr = prior[0] if prior else {}
+                result["kpis"].update({
+                    "prior_clicks":       pr.get("clicks"),
+                    "prior_impressions":  pr.get("impressions"),
+                    "prior_ctr":          pr.get("ctr"),
+                    "prior_avg_position": pr.get("avg_position"),
+                    "prior_start":        ps.isoformat(),
+                    "prior_end":          pe.isoformat(),
+                })
+            except Exception as exc:
+                errors["kpis_prior"] = str(exc)[:300]
         try:
             result["daily"] = _clean(_run(
                 f"SELECT CAST(date AS STRING) AS date, clicks, impressions, ctr, avg_position "

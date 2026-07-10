@@ -1393,16 +1393,21 @@ def render_bigquery_dashboard_page(
     // ---- Search Console ----
     const gscPos = v => v==null ? '—' : num(v).toFixed(1);
     const gscPct = v => v==null ? '—' : (num(v)).toFixed(2) + '%';
-    function renderGscKpis(k) {{
-      k = k || {{}};
+    function renderGscKpis(k, daily) {{
+      k = k || {{}}; daily = daily || [];
+      // [label, formatted value, kpi key, prior value, good-direction, spark color].
+      // Avg position is "lower is better" so its delta direction is 'down'.
       const cards = [
-        ['Clicks', count(k.clicks)],
-        ['Impressions', count(k.impressions)],
-        ['CTR', gscPct(k.ctr)],
-        ['Avg position', gscPos(k.avg_position)],
+        ['Clicks', count(k.clicks), 'clicks', k.prior_clicks, 'up', '#1769aa'],
+        ['Impressions', count(k.impressions), 'impressions', k.prior_impressions, 'up', '#7c3aed'],
+        ['CTR', gscPct(k.ctr), 'ctr', k.prior_ctr, 'up', '#0a7f3f'],
+        ['Avg position', gscPos(k.avg_position), 'avg_position', k.prior_avg_position, 'down', '#d97706'],
       ];
-      document.getElementById('gscKpis').innerHTML = cards.map(([label,val]) =>
-        `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{val}}</div></div>`).join('');
+      document.getElementById('gscKpis').innerHTML = cards.map(([label,val,key,prior,dir,color]) => {{
+        const delta = summaryDeltaHtml(k[key], (prior!=null?prior:null), dir);
+        const spark = sparkSvg(daily.map(d=>num(d[key])), color);
+        return `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{val}}</div><div class="card-foot">${{delta}}${{spark}}</div></div>`;
+      }}).join('');
     }}
     // ---- GSC queries/pages: sortable + paginated (top 10/page) ----
     const GSC_PER_PAGE = 10;
@@ -1488,7 +1493,7 @@ def render_bigquery_dashboard_page(
       document.getElementById('gscPagesTable').innerHTML = skelTable(5,6);
       try {{
         const p = await getJson(withDates(GSC_API));
-        renderGscKpis((p&&p.kpis)||{{}});
+        renderGscKpis((p&&p.kpis)||{{}}, (p&&p.daily)||[]);
         for (const which of ['queries','pages']) {{
           const st=gscTables[which]; st.rows = (p && (which==='queries'?p.top_queries:p.top_pages)) || [];
           st.page=1; st.sortKey='clicks'; st.sortDir='desc'; renderGscTable(which);
