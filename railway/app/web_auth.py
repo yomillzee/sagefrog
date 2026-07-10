@@ -190,46 +190,131 @@ def _esc(text: str) -> str:
 
 
 def render_login_page(*, error: str | None = None, next_path: str = "/admin") -> str:
-    err = f'<p class="error">{_esc(error)}</p>' if error else ""
+    err = f'<p class="error" role="alert">{_esc(error)}</p>' if error else ""
     nxt = _esc(next_path or "/admin")
+    # Where the "Request a reset" button emails — resets are admin-driven (there is
+    # no self-service email flow). Change this to your support inbox.
+    support_email = "sagefrogmarketinggroup@gmail.com"
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign in · EOS Ads</title>
+  <title>Sign in · Sagefrog Marketing Group</title>
   <style>
-    :root {{ --navy: #0a2540; --accent: #0b5cab; --border: #d8dee8; }}
-    * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center;
-      font-family: system-ui, sans-serif; background: #eef1f5; color: #0f1c2e; }}
-    .card {{ width: min(400px, 92vw); background: #fff; border: 1px solid var(--border);
-      border-radius: 12px; padding: 28px 24px; box-shadow: 0 8px 32px rgba(10,37,64,.08); }}
-    h1 {{ margin: 0 0 8px; font-size: 1.35rem; color: var(--navy); }}
-    p.sub {{ margin: 0 0 20px; color: #5a6578; font-size: .92rem; }}
-    label {{ display: block; font-size: .85rem; font-weight: 600; margin-bottom: 6px; }}
-    input {{ width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
-      font-size: 1rem; margin-bottom: 14px; }}
-    button {{ width: 100%; padding: 12px; border: 0; border-radius: 8px; background: var(--accent);
-      color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer; }}
-    button:hover {{ filter: brightness(1.05); }}
-    .error {{ color: #b42318; font-size: .9rem; margin: 0 0 12px; }}
+    :root {{
+      --navy:#0a2540; --ink:#0f1c2e; --muted:#5a6578; --line:#e3e8f0;
+      --accent:#2563eb; --accent-d:#1d4ed8; --green:#34b27b; --danger:#b42318;
+    }}
+    * {{ box-sizing:border-box; }}
+    html,body {{ height:100%; }}
+    body {{
+      margin:0; padding:24px; color:var(--ink); display:grid; place-items:center;
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+      background:
+        radial-gradient(1100px 560px at 16% -12%, rgba(52,178,123,.20), transparent 60%),
+        radial-gradient(900px 520px at 100% 0%, rgba(37,99,235,.24), transparent 55%),
+        linear-gradient(160deg,#0a2540 0%,#071b30 55%,#05121f 100%);
+    }}
+    .wrap {{ width:min(420px,100%); animation:rise .5s ease both; }}
+    @keyframes rise {{ from {{ opacity:0; transform:translateY(10px); }} to {{ opacity:1; transform:none; }} }}
+    .brand {{ display:flex; flex-direction:column; align-items:center; gap:12px; margin-bottom:22px; }}
+    .logo {{ width:56px; height:56px; border-radius:16px; display:grid; place-items:center;
+      background:linear-gradient(135deg,var(--green),#0a2540); box-shadow:0 10px 26px rgba(5,18,31,.5); }}
+    .logo svg {{ width:30px; height:30px; }}
+    .brand h1 {{ margin:0; font-size:1.05rem; font-weight:700; color:#fff; letter-spacing:.2px; }}
+    .brand p {{ margin:0; font-size:.84rem; color:rgba(255,255,255,.6); }}
+    .card {{ background:#fff; border-radius:18px; padding:30px 28px;
+      box-shadow:0 24px 60px rgba(3,12,24,.42), 0 2px 6px rgba(3,12,24,.2); }}
+    .card h2 {{ margin:0 0 4px; font-size:1.28rem; color:var(--navy); }}
+    .card .lead {{ margin:0 0 22px; color:var(--muted); font-size:.9rem; }}
+    label {{ display:block; font-size:.8rem; font-weight:600; color:#334155; margin:0 0 6px; }}
+    .field {{ margin-bottom:16px; position:relative; }}
+    input {{ width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:10px;
+      font-size:.98rem; color:var(--ink); background:#fbfcfe; transition:border-color .15s, box-shadow .15s; }}
+    input::placeholder {{ color:#9aa5b5; }}
+    input:focus {{ outline:none; border-color:var(--accent); background:#fff;
+      box-shadow:0 0 0 3px rgba(37,99,235,.15); }}
+    .pw-wrap input {{ padding-right:62px; }}
+    .pw-toggle {{ position:absolute; right:8px; top:32px; border:0; background:transparent;
+      color:var(--muted); font-size:.76rem; font-weight:600; cursor:pointer; padding:6px 8px;
+      border-radius:6px; }}
+    .pw-toggle:hover {{ color:var(--accent); background:#eef4ff; }}
+    button.submit {{ width:100%; padding:13px; border:0; border-radius:10px; color:#fff;
+      font-size:1rem; font-weight:700; cursor:pointer; letter-spacing:.2px; margin-top:4px;
+      background:linear-gradient(135deg,var(--accent),var(--accent-d));
+      box-shadow:0 6px 18px rgba(37,99,235,.35); transition:transform .06s, filter .15s; }}
+    button.submit:hover {{ filter:brightness(1.06); }}
+    button.submit:active {{ transform:translateY(1px); }}
+    .error {{ color:var(--danger); font-size:.87rem; margin:0 0 14px; padding:10px 12px;
+      background:#fef3f2; border:1px solid #fecdc9; border-radius:9px; }}
+    .forgot {{ margin-top:18px; border-top:1px solid var(--line); padding-top:16px; }}
+    .forgot summary {{ list-style:none; cursor:pointer; font-size:.86rem; font-weight:600;
+      color:var(--accent); }}
+    .forgot summary::-webkit-details-marker {{ display:none; }}
+    .forgot summary:hover {{ text-decoration:underline; }}
+    .forgot-body {{ margin-top:12px; font-size:.85rem; color:var(--muted); line-height:1.55; }}
+    .forgot-body a.ghost {{ display:inline-block; margin-top:12px; padding:9px 16px; border-radius:9px;
+      border:1px solid var(--accent); color:var(--accent); text-decoration:none; font-weight:600;
+      font-size:.85rem; transition:background .15s, color .15s; }}
+    .forgot-body a.ghost:hover {{ background:var(--accent); color:#fff; }}
+    .foot {{ display:flex; align-items:center; justify-content:center; gap:6px; margin-top:20px;
+      font-size:.75rem; color:rgba(255,255,255,.5); }}
+    .foot svg {{ width:13px; height:13px; }}
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Sign in</h1>
-    <p class="sub">EOS Ads dashboards</p>
-    {err}
-    <form method="post" action="/login">
-      <input type="hidden" name="next" value="{nxt}">
-      <label for="email">Email</label>
-      <input id="email" name="email" type="email" autocomplete="username" required>
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required>
-      <button type="submit">Sign in</button>
-    </form>
+  <div class="wrap">
+    <div class="brand">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/>
+          <path d="M2 21c0-3 1.85-5.36 5.08-6"/>
+        </svg>
+      </div>
+      <h1>Sagefrog Marketing Group</h1>
+      <p>Client dashboards</p>
+    </div>
+    <div class="card">
+      <h2>Welcome back</h2>
+      <p class="lead">Sign in to access your reporting dashboards.</p>
+      {err}
+      <form method="post" action="/login">
+        <input type="hidden" name="next" value="{nxt}">
+        <div class="field">
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" autocomplete="username" placeholder="you@company.com" required>
+        </div>
+        <div class="field pw-wrap">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required>
+          <button type="button" class="pw-toggle" id="pwToggle" aria-label="Show password">Show</button>
+        </div>
+        <button type="submit" class="submit">Sign in</button>
+      </form>
+      <details class="forgot">
+        <summary>Forgot your password?</summary>
+        <div class="forgot-body">
+          Password resets are handled by your Sagefrog administrator. Send us a note and we'll get you back in.
+          <a class="ghost" href="mailto:{support_email}?subject=Password%20reset%20request">Request a reset</a>
+        </div>
+      </details>
+    </div>
+    <div class="foot">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+      Secure sign-in · &copy; 2026 Sagefrog Marketing Group
+    </div>
   </div>
+  <script>
+    (function(){{
+      var t=document.getElementById('pwToggle'), p=document.getElementById('password');
+      if(t&&p) t.addEventListener('click',function(){{
+        var show=p.type==='password'; p.type=show?'text':'password';
+        t.textContent=show?'Hide':'Show';
+        t.setAttribute('aria-label',show?'Hide password':'Show password');
+      }});
+    }})();
+  </script>
 </body>
 </html>"""
 
@@ -259,7 +344,7 @@ def render_dashboards_page(*, user: WebUser, dashboards: list[tuple[str, str]]) 
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dashboards · EOS Ads</title>
+  <title>Dashboards · Sagefrog Marketing Group</title>
   <style>
     :root {{ --navy: #0a2540; --accent: #0b5cab; --border: #d8dee8; }}
     * {{ box-sizing: border-box; }}
@@ -534,7 +619,7 @@ def render_admin_page(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Admin · EOS Ads</title>
+  <title>Admin · Sagefrog Marketing Group</title>
   <style>
     :root {{ --navy: #0a2540; --accent: #0b5cab; --border: #d8dee8; --muted: #5a6578; }}
     * {{ box-sizing: border-box; }}
