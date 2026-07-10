@@ -756,8 +756,11 @@ def render_bigquery_dashboard_page(
     .gads-shuffle svg {{ width:13px; height:13px; }}
     .gads-shuffle:hover {{ background:#f1f6ff; border-color:#a9c7f5; }}
     .gads-shuffle:active {{ transform:rotate(-90deg); }}
-    .gads-title {{ color:#1a0dab; font-size:1rem; font-weight:400; line-height:1.3; }}
-    .gads-desc {{ color:#4d5156; font-size:.8rem; line-height:1.35; margin-top:2px; }}
+    /* white-space:normal overrides the table's `th,td{{white-space:nowrap}}` — without
+       it the headline/description text runs on one line and overflows the card
+       across the metric columns. */
+    .gads-title {{ color:#1a0dab; font-size:1rem; font-weight:400; line-height:1.3; white-space:normal; overflow-wrap:anywhere; }}
+    .gads-desc {{ color:#4d5156; font-size:.8rem; line-height:1.35; margin-top:2px; white-space:normal; overflow-wrap:anywhere; }}
     .ad-label-sub {{ margin-top:4px; }}
     .ad-cell.gads .ad-copy-more {{ margin-left:2px; margin-top:5px; }}
     .ad-cell.gads .ad-copy-extra {{ margin-left:2px; margin-top:3px; }}
