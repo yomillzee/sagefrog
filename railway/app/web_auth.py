@@ -20,6 +20,11 @@ from security import is_production
 from web_users import WebUser
 
 SESSION_USER_ID = "user_id"
+# When an admin is "viewing as" another user, this holds that target user's id.
+# The real signed-in account stays in SESSION_USER_ID; only get_current_user
+# resolves to the impersonated user so every downstream access check and page
+# renders exactly as that user would see them.
+SESSION_VIEW_AS_ID = "view_as_user_id"
 
 
 def session_secret() -> str:
@@ -62,7 +67,8 @@ def auth_enabled() -> bool:
     return web_users.enabled()
 
 
-def get_current_user(request: Request) -> WebUser | None:
+def get_real_user(request: Request) -> WebUser | None:
+    """The actually signed-in account, ignoring any active "view as"."""
     if not auth_enabled():
         return None
     raw = request.session.get(SESSION_USER_ID)
@@ -79,12 +85,101 @@ def get_current_user(request: Request) -> WebUser | None:
     return user
 
 
+def _view_as_target(request: Request, real: WebUser | None) -> WebUser | None:
+    """The user an admin is impersonating via "view as", or None.
+
+    Only admins may impersonate. A stale/invalid/self target self-heals by
+    clearing the session key so a deactivated or deleted target can't wedge the
+    session.
+    """
+    if not real or real.role != "admin":
+        return None
+    raw = request.session.get(SESSION_VIEW_AS_ID)
+    if raw is None:
+        return None
+    try:
+        target_id = int(raw)
+    except (TypeError, ValueError):
+        request.session.pop(SESSION_VIEW_AS_ID, None)
+        return None
+    if target_id == real.id:
+        request.session.pop(SESSION_VIEW_AS_ID, None)
+        return None
+    target = web_users.get_user_by_id(target_id)
+    if not target:
+        request.session.pop(SESSION_VIEW_AS_ID, None)
+        return None
+    return target
+
+
+def get_current_user(request: Request) -> WebUser | None:
+    """The effective user for access checks and rendering.
+
+    Normally the signed-in account, but when an admin has an active "view as"
+    this returns the impersonated user so the whole platform (which dashboards
+    are visible, client scoping, admin-only UI) reflects that user's experience.
+    """
+    real = get_real_user(request)
+    if real and real.role == "admin":
+        target = _view_as_target(request, real)
+        if target:
+            return target
+    return real
+
+
+def current_view_as(request: Request) -> WebUser | None:
+    """The user currently being viewed-as (admin impersonation), or None."""
+    return _view_as_target(request, get_real_user(request))
+
+
+def set_view_as(request: Request, target_user_id: int) -> None:
+    request.session[SESSION_VIEW_AS_ID] = int(target_user_id)
+
+
+def clear_view_as(request: Request) -> None:
+    request.session.pop(SESSION_VIEW_AS_ID, None)
+
+
 def login_user(request: Request, user: WebUser) -> None:
     request.session[SESSION_USER_ID] = user.id
+    # A fresh login must never inherit a previous session's impersonation.
+    request.session.pop(SESSION_VIEW_AS_ID, None)
 
 
 def logout_user(request: Request) -> None:
     request.session.clear()
+
+
+def impersonation_banner_html(request: Request) -> str:
+    """Fixed "Viewing as …" bar with an Exit control, or "" when not active.
+
+    Injected into every HTML page (see the middleware in main.py) so an admin
+    can always leave "view as" from wherever they navigated. Uses inline styles
+    so it renders even on pages whose CSS it isn't part of.
+    """
+    target = current_view_as(request)
+    if not target:
+        return ""
+    who = _esc(target.email)
+    role = _esc(target.role + (f" · {target.client_slug}" if target.client_slug else ""))
+    return f"""
+    <div style="position:fixed;left:0;right:0;bottom:0;z-index:2147483000;
+      display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;
+      padding:9px 16px;background:#7c2d12;color:#fff;font:600 .85rem/1.3 -apple-system,
+      BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;box-shadow:0 -2px 12px rgba(0,0,0,.25);">
+      <span style="display:inline-flex;align-items:center;gap:8px;">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+        Viewing as <strong style="font-weight:800;">{who}</strong>
+        <span style="opacity:.8;font-weight:600;">({role})</span>
+      </span>
+      <form method="post" action="/admin/view-as/exit" style="margin:0;">
+        <button type="submit" style="appearance:none;border:1px solid rgba(255,255,255,.7);
+          background:rgba(255,255,255,.12);color:#fff;font:inherit;font-weight:700;
+          padding:5px 14px;border-radius:999px;cursor:pointer;">Exit view as</button>
+      </form>
+    </div>"""
 
 
 async def require_user(request: Request) -> WebUser:

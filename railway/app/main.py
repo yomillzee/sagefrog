@@ -212,6 +212,44 @@ except Exception as _boot_exc:
     import sys as _sys
     print(f"WARNING: DB schema/bootstrap error at startup: {_boot_exc}", file=_sys.stderr)
 
+@app.middleware("http")
+async def _inject_view_as_banner(request: Request, call_next):
+    """Append the "Viewing as …" exit bar to HTML pages during impersonation.
+
+    Registered before the session middleware so, in Starlette's stack, the
+    session middleware ends up outermost and request.session is populated by
+    the time this runs. Doing it here (rather than in each renderer) keeps the
+    exit affordance on every page — dashboard, settings, files, connectors,
+    the dashboards picker — with no per-renderer plumbing.
+    """
+    response = await call_next(request)
+    if "text/html" not in (response.headers.get("content-type") or "").lower():
+        return response
+    try:
+        banner = web_auth.impersonation_banner_html(request)
+    except Exception:
+        banner = ""
+    if not banner:
+        return response
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    text = body.decode(response.charset or "utf-8")
+    if "</body>" in text:
+        text = text.replace("</body>", banner + "</body>", 1)
+    else:
+        text += banner
+    headers = {
+        k: v
+        for k, v in response.headers.items()
+        if k.lower() not in ("content-length", "content-encoding")
+    }
+    return Response(
+        content=text,
+        status_code=response.status_code,
+        headers=headers,
+        media_type="text/html",
+    )
+
+
 if web_users.enabled():
     try:
         web_auth.add_session_middleware(app)
@@ -1556,7 +1594,8 @@ def login_submit(
 
 @app.post("/logout", include_in_schema=False)
 def logout(request: Request) -> RedirectResponse:
-    user = web_auth.get_current_user(request)
+    # Attribute the logout to the real account, not any user being viewed-as.
+    user = web_auth.get_real_user(request)
     ctx = audit_log.request_context(request)
     if user:
         audit_log.record(
@@ -1567,6 +1606,52 @@ def logout(request: Request) -> RedirectResponse:
         )
     web_auth.logout_user(request)
     return RedirectResponse(url="/login", status_code=303)
+
+
+@app.post("/admin/view-as", include_in_schema=False)
+def admin_view_as_start(
+    request: Request,
+    user_id: int = Form(...),
+    admin: web_users.WebUser = Depends(web_auth.require_admin),
+) -> RedirectResponse:
+    """Admin: begin viewing the platform as another registered user."""
+    target = web_users.get_user_record(int(user_id))
+    ctx = audit_log.request_context(request)
+    if not target or not target.is_active:
+        return RedirectResponse(url="/dashboards", status_code=303)
+    if target.id == admin.id:
+        # Viewing as yourself is a no-op; just clear any prior impersonation.
+        web_auth.clear_view_as(request)
+        return RedirectResponse(url="/dashboards", status_code=303)
+    web_auth.set_view_as(request, target.id)
+    audit_log.record(
+        action="admin.view_as.start",
+        actor_user_id=admin.id,
+        actor_email=admin.email,
+        subject_email=target.email,
+        detail={"target_role": target.role, "target_slug": target.client_slug},
+        **ctx,
+    )
+    # Land where the target user lands after login (their dashboards picker /
+    # single dashboard) so the admin sees exactly that user's entry point.
+    return RedirectResponse(url="/dashboards", status_code=303)
+
+
+@app.post("/admin/view-as/exit", include_in_schema=False)
+def admin_view_as_exit(request: Request) -> RedirectResponse:
+    """Leave "view as" and return to the real admin account."""
+    real = web_auth.get_real_user(request)
+    target = web_auth.current_view_as(request)
+    web_auth.clear_view_as(request)
+    if real and target:
+        audit_log.record(
+            action="admin.view_as.stop",
+            actor_user_id=real.id,
+            actor_email=real.email,
+            subject_email=target.email,
+            **audit_log.request_context(request),
+        )
+    return RedirectResponse(url="/dashboards", status_code=303)
 
 
 def _gcp_credentials_section_html() -> str:

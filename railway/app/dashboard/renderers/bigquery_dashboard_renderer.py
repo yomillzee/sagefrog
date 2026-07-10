@@ -110,6 +110,7 @@ def render_bigquery_dashboard_page(
     api_client_key: str = "nixon",
     label: str = "Nixon Medical",
     session_can_switch_clients: bool = False,
+    view_as_users: list[dict] | None = None,
 ) -> str:
     """Render this BigQuery-mart dashboard for any client.
 
@@ -282,6 +283,32 @@ def render_bigquery_dashboard_page(
     _ICON_ADMIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
     admin_panel_html = ""
     if session_is_admin:
+        import html as _html
+        _users = view_as_users or []
+        if _users:
+            _opts = "".join(
+                '<option value="{uid}">{email} — {role}</option>'.format(
+                    uid=int(u["id"]),
+                    email=_html.escape(str(u.get("email") or "")),
+                    role=_html.escape(
+                        str(u.get("role") or "")
+                        + (f" · {u['client_slug']}" if u.get("client_slug") else "")
+                    ),
+                )
+                for u in _users
+            )
+            view_as_body = f"""
+        <form method="post" action="/admin/view-as" class="admin-view-as-form">
+          <label for="viewAsSelect" class="admin-panel-label">View as user</label>
+          <select id="viewAsSelect" name="user_id" required>
+            <option value="" disabled selected>Select a user…</option>
+            {_opts}
+          </select>
+          <button type="submit" class="primary" style="width:100%">View as this user</button>
+        </form>
+        <span class="status" style="display:block;margin-top:8px">See the platform exactly as this user does. A banner lets you exit.</span>"""
+        else:
+            view_as_body = '<p class="admin-panel-note">No other users to view as yet.</p>'
         admin_panel_html = f"""
     <button class="admin-fab" id="adminFab" title="Admin tools" aria-label="Admin tools">{_ICON_ADMIN}</button>
     <div class="admin-panel" id="adminPanel">
@@ -291,8 +318,7 @@ def render_bigquery_dashboard_page(
       </div>
       <div class="admin-panel-body">
         <p class="admin-panel-note">{label} · admin only</p>
-        <button type="button" class="primary" id="adminRefreshBtn" style="width:100%">Refresh data</button>
-        <span class="status" id="adminRefreshStatus" style="display:block;margin-top:8px">Re-runs all BQ queries for the current date range.</span>
+        {view_as_body}
       </div>
     </div>"""
 
@@ -432,6 +458,9 @@ def render_bigquery_dashboard_page(
     .admin-panel-close:hover {{ background:var(--row-alt); color:var(--text); }}
     .admin-panel-body {{ padding:16px; display:flex; flex-direction:column; gap:8px; }}
     .admin-panel-note {{ margin:0; font-size:.76rem; color:var(--muted); }}
+    .admin-view-as-form {{ display:flex; flex-direction:column; gap:8px; margin:0; }}
+    .admin-panel-label {{ font-size:.72rem; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:var(--muted); }}
+    .admin-view-as-form select {{ width:100%; padding:9px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--text); font:inherit; font-size:.86rem; }}
     .date-bar-top {{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }}
     .date-bar-bottom {{ display:flex; flex-wrap:wrap; gap:20px; align-items:center; }}
     label {{ display:grid; gap:5px; color:var(--muted); font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }}
@@ -3048,13 +3077,6 @@ def render_bigquery_dashboard_page(
       fab.addEventListener('click',()=>panel.classList.toggle('open'));
       if (close) close.addEventListener('click',()=>panel.classList.remove('open'));
       document.addEventListener('keydown',e=>{{if(e.key==='Escape')panel.classList.remove('open');}});
-      const refreshBtn=document.getElementById('adminRefreshBtn');
-      const refreshSt=document.getElementById('adminRefreshStatus');
-      if (refreshBtn) refreshBtn.addEventListener('click',()=>{{
-        panel.classList.remove('open');
-        if (refreshSt) {{ refreshSt.className='status'; refreshSt.textContent='Refreshing…'; setTimeout(()=>{{refreshSt.textContent='Re-runs all BQ queries for the current date range.';}},2500); }}
-        loadCurrentTab();
-      }});
     }})();
   </script>
 </body>

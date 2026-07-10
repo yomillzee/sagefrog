@@ -26,6 +26,30 @@ from dashboard.utils.formatting import platform_error
 router = APIRouter(include_in_schema=False)
 LOGGER = logging.getLogger(__name__)
 
+
+def _view_as_user_options(effective_user) -> list[dict] | None:
+    """Users an admin can "view as" (everyone but themselves).
+
+    Only returned for an admin session — when impersonating, the effective user
+    is the (non-admin) target, so no picker is offered and this is None.
+    """
+    if not (effective_user and effective_user.role == "admin"):
+        return None
+    try:
+        return [
+            {
+                "id": u["id"],
+                "email": u["email"],
+                "role": u["role"],
+                "client_slug": u.get("client_slug"),
+            }
+            for u in web_users.list_users(include_inactive=False)
+            if u.get("id") != effective_user.id
+        ]
+    except Exception:
+        LOGGER.exception("Failed to load users for view-as picker")
+        return None
+
 @router.post(
     "/internal/sync-penn",
     summary="Cron: sync Penn warehouse + refresh dashboard snapshot",
@@ -230,6 +254,7 @@ def dashboard_client(
             return HTMLResponse(render_bigquery_dashboard_page(
                 client_slug=slug, api_client_key=slug, label=label,
                 session_can_switch_clients=session_can_switch_clients(auth),
+                view_as_users=_view_as_user_options(auth.user),
                 **penn_html_session_kwargs(auth),
             ))
         dashboard_service.verify_dashboard_key(key)
