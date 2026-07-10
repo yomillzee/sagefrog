@@ -722,6 +722,9 @@ def render_bigquery_dashboard_page(
     .pill-google {{ background:#e8f0fe; color:#1a73e8; }}
     .pill-linkedin {{ background:#e6f0f8; color:#0a66c2; }}
     .pill-meta {{ background:#f0e8fe; color:#7b2ff7; }}
+    /* Platform brand icons (campaign rows) */
+    .plat-ico {{ display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; margin-right:9px; vertical-align:middle; flex:0 0 auto; }}
+    .plat-ico svg {{ width:18px; height:18px; display:block; }}
     .ad-cell {{ display:inline-flex; align-items:center; gap:9px; vertical-align:middle; }}
     .ad-thumb {{ width:34px; height:34px; border-radius:5px; object-fit:cover; border:1px solid var(--line); background:#f0f3f8; flex:0 0 auto; cursor:zoom-in; }}
     .creative-preview {{ position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; }}
@@ -742,6 +745,22 @@ def render_bigquery_dashboard_page(
     .ad-copy-more:hover {{ text-decoration:underline; }}
     .ad-copy-extra {{ display:flex; flex-direction:column; gap:1px; }}
     .ad-copy-extra[hidden] {{ display:none; }}
+    /* Google search-ad preview — mimics a real SERP ad so the row reads like the
+       live creative. White card + Google colours regardless of dashboard theme. */
+    .ad-cell.gads {{ align-items:flex-start; }}
+    .gads-preview {{ max-width:540px; padding:9px 12px; border:1px solid #e6e9ef; border-radius:9px; background:#fff; box-shadow:0 1px 2px rgba(16,33,67,.05); }}
+    .gads-top {{ display:flex; align-items:center; gap:8px; margin-bottom:3px; }}
+    .gads-badge {{ font-size:.62rem; font-weight:800; color:#202124; border:1px solid #202124; border-radius:4px; padding:0 4px; line-height:1.35; }}
+    .gads-url {{ font-size:.74rem; color:#202124; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+    .gads-shuffle {{ margin-left:auto; display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border:1px solid #dadce0; border-radius:999px; background:#fff; color:#1a73e8; cursor:pointer; flex:0 0 auto; transition:background .12s, transform .12s; }}
+    .gads-shuffle svg {{ width:13px; height:13px; }}
+    .gads-shuffle:hover {{ background:#f1f6ff; border-color:#a9c7f5; }}
+    .gads-shuffle:active {{ transform:rotate(-90deg); }}
+    .gads-title {{ color:#1a0dab; font-size:1rem; font-weight:400; line-height:1.3; }}
+    .gads-desc {{ color:#4d5156; font-size:.8rem; line-height:1.35; margin-top:2px; }}
+    .ad-label-sub {{ margin-top:4px; }}
+    .ad-cell.gads .ad-copy-more {{ margin-left:2px; margin-top:5px; }}
+    .ad-cell.gads .ad-copy-extra {{ margin-left:2px; margin-top:3px; }}
     /* ---- Pages search ---- */
     .page-search {{ width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:8px 12px; font:inherit; font-size:.88rem; background:#fff; color:#102033; margin-bottom:10px; }}
     .page-search:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
@@ -1930,11 +1949,19 @@ def render_bigquery_dashboard_page(
       return new Map([...campaigns.entries()].sort(cmpNode));
     }}
     function metricCells(m) {{ const wc=withCtr(m); return METRIC_COLS.map(c=>`<td>${{c.format(wc[c.key])}}</td>`).join(''); }}
-    function platformPill(p) {{
+    // Brand marks for the platform column — inline SVG so the tree reads as a
+    // sleek icon rail instead of text pills. Google = 4-colour G, LinkedIn +
+    // Meta = their single-path glyphs in brand colours.
+    const PLATFORM_SVG = {{
+      google: '<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>',
+      linkedin: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#0A66C2" d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.35V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13zM7.12 20.45H3.55V9h3.57v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0z"/></svg>',
+      meta: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#0668E1" d="M6.915 4.03c-1.968 0-3.683 1.28-4.871 3.113C.704 9.208 0 11.883 0 14.449c0 .706.07 1.369.21 1.973a6.624 6.624 0 0 0 .265.86 5.297 5.297 0 0 0 .371.761c.696 1.159 1.818 1.927 3.593 1.927 1.497 0 2.633-.671 3.965-2.444.76-1.012 1.144-1.626 2.663-4.32l.756-1.339.186-.325c.061.1.121.196.183.294l2.152 3.595c.724 1.21 1.665 2.556 2.47 3.314 1.046.987 1.992 1.22 3.06 1.22 1.075 0 1.876-.355 2.455-.843a3.743 3.743 0 0 0 .81-.973c.542-.939.861-2.127.861-3.745 0-2.72-.681-5.357-2.084-7.45-1.282-1.912-2.957-2.93-4.716-2.93-1.047 0-2.088.467-3.053 1.308-.652.57-1.257 1.29-1.82 2.05-.69-.875-1.335-1.547-1.958-2.056-1.182-.966-2.315-1.303-3.454-1.303zm10.16 2.053c1.147 0 2.188.758 2.992 1.999 1.132 1.748 1.647 4.195 1.647 6.4 0 1.548-.368 2.9-1.839 2.9-.58 0-1.027-.235-1.664-1.001-.496-.601-1.343-1.878-2.832-4.358l-.617-1.028a44.908 44.908 0 0 0-1.255-1.98c.07-.109.141-.224.211-.327 1.12-1.667 2.118-2.605 3.325-2.605zm-10.201.553c1.265 0 2.058.791 2.675 1.446.307.327.737.871 1.234 1.579l-1.02 1.566c-.757 1.163-1.882 3.017-2.837 4.338-1.191 1.649-1.81 1.817-2.486 1.817-.524 0-1.038-.237-1.383-.794-.263-.426-.464-1.13-.464-2.046 0-2.221.63-4.535 1.66-6.088.454-.687.964-1.226 1.533-1.533a2.264 2.264 0 0 1 1.088-.282z"/></svg>',
+    }};
+    function platformIcon(p) {{
       const k=(p||'google').toLowerCase();
       const key=k==='linkedin'?'linkedin':k==='meta'?'meta':'google';
       const label=key==='linkedin'?'LinkedIn':key==='meta'?'Meta':'Google';
-      return `<span class="pill pill-${{key}}">${{label}}</span>`;
+      return `<span class="plat-ico plat-ico-${{key}}" title="${{label}}" aria-label="${{label}}">${{PLATFORM_SVG[key]}}</span>`;
     }}
     function parseCopyList(v) {{
       if (Array.isArray(v)) return v.filter(Boolean);
@@ -1942,16 +1969,75 @@ def render_bigquery_dashboard_page(
       return [];
     }}
     const HEADLINES_VISIBLE = 5;
+    const ICON_SHUFFLE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>';
+    // Turn a final URL into a Google-style display path (host + first segment).
+    function gadsDisplayUrl(ad) {{
+      const raw=String(ad.final_url||'').trim();
+      try {{
+        const u=new URL(raw.match(/^https?:\\/\\//)?raw:('https://'+raw));
+        const seg=u.pathname.split('/').filter(Boolean)[0];
+        return u.hostname.replace(/^www\\./,'')+(seg?('/'+seg):'');
+      }} catch(e) {{
+        return (raw||'example.com').replace(/^https?:\\/\\//,'').replace(/^www\\./,'').split('/').slice(0,2).join('/');
+      }}
+    }}
+    // Fisher–Yates pick of n items — how the shuffle randomizes the RSA mix.
+    function gadsPick(arr,n) {{
+      const a=arr.slice();
+      for (let i=a.length-1;i>0;i--) {{ const j=Math.floor(Math.random()*(i+1)); const t=a[i]; a[i]=a[j]; a[j]=t; }}
+      return a.slice(0,n);
+    }}
+    // Re-render a Google preview's shown assets (up to 3 headlines, 2 descriptions).
+    // shuffle=true randomizes the mix like Google's RSA serving would.
+    function gadsUpdatePreview(cell, shuffle) {{
+      let hs=[], ds=[];
+      try {{ hs=JSON.parse(cell.dataset.hs||'[]'); }} catch(e) {{}}
+      try {{ ds=JSON.parse(cell.dataset.ds||'[]'); }} catch(e) {{}}
+      const h=shuffle?gadsPick(hs,3):hs.slice(0,3);
+      const d=shuffle?gadsPick(ds,2):ds.slice(0,2);
+      const t=cell.querySelector('.gads-title'); if (t) t.textContent=h.join(' | ');
+      const de=cell.querySelector('.gads-desc'); if (de) de.textContent=d.join(' ');
+    }}
+    // Google search RSA → a realistic ad preview (3 headlines / 2 descriptions),
+    // a shuffle button that re-rolls the mix, and the full asset list in an
+    // accordion. Non-search / image ads fall through to the thumbnail layout.
+    function googleAdCell(ad, hs, ds) {{
+      const sub=ad.ad_id?`<span class="ad-label-sub"><span class="ad-id">#${{esc(ad.ad_id)}}</span></span>`:'';
+      const disp=esc(gadsDisplayUrl(ad));
+      const h0=hs.slice(0,3).map(esc).join(' | ');
+      const d0=ds.slice(0,2).map(esc).join(' ');
+      const allH=hs.map((v,i)=>`<span class="ad-copy-line"><span class="ad-copy-tag">H${{i+1}}</span>${{esc(v)}}</span>`).join('');
+      const allD=ds.map((v,i)=>`<span class="ad-copy-line"><span class="ad-copy-tag">D${{i+1}}</span>${{esc(v)}}</span>`).join('');
+      const cnt=`${{hs.length}} headline${{hs.length===1?'':'s'}} · ${{ds.length}} description${{ds.length===1?'':'s'}}`;
+      const acc=(hs.length>3||ds.length>2)
+        ? `<button type="button" class="ad-copy-more" data-more-label="All assets (${{cnt}})">All assets (${{cnt}})</button><div class="ad-copy-extra" hidden>${{allH}}${{allD}}</div>`
+        : '';
+      return `<div class="ad-cell gads" data-hs="${{esc(JSON.stringify(hs))}}" data-ds="${{esc(JSON.stringify(ds))}}"><span class="ad-meta">
+        <div class="gads-preview">
+          <div class="gads-top"><span class="gads-badge">Ad</span><span class="gads-url">${{disp}}</span><button type="button" class="gads-shuffle" title="Shuffle asset mix" aria-label="Shuffle asset mix">${{ICON_SHUFFLE}}</button></div>
+          <div class="gads-title">${{h0}}</div>
+          <div class="gads-desc">${{d0}}</div>
+        </div>
+        ${{sub}}
+        ${{acc}}
+      </span></div>`;
+    }}
     function adCell(ad) {{
+      const platform=(ad.platform||'google').toLowerCase();
+      // Full RSA copy (up to 15 headlines / 4 descriptions) from the JSON arrays;
+      // fall back to the legacy flat columns for rows synced before the repull.
+      let hs=parseCopyList(ad.headlines); if(!hs.length) hs=[ad.headline_1,ad.headline_2,ad.headline_3].filter(Boolean);
+      let ds=parseCopyList(ad.descriptions); if(!ds.length) ds=[ad.description_1,ad.description_2].filter(Boolean);
+      // Google search ads (text/RSA) get the true ad preview; image/display and
+      // LinkedIn/Meta creatives keep the thumbnail-based layout below.
+      if (platform==='google' && (hs.length||ds.length) && !ad.thumbnail_url) {{
+        return googleAdCell(ad, hs, ds);
+      }}
       const type=ad.media_type?`<span class="ad-type">${{esc(ad.media_type)}}</span>`:'';
       // Full-size preview prefers image_url/video_url over the (often smaller/
       // cropped) thumbnail_url; click opens it in the modal (see creativePreview).
       const fullImg=ad.image_url||ad.thumbnail_url||'';
       const thumb=ad.thumbnail_url?`<img class="ad-thumb" src="${{esc(ad.thumbnail_url)}}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none'" data-preview-image="${{esc(fullImg)}}" data-preview-video="${{esc(ad.video_url||'')}}">` :'';
-      // Full RSA copy (up to 15 headlines / 4 descriptions) from the JSON arrays;
-      // fall back to the legacy flat columns for rows synced before the repull.
-      let hs=parseCopyList(ad.headlines); if(!hs.length) hs=[ad.headline_1,ad.headline_2,ad.headline_3].filter(Boolean);
-      let ds=parseCopyList(ad.descriptions); if(!ds.length) ds=[ad.description_1,ad.description_2].filter(Boolean);
       // ad_name is often blank for RSAs; prefer it, then the first headline, then
       // the raw ad ID as a last resort (shown small/muted, not as the headline label).
       const label=esc(ad.ad_name || hs[0] || ad.ad_label || '—');
@@ -1989,7 +2075,7 @@ def render_bigquery_dashboard_page(
         let body='', cIdx=0;
         for (const camp of tree.values()) {{
           const cId='c'+(cIdx++), gCount=camp.groups.size;
-          body+=`<tr class="tree-row lvl-campaign" data-id="${{cId}}" data-expandable="1"><td class="left"><span class="caret"></span>${{platformPill(camp.platform)}}<span class="tree-name">${{esc(camp.name)}}</span> <span class="muted">(${{gCount}} ad group${{gCount===1?'':'s'}})</span></td>${{metricCells(camp.metrics)}}</tr>`;
+          body+=`<tr class="tree-row lvl-campaign" data-id="${{cId}}" data-expandable="1"><td class="left"><span class="caret"></span>${{platformIcon(camp.platform)}}<span class="tree-name">${{esc(camp.name)}}</span> <span class="muted">(${{gCount}} ad group${{gCount===1?'':'s'}})</span></td>${{metricCells(camp.metrics)}}</tr>`;
           let gIdx=0;
           for (const grp of camp.groups.values()) {{
             const gId=cId+'g'+(gIdx++), aCount=grp.ads.length;
@@ -3293,6 +3379,13 @@ def render_bigquery_dashboard_page(
       buildMetricChips();
     }}
     document.getElementById('explorerTable').addEventListener('click',ev=>{{
+      const shuf=ev.target.closest('.gads-shuffle');
+      if (shuf) {{
+        ev.stopPropagation();
+        const cell=shuf.closest('.ad-cell');
+        if (cell) gadsUpdatePreview(cell, true);
+        return;
+      }}
       const thumb=ev.target.closest('.ad-thumb');
       if (thumb) {{
         openCreativePreview(thumb.dataset.previewImage||'', thumb.dataset.previewVideo||'');
