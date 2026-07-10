@@ -207,6 +207,15 @@ _CONNECTOR_CSS = """
   .account-item-name { font-size: 0.92rem; font-weight: 600; }
   .account-item-id { font-size: 0.78rem; color: var(--muted); }
   .account-item.selected { border-color: var(--accent); background: #eff6ff; }
+  .account-search {
+    width: 100%; box-sizing: border-box; margin: 4px 0 0;
+    padding: 9px 12px 9px 34px; font-size: 0.9rem;
+    border: 1px solid var(--border); border-radius: 8px; background: #fff;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='M21 21l-4.35-4.35'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: 11px center;
+  }
+  .account-search:focus { outline: none; border-color: var(--accent); }
+  .account-nomatch { color: var(--muted); font-size: 0.88rem; padding: 8px 2px 2px; }
 
   /* Destination fields */
   .dest-field { margin-bottom: 16px; }
@@ -619,7 +628,9 @@ def _render_wizard(
           <div id="accountLoading" style="color:var(--muted);font-size:.9rem">
             <span class="spinner"></span>Loading accounts…
           </div>
+          <input id="accountSearch" class="account-search" type="text" placeholder="Search accounts by name or ID…" oninput="filterAccounts()" autocomplete="off" style="display:none" />
           <div id="accountList" class="account-list" style="display:none"></div>
+          <div id="accountNoMatch" class="account-nomatch" style="display:none">No accounts match your search.</div>
           <div id="accountError" class="test-result err" style="display:none"></div>
           <div class="wizard-actions" style="display:none" id="step2Actions">
             <button class="btn-primary" id="step2Next" onclick="confirmAccount()">Continue</button>
@@ -789,6 +800,7 @@ def _render_wizard(
         (data.accounts || []).forEach(acc => {{
           var item = document.createElement('label');
           item.className = 'account-item';
+          item.dataset.search = ((acc.name||'') + ' ' + acc.id).toLowerCase();
           item.innerHTML = '<input type="radio" name="account" value="' + acc.id + '" data-name="' + (acc.name||'') + '"> <div><div class="account-item-name">' + (acc.name||acc.id) + '</div><div class="account-item-id">ID: ' + acc.id + '</div></div>';
           item.querySelector('input').addEventListener('change', function() {{
             document.querySelectorAll('.account-item').forEach(i => i.classList.remove('selected'));
@@ -800,6 +812,11 @@ def _render_wizard(
           list.appendChild(item);
         }});
         list.style.display = 'flex';
+        // Reveal the filter only when the list is long enough to warrant it.
+        var search = document.getElementById('accountSearch');
+        if (search && (data.accounts || []).length > 8) {{
+          search.style.display = 'block';
+        }}
         if (!data.accounts || !data.accounts.length) {{
           list.innerHTML = '<p style="color:var(--muted);font-size:.9rem">No accounts found for this connection.</p>';
         }}
@@ -809,6 +826,19 @@ def _render_wizard(
         errEl.textContent = 'Failed to load accounts: ' + err.message;
         errEl.style.display = 'block';
       }});
+    }}
+
+    function filterAccounts() {{
+      var q = (document.getElementById('accountSearch').value || '').trim().toLowerCase();
+      var items = document.querySelectorAll('#accountList .account-item');
+      var shown = 0;
+      items.forEach(function(it) {{
+        var match = !q || (it.dataset.search || '').indexOf(q) !== -1;
+        it.style.display = match ? '' : 'none';
+        if (match) shown++;
+      }});
+      var nm = document.getElementById('accountNoMatch');
+      if (nm) nm.style.display = (q && shown === 0) ? 'block' : 'none';
     }}
 
     function confirmAccount() {{
