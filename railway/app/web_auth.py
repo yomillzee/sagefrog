@@ -584,6 +584,14 @@ document.querySelectorAll('.avatar-file').forEach(inp => {
 """
 
 
+def _label_initials(label: str) -> str:
+    """Up to two initials from a display label (dashboard card icon)."""
+    parts = [p for p in (label or "").split() if p]
+    if len(parts) >= 2:
+        return (parts[0][0] + parts[1][0]).upper()
+    return ((label or "?")[:2]).upper()
+
+
 def _user_initials(email: str) -> str:
     """Up to two initials from an email's local part (fallback avatar)."""
     local = (email or "").split("@")[0]
@@ -708,41 +716,47 @@ def render_admin_page(
         import client_dashboard_config as _cdc
 
         if dashboard_registry.enabled():
-            dash_rows = []
+            dash_cards = []
             for row in dashboard_registry.list_clients():
                 slug = row.client_slug
                 label = row.label
+                initials = _esc(_label_initials(label))
 
-                # Template column: bigquery_nixon = the connector-driven Nixon
-                # template; anything else (api/bigquery) is the older snapshot
-                # dashboard. Offer a one-click convert for legacy dashboards so
-                # they don't need a manual DB update.
+                # Template: bigquery_nixon = the connector-driven Nixon template;
+                # anything else (api/bigquery) is the older snapshot dashboard. Offer
+                # a one-click convert for legacy dashboards (no manual DB update).
                 try:
                     _mode = (_cdc.get_config(slug).dashboard_mode or "api")
                 except Exception:
                     _mode = "api"
+                convert_btn = ""
                 if _mode == "bigquery_nixon":
-                    template_cell = '<span class="badge ok">New template</span>'
+                    template_badge = '<span class="dash-badge new">New template</span>'
                 elif slug == "penn":
-                    template_cell = '<span class="muted">Snapshot (protected)</span>'
+                    template_badge = '<span class="dash-badge snap">Snapshot · protected</span>'
                 else:
-                    template_cell = (
-                        f'<span class="muted">Snapshot</span> · '
-                        f'<form method="post" action="/admin/dashboards/{_esc(slug)}/mode" style="display:inline">'
-                        f'<button type="submit" class="link" '
+                    template_badge = '<span class="dash-badge snap">Snapshot</span>'
+                    convert_btn = (
+                        f'<form method="post" action="/admin/dashboards/{_esc(slug)}/mode" class="inline-form">'
+                        f'<button type="submit" class="dash-btn ghost" '
                         f"onclick=\"return confirm('Convert {_esc(label)} to the new connector template?')\">"
                         f'Use new template</button></form>'
                     )
 
-                delete_cell = ""
+                clear_snapshot_btn = (
+                    f'<form method="post" action="/admin/snapshot/{_esc(slug)}/delete" class="inline-form">'
+                    f'<button type="submit" class="dash-btn ghost" '
+                    f"onclick=\"return confirm('Clear cached snapshot for {_esc(label)}?')\">Clear snapshot</button></form>"
+                )
+
                 if slug == "penn":
-                    delete_cell = '<span class="muted">Protected</span>'
+                    foot = '<span class="dash-card-note">Protected — cannot be deleted</span>'
                 else:
                     field_id = f"confirm-{slug.replace('-', '_')}"
                     btn_id = f"delete-btn-{slug.replace('-', '_')}"
-                    delete_cell = f"""
+                    foot = f"""
                     <details class="dash-delete-fold">
-                      <summary class="link danger">Delete…</summary>
+                      <summary class="link danger">Delete dashboard…</summary>
                       <form method="post" action="/admin/dashboards/{_esc(slug)}/delete" class="dash-delete-form">
                         <p class="hint">Type <strong>{_esc(label)}</strong> to confirm.</p>
                         <input type="text" id="{field_id}" name="confirm_label"
@@ -751,25 +765,28 @@ def render_admin_page(
                         <button type="submit" id="{btn_id}" class="link danger" disabled>Delete dashboard</button>
                       </form>
                     </details>"""
-                clear_snapshot_form = (
-                    f'<form method="post" action="/admin/snapshot/{_esc(slug)}/delete" style="display:inline">'
-                    f'<button type="submit" class="link" onclick="return confirm(\'Clear cached snapshot for {_esc(label)}?\')">Clear snapshot</button>'
-                    f"</form>"
-                )
-                dash_rows.append(
-                    f"<tr>"
-                    f'<td class="mono">{_esc(slug)}</td>'
-                    f"<td>{_esc(label)}</td>"
-                    f"<td>{template_cell}</td>"
-                    f'<td><a href="/dashboard/{_esc(slug)}">Open</a> · '
-                    f'<a href="/dashboard/{_esc(slug)}/settings">Settings</a> · '
-                    f"{clear_snapshot_form}</td>"
-                    f"<td>{delete_cell}</td>"
-                    f"</tr>"
-                )
-            dash_table = (
-                "\n".join(dash_rows)
-                or '<tr><td colspan="5" class="muted">No dashboards yet.</td></tr>'
+
+                dash_cards.append(f"""
+        <div class="dash-card">
+          <div class="dash-card-head">
+            <span class="dash-avatar">{initials}</span>
+            <div class="dash-card-title">
+              <span class="dash-card-name" title="{_esc(label)}">{_esc(label)}</span>
+              <a class="dash-card-slug mono" href="/dashboard/{_esc(slug)}">/dashboard/{_esc(slug)}</a>
+            </div>
+            {template_badge}
+          </div>
+          <div class="dash-card-actions">
+            <a class="dash-btn primary" href="/dashboard/{_esc(slug)}">Open</a>
+            <a class="dash-btn" href="/dashboard/{_esc(slug)}/settings">Settings</a>
+            {clear_snapshot_btn}
+            {convert_btn}
+          </div>
+          <div class="dash-card-foot">{foot}</div>
+        </div>""")
+            dash_grid = (
+                "".join(dash_cards)
+                or '<p class="muted" style="margin:0">No dashboards yet.</p>'
             )
             for slug, _label in client_config.list_dashboard_clients():
                 client_slug_options += f'<option value="{_esc(slug)}"></option>\n'
@@ -799,10 +816,7 @@ def render_admin_page(
           </form>
         </details>
       </div>
-      <table class="dash-table">
-        <thead><tr><th>Slug</th><th>Name</th><th>Template</th><th>Links</th><th></th></tr></thead>
-        <tbody>{dash_table}</tbody>
-      </table>
+      <div class="dash-grid">{dash_grid}</div>
     </section>"""
             dash_delete_js = """
     document.querySelectorAll('.dash-delete-form input[name="confirm_label"]').forEach((input) => {
@@ -980,6 +994,33 @@ def render_admin_page(
     .advanced-summary:hover .advanced-title {{ color: var(--accent); }}
     .advanced-body {{ padding: 0 20px 8px; }}
     .advanced-body > section, .advanced-body > .admin-oauth-section {{ box-shadow: none; }}
+    /* ---- Dashboards card grid ---- */
+    .dash-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; margin-top: 4px; }}
+    .dash-card {{ display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--line); border-radius: 14px;
+      padding: 16px; background: #fff; box-shadow: 0 1px 2px rgba(16,33,67,.04); transition: border-color .15s, box-shadow .15s, transform .06s; }}
+    .dash-card:hover {{ border-color: #c6d5ea; box-shadow: 0 8px 26px rgba(16,33,67,.10); }}
+    .dash-card-head {{ display: flex; align-items: center; gap: 12px; }}
+    .dash-avatar {{ width: 42px; height: 42px; border-radius: 11px; flex-shrink: 0; display: grid; place-items: center;
+      font-weight: 800; font-size: .92rem; letter-spacing: .02em; color: #fff;
+      background: linear-gradient(135deg, var(--accent), #1e3a8a); box-shadow: 0 4px 12px rgba(37,99,235,.28); }}
+    .dash-card-title {{ display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 1px; }}
+    .dash-card-name {{ font-weight: 700; font-size: 1rem; color: var(--navy); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .dash-card-slug {{ font-size: .76rem; color: var(--muted); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .dash-card-slug:hover {{ color: var(--accent); text-decoration: underline; }}
+    .dash-badge {{ flex-shrink: 0; padding: 3px 10px; border-radius: 999px; font-size: .7rem; font-weight: 700; white-space: nowrap; }}
+    .dash-badge.new {{ background: #ecfdf3; color: #15803d; }}
+    .dash-badge.snap {{ background: #f1f5f9; color: #64748b; }}
+    .dash-card-actions {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }}
+    .dash-btn {{ display: inline-flex; align-items: center; padding: 7px 13px; border-radius: 9px; border: 1px solid var(--line);
+      background: #fff; color: var(--navy); font-size: .82rem; font-weight: 650; text-decoration: none; cursor: pointer;
+      transition: background .12s, border-color .12s, color .12s; }}
+    .dash-btn:hover {{ background: #f4f8fd; border-color: #b9c8dc; }}
+    .dash-btn.primary {{ background: var(--accent); border-color: var(--accent); color: #fff; }}
+    .dash-btn.primary:hover {{ filter: brightness(1.06); background: var(--accent); }}
+    .dash-btn.ghost {{ background: transparent; }}
+    .dash-card-foot {{ margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line); position: relative; }}
+    .dash-card-note {{ font-size: .8rem; color: var(--muted); }}
+    .dash-card .dash-delete-fold summary {{ color: var(--danger); }}
   </style>
 </head>
 <body>
