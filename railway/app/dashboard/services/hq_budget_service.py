@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import calendar
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import client_dashboard_config
@@ -24,6 +24,10 @@ LOGGER = logging.getLogger(__name__)
 
 # Match /api/clients/{key}/summary so the HQ read shares its cached result.
 _SUMMARY_TTL_SECONDS = 900
+# Trailing window for the sessions sparkline — long enough to read momentum,
+# short enough to stay a cheap single scan. Ends yesterday (GA4 export lags a
+# day, so "today" is usually partial and would show a misleading dip).
+_SESSIONS_TRAILING_DAYS = 30
 
 
 def _client_mtd_spend(
@@ -46,6 +50,28 @@ def _client_mtd_spend(
     result = db_cache_get_or_fetch(f"{slug}.summary", payload, _fetch)
     summary = (result or {}).get("summary") or {}
     return float(summary.get("spend") or 0.0)
+
+
+def _client_sessions_series(
+    *,
+    slug: str,
+    project_id: str,
+    dataset_id: str,
+    start: date,
+    end: date,
+) -> list[int]:
+    """Trailing daily GA4 sessions for one client (for the sparkline)."""
+    payload = {"start": start.isoformat(), "end": end.isoformat()}
+
+    def _fetch() -> dict[str, Any]:
+        with marketing_service.route(
+            client_key=slug, project_id=project_id, mart_dataset_id=dataset_id
+        ):
+            return marketing_service.fetch_sessions_daily(start_date=start, end_date=end)
+
+    result = db_cache_get_or_fetch(f"{slug}.hq.sessions_daily", payload, _fetch)
+    daily = (result or {}).get("daily") or []
+    return [int(r.get("sessions") or 0) for r in daily]
 
 
 def db_cache_get_or_fetch(source: str, payload: dict, fetch) -> dict:
@@ -91,6 +117,9 @@ def build_hq_budget_overview() -> dict[str, Any]:
     days_elapsed = today.day
     days_remaining = max(0, days_in_month - days_elapsed)
     pct_month = round(100 * days_elapsed / days_in_month, 1) if days_in_month else 0.0
+    # Sessions sparkline window: trailing N days ending yesterday.
+    sessions_end = today - timedelta(days=1)
+    sessions_start = sessions_end - timedelta(days=_SESSIONS_TRAILING_DAYS - 1)
 
     clients = client_dashboard_config.list_budget_overview()
 
@@ -107,6 +136,7 @@ def build_hq_budget_overview() -> dict[str, Any]:
 
         spend: float | None = None
         spend_available = False
+        sessions_series: list[int] = []
         if project_id:
             try:
                 spend = _client_mtd_spend(
@@ -118,6 +148,14 @@ def build_hq_budget_overview() -> dict[str, Any]:
                 LOGGER.exception("HQ budget: MTD spend failed for %s", slug)
                 spend = None
                 spend_available = False
+            try:
+                sessions_series = _client_sessions_series(
+                    slug=slug, project_id=project_id, dataset_id=dataset_id,
+                    start=sessions_start, end=sessions_end,
+                )
+            except Exception:
+                LOGGER.exception("HQ budget: sessions failed for %s", slug)
+                sessions_series = []
 
         mtd = spend or 0.0
         pct_budget = round(100 * mtd / budget, 1) if budget > 0 else None
@@ -148,11 +186,19 @@ def build_hq_budget_overview() -> dict[str, Any]:
             "remaining_budget": remaining,
             "pace_delta": pace_delta,
             "status": status,
+            "sessions_series": sessions_series,
+            "sessions_total": sum(sessions_series),
+            "sessions_available": bool(sessions_series),
         })
 
     return {
         "month_label": month_start.strftime("%B %Y"),
         "as_of": today.isoformat(),
+        "sessions_window": {
+            "start": sessions_start.isoformat(),
+            "end": sessions_end.isoformat(),
+            "days": _SESSIONS_TRAILING_DAYS,
+        },
         "days_in_month": days_in_month,
         "days_elapsed": days_elapsed,
         "days_remaining": days_remaining,
