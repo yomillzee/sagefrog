@@ -232,9 +232,8 @@ at rest** (Fernet) in `oauth_credentials`.
   - a `<meta name="csrf-token">` plus a small `fetch` wrapper that attaches the
     `X-CSRF-Token` header to same-origin AJAX writes.
 
-  Header-authenticated API callers (Bearer / `X-API-Key`), the cron secret, and the
-  legacy `?key=` dashboard links are exempt — they aren't CSRF-prone and stay working
-  unchanged.
+  Header-authenticated API callers (Bearer / `X-API-Key`) and the cron secret are
+  exempt — they aren't CSRF-prone and stay working unchanged.
 
 ---
 
@@ -330,7 +329,6 @@ Only the most important variables are listed here; see
 | `CRON_SECRET` | Auth for the `/internal/sync-*` endpoints **only** (no longer shared with other surfaces) |
 | `AUTH_SESSION_SECRET` | Signs `eos_session` cookies and OAuth connect-link/state tokens. **Required in production** — no longer falls back to `CRON_SECRET`/`API_KEY` (dev keeps the fallback) |
 | `OAUTH_TOKEN_ENCRYPTION_KEY` | Dedicated key for OAuth token encryption (required in production; dev falls back to `AUTH_SESSION_SECRET`) |
-| `DASHBOARD_SECRET` | Dedicated secret for the legacy `?key=` dashboard link (production; dev falls back to `CRON_SECRET`) |
 | `AUTH_SESSION_HTTPS_ONLY` | Force / disable HTTPS-only cookies (`0` for local HTTP) |
 | `AUTH_BOOTSTRAP_ADMIN_EMAIL` / `AUTH_BOOTSTRAP_ADMIN_PASSWORD` | First admin account on initial deploy (password ≥ 10 chars) |
 | `AUTH_LOGIN_MAX_FAILURES` / `AUTH_LOGIN_WINDOW_SECONDS` / `AUTH_LOGIN_LOCKOUT_SECONDS` | Login rate-limit tuning |

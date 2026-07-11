@@ -14,7 +14,6 @@ import connector_config_store
 import connectors  # noqa: F401 — triggers handler registration
 import oauth_store
 import web_auth
-import web_users
 from connectors.base import get as get_handler
 from dashboard.renderers import connectors_renderer
 from dashboard.routes.helpers import validate_client_slug
@@ -27,20 +26,20 @@ router = APIRouter(include_in_schema=False)
 # Auth helpers (mirrors settings_routes pattern)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _auth(request: Request, client_slug: str, key: str | None):
-    if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=client_slug, key=key)
-        if isinstance(auth, RedirectResponse):
-            return auth, None, None, None, None
-        user = auth.user
-        return (
-            None,
-            auth.access_key,
-            auth.use_session,
-            user.email if user else None,
-            bool(user and user.role == "admin"),
-        )
-    return None, key, False, None, False
+def _auth(request: Request, client_slug: str):
+    # Session-only since ?key= was retired. access_key/use_session remain in the
+    # tuple (always None/True) for the renderer plumbing that still threads them.
+    auth = web_auth.authenticate_dashboard(request, client_slug=client_slug)
+    if isinstance(auth, RedirectResponse):
+        return auth, None, None, None, None
+    user = auth.user
+    return (
+        None,
+        auth.access_key,
+        auth.use_session,
+        user.email if user else None,
+        bool(user and user.role == "admin"),
+    )
 
 
 def _session_kw(access_key, use_session, session_email, session_is_admin) -> dict:
@@ -60,12 +59,11 @@ def _session_kw(access_key, use_session, session_email, session_is_admin) -> dic
 def connectors_directory(
     client_slug: str,
     request: Request,
-    key: str | None = None,
     connected: str | None = None,
     disconnected: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
-    redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug, key)
+    redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug)
     if redirect:
         return redirect
 
@@ -97,10 +95,9 @@ def connectors_directory(
 def lead_tracking_page(
     client_slug: str,
     request: Request,
-    key: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
-    redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug, key)
+    redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug)
     if redirect:
         return redirect
 
@@ -129,7 +126,6 @@ def connector_reauth(
     client_slug: str,
     connector_type: str,
     request: Request,
-    key: str | None = None,
 ):
     """Redirect straight to the OAuth consent screen, bypassing the wizard.
     Useful when a token needs refreshing without changing the connected account."""
@@ -142,13 +138,11 @@ def connector_reauth(
     if handler.no_oauth:
         raise HTTPException(status_code=400, detail="This connector does not use OAuth.")
 
-    redirect, access_key, *_ = _auth(request, slug, key)
+    redirect, *_ = _auth(request, slug)
     if redirect:
         return redirect
 
     return_to = f"/dashboard/{slug}/connectors/{ctype}?reauth_done=1"
-    if access_key:
-        return_to += f"&key={_q(access_key, safe='')}"
     oauth_start = (
         f"/oauth/{handler.oauth_platform}/connect"
         f"?return_to={_q(return_to, safe='')}"
@@ -162,7 +156,6 @@ def connector_detail(
     client_slug: str,
     connector_type: str,
     request: Request,
-    key: str | None = None,
     oauth_done: str | None = None,
     oauth_error: str | None = None,
     connected: str | None = None,
@@ -176,7 +169,7 @@ def connector_detail(
     if not handler:
         raise HTTPException(status_code=404, detail=f"Unknown connector '{connector_type}'.")
 
-    redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug, key)
+    redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug)
     if redirect:
         return redirect
 
@@ -218,7 +211,6 @@ async def connector_accounts(
     client_slug: str,
     connector_type: str,
     request: Request,
-    key: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
     ctype = connector_type.strip().lower()
@@ -226,7 +218,7 @@ async def connector_accounts(
     if not handler:
         return JSONResponse({"ok": False, "error": f"Unknown connector '{connector_type}'."}, status_code=404)
 
-    redirect, *_ = _auth(request, slug, key)
+    redirect, *_ = _auth(request, slug)
     if redirect:
         return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
 
@@ -247,7 +239,6 @@ async def connector_configure(
     client_slug: str,
     connector_type: str,
     request: Request,
-    key: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
     ctype = connector_type.strip().lower()
@@ -255,7 +246,7 @@ async def connector_configure(
     if not handler:
         return JSONResponse({"ok": False, "error": f"Unknown connector."}, status_code=404)
 
-    redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug, key)
+    redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug)
     if redirect:
         return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
 
@@ -354,7 +345,6 @@ async def connector_test(
     client_slug: str,
     connector_type: str,
     request: Request,
-    key: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
     ctype = connector_type.strip().lower()
@@ -362,7 +352,7 @@ async def connector_test(
     if not handler:
         return JSONResponse({"ok": False, "error": "Unknown connector."}, status_code=404)
 
-    redirect, *_ = _auth(request, slug, key)
+    redirect, *_ = _auth(request, slug)
     if redirect:
         return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
 
@@ -388,7 +378,6 @@ async def connector_sync(
     connector_type: str,
     request: Request,
     background_tasks: BackgroundTasks,
-    key: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
     ctype = connector_type.strip().lower()
@@ -396,7 +385,7 @@ async def connector_sync(
     if not handler:
         return JSONResponse({"ok": False, "error": "Unknown connector."}, status_code=404)
 
-    redirect, _ak, _us, session_email, _is_admin = _auth(request, slug, key)
+    redirect, _ak, _us, session_email, _is_admin = _auth(request, slug)
     if redirect:
         return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
 
@@ -459,12 +448,11 @@ async def connector_sync_options(
     client_slug: str,
     connector_type: str,
     request: Request,
-    key: str | None = None,
 ):
     import json as _json
     slug = validate_client_slug(client_slug)
     ctype = connector_type.strip().lower()
-    redirect, _ak, _us, _email, _is_admin = _auth(request, slug, key)
+    redirect, _ak, _us, _email, _is_admin = _auth(request, slug)
     if redirect:
         return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
     config = connector_config_store.get_config(slug, ctype)
@@ -500,12 +488,11 @@ async def connector_connect_link(
     client_slug: str,
     connector_type: str,
     request: Request,
-    key: str | None = None,
 ):
     import oauth_flows
     slug = validate_client_slug(client_slug)
     ctype = connector_type.strip().lower()
-    redirect, _ak, _us, _email, _is_admin = _auth(request, slug, key)
+    redirect, _ak, _us, _email, _is_admin = _auth(request, slug)
     if redirect:
         return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
     if ctype not in oauth_flows.PLATFORMS:
@@ -528,10 +515,9 @@ async def connector_sync_cancel(
     connector_type: str,
     run_id: int,
     request: Request,
-    key: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
-    redirect, *_ = _auth(request, slug, key)
+    redirect, *_ = _auth(request, slug)
     if redirect:
         return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
 
@@ -549,7 +535,6 @@ async def connector_disconnect(
     client_slug: str,
     connector_type: str,
     request: Request,
-    key: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
     ctype = connector_type.strip().lower()
@@ -557,7 +542,7 @@ async def connector_disconnect(
     if not handler:
         raise HTTPException(status_code=404, detail="Unknown connector.")
 
-    redirect, access_key, use_session, session_email, *_ = _auth(request, slug, key)
+    redirect, _ak, _us, session_email, *_ = _auth(request, slug)
     if redirect:
         return redirect
 
@@ -583,10 +568,7 @@ async def connector_disconnect(
         )
 
     dest = f"/dashboard/{slug}/connectors"
-    if not use_session and access_key:
-        from urllib.parse import quote
-        dest += f"?key={quote(access_key, safe='')}"
-    return RedirectResponse(url=dest + ("&" if "?" in dest else "?") + f"disconnected={handler.display_name}", status_code=303)
+    return RedirectResponse(url=dest + "?" + f"disconnected={handler.display_name}", status_code=303)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -598,7 +580,6 @@ async def connector_delete_data(
     client_slug: str,
     connector_type: str,
     request: Request,
-    key: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
     ctype = connector_type.strip().lower()
@@ -606,7 +587,7 @@ async def connector_delete_data(
     if not handler:
         return JSONResponse({"ok": False, "error": "Unknown connector."}, status_code=404)
 
-    redirect, _ak, _us, session_email, session_is_admin = _auth(request, slug, key)
+    redirect, _ak, _us, session_email, session_is_admin = _auth(request, slug)
     if redirect:
         return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
     if not session_is_admin:

@@ -61,7 +61,6 @@ def _favicon_head_html() -> str:
 def build_auth_status() -> dict[str, Any]:
     session_enabled = web_users.enabled()
     api_key_set = bool(security.configured_api_key())
-    dashboard_secret = bool(dashboard_service.configured_dashboard_secret())
     session_secret = security.session_signing_secret_configured()
     bootstrap = bool(
         (os.getenv("AUTH_BOOTSTRAP_ADMIN_EMAIL") or "").strip()
@@ -71,7 +70,6 @@ def build_auth_status() -> dict[str, Any]:
         "session_auth": session_enabled,
         "session_secret": session_secret,
         "api_key": api_key_set,
-        "dashboard_secret": dashboard_secret,
         "bootstrap_admin_configured": bootstrap,
         "overall_ok": session_enabled and session_secret and api_key_set,
     }

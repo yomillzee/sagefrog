@@ -9,10 +9,8 @@ from __future__ import annotations
 
 from dashboard.utils.auth import (
     can_edit_penn_insights,
-    configured_dashboard_secret,
     min_refresh_seconds,
     refresh_cooldown_status,
-    verify_dashboard_key,
 )
 from dashboard.utils.dates import (
     mtd_calendar_bounds as _mtd_calendar_bounds,

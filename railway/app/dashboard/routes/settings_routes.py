@@ -81,7 +81,6 @@ def _resolve_settings_next(next_url: str, slug: str) -> str:
 def dashboard_client_settings(
     client_slug: str,
     request: Request,
-    key: str | None = None,
     saved: str | None = None,
     bl_rules_saved: str | None = None,
     theme_saved: str | None = None,
@@ -112,42 +111,23 @@ def dashboard_client_settings(
     db_cfg = client_dashboard_config.get_config(slug)
     is_nixon_mode = bool(db_cfg and db_cfg.dashboard_mode == "bigquery_nixon")
 
-    if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
-        if isinstance(auth, RedirectResponse):
-            return auth
-        if is_nixon_mode:
-            return _render_bq_nixon_settings(
-                slug, db_cfg, flash=flash, flash_err=flash_err,
-                html_kw=dashboard_settings_session_kwargs(auth),
-            )
-        cfg = dashboard_settings.load_settings_config(slug)
-        return HTMLResponse(
-            dashboard_settings.render_settings_html(
-                client_slug=slug,
-                cfg=cfg,
-                flash_message=flash,
-                flash_error=flash_err,
-                db_config_updated_at=_config_updated_at(slug),
-                **dashboard_settings_session_kwargs(auth),
-            )
-        )
-    dashboard_service.verify_dashboard_key(key)
+    auth = web_auth.authenticate_dashboard(request, client_slug=slug)
+    if isinstance(auth, RedirectResponse):
+        return auth
     if is_nixon_mode:
         return _render_bq_nixon_settings(
             slug, db_cfg, flash=flash, flash_err=flash_err,
-            html_kw={"access_key": key, "use_session": False,
-                     "session_email": None, "session_is_admin": False},
+            html_kw=dashboard_settings_session_kwargs(auth),
         )
     cfg = dashboard_settings.load_settings_config(slug)
     return HTMLResponse(
         dashboard_settings.render_settings_html(
             client_slug=slug,
             cfg=cfg,
-            access_key=key,
             flash_message=flash,
             flash_error=flash_err,
             db_config_updated_at=_config_updated_at(slug),
+            **dashboard_settings_session_kwargs(auth),
         )
     )
 
@@ -163,7 +143,6 @@ def dashboard_client_settings_post(
     client_slug: str,
     request: Request,
     action: str = Form("save"),
-    key: str | None = None,
     next: str = Form(""),
     label: str = Form(""),
     google_customer_id: str = Form(""),
@@ -199,29 +178,16 @@ def dashboard_client_settings_post(
 ):
     slug = validate_client_slug(client_slug)
     act = (action or "save").strip().lower()
-    auth = None
-    access_key = key
-    use_session = False
-    session_is_admin = False
-    session_email = None
+    auth = web_auth.authenticate_dashboard(request, client_slug=slug)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    access_key = auth.access_key
+    use_session = auth.use_session
+    user = auth.user
+    session_is_admin = bool(user and user.role == "admin")
+    session_email = user.email if user else None
 
-    if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
-        if isinstance(auth, RedirectResponse):
-            return auth
-        access_key = auth.access_key
-        use_session = auth.use_session
-        user = auth.user
-        session_is_admin = bool(user and user.role == "admin")
-        session_email = user.email if user else None
-    else:
-        dashboard_service.verify_dashboard_key(key)
-
-    session_kw = (
-        dashboard_settings_session_kwargs(auth)
-        if web_users.enabled() and auth
-        else {"access_key": access_key, "use_session": use_session}
-    )
+    session_kw = dashboard_settings_session_kwargs(auth)
 
     if act == "save":
         if web_users.enabled() and not session_is_admin:
@@ -579,7 +545,6 @@ def dashboard_client_budget_save(
     client_slug: str,
     request: Request,
     monthly_budget_usd: str = Form(""),
-    key: str | None = None,
 ):
     """Inline monthly-budget save from the Campaign Explorer budget module.
 
@@ -589,15 +554,10 @@ def dashboard_client_budget_save(
     key the Settings page writes and the dashboard reads back.
     """
     slug = validate_client_slug(client_slug)
-    if web_users.enabled():
-        auth = web_auth.authenticate_dashboard_api(request, client_slug=slug, key=key)
-        user = auth.user
-        session_is_admin = bool(user and user.role == "admin")
-        session_email = user.email if user else None
-    else:
-        dashboard_service.verify_dashboard_key(key)
-        session_is_admin = True  # legacy ?key= access implies full control
-        session_email = "dashboard_key"
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
+    user = auth.user
+    session_is_admin = bool(user and user.role == "admin")
+    session_email = user.email if user else None
 
     if web_users.enabled() and not session_is_admin:
         return JSONResponse(
@@ -640,20 +600,14 @@ def dashboard_client_budget_visibility(
     client_slug: str,
     request: Request,
     show: str = Form(""),
-    key: str | None = None,
 ):
     """Admin-only toggle: does the budget tracker module appear on the client's
     Campaign Explorer? (It always shows on this settings page.)"""
     slug = validate_client_slug(client_slug)
-    if web_users.enabled():
-        auth = web_auth.authenticate_dashboard_api(request, client_slug=slug, key=key)
-        user = auth.user
-        session_is_admin = bool(user and user.role == "admin")
-        session_email = user.email if user else None
-    else:
-        dashboard_service.verify_dashboard_key(key)
-        session_is_admin = True
-        session_email = "dashboard_key"
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
+    user = auth.user
+    session_is_admin = bool(user and user.role == "admin")
+    session_email = user.email if user else None
 
     if web_users.enabled() and not session_is_admin:
         return JSONResponse(
@@ -691,7 +645,6 @@ def dashboard_client_sidebar_theme(
     request: Request,
     sidebar_from: str = Form(""),
     sidebar_to: str = Form(""),
-    key: str | None = None,
 ):
     """Admin-only: set the top/bottom colors of the client sidebar gradient.
 
@@ -699,15 +652,10 @@ def dashboard_client_sidebar_theme(
     so it re-themes the sidebar on every page without disturbing other styling.
     """
     slug = validate_client_slug(client_slug)
-    if web_users.enabled():
-        auth = web_auth.authenticate_dashboard_api(request, client_slug=slug, key=key)
-        user = auth.user
-        session_is_admin = bool(user and user.role == "admin")
-        session_email = user.email if user else None
-    else:
-        dashboard_service.verify_dashboard_key(key)
-        session_is_admin = True
-        session_email = "dashboard_key"
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
+    user = auth.user
+    session_is_admin = bool(user and user.role == "admin")
+    session_email = user.email if user else None
 
     if web_users.enabled() and not session_is_admin:
         return JSONResponse(

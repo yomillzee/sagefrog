@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from urllib.parse import quote
-
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
@@ -214,7 +212,6 @@ def internal_backfill_bq_client(client_slug: str) -> dict:
 def dashboard_client(
     client_slug: str,
     request: Request,
-    key: str | None = None,
     view_range: str | None = None,
     synced: str | None = None,
     budget_saved: str | None = None,
@@ -247,47 +244,20 @@ def dashboard_client(
     # needed here, same as Nixon's own /dashboard/nixon-bq-test route.
     if db_cfg and db_cfg.dashboard_mode == "bigquery_nixon":
         label = (db_cfg.label or slug).strip() or slug
-        if web_users.enabled():
-            auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
-            if isinstance(auth, RedirectResponse):
-                return auth
-            return HTMLResponse(render_bigquery_dashboard_page(
-                client_slug=slug, api_client_key=slug, label=label,
-                session_can_switch_clients=session_can_switch_clients(auth),
-                view_as_users=_view_as_user_options(auth.user),
-                show_budget_tracker=bool(getattr(db_cfg, "explorer_budget_tracker", True)),
-                **penn_html_session_kwargs(auth),
-            ))
-        dashboard_service.verify_dashboard_key(key)
-        return HTMLResponse(render_bigquery_dashboard_page(
-            client_slug=slug, api_client_key=slug, label=label,
-            access_key=key, use_session=False, session_email=None, session_is_admin=False,
-            show_budget_tracker=bool(getattr(db_cfg, "explorer_budget_tracker", True)),
-        ))
-
-    if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug)
         if isinstance(auth, RedirectResponse):
             return auth
-        snapshot = dashboard_snapshots.get_snapshot(slug)
-        if not snapshot:
-            if db_cfg and db_cfg.dashboard_mode == "bigquery":
-                try:
-                    snapshot = dashboard_service.refresh_bq_client(slug, sync_trigger="cache_miss")
-                except Exception as exc:
-                    LOGGER.exception("BQ client dashboard cache miss refresh failed: %s", slug)
-                    snapshot = {"client_key": slug, "errors": {"bq": platform_error(exc)}}
-        return HTMLResponse(
-            dashboard_service.render_penn_html(
-                snapshot,
-                client_slug=slug,
-                flash_message=flash,
-                view_range=view_range,
-                session_can_switch_clients=session_can_switch_clients(auth),
-                **penn_html_session_kwargs(auth),
-            )
-        )
-    dashboard_service.verify_dashboard_key(key)
+        return HTMLResponse(render_bigquery_dashboard_page(
+            client_slug=slug, api_client_key=slug, label=label,
+            session_can_switch_clients=session_can_switch_clients(auth),
+            view_as_users=_view_as_user_options(auth.user),
+            show_budget_tracker=bool(getattr(db_cfg, "explorer_budget_tracker", True)),
+            **penn_html_session_kwargs(auth),
+        ))
+
+    auth = web_auth.authenticate_dashboard(request, client_slug=slug)
+    if isinstance(auth, RedirectResponse):
+        return auth
     snapshot = dashboard_snapshots.get_snapshot(slug)
     if not snapshot:
         if db_cfg and db_cfg.dashboard_mode == "bigquery":
@@ -298,7 +268,12 @@ def dashboard_client(
                 snapshot = {"client_key": slug, "errors": {"bq": platform_error(exc)}}
     return HTMLResponse(
         dashboard_service.render_penn_html(
-            snapshot, client_slug=slug, access_key=key, flash_message=flash, view_range=view_range
+            snapshot,
+            client_slug=slug,
+            flash_message=flash,
+            view_range=view_range,
+            session_can_switch_clients=session_can_switch_clients(auth),
+            **penn_html_session_kwargs(auth),
         )
     )
 @router.get(
@@ -310,7 +285,6 @@ def dashboard_client(
 def dashboard_ga4_backfill(
     client_slug: str,
     request: Request,
-    key: str | None = None,
     days: int = 365,
 ):
     """Daily GA4 session/page-view counts straight from the BigQuery export.
@@ -320,12 +294,9 @@ def dashboard_ga4_backfill(
     days are dates not yet loaded.
     """
     slug = validate_client_slug(client_slug)
-    if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
-        if isinstance(auth, RedirectResponse):
-            return JSONResponse({"ok": False, "error": "auth_required"}, status_code=401)
-    else:
-        dashboard_service.verify_dashboard_key(key)
+    auth = web_auth.authenticate_dashboard(request, client_slug=slug)
+    if isinstance(auth, RedirectResponse):
+        return JSONResponse({"ok": False, "error": "auth_required"}, status_code=401)
 
     import client_config
     import ga4_clients
@@ -374,16 +345,12 @@ def dashboard_ga4_backfill(
 def dashboard_data_source_status(
     client_slug: str,
     request: Request,
-    key: str | None = None,
 ):
     """Read-only health of each data source's BigQuery feed for the settings page."""
     slug = validate_client_slug(client_slug)
-    if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
-        if isinstance(auth, RedirectResponse):
-            return JSONResponse({"ok": False, "error": "auth_required"}, status_code=401)
-    else:
-        dashboard_service.verify_dashboard_key(key)
+    auth = web_auth.authenticate_dashboard(request, client_slug=slug)
+    if isinstance(auth, RedirectResponse):
+        return JSONResponse({"ok": False, "error": "auth_required"}, status_code=401)
     try:
         import data_source_status
         sources = data_source_status.build_status(slug)
@@ -404,30 +371,18 @@ def dashboard_data_source_status(
 def dashboard_client_refresh(
     client_slug: str,
     request: Request,
-    key: str | None = None,
     date_range: str = "LAST_30_DAYS",
     quick: str | None = Form(None),
 ):
     slug = validate_client_slug(client_slug)
-    if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
-        if isinstance(auth, RedirectResponse):
-            return auth
-        access_key = auth.access_key
-        use_session = auth.use_session
-    else:
-        dashboard_service.verify_dashboard_key(key)
-        access_key = key
-        use_session = False
+    auth = web_auth.authenticate_dashboard(request, client_slug=slug)
+    if isinstance(auth, RedirectResponse):
+        return auth
 
     snapshot = dashboard_snapshots.get_snapshot(slug)
     is_quick = str(quick or "").strip().lower() in ("1", "true", "yes", "on")
     allowed, remaining = dashboard_service.refresh_cooldown_status(snapshot, quick=is_quick)
-    html_kw = (
-        penn_html_session_kwargs(auth)
-        if web_users.enabled()
-        else {"access_key": access_key, "use_session": use_session}
-    )
+    html_kw = penn_html_session_kwargs(auth)
     if not allowed:
         mins = max(1, (remaining + 59) // 60)
         kind = "quick" if is_quick else "full"
@@ -470,12 +425,7 @@ def dashboard_client_refresh(
             ),
             status_code=400,
         )
-    if use_session:
-        return RedirectResponse(url=f"/dashboard/{slug}?synced=1", status_code=303)
-    return RedirectResponse(
-        url=f"/dashboard/{slug}?key={quote(access_key or '', safe='')}&synced=1",
-        status_code=303,
-    )
+    return RedirectResponse(url=f"/dashboard/{slug}?synced=1", status_code=303)
 @router.post(
     "/dashboard/{client_slug}/insights",
     summary="Save client dashboard insights text",
@@ -487,74 +437,50 @@ def dashboard_client_insights(
     client_slug: str,
     request: Request,
     body: str = Form(""),
-    key: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
-    auth = None
-    if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
-        if isinstance(auth, RedirectResponse):
-            return auth
-        access_key = auth.access_key
-        use_session = auth.use_session
-        user = auth.user
-        if not dashboard_service.can_edit_penn_insights(
-            session_is_admin=bool(user and user.role == "admin"),
-            access_key=access_key,
-        ):
-            snapshot = dashboard_snapshots.get_snapshot(slug)
-            return HTMLResponse(
-                dashboard_service.render_penn_html(
-                    snapshot,
-                    client_slug=slug,
-                    flash_message="Only admins can edit insights.",
-                    **penn_html_session_kwargs(auth),
-                ),
-                status_code=403,
-            )
-        updated_by = user.email if user else None
-    else:
-        dashboard_service.verify_dashboard_key(key)
-        access_key = key
-        use_session = False
-        updated_by = "dashboard_key"
+    auth = web_auth.authenticate_dashboard(request, client_slug=slug)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    user = auth.user
+    if not dashboard_service.can_edit_penn_insights(
+        session_is_admin=bool(user and user.role == "admin"),
+    ):
+        snapshot = dashboard_snapshots.get_snapshot(slug)
+        return HTMLResponse(
+            dashboard_service.render_penn_html(
+                snapshot,
+                client_slug=slug,
+                flash_message="Only admins can edit insights.",
+                **penn_html_session_kwargs(auth),
+            ),
+            status_code=403,
+        )
+    updated_by = user.email if user else None
 
     try:
         dashboard_service.save_penn_insights(body, updated_by=updated_by, client_key=slug)
     except Exception as e:
         snapshot = dashboard_snapshots.get_snapshot(slug)
-        html_kw = (
-            penn_html_session_kwargs(auth)
-            if web_users.enabled()
-            else {"access_key": access_key, "use_session": use_session}
-        )
         return HTMLResponse(
             dashboard_service.render_penn_html(
                 snapshot,
                 client_slug=slug,
                 flash_message=f"Could not save insights: {str(e)[:200]}",
-                **html_kw,
+                **penn_html_session_kwargs(auth),
             ),
             status_code=400,
         )
 
-    if use_session:
-        return RedirectResponse(url=f"/dashboard/{slug}?insights_saved=1", status_code=303)
-    return RedirectResponse(
-        url=f"/dashboard/{slug}?key={quote(access_key or '', safe='')}&insights_saved=1",
-        status_code=303,
-    )
+    return RedirectResponse(url=f"/dashboard/{slug}?insights_saved=1", status_code=303)
 @router.get(
     "/dashboard/{client_slug}.json",
     summary="Client dashboard snapshot JSON",
     include_in_schema=False,
 )
-def dashboard_client_json(client_slug: str, request: Request, key: str | None = None) -> dict:
+def dashboard_client_json(client_slug: str, request: Request) -> dict:
     slug = validate_client_slug(client_slug)
-    if web_users.enabled():
-        web_auth.authenticate_dashboard_api(request, client_slug=slug, key=key)
-    else:
-        dashboard_service.verify_dashboard_key(key)
+    web_auth.authenticate_dashboard_api(request, client_slug=slug)
     snapshot = dashboard_snapshots.get_snapshot(slug)
     if not snapshot:
         raise HTTPException(
@@ -570,7 +496,6 @@ def dashboard_client_json(client_slug: str, request: Request, key: str | None = 
 )
 def dashboard_penn_legacy(
     request: Request,
-    key: str | None = None,
     view_range: str | None = None,
     synced: str | None = None,
     insights_saved: str | None = None,
@@ -578,7 +503,6 @@ def dashboard_penn_legacy(
     return dashboard_client(
         client_slug="penn",
         request=request,
-        key=key,
         view_range=view_range,
         synced=synced,
         insights_saved=insights_saved,

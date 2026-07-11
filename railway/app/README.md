@@ -79,7 +79,7 @@ Requires **Postgres** (`DATABASE_URL`). Uploaded `.docx` and `.pdf` files (up to
 
 Create additional users at `/admin` after signing in as admin. The **Audit log** section on `/admin` records sign-ins, sign-outs, failed logins, and user create/deactivate actions (with actor, target, IP).
 
-The shared `?key=` link (legacy) is keyed on `DASHBOARD_SECRET`; in production it no longer accepts `CRON_SECRET` (local dev still falls back to it). **`API_KEY` is unchanged** — still used for `/google-ads/*`, ChatGPT, etc. `CRON_SECRET` is now dedicated to the internal `/internal/sync-*` cron endpoints only.
+Dashboards are session-only: the legacy `?key=` share link (and its `DASHBOARD_SECRET`) has been retired — give a viewer a `client`-role login instead. **`API_KEY` is unchanged** — still used for `/google-ads/*`, ChatGPT, etc. `CRON_SECRET` is now dedicated to the internal `/internal/sync-*` cron endpoints only.
 
 **Production hardening:** On Railway, `/docs` and `/openapi.json` are disabled automatically (`DISABLE_API_DOCS=0` to re-enable). Failed logins are rate-limited per IP/email (`AUTH_LOGIN_MAX_FAILURES`, default 5 per 15 minutes, then 15-minute lockout).
 
@@ -231,7 +231,7 @@ Example response fields per row: `campaign_name`, `ad_name`, `youtube_video_id`,
 - `GET /health` — deploy health check
 - `GET /login` — browser sign-in (Postgres users)
 - `GET /admin` — manage users (admin role)
-- `GET /dashboard/penn` — Penn HTML dashboard (session or legacy `?key=`)
+- `GET /dashboard/penn` — Penn HTML dashboard (requires a signed-in session)
 - `GET /google-ads/env` — which credentials are set (no secrets returned)
 - `GET /google-ads/test-token` — OAuth refresh only (debug `invalid_grant` before GAQL)
 - `POST /google-ads/search` — run a GAQL query (rows are structured JSON dicts)

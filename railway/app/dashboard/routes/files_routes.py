@@ -36,7 +36,6 @@ router = APIRouter(include_in_schema=False)
 def dashboard_client_files_page(
     client_slug: str,
     request: Request,
-    key: str | None = None,
     folder: str | None = None,
     doc_uploaded: str | None = None,
     doc_deleted: str | None = None,
@@ -57,7 +56,7 @@ def dashboard_client_files_page(
     )
 
     if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug)
         if isinstance(auth, RedirectResponse):
             return auth
         try:
@@ -74,20 +73,7 @@ def dashboard_client_files_page(
             )
         )
 
-    dashboard_service.verify_dashboard_key(key)
-    try:
-        label = client_config.client_label(slug)
-    except ValueError:
-        label = slug.replace("-", " ").title()
-    return HTMLResponse(
-        dashboard_service.render_files_page(
-            client_slug=slug,
-            label=label,
-            access_key=key,
-            flash_message=flash,
-            folder_id=folder_id,
-        )
-    )
+    raise HTTPException(status_code=503, detail="Dashboard access requires login.")
 @router.get(
     "/dashboard/{client_slug}/insights-upload",
     summary="Legacy redirect to Files page",
@@ -95,7 +81,6 @@ def dashboard_client_files_page(
 )
 def dashboard_client_insights_upload_page(
     client_slug: str,
-    key: str | None = None,
     folder: str | None = None,
     doc_uploaded: str | None = None,
     doc_deleted: str | None = None,
@@ -106,7 +91,6 @@ def dashboard_client_insights_upload_page(
 ):
     slug = validate_client_slug(client_slug)
     params = files_page_query_params(
-        key=key,
         folder=folder,
         doc_uploaded=doc_uploaded,
         doc_deleted=doc_deleted,
@@ -129,7 +113,6 @@ def dashboard_client_insights_upload_page(
 async def dashboard_client_insight_document_upload(
     client_slug: str,
     request: Request,
-    key: str | None = None,
     title: str = Form(""),
     period: str = Form(""),
     folder_id: str = Form(""),
@@ -139,7 +122,7 @@ async def dashboard_client_insight_document_upload(
     slug = validate_client_slug(client_slug)
     auth = None
     if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug)
         if isinstance(auth, RedirectResponse):
             if wants_json:
                 return files_api_error("Sign in required.", status_code=401)
@@ -156,9 +139,7 @@ async def dashboard_client_insight_document_upload(
             raise HTTPException(status_code=403, detail="Only admins can upload insight documents.")
         uploaded_by = user.email if user else None
     else:
-        dashboard_service.verify_dashboard_key(key)
-        access_key = key
-        use_session = False
+        raise HTTPException(status_code=503, detail="Dashboard access requires login.")
         uploaded_by = "dashboard_key"
 
     redirect_folder_id: int | None = None
@@ -243,15 +224,11 @@ def dashboard_client_insight_document_download(
     client_slug: str,
     doc_id: int,
     request: Request,
-    key: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
-    if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
-        if isinstance(auth, RedirectResponse):
-            return auth
-    else:
-        dashboard_service.verify_dashboard_key(key)
+    auth = web_auth.authenticate_dashboard(request, client_slug=slug)
+    if isinstance(auth, RedirectResponse):
+        return auth
 
     payload = client_insight_documents.get_document_bytes(slug, doc_id)
     if not payload:
@@ -273,12 +250,11 @@ def dashboard_client_insight_document_delete(
     client_slug: str,
     doc_id: int,
     request: Request,
-    key: str | None = None,
     folder_id: str = Form(""),
 ):
     slug = validate_client_slug(client_slug)
     if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug)
         if isinstance(auth, RedirectResponse):
             return auth
         access_key = auth.access_key
@@ -291,9 +267,7 @@ def dashboard_client_insight_document_delete(
             raise HTTPException(status_code=403, detail="Only admins can delete insight documents.")
         actor = user.email if user else None
     else:
-        dashboard_service.verify_dashboard_key(key)
-        access_key = key
-        use_session = False
+        raise HTTPException(status_code=503, detail="Dashboard access requires login.")
         actor = "dashboard_key"
 
     redirect_folder_id: int | None = None
@@ -332,13 +306,12 @@ def dashboard_client_insight_document_move(
     client_slug: str,
     doc_id: int,
     request: Request,
-    key: str | None = None,
     folder_id: str = Form(""),
 ):
     wants_json = files_api_request(request)
     slug = validate_client_slug(client_slug)
     if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug)
         if isinstance(auth, RedirectResponse):
             if wants_json:
                 return files_api_error("Sign in required.", status_code=401)
@@ -355,9 +328,7 @@ def dashboard_client_insight_document_move(
             raise HTTPException(status_code=403, detail="Only admins can move insight documents.")
         actor = user.email if user else None
     else:
-        dashboard_service.verify_dashboard_key(key)
-        access_key = key
-        use_session = False
+        raise HTTPException(status_code=503, detail="Dashboard access requires login.")
         actor = "dashboard_key"
 
     target_folder_id: int | None = None
@@ -427,13 +398,12 @@ def dashboard_client_insight_document_move(
 def dashboard_client_insight_folder_create(
     client_slug: str,
     request: Request,
-    key: str | None = None,
     name: str = Form(...),
     parent_id: str = Form(""),
 ):
     slug = validate_client_slug(client_slug)
     if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug)
         if isinstance(auth, RedirectResponse):
             return auth
         access_key = auth.access_key
@@ -446,9 +416,7 @@ def dashboard_client_insight_folder_create(
             raise HTTPException(status_code=403, detail="Only admins can create folders.")
         actor = user.email if user else None
     else:
-        dashboard_service.verify_dashboard_key(key)
-        access_key = key
-        use_session = False
+        raise HTTPException(status_code=503, detail="Dashboard access requires login.")
         actor = "dashboard_key"
 
     parent_folder_id: int | None = None
@@ -511,11 +479,10 @@ def dashboard_client_insight_folder_delete(
     client_slug: str,
     folder_id: int,
     request: Request,
-    key: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
     if web_users.enabled():
-        auth = web_auth.authenticate_dashboard(request, client_slug=slug, key=key)
+        auth = web_auth.authenticate_dashboard(request, client_slug=slug)
         if isinstance(auth, RedirectResponse):
             return auth
         access_key = auth.access_key
@@ -528,9 +495,7 @@ def dashboard_client_insight_folder_delete(
             raise HTTPException(status_code=403, detail="Only admins can delete folders.")
         actor = user.email if user else None
     else:
-        dashboard_service.verify_dashboard_key(key)
-        access_key = key
-        use_session = False
+        raise HTTPException(status_code=503, detail="Dashboard access requires login.")
         actor = "dashboard_key"
 
     existing = client_insight_documents.get_folder(slug, folder_id)

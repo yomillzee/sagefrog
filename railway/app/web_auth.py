@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hmac
 import html
 import os
 from dataclasses import dataclass
@@ -230,30 +229,6 @@ def require_client_access(client_slug: str):
     return _dep
 
 
-def legacy_dashboard_key_ok(key: str | None) -> bool:
-    from dashboard_service import configured_dashboard_secret
-
-    expected = configured_dashboard_secret()
-    if not expected:
-        return False
-    return bool(key and hmac.compare_digest(key.strip(), expected))
-
-
-def resolve_client_dashboard_user(
-    request: Request,
-    *,
-    client_slug: str,
-    key: str | None,
-) -> WebUser | None:
-    """Session user with access, or None if legacy ?key= should be tried."""
-    user = get_current_user(request)
-    if user and user.can_access_client(client_slug):
-        return user
-    if legacy_dashboard_key_ok(key):
-        return None
-    return None
-
-
 def redirect_to_login(request: Request, *, next_path: str | None = None) -> RedirectResponse:
     target = next_path or str(request.url.path)
     if request.url.query:
@@ -263,24 +238,38 @@ def redirect_to_login(request: Request, *, next_path: str | None = None) -> Redi
 
 @dataclass(frozen=True)
 class DashboardAuth:
+    # access_key / use_session are retained for renderer compatibility. The legacy
+    # ?key= share-link mechanism has been retired, so dashboards are session-only:
+    # access_key is always None and use_session is always True.
     access_key: str | None
     use_session: bool
     user: WebUser | None
+
+
+def _require_session_enabled() -> None:
+    if not web_users.enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Dashboard access requires login (set DATABASE_URL to enable web users).",
+        )
 
 
 def authenticate_dashboard(
     request: Request,
     *,
     client_slug: str,
-    key: str | None,
 ) -> DashboardAuth | RedirectResponse:
-    """Session login, legacy ?key=, or redirect to /login."""
-    user = resolve_client_dashboard_user(request, client_slug=client_slug, key=key)
-    if user is not None:
+    """Require a signed-in user with access to this client's dashboard.
+
+    The legacy ?key= share link has been retired — access is session-only. An
+    authenticated user without access gets 403; an anonymous visitor is
+    redirected to /login.
+    """
+    _require_session_enabled()
+    user = get_current_user(request)
+    if user and user.can_access_client(client_slug):
         return DashboardAuth(access_key=None, use_session=True, user=user)
-    if legacy_dashboard_key_ok(key):
-        return DashboardAuth(access_key=key, use_session=False, user=None)
-    if get_current_user(request):
+    if user:
         raise HTTPException(status_code=403, detail="You do not have access to this dashboard.")
     return redirect_to_login(request)
 
@@ -289,15 +278,13 @@ def authenticate_dashboard_api(
     request: Request,
     *,
     client_slug: str,
-    key: str | None,
 ) -> DashboardAuth:
     """Same as authenticate_dashboard but JSON-friendly errors (no redirect)."""
-    user = resolve_client_dashboard_user(request, client_slug=client_slug, key=key)
-    if user is not None:
+    _require_session_enabled()
+    user = get_current_user(request)
+    if user and user.can_access_client(client_slug):
         return DashboardAuth(access_key=None, use_session=True, user=user)
-    if legacy_dashboard_key_ok(key):
-        return DashboardAuth(access_key=key, use_session=False, user=None)
-    if get_current_user(request):
+    if user:
         raise HTTPException(status_code=403, detail="You do not have access to this dashboard.")
     raise HTTPException(status_code=401, detail="Sign in required.")
 

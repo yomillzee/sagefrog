@@ -88,7 +88,6 @@ def files_api_error(message: str, *, status_code: int = 400) -> JSONResponse:
 
 def files_page_query_params(
     *,
-    key: str | None,
     folder: str | None = None,
     doc_uploaded: str | None = None,
     doc_deleted: str | None = None,
@@ -98,8 +97,6 @@ def files_page_query_params(
     doc_error: str | None = None,
 ) -> dict[str, str]:
     params: dict[str, str] = {}
-    if key:
-        params["key"] = key
     if folder:
         params["folder"] = str(folder).strip()
     if doc_error:
@@ -131,13 +128,13 @@ def parse_folder_id(value: str | None) -> int | None:
 def dashboard_flash_redirect(
     *,
     client_slug: str,
-    use_session: bool,
-    access_key: str | None,
+    use_session: bool = True,
+    access_key: str | None = None,
     **query: str,
 ) -> RedirectResponse:
+    # use_session / access_key are accepted for call-site compatibility but no
+    # longer emit ?key= — the legacy share-link mechanism has been retired.
     params = {k: v for k, v in query.items() if v}
-    if not use_session:
-        params["key"] = access_key or ""
     dest = f"/dashboard/{client_slug}"
     if params:
         q = "&".join(
@@ -150,16 +147,16 @@ def dashboard_flash_redirect(
 def files_flash_redirect(
     *,
     client_slug: str,
-    use_session: bool,
-    access_key: str | None,
+    use_session: bool = True,
+    access_key: str | None = None,
     folder_id: int | None = None,
     **query: str,
 ) -> RedirectResponse:
+    # use_session / access_key are accepted for call-site compatibility but no
+    # longer emit ?key= — the legacy share-link mechanism has been retired.
     params = {k: v for k, v in query.items() if v}
     if folder_id is not None:
         params["folder"] = str(int(folder_id))
-    if not use_session:
-        params["key"] = access_key or ""
     dest = f"/dashboard/{client_slug}/files"
     if params:
         q = "&".join(
