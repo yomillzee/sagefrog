@@ -679,3 +679,67 @@ def dashboard_client_budget_visibility(
         **audit_log.request_context(request),
     )
     return JSONResponse({"ok": True, "explorer_budget_tracker": saved.explorer_budget_tracker})
+
+
+@router.post(
+    "/dashboard/{client_slug}/sidebar-theme",
+    summary="Save the client's sidebar gradient colors (JSON)",
+    include_in_schema=False,
+)
+def dashboard_client_sidebar_theme(
+    client_slug: str,
+    request: Request,
+    sidebar_from: str = Form(""),
+    sidebar_to: str = Form(""),
+    key: str | None = None,
+):
+    """Admin-only: set the top/bottom colors of the client sidebar gradient.
+
+    Merges into the existing theme (leaving the platform brand colors untouched),
+    so it re-themes the sidebar on every page without disturbing other styling.
+    """
+    slug = validate_client_slug(client_slug)
+    if web_users.enabled():
+        auth = web_auth.authenticate_dashboard_api(request, client_slug=slug, key=key)
+        user = auth.user
+        session_is_admin = bool(user and user.role == "admin")
+        session_email = user.email if user else None
+    else:
+        dashboard_service.verify_dashboard_key(key)
+        session_is_admin = True
+        session_email = "dashboard_key"
+
+    if web_users.enabled() and not session_is_admin:
+        return JSONResponse(
+            {"ok": False, "error": "Only admins can change the sidebar colors."},
+            status_code=403,
+        )
+    if not client_dashboard_config.enabled():
+        return JSONResponse(
+            {"ok": False, "error": "DATABASE_URL is required to save the theme."},
+            status_code=503,
+        )
+    from_hex = dashboard_theme.normalize_hex(sidebar_from)
+    to_hex = dashboard_theme.normalize_hex(sidebar_to)
+    if not from_hex or not to_hex:
+        return JSONResponse(
+            {"ok": False, "error": "Enter valid hex colors (e.g. #0a2540)."},
+            status_code=400,
+        )
+    stored = client_dashboard_config.get_theme(slug)
+    theme = dict(stored) if isinstance(stored, dict) else {}
+    theme["sidebar_from"] = from_hex
+    theme["sidebar_to"] = to_hex
+    try:
+        client_dashboard_config.save_theme(
+            slug, theme, updated_by=session_email or "dashboard_key",
+        )
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    audit_log.record(
+        action="dashboard.sidebar_theme_saved",
+        actor_email=session_email,
+        detail={"client_slug": slug, "sidebar_from": from_hex, "sidebar_to": to_hex},
+        **audit_log.request_context(request),
+    )
+    return JSONResponse({"ok": True, "sidebar_from": from_hex, "sidebar_to": to_hex})

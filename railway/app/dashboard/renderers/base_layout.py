@@ -663,11 +663,21 @@ def render_sidebar(
 
     account_html = _sidebar_account_html(email=session_email, is_admin=session_is_admin)
 
+    # Apply the client's saved sidebar gradient inline (as custom properties on the
+    # aside itself) so it themes every page — including the dashboard/settings pages
+    # whose :root hardcodes the default --sidebar-from/--sidebar-to. Editable from
+    # Settings → Sidebar appearance.
+    _theme = dashboard_theme.load_client_theme(client_slug)
+    sidebar_style = (
+        f"--sidebar-from:{_theme.get('sidebar_from', '#0a2540')};"
+        f"--sidebar-to:{_theme.get('sidebar_to', '#123456')}"
+    )
+
     return f"""
     <button type="button" class="dash-sidebar-toggle" id="sidebarToggle"
       aria-label="Open navigation" aria-expanded="false" aria-controls="dashSidebar">{_NAV_ICON_MENU}</button>
     <div class="dash-sidebar-backdrop" id="sidebarBackdrop" hidden></div>
-    <aside class="dash-sidebar" id="dashSidebar" aria-label="Primary navigation">
+    <aside class="dash-sidebar" id="dashSidebar" aria-label="Primary navigation" style="{sidebar_style}">
       <div class="dash-sidebar-head">
         <a href="{_esc(overview_url)}" class="dash-sidebar-logo" aria-label="Sagefrog home">
           <img class="dash-sidebar-logo-icon" src="/static/apple-touch-icon.png" alt="" width="36" height="36" />

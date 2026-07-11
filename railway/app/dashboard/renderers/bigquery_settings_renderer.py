@@ -122,6 +122,42 @@ def render_bigquery_settings_page(
         f"/dashboard/{client_slug}/budget-visibility", access_key=access_key
     )
     budget_toggle_checked = " checked" if budget_tracker_enabled else ""
+
+    # Sidebar gradient picker (admin only). Colors come from the client theme;
+    # saving writes sidebar_from / sidebar_to and re-themes the sidebar on every
+    # page (see base_layout.render_sidebar, which applies the theme inline).
+    import dashboard_theme
+    _theme = dashboard_theme.load_client_theme(client_slug)
+    sidebar_from = _theme.get("sidebar_from", "#0a2540")
+    sidebar_to = _theme.get("sidebar_to", "#123456")
+    sidebar_theme_url = _api_url(
+        f"/dashboard/{client_slug}/sidebar-theme", access_key=access_key
+    )
+    sidebar_default_from = dashboard_theme.DEFAULT_THEME["sidebar_from"]
+    sidebar_default_to = dashboard_theme.DEFAULT_THEME["sidebar_to"]
+    sidebar_theme_html = "" if not session_is_admin else f"""
+    <section>
+      <h2>Sidebar appearance</h2>
+      <p class="hint">The client sidebar is a top-to-bottom gradient. Pick the two colors; the change applies across this client's dashboard for everyone.</p>
+      <div class="sidebar-theme">
+        <div class="sidebar-theme-preview" id="sidebarThemePreview" style="background:linear-gradient(180deg, {_esc(sidebar_from)}, {_esc(sidebar_to)})">
+          <span class="sidebar-theme-preview-label">Sidebar</span>
+        </div>
+        <div class="sidebar-theme-controls">
+          <label class="color-field">Top color
+            <span class="color-input"><input type="color" id="sidebarFrom" value="{_esc(sidebar_from)}"><span class="color-hex" id="sidebarFromHex">{_esc(sidebar_from)}</span></span>
+          </label>
+          <label class="color-field">Bottom color
+            <span class="color-input"><input type="color" id="sidebarTo" value="{_esc(sidebar_to)}"><span class="color-hex" id="sidebarToHex">{_esc(sidebar_to)}</span></span>
+          </label>
+          <div class="btn-row" style="margin-top:4px">
+            <button type="button" class="primary" id="sidebarThemeSave">Save colors</button>
+            <button type="button" class="primary ghost" id="sidebarThemeReset">Reset to default</button>
+            <span class="status" id="sidebarThemeStatus"></span>
+          </div>
+        </div>
+      </div>
+    </section>"""
     budget_visibility_html = "" if not session_is_admin else f"""
     <section>
       <h2>Budget tracker visibility</h2>
@@ -197,13 +233,6 @@ def render_bigquery_settings_page(
     th {{ background:#f4f7fb; color:#5a6b82; text-transform:uppercase; font-size:.68rem; letter-spacing:.04em; font-weight:800; }}
     th.left,td.left {{ text-align:left; }}
     .empty {{ color:var(--muted); padding:18px; text-align:center; }}
-    .badge {{ display:inline-block; font-size:.6rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; padding:2px 6px; border-radius:4px; vertical-align:middle; margin-left:5px; }}
-    .badge-view {{ background:#eef4fb; color:#1d6fd0; }}
-    .badge-tbl {{ background:#eef7f2; color:#0a7f3f; }}
-    .badge-opt {{ background:#fff8e7; color:#8a6500; }}
-    .pipe-table td.left {{ vertical-align:top; }}
-    .pipe-table .module-label {{ font-weight:600; color:var(--navy); font-size:.88rem; }}
-    .pipe-table .module-sub {{ font-size:.76rem; color:var(--muted); margin-top:1px; }}
     .module-toggle-row {{ display:flex; align-items:center; justify-content:space-between; padding:10px 14px; border:1px solid var(--line-soft); border-radius:var(--radius-sm); background:#fafcff; }}
     .module-toggle-info {{ display:flex; flex-direction:column; gap:2px; }}
     .module-toggle-label {{ font-size:.9rem; font-weight:650; color:var(--navy); }}
@@ -215,6 +244,25 @@ def render_bigquery_settings_page(
     .toggle-switch input:checked + .toggle-track {{ background:var(--accent); }}
     .toggle-switch input:checked + .toggle-track:before {{ transform:translateX(18px); }}
     .toggle-switch input:focus-visible + .toggle-track {{ outline:2px solid #bcd4f0; outline-offset:2px; }}
+    /* Accordion (Data & freshness) */
+    .acc-section {{ padding:0; }}
+    .acc > summary {{ list-style:none; cursor:pointer; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:20px 22px; }}
+    .acc > summary::-webkit-details-marker {{ display:none; }}
+    .acc-title {{ display:block; color:var(--navy); font-size:1.1rem; font-weight:750; }}
+    .acc-sub {{ display:block; font-size:.8rem; color:var(--muted); margin-top:2px; }}
+    .acc-caret {{ color:var(--muted); font-size:.9rem; transition:transform .18s; flex-shrink:0; }}
+    .acc[open] .acc-caret {{ transform:rotate(180deg); }}
+    .acc > summary:hover .acc-title {{ color:var(--accent); }}
+    .acc-body {{ padding:0 22px 20px; }}
+    /* Sidebar gradient picker */
+    .sidebar-theme {{ display:flex; gap:20px; align-items:stretch; margin-top:14px; flex-wrap:wrap; }}
+    .sidebar-theme-preview {{ width:120px; min-height:150px; border-radius:12px; border:1px solid var(--line); box-shadow:var(--shadow); display:flex; align-items:flex-start; padding:12px; flex-shrink:0; }}
+    .sidebar-theme-preview-label {{ color:rgba(255,255,255,.92); font-weight:700; font-size:.9rem; letter-spacing:.01em; }}
+    .sidebar-theme-controls {{ display:flex; flex-direction:column; gap:12px; justify-content:center; }}
+    .color-field {{ display:flex; flex-direction:column; gap:6px; }}
+    .color-input {{ display:inline-flex; align-items:center; gap:9px; }}
+    .color-input input[type=color] {{ width:44px; height:32px; padding:0; border:1px solid var(--line); border-radius:8px; background:#fff; cursor:pointer; }}
+    .color-hex {{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.82rem; color:var(--navy); text-transform:uppercase; }}
     {budget_css}
   </style>
 </head>
@@ -233,94 +281,10 @@ def render_bigquery_settings_page(
       <h2>BigQuery connection</h2>
       <div class="kv-grid">
         <div><span class="kv-label">Project</span><span class="kv-val mono">{_esc(project)}</span></div>
-        <div><span class="kv-label">GA4 dataset</span><span class="kv-val mono">{_esc(ga4_dataset)}</span></div>
         <div><span class="kv-label">Marts dataset</span><span class="kv-val mono">{_esc(marts_dataset)}</span></div>
       </div>
-      <p class="hint">Reads use the shared agency service account (managed once in <a href="/admin">Admin</a>), which needs the <strong>BigQuery Data Editor</strong> and <strong>BigQuery Job User</strong> roles on this project in GCP.</p>
+      <p class="hint">Reads use the shared agency service account (managed once in <a href="/admin">Admin</a>), which needs the <strong>BigQuery Data Editor</strong> and <strong>BigQuery Job User</strong> roles on this project in GCP. Use <strong>Verify BigQuery access</strong> to confirm the project is connected and readable.</p>
       {verify_html}
-    </section>
-
-    <section>
-      <h2>Data pipeline map</h2>
-      <p class="hint">Each dashboard module calls one API endpoint that reads one mart table or view in <code>{_esc(marts_dataset)}</code> on <code>{_esc(project)}</code>.</p>
-      <div class="table-wrap" style="margin-top:14px">
-        <table class="pipe-table">
-          <thead>
-            <tr>
-              <th class="left">Module</th>
-              <th class="left">API endpoint</th>
-              <th class="left">BQ mart</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td class="left"><div class="module-label">Overview</div><div class="module-sub">Paid media summary + daily trend</div></td>
-              <td class="left mono">/api/clients/{api_client_key}/summary</td>
-              <td class="left mono">vw_paid_media_daily<span class="badge badge-view">VIEW</span></td>
-            </tr>
-            <tr>
-              <td class="left"><div class="module-label">Campaign Explorer — Google</div><div class="module-sub">Ad-level creative drill-down</div></td>
-              <td class="left mono">/api/clients/{api_client_key}/google-ads/explorer</td>
-              <td class="left mono">explorer_google_ads_daily<span class="badge badge-view">VIEW</span></td>
-            </tr>
-            <tr>
-              <td class="left"><div class="module-label">Campaign Explorer — Keywords</div><div class="module-sub">Cost by search keyword</div></td>
-              <td class="left mono">/api/clients/{api_client_key}/google-ads/keywords</td>
-              <td class="left mono">explorer_google_ads_keyword_daily<span class="badge badge-view">VIEW</span></td>
-            </tr>
-            <tr>
-              <td class="left"><div class="module-label">Campaign Explorer — LinkedIn</div><div class="module-sub">Creative thumbnails + spend</div></td>
-              <td class="left mono">/api/clients/{api_client_key}/linkedin/explorer</td>
-              <td class="left mono">fact_linkedin_ads_creative_daily<span class="badge badge-view">VIEW</span></td>
-            </tr>
-            <tr>
-              <td class="left"><div class="module-label">Website Analytics — Top Pages</div><div class="module-sub">Page views, users, sessions</div></td>
-              <td class="left mono">/api/clients/{api_client_key}/pages/top</td>
-              <td class="left mono">vw_page_path_daily<span class="badge badge-view">VIEW</span></td>
-            </tr>
-            <tr>
-              <td class="left"><div class="module-label">AI Traffic + Campaign Explorer paid source</div><div class="module-sub">Source / AI referral breakdown</div></td>
-              <td class="left mono">/api/clients/{api_client_key}/pages/sources</td>
-              <td class="left mono">vw_page_path_source_daily<span class="badge badge-view">VIEW</span></td>
-            </tr>
-            <tr>
-              <td class="left"><div class="module-label">Website Analytics — Traffic</div><div class="module-sub">Sessions by channel + daily trend</div></td>
-              <td class="left mono">/api/clients/{api_client_key}/pages/traffic-acquisition</td>
-              <td class="left mono">vw_ga4_traffic_acq_daily<span class="badge badge-view">VIEW</span></td>
-            </tr>
-            <tr>
-              <td class="left"><div class="module-label">Website Analytics — Audience</div><div class="module-sub">Device type split</div></td>
-              <td class="left mono">/api/clients/{api_client_key}/pages/device-split</td>
-              <td class="left mono">vw_ga4_tech_daily<span class="badge badge-view">VIEW</span><span class="badge badge-opt">optional</span></td>
-            </tr>
-            <tr>
-              <td class="left"><div class="module-label">Website Analytics — Landing Pages</div><div class="module-sub">Session + key event rate by first URL</div></td>
-              <td class="left mono">/api/clients/{api_client_key}/pages/landing</td>
-              <td class="left mono">vw_ga4_landing_pages_daily<span class="badge badge-view">VIEW</span></td>
-            </tr>
-            <tr>
-              <td class="left"><div class="module-label">Website Analytics — Conversions</div><div class="module-sub">Custom events + form funnel</div></td>
-              <td class="left mono">/api/clients/{api_client_key}/analytics/conversions</td>
-              <td class="left mono">vw_ga4_events_daily<span class="badge badge-view">VIEW</span></td>
-            </tr>
-            <tr>
-              <td class="left"><div class="module-label">Website Analytics — User Acquisition</div><div class="module-sub">First-touch channel + source/medium</div></td>
-              <td class="left mono">/api/clients/{api_client_key}/analytics/user-acquisition</td>
-              <td class="left mono">vw_ga4_user_acq_daily<span class="badge badge-view">VIEW</span></td>
-            </tr>
-            <tr>
-              <td class="left"><div class="module-label">Website Analytics — Demographics</div><div class="module-sub">City/region, age bracket, gender</div></td>
-              <td class="left mono">/api/clients/{api_client_key}/analytics/demographics</td>
-              <td class="left mono">vw_ga4_demographics_daily<span class="badge badge-view">VIEW</span></td>
-            </tr>
-            <tr>
-              <td class="left"><div class="module-label">Mart Health</div><div class="module-sub">Row counts + date freshness per source</div></td>
-              <td class="left mono">/api/clients/{api_client_key}/marketing/health</td>
-              <td class="left mono">mart_health<span class="badge badge-tbl">TABLE</span></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
     </section>
 
     <section>
@@ -331,6 +295,8 @@ def render_bigquery_settings_page(
         <button type="button" class="primary ghost" id="resetPagesBtn">Reset to defaults (all on)</button>
       </div>
     </section>
+
+    {sidebar_theme_html}
 
     <section>
       <h2>Campaign explorer filters</h2>
@@ -346,17 +312,24 @@ def render_bigquery_settings_page(
       </div>
     </section>
 
-    <section>
-      <h2>Data</h2>
-      <p class="hint">Pull recent data, or backfill history, into BigQuery for {_esc(label)}.</p>
-      <div class="btn-row">
-        <button type="button" class="primary" id="refreshBtn">Refresh — last 30 days</button>
-        {'<button type="button" class="primary ghost" id="backfillBtn">Backfill LinkedIn — 180 days</button>' if show_linkedin_backfill else ''}
-        <span class="status" id="dataStatus"></span>
-      </div>
-      <h3 class="sub">Freshness — mart health</h3>
-      <div class="status" id="healthStatus">Loading…</div>
-      <div class="table-wrap"><table id="healthTable"></table></div>
+    <section class="acc-section">
+      <details class="acc">
+        <summary class="acc-summary">
+          <span><span class="acc-title">Data &amp; freshness</span><span class="acc-sub">Refresh / backfill BigQuery and check mart health</span></span>
+          <span class="acc-caret" aria-hidden="true">&#9662;</span>
+        </summary>
+        <div class="acc-body">
+          <p class="hint">Pull recent data, or backfill history, into BigQuery for {_esc(label)}.</p>
+          <div class="btn-row">
+            <button type="button" class="primary" id="refreshBtn">Refresh — last 30 days</button>
+            {'<button type="button" class="primary ghost" id="backfillBtn">Backfill LinkedIn — 180 days</button>' if show_linkedin_backfill else ''}
+            <span class="status" id="dataStatus"></span>
+          </div>
+          <h3 class="sub">Freshness — mart health</h3>
+          <div class="status" id="healthStatus">Loading…</div>
+          <div class="table-wrap"><table id="healthTable"></table></div>
+        </div>
+      </details>
     </section>
 
     {budget_visibility_html}
@@ -492,6 +465,43 @@ def render_bigquery_settings_page(
       const all = ALL_PAGES.reduce((o,k)=>({{...o,[k]:true}}),{{}}); savePages(all); renderPageToggles();
     }});
     renderPageToggles();
+    // ---- Sidebar gradient picker ----
+    (function(){{
+      const from = document.getElementById('sidebarFrom');
+      const to = document.getElementById('sidebarTo');
+      if (!from || !to) return;
+      const preview = document.getElementById('sidebarThemePreview');
+      const fromHex = document.getElementById('sidebarFromHex');
+      const toHex = document.getElementById('sidebarToHex');
+      const liveSidebar = document.getElementById('dashSidebar');
+      const DEF_FROM = "{sidebar_default_from}", DEF_TO = "{sidebar_default_to}";
+      function apply() {{
+        const f = from.value, t = to.value;
+        if (preview) preview.style.background = `linear-gradient(180deg, ${{f}}, ${{t}})`;
+        if (fromHex) fromHex.textContent = f;
+        if (toHex) toHex.textContent = t;
+        if (liveSidebar) {{ liveSidebar.style.setProperty('--sidebar-from', f); liveSidebar.style.setProperty('--sidebar-to', t); }}
+      }}
+      from.addEventListener('input', apply);
+      to.addEventListener('input', apply);
+      document.getElementById('sidebarThemeReset').addEventListener('click', () => {{ from.value = DEF_FROM; to.value = DEF_TO; apply(); }});
+      document.getElementById('sidebarThemeSave').addEventListener('click', async () => {{
+        const btn = document.getElementById('sidebarThemeSave');
+        btn.disabled = true; setStatus('sidebarThemeStatus', 'Saving…');
+        try {{
+          const r = await fetch("{sidebar_theme_url}", {{
+            method:'POST', credentials:'same-origin',
+            headers:{{'Content-Type':'application/x-www-form-urlencoded'}},
+            body: new URLSearchParams({{ sidebar_from: from.value, sidebar_to: to.value }}),
+          }});
+          const body = await r.json().catch(() => ({{}}));
+          if (!r.ok || !body.ok) throw new Error(body.error || ('HTTP ' + r.status));
+          setStatus('sidebarThemeStatus', 'Saved. Reload other pages to see the update.');
+        }} catch (err) {{
+          setStatus('sidebarThemeStatus', 'Save failed: ' + (err.message || err), true);
+        }} finally {{ btn.disabled = false; }}
+      }});
+    }})();
     // ---- Budget tracker: show-on-explorer toggle ----
     (function(){{
       const t = document.getElementById('budgetVisibilityToggle');
