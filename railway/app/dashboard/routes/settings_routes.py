@@ -691,6 +691,7 @@ def dashboard_client_sidebar_theme(
     request: Request,
     sidebar_from: str = Form(""),
     sidebar_to: str = Form(""),
+    blend: str = Form(""),
     key: str | None = None,
 ):
     """Admin-only: set the top/bottom colors of the client sidebar gradient.
@@ -726,10 +727,13 @@ def dashboard_client_sidebar_theme(
             {"ok": False, "error": "Enter valid hex colors (e.g. #0a2540)."},
             status_code=400,
         )
+    blend_val = dashboard_theme.normalize_blend(blend) if str(blend).strip() else None
     stored = client_dashboard_config.get_theme(slug)
     theme = dict(stored) if isinstance(stored, dict) else {}
     theme["sidebar_from"] = from_hex
     theme["sidebar_to"] = to_hex
+    if blend_val is not None:
+        theme["sidebar_blend"] = blend_val
     try:
         client_dashboard_config.save_theme(
             slug, theme, updated_by=session_email or "dashboard_key",
@@ -739,7 +743,9 @@ def dashboard_client_sidebar_theme(
     audit_log.record(
         action="dashboard.sidebar_theme_saved",
         actor_email=session_email,
-        detail={"client_slug": slug, "sidebar_from": from_hex, "sidebar_to": to_hex},
+        detail={"client_slug": slug, "sidebar_from": from_hex, "sidebar_to": to_hex, "sidebar_blend": blend_val},
         **audit_log.request_context(request),
     )
-    return JSONResponse({"ok": True, "sidebar_from": from_hex, "sidebar_to": to_hex})
+    return JSONResponse(
+        {"ok": True, "sidebar_from": from_hex, "sidebar_to": to_hex, "sidebar_blend": blend_val}
+    )
