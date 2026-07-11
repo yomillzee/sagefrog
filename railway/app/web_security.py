@@ -207,3 +207,22 @@ def inject_csrf_html(html: str, token: str) -> str:
 
     hidden = _hidden_input(token)
     return _POST_FORM_RE.sub(lambda m: m.group(0) + hidden, html)
+
+
+def assemble_page_html(text: str, *, banner: str = "", csrf_token: str | None = None) -> str:
+    """Splice the impersonation banner and CSRF plumbing into a rendered page.
+
+    Order matters: the banner is inserted *before* CSRF injection so its
+    "Exit view as" POST form is present when ``inject_csrf_html`` stamps the
+    hidden token into every form. Injecting first would leave that exit form
+    tokenless, its POST would 403, and an admin would be stranded in "view as"
+    with no working way out.
+    """
+    if banner:
+        if "</body>" in text:
+            text = text.replace("</body>", banner + "</body>", 1)
+        else:
+            text += banner
+    if csrf_token:
+        text = inject_csrf_html(text, csrf_token)
+    return text

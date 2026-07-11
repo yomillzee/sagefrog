@@ -46,6 +46,23 @@ class WebSecurityUnitTests(unittest.TestCase):
         self.assertFalse(web_security.tokens_match("", "x"))
         self.assertFalse(web_security.tokens_match("x", None))
 
+    def test_assemble_tokenizes_banner_exit_form(self) -> None:
+        # Regression: the impersonation banner is spliced in before CSRF
+        # injection so its "Exit view as" POST form receives a token. Injecting
+        # first left the exit form tokenless, 403'ing the POST and trapping the
+        # admin in "view as".
+        page = "<html><head></head><body><main>hi</main></body></html>"
+        banner = '<form method="post" action="/admin/view-as/exit"><button>Exit</button></form>'
+        out = web_security.assemble_page_html(page, banner=banner, csrf_token="TOK")
+        exit_form = re.search(r'<form[^>]*/admin/view-as/exit[^>]*>.*?</form>', out, re.S).group(0)
+        self.assertIn('name="csrf_token" value="TOK"', exit_form)
+        # Banner still lands inside the body, before </body>.
+        self.assertIn(banner[:20], out.split("</body>")[0])
+
+    def test_assemble_noops_without_banner_or_token(self) -> None:
+        page = "<html><head></head><body>x</body></html>"
+        self.assertEqual(web_security.assemble_page_html(page), page)
+
     def test_inject_targets_post_forms_only(self) -> None:
         html = (
             "<html><head></head><body>"

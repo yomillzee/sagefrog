@@ -244,13 +244,7 @@ async def _inject_html_extras(request: Request, call_next):
         return response
     body = b"".join([chunk async for chunk in response.body_iterator])
     text = body.decode(response.charset or "utf-8")
-    if csrf_token:
-        text = web_security.inject_csrf_html(text, csrf_token)
-    if banner:
-        if "</body>" in text:
-            text = text.replace("</body>", banner + "</body>", 1)
-        else:
-            text += banner
+    text = web_security.assemble_page_html(text, banner=banner, csrf_token=csrf_token)
     headers = {
         k: v
         for k, v in response.headers.items()
