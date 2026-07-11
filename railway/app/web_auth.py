@@ -323,9 +323,9 @@ def render_login_page(*, error: str | None = None, next_path: str = "/admin") ->
     .wrap {{ width:min(420px,100%); animation:rise .5s ease both; }}
     @keyframes rise {{ from {{ opacity:0; transform:translateY(10px); }} to {{ opacity:1; transform:none; }} }}
     .brand {{ display:flex; flex-direction:column; align-items:center; gap:12px; margin-bottom:22px; }}
-    .logo {{ width:56px; height:56px; border-radius:16px; display:grid; place-items:center;
-      background:linear-gradient(135deg,var(--green),#0a2540); box-shadow:0 10px 26px rgba(5,18,31,.5); }}
-    .logo svg {{ width:30px; height:30px; }}
+    .logo {{ width:56px; height:56px; border-radius:16px; display:grid; place-items:center; overflow:hidden;
+      background:#fff; box-shadow:0 10px 26px rgba(5,18,31,.5); }}
+    .logo img {{ width:100%; height:100%; object-fit:cover; }}
     .brand h1 {{ margin:0; font-size:1.05rem; font-weight:700; color:#fff; letter-spacing:.2px; }}
     .brand p {{ margin:0; font-size:.84rem; color:rgba(255,255,255,.6); }}
     .card {{ background:#fff; border-radius:18px; padding:30px 28px;
@@ -371,10 +371,7 @@ def render_login_page(*, error: str | None = None, next_path: str = "/admin") ->
   <div class="wrap">
     <div class="brand">
       <div class="logo">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/>
-          <path d="M2 21c0-3 1.85-5.36 5.08-6"/>
-        </svg>
+        <img src="/static/apple-touch-icon.png" alt="Sagefrog" width="56" height="56">
       </div>
       <h1>Sagefrog Marketing Group</h1>
       <p>Client dashboards</p>
@@ -467,9 +464,9 @@ def render_dashboards_page(*, user: WebUser, dashboards: list[tuple[str, str]]) 
     .wrap {{ width:min(440px,100%); animation:rise .5s ease both; }}
     @keyframes rise {{ from {{ opacity:0; transform:translateY(10px); }} to {{ opacity:1; transform:none; }} }}
     .brand {{ display:flex; flex-direction:column; align-items:center; gap:12px; margin-bottom:22px; }}
-    .logo {{ width:56px; height:56px; border-radius:16px; display:grid; place-items:center;
-      background:linear-gradient(135deg,var(--green),#0a2540); box-shadow:0 10px 26px rgba(5,18,31,.5); }}
-    .logo svg {{ width:30px; height:30px; }}
+    .logo {{ width:56px; height:56px; border-radius:16px; display:grid; place-items:center; overflow:hidden;
+      background:#fff; box-shadow:0 10px 26px rgba(5,18,31,.5); }}
+    .logo img {{ width:100%; height:100%; object-fit:cover; }}
     .brand h1 {{ margin:0; font-size:1.05rem; font-weight:700; color:#fff; letter-spacing:.2px; }}
     .brand > p {{ margin:0; font-size:.84rem; color:rgba(255,255,255,.6); }}
     .card {{ background:#fff; border-radius:18px; padding:30px 28px;
@@ -500,10 +497,7 @@ def render_dashboards_page(*, user: WebUser, dashboards: list[tuple[str, str]]) 
   <div class="wrap">
     <div class="brand">
       <div class="logo">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/>
-          <path d="M2 21c0-3 1.85-5.36 5.08-6"/>
-        </svg>
+        <img src="/static/apple-touch-icon.png" alt="Sagefrog" width="56" height="56">
       </div>
       <h1>Sagefrog Marketing Group</h1>
       <p>Client dashboards</p>
@@ -899,9 +893,9 @@ def render_admin_page(
       align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
       background: linear-gradient(120deg,#0a2540 0%,#0d2f57 100%); box-shadow: 0 2px 14px rgba(5,18,31,.28); }}
     .brand-head {{ display: flex; align-items: center; gap: 12px; }}
-    .brand-mark {{ width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
-      background: linear-gradient(135deg,var(--green),#0a2540); box-shadow: 0 6px 16px rgba(5,18,31,.4); flex-shrink: 0; }}
-    .brand-mark svg {{ width: 22px; height: 22px; }}
+    .brand-mark {{ width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; overflow: hidden;
+      background: #fff; box-shadow: 0 6px 16px rgba(5,18,31,.4); flex-shrink: 0; }}
+    .brand-mark img {{ width: 100%; height: 100%; object-fit: cover; }}
     header h1 {{ margin: 0; font-size: 1.05rem; letter-spacing: .2px; }}
     header .who {{ font-size: .82rem; opacity: .7; }}
   header a, header button.link {{ color: #fff; text-decoration: none; background: none; border: 0;
@@ -1063,10 +1057,7 @@ def render_admin_page(
   <header>
     <div class="brand-head">
       <div class="brand-mark">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/>
-          <path d="M2 21c0-3 1.85-5.36 5.08-6"/>
-        </svg>
+        <img src="/static/apple-touch-icon.png" alt="Sagefrog" width="40" height="40">
       </div>
       <div>
         <h1>Sagefrog Marketing Group · Admin</h1>
