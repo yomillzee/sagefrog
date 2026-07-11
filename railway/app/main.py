@@ -1771,6 +1771,7 @@ def admin_home(
             error=err,
             oauth_section_html=oauth_html,
             credentials_section_html=_gcp_credentials_section_html(),
+            is_super_admin=web_auth.is_super_admin(user),
         )
     )
 
@@ -2081,12 +2082,41 @@ def admin_convert_dashboard_mode(
     )
 
 
+@app.post("/admin/dashboards/{client_slug}/logo", include_in_schema=False)
+def admin_set_dashboard_logo(
+    client_slug: str,
+    request: Request,
+    logo: str = Form(""),
+    admin: web_users.WebUser = Depends(web_auth.require_admin),
+) -> JSONResponse:
+    """Set (or clear) a dashboard's logo. Expects a resized ``data:image/...`` URI."""
+    value = (logo or "").strip()
+    if value:
+        if not value.startswith("data:image/"):
+            return JSONResponse({"ok": False, "error": "Logo must be an image."}, status_code=400)
+        if len(value) > _AVATAR_MAX_CHARS:
+            return JSONResponse(
+                {"ok": False, "error": "Image is too large — try a smaller crop."},
+                status_code=413,
+            )
+    stored = value or None
+    if not dashboard_registry.set_logo(client_slug, stored):
+        return JSONResponse({"ok": False, "error": "Dashboard not found."}, status_code=404)
+    audit_log.record(
+        action="dashboard.logo_updated",
+        actor_email=admin.email,
+        detail={"client_slug": client_slug, "cleared": stored is None},
+        **audit_log.request_context(request),
+    )
+    return JSONResponse({"ok": True, "logo": stored})
+
+
 @app.post("/admin/dashboards/{client_slug}/delete", include_in_schema=False)
 def admin_delete_dashboard(
     client_slug: str,
     request: Request,
     confirm_label: str = Form(""),
-    user: web_users.WebUser = Depends(web_auth.require_admin),
+    user: web_users.WebUser = Depends(web_auth.require_super_admin),
 ):
     ctx = audit_log.request_context(request)
     try:

@@ -49,6 +49,10 @@ SCHEMA_SQL_STATEMENTS = [
       deleted_by TEXT
     )
     """,
+    # Client logo, stored as a small data: URI (resized client-side).
+    """
+    ALTER TABLE dashboard_clients ADD COLUMN IF NOT EXISTS logo TEXT
+    """,
 ]
 
 
@@ -59,6 +63,7 @@ class DashboardClientRow:
     source: str
     created_at: str | None = None
     created_by: str | None = None
+    logo: str | None = None
 
 
 def _get_db_url() -> str | None:
@@ -160,7 +165,7 @@ def list_clients() -> list[DashboardClientRow]:
     with db.connection() as conn:
         rows = conn.execute(
             """
-            SELECT client_slug, label, source, created_at, created_by
+            SELECT client_slug, label, source, created_at, created_by, logo
             FROM dashboard_clients
             ORDER BY label ASC, client_slug ASC
             """
@@ -175,9 +180,24 @@ def list_clients() -> list[DashboardClientRow]:
                 source=str(row[2] or "admin"),
                 created_at=created.isoformat() if created else None,
                 created_by=str(row[4]).strip() if row[4] else None,
+                logo=str(row[5]) if len(row) > 5 and row[5] is not None else None,
             )
         )
     return out
+
+
+def set_logo(client_slug: str, logo: str | None) -> bool:
+    """Set (or clear, with None) a dashboard's logo data URI."""
+    if not enabled():
+        return False
+    slug = normalize_slug(client_slug)
+    ensure_schema(seed_defaults=False)
+    with db.connection() as conn:
+        cur = conn.execute(
+            "UPDATE dashboard_clients SET logo = %s WHERE client_slug = %s",
+            (logo, slug),
+        )
+        return cur.rowcount > 0
 
 
 def list_slugs() -> list[str]:

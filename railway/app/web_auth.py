@@ -196,6 +196,33 @@ async def require_admin(request: Request) -> WebUser:
     return user
 
 
+def super_admin_emails() -> set[str]:
+    """Admins allowed to perform destructive actions (e.g. deleting dashboards).
+
+    Configurable via SUPER_ADMIN_EMAILS (comma-separated); mikem@sagefrog.com is
+    always included.
+    """
+    raw = os.getenv("SUPER_ADMIN_EMAILS", "")
+    emails = {e.strip().lower() for e in raw.split(",") if e.strip()}
+    emails.add("mikem@sagefrog.com")
+    return emails
+
+
+def is_super_admin(user: WebUser | None) -> bool:
+    return bool(
+        user
+        and user.role == "admin"
+        and (user.email or "").strip().lower() in super_admin_emails()
+    )
+
+
+async def require_super_admin(request: Request) -> WebUser:
+    user = await require_admin(request)
+    if not is_super_admin(user):
+        raise HTTPException(status_code=403, detail="Super admin access required.")
+    return user
+
+
 def require_client_access(client_slug: str):
     slug = client_slug.strip().lower()
 
@@ -581,6 +608,36 @@ document.querySelectorAll('.avatar-file').forEach(inp => {
     }
   });
 });
+document.querySelectorAll('.dash-logo-file').forEach(inp => {
+  inp.addEventListener('change', async () => {
+    const file = inp.files && inp.files[0];
+    if (!file) return;
+    const slug = inp.dataset.slug;
+    const label = inp.closest('.dash-logo');
+    if (label) label.classList.add('is-uploading');
+    try {
+      const dataUri = await _avatarResize(file, 160);
+      const r = await fetch('/admin/dashboards/' + encodeURIComponent(slug) + '/logo', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ logo: dataUri }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || !body.ok) throw new Error(body.error || ('HTTP ' + r.status));
+      const holder = document.getElementById('dashlogo-' + slug);
+      if (holder) {
+        const img = document.createElement('img');
+        img.src = body.logo; img.alt = ''; img.className = 'logo-img'; img.id = 'dashlogo-' + slug;
+        holder.replaceWith(img);
+      }
+    } catch (err) {
+      alert('Logo upload failed: ' + (err.message || err));
+    } finally {
+      if (label) label.classList.remove('is-uploading');
+      inp.value = '';
+    }
+  });
+});
 """
 
 
@@ -612,6 +669,7 @@ def render_admin_page(
     error: str | None = None,
     oauth_section_html: str = "",
     credentials_section_html: str = "",
+    is_super_admin: bool = False,
 ) -> str:
     notice = ""
     if message:
@@ -713,52 +771,44 @@ def render_admin_page(
     dash_delete_js = ""
     try:
         import dashboard_registry
-        import client_dashboard_config as _cdc
 
         if dashboard_registry.enabled():
-            dash_cards = []
+            dash_rows = []
             for row in dashboard_registry.list_clients():
                 slug = row.client_slug
                 label = row.label
                 initials = _esc(_label_initials(label))
-
-                # Template: bigquery_nixon = the connector-driven Nixon template;
-                # anything else (api/bigquery) is the older snapshot dashboard. Offer
-                # a one-click convert for legacy dashboards (no manual DB update).
-                try:
-                    _mode = (_cdc.get_config(slug).dashboard_mode or "api")
-                except Exception:
-                    _mode = "api"
-                convert_btn = ""
-                if _mode == "bigquery_nixon":
-                    template_badge = '<span class="dash-badge new">New template</span>'
-                elif slug == "penn":
-                    template_badge = '<span class="dash-badge snap">Snapshot · protected</span>'
-                else:
-                    template_badge = '<span class="dash-badge snap">Snapshot</span>'
-                    convert_btn = (
-                        f'<form method="post" action="/admin/dashboards/{_esc(slug)}/mode" class="inline-form">'
-                        f'<button type="submit" class="dash-btn ghost" '
-                        f"onclick=\"return confirm('Convert {_esc(label)} to the new connector template?')\">"
-                        f'Use new template</button></form>'
-                    )
-
-                clear_snapshot_btn = (
-                    f'<form method="post" action="/admin/snapshot/{_esc(slug)}/delete" class="inline-form">'
-                    f'<button type="submit" class="dash-btn ghost" '
-                    f"onclick=\"return confirm('Clear cached snapshot for {_esc(label)}?')\">Clear snapshot</button></form>"
+                logo = getattr(row, "logo", None)
+                logo_inner = (
+                    f'<img src="{_esc(str(logo))}" alt="" class="logo-img" id="dashlogo-{_esc(slug)}">'
+                    if logo
+                    else f'<span class="logo-initials" id="dashlogo-{_esc(slug)}">{initials}</span>'
+                )
+                logo_cell = (
+                    f'<label class="dash-logo" title="Upload logo">'
+                    f'<input type="file" accept="image/*" class="dash-logo-file" data-slug="{_esc(slug)}" hidden>'
+                    f'{logo_inner}'
+                    f'<span class="logo-edit" aria-hidden="true"><svg viewBox="0 0 24 24" width="10" height="10" '
+                    f'fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
+                    f'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span></label>'
                 )
 
-                if slug == "penn":
-                    foot = '<span class="dash-card-note">Protected — cannot be deleted</span>'
+                # Delete is destructive → super admins only. Others just see the
+                # protected/absence of the control.
+                if not is_super_admin or slug == "penn":
+                    delete_ctl = (
+                        '<span class="dash-row-note">Protected</span>'
+                        if slug == "penn"
+                        else ""
+                    )
                 else:
                     field_id = f"confirm-{slug.replace('-', '_')}"
                     btn_id = f"delete-btn-{slug.replace('-', '_')}"
-                    foot = f"""
+                    delete_ctl = f"""
                     <details class="dash-delete-fold">
-                      <summary class="link danger">Delete dashboard…</summary>
+                      <summary class="dash-icon-btn danger" title="Delete dashboard" aria-label="Delete dashboard"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></summary>
                       <form method="post" action="/admin/dashboards/{_esc(slug)}/delete" class="dash-delete-form">
-                        <p class="hint">Type <strong>{_esc(label)}</strong> to confirm.</p>
+                        <p class="hint">Type <strong>{_esc(label)}</strong> to confirm deletion.</p>
                         <input type="text" id="{field_id}" name="confirm_label"
                           placeholder="{_esc(label)}" autocomplete="off"
                           data-expected="{_esc(label)}" data-btn-id="{btn_id}">
@@ -766,26 +816,20 @@ def render_admin_page(
                       </form>
                     </details>"""
 
-                dash_cards.append(f"""
-        <div class="dash-card">
-          <div class="dash-card-head">
-            <span class="dash-avatar">{initials}</span>
-            <div class="dash-card-title">
-              <span class="dash-card-name" title="{_esc(label)}">{_esc(label)}</span>
-              <a class="dash-card-slug mono" href="/dashboard/{_esc(slug)}">/dashboard/{_esc(slug)}</a>
-            </div>
-            {template_badge}
+                dash_rows.append(f"""
+        <div class="dash-row">
+          {logo_cell}
+          <a class="dash-row-main" href="/dashboard/{_esc(slug)}">
+            <span class="dash-row-name">{_esc(label)}</span>
+            <span class="dash-row-slug mono">/dashboard/{_esc(slug)}</span>
+          </a>
+          <div class="dash-row-actions">
+            <a class="dash-icon-btn" href="/dashboard/{_esc(slug)}" title="Open dashboard" aria-label="Open dashboard"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg></a>
+            {delete_ctl}
           </div>
-          <div class="dash-card-actions">
-            <a class="dash-btn primary" href="/dashboard/{_esc(slug)}">Open</a>
-            <a class="dash-btn" href="/dashboard/{_esc(slug)}/settings">Settings</a>
-            {clear_snapshot_btn}
-            {convert_btn}
-          </div>
-          <div class="dash-card-foot">{foot}</div>
         </div>""")
-            dash_grid = (
-                "".join(dash_cards)
+            dash_list = (
+                "".join(dash_rows)
                 or '<p class="muted" style="margin:0">No dashboards yet.</p>'
             )
             for slug, _label in client_config.list_dashboard_clients():
@@ -797,7 +841,7 @@ def render_admin_page(
       <div class="dash-section-head">
         <h2>Dashboards</h2>
         <details class="dash-add-fold">
-          <summary class="btn primary btn-sm">+ Add dashboard</summary>
+          <summary class="add-dash-btn"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Add dashboard</summary>
           <form method="post" action="/admin/dashboards" class="dash-add-form">
             <div class="row">
               <div>
@@ -816,7 +860,7 @@ def render_admin_page(
           </form>
         </details>
       </div>
-      <div class="dash-grid">{dash_grid}</div>
+      <div class="dash-list">{dash_list}</div>
     </section>"""
             dash_delete_js = """
     document.querySelectorAll('.dash-delete-form input[name="confirm_label"]').forEach((input) => {
@@ -994,33 +1038,43 @@ def render_admin_page(
     .advanced-summary:hover .advanced-title {{ color: var(--accent); }}
     .advanced-body {{ padding: 0 20px 8px; }}
     .advanced-body > section, .advanced-body > .admin-oauth-section {{ box-shadow: none; }}
-    /* ---- Dashboards card grid ---- */
-    .dash-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; margin-top: 4px; }}
-    .dash-card {{ display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--line); border-radius: 14px;
-      padding: 16px; background: #fff; box-shadow: 0 1px 2px rgba(16,33,67,.04); transition: border-color .15s, box-shadow .15s, transform .06s; }}
-    .dash-card:hover {{ border-color: #c6d5ea; box-shadow: 0 8px 26px rgba(16,33,67,.10); }}
-    .dash-card-head {{ display: flex; align-items: center; gap: 12px; }}
-    .dash-avatar {{ width: 42px; height: 42px; border-radius: 11px; flex-shrink: 0; display: grid; place-items: center;
-      font-weight: 800; font-size: .92rem; letter-spacing: .02em; color: #fff;
-      background: linear-gradient(135deg, var(--accent), #1e3a8a); box-shadow: 0 4px 12px rgba(37,99,235,.28); }}
-    .dash-card-title {{ display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 1px; }}
-    .dash-card-name {{ font-weight: 700; font-size: 1rem; color: var(--navy); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-    .dash-card-slug {{ font-size: .76rem; color: var(--muted); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-    .dash-card-slug:hover {{ color: var(--accent); text-decoration: underline; }}
-    .dash-badge {{ flex-shrink: 0; padding: 3px 10px; border-radius: 999px; font-size: .7rem; font-weight: 700; white-space: nowrap; }}
-    .dash-badge.new {{ background: #ecfdf3; color: #15803d; }}
-    .dash-badge.snap {{ background: #f1f5f9; color: #64748b; }}
-    .dash-card-actions {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }}
-    .dash-btn {{ display: inline-flex; align-items: center; padding: 7px 13px; border-radius: 9px; border: 1px solid var(--line);
-      background: #fff; color: var(--navy); font-size: .82rem; font-weight: 650; text-decoration: none; cursor: pointer;
-      transition: background .12s, border-color .12s, color .12s; }}
-    .dash-btn:hover {{ background: #f4f8fd; border-color: #b9c8dc; }}
-    .dash-btn.primary {{ background: var(--accent); border-color: var(--accent); color: #fff; }}
-    .dash-btn.primary:hover {{ filter: brightness(1.06); background: var(--accent); }}
-    .dash-btn.ghost {{ background: transparent; }}
-    .dash-card-foot {{ margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line); position: relative; }}
-    .dash-card-note {{ font-size: .8rem; color: var(--muted); }}
-    .dash-card .dash-delete-fold summary {{ color: var(--danger); }}
+    /* ---- Dashboards list (one row each) ---- */
+    .dash-list {{ display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }}
+    .dash-row {{ display: flex; align-items: center; gap: 14px; padding: 10px 14px; border: 1px solid var(--line);
+      border-radius: 12px; background: #fff; transition: border-color .15s, box-shadow .15s; }}
+    .dash-row:hover {{ border-color: #c6d5ea; box-shadow: 0 4px 16px rgba(16,33,67,.08); }}
+    .dash-logo {{ position: relative; display: inline-flex; width: 40px; height: 40px; cursor: pointer; flex-shrink: 0; }}
+    .logo-img, .logo-initials {{ width: 40px; height: 40px; border-radius: 10px; object-fit: cover; display: grid; place-items: center; }}
+    .logo-initials {{ color: #fff; font-weight: 800; font-size: .86rem; letter-spacing: .02em;
+      background: linear-gradient(135deg, var(--accent), #1e3a8a); }}
+    .logo-img {{ border: 1px solid var(--border); background: #fff; }}
+    .logo-edit {{ position: absolute; right: -3px; bottom: -3px; width: 16px; height: 16px; border-radius: 50%;
+      background: var(--navy); color: #fff; display: grid; place-items: center; box-shadow: 0 1px 3px rgba(5,18,31,.35);
+      opacity: 0; transition: opacity .12s; }}
+    .dash-logo:hover .logo-edit {{ opacity: 1; }}
+    .dash-logo.is-uploading {{ opacity: .5; pointer-events: none; }}
+    .dash-row-main {{ display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 1px; text-decoration: none; }}
+    .dash-row-name {{ font-weight: 700; font-size: .98rem; color: var(--navy); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .dash-row-main:hover .dash-row-name {{ color: var(--accent); }}
+    .dash-row-slug {{ font-size: .76rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .dash-row-actions {{ display: flex; align-items: center; gap: 6px; flex-shrink: 0; position: relative; }}
+    .dash-row-note {{ font-size: .74rem; color: var(--muted); font-weight: 600; }}
+    .dash-icon-btn {{ display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
+      border-radius: 9px; border: 1px solid var(--line); background: #fff; color: var(--navy); cursor: pointer;
+      text-decoration: none; list-style: none; transition: background .12s, border-color .12s, color .12s; }}
+    .dash-icon-btn::-webkit-details-marker {{ display: none; }}
+    .dash-icon-btn:hover {{ background: #f4f8fd; border-color: #b9c8dc; color: var(--accent); }}
+    .dash-icon-btn.danger:hover {{ background: #fef2f2; border-color: #f3c0bb; color: var(--danger); }}
+    .dash-delete-fold[open] > .dash-icon-btn.danger {{ background: #fef2f2; color: var(--danger); border-color: #f3c0bb; }}
+    .dash-delete-fold .dash-delete-form {{ position: absolute; right: 0; top: calc(100% + 6px); z-index: 6; width: 260px;
+      max-width: 80vw; margin: 0; box-shadow: 0 8px 24px rgba(16,33,67,.16); }}
+    /* Modern "Add dashboard" button */
+    .add-dash-btn {{ display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px; border-radius: 10px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-d)); color: #fff; font-size: .88rem; font-weight: 700;
+      cursor: pointer; list-style: none; box-shadow: 0 5px 14px rgba(37,99,235,.3); transition: filter .15s, transform .06s; }}
+    .add-dash-btn::-webkit-details-marker {{ display: none; }}
+    .add-dash-btn:hover {{ filter: brightness(1.06); }}
+    .add-dash-btn:active {{ transform: translateY(1px); }}
   </style>
 </head>
 <body>
