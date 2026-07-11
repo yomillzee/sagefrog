@@ -86,6 +86,9 @@ def render_hq_budget_page(*, user_email: str) -> str:
     .badge.no_budget {{ background:#eef2f7; color:var(--muted); }}
     .delta-over {{ color:var(--danger); }}
     .delta-under {{ color:var(--green); }}
+    .sess-cell {{ display:flex; align-items:center; justify-content:flex-end; gap:9px; }}
+    .spark svg {{ display:block; }}
+    .sess-total {{ font-variant-numeric:tabular-nums; color:var(--muted); font-size:.78rem; min-width:46px; text-align:right; }}
     .muted {{ color:var(--muted); }}
     .empty {{ text-align:center; color:var(--muted); padding:26px 8px; }}
     .skel {{ display:inline-block; height:12px; border-radius:6px; background:linear-gradient(90deg,#eef2f7,#e2e8f0,#eef2f7); background-size:200% 100%; animation:sh 1.2s ease-in-out infinite; }}
@@ -130,6 +133,7 @@ def render_hq_budget_page(*, user_email: str) -> str:
             <th class="sortable" data-key="label">Client</th>
             <th class="sortable" data-key="monthly_budget">Monthly budget</th>
             <th class="sortable" data-key="mtd_spend">Spend MTD</th>
+            <th class="sortable" data-key="sessions_total">Sessions · 30d</th>
             <th class="sortable active" data-key="pct_budget">% of budget</th>
             <th class="sortable" data-key="projected_month_end">Projected</th>
             <th class="sortable" data-key="pace_delta">Status</th>
@@ -144,6 +148,7 @@ def render_hq_budget_page(*, user_email: str) -> str:
   <script>
     const money = v => new Intl.NumberFormat('en-US',{{style:'currency',currency:'USD',maximumFractionDigits:0}}).format(Number(v||0));
     const money2 = v => new Intl.NumberFormat('en-US',{{style:'currency',currency:'USD',maximumFractionDigits:2}}).format(Number(v||0));
+    const nfmt = v => new Intl.NumberFormat('en-US').format(Math.round(Number(v||0)));
     const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
     const STATUS_LABEL = {{ over:'Over pace', under:'Under pace', on_track:'On track', no_budget:'No budget' }};
     let hqData = null;
@@ -186,6 +191,28 @@ def render_hq_budget_page(*, user_email: str) -> str:
       if (!r.spend_available && r.status!=='no_budget') return '<span class="badge no_budget">No data</span>';
       return `<span class="badge ${{r.status}}">${{STATUS_LABEL[r.status]||r.status}}</span>`;
     }}
+    // Inline SVG sparkline of daily sessions. Colour tints up (green) / down
+    // (red) / flat (blue) by comparing the last third of the window to the first.
+    function sparkline(series) {{
+      if (!series || series.length < 2) return '';
+      const w = 96, h = 26, pad = 3, n = series.length;
+      const max = Math.max(...series), min = Math.min(...series), span = (max - min) || 1;
+      const x = i => pad + (w - 2*pad) * (i / (n - 1));
+      const y = v => pad + (h - 2*pad) * (1 - (v - min) / span);
+      const pts = series.map((v, i) => `${{x(i).toFixed(1)}},${{y(v).toFixed(1)}}`).join(' ');
+      const k = Math.max(1, Math.floor(n / 3));
+      const avg = a => a.reduce((s, v) => s + v, 0) / a.length;
+      const first = avg(series.slice(0, k)), last = avg(series.slice(-k));
+      const color = last >= first * 1.02 ? '#0a7f3f' : (last <= first * 0.98 ? '#b42318' : '#2563eb');
+      const lx = x(n - 1), ly = y(series[n - 1]);
+      return `<span class="spark"><svg width="${{w}}" height="${{h}}" viewBox="0 0 ${{w}} ${{h}}" preserveAspectRatio="none" aria-hidden="true">`
+        + `<polyline points="${{pts}}" fill="none" stroke="${{color}}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>`
+        + `<circle cx="${{lx.toFixed(1)}}" cy="${{ly.toFixed(1)}}" r="1.9" fill="${{color}}"/></svg></span>`;
+    }}
+    function sessCell(r) {{
+      if (!r.sessions_available) return '<span class="muted">—</span>';
+      return `<div class="sess-cell">${{sparkline(r.sessions_series)}}<span class="sess-total">${{nfmt(r.sessions_total)}}</span></div>`;
+    }}
     function spendCell(r) {{
       if (!r.spend_available) return '<span class="muted">—</span>';
       return `<span class="num">${{money(r.mtd_spend)}}</span>`;
@@ -205,7 +232,7 @@ def render_hq_budget_page(*, user_email: str) -> str:
 
       const rows = sortedRows();
       const body = document.getElementById('hqBody');
-      if (!rows.length) {{ body.innerHTML = `<tr><td colspan="6" class="empty">No clients configured yet.</td></tr>`; }}
+      if (!rows.length) {{ body.innerHTML = `<tr><td colspan="7" class="empty">No clients configured yet.</td></tr>`; }}
       else body.innerHTML = rows.map(r => {{
         const dash = `/dashboard/${{encodeURIComponent(r.client_slug)}}`;
         const budget = r.has_budget ? `<span class="num">${{money(r.monthly_budget)}}</span>` : '<span class="muted">Not set</span>';
@@ -213,6 +240,7 @@ def render_hq_budget_page(*, user_email: str) -> str:
           + `<td><div class="cl-name"><a href="${{dash}}">${{esc(r.label)}}</a></div><div class="cl-slug">${{esc(r.client_slug)}}</div></td>`
           + `<td>${{budget}}</td>`
           + `<td>${{spendCell(r)}}</td>`
+          + `<td>${{sessCell(r)}}</td>`
           + `<td>${{pctCell(r)}}</td>`
           + `<td>${{projCell(r)}}</td>`
           + `<td>${{statusCell(r)}}</td>`
@@ -220,18 +248,21 @@ def render_hq_budget_page(*, user_email: str) -> str:
       }}).join('');
 
       document.getElementById('hqFoot').innerHTML = rows.length
-        ? `<tr><td>All clients</td><td class="num">${{money(t.monthly_budget)}}</td><td class="num">${{money(t.mtd_spend)}}</td><td></td><td class="num">${{money(t.projected_month_end)}}</td><td></td></tr>`
+        ? `<tr><td>All clients</td><td class="num">${{money(t.monthly_budget)}}</td><td class="num">${{money(t.mtd_spend)}}</td><td></td><td></td><td class="num">${{money(t.projected_month_end)}}</td><td></td></tr>`
         : '';
 
       document.querySelectorAll('#hqTable th.sortable').forEach(th =>
         th.classList.toggle('active', th.dataset.key === sort.key));
+      const sw = hqData.sessions_window || {{}};
       document.getElementById('hqNote').textContent =
-        `Spend is paid media (Google, LinkedIn, Meta) from each client's BigQuery mart, as of ${{hqData.as_of}}. "—" means no BigQuery project is configured for that client yet.`;
+        `Spend is paid media (Google, LinkedIn, Meta) from each client's BigQuery mart, as of ${{hqData.as_of}}. `
+        + `Sessions sparkline is total GA4 sessions per day over the trailing ${{sw.days||30}} days (${{sw.start||''}} to ${{sw.end||''}}); green trending up, red down. `
+        + `"—" means no data / no BigQuery project configured for that client yet.`;
     }}
     function skeleton() {{
       document.getElementById('hqBody').innerHTML = Array.from({{length:6}}, () =>
         `<tr><td><span class="skel" style="width:140px"></span></td>`
-        + Array.from({{length:5}}, () => `<td><span class="skel" style="width:60px"></span></td>`).join('') + `</tr>`).join('');
+        + Array.from({{length:6}}, () => `<td><span class="skel" style="width:60px"></span></td>`).join('') + `</tr>`).join('');
     }}
     document.getElementById('hqTable').querySelector('thead').addEventListener('click', ev => {{
       const th = ev.target.closest('th.sortable'); if (!th || !hqData) return;

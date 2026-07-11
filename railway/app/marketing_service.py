@@ -693,6 +693,37 @@ def fetch_traffic_acquisition(
     }
 
 
+def fetch_sessions_daily(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Daily total GA4 sessions for a date range — one lean query.
+
+    A trimmed slice of fetch_traffic_acquisition (just the daily series, no
+    channel/source breakdowns) so callers that only need a sessions sparkline
+    pay for a single scan of vw_ga4_traffic_acq_daily.
+    """
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    daily_sql = f"""
+    SELECT
+      CAST(date AS STRING) AS date,
+      SUM(sessions) AS sessions
+    FROM {_traffic_acq_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY date
+    ORDER BY date ASC
+    """
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "daily": _run_query(daily_sql, params=params, max_rows=2000),
+    }
+
+
 def fetch_device_split(
     *,
     start_date: date,
