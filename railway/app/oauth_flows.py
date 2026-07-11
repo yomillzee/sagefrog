@@ -78,10 +78,11 @@ import time as _time
 
 
 def _connect_secret() -> bytes:
-    s = (os.getenv("AUTH_SESSION_SECRET") or os.getenv("CRON_SECRET") or "").strip()
-    if not s:
-        raise RuntimeError("AUTH_SESSION_SECRET or CRON_SECRET required for connect links.")
-    return s.encode()
+    # Same signing secret as session cookies (AUTH_SESSION_SECRET): dedicated,
+    # fail-closed in production, dev-only fallback. See security.session_signing_secret.
+    from security import session_signing_secret
+
+    return session_signing_secret().encode()
 
 
 def sign_connect_state(client_slug: str, platform: str, *, ttl_seconds: int = 7 * 86400) -> str:

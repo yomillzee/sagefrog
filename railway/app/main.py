@@ -285,8 +285,12 @@ async def _csrf_protect(request: Request, call_next):
 if web_users.enabled():
     try:
         web_auth.add_session_middleware(app)
-    except RuntimeError:
-        pass
+    except RuntimeError as _sess_exc:
+        # No session signing secret: browser login is disabled. Surface it loudly
+        # rather than silently — in production this means AUTH_SESSION_SECRET is
+        # unset (it no longer falls back to CRON_SECRET / API_KEY).
+        import sys as _sys
+        print(f"WARNING: session auth disabled — {_sess_exc}", file=_sys.stderr)
 
 register_dashboard_routes(app)
 
@@ -428,7 +432,7 @@ def root() -> dict:
         "dashboard_penn": "/dashboard/penn",
         "dashboard_demo": "/dashboard/demo",
         "dashboard_client_settings": "/dashboard/{client_slug}/settings",
-        "dashboard_penn_legacy_key": "/dashboard/penn?key=<CRON_SECRET>",
+        "dashboard_penn_legacy_key": "/dashboard/penn?key=<DASHBOARD_SECRET>",
         "internal_sync_penn": "POST /internal/sync-penn (header X-Cron-Secret)",
         "ga4_env": "/ga4/env",
     }

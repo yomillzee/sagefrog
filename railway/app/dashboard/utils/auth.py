@@ -7,11 +7,20 @@ from datetime import UTC, datetime
 from typing import Any
 
 import web_users
+from security import is_production
 
 
 def configured_dashboard_secret() -> str | None:
-    secret = (os.getenv("DASHBOARD_SECRET") or os.getenv("CRON_SECRET") or "").strip()
-    return secret or None
+    # Dedicated to DASHBOARD_SECRET so the legacy ?key= link no longer piggybacks
+    # on CRON_SECRET. Fail-closed in production (no CRON_SECRET fallback); local
+    # dev keeps the fallback for convenience.
+    dedicated = (os.getenv("DASHBOARD_SECRET") or "").strip()
+    if dedicated:
+        return dedicated
+    if is_production():
+        return None
+    fallback = (os.getenv("CRON_SECRET") or "").strip()
+    return fallback or None
 
 
 def min_refresh_seconds(*, quick: bool = False) -> int:
@@ -61,7 +70,7 @@ def verify_dashboard_key(key: str | None) -> None:
     if not expected:
         raise HTTPException(
             status_code=503,
-            detail="Dashboard access is not configured (set CRON_SECRET or DASHBOARD_SECRET).",
+            detail="Dashboard access is not configured (set DASHBOARD_SECRET).",
         )
     if not key or key.strip() != expected:
         raise HTTPException(status_code=401, detail="Invalid or missing key query parameter.")
