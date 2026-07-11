@@ -649,7 +649,7 @@ def render_bigquery_dashboard_page(
     .bar-fill {{ height:100%; background:var(--accent); border-radius:4px; transition:width .3s; }}
     .bar-count {{ flex:0 0 100px; font-size:.82rem; color:var(--navy); text-align:right; font-variant-numeric:tabular-nums; }}
     .bar-pct {{ color:var(--muted); font-size:.74rem; margin-left:4px; }}
-    /* Cost by Keyword: insight banner, toolbar, match badges and in-cell bars. */
+    /* Keyword Performance: insight banner, toolbar, match badges and in-cell bars. */
     .kw-insight {{ display:flex; flex-wrap:wrap; align-items:center; gap:8px 22px; padding:11px 15px; margin-bottom:14px; border:1px solid var(--line-soft); border-radius:var(--radius-sm); background:#f6f9fd; font-size:.82rem; color:var(--navy); }}
     .kw-insight[hidden] {{ display:none; }}
     .kw-insight .kw-ins {{ display:inline-flex; align-items:center; gap:8px; }}
@@ -872,8 +872,7 @@ def render_bigquery_dashboard_page(
         <div class="table-wrap"><table id="explorerTable"></table></div>
       </section>
       <section id="sec-keywords" style="display:none">
-        <div class="sec-head"><h2>Cost by Keyword</h2><span class="status" id="keywordStatus"></span></div>
-        <div class="cards" id="keywordSummaryCards" style="margin-bottom:14px"></div>
+        <div class="sec-head"><h2>Keyword Performance</h2><span class="status" id="keywordStatus"></span></div>
         <div class="kw-insight" id="keywordInsight" hidden></div>
         <div class="kw-toolbar">
           <input type="search" id="keywordSearch" class="kw-search" placeholder="Search keywords…" autocomplete="off">
@@ -2114,7 +2113,7 @@ def render_bigquery_dashboard_page(
       }}
       return out;
     }}
-    // "Cost by Keyword" — Google Ads search keywords only; the section stays
+    // "Keyword Performance" — Google Ads search keywords only; the section stays
     // hidden for clients with no keyword data. Summary cards + an insight
     // banner + a sortable/searchable table with match badges and in-cell bars,
     // all derived from the same keyword rows (no extra fetch).
@@ -2165,13 +2164,6 @@ def render_bigquery_dashboard_page(
         return mul*(x-y);
       }});
       return rows;
-    }}
-    function renderKeywordSummary() {{
-      const t=kwAllRows.reduce((a,r)=>{{a.spend+=num(r.spend);a.clicks+=num(r.clicks);a.conv+=num(r.conversions);a.val+=num(r.conversion_value);return a;}}, {{spend:0,clicks:0,conv:0,val:0}});
-      const cpa=t.conv?money(t.spend/t.conv):'—';
-      const cards=[['Spend',money(t.spend)],['Clicks',count(t.clicks)],['Conversions',count(t.conv)],['CPA',cpa],['Conv. value',money(t.val)]];
-      const el=document.getElementById('keywordSummaryCards');
-      if (el) el.innerHTML=cards.map(([l,v])=>`<div class="card"><div class="card-title">${{l}}</div><div class="card-value">${{v}}</div></div>`).join('');
     }}
     function renderKeywordInsight() {{
       const el=document.getElementById('keywordInsight');
@@ -2275,7 +2267,6 @@ def render_bigquery_dashboard_page(
       if (next) next.onclick=()=>{{ if(kwPageNum<totalPages){{ kwPageNum++; renderKeywordTable(); }} }};
     }}
     function renderKeywords() {{
-      renderKeywordSummary();
       renderKeywordInsight();
       renderKeywordTable();
     }}
@@ -3334,7 +3325,7 @@ def render_bigquery_dashboard_page(
       const row=ev.target.closest('tr[data-expandable]');
       if (row) toggleExplorerRow(row);
     }});
-    // ---- Cost by Keyword: search, match filter and column sorting ----
+    // ---- Keyword Performance: search, match filter and column sorting ----
     document.getElementById('keywordSearch').addEventListener('input',ev=>{{
       kwSearch=ev.target.value; kwPageNum=1; renderKeywordTable();
     }});
