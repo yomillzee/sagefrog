@@ -112,6 +112,10 @@ def render_gtm_page(
     .tag-table-wrap {{ overflow-x:auto; }}
     table {{ width:100%; border-collapse:collapse; font-size:.86rem; }}
     th {{ text-align:left; padding:11px 16px; font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); background:#f8fafc; border-bottom:1px solid var(--line); white-space:nowrap; }}
+    th.sortable {{ cursor:pointer; user-select:none; }}
+    th.sortable:hover {{ color:var(--accent); }}
+    th.sorted {{ color:var(--accent); }}
+    th .sort-arrow {{ font-size:.62rem; }}
     td {{ padding:12px 16px; border-bottom:1px solid #eef2f7; vertical-align:middle; }}
     td.td-top {{ vertical-align:top; }}
     tr:last-child td {{ border-bottom:0; }}
@@ -207,6 +211,20 @@ const KE_STORAGE_KEY = {repr(f"gtm_key_events_{client_slug}")};
 let allRows = [];
 let keyEventTags = loadKeyEventTags();
 let viewMode = keyEventTags.size ? 'key' : 'all';
+// Sort the table by the GA4 event column — on by default ('asc'). Click the
+// "GA4 event" header to flip direction. Non-GA4 tags (no event) always sort last.
+let eventSortDir = 'asc';
+function sortRows(rows) {{
+  if (!eventSortDir) return rows;
+  const dir = eventSortDir === 'asc' ? 1 : -1;
+  return [...rows].sort((a, b) => {{
+    const ga = a.is_ga4_event ? 0 : 1, gb = b.is_ga4_event ? 0 : 1;
+    if (ga !== gb) return ga - gb;                      // non-GA4 tags always last
+    const ka = (a.event_name || '').toLowerCase(), kb = (b.event_name || '').toLowerCase();
+    if (ka !== kb) return (ka < kb ? -1 : 1) * dir;
+    return String(a.tag_name || '').localeCompare(String(b.tag_name || ''));
+  }});
+}}
 
 function loadKeyEventTags() {{
   try {{ const s = localStorage.getItem(KE_STORAGE_KEY); return new Set(s ? JSON.parse(s) : []); }}
@@ -260,7 +278,7 @@ function renderTable(rows) {{
     + '<th>Tag</th>'
     + '<th class="col-consent"></th>'
     + '<th>Type</th>'
-    + '<th>GA4 event</th>'
+    + `<th class="col-event sortable${{eventSortDir ? ' sorted' : ''}}" data-sort="event" title="Sort by GA4 event">GA4 event${{eventSortDir === 'asc' ? ' <span class="sort-arrow">▲</span>' : eventSortDir === 'desc' ? ' <span class="sort-arrow">▼</span>' : ''}}</th>`
     + '<th>Triggers</th>'
     + '<th>Logic</th>'
     + '</tr>';
@@ -320,10 +338,19 @@ function emptyState() {{
   return `<div class="empty-state"><div class="es-title">No tags found</div>This GTM container has no tags.</div>`;
 }}
 function applyView() {{
-  const rows = currentRows();
+  const rows = sortRows(currentRows());
   document.getElementById('tableContainer').innerHTML = rows.length ? renderTable(rows) : emptyState();
   syncTabs();
 }}
+
+// Click the "GA4 event" header to flip sort direction (delegated so it survives
+// table re-renders).
+document.getElementById('tableContainer').addEventListener('click', ev => {{
+  const th = ev.target.closest('th[data-sort="event"]');
+  if (!th) return;
+  eventSortDir = eventSortDir === 'asc' ? 'desc' : 'asc';
+  applyView();
+}});
 function syncTabs() {{
   const keyCount = allRows.filter(r => r.is_ga4_event && keyEventTags.has(r.tag_name)).length;
   const kc = document.getElementById('keyCount'); if (kc) kc.textContent = keyCount;
