@@ -45,6 +45,10 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE web_users ADD CONSTRAINT web_users_role_check
       CHECK (role IN ('admin', 'client', 'standard'))
     """,
+    # Avatar headshot, stored as a small data: URI (resized client-side).
+    """
+    ALTER TABLE web_users ADD COLUMN IF NOT EXISTS avatar TEXT
+    """,
 ]
 
 
@@ -55,6 +59,7 @@ class WebUser:
     role: str
     client_slug: str | None
     is_active: bool
+    avatar: str | None = None
 
     def can_access_client(self, slug: str) -> bool:
         if not self.is_active:
@@ -101,6 +106,7 @@ def _row_to_user(row: tuple[Any, ...]) -> WebUser:
         role=str(row[2]),
         client_slug=str(row[3]) if row[3] is not None else None,
         is_active=bool(row[4]),
+        avatar=str(row[5]) if len(row) > 5 and row[5] is not None else None,
     )
 
 
@@ -112,7 +118,7 @@ def get_user_by_email(email: str) -> WebUser | None:
     with db.connection() as conn:
         row = conn.execute(
             """
-            SELECT id, email, role, client_slug, is_active
+            SELECT id, email, role, client_slug, is_active, avatar
             FROM web_users
             WHERE LOWER(email) = %s AND is_active = TRUE
             """,
@@ -137,7 +143,7 @@ def get_user_record(user_id: int) -> WebUser | None:
     with db.connection() as conn:
         row = conn.execute(
             """
-            SELECT id, email, role, client_slug, is_active
+            SELECT id, email, role, client_slug, is_active, avatar
             FROM web_users
             WHERE id = %s
             """,
@@ -175,12 +181,12 @@ def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
     with db.connection() as conn:
         if include_inactive:
             rows = conn.execute(
-                "SELECT id, email, role, client_slug, is_active, created_at "
+                "SELECT id, email, role, client_slug, is_active, created_at, avatar "
                 "FROM web_users ORDER BY role DESC, LOWER(email)"
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT id, email, role, client_slug, is_active, created_at "
+                "SELECT id, email, role, client_slug, is_active, created_at, avatar "
                 "FROM web_users WHERE is_active = TRUE ORDER BY role DESC, LOWER(email)"
             ).fetchall()
     out: list[dict[str, Any]] = []
@@ -193,9 +199,27 @@ def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
                 "client_slug": str(row[3]) if row[3] is not None else None,
                 "is_active": bool(row[4]),
                 "created_at": row[5].isoformat() if row[5] else None,
+                "avatar": str(row[6]) if row[6] is not None else None,
             }
         )
     return out
+
+
+def set_avatar(user_id: int, avatar: str | None) -> bool:
+    """Set (or clear, with None) a user's avatar data URI."""
+    if not enabled():
+        return False
+    ensure_schema()
+    with db.connection() as conn:
+        cur = conn.execute(
+            """
+            UPDATE web_users
+            SET avatar = %s, updated_at = NOW()
+            WHERE id = %s AND is_active = TRUE
+            """,
+            (avatar, user_id),
+        )
+        return cur.rowcount > 0
 
 
 def count_admins() -> int:

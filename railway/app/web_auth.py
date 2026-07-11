@@ -530,6 +530,71 @@ def _format_audit_time(iso: str | None) -> str:
         return iso[:19] if iso else "—"
 
 
+# Client-side avatar upload: resize the chosen file to a small square JPEG and
+# POST it to the per-user endpoint, then swap the avatar in place. Plain string
+# (not an f-string) — it's injected verbatim into the admin page.
+_ADMIN_AVATAR_JS = """
+function _avatarResize(file, size) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const c = document.createElement('canvas'); c.width = size; c.height = size;
+      const ctx = c.getContext('2d');
+      const s = Math.min(img.width, img.height);
+      const sx = (img.width - s) / 2, sy = (img.height - s) / 2;
+      ctx.drawImage(img, sx, sy, s, s, 0, 0, size, size);
+      resolve(c.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read image')); };
+    img.src = url;
+  });
+}
+document.querySelectorAll('.avatar-file').forEach(inp => {
+  inp.addEventListener('change', async () => {
+    const file = inp.files && inp.files[0];
+    if (!file) return;
+    const uid = inp.dataset.userId;
+    const label = inp.closest('.avatar');
+    if (label) label.classList.add('is-uploading');
+    try {
+      const dataUri = await _avatarResize(file, 160);
+      const r = await fetch('/admin/users/' + uid + '/avatar', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ avatar: dataUri }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || !body.ok) throw new Error(body.error || ('HTTP ' + r.status));
+      const holder = document.getElementById('avimg-' + uid);
+      if (holder) {
+        const img = document.createElement('img');
+        img.src = body.avatar; img.alt = ''; img.className = 'avatar-img'; img.id = 'avimg-' + uid;
+        holder.replaceWith(img);
+      }
+    } catch (err) {
+      alert('Avatar upload failed: ' + (err.message || err));
+    } finally {
+      if (label) label.classList.remove('is-uploading');
+      inp.value = '';
+    }
+  });
+});
+"""
+
+
+def _user_initials(email: str) -> str:
+    """Up to two initials from an email's local part (fallback avatar)."""
+    local = (email or "").split("@")[0]
+    for sep in (".", "-", "_", "+"):
+        local = local.replace(sep, " ")
+    parts = [p for p in local.split(" ") if p]
+    if len(parts) >= 2:
+        return (parts[0][0] + parts[1][0]).upper()
+    return (local[:2] or "?").upper()
+
+
 def render_admin_page(
     *,
     user: WebUser,
@@ -550,10 +615,32 @@ def render_admin_page(
     for u in users:
         slug = u.get("client_slug") or "—"
         uid = int(u["id"])
+        email = str(u.get("email") or "")
+        role = str(u.get("role") or "")
+        avatar = u.get("avatar")
+        av_inner = (
+            f'<img src="{_esc(str(avatar))}" alt="" class="avatar-img" id="avimg-{uid}">'
+            if avatar
+            else f'<span class="avatar-initials" id="avimg-{uid}">{_esc(_user_initials(email))}</span>'
+        )
+        avatar_cell = (
+            f'<label class="avatar" title="Upload headshot">'
+            f'<input type="file" accept="image/*" class="avatar-file" data-user-id="{uid}" hidden>'
+            f'{av_inner}'
+            f'<span class="avatar-edit" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11" '
+            f'fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
+            f'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span></label>'
+        )
+        role_badge = f'<span class="role-badge role-{_esc(role)}">{_esc(role)}</span>'
+        status_badge = (
+            '<span class="pill pill-on">Active</span>'
+            if u.get("is_active")
+            else '<span class="pill pill-off">Inactive</span>'
+        )
         reset_html = f"""
-        <details class="dash-delete-fold">
+        <details class="row-fold">
           <summary class="link">Reset password…</summary>
-          <form method="post" action="/admin/users/{uid}/reset-password" class="dash-delete-form"
+          <form method="post" action="/admin/users/{uid}/reset-password" class="row-fold-form"
             onsubmit="return confirm('Reset this user\'s password?');">
             <input type="password" name="new_password" placeholder="New password (min 10 chars)"
               minlength="10" required autocomplete="new-password">
@@ -565,13 +652,13 @@ def render_admin_page(
         if uid != user.id:
             raw_slug = _esc(u.get("client_slug") or "")
             role_opts = "".join(
-                f'<option value="{r}"{" selected" if u.get("role") == r else ""}>{r}</option>'
+                f'<option value="{r}"{" selected" if role == r else ""}>{r}</option>'
                 for r in ("admin", "client", "standard")
             )
             role_html = f"""
-        <details class="dash-delete-fold">
+        <details class="row-fold">
           <summary class="link">Change role…</summary>
-          <form method="post" action="/admin/users/{uid}/role" class="dash-delete-form">
+          <form method="post" action="/admin/users/{uid}/role" class="row-fold-form">
             <select name="role" aria-label="Role">{role_opts}</select>
             <input type="text" name="client_slug" placeholder="client slug (client role only)"
               value="{raw_slug}" autocomplete="off">
@@ -579,18 +666,22 @@ def render_admin_page(
           </form>
         </details>"""
             deactivate_html = (
-                f'<form method="post" action="/admin/users/{uid}/deactivate" '
+                f'<form method="post" action="/admin/users/{uid}/deactivate" class="inline-form" '
                 f'onsubmit="return confirm(\'Deactivate this user?\');">'
                 f'<button type="submit" class="link danger">Deactivate</button></form>'
             )
-        actions = reset_html + role_html + deactivate_html
+        actions = f'<div class="row-actions">{reset_html}{role_html}{deactivate_html}</div>'
         rows.append(
-            f"<tr><td>{_esc(u['email'])}</td><td>{_esc(u['role'])}</td>"
-            f"<td>{_esc(str(slug))}</td>"
-            f"<td>{'yes' if u.get('is_active') else 'no'}</td>"
-            f"<td>{actions}</td></tr>"
+            f'<tr>'
+            f'<td class="col-av">{avatar_cell}</td>'
+            f'<td class="col-user">{_esc(email)}</td>'
+            f'<td>{role_badge}</td>'
+            f'<td class="mono">{_esc(str(slug))}</td>'
+            f'<td>{status_badge}</td>'
+            f'<td class="col-actions">{actions}</td>'
+            f'</tr>'
         )
-    user_rows = "\n".join(rows) or '<tr><td colspan="5" class="muted">No users yet.</td></tr>'
+    user_rows = "\n".join(rows) or '<tr><td colspan="6" class="muted">No users yet.</td></tr>'
 
     audit_rows = []
     for ev in audit_events or []:
@@ -844,6 +935,51 @@ def render_admin_page(
     .dash-delete-fold summary::-webkit-details-marker {{ display: none; }}
     .dash-delete-form {{ margin-top: 8px; padding: 10px; background: #fafbfc; border-radius: 8px; border: 1px solid var(--border); }}
     .dash-delete-form input {{ max-width: 100%; margin-bottom: 8px; }}
+    /* ---- Users table (modern) ---- */
+    .user-table-wrap {{ overflow-x: auto; }}
+    .user-table {{ font-size: .92rem; }}
+    .user-table td {{ vertical-align: middle; }}
+    .user-table td.col-user {{ font-weight: 600; color: var(--navy); }}
+    .col-av {{ width: 52px; }}
+    .avatar {{ position: relative; display: inline-flex; width: 40px; height: 40px; cursor: pointer; flex-shrink: 0; }}
+    .avatar-img, .avatar-initials {{ width: 40px; height: 40px; border-radius: 50%; object-fit: cover; display: grid; place-items: center; }}
+    .avatar-initials {{ background: linear-gradient(135deg, #dbe7f7, #eef4fb); color: #35507a; font-weight: 800; font-size: .82rem; letter-spacing: .02em; border: 1px solid var(--border); }}
+    .avatar-img {{ border: 1px solid var(--border); background: #f0f3f8; }}
+    .avatar-edit {{ position: absolute; right: -2px; bottom: -2px; width: 17px; height: 17px; border-radius: 50%;
+      background: var(--accent); color: #fff; display: grid; place-items: center; box-shadow: 0 1px 3px rgba(5,18,31,.35);
+      opacity: 0; transition: opacity .12s; }}
+    .avatar:hover .avatar-edit {{ opacity: 1; }}
+    .avatar.is-uploading {{ opacity: .5; pointer-events: none; }}
+    .role-badge {{ display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: .74rem; font-weight: 700;
+      text-transform: capitalize; }}
+    .role-admin {{ background: #eef2ff; color: #4338ca; }}
+    .role-client {{ background: #ecfdf3; color: #15803d; }}
+    .role-standard {{ background: #fff7ed; color: #b45309; }}
+    .pill {{ display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: .74rem; font-weight: 700; }}
+    .pill-on {{ background: #e8f5e9; color: #1b5e20; }}
+    .pill-off {{ background: #f1f5f9; color: #64748b; }}
+    .row-actions {{ display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: flex-end; }}
+    .row-fold {{ margin: 0; font-size: .86rem; }}
+    .row-fold summary {{ cursor: pointer; list-style: none; color: var(--accent); font-weight: 600; }}
+    .row-fold summary::-webkit-details-marker {{ display: none; }}
+    .row-fold-form {{ margin-top: 8px; padding: 10px; background: #fafbfc; border-radius: 8px; border: 1px solid var(--border);
+      position: absolute; z-index: 6; width: 260px; max-width: 80vw; box-shadow: 0 6px 22px rgba(16,33,67,.14); }}
+    .row-fold-form input {{ max-width: 100%; margin-bottom: 8px; }}
+    .col-actions {{ text-align: right; }}
+    td.col-actions {{ position: relative; }}
+    /* ---- Advanced fold ---- */
+    .advanced-fold {{ background: #fff; border: 1px solid var(--line); border-radius: 16px; margin-bottom: 18px;
+      box-shadow: 0 6px 22px rgba(10,37,64,.06); overflow: hidden; }}
+    .advanced-summary {{ list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between;
+      gap: 14px; padding: 20px 24px; }}
+    .advanced-summary::-webkit-details-marker {{ display: none; }}
+    .advanced-title {{ display: block; font-size: 1.05rem; font-weight: 750; color: var(--navy); }}
+    .advanced-sub {{ display: block; font-size: .82rem; color: var(--muted); margin-top: 2px; }}
+    .advanced-caret {{ color: var(--muted); transition: transform .18s; flex-shrink: 0; }}
+    .advanced-fold[open] .advanced-caret {{ transform: rotate(180deg); }}
+    .advanced-summary:hover .advanced-title {{ color: var(--accent); }}
+    .advanced-body {{ padding: 0 20px 8px; }}
+    .advanced-body > section, .advanced-body > .admin-oauth-section {{ box-shadow: none; }}
   </style>
 </head>
 <body>
@@ -867,8 +1003,6 @@ def render_admin_page(
   <main>
     {notice}
     {dashboard_manage_html}
-    {oauth_section_html}
-    {credentials_section_html}
     <section>
       <h2>Create user</h2>
       <form method="post" action="/admin/users">
@@ -903,22 +1037,39 @@ def render_admin_page(
     </section>
     <section>
       <h2>Users</h2>
-      <table>
-        <thead><tr><th>Email</th><th>Role</th><th>Client</th><th>Active</th><th></th></tr></thead>
+      <div class="user-table-wrap">
+      <table class="user-table">
+        <thead><tr><th class="col-av"></th><th>User</th><th>Role</th><th>Client</th><th>Status</th><th></th></tr></thead>
         <tbody>{user_rows}</tbody>
       </table>
-    </section>
-    <section>
-      <h2>Audit log</h2>
-      <p class="muted" style="margin:0 0 12px;font-size:.9rem">Sign-ins, sign-outs, and admin user changes (latest 150).</p>
-      <div class="audit-wrap">
-        <table>
-          <thead><tr><th>When</th><th>Event</th><th>Actor</th><th>Details</th><th class="mono">IP</th></tr></thead>
-          <tbody>{audit_table}</tbody>
-        </table>
       </div>
     </section>
+
+    <details class="advanced-fold">
+      <summary class="advanced-summary">
+        <span class="advanced-head">
+          <span class="advanced-title">Advanced settings</span>
+          <span class="advanced-sub">Platform connections, GCP service credentials, and the audit log</span>
+        </span>
+        <span class="advanced-caret" aria-hidden="true">&#9662;</span>
+      </summary>
+      <div class="advanced-body">
+        {oauth_section_html}
+        {credentials_section_html}
+        <section>
+          <h2>Audit log</h2>
+          <p class="muted" style="margin:0 0 12px;font-size:.9rem">Sign-ins, sign-outs, and admin user changes (latest 150).</p>
+          <div class="audit-wrap">
+            <table>
+              <thead><tr><th>When</th><th>Event</th><th>Actor</th><th>Details</th><th class="mono">IP</th></tr></thead>
+              <tbody>{audit_table}</tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </details>
   </main>
   <script>{dash_delete_js}</script>
+  <script>{_ADMIN_AVATAR_JS}</script>
 </body>
 </html>"""

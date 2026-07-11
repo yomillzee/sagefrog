@@ -1915,6 +1915,48 @@ def admin_reset_password(
     return RedirectResponse(url="/admin?err=Password+reset+failed", status_code=303)
 
 
+# Cap the stored data URI. Avatars are resized client-side to ~160px, so a real
+# headshot lands well under this; the cap just stops an oversized paste from
+# bloating the row.
+_AVATAR_MAX_CHARS = 400_000
+
+
+@app.post("/admin/users/{user_id}/avatar", include_in_schema=False)
+def admin_set_user_avatar(
+    user_id: int,
+    request: Request,
+    avatar: str = Form(""),
+    admin: web_users.WebUser = Depends(web_auth.require_admin),
+) -> JSONResponse:
+    """Set (or clear) a user's avatar. Expects a resized ``data:image/...`` URI."""
+    target = web_users.get_user_record(user_id)
+    if not target:
+        return JSONResponse({"ok": False, "error": "User not found."}, status_code=404)
+    value = (avatar or "").strip()
+    if value:
+        if not value.startswith("data:image/"):
+            return JSONResponse(
+                {"ok": False, "error": "Avatar must be an image."}, status_code=400
+            )
+        if len(value) > _AVATAR_MAX_CHARS:
+            return JSONResponse(
+                {"ok": False, "error": "Image is too large — try a smaller crop."},
+                status_code=413,
+            )
+    stored = value or None
+    if not web_users.set_avatar(user_id, stored):
+        return JSONResponse({"ok": False, "error": "Save failed."}, status_code=400)
+    audit_log.record(
+        action="user.avatar_updated",
+        actor_user_id=admin.id,
+        actor_email=admin.email,
+        subject_email=target.email,
+        detail={"cleared": stored is None},
+        **audit_log.request_context(request),
+    )
+    return JSONResponse({"ok": True, "avatar": stored})
+
+
 @app.post("/admin/users/{user_id}/role", include_in_schema=False)
 def admin_set_user_role(
     user_id: int,
