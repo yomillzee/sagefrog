@@ -625,7 +625,10 @@ def render_bigquery_dashboard_page(
     .empty {{ color:var(--muted); padding:26px; text-align:center; }}
     code {{ background:#eef4fb; padding:2px 5px; border-radius:4px; font-size:.85em; }}
     .muted {{ color:var(--muted); font-size:.78rem; margin-left:6px; }}
-    .page-path {{ font-weight:600; color:#1f2d40; word-break:break-all; }}
+    /* Cap the path label so a long URL can't balloon the column and shove the
+       metric columns off the horizontal scroller (worst on mobile). Truncates
+       with an ellipsis; the full path stays available via the title tooltip. */
+    .page-path {{ display:inline-block; max-width:min(52vw,460px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; font-weight:600; color:#1f2d40; }}
     table.compact {{ min-width:0; font-size:.84rem; }}
     table.compact th, table.compact td {{ padding:8px 12px; }}
     /* ---- Pager ---- */
@@ -2342,7 +2345,7 @@ def render_bigquery_dashboard_page(
       const startIdx=(pagesPageNum-1)*PAGES_PER_PAGE;
       const pageRows=base.slice(startIdx,startIdx+PAGES_PER_PAGE);
       el.innerHTML=`<thead><tr><th class="left">Page</th><th>Views</th><th>Users</th><th>Key events</th><th>Avg engt</th></tr></thead>`+
-        `<tbody>${{pageRows.map(p=>{{const sub=p.page_group?` <span class="muted">${{esc(p.page_group)}}</span>`:'';const engt=p.users?p.engagement_seconds/p.users:0;return`<tr><td class="left"><span class="page-path">${{esc(p.page_path)}}</span>${{sub}}</td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;}}). join('')}}</tbody>`;
+        `<tbody>${{pageRows.map(p=>{{const sub=p.page_group?` <span class="muted">${{esc(p.page_group)}}</span>`:'';const engt=p.users?p.engagement_seconds/p.users:0;return`<tr><td class="left"><span class="page-path" title="${{esc(p.page_path)}}">${{esc(p.page_path)}}</span>${{sub}}</td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;}}). join('')}}</tbody>`;
       const tag=pagesSearchQuery?' (filtered)':'';
       setStatus('pagesStatus', `${{startIdx+1}}–${{startIdx+pageRows.length}} of ${{base.length}}${{tag}}`);
       renderPagesPager(totalPages);
@@ -2555,7 +2558,7 @@ def render_bigquery_dashboard_page(
           const mId=cId+'m'+(mi++), pages=[...cm.pages.values()].sort((a,b)=>b.sessions-a.sessions).slice(0,PAGES_TOP_LIMIT);
           body+=`<tr class="tree-row lvl-group" data-id="${{mId}}" data-parent="${{cId}}" data-expandable="1" hidden><td class="left"><span class="indent1"></span><span class="caret"></span><span class="tree-name">${{esc(cm.campaign)}}</span> <span class="muted">(${{cm.pages.size}} page${{cm.pages.size===1?'':'s'}})</span></td>${{cells(cm)}}</tr>`;
           for (const p of pages) {{
-            body+=`<tr class="tree-row lvl-ad" data-parent="${{mId}}" hidden><td class="left"><span class="indent2"></span><span class="page-path">${{esc(p.page_path)}}</span></td>${{cells(p)}}</tr>`;
+            body+=`<tr class="tree-row lvl-ad" data-parent="${{mId}}" hidden><td class="left"><span class="indent2"></span><span class="page-path" title="${{esc(p.page_path)}}">${{esc(p.page_path)}}</span></td>${{cells(p)}}</tr>`;
           }}
         }}
       }}
@@ -2874,7 +2877,7 @@ def render_bigquery_dashboard_page(
       if (landingPageNum>totalPages) landingPageNum=totalPages;
       const startIdx=(landingPageNum-1)*LANDING_PER_PAGE, rows=base.slice(startIdx,startIdx+LANDING_PER_PAGE);
       el.innerHTML=`<thead><tr><th class="left">Landing page</th><th>Sessions</th><th>Users</th><th>New users</th><th>Key events</th><th>KE rate</th><th>Avg engt</th></tr></thead>`+
-        `<tbody>${{rows.map(r=>`<tr><td class="left"><span class="page-path">${{esc(r.page_path)}}</span></td><td>${{count(r.sessions)}}</td><td>${{count(r.users)}}</td><td>${{count(r.new_users)}}</td><td>${{count(r.key_events)}}</td><td>${{r.key_event_rate!=null?r.key_event_rate+'%':'—'}}</td><td>${{fmtDuration(r.avg_engagement_seconds)}}</td></tr>`).join('')}}</tbody>`;
+        `<tbody>${{rows.map(r=>`<tr><td class="left"><span class="page-path" title="${{esc(r.page_path)}}">${{esc(r.page_path)}}</span></td><td>${{count(r.sessions)}}</td><td>${{count(r.users)}}</td><td>${{count(r.new_users)}}</td><td>${{count(r.key_events)}}</td><td>${{r.key_event_rate!=null?r.key_event_rate+'%':'—'}}</td><td>${{fmtDuration(r.avg_engagement_seconds)}}</td></tr>`).join('')}}</tbody>`;
       setStatus('landingStatus',`${{startIdx+1}}–${{startIdx+rows.length}} of ${{base.length}}`+(landingSearchQuery?' (filtered)':''));
       const pager=document.getElementById('landingPager');
       if (totalPages<=1) {{ pager.innerHTML=''; return; }}
