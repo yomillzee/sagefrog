@@ -674,8 +674,14 @@ def render_sidebar(
     )
 
     return f"""
-    <button type="button" class="dash-sidebar-toggle" id="sidebarToggle"
-      aria-label="Open navigation" aria-expanded="false" aria-controls="dashSidebar">{_NAV_ICON_MENU}</button>
+    <div class="dash-mobile-bar">
+      <button type="button" class="dash-sidebar-toggle" id="sidebarToggle"
+        aria-label="Open navigation" aria-expanded="false" aria-controls="dashSidebar">{_NAV_ICON_MENU}</button>
+      <a href="{_esc(overview_url)}" class="dash-mobile-brand" aria-label="Sagefrog home">
+        <img src="/static/apple-touch-icon.png" alt="" width="30" height="30">
+        <span>Sagefrog</span>
+      </a>
+    </div>
     <div class="dash-sidebar-backdrop" id="sidebarBackdrop" hidden></div>
     <aside class="dash-sidebar" id="dashSidebar" aria-label="Primary navigation" style="{sidebar_style}">
       <div class="dash-sidebar-head">
@@ -1271,48 +1277,82 @@ SIDEBAR_CSS = """
     .dash-sidebar-account-sep { color: #64768f; }
     .dash-sidebar-logout-form { display: inline; margin: 0; }
 
-    /* Mobile hamburger + backdrop (hidden on desktop) */
+    /* Mobile top bar: hamburger + brand (the bar is hidden on desktop, so the
+       toggle inside it is too). Replaces the old lone floating hamburger. */
+    .dash-mobile-bar { display: none; }
+    .dash-mobile-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      color: var(--navy);
+      font-weight: 750;
+      font-size: 1.02rem;
+      letter-spacing: -0.01em;
+    }
+    .dash-mobile-brand img { border-radius: 7px; }
     .dash-sidebar-toggle {
-      display: none;
-      position: fixed;
-      top: 12px;
-      left: 12px;
-      z-index: 95;
-      width: 42px;
-      height: 42px;
+      display: inline-flex;
       align-items: center;
       justify-content: center;
+      width: 40px;
+      height: 40px;
+      flex-shrink: 0;
       border-radius: 10px;
       border: 1px solid var(--border);
       background: #fff;
       color: var(--navy);
       cursor: pointer;
-      box-shadow: var(--shadow-sm);
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
     }
     .dash-sidebar-toggle svg { width: 20px; height: 20px; }
+    .app-shell.sidebar-open .dash-sidebar-toggle {
+      background: #f0f6ff;
+      border-color: #93c5fd;
+      color: var(--accent, #1d6fd0);
+    }
     .dash-sidebar-backdrop { display: none; }
 
     @media (max-width: 900px) {
-      .dash-sidebar {
+      .dash-mobile-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
         position: fixed;
         top: 0;
         left: 0;
-        height: 100vh;
+        right: 0;
+        height: 52px;
+        padding: 0 12px;
+        background: #fff;
+        border-bottom: 1px solid var(--border);
+        z-index: 95;
+        box-shadow: 0 1px 3px rgba(10, 37, 64, 0.06);
+      }
+      .dash-sidebar {
+        position: fixed;
+        top: 52px;
+        left: 0;
+        height: calc(100vh - 52px);
         width: 264px;
         transform: translateX(-100%);
         transition: transform 0.25s ease;
         box-shadow: 4px 0 24px rgba(0, 0, 0, 0.28);
       }
+      /* The brand lives in the top bar now, so drop the drawer's own logo head. */
+      .dash-sidebar-head { display: none; }
       .app-shell.sidebar-open .dash-sidebar { transform: translateX(0); }
       .app-shell.sidebar-open .dash-sidebar-backdrop {
         display: block;
         position: fixed;
-        inset: 0;
+        top: 52px;
+        left: 0;
+        right: 0;
+        bottom: 0;
         z-index: 88;
         background: rgba(8, 18, 33, 0.5);
       }
-      .dash-sidebar-toggle { display: inline-flex; }
-      .dash-main { padding-top: 60px; }
+      .dash-main { padding-top: 52px; }
     }
 """
 

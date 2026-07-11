@@ -782,7 +782,8 @@ def render_bigquery_dashboard_page(
     .state-tile-label {{ font-size:8px; font-weight:700; fill:#5a6b82; pointer-events:none; }}
     .state-map-scale {{ display:flex; align-items:center; gap:8px; margin-top:10px; font-size:.72rem; color:var(--muted); }}
     .state-map-scale-bar {{ flex:1 1 auto; height:8px; border-radius:4px; background:linear-gradient(90deg,#eaf1fb,#1d6fd0); }}
-    @media (max-width:900px) {{ .cards {{ grid-template-columns:repeat(2,minmax(120px,1fr)); }} .two-col,.three-col {{ grid-template-columns:1fr; }} }}
+    /* Sticky date bar clears the fixed 52px mobile top bar (see SIDEBAR_CSS). */
+    @media (max-width:900px) {{ .cards {{ grid-template-columns:repeat(2,minmax(120px,1fr)); }} .two-col,.three-col {{ grid-template-columns:1fr; }} .date-bar {{ top:52px; }} }}
     /* ---- Skeleton loaders ---- */
     @keyframes shimmer {{ 0%{{background-position:-200% 0}} 100%{{background-position:200% 0}} }}
     .skel {{ display:block; background:linear-gradient(90deg,#eef2f7 25%,#e4eaf2 50%,#eef2f7 75%); background-size:200% 100%; animation:shimmer 1.4s ease-in-out infinite; border-radius:5px; }}
