@@ -880,6 +880,7 @@ def render_bigquery_dashboard_page(
           <div class="chips" id="keywordMatchChips"></div>
         </div>
         <div class="table-wrap"><table id="keywordTable" class="compact"></table></div>
+        <div class="pager" id="keywordPager"></div>
       </section>
       <section id="sec-paid-sources" style="display:none">
         <div class="sec-head"><h2>Paid campaign traffic</h2><span class="status" id="paidSourceStatus"></span></div>
@@ -2121,6 +2122,7 @@ def render_bigquery_dashboard_page(
     let kwSort={{ key:'spend', dir:'desc' }};
     let kwSearch='';
     let kwMatchFilter=new Set();  // uppercased match types; empty = all
+    const KW_PER_PAGE=10; let kwPageNum=1;
     const KW_COLS=[
       {{key:'keyword_text',label:'Keyword',left:true}},
       {{key:'match_type',label:'Match',left:true}},
@@ -2218,11 +2220,18 @@ def render_bigquery_dashboard_page(
       if (!rows.length) {{
         el.innerHTML=head+`<tbody><tr><td class="empty" colspan="${{KW_COLS.length}}">No keywords match these filters.</td></tr></tbody>`;
         setStatus('keywordStatus', total?`0 of ${{total}} keyword(s)`:'No keyword data');
+        document.getElementById('keywordPager').innerHTML='';
         return;
       }}
+      // Bars scale to the whole filtered set (not just the page) so they stay
+      // comparable as you move between pages.
       const maxSpend=Math.max(...rows.map(r=>num(r.spend)), 0);
       const maxCpa=Math.max(...rows.map(r=>num(r.conversions)?num(r.spend)/num(r.conversions):0), 0);
-      const body=rows.map(r=>{{
+      const totalPages=Math.max(1, Math.ceil(rows.length/KW_PER_PAGE));
+      if (kwPageNum>totalPages) kwPageNum=totalPages;
+      const startIdx=(kwPageNum-1)*KW_PER_PAGE;
+      const pageRows=rows.slice(startIdx, startIdx+KW_PER_PAGE);
+      const body=pageRows.map(r=>{{
         const clk=num(r.clicks), conv=num(r.conversions), spend=num(r.spend);
         const spendCell=`<div class="cell-bar"><span class="cell-bar-val">${{money(spend)}}</span>${{pctBar(maxSpend?spend/maxSpend*100:0)}}</div>`;
         const ctr=r.ctr==null?'—':num(r.ctr).toFixed(2)+'%';
@@ -2250,7 +2259,20 @@ def render_bigquery_dashboard_page(
       }}).join('');
       el.innerHTML=head+`<tbody>${{body}}</tbody>`;
       const filtered=rows.length!==total;
-      setStatus('keywordStatus', filtered?`${{rows.length}} of ${{total}} keyword(s)`:`${{total}} keyword(s)`);
+      const suffix=filtered?` (of ${{total}})`:'';
+      const status=totalPages>1
+        ? `${{startIdx+1}}–${{startIdx+pageRows.length}} of ${{rows.length}} keyword(s)${{suffix}}`
+        : `${{rows.length}} keyword(s)${{suffix}}`;
+      setStatus('keywordStatus', status);
+      renderKeywordPager(totalPages);
+    }}
+    function renderKeywordPager(totalPages) {{
+      const pager=document.getElementById('keywordPager');
+      if (totalPages<=1) {{ pager.innerHTML=''; return; }}
+      pager.innerHTML=`<button type="button" class="pager-btn" id="kwPrev"${{kwPageNum<=1?' disabled':''}}>‹ Prev</button><span class="pager-info">Page ${{kwPageNum}} of ${{totalPages}}</span><button type="button" class="pager-btn" id="kwNext"${{kwPageNum>=totalPages?' disabled':''}}>Next ›</button>`;
+      const prev=document.getElementById('kwPrev'), next=document.getElementById('kwNext');
+      if (prev) prev.onclick=()=>{{ if(kwPageNum>1){{ kwPageNum--; renderKeywordTable(); }} }};
+      if (next) next.onclick=()=>{{ if(kwPageNum<totalPages){{ kwPageNum++; renderKeywordTable(); }} }};
     }}
     function renderKeywords() {{
       renderKeywordSummary();
@@ -2274,6 +2296,7 @@ def render_bigquery_dashboard_page(
       const kwSec=document.getElementById('sec-keywords');
       if (kwAllRows.length) {{
         kwSec.style.display='';
+        kwPageNum=1;
         buildKeywordControls();
         renderKeywords();
       }} else {{
@@ -3313,21 +3336,21 @@ def render_bigquery_dashboard_page(
     }});
     // ---- Cost by Keyword: search, match filter and column sorting ----
     document.getElementById('keywordSearch').addEventListener('input',ev=>{{
-      kwSearch=ev.target.value; renderKeywordTable();
+      kwSearch=ev.target.value; kwPageNum=1; renderKeywordTable();
     }});
     document.getElementById('keywordMatchChips').addEventListener('click',ev=>{{
       const btn=ev.target.closest('.chip'); if (!btn) return;
       const m=btn.dataset.match;
       if (m==='All') kwMatchFilter.clear();
       else kwMatchFilter.has(m) ? kwMatchFilter.delete(m) : kwMatchFilter.add(m);
-      syncKeywordChips(); renderKeywordTable();
+      kwPageNum=1; syncKeywordChips(); renderKeywordTable();
     }});
     document.getElementById('keywordTable').addEventListener('click',ev=>{{
       const th=ev.target.closest('th.expl-sort'); if (!th) return;
       const key=th.dataset.key;
       if (kwSort.key===key) kwSort.dir = kwSort.dir==='asc'?'desc':'asc';
       else kwSort = {{ key, dir: (key==='keyword_text'||key==='match_type')?'asc':'desc' }};
-      renderKeywordTable();
+      kwPageNum=1; renderKeywordTable();
     }});
     // ---- Creative preview modal (click a thumbnail to see it full size) ----
     function openCreativePreview(imageUrl, videoUrl) {{
