@@ -22,7 +22,7 @@ def render_hq_budget_page(*, user_email: str) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Budget HQ · Sagefrog Marketing Group</title>
+  <title>HQ · Sagefrog Marketing Group</title>
   <link rel="icon" type="image/png" href="/static/favicon.png">
   <style>
     :root {{
@@ -37,9 +37,9 @@ def render_hq_budget_page(*, user_email: str) -> str:
       gap:16px; flex-wrap:wrap; background:linear-gradient(120deg,#0a2540 0%,#0d2f57 100%);
       box-shadow:0 2px 14px rgba(5,18,31,.28); }}
     .brand-head {{ display:flex; align-items:center; gap:12px; }}
-    .brand-mark {{ width:40px; height:40px; border-radius:11px; display:grid; place-items:center;
-      background:linear-gradient(135deg,var(--green),#0a2540); box-shadow:0 6px 16px rgba(5,18,31,.4); flex-shrink:0; }}
-    .brand-mark svg {{ width:22px; height:22px; }}
+    .brand-mark {{ width:40px; height:40px; border-radius:11px; display:grid; place-items:center; overflow:hidden;
+      background:#fff; box-shadow:0 6px 16px rgba(5,18,31,.4); flex-shrink:0; }}
+    .brand-mark img {{ width:100%; height:100%; object-fit:cover; }}
     header h1 {{ margin:0; font-size:1.05rem; letter-spacing:.2px; }}
     header .who {{ font-size:.82rem; opacity:.7; }}
     header a, header button.link {{ color:#fff; text-decoration:none; background:none; border:0;
@@ -101,13 +101,10 @@ def render_hq_budget_page(*, user_email: str) -> str:
   <header>
     <div class="brand-head">
       <div class="brand-mark">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/>
-          <path d="M2 21c0-3 1.85-5.36 5.08-6"/>
-        </svg>
+        <img src="/static/apple-touch-icon.png" alt="Sagefrog" width="40" height="40">
       </div>
       <div>
-        <h1>Sagefrog Marketing Group · Budget HQ</h1>
+        <h1>Sagefrog Marketing Group · HQ</h1>
         <span class="who">Signed in as {_esc(user_email)}</span>
       </div>
     </div>
