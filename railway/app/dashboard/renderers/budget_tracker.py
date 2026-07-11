@@ -51,6 +51,14 @@ def css() -> str:
     .budget-goal-prefix { position:absolute; left:9px; color:var(--muted); font-size:.85rem; pointer-events:none; }
     .budget-goal-input input { width:130px; padding:6px 10px 6px 18px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--navy); font:inherit; font-size:.86rem; text-transform:none; letter-spacing:0; }
     .budget-goal-save { cursor:pointer; }
+    /* Loading skeletons (self-contained: the settings host has no global .skel) */
+    @keyframes budgetShimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+    .budget-skel { display:block; height:9px; border-radius:5px;
+      background:linear-gradient(90deg,#eef2f7 25%,#e4eaf2 50%,#eef2f7 75%); background-size:200% 100%;
+      animation:budgetShimmer 1.4s ease-in-out infinite; }
+    #sec-budget .chart-canvas-host.is-loading { border-radius:8px;
+      background:linear-gradient(90deg,#eef2f7 25%,#e4eaf2 50%,#eef2f7 75%); background-size:200% 100%;
+      animation:budgetShimmer 1.4s ease-in-out infinite; }
     """
 
 
@@ -126,9 +134,18 @@ _JS_BODY = r"""
     const inp=document.getElementById('budgetGoalInput');
     if (inp && !inp.matches(':focus')) inp.value = monthlyBudget>0 ? monthlyBudget : '';
   }
+  function showBudgetSkeleton(){
+    const stats=document.getElementById('budgetStats');
+    if (stats) stats.innerHTML = Array.from({length:3},()=>
+      '<div class="budget-stat"><span class="budget-skel" style="width:58%"></span>'
+      + '<span class="budget-skel" style="height:18px;width:74%;margin-top:7px"></span></div>').join('');
+    const host=document.getElementById('budgetChart');
+    if (host && host.parentElement) host.parentElement.classList.add('is-loading');
+  }
   async function loadBudget(){
     syncGoalInput();
     setStatus('budgetStatus','Loading…');
+    showBudgetSkeleton();
     const win=budgetWindow();
     const startStr=fmtDate(win.start), lastStr=fmtDate(win.lastData);
     let daily=[];
@@ -137,6 +154,8 @@ _JS_BODY = r"""
     renderBudget(daily,win);
   }
   function renderBudget(daily,win){
+    const _ch=document.getElementById('budgetChart');
+    if (_ch && _ch.parentElement) _ch.parentElement.classList.remove('is-loading');
     const axis=dayRange(win.start,win.axisEnd);
     const lastStr=fmtDate(win.lastData);
     const spend={}; PLATFORMS.forEach(p=>spend[p.key]={});

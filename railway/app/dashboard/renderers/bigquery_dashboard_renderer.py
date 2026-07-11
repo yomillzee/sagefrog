@@ -1711,6 +1711,10 @@ def render_bigquery_dashboard_page(
     }}
     async function renderGscKeywordTables() {{
       const reqId = ++_gscKwReqId;
+      // Skeleton only the tables that will actually resolve to data, so we
+      // never flash a skeleton in front of a "nothing configured" empty state.
+      if (gscBrandedRoots.length) document.getElementById('gscBrandedTable').innerHTML = skelTable(4,4);
+      if (gscTargetKeywords.length) document.getElementById('gscTargetTable').innerHTML = skelTable(4,4);
       const [branded, target] = await Promise.all([
         fetchKeywordMatches(gscBrandedRoots),
         fetchKeywordMatches(gscTargetKeywords),
@@ -2272,6 +2276,7 @@ def render_bigquery_dashboard_page(
     }}
     async function loadExplorer() {{
       setStatus('explorerStatus','Loading…');
+      document.getElementById('explorerSummaryCards').innerHTML = skelCards(5);
       document.getElementById('explorerTable').innerHTML = skelTable(6,8);
       const [g,l,m,kw]=await Promise.all([
         getJson(withDates(EXPLORER_API)).catch(()=>({{rows:[]}})),
