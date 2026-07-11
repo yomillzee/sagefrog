@@ -649,6 +649,29 @@ def render_bigquery_dashboard_page(
     .bar-fill {{ height:100%; background:var(--accent); border-radius:4px; transition:width .3s; }}
     .bar-count {{ flex:0 0 100px; font-size:.82rem; color:var(--navy); text-align:right; font-variant-numeric:tabular-nums; }}
     .bar-pct {{ color:var(--muted); font-size:.74rem; margin-left:4px; }}
+    /* Cost by Keyword: insight banner, toolbar, match badges and in-cell bars. */
+    .kw-insight {{ display:flex; flex-wrap:wrap; align-items:center; gap:8px 22px; padding:11px 15px; margin-bottom:14px; border:1px solid var(--line-soft); border-radius:var(--radius-sm); background:#f6f9fd; font-size:.82rem; color:var(--navy); }}
+    .kw-insight[hidden] {{ display:none; }}
+    .kw-insight .kw-ins {{ display:inline-flex; align-items:center; gap:8px; }}
+    .kw-insight strong {{ font-weight:800; }}
+    .kw-ins-icon {{ flex:0 0 auto; width:15px; height:15px; }}
+    .kw-ins.kw-ins-warn {{ color:#8a5a00; }}
+    .kw-toolbar {{ display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin-bottom:14px; }}
+    .kw-search {{ border:1px solid var(--line); border-radius:var(--radius-sm); padding:7px 12px; font:inherit; font-size:.84rem; color:#102033; min-width:230px; background:#fff; }}
+    .kw-search:focus {{ outline:none; border-color:var(--accent); }}
+    .kw-search::placeholder {{ color:#9aa7bd; }}
+    .kw-name {{ font-weight:650; color:var(--navy); }}
+    .kw-sub {{ color:var(--muted); font-size:.73rem; margin-top:1px; }}
+    .badge-match {{ display:inline-block; padding:2px 9px; border-radius:999px; font-size:.66rem; font-weight:800; letter-spacing:.02em; white-space:nowrap; }}
+    .badge-exact {{ background:#e4f4ea; color:#0a7f3f; }}
+    .badge-phrase {{ background:#e8f0fe; color:#1a73e8; }}
+    .badge-broad {{ background:#eef2f7; color:#54637a; }}
+    .cell-bar {{ display:flex; align-items:center; justify-content:flex-end; gap:9px; }}
+    .cell-bar .bar-track {{ flex:0 0 auto; width:74px; height:6px; }}
+    .cell-bar-val {{ font-variant-numeric:tabular-nums; }}
+    .num-good {{ color:var(--ok); font-weight:650; }}
+    .num-bad {{ color:var(--bad); }}
+    .cell-flag {{ color:#d9a400; margin-left:6px; }}
     /* ---- Layout cols ---- */
     .two-col {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px; }}
     /* Grid items must be allowed to shrink below their content, or a wide table
@@ -850,6 +873,12 @@ def render_bigquery_dashboard_page(
       </section>
       <section id="sec-keywords" style="display:none">
         <div class="sec-head"><h2>Cost by Keyword</h2><span class="status" id="keywordStatus"></span></div>
+        <div class="cards" id="keywordSummaryCards" style="margin-bottom:14px"></div>
+        <div class="kw-insight" id="keywordInsight" hidden></div>
+        <div class="kw-toolbar">
+          <input type="search" id="keywordSearch" class="kw-search" placeholder="Search keywords…" autocomplete="off">
+          <div class="chips" id="keywordMatchChips"></div>
+        </div>
         <div class="table-wrap"><table id="keywordTable" class="compact"></table></div>
       </section>
       <section id="sec-paid-sources" style="display:none">
@@ -2084,21 +2113,149 @@ def render_bigquery_dashboard_page(
       }}
       return out;
     }}
-    // "Cost by Keyword" flat table below the campaign tree. Google Ads search
-    // keywords only; the section stays hidden for clients with no keyword data.
-    function renderKeywordTable(rows) {{
-      const dim=(_,r)=>`${{r.criterion_id||''}} / ${{r.ad_group_name||''}} / ${{r.keyword_text||''}}`;
-      renderTable('keywordTable', [
-        {{key:'_dim',label:'Keyword',left:true,format:dim}},
-        {{key:'ctr',label:'CTR',format:v=>v==null?'—':num(v).toFixed(2)+'%'}},
-        {{key:'spend',label:'Cost',format:money}},
-        {{key:'clicks',label:'Clicks',format:count}},
-        {{key:'conversions',label:'Conv.',format:count}},
-        {{key:'cpa',label:'CPA',format:(_,r)=>num(r.conversions)?money(num(r.spend)/num(r.conversions)):'—'}},
-        {{key:'conversion_value',label:'Conv. value',format:v=>v==null?'—':money(v)}},
-        {{key:'impressions',label:'Impr.',format:count}},
-        {{key:'avg_cpc',label:'Avg CPC',format:v=>v==null?'—':money(v)}},
-      ], rows, 'No keyword data for this range.');
+    // "Cost by Keyword" — Google Ads search keywords only; the section stays
+    // hidden for clients with no keyword data. Summary cards + an insight
+    // banner + a sortable/searchable table with match badges and in-cell bars,
+    // all derived from the same keyword rows (no extra fetch).
+    let kwAllRows=[];
+    let kwSort={{ key:'spend', dir:'desc' }};
+    let kwSearch='';
+    let kwMatchFilter=new Set();  // uppercased match types; empty = all
+    const KW_COLS=[
+      {{key:'keyword_text',label:'Keyword',left:true}},
+      {{key:'match_type',label:'Match',left:true}},
+      {{key:'spend',label:'Spend'}},
+      {{key:'impressions',label:'Impr.'}},
+      {{key:'clicks',label:'Clicks'}},
+      {{key:'ctr',label:'CTR'}},
+      {{key:'conversions',label:'Conv.'}},
+      {{key:'cvr',label:'CVR'}},
+      {{key:'cpa',label:'CPA'}},
+      {{key:'conversion_value',label:'Conv. value'}},
+    ];
+    const kwTitle=t=>t?t.charAt(0)+t.slice(1).toLowerCase():'';
+    function kwMatchBadge(mt) {{
+      const t=(mt||'').toUpperCase();
+      if (!t) return '<span class="kw-sub">—</span>';
+      const cls=t==='EXACT'?'badge-exact':t==='PHRASE'?'badge-phrase':'badge-broad';
+      return `<span class="badge-match ${{cls}}">${{esc(kwTitle(t))}}</span>`;
+    }}
+    // Values without a defined metric (e.g. CPA with no conversions) return null
+    // so the sort comparator can always sink them to the bottom.
+    function kwSortVal(r,key) {{
+      if (key==='keyword_text') return (r.keyword_text||'').toLowerCase();
+      if (key==='match_type')   return (r.match_type||'').toLowerCase();
+      if (key==='cvr')  return num(r.clicks) ? num(r.conversions)/num(r.clicks) : null;
+      if (key==='cpa')  return num(r.conversions) ? num(r.spend)/num(r.conversions) : null;
+      return num(r[key]);
+    }}
+    function kwFiltered() {{
+      let rows=kwAllRows.slice();
+      if (kwMatchFilter.size) rows=rows.filter(r=>kwMatchFilter.has((r.match_type||'').toUpperCase()));
+      const q=kwSearch.trim().toLowerCase();
+      if (q) rows=rows.filter(r=>((r.keyword_text||'')+' '+(r.ad_group_name||'')+' '+(r.campaign_name||'')).toLowerCase().includes(q));
+      const {{key,dir}}=kwSort, mul=dir==='asc'?1:-1;
+      rows.sort((a,b)=>{{
+        const x=kwSortVal(a,key), y=kwSortVal(b,key);
+        const xb=(x==null), yb=(y==null);
+        if (xb&&yb) return 0; if (xb) return 1; if (yb) return -1;
+        if (typeof x==='string') return mul*x.localeCompare(y,undefined,{{numeric:true}});
+        return mul*(x-y);
+      }});
+      return rows;
+    }}
+    function renderKeywordSummary() {{
+      const t=kwAllRows.reduce((a,r)=>{{a.spend+=num(r.spend);a.clicks+=num(r.clicks);a.conv+=num(r.conversions);a.val+=num(r.conversion_value);return a;}}, {{spend:0,clicks:0,conv:0,val:0}});
+      const cpa=t.conv?money(t.spend/t.conv):'—';
+      const cards=[['Spend',money(t.spend)],['Clicks',count(t.clicks)],['Conversions',count(t.conv)],['CPA',cpa],['Conv. value',money(t.val)]];
+      const el=document.getElementById('keywordSummaryCards');
+      if (el) el.innerHTML=cards.map(([l,v])=>`<div class="card"><div class="card-title">${{l}}</div><div class="card-value">${{v}}</div></div>`).join('');
+    }}
+    function renderKeywordInsight() {{
+      const el=document.getElementById('keywordInsight');
+      if (!el) return;
+      const items=[];
+      const bySpend=kwAllRows.slice().sort((a,b)=>num(b.spend)-num(a.spend));
+      const total=bySpend.reduce((s,r)=>s+num(r.spend),0);
+      const topN=Math.min(3, bySpend.length);
+      if (total>0 && topN) {{
+        const topSpend=bySpend.slice(0,topN).reduce((s,r)=>s+num(r.spend),0);
+        const pct=Math.round(topSpend/total*100);
+        const info='<svg class="kw-ins-icon" viewBox="0 0 24 24" fill="none" stroke="#1d6fd0" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.1" fill="#1d6fd0" stroke="none"/></svg>';
+        items.push(`<span class="kw-ins">${{info}}<span><strong>${{pct}}% of spend</strong> came from the top ${{topN}} keyword${{topN===1?'':'s'}}.</span></span>`);
+      }}
+      const wasteful=kwAllRows.filter(r=>num(r.spend)>100 && !num(r.conversions)).length;
+      if (wasteful) {{
+        const warn='<svg class="kw-ins-icon" viewBox="0 0 24 24" fill="none" stroke="#c98a00" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 1.8 20.5h20.4z"/><path d="M12 10v4"/><circle cx="12" cy="17.4" r="0.6" fill="#c98a00" stroke="none"/></svg>';
+        items.push(`<span class="kw-ins kw-ins-warn">${{warn}}<span><strong>${{wasteful}} keyword${{wasteful===1?'':'s'}}</strong> spent over $100 without a conversion.</span></span>`);
+      }}
+      el.innerHTML=items.join('');
+      el.hidden=!items.length;
+    }}
+    function buildKeywordControls() {{
+      const host=document.getElementById('keywordMatchChips');
+      if (!host) return;
+      const order=['EXACT','PHRASE','BROAD'];
+      const types=[...new Set(kwAllRows.map(r=>(r.match_type||'').toUpperCase()).filter(Boolean))]
+        .sort((a,b)=>(order.indexOf(a)<0?9:order.indexOf(a))-(order.indexOf(b)<0?9:order.indexOf(b)));
+      // A single match type isn't worth a filter row.
+      host.innerHTML = types.length<2 ? '' : ['All',...types].map(t=>
+        `<button type="button" class="chip" data-match="${{esc(t)}}">${{t==='All'?'All':esc(kwTitle(t))}}</button>`).join('');
+      syncKeywordChips();
+    }}
+    function syncKeywordChips() {{
+      document.querySelectorAll('#keywordMatchChips .chip').forEach(b=>{{
+        const m=b.dataset.match;
+        b.classList.toggle('active', m==='All' ? !kwMatchFilter.size : kwMatchFilter.has(m));
+      }});
+    }}
+    function renderKeywordTable() {{
+      const rows=kwFiltered();
+      const total=kwAllRows.length;
+      const el=document.getElementById('keywordTable');
+      const arrow=k=>kwSort.key===k?(kwSort.dir==='asc'?' ▲':' ▼'):'';
+      const head=`<thead><tr>${{KW_COLS.map(c=>`<th class="expl-sort${{c.left?' left':''}}${{kwSort.key===c.key?' active':''}}" data-key="${{c.key}}">${{esc(c.label)}}${{arrow(c.key)}}</th>`).join('')}}</tr></thead>`;
+      if (!rows.length) {{
+        el.innerHTML=head+`<tbody><tr><td class="empty" colspan="${{KW_COLS.length}}">No keywords match these filters.</td></tr></tbody>`;
+        setStatus('keywordStatus', total?`0 of ${{total}} keyword(s)`:'No keyword data');
+        return;
+      }}
+      const maxSpend=Math.max(...rows.map(r=>num(r.spend)), 0);
+      const maxCpa=Math.max(...rows.map(r=>num(r.conversions)?num(r.spend)/num(r.conversions):0), 0);
+      const body=rows.map(r=>{{
+        const clk=num(r.clicks), conv=num(r.conversions), spend=num(r.spend);
+        const spendCell=`<div class="cell-bar"><span class="cell-bar-val">${{money(spend)}}</span>${{pctBar(maxSpend?spend/maxSpend*100:0)}}</div>`;
+        const ctr=r.ctr==null?'—':num(r.ctr).toFixed(2)+'%';
+        const cvrCell=clk?`<span class="${{conv?'num-good':'num-bad'}}">${{(conv/clk*100).toFixed(2)}}%</span>`:'—';
+        let cpaCell;
+        if (conv) {{
+          const cpa=spend/conv;
+          cpaCell=`<div class="cell-bar"><span class="cell-bar-val">${{money(cpa)}}</span>${{pctBar(maxCpa?cpa/maxCpa*100:0)}}</div>`;
+        }} else {{
+          const flag=spend>0?`<span class="cell-flag" title="Spent without a conversion">&#9888;</span>`:'';
+          cpaCell=`<span class="cell-bar-val">—</span>${{flag}}`;
+        }}
+        return `<tr>`+
+          `<td class="left"><div class="kw-name">${{esc(r.keyword_text||'—')}}</div>${{r.ad_group_name?`<div class="kw-sub">${{esc(r.ad_group_name)}}</div>`:''}}</td>`+
+          `<td class="left">${{kwMatchBadge(r.match_type)}}</td>`+
+          `<td>${{spendCell}}</td>`+
+          `<td>${{count(r.impressions)}}</td>`+
+          `<td>${{count(clk)}}</td>`+
+          `<td>${{ctr}}</td>`+
+          `<td>${{count(conv)}}</td>`+
+          `<td>${{cvrCell}}</td>`+
+          `<td>${{cpaCell}}</td>`+
+          `<td>${{r.conversion_value==null?'—':money(r.conversion_value)}}</td>`+
+        `</tr>`;
+      }}).join('');
+      el.innerHTML=head+`<tbody>${{body}}</tbody>`;
+      const filtered=rows.length!==total;
+      setStatus('keywordStatus', filtered?`${{rows.length}} of ${{total}} keyword(s)`:`${{total}} keyword(s)`);
+    }}
+    function renderKeywords() {{
+      renderKeywordSummary();
+      renderKeywordInsight();
+      renderKeywordTable();
     }}
     async function loadExplorer() {{
       setStatus('explorerStatus','Loading…');
@@ -2113,12 +2270,12 @@ def render_bigquery_dashboard_page(
       renderExplorer();
       // Keyword table: only show the section when this client actually has
       // Google Ads search-keyword data (empty for LinkedIn/Meta-only clients).
-      const kwRows=(kw&&kw.rows)||[];
+      kwAllRows=(kw&&kw.rows)||[];
       const kwSec=document.getElementById('sec-keywords');
-      if (kwRows.length) {{
+      if (kwAllRows.length) {{
         kwSec.style.display='';
-        renderKeywordTable(kwRows);
-        setStatus('keywordStatus', `${{kwRows.length}} keyword(s)`);
+        buildKeywordControls();
+        renderKeywords();
       }} else {{
         kwSec.style.display='none';
       }}
@@ -3153,6 +3310,24 @@ def render_bigquery_dashboard_page(
       }}
       const row=ev.target.closest('tr[data-expandable]');
       if (row) toggleExplorerRow(row);
+    }});
+    // ---- Cost by Keyword: search, match filter and column sorting ----
+    document.getElementById('keywordSearch').addEventListener('input',ev=>{{
+      kwSearch=ev.target.value; renderKeywordTable();
+    }});
+    document.getElementById('keywordMatchChips').addEventListener('click',ev=>{{
+      const btn=ev.target.closest('.chip'); if (!btn) return;
+      const m=btn.dataset.match;
+      if (m==='All') kwMatchFilter.clear();
+      else kwMatchFilter.has(m) ? kwMatchFilter.delete(m) : kwMatchFilter.add(m);
+      syncKeywordChips(); renderKeywordTable();
+    }});
+    document.getElementById('keywordTable').addEventListener('click',ev=>{{
+      const th=ev.target.closest('th.expl-sort'); if (!th) return;
+      const key=th.dataset.key;
+      if (kwSort.key===key) kwSort.dir = kwSort.dir==='asc'?'desc':'asc';
+      else kwSort = {{ key, dir: (key==='keyword_text'||key==='match_type')?'asc':'desc' }};
+      renderKeywordTable();
     }});
     // ---- Creative preview modal (click a thumbnail to see it full size) ----
     function openCreativePreview(imageUrl, videoUrl) {{
