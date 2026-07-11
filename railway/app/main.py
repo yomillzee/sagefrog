@@ -48,6 +48,7 @@ import connector_config_store
 import oauth_flows
 import oauth_store
 import web_auth
+import web_security
 import web_users
 from models import (
     AccountsResponse,
@@ -213,14 +214,18 @@ except Exception as _boot_exc:
     print(f"WARNING: DB schema/bootstrap error at startup: {_boot_exc}", file=_sys.stderr)
 
 @app.middleware("http")
-async def _inject_view_as_banner(request: Request, call_next):
-    """Append the "Viewing as …" exit bar to HTML pages during impersonation.
+async def _inject_html_extras(request: Request, call_next):
+    """Rewrite HTML responses to add the impersonation bar and CSRF plumbing.
 
     Registered before the session middleware so, in Starlette's stack, the
     session middleware ends up outermost and request.session is populated by
     the time this runs. Doing it here (rather than in each renderer) keeps the
-    exit affordance on every page — dashboard, settings, files, connectors,
-    the dashboards picker — with no per-renderer plumbing.
+    exit affordance and CSRF token on every page — dashboard, settings, files,
+    connectors, the dashboards picker — with no per-renderer plumbing.
+
+    Seeding the CSRF token only on HTML responses confines the session cookie
+    to browser page loads; the mutation lands in request.session before the
+    outer SessionMiddleware serializes the cookie on the way out.
     """
     response = await call_next(request)
     if "text/html" not in (response.headers.get("content-type") or "").lower():
@@ -229,14 +234,23 @@ async def _inject_view_as_banner(request: Request, call_next):
         banner = web_auth.impersonation_banner_html(request)
     except Exception:
         banner = ""
-    if not banner:
+    csrf_token: str | None = None
+    if "session" in request.scope:
+        try:
+            csrf_token = web_security.ensure_csrf_token(request.session)
+        except Exception:
+            csrf_token = None
+    if not banner and not csrf_token:
         return response
     body = b"".join([chunk async for chunk in response.body_iterator])
     text = body.decode(response.charset or "utf-8")
-    if "</body>" in text:
-        text = text.replace("</body>", banner + "</body>", 1)
-    else:
-        text += banner
+    if csrf_token:
+        text = web_security.inject_csrf_html(text, csrf_token)
+    if banner:
+        if "</body>" in text:
+            text = text.replace("</body>", banner + "</body>", 1)
+        else:
+            text += banner
     headers = {
         k: v
         for k, v in response.headers.items()
@@ -248,6 +262,24 @@ async def _inject_view_as_banner(request: Request, call_next):
         headers=headers,
         media_type="text/html",
     )
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    """Attach a framework-safe set of security headers to every response."""
+    response = await call_next(request)
+    https = request.url.scheme == "https" or is_production()
+    web_security.apply_security_headers(response, https=https)
+    return response
+
+
+@app.middleware("http")
+async def _csrf_protect(request: Request, call_next):
+    """Reject cookie-authenticated state changes that lack a valid CSRF token."""
+    if web_security.requires_csrf(request):
+        if not await web_security.validate_csrf(request):
+            return Response("CSRF verification failed.", status_code=403)
+    return await call_next(request)
 
 
 if web_users.enabled():

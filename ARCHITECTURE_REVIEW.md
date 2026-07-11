@@ -546,9 +546,11 @@ If `API_KEY` is not set in the environment, `security.py:require_api_key()` retu
 
 The Fernet encryption key for stored OAuth tokens is derived from `AUTH_SESSION_SECRET`. If that secret is rotated (e.g., after a compromise), all stored OAuth tokens in `oauth_credentials` become unreadable and must be re-authorized through the OAuth flow for each platform. There is no key migration / re-encryption capability.
 
-### 4. No CSRF Protection
+### 4. No CSRF Protection — *resolved*
 
-The login form (`POST /login`), settings forms, and admin forms use standard HTML `<form>` submissions with session cookies. No CSRF token is issued or verified. Since `SameSite=Lax` is set, cross-site POST requests from top-level navigations are blocked, but non-top-level cross-origin POST attacks (e.g., from iframes) may not be. An explicit CSRF token (e.g., via `starlette-csrf`) is the safe path.
+The login form (`POST /login`), settings forms, and admin forms use standard HTML `<form>` submissions with session cookies. Previously no CSRF token was issued or verified; `SameSite=Lax` blocked cross-site top-level POSTs but not every non-top-level cross-origin case.
+
+**Resolved** in `web_security.py`: a per-session synchronizer token is seeded into the signed session cookie and enforced by the `_csrf_protect` middleware for cookie-authenticated, state-changing requests. Header-authenticated API callers (Bearer / `X-API-Key`), the cron secret, and the legacy `?key=` path are exempt. The token reaches the browser two ways — a hidden `csrf_token` field auto-injected into every server-rendered `<form method=post>`, and a `<meta name="csrf-token">` plus a small `fetch` wrapper that attaches the `X-CSRF-Token` header to same-origin AJAX writes. The same module applies a framework-safe set of response security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, a framing/base-uri/form-action CSP, `Permissions-Policy`, and HSTS on HTTPS).
 
 ### 5. Synchronous Database Access Blocks the Event Loop
 
