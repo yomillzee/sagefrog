@@ -1776,6 +1776,29 @@ def admin_home(
     )
 
 
+@app.get("/admin/hq", include_in_schema=False, response_class=HTMLResponse)
+def admin_budget_hq(request: Request):
+    """Admin-only 'Budget HQ': every client's monthly spend vs budget in one view."""
+    user = web_auth.get_current_user(request)
+    if not user:
+        return web_auth.redirect_to_login(request, next_path="/admin/hq")
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    from dashboard.renderers.hq_renderer import render_hq_budget_page
+
+    return HTMLResponse(render_hq_budget_page(user_email=user.email))
+
+
+@app.get("/admin/hq/data", include_in_schema=False)
+def admin_budget_hq_data(
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+) -> dict:
+    """JSON feed for the Budget HQ page: MTD spend + pacing for every client."""
+    from dashboard.services.hq_budget_service import build_hq_budget_overview
+
+    return build_hq_budget_overview()
+
+
 @app.post("/admin/gcp-credentials", include_in_schema=False)
 async def admin_set_gcp_credentials(
     request: Request,

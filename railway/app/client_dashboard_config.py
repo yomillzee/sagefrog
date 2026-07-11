@@ -479,6 +479,38 @@ def list_config_labels() -> dict[str, str]:
     return {str(row[0]): str(row[1]) for row in rows if row[1]}
 
 
+def list_budget_overview() -> list[dict[str, Any]]:
+    """All clients with the fields the HQ budget page needs, ordered by label.
+
+    Just the columns budget pacing cares about (slug, label, budget, and the
+    BigQuery mart location) so the HQ view can loop clients without loading a
+    full ClientConfigRow each. Rows keep their raw values; the caller decides
+    which are spend-computable (those with a gcp_project_id)."""
+    if not enabled():
+        return []
+    ensure_schema()
+    with db.connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT client_slug, label, monthly_budget_usd,
+                   gcp_project_id, bq_mart_dataset_id, dashboard_mode
+            FROM client_dashboard_config
+            ORDER BY LOWER(NULLIF(label, '')), client_slug
+            """
+        ).fetchall()
+    return [
+        {
+            "client_slug": str(r[0]),
+            "label": str(r[1] or "").strip() or str(r[0]),
+            "monthly_budget_usd": float(r[2]) if r[2] is not None else None,
+            "gcp_project_id": (str(r[3]).strip() or None) if r[3] else None,
+            "bq_mart_dataset_id": (str(r[4]).strip() or None) if r[4] else None,
+            "dashboard_mode": str(r[5] or "api"),
+        }
+        for r in rows
+    ]
+
+
 def get_features(client_slug: str) -> dict[str, Any] | None:
     slug = (client_slug or "").strip().lower()
     if not slug or not enabled():
