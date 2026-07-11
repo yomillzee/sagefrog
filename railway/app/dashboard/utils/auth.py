@@ -1,26 +1,14 @@
-"""Dashboard access keys, refresh cooldown, and edit permissions."""
+"""Dashboard refresh cooldown and edit permissions.
+
+The legacy ?key= share-link mechanism (and its DASHBOARD_SECRET) has been
+retired — dashboards are session-only now.
+"""
 
 from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
 from typing import Any
-
-import web_users
-from security import is_production
-
-
-def configured_dashboard_secret() -> str | None:
-    # Dedicated to DASHBOARD_SECRET so the legacy ?key= link no longer piggybacks
-    # on CRON_SECRET. Fail-closed in production (no CRON_SECRET fallback); local
-    # dev keeps the fallback for convenience.
-    dedicated = (os.getenv("DASHBOARD_SECRET") or "").strip()
-    if dedicated:
-        return dedicated
-    if is_production():
-        return None
-    fallback = (os.getenv("CRON_SECRET") or "").strip()
-    return fallback or None
 
 
 def min_refresh_seconds(*, quick: bool = False) -> int:
@@ -63,23 +51,10 @@ def refresh_cooldown_status(
     return False, int(wait - elapsed)
 
 
-def verify_dashboard_key(key: str | None) -> None:
-    from fastapi import HTTPException
+def can_edit_penn_insights(*, session_is_admin: bool, access_key: str | None = None) -> bool:
+    """Only signed-in admins may edit insights text.
 
-    expected = configured_dashboard_secret()
-    if not expected:
-        raise HTTPException(
-            status_code=503,
-            detail="Dashboard access is not configured (set DASHBOARD_SECRET).",
-        )
-    if not key or key.strip() != expected:
-        raise HTTPException(status_code=401, detail="Invalid or missing key query parameter.")
-
-
-def can_edit_penn_insights(*, session_is_admin: bool, access_key: str | None) -> bool:
-    """Admins (session) or legacy shared-key mode may edit insights text."""
-    if session_is_admin:
-        return True
-    if not web_users.enabled() and access_key:
-        return True
-    return False
+    ``access_key`` is accepted for call-site compatibility but ignored: the
+    legacy shared-key edit path has been retired along with ?key=.
+    """
+    return session_is_admin

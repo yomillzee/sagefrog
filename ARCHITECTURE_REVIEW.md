@@ -198,6 +198,10 @@ Used by the dashboard UI and admin pages.
 7. Role check: `admin` can access any dashboard; `client` can only access dashboards matching their `client_slug`
 8. Session cookie: 14-day max age, `SameSite=Lax`, HTTPS-only when `RAILWAY_ENVIRONMENT` or `AUTH_SESSION_HTTPS_ONLY` is set
 
+### Legacy `?key=` share link retired
+
+Dashboards were previously also reachable via `/dashboard/{slug}?key=<secret>` — a single shared, non-expiring, non-audited passwordless link keyed on `DASHBOARD_SECRET`. This mechanism has been **removed entirely**: `authenticate_dashboard` / `authenticate_dashboard_api` are session-only, the `verify_dashboard_key` / `configured_dashboard_secret` / `legacy_dashboard_key_ok` helpers and all route `key` parameters are gone, and `DASHBOARD_SECRET` is no longer read. To grant someone dashboard access, create a `client`-role account scoped to their `client_slug` (per-person, individually revocable, recorded in the audit log). Endpoints that also accept the external `API_KEY` (ChatGPT / API callers) are unaffected.
+
 ### OAuth Token Management
 
 Used to authorize the service to call third-party marketing APIs on behalf of the agency.
@@ -542,10 +546,11 @@ Previously `AUTH_SESSION_SECRET` fell back to `CRON_SECRET`, then to `API_KEY`, 
 **Resolved**: each auth surface now uses a dedicated secret and, in production, fails closed with no cross-fallback (local dev keeps convenience fallbacks). The canonical resolver is `security.session_signing_secret()`:
 - **Session cookies** (`web_auth.session_secret`) and **OAuth connect-link / state tokens** (`oauth_flows._connect_secret`) use `AUTH_SESSION_SECRET`.
 - **OAuth token encryption** (`oauth_store._encryption_key`) uses `OAUTH_TOKEN_ENCRYPTION_KEY`.
-- **Legacy `?key=` dashboard access** (`dashboard/utils/auth.configured_dashboard_secret`) uses `DASHBOARD_SECRET`.
 - **`CRON_SECRET`** is now dedicated to the `/internal/sync-*` endpoints only.
 
-A missing session secret no longer silently disables login — `main.py` logs a clear warning. **Migration**: set `AUTH_SESSION_SECRET`, `OAUTH_TOKEN_ENCRYPTION_KEY`, and `DASHBOARD_SECRET` in Railway; to avoid disrupting active sessions and `?key=` links during the cutover, set them to the value `CRON_SECRET` currently holds, then rotate independently later.
+The legacy `?key=` dashboard share link (and its `DASHBOARD_SECRET`) has since been **retired entirely** — dashboards are session-only, so there is no longer a dashboard access secret at all (see "Legacy `?key=` share link retired" below).
+
+A missing session secret no longer silently disables login — `main.py` logs a clear warning. **Migration**: set `AUTH_SESSION_SECRET` and `OAUTH_TOKEN_ENCRYPTION_KEY` in Railway; to avoid disrupting active sessions during the cutover, set them to the value `CRON_SECRET` currently holds, then rotate independently later.
 
 ### 3. OAuth Token Encryption Key Rotation = Token Loss
 
@@ -555,7 +560,7 @@ The Fernet encryption key for stored OAuth tokens is derived from `AUTH_SESSION_
 
 The login form (`POST /login`), settings forms, and admin forms use standard HTML `<form>` submissions with session cookies. Previously no CSRF token was issued or verified; `SameSite=Lax` blocked cross-site top-level POSTs but not every non-top-level cross-origin case.
 
-**Resolved** in `web_security.py`: a per-session synchronizer token is seeded into the signed session cookie and enforced by the `_csrf_protect` middleware for cookie-authenticated, state-changing requests. Header-authenticated API callers (Bearer / `X-API-Key`), the cron secret, and the legacy `?key=` path are exempt. The token reaches the browser two ways — a hidden `csrf_token` field auto-injected into every server-rendered `<form method=post>`, and a `<meta name="csrf-token">` plus a small `fetch` wrapper that attaches the `X-CSRF-Token` header to same-origin AJAX writes. The same module applies a framework-safe set of response security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, a framing/base-uri/form-action CSP, `Permissions-Policy`, and HSTS on HTTPS).
+**Resolved** in `web_security.py`: a per-session synchronizer token is seeded into the signed session cookie and enforced by the `_csrf_protect` middleware for cookie-authenticated, state-changing requests. Header-authenticated API callers (Bearer / `X-API-Key`) and the cron secret are exempt. The token reaches the browser two ways — a hidden `csrf_token` field auto-injected into every server-rendered `<form method=post>`, and a `<meta name="csrf-token">` plus a small `fetch` wrapper that attaches the `X-CSRF-Token` header to same-origin AJAX writes. The same module applies a framework-safe set of response security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, a framing/base-uri/form-action CSP, `Permissions-Policy`, and HSTS on HTTPS).
 
 ### 5. Synchronous Database Access Blocks the Event Loop
 

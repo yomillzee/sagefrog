@@ -432,7 +432,6 @@ def root() -> dict:
         "dashboard_penn": "/dashboard/penn",
         "dashboard_demo": "/dashboard/demo",
         "dashboard_client_settings": "/dashboard/{client_slug}/settings",
-        "dashboard_penn_legacy_key": "/dashboard/penn?key=<DASHBOARD_SECRET>",
         "internal_sync_penn": "POST /internal/sync-penn (header X-Cron-Secret)",
         "ga4_env": "/ga4/env",
     }
