@@ -327,12 +327,13 @@ Only the most important variables are listed here; see
 | Variable | Purpose |
 |---|---|
 | `API_KEY` | Bearer/`X-API-Key` token for platform API endpoints (fails closed in prod if unset) |
-| `CRON_SECRET` | Auth for the `/internal/sync-*` endpoints |
-| `AUTH_SESSION_SECRET` | Signing key for `eos_session` cookies (recommended: set explicitly, distinct from other secrets) |
+| `CRON_SECRET` | Auth for the `/internal/sync-*` endpoints **only** (no longer shared with other surfaces) |
+| `AUTH_SESSION_SECRET` | Signs `eos_session` cookies and OAuth connect-link/state tokens. **Required in production** — no longer falls back to `CRON_SECRET`/`API_KEY` (dev keeps the fallback) |
+| `OAUTH_TOKEN_ENCRYPTION_KEY` | Dedicated key for OAuth token encryption (required in production; dev falls back to `AUTH_SESSION_SECRET`) |
+| `DASHBOARD_SECRET` | Dedicated secret for the legacy `?key=` dashboard link (production; dev falls back to `CRON_SECRET`) |
 | `AUTH_SESSION_HTTPS_ONLY` | Force / disable HTTPS-only cookies (`0` for local HTTP) |
 | `AUTH_BOOTSTRAP_ADMIN_EMAIL` / `AUTH_BOOTSTRAP_ADMIN_PASSWORD` | First admin account on initial deploy (password ≥ 10 chars) |
 | `AUTH_LOGIN_MAX_FAILURES` / `AUTH_LOGIN_WINDOW_SECONDS` / `AUTH_LOGIN_LOCKOUT_SECONDS` | Login rate-limit tuning |
-| `OAUTH_TOKEN_ENCRYPTION_KEY` | Dedicated key for OAuth token encryption |
 
 ### Database, cache, deployment
 

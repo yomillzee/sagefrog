@@ -535,12 +535,17 @@ If `API_KEY` is not set in the environment, `security.py:require_api_key()` retu
 
 **Mitigation needed**: Fail-closed by default — raise an error on startup if `API_KEY` is not set in production, or always require auth with no fallback.
 
-### 2. Shared Secret Fallback Chain
+### 2. Shared Secret Fallback Chain — *resolved*
 
-`AUTH_SESSION_SECRET` falls back to `CRON_SECRET`, then to `API_KEY`. This means:
-- A compromise of any one secret potentially compromises all three authentication surfaces
-- If `API_KEY` is used to sign session cookies, rotating the API key invalidates all active user sessions
-- Explicitly setting `AUTH_SESSION_SECRET` and `OAUTH_TOKEN_ENCRYPTION_KEY` as distinct secrets is documented but not enforced
+Previously `AUTH_SESSION_SECRET` fell back to `CRON_SECRET`, then to `API_KEY`, so one secret's compromise or rotation cascaded across sessions, cron auth, and the API key.
+
+**Resolved**: each auth surface now uses a dedicated secret and, in production, fails closed with no cross-fallback (local dev keeps convenience fallbacks). The canonical resolver is `security.session_signing_secret()`:
+- **Session cookies** (`web_auth.session_secret`) and **OAuth connect-link / state tokens** (`oauth_flows._connect_secret`) use `AUTH_SESSION_SECRET`.
+- **OAuth token encryption** (`oauth_store._encryption_key`) uses `OAUTH_TOKEN_ENCRYPTION_KEY`.
+- **Legacy `?key=` dashboard access** (`dashboard/utils/auth.configured_dashboard_secret`) uses `DASHBOARD_SECRET`.
+- **`CRON_SECRET`** is now dedicated to the `/internal/sync-*` endpoints only.
+
+A missing session secret no longer silently disables login — `main.py` logs a clear warning. **Migration**: set `AUTH_SESSION_SECRET`, `OAUTH_TOKEN_ENCRYPTION_KEY`, and `DASHBOARD_SECRET` in Railway; to avoid disrupting active sessions and `?key=` links during the cutover, set them to the value `CRON_SECRET` currently holds, then rotate independently later.
 
 ### 3. OAuth Token Encryption Key Rotation = Token Loss
 

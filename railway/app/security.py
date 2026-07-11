@@ -25,6 +25,44 @@ def is_production() -> bool:
     )
 
 
+def session_signing_secret() -> str:
+    """Secret for signing session cookies and connect-link / OAuth-state tokens.
+
+    Dedicated to ``AUTH_SESSION_SECRET``. In production this is required with no
+    fallback: the old chain to ``CRON_SECRET`` / ``API_KEY`` meant one secret's
+    compromise or rotation cascaded across unrelated auth surfaces (sessions,
+    cron auth, the API key). Local dev keeps a convenience fallback so setups
+    without the dedicated variable still run.
+    """
+    dedicated = (os.getenv("AUTH_SESSION_SECRET") or "").strip()
+    if dedicated:
+        return dedicated
+    if is_production():
+        raise RuntimeError(
+            "AUTH_SESSION_SECRET is not set. Set a dedicated session signing "
+            "secret in the environment — it is required in production and must "
+            "not be shared with CRON_SECRET or API_KEY."
+        )
+    fallback = (
+        (os.getenv("CRON_SECRET") or "").strip()
+        or (os.getenv("API_KEY") or "").strip()
+    )
+    if not fallback:
+        raise RuntimeError(
+            "Set AUTH_SESSION_SECRET to sign session cookies (the CRON_SECRET / "
+            "API_KEY fallback is dev-only and is also unset)."
+        )
+    return fallback
+
+
+def session_signing_secret_configured() -> bool:
+    """Non-raising check: True when a session signing secret is resolvable."""
+    try:
+        return bool(session_signing_secret())
+    except RuntimeError:
+        return False
+
+
 async def require_api_key(
     bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
     x_api_key: str | None = Security(_api_key_header),

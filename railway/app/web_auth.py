@@ -16,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import audit_log
 import client_config
 import web_users
-from security import is_production
+from security import is_production, session_signing_secret
 from web_users import WebUser
 
 SESSION_USER_ID = "user_id"
@@ -28,15 +28,10 @@ SESSION_VIEW_AS_ID = "view_as_user_id"
 
 
 def session_secret() -> str:
-    secret = (
-        (os.getenv("AUTH_SESSION_SECRET") or "").strip()
-        or (os.getenv("CRON_SECRET") or "").strip()
-    )
-    if not secret:
-        raise RuntimeError(
-            "Set AUTH_SESSION_SECRET (recommended) or CRON_SECRET for signed session cookies."
-        )
-    return secret
+    # Canonical resolver lives in security.session_signing_secret(): dedicated to
+    # AUTH_SESSION_SECRET, fail-closed in production, dev-only fallback. Kept as a
+    # thin wrapper so existing callers (add_session_middleware) stay unchanged.
+    return session_signing_secret()
 
 
 def https_only_cookies() -> bool:

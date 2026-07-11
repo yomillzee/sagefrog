@@ -57,7 +57,7 @@ Requires **Postgres** (`DATABASE_URL`). The service creates a `web_users` table.
 
 | Variable | Purpose |
 |----------|---------|
-| `AUTH_SESSION_SECRET` | Signs session cookies (use a long random string; falls back to `CRON_SECRET` / `API_KEY` if unset) |
+| `AUTH_SESSION_SECRET` | Signs session cookies and OAuth connect-link/state tokens (use a long random string). **Required in production** — it no longer falls back to `CRON_SECRET` / `API_KEY`; local dev keeps that fallback for convenience. |
 | `AUTH_SESSION_HTTPS_ONLY` | Set `1` on Railway so cookies are HTTPS-only |
 | `AUTH_BOOTSTRAP_ADMIN_EMAIL` | Creates the **first** admin if no admin exists yet |
 | `AUTH_BOOTSTRAP_ADMIN_PASSWORD` | Password for bootstrap admin (min 10 characters) |
@@ -79,7 +79,7 @@ Requires **Postgres** (`DATABASE_URL`). Uploaded `.docx` and `.pdf` files (up to
 
 Create additional users at `/admin` after signing in as admin. The **Audit log** section on `/admin` records sign-ins, sign-outs, failed logins, and user create/deactivate actions (with actor, target, IP).
 
-The shared `?key=` link still works when `CRON_SECRET` / `DASHBOARD_SECRET` is set (legacy). **`API_KEY` is unchanged** — still used for `/google-ads/*`, ChatGPT, etc.
+The shared `?key=` link (legacy) is keyed on `DASHBOARD_SECRET`; in production it no longer accepts `CRON_SECRET` (local dev still falls back to it). **`API_KEY` is unchanged** — still used for `/google-ads/*`, ChatGPT, etc. `CRON_SECRET` is now dedicated to the internal `/internal/sync-*` cron endpoints only.
 
 **Production hardening:** On Railway, `/docs` and `/openapi.json` are disabled automatically (`DISABLE_API_DOCS=0` to re-enable). Failed logins are rate-limited per IP/email (`AUTH_LOGIN_MAX_FAILURES`, default 5 per 15 minutes, then 15-minute lockout).
 

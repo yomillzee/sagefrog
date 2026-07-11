@@ -62,9 +62,7 @@ def build_auth_status() -> dict[str, Any]:
     session_enabled = web_users.enabled()
     api_key_set = bool(security.configured_api_key())
     dashboard_secret = bool(dashboard_service.configured_dashboard_secret())
-    session_secret = bool(
-        (os.getenv("AUTH_SESSION_SECRET") or os.getenv("CRON_SECRET") or os.getenv("API_KEY") or "").strip()
-    )
+    session_secret = security.session_signing_secret_configured()
     bootstrap = bool(
         (os.getenv("AUTH_BOOTSTRAP_ADMIN_EMAIL") or "").strip()
         and (os.getenv("AUTH_BOOTSTRAP_ADMIN_PASSWORD") or "").strip()
