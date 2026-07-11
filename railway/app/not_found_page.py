@@ -5,6 +5,67 @@ from __future__ import annotations
 import html
 
 
+def render_error_page(*, status_code: int, detail: str | None = None) -> str:
+    """A friendly, navigable page for browser 401/403 responses.
+
+    Rendered instead of a raw JSON error so the caller is never stranded on a
+    dead-end blob: it always offers a way back, and because it is HTML the
+    ``_inject_html_extras`` middleware layers the "Exit view as" banner on top,
+    which is the only escape hatch for an admin stuck impersonating a user who
+    lacks access to the page they landed on.
+    """
+    titles = {
+        401: "Please sign in",
+        403: "No access",
+    }
+    title = html.escape(titles.get(status_code, "Something went wrong"))
+    message = html.escape(
+        detail or "You don't have access to this page with your current account."
+    )
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{status_code} · Sagefrog</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background:
+        radial-gradient(1100px 560px at 16% -12%, rgba(52,178,123,.20), transparent 60%),
+        radial-gradient(900px 520px at 100% 0%, rgba(37,99,235,.24), transparent 55%),
+        linear-gradient(160deg,#0a2540 0%,#071b30 55%,#05121f 100%); }}
+    .card {{ width: min(420px, 100%); background: #fff; border-radius: 18px; padding: 34px 30px; text-align: center;
+      box-shadow: 0 24px 60px rgba(3,12,24,.42), 0 2px 6px rgba(3,12,24,.2); }}
+    .mark {{ width: 56px; height: 56px; border-radius: 16px; margin: 0 auto 18px; overflow: hidden;
+      background: #fff; box-shadow: 0 10px 26px rgba(5,18,31,.28); }}
+    .mark img {{ width: 100%; height: 100%; object-fit: cover; }}
+    .code {{ font-size: .78rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #94a3b8; }}
+    h1 {{ margin: 6px 0 8px; font-size: 1.4rem; color: #0a2540; }}
+    p {{ margin: 0 0 22px; color: #5a6578; font-size: .95rem; line-height: 1.55; }}
+    .links {{ display: flex; flex-direction: column; gap: 10px; }}
+    a.btn {{ display: block; padding: 12px; border-radius: 10px; text-decoration: none; font-weight: 700; font-size: .95rem; }}
+    a.primary {{ color: #fff; background: linear-gradient(135deg,#2563eb,#1d4ed8); box-shadow: 0 6px 18px rgba(37,99,235,.35); }}
+    a.ghost {{ color: #2563eb; border: 1px solid #dbe4f0; }}
+    a.btn:hover {{ filter: brightness(1.04); }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="mark"><img src="/static/apple-touch-icon.png" alt="Sagefrog"></div>
+    <div class="code">{status_code} · {title}</div>
+    <h1>{title}</h1>
+    <p>{message}</p>
+    <div class="links">
+      <a class="btn primary" href="/dashboards">Go to your dashboards</a>
+      <a class="btn ghost" href="/login">Sign in with a different account</a>
+    </div>
+  </div>
+</body>
+</html>"""
+
+
 def render_not_found_page(*, path: str | None = None) -> str:
     safe_path = html.escape(path or "", quote=True)
     path_line = (

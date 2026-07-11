@@ -305,7 +305,12 @@ _HTML_404_API_PREFIXES = (
 )
 
 
-def _request_wants_html_404(request: Request) -> bool:
+def _request_wants_html_error(request: Request) -> bool:
+    """True for a top-level browser navigation (as opposed to an API/XHR call).
+
+    Used to decide whether an error should render as a friendly HTML page or a
+    JSON body: API prefixes and JSON-only Accept headers stay JSON.
+    """
     path = request.url.path
     if any(path.startswith(prefix) for prefix in _HTML_404_API_PREFIXES):
         return False
@@ -319,14 +324,24 @@ def _request_wants_html_404(request: Request) -> bool:
 async def custom_http_exception_handler(
     request: Request, exc: StarletteHTTPException
 ) -> HTMLResponse | JSONResponse:
-    if exc.status_code == 404 and _request_wants_html_404(request):
-        return HTMLResponse(
-            not_found_page.render_not_found_page(path=request.url.path),
-            status_code=404,
-        )
     detail = exc.detail
     if not isinstance(detail, str):
         detail = str(detail)
+    if _request_wants_html_error(request):
+        if exc.status_code == 404:
+            return HTMLResponse(
+                not_found_page.render_not_found_page(path=request.url.path),
+                status_code=404,
+            )
+        # A browser navigation that 401/403s (e.g. an admin stuck impersonating
+        # a user without access to this page) must not dead-end on a JSON blob:
+        # render a navigable HTML page so the injected "Exit view as" banner and
+        # the back-links give a way out.
+        if exc.status_code in (401, 403):
+            return HTMLResponse(
+                not_found_page.render_error_page(status_code=exc.status_code, detail=detail),
+                status_code=exc.status_code,
+            )
     return JSONResponse({"detail": detail}, status_code=exc.status_code)
 
 
