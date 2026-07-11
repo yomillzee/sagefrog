@@ -260,6 +260,10 @@ def render_hq_budget_page(*, user_email: str) -> str:
         + `"—" means no data / no BigQuery project configured for that client yet.`;
     }}
     function skeleton() {{
+      document.getElementById('hqTiles').innerHTML = Array.from({{length:4}}, () =>
+        `<div class="tile"><div class="skel" style="height:10px;width:55%"></div>`
+        + `<div class="skel" style="height:26px;width:70%;margin-top:9px"></div>`
+        + `<div class="skel" style="height:9px;width:40%;margin-top:7px"></div></div>`).join('');
       document.getElementById('hqBody').innerHTML = Array.from({{length:6}}, () =>
         `<tr><td><span class="skel" style="width:140px"></span></td>`
         + Array.from({{length:6}}, () => `<td><span class="skel" style="width:60px"></span></td>`).join('') + `</tr>`).join('');
