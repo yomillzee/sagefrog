@@ -25,30 +25,6 @@ DEFAULT_THEME: dict[str, str] = {
 THEME_KEYS: tuple[str, ...] = tuple(DEFAULT_THEME.keys())
 _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
-# Sidebar gradient split: the % down the sidebar where the top color hands off to
-# the bottom color (so 50 ≈ an even split). Stored alongside the theme colors but
-# kept out of THEME_KEYS since it isn't a hex value. A soft transition band of
-# ±_SIDEBAR_BLEND_BAND% is centered on the split.
-DEFAULT_SIDEBAR_BLEND = 50
-_SIDEBAR_BLEND_BAND = 10
-
-
-def normalize_blend(value: object) -> int:
-    try:
-        n = int(round(float(value)))  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return DEFAULT_SIDEBAR_BLEND
-    return max(0, min(100, n))
-
-
-def sidebar_gradient_stops(blend: object) -> tuple[int, int]:
-    """(a, b) stop percentages for the gradient: solid top color to a%, solid
-    bottom color from b%, smooth transition between."""
-    p = normalize_blend(blend)
-    a = max(0, min(100, p - _SIDEBAR_BLEND_BAND))
-    b = max(0, min(100, p + _SIDEBAR_BLEND_BAND))
-    return a, b
-
 
 def normalize_hex(value: str | None) -> str | None:
     text = (value or "").strip()
@@ -74,13 +50,10 @@ def merge_theme(overrides: dict[str, Any] | None) -> dict[str, str]:
 
 def load_client_theme(client_slug: str) -> dict[str, str]:
     slug = (client_slug or "").strip().lower()
-    stored = client_dashboard_config.get_theme(slug) if slug else None
-    merged = merge_theme(stored)
-    # sidebar_blend rides alongside the hex keys but isn't validated as hex, so
-    # merge_theme skips it; pull it through here (as an int) for the sidebar.
-    blend_raw = stored.get("sidebar_blend") if isinstance(stored, dict) else None
-    merged["sidebar_blend"] = str(normalize_blend(blend_raw))
-    return merged
+    if not slug:
+        return merge_theme(None)
+    stored = client_dashboard_config.get_theme(slug)
+    return merge_theme(stored)
 
 
 def parse_theme_form(**raw: str) -> dict[str, str]:

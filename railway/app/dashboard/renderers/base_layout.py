@@ -668,11 +668,9 @@ def render_sidebar(
     # whose :root hardcodes the default --sidebar-from/--sidebar-to. Editable from
     # Settings → Sidebar appearance.
     _theme = dashboard_theme.load_client_theme(client_slug)
-    _grad_a, _grad_b = dashboard_theme.sidebar_gradient_stops(_theme.get("sidebar_blend"))
     sidebar_style = (
         f"--sidebar-from:{_theme.get('sidebar_from', '#0a2540')};"
-        f"--sidebar-to:{_theme.get('sidebar_to', '#123456')};"
-        f"--sidebar-a:{_grad_a}%;--sidebar-b:{_grad_b}%"
+        f"--sidebar-to:{_theme.get('sidebar_to', '#123456')}"
     )
 
     return f"""
@@ -1062,13 +1060,7 @@ SIDEBAR_CSS = """
       height: 100vh;
       display: flex;
       flex-direction: column;
-      /* Stops (--sidebar-a/-b) let the settings picker shift how much of each
-         color shows; they default to a plain full-height gradient. */
-      background: linear-gradient(180deg,
-        var(--sidebar-from) 0%,
-        var(--sidebar-from) var(--sidebar-a, 0%),
-        var(--sidebar-to) var(--sidebar-b, 100%),
-        var(--sidebar-to) 100%);
+      background: linear-gradient(180deg, var(--sidebar-from), var(--sidebar-to));
       color: #e6edf6;
       z-index: 90;
       overflow: hidden;

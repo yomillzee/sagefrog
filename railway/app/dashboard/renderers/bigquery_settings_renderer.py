@@ -130,24 +130,17 @@ def render_bigquery_settings_page(
     _theme = dashboard_theme.load_client_theme(client_slug)
     sidebar_from = _theme.get("sidebar_from", "#0a2540")
     sidebar_to = _theme.get("sidebar_to", "#123456")
-    sidebar_blend = dashboard_theme.normalize_blend(_theme.get("sidebar_blend"))
-    _pa, _pb = dashboard_theme.sidebar_gradient_stops(sidebar_blend)
-    sidebar_preview_gradient = (
-        f"linear-gradient(180deg, {sidebar_from} 0%, {sidebar_from} {_pa}%, "
-        f"{sidebar_to} {_pb}%, {sidebar_to} 100%)"
-    )
     sidebar_theme_url = _api_url(
         f"/dashboard/{client_slug}/sidebar-theme", access_key=access_key
     )
     sidebar_default_from = dashboard_theme.DEFAULT_THEME["sidebar_from"]
     sidebar_default_to = dashboard_theme.DEFAULT_THEME["sidebar_to"]
-    sidebar_default_blend = dashboard_theme.DEFAULT_SIDEBAR_BLEND
     sidebar_theme_html = "" if not session_is_admin else f"""
     <section>
       <h2>Sidebar appearance</h2>
       <p class="hint">The client sidebar is a top-to-bottom gradient. Pick the two colors; the change applies across this client's dashboard for everyone.</p>
       <div class="sidebar-theme">
-        <div class="sidebar-theme-preview" id="sidebarThemePreview" style="background:{_esc(sidebar_preview_gradient)}">
+        <div class="sidebar-theme-preview" id="sidebarThemePreview" style="background:linear-gradient(180deg, {_esc(sidebar_from)}, {_esc(sidebar_to)})">
           <span class="sidebar-theme-preview-label">Sidebar</span>
         </div>
         <div class="sidebar-theme-controls">
@@ -156,10 +149,6 @@ def render_bigquery_settings_page(
           </label>
           <label class="color-field">Bottom color
             <span class="color-input"><input type="color" id="sidebarTo" value="{_esc(sidebar_to)}"><span class="color-hex" id="sidebarToHex">{_esc(sidebar_to)}</span></span>
-          </label>
-          <label class="color-field">Color split
-            <input type="range" id="sidebarBlend" class="blend-slider" min="0" max="100" step="1" value="{sidebar_blend}">
-            <span class="blend-label" id="sidebarBlendLabel">Top {sidebar_blend}% · Bottom {100 - sidebar_blend}%</span>
           </label>
           <div class="btn-row" style="margin-top:4px">
             <button type="button" class="primary" id="sidebarThemeSave">Save colors</button>
@@ -274,8 +263,6 @@ def render_bigquery_settings_page(
     .color-input {{ display:inline-flex; align-items:center; gap:9px; }}
     .color-input input[type=color] {{ width:44px; height:32px; padding:0; border:1px solid var(--line); border-radius:8px; background:#fff; cursor:pointer; }}
     .color-hex {{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.82rem; color:var(--navy); text-transform:uppercase; }}
-    .blend-slider {{ width:200px; max-width:100%; accent-color:var(--accent); cursor:pointer; }}
-    .blend-label {{ font-size:.78rem; color:var(--muted); font-weight:600; text-transform:none; letter-spacing:0; }}
     {budget_css}
   </style>
 </head>
@@ -483,38 +470,21 @@ def render_bigquery_settings_page(
       const from = document.getElementById('sidebarFrom');
       const to = document.getElementById('sidebarTo');
       if (!from || !to) return;
-      const blendEl = document.getElementById('sidebarBlend');
-      const blendLabel = document.getElementById('sidebarBlendLabel');
       const preview = document.getElementById('sidebarThemePreview');
       const fromHex = document.getElementById('sidebarFromHex');
       const toHex = document.getElementById('sidebarToHex');
       const liveSidebar = document.getElementById('dashSidebar');
-      const DEF_FROM = "{sidebar_default_from}", DEF_TO = "{sidebar_default_to}", DEF_BLEND = {sidebar_default_blend};
-      const BAND = 10;  // matches dashboard_theme._SIDEBAR_BLEND_BAND
-      const clamp = v => Math.max(0, Math.min(100, v));
-      function stops(blend) {{ return [clamp(blend - BAND), clamp(blend + BAND)]; }}
-      function gradientCss(f, t, blend) {{
-        const [a, b] = stops(blend);
-        return `linear-gradient(180deg, ${{f}} 0%, ${{f}} ${{a}}%, ${{t}} ${{b}}%, ${{t}} 100%)`;
-      }}
+      const DEF_FROM = "{sidebar_default_from}", DEF_TO = "{sidebar_default_to}";
       function apply() {{
-        const f = from.value, t = to.value, blend = parseInt(blendEl && blendEl.value, 10) || 0;
-        if (preview) preview.style.background = gradientCss(f, t, blend);
+        const f = from.value, t = to.value;
+        if (preview) preview.style.background = `linear-gradient(180deg, ${{f}}, ${{t}})`;
         if (fromHex) fromHex.textContent = f;
         if (toHex) toHex.textContent = t;
-        if (blendLabel) blendLabel.textContent = `Top ${{blend}}% · Bottom ${{100 - blend}}%`;
-        if (liveSidebar) {{
-          const [a, b] = stops(blend);
-          liveSidebar.style.setProperty('--sidebar-from', f);
-          liveSidebar.style.setProperty('--sidebar-to', t);
-          liveSidebar.style.setProperty('--sidebar-a', a + '%');
-          liveSidebar.style.setProperty('--sidebar-b', b + '%');
-        }}
+        if (liveSidebar) {{ liveSidebar.style.setProperty('--sidebar-from', f); liveSidebar.style.setProperty('--sidebar-to', t); }}
       }}
       from.addEventListener('input', apply);
       to.addEventListener('input', apply);
-      if (blendEl) blendEl.addEventListener('input', apply);
-      document.getElementById('sidebarThemeReset').addEventListener('click', () => {{ from.value = DEF_FROM; to.value = DEF_TO; if (blendEl) blendEl.value = DEF_BLEND; apply(); }});
+      document.getElementById('sidebarThemeReset').addEventListener('click', () => {{ from.value = DEF_FROM; to.value = DEF_TO; apply(); }});
       document.getElementById('sidebarThemeSave').addEventListener('click', async () => {{
         const btn = document.getElementById('sidebarThemeSave');
         btn.disabled = true; setStatus('sidebarThemeStatus', 'Saving…');
@@ -522,7 +492,7 @@ def render_bigquery_settings_page(
           const r = await fetch("{sidebar_theme_url}", {{
             method:'POST', credentials:'same-origin',
             headers:{{'Content-Type':'application/x-www-form-urlencoded'}},
-            body: new URLSearchParams({{ sidebar_from: from.value, sidebar_to: to.value, blend: (blendEl ? blendEl.value : DEF_BLEND) }}),
+            body: new URLSearchParams({{ sidebar_from: from.value, sidebar_to: to.value }}),
           }});
           const body = await r.json().catch(() => ({{}}));
           if (!r.ok || !body.ok) throw new Error(body.error || ('HTTP ' + r.status));
