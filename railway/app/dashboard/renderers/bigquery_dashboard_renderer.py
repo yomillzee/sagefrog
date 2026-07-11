@@ -810,6 +810,8 @@ def render_bigquery_dashboard_page(
     .state-map-scale-bar {{ flex:1 1 auto; height:8px; border-radius:4px; background:linear-gradient(90deg,#eaf1fb,#1d6fd0); }}
     /* Sticky date bar clears the fixed 52px mobile top bar (see SIDEBAR_CSS). */
     @media (max-width:900px) {{ .cards {{ grid-template-columns:repeat(2,minmax(120px,1fr)); }} .two-col,.three-col {{ grid-template-columns:1fr; }} .date-bar {{ top:52px; }} }}
+    /* On phones give the metric columns more room: tighten the path label cap. */
+    @media (max-width:640px) {{ .page-path {{ max-width:44vw; }} }}
     /* ---- Skeleton loaders ---- */
     @keyframes shimmer {{ 0%{{background-position:-200% 0}} 100%{{background-position:200% 0}} }}
     .skel {{ display:block; background:linear-gradient(90deg,#eef2f7 25%,#e4eaf2 50%,#eef2f7 75%); background-size:200% 100%; animation:shimmer 1.4s ease-in-out infinite; border-radius:5px; }}
@@ -2345,7 +2347,7 @@ def render_bigquery_dashboard_page(
       const startIdx=(pagesPageNum-1)*PAGES_PER_PAGE;
       const pageRows=base.slice(startIdx,startIdx+PAGES_PER_PAGE);
       el.innerHTML=`<thead><tr><th class="left">Page</th><th>Views</th><th>Users</th><th>Key events</th><th>Avg engt</th></tr></thead>`+
-        `<tbody>${{pageRows.map(p=>{{const sub=p.page_group?` <span class="muted">${{esc(p.page_group)}}</span>`:'';const engt=p.users?p.engagement_seconds/p.users:0;return`<tr><td class="left"><span class="page-path" title="${{esc(p.page_path)}}">${{esc(p.page_path)}}</span>${{sub}}</td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;}}). join('')}}</tbody>`;
+        `<tbody>${{pageRows.map(p=>{{const engt=p.users?p.engagement_seconds/p.users:0;return`<tr><td class="left"><span class="page-path" title="${{esc(p.page_path)}}">${{esc(p.page_path)}}</span></td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;}}). join('')}}</tbody>`;
       const tag=pagesSearchQuery?' (filtered)':'';
       setStatus('pagesStatus', `${{startIdx+1}}–${{startIdx+pageRows.length}} of ${{base.length}}${{tag}}`);
       renderPagesPager(totalPages);
