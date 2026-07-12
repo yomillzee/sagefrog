@@ -51,7 +51,10 @@ class MetaAdsConnector(ConnectorHandler):
             or oauth_store.get_access_token("meta")
         )
         if not access_token:
-            return SyncResult(rows_loaded=0, error="No Meta access token — reconnect via the connector wizard.")
+            return SyncResult(rows_loaded=0, error=oauth_store.token_error(
+                "meta", client_slug=client_slug,
+                missing="No Meta access token — reconnect via the connector wizard.",
+            ))
 
         bq_project_id = cfg.bq_project_id if cfg else None
         raw_dataset_id = cfg.raw_dataset_id if cfg else None

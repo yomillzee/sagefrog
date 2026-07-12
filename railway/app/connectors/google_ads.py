@@ -59,7 +59,10 @@ class GoogleAdsConnector(ConnectorHandler):
 
         refresh = oauth_store.get_refresh_token("google_ads", client_slug=client_slug)
         if not refresh:
-            return SyncResult(rows_loaded=0, error="No Google Ads refresh token. Reconnect Google Ads in settings.")
+            return SyncResult(rows_loaded=0, error=oauth_store.token_error(
+                "google_ads", client_slug=client_slug,
+                missing="No Google Ads refresh token. Reconnect Google Ads in settings.",
+            ))
 
         start, end, _ = resolve_date_range(date_range)
         try:
