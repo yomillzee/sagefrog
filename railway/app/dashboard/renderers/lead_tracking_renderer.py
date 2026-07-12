@@ -24,6 +24,7 @@ _EXTRA_CSS = """
 .lt-bar-track { background:#f1f3f8; border-radius:6px; height:20px; overflow:hidden; }
 .lt-bar-fill { background:#ff7a59; height:100%; border-radius:6px; min-width:2px; }
 .lt-bar-val { text-align:right; color:#111827; font-variant-numeric:tabular-nums; font-weight:600; }
+.lt-table-wrap { overflow-x:auto; }
 .lt-table { width:100%; border-collapse:collapse; font-size:13px; }
 .lt-table th { text-align:left; color:#6b7280; font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.03em; padding:8px 10px; border-bottom:2px solid #eef0f4; }
 .lt-table td { padding:9px 10px; border-bottom:1px solid #f2f4f8; color:#374151; }
@@ -132,8 +133,8 @@ def render_lead_tracking(
             for r in report.deals_by_source[:12]
         )
         deals_src_html = (
-            '<table class="lt-table"><thead><tr><th>Source</th><th>Deals</th>'
-            '<th>Pipeline</th><th>Won</th></tr></thead><tbody>' + deal_rows + '</tbody></table>'
+            '<div class="lt-table-wrap"><table class="lt-table"><thead><tr><th>Source</th><th>Deals</th>'
+            '<th>Pipeline</th><th>Won</th></tr></thead><tbody>' + deal_rows + '</tbody></table></div>'
         )
     else:
         deals_src_html = '<div class="lt-empty">No deals synced yet.</div>'
@@ -148,8 +149,8 @@ def render_lead_tracking(
             for r in report.recent_mqls
         )
         recent_html = (
-            '<table class="lt-table"><thead><tr><th>Email</th><th>Company</th>'
-            '<th>Original source</th><th>Became MQL</th></tr></thead><tbody>' + recent_rows + '</tbody></table>'
+            '<div class="lt-table-wrap"><table class="lt-table"><thead><tr><th>Email</th><th>Company</th>'
+            '<th>Original source</th><th>Became MQL</th></tr></thead><tbody>' + recent_rows + '</tbody></table></div>'
         )
     else:
         recent_html = '<div class="lt-empty">No MQLs synced yet.</div>'
