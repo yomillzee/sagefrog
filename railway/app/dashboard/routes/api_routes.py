@@ -157,7 +157,13 @@ def _cached_bq_read(source: str, payload: dict, *, ttl_seconds: int, fetch) -> d
         _floor = 0
     if _floor > 0:
         ttl_seconds = max(ttl_seconds, _floor)
-    hit = db_cache.get_cached(source, payload)
+    try:
+        hit = db_cache.get_cached(source, payload)
+    except Exception:
+        # A transient cache-store (Postgres) hiccup must not 500 the endpoint --
+        # fall through to a live BigQuery read instead of failing the request.
+        logger.warning("db_cache read failed for %s; falling back to live fetch", source, exc_info=True)
+        hit = None
     if hit is not None:
         return hit.response_json
     result = fetch()
