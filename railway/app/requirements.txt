@@ -12,3 +12,4 @@ bcrypt
 python-multipart
 itsdangerous
 cryptography
+duckdb==1.5.4

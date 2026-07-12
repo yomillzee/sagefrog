@@ -1067,6 +1067,7 @@ def render_admin_page(
     </div>
     <div style="display:flex; align-items:center; gap:16px">
       <a href="/admin/hq" style="color:#fff; opacity:.9; text-decoration:none; font-weight:600">HQ</a>
+      <a href="/admin/agency-trends" style="color:#fff; opacity:.9; text-decoration:none; font-weight:600">Trends</a>
       <form method="post" action="/logout" style="display:inline"><button type="submit" class="link">Sign out</button></form>
     </div>
   </header>

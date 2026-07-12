@@ -1843,6 +1843,30 @@ def admin_budget_hq_data(
     return build_hq_budget_overview()
 
 
+@app.get("/admin/agency-trends", include_in_schema=False, response_class=HTMLResponse)
+def admin_agency_trends(request: Request):
+    """Admin-only 'Agency Trends': every client's week-over-week paid-media
+    momentum plus channel mix, computed in one DuckDB scan over metrics_daily."""
+    user = web_auth.get_current_user(request)
+    if not user:
+        return web_auth.redirect_to_login(request, next_path="/admin/agency-trends")
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    from dashboard.renderers.agency_trends_renderer import render_agency_trends_page
+
+    return HTMLResponse(render_agency_trends_page(user_email=user.email))
+
+
+@app.get("/admin/agency-trends/data", include_in_schema=False)
+def admin_agency_trends_data(
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+) -> dict:
+    """JSON feed for the Agency Trends page: cross-client week-over-week spend."""
+    from dashboard.services.agency_trends_service import build_agency_trends
+
+    return build_agency_trends()
+
+
 @app.post("/admin/gcp-credentials", include_in_schema=False)
 async def admin_set_gcp_credentials(
     request: Request,
