@@ -1208,13 +1208,26 @@ def render_bigquery_dashboard_page(
         el.title = '';
       }}
     }}
-    async function getJson(url, _retried) {{
-      const resp = await fetch(url, {{ credentials:'same-origin' }});
-      if (!resp.ok && resp.status >= 500 && !_retried) {{
-        // 5xx here has mostly been transient BQ concurrency pressure, not a
-        // real failure -- one retry after a short delay clears most of them.
-        await new Promise(r => setTimeout(r, 400 + Math.random()*400));
-        return getJson(url, true);
+    async function getJson(url, _attempt) {{
+      _attempt = _attempt || 0;
+      const MAX_RETRIES = 2;
+      // Growing backoff with jitter: ~0.4-0.8s, then ~0.8-1.2s.
+      const backoff = () => new Promise(r => setTimeout(r, 400 * (_attempt + 1) + Math.random()*400));
+      let resp;
+      try {{
+        resp = await fetch(url, {{ credentials:'same-origin' }});
+      }} catch (netErr) {{
+        // fetch() rejects (no HTTP status) on network drops, cold-start
+        // connection resets and platform proxy blips -- treat like a 5xx and
+        // retry before surfacing the failure.
+        if (_attempt < MAX_RETRIES) {{ await backoff(); return getJson(url, _attempt + 1); }}
+        throw netErr;
+      }}
+      if (!resp.ok && resp.status >= 500 && _attempt < MAX_RETRIES) {{
+        // 5xx here has mostly been transient BQ concurrency pressure / cold
+        // starts, not a real failure -- retry with growing backoff.
+        await backoff();
+        return getJson(url, _attempt + 1);
       }}
       const body = await resp.json().catch(() => ({{ detail:resp.statusText }}));
       if (!resp.ok) {{
