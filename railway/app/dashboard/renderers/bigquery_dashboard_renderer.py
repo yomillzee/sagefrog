@@ -373,33 +373,19 @@ def render_bigquery_dashboard_page(
     # the paid panel is prepended only when the client runs paid ads.
     ov_panels = """
       <section class="ov-panel">
-        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><span class="status" id="ovSessionsStatus"></span><button type="button" class="ov-more" data-goto="analytics">See more →</button></div></div>
-        <div class="filter-group" style="margin-bottom:10px">
-          <span class="filter-label">Interval</span>
-          <div class="chips" id="ovSessionsGranChips">
-            <button type="button" class="chip active" data-gran="daily">Daily</button>
-            <button type="button" class="chip" data-gran="weekly">Weekly</button>
-          </div>
-        </div>
+        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><div class="chips seg" id="ovSessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><span class="status" id="ovSessionsStatus"></span><button type="button" class="ov-more" data-goto="analytics">See more <span class="ov-more-arrow">&rarr;</span></button></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovSessionsTrend"></canvas></div></div>
         <div class="cmp-legend" id="ovSessionsLegend"></div>
       </section>
 
       <section class="ov-panel">
-        <div class="sec-head"><h2>AI traffic</h2><div class="ov-actions"><span class="status" id="ovAiStatus"></span><button type="button" class="ov-more" data-goto="ai_traffic">See more →</button></div></div>
-        <div class="filter-group" style="margin-bottom:10px">
-          <span class="filter-label">Interval</span>
-          <div class="chips" id="ovAiGranChips">
-            <button type="button" class="chip active" data-gran="daily">Daily</button>
-            <button type="button" class="chip" data-gran="weekly">Weekly</button>
-          </div>
-        </div>
+        <div class="sec-head"><h2>AI traffic</h2><div class="ov-actions"><div class="chips seg" id="ovAiGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><span class="status" id="ovAiStatus"></span><button type="button" class="ov-more" data-goto="ai_traffic">See more <span class="ov-more-arrow">&rarr;</span></button></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovAiTrend"></canvas></div></div>
         <div class="cmp-legend" id="ovAiLegend"></div>
       </section>
 
       <section class="ov-panel">
-        <div class="sec-head"><h2>Search Console</h2><div class="ov-actions"><span class="status" id="ovGscStatus"></span><button type="button" class="ov-more" data-goto="gsc">See more →</button></div></div>
+        <div class="sec-head"><h2>Search Console</h2><div class="ov-actions"><span class="status" id="ovGscStatus"></span><button type="button" class="ov-more" data-goto="gsc">See more <span class="ov-more-arrow">&rarr;</span></button></div></div>
         <div class="two-col" style="margin-top:0">
           <div class="col-panel">
             <h3>Branded queries</h3>
@@ -416,13 +402,13 @@ def render_bigquery_dashboard_page(
     if show_pagespeed:
         ov_panels += """
       <section class="ov-panel">
-        <div class="sec-head"><h2>Site performance</h2><div class="ov-actions"><span class="status" id="ovPsStatus"></span><button type="button" class="ov-more" data-goto="site_performance">See more →</button></div></div>
+        <div class="sec-head"><h2>Site performance</h2><div class="ov-actions"><span class="status" id="ovPsStatus"></span><button type="button" class="ov-more" data-goto="site_performance">See more <span class="ov-more-arrow">&rarr;</span></button></div></div>
         <div class="cards" id="ovPsScores"></div>
       </section>"""
     if has_paid_ads:
         paid_panel = """
       <section id="sec-overview">
-        <div class="sec-head"><h2>Paid summary</h2><div class="ov-actions"><span class="status" id="summaryStatus"></span><button type="button" class="ov-more" data-goto="explorer">See more →</button></div></div>
+        <div class="sec-head"><h2>Paid summary</h2><div class="ov-actions"><span class="status" id="summaryStatus"></span><button type="button" class="ov-more" data-goto="explorer">See more <span class="ov-more-arrow">&rarr;</span></button></div></div>
         <div class="cards" id="summaryCards"></div>
       </section>
 
@@ -508,6 +494,12 @@ def render_bigquery_dashboard_page(
     .chip:hover {{ border-color:#b9c8dc; background:#f4f8fd; }}
     .chip.active {{ background:var(--navy); color:#fff; border-color:var(--navy); }}
     .chip.active:hover {{ background:#0d2c4d; }}
+    /* Compact segmented toggle (e.g. Daily/Weekly) that sits on the card title line. */
+    .chips.seg {{ gap:0; flex-wrap:nowrap; padding:2px; background:#f1f4f8; border:1px solid var(--line); border-radius:8px; }}
+    .chips.seg .chip {{ border:0; border-radius:6px; background:none; padding:3px 12px; font-size:.76rem; color:var(--muted); }}
+    .chips.seg .chip:hover {{ background:#fff; color:var(--navy); }}
+    .chips.seg .chip.active {{ background:#fff; color:var(--navy); border-color:transparent; box-shadow:0 1px 2px rgba(16,33,67,.14); }}
+    .chips.seg .chip.active:hover {{ background:#fff; }}
     /* ---- Key-event searchable dropdown ---- */
     .ke-dropdown {{ position:relative; display:inline-block; }}
     .ke-dd-toggle {{ display:inline-flex; align-items:center; gap:8px; min-width:190px; justify-content:space-between; border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:var(--radius-sm); padding:6px 12px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; transition:border-color .12s; }}
@@ -558,12 +550,15 @@ def render_bigquery_dashboard_page(
     .ob-copy-btn {{ border:1px solid var(--line); background:var(--card); color:var(--accent); font-weight:600; font-size:.78rem; padding:5px 11px; border-radius:6px; cursor:pointer; white-space:nowrap; transition:background .15s; }}
     .ob-copy-btn:hover {{ background:#eaf2fd; }}
     .ob-copy-btn.ok {{ color:#178a4c; border-color:#178a4c; }}
-    .sec-head {{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:16px; }}
+    .sec-head {{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }}
     .sec-head h2 {{ margin:0; }}
     .sec-head .status {{ margin:0; font-size:.76rem; text-align:right; flex-shrink:0; }}
-    .ov-actions {{ display:flex; align-items:center; gap:10px; flex-shrink:0; }}
-    .ov-more {{ border:1px solid var(--line); background:#fff; color:var(--accent); border-radius:999px; padding:4px 13px; font:inherit; font-size:.78rem; font-weight:700; cursor:pointer; white-space:nowrap; }}
-    .ov-more:hover {{ border-color:var(--accent); background:#f4f8fd; }}
+    .sec-head-actions {{ display:flex; align-items:center; gap:12px; flex-shrink:0; }}
+    .ov-actions {{ display:flex; align-items:center; gap:12px; flex-shrink:0; }}
+    .ov-more {{ display:inline-flex; align-items:center; gap:5px; border:0; background:none; color:var(--muted); padding:2px 0; font:inherit; font-size:.78rem; font-weight:700; cursor:pointer; white-space:nowrap; transition:color .12s; }}
+    .ov-more:hover {{ color:var(--accent); }}
+    .ov-more-arrow {{ font-size:.95rem; line-height:1; transition:transform .12s; }}
+    .ov-more:hover .ov-more-arrow {{ transform:translateX(3px); }}
     .status {{ color:var(--muted); font-size:.82rem; margin:0 0 12px; }}
     .status.error {{ color:var(--bad); }}
     /* ---- Metric cards ---- */
@@ -898,14 +893,7 @@ def render_bigquery_dashboard_page(
     <div id="pane-analytics" hidden>
 
       <section id="sec-sessions">
-        <div class="sec-head"><h2>Sessions over time <span class="cmp-warn" id="sessionsCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="sessionsTrendStatus"></span></div>
-        <div class="filter-group" style="margin-bottom:10px">
-          <span class="filter-label">Interval</span>
-          <div class="chips" id="sessionsGranChips">
-            <button type="button" class="chip active" data-gran="daily">Daily</button>
-            <button type="button" class="chip" data-gran="weekly">Weekly</button>
-          </div>
-        </div>
+        <div class="sec-head"><h2>Sessions over time <span class="cmp-warn" id="sessionsCmpWarn" title="" hidden>&#9888;</span></h2><div class="sec-head-actions"><div class="chips seg" id="sessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><span class="status" id="sessionsTrendStatus"></span></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:200px"><canvas id="sessionsTrendChart"></canvas></div></div>
         <div class="cmp-legend" id="sessionsTrendLegend"></div>
       </section>
@@ -978,14 +966,7 @@ def render_bigquery_dashboard_page(
     <!-- ===== AI TRAFFIC TAB ===== -->
     <div id="pane-ai_traffic" hidden>
       <section id="sec-ai-trend">
-        <div class="sec-head"><h2>AI traffic over time</h2><span class="status" id="aiTrendStatus"></span></div>
-        <div class="filter-group" style="margin-bottom:10px">
-          <span class="filter-label">Interval</span>
-          <div class="chips" id="aiTrendGranChips">
-            <button type="button" class="chip active" data-gran="daily">Daily</button>
-            <button type="button" class="chip" data-gran="weekly">Weekly</button>
-          </div>
-        </div>
+        <div class="sec-head"><h2>AI traffic over time</h2><div class="sec-head-actions"><div class="chips seg" id="aiTrendGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><span class="status" id="aiTrendStatus"></span></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:260px"><canvas id="aiTrendChart"></canvas></div></div>
         <p class="chart-note">Sessions per day, stacked by referring AI assistant.</p>
       </section>
