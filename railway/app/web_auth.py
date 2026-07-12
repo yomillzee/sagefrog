@@ -320,7 +320,7 @@ def render_login_page(*, error: str | None = None, next_path: str = "/admin") ->
         radial-gradient(900px 520px at 100% 0%, rgba(37,99,235,.24), transparent 55%),
         linear-gradient(160deg,#0a2540 0%,#071b30 55%,#05121f 100%);
     }}
-    .wrap {{ width:min(420px,100%); animation:rise .5s ease both; }}
+    .wrap {{ width:min(420px,100%); position:relative; z-index:1; animation:rise .5s ease both; }}
     @keyframes rise {{ from {{ opacity:0; transform:translateY(10px); }} to {{ opacity:1; transform:none; }} }}
     .brand {{ display:flex; flex-direction:column; align-items:center; gap:12px; margin-bottom:22px; }}
     .logo {{ width:56px; height:56px; border-radius:16px; display:grid; place-items:center; overflow:hidden;
@@ -416,6 +416,7 @@ def render_login_page(*, error: str | None = None, next_path: str = "/admin") ->
       }});
     }})();
   </script>
+  <script src="/static/login-bg.js" defer></script>
 </body>
 </html>"""
 
