@@ -832,6 +832,7 @@ def render_client_shell_page(
     .dash-main {{ flex: 1; min-width: 0; display: flex; flex-direction: column; width: 100%; }}
     .dash-content {{ flex: 1; width: 100%; padding: 28px 32px 48px; }}
     .wrap {{ width: 100%; max-width: none; min-width: 0; }}
+    @media (max-width: 720px) {{ .dash-content {{ padding: 18px 16px 40px; }} }}
     {SIDEBAR_CSS}
     {extra_css}
   </style>

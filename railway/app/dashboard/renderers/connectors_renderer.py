@@ -274,7 +274,9 @@ _CONNECTOR_CSS = """
   .btn-danger:hover { background: #fef2f2; }
 
   /* Sync history table */
+  .sync-history-wrap { overflow-x: auto; }
   .sync-history { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .sync-history th, .sync-history td { white-space: nowrap; }
   .sync-history th {
     text-align: left; padding: 8px 12px; font-size: 0.78rem; font-weight: 700;
     color: var(--muted); letter-spacing:.04em; text-transform:uppercase;
@@ -1039,10 +1041,12 @@ def _render_management_view(
         runs_section = f"""
         <div class="mgmt-section">
           <div class="mgmt-section-title">Sync history</div>
+          <div class="sync-history-wrap">
           <table class="sync-history">
             <thead><tr><th>Started</th><th>Type</th><th>Status</th><th>Rows</th><th>Duration</th><th>Error</th></tr></thead>
             <tbody>{runs_rows}</tbody>
           </table>
+          </div>
         </div>
         """
 
