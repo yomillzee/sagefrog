@@ -132,16 +132,24 @@ def _primary_secret() -> str:
 
 
 # Env vars whose values a pre-migration deployment may have derived the OAuth
-# token key from. APP_ENCRYPTION_KEY is the original dedicated key that predated
-# OAUTH_TOKEN_ENCRYPTION_KEY (renaming it left the old value orphaned in the
-# environment, undecryptable by the new name); the AUTH_SESSION_SECRET /
-# CRON_SECRET / API_KEY chain is the documented dev/legacy fallback. Trying a key
-# that didn't encrypt a given token is harmless: Fernet is authenticated, so a
-# wrong key can't false-decrypt — it fails cleanly and the next candidate runs.
+# token key from. Rationale for each:
+#   - APP_ENCRYPTION_KEY: an early dedicated key that predated
+#     OAUTH_TOKEN_ENCRYPTION_KEY; renaming it left the old value orphaned.
+#   - AUTH_SESSION_SECRET / CRON_SECRET / API_KEY: the documented fallback chain.
+#     Tokens connected before AUTH_SESSION_SECRET existed were encrypted under the
+#     shared secret (which resolved to CRON_SECRET / API_KEY at the time).
+#   - DASHBOARD_SECRET: seeded from the shared CRON_SECRET value during the
+#     de-overload migration (it took over the legacy ?key= dashboard link). When
+#     CRON_SECRET was later rotated independently, DASHBOARD_SECRET is the var
+#     that still carries the ORIGINAL shared value the tokens were encrypted under.
+# Trying a key that didn't encrypt a given token is harmless: Fernet is
+# authenticated, so a wrong key can't false-decrypt — it fails cleanly and the
+# next candidate runs.
 _LEGACY_SECRET_ENV_VARS = (
     "APP_ENCRYPTION_KEY",
     "AUTH_SESSION_SECRET",
     "CRON_SECRET",
+    "DASHBOARD_SECRET",
     "API_KEY",
 )
 

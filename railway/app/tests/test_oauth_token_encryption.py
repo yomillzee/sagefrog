@@ -71,6 +71,16 @@ class DecryptFallbackTests(unittest.TestCase):
             self.assertEqual(result, "ga4-token")
             self.assertTrue(used_legacy)
 
+    def test_dashboard_secret_decrypts_after_cron_secret_rotation(self):
+        # Real incident: tokens encrypted under the shared secret; DASHBOARD_SECRET
+        # kept that value after CRON_SECRET was rotated in the de-overload.
+        old = _encrypt_under("old-shared-secret", "google-ads-token")
+        env = _orphan_env(DASHBOARD_SECRET="old-shared-secret")
+        with mock.patch.dict(os.environ, env, clear=False):
+            result, used_legacy = oauth_store._decrypt_ex(old)
+            self.assertEqual(result, "google-ads-token")
+            self.assertTrue(used_legacy)
+
     def test_explicit_fallbacks_env_decrypts(self):
         old = _encrypt_under("rotated-out-key", "tok")
         env = _orphan_env(OAUTH_TOKEN_ENCRYPTION_KEY_FALLBACKS="noise-1, rotated-out-key ,noise-2")
