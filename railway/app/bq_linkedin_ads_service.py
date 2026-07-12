@@ -350,6 +350,7 @@ def sync_campaign_metadata_and_rebuild_mart(
     account_id: str | None,
     start: date,
     end: date,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
     """Populate linkedin_ads.campaigns and rebuild the LinkedIn campaign mart.
 
@@ -405,7 +406,9 @@ def sync_campaign_metadata_and_rebuild_mart(
     if missing:
         import linkedin_service
 
-        for row in linkedin_service.fetch_campaign_metadata_rows(account_id_clean, missing):
+        for row in linkedin_service.fetch_campaign_metadata_rows(
+            account_id_clean, missing, access_token=access_token
+        ):
             cid = str(row.get("campaign_id") or "").strip()
             if cid:
                 metadata_by_id[cid] = row

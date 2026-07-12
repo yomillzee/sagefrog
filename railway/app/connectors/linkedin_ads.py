@@ -38,12 +38,17 @@ class LinkedInAdsConnector(ConnectorHandler):
         start, end, _ = resolve_date_range(date_range)
         rows_written = 0
         try:
+            # Resolve THIS client's access token up front and thread it through —
+            # the service layer otherwise falls back to load_linkedin_env(), which
+            # reads the global OAuth store (no client_slug), so a client-scoped
+            # connection can never sync while the global token is absent.
+            access_token = _get_access_token(client_slug)
             with bq_linkedin_ads_service.route(
                 bq_project_id=bq_project_id,
                 linkedin_dataset_id=raw_dataset_id,
             ):
                 daily_rows = linkedin_service.fetch_campaign_daily_metrics(
-                    account_id, start=start, end=end
+                    account_id, start=start, end=end, access_token=access_token
                 )
                 # Write campaign-level rows to raw_linkedin_ads.campaign_daily
                 # (same table Google writes). Everything downstream — the Overview
@@ -56,7 +61,7 @@ class LinkedInAdsConnector(ConnectorHandler):
                 )
                 rows_written += mirrored.get("rows_upserted") or 0
                 meta = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(
-                    account_id=account_id, start=start, end=end
+                    account_id=account_id, start=start, end=end, access_token=access_token
                 )
                 rows_written += meta.get("rows_upserted") or 0
             # Rebuild the unified paid-media view + data-health mart (app's own
@@ -78,10 +83,13 @@ def _get_access_token(client_slug: str) -> str:
 
     refresh = oauth_store.get_refresh_token("linkedin", client_slug=client_slug)
     if not refresh:
-        raise RuntimeError(
-            f"No LinkedIn OAuth token found for client '{client_slug}'. "
-            "Connect LinkedIn in the connector setup wizard."
-        )
+        raise RuntimeError(oauth_store.token_error(
+            "linkedin", client_slug=client_slug,
+            missing=(
+                f"No LinkedIn OAuth token found for client '{client_slug}'. "
+                "Connect LinkedIn in the connector setup wizard."
+            ),
+        ))
     env = LinkedInEnv(
         client_id=_get_required_env(*_ENV_ALIASES["client_id"]),
         client_secret=_get_required_env(*_ENV_ALIASES["client_secret"]),
