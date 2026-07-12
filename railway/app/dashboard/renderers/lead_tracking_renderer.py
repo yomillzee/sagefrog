@@ -2,42 +2,120 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime
 from typing import Any
 
+import dashboard_theme
 from dashboard.renderers.base_layout import render_client_shell_page
 from dashboard.utils.formatting import esc as _esc
+from dashboard.utils.formatting import json_for_html_script as _json
 from hubspot_reports_service import LeadTrackingReport
 
+# Categorical palette for source breakdowns, drawn from the client theme so the
+# page inherits any brand overrides. Ordered for good adjacent contrast.
+_SOURCE_PALETTE_KEYS = ("sidebar_from", "google", "meta", "organic", "linkedin", "business_line")
+
 _EXTRA_CSS = """
-.lt-wrap { max-width: 1080px; }
-.lt-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; margin:20px 0 28px; }
-.lt-tile { background:#fff; border:1px solid #e6e8ee; border-radius:12px; padding:18px 20px; }
-.lt-tile-label { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:#6b7280; margin-bottom:6px; }
-.lt-tile-value { font-size:28px; font-weight:700; color:#111827; line-height:1.1; }
-.lt-tile-sub { font-size:12px; color:#9ca3af; margin-top:4px; }
-.lt-card { background:#fff; border:1px solid #e6e8ee; border-radius:12px; padding:20px 22px; margin-bottom:22px; }
-.lt-card h2 { font-size:15px; font-weight:600; color:#111827; margin:0 0 16px; }
-.lt-bars { display:flex; flex-direction:column; gap:10px; }
-.lt-bar-row { display:grid; grid-template-columns:150px 1fr 64px; align-items:center; gap:12px; font-size:13px; }
-.lt-bar-label { color:#374151; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.lt-bar-track { background:#f1f3f8; border-radius:6px; height:20px; overflow:hidden; }
-.lt-bar-fill { background:#ff7a59; height:100%; border-radius:6px; min-width:2px; }
-.lt-bar-val { text-align:right; color:#111827; font-variant-numeric:tabular-nums; font-weight:600; }
+.lt-wrap { max-width: 1200px; }
+.lt-head { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:4px; }
+.lt-title { font-size:1.6rem; font-weight:750; color:var(--navy); margin:0; letter-spacing:-.01em; }
+.lt-sub { font-size:.9rem; color:var(--muted); margin:6px 0 0; }
+.lt-hs-tag { display:inline-flex; align-items:center; gap:7px; padding:7px 13px; border-radius:999px; background:#fff3ed; border:1px solid #ffd9c7; color:#c2410c; font-size:.78rem; font-weight:650; white-space:nowrap; }
+.lt-hs-dot { width:8px; height:8px; border-radius:50%; background:#ff7a59; }
+
+/* KPI tiles */
+.lt-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:16px; margin:22px 0 24px; }
+.lt-tile { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:18px 20px; box-shadow:var(--shadow-sm); position:relative; overflow:hidden; }
+.lt-tile::before { content:""; position:absolute; inset:0 auto 0 0; width:4px; background:var(--accent); opacity:.85; }
+.lt-tile.t-mql::before { background:var(--accent); }
+.lt-tile.t-contacts::before { background:var(--navy); }
+.lt-tile.t-deals::before { background:var(--organic); }
+.lt-tile.t-pipeline::before { background:var(--business-line); }
+.lt-tile.t-won::before { background:var(--ok); }
+.lt-tile-label { font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:700; margin-bottom:8px; }
+.lt-tile-value { font-size:1.9rem; font-weight:750; color:var(--navy); line-height:1.05; letter-spacing:-.01em; font-variant-numeric:tabular-nums; }
+.lt-tile-sub { font-size:.78rem; color:var(--muted); margin-top:6px; }
+.lt-tile-sub strong { color:var(--text); font-weight:700; }
+
+/* Cards */
+.lt-card { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:20px 22px; margin-bottom:20px; box-shadow:var(--shadow-sm); }
+.lt-card-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin:0 0 16px; flex-wrap:wrap; }
+.lt-card h2 { font-size:1rem; font-weight:700; color:var(--navy); margin:0; }
+.lt-card-note { font-size:.78rem; color:var(--muted); }
+.lt-cols { display:grid; grid-template-columns:1.15fr 1fr; gap:20px; align-items:start; }
+.lt-cols .lt-card { margin-bottom:0; height:100%; }
+
+/* Delta badge */
+.lt-delta { display:inline-flex; align-items:center; gap:4px; padding:4px 10px; border-radius:999px; font-size:.76rem; font-weight:700; font-variant-numeric:tabular-nums; }
+.lt-delta.up { background:var(--ok-bg); color:var(--ok); }
+.lt-delta.down { background:var(--err-bg); color:var(--err); }
+.lt-delta.flat { background:var(--surface); color:var(--muted); }
+.lt-delta svg { width:13px; height:13px; }
+
+/* Time-series chart */
+.lt-chart { position:relative; width:100%; }
+.lt-chart svg { display:block; width:100%; height:auto; }
+.lt-chart-guide { position:absolute; top:0; width:1px; background:var(--accent); opacity:0; pointer-events:none; transition:opacity .1s; }
+.lt-chart-dot { position:absolute; width:11px; height:11px; margin:-6px 0 0 -6px; border-radius:50%; background:var(--accent); border:2.5px solid var(--panel); box-shadow:0 1px 4px rgba(11,92,171,.4); opacity:0; pointer-events:none; transition:opacity .1s; }
+.lt-chart-tip { position:absolute; transform:translate(-50%,-115%); background:var(--navy); color:#fff; padding:7px 11px; border-radius:9px; font-size:.76rem; line-height:1.35; white-space:nowrap; pointer-events:none; opacity:0; transition:opacity .1s; box-shadow:0 6px 18px rgba(10,37,64,.28); z-index:3; }
+.lt-chart-tip b { font-weight:750; font-size:.86rem; }
+.lt-chart-tip .lt-tip-m { color:#b9c9de; font-size:.7rem; text-transform:uppercase; letter-spacing:.04em; }
+
+/* Funnel */
+.lt-funnel { display:flex; flex-direction:column; gap:2px; }
+.lt-funnel-stage { padding:2px 0; }
+.lt-funnel-top { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:5px; }
+.lt-funnel-name { font-size:.82rem; font-weight:650; color:var(--text); }
+.lt-funnel-val { font-size:.92rem; font-weight:750; color:var(--navy); font-variant-numeric:tabular-nums; }
+.lt-funnel-bar { height:26px; border-radius:8px; min-width:8px; transition:width .4s ease; }
+.lt-funnel-conv { display:flex; align-items:center; gap:7px; padding:6px 0 6px 4px; color:var(--muted); font-size:.75rem; }
+.lt-funnel-conv svg { width:14px; height:14px; opacity:.7; }
+.lt-funnel-conv strong { color:var(--text); font-weight:700; }
+
+/* Ranked source bars */
+.lt-bars { display:flex; flex-direction:column; gap:12px; }
+.lt-bar-row { display:grid; grid-template-columns:1fr auto; gap:4px 12px; align-items:center; font-size:.82rem; }
+.lt-bar-head { display:flex; align-items:center; gap:8px; min-width:0; }
+.lt-bar-swatch { width:9px; height:9px; border-radius:3px; flex-shrink:0; }
+.lt-bar-label { color:var(--text); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.lt-bar-val { text-align:right; color:var(--navy); font-variant-numeric:tabular-nums; font-weight:700; }
+.lt-bar-val span { color:var(--muted); font-weight:600; font-size:.74rem; margin-left:5px; }
+.lt-bar-track { grid-column:1 / -1; background:var(--surface); border-radius:6px; height:9px; overflow:hidden; }
+.lt-bar-fill { height:100%; border-radius:6px; min-width:3px; transition:width .4s ease; }
+
+/* Tables */
 .lt-table-wrap { overflow-x:auto; }
-.lt-table { width:100%; border-collapse:collapse; font-size:13px; }
-.lt-table th { text-align:left; color:#6b7280; font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.03em; padding:8px 10px; border-bottom:2px solid #eef0f4; }
-.lt-table td { padding:9px 10px; border-bottom:1px solid #f2f4f8; color:#374151; }
-.lt-empty { color:#9ca3af; font-size:13px; padding:8px 0; }
-.lt-note { background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; border-radius:10px; padding:12px 16px; font-size:13px; margin-bottom:20px; }
-.lt-cols { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
-@media (max-width:720px){ .lt-cols{ grid-template-columns:1fr; } .lt-bar-row{ grid-template-columns:110px 1fr 56px; } }
+.lt-table { width:100%; border-collapse:collapse; font-size:.85rem; }
+.lt-table th { text-align:left; color:var(--muted); font-weight:700; font-size:.68rem; text-transform:uppercase; letter-spacing:.05em; padding:9px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
+.lt-table th.num, .lt-table td.num { text-align:right; font-variant-numeric:tabular-nums; }
+.lt-table td { padding:11px 12px; border-bottom:1px solid #f1f4f8; color:var(--text); }
+.lt-table tbody tr:last-child td { border-bottom:0; }
+.lt-table tbody tr:hover td { background:var(--surface); }
+.lt-src-cell { display:flex; align-items:center; gap:9px; }
+.lt-conv-pill { display:inline-flex; align-items:center; padding:2px 9px; border-radius:999px; background:#eef4ff; color:var(--accent); font-size:.74rem; font-weight:700; }
+.lt-email { font-weight:600; color:var(--text); }
+.lt-muted { color:var(--muted); }
+
+.lt-empty { color:var(--muted); font-size:.85rem; padding:20px 4px; text-align:center; }
+.lt-note { background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; border-radius:12px; padding:13px 16px; font-size:.85rem; margin-bottom:20px; }
+
+@media (max-width:820px){ .lt-cols{ grid-template-columns:1fr; } .lt-cols .lt-card{ height:auto; } }
 """
+
+# ---- geometry for the SVG trend chart ----
+_VBW, _VBH = 900, 260
+_PAD_L, _PAD_R, _PAD_T, _PAD_B = 48, 18, 18, 34
+_PLOT_W = _VBW - _PAD_L - _PAD_R
+_PLOT_H = _VBH - _PAD_T - _PAD_B
+
+_MONTHS_ABBR = ("", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
 def _fmt_int(n: Any) -> str:
     try:
-        return f"{int(n):,}"
+        return f"{int(round(float(n))):,}"
     except (TypeError, ValueError):
         return "0"
 
@@ -49,35 +127,354 @@ def _fmt_money(n: Any) -> str:
         return "$0"
 
 
+def _fmt_money_compact(n: Any) -> str:
+    try:
+        v = float(n)
+    except (TypeError, ValueError):
+        return "$0"
+    a = abs(v)
+    if a >= 1_000_000:
+        return f"${v / 1_000_000:.1f}M".replace(".0M", "M")
+    if a >= 10_000:
+        return f"${v / 1_000:.0f}K"
+    return f"${v:,.0f}"
+
+
+def _pct_str(num: float, den: float) -> str:
+    if not den:
+        return "—"
+    return f"{100.0 * num / den:.0f}%"
+
+
 def _fmt_dt(v: Any) -> str:
     if isinstance(v, (datetime, date)):
         return v.strftime("%b %d, %Y")
     return _esc(str(v)) if v else "—"
 
 
-def _bars(rows: list[dict[str, Any]], *, label_key: str, value_key: str, money: bool = False) -> str:
+def _source_label(src: str) -> str:
+    return (src or "Unknown").replace("_", " ").title()
+
+
+def _nice_ceiling(v: float) -> float:
+    """Round a peak value up to a clean axis maximum."""
+    if v <= 0:
+        return 4.0
+    mag = 10 ** math.floor(math.log10(v))
+    for step in (1, 2, 2.5, 5, 10):
+        if v <= step * mag:
+            return step * mag
+    return 10 * mag
+
+
+def _fill_months(rows: list[dict[str, Any]]) -> list[tuple[int, int, int]]:
+    """Turn sparse [{month:'YYYY-MM', contacts:N}] into a continuous monthly
+    series (missing months filled with 0), capped to the most recent 24."""
+    parsed: list[tuple[int, int, int]] = []
+    for r in rows:
+        m = str(r.get("month") or "")
+        try:
+            y_s, mo_s = m.split("-")
+            parsed.append((int(y_s), int(mo_s), int(r.get("contacts") or 0)))
+        except (ValueError, TypeError):
+            continue
+    if not parsed:
+        return []
+    parsed.sort()
+    valmap = {(y, mo): v for y, mo, v in parsed}
+    (y0, m0, _), (y1, m1, _) = parsed[0], parsed[-1]
+    out: list[tuple[int, int, int]] = []
+    y, mo = y0, m0
+    while (y, mo) <= (y1, m1):
+        out.append((y, mo, valmap.get((y, mo), 0)))
+        mo += 1
+        if mo > 12:
+            mo, y = 1, y + 1
+    return out[-24:]
+
+
+def _delta_badge(series: list[tuple[int, int, int]]) -> str:
+    """Month-over-month change badge for the two most recent months."""
+    if len(series) < 2:
+        return ""
+    prev, curr = series[-2][2], series[-1][2]
+    if prev == 0:
+        if curr == 0:
+            return '<span class="lt-delta flat">No change</span>'
+        return f'<span class="lt-delta up">{_up_svg()} New this month</span>'
+    change = (curr - prev) / prev * 100.0
+    if abs(change) < 0.5:
+        return '<span class="lt-delta flat">Flat vs. last month</span>'
+    if change > 0:
+        return f'<span class="lt-delta up">{_up_svg()} {change:.0f}% vs. last month</span>'
+    return f'<span class="lt-delta down">{_down_svg()} {abs(change):.0f}% vs. last month</span>'
+
+
+def _up_svg() -> str:
+    return ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" '
+            'stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6 4 4 6-7"/>'
+            '<path d="M20 8h-4V4" transform="translate(0 0)"/><path d="M16 8h4v4"/></svg>')
+
+
+def _down_svg() -> str:
+    return ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" '
+            'stroke-linecap="round" stroke-linejoin="round"><path d="M4 7l6 6 4-4 6 7"/>'
+            '<path d="M16 16h4v-4"/></svg>')
+
+
+def _month_label(y: int, mo: int, *, with_year: bool) -> str:
+    base = _MONTHS_ABBR[mo] if 1 <= mo <= 12 else str(mo)
+    return f"{base} '{y % 100:02d}" if with_year else base
+
+
+def _area_chart(series: list[tuple[int, int, int]], accent: str) -> str:
+    """Inline SVG area+line trend chart with a JS-driven hover tooltip."""
+    if len(series) < 2:
+        return '<div class="lt-empty">Not enough monthly history yet to plot a trend.</div>'
+
+    peak = max((v for _, _, v in series), default=0)
+    max_y = _nice_ceiling(peak)
+    n = len(series)
+
+    def _x(i: int) -> float:
+        return _PAD_L + _PLOT_W * (i / (n - 1))
+
+    def _y(v: float) -> float:
+        return _PAD_T + _PLOT_H * (1 - (v / max_y if max_y else 0))
+
+    pts = [(_x(i), _y(v)) for i, (_, _, v) in enumerate(series)]
+
+    # Horizontal gridlines + y-axis labels (0 .. max_y in 4 steps).
+    grid, ylabels = [], []
+    for g in range(5):
+        gv = max_y * g / 4
+        gy = _y(gv)
+        grid.append(
+            f'<line x1="{_PAD_L}" y1="{gy:.1f}" x2="{_VBW - _PAD_R}" y2="{gy:.1f}" '
+            f'stroke="#eef1f6" stroke-width="1"/>'
+        )
+        ylabels.append(
+            f'<text x="{_PAD_L - 10}" y="{gy + 4:.1f}" text-anchor="end" '
+            f'font-size="12" fill="#94a3b8">{_fmt_int(gv)}</text>'
+        )
+
+    # X-axis labels — stride so at most ~8 render, avoiding overlap.
+    stride = max(1, math.ceil(n / 8))
+    xlabels = []
+    for i, (y, mo, _v) in enumerate(series):
+        if i % stride and i != n - 1:
+            continue
+        lx = _x(i)
+        show_year = (mo == 1) or (i == 0)
+        anchor = "start" if i == 0 else ("end" if i == n - 1 else "middle")
+        xlabels.append(
+            f'<text x="{lx:.1f}" y="{_VBH - 12}" text-anchor="{anchor}" '
+            f'font-size="12" fill="#94a3b8">{_month_label(y, mo, with_year=show_year)}</text>'
+        )
+
+    line_pts = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    base_y = _y(0)
+    area_d = (
+        f"M {pts[0][0]:.1f} {base_y:.1f} "
+        + " ".join(f"L {x:.1f} {y:.1f}" for x, y in pts)
+        + f" L {pts[-1][0]:.1f} {base_y:.1f} Z"
+    )
+    dots = "".join(
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="2.6" fill="{accent}" opacity="0.9"/>'
+        for x, y in pts
+    )
+
+    # Data for the JS hover overlay: fractions over the full viewBox so the
+    # absolutely-positioned overlay lines up at any rendered width.
+    points_json = _json([
+        {
+            "xf": round(x / _VBW, 5),
+            "yf": round(y / _VBH, 5),
+            "label": _month_label(yr, mo, with_year=True),
+            "value": _fmt_int(v),
+        }
+        for (x, y), (yr, mo, v) in zip(pts, series)
+    ])
+
+    grad_id = "ltArea"
+    svg = f"""
+      <svg viewBox="0 0 {_VBW} {_VBH}" role="img"
+           aria-label="Monthly MQL trend" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <linearGradient id="{grad_id}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="{accent}" stop-opacity="0.22"/>
+            <stop offset="100%" stop-color="{accent}" stop-opacity="0.02"/>
+          </linearGradient>
+        </defs>
+        {''.join(grid)}
+        <path d="{area_d}" fill="url(#{grad_id})"/>
+        <polyline points="{line_pts}" fill="none" stroke="{accent}" stroke-width="2.5"
+                  stroke-linejoin="round" stroke-linecap="round"/>
+        {dots}
+        {''.join(ylabels)}
+        {''.join(xlabels)}
+      </svg>
+    """
+    return f"""
+      <div class="lt-chart" data-lt-points='{points_json}'>
+        {svg}
+        <div class="lt-chart-guide" data-lt-guide style="top:{_PAD_T / _VBH * 100:.2f}%;height:{_PLOT_H / _VBH * 100:.2f}%"></div>
+        <div class="lt-chart-dot" data-lt-hoverdot></div>
+        <div class="lt-chart-tip" data-lt-tip></div>
+      </div>
+    """
+
+
+_CHART_JS = """
+<script>
+(function () {
+  document.querySelectorAll('.lt-chart[data-lt-points]').forEach(function (chart) {
+    var pts;
+    try { pts = JSON.parse(chart.getAttribute('data-lt-points')); }
+    catch (e) { return; }
+    if (!pts || !pts.length) return;
+    var guide = chart.querySelector('[data-lt-guide]');
+    var dot   = chart.querySelector('[data-lt-hoverdot]');
+    var tip   = chart.querySelector('[data-lt-tip]');
+
+    function show(p) {
+      var xp = p.xf * 100, yp = p.yf * 100;
+      guide.style.left = xp + '%'; guide.style.opacity = 1;
+      dot.style.left = xp + '%'; dot.style.top = yp + '%'; dot.style.opacity = 1;
+      tip.style.left = xp + '%'; tip.style.top = yp + '%'; tip.style.opacity = 1;
+      tip.innerHTML = '<span class="lt-tip-m">' + p.label + '</span><br><b>' +
+                      p.value + '</b> MQLs';
+    }
+    function hide() { guide.style.opacity = 0; dot.style.opacity = 0; tip.style.opacity = 0; }
+
+    chart.addEventListener('mousemove', function (ev) {
+      var r = chart.getBoundingClientRect();
+      if (!r.width) return;
+      var frac = (ev.clientX - r.left) / r.width;
+      var best = pts[0], bd = Infinity;
+      for (var i = 0; i < pts.length; i++) {
+        var d = Math.abs(pts[i].xf - frac);
+        if (d < bd) { bd = d; best = pts[i]; }
+      }
+      show(best);
+    });
+    chart.addEventListener('mouseleave', hide);
+  });
+})();
+</script>
+"""
+
+
+def _tile(kind: str, label: str, value: str, sub: str = "") -> str:
+    sub_html = f'<div class="lt-tile-sub">{sub}</div>' if sub else ""
+    return (
+        f'<div class="lt-tile t-{kind}">'
+        f'<div class="lt-tile-label">{_esc(label)}</div>'
+        f'<div class="lt-tile-value">{value}</div>'
+        f'{sub_html}</div>'
+    )
+
+
+def _funnel(stages: list[tuple[str, int, str]]) -> str:
+    """Vertical, tapering funnel. stages = [(name, count, color)]."""
+    counts = [c for _, c, _ in stages]
+    peak = max(counts, default=0) or 1
+    parts = ['<div class="lt-funnel">']
+    for i, (name, count, color) in enumerate(stages):
+        width = max(8.0, count / peak * 100.0)
+        parts.append(
+            f'<div class="lt-funnel-stage">'
+            f'<div class="lt-funnel-top"><span class="lt-funnel-name">{_esc(name)}</span>'
+            f'<span class="lt-funnel-val">{_fmt_int(count)}</span></div>'
+            f'<div class="lt-funnel-bar" style="width:{width:.1f}%;background:{color}"></div>'
+            f'</div>'
+        )
+        if i < len(stages) - 1:
+            nxt = stages[i + 1][1]
+            parts.append(
+                f'<div class="lt-funnel-conv">{_down_arrow()}'
+                f'<span><strong>{_pct_str(nxt, count)}</strong> '
+                f'{_esc(name.split()[0].lower())} → {_esc(stages[i + 1][0].split()[0].lower())}</span></div>'
+            )
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _down_arrow() -> str:
+    return ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+            'stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/>'
+            '<path d="M6 13l6 6 6-6"/></svg>')
+
+
+def _source_bars(rows: list[dict[str, Any]], colors: list[str]) -> str:
     if not rows:
-        return '<div class="lt-empty">No data yet.</div>'
-    top = rows[:10]
-    peak = max((float(r.get(value_key) or 0) for r in top), default=0) or 1
+        return '<div class="lt-empty">No lead sources yet.</div>'
+    top = rows[:8]
+    total = sum(int(r.get("contacts") or 0) for r in rows) or 1
+    peak = max((int(r.get("contacts") or 0) for r in top), default=0) or 1
     out = ['<div class="lt-bars">']
-    for r in top:
-        val = float(r.get(value_key) or 0)
-        pct = max(2, round(val / peak * 100))
-        shown = _fmt_money(val) if money else _fmt_int(val)
+    for i, r in enumerate(top):
+        c = int(r.get("contacts") or 0)
+        color = colors[i % len(colors)]
+        width = max(3.0, c / peak * 100.0)
+        share = c / total * 100.0
         out.append(
             f'<div class="lt-bar-row">'
-            f'<span class="lt-bar-label">{_esc(str(r.get(label_key) or "Unknown"))}</span>'
-            f'<span class="lt-bar-track"><span class="lt-bar-fill" style="width:{pct}%"></span></span>'
-            f'<span class="lt-bar-val">{shown}</span>'
+            f'<span class="lt-bar-head"><span class="lt-bar-swatch" style="background:{color}"></span>'
+            f'<span class="lt-bar-label">{_esc(_source_label(r.get("source")))}</span></span>'
+            f'<span class="lt-bar-val">{_fmt_int(c)}<span>{share:.0f}%</span></span>'
+            f'<span class="lt-bar-track"><span class="lt-bar-fill" '
+            f'style="width:{width:.1f}%;background:{color}"></span></span>'
             f'</div>'
         )
     out.append("</div>")
     return "".join(out)
 
 
-def _source_label(src: str) -> str:
-    return (src or "Unknown").replace("_", " ").title()
+def _source_performance(
+    leads: list[dict[str, Any]], deals: list[dict[str, Any]]
+) -> str:
+    """Unified per-source table joining MQL volume with deal/revenue outcomes."""
+    merged: dict[str, dict[str, Any]] = {}
+    for r in leads:
+        key = str(r.get("source") or "Unknown")
+        merged.setdefault(key, {"mqls": 0, "deals": 0, "amount": 0.0, "won": 0.0})
+        merged[key]["mqls"] = int(r.get("contacts") or 0)
+    for r in deals:
+        key = str(r.get("source") or "Unknown")
+        m = merged.setdefault(key, {"mqls": 0, "deals": 0, "amount": 0.0, "won": 0.0})
+        m["deals"] = int(r.get("deals") or 0)
+        m["amount"] = float(r.get("amount") or 0.0)
+        m["won"] = float(r.get("won_amount") or 0.0)
+
+    if not merged:
+        return '<div class="lt-empty">No source data synced yet.</div>'
+
+    rows = sorted(
+        merged.items(), key=lambda kv: (kv[1]["mqls"], kv[1]["deals"]), reverse=True
+    )[:12]
+
+    body = []
+    for key, m in rows:
+        conv = (
+            f'<span class="lt-conv-pill">{_pct_str(m["deals"], m["mqls"])}</span>'
+            if m["mqls"] else '<span class="lt-muted">—</span>'
+        )
+        body.append(
+            f'<tr><td>{_esc(_source_label(key))}</td>'
+            f'<td class="num">{_fmt_int(m["mqls"])}</td>'
+            f'<td class="num">{_fmt_int(m["deals"])}</td>'
+            f'<td class="num">{_fmt_money(m["amount"])}</td>'
+            f'<td class="num">{_fmt_money(m["won"])}</td>'
+            f'<td class="num">{conv}</td></tr>'
+        )
+    return (
+        '<div class="lt-table-wrap"><table class="lt-table"><thead><tr>'
+        '<th>Source</th><th class="num">MQLs</th><th class="num">Deals</th>'
+        '<th class="num">Pipeline</th><th class="num">Won</th>'
+        '<th class="num">MQL→Deal</th></tr></thead><tbody>'
+        + "".join(body) + '</tbody></table></div>'
+    )
 
 
 def render_lead_tracking(
@@ -93,81 +490,111 @@ def render_lead_tracking(
     if not report.configured:
         content = (
             '<div class="lt-wrap">'
-            '<h1 class="connectors-page-title">Lead Tracking</h1>'
+            '<div class="lt-head"><div><h1 class="lt-title">Lead Tracking</h1></div></div>'
             f'<div class="lt-note">{_esc(report.error or "HubSpot is not configured for this client.")} '
             'Connect HubSpot from the Connectors page to enable these reports.</div>'
             '</div>'
         )
         return _shell(client_slug, label, content, access_key, use_session, session_email, session_is_admin)
 
+    theme = dashboard_theme.load_client_theme(client_slug)
+    accent = "#0b5cab"
+    source_colors = [theme.get(k, "#0b5cab") for k in _SOURCE_PALETTE_KEYS]
+
     note = ""
     if not report.contacts_available and not report.deals_available:
         note = ('<div class="lt-note">No HubSpot data has synced yet. Run a sync from the '
                 'HubSpot connector, then refresh this page.</div>')
 
-    tiles = f"""
-      <div class="lt-tiles">
-        <div class="lt-tile"><div class="lt-tile-label">MQLs</div><div class="lt-tile-value">{_fmt_int(report.mql_count)}</div><div class="lt-tile-sub">is or has been MQL</div></div>
-        <div class="lt-tile"><div class="lt-tile-label">Contacts tracked</div><div class="lt-tile-value">{_fmt_int(report.contact_count)}</div></div>
-        <div class="lt-tile"><div class="lt-tile-label">Deals</div><div class="lt-tile-value">{_fmt_int(report.deal_count)}</div></div>
-        <div class="lt-tile"><div class="lt-tile-label">Pipeline</div><div class="lt-tile-value">{_fmt_money(report.pipeline_amount)}</div></div>
-        <div class="lt-tile"><div class="lt-tile-label">Won revenue</div><div class="lt-tile-value">{_fmt_money(report.won_amount)}</div><div class="lt-tile-sub">closed-won</div></div>
-      </div>
-    """
+    # KPI tiles with derived context.
+    tiles = (
+        '<div class="lt-tiles">'
+        + _tile("mql", "MQLs", _fmt_int(report.mql_count),
+                f'<strong>{_pct_str(report.mql_count, report.contact_count)}</strong> of contacts')
+        + _tile("contacts", "Contacts tracked", _fmt_int(report.contact_count))
+        + _tile("deals", "Deals", _fmt_int(report.deal_count),
+                f'<strong>{_pct_str(report.deal_count, report.mql_count)}</strong> of MQLs')
+        + _tile("pipeline", "Pipeline", _fmt_money_compact(report.pipeline_amount),
+                (f'<strong>{_fmt_money_compact(report.pipeline_amount / report.deal_count)}</strong> avg deal'
+                 if report.deal_count else ""))
+        + _tile("won", "Won revenue", _fmt_money_compact(report.won_amount),
+                f'<strong>{_pct_str(report.won_amount, report.pipeline_amount)}</strong> win rate')
+        + '</div>'
+    )
 
-    # MQLs by month (bars)
-    month_rows = [{"m": r.get("month"), "c": r.get("contacts")} for r in report.mqls_by_month]
-    mqls_month_html = _bars(month_rows, label_key="m", value_key="c")
+    # Hero: MQL trend over time.
+    series = _fill_months(report.mqls_by_month)
+    chart_html = _area_chart(series, accent)
+    delta = _delta_badge(series)
+    chart_card = (
+        '<div class="lt-card">'
+        '<div class="lt-card-head"><h2>MQLs over time</h2>'
+        f'{delta}</div>{chart_html}</div>'
+    )
 
-    # Leads by source
-    lead_src_rows = [{"s": _source_label(r.get("source")), "c": r.get("contacts")} for r in report.leads_by_source]
-    leads_src_html = _bars(lead_src_rows, label_key="s", value_key="c")
+    # Funnel + top sources.
+    funnel_html = _funnel([
+        ("Contacts tracked", report.contact_count, theme.get("sidebar_from", "#0a2540")),
+        ("MQLs", report.mql_count, accent),
+        ("Deals", report.deal_count, theme.get("organic", "#16a34a")),
+    ])
+    sources_html = _source_bars(report.leads_by_source, source_colors)
+    cols = (
+        '<div class="lt-cols">'
+        f'<div class="lt-card"><div class="lt-card-head"><h2>Lead-to-deal funnel</h2></div>{funnel_html}</div>'
+        f'<div class="lt-card"><div class="lt-card-head"><h2>Top lead sources</h2>'
+        '<span class="lt-card-note">by MQL volume</span></div>'
+        f'{sources_html}</div>'
+        '</div>'
+    )
 
-    # Deals by source table
-    if report.deals_by_source:
-        deal_rows = "".join(
-            f'<tr><td>{_esc(_source_label(r.get("source")))}</td>'
-            f'<td>{_fmt_int(r.get("deals"))}</td>'
-            f'<td>{_fmt_money(r.get("amount"))}</td>'
-            f'<td>{_fmt_money(r.get("won_amount"))}</td></tr>'
-            for r in report.deals_by_source[:12]
-        )
-        deals_src_html = (
-            '<div class="lt-table-wrap"><table class="lt-table"><thead><tr><th>Source</th><th>Deals</th>'
-            '<th>Pipeline</th><th>Won</th></tr></thead><tbody>' + deal_rows + '</tbody></table></div>'
-        )
-    else:
-        deals_src_html = '<div class="lt-empty">No deals synced yet.</div>'
+    # Unified source performance.
+    perf_html = _source_performance(report.leads_by_source, report.deals_by_source)
+    perf_card = (
+        '<div class="lt-card"><div class="lt-card-head"><h2>Source performance</h2>'
+        '<span class="lt-card-note">MQLs, pipeline &amp; conversion by channel</span></div>'
+        f'{perf_html}</div>'
+    )
 
-    # Recent MQLs table
+    # Recent MQLs.
     if report.recent_mqls:
         recent_rows = "".join(
-            f'<tr><td>{_esc(r.get("email") or "—")}</td>'
+            f'<tr><td class="lt-email">{_esc(r.get("email") or "—")}</td>'
             f'<td>{_esc(r.get("company") or "—")}</td>'
             f'<td>{_esc(_source_label(r.get("source")))}</td>'
-            f'<td>{_fmt_dt(r.get("became_stage_date"))}</td></tr>'
+            f'<td class="lt-muted">{_fmt_dt(r.get("became_stage_date"))}</td></tr>'
             for r in report.recent_mqls
         )
         recent_html = (
             '<div class="lt-table-wrap"><table class="lt-table"><thead><tr><th>Email</th><th>Company</th>'
-            '<th>Original source</th><th>Became MQL</th></tr></thead><tbody>' + recent_rows + '</tbody></table></div>'
+            '<th>Original source</th><th>Became MQL</th></tr></thead><tbody>'
+            + recent_rows + '</tbody></table></div>'
         )
     else:
         recent_html = '<div class="lt-empty">No MQLs synced yet.</div>'
+    recent_card = (
+        '<div class="lt-card"><div class="lt-card-head"><h2>Recent MQLs</h2>'
+        '<span class="lt-card-note">latest 20</span></div>'
+        f'{recent_html}</div>'
+    )
 
     content = f"""
       <div class="lt-wrap">
-        <h1 class="connectors-page-title">Lead Tracking</h1>
-        <p class="connectors-page-sub">HubSpot lead &amp; pipeline reporting for {_esc(label)}.</p>
+        <div class="lt-head">
+          <div>
+            <h1 class="lt-title">Lead Tracking</h1>
+            <p class="lt-sub">HubSpot lead &amp; pipeline reporting for {_esc(label)}.</p>
+          </div>
+          <span class="lt-hs-tag"><span class="lt-hs-dot"></span>HubSpot</span>
+        </div>
         {note}
         {tiles}
-        <div class="lt-cols">
-          <div class="lt-card"><h2>MQLs by month</h2>{mqls_month_html}</div>
-          <div class="lt-card"><h2>Leads by original source</h2>{leads_src_html}</div>
-        </div>
-        <div class="lt-card"><h2>Pipeline &amp; revenue by source</h2>{deals_src_html}</div>
-        <div class="lt-card"><h2>Recent MQLs</h2>{recent_html}</div>
+        {chart_card}
+        {cols}
+        {perf_card}
+        {recent_card}
       </div>
+      {_CHART_JS}
     """
     return _shell(client_slug, label, content, access_key, use_session, session_email, session_is_admin)
 
