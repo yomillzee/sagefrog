@@ -373,13 +373,13 @@ def render_bigquery_dashboard_page(
     # the paid panel is prepended only when the client runs paid ads.
     ov_panels = """
       <section class="ov-panel">
-        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><div class="chips seg" id="ovSessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><span class="status" id="ovSessionsStatus"></span><button type="button" class="ov-more" data-goto="analytics">See more <span class="ov-more-arrow">&rarr;</span></button></div></div>
+        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><div class="chips seg" id="ovSessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" data-goto="analytics">See more <span class="ov-more-arrow">&rarr;</span></button></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovSessionsTrend"></canvas></div></div>
         <div class="cmp-legend" id="ovSessionsLegend"></div>
       </section>
 
       <section class="ov-panel">
-        <div class="sec-head"><h2>AI traffic</h2><div class="ov-actions"><div class="chips seg" id="ovAiGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><span class="status" id="ovAiStatus"></span><button type="button" class="ov-more" data-goto="ai_traffic">See more <span class="ov-more-arrow">&rarr;</span></button></div></div>
+        <div class="sec-head"><h2>AI traffic</h2><div class="ov-actions"><div class="chips seg" id="ovAiGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" data-goto="ai_traffic">See more <span class="ov-more-arrow">&rarr;</span></button></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovAiTrend"></canvas></div></div>
         <div class="cmp-legend" id="ovAiLegend"></div>
       </section>
