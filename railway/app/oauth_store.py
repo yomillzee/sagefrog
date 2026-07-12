@@ -131,24 +131,48 @@ def _primary_secret() -> str:
     return secret
 
 
+# Env vars whose values a pre-migration deployment may have derived the OAuth
+# token key from. APP_ENCRYPTION_KEY is the original dedicated key that predated
+# OAUTH_TOKEN_ENCRYPTION_KEY (renaming it left the old value orphaned in the
+# environment, undecryptable by the new name); the AUTH_SESSION_SECRET /
+# CRON_SECRET / API_KEY chain is the documented dev/legacy fallback. Trying a key
+# that didn't encrypt a given token is harmless: Fernet is authenticated, so a
+# wrong key can't false-decrypt — it fails cleanly and the next candidate runs.
+_LEGACY_SECRET_ENV_VARS = (
+    "APP_ENCRYPTION_KEY",
+    "AUTH_SESSION_SECRET",
+    "CRON_SECRET",
+    "API_KEY",
+)
+
+
 def _legacy_secrets() -> list[str]:
     """Historical secrets an existing token may have been encrypted under.
 
-    Before OAuth token encryption was de-overloaded onto a dedicated
-    OAUTH_TOKEN_ENCRYPTION_KEY, the key was derived from AUTH_SESSION_SECRET /
-    CRON_SECRET / API_KEY. When an operator sets a fresh OAUTH_TOKEN_ENCRYPTION_KEY
-    without carrying over the old value, every previously stored token becomes
-    undecryptable with the primary key alone. These are tried as additional
-    decrypt candidates so the migration self-heals instead of forcing every
-    client to reconnect. Only secrets still present in the environment appear
-    here, so this grants no new access — it just reads tokens this deployment
-    could already have read a moment ago.
+    When an operator sets a fresh OAUTH_TOKEN_ENCRYPTION_KEY without carrying over
+    the old value, every previously stored token becomes undecryptable with the
+    primary key alone. These are tried as additional decrypt candidates so the
+    migration self-heals (each token is re-encrypted under the current key on
+    first read) instead of forcing every client to reconnect. Only secrets still
+    present in the environment appear here, so this grants no new access — it just
+    reads tokens this deployment could already have read a moment ago.
+
+    OAUTH_TOKEN_ENCRYPTION_KEY_FALLBACKS (comma-separated raw secrets) lets an
+    operator supply prior key values directly, so a future key rotation needs no
+    code change — set it to the outgoing key, deploy, then clear it once tokens
+    have migrated.
     """
     out: list[str] = []
-    for name in ("AUTH_SESSION_SECRET", "CRON_SECRET", "API_KEY"):
-        val = (os.getenv(name) or "").strip()
+
+    def _add(val: str) -> None:
+        val = (val or "").strip()
         if val and val not in out:
             out.append(val)
+
+    for raw in (os.getenv("OAUTH_TOKEN_ENCRYPTION_KEY_FALLBACKS") or "").split(","):
+        _add(raw)
+    for name in _LEGACY_SECRET_ENV_VARS:
+        _add(os.getenv(name) or "")
     return out
 
 

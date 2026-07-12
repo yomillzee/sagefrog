@@ -26,6 +26,17 @@ def _encrypt_under(secret: str, plaintext: str) -> str:
     return Fernet(oauth_store._fernet_key(secret)).encrypt(plaintext.encode()).decode("ascii")
 
 
+def _orphan_env(**overrides) -> dict:
+    """Env where no configured key matches the token — every legacy candidate
+    var (and the fallbacks list) is set to something unrelated."""
+    env = {"OAUTH_TOKEN_ENCRYPTION_KEY": "current-key",
+           "OAUTH_TOKEN_ENCRYPTION_KEY_FALLBACKS": ""}
+    for name in oauth_store._LEGACY_SECRET_ENV_VARS:
+        env[name] = "unrelated-" + name
+    env.update(overrides)
+    return env
+
+
 class DecryptFallbackTests(unittest.TestCase):
     def test_primary_key_roundtrip(self):
         with mock.patch.dict(os.environ, {"OAUTH_TOKEN_ENCRYPTION_KEY": "primary-secret"}, clear=False):
@@ -49,14 +60,29 @@ class DecryptFallbackTests(unittest.TestCase):
             # Back-compat wrapper still returns the plaintext transparently.
             self.assertEqual(oauth_store._decrypt(old), "legacy-token")
 
+    def test_app_encryption_key_decrypts_and_flags_migration(self):
+        # The real incident: tokens were minted under APP_ENCRYPTION_KEY (the
+        # pre-rename dedicated key), left orphaned when the code moved to
+        # OAUTH_TOKEN_ENCRYPTION_KEY with a different value.
+        old = _encrypt_under("original-app-key", "ga4-token")
+        env = _orphan_env(APP_ENCRYPTION_KEY="original-app-key")
+        with mock.patch.dict(os.environ, env, clear=False):
+            result, used_legacy = oauth_store._decrypt_ex(old)
+            self.assertEqual(result, "ga4-token")
+            self.assertTrue(used_legacy)
+
+    def test_explicit_fallbacks_env_decrypts(self):
+        old = _encrypt_under("rotated-out-key", "tok")
+        env = _orphan_env(OAUTH_TOKEN_ENCRYPTION_KEY_FALLBACKS="noise-1, rotated-out-key ,noise-2")
+        with mock.patch.dict(os.environ, env, clear=False):
+            result, used_legacy = oauth_store._decrypt_ex(old)
+            self.assertEqual(result, "tok")
+            self.assertTrue(used_legacy)
+
     def test_undecryptable_is_distinct_from_absent(self):
         # Ciphertext exists but no configured secret can decrypt it.
         orphan = _encrypt_under("a-secret-no-longer-in-the-env", "lost-token")
-        env = {"OAUTH_TOKEN_ENCRYPTION_KEY": "current-key"}
-        # Ensure no legacy secrets happen to match.
-        for name in ("AUTH_SESSION_SECRET", "CRON_SECRET", "API_KEY"):
-            env[name] = "unrelated-" + name
-        with mock.patch.dict(os.environ, env, clear=False):
+        with mock.patch.dict(os.environ, _orphan_env(), clear=False):
             result, used_legacy = oauth_store._decrypt_ex(orphan)
             self.assertIs(result, oauth_store._UNDECRYPTABLE)
             self.assertFalse(used_legacy)
@@ -83,9 +109,7 @@ class TokenHealthAndErrorTests(unittest.TestCase):
 
     def test_token_health_undecryptable(self):
         orphan = _encrypt_under("gone-secret", "tok")
-        env = {"OAUTH_TOKEN_ENCRYPTION_KEY": "current", "AUTH_SESSION_SECRET": "x",
-               "CRON_SECRET": "y", "API_KEY": "z"}
-        with mock.patch.dict(os.environ, env, clear=False), \
+        with mock.patch.dict(os.environ, _orphan_env(), clear=False), \
                 mock.patch.object(oauth_store, "enabled", lambda: True):
             with self._patch_row({"refresh_token_enc": orphan, "access_token_enc": None}):
                 self.assertEqual(oauth_store.token_health("meta"), "undecryptable")
@@ -98,9 +122,7 @@ class TokenHealthAndErrorTests(unittest.TestCase):
 
     def test_token_error_message_switches_on_health(self):
         orphan = _encrypt_under("gone-secret", "tok")
-        env = {"OAUTH_TOKEN_ENCRYPTION_KEY": "current", "AUTH_SESSION_SECRET": "x",
-               "CRON_SECRET": "y", "API_KEY": "z"}
-        with mock.patch.dict(os.environ, env, clear=False), \
+        with mock.patch.dict(os.environ, _orphan_env(), clear=False), \
                 mock.patch.object(oauth_store, "enabled", lambda: True):
             with self._patch_row({"refresh_token_enc": orphan, "access_token_enc": None}):
                 msg = oauth_store.token_error("meta", client_slug="acme", missing="No Meta token.")
@@ -114,9 +136,7 @@ class TokenHealthAndErrorTests(unittest.TestCase):
 class PublicStatusTests(unittest.TestCase):
     def test_undecryptable_row_reports_decrypt_error_not_connected(self):
         orphan = _encrypt_under("gone-secret", "tok")
-        env = {"OAUTH_TOKEN_ENCRYPTION_KEY": "current", "AUTH_SESSION_SECRET": "x",
-               "CRON_SECRET": "y", "API_KEY": "z"}
-        with mock.patch.dict(os.environ, env, clear=False):
+        with mock.patch.dict(os.environ, _orphan_env(), clear=False):
             row = {"refresh_token_enc": orphan, "access_token_enc": None,
                    "connected_by": None, "connected_at": None, "updated_at": None,
                    "scopes": None, "metadata_json": {}}
