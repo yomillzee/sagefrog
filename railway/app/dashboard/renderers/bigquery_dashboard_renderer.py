@@ -1607,10 +1607,12 @@ def render_bigquery_dashboard_page(
       {{key:'ctr', label:'CTR', format:gscPct, defDir:'desc'}},
       {{key:'avg_position', label:'Position', format:gscPos, defDir:'asc'}},
     ];
-    // Δ Position is queries-only (pages/branded/target carry no prior-position
-    // field). Default asc so the first click surfaces the biggest sinkers.
+    // Δ Position vs. the prior period. Every query-keyed table (top queries,
+    // branded, target) carries prior_avg_position/delta_position from the
+    // backend; only the pages table doesn't. Default asc so the first click
+    // surfaces the biggest sinkers.
     const GSC_DELTA_COL = {{key:'delta_position', label:'\\u0394 Pos', format:gscDelta, defDir:'asc'}};
-    const gscColsFor = which => which==='queries' ? GSC_SORT_COLS.concat([GSC_DELTA_COL]) : GSC_SORT_COLS;
+    const gscColsFor = which => which==='pages' ? GSC_SORT_COLS : GSC_SORT_COLS.concat([GSC_DELTA_COL]);
     // page_url rows come back as full URLs (https://host/path) -- show just the
     // path in the table (full URL stays in the title tooltip on hover).
     function pathOnly(url) {{
@@ -1743,8 +1745,8 @@ def render_bigquery_dashboard_page(
       const reqId = ++_gscKwReqId;
       // Skeleton only the tables that will actually resolve to data, so we
       // never flash a skeleton in front of a "nothing configured" empty state.
-      if (gscBrandedRoots.length) document.getElementById('gscBrandedTable').innerHTML = skelTable(4,4);
-      if (gscTargetKeywords.length) document.getElementById('gscTargetTable').innerHTML = skelTable(4,4);
+      if (gscBrandedRoots.length) document.getElementById('gscBrandedTable').innerHTML = skelTable(4,6);
+      if (gscTargetKeywords.length) document.getElementById('gscTargetTable').innerHTML = skelTable(4,6);
       const [branded, target] = await Promise.all([
         fetchKeywordMatches(gscBrandedRoots),
         fetchKeywordMatches(gscTargetKeywords),
