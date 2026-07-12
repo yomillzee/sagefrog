@@ -739,9 +739,42 @@ def build_gsc_mart_summary(*, start: date, end: date, client_slug: str | None = 
         except Exception as exc:
             errors["daily"] = str(exc)[:300]
         try:
-            result["top_queries"] = _clean(_run(
-                f"SELECT query, {m} FROM {qv} WHERE {where} GROUP BY query "
-                f"ORDER BY clicks DESC, impressions DESC LIMIT 25", max_rows=30))
+            # Top queries with each query's prior-period avg position, so the UI
+            # can show which keywords rose or sank. Conditional aggregation over
+            # a window widened to cover the prior period; delta_position is
+            # prior − current (positive = improved toward rank 1). None when the
+            # query had no impressions in the prior period (newly ranking).
+            ps, pe = _prior_period(start, end)
+            ps_s, pe_s = ps.isoformat(), pe.isoformat()
+            cur_impr = f"SUM(IF(date BETWEEN '{s}' AND '{e}', impressions, 0))"
+            tq_sql = f"""
+            SELECT
+              query,
+              SUM(IF(date BETWEEN '{s}' AND '{e}', clicks, 0))       AS clicks,
+              {cur_impr}                                             AS impressions,
+              ROUND(SAFE_DIVIDE(
+                SUM(IF(date BETWEEN '{s}' AND '{e}', clicks, 0)),
+                NULLIF({cur_impr}, 0)) * 100, 2)                     AS ctr,
+              ROUND(SAFE_DIVIDE(
+                SUM(IF(date BETWEEN '{s}' AND '{e}', pos_sum, 0.0)),
+                NULLIF({cur_impr}, 0)) + 1, 1)                       AS avg_position,
+              ROUND(SAFE_DIVIDE(
+                SUM(IF(date BETWEEN '{ps_s}' AND '{pe_s}', pos_sum, 0.0)),
+                NULLIF(SUM(IF(date BETWEEN '{ps_s}' AND '{pe_s}', impressions, 0)), 0)) + 1, 1)
+                                                                     AS prior_avg_position
+            FROM {qv}
+            WHERE date BETWEEN '{ps_s}' AND '{e}'
+            GROUP BY query
+            HAVING {cur_impr} > 0
+            ORDER BY clicks DESC, impressions DESC
+            LIMIT 25
+            """
+            tq = _clean(_run(tq_sql, max_rows=30))
+            for r in tq:
+                cur = r.get("avg_position")
+                pri = r.get("prior_avg_position")
+                r["delta_position"] = round(pri - cur, 1) if (cur and pri) else None
+            result["top_queries"] = tq
         except Exception as exc:
             errors["top_queries"] = str(exc)[:300]
         try:

@@ -588,6 +588,12 @@ def render_bigquery_dashboard_page(
     th.gsc-sort {{ cursor:pointer; user-select:none; white-space:nowrap; transition:background .12s,color .12s; }}
     th.gsc-sort:hover {{ background:#e9eef5; color:#33455e; }}
     th.gsc-sort.active {{ color:var(--accent); }}
+    /* Δ Position movement badges (queries table) */
+    .gsc-mv {{ display:inline-block; font-size:.74rem; font-weight:800; padding:2px 7px; border-radius:999px; font-variant-numeric:tabular-nums; white-space:nowrap; }}
+    .gsc-mv-up {{ color:#0a7f3f; background:#e7f6ee; }}
+    .gsc-mv-down {{ color:#c02626; background:#fdecec; }}
+    .gsc-mv-flat {{ color:#8a97a8; background:transparent; font-weight:600; }}
+    .gsc-mv-new {{ color:#1769aa; background:#e9f1fb; }}
     th.expl-sort {{ cursor:pointer; user-select:none; white-space:nowrap; transition:background .12s,color .12s; }}
     th.expl-sort:hover {{ background:#e9eef5; color:#33455e; }}
     th.expl-sort.active {{ color:var(--accent); }}
@@ -1567,6 +1573,16 @@ def render_bigquery_dashboard_page(
     // ---- Search Console ----
     const gscPos = v => v==null ? '—' : num(v).toFixed(1);
     const gscPct = v => v==null ? '—' : (num(v)).toFixed(2) + '%';
+    // Position movement vs. the previous period: value is prior - current, so a
+    // positive number means the keyword improved (moved toward rank 1). null =
+    // the query didn't rank in the prior period ("New").
+    const gscDelta = v => {{
+      if (v==null) return '<span class="gsc-mv gsc-mv-new">New</span>';
+      const n=num(v);
+      if (Math.abs(n)<0.05) return '<span class="gsc-mv gsc-mv-flat">\\u2013</span>';
+      if (n>0) return '<span class="gsc-mv gsc-mv-up">\\u25B4 '+n.toFixed(1)+'</span>';
+      return '<span class="gsc-mv gsc-mv-down">\\u25BE '+Math.abs(n).toFixed(1)+'</span>';
+    }};
     function renderGscKpis(k, daily) {{
       k = k || {{}}; daily = daily || [];
       // [label, formatted value, kpi key, prior value, good-direction, spark color].
@@ -1591,6 +1607,10 @@ def render_bigquery_dashboard_page(
       {{key:'ctr', label:'CTR', format:gscPct, defDir:'desc'}},
       {{key:'avg_position', label:'Position', format:gscPos, defDir:'asc'}},
     ];
+    // Δ Position is queries-only (pages/branded/target carry no prior-position
+    // field). Default asc so the first click surfaces the biggest sinkers.
+    const GSC_DELTA_COL = {{key:'delta_position', label:'\\u0394 Pos', format:gscDelta, defDir:'asc'}};
+    const gscColsFor = which => which==='queries' ? GSC_SORT_COLS.concat([GSC_DELTA_COL]) : GSC_SORT_COLS;
     // page_url rows come back as full URLs (https://host/path) -- show just the
     // path in the table (full URL stays in the title tooltip on hover).
     function pathOnly(url) {{
@@ -1614,6 +1634,7 @@ def render_bigquery_dashboard_page(
     }}
     function renderGscTable(which) {{
       const st = gscTables[which];
+      const cols = gscColsFor(which);
       const el = document.getElementById(st.tableId);
       const pager = document.getElementById(st.pagerId);
       if (!st.rows.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No data for this range.</td></tr></tbody>`; pager.innerHTML=''; return; }}
@@ -1622,8 +1643,8 @@ def render_bigquery_dashboard_page(
       if (st.page>totalPages) st.page=totalPages;
       const start=(st.page-1)*GSC_PER_PAGE, pageRows=sorted.slice(start,start+GSC_PER_PAGE);
       const arrow=k=>st.sortKey===k?(st.sortDir==='asc'?' \\u25B4':' \\u25BE'):'';
-      const head=`<thead><tr><th class="left col-resizable">${{esc(st.labelText)}}<span class="col-resizer" data-which="${{which}}"></span></th>`+GSC_SORT_COLS.map(c=>`<th class="gsc-sort${{st.sortKey===c.key?' active':''}}" data-which="${{which}}" data-key="${{c.key}}">${{c.label}}${{arrow(c.key)}}</th>`).join('')+`</tr></thead>`;
-      const body=`<tbody>`+pageRows.map(r=>{{const raw=r[st.labelKey];const label=st.labelFormat?st.labelFormat(raw):raw;return`<tr><td class="left"><span class="page-path" title="${{esc(raw)}}">${{esc(label)}}</span></td>`+GSC_SORT_COLS.map(c=>`<td>${{c.format(r[c.key])}}</td>`).join('')+`</tr>`;}}).join('')+`</tbody>`;
+      const head=`<thead><tr><th class="left col-resizable">${{esc(st.labelText)}}<span class="col-resizer" data-which="${{which}}"></span></th>`+cols.map(c=>`<th class="gsc-sort${{st.sortKey===c.key?' active':''}}" data-which="${{which}}" data-key="${{c.key}}">${{c.label}}${{arrow(c.key)}}</th>`).join('')+`</tr></thead>`;
+      const body=`<tbody>`+pageRows.map(r=>{{const raw=r[st.labelKey];const label=st.labelFormat?st.labelFormat(raw):raw;return`<tr><td class="left"><span class="page-path" title="${{esc(raw)}}">${{esc(label)}}</span></td>`+cols.map(c=>`<td>${{c.format(r[c.key])}}</td>`).join('')+`</tr>`;}}).join('')+`</tbody>`;
       el.innerHTML=head+body;
       applyGscColWidth(el, st);
       if (totalPages<=1) {{ pager.innerHTML=''; }}
@@ -1633,7 +1654,7 @@ def render_bigquery_dashboard_page(
       const th=ev.target.closest('th.gsc-sort');
       if (th) {{ const st=gscTables[th.dataset.which], key=th.dataset.key;
         if (st.sortKey===key) st.sortDir=st.sortDir==='asc'?'desc':'asc';
-        else {{ st.sortKey=key; st.sortDir=(GSC_SORT_COLS.find(c=>c.key===key)||{{}}).defDir||'desc'; }}
+        else {{ st.sortKey=key; st.sortDir=(gscColsFor(th.dataset.which).find(c=>c.key===key)||{{}}).defDir||'desc'; }}
         st.page=1; renderGscTable(th.dataset.which); return;
       }}
       const pb=ev.target.closest('.pager-btn[data-which]');
