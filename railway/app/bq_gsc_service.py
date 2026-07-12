@@ -680,6 +680,53 @@ def _gsc_metric_cols() -> str:
     )
 
 
+def _query_delta_metric_cols(s: str, e: str, ps: str, pe: str, alias: str = "q") -> str:
+    """SELECT-list metric columns for a per-query GROUP BY that reports the
+    current window's clicks/impressions/ctr/avg_position AND the prior window's
+    avg_position, via conditional aggregation over a single scan widened to
+    cover both windows.
+
+    Every base column is qualified with `alias` on purpose: the SELECT aliases
+    `clicks`/`impressions` shadow the same-named base columns, and an
+    unqualified reference to them inside the HAVING (see
+    `_query_delta_having`) or ORDER BY binds to the aggregate alias, which
+    BigQuery rejects as "aggregations of aggregations". Callers MUST alias the
+    scanned source `AS {alias}`.
+    """
+    a = alias
+    cur_impr = f"SUM(IF({a}.date BETWEEN '{s}' AND '{e}', {a}.impressions, 0))"
+    cur_clk  = f"SUM(IF({a}.date BETWEEN '{s}' AND '{e}', {a}.clicks, 0))"
+    cur_pos  = f"SUM(IF({a}.date BETWEEN '{s}' AND '{e}', {a}.pos_sum, 0.0))"
+    pri_impr = f"SUM(IF({a}.date BETWEEN '{ps}' AND '{pe}', {a}.impressions, 0))"
+    pri_pos  = f"SUM(IF({a}.date BETWEEN '{ps}' AND '{pe}', {a}.pos_sum, 0.0))"
+    return (
+        f"{cur_clk} AS clicks, "
+        f"{cur_impr} AS impressions, "
+        f"ROUND(SAFE_DIVIDE({cur_clk}, NULLIF({cur_impr}, 0)) * 100, 2) AS ctr, "
+        f"ROUND(SAFE_DIVIDE({cur_pos}, NULLIF({cur_impr}, 0)) + 1, 1) AS avg_position, "
+        f"ROUND(SAFE_DIVIDE({pri_pos}, NULLIF({pri_impr}, 0)) + 1, 1) AS prior_avg_position"
+    )
+
+
+def _query_delta_having(s: str, e: str, alias: str = "q") -> str:
+    """HAVING predicate keeping only queries with current-window impressions,
+    so a widened scan doesn't surface queries that existed only in the prior
+    window. Qualified with `alias` for the shadowing reason above."""
+    return f"SUM(IF({alias}.date BETWEEN '{s}' AND '{e}', {alias}.impressions, 0)) > 0"
+
+
+def _attach_delta_position(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add `delta_position` = prior_avg_position − avg_position (positive =
+    improved toward rank 1) to each row. None when either side is missing —
+    e.g. a query that didn't rank in the prior window, flagged "New" in the UI.
+    """
+    for r in rows:
+        cur = r.get("avg_position")
+        pri = r.get("prior_avg_position")
+        r["delta_position"] = round(pri - cur, 1) if (cur and pri) else None
+    return rows
+
+
 def build_gsc_mart_summary(*, start: date, end: date, client_slug: str | None = None) -> dict[str, Any]:
     """Read the GSC mart views and return {kpis, daily, top_queries, top_pages}.
 
@@ -750,41 +797,16 @@ def build_gsc_mart_summary(*, start: date, end: date, client_slug: str | None = 
             # query had no impressions in the prior period (newly ranking).
             ps, pe = _prior_period(start, end)
             ps_s, pe_s = ps.isoformat(), pe.isoformat()
-            # Columns are qualified with the table alias `q` so that the bare
-            # `impressions` inside the HAVING resolves to the base column rather
-            # than the SELECT-list alias of the same name — an unqualified
-            # reference there resolves to the aggregate alias and BigQuery
-            # rejects it as an "aggregations of aggregations" error, which would
-            # silently blank the whole Top-queries table.
-            cur_impr = f"SUM(IF(q.date BETWEEN '{s}' AND '{e}', q.impressions, 0))"
             tq_sql = f"""
-            SELECT
-              q.query                                               AS query,
-              SUM(IF(q.date BETWEEN '{s}' AND '{e}', q.clicks, 0))  AS clicks,
-              {cur_impr}                                             AS impressions,
-              ROUND(SAFE_DIVIDE(
-                SUM(IF(q.date BETWEEN '{s}' AND '{e}', q.clicks, 0)),
-                NULLIF({cur_impr}, 0)) * 100, 2)                     AS ctr,
-              ROUND(SAFE_DIVIDE(
-                SUM(IF(q.date BETWEEN '{s}' AND '{e}', q.pos_sum, 0.0)),
-                NULLIF({cur_impr}, 0)) + 1, 1)                       AS avg_position,
-              ROUND(SAFE_DIVIDE(
-                SUM(IF(q.date BETWEEN '{ps_s}' AND '{pe_s}', q.pos_sum, 0.0)),
-                NULLIF(SUM(IF(q.date BETWEEN '{ps_s}' AND '{pe_s}', q.impressions, 0)), 0)) + 1, 1)
-                                                                     AS prior_avg_position
+            SELECT q.query AS query, {_query_delta_metric_cols(s, e, ps_s, pe_s)}
             FROM {qv} AS q
             WHERE q.date BETWEEN '{ps_s}' AND '{e}'
             GROUP BY q.query
-            HAVING {cur_impr} > 0
+            HAVING {_query_delta_having(s, e)}
             ORDER BY clicks DESC, impressions DESC
             LIMIT 25
             """
-            tq = _clean(_run(tq_sql, max_rows=30))
-            for r in tq:
-                cur = r.get("avg_position")
-                pri = r.get("prior_avg_position")
-                r["delta_position"] = round(pri - cur, 1) if (cur and pri) else None
-            result["top_queries"] = tq
+            result["top_queries"] = _attach_delta_position(_clean(_run(tq_sql, max_rows=30)))
         except Exception as exc:
             errors["top_queries"] = str(exc)[:300]
         try:
@@ -815,17 +837,23 @@ def gsc_keyword_matches(
             return []
         project, ds = _project_id(), _reporting_mart_ds()
         qv = f"`{project}.{ds}.{_QUERY_VIEW}`"
-        m = _gsc_metric_cols()
         s, e = start.isoformat(), end.isoformat()
+        # Same per-query current metrics + prior-period avg position as
+        # build_gsc_mart_summary's top_queries, so branded/target rows carry the
+        # same sortable Δ Position. Scan is widened to the prior window; the
+        # HAVING keeps only queries active in the selected range.
+        ps, pe = _prior_period(start, end)
+        ps_s, pe_s = ps.isoformat(), pe.isoformat()
         sql = f"""
-        SELECT query, {m}
-        FROM {qv}
-        WHERE date BETWEEN '{s}' AND '{e}'
+        SELECT q.query AS query, {_query_delta_metric_cols(s, e, ps_s, pe_s)}
+        FROM {qv} AS q
+        WHERE q.date BETWEEN '{ps_s}' AND '{e}'
           AND EXISTS (
             SELECT 1 FROM UNNEST(@terms) AS t
-            WHERE LOWER(query) LIKE CONCAT('%', t, '%')
+            WHERE LOWER(q.query) LIKE CONCAT('%', t, '%')
           )
-        GROUP BY query
+        GROUP BY q.query
+        HAVING {_query_delta_having(s, e)}
         ORDER BY clicks DESC, impressions DESC
         LIMIT 500
         """
@@ -842,7 +870,7 @@ def gsc_keyword_matches(
                     v = float(v)
                 rr[k] = v
             out.append(rr)
-        return out
+        return _attach_delta_position(out)
 
 
 def gsc_keyword_weekly_trend(
