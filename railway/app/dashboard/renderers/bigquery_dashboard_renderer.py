@@ -373,19 +373,19 @@ def render_bigquery_dashboard_page(
     # the paid panel is prepended only when the client runs paid ads.
     ov_panels = """
       <section class="ov-panel">
-        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><div class="chips seg" id="ovSessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" data-goto="analytics">See more <span class="ov-more-arrow">&rarr;</span></button></div></div>
+        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><div class="chips seg" id="ovSessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="analytics"><span class="ov-more-arrow" aria-hidden="true">&rarr;</span></button></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovSessionsTrend"></canvas></div></div>
         <div class="cmp-legend" id="ovSessionsLegend"></div>
       </section>
 
       <section class="ov-panel">
-        <div class="sec-head"><h2>AI traffic</h2><div class="ov-actions"><div class="chips seg" id="ovAiGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" data-goto="ai_traffic">See more <span class="ov-more-arrow">&rarr;</span></button></div></div>
+        <div class="sec-head"><h2>AI traffic</h2><div class="ov-actions"><div class="chips seg" id="ovAiGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="ai_traffic"><span class="ov-more-arrow" aria-hidden="true">&rarr;</span></button></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovAiTrend"></canvas></div></div>
         <div class="cmp-legend" id="ovAiLegend"></div>
       </section>
 
       <section class="ov-panel">
-        <div class="sec-head"><h2>Search Console</h2><div class="ov-actions"><span class="status" id="ovGscStatus"></span><button type="button" class="ov-more" data-goto="gsc">See more <span class="ov-more-arrow">&rarr;</span></button></div></div>
+        <div class="sec-head"><h2>Search Console</h2><div class="ov-actions"><span class="status" id="ovGscStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="gsc"><span class="ov-more-arrow" aria-hidden="true">&rarr;</span></button></div></div>
         <div class="two-col" style="margin-top:0">
           <div class="col-panel">
             <h3>Branded queries</h3>
@@ -402,13 +402,13 @@ def render_bigquery_dashboard_page(
     if show_pagespeed:
         ov_panels += """
       <section class="ov-panel">
-        <div class="sec-head"><h2>Site performance</h2><div class="ov-actions"><span class="status" id="ovPsStatus"></span><button type="button" class="ov-more" data-goto="site_performance">See more <span class="ov-more-arrow">&rarr;</span></button></div></div>
+        <div class="sec-head"><h2>Site performance</h2><div class="ov-actions"><span class="status" id="ovPsStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="site_performance"><span class="ov-more-arrow" aria-hidden="true">&rarr;</span></button></div></div>
         <div class="cards" id="ovPsScores"></div>
       </section>"""
     if has_paid_ads:
         paid_panel = """
       <section id="sec-overview">
-        <div class="sec-head"><h2>Paid summary</h2><div class="ov-actions"><span class="status" id="summaryStatus"></span><button type="button" class="ov-more" data-goto="explorer">See more <span class="ov-more-arrow">&rarr;</span></button></div></div>
+        <div class="sec-head"><h2>Paid summary</h2><div class="ov-actions"><span class="status" id="summaryStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="explorer"><span class="ov-more-arrow" aria-hidden="true">&rarr;</span></button></div></div>
         <div class="cards" id="summaryCards"></div>
       </section>
 
@@ -555,10 +555,10 @@ def render_bigquery_dashboard_page(
     .sec-head .status {{ margin:0; font-size:.76rem; text-align:right; flex-shrink:0; }}
     .sec-head-actions {{ display:flex; align-items:center; gap:12px; flex-shrink:0; }}
     .ov-actions {{ display:flex; align-items:center; gap:12px; flex-shrink:0; }}
-    .ov-more {{ display:inline-flex; align-items:center; gap:5px; border:0; background:none; color:var(--muted); padding:2px 0; font:inherit; font-size:.78rem; font-weight:700; cursor:pointer; white-space:nowrap; transition:color .12s; }}
-    .ov-more:hover {{ color:var(--accent); }}
-    .ov-more-arrow {{ font-size:.95rem; line-height:1; transition:transform .12s; }}
-    .ov-more:hover .ov-more-arrow {{ transform:translateX(3px); }}
+    .ov-more {{ display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border:0; border-radius:999px; background:none; color:var(--muted); padding:0; font:inherit; cursor:pointer; transition:color .12s, background .12s; }}
+    .ov-more:hover {{ color:var(--accent); background:rgba(0,0,0,.05); }}
+    .ov-more-arrow {{ font-size:1.15rem; line-height:1; transition:transform .12s; }}
+    .ov-more:hover .ov-more-arrow {{ transform:translateX(2px); }}
     .status {{ color:var(--muted); font-size:.82rem; margin:0 0 12px; }}
     .status.error {{ color:var(--bad); }}
     /* ---- Metric cards ---- */
@@ -1470,8 +1470,9 @@ def render_bigquery_dashboard_page(
         summaryPayload = curr;
         compareSummaryPayload = prev;
         renderSummary(); renderChart();
-        const note = summaryPayload.by_source ? '' : ' · combined';
-        setStatus('summaryStatus', `${{summaryPayload.start_date}} – ${{summaryPayload.end_date}}${{note}}`);
+        // Date range is already shown by the Range dropdown, so keep this to
+        // just the source note (blank unless the data is combined across sources).
+        setStatus('summaryStatus', summaryPayload.by_source ? '' : 'combined');
       }} catch(err) {{
         summaryPayload=null;
         compareSummaryPayload=null;
