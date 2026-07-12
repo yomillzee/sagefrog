@@ -1273,6 +1273,15 @@ def render_bigquery_dashboard_page(
       const efb = document.getElementById('explorerFilterBar');
       if (efb) efb.hidden = !(tab === 'explorer' && EXPLORER_FILTER_GROUPS.length);
       currentTab = tab;
+      // Keep the tab in the URL so a refresh reopens the same page (not
+      // Overview), and so switching clients can carry the tab across. Overview
+      // is the canonical home, so it drops ?view= to keep that URL clean.
+      try {{
+        const u = new URL(location.href);
+        if (tab === 'overview') u.searchParams.delete('view');
+        else u.searchParams.set('view', tab);
+        history.replaceState(null, '', u);
+      }} catch (e) {{ /* ignore */ }}
       updateKeyEventBar();
       if (tab === 'explorer' && !explorerLoaded) {{
         explorerLoaded = true;
