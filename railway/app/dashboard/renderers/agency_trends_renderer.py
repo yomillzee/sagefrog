@@ -172,11 +172,9 @@ def render_agency_trends_page(*, user_email: str) -> str:
 
       const body = document.getElementById('atBody');
       const rows = d.clients || [];
-      if (!rows.length) {{ body.innerHTML = `<tr><td colspan="4" class="empty">No paid-media spend recorded in the warehouse for this window yet.</td></tr>`; }}
+      if (!rows.length) {{ body.innerHTML = `<tr><td colspan="4" class="empty">No paid-media spend in the client marts for this window yet.</td></tr>`; }}
       else body.innerHTML = rows.map(r => {{
-        const name = r.unattributed
-          ? `<div class="cl-name">${{esc(r.label)}}</div><div class="cl-slug">account not linked to a client</div>`
-          : `<div class="cl-name"><a href="/dashboard/${{encodeURIComponent(r.client_slug)}}">${{esc(r.label)}}</a></div><div class="cl-slug">${{esc(r.client_slug)}}</div>`;
+        const name = `<div class="cl-name"><a href="/dashboard/${{encodeURIComponent(r.client_slug)}}">${{esc(r.label)}}</a></div><div class="cl-slug">${{esc(r.client_slug)}}</div>`;
         return `<tr><td>${{name}}</td>`
           + `<td class="num">${{money(r.last_7)}}</td>`
           + `<td class="num">${{money(r.prior_7)}}</td>`
@@ -192,8 +190,8 @@ def render_agency_trends_page(*, user_email: str) -> str:
         : `<p class="empty">No spend by channel in this window.</p>`;
 
       document.getElementById('atNote').textContent =
-        `Computed in one DuckDB scan over metrics_daily joined to the connector→client map, as of ${{d.as_of}}. `
-        + `"Unattributed" is spend on an ad account not yet linked to a client connector. Cached ~15 min.`;
+        `Paid media (Google, LinkedIn, Meta) from each client's BigQuery mart — the same source as HQ — `
+        + `lined up in DuckDB to compare the last 7 days with the 7 before, as of ${{d.as_of}}. Cached ~15 min.`;
     }}
     function skeleton() {{
       document.getElementById('atTiles').innerHTML = Array.from({{length:4}}, () =>
