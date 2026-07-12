@@ -431,7 +431,11 @@ def fetch_top_queries(*, start: date, end: date, limit: int = 25) -> list[dict[s
       ) + 1                                                     AS prior_avg_position
     FROM gsc
     GROUP BY 1
-    HAVING SUM(IF(date BETWEEN '{s}' AND '{e}', impressions, 0)) > 0
+    -- Qualify `impressions` with the CTE name: an unqualified reference here
+    -- binds to the SELECT-list alias of the same name (itself a SUM), which
+    -- BigQuery rejects as "aggregations of aggregations" and would blank the
+    -- whole table.
+    HAVING SUM(IF(date BETWEEN '{s}' AND '{e}', gsc.impressions, 0)) > 0
     ORDER BY clicks DESC, impressions DESC
     LIMIT {int(limit)}
     """
@@ -746,25 +750,31 @@ def build_gsc_mart_summary(*, start: date, end: date, client_slug: str | None = 
             # query had no impressions in the prior period (newly ranking).
             ps, pe = _prior_period(start, end)
             ps_s, pe_s = ps.isoformat(), pe.isoformat()
-            cur_impr = f"SUM(IF(date BETWEEN '{s}' AND '{e}', impressions, 0))"
+            # Columns are qualified with the table alias `q` so that the bare
+            # `impressions` inside the HAVING resolves to the base column rather
+            # than the SELECT-list alias of the same name — an unqualified
+            # reference there resolves to the aggregate alias and BigQuery
+            # rejects it as an "aggregations of aggregations" error, which would
+            # silently blank the whole Top-queries table.
+            cur_impr = f"SUM(IF(q.date BETWEEN '{s}' AND '{e}', q.impressions, 0))"
             tq_sql = f"""
             SELECT
-              query,
-              SUM(IF(date BETWEEN '{s}' AND '{e}', clicks, 0))       AS clicks,
+              q.query                                               AS query,
+              SUM(IF(q.date BETWEEN '{s}' AND '{e}', q.clicks, 0))  AS clicks,
               {cur_impr}                                             AS impressions,
               ROUND(SAFE_DIVIDE(
-                SUM(IF(date BETWEEN '{s}' AND '{e}', clicks, 0)),
+                SUM(IF(q.date BETWEEN '{s}' AND '{e}', q.clicks, 0)),
                 NULLIF({cur_impr}, 0)) * 100, 2)                     AS ctr,
               ROUND(SAFE_DIVIDE(
-                SUM(IF(date BETWEEN '{s}' AND '{e}', pos_sum, 0.0)),
+                SUM(IF(q.date BETWEEN '{s}' AND '{e}', q.pos_sum, 0.0)),
                 NULLIF({cur_impr}, 0)) + 1, 1)                       AS avg_position,
               ROUND(SAFE_DIVIDE(
-                SUM(IF(date BETWEEN '{ps_s}' AND '{pe_s}', pos_sum, 0.0)),
-                NULLIF(SUM(IF(date BETWEEN '{ps_s}' AND '{pe_s}', impressions, 0)), 0)) + 1, 1)
+                SUM(IF(q.date BETWEEN '{ps_s}' AND '{pe_s}', q.pos_sum, 0.0)),
+                NULLIF(SUM(IF(q.date BETWEEN '{ps_s}' AND '{pe_s}', q.impressions, 0)), 0)) + 1, 1)
                                                                      AS prior_avg_position
-            FROM {qv}
-            WHERE date BETWEEN '{ps_s}' AND '{e}'
-            GROUP BY query
+            FROM {qv} AS q
+            WHERE q.date BETWEEN '{ps_s}' AND '{e}'
+            GROUP BY q.query
             HAVING {cur_impr} > 0
             ORDER BY clicks DESC, impressions DESC
             LIMIT 25
