@@ -256,8 +256,24 @@ def dash_top_header_html(
 def dashboard_topbar_js() -> str:
     return """
     document.getElementById('clientSwitcher')?.addEventListener('change', (e) => {
-      const url = e.target.value;
-      if (url) window.location.href = url;
+      let url = e.target.value;
+      if (url) {
+        // Carry the current dashboard tab (?view=) to the client we're switching
+        // to, so leaving Client A on AI Traffic lands on Client B's AI Traffic
+        // instead of snapping back to Overview. The dashboard reads ?view= on
+        // load and falls back to Overview if that page is hidden/absent, so this
+        // is safe even when the target client doesn't have the same tab. On
+        // Settings/Files/etc. there is no ?view= in the URL, so this is a no-op.
+        try {
+          const view = new URLSearchParams(location.search).get('view');
+          if (view) {
+            const u = new URL(url, location.origin);
+            if (!u.searchParams.has('view')) u.searchParams.set('view', view);
+            url = u.pathname + u.search + u.hash;
+          }
+        } catch (err) { /* ignore */ }
+        window.location.href = url;
+      }
     });
     let andreClicks = 0;
     let andreTimer = null;
