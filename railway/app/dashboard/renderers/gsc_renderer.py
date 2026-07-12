@@ -39,6 +39,21 @@ def _fmt_pos(v: float) -> str:
     return f"{v:.1f}" if v else "—"
 
 
+def _pos_delta_cell(delta: float | None) -> str:
+    """Position-movement badge for a query row.
+
+    `delta` is prior − current position: positive = improved (moved toward
+    rank 1), negative = sank. None = the query didn't rank in the prior period.
+    """
+    if delta is None:
+        return '<span class="gsc-pos-delta gsc-pos-new">New</span>'
+    if abs(delta) < 0.05:
+        return '<span class="gsc-pos-delta gsc-pos-flat">—</span>'
+    if delta > 0:
+        return f'<span class="gsc-pos-delta gsc-pos-up">▲ {abs(delta):.1f}</span>'
+    return f'<span class="gsc-pos-delta gsc-pos-down">▼ {abs(delta):.1f}</span>'
+
+
 def _delta_badge(current: float, prior: float, *, lower_is_better: bool = False) -> str:
     """Render a ▲/▼ pct badge. Returns '' if no prior data."""
     if not prior or not current:
@@ -51,10 +66,25 @@ def _delta_badge(current: float, prior: float, *, lower_is_better: bool = False)
     return f'<span class="gsc-delta {cls}">{arrow} {abs(pct):.1f}%</span>'
 
 
-def _gsc_table(rows: list[dict], columns: list[tuple[str, str, str]]) -> str:
+def _fmt_cell(key: str, fmt: str, val: Any) -> str:
+    """Return the inner HTML for one table cell. Mirrors gscFormatCell in JS so
+    server-rendered rows and JS-resorted rows look identical."""
+    if fmt == "posdelta":
+        return _pos_delta_cell(float(val) if val is not None else None)
+    if fmt == "pct":
+        return _esc(_fmt_pct(float(val) if val is not None else 0))
+    if fmt == "pos":
+        return _esc(_fmt_pos(float(val) if val is not None else 0))
+    if fmt == "int":
+        return _esc(_fmt_int(float(val) if val is not None else 0))
+    return _esc(str(val or ""))
+
+
+def _gsc_table(rows: list[dict], columns: list[tuple[str, str, str, str]]) -> str:
     """Render a sortable GSC data table.
 
-    columns: list of (key, label, align) where align is 'left' or 'right'
+    columns: list of (key, label, align, fmt) where align is 'left'/'right'
+    and fmt is one of 'text' | 'int' | 'pct' | 'pos' | 'posdelta'.
     """
     if not rows:
         return (
@@ -63,27 +93,24 @@ def _gsc_table(rows: list[dict], columns: list[tuple[str, str, str]]) -> str:
     head_cells = "".join(
         f'<th class="sortable{"" if align == "left" else " num"}" '
         f'data-col="{key}">{label}<span class="sort-icon"></span></th>'
-        for key, label, align in columns
+        for key, label, align, _fmt in columns
     )
+    col_spec = [
+        {"key": key, "align": align, "fmt": fmt}
+        for key, _label, align, fmt in columns
+    ]
     tbody_rows = ""
     for row in rows:
         cells = ""
-        for key, _label, align in columns:
-            val = row.get(key)
-            if align == "right":
-                if key == "ctr":
-                    display = _fmt_pct(float(val) if val is not None else 0)
-                elif key == "avg_position":
-                    display = _fmt_pos(float(val) if val is not None else 0)
-                else:
-                    display = _fmt_int(float(val) if val is not None else 0)
-                cells += f'<td class="num">{_esc(display)}</td>'
-            else:
-                cells += f'<td class="name gsc-name">{_esc(str(val or ""))}</td>'
+        for key, _label, align, fmt in columns:
+            inner = _fmt_cell(key, fmt, row.get(key))
+            cls = "num" if align == "right" else "name gsc-name"
+            cells += f'<td class="{cls}">{inner}</td>'
         tbody_rows += f"<tr>{cells}</tr>"
     return f"""
     <div class="table-wrap">
-      <table class="data-table gsc-table" data-rows='{_safe_json(rows)}'>
+      <table class="data-table gsc-table" data-rows='{_safe_json(rows)}'
+             data-cols='{_safe_json(col_spec)}'>
         <thead><tr>{head_cells}</tr></thead>
         <tbody>{tbody_rows}</tbody>
       </table>
@@ -139,22 +166,24 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
         items = "".join(f"<li><strong>{_esc(k)}</strong>: {_esc(v)}</li>" for k, v in errors.items())
         error_html = f'<div class="gsc-errors"><strong>GSC query warnings</strong><ul>{items}</ul></div>'
 
-    # Queries table
+    # Queries table — includes a Δ Position column vs. the previous period so
+    # you can sort to surface which keywords rose or sank.
     query_table_html = _gsc_table(top_queries, [
-        ("query", "Query", "left"),
-        ("clicks", "Clicks", "right"),
-        ("impressions", "Impressions", "right"),
-        ("ctr", "CTR", "right"),
-        ("avg_position", "Avg. Position", "right"),
+        ("query", "Query", "left", "text"),
+        ("clicks", "Clicks", "right", "int"),
+        ("impressions", "Impressions", "right", "int"),
+        ("ctr", "CTR", "right", "pct"),
+        ("avg_position", "Avg. Position", "right", "pos"),
+        ("delta_position", "Δ Position", "right", "posdelta"),
     ])
 
     # Pages table
     page_table_html = _gsc_table(top_pages, [
-        ("page_url", "Page URL", "left"),
-        ("clicks", "Clicks", "right"),
-        ("impressions", "Impressions", "right"),
-        ("ctr", "CTR", "right"),
-        ("avg_position", "Avg. Position", "right"),
+        ("page_url", "Page URL", "left", "text"),
+        ("clicks", "Clicks", "right", "int"),
+        ("impressions", "Impressions", "right", "int"),
+        ("ctr", "CTR", "right", "pct"),
+        ("avg_position", "Avg. Position", "right", "pos"),
     ])
 
 
@@ -360,12 +389,38 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
     }});
   }});
 
+  // Shared cell formatter — mirrors _fmt_cell in the Python renderer so a
+  // JS-resorted row looks identical to the server-rendered one.
+  function gscFormatCell(fmt, v) {{
+    if (fmt === 'posdelta') {{
+      if (v == null) return '<span class="gsc-pos-delta gsc-pos-new">New</span>';
+      if (Math.abs(v) < 0.05) return '<span class="gsc-pos-delta gsc-pos-flat">—</span>';
+      if (v > 0) return '<span class="gsc-pos-delta gsc-pos-up">▲ ' + Math.abs(v).toFixed(1) + '</span>';
+      return '<span class="gsc-pos-delta gsc-pos-down">▼ ' + Math.abs(v).toFixed(1) + '</span>';
+    }}
+    if (v == null) return fmt === 'pos' ? '—' : '';
+    if (fmt === 'pct') return v.toFixed(2) + '%';
+    if (fmt === 'pos') return v > 0 ? v.toFixed(1) : '—';
+    if (fmt === 'int') return Math.round(v).toLocaleString();
+    return String(v);
+  }}
+
   // Sortable GSC tables
   document.querySelectorAll('.gsc-table').forEach(function(table) {{
     var rawRows = JSON.parse(table.dataset.rows || '[]');
+    var cols = JSON.parse(table.dataset.cols || '[]');
     var tbody = table.querySelector('tbody');
     var sortCol = null;
     var sortDir = -1;
+
+    function renderRows(list) {{
+      tbody.innerHTML = list.map(function(row) {{
+        return '<tr>' + cols.map(function(c) {{
+          var cls = c.align === 'right' ? 'num' : 'name gsc-name';
+          return '<td class="' + cls + '">' + gscFormatCell(c.fmt, row[c.key]) + '</td>';
+        }}).join('') + '</tr>';
+      }}).join('');
+    }}
 
     table.querySelectorAll('th.sortable').forEach(function(th) {{
       th.addEventListener('click', function() {{
@@ -379,23 +434,16 @@ def gsc_section_html(gsc: dict[str, Any]) -> str:
         th.setAttribute('data-sort-dir', sortDir === -1 ? 'desc' : 'asc');
         var sorted = rawRows.slice().sort(function(a, b) {{
           var av = a[col], bv = b[col];
-          if (av == null) av = typeof bv === 'string' ? '' : 0;
-          if (bv == null) bv = typeof av === 'string' ? '' : 0;
+          // Null (e.g. "New" keywords with no prior position) always sinks to
+          // the bottom, regardless of sort direction.
+          if (av == null && bv == null) return 0;
+          if (av == null) return 1;
+          if (bv == null) return -1;
           if (av < bv) return sortDir;
           if (av > bv) return -sortDir;
           return 0;
         }});
-        tbody.innerHTML = sorted.map(function(row) {{
-          return '<tr>' + Object.keys(rawRows[0] || {{}}).map(function(k) {{
-            var v = row[k];
-            var isNum = typeof v === 'number';
-            var display = v == null ? '' :
-              k === 'ctr' ? (v).toFixed(2) + '%' :
-              k === 'avg_position' ? (v > 0 ? v.toFixed(1) : '—') :
-              isNum ? Math.round(v).toLocaleString() : String(v);
-            return '<td class="' + (isNum ? 'num' : 'name gsc-name') + '">' + display + '</td>';
-          }}).join('') + '</tr>';
-        }}).join('');
+        renderRows(sorted);
       }});
     }});
   }});
@@ -521,4 +569,17 @@ GSC_CSS = """
       font-style: italic;
       padding: 12px 0;
     }
+    .gsc-pos-delta {
+      display: inline-block;
+      font-size: 0.76rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .gsc-pos-up   { color: #16a34a; background: #f0fdf4; }
+    .gsc-pos-down { color: #dc2626; background: #fef2f2; }
+    .gsc-pos-flat { color: var(--muted); background: transparent; font-weight: 400; }
+    .gsc-pos-new  { color: #0a66c2; background: #eff6ff; }
 """

@@ -399,30 +399,62 @@ def fetch_daily(*, start: date, end: date) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 def fetch_top_queries(*, start: date, end: date, limit: int = 25) -> list[dict[str, Any]]:
+    """Top queries for [start, end] with each query's prior-period avg position.
+
+    The CTE is widened to cover the prior window too so we can compute, per
+    query, the position it held in the immediately-preceding same-length period.
+    `delta_position` is prior − current: positive means the keyword *improved*
+    (moved toward rank 1, since a lower position number is better), negative
+    means it sank. It's None when the query had no impressions in the prior
+    period (i.e. newly ranking), so the UI can flag it as "new".
+    """
+    prior_start, prior_end = _prior_period(start, end)
+    s, e   = start.isoformat(), end.isoformat()
+    ps, pe = prior_start.isoformat(), prior_end.isoformat()
     sql = f"""
-    WITH {_query_cte(start, end)}
+    WITH {_query_cte(prior_start, end)}
     SELECT
       {_anon_label()}                                          AS query,
-      SUM(clicks)                                              AS clicks,
-      SUM(impressions)                                         AS impressions,
-      SAFE_DIVIDE(SUM(clicks), SUM(impressions))               AS ctr,
-      SAFE_DIVIDE(SUM(pos_sum), SUM(impressions)) + 1          AS avg_position
+      SUM(IF(date BETWEEN '{s}' AND '{e}', clicks, 0))         AS clicks,
+      SUM(IF(date BETWEEN '{s}' AND '{e}', impressions, 0))    AS impressions,
+      SAFE_DIVIDE(
+        SUM(IF(date BETWEEN '{s}' AND '{e}', clicks, 0)),
+        NULLIF(SUM(IF(date BETWEEN '{s}' AND '{e}', impressions, 0)), 0)
+      )                                                         AS ctr,
+      SAFE_DIVIDE(
+        SUM(IF(date BETWEEN '{s}' AND '{e}', pos_sum, 0.0)),
+        NULLIF(SUM(IF(date BETWEEN '{s}' AND '{e}', impressions, 0)), 0)
+      ) + 1                                                     AS avg_position,
+      SAFE_DIVIDE(
+        SUM(IF(date BETWEEN '{ps}' AND '{pe}', pos_sum, 0.0)),
+        NULLIF(SUM(IF(date BETWEEN '{ps}' AND '{pe}', impressions, 0)), 0)
+      ) + 1                                                     AS prior_avg_position
     FROM gsc
     GROUP BY 1
+    HAVING SUM(IF(date BETWEEN '{s}' AND '{e}', impressions, 0)) > 0
     ORDER BY clicks DESC, impressions DESC
     LIMIT {int(limit)}
     """
     rows = _run_with_hist_fallback(sql, max_rows=limit + 5)
-    return [
-        {
-            "query":        str(r.get("query") or "(anonymized query)"),
-            "clicks":       int(r.get("clicks") or 0),
-            "impressions":  int(r.get("impressions") or 0),
-            "ctr":          float(r.get("ctr") or 0) * 100,
-            "avg_position": float(r.get("avg_position") or 0),
-        }
-        for r in rows
-    ]
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        avg_position = float(r.get("avg_position") or 0)
+        prior_raw = r.get("prior_avg_position")
+        prior_position = float(prior_raw) if prior_raw is not None else None
+        delta_position = (
+            round(prior_position - avg_position, 1)
+            if (prior_position and avg_position) else None
+        )
+        out.append({
+            "query":              str(r.get("query") or "(anonymized query)"),
+            "clicks":             int(r.get("clicks") or 0),
+            "impressions":        int(r.get("impressions") or 0),
+            "ctr":                float(r.get("ctr") or 0) * 100,
+            "avg_position":       avg_position,
+            "prior_avg_position": round(prior_position, 1) if prior_position else None,
+            "delta_position":     delta_position,
+        })
+    return out
 
 
 # ---------------------------------------------------------------------------
