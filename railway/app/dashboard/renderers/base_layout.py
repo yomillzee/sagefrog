@@ -75,9 +75,20 @@ def refresh_toolbar(
     elif min_refresh_seconds(quick=False) > 0 and not quick_allowed and not full_allowed:
         mins = max(1, (min(quick_remaining, full_remaining) + 59) // 60)
         notice = f'<div class="notice muted">Refresh available in ~{mins} min.</div>'
+    # Progressive enhancement: these stay ordinary POST forms and work with JS
+    # off. When htmx is loaded it intercepts the submit (hx-post), so the whole
+    # page no longer freezes during the multi-second refresh — instead the
+    # button disables (hx-disabled-elt) and a spinner shows (hx-indicator), and
+    # the server replies with an HX-Redirect to the freshly-synced dashboard.
+    # The hidden csrf_token the form middleware injects rides along in the body,
+    # so CSRF stays satisfied with no extra wiring.
+    hx = (
+        f'hx-post="{refresh_url}" hx-swap="none" '
+        'hx-disabled-elt="find button" hx-indicator="#refresh-indicator"'
+    )
     if quick_allowed:
         quick_btn = (
-            f'<form method="post" action="{refresh_url}" class="refresh-form">'
+            f'<form method="post" action="{refresh_url}" class="refresh-form" {hx}>'
             f'<input type="hidden" name="quick" value="1">'
             f'<button type="submit" class="refresh-btn">Quick refresh</button></form>'
         )
@@ -85,7 +96,7 @@ def refresh_toolbar(
         quick_btn = '<button type="button" class="refresh-btn" disabled>Quick refresh</button>'
     if full_allowed:
         full_btn = (
-            f'<form method="post" action="{refresh_url}" class="refresh-form">'
+            f'<form method="post" action="{refresh_url}" class="refresh-form" {hx}>'
             f'<button type="submit" class="refresh-btn refresh-btn--secondary">'
             f"Full refresh</button></form>"
         )
@@ -94,7 +105,11 @@ def refresh_toolbar(
             '<button type="button" class="refresh-btn refresh-btn--secondary" disabled>'
             "Full refresh</button>"
         )
-    buttons = f'<div class="refresh-actions">{quick_btn}{full_btn}</div>'
+    spinner = (
+        '<span id="refresh-indicator" class="refresh-spinner htmx-indicator" '
+        'role="status" aria-label="Refreshing"></span>'
+    )
+    buttons = f'<div class="refresh-actions">{quick_btn}{full_btn}{spinner}</div>'
     return f'<div class="refresh-bar">{notice}{buttons}</div>'
 
 
@@ -824,6 +839,7 @@ def render_client_shell_page(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{_esc(label)} — {_esc(page_title)}</title>
   {favicon_head_html()}
+  <script src="/static/vendor/htmx.min.js" defer></script>
   <style>
     {dashboard_theme.root_css_block(theme)}
     * {{ box-sizing: border-box; }}

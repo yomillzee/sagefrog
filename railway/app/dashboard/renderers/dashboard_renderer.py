@@ -2216,6 +2216,14 @@ def render_penn_html(
     }}
     .refresh-btn--secondary:hover:not(:disabled) {{ background: #f0f7ff; filter: none; }}
     .notice {{ font-size: 0.86rem; color: var(--muted); }}
+    /* htmx in-flight feedback for the refresh buttons */
+    .htmx-indicator {{ opacity: 0; transition: opacity 0.15s ease-in; }}
+    .htmx-request .htmx-indicator, .htmx-request.htmx-indicator {{ opacity: 1; }}
+    .refresh-spinner {{ width: 15px; height: 15px; border-radius: 50%;
+      border: 2px solid var(--border); border-top-color: var(--accent);
+      display: inline-block; animation: refresh-spin 0.7s linear infinite; }}
+    @keyframes refresh-spin {{ to {{ transform: rotate(360deg); }} }}
+    @media (prefers-reduced-motion: reduce) {{ .refresh-spinner {{ animation: none; }} }}
 
     .tab-panel {{ display: none; }}
     .tab-panel.active {{ display: block; }}

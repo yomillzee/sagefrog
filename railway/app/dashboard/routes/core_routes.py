@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 import dashboard_service
 import dashboard_snapshots
@@ -219,6 +219,9 @@ def dashboard_client(
     doc_uploaded: str | None = None,
     doc_deleted: str | None = None,
     doc_error: str | None = None,
+    refresh_wait: str | None = None,
+    refresh_kind: str | None = None,
+    refresh_error: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
     if doc_error:
@@ -233,6 +236,13 @@ def dashboard_client(
         flash = "Dashboard refreshed."
     elif budget_saved:
         flash = "Monthly budget saved."
+    elif refresh_error:
+        flash = "Refresh failed. Please try again."
+    elif refresh_wait:
+        # htmx cooldown bounce-back: mirror the plain-form 429 message.
+        kind = (refresh_kind or "").strip() or "full"
+        mins = str(refresh_wait).strip()[:4]
+        flash = f"Please wait ~{mins} minutes before another {kind} refresh."
     else:
         flash = None
     import client_dashboard_config as _cdc
@@ -379,6 +389,17 @@ def dashboard_client_refresh(
     if isinstance(auth, RedirectResponse):
         return auth
 
+    # htmx submits the refresh form via AJAX so the page never freezes during
+    # the (slow) sync. For those requests we answer with an HX-Redirect header —
+    # htmx then navigates to the freshly-synced dashboard exactly like the 303
+    # below does for a plain form post — rather than swapping a full HTML page
+    # into the toolbar. Cooldown/error messages ride along as query flags the
+    # GET dashboard turns back into a flash.
+    is_htmx = request.headers.get("HX-Request", "").lower() == "true"
+
+    def _hx_redirect(target: str) -> Response:
+        return Response(status_code=204, headers={"HX-Redirect": target})
+
     snapshot = dashboard_snapshots.get_snapshot(slug)
     is_quick = str(quick or "").strip().lower() in ("1", "true", "yes", "on")
     allowed, remaining = dashboard_service.refresh_cooldown_status(snapshot, quick=is_quick)
@@ -386,6 +407,8 @@ def dashboard_client_refresh(
     if not allowed:
         mins = max(1, (remaining + 59) // 60)
         kind = "quick" if is_quick else "full"
+        if is_htmx:
+            return _hx_redirect(f"/dashboard/{slug}?refresh_wait={mins}&refresh_kind={kind}")
         return HTMLResponse(
             dashboard_service.render_penn_html(
                 snapshot,
@@ -416,6 +439,8 @@ def dashboard_client_refresh(
                 client_slug=slug, date_range=preset, sync_trigger="manual_full"
             )
     except Exception as e:
+        if is_htmx:
+            return _hx_redirect(f"/dashboard/{slug}?refresh_error=1")
         return HTMLResponse(
             dashboard_service.render_penn_html(
                 snapshot,
@@ -425,6 +450,8 @@ def dashboard_client_refresh(
             ),
             status_code=400,
         )
+    if is_htmx:
+        return _hx_redirect(f"/dashboard/{slug}?synced=1")
     return RedirectResponse(url=f"/dashboard/{slug}?synced=1", status_code=303)
 @router.post(
     "/dashboard/{client_slug}/insights",
