@@ -109,6 +109,7 @@ def render_hq_budget_page(*, user_email: str) -> str:
       </div>
     </div>
     <div class="head-actions">
+      <a href="/admin/agency-trends">Trends</a>
       <a href="/admin">&larr; Admin</a>
       <form method="post" action="/logout" style="display:inline"><button type="submit" class="link">Sign out</button></form>
     </div>
