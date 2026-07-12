@@ -224,6 +224,7 @@ def dashboard_client_insight_document_download(
     client_slug: str,
     doc_id: int,
     request: Request,
+    inline: str | None = None,
 ):
     slug = validate_client_slug(client_slug)
     auth = web_auth.authenticate_dashboard(request, client_slug=slug)
@@ -236,10 +237,11 @@ def dashboard_client_insight_document_download(
     meta, file_bytes = payload
     filename = meta.original_filename or meta.title or "document"
     safe_name = "".join(c for c in filename if c.isalnum() or c in " ._-").strip() or "document"
+    disposition = "inline" if inline else "attachment"
     return Response(
         content=file_bytes,
         media_type=meta.content_type or "application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+        headers={"Content-Disposition": f'{disposition}; filename="{safe_name}"'},
     )
 @router.post(
     "/dashboard/{client_slug}/insight-documents/{doc_id}/delete",

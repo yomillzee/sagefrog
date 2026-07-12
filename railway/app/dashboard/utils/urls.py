@@ -159,12 +159,16 @@ def insight_document_download_url(
     doc_id: int,
     access_key: str | None,
     use_session: bool,
+    inline: bool = False,
 ) -> str:
     base = f"/dashboard/{client_slug}/insight-documents/{int(doc_id)}"
-    if use_session:
-        return base
-    if access_key:
-        return f"{base}?key={quote(access_key, safe='')}"
+    params = []
+    if not use_session and access_key:
+        params.append(f"key={quote(access_key, safe='')}")
+    if inline:
+        params.append("inline=1")
+    if params:
+        return f"{base}?{'&'.join(params)}"
     return base
 
 
