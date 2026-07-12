@@ -202,6 +202,14 @@ def client_files_browser_html(
                 <button type="submit" class="files-row-action files-row-action--danger" title="Delete file">Delete</button>
               </form>"""
         display_name = row.title or row.original_filename
+        preview_url = _insight_document_download_url(
+            client_slug=client_slug,
+            doc_id=row.id,
+            access_key=access_key,
+            use_session=use_session,
+            inline=True,
+        )
+        is_pdf = (row.original_filename or "").lower().endswith(".pdf")
         drag_attrs = ""
         if can_manage:
             drag_attrs = (
@@ -212,11 +220,15 @@ def client_files_browser_html(
             f"""
             <tr class="files-row files-row--file"{drag_attrs}>
               <td class="files-col-name">
-                <div class="files-name-link files-name-link--static">
+                <button type="button" class="files-name-link files-name-btn"
+                  data-preview-url="{_esc(preview_url)}"
+                  data-download-url="{_esc(download_url)}"
+                  data-file-name="{_esc(display_name)}"
+                  data-file-type="{'pdf' if is_pdf else 'other'}">
                   {_file_type_icon_html(row.original_filename)}
                   <span class="files-name-text">{_esc(display_name)}</span>
                   <span class="files-name-sub muted">{_esc(docs.file_type_label(row.original_filename))}</span>
-                </div>
+                </button>
               </td>
               <td class="files-col-modified">{_fmt_short_date(row.uploaded_at)}</td>
               <td class="files-col-size">{_esc(_fmt_file_size(row.file_size))}</td>
@@ -287,7 +299,20 @@ def client_files_browser_html(
           </tbody>
         </table>
       </div>
-    </div>"""
+    </div>
+    <dialog class="files-preview-dialog" id="filePreviewDialog">
+      <div class="files-preview-head">
+        <span class="files-preview-title" id="filePreviewTitle"></span>
+        <div class="files-preview-head-actions">
+          <a class="files-btn files-btn--primary" id="filePreviewDownload" href="#" download>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 16V4m0 0l-4 4m4-4l4 4M4 20h16"/></svg>
+            Download
+          </a>
+          <button type="button" class="files-preview-close" id="filePreviewClose" aria-label="Close preview">&times;</button>
+        </div>
+      </div>
+      <div class="files-preview-body" id="filePreviewBody"></div>
+    </dialog>"""
 
 
 def files_page_css() -> str:
@@ -320,6 +345,9 @@ def files_page_css() -> str:
     .files-row--file[draggable="true"] { cursor: grab; }
     .files-row--file.files-row--dragging { opacity: 0.45; cursor: grabbing; }
     .files-name-link--static { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .files-name-btn { appearance: none; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; padding: 0; width: 100%; }
+    .files-name-btn:hover .files-name-text { color: var(--accent); text-decoration: underline; }
+    .files-name-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
     .files-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 16px 20px; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, #fff 0%, var(--surface) 100%); }
     .files-breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: 0.92rem; min-width: 0; }
     .files-crumb-link { color: var(--accent); text-decoration: none; font-weight: 600; }
@@ -366,6 +394,19 @@ def files_page_css() -> str:
     .files-dialog-input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font: inherit; margin-bottom: 16px; }
     .files-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
     .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    .files-preview-dialog { border: 0; border-radius: 14px; padding: 0; box-shadow: 0 20px 50px rgba(10, 37, 64, 0.28); width: min(960px, calc(100vw - 32px)); max-width: calc(100vw - 32px); height: min(85vh, calc(100vh - 48px)); max-height: calc(100vh - 48px); overflow: hidden; }
+    .files-preview-dialog::backdrop { background: rgba(10, 37, 64, 0.55); }
+    .files-preview-dialog[open] { display: flex; flex-direction: column; }
+    .files-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+    .files-preview-title { font-weight: 700; color: var(--navy); font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .files-preview-head-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    .files-preview-close { appearance: none; border: 1px solid var(--border); background: #fff; border-radius: 8px; width: 34px; height: 34px; font-size: 1.4rem; line-height: 1; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+    .files-preview-close:hover { background: #f4f7fb; color: var(--navy); }
+    .files-preview-body { flex: 1; min-height: 0; background: #f4f6fa; position: relative; }
+    .files-preview-body iframe { width: 100%; height: 100%; border: 0; display: block; }
+    .files-preview-fallback { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; height: 100%; padding: 40px; text-align: center; color: var(--muted); }
+    .files-preview-fallback svg { width: 44px; height: 44px; color: var(--muted); }
+    .files-preview-fallback p { margin: 0; font-size: 0.95rem; }
     @media (max-width: 720px) {
       .files-col-modified, .files-col-size { display: none; }
       .files-toolbar { flex-direction: column; align-items: stretch; }
@@ -377,6 +418,51 @@ def files_page_css() -> str:
 def files_page_js() -> str:
     return """
     (function () {
+      const previewDialog = document.getElementById('filePreviewDialog');
+      if (previewDialog) {
+        const titleEl = document.getElementById('filePreviewTitle');
+        const bodyEl = document.getElementById('filePreviewBody');
+        const downloadEl = document.getElementById('filePreviewDownload');
+        const closeEl = document.getElementById('filePreviewClose');
+
+        function closePreview() {
+          previewDialog.close();
+        }
+
+        function openPreview(btn) {
+          const name = btn.dataset.fileName || 'Document';
+          const previewUrl = btn.dataset.previewUrl;
+          const downloadUrl = btn.dataset.downloadUrl;
+          const fileType = btn.dataset.fileType;
+          titleEl.textContent = name;
+          if (downloadEl) downloadEl.href = downloadUrl || '#';
+          bodyEl.innerHTML = '';
+          if (fileType === 'pdf' && previewUrl) {
+            const frame = document.createElement('iframe');
+            frame.src = previewUrl;
+            frame.title = name;
+            bodyEl.appendChild(frame);
+          } else {
+            bodyEl.innerHTML =
+              '<div class="files-preview-fallback">' +
+              '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>' +
+              '<p>This file type can\\'t be previewed in the browser.</p>' +
+              '<p>Use Download to open it.</p>' +
+              '</div>';
+          }
+          previewDialog.showModal();
+        }
+
+        document.querySelectorAll('.files-name-btn').forEach((btn) => {
+          btn.addEventListener('click', () => openPreview(btn));
+        });
+        closeEl?.addEventListener('click', closePreview);
+        previewDialog.addEventListener('click', (event) => {
+          if (event.target === previewDialog) closePreview();
+        });
+        previewDialog.addEventListener('close', () => { bodyEl.innerHTML = ''; });
+      }
+
       const dialog = document.getElementById('newFolderDialog');
       const openBtn = document.getElementById('newFolderBtn');
       const cancelBtn = document.getElementById('newFolderCancel');
