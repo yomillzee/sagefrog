@@ -41,7 +41,10 @@ class GTMConnector(ConnectorHandler):
             "google_tag_manager", client_slug=client_slug
         )
         if not refresh_token:
-            return SyncResult(rows_loaded=0, error="No google_tag_manager token found.")
+            return SyncResult(rows_loaded=0, error=oauth_store.token_error(
+                "google_tag_manager", client_slug=client_slug,
+                missing="No google_tag_manager token found.",
+            ))
 
         try:
             result = gtm_service.get_live_tags(
