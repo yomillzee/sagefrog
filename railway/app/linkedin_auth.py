@@ -43,16 +43,21 @@ class LinkedInEnv:
     version: str
 
 
-def load_linkedin_env() -> LinkedInEnv:
+def load_linkedin_env(*, require_token: bool = True) -> LinkedInEnv:
+    """Build the LinkedIn env. With require_token=False the global refresh token
+    is optional (blank if absent) instead of raising — used by callers that
+    already hold a client-scoped access token and only need client_id / secret /
+    version, so a client whose token lives under its own slug can still sync when
+    the global token is missing/undecryptable."""
     return LinkedInEnv(
         client_id=_get_required_env(*_ENV_ALIASES["client_id"]),
         client_secret=_get_required_env(*_ENV_ALIASES["client_secret"]),
-        refresh_token=_resolve_refresh_token(),
+        refresh_token=_resolve_refresh_token(required=require_token),
         version=_get_env(*_ENV_ALIASES["version"]) or "202509",
     )
 
 
-def _resolve_refresh_token() -> str:
+def _resolve_refresh_token(required: bool = True) -> str:
     try:
         import oauth_store
 
@@ -61,6 +66,8 @@ def _resolve_refresh_token() -> str:
             return db_token
     except Exception:
         pass
+    if not required:
+        return ""
     raise RuntimeError(
         "Missing LinkedIn refresh token. Connect LinkedIn in dashboard settings "
         "(Settings → Connect LinkedIn)."

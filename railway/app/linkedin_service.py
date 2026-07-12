@@ -230,7 +230,7 @@ def list_ad_accounts(
     access_token: str | None = None,
     env: LinkedInEnv | None = None,
 ) -> list[dict[str, Any]]:
-    env = env or load_linkedin_env()
+    env = env or load_linkedin_env(require_token=access_token is None)
     access_token = access_token or refresh_access_token(env)["access_token"]
     try:
         payload = _linkedin_get("/adAccounts", params={"q": "search"}, access_token=access_token, env=env)
@@ -627,7 +627,7 @@ def list_campaign_groups(
     env: LinkedInEnv | None = None,
 ) -> list[dict[str, Any]]:
     """List campaign groups for one ad account."""
-    env = env or load_linkedin_env()
+    env = env or load_linkedin_env(require_token=access_token is None)
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
     if not account_id_clean:
@@ -765,7 +765,7 @@ def campaign_groups_performance(
     env: LinkedInEnv | None = None,
 ) -> dict[str, Any]:
     """Account totals plus spend/clicks/impressions by campaign group."""
-    env = env or load_linkedin_env()
+    env = env or load_linkedin_env(require_token=access_token is None)
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
     if not account_id_clean:
@@ -964,7 +964,7 @@ def fetch_daily_metrics(
     env: LinkedInEnv | None = None,
 ) -> list[dict[str, Any]]:
     """Account-level metrics per day (for Postgres warehouse / metrics_daily)."""
-    env = env or load_linkedin_env()
+    env = env or load_linkedin_env(require_token=access_token is None)
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
 
@@ -1054,7 +1054,7 @@ def fetch_campaign_daily_metrics(
     Returns list of {campaign_id, campaign_name, metric_date, spend, clicks, impressions,
     conversions, conversion_value}. One row per (campaign, day).
     """
-    env = env or load_linkedin_env()
+    env = env or load_linkedin_env(require_token=access_token is None)
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
 
@@ -1133,7 +1133,7 @@ def fetch_creative_daily_metrics(
     Returns list of {creative_id, metric_date, spend, clicks, impressions,
     conversions, conversion_value}. One row per (creative, day).
     """
-    env = env or load_linkedin_env()
+    env = env or load_linkedin_env(require_token=access_token is None)
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
 
@@ -1300,7 +1300,7 @@ def creatives_performance(
     Creative-level metrics (LinkedIn has no ad set — this is the level below campaign).
     Use for ad/creative dashboards; do not roll into campaign totals by name.
     """
-    env = env or load_linkedin_env()
+    env = env or load_linkedin_env(require_token=access_token is None)
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
     if not account_id_clean:
@@ -1440,7 +1440,7 @@ def fetch_creatives_metadata_by_ids(
     creatives whose lookup fails are skipped (retried on the next sync) rather
     than cached as null.
     """
-    env = env or load_linkedin_env()
+    env = env or load_linkedin_env(require_token=access_token is None)
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
     if not account_id_clean:
@@ -1530,7 +1530,7 @@ def account_performance(
     access_token: str | None = None,
     env: LinkedInEnv | None = None,
 ) -> dict[str, Any]:
-    env = env or load_linkedin_env()
+    env = env or load_linkedin_env(require_token=access_token is None)
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
     if not account_id_clean:
@@ -1855,7 +1855,7 @@ def list_account_video_assets(
     env: LinkedInEnv | None = None,
 ) -> list[dict[str, Any]]:
     """List video assets for an ad account (works with r_ads; no Posts API needed)."""
-    env = env or load_linkedin_env()
+    env = env or load_linkedin_env(require_token=access_token is None)
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
     if not account_id_clean:
@@ -2018,7 +2018,7 @@ def enrich_creative_rows_with_media(
     }
     if not creatives or not account_id:
         return stats
-    env = env or load_linkedin_env()
+    env = env or load_linkedin_env(require_token=access_token is None)
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
     video_cache: dict[str, dict[str, str]] = {}
@@ -2307,7 +2307,7 @@ def list_video_creatives(
     Video/image preview URLs for LinkedIn ad creatives.
     Resolves video thumbnail + downloadUrl via Videos API and images via Images API.
     """
-    env = env or load_linkedin_env()
+    env = env or load_linkedin_env(require_token=access_token is None)
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
     if not account_id_clean:
@@ -2468,7 +2468,7 @@ def fetch_campaign_metadata_rows(
     env: LinkedInEnv | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch LinkedIn campaign metadata rows for BigQuery campaign-name enrichment."""
-    env = env or load_linkedin_env()
+    env = env or load_linkedin_env(require_token=access_token is None)
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
     group_name_cache: dict[str, str] = {}

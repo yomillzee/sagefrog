@@ -84,7 +84,7 @@ def _graph_get(
     params: dict[str, Any] | None = None,
     env: MetaEnv | None = None,
 ) -> dict[str, Any]:
-    env = env or load_meta_env()
+    env = env or load_meta_env(access_token=access_token)
     query = dict(params or {})
     query["access_token"] = access_token
     url = path if path.startswith("http") else f"{_graph_base(env)}{path}"
@@ -253,7 +253,7 @@ def list_ad_accounts(
     access_token: str | None = None,
     env: MetaEnv | None = None,
 ) -> list[dict[str, Any]]:
-    env = env or load_meta_env()
+    env = env or load_meta_env(access_token=access_token)
     access_token = access_token or env.access_token
     business_id = env.business_id
 
@@ -282,7 +282,7 @@ def list_user_ad_accounts(
 
     Use as a fallback when the app lacks business_management Advanced Access.
     """
-    env = env or load_meta_env()
+    env = env or load_meta_env(access_token=access_token)
     rows = _graph_get_all(
         "/me/adaccounts",
         access_token=access_token,
@@ -328,7 +328,7 @@ def test_ads_read_access(
     env: MetaEnv | None = None,
 ) -> dict[str, Any]:
     """Probe whether this token can read ads (required for metaVideos)."""
-    env = env or load_meta_env()
+    env = env or load_meta_env(access_token=access_token)
     access_token = access_token or env.access_token
     account_id_clean = _normalize_account_id(account_id)
     if not account_id_clean:
@@ -400,7 +400,7 @@ def fetch_daily_metrics(
     access_token: str | None = None,
     env: MetaEnv | None = None,
 ) -> list[dict[str, Any]]:
-    env = env or load_meta_env()
+    env = env or load_meta_env(access_token=access_token)
     access_token = access_token or env.access_token
     account_id_clean = _normalize_account_id(account_id)
 
@@ -463,7 +463,7 @@ def fetch_campaign_daily_metrics(
     import logging
     _log = logging.getLogger(__name__)
 
-    env = env or load_meta_env()
+    env = env or load_meta_env(access_token=access_token)
     access_token = access_token or env.access_token
     account_id_clean = _normalize_account_id(account_id)
 
@@ -511,7 +511,7 @@ def fetch_adset_daily_metrics(
     import logging
     _log = logging.getLogger(__name__)
 
-    env = env or load_meta_env()
+    env = env or load_meta_env(access_token=access_token)
     access_token = access_token or env.access_token
     account_id_clean = _normalize_account_id(account_id)
 
@@ -560,7 +560,7 @@ def fetch_ad_daily_metrics(
     import logging
     _log = logging.getLogger(__name__)
 
-    env = env or load_meta_env()
+    env = env or load_meta_env(access_token=access_token)
     access_token = access_token or env.access_token
     account_id_clean = _normalize_account_id(account_id)
 
@@ -637,7 +637,7 @@ def account_performance(
     access_token: str | None = None,
     env: MetaEnv | None = None,
 ) -> dict[str, Any]:
-    env = env or load_meta_env()
+    env = env or load_meta_env(access_token=access_token)
     access_token = access_token or env.access_token
     account_id_clean = _normalize_account_id(account_id)
     if not account_id_clean:
@@ -740,7 +740,7 @@ def adsets_performance(
     Ad set-level metrics (sub-campaign). Use for ad set dashboards;
     do not roll into campaign totals by name.
     """
-    env = env or load_meta_env()
+    env = env or load_meta_env(access_token=access_token)
     access_token = access_token or env.access_token
     account_id_clean = _normalize_account_id(account_id)
     if not account_id_clean:
@@ -882,7 +882,7 @@ def ads_performance(
     """
     Ad-level metrics (below ad set). Optionally merges creative thumbnails when ads_read is available.
     """
-    env = env or load_meta_env()
+    env = env or load_meta_env(access_token=access_token)
     access_token = access_token or env.access_token
     account_id_clean = _normalize_account_id(account_id)
     if not account_id_clean:
@@ -1096,7 +1096,7 @@ def list_videos(
     """
     Video/image preview URLs for Meta ads via ad creative metadata.
     """
-    env = env or load_meta_env()
+    env = env or load_meta_env(access_token=access_token)
     access_token = access_token or env.access_token
     account_id_clean = _normalize_account_id(account_id)
     if not account_id_clean:
@@ -1228,7 +1228,7 @@ def fetch_ad_creative_metadata(
     Returns a list of {ad_id, ad_name, adset_id, adset_name, campaign_id, campaign_name,
     thumbnail_url, image_url, media_type} — one row per ad.
     """
-    env = env or load_meta_env()
+    env = env or load_meta_env(access_token=access_token)
     access_token = access_token or env.access_token
     account_id_clean = _normalize_account_id(account_id)
     if not account_id_clean:

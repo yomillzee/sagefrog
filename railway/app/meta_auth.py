@@ -45,11 +45,17 @@ class MetaEnv:
     api_version: str
 
 
-def load_meta_env() -> MetaEnv:
+def load_meta_env(access_token: str | None = None) -> MetaEnv:
+    """Build the Meta env. When `access_token` is supplied (e.g. a client-scoped
+    token the connector already resolved), use it verbatim and DON'T fall back to
+    the global OAuth store — otherwise a client whose token lives under its own
+    slug can never sync while the global token is absent/undecryptable. With no
+    token passed, resolve the global token as before."""
+    token = (access_token or "").strip() or _resolve_access_token()
     return MetaEnv(
         app_id=_get_required_env(*_ENV_ALIASES["app_id"]),
         app_secret=_get_required_env(*_ENV_ALIASES["app_secret"]),
-        access_token=_resolve_access_token(),
+        access_token=token,
         business_id=_get_required_env(*_ENV_ALIASES["business_id"]),
         api_version=_get_env(*_ENV_ALIASES["api_version"]) or "v21.0",
     )
