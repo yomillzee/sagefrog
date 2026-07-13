@@ -74,21 +74,17 @@ def render_hq_budget_page(*, user_email: str) -> str:
     .cl-slug {{ color:var(--muted); font-size:.74rem; font-weight:500; margin-top:1px; }}
     .num {{ font-variant-numeric:tabular-nums; }}
     /* progress bar in % of budget cell */
-    .pct-cell {{ display:flex; align-items:center; justify-content:flex-end; gap:9px; }}
+    .pct-cell {{ display:flex; align-items:center; justify-content:flex-end; gap:9px; cursor:default; }}
+    .pct-cell .num {{ font-weight:800; }}
+    .pct-cell .num.over {{ color:var(--danger); }}
+    .pct-cell .num.under {{ color:var(--green); }}
+    .pct-cell .num.on_track {{ color:var(--navy); }}
     .pbar {{ flex:0 0 84px; height:7px; border-radius:4px; background:#eef2f7; overflow:hidden; }}
     .pbar > span {{ display:block; height:100%; border-radius:4px; background:var(--accent); }}
     .pbar.over > span {{ background:var(--danger); }}
     .pbar.under > span {{ background:var(--green); }}
-    .badge {{ display:inline-block; padding:2px 10px; border-radius:999px; font-size:.68rem; font-weight:800; letter-spacing:.02em; }}
-    .badge.over {{ background:#fdeceb; color:var(--danger); }}
-    .badge.under {{ background:#e4f4ea; color:var(--green); }}
-    .badge.on_track {{ background:#eaf1fb; color:var(--accent); }}
-    .badge.no_budget {{ background:#eef2f7; color:var(--muted); }}
-    .delta-over {{ color:var(--danger); }}
-    .delta-under {{ color:var(--green); }}
     .sess-cell {{ display:flex; align-items:center; justify-content:flex-end; gap:9px; }}
     .spark svg {{ display:block; }}
-    .sess-total {{ font-variant-numeric:tabular-nums; color:var(--muted); font-size:.78rem; min-width:46px; text-align:right; }}
     .muted {{ color:var(--muted); }}
     .empty {{ text-align:center; color:var(--muted); padding:26px 8px; }}
     .skel {{ display:inline-block; height:12px; border-radius:6px; background:linear-gradient(90deg,#eef2f7,#e2e8f0,#eef2f7); background-size:200% 100%; animation:sh 1.2s ease-in-out infinite; }}
@@ -129,12 +125,8 @@ def render_hq_budget_page(*, user_email: str) -> str:
         <table id="hqTable">
           <thead><tr>
             <th class="sortable" data-key="label">Client</th>
-            <th class="sortable" data-key="monthly_budget">Monthly budget</th>
-            <th class="sortable" data-key="mtd_spend">Spend MTD</th>
-            <th class="sortable" data-key="sessions_total">Sessions · 30d</th>
             <th class="sortable active" data-key="pct_budget">% of budget</th>
-            <th class="sortable" data-key="projected_month_end">Projected</th>
-            <th class="sortable" data-key="pace_delta">Status</th>
+            <th class="sortable" data-key="sessions_total">Sessions · 30d</th>
           </tr></thead>
           <tbody id="hqBody"></tbody>
           <tfoot id="hqFoot"></tfoot>
@@ -146,7 +138,6 @@ def render_hq_budget_page(*, user_email: str) -> str:
   <script>
     const money = v => new Intl.NumberFormat('en-US',{{style:'currency',currency:'USD',maximumFractionDigits:0}}).format(Number(v||0));
     const money2 = v => new Intl.NumberFormat('en-US',{{style:'currency',currency:'USD',maximumFractionDigits:2}}).format(Number(v||0));
-    const nfmt = v => new Intl.NumberFormat('en-US').format(Math.round(Number(v||0)));
     const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
     const STATUS_LABEL = {{ over:'Over pace', under:'Under pace', on_track:'On track', no_budget:'No budget' }};
     let hqData = null;
@@ -171,23 +162,15 @@ def render_hq_budget_page(*, user_email: str) -> str:
     }}
     function pctCell(r) {{
       if (r.pct_budget == null) return '<span class="muted">—</span>';
-      const cls = r.status==='over'?'over':(r.status==='under'?'under':'');
+      const cls = r.status==='over'?'over':(r.status==='under'?'under':'on_track');
+      const bar = cls==='on_track' ? '' : cls;
       const w = Math.min(100, r.pct_budget);
-      return `<div class="pct-cell"><span class="num">${{r.pct_budget.toFixed(0)}}%</span>`
-        + `<span class="pbar ${{cls}}"><span style="width:${{w}}%"></span></span></div>`;
-    }}
-    function projCell(r) {{
-      if (!r.spend_available || r.projected_month_end == null) return '<span class="muted">—</span>';
-      let sub = '';
-      if (r.pace_delta != null) {{
-        const over = r.pace_delta > 0;
-        sub = `<div class="cl-slug ${{over?'delta-over':'delta-under'}}">${{over?'+':''}}${{money(r.pace_delta)}} vs budget</div>`;
-      }}
-      return `<div class="num">${{money(r.projected_month_end)}}</div>${{sub}}`;
-    }}
-    function statusCell(r) {{
-      if (!r.spend_available && r.status!=='no_budget') return '<span class="badge no_budget">No data</span>';
-      return `<span class="badge ${{r.status}}">${{STATUS_LABEL[r.status]||r.status}}</span>`;
+      const budgetTxt = r.has_budget ? money2(r.monthly_budget) : 'no budget set';
+      const tip = r.spend_available
+        ? `${{money2(r.mtd_spend)}} spent of ${{budgetTxt}} · ${{STATUS_LABEL[r.status]||r.status}}`
+        : 'No spend data';
+      return `<div class="pct-cell" title="${{esc(tip)}}"><span class="num ${{cls}}">${{r.pct_budget.toFixed(0)}}%</span>`
+        + `<span class="pbar ${{bar}}"><span style="width:${{w}}%"></span></span></div>`;
     }}
     // Inline SVG sparkline of daily sessions. Colour tints up (green) / down
     // (red) / flat (blue) by comparing the last third of the window to the first.
@@ -209,11 +192,7 @@ def render_hq_budget_page(*, user_email: str) -> str:
     }}
     function sessCell(r) {{
       if (!r.sessions_available) return '<span class="muted">—</span>';
-      return `<div class="sess-cell">${{sparkline(r.sessions_series)}}<span class="sess-total">${{nfmt(r.sessions_total)}}</span></div>`;
-    }}
-    function spendCell(r) {{
-      if (!r.spend_available) return '<span class="muted">—</span>';
-      return `<span class="num">${{money(r.mtd_spend)}}</span>`;
+      return `<div class="sess-cell">${{sparkline(r.sessions_series)}}</div>`;
     }}
     function render() {{
       const t = hqData.totals || {{}};
@@ -230,23 +209,20 @@ def render_hq_budget_page(*, user_email: str) -> str:
 
       const rows = sortedRows();
       const body = document.getElementById('hqBody');
-      if (!rows.length) {{ body.innerHTML = `<tr><td colspan="7" class="empty">No clients configured yet.</td></tr>`; }}
+      if (!rows.length) {{ body.innerHTML = `<tr><td colspan="3" class="empty">No clients configured yet.</td></tr>`; }}
       else body.innerHTML = rows.map(r => {{
         const dash = `/dashboard/${{encodeURIComponent(r.client_slug)}}`;
-        const budget = r.has_budget ? `<span class="num">${{money(r.monthly_budget)}}</span>` : '<span class="muted">Not set</span>';
         return `<tr>`
           + `<td><div class="cl-name"><a href="${{dash}}">${{esc(r.label)}}</a></div><div class="cl-slug">${{esc(r.client_slug)}}</div></td>`
-          + `<td>${{budget}}</td>`
-          + `<td>${{spendCell(r)}}</td>`
-          + `<td>${{sessCell(r)}}</td>`
           + `<td>${{pctCell(r)}}</td>`
-          + `<td>${{projCell(r)}}</td>`
-          + `<td>${{statusCell(r)}}</td>`
+          + `<td>${{sessCell(r)}}</td>`
         + `</tr>`;
       }}).join('');
 
+      const totPct = t.monthly_budget ? Math.round(t.mtd_spend / t.monthly_budget * 100) : null;
+      const totTip = `${{money2(t.mtd_spend)}} spent of ${{money2(t.monthly_budget)}} budget`;
       document.getElementById('hqFoot').innerHTML = rows.length
-        ? `<tr><td>All clients</td><td class="num">${{money(t.monthly_budget)}}</td><td class="num">${{money(t.mtd_spend)}}</td><td></td><td></td><td class="num">${{money(t.projected_month_end)}}</td><td></td></tr>`
+        ? `<tr><td>All clients</td><td><div class="pct-cell" title="${{esc(totTip)}}"><span class="num">${{totPct==null?'—':totPct+'%'}}</span></div></td><td></td></tr>`
         : '';
 
       document.querySelectorAll('#hqTable th.sortable').forEach(th =>
@@ -264,7 +240,7 @@ def render_hq_budget_page(*, user_email: str) -> str:
         + `<div class="skel" style="height:9px;width:40%;margin-top:7px"></div></div>`).join('');
       document.getElementById('hqBody').innerHTML = Array.from({{length:6}}, () =>
         `<tr><td><span class="skel" style="width:140px"></span></td>`
-        + Array.from({{length:6}}, () => `<td><span class="skel" style="width:60px"></span></td>`).join('') + `</tr>`).join('');
+        + Array.from({{length:2}}, () => `<td><span class="skel" style="width:60px"></span></td>`).join('') + `</tr>`).join('');
     }}
     document.getElementById('hqTable').querySelector('thead').addEventListener('click', ev => {{
       const th = ev.target.closest('th.sortable'); if (!th || !hqData) return;
@@ -282,7 +258,7 @@ def render_hq_budget_page(*, user_email: str) -> str:
         render();
       }} catch (e) {{
         document.getElementById('hqSub').textContent = 'Failed to load budget data.';
-        document.getElementById('hqBody').innerHTML = `<tr><td colspan="6" class="empty">Could not load budget data (${{esc(e.message||'error')}}). Try refreshing.</td></tr>`;
+        document.getElementById('hqBody').innerHTML = `<tr><td colspan="3" class="empty">Could not load budget data (${{esc(e.message||'error')}}). Try refreshing.</td></tr>`;
       }}
     }}
     load();
