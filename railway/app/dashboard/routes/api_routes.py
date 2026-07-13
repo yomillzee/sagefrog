@@ -595,7 +595,8 @@ def nixon_gsc_summary(
 )
 def nixon_gsc_keyword_matches(
     request: Request,
-    terms: str = Query(default="", description="Comma-separated match terms."),
+    terms: str = Query(default="", description="Comma-separated include terms."),
+    exclude: str = Query(default="", description="Comma-separated exclude terms."),
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
@@ -605,6 +606,7 @@ def nixon_gsc_keyword_matches(
         request, bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
     term_list = [t.strip() for t in terms.split(",") if t.strip()]
+    exclude_list = [t.strip() for t in exclude.split(",") if t.strip()]
     start, end = _resolve_marketing_dates(start_date, end_date)
     if not term_list:
         return {"rows": [], "weekly": []}
@@ -617,18 +619,20 @@ def nixon_gsc_keyword_matches(
         import bq_gsc_service
         # Same "nixon" marketing key -> "nixon-bq-test" BQ client_slug split as
         # nixon_gsc_summary above.
-        cache_key = {"start": start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list)}
-        trend_cache_key = {"start": trend_start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list)}
+        cache_key = {"start": start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list), "exclude": sorted(exclude_list)}
+        trend_cache_key = {"start": trend_start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list), "exclude": sorted(exclude_list)}
         rows = _cached_bq_read(
             "nixon.gsc.keyword_matches", cache_key, ttl_seconds=900,
             fetch=lambda: bq_gsc_service.gsc_keyword_matches(
-                start=start, end=end, terms=term_list, client_slug="nixon-bq-test",
+                start=start, end=end, terms=term_list, exclude_terms=exclude_list,
+                client_slug="nixon-bq-test",
             ),
         )
         weekly = _cached_bq_read(
             "nixon.gsc.keyword_weekly_trend", trend_cache_key, ttl_seconds=900,
             fetch=lambda: bq_gsc_service.gsc_keyword_weekly_trend(
-                start=trend_start, end=end, terms=term_list, client_slug="nixon-bq-test",
+                start=trend_start, end=end, terms=term_list, exclude_terms=exclude_list,
+                client_slug="nixon-bq-test",
             ),
         )
         return {"rows": rows, "weekly": weekly}
@@ -1882,7 +1886,8 @@ def client_gsc_summary(
 def client_gsc_keyword_matches(
     client_key: str,
     request: Request,
-    terms: str = Query(default="", description="Comma-separated match terms."),
+    terms: str = Query(default="", description="Comma-separated include terms."),
+    exclude: str = Query(default="", description="Comma-separated exclude terms."),
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
@@ -1890,15 +1895,18 @@ def client_gsc_keyword_matches(
 ) -> dict:
     """Unlike gsc/summary's top_queries (LIMIT 25 by clicks), this scans every
     query in range for the given terms -- so a branded/target keyword that
-    isn't a top-25 performer by raw click volume still shows up. Also returns
-    a weekly clicks/impressions rollup ("weekly") for trending the same terms
-    over time, computed in the same request rather than a separate round trip."""
+    isn't a top-25 performer by raw click volume still shows up. A query counts
+    when it contains any include term (`terms`) and none of the `exclude` terms.
+    Also returns a weekly clicks/impressions rollup ("weekly") for trending the
+    same terms over time, computed in the same request rather than a separate
+    round trip."""
     normalized = (client_key or "").strip().lower()
     _authorize_bq_client_api(
         request, client_slug=normalized,
         bearer_credentials=bearer_credentials, x_api_key=x_api_key,
     )
     term_list = [t.strip() for t in terms.split(",") if t.strip()]
+    exclude_list = [t.strip() for t in exclude.split(",") if t.strip()]
     start, end = _resolve_marketing_dates(start_date, end_date)
     if not term_list:
         return {"rows": [], "weekly": []}
@@ -1907,18 +1915,20 @@ def client_gsc_keyword_matches(
     trend_start = min(start, end - timedelta(days=_KEYWORD_TREND_DAYS))
     try:
         import bq_gsc_service
-        cache_key = {"start": start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list)}
-        trend_cache_key = {"start": trend_start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list)}
+        cache_key = {"start": start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list), "exclude": sorted(exclude_list)}
+        trend_cache_key = {"start": trend_start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list), "exclude": sorted(exclude_list)}
         rows = _cached_bq_read(
             f"{normalized}.gsc.keyword_matches", cache_key, ttl_seconds=900,
             fetch=lambda: bq_gsc_service.gsc_keyword_matches(
-                start=start, end=end, terms=term_list, client_slug=normalized,
+                start=start, end=end, terms=term_list, exclude_terms=exclude_list,
+                client_slug=normalized,
             ),
         )
         weekly = _cached_bq_read(
             f"{normalized}.gsc.keyword_weekly_trend", trend_cache_key, ttl_seconds=900,
             fetch=lambda: bq_gsc_service.gsc_keyword_weekly_trend(
-                start=trend_start, end=end, terms=term_list, client_slug=normalized,
+                start=trend_start, end=end, terms=term_list, exclude_terms=exclude_list,
+                client_slug=normalized,
             ),
         )
         return {"rows": rows, "weekly": weekly}
@@ -1937,8 +1947,8 @@ async def save_gsc_keyword_config(
     x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     """Persist the branded roots (brand-name stems) + specific target keywords
-    used by the Search Console 'Branded & Target Keywords' section. Stored one
-    per line in client_dashboard_config."""
+    used by the Search Console 'Branded & Target Keywords' section, plus optional
+    per-group exclude roots. Stored one per line in client_dashboard_config."""
     normalized = (client_key or "").strip().lower()
     _authorize_bq_client_api(
         request, client_slug=normalized,
@@ -1954,6 +1964,8 @@ async def save_gsc_keyword_config(
             normalized,
             branded_roots=str(body.get("branded_roots") or ""),
             target_keywords=str(body.get("target_keywords") or ""),
+            branded_exclude=str(body.get("branded_exclude") or ""),
+            target_exclude=str(body.get("target_exclude") or ""),
             updated_by="dashboard",
         )
     except Exception as exc:

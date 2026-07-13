@@ -47,6 +47,27 @@ class GscKeywordConfigTests(unittest.TestCase):
         self.assertIn("acme\nacme co", params)
         self.assertIn("running shoes", params)
 
+    def test_update_gsc_keywords_persists_exclude_roots(self):
+        fake = _FakeConn()
+
+        @contextmanager
+        def fake_connection():
+            yield fake
+
+        with patch.object(cdc, "enabled", return_value=True), \
+             patch.object(cdc, "ensure_schema", return_value=True), \
+             patch.object(cdc.db, "connection", fake_connection):
+            cdc.update_gsc_keywords(
+                "acme", branded_roots="benjamin", target_keywords="running shoes",
+                branded_exclude="dr", target_exclude="cheap",
+            )
+
+        sql, params = fake.calls[0]
+        self.assertIn("gsc_branded_exclude = EXCLUDED.gsc_branded_exclude", sql)
+        self.assertIn("gsc_target_exclude = EXCLUDED.gsc_target_exclude", sql)
+        self.assertIn("dr", params)
+        self.assertIn("cheap", params)
+
     def test_blank_values_stored_as_null(self):
         fake = _FakeConn()
 
