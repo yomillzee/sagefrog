@@ -133,14 +133,22 @@ async def validate_csrf(request: Request) -> bool:
             # Prime the body cache first so BaseHTTPMiddleware can replay it to
             # the downstream route — reading request.form() alone would consume
             # the stream and starve the handler's Form(...) parameters.
+            form = None
             try:
                 await request.body()
                 form = await request.form()
-            except Exception:
-                form = None
-            if form is not None:
                 value = form.get(CSRF_FIELD_NAME)
                 form_token = value if isinstance(value, str) else None
+            except Exception:
+                form_token = None
+            finally:
+                if form is not None:
+                    # Release any SpooledTemporaryFile-backed UploadFile parts:
+                    # multipart file uploads > the spool threshold roll over to
+                    # on-disk temp files, and the downstream route re-parses the
+                    # (replayed) body on its own Request, so this copy would
+                    # otherwise leak an open handle on every upload.
+                    await form.close()
     submitted = _submitted_token(request, form_token)
     expected = request.scope.get("session", {}).get(CSRF_SESSION_KEY)
     return tokens_match(expected, submitted)
