@@ -44,7 +44,7 @@ class DashboardClientBigqueryNixonModeTests(unittest.TestCase):
              patch.object(core_routes, "render_bigquery_dashboard_page", fake_render), \
              patch.object(core_routes.dashboard_service, "render_penn_html") as fake_render_penn:
             request = types.SimpleNamespace()
-            resp = core_routes.dashboard_client(client_slug="acme", request=request, key=None)
+            resp = core_routes.dashboard_client(client_slug="acme", request=request)
 
         self.assertIn("nixon-template", resp.body.decode())
         fake_render_penn.assert_not_called()
@@ -65,7 +65,7 @@ class DashboardClientBigqueryNixonModeTests(unittest.TestCase):
              patch.object(core_routes, "render_bigquery_dashboard_page") as fake_render, \
              patch.object(core_routes.dashboard_service, "render_penn_html", return_value="<html>penn</html>") as fake_render_penn:
             request = types.SimpleNamespace()
-            resp = core_routes.dashboard_client(client_slug="other", request=request, key=None)
+            resp = core_routes.dashboard_client(client_slug="other", request=request)
 
         self.assertIn("penn", resp.body.decode())
         fake_render.assert_not_called()

@@ -35,10 +35,11 @@ class SettingsBigqueryNixonModeTests(unittest.TestCase):
         with patch.object(settings_routes, "validate_client_slug", side_effect=lambda s: s), \
              patch.object(settings_routes.client_dashboard_config, "get_config",
                           return_value=_FakeCfgRow("bigquery_nixon")), \
+             patch.object(settings_routes.client_dashboard_config, "get_theme", return_value=None), \
              patch.object(settings_routes.web_users, "enabled", return_value=True), \
              patch.object(settings_routes.web_auth, "authenticate_dashboard", return_value=_FakeAuth()), \
              patch.object(settings_routes.dashboard_settings, "render_settings_html") as penn_form:
-            resp = settings_routes.dashboard_client_settings(client_slug="test", request=types.SimpleNamespace(), key=None)
+            resp = settings_routes.dashboard_client_settings(client_slug="test", request=types.SimpleNamespace())
 
         body = resp.body.decode()
         # Nixon-style settings page, not the Penn account-ID form.
@@ -55,7 +56,7 @@ class SettingsBigqueryNixonModeTests(unittest.TestCase):
              patch.object(settings_routes.web_auth, "authenticate_dashboard", return_value=_FakeAuth()), \
              patch.object(settings_routes.dashboard_settings, "load_settings_config", return_value=object()), \
              patch.object(settings_routes.dashboard_settings, "render_settings_html", return_value="<html>penn-form</html>") as penn_form:
-            resp = settings_routes.dashboard_client_settings(client_slug="other", request=types.SimpleNamespace(), key=None)
+            resp = settings_routes.dashboard_client_settings(client_slug="other", request=types.SimpleNamespace())
 
         self.assertIn("penn-form", resp.body.decode())
         penn_form.assert_called_once()

@@ -49,7 +49,7 @@ class ConnectorConfigureProvisioningTests(unittest.TestCase):
                               meta_account_id=None, ga4_client_key=None)):
             return _run(connector_routes.connector_configure(
                 client_slug="test", connector_type="ga4",
-                request=_FakeRequest(body), key="k"))
+                request=_FakeRequest(body)))
 
     def test_destination_step_provisions_and_returns_ok(self) -> None:
         fake_setup = types.SimpleNamespace(

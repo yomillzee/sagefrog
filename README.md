@@ -2,9 +2,10 @@
 
 A multi-platform marketing analytics dashboard and API service built for a digital
 marketing agency. Sagefrog aggregates paid-media performance from **Google Ads,
-LinkedIn, Meta, GA4 / BigQuery, Indeed, Harvest, and HubSpot** into a single,
-branded, per-client view — and exposes the same data through an authenticated API
-that a ChatGPT Custom Action can query on behalf of agency staff.
+LinkedIn, Meta, GA4 / BigQuery, Google Search Console, Indeed, Harvest, and
+HubSpot** into a single, branded, per-client view — and exposes the same data
+through an authenticated API that a ChatGPT Custom Action can query on behalf of
+agency staff.
 
 Penn Community Bank is the primary (and most built-out) client dashboard, but the
 platform is designed to host many clients, each with its own dashboard, data
@@ -41,6 +42,13 @@ connectors, and access controls.
 - **GA4 / BigQuery analytics.** Runs SQL against each client's GA4 events-export
   dataset for traffic, top pages, source/medium, device split, and attribution
   panels.
+- **Search Console (SEO) analytics.** Combines Google's native GSC BigQuery export
+  with API-backfilled history for query- and page-level clicks/impressions/CTR/
+  position, branded vs. target keyword leaderboards, prior-period position deltas,
+  and average-position trend charts.
+- **AI-traffic tracking.** Surfaces referral visits from AI assistants (ChatGPT,
+  Perplexity, and similar) as their own dashboard section, derived from the GA4 /
+  BigQuery page-path-by-source data.
 - **Branded client dashboards.** Each client sees a read-only, logo-branded view of
   only their own data.
 - **Admin console.** Agency staff manage dashboards, users, OAuth connections,
@@ -245,6 +253,7 @@ at rest** (Fernet) in `oauth_credentials`.
 | **LinkedIn** | `httpx` | OAuth refresh token | Campaign/creative performance, video URLs, daily backfill; version via `LINKEDIN_VERSION` |
 | **Meta (Facebook)** | `httpx` (Graph API) | System-user token via OAuth | Campaign/ad-set insights, creative assets; needs `ads_read` + `business_management` |
 | **GA4 / BigQuery** | `google-cloud-bigquery` | GCP service account (per-client or global) | Raw SQL over GA4 events export, daily aggregation; multi-project via `GA4_CLIENTS` |
+| **Google Search Console** | `google-cloud-bigquery` (+ Search Console API for backfill) | GCP service account (per-client or global) | Query/page performance via native GSC BQ export unioned with API-backfilled history; per-client routing via `GSC_CLIENTS` |
 | **Indeed** | `httpx` | Client-credentials OAuth | Job postings, registration analytics |
 | **Harvest** | `httpx` | OAuth refresh token | Time-tracking data (Files page) |
 | **HubSpot** | `httpx` | OAuth / token | CRM/marketing sync via `/internal/sync-hubspot` |
@@ -347,7 +356,8 @@ Only the most important variables are listed here; see
 
 Google Ads (`GOOGLE_ADS_*`), LinkedIn (`LINKEDIN_*`), Meta (`META_*`), GA4/BigQuery
 (`GCP_SERVICE_ACCOUNT_JSON`, `BQ_PROJECT_ID`, `BQ_DATASET_ID`, `GA4_CLIENTS`,
-`GCP_CREDS_*_BASE64`), Indeed (`INDEED_*`), Harvest (`HARVEST_*`), and Penn-specific
+`GCP_CREDS_*_BASE64`), Search Console (`GSC_CLIENTS`, `GSC_BQ_PROJECT_ID`,
+`BQ_MART_DATASET_ID`), Indeed (`INDEED_*`), Harvest (`HARVEST_*`), and Penn-specific
 overrides (`PENN_*`). See the architecture review for the full list.
 
 ---

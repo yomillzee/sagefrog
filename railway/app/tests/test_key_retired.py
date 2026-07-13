@@ -70,8 +70,15 @@ class SignatureTests(unittest.TestCase):
 
 
 class AuthBehaviorTests(unittest.TestCase):
-    def tearDown(self) -> None:
+    def setUp(self) -> None:
+        # These cases need web_users to look "enabled"; save the real attribute
+        # and restore it in tearDown so an override never leaks into later test
+        # modules (which would make DB-backed helpers think a DB is configured).
+        self._orig_enabled = web_auth.web_users.enabled
         web_auth.web_users.enabled = lambda: True
+
+    def tearDown(self) -> None:
+        web_auth.web_users.enabled = self._orig_enabled
 
     def _patch_user(self, user):
         self._orig = web_auth.get_current_user

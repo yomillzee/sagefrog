@@ -17,7 +17,7 @@ class ClientBqVerifyTests(unittest.TestCase):
     def _call(self):
         return api_routes.client_bq_verify(
             client_key="acme", request=types.SimpleNamespace(),
-            key=None, bearer_credentials=None, x_api_key=None,
+            bearer_credentials=None, x_api_key=None,
         )
 
     def test_ok_when_access_verified(self):
