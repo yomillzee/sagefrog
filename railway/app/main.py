@@ -1819,6 +1819,7 @@ def admin_home(
         web_auth.render_admin_page(
             user=user,
             users=users,
+            groups=web_users.list_groups(include_inactive=False),
             audit_events=events,
             message=flash,
             error=err,
@@ -1923,6 +1924,98 @@ async def admin_set_gcp_credentials(
     )
 
 
+def _parse_group_id(raw: str | None) -> int | None:
+    """Coerce a form-submitted group id to int, treating blank/'none' as None.
+
+    The Create-user and role dropdowns submit an empty value for the "Ungrouped"
+    option, so an unparseable value simply means no group."""
+    val = (raw or "").strip()
+    if not val or val.lower() in ("none", "0", "-"):
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
+@app.post("/admin/groups", include_in_schema=False)
+def admin_create_group(
+    request: Request,
+    name: str = Form(...),
+    client_slugs: list[str] = Form(default=[]),
+    description: str | None = Form(None),
+    admin: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    ctx = audit_log.request_context(request)
+    try:
+        created = web_users.create_group(
+            name=name, client_slugs=client_slugs, description=description
+        )
+    except ValueError as exc:
+        return RedirectResponse(url=f"/admin?err={quote(str(exc))}", status_code=303)
+    audit_log.record(
+        action="group.created",
+        actor_user_id=admin.id,
+        actor_email=admin.email,
+        detail={"name": created["name"], "client_slugs": created["client_slugs"]},
+        **ctx,
+    )
+    return RedirectResponse(url="/admin?msg=Group+created", status_code=303)
+
+
+@app.post("/admin/groups/{group_id}", include_in_schema=False)
+def admin_update_group(
+    group_id: int,
+    request: Request,
+    name: str = Form(...),
+    client_slugs: list[str] = Form(default=[]),
+    description: str | None = Form(None),
+    admin: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    ctx = audit_log.request_context(request)
+    try:
+        updated = web_users.update_group(
+            group_id, name=name, client_slugs=client_slugs, description=description
+        )
+    except ValueError as exc:
+        return RedirectResponse(url=f"/admin?err={quote(str(exc))}", status_code=303)
+    if not updated:
+        return RedirectResponse(url="/admin?err=Group+not+found", status_code=303)
+    audit_log.record(
+        action="group.updated",
+        actor_user_id=admin.id,
+        actor_email=admin.email,
+        detail={"name": updated["name"], "client_slugs": updated["client_slugs"]},
+        **ctx,
+    )
+    return RedirectResponse(url="/admin?msg=Group+updated", status_code=303)
+
+
+@app.post("/admin/groups/{group_id}/delete", include_in_schema=False)
+def admin_delete_group(
+    group_id: int,
+    request: Request,
+    admin: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    ctx = audit_log.request_context(request)
+    target = web_users.get_group(group_id)
+    if not target:
+        return RedirectResponse(url="/admin?err=Group+not+found", status_code=303)
+    if not web_users.delete_group(group_id):
+        return RedirectResponse(
+            url="/admin?err=Remove+its+members+before+deleting+the+group",
+            status_code=303,
+        )
+    audit_log.record(
+        action="group.deleted",
+        actor_user_id=admin.id,
+        actor_email=admin.email,
+        detail={"name": target["name"]},
+        **ctx,
+    )
+    return RedirectResponse(url="/admin?msg=Group+deleted", status_code=303)
+
+
 @app.post("/admin/users", include_in_schema=False)
 def admin_create_user(
     request: Request,
@@ -1931,6 +2024,7 @@ def admin_create_user(
     role: str = Form("client"),
     client_slug: str | None = Form(None),
     allowed_client_slugs: list[str] = Form(default=[]),
+    group_id: str | None = Form(None),
     user: web_users.WebUser = Depends(web_auth.require_admin),
 ):
     ctx = audit_log.request_context(request)
@@ -1941,6 +2035,7 @@ def admin_create_user(
             role=role,
             client_slug=client_slug,
             allowed_client_slugs=allowed_client_slugs,
+            group_id=_parse_group_id(group_id),
         )
     except ValueError as e:
         users = web_users.list_users(include_inactive=False)
@@ -1963,6 +2058,7 @@ def admin_create_user(
             "role": created.role,
             "client_slug": created.client_slug,
             "allowed_client_slugs": list(created.allowed_client_slugs),
+            "group_id": created.group_id,
         },
         **ctx,
     )
@@ -2071,6 +2167,7 @@ def admin_set_user_role(
     role: str = Form(...),
     client_slug: str | None = Form(None),
     allowed_client_slugs: list[str] = Form(default=[]),
+    group_id: str | None = Form(None),
     admin: web_users.WebUser = Depends(web_auth.require_admin),
 ):
     ctx = audit_log.request_context(request)
@@ -2084,7 +2181,9 @@ def admin_set_user_role(
     if target.role == "admin" and new_role != "admin" and web_users.count_admins() <= 1:
         return RedirectResponse(url="/admin?err=Cannot+change+the+only+admin%27s+role", status_code=303)
     try:
-        updated = web_users.set_role(user_id, new_role, client_slug, allowed_client_slugs)
+        updated = web_users.set_role(
+            user_id, new_role, client_slug, allowed_client_slugs, _parse_group_id(group_id)
+        )
     except ValueError as exc:
         return RedirectResponse(url=f"/admin?err={quote(str(exc))}", status_code=303)
     if not updated:
@@ -2098,6 +2197,7 @@ def admin_set_user_role(
             "role": updated.role,
             "client_slug": updated.client_slug,
             "allowed_client_slugs": list(updated.allowed_client_slugs),
+            "group_id": updated.group_id,
         },
         **ctx,
     )

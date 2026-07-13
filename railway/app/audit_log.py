@@ -44,6 +44,9 @@ _ACTION_LABELS = {
     "user.deactivated": "Deactivated user",
     "user.role_changed": "Changed role",
     "user.bootstrap_admin": "Bootstrap admin created",
+    "group.created": "Created client group",
+    "group.updated": "Updated client group",
+    "group.deleted": "Deleted client group",
     "dashboard.config_saved": "Saved dashboard config",
     "dashboard.created": "Created dashboard",
     "dashboard.deleted": "Deleted dashboard",
@@ -196,6 +199,13 @@ def format_detail(event: dict[str, Any]) -> str:
             parts.append(f"client={slug}")
         if role == "standard" and isinstance(allowed, list):
             parts.append(f"clients={', '.join(allowed) if allowed else 'none'}")
+    elif action in ("group.created", "group.updated", "group.deleted"):
+        name = detail.get("name")
+        slugs = detail.get("client_slugs")
+        if name:
+            parts.append(str(name))
+        if isinstance(slugs, list):
+            parts.append(f"dashboards={', '.join(slugs) if slugs else 'none'}")
     elif action == "dashboard.config_saved":
         slug = detail.get("client_slug")
         if slug:

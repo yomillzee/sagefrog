@@ -662,6 +662,7 @@ def render_admin_page(
     *,
     user: WebUser,
     users: list[dict],
+    groups: list[dict] | None = None,
     audit_events: list[dict] | None = None,
     message: str | None = None,
     error: str | None = None,
@@ -675,8 +676,17 @@ def render_admin_page(
     if error:
         notice += f'<div class="notice err">{_esc(error)}</div>'
 
-    # Available clients for the 'standard' per-client access checkboxes. Sourced
-    # from the dashboard registry so it matches what can_access_client gates on.
+    # Client groups the admin can assign 'client' users to. Fetched here when the
+    # caller didn't pass them so error re-renders don't have to thread it through.
+    if groups is None:
+        try:
+            groups = web_users.list_groups(include_inactive=False)
+        except Exception:
+            groups = []
+
+    # Available clients for the per-client access checkboxes (standard users and
+    # group dashboards). Sourced from the dashboard registry so it matches what
+    # can_access_client gates on.
     client_choices: list[tuple[str, str]] = []
     try:
         import dashboard_registry as _dreg
@@ -687,31 +697,55 @@ def render_admin_page(
             ]
     except Exception:
         client_choices = []
+    client_labels = {slug: label for slug, label in client_choices}
 
-    def _client_checkboxes(selected: set[str]) -> str:
+    def _client_checkboxes(
+        selected: set[str], *, field: str = "allowed_client_slugs"
+    ) -> str:
         if not client_choices:
             return '<p class="muted" style="margin:.35rem 0 0">No dashboards yet.</p>'
         items = []
         for cslug, clabel in client_choices:
             checked = " checked" if cslug in selected else ""
             items.append(
-                f'<label class="ckbx"><input type="checkbox" name="allowed_client_slugs" '
+                f'<label class="ckbx"><input type="checkbox" name="{field}" '
                 f'value="{_esc(cslug)}"{checked}><span>{_esc(clabel)}</span></label>'
             )
         return '<div class="client-checks">' + "".join(items) + "</div>"
+
+    def _group_select(selected_id: int | None) -> str:
+        opts = ['<option value="">Ungrouped — use a single client slug</option>']
+        for g in groups or []:
+            n = len(g.get("client_slugs") or [])
+            plural = "" if n == 1 else "s"
+            sel = " selected" if selected_id is not None and int(g["id"]) == int(selected_id) else ""
+            opts.append(
+                f'<option value="{int(g["id"])}"{sel}>{_esc(g["name"])} &middot; '
+                f'{n} dashboard{plural}</option>'
+            )
+        return '<select name="group_id" class="group-select">' + "".join(opts) + "</select>"
 
     rows = []
     for u in users:
         uid = int(u["id"])
         email = str(u.get("email") or "")
         role = str(u.get("role") or "")
+        group_name = u.get("group_name")
         if role == "standard":
             allowed = u.get("allowed_client_slugs") or []
             slug = ", ".join(allowed) if allowed else "none"
         elif role == "admin":
             slug = "all"
+        elif u.get("group_id"):
+            gslugs = u.get("group_client_slugs") or []
+            slug = ", ".join(gslugs) if gslugs else "none"
         else:
             slug = u.get("client_slug") or "—"
+        group_cell = (
+            f'<span class="group-badge">{_esc(str(group_name))}</span>'
+            if group_name
+            else '<span class="muted">—</span>'
+        )
         avatar = u.get("avatar")
         av_inner = (
             f'<img src="{_esc(str(avatar))}" alt="" class="avatar-img" id="avimg-{uid}">'
@@ -751,14 +785,19 @@ def render_admin_page(
                 for r in ("admin", "client", "standard")
             )
             row_checks = _client_checkboxes(set(u.get("allowed_client_slugs") or []))
+            row_group_select = _group_select(u.get("group_id"))
             role_html = f"""
         <details class="row-fold">
           <summary class="link">Change role…</summary>
           <form method="post" action="/admin/users/{uid}/role" class="row-fold-form role-form">
             <select name="role" aria-label="Role" class="role-select">{role_opts}</select>
-            <span class="client-only"><input type="text" name="client_slug"
-              placeholder="client slug (client role only)"
-              value="{raw_slug}" autocomplete="off"></span>
+            <div class="client-only">
+              <span class="ckbx-legend">Client group</span>
+              {row_group_select}
+              <input type="text" name="client_slug" class="slug-fallback"
+                placeholder="or a single client slug"
+                value="{raw_slug}" autocomplete="off">
+            </div>
             <div class="standard-only">
               <span class="ckbx-legend">Clients this user can access</span>
               {row_checks}
@@ -777,12 +816,89 @@ def render_admin_page(
             f'<td class="col-av">{avatar_cell}</td>'
             f'<td class="col-user">{_esc(email)}</td>'
             f'<td>{role_badge}</td>'
+            f'<td>{group_cell}</td>'
             f'<td class="mono">{_esc(str(slug))}</td>'
             f'<td>{status_badge}</td>'
             f'<td class="col-actions">{actions}</td>'
             f'</tr>'
         )
-    user_rows = "\n".join(rows) or '<tr><td colspan="6" class="muted">No users yet.</td></tr>'
+    user_rows = "\n".join(rows) or '<tr><td colspan="7" class="muted">No users yet.</td></tr>'
+
+    # ---- Client groups management section ----
+    group_rows_html = []
+    for g in groups or []:
+        gid = int(g["id"])
+        gname = _esc(g["name"])
+        gslugs = g.get("client_slugs") or []
+        members = int(g.get("member_count") or 0)
+        chips = "".join(
+            f'<span class="grp-chip">{_esc(client_labels.get(s, s))}</span>' for s in gslugs
+        ) or '<span class="muted" style="font-size:.82rem">No dashboards yet</span>'
+        member_note = f'{members} member' + ("" if members == 1 else "s")
+        if members == 0:
+            delete_ctl = (
+                f'<form method="post" action="/admin/groups/{gid}/delete" class="inline-form" '
+                f'onsubmit="return confirm(\'Delete this group?\');">'
+                f'<button type="submit" class="link danger">Delete</button></form>'
+            )
+        else:
+            delete_ctl = '<span class="dash-row-note">Reassign members to delete</span>'
+        edit_checks = _client_checkboxes(set(gslugs), field="client_slugs")
+        desc_val = _esc(g.get("description") or "")
+        group_rows_html.append(f"""
+        <div class="group-row">
+          <div class="group-row-head">
+            <div class="group-row-main">
+              <span class="group-row-name">{gname}</span>
+              <span class="group-row-meta">{member_note}</span>
+            </div>
+            <div class="group-chips">{chips}</div>
+            <div class="group-row-actions">
+              <details class="row-fold">
+                <summary class="link">Edit…</summary>
+                <form method="post" action="/admin/groups/{gid}" class="row-fold-form group-edit-form">
+                  <label>Group name</label>
+                  <input type="text" name="name" value="{gname}" required maxlength="120">
+                  <label>Description</label>
+                  <input type="text" name="description" value="{desc_val}" maxlength="200"
+                    placeholder="optional">
+                  <span class="ckbx-legend">Dashboards in this group</span>
+                  {edit_checks}
+                  <button type="submit" class="link">Save group</button>
+                </form>
+              </details>
+              {delete_ctl}
+            </div>
+          </div>
+        </div>""")
+    group_list_html = "".join(group_rows_html) or (
+        '<p class="muted" style="margin:0">No client groups yet. Create one to bundle '
+        "dashboards and assign client users to it.</p>"
+    )
+    add_group_checks = _client_checkboxes(set(), field="client_slugs")
+    groups_section_html = f"""
+    <section class="dash-section groups-section">
+      <div class="dash-section-head">
+        <h2>Client groups</h2>
+        <details class="dash-add-fold">
+          <summary class="add-dash-btn"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Add group</summary>
+          <form method="post" action="/admin/groups" class="dash-add-form">
+            <label for="group_name">Group name</label>
+            <input id="group_name" name="name" type="text" required maxlength="120"
+              placeholder="Penn Medical">
+            <label for="group_desc" style="margin-top:8px">Description (optional)</label>
+            <input id="group_desc" name="description" type="text" maxlength="200">
+            <span class="ckbx-legend">Dashboards in this group</span>
+            {add_group_checks}
+            <button type="submit" class="primary">Create group</button>
+          </form>
+        </details>
+      </div>
+      <p class="muted" style="margin:-4px 0 14px;font-size:.86rem">Bundle one or more dashboards
+        into a group, then assign client users to it — access comes from the group, so there's
+        no slug to mistype.</p>
+      <div class="group-list">{group_list_html}</div>
+    </section>"""
 
     audit_rows = []
     for ev in audit_events or []:
@@ -1066,6 +1182,26 @@ def render_admin_page(
     .ckbx input {{ margin: 0; width: auto; max-width: none; }}
     .col-actions {{ text-align: right; }}
     td.col-actions {{ position: relative; }}
+    .group-badge {{ display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: .74rem; font-weight: 700;
+      background: #eef2ff; color: #3730a3; }}
+    .group-select, .slug-fallback {{ width: 100%; max-width: 100%; margin-bottom: 8px; }}
+    .slug-fallback {{ font-size: .86rem; }}
+    /* ---- Client groups ---- */
+    .groups-section {{ border-top: 3px solid #6366f1; }}
+    .group-list {{ display: flex; flex-direction: column; gap: 8px; }}
+    .group-row {{ border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 12px 14px;
+      transition: border-color .15s, box-shadow .15s; }}
+    .group-row:hover {{ border-color: #c6d5ea; box-shadow: 0 4px 16px rgba(16,33,67,.08); }}
+    .group-row-head {{ display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }}
+    .group-row-main {{ display: flex; flex-direction: column; min-width: 140px; gap: 1px; }}
+    .group-row-name {{ font-weight: 700; font-size: .98rem; color: var(--navy); }}
+    .group-row-meta {{ font-size: .76rem; color: var(--muted); }}
+    .group-chips {{ display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }}
+    .grp-chip {{ display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: .74rem; font-weight: 600;
+      background: #f1f5f9; color: #334155; border: 1px solid var(--border); }}
+    .group-row-actions {{ display: flex; align-items: center; gap: 6px 14px; flex-shrink: 0; position: relative; }}
+    .group-edit-form {{ width: 300px; }}
+    .group-edit-form input {{ max-width: 100%; }}
     /* ---- Advanced fold ---- */
     .advanced-fold {{ background: #fff; border: 1px solid var(--line); border-radius: 16px; margin-bottom: 18px;
       box-shadow: 0 6px 22px rgba(10,37,64,.06); overflow: hidden; }}
@@ -1161,7 +1297,11 @@ def render_admin_page(
             </select>
           </div>
           <div class="client-only">
-            <label for="client_slug">Client slug (for client role, e.g. penn)</label>
+            <label for="group_id">Client group (recommended)</label>
+            {_group_select(None)}
+            <p class="hint">Pick a group to grant its dashboards — no slug to mistype.
+              Leave <em>Ungrouped</em> to bind a single dashboard by slug below.</p>
+            <label for="client_slug" style="margin-top:8px">Client slug (ungrouped only)</label>
             <input id="client_slug" name="client_slug" type="text" placeholder="penn"
               list="clientSlugOptions">
             {client_slug_datalist}
@@ -1178,11 +1318,12 @@ def render_admin_page(
       <h2>Users</h2>
       <div class="user-table-wrap">
       <table class="user-table">
-        <thead><tr><th class="col-av"></th><th>User</th><th>Role</th><th>Client</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th class="col-av"></th><th>User</th><th>Role</th><th>Group</th><th>Client access</th><th>Status</th><th></th></tr></thead>
         <tbody>{user_rows}</tbody>
       </table>
       </div>
     </section>
+    {groups_section_html}
 
     <details class="advanced-fold">
       <summary class="advanced-summary">

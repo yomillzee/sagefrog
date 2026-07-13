@@ -56,6 +56,34 @@ SCHEMA_SQL_STATEMENTS = [
     """
     ALTER TABLE web_users ADD COLUMN IF NOT EXISTS allowed_client_slugs TEXT[]
     """,
+    # Client groups: a named bundle of one-or-more client dashboards. A 'client'
+    # user assigned to a group draws its access from the group's slug list
+    # instead of a hand-typed client_slug — organization plus a guard against
+    # granting the wrong access.
+    """
+    CREATE TABLE IF NOT EXISTS client_groups (
+      id BIGSERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      client_slugs TEXT[] NOT NULL DEFAULT '{}',
+      description TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS client_groups_active_name_lower_uq
+      ON client_groups (LOWER(name)) WHERE is_active = TRUE
+    """,
+    # Group membership for 'client' users. NULL = ungrouped (legacy single-slug
+    # access via client_slug). Set only for the 'client' role.
+    """
+    ALTER TABLE web_users ADD COLUMN IF NOT EXISTS group_id BIGINT
+      REFERENCES client_groups(id) ON DELETE SET NULL
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS web_users_group_idx ON web_users (group_id)
+    """,
 ]
 
 
@@ -81,6 +109,22 @@ class WebUser:
     avatar: str | None = None
     # Client slugs a 'standard' user may access. Empty means no access.
     allowed_client_slugs: tuple[str, ...] = ()
+    # Group membership for 'client' users (None = ungrouped / legacy single-slug).
+    group_id: int | None = None
+    # Resolved slug list of the user's group, if any. Populated via LEFT JOIN in
+    # the user queries; drives access for grouped 'client' users.
+    group_client_slugs: tuple[str, ...] = ()
+
+    def accessible_client_slugs(self) -> tuple[str, ...]:
+        """Every client slug this user may access (empty for admins = all)."""
+        if self.role == "standard":
+            return self.allowed_client_slugs
+        if self.role == "client":
+            if self.group_id is not None:
+                return self.group_client_slugs
+            single = (self.client_slug or "").strip().lower()
+            return (single,) if single else ()
+        return ()
 
     def can_access_client(self, slug: str) -> bool:
         if not self.is_active:
@@ -90,7 +134,11 @@ class WebUser:
         target = (slug or "").strip().lower()
         if self.role == "standard":
             return target in self.allowed_client_slugs
-        return self.role == "client" and (self.client_slug or "").strip() == target
+        if self.role != "client":
+            return False
+        if self.group_id is not None:
+            return target in self.group_client_slugs
+        return (self.client_slug or "").strip().lower() == target
 
 
 def _get_db_url() -> str | None:
@@ -125,6 +173,8 @@ def verify_password(plain: str, password_hash: str) -> bool:
 
 def _row_to_user(row: tuple[Any, ...]) -> WebUser:
     allowed = row[6] if len(row) > 6 and row[6] is not None else ()
+    group_id = int(row[7]) if len(row) > 7 and row[7] is not None else None
+    group_slugs = row[8] if len(row) > 8 and row[8] is not None else ()
     return WebUser(
         id=int(row[0]),
         email=str(row[1]),
@@ -133,7 +183,18 @@ def _row_to_user(row: tuple[Any, ...]) -> WebUser:
         is_active=bool(row[4]),
         avatar=str(row[5]) if len(row) > 5 and row[5] is not None else None,
         allowed_client_slugs=tuple(str(s) for s in allowed),
+        group_id=group_id,
+        group_client_slugs=tuple(str(s) for s in group_slugs),
     )
+
+
+# Shared SELECT column list + JOIN for building a WebUser. The group's slug list
+# is folded in so grouped 'client' users resolve their access in one query.
+_USER_SELECT = (
+    "u.id, u.email, u.role, u.client_slug, u.is_active, u.avatar, "
+    "u.allowed_client_slugs, u.group_id, g.client_slugs"
+)
+_USER_FROM = "FROM web_users u LEFT JOIN client_groups g ON g.id = u.group_id"
 
 
 def get_user_by_email(email: str) -> WebUser | None:
@@ -143,10 +204,10 @@ def get_user_by_email(email: str) -> WebUser | None:
     normalized = email.strip().lower()
     with db.connection() as conn:
         row = conn.execute(
-            """
-            SELECT id, email, role, client_slug, is_active, avatar, allowed_client_slugs
-            FROM web_users
-            WHERE LOWER(email) = %s AND is_active = TRUE
+            f"""
+            SELECT {_USER_SELECT}
+            {_USER_FROM}
+            WHERE LOWER(u.email) = %s AND u.is_active = TRUE
             """,
             (normalized,),
         ).fetchone()
@@ -168,10 +229,10 @@ def get_user_record(user_id: int) -> WebUser | None:
     ensure_schema()
     with db.connection() as conn:
         row = conn.execute(
-            """
-            SELECT id, email, role, client_slug, is_active, avatar, allowed_client_slugs
-            FROM web_users
-            WHERE id = %s
+            f"""
+            SELECT {_USER_SELECT}
+            {_USER_FROM}
+            WHERE u.id = %s
             """,
             (user_id,),
         ).fetchone()
@@ -204,20 +265,19 @@ def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
     if not enabled():
         return []
     ensure_schema()
+    cols = (
+        "u.id, u.email, u.role, u.client_slug, u.is_active, u.created_at, "
+        "u.avatar, u.allowed_client_slugs, u.group_id, g.name, g.client_slugs"
+    )
+    where = "" if include_inactive else "WHERE u.is_active = TRUE"
     with db.connection() as conn:
-        if include_inactive:
-            rows = conn.execute(
-                "SELECT id, email, role, client_slug, is_active, created_at, avatar, allowed_client_slugs "
-                "FROM web_users ORDER BY role DESC, LOWER(email)"
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT id, email, role, client_slug, is_active, created_at, avatar, allowed_client_slugs "
-                "FROM web_users WHERE is_active = TRUE ORDER BY role DESC, LOWER(email)"
-            ).fetchall()
+        rows = conn.execute(
+            f"SELECT {cols} {_USER_FROM} {where} ORDER BY u.role DESC, LOWER(u.email)"
+        ).fetchall()
     out: list[dict[str, Any]] = []
     for row in rows:
-        allowed = row[7] if len(row) > 7 and row[7] is not None else ()
+        allowed = row[7] if row[7] is not None else ()
+        group_slugs = row[10] if row[10] is not None else ()
         out.append(
             {
                 "id": int(row[0]),
@@ -228,6 +288,9 @@ def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
                 "created_at": row[5].isoformat() if row[5] else None,
                 "avatar": str(row[6]) if row[6] is not None else None,
                 "allowed_client_slugs": [str(s) for s in allowed],
+                "group_id": int(row[8]) if row[8] is not None else None,
+                "group_name": str(row[9]) if row[9] is not None else None,
+                "group_client_slugs": [str(s) for s in group_slugs],
             }
         )
     return out
@@ -261,6 +324,28 @@ def count_admins() -> int:
     return int(row[0]) if row else 0
 
 
+def _resolve_client_scope(
+    role: str, client_slug: str | None, group_id: int | None
+) -> tuple[str | None, int | None]:
+    """Resolve the (client_slug, group_id) to persist for a user of ``role``.
+
+    Only the 'client' role carries either. A group takes precedence over a
+    hand-typed slug (the group defines access); a group is validated to exist
+    and be active. Ungrouped client users still require a legacy single slug."""
+    if role != "client":
+        return None, None
+    gid = int(group_id) if group_id else None
+    if gid is not None:
+        grp = get_group(gid)
+        if not grp or not grp.get("is_active", True):
+            raise ValueError("Selected client group was not found.")
+        return None, gid
+    slug = (client_slug or "").strip().lower() or None
+    if not slug:
+        raise ValueError("Pick a client group (or enter a client slug) for client users.")
+    return slug, None
+
+
 def create_user(
     *,
     email: str,
@@ -268,6 +353,7 @@ def create_user(
     role: str,
     client_slug: str | None = None,
     allowed_client_slugs: list[str] | None = None,
+    group_id: int | None = None,
 ) -> WebUser:
     if not enabled():
         raise RuntimeError("DATABASE_URL is not set — web users require Postgres.")
@@ -277,17 +363,13 @@ def create_user(
     role = role.strip().lower()
     if role not in ("admin", "client", "standard"):
         raise ValueError("role must be admin, client, or standard.")
-    slug = (client_slug or "").strip().lower() or None
-    if role == "client" and not slug:
-        raise ValueError("client_slug is required for client users.")
-    if role in ("admin", "standard"):
-        slug = None
-    # Only 'standard' users carry a per-client access list; other roles store NULL.
-    allowed = _normalize_slug_list(allowed_client_slugs) if role == "standard" else None
     if len(password) < 10:
         raise ValueError("Password must be at least 10 characters.")
-
     ensure_schema()
+    slug, gid = _resolve_client_scope(role, client_slug, group_id)
+    # Only 'standard' users carry a per-client access list; other roles store NULL.
+    allowed = _normalize_slug_list(allowed_client_slugs) if role == "standard" else None
+
     now = datetime.now(tz=UTC)
     pw_hash = hash_password(password)
     with db.connection() as conn:
@@ -302,7 +384,8 @@ def create_user(
             (normalized_email,),
         ).fetchone()
         if inactive:
-            row = conn.execute(
+            new_id = int(inactive[0])
+            conn.execute(
                 """
                 UPDATE web_users
                 SET email = %s,
@@ -310,26 +393,30 @@ def create_user(
                     role = %s,
                     client_slug = %s,
                     allowed_client_slugs = %s,
+                    group_id = %s,
                     is_active = TRUE,
                     updated_at = %s
                 WHERE id = %s
-                RETURNING id, email, role, client_slug, is_active, avatar, allowed_client_slugs
                 """,
-                (normalized_email, pw_hash, role, slug, allowed, now, int(inactive[0])),
-            ).fetchone()
+                (normalized_email, pw_hash, role, slug, allowed, gid, now, new_id),
+            )
         else:
             try:
                 row = conn.execute(
                     """
-                    INSERT INTO web_users (email, password_hash, role, client_slug, allowed_client_slugs, is_active, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, TRUE, %s, %s)
-                    RETURNING id, email, role, client_slug, is_active, avatar, allowed_client_slugs
+                    INSERT INTO web_users (email, password_hash, role, client_slug, allowed_client_slugs, group_id, is_active, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s, %s)
+                    RETURNING id
                     """,
-                    (normalized_email, pw_hash, role, slug, allowed, now, now),
+                    (normalized_email, pw_hash, role, slug, allowed, gid, now, now),
                 ).fetchone()
+                new_id = int(row[0])
             except psycopg.errors.UniqueViolation as e:
                 raise ValueError("A user with that email already exists.") from e
-    return _row_to_user(row)
+    created = get_user_record(new_id)
+    if created is None:
+        raise RuntimeError("User was created but could not be re-read.")
+    return created
 
 
 def set_password(user_id: int, new_password: str) -> bool:
@@ -356,6 +443,7 @@ def set_role(
     role: str,
     client_slug: str | None = None,
     allowed_client_slugs: list[str] | None = None,
+    group_id: int | None = None,
 ) -> WebUser | None:
     """Change an active user's role (and client scoping). Returns the updated
     user, or None if no active user matched. Raises ValueError on bad input."""
@@ -364,25 +452,22 @@ def set_role(
     role = (role or "").strip().lower()
     if role not in ("admin", "client", "standard"):
         raise ValueError("role must be admin, client, or standard.")
-    slug = (client_slug or "").strip().lower() or None
-    if role == "client" and not slug:
-        raise ValueError("client_slug is required for client users.")
-    if role in ("admin", "standard"):
-        slug = None
+    ensure_schema()
+    slug, gid = _resolve_client_scope(role, client_slug, group_id)
     # Only 'standard' users carry a per-client access list; other roles reset to NULL.
     allowed = _normalize_slug_list(allowed_client_slugs) if role == "standard" else None
-    ensure_schema()
     with db.connection() as conn:
         row = conn.execute(
             """
             UPDATE web_users
-            SET role = %s, client_slug = %s, allowed_client_slugs = %s, updated_at = NOW()
+            SET role = %s, client_slug = %s, allowed_client_slugs = %s,
+                group_id = %s, updated_at = NOW()
             WHERE id = %s AND is_active = TRUE
-            RETURNING id, email, role, client_slug, is_active, avatar, allowed_client_slugs
+            RETURNING id
             """,
-            (role, slug, allowed, user_id),
+            (role, slug, allowed, gid, user_id),
         ).fetchone()
-    return _row_to_user(row) if row else None
+    return get_user_record(int(row[0])) if row else None
 
 
 def deactivate_user(user_id: int) -> bool:
@@ -423,6 +508,146 @@ def backfill_standard_all_access(all_slugs: list[str]) -> int:
             (slugs,),
         )
         return cur.rowcount
+
+
+# ---------------------------------------------------------------------------
+# Client groups: named bundles of client dashboards that 'client' users join.
+# ---------------------------------------------------------------------------
+
+
+def _group_row_to_dict(row: tuple[Any, ...]) -> dict[str, Any]:
+    slugs = row[2] if row[2] is not None else ()
+    return {
+        "id": int(row[0]),
+        "name": str(row[1]),
+        "client_slugs": [str(s) for s in slugs],
+        "description": str(row[3]) if row[3] is not None else None,
+        "is_active": bool(row[4]),
+        "member_count": int(row[5]) if len(row) > 5 and row[5] is not None else 0,
+    }
+
+
+_GROUP_SELECT = (
+    "g.id, g.name, g.client_slugs, g.description, g.is_active, "
+    "(SELECT COUNT(*) FROM web_users u WHERE u.group_id = g.id AND u.is_active = TRUE)"
+)
+
+
+def list_groups(*, include_inactive: bool = False) -> list[dict[str, Any]]:
+    if not enabled():
+        return []
+    ensure_schema()
+    where = "" if include_inactive else "WHERE g.is_active = TRUE"
+    with db.connection() as conn:
+        rows = conn.execute(
+            f"SELECT {_GROUP_SELECT} FROM client_groups g {where} ORDER BY LOWER(g.name)"
+        ).fetchall()
+    return [_group_row_to_dict(r) for r in rows]
+
+
+def get_group(group_id: int) -> dict[str, Any] | None:
+    if not enabled():
+        return None
+    ensure_schema()
+    with db.connection() as conn:
+        row = conn.execute(
+            f"SELECT {_GROUP_SELECT} FROM client_groups g WHERE g.id = %s",
+            (int(group_id),),
+        ).fetchone()
+    return _group_row_to_dict(row) if row else None
+
+
+def create_group(
+    *, name: str, client_slugs: list[str] | None = None, description: str | None = None
+) -> dict[str, Any]:
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is not set — client groups require Postgres.")
+    clean_name = (name or "").strip()
+    if not clean_name:
+        raise ValueError("Group name is required.")
+    slugs = _normalize_slug_list(client_slugs)
+    desc = (description or "").strip() or None
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    with db.connection() as conn:
+        try:
+            row = conn.execute(
+                """
+                INSERT INTO client_groups (name, client_slugs, description, is_active, created_at, updated_at)
+                VALUES (%s, %s, %s, TRUE, %s, %s)
+                RETURNING id
+                """,
+                (clean_name, slugs, desc, now, now),
+            ).fetchone()
+        except psycopg.errors.UniqueViolation as e:
+            raise ValueError("A group with that name already exists.") from e
+    created = get_group(int(row[0]))
+    if created is None:
+        raise RuntimeError("Group was created but could not be re-read.")
+    return created
+
+
+def update_group(
+    group_id: int,
+    *,
+    name: str | None = None,
+    client_slugs: list[str] | None = None,
+    description: str | None = None,
+) -> dict[str, Any] | None:
+    """Update a group's name / dashboards / description. Only non-None fields
+    are changed. Returns the updated group, or None if it doesn't exist."""
+    if not enabled():
+        return None
+    ensure_schema()
+    sets: list[str] = []
+    params: list[Any] = []
+    if name is not None:
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValueError("Group name cannot be blank.")
+        sets.append("name = %s")
+        params.append(clean_name)
+    if client_slugs is not None:
+        sets.append("client_slugs = %s")
+        params.append(_normalize_slug_list(client_slugs))
+    if description is not None:
+        sets.append("description = %s")
+        params.append(description.strip() or None)
+    if not sets:
+        return get_group(group_id)
+    sets.append("updated_at = NOW()")
+    params.append(int(group_id))
+    with db.connection() as conn:
+        try:
+            row = conn.execute(
+                f"UPDATE client_groups SET {', '.join(sets)} "
+                "WHERE id = %s AND is_active = TRUE RETURNING id",
+                tuple(params),
+            ).fetchone()
+        except psycopg.errors.UniqueViolation as e:
+            raise ValueError("A group with that name already exists.") from e
+    return get_group(int(row[0])) if row else None
+
+
+def delete_group(group_id: int) -> bool:
+    """Soft-delete a group. Refuses (returns False) if it still has active
+    members — reassign or remove them first so nobody silently loses access."""
+    if not enabled():
+        return False
+    ensure_schema()
+    with db.connection() as conn:
+        members = conn.execute(
+            "SELECT COUNT(*) FROM web_users WHERE group_id = %s AND is_active = TRUE",
+            (int(group_id),),
+        ).fetchone()
+        if members and int(members[0]) > 0:
+            return False
+        cur = conn.execute(
+            "UPDATE client_groups SET is_active = FALSE, updated_at = NOW() "
+            "WHERE id = %s AND is_active = TRUE",
+            (int(group_id),),
+        )
+        return cur.rowcount > 0
 
 
 def bootstrap_admin_from_env() -> WebUser | None:
