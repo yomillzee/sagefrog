@@ -890,19 +890,17 @@ def gsc_keyword_weekly_trend(
     *, start: date, end: date, terms: list[str],
     exclude_terms: list[str] | None = None, client_slug: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Weekly (Monday-start) rank-distribution for queries matching `terms` but
-    not `exclude_terms`, over the full date range -- same term-matching as
-    gsc_keyword_matches.
+    """Weekly (Monday-start) clicks/impressions/CTR/avg-position rollup for
+    queries matching `terms` but not `exclude_terms`, over the full date range --
+    same term-matching as gsc_keyword_matches, grouped by week instead of
+    collapsed to one total, so branded/target keyword rank can be plotted as an
+    impression-weighted average-position line over time.
 
-    Each week returns how many matched keywords fall in each position band
-    (1-3 / 4-10 / 11-20 / 21+), from each keyword's impression-weighted average
-    position that week. This is deliberately NOT a single averaged position
-    line: the set of ranking keywords changes week to week, so any average over
-    it (mean or median) conflates real rank movement with basket composition --
-    a newly-ranking keyword entering at position 17 drags a mean down and reads
-    as a broad loss. A band count is immune to that: the new keyword just adds
-    one to the 11-20 band (visible new coverage), while the top-3 band is
-    unchanged. Movement shows as bands shifting between weeks.
+    An averaged-position line conflates real rank movement with basket
+    composition when the matched keyword set is noisy (a newly-ranking keyword
+    entering at position 17 drags the mean down). The exclude roots now let a
+    client prune that noise directly -- trimming off-target queries out of the
+    basket -- so the single line is a faithful trend again.
     """
     terms = [t.strip().lower() for t in terms if t and t.strip()]
     exclude_terms = [t.strip().lower() for t in (exclude_terms or []) if t and t.strip()]
@@ -914,37 +912,26 @@ def gsc_keyword_weekly_trend(
             return []
         project, ds = _project_id(), _reporting_mart_ds()
         qv = f"`{project}.{ds}.{_QUERY_VIEW}`"
+        m = _gsc_metric_cols()
         s, e = start.isoformat(), end.isoformat()
         # NOT EXISTS over an empty @exclude array is always true, so the clause
         # is a no-op when no exclude terms are configured.
         sql = f"""
-        WITH per_kw_week AS (
-          SELECT
-            DATE_TRUNC(date, WEEK(MONDAY)) AS wk,
-            query,
-            SAFE_DIVIDE(SUM(pos_sum), NULLIF(SUM(impressions), 0)) + 1 AS kw_position
-          FROM {qv}
-          WHERE date BETWEEN '{s}' AND '{e}'
-            AND EXISTS (
-              SELECT 1 FROM UNNEST(@terms) AS t
-              WHERE LOWER(query) LIKE CONCAT('%', t, '%')
-            )
-            AND NOT EXISTS (
-              SELECT 1 FROM UNNEST(@exclude) AS x
-              WHERE LOWER(query) LIKE CONCAT('%', x, '%')
-            )
-          GROUP BY wk, query
-        )
         SELECT
-          CAST(wk AS STRING)                              AS week_start,
-          COUNTIF(kw_position <= 3)                       AS pos_1_3,
-          COUNTIF(kw_position > 3  AND kw_position <= 10) AS pos_4_10,
-          COUNTIF(kw_position > 10 AND kw_position <= 20) AS pos_11_20,
-          COUNTIF(kw_position > 20)                       AS pos_21_plus,
-          COUNT(kw_position)                              AS keyword_count
-        FROM per_kw_week
-        GROUP BY wk
-        ORDER BY wk
+          CAST(DATE_TRUNC(date, WEEK(MONDAY)) AS STRING) AS week_start,
+          {m}
+        FROM {qv}
+        WHERE date BETWEEN '{s}' AND '{e}'
+          AND EXISTS (
+            SELECT 1 FROM UNNEST(@terms) AS t
+            WHERE LOWER(query) LIKE CONCAT('%', t, '%')
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM UNNEST(@exclude) AS x
+            WHERE LOWER(query) LIKE CONCAT('%', x, '%')
+          )
+        GROUP BY week_start
+        ORDER BY week_start
         """
         from google.cloud import bigquery as _bq
         rows = _run(

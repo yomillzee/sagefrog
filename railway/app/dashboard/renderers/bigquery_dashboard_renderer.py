@@ -372,10 +372,27 @@ def render_bigquery_dashboard_page(
         else ""
     )
 
+    # Caption + hover tooltip shared by the four branded/target keyword trend
+    # charts (Search Console tab + Overview), explaining how the avg-position
+    # line is built. Native title tooltip, matching the .cmp-warn help pattern.
+    _kw_trend_help = (
+        "Each point is the impression-weighted average Google position of the "
+        "matching keywords (your include roots, minus any exclude terms) for "
+        "that week. Lower is better, so the axis is flipped — higher on the "
+        "chart means a better ranking. The line always covers the last ~13 "
+        "weeks, regardless of the date range selected above."
+    )
+    _kw_trend_cap = (
+        '<div class="chart-cap">Avg. position over time'
+        '<span class="info-tip" tabindex="0" role="img" '
+        f'aria-label="How this chart works. {_kw_trend_help}" '
+        f'title="{_kw_trend_help}">&#9432;</span></div>'
+    )
+
     # Overview is a "home": the top widget from each section, each with a
     # "See more" that jumps to that tab. Panels below are shared by all clients;
     # the paid panel is prepended only when the client runs paid ads.
-    ov_panels = """
+    ov_panels = f"""
       <section class="ov-panel">
         <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><div class="chips seg" id="ovSessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="analytics"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovSessionsTrend"></canvas></div></div>
@@ -394,13 +411,15 @@ def render_bigquery_dashboard_page(
           <div class="col-panel">
             <h3>Branded queries</h3>
             <div class="table-wrap"><table id="ovGscBrandedLeaders" class="compact gsc-leaderboard"></table></div>
-            <div class="chart-canvas-host" style="height:180px;margin-top:12px"><canvas id="ovGscBrandedTrend"></canvas></div>
+            {_kw_trend_cap}
+            <div class="chart-canvas-host" style="height:180px"><canvas id="ovGscBrandedTrend"></canvas></div>
             <div class="muted" id="ovGscBrandedNote" style="font-size:.74rem;margin-top:6px"></div>
           </div>
           <div class="col-panel">
             <h3>Target keywords</h3>
             <div class="table-wrap"><table id="ovGscTargetLeaders" class="compact gsc-leaderboard"></table></div>
-            <div class="chart-canvas-host" style="height:180px;margin-top:12px"><canvas id="ovGscTargetTrend"></canvas></div>
+            {_kw_trend_cap}
+            <div class="chart-canvas-host" style="height:180px"><canvas id="ovGscTargetTrend"></canvas></div>
             <div class="muted" id="ovGscTargetNote" style="font-size:.74rem;margin-top:6px"></div>
           </div>
         </div>
@@ -656,6 +675,11 @@ def render_bigquery_dashboard_page(
     .chart-wrap {{ position:relative; border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px; background:#fafcff; }}
     .trend-svg {{ width:100%; height:260px; display:block; }}
     .chart-note {{ font-size:.74rem; color:var(--muted); margin-top:8px; }}
+    /* Small labelled caption above the keyword avg-position trend charts, with a
+       hover/focus info glyph carrying the "how this chart works" tooltip. */
+    .chart-cap {{ display:flex; align-items:center; gap:5px; margin:2px 0 8px; font-size:.72rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }}
+    .info-tip {{ cursor:help; color:#9aa7bd; font-size:.92rem; font-weight:400; line-height:1; text-transform:none; }}
+    .info-tip:hover, .info-tip:focus {{ color:var(--accent); outline:none; }}
     {budget_css}
     .chart-tip {{ position:absolute; pointer-events:none; background:#0b1020; color:#e8eefc; font-size:.74rem; line-height:1.5; padding:7px 9px; border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.25); transform:translate(-50%,-112%); white-space:nowrap; z-index:5; }}
     .metric-swatch {{ width:10px; height:10px; border-radius:2px; display:inline-block; vertical-align:middle; margin-right:4px; }}
@@ -1034,6 +1058,7 @@ def render_bigquery_dashboard_page(
             <div class="table-wrap"><table id="gscBrandedTable" class="compact"></table></div>
             <div class="pager" id="gscBrandedPager"></div>
             <div class="chart-wrap" style="margin-top:12px">
+              {_kw_trend_cap}
               <div class="chart-canvas-host" style="height:150px"><canvas id="gscBrandedTrendChart"></canvas></div>
             </div>
           </div>
@@ -1044,6 +1069,7 @@ def render_bigquery_dashboard_page(
             <div class="table-wrap"><table id="gscTargetTable" class="compact"></table></div>
             <div class="pager" id="gscTargetPager"></div>
             <div class="chart-wrap" style="margin-top:12px">
+              {_kw_trend_cap}
               <div class="chart-canvas-host" style="height:150px"><canvas id="gscTargetTrendChart"></canvas></div>
             </div>
           </div>
@@ -1747,52 +1773,23 @@ def render_bigquery_dashboard_page(
         return {{rows:[], weekly:[]}};
       }}
     }}
-    // Weekly rank-distribution: a stacked bar per week counting how many matched
-    // keywords sit in each position band. A single averaged-position line was
-    // rejected -- the set of ranking keywords changes week to week, so any
-    // average conflates real movement with basket composition (a new keyword at
-    // pos 17 tanks the mean). Band counts don't: a new keyword just adds to the
-    // 11-20 band. Bands are an ordered (ordinal) scale, so one hue dark->light,
-    // best->worst (validated CVD-safe), not a rainbow. Best band sits on the
-    // baseline so its growth is easy to read.
-    const GSC_BAND_COLS = [
-      {{key:'pos_1_3',     label:'Pos 1\\u20133',  color:'#0d366b'}},
-      {{key:'pos_4_10',    label:'Pos 4\\u201310', color:'#1c5cab'}},
-      {{key:'pos_11_20',   label:'Pos 11\\u201320',color:'#3987e5'}},
-      {{key:'pos_21_plus', label:'Pos 21+',    color:'#86b6ef'}},
-    ];
-    function drawKeywordDistribution(canvasId, rows) {{
+    // Weekly avg-position trend: a single impression-weighted average-position
+    // line per week over the matched keyword basket. For position lower is
+    // better, so the y-axis is reversed (best rank at the top) like a rank
+    // chart. The include/exclude roots keep the basket on-target, so the mean
+    // tracks real rank movement rather than basket churn.
+    function drawKeywordTrend(canvasId, rows, valueKey, color, invert) {{
       clearSkelChart(canvasId);
       if (!document.getElementById(canvasId)) return;
-      if (!rows || !rows.length) {{ __destroyChart(canvasId); return; }}
+      const n=rows.length;
+      if (!n) {{ __destroyChart(canvasId); return; }}
       const labels=rows.map(r=>String(r.week_start||'').slice(5));
-      const topKey=GSC_BAND_COLS[GSC_BAND_COLS.length-1].key;
-      const datasets=GSC_BAND_COLS.map(b=>({{
-        label:b.label, data:rows.map(r=>num(r[b.key])), backgroundColor:b.color,
-        stack:'kw', maxBarThickness:26,
-        // 2px surface-colored top edge separates stacked segments; round only
-        // the topmost segment's top corners so the whole bar reads as one unit.
-        borderColor:'#ffffff', borderWidth:{{top:2, right:0, bottom:0, left:0}},
-        borderRadius: b.key===topKey ? {{topLeft:3, topRight:3, bottomLeft:0, bottomRight:0}} : 0,
-      }}));
-      __chart(canvasId, {{
-        type:'bar',
-        data:{{labels, datasets}},
-        options:{{
-          interaction:{{mode:'index', intersect:false}},
-          scales:{{
-            x:{{stacked:true, grid:{{display:false}}, border:{{display:false}}, ticks:{{maxRotation:0, autoSkip:true, maxTicksLimit:8}}}},
-            y:{{stacked:true, beginAtZero:true, grid:{{color:'#f1f4f9'}}, border:{{display:false}}, ticks:{{maxTicksLimit:4, precision:0}}}},
-          }},
-          plugins:{{
-            legend:{{display:true, position:'top', align:'start',
-              labels:{{boxWidth:8, boxHeight:8, usePointStyle:true, pointStyle:'rectRounded', padding:9, font:{{size:10}}}}}},
-            tooltip:{{callbacks:{{
-              label:c=>`${{c.dataset.label}}: ${{count(c.raw)}}`,
-              footer:items=>'Total: '+count(items.reduce((a,i)=>a+num(i.raw),0)),
-            }}}},
-          }},
-        }},
+      const data=rows.map(r=>num(r[valueKey]));
+      const fmtPos=v=>(Math.round(v*10)/10).toFixed(1);
+      lineChart(canvasId, labels, [{{ label:'Avg position', data, color, fill:true }}], {{
+        points:true, yReverse: !!invert, yDisplay:true, beginAtZero:false,
+        yFmt: v => fmtPos(v),
+        tooltip: {{ label: c => `Avg position: ${{fmtPos(c.raw)}}` }},
       }});
     }}
     async function renderGscKeywordTables() {{
@@ -1810,8 +1807,8 @@ def render_bigquery_dashboard_page(
       gscTables.target.rows  = target.rows;
       gscTables.branded.page = 1; gscTables.target.page = 1;
       renderGscTable('branded'); renderGscTable('target');
-      drawKeywordDistribution('gscBrandedTrendChart', branded.weekly);
-      drawKeywordDistribution('gscTargetTrendChart', target.weekly);
+      drawKeywordTrend('gscBrandedTrendChart', branded.weekly, 'avg_position', '#1d6fd0', true);
+      drawKeywordTrend('gscTargetTrendChart', target.weekly, 'avg_position', '#7c3aed', true);
       const setCount=(id,n,configured)=>{{const el=document.getElementById(id); if(el) el.textContent = configured ? `(${{n}})` : '';}};
       setCount('gscBrandedCount', gscTables.branded.rows.length, gscBrandedRoots.length);
       setCount('gscTargetCount', gscTables.target.rows.length, gscTargetKeywords.length);
@@ -3298,11 +3295,11 @@ def render_bigquery_dashboard_page(
       const aTot=ovAiCache.cur.reduce((s,d)=>s+num(d.value),0);
       setStatus('ovAiStatus', aTot?count(aTot)+' sessions':'No AI traffic');
       // Search Console — branded & target keyword leaderboard (top by rank) plus
-      // the rank-distribution trend over time.
+      // the weekly avg-position trend over time.
       renderKwLeaderboard('ovGscBrandedLeaders', branded.rows, gscBrandedRoots.length);
       renderKwLeaderboard('ovGscTargetLeaders', target.rows, gscTargetKeywords.length);
-      drawKeywordDistribution('ovGscBrandedTrend', branded.weekly);
-      drawKeywordDistribution('ovGscTargetTrend', target.weekly);
+      drawKeywordTrend('ovGscBrandedTrend', branded.weekly, 'avg_position', '#1d6fd0', true);
+      drawKeywordTrend('ovGscTargetTrend', target.weekly, 'avg_position', '#7c3aed', true);
       const noteFor=(roots, weekly)=> !roots.length ? 'Set keywords on the Search Console tab.'
         : (!(weekly||[]).length ? 'No matching queries in this range.' : '');
       const bn=document.getElementById('ovGscBrandedNote'); if(bn) bn.textContent=noteFor(gscBrandedRoots, branded.weekly);
