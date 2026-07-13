@@ -392,6 +392,61 @@ def _time_range(start: date, end: date) -> str:
     return json.dumps({"since": start.isoformat(), "until": end.isoformat()})
 
 
+def _graph_insights_chunked(
+    path: str,
+    *,
+    access_token: str,
+    params: dict[str, Any],
+    start: date,
+    end: date,
+    env: MetaEnv | None = None,
+    chunk_days: int = 7,
+) -> list[dict[str, Any]]:
+    """Fetch insights over [start, end] in <=chunk_days windows and concatenate.
+
+    High-cardinality levels (ad, adset) over a wide window make Meta service the
+    query as an async report job that frequently times out or fails. Because
+    sync_meta_to_bq swallows per-source errors and the BQ write is an upsert
+    (never a delete), that silently freezes the raw ad/adset table at its last
+    good date while the lighter campaign-level fetch keeps advancing. Splitting
+    the range into small windows keeps each request on the fast synchronous
+    pagination path. A single failing chunk is logged and skipped so the
+    remaining (especially most recent) days still flow; only a total wipeout
+    re-raises so the connector surfaces it. `params` must NOT set time_range --
+    it is applied per chunk here.
+    """
+    import logging
+    _log = logging.getLogger(__name__)
+
+    rows: list[dict[str, Any]] = []
+    step = timedelta(days=max(1, chunk_days))
+    chunks = 0
+    failures = 0
+    chunk_start = start
+    while chunk_start <= end:
+        chunk_end = min(chunk_start + step - timedelta(days=1), end)
+        chunks += 1
+        try:
+            rows.extend(
+                _graph_insights(
+                    path,
+                    access_token=access_token,
+                    params={**params, "time_range": _time_range(chunk_start, chunk_end)},
+                    env=env,
+                )
+            )
+        except Exception as exc:
+            failures += 1
+            _log.warning("Meta insights chunk %s..%s failed: %s", chunk_start, chunk_end, exc)
+        chunk_start = chunk_end + timedelta(days=1)
+
+    if failures and failures == chunks:
+        raise RuntimeError(
+            f"All {chunks} Meta insights chunks failed for {start}..{end}"
+        )
+    return rows
+
+
 def fetch_daily_metrics(
     account_id: str,
     *,
@@ -516,16 +571,17 @@ def fetch_adset_daily_metrics(
     account_id_clean = _normalize_account_id(account_id)
 
     _log.info("Meta insights adset: account=%s range=%s/%s", account_id_clean, start, end)
-    rows = _graph_insights(
+    rows = _graph_insights_chunked(
         f"/{_act_id(account_id_clean)}/insights",
         access_token=access_token,
         params={
             "fields": _ADSET_INSIGHT_FIELDS,
-            "time_range": _time_range(start, end),
             "time_increment": 1,
             "level": "adset",
             "limit": 500,
         },
+        start=start,
+        end=end,
         env=env,
     )
     _log.info("Meta insights adset: api_rows=%d", len(rows))
@@ -565,16 +621,17 @@ def fetch_ad_daily_metrics(
     account_id_clean = _normalize_account_id(account_id)
 
     _log.info("Meta insights ad: account=%s range=%s/%s", account_id_clean, start, end)
-    rows = _graph_insights(
+    rows = _graph_insights_chunked(
         f"/{_act_id(account_id_clean)}/insights",
         access_token=access_token,
         params={
             "fields": _AD_INSIGHT_FIELDS,
-            "time_range": _time_range(start, end),
             "time_increment": 1,
             "level": "ad",
             "limit": 500,
         },
+        start=start,
+        end=end,
         env=env,
     )
     _log.info("Meta insights ad: api_rows=%d", len(rows))
