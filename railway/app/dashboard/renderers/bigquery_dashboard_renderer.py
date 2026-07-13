@@ -389,12 +389,14 @@ def render_bigquery_dashboard_page(
         <div class="two-col" style="margin-top:0">
           <div class="col-panel">
             <h3>Branded queries</h3>
-            <div class="chart-canvas-host" style="height:180px"><canvas id="ovGscBrandedTrend"></canvas></div>
+            <div class="table-wrap"><table id="ovGscBrandedLeaders" class="compact gsc-leaderboard"></table></div>
+            <div class="chart-canvas-host" style="height:180px;margin-top:12px"><canvas id="ovGscBrandedTrend"></canvas></div>
             <div class="muted" id="ovGscBrandedNote" style="font-size:.74rem;margin-top:6px"></div>
           </div>
           <div class="col-panel">
             <h3>Target keywords</h3>
-            <div class="chart-canvas-host" style="height:180px"><canvas id="ovGscTargetTrend"></canvas></div>
+            <div class="table-wrap"><table id="ovGscTargetLeaders" class="compact gsc-leaderboard"></table></div>
+            <div class="chart-canvas-host" style="height:180px;margin-top:12px"><canvas id="ovGscTargetTrend"></canvas></div>
             <div class="muted" id="ovGscTargetNote" style="font-size:.74rem;margin-top:6px"></div>
           </div>
         </div>
@@ -600,9 +602,11 @@ def render_bigquery_dashboard_page(
     /* GSC/keyword tables: truncate the long query/URL label instead of letting
        the table overflow its column and push off the page. */
     #gscQueriesTable td.left, #gscPagesTable td.left,
-    #gscBrandedTable td.left, #gscTargetTable td.left {{ max-width:0; }}
+    #gscBrandedTable td.left, #gscTargetTable td.left,
+    .gsc-leaderboard td.left {{ max-width:0; }}
     #gscQueriesTable td.left > *, #gscPagesTable td.left > *,
-    #gscBrandedTable td.left > *, #gscTargetTable td.left > * {{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; word-break:normal; }}
+    #gscBrandedTable td.left > *, #gscTargetTable td.left > *,
+    .gsc-leaderboard td.left > * {{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; word-break:normal; }}
     /* Drag-to-resize handle on the label column of the GSC/keyword tables. */
     th.col-resizable {{ position:relative; }}
     .col-resizer {{ position:absolute; top:0; right:0; width:9px; height:100%; cursor:col-resize; user-select:none; touch-action:none; }}
@@ -3232,8 +3236,26 @@ def render_bigquery_dashboard_page(
         setStatus('ovPsStatus', p.metric_date?('measured '+p.metric_date):'');
       }} catch(err) {{ host.innerHTML=''; setStatus('ovPsStatus', err.message||String(err), true); }}
     }}
+    // Overview Search Console leaderboard: the top keywords by current rank
+    // (best position first) — just keyword, position, and movement vs. the prior
+    // period. Full sortable/paginated tables live on the Search Console tab; this
+    // is the at-a-glance snapshot next to the rank-distribution trend.
+    const OV_KW_LEADERS = 5;
+    function renderKwLeaderboard(tableId, rows, configured) {{
+      const el=document.getElementById(tableId); if(!el) return;
+      if (!configured) {{ el.innerHTML=`<tbody><tr><td class="empty">No keywords set — add them on the Search Console tab.</td></tr></tbody>`; return; }}
+      const top=(rows||[]).slice()
+        .sort((a,b)=>num(a.avg_position)-num(b.avg_position))
+        .slice(0,OV_KW_LEADERS);
+      if (!top.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No matching queries in this range.</td></tr></tbody>`; return; }}
+      const head=`<thead><tr><th class="left">Keyword</th><th>Position</th><th>Movement</th></tr></thead>`;
+      const body=top.map(r=>`<tr><td class="left" title="${{esc(r.query)}}"><span>${{esc(r.query)}}</span></td><td>${{gscPos(r.avg_position)}}</td><td>${{gscDelta(r.delta_position)}}</td></tr>`).join('');
+      el.innerHTML=head+`<tbody>${{body}}</tbody>`;
+    }}
     async function loadOverviewHome() {{
       setStatus('ovSessionsStatus','Loading…'); setStatus('ovAiStatus','Loading…'); setStatus('ovGscStatus','Loading…');
+      document.getElementById('ovGscBrandedLeaders').innerHTML = skelTable(3,4);
+      document.getElementById('ovGscTargetLeaders').innerHTML = skelTable(3,4);
       const hasPrev=!!compareStart;
       const [traffic, trafficPrev, aiCur, aiPrev, branded, target] = await Promise.all([
         getJson(withDatesRange(TRAFFIC_ACQ_API, currentStart, currentEnd)).catch(()=>({{daily:[]}})),
@@ -3253,7 +3275,10 @@ def render_bigquery_dashboard_page(
       ovRenderAi();
       const aTot=ovAiCache.cur.reduce((s,d)=>s+num(d.value),0);
       setStatus('ovAiStatus', aTot?count(aTot)+' sessions':'No AI traffic');
-      // Search Console — branded & target keyword rank-distribution over time.
+      // Search Console — branded & target keyword leaderboard (top by rank) plus
+      // the rank-distribution trend over time.
+      renderKwLeaderboard('ovGscBrandedLeaders', branded.rows, gscBrandedRoots.length);
+      renderKwLeaderboard('ovGscTargetLeaders', target.rows, gscTargetKeywords.length);
       drawKeywordDistribution('ovGscBrandedTrend', branded.weekly);
       drawKeywordDistribution('ovGscTargetTrend', target.weekly);
       const noteFor=(roots, weekly)=> !roots.length ? 'Set keywords on the Search Console tab.'
