@@ -196,6 +196,38 @@ def refresh_access_token(env: LinkedInEnv | None = None) -> dict[str, Any]:
     return data
 
 
+def resolve_client_access_token(client_slug: str) -> str | None:
+    """Best-effort LinkedIn access token for a connector-onboarded client.
+
+    Connector clients store their LinkedIn refresh token in the client-scoped
+    oauth_store (keyed by client_slug), not the global env. Callers thread the
+    returned token into the linkedin_service fetch_* functions so those don't
+    fall back to the tokenless global load_linkedin_env() and fail.
+
+    Returns None (never raises) when there's no client-scoped token or the
+    refresh fails, so the caller cleanly falls back to the global env -- which
+    is the correct behavior for single-tenant / Penn-style deployments.
+    """
+    if not (client_slug or "").strip():
+        return None
+    try:
+        import oauth_store
+        from linkedin_auth import _ENV_ALIASES, _get_env, _get_required_env
+
+        refresh = oauth_store.get_refresh_token("linkedin", client_slug=client_slug)
+        if not refresh:
+            return None
+        env = LinkedInEnv(
+            client_id=_get_required_env(*_ENV_ALIASES["client_id"]),
+            client_secret=_get_required_env(*_ENV_ALIASES["client_secret"]),
+            refresh_token=refresh,
+            version=_get_env(*_ENV_ALIASES["version"]) or "202509",
+        )
+        return refresh_access_token(env)["access_token"]
+    except Exception:
+        return None
+
+
 def test_refresh_token(env: LinkedInEnv | None = None) -> dict[str, Any]:
     try:
         token_data = refresh_access_token(env)

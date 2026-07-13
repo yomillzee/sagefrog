@@ -421,7 +421,8 @@ def sync_campaign_metadata_and_rebuild_mart(
     creative_sync: dict[str, Any] = {}
     try:
         creative_sync = sync_linkedin_creative_daily(
-            account_id=account_id_clean, start=start, end=end
+            account_id=account_id_clean, start=start, end=end,
+            access_token=access_token,
         )
     except Exception as exc:
         creative_sync = {"error": str(exc)[:300]}
@@ -437,7 +438,9 @@ def sync_campaign_metadata_and_rebuild_mart(
     }
 
 
-def _backfill_missing_creative_metadata(account_id_clean: str) -> dict[str, Any]:
+def _backfill_missing_creative_metadata(
+    account_id_clean: str, *, access_token: str | None = None
+) -> dict[str, Any]:
     """Upsert metadata for creative_ids present in raw ad_daily but still missing
     from creative_metadata — i.e. paused/archived/historical creatives the 30-day
     performance call omits, which otherwise leave NULL campaign_id/name in the
@@ -475,7 +478,9 @@ def _backfill_missing_creative_metadata(account_id_clean: str) -> dict[str, Any]
     if not missing_ids:
         return {"missing": 0, "fetched": 0}
 
-    meta_rows = linkedin_service.fetch_creatives_metadata_by_ids(account_id_clean, missing_ids)
+    meta_rows = linkedin_service.fetch_creatives_metadata_by_ids(
+        account_id_clean, missing_ids, access_token=access_token
+    )
     for r in meta_rows:
         r.setdefault("account_id", account_id_clean)
     mirror = bigquery_warehouse.mirror_linkedin_creative_metadata(meta_rows)
@@ -514,11 +519,18 @@ def sync_linkedin_creative_daily(
     account_id: str,
     start: date,
     end: date,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
     """Sync LinkedIn creative daily metrics + metadata to BigQuery.
 
     Writes to linkedin_ads.ad_daily and linkedin_ads.creative_metadata,
     then creates/replaces the fact_linkedin_ads_creative_daily mart view.
+
+    ``access_token`` must be threaded through for connector-onboarded clients:
+    their LinkedIn OAuth token is client-scoped (oauth_store), so without it the
+    linkedin_service calls fall back to the global load_linkedin_env(), which
+    has no token for these clients and raises -- silently leaving the creative
+    mart unbuilt while the campaign mart succeeds.
     """
     import bigquery_warehouse
     import linkedin_service
@@ -526,12 +538,12 @@ def sync_linkedin_creative_daily(
     account_id_clean = str(account_id).strip().split(":")[-1]
 
     daily_rows = linkedin_service.fetch_creative_daily_metrics(
-        account_id_clean, start=start, end=end
+        account_id_clean, start=start, end=end, access_token=access_token
     )
     ad_mirror = bigquery_warehouse.mirror_linkedin_ad_daily_batch(account_id_clean, daily_rows)
 
     creatives_perf = linkedin_service.creatives_performance(
-        account_id_clean, date_range="LAST_30_DAYS"
+        account_id_clean, date_range="LAST_30_DAYS", access_token=access_token
     )
     raw_creatives = creatives_perf.get("creatives") or []
     for row in raw_creatives:
@@ -540,7 +552,7 @@ def sync_linkedin_creative_daily(
 
     # Backfill metadata for historical/paused/archived creatives that exist in
     # ad_daily but were never captured by the 30-day performance call above.
-    backfill = _backfill_missing_creative_metadata(account_id_clean)
+    backfill = _backfill_missing_creative_metadata(account_id_clean, access_token=access_token)
 
     view = bigquery_warehouse.create_linkedin_creative_mart_view()
 

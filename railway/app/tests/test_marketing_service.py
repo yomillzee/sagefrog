@@ -301,5 +301,111 @@ class MarketingServiceTests(unittest.TestCase):
         self.assertIn("`nixon-medical.marketing_marts.explorer_google_ads_daily`", sql)
 
 
+class _LinkedInFakeClient:
+    """Serves the LinkedIn creative query or the campaign fallback based on flags."""
+
+    def __init__(self, *, creative_rows=None, creative_raises=False):
+        self.calls = []
+        self._creative_rows = creative_rows if creative_rows is not None else []
+        self._creative_raises = creative_raises
+
+    def query(self, sql, job_config=None):
+        self.calls.append({"sql": sql, "job_config": job_config})
+        if "fact_linkedin_ads_creative_daily" in sql:
+            if self._creative_raises:
+                raise RuntimeError("404 Not found: Table fact_linkedin_ads_creative_daily")
+            return _FakeQueryJob(list(self._creative_rows))
+        if "fact_linkedin_ads_campaign_daily" in sql:
+            return _FakeQueryJob([{
+                "campaign_group_name": "Group A",
+                "campaign_name": "Campaign A",
+                "creative_id": None,
+                "creative_name": None,
+                "media_type": None,
+                "thumbnail_url": None,
+                "spend": 1007.08,
+                "impressions": 6896,
+                "clicks": 58,
+                "conversions": 0,
+                "conversion_value": 0,
+            }])
+        return _FakeQueryJob([])
+
+
+class LinkedInExplorerFallbackTests(unittest.TestCase):
+    def test_uses_creative_mart_when_it_has_rows(self) -> None:
+        creative = [{
+            "campaign_group_name": "Group A",
+            "campaign_name": "Campaign A",
+            "creative_id": 123,
+            "creative_name": "Creative A",
+            "media_type": "IMAGE",
+            "thumbnail_url": "https://x/thumb.jpg",
+            "spend": 50,
+            "impressions": 500,
+            "clicks": 20,
+            "conversions": 3,
+            "conversion_value": 90,
+        }]
+        fake_client = _LinkedInFakeClient(creative_rows=creative)
+        with patch.object(
+            marketing_service.bigquery_service, "build_client", return_value=fake_client
+        ):
+            payload = marketing_service.fetch_linkedin_explorer(
+                start_date=date(2026, 6, 1), end_date=date(2026, 6, 30)
+            )
+        self.assertEqual(payload["level"], "creative")
+        self.assertEqual(payload["row_count"], 1)
+        self.assertEqual(payload["rows"][0]["creative_id"], 123)
+        # Only the creative query runs -- no wasted fallback query.
+        self.assertEqual(len(fake_client.calls), 1)
+
+    def test_falls_back_to_campaign_mart_when_creative_table_missing(self) -> None:
+        fake_client = _LinkedInFakeClient(creative_raises=True)
+        with patch.object(
+            marketing_service.bigquery_service, "build_client", return_value=fake_client
+        ):
+            payload = marketing_service.fetch_linkedin_explorer(
+                start_date=date(2026, 6, 1), end_date=date(2026, 6, 30)
+            )
+        self.assertEqual(payload["level"], "campaign")
+        self.assertEqual(payload["row_count"], 1)
+        self.assertEqual(payload["rows"][0]["campaign_group_name"], "Group A")
+        self.assertIsNone(payload["rows"][0]["creative_id"])
+        # Creative attempt raised, then the campaign fallback ran.
+        self.assertEqual(len(fake_client.calls), 2)
+
+    def test_falls_back_to_campaign_mart_when_creative_empty(self) -> None:
+        fake_client = _LinkedInFakeClient(creative_rows=[])
+        with patch.object(
+            marketing_service.bigquery_service, "build_client", return_value=fake_client
+        ):
+            payload = marketing_service.fetch_linkedin_explorer(
+                start_date=date(2026, 6, 1), end_date=date(2026, 6, 30)
+            )
+        self.assertEqual(payload["level"], "campaign")
+        self.assertEqual(payload["row_count"], 1)
+
+    def test_returns_empty_when_no_linkedin_marts_exist(self) -> None:
+        class _NoTables:
+            def __init__(self):
+                self.calls = []
+
+            def query(self, sql, job_config=None):
+                self.calls.append(sql)
+                raise RuntimeError("404 Not found")
+
+        fake_client = _NoTables()
+        with patch.object(
+            marketing_service.bigquery_service, "build_client", return_value=fake_client
+        ):
+            payload = marketing_service.fetch_linkedin_explorer(
+                start_date=date(2026, 6, 1), end_date=date(2026, 6, 30)
+            )
+        self.assertEqual(payload["level"], "none")
+        self.assertEqual(payload["row_count"], 0)
+        self.assertEqual(payload["rows"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

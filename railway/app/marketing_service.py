@@ -97,6 +97,10 @@ def _linkedin_creative_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.fact_linkedin_ads_creative_daily`"
 
 
+def _linkedin_campaign_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.fact_linkedin_ads_campaign_daily`"
+
+
 def _meta_ad_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.fact_meta_ads_ad_daily`"
 
@@ -461,12 +465,25 @@ def fetch_linkedin_explorer(
     start_date: date,
     end_date: date,
 ) -> dict[str, Any]:
-    """LinkedIn creative-level explorer (campaign group > campaign/ad set > creative).
+    """LinkedIn explorer (campaign group > campaign/ad set > creative).
 
     Mirrors fetch_google_ads_explorer. The dashboard renderer maps this
     onto the Google tree levels and shows each creative's thumbnail.
+
+    Prefers the creative-level mart (`fact_linkedin_ads_creative_daily`) so the
+    tree can drill down to individual creatives with thumbnails. Many clients
+    only sync LinkedIn at the campaign level, though -- their mart has
+    `fact_linkedin_ads_campaign_daily` but no creative table. For them the
+    creative query would raise "table not found", the endpoint would 500, and
+    the frontend would silently drop LinkedIn (leaving only Google). So when the
+    creative table is missing or empty for the range, fall back to the
+    campaign-level mart: same row shape, minus the per-creative breakdown.
     """
-    sql = f"""
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    creative_sql = f"""
     SELECT
       campaign_group_name,
       campaign_name,
@@ -486,20 +503,53 @@ def fetch_linkedin_explorer(
     GROUP BY campaign_group_name, campaign_name, creative_id
     ORDER BY spend DESC
     """
-    rows = _run_query(
-        sql,
-        params={
-            "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
-            "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
-        },
-        max_rows=20000,
-    )
+    # Campaign-level fallback -- no creative_id/thumbnail, but the same columns
+    # the renderer reads (campaign_group_name/campaign_name/metrics). One row per
+    # campaign; NULL creative fields degrade to empty in normalizeExplorerRows.
+    campaign_sql = f"""
+    SELECT
+      campaign_group_name,
+      campaign_name,
+      CAST(NULL AS INT64) AS creative_id,
+      CAST(NULL AS STRING) AS creative_name,
+      CAST(NULL AS STRING) AS media_type,
+      CAST(NULL AS STRING) AS thumbnail_url,
+      CAST(NULL AS STRING) AS image_url,
+      CAST(NULL AS STRING) AS video_url,
+      ROUND(SUM(spend), 2) AS spend,
+      SUM(impressions) AS impressions,
+      SUM(clicks) AS clicks,
+      SUM(conversions) AS conversions,
+      ROUND(SUM(conversion_value), 2) AS conversion_value
+    FROM {_linkedin_campaign_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY campaign_group_name, campaign_name
+    ORDER BY spend DESC
+    """
+
+    level = "creative"
+    try:
+        rows = _run_query(creative_sql, params=params, max_rows=20000)
+    except Exception:
+        rows = []
+    if not rows:
+        # Creative table missing/empty -- try the campaign-level mart. If that
+        # also doesn't exist (client has no LinkedIn data at all), return an
+        # empty result rather than 500ing the endpoint.
+        try:
+            rows = _run_query(campaign_sql, params=params, max_rows=20000)
+            level = "campaign"
+        except Exception:
+            rows = []
+            level = "none"
+
     return {
         "client": _client_key(),
         "date_range": {
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
         },
+        "level": level,
         "row_count": len(rows),
         "rows": rows,
     }

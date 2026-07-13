@@ -557,8 +557,14 @@ def refresh_bq_client(
                     bq_project_id=_mart_bq_project, credentials_env=_mart_credentials_env
                 ):
                     if repair_bq_sources:
+                        # Thread the client-scoped LinkedIn token so the creative
+                        # sync (inside this call) authenticates as this client
+                        # instead of the tokenless global env -- otherwise the
+                        # creative mart silently never builds for connector clients.
+                        _li_token = linkedin_service.resolve_client_access_token(cfg.client_key)
                         meta_sync = bq_linkedin_ads_service.sync_campaign_metadata_and_rebuild_mart(
                             account_id=linkedin_account_id, start=start, end=end,
+                            access_token=_li_token,
                         )
                         snapshot.setdefault("warehouse_sync", {})["linkedin_campaign_metadata"] = meta_sync
                     li_snap = bq_linkedin_ads_service.build_snapshot(
