@@ -537,6 +537,27 @@ def _format_audit_time(iso: str | None) -> str:
 # Client-side avatar upload: resize the chosen file to a small square JPEG and
 # POST it to the per-user endpoint, then swap the avatar in place. Plain string
 # (not an f-string) — it's injected verbatim into the admin page.
+_ROLE_TOGGLE_JS = """
+(function () {
+  function sync(form) {
+    var sel = form.querySelector('.role-select');
+    if (!sel) return;
+    var role = sel.value;
+    form.querySelectorAll('.client-only').forEach(function (el) {
+      el.style.display = (role === 'client') ? '' : 'none';
+    });
+    form.querySelectorAll('.standard-only').forEach(function (el) {
+      el.style.display = (role === 'standard') ? '' : 'none';
+    });
+  }
+  document.querySelectorAll('form.role-form').forEach(function (form) {
+    var sel = form.querySelector('.role-select');
+    if (sel) sel.addEventListener('change', function () { sync(form); });
+    sync(form);
+  });
+})();
+"""
+
 _ADMIN_AVATAR_JS = """
 function _avatarResize(file, size) {
   return new Promise((resolve, reject) => {
@@ -654,12 +675,43 @@ def render_admin_page(
     if error:
         notice += f'<div class="notice err">{_esc(error)}</div>'
 
+    # Available clients for the 'standard' per-client access checkboxes. Sourced
+    # from the dashboard registry so it matches what can_access_client gates on.
+    client_choices: list[tuple[str, str]] = []
+    try:
+        import dashboard_registry as _dreg
+
+        if _dreg.enabled():
+            client_choices = [
+                (r.client_slug, r.label or r.client_slug) for r in _dreg.list_clients()
+            ]
+    except Exception:
+        client_choices = []
+
+    def _client_checkboxes(selected: set[str]) -> str:
+        if not client_choices:
+            return '<p class="muted" style="margin:.35rem 0 0">No dashboards yet.</p>'
+        items = []
+        for cslug, clabel in client_choices:
+            checked = " checked" if cslug in selected else ""
+            items.append(
+                f'<label class="ckbx"><input type="checkbox" name="allowed_client_slugs" '
+                f'value="{_esc(cslug)}"{checked}><span>{_esc(clabel)}</span></label>'
+            )
+        return '<div class="client-checks">' + "".join(items) + "</div>"
+
     rows = []
     for u in users:
-        slug = u.get("client_slug") or "—"
         uid = int(u["id"])
         email = str(u.get("email") or "")
         role = str(u.get("role") or "")
+        if role == "standard":
+            allowed = u.get("allowed_client_slugs") or []
+            slug = ", ".join(allowed) if allowed else "none"
+        elif role == "admin":
+            slug = "all"
+        else:
+            slug = u.get("client_slug") or "—"
         avatar = u.get("avatar")
         av_inner = (
             f'<img src="{_esc(str(avatar))}" alt="" class="avatar-img" id="avimg-{uid}">'
@@ -698,13 +750,19 @@ def render_admin_page(
                 f'<option value="{r}"{" selected" if role == r else ""}>{r}</option>'
                 for r in ("admin", "client", "standard")
             )
+            row_checks = _client_checkboxes(set(u.get("allowed_client_slugs") or []))
             role_html = f"""
         <details class="row-fold">
           <summary class="link">Change role…</summary>
-          <form method="post" action="/admin/users/{uid}/role" class="row-fold-form">
-            <select name="role" aria-label="Role">{role_opts}</select>
-            <input type="text" name="client_slug" placeholder="client slug (client role only)"
-              value="{raw_slug}" autocomplete="off">
+          <form method="post" action="/admin/users/{uid}/role" class="row-fold-form role-form">
+            <select name="role" aria-label="Role" class="role-select">{role_opts}</select>
+            <span class="client-only"><input type="text" name="client_slug"
+              placeholder="client slug (client role only)"
+              value="{raw_slug}" autocomplete="off"></span>
+            <div class="standard-only">
+              <span class="ckbx-legend">Clients this user can access</span>
+              {row_checks}
+            </div>
             <button type="submit" class="link">Update role</button>
           </form>
         </details>"""
@@ -1000,6 +1058,12 @@ def render_admin_page(
     .row-fold-form {{ margin-top: 8px; padding: 10px; background: #fafbfc; border-radius: 8px; border: 1px solid var(--border);
       position: absolute; z-index: 6; width: 260px; max-width: 80vw; box-shadow: 0 6px 22px rgba(16,33,67,.14); }}
     .row-fold-form input {{ max-width: 100%; margin-bottom: 8px; }}
+    .ckbx-legend {{ display: block; font-size: .7rem; font-weight: 700; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .04em; margin: 2px 0 6px; }}
+    .client-checks {{ display: flex; flex-direction: column; gap: 5px; max-height: 190px; overflow-y: auto;
+      padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; margin-bottom: 8px; }}
+    .ckbx {{ display: flex; align-items: center; gap: 8px; font-size: .86rem; font-weight: 500; cursor: pointer; margin: 0; }}
+    .ckbx input {{ margin: 0; width: auto; max-width: none; }}
     .col-actions {{ text-align: right; }}
     td.col-actions {{ position: relative; }}
     /* ---- Advanced fold ---- */
@@ -1076,7 +1140,7 @@ def render_admin_page(
     {dashboard_manage_html}
     <section>
       <h2>Create user</h2>
-      <form method="post" action="/admin/users">
+      <form method="post" action="/admin/users" class="role-form">
         <div class="row">
           <div>
             <label for="email">Email</label>
@@ -1090,18 +1154,22 @@ def render_admin_page(
         <div class="row">
           <div>
             <label for="role">Role</label>
-            <select id="role" name="role">
+            <select id="role" name="role" class="role-select">
               <option value="client">client</option>
               <option value="standard">standard (Sagefrog staff, view-only)</option>
               <option value="admin">admin</option>
             </select>
           </div>
-          <div>
+          <div class="client-only">
             <label for="client_slug">Client slug (for client role, e.g. penn)</label>
             <input id="client_slug" name="client_slug" type="text" placeholder="penn"
               list="clientSlugOptions">
             {client_slug_datalist}
           </div>
+        </div>
+        <div class="standard-only">
+          <span class="ckbx-legend">Clients this user can access (standard role)</span>
+          {_client_checkboxes(set())}
         </div>
         <button type="submit" class="primary">Create user</button>
       </form>
@@ -1142,5 +1210,6 @@ def render_admin_page(
   </main>
   <script>{dash_delete_js}</script>
   <script>{_ADMIN_AVATAR_JS}</script>
+  <script>{_ROLE_TOGGLE_JS}</script>
 </body>
 </html>"""

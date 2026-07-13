@@ -171,10 +171,13 @@ def format_detail(event: dict[str, Any]) -> str:
     if action == "user.created":
         role = detail.get("role")
         slug = detail.get("client_slug")
+        allowed = detail.get("allowed_client_slugs")
         if role:
             parts.append(f"role={role}")
         if slug:
             parts.append(f"client={slug}")
+        if role == "standard" and isinstance(allowed, list):
+            parts.append(f"clients={', '.join(allowed) if allowed else 'none'}")
     elif action == "login.failed":
         reason = detail.get("reason")
         if reason:
@@ -186,10 +189,13 @@ def format_detail(event: dict[str, Any]) -> str:
     elif action == "user.role_changed":
         role = detail.get("role")
         slug = detail.get("client_slug")
+        allowed = detail.get("allowed_client_slugs")
         if role:
             parts.append(f"role={role}")
         if slug:
             parts.append(f"client={slug}")
+        if role == "standard" and isinstance(allowed, list):
+            parts.append(f"clients={', '.join(allowed) if allowed else 'none'}")
     elif action == "dashboard.config_saved":
         slug = detail.get("client_slug")
         if slug:

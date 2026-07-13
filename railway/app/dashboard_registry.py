@@ -336,6 +336,12 @@ def delete_client(
             "UPDATE web_users SET client_slug = NULL, updated_at = NOW() WHERE client_slug = %s",
             (slug,),
         )
+        # Also drop the slug from any 'standard' user's per-client access list.
+        conn.execute(
+            "UPDATE web_users SET allowed_client_slugs = array_remove(allowed_client_slugs, %s), "
+            "updated_at = NOW() WHERE %s = ANY(allowed_client_slugs)",
+            (slug, slug),
+        )
         deleted = conn.execute(
             "DELETE FROM dashboard_clients WHERE client_slug = %s RETURNING client_slug",
             (slug,),
