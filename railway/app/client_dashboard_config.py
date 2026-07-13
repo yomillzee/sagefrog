@@ -66,6 +66,12 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS gsc_target_keywords TEXT
     """,
     """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS gsc_branded_exclude TEXT
+    """,
+    """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS gsc_target_exclude TEXT
+    """,
+    """
     ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS ga4_key_events TEXT
     """,
     """
@@ -104,6 +110,8 @@ class ClientConfigRow:
     ga4_key_events: str | None = None
     explorer_filters: str | None = None
     explorer_budget_tracker: bool = True
+    gsc_branded_exclude: str | None = None
+    gsc_target_exclude: str | None = None
 
 
 def _get_db_url() -> str | None:
@@ -140,7 +148,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    dashboard_mode, gsc_site_url, semrush_domain,
                    gtm_account_id, gtm_container_id,
                    gsc_branded_roots, gsc_target_keywords, ga4_key_events,
-                   explorer_filters, explorer_budget_tracker
+                   explorer_filters, explorer_budget_tracker,
+                   gsc_branded_exclude, gsc_target_exclude
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -176,6 +185,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         ga4_key_events=_s(row[18]),
         explorer_filters=_s(row[19]),
         explorer_budget_tracker=bool(row[20]) if row[20] is not None else True,
+        gsc_branded_exclude=_s(row[21]),
+        gsc_target_exclude=_s(row[22]),
     )
 
 
@@ -279,10 +290,17 @@ def update_gsc_keywords(
     *,
     branded_roots: str | None,
     target_keywords: str | None,
+    branded_exclude: str | None = None,
+    target_exclude: str | None = None,
     updated_by: str | None = None,
 ) -> None:
-    """Set the Search Console branded roots + target keywords for a client,
-    touching only those columns (label/accounts are left untouched)."""
+    """Set the Search Console branded/target keyword filters for a client,
+    touching only those columns (label/accounts are left untouched).
+
+    Each group has include roots (branded_roots / target_keywords) and optional
+    exclude roots (branded_exclude / target_exclude): a query counts toward a
+    group when it contains any include root AND none of the exclude roots -- so
+    a client can, e.g., include "benjamin" as branded but exclude "dr"."""
     slug = (client_slug or "").strip().lower()
     if not slug:
         raise ValueError("client_slug is required.")
@@ -299,17 +317,21 @@ def update_gsc_keywords(
             """
             INSERT INTO client_dashboard_config (
               client_slug, label, updated_at, updated_by,
-              gsc_branded_roots, gsc_target_keywords
+              gsc_branded_roots, gsc_target_keywords,
+              gsc_branded_exclude, gsc_target_exclude
             )
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (client_slug) DO UPDATE SET
               gsc_branded_roots = EXCLUDED.gsc_branded_roots,
               gsc_target_keywords = EXCLUDED.gsc_target_keywords,
+              gsc_branded_exclude = EXCLUDED.gsc_branded_exclude,
+              gsc_target_exclude = EXCLUDED.gsc_target_exclude,
               updated_at = EXCLUDED.updated_at,
               updated_by = EXCLUDED.updated_by
             """,
             (slug, slug, now, _clean(updated_by),
-             _clean(branded_roots), _clean(target_keywords)),
+             _clean(branded_roots), _clean(target_keywords),
+             _clean(branded_exclude), _clean(target_exclude)),
         )
 
 

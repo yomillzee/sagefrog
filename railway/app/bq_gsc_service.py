@@ -821,14 +821,18 @@ def build_gsc_mart_summary(*, start: date, end: date, client_slug: str | None = 
 
 
 def gsc_keyword_matches(
-    *, start: date, end: date, terms: list[str], client_slug: str | None = None
+    *, start: date, end: date, terms: list[str],
+    exclude_terms: list[str] | None = None, client_slug: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Queries whose text contains any of `terms`, aggregated over the full
-    date range -- unlike top_queries in build_gsc_mart_summary (LIMIT 25 by
-    clicks), this scans every matching query regardless of its click rank, so
-    a branded/target keyword that isn't a top performer still shows up.
+    """Queries whose text contains any of `terms` but none of `exclude_terms`,
+    aggregated over the full date range -- unlike top_queries in
+    build_gsc_mart_summary (LIMIT 25 by clicks), this scans every matching query
+    regardless of its click rank, so a branded/target keyword that isn't a top
+    performer still shows up. `exclude_terms` lets a client subtract a substring
+    from an include root (e.g. include "benjamin", exclude "dr").
     """
     terms = [t.strip().lower() for t in terms if t and t.strip()]
+    exclude_terms = [t.strip().lower() for t in (exclude_terms or []) if t and t.strip()]
     if not terms:
         return []
     with _client_context(client_slug):
@@ -844,6 +848,8 @@ def gsc_keyword_matches(
         # HAVING keeps only queries active in the selected range.
         ps, pe = _prior_period(start, end)
         ps_s, pe_s = ps.isoformat(), pe.isoformat()
+        # NOT EXISTS over an empty @exclude array is always true, so the clause
+        # is a no-op when no exclude terms are configured.
         sql = f"""
         SELECT q.query AS query, {_query_delta_metric_cols(s, e, ps_s, pe_s)}
         FROM {qv} AS q
@@ -851,6 +857,10 @@ def gsc_keyword_matches(
           AND EXISTS (
             SELECT 1 FROM UNNEST(@terms) AS t
             WHERE LOWER(q.query) LIKE CONCAT('%', t, '%')
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM UNNEST(@exclude) AS x
+            WHERE LOWER(q.query) LIKE CONCAT('%', x, '%')
           )
         GROUP BY q.query
         HAVING {_query_delta_having(s, e)}
@@ -860,7 +870,10 @@ def gsc_keyword_matches(
         from google.cloud import bigquery as _bq
         rows = _run(
             sql, max_rows=500,
-            query_parameters=[_bq.ArrayQueryParameter("terms", "STRING", terms)],
+            query_parameters=[
+                _bq.ArrayQueryParameter("terms", "STRING", terms),
+                _bq.ArrayQueryParameter("exclude", "STRING", exclude_terms),
+            ],
         )
         out = []
         for r in rows:
@@ -874,10 +887,12 @@ def gsc_keyword_matches(
 
 
 def gsc_keyword_weekly_trend(
-    *, start: date, end: date, terms: list[str], client_slug: str | None = None
+    *, start: date, end: date, terms: list[str],
+    exclude_terms: list[str] | None = None, client_slug: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Weekly (Monday-start) rank-distribution for queries matching `terms`,
-    over the full date range -- same term-matching as gsc_keyword_matches.
+    """Weekly (Monday-start) rank-distribution for queries matching `terms` but
+    not `exclude_terms`, over the full date range -- same term-matching as
+    gsc_keyword_matches.
 
     Each week returns how many matched keywords fall in each position band
     (1-3 / 4-10 / 11-20 / 21+), from each keyword's impression-weighted average
@@ -890,6 +905,7 @@ def gsc_keyword_weekly_trend(
     unchanged. Movement shows as bands shifting between weeks.
     """
     terms = [t.strip().lower() for t in terms if t and t.strip()]
+    exclude_terms = [t.strip().lower() for t in (exclude_terms or []) if t and t.strip()]
     if not terms:
         return []
     with _client_context(client_slug):
@@ -899,6 +915,8 @@ def gsc_keyword_weekly_trend(
         project, ds = _project_id(), _reporting_mart_ds()
         qv = f"`{project}.{ds}.{_QUERY_VIEW}`"
         s, e = start.isoformat(), end.isoformat()
+        # NOT EXISTS over an empty @exclude array is always true, so the clause
+        # is a no-op when no exclude terms are configured.
         sql = f"""
         WITH per_kw_week AS (
           SELECT
@@ -910,6 +928,10 @@ def gsc_keyword_weekly_trend(
             AND EXISTS (
               SELECT 1 FROM UNNEST(@terms) AS t
               WHERE LOWER(query) LIKE CONCAT('%', t, '%')
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM UNNEST(@exclude) AS x
+              WHERE LOWER(query) LIKE CONCAT('%', x, '%')
             )
           GROUP BY wk, query
         )
@@ -927,7 +949,10 @@ def gsc_keyword_weekly_trend(
         from google.cloud import bigquery as _bq
         rows = _run(
             sql, max_rows=200,
-            query_parameters=[_bq.ArrayQueryParameter("terms", "STRING", terms)],
+            query_parameters=[
+                _bq.ArrayQueryParameter("terms", "STRING", terms),
+                _bq.ArrayQueryParameter("exclude", "STRING", exclude_terms),
+            ],
         )
         out = []
         for r in rows:

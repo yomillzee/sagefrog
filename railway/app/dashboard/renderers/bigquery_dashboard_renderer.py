@@ -151,6 +151,8 @@ def render_bigquery_dashboard_page(
     # by the "Branded & Target Keywords" section. Stored one per line.
     gsc_branded_roots = ""
     gsc_target_keywords = ""
+    gsc_branded_exclude = ""
+    gsc_target_exclude = ""
     ga4_key_events = ""
     explorer_filters_cfg = ""
     monthly_budget_val: float | None = None
@@ -161,6 +163,8 @@ def render_bigquery_dashboard_page(
         if _kwcfg:
             gsc_branded_roots = _kwcfg.gsc_branded_roots or ""
             gsc_target_keywords = _kwcfg.gsc_target_keywords or ""
+            gsc_branded_exclude = getattr(_kwcfg, "gsc_branded_exclude", None) or ""
+            gsc_target_exclude = getattr(_kwcfg, "gsc_target_exclude", None) or ""
             ga4_key_events = _kwcfg.ga4_key_events or ""
             explorer_filters_cfg = _kwcfg.explorer_filters or ""
             monthly_budget_val = getattr(_kwcfg, "monthly_budget_usd", None)
@@ -627,6 +631,12 @@ def render_bigquery_dashboard_page(
     .tag-chip button:hover {{ background:var(--bad); color:#fff; }}
     .tag-input {{ border:0; outline:none; font:inherit; font-size:.84rem; padding:4px 2px; min-width:110px; flex:1; background:transparent; color:#102033; }}
     .tag-input::placeholder {{ color:#9aa7bd; }}
+    /* Exclude editor: same layout, red-tinted so it reads as a "subtract"
+       filter distinct from the blue include chips above it. */
+    .is-admin .tag-editor-exclude {{ margin-top:-4px; }}
+    .tag-editor-exclude .tag-chip {{ background:#fdecec; color:#8a2020; }}
+    .tag-editor-exclude .tag-chip button {{ background:rgba(138,32,32,.16); color:#8a2020; }}
+    .tag-editor-exclude:focus-within {{ border-color:#e6a6a6; box-shadow:0 0 0 2px #fbe2e2; }}
     .empty {{ color:var(--muted); padding:26px; text-align:center; }}
     code {{ background:#eef4fb; padding:2px 5px; border-radius:4px; font-size:.85em; }}
     .muted {{ color:var(--muted); font-size:.78rem; margin-left:6px; }}
@@ -1020,6 +1030,7 @@ def render_bigquery_dashboard_page(
           <div class="col-panel">
             <h3>Branded queries <span class="muted" id="gscBrandedCount"></span></h3>
             <div class="tag-editor" id="gscBrandedTags"></div>
+            <div class="tag-editor tag-editor-exclude" id="gscBrandedExcludeTags"></div>
             <div class="table-wrap"><table id="gscBrandedTable" class="compact"></table></div>
             <div class="pager" id="gscBrandedPager"></div>
             <div class="chart-wrap" style="margin-top:12px">
@@ -1029,6 +1040,7 @@ def render_bigquery_dashboard_page(
           <div class="col-panel">
             <h3>Target queries <span class="muted" id="gscTargetCount"></span></h3>
             <div class="tag-editor" id="gscTargetTags"></div>
+            <div class="tag-editor tag-editor-exclude" id="gscTargetExcludeTags"></div>
             <div class="table-wrap"><table id="gscTargetTable" class="compact"></table></div>
             <div class="pager" id="gscTargetPager"></div>
             <div class="chart-wrap" style="margin-top:12px">
@@ -1088,6 +1100,8 @@ def render_bigquery_dashboard_page(
     const GSC_KEYWORD_MATCHES_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/keyword-matches')}";
     const GSC_BRANDED_ROOTS = {json.dumps([s.strip() for s in gsc_branded_roots.splitlines() if s.strip()])};
     const GSC_TARGET_KEYWORDS = {json.dumps([s.strip() for s in gsc_target_keywords.splitlines() if s.strip()])};
+    const GSC_BRANDED_EXCLUDE = {json.dumps([s.strip() for s in gsc_branded_exclude.splitlines() if s.strip()])};
+    const GSC_TARGET_EXCLUDE = {json.dumps([s.strip() for s in gsc_target_exclude.splitlines() if s.strip()])};
     const GSC_BRANDED_RAW = {json.dumps(gsc_branded_roots)};
     const GSC_TARGET_RAW = {json.dumps(gsc_target_keywords)};
     const LANDING_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/landing-events')}";
@@ -1709,17 +1723,23 @@ def render_bigquery_dashboard_page(
     }}
 
     // ---- Branded / target keyword filtering (GSC queries only) ----
+    // Each group has include roots plus optional exclude roots: a query counts
+    // when it contains any include root AND none of the exclude roots (so you
+    // can include "benjamin" but exclude "dr").
     let gscBrandedRoots = GSC_BRANDED_ROOTS.slice();
     let gscTargetKeywords = GSC_TARGET_KEYWORDS.slice();
+    let gscBrandedExclude = GSC_BRANDED_EXCLUDE.slice();
+    let gscTargetExclude = GSC_TARGET_EXCLUDE.slice();
     // Branded/target queries are matched against the FULL date-range dataset
     // via a dedicated backend scan (gsc/keyword-matches), not filtered from
     // the top_queries subset (top_queries is LIMIT 25 by clicks in
     // gsc/summary, so a real match outside the top 25 would otherwise be
     // silently missed).
     let _gscKwReqId = 0;
-    async function fetchKeywordMatches(terms) {{
+    async function fetchKeywordMatches(terms, excludeTerms) {{
       if (!terms.length) return {{rows:[], weekly:[]}};
-      const url = withDates(GSC_KEYWORD_MATCHES_API) + '&terms=' + encodeURIComponent(terms.join(','));
+      let url = withDates(GSC_KEYWORD_MATCHES_API) + '&terms=' + encodeURIComponent(terms.join(','));
+      if (excludeTerms && excludeTerms.length) url += '&exclude=' + encodeURIComponent(excludeTerms.join(','));
       try {{
         const r = await getJson(url);
         return {{rows: r.rows || [], weekly: r.weekly || []}};
@@ -1782,8 +1802,8 @@ def render_bigquery_dashboard_page(
       if (gscBrandedRoots.length) document.getElementById('gscBrandedTable').innerHTML = skelTable(4,6);
       if (gscTargetKeywords.length) document.getElementById('gscTargetTable').innerHTML = skelTable(4,6);
       const [branded, target] = await Promise.all([
-        fetchKeywordMatches(gscBrandedRoots),
-        fetchKeywordMatches(gscTargetKeywords),
+        fetchKeywordMatches(gscBrandedRoots, gscBrandedExclude),
+        fetchKeywordMatches(gscTargetKeywords, gscTargetExclude),
       ]);
       if (reqId !== _gscKwReqId) return; // a newer call (date range/terms changed) superseded this one
       gscTables.branded.rows = branded.rows;
@@ -1811,7 +1831,7 @@ def render_bigquery_dashboard_page(
       _kwSaveTimer=setTimeout(async () => {{
         setStatus('gscKwStatus','Saving…');
         try {{
-          const r=await fetch(GSC_KEYWORD_CONFIG_API, {{method:'POST', headers:{{'Content-Type':'application/json'}}, credentials:'same-origin', body:JSON.stringify({{branded_roots:gscBrandedRoots.join('\\n'), target_keywords:gscTargetKeywords.join('\\n')}})}});
+          const r=await fetch(GSC_KEYWORD_CONFIG_API, {{method:'POST', headers:{{'Content-Type':'application/json'}}, credentials:'same-origin', body:JSON.stringify({{branded_roots:gscBrandedRoots.join('\\n'), target_keywords:gscTargetKeywords.join('\\n'), branded_exclude:gscBrandedExclude.join('\\n'), target_exclude:gscTargetExclude.join('\\n')}})}});
           const body=await r.json().catch(()=>({{}}));
           if (!r.ok||!body.ok) throw new Error((body&&body.detail&&(body.detail.error||body.detail))||r.statusText);
           setStatus('gscKwStatus','Saved.'); setTimeout(()=>{{const el=document.getElementById('gscKwStatus'); if(el&&el.textContent==='Saved.') el.textContent='';}}, 2000);
@@ -1836,8 +1856,10 @@ def render_bigquery_dashboard_page(
       }}
       render();
     }}
-    makeTagEditor('gscBrandedTags','Branded roots', ()=>gscBrandedRoots, t=>{{gscBrandedRoots=t;}});
-    makeTagEditor('gscTargetTags','Target keywords', ()=>gscTargetKeywords, t=>{{gscTargetKeywords=t;}});
+    makeTagEditor('gscBrandedTags','Include roots', ()=>gscBrandedRoots, t=>{{gscBrandedRoots=t;}});
+    makeTagEditor('gscBrandedExcludeTags','Exclude terms', ()=>gscBrandedExclude, t=>{{gscBrandedExclude=t;}});
+    makeTagEditor('gscTargetTags','Include keywords', ()=>gscTargetKeywords, t=>{{gscTargetKeywords=t;}});
+    makeTagEditor('gscTargetExcludeTags','Exclude terms', ()=>gscTargetExclude, t=>{{gscTargetExclude=t;}});
 
     // ---- SEMrush (domain-level snapshot — not date-range scoped) ----
     function renderSemrushKpis(ov, bl) {{
@@ -3262,8 +3284,8 @@ def render_bigquery_dashboard_page(
         hasPrev ? getJson(withDatesRange(TRAFFIC_ACQ_API, compareStart, compareEnd)).catch(()=>null) : Promise.resolve(null),
         getJson(withDatesRange(AI_TRAFFIC_DAILY_API, currentStart, currentEnd)).then(d=>d.rows||[]).catch(()=>[]),
         hasPrev ? getJson(withDatesRange(AI_TRAFFIC_DAILY_API, compareStart, compareEnd)).then(d=>d.rows||[]).catch(()=>[]) : Promise.resolve([]),
-        fetchKeywordMatches(gscBrandedRoots),
-        fetchKeywordMatches(gscTargetKeywords),
+        fetchKeywordMatches(gscBrandedRoots, gscBrandedExclude),
+        fetchKeywordMatches(gscTargetKeywords, gscTargetExclude),
       ]);
       // Website analytics — sessions, current vs previous.
       ovSessionsCache={{ cur: ovSumByDate(traffic.daily||[],'sessions'), prev: ovSumByDate((trafficPrev&&trafficPrev.daily)||[],'sessions') }};
