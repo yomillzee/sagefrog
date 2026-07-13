@@ -372,10 +372,27 @@ def render_bigquery_dashboard_page(
         else ""
     )
 
+    # Caption + hover tooltip shared by the four branded/target keyword trend
+    # charts (Search Console tab + Overview), explaining how the avg-position
+    # line is built. Native title tooltip, matching the .cmp-warn help pattern.
+    _kw_trend_help = (
+        "Each point is the impression-weighted average Google position of the "
+        "matching keywords (your include roots, minus any exclude terms) for "
+        "that week. Lower is better, so the axis is flipped — higher on the "
+        "chart means a better ranking. The line always covers the last ~13 "
+        "weeks, regardless of the date range selected above."
+    )
+    _kw_trend_cap = (
+        '<div class="chart-cap">Avg. position over time'
+        '<span class="info-tip" tabindex="0" role="img" '
+        f'aria-label="How this chart works. {_kw_trend_help}" '
+        f'title="{_kw_trend_help}">&#9432;</span></div>'
+    )
+
     # Overview is a "home": the top widget from each section, each with a
     # "See more" that jumps to that tab. Panels below are shared by all clients;
     # the paid panel is prepended only when the client runs paid ads.
-    ov_panels = """
+    ov_panels = f"""
       <section class="ov-panel">
         <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><div class="chips seg" id="ovSessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="analytics"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovSessionsTrend"></canvas></div></div>
@@ -394,13 +411,15 @@ def render_bigquery_dashboard_page(
           <div class="col-panel">
             <h3>Branded queries</h3>
             <div class="table-wrap"><table id="ovGscBrandedLeaders" class="compact gsc-leaderboard"></table></div>
-            <div class="chart-canvas-host" style="height:180px;margin-top:12px"><canvas id="ovGscBrandedTrend"></canvas></div>
+            {_kw_trend_cap}
+            <div class="chart-canvas-host" style="height:180px"><canvas id="ovGscBrandedTrend"></canvas></div>
             <div class="muted" id="ovGscBrandedNote" style="font-size:.74rem;margin-top:6px"></div>
           </div>
           <div class="col-panel">
             <h3>Target keywords</h3>
             <div class="table-wrap"><table id="ovGscTargetLeaders" class="compact gsc-leaderboard"></table></div>
-            <div class="chart-canvas-host" style="height:180px;margin-top:12px"><canvas id="ovGscTargetTrend"></canvas></div>
+            {_kw_trend_cap}
+            <div class="chart-canvas-host" style="height:180px"><canvas id="ovGscTargetTrend"></canvas></div>
             <div class="muted" id="ovGscTargetNote" style="font-size:.74rem;margin-top:6px"></div>
           </div>
         </div>
@@ -656,6 +675,11 @@ def render_bigquery_dashboard_page(
     .chart-wrap {{ position:relative; border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px; background:#fafcff; }}
     .trend-svg {{ width:100%; height:260px; display:block; }}
     .chart-note {{ font-size:.74rem; color:var(--muted); margin-top:8px; }}
+    /* Small labelled caption above the keyword avg-position trend charts, with a
+       hover/focus info glyph carrying the "how this chart works" tooltip. */
+    .chart-cap {{ display:flex; align-items:center; gap:5px; margin:2px 0 8px; font-size:.72rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }}
+    .info-tip {{ cursor:help; color:#9aa7bd; font-size:.92rem; font-weight:400; line-height:1; text-transform:none; }}
+    .info-tip:hover, .info-tip:focus {{ color:var(--accent); outline:none; }}
     {budget_css}
     .chart-tip {{ position:absolute; pointer-events:none; background:#0b1020; color:#e8eefc; font-size:.74rem; line-height:1.5; padding:7px 9px; border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.25); transform:translate(-50%,-112%); white-space:nowrap; z-index:5; }}
     .metric-swatch {{ width:10px; height:10px; border-radius:2px; display:inline-block; vertical-align:middle; margin-right:4px; }}
@@ -1034,6 +1058,7 @@ def render_bigquery_dashboard_page(
             <div class="table-wrap"><table id="gscBrandedTable" class="compact"></table></div>
             <div class="pager" id="gscBrandedPager"></div>
             <div class="chart-wrap" style="margin-top:12px">
+              {_kw_trend_cap}
               <div class="chart-canvas-host" style="height:150px"><canvas id="gscBrandedTrendChart"></canvas></div>
             </div>
           </div>
@@ -1044,6 +1069,7 @@ def render_bigquery_dashboard_page(
             <div class="table-wrap"><table id="gscTargetTable" class="compact"></table></div>
             <div class="pager" id="gscTargetPager"></div>
             <div class="chart-wrap" style="margin-top:12px">
+              {_kw_trend_cap}
               <div class="chart-canvas-host" style="height:150px"><canvas id="gscTargetTrendChart"></canvas></div>
             </div>
           </div>
