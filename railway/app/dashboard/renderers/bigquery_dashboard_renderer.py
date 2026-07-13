@@ -382,11 +382,18 @@ def render_bigquery_dashboard_page(
         "chart means a better ranking. The line always covers the last ~13 "
         "weeks, regardless of the date range selected above."
     )
+    _kw_trend_ico = (
+        '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" '
+        'stroke="currentColor" stroke-width="1.4" stroke-linecap="round" '
+        'aria-hidden="true"><circle cx="8" cy="8" r="6.5"/>'
+        '<path d="M8 7.3v3.4"/>'
+        '<circle cx="8" cy="4.9" r=".85" fill="currentColor" stroke="none"/></svg>'
+    )
     _kw_trend_cap = (
         '<div class="chart-cap">Avg. position over time'
         '<span class="info-tip" tabindex="0" role="img" '
         f'aria-label="How this chart works. {_kw_trend_help}" '
-        f'title="{_kw_trend_help}">&#9432;</span></div>'
+        f'title="{_kw_trend_help}">{_kw_trend_ico}</span></div>'
     )
 
     # Overview is a "home": the top widget from each section, each with a
@@ -678,7 +685,9 @@ def render_bigquery_dashboard_page(
     /* Small labelled caption above the keyword avg-position trend charts, with a
        hover/focus info glyph carrying the "how this chart works" tooltip. */
     .chart-cap {{ display:flex; align-items:center; gap:5px; margin:2px 0 8px; font-size:.72rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }}
-    .info-tip {{ cursor:help; color:#9aa7bd; font-size:.92rem; font-weight:400; line-height:1; text-transform:none; }}
+    .ov-panel .table-wrap + .chart-cap {{ margin-top:18px; }}
+    .info-tip {{ display:inline-flex; align-items:center; cursor:help; color:#9aa7bd; line-height:0; text-transform:none; }}
+    .info-tip svg {{ display:block; }}
     .info-tip:hover, .info-tip:focus {{ color:var(--accent); outline:none; }}
     {budget_css}
     .chart-tip {{ position:absolute; pointer-events:none; background:#0b1020; color:#e8eefc; font-size:.74rem; line-height:1.5; padding:7px 9px; border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.25); transform:translate(-50%,-112%); white-space:nowrap; z-index:5; }}
