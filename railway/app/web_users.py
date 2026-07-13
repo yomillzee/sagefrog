@@ -49,7 +49,26 @@ SCHEMA_SQL_STATEMENTS = [
     """
     ALTER TABLE web_users ADD COLUMN IF NOT EXISTS avatar TEXT
     """,
+    # Per-client access list for 'standard' users. NULL means a pre-migration
+    # row that has not been scoped yet (grandfathered to all-access by the
+    # startup backfill); an empty array means "explicitly no access". Only
+    # consulted for the 'standard' role.
+    """
+    ALTER TABLE web_users ADD COLUMN IF NOT EXISTS allowed_client_slugs TEXT[]
+    """,
 ]
+
+
+def _normalize_slug_list(slugs: list[str] | tuple[str, ...] | None) -> list[str]:
+    """Lowercase, strip, drop blanks, and de-dupe a list of client slugs."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in slugs or ():
+        slug = (raw or "").strip().lower()
+        if slug and slug not in seen:
+            seen.add(slug)
+            out.append(slug)
+    return out
 
 
 @dataclass(frozen=True)
@@ -60,13 +79,18 @@ class WebUser:
     client_slug: str | None
     is_active: bool
     avatar: str | None = None
+    # Client slugs a 'standard' user may access. Empty means no access.
+    allowed_client_slugs: tuple[str, ...] = ()
 
     def can_access_client(self, slug: str) -> bool:
         if not self.is_active:
             return False
-        if self.role in ("admin", "standard"):
+        if self.role == "admin":
             return True
-        return self.role == "client" and (self.client_slug or "").strip() == slug
+        target = (slug or "").strip().lower()
+        if self.role == "standard":
+            return target in self.allowed_client_slugs
+        return self.role == "client" and (self.client_slug or "").strip() == target
 
 
 def _get_db_url() -> str | None:
@@ -100,6 +124,7 @@ def verify_password(plain: str, password_hash: str) -> bool:
 
 
 def _row_to_user(row: tuple[Any, ...]) -> WebUser:
+    allowed = row[6] if len(row) > 6 and row[6] is not None else ()
     return WebUser(
         id=int(row[0]),
         email=str(row[1]),
@@ -107,6 +132,7 @@ def _row_to_user(row: tuple[Any, ...]) -> WebUser:
         client_slug=str(row[3]) if row[3] is not None else None,
         is_active=bool(row[4]),
         avatar=str(row[5]) if len(row) > 5 and row[5] is not None else None,
+        allowed_client_slugs=tuple(str(s) for s in allowed),
     )
 
 
@@ -118,7 +144,7 @@ def get_user_by_email(email: str) -> WebUser | None:
     with db.connection() as conn:
         row = conn.execute(
             """
-            SELECT id, email, role, client_slug, is_active, avatar
+            SELECT id, email, role, client_slug, is_active, avatar, allowed_client_slugs
             FROM web_users
             WHERE LOWER(email) = %s AND is_active = TRUE
             """,
@@ -143,7 +169,7 @@ def get_user_record(user_id: int) -> WebUser | None:
     with db.connection() as conn:
         row = conn.execute(
             """
-            SELECT id, email, role, client_slug, is_active, avatar
+            SELECT id, email, role, client_slug, is_active, avatar, allowed_client_slugs
             FROM web_users
             WHERE id = %s
             """,
@@ -181,16 +207,17 @@ def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
     with db.connection() as conn:
         if include_inactive:
             rows = conn.execute(
-                "SELECT id, email, role, client_slug, is_active, created_at, avatar "
+                "SELECT id, email, role, client_slug, is_active, created_at, avatar, allowed_client_slugs "
                 "FROM web_users ORDER BY role DESC, LOWER(email)"
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT id, email, role, client_slug, is_active, created_at, avatar "
+                "SELECT id, email, role, client_slug, is_active, created_at, avatar, allowed_client_slugs "
                 "FROM web_users WHERE is_active = TRUE ORDER BY role DESC, LOWER(email)"
             ).fetchall()
     out: list[dict[str, Any]] = []
     for row in rows:
+        allowed = row[7] if len(row) > 7 and row[7] is not None else ()
         out.append(
             {
                 "id": int(row[0]),
@@ -200,6 +227,7 @@ def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
                 "is_active": bool(row[4]),
                 "created_at": row[5].isoformat() if row[5] else None,
                 "avatar": str(row[6]) if row[6] is not None else None,
+                "allowed_client_slugs": [str(s) for s in allowed],
             }
         )
     return out
@@ -239,6 +267,7 @@ def create_user(
     password: str,
     role: str,
     client_slug: str | None = None,
+    allowed_client_slugs: list[str] | None = None,
 ) -> WebUser:
     if not enabled():
         raise RuntimeError("DATABASE_URL is not set — web users require Postgres.")
@@ -253,6 +282,8 @@ def create_user(
         raise ValueError("client_slug is required for client users.")
     if role in ("admin", "standard"):
         slug = None
+    # Only 'standard' users carry a per-client access list; other roles store NULL.
+    allowed = _normalize_slug_list(allowed_client_slugs) if role == "standard" else None
     if len(password) < 10:
         raise ValueError("Password must be at least 10 characters.")
 
@@ -278,22 +309,23 @@ def create_user(
                     password_hash = %s,
                     role = %s,
                     client_slug = %s,
+                    allowed_client_slugs = %s,
                     is_active = TRUE,
                     updated_at = %s
                 WHERE id = %s
-                RETURNING id, email, role, client_slug, is_active
+                RETURNING id, email, role, client_slug, is_active, avatar, allowed_client_slugs
                 """,
-                (normalized_email, pw_hash, role, slug, now, int(inactive[0])),
+                (normalized_email, pw_hash, role, slug, allowed, now, int(inactive[0])),
             ).fetchone()
         else:
             try:
                 row = conn.execute(
                     """
-                    INSERT INTO web_users (email, password_hash, role, client_slug, is_active, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, TRUE, %s, %s)
-                    RETURNING id, email, role, client_slug, is_active
+                    INSERT INTO web_users (email, password_hash, role, client_slug, allowed_client_slugs, is_active, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, TRUE, %s, %s)
+                    RETURNING id, email, role, client_slug, is_active, avatar, allowed_client_slugs
                     """,
-                    (normalized_email, pw_hash, role, slug, now, now),
+                    (normalized_email, pw_hash, role, slug, allowed, now, now),
                 ).fetchone()
             except psycopg.errors.UniqueViolation as e:
                 raise ValueError("A user with that email already exists.") from e
@@ -319,7 +351,12 @@ def set_password(user_id: int, new_password: str) -> bool:
         return cur.rowcount > 0
 
 
-def set_role(user_id: int, role: str, client_slug: str | None = None) -> WebUser | None:
+def set_role(
+    user_id: int,
+    role: str,
+    client_slug: str | None = None,
+    allowed_client_slugs: list[str] | None = None,
+) -> WebUser | None:
     """Change an active user's role (and client scoping). Returns the updated
     user, or None if no active user matched. Raises ValueError on bad input."""
     if not enabled():
@@ -332,16 +369,18 @@ def set_role(user_id: int, role: str, client_slug: str | None = None) -> WebUser
         raise ValueError("client_slug is required for client users.")
     if role in ("admin", "standard"):
         slug = None
+    # Only 'standard' users carry a per-client access list; other roles reset to NULL.
+    allowed = _normalize_slug_list(allowed_client_slugs) if role == "standard" else None
     ensure_schema()
     with db.connection() as conn:
         row = conn.execute(
             """
             UPDATE web_users
-            SET role = %s, client_slug = %s, updated_at = NOW()
+            SET role = %s, client_slug = %s, allowed_client_slugs = %s, updated_at = NOW()
             WHERE id = %s AND is_active = TRUE
-            RETURNING id, email, role, client_slug, is_active
+            RETURNING id, email, role, client_slug, is_active, avatar, allowed_client_slugs
             """,
-            (role, slug, user_id),
+            (role, slug, allowed, user_id),
         ).fetchone()
     return _row_to_user(row) if row else None
 
@@ -360,6 +399,30 @@ def deactivate_user(user_id: int) -> bool:
             (user_id,),
         )
         return cur.rowcount > 0
+
+
+def backfill_standard_all_access(all_slugs: list[str]) -> int:
+    """Grandfather pre-migration 'standard' users to all-access.
+
+    Standard users used to see every client. After per-client scoping, an empty
+    list means no access. To avoid locking anyone out on rollout, any standard
+    user whose access list was never set (NULL) is granted every current client
+    slug once; an admin can then trim them down. New/edited standard users store
+    an explicit (possibly empty) array and are left untouched (IS NULL guard)."""
+    if not enabled():
+        return 0
+    ensure_schema()
+    slugs = _normalize_slug_list(all_slugs)
+    with db.connection() as conn:
+        cur = conn.execute(
+            """
+            UPDATE web_users
+            SET allowed_client_slugs = %s, updated_at = NOW()
+            WHERE role = 'standard' AND allowed_client_slugs IS NULL
+            """,
+            (slugs,),
+        )
+        return cur.rowcount
 
 
 def bootstrap_admin_from_env() -> WebUser | None:

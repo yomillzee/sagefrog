@@ -187,6 +187,15 @@ try:
     audit_log.ensure_schema()
     client_dashboard_config.ensure_schema()
     dashboard_registry.ensure_schema()
+    # Grandfather existing 'standard' users to every current client so the switch
+    # to per-client scoping doesn't lock them out; runs once per user (IS NULL).
+    try:
+        _granted = web_users.backfill_standard_all_access(dashboard_registry.list_slugs())
+        if _granted:
+            print(f"Startup: granted all-client access to {_granted} pre-scoping standard user(s).")
+    except Exception as _bf_exc:
+        import sys as _sys
+        print(f"WARNING: standard-user access backfill failed: {_bf_exc}", file=_sys.stderr)
     business_line_rules.ensure_schema()
     client_insight_documents.ensure_schema()
     oauth_store.ensure_schema()
@@ -1921,6 +1930,7 @@ def admin_create_user(
     password: str = Form(...),
     role: str = Form("client"),
     client_slug: str | None = Form(None),
+    allowed_client_slugs: list[str] = Form(default=[]),
     user: web_users.WebUser = Depends(web_auth.require_admin),
 ):
     ctx = audit_log.request_context(request)
@@ -1930,6 +1940,7 @@ def admin_create_user(
             password=password,
             role=role,
             client_slug=client_slug,
+            allowed_client_slugs=allowed_client_slugs,
         )
     except ValueError as e:
         users = web_users.list_users(include_inactive=False)
@@ -1948,7 +1959,11 @@ def admin_create_user(
         actor_user_id=user.id,
         actor_email=user.email,
         subject_email=created.email,
-        detail={"role": created.role, "client_slug": created.client_slug},
+        detail={
+            "role": created.role,
+            "client_slug": created.client_slug,
+            "allowed_client_slugs": list(created.allowed_client_slugs),
+        },
         **ctx,
     )
     return RedirectResponse(url="/admin?msg=User+created", status_code=303)
@@ -2055,6 +2070,7 @@ def admin_set_user_role(
     request: Request,
     role: str = Form(...),
     client_slug: str | None = Form(None),
+    allowed_client_slugs: list[str] = Form(default=[]),
     admin: web_users.WebUser = Depends(web_auth.require_admin),
 ):
     ctx = audit_log.request_context(request)
@@ -2068,7 +2084,7 @@ def admin_set_user_role(
     if target.role == "admin" and new_role != "admin" and web_users.count_admins() <= 1:
         return RedirectResponse(url="/admin?err=Cannot+change+the+only+admin%27s+role", status_code=303)
     try:
-        updated = web_users.set_role(user_id, new_role, client_slug)
+        updated = web_users.set_role(user_id, new_role, client_slug, allowed_client_slugs)
     except ValueError as exc:
         return RedirectResponse(url=f"/admin?err={quote(str(exc))}", status_code=303)
     if not updated:
@@ -2078,7 +2094,11 @@ def admin_set_user_role(
         actor_user_id=admin.id,
         actor_email=admin.email,
         subject_email=updated.email,
-        detail={"role": updated.role, "client_slug": updated.client_slug},
+        detail={
+            "role": updated.role,
+            "client_slug": updated.client_slug,
+            "allowed_client_slugs": list(updated.allowed_client_slugs),
+        },
         **ctx,
     )
     return RedirectResponse(
