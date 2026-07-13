@@ -1747,52 +1747,23 @@ def render_bigquery_dashboard_page(
         return {{rows:[], weekly:[]}};
       }}
     }}
-    // Weekly rank-distribution: a stacked bar per week counting how many matched
-    // keywords sit in each position band. A single averaged-position line was
-    // rejected -- the set of ranking keywords changes week to week, so any
-    // average conflates real movement with basket composition (a new keyword at
-    // pos 17 tanks the mean). Band counts don't: a new keyword just adds to the
-    // 11-20 band. Bands are an ordered (ordinal) scale, so one hue dark->light,
-    // best->worst (validated CVD-safe), not a rainbow. Best band sits on the
-    // baseline so its growth is easy to read.
-    const GSC_BAND_COLS = [
-      {{key:'pos_1_3',     label:'Pos 1\\u20133',  color:'#0d366b'}},
-      {{key:'pos_4_10',    label:'Pos 4\\u201310', color:'#1c5cab'}},
-      {{key:'pos_11_20',   label:'Pos 11\\u201320',color:'#3987e5'}},
-      {{key:'pos_21_plus', label:'Pos 21+',    color:'#86b6ef'}},
-    ];
-    function drawKeywordDistribution(canvasId, rows) {{
+    // Weekly avg-position trend: a single impression-weighted average-position
+    // line per week over the matched keyword basket. For position lower is
+    // better, so the y-axis is reversed (best rank at the top) like a rank
+    // chart. The include/exclude roots keep the basket on-target, so the mean
+    // tracks real rank movement rather than basket churn.
+    function drawKeywordTrend(canvasId, rows, valueKey, color, invert) {{
       clearSkelChart(canvasId);
       if (!document.getElementById(canvasId)) return;
-      if (!rows || !rows.length) {{ __destroyChart(canvasId); return; }}
+      const n=rows.length;
+      if (!n) {{ __destroyChart(canvasId); return; }}
       const labels=rows.map(r=>String(r.week_start||'').slice(5));
-      const topKey=GSC_BAND_COLS[GSC_BAND_COLS.length-1].key;
-      const datasets=GSC_BAND_COLS.map(b=>({{
-        label:b.label, data:rows.map(r=>num(r[b.key])), backgroundColor:b.color,
-        stack:'kw', maxBarThickness:26,
-        // 2px surface-colored top edge separates stacked segments; round only
-        // the topmost segment's top corners so the whole bar reads as one unit.
-        borderColor:'#ffffff', borderWidth:{{top:2, right:0, bottom:0, left:0}},
-        borderRadius: b.key===topKey ? {{topLeft:3, topRight:3, bottomLeft:0, bottomRight:0}} : 0,
-      }}));
-      __chart(canvasId, {{
-        type:'bar',
-        data:{{labels, datasets}},
-        options:{{
-          interaction:{{mode:'index', intersect:false}},
-          scales:{{
-            x:{{stacked:true, grid:{{display:false}}, border:{{display:false}}, ticks:{{maxRotation:0, autoSkip:true, maxTicksLimit:8}}}},
-            y:{{stacked:true, beginAtZero:true, grid:{{color:'#f1f4f9'}}, border:{{display:false}}, ticks:{{maxTicksLimit:4, precision:0}}}},
-          }},
-          plugins:{{
-            legend:{{display:true, position:'top', align:'start',
-              labels:{{boxWidth:8, boxHeight:8, usePointStyle:true, pointStyle:'rectRounded', padding:9, font:{{size:10}}}}}},
-            tooltip:{{callbacks:{{
-              label:c=>`${{c.dataset.label}}: ${{count(c.raw)}}`,
-              footer:items=>'Total: '+count(items.reduce((a,i)=>a+num(i.raw),0)),
-            }}}},
-          }},
-        }},
+      const data=rows.map(r=>num(r[valueKey]));
+      const fmtPos=v=>(Math.round(v*10)/10).toFixed(1);
+      lineChart(canvasId, labels, [{{ label:'Avg position', data, color, fill:true }}], {{
+        points:true, yReverse: !!invert, yDisplay:true, beginAtZero:false,
+        yFmt: v => fmtPos(v),
+        tooltip: {{ label: c => `Avg position: ${{fmtPos(c.raw)}}` }},
       }});
     }}
     async function renderGscKeywordTables() {{
@@ -1810,8 +1781,8 @@ def render_bigquery_dashboard_page(
       gscTables.target.rows  = target.rows;
       gscTables.branded.page = 1; gscTables.target.page = 1;
       renderGscTable('branded'); renderGscTable('target');
-      drawKeywordDistribution('gscBrandedTrendChart', branded.weekly);
-      drawKeywordDistribution('gscTargetTrendChart', target.weekly);
+      drawKeywordTrend('gscBrandedTrendChart', branded.weekly, 'avg_position', '#1d6fd0', true);
+      drawKeywordTrend('gscTargetTrendChart', target.weekly, 'avg_position', '#7c3aed', true);
       const setCount=(id,n,configured)=>{{const el=document.getElementById(id); if(el) el.textContent = configured ? `(${{n}})` : '';}};
       setCount('gscBrandedCount', gscTables.branded.rows.length, gscBrandedRoots.length);
       setCount('gscTargetCount', gscTables.target.rows.length, gscTargetKeywords.length);
@@ -3298,11 +3269,11 @@ def render_bigquery_dashboard_page(
       const aTot=ovAiCache.cur.reduce((s,d)=>s+num(d.value),0);
       setStatus('ovAiStatus', aTot?count(aTot)+' sessions':'No AI traffic');
       // Search Console — branded & target keyword leaderboard (top by rank) plus
-      // the rank-distribution trend over time.
+      // the weekly avg-position trend over time.
       renderKwLeaderboard('ovGscBrandedLeaders', branded.rows, gscBrandedRoots.length);
       renderKwLeaderboard('ovGscTargetLeaders', target.rows, gscTargetKeywords.length);
-      drawKeywordDistribution('ovGscBrandedTrend', branded.weekly);
-      drawKeywordDistribution('ovGscTargetTrend', target.weekly);
+      drawKeywordTrend('ovGscBrandedTrend', branded.weekly, 'avg_position', '#1d6fd0', true);
+      drawKeywordTrend('ovGscTargetTrend', target.weekly, 'avg_position', '#7c3aed', true);
       const noteFor=(roots, weekly)=> !roots.length ? 'Set keywords on the Search Console tab.'
         : (!(weekly||[]).length ? 'No matching queries in this range.' : '');
       const bn=document.getElementById('ovGscBrandedNote'); if(bn) bn.textContent=noteFor(gscBrandedRoots, branded.weekly);
