@@ -209,7 +209,10 @@ def client_files_browser_html(
             use_session=use_session,
             inline=True,
         )
-        is_pdf = (row.original_filename or "").lower().endswith(".pdf")
+        lower_name = (row.original_filename or "").lower()
+        is_pdf = lower_name.endswith(".pdf")
+        is_docx = lower_name.endswith(".docx")
+        file_type = "pdf" if is_pdf else "docx" if is_docx else "other"
         drag_attrs = ""
         if can_manage:
             drag_attrs = (
@@ -224,7 +227,7 @@ def client_files_browser_html(
                   data-preview-url="{_esc(preview_url)}"
                   data-download-url="{_esc(download_url)}"
                   data-file-name="{_esc(display_name)}"
-                  data-file-type="{'pdf' if is_pdf else 'other'}">
+                  data-file-type="{file_type}">
                   {_file_type_icon_html(row.original_filename)}
                   <span class="files-name-text">{_esc(display_name)}</span>
                   <span class="files-name-sub muted">{_esc(docs.file_type_label(row.original_filename))}</span>
@@ -407,6 +410,10 @@ def files_page_css() -> str:
     .files-preview-fallback { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; height: 100%; padding: 40px; text-align: center; color: var(--muted); }
     .files-preview-fallback svg { width: 44px; height: 44px; color: var(--muted); }
     .files-preview-fallback p { margin: 0; font-size: 0.95rem; }
+    .files-preview-loading { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--muted); font-size: 0.95rem; }
+    .files-preview-docx { height: 100%; overflow: auto; padding: 24px 16px; }
+    .files-preview-docx .docx-wrapper { background: transparent; padding: 0; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+    .files-preview-docx .docx-wrapper > section.docx { background: #fff; box-shadow: 0 2px 12px rgba(10, 37, 64, 0.12); margin: 0; }
     @media (max-width: 720px) {
       .files-col-modified, .files-col-size { display: none; }
       .files-toolbar { flex-direction: column; align-items: stretch; }
@@ -429,6 +436,47 @@ def files_page_js() -> str:
           previewDialog.close();
         }
 
+        function fallbackHtml(message) {
+          return '<div class="files-preview-fallback">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>' +
+            '<p>' + message + '</p>' +
+            '<p>Use Download to open it.</p>' +
+            '</div>';
+        }
+
+        let previewToken = 0;
+
+        function renderDocx(previewUrl, name) {
+          const token = ++previewToken;
+          bodyEl.innerHTML = '<div class="files-preview-loading">Loading preview…</div>';
+          if (!previewUrl || typeof docx === 'undefined' || !docx.renderAsync) {
+            bodyEl.innerHTML = fallbackHtml("This file type can't be previewed in the browser.");
+            return;
+          }
+          fetch(previewUrl, { credentials: 'same-origin' })
+            .then((resp) => {
+              if (!resp.ok) throw new Error('HTTP ' + resp.status);
+              return resp.blob();
+            })
+            .then((blob) => {
+              if (token !== previewToken) return;
+              const container = document.createElement('div');
+              container.className = 'files-preview-docx';
+              bodyEl.innerHTML = '';
+              bodyEl.appendChild(container);
+              return docx.renderAsync(blob, container, null, {
+                className: 'docx',
+                inWrapper: true,
+                ignoreWidth: false,
+                ignoreHeight: false,
+              });
+            })
+            .catch(() => {
+              if (token !== previewToken) return;
+              bodyEl.innerHTML = fallbackHtml("This document couldn't be previewed in the browser.");
+            });
+        }
+
         function openPreview(btn) {
           const name = btn.dataset.fileName || 'Document';
           const previewUrl = btn.dataset.previewUrl;
@@ -442,13 +490,10 @@ def files_page_js() -> str:
             frame.src = previewUrl;
             frame.title = name;
             bodyEl.appendChild(frame);
+          } else if (fileType === 'docx') {
+            renderDocx(previewUrl, name);
           } else {
-            bodyEl.innerHTML =
-              '<div class="files-preview-fallback">' +
-              '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>' +
-              '<p>This file type can\\'t be previewed in the browser.</p>' +
-              '<p>Use Download to open it.</p>' +
-              '</div>';
+            bodyEl.innerHTML = fallbackHtml("This file type can't be previewed in the browser.");
           }
           previewDialog.showModal();
         }
@@ -460,7 +505,7 @@ def files_page_js() -> str:
         previewDialog.addEventListener('click', (event) => {
           if (event.target === previewDialog) closePreview();
         });
-        previewDialog.addEventListener('close', () => { bodyEl.innerHTML = ''; });
+        previewDialog.addEventListener('close', () => { previewToken++; bodyEl.innerHTML = ''; });
       }
 
       const dialog = document.getElementById('newFolderDialog');
@@ -727,7 +772,12 @@ def render_files_page(
         active_nav="files",
         page_title="Files",
         page_subtitle=f"{label} · Shared documents",
-        content_html=body + f"<script>{files_page_js()}</script>",
+        content_html=(
+            body
+            + '<script src="/static/vendor/jszip.min.js"></script>'
+            + '<script src="/static/vendor/docx-preview.min.js"></script>'
+            + f"<script>{files_page_js()}</script>"
+        ),
         access_key=access_key,
         use_session=use_session,
         session_email=session_email,
