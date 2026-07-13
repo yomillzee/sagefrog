@@ -10,6 +10,28 @@ from connectors.base import ConnectorHandler, SyncResult, register
 _log = logging.getLogger(__name__)
 
 
+def _friendly_sync_error(exc: Exception, customer_id: str) -> str:
+    """Translate opaque Google Ads API failures into an actionable message.
+
+    A suspended, cancelled, or not-yet-billed Google Ads account returns a raw
+    gRPC ``PERMISSION_DENIED`` ("The caller does not have permission") when
+    queried — even when the account is correctly linked to the manager (login)
+    account. That verbatim ``_InactiveRpcError`` string is unreadable and
+    misleadingly points at a credentials/config problem, so surface the likely
+    account-side cause instead. Non-permission errors fall through unchanged.
+    """
+    raw = str(exc)
+    low = raw.lower()
+    if "permission_denied" in low or "caller does not have permission" in low:
+        return (
+            f"Google Ads account {customer_id} is not accessible (PERMISSION_DENIED). "
+            "It's linked to your manager account, so this usually means the account "
+            "itself is suspended, cancelled, or has no active billing set up. Confirm "
+            "it's active with billing enabled in Google Ads, then re-sync."
+        )
+    return raw[:500]
+
+
 class GoogleAdsConnector(ConnectorHandler):
     connector_type = "google_ads"
     display_name = "Google Ads"
@@ -94,7 +116,7 @@ class GoogleAdsConnector(ConnectorHandler):
             )
         except Exception as exc:
             _log.warning("Google Ads sync failed [%s]: %s", client_slug, exc)
-            return SyncResult(rows_loaded=0, error=str(exc)[:500])
+            return SyncResult(rows_loaded=0, error=_friendly_sync_error(exc, customer_id))
 
 
 register(GoogleAdsConnector())
