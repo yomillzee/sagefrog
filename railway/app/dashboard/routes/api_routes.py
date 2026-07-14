@@ -26,6 +26,14 @@ from dashboard.routes.helpers import (
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# The Nixon portal is reachable under two registered slugs: "nixon-bq-test" (the
+# dashboard the picker lists and that per-client access grants target) and
+# "nixon" (the legacy connector-config / marketing key its routes read under).
+# Access to either must open it — otherwise a standard user granted only
+# "nixon-bq-test" sees "Nixon Medical" in their picker but 403s on every route
+# here, which all authed against the bare "nixon" slug.
+_NIXON_ACCESS_SLUGS = ("nixon-bq-test", "nixon")
+
 # Trailing window for the branded/target keyword weekly-position TREND chart
 # (~13 weeks). Independent of the dashboard's selected date range so a short
 # range like Last 7d still shows a multi-week "movement over time" line.
@@ -142,7 +150,7 @@ def _cached_bq_read(source: str, payload: dict, *, ttl_seconds: int, fetch) -> d
     include_in_schema=False,
 )
 def nixon_bigquery_test_dashboard(request: Request):
-    auth = web_auth.authenticate_dashboard(request, client_slug="nixon")
+    auth = web_auth.authenticate_dashboard_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     if isinstance(auth, RedirectResponse):
         return auth
     return HTMLResponse(render_bigquery_dashboard_page(
@@ -157,7 +165,7 @@ def nixon_bigquery_test_dashboard(request: Request):
     include_in_schema=False,
 )
 def nixon_analytics_dashboard(request: Request):
-    auth = web_auth.authenticate_dashboard(request, client_slug="nixon")
+    auth = web_auth.authenticate_dashboard_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     if isinstance(auth, RedirectResponse):
         return auth
     return HTMLResponse(render_analytics_page(**penn_html_session_kwargs(auth)))
@@ -169,7 +177,7 @@ def nixon_analytics_dashboard(request: Request):
     include_in_schema=False,
 )
 def nixon_gtm_dashboard(request: Request):
-    auth = web_auth.authenticate_dashboard(request, client_slug="nixon")
+    auth = web_auth.authenticate_dashboard_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     if isinstance(auth, RedirectResponse):
         return auth
     kw = penn_html_session_kwargs(auth)
@@ -239,7 +247,7 @@ def nixon_bq_settings_page(
     saved: str | None = None,
     bq_error: str | None = None,
 ):
-    auth = web_auth.authenticate_dashboard(request, client_slug="nixon")
+    auth = web_auth.authenticate_dashboard_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     if isinstance(auth, RedirectResponse):
         return auth
     html_kw = penn_html_session_kwargs(auth)
@@ -296,7 +304,7 @@ def nixon_marketing(
         description="Number of top campaigns by spend to return.",
     ),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -331,7 +339,7 @@ def client_summary(
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     if normalized == "nixon":
-        web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+        web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
         start, end = _resolve_marketing_dates(start_date, end_date)
         try:
             return _cached_bq_read(
@@ -372,7 +380,7 @@ def nixon_marketing_health(
         description="Maximum mart_health rows to return.",
     ),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     try:
         return _cached_bq_read(
             "nixon.marketing.health", {"limit": limit}, ttl_seconds=900,
@@ -398,7 +406,7 @@ def client_health(
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     if normalized == "nixon":
-        web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+        web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
         try:
             return _cached_bq_read(
                 "nixon.marketing.health", {"limit": limit}, ttl_seconds=900,
@@ -429,7 +437,7 @@ def nixon_google_ads_keywords(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -459,7 +467,7 @@ def nixon_google_ads_explorer(
         description="Inclusive end date. Defaults to today.",
     ),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -490,7 +498,7 @@ def nixon_gsc_summary(
         description="Inclusive end date. Defaults to today.",
     ),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         import bq_gsc_service
@@ -519,7 +527,7 @@ def nixon_gsc_keyword_matches(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     term_list = [t.strip() for t in terms.split(",") if t.strip()]
     exclude_list = [t.strip() for t in exclude.split(",") if t.strip()]
     start, end = _resolve_marketing_dates(start_date, end_date)
@@ -562,7 +570,7 @@ def nixon_gsc_keyword_matches(
 def nixon_semrush_summary(
     request: Request,
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     try:
         import bq_semrush_service
         # SEMrush routes by client_slug; the Nixon dashboard's BQ client is
@@ -588,7 +596,7 @@ def nixon_pagespeed_summary(
     request: Request,
     strategy: str = "desktop",
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     strat = (strategy or "desktop").strip().lower()
     if strat not in ("desktop", "mobile"):
         strat = "desktop"
@@ -623,7 +631,7 @@ def nixon_linkedin_explorer(
         description="Inclusive end date. Defaults to today.",
     ),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -649,7 +657,7 @@ def nixon_meta_debug_insights(
     level: str = Query(default="campaign", description="campaign | adset | ad"),
     days: int = Query(default=7, description="How many trailing days to probe"),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     import oauth_store, meta_service
     from datetime import date, timedelta
     from meta_auth import load_meta_env
@@ -727,7 +735,7 @@ def nixon_meta_explorer(
         description="Inclusive end date. Defaults to today.",
     ),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -752,7 +760,7 @@ def nixon_pages_top(
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -774,7 +782,7 @@ def nixon_pages_sources(
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -796,7 +804,7 @@ def nixon_ai_traffic_daily(
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -818,7 +826,7 @@ def nixon_traffic_acquisition(
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -840,7 +848,7 @@ def nixon_device_split(
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -862,7 +870,7 @@ def nixon_landing_pages(
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -884,7 +892,7 @@ def nixon_landing_page_events(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -903,7 +911,7 @@ def nixon_top_pages_key_events(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -921,7 +929,7 @@ def nixon_traffic_key_events(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -939,7 +947,7 @@ def nixon_user_acq_key_events(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -957,7 +965,7 @@ def nixon_conversion_events(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -976,7 +984,7 @@ def nixon_user_acquisition(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -995,7 +1003,7 @@ def nixon_demographics(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -1806,7 +1814,7 @@ def nixon_backfill_linkedin(
     """Run the 180-day onboarding ingestion for Nixon (writes raw_linkedin_ads +
     rebuilds the marts). Authed by the signed-in dashboard session or an API key
     — the same gate as the read endpoints — so no cron secret is needed."""
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     try:
         import dashboard_service
 
@@ -1839,7 +1847,7 @@ def nixon_refresh(
 ) -> dict:
     """Pull the last 30 days into BigQuery for Nixon (the rolling refresh). Same
     auth as the read endpoints — no cron secret needed."""
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     try:
         import dashboard_service
 
@@ -1932,7 +1940,7 @@ def client_bq_verify(
 def debug_bigquery_identity(
     request: Request,
 ) -> dict:
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     try:
         client = bigquery_service.build_client(project_id="nixon-medical")
         credentials = getattr(client, "_credentials", None) or getattr(client, "credentials", None)
