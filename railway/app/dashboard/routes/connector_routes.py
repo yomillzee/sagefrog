@@ -357,9 +357,9 @@ async def connector_test(
         return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
 
     try:
-        accounts = handler.list_accounts(client_slug=slug)
+        label = handler.test_connection(client_slug=slug)
         config = connector_config_store.get_config(slug, ctype)
-        acct_name = (config and config.source_account_name) or (accounts[0]["name"] if accounts else "")
+        acct_name = (config and config.source_account_name) or label
         return JSONResponse({
             "ok": True,
             "message": f"Connection verified. Account: {acct_name}" if acct_name else "Connection verified.",

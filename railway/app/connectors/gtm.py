@@ -27,6 +27,26 @@ class GTMConnector(ConnectorHandler):
             raise RuntimeError("No google_tag_manager token found for this client.")
         return gtm_service.list_containers(refresh_token)
 
+    def test_connection(self, *, client_slug: str) -> str:
+        # list_containers fans out over every account + container the token can
+        # see, which trips GTM's tight per-minute quota (429) for agency-wide
+        # tokens. When a container is already selected, verify with a single
+        # live-version read (one API call) instead.
+        cfg = connector_config_store.get_config(client_slug, "gtm")
+        parts = (cfg.source_account_id or "").split(":") if cfg else []
+        if len(parts) == 2 and all(parts):
+            refresh_token = oauth_store.get_refresh_token(
+                "google_tag_manager", client_slug=client_slug
+            )
+            if not refresh_token:
+                raise RuntimeError("No google_tag_manager token found for this client.")
+            gtm_service.get_live_tags(
+                client_slug, parts[0], parts[1], refresh_token, force_refresh=True
+            )
+            return cfg.source_account_name or ""
+        # No container configured yet — fall back to the full account listing.
+        return super().test_connection(client_slug=client_slug)
+
     def run_sync(self, *, client_slug: str, date_range: str = "LAST_30_DAYS") -> SyncResult:
         cfg = connector_config_store.get_config(client_slug, "gtm")
         if not cfg or not cfg.source_account_id:

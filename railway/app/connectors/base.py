@@ -56,6 +56,19 @@ class ConnectorHandler(ABC):
         """Trigger a source-specific sync run for this platform."""
         ...
 
+    def test_connection(self, *, client_slug: str) -> str:
+        """Verify the connection is live; return a short label (e.g. account name).
+
+        Raises on failure so the wizard's Test connection step can surface the
+        error. The default lists the authorised accounts and uses the first
+        name. Connectors whose account-listing API fans out over many objects
+        (e.g. GTM, which lists every account and its containers and trips
+        Google's tight per-minute quota) should override this with a cheaper
+        single-target check against the already-configured account.
+        """
+        accounts = self.list_accounts(client_slug=client_slug)
+        return accounts[0]["name"] if accounts else ""
+
 
 # Global registry
 _REGISTRY: dict[str, ConnectorHandler] = {}
