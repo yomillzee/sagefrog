@@ -610,16 +610,21 @@ def render_penn_html(
     ga4_campaign_metrics: dict[str, dict[str, dict[str, Any]]] = {}
     ga4_adset_metrics: dict[str, dict[str, dict[str, Any]]] = {}
     ga4_ad_metrics: dict[str, dict[str, dict[str, Any]]] = {}
+    # GA4 Data API paid-entity mart (id-based, single-pipeline). Preferred over the
+    # native event-export attribution when populated; empty falls back to the export.
+    ga4_paid_platforms = (snapshot.get("ga4_paid_entity") or {}).get("platforms") or {}
     for platform in ("google", "linkedin", "meta"):
         platform_bd = breakdowns.get(platform) or {}
         campaigns = platform_bd.get("campaign") or []
         adsets = platform_bd.get("adset") or []
         ads = platform_bd.get("ad") or []
         report = ga4_platforms.get(platform) or {}
-        entity_rows = report.get("by_entity") or []
+        mart = ga4_paid_platforms.get(platform) or {}
+        by_campaign = mart.get("by_campaign") or report.get("by_campaign") or []
+        entity_rows = mart.get("by_entity") or report.get("by_entity") or []
         ga4_campaign_metrics[platform] = (
-            build_ga4_campaign_index(report.get("by_campaign") or [], campaigns)
-            if campaigns and report
+            build_ga4_campaign_index(by_campaign, campaigns)
+            if campaigns and by_campaign
             else {}
         )
         # Ad set / ad verified conversions join by exact Meta object id (utm_term /
