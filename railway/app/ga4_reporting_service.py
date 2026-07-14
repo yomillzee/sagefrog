@@ -496,6 +496,51 @@ def fetch_paid_google_entity_daily(
     return out
 
 
+def fetch_paid_google_key_event_daily(
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
+) -> list[dict[str, Any]]:
+    """Google Ads key events split by event name, per campaign (native GA4 link).
+
+    Companion to fetch_paid_google_entity_daily, adding eventName so the
+    Verified conv. column's per-key-event selector filters Google campaigns too
+    (not just Meta). Only key_events > 0 rows kept, so cardinality stays small.
+    """
+    try:
+        rows = _run_report(
+            property_id,
+            dimensions=[
+                "date", "sessionGoogleAdsCampaignId", "sessionGoogleAdsCampaignName", "eventName",
+            ],
+            metrics=["keyEvents"],
+            start=start, end=end, access_token=access_token,
+        )
+    except RuntimeError as exc:
+        _log.warning(
+            "GA4 google_key_event_daily skipped — API rejected dimension/metric combination "
+            "or returned error. Table will be empty for this sync. Error: %s", exc,
+        )
+        return []
+    synced_at = _now()
+    out = []
+    for r in rows:
+        campaign_id = r.get("sessionGoogleAdsCampaignId") or ""
+        key_events = int(float(r.get("keyEvents") or 0))
+        if campaign_id in ("", "(not set)") or key_events <= 0:
+            continue
+        out.append({
+            "client_key": client_key,
+            "property_id": property_id,
+            "date": _parse_date(r.get("date", "")),
+            "campaign_id": campaign_id,
+            "campaign_name": r.get("sessionGoogleAdsCampaignName") or "(not set)",
+            "event_name": r.get("eventName") or "(not set)",
+            "key_events": key_events,
+            "synced_at": synced_at,
+        })
+    return out
+
+
 def fetch_paid_key_event_daily(
     property_id: str, start: str, end: str, access_token: str,
     *, client_key: str = "",
@@ -751,6 +796,15 @@ GA4_REPORTS = [
         "grain": ["date", "campaign_id"],
         "required": False,
         "notes": "Google Ads verified conversions per campaign via GA4's native Google Ads link (no URL tagging). Joins to explorer_google_ads_daily by campaign id. Campaign grain — Display/PMAX/Demand Gen have no reliable per-ad ids.",
+    },
+    {
+        "report_key": "paid_google_key_event",
+        "table_name": "ga4_google_key_event_daily",
+        "dimensions": ["date", "sessionGoogleAdsCampaignId", "sessionGoogleAdsCampaignName", "eventName"],
+        "metrics": ["keyEvents"],
+        "grain": ["date", "campaign_id", "event_name"],
+        "required": False,
+        "notes": "Google Ads key events split by event name, per campaign. Powers the per-key-event selector for Google in the Verified conv. column. Only key_events > 0 kept.",
     },
     {
         "report_key": "paid_key_event",
