@@ -51,6 +51,18 @@ def route(
         _route_ctx.reset(token)
 
 
+def default_destination() -> tuple[str, str]:
+    """Nixon's built-in marketing-mart (project_id, dataset_id).
+
+    Nixon predates DB-stored BigQuery routing, so its mart destination lives
+    here as the module defaults rather than in its client_dashboard_config row.
+    Exposed so other read paths (e.g. the HQ budget overview) can resolve
+    Nixon's spend the same way the dashboard does, instead of skipping it for
+    having no project on its config row.
+    """
+    return _DEFAULT_PROJECT_ID, _DEFAULT_DATASET_ID
+
+
 def _ctx() -> dict:
     return _route_ctx.get() or {}
 
