@@ -1951,6 +1951,7 @@ def render_bigquery_dashboard_page(
     let verifiedByAdId = {{}};
     let verifiedByAdIdEvent = {{}};
     let verifiedByGoogleCampaignId = {{}};
+    let verifiedByGoogleCampaignIdEvent = {{}};
     let keyEventList = [];
     const KE_STORAGE_KEY = 'ce_verified_ke_{api_client_key}';
     let selectedKeyEvent = (function(){{ try {{ return localStorage.getItem(KE_STORAGE_KEY) || '__all__'; }} catch(e) {{ return '__all__'; }} }})();
@@ -2074,9 +2075,12 @@ def render_bigquery_dashboard_page(
         // to the campaign node — sub-levels stay "—" (no reliable per-ad id).
         if (camp.platform==='google') {{
           if (gHasData && camp.campaign_id) {{
-            const gv=num(verifiedByGoogleCampaignId[String(camp.campaign_id)]);
+            const cid=String(camp.campaign_id);
+            const gv=num(verifiedByGoogleCampaignId[cid]);
             camp.metrics.verified=gv;
-            camp.metrics.verified_sel=gv;
+            camp.metrics.verified_sel=(selectedKeyEvent==='__all__')
+              ? gv
+              : num((verifiedByGoogleCampaignIdEvent[cid]||{{}})[selectedKeyEvent]);
           }} else {{
             camp.metrics._verifiedNa=true;
           }}
@@ -2428,7 +2432,10 @@ def render_bigquery_dashboard_page(
       verifiedByAdId=(ver&&ver.by_ad_id)?ver.by_ad_id:{{}};
       verifiedByAdIdEvent=(ver&&ver.by_ad_id_event)?ver.by_ad_id_event:{{}};
       verifiedByGoogleCampaignId=(gver&&gver.by_campaign_id)?gver.by_campaign_id:{{}};
-      keyEventList=(ver&&ver.events)?ver.events:[];
+      verifiedByGoogleCampaignIdEvent=(gver&&gver.by_campaign_id_event)?gver.by_campaign_id_event:{{}};
+      const metaEvents=(ver&&ver.events)?ver.events:[];
+      const googleEvents=(gver&&gver.events)?gver.events:[];
+      keyEventList=[...new Set([...metaEvents,...googleEvents])];
       if (selectedKeyEvent!=='__all__' && keyEventList.indexOf(selectedKeyEvent)<0) selectedKeyEvent='__all__';
       explorerRows=normalizeExplorerRows(g,l,m);
       applyVerifiedSelection();

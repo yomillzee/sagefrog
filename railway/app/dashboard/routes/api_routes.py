@@ -760,6 +760,15 @@ def _merge_verified(totals: dict, per_event: dict) -> dict:
     }
 
 
+def _merge_google_verified(totals: dict, per_event: dict) -> dict:
+    """Combine Google by_campaign_id totals with the per-key-event breakdown."""
+    return {
+        **totals,
+        "events": per_event.get("events", []),
+        "by_campaign_id_event": per_event.get("by_campaign_id_event", {}),
+    }
+
+
 @router.get(
     "/api/clients/nixon/meta/verified-conversions",
     summary="Nixon GA4-verified conversions per Meta ad id from BigQuery",
@@ -801,8 +810,9 @@ def nixon_google_verified_conversions(
             "nixon.explorer.google_verified",
             {"start": start.isoformat(), "end": end.isoformat()},
             ttl_seconds=900,
-            fetch=lambda: marketing_service.fetch_google_verified_conversions(
-                start_date=start, end_date=end,
+            fetch=lambda: _merge_google_verified(
+                marketing_service.fetch_google_verified_conversions(start_date=start, end_date=end),
+                marketing_service.fetch_google_verified_key_events(start_date=start, end_date=end),
             ),
         )
     except Exception as exc:
@@ -1355,8 +1365,9 @@ def client_google_verified_conversions(
                 f"{normalized}.explorer.google_verified",
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
-                fetch=lambda: marketing_service.fetch_google_verified_conversions(
-                    start_date=start, end_date=end,
+                fetch=lambda: _merge_google_verified(
+                    marketing_service.fetch_google_verified_conversions(start_date=start, end_date=end),
+                    marketing_service.fetch_google_verified_key_events(start_date=start, end_date=end),
                 ),
             )
     except Exception as exc:
