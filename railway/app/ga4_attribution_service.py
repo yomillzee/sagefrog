@@ -101,6 +101,8 @@ def _attribution_base_sql(table: str, suffix_start: str, suffix_end: str) -> str
         collected_traffic_source.manual_medium AS manual_medium,
         collected_traffic_source.manual_campaign_name AS manual_campaign_name,
         collected_traffic_source.manual_campaign_id AS manual_campaign_id,
+        collected_traffic_source.manual_term AS manual_term,
+        collected_traffic_source.manual_content AS manual_content,
         session_traffic_source_last_click.google_ads_campaign.campaign_id AS linked_campaign_id,
         session_traffic_source_last_click.google_ads_campaign.campaign_name AS linked_campaign_name,
         session_traffic_source_last_click.manual_campaign.campaign_id AS click_campaign_id,
@@ -127,6 +129,8 @@ def _attribution_base_sql(table: str, suffix_start: str, suffix_end: str) -> str
         click_campaign_id,
         click_campaign_name,
         traffic_campaign_name,
+        manual_term,
+        manual_content,
         REGEXP_EXTRACT(page_location, r'[?&]fbclid=([^&]+)') AS fbclid,
         REGEXP_EXTRACT(page_location, r'[?&]li_fat_id=([^&]+)') AS li_fat_id,
         LOWER(COALESCE(source, '')) AS src,
@@ -202,7 +206,12 @@ def _attribution_base_sql(table: str, suffix_start: str, suffix_end: str) -> str
             NULLIF(traffic_campaign_name, '(not set)'),
             ''
           )
-        END AS campaign_name
+        END AS campaign_name,
+        -- Meta dynamic URL params land ad set id in manual_term (utm_term) and
+        -- ad id in manual_content (utm_content). Both are real Meta object ids
+        -- that join by exact id to the adset/ad marts. Empty when untagged.
+        COALESCE(NULLIF(manual_term, '(not set)'), '') AS adset_id,
+        COALESCE(NULLIF(manual_content, '(not set)'), '') AS ad_id
       FROM raw_events
       WHERE event_name = 'session_start'
     ),
@@ -232,6 +241,8 @@ def _attribution_base_sql(table: str, suffix_start: str, suffix_end: str) -> str
         s.attribution_tier,
         s.campaign_id,
         s.campaign_name,
+        s.adset_id,
+        s.ad_id,
         s.gclid,
         s.fbclid,
         s.li_fat_id,
@@ -253,6 +264,8 @@ def _attribution_base_sql(table: str, suffix_start: str, suffix_end: str) -> str
         s.attribution_tier,
         s.campaign_id,
         s.campaign_name,
+        s.adset_id,
+        s.ad_id,
         s.gclid,
         s.fbclid,
         s.li_fat_id
@@ -318,6 +331,30 @@ def fetch_paid_media_attribution(
     """
     )
 
+    entity_sql = (
+        base
+        + """
+    SELECT
+      platform,
+      COALESCE(NULLIF(campaign_id, '(not set)'), '') AS campaign_id,
+      COALESCE(NULLIF(campaign_name, '(not set)'), '') AS campaign_name,
+      adset_id,
+      ad_id,
+      COUNT(*) AS sessions,
+      COUNTIF(
+        max_engagement_time_msec >= 10000
+        OR page_views >= 2
+        OR key_events >= 1
+        OR user_engagement_events >= 1
+      ) AS engaged_sessions,
+      SUM(page_views) AS page_views,
+      SUM(key_events) AS key_events
+    FROM session_rollups
+    GROUP BY platform, campaign_id, campaign_name, adset_id, ad_id
+    ORDER BY platform, sessions DESC
+    """
+    )
+
     events_sql = (
         base
         + f"""
@@ -339,6 +376,7 @@ def fetch_paid_media_attribution(
 
     daily_rows = run_query(daily_sql, max_rows=10000, project_id=target.bq_project_id, credentials_env=target.credentials_env)
     campaign_rows = run_query(campaign_sql, max_rows=5000, project_id=target.bq_project_id, credentials_env=target.credentials_env)
+    entity_rows = run_query(entity_sql, max_rows=20000, project_id=target.bq_project_id, credentials_env=target.credentials_env)
     top_event_rows = run_query(events_sql, max_rows=200, project_id=target.bq_project_id, credentials_env=target.credentials_env)
 
     return _build_multi_platform_report(
@@ -347,6 +385,7 @@ def fetch_paid_media_attribution(
         target=target,
         daily_rows=daily_rows,
         campaign_rows=campaign_rows,
+        entity_rows=entity_rows,
         top_event_rows=top_event_rows,
     )
 
@@ -364,6 +403,7 @@ def _build_platform_report(
     daily_rows: list[dict[str, Any]],
     campaign_rows: list[dict[str, Any]],
     top_event_rows: list[dict[str, Any]],
+    entity_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     tier_totals = _empty_tier_totals(platform)
     by_date: dict[str, dict[str, Any]] = {}
@@ -471,6 +511,20 @@ def _build_platform_report(
         },
         "daily": daily_out,
         "by_campaign": campaigns_out,
+        "by_entity": [
+            {
+                "campaign_id": str(row.get("campaign_id") or ""),
+                "campaign_name": str(row.get("campaign_name") or ""),
+                "adset_id": str(row.get("adset_id") or ""),
+                "ad_id": str(row.get("ad_id") or ""),
+                "sessions": int(row.get("sessions") or 0),
+                "engaged_sessions": int(row.get("engaged_sessions") or 0),
+                "page_views": int(row.get("page_views") or 0),
+                "key_events": int(row.get("key_events") or 0),
+            }
+            for row in (entity_rows or [])
+            if str(row.get("platform") or "") == platform
+        ],
         "top_events": [
             {
                 "event_name": str(r.get("event_name") or ""),
@@ -490,6 +544,7 @@ def _build_multi_platform_report(
     daily_rows: list[dict[str, Any]],
     campaign_rows: list[dict[str, Any]],
     top_event_rows: list[dict[str, Any]],
+    entity_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     platforms: dict[str, dict[str, Any]] = {}
     for platform in ("google", "linkedin", "meta"):
@@ -500,6 +555,7 @@ def _build_multi_platform_report(
             daily_rows=daily_rows,
             campaign_rows=campaign_rows,
             top_event_rows=top_event_rows,
+            entity_rows=entity_rows,
         )
 
     combined_by_date: dict[str, dict[str, int]] = {}
@@ -583,6 +639,51 @@ def build_ga4_campaign_index(
         bucket["key_events"] += int(row.get("key_events") or 0)
         bucket["page_views"] += int(row.get("page_views") or 0)
 
+    for bucket in index.values():
+        sessions = int(bucket["sessions"])
+        engaged = int(bucket["engaged_sessions"])
+        bucket["engagement_rate"] = round(engaged / sessions, 4) if sessions else 0.0
+    return index
+
+
+_LEVEL_ID_FIELD: dict[str, str] = {
+    "campaign": "campaign_id",
+    "adset": "adset_id",
+    "ad": "ad_id",
+}
+
+
+def build_ga4_level_index(
+    ga4_entity_rows: list[dict[str, Any]],
+    ad_entities: list[dict[str, Any]],
+    *,
+    level: str,
+) -> dict[str, dict[str, Any]]:
+    """Map an ad-platform entity id -> aggregated GA4 onsite metrics, matched by exact id.
+
+    Works at campaign / adset / ad level using the per-(campaign,adset,ad) GA4 rows
+    (report["by_entity"]). Matching is id-only: Meta stamps the real campaign/adset/ad
+    object ids into utm_id/utm_term/utm_content, so the GA4 id joins straight to the
+    ad-platform entity id — no fragile name matching. Rows whose id has no matching
+    ad entity (untagged / stale) are dropped so we never invent attribution.
+    """
+    id_field = _LEVEL_ID_FIELD.get(level)
+    if not id_field:
+        raise ValueError(f"Unknown level '{level}'. Expected campaign/adset/ad.")
+    known_ids = {str(e.get("id") or "").strip() for e in ad_entities if e.get("id")}
+    index: dict[str, dict[str, Any]] = {}
+    for row in ga4_entity_rows:
+        eid = str(row.get(id_field) or "").strip()
+        if not eid or eid not in known_ids:
+            continue
+        bucket = index.setdefault(
+            eid,
+            {"sessions": 0, "engaged_sessions": 0, "key_events": 0, "page_views": 0},
+        )
+        bucket["sessions"] += int(row.get("sessions") or 0)
+        bucket["engaged_sessions"] += int(row.get("engaged_sessions") or 0)
+        bucket["key_events"] += int(row.get("key_events") or 0)
+        bucket["page_views"] += int(row.get("page_views") or 0)
     for bucket in index.values():
         sessions = int(bucket["sessions"])
         engaged = int(bucket["engaged_sessions"])
