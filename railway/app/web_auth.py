@@ -289,6 +289,43 @@ def authenticate_dashboard_api(
     raise HTTPException(status_code=401, detail="Sign in required.")
 
 
+def authenticate_dashboard_any(
+    request: Request,
+    *,
+    client_slugs: tuple[str, ...],
+) -> DashboardAuth | RedirectResponse:
+    """Like authenticate_dashboard, but access to ANY of the given slugs opens
+    the dashboard.
+
+    Used where one portal is reachable under more than one registered slug —
+    e.g. Nixon's dashboard is listed and granted under "nixon-bq-test" but its
+    routes historically auth under the "nixon" connector/marketing key. Checking
+    a single slug there wrongly 403s a user granted only the other one.
+    """
+    _require_session_enabled()
+    user = get_current_user(request)
+    if user and any(user.can_access_client(slug) for slug in client_slugs):
+        return DashboardAuth(access_key=None, use_session=True, user=user)
+    if user:
+        raise HTTPException(status_code=403, detail="You do not have access to this dashboard.")
+    return redirect_to_login(request)
+
+
+def authenticate_dashboard_api_any(
+    request: Request,
+    *,
+    client_slugs: tuple[str, ...],
+) -> DashboardAuth:
+    """Same as authenticate_dashboard_any but JSON-friendly errors (no redirect)."""
+    _require_session_enabled()
+    user = get_current_user(request)
+    if user and any(user.can_access_client(slug) for slug in client_slugs):
+        return DashboardAuth(access_key=None, use_session=True, user=user)
+    if user:
+        raise HTTPException(status_code=403, detail="You do not have access to this dashboard.")
+    raise HTTPException(status_code=401, detail="Sign in required.")
+
+
 def _esc(text: str) -> str:
     return html.escape(text, quote=True)
 
