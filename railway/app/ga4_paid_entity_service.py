@@ -112,6 +112,93 @@ def shape_paid_entity_rows(raw_rows: list[dict[str, Any]]) -> dict[str, dict[str
     }
 
 
+_OTHER_TOKEN = "(other)"
+
+
+def summarize_cardinality(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Health summary for ga4_paid_entity_daily: how much traffic is unattributable.
+
+    GA4's Data API buckets overflow past its cardinality cap into a literal
+    "(other)" dimension value; rows with no ids at all are simply untagged. Both
+    are conversions we can't pin to a specific entity, so surface their share to
+    decide whether the Data API path is good enough or the account needs the
+    event export.
+    """
+    total_sessions = total_key_events = 0
+    other_sessions = other_key_events = 0
+    untagged_sessions = 0
+    campaigns: set[str] = set()
+    adsets: set[str] = set()
+    ads: set[str] = set()
+    for r in rows:
+        cid = str(r.get("campaign_id") or "").strip()
+        adset = str(r.get("manual_term") or "").strip()
+        ad = str(r.get("manual_ad_content") or "").strip()
+        cname = str(r.get("campaign_name") or "").strip()
+        sessions = int(r.get("sessions") or 0)
+        key_events = int(r.get("key_events") or 0)
+        total_sessions += sessions
+        total_key_events += key_events
+        if _OTHER_TOKEN in (cid, adset, ad, cname):
+            other_sessions += sessions
+            other_key_events += key_events
+        elif not cid and not adset and not ad:
+            untagged_sessions += sessions
+        if cid and cid != _OTHER_TOKEN:
+            campaigns.add(cid)
+        if adset and adset != _OTHER_TOKEN:
+            adsets.add(adset)
+        if ad and ad != _OTHER_TOKEN:
+            ads.add(ad)
+    return {
+        "rows": len(rows),
+        "total_sessions": total_sessions,
+        "total_key_events": total_key_events,
+        "other_sessions": other_sessions,
+        "other_key_events": other_key_events,
+        "other_share": round(other_sessions / total_sessions, 4) if total_sessions else 0.0,
+        "untagged_sessions": untagged_sessions,
+        "distinct_campaigns": len(campaigns),
+        "distinct_adsets": len(adsets),
+        "distinct_ads": len(ads),
+    }
+
+
+def fetch_paid_entity_health(
+    *,
+    client_key: str | None = None,
+    date_range: str = "LAST_30_DAYS",
+    target: Ga4ClientTarget | None = None,
+    raw_dataset: str = _DEFAULT_RAW_DATASET,
+) -> dict[str, Any]:
+    """One-glance cardinality/coverage check for ga4_paid_entity_daily per client."""
+    target = target or resolve_target(client_key=client_key)
+    s, e, _preset = resolve_date_range(date_range)
+    table = f"`{target.bq_project_id}.{raw_dataset}.{_TABLE}`"
+    where = [f"date BETWEEN DATE '{s.isoformat()}' AND DATE '{e.isoformat()}'"]
+    if target.client_key:
+        where.append(f"client_key = '{target.client_key}'")
+    elif target.account_id:
+        where.append(f"property_id = '{target.account_id}'")
+    sql = f"""
+    SELECT
+      campaign_id, campaign_name, manual_term, manual_ad_content,
+      SUM(sessions) AS sessions, SUM(key_events) AS key_events
+    FROM {table}
+    WHERE {" AND ".join(where)}
+    GROUP BY 1, 2, 3, 4
+    """
+    rows = run_query(
+        sql,
+        project_id=target.bq_project_id,
+        credentials_env=target.credentials_env,
+        max_rows=50000,
+    )
+    summary = summarize_cardinality(rows)
+    summary["date_range"] = {"start": s.isoformat(), "end": e.isoformat()}
+    return summary
+
+
 def fetch_paid_entity_report(
     *,
     client_key: str | None = None,

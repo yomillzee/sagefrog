@@ -81,5 +81,34 @@ class ShapeTest(unittest.TestCase):
         self.assertEqual(svc.shape_paid_entity_rows(raw), {})
 
 
+class CardinalityHealthTest(unittest.TestCase):
+    def test_other_and_untagged_shares(self):
+        rows = [
+            # clean, fully attributed
+            {"campaign_id": "C1", "campaign_name": "HM", "manual_term": "AS1",
+             "manual_ad_content": "AD1", "sessions": 100, "key_events": 8},
+            # cardinality overflow -> (other)
+            {"campaign_id": "C2", "campaign_name": "X", "manual_term": "(other)",
+             "manual_ad_content": "(other)", "sessions": 40, "key_events": 3},
+            # untagged (no ids at all)
+            {"campaign_id": "", "campaign_name": "", "manual_term": "",
+             "manual_ad_content": "", "sessions": 10, "key_events": 1},
+        ]
+        s = svc.summarize_cardinality(rows)
+        self.assertEqual(s["total_sessions"], 150)
+        self.assertEqual(s["other_sessions"], 40)
+        self.assertEqual(s["other_key_events"], 3)
+        self.assertEqual(s["untagged_sessions"], 10)
+        self.assertEqual(s["other_share"], round(40 / 150, 4))
+        self.assertEqual(s["distinct_campaigns"], 2)  # C1, C2 (not the empty one)
+        self.assertEqual(s["distinct_adsets"], 1)     # AS1 only; (other)/'' excluded
+        self.assertEqual(s["distinct_ads"], 1)
+
+    def test_empty_rows(self):
+        s = svc.summarize_cardinality([])
+        self.assertEqual(s["total_sessions"], 0)
+        self.assertEqual(s["other_share"], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
