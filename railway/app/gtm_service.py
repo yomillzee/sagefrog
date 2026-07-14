@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -12,6 +13,13 @@ _log = logging.getLogger(__name__)
 
 _GTM_BASE = "https://tagmanager.googleapis.com/tagmanager/v2"
 _CACHE_TTL = timedelta(minutes=15)
+
+# GTM enforces a low per-minute quota, so a burst of calls (e.g. the connection
+# test fired repeatedly) can return 429 Too Many Requests, and Google's edge can
+# hiccup with 500/502/503. Retry those a couple of times with a short backoff.
+_RETRY_STATUSES = frozenset({429, 500, 502, 503})
+_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = 2
 
 # key: (client_slug, container_id) → (fetched_at, payload)
 _cache: dict[tuple[str, str], tuple[datetime, dict[str, Any]]] = {}
@@ -89,6 +97,43 @@ def _get_access_token(refresh_token: str) -> str:
     return _ga4_refresh(refresh_token)
 
 
+def _retry_after_seconds(resp: httpx.Response, default: float) -> float:
+    """Honour a numeric Retry-After header (delta-seconds); fall back to default."""
+    try:
+        return max(float(resp.headers.get("Retry-After", "")), 0.0)
+    except (TypeError, ValueError):
+        return default
+
+
+def _gtm_get(http: httpx.Client, url: str, access_token: str) -> httpx.Response:
+    """GET a GTM endpoint, retrying transient failures (429/5xx) with backoff.
+
+    A persistent 429 raises a friendly RuntimeError rather than letting httpx's
+    raw ``Client error '429 Too Many Requests'`` string surface in the UI.
+    Status-specific handling (401/403/404) stays with each caller.
+    """
+    headers = {"Authorization": f"Bearer {access_token}"}
+    resp = http.get(url, headers=headers)
+    for attempt in range(1, _MAX_ATTEMPTS):
+        if resp.status_code not in _RETRY_STATUSES:
+            break
+        wait = _retry_after_seconds(resp, _RETRY_BACKOFF_SECONDS * attempt)
+        _log.warning(
+            "GTM %s returned %d; retrying in %.1fs (attempt %d/%d)",
+            url, resp.status_code, wait, attempt, _MAX_ATTEMPTS,
+        )
+        time.sleep(wait)
+        resp = http.get(url, headers=headers)
+
+    if resp.status_code == 429:
+        raise RuntimeError(
+            "Google Tag Manager is rate-limiting requests (HTTP 429). This is a "
+            "temporary quota limit that usually clears within a minute — wait a "
+            "moment and try again."
+        )
+    return resp
+
+
 def list_containers(refresh_token: str) -> list[dict[str, Any]]:
     """Return one entry per GTM container the token can access.
 
@@ -96,10 +141,7 @@ def list_containers(refresh_token: str) -> list[dict[str, Any]]:
     """
     access_token = _get_access_token(refresh_token)
     with httpx.Client(timeout=30) as http:
-        resp = http.get(
-            f"{_GTM_BASE}/accounts",
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
+        resp = _gtm_get(http, f"{_GTM_BASE}/accounts", access_token)
     if resp.status_code in (401, 403):
         raise PermissionError(
             f"Google returned {resp.status_code} listing GTM accounts. "
@@ -113,9 +155,8 @@ def list_containers(refresh_token: str) -> list[dict[str, Any]]:
         for acct in accounts:
             acct_id = str(acct.get("accountId", ""))
             acct_name = str(acct.get("name", acct_id))
-            cr = http.get(
-                f"{_GTM_BASE}/accounts/{acct_id}/containers",
-                headers={"Authorization": f"Bearer {access_token}"},
+            cr = _gtm_get(
+                http, f"{_GTM_BASE}/accounts/{acct_id}/containers", access_token
             )
             if cr.status_code >= 400:
                 continue
@@ -137,7 +178,7 @@ def _fetch_live_version(
 ) -> dict[str, Any]:
     url = f"{_GTM_BASE}/accounts/{account_id}/containers/{container_id}/versions:live"
     with httpx.Client(timeout=30) as http:
-        resp = http.get(url, headers={"Authorization": f"Bearer {access_token}"})
+        resp = _gtm_get(http, url, access_token)
     if resp.status_code == 401:
         raise PermissionError(
             "Google returned 401 — the stored token lacks tagmanager.readonly. "
