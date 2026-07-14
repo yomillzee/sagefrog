@@ -126,6 +126,10 @@ def _ga4_paid_key_event_table() -> str:
     return f"`{_project_id()}.raw_ga4.ga4_paid_key_event_daily`"
 
 
+def _ga4_google_entity_table() -> str:
+    return f"`{_project_id()}.raw_ga4.ga4_google_entity_daily`"
+
+
 def _page_path_daily_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.vw_page_path_daily`"
 
@@ -769,6 +773,50 @@ def fetch_meta_verified_key_events(
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "events": ordered_events,
         "by_ad_id_event": by_ad_id_event,
+    }
+
+
+def fetch_google_verified_conversions(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """GA4-verified conversions (key events) per Google Ads campaign id.
+
+    Sourced from GA4's native Google Ads link (no URL tagging). Campaign grain,
+    matched to explorer_google_ads_daily by campaign id. Missing table (not
+    synced yet) yields an empty map so the explorer falls back to dashes.
+    """
+    sql = f"""
+    SELECT campaign_id, SUM(key_events) AS key_events
+    FROM {_ga4_google_entity_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+      AND campaign_id NOT IN ('', '(not set)')
+    GROUP BY campaign_id
+    """
+    try:
+        rows = _run_query(
+            sql,
+            params={
+                "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            },
+            max_rows=50000,
+        )
+    except Exception as exc:
+        if "not found" in str(exc).lower():
+            rows = []
+        else:
+            raise
+    by_campaign_id = {
+        str(r.get("campaign_id")): int(r.get("key_events") or 0)
+        for r in rows if r.get("campaign_id")
+    }
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "row_count": len(by_campaign_id),
+        "by_campaign_id": by_campaign_id,
     }
 
 
