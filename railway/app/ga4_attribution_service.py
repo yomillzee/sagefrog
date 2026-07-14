@@ -35,9 +35,9 @@ METHODOLOGY: dict[str, str] = {
         "Use LinkedIn Campaign Manager URL parameters (utm_source=linkedin&utm_medium=paid&utm_campaign=…)."
     ),
     "meta": (
-        "Meta sessions: (1) fbclid click parameter, "
-        "(2) UTM campaign id/name on the session, "
-        "(3) source/medium facebook/instagram + paid/cpc fallback. "
+        "Meta sessions: (1) utm_source_platform=Meta tag, (2) fbclid click parameter, "
+        "(3) UTM campaign id/name on the session, "
+        "(4) source/medium facebook/instagram + paid/cpc fallback. "
         "Enable Meta URL parameters or manual UTMs on ad destination URLs."
     ),
 }
@@ -103,6 +103,7 @@ def _attribution_base_sql(table: str, suffix_start: str, suffix_end: str) -> str
         collected_traffic_source.manual_campaign_id AS manual_campaign_id,
         collected_traffic_source.manual_term AS manual_term,
         collected_traffic_source.manual_content AS manual_content,
+        collected_traffic_source.manual_source_platform AS manual_source_platform,
         session_traffic_source_last_click.google_ads_campaign.campaign_id AS linked_campaign_id,
         session_traffic_source_last_click.google_ads_campaign.campaign_name AS linked_campaign_name,
         session_traffic_source_last_click.manual_campaign.campaign_id AS click_campaign_id,
@@ -145,10 +146,14 @@ def _attribution_base_sql(table: str, suffix_start: str, suffix_end: str) -> str
           WHEN LOWER(COALESCE(source, '')) = 'google'
             AND LOWER(COALESCE(medium, '')) IN ('cpc', 'ppc', 'paid')
             THEN 'google'
+          -- Robust, tag-driven Meta signal: utm_source_platform=Meta lands here
+          -- regardless of what utm_source carries ({{site_source_name}} -> fb/ig/an/msg).
+          WHEN LOWER(COALESCE(manual_source_platform, '')) = 'meta'
+            THEN 'meta'
           WHEN NULLIF(REGEXP_EXTRACT(page_location, r'[?&]fbclid=([^&]+)'), '') IS NOT NULL
             THEN 'meta'
-          WHEN LOWER(COALESCE(source, '')) IN ('facebook', 'fb', 'instagram', 'ig', 'meta', 'msg')
-            OR LOWER(COALESCE(manual_source, '')) IN ('facebook', 'fb', 'instagram', 'ig', 'meta')
+          WHEN LOWER(COALESCE(source, '')) IN ('facebook', 'fb', 'instagram', 'ig', 'meta', 'msg', 'an')
+            OR LOWER(COALESCE(manual_source, '')) IN ('facebook', 'fb', 'instagram', 'ig', 'meta', 'msg', 'an')
             OR LOWER(COALESCE(source, '')) LIKE '%facebook%'
             OR LOWER(COALESCE(source, '')) LIKE '%instagram%'
             THEN 'meta'
