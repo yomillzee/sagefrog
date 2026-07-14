@@ -122,6 +122,10 @@ def _ga4_paid_entity_table() -> str:
     return f"`{_project_id()}.raw_ga4.ga4_paid_entity_daily`"
 
 
+def _ga4_paid_key_event_table() -> str:
+    return f"`{_project_id()}.raw_ga4.ga4_paid_key_event_daily`"
+
+
 def _page_path_daily_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.vw_page_path_daily`"
 
@@ -712,6 +716,59 @@ def fetch_meta_verified_conversions(
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "row_count": len(by_ad_id),
         "by_ad_id": by_ad_id,
+    }
+
+
+def fetch_meta_verified_key_events(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """GA4-verified conversions split by key-event name, per Meta ad id.
+
+    Powers the per-key-event selector on the explorer's Verified conv. column:
+    returns {ad_id: {event_name: key_events}} plus the sorted list of key events
+    present. Missing table (not synced yet) yields empty maps so the selector
+    simply offers "All key events" and the column falls back to the blended total.
+    """
+    sql = f"""
+    SELECT manual_ad_content AS ad_id, event_name, SUM(key_events) AS key_events
+    FROM {_ga4_paid_key_event_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+      AND manual_ad_content NOT IN ('', '(not set)', '(other)')
+    GROUP BY manual_ad_content, event_name
+    """
+    try:
+        rows = _run_query(
+            sql,
+            params={
+                "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            },
+            max_rows=100000,
+        )
+    except Exception as exc:
+        if "not found" in str(exc).lower():
+            rows = []
+        else:
+            raise
+    by_ad_id_event: dict[str, dict[str, int]] = {}
+    events: dict[str, int] = {}
+    for r in rows:
+        ad_id = str(r.get("ad_id") or "")
+        event = str(r.get("event_name") or "")
+        ke = int(r.get("key_events") or 0)
+        if not ad_id or not event or ke <= 0:
+            continue
+        by_ad_id_event.setdefault(ad_id, {})[event] = by_ad_id_event.get(ad_id, {}).get(event, 0) + ke
+        events[event] = events.get(event, 0) + ke
+    # Order events by total volume so the most common conversion sits on top.
+    ordered_events = [e for e, _ in sorted(events.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "events": ordered_events,
+        "by_ad_id_event": by_ad_id_event,
     }
 
 
