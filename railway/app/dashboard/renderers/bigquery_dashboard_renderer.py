@@ -1120,6 +1120,7 @@ def render_bigquery_dashboard_page(
     const LINKEDIN_EXPLORER_API= "{_aurl(f'/api/clients/{api_client_key}/linkedin/explorer')}";
     const META_EXPLORER_API    = "{_aurl(f'/api/clients/{api_client_key}/meta/explorer')}";
     const META_VERIFIED_API    = "{_aurl(f'/api/clients/{api_client_key}/meta/verified-conversions')}";
+    const GOOGLE_VERIFIED_API  = "{_aurl(f'/api/clients/{api_client_key}/google-ads/verified-conversions')}";
     const BACKFILL_API         = "{_aurl(f'/api/clients/{api_client_key}/backfill-linkedin')}";
     const PAGES_TOP_API        = "{_aurl(f'/api/clients/{api_client_key}/pages/top')}";
     const PAGES_SOURCES_API    = "{_aurl(f'/api/clients/{api_client_key}/pages/sources')}";
@@ -1949,6 +1950,7 @@ def render_bigquery_dashboard_page(
     let explorerRows = [];
     let verifiedByAdId = {{}};
     let verifiedByAdIdEvent = {{}};
+    let verifiedByGoogleCampaignId = {{}};
     let keyEventList = [];
     const KE_STORAGE_KEY = 'ce_verified_ke_{api_client_key}';
     let selectedKeyEvent = (function(){{ try {{ return localStorage.getItem(KE_STORAGE_KEY) || '__all__'; }} catch(e) {{ return '__all__'; }} }})();
@@ -2049,12 +2051,13 @@ def render_bigquery_dashboard_page(
       const campaigns=new Map();
       for (const r of rows) {{
         const cName=r.campaign_name||'—', platform=(r.platform||'google').toLowerCase(), cKey=platform+'|'+cName;
-        if (!campaigns.has(cKey)) campaigns.set(cKey,{{name:cName,platform,metrics:zeroMetrics(),groups:new Map()}});
+        if (!campaigns.has(cKey)) campaigns.set(cKey,{{name:cName,platform,campaign_id:r.campaign_id||'',metrics:zeroMetrics(),groups:new Map()}});
         const camp=campaigns.get(cKey);
         addMetrics(camp.metrics,r);
         const gName=r.ad_group_name||'—';
         if (!camp.groups.has(gName)) camp.groups.set(gName,{{name:gName,metrics:zeroMetrics(),ads:[]}});
         const grp=camp.groups.get(gName);
+        if (r._verifiedNa) grp.metrics._verifiedNa=true;
         addMetrics(grp.metrics,r);
         grp.ads.push(r);
       }}
@@ -2064,6 +2067,13 @@ def render_bigquery_dashboard_page(
       const cmpMetric=(x,y)=>mul*(explorerMetricVal(x,key)-explorerMetricVal(y,key));
       const cmpNode=(a,b)=> key==='name' ? cmpName(a[1].name,b[1].name) : cmpMetric(a[1].metrics,b[1].metrics);
       for (const camp of campaigns.values()) {{
+        // Google verified is a campaign-level number (native GA4 link); attach it
+        // to the campaign node — sub-levels stay "—" (no reliable per-ad id).
+        if (camp.platform==='google' && camp.campaign_id) {{
+          const gv=num(verifiedByGoogleCampaignId[String(camp.campaign_id)]);
+          camp.metrics.verified=gv;
+          camp.metrics.verified_sel=gv;
+        }}
         for (const grp of camp.groups.values()) {{
           grp.ads.sort((a,b)=> key==='name' ? cmpName(explorerAdName(a),explorerAdName(b)) : cmpMetric(a,b));
         }}
@@ -2071,7 +2081,7 @@ def render_bigquery_dashboard_page(
       }}
       return new Map([...campaigns.entries()].sort(cmpNode));
     }}
-    function metricCells(m) {{ const wc=withCtr(m); return METRIC_COLS.map(c=>`<td${{c.cls?` class="${{c.cls}}"`:''}}>${{c.format(wc[c.key])}}</td>`).join(''); }}
+    function metricCells(m) {{ const wc=withCtr(m); return METRIC_COLS.map(c=>{{ const cell=(c.key==='verified_sel'&&m._verifiedNa)?'—':c.format(wc[c.key]); return `<td${{c.cls?` class="${{c.cls}}"`:''}}>${{cell}}</td>`; }}).join(''); }}
     // Brand marks for the platform column — inline SVG so the tree reads as a
     // sleek icon rail instead of text pills. Google = 4-colour G, LinkedIn +
     // Meta = their single-path glyphs in brand colours.
@@ -2185,10 +2195,14 @@ def render_bigquery_dashboard_page(
       // Aggregate summary cards — slice with the same filters as the table
       // (date range, Platform chips, and the explorer filter chips).
       const agg=withCtr(filtered.reduce((a,r)=>{{addMetrics(a,r);return a;}}, zeroMetrics()));
+      // Google verified is campaign-level (not on rows), so add it once per distinct
+      // Google campaign in the filtered set for the summary total.
+      const gcSeen=new Set(); let googleVerifiedTotal=0;
+      for (const r of filtered) {{ const cid=String(r.campaign_id||''); if (r.platform==='google' && cid && !gcSeen.has(cid)) {{ gcSeen.add(cid); googleVerifiedTotal+=num(verifiedByGoogleCampaignId[cid]); }} }}
       const scards=document.getElementById('explorerSummaryCards');
       if (scards) scards.innerHTML=[
         ['Spend',money(agg.spend)],['Impressions',count(agg.impressions)],['Clicks',count(agg.clicks)],
-        ['Conversions',count(agg.conversions)],['Verified conv. (GA4)',count(agg.verified)],['CTR',num(agg.ctr).toFixed(2)+'%'],
+        ['Conversions',count(agg.conversions)],['Verified conv. (GA4)',count(num(agg.verified)+googleVerifiedTotal)],['CTR',num(agg.ctr).toFixed(2)+'%'],
       ].map(([l,v])=>`<div class="card"><div class="card-title">${{l}}</div><div class="card-value">${{v}}</div></div>`).join('');
       const el=document.getElementById('explorerTable');
       const tree=buildExplorerTree(filtered);
@@ -2225,7 +2239,7 @@ def render_bigquery_dashboard_page(
     function normalizeExplorerRows(google, linkedin, meta) {{
       const out=[];
       for (const r of (google&&google.rows?google.rows:[])) {{
-        out.push({{platform:'google',campaign_name:r.campaign_name,ad_group_name:r.ad_group_name,ad_label:r.ad_label,ad_id:r.ad_id,headlines:r.headlines,descriptions:r.descriptions,headline_1:r.headline_1,headline_2:r.headline_2,headline_3:r.headline_3,description_1:r.description_1,description_2:r.description_2,ad_name:r.ad_name,final_url:r.final_url,ad_type:r.ad_type,thumbnail_url:'',media_type:r.ad_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
+        out.push({{platform:'google',campaign_id:r.campaign_id,campaign_name:r.campaign_name,ad_group_name:r.ad_group_name,ad_label:r.ad_label,ad_id:r.ad_id,headlines:r.headlines,descriptions:r.descriptions,headline_1:r.headline_1,headline_2:r.headline_2,headline_3:r.headline_3,description_1:r.description_1,description_2:r.description_2,ad_name:r.ad_name,final_url:r.final_url,ad_type:r.ad_type,thumbnail_url:'',media_type:r.ad_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions),_verifiedNa:true}});
       }}
       for (const r of (linkedin&&linkedin.rows?linkedin.rows:[])) {{
         out.push({{platform:'linkedin',campaign_name:r.campaign_group_name||r.campaign_name,ad_group_name:r.campaign_name,ad_label:r.creative_name,thumbnail_url:r.thumbnail_url||r.image_url||'',image_url:r.image_url||'',video_url:r.video_url||'',media_type:r.media_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
@@ -2396,15 +2410,17 @@ def render_bigquery_dashboard_page(
       setStatus('explorerStatus','Loading…');
       document.getElementById('explorerSummaryCards').innerHTML = skelCards(5);
       document.getElementById('explorerTable').innerHTML = skelTable(6,8);
-      const [g,l,m,kw,ver]=await Promise.all([
+      const [g,l,m,kw,ver,gver]=await Promise.all([
         getJson(withDates(EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(LINKEDIN_EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(META_EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(GOOGLE_ADS_KEYWORDS_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(META_VERIFIED_API)).catch(()=>({{by_ad_id:{{}}}})),
+        getJson(withDates(GOOGLE_VERIFIED_API)).catch(()=>({{by_campaign_id:{{}}}})),
       ]);
       verifiedByAdId=(ver&&ver.by_ad_id)?ver.by_ad_id:{{}};
       verifiedByAdIdEvent=(ver&&ver.by_ad_id_event)?ver.by_ad_id_event:{{}};
+      verifiedByGoogleCampaignId=(gver&&gver.by_campaign_id)?gver.by_campaign_id:{{}};
       keyEventList=(ver&&ver.events)?ver.events:[];
       if (selectedKeyEvent!=='__all__' && keyEventList.indexOf(selectedKeyEvent)<0) selectedKeyEvent='__all__';
       explorerRows=normalizeExplorerRows(g,l,m);

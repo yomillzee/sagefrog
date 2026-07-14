@@ -452,6 +452,50 @@ def fetch_paid_entity_daily(
     return out
 
 
+def fetch_paid_google_entity_daily(
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
+) -> list[dict[str, Any]]:
+    """Google Ads verified conversions per campaign, via GA4's native link.
+
+    Google uses gclid auto-tagging, so GA4 populates the linked Google Ads
+    campaign id/name directly (sessionGoogleAds* dimensions) — no URL tagging.
+    Kept at campaign grain on purpose: Penn's Google spend is Display / Demand
+    Gen / PMAX, where per-ad creative ids aren't reliable, so the campaign is
+    the trustworthy unit. Joins to explorer_google_ads_daily by campaign id.
+    """
+    try:
+        rows = _run_report(
+            property_id,
+            dimensions=["date", "sessionGoogleAdsCampaignId", "sessionGoogleAdsCampaignName"],
+            metrics=["keyEvents", "sessions"],
+            start=start, end=end, access_token=access_token,
+        )
+    except RuntimeError as exc:
+        _log.warning(
+            "GA4 google_entity_daily skipped — API rejected dimension/metric combination "
+            "or returned error. Table will be empty for this sync. Error: %s", exc,
+        )
+        return []
+    synced_at = _now()
+    out = []
+    for r in rows:
+        campaign_id = r.get("sessionGoogleAdsCampaignId") or ""
+        if campaign_id in ("", "(not set)"):
+            continue
+        out.append({
+            "client_key": client_key,
+            "property_id": property_id,
+            "date": _parse_date(r.get("date", "")),
+            "campaign_id": campaign_id,
+            "campaign_name": r.get("sessionGoogleAdsCampaignName") or "(not set)",
+            "key_events": int(float(r.get("keyEvents") or 0)),
+            "sessions": int(r.get("sessions") or 0),
+            "synced_at": synced_at,
+        })
+    return out
+
+
 def fetch_paid_key_event_daily(
     property_id: str, start: str, end: str, access_token: str,
     *, client_key: str = "",
@@ -698,6 +742,15 @@ GA4_REPORTS = [
         "grain": ["date", "source_platform", "campaign_id", "manual_term", "manual_ad_content"],
         "required": False,
         "notes": "Paid attribution by campaign/ad set/ad id (utm_id/utm_term/utm_content). Joins to ad-platform marts by exact id. High cardinality — skipped if API rejects. Replaces the native event-export dependency for verified conversions.",
+    },
+    {
+        "report_key": "paid_google_entity",
+        "table_name": "ga4_google_entity_daily",
+        "dimensions": ["date", "sessionGoogleAdsCampaignId", "sessionGoogleAdsCampaignName"],
+        "metrics": ["keyEvents", "sessions"],
+        "grain": ["date", "campaign_id"],
+        "required": False,
+        "notes": "Google Ads verified conversions per campaign via GA4's native Google Ads link (no URL tagging). Joins to explorer_google_ads_daily by campaign id. Campaign grain — Display/PMAX/Demand Gen have no reliable per-ad ids.",
     },
     {
         "report_key": "paid_key_event",
