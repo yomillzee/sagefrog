@@ -2066,13 +2066,20 @@ def render_bigquery_dashboard_page(
       const cmpName=(x,y)=>mul*String(x).localeCompare(String(y),undefined,{{numeric:true}});
       const cmpMetric=(x,y)=>mul*(explorerMetricVal(x,key)-explorerMetricVal(y,key));
       const cmpNode=(a,b)=> key==='name' ? cmpName(a[1].name,b[1].name) : cmpMetric(a[1].metrics,b[1].metrics);
+      // No Google verified data yet (table not synced) -> show "—", not a
+      // misleading 0. Once synced, an unmatched campaign legitimately reads 0.
+      const gHasData = Object.keys(verifiedByGoogleCampaignId).length > 0;
       for (const camp of campaigns.values()) {{
         // Google verified is a campaign-level number (native GA4 link); attach it
         // to the campaign node — sub-levels stay "—" (no reliable per-ad id).
-        if (camp.platform==='google' && camp.campaign_id) {{
-          const gv=num(verifiedByGoogleCampaignId[String(camp.campaign_id)]);
-          camp.metrics.verified=gv;
-          camp.metrics.verified_sel=gv;
+        if (camp.platform==='google') {{
+          if (gHasData && camp.campaign_id) {{
+            const gv=num(verifiedByGoogleCampaignId[String(camp.campaign_id)]);
+            camp.metrics.verified=gv;
+            camp.metrics.verified_sel=gv;
+          }} else {{
+            camp.metrics._verifiedNa=true;
+          }}
         }}
         for (const grp of camp.groups.values()) {{
           grp.ads.sort((a,b)=> key==='name' ? cmpName(explorerAdName(a),explorerAdName(b)) : cmpMetric(a,b));
