@@ -252,12 +252,24 @@ def nixon_bq_settings_page(
     if bq_error:
         flash_error = str(bq_error)[:300]
 
+    # The monthly budget, budget-tracker visibility, and explorer filters are all
+    # saved under the "nixon-bq-test" slug (the budget POST + settings save write
+    # there). Load that row back so the saved values re-render on this page —
+    # without this the budget/goal field always came back blank after a save,
+    # which looked like the budget wasn't saving at all.
+    import client_dashboard_config
+
+    db_cfg = client_dashboard_config.get_config("nixon-bq-test")
+
     return HTMLResponse(
         render_bigquery_settings_page(
             routing=routing,
             account_ids=account_ids,
             flash=flash,
             flash_error=flash_error,
+            explorer_filters=(getattr(db_cfg, "explorer_filters", None) or ""),
+            monthly_budget=getattr(db_cfg, "monthly_budget_usd", None),
+            budget_tracker_enabled=bool(getattr(db_cfg, "explorer_budget_tracker", True)),
             **html_kw,
         )
     )
