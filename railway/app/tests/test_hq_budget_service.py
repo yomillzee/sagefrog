@@ -145,6 +145,59 @@ class HqBudgetOverviewTests(unittest.TestCase):
         self.assertGreater(len(seen_threads), 1)  # ran on multiple worker threads
         self.assertLess(elapsed, n * per_read)    # faster than the sequential sum
 
+    def test_nixon_budget_priced_despite_missing_project_on_config_row(self):
+        # nixon-bq-test carries a budget but no gcp_project_id on its config row
+        # (Nixon's mart lives in marketing_service defaults). Without the
+        # code-level fallback it would skip the spend read and show 0% of budget;
+        # with it, HQ resolves the built-in destination and prices spend.
+        nixon = {
+            "client_slug": "nixon-bq-test",
+            "label": "Nixon Medical",
+            "monthly_budget_usd": 10000.0,
+            "gcp_project_id": None,
+            "bq_mart_dataset_id": None,
+        }
+        seen = {}
+
+        def spend(*, slug, project_id, dataset_id, month_start, today):
+            seen["project_id"] = project_id
+            seen["dataset_id"] = dataset_id
+            return 4000.0
+
+        with patch.object(hq.client_dashboard_config, "list_budget_overview", return_value=[nixon]), \
+             patch.object(hq, "_client_mtd_spend", side_effect=spend), \
+             patch.object(hq, "_client_sessions_series", return_value=[]):
+            result = hq.build_hq_budget_overview()
+
+        row = result["clients"][0]
+        self.assertTrue(row["spend_available"])
+        self.assertEqual(row["mtd_spend"], 4000.0)
+        self.assertEqual(row["pct_budget"], 40.0)  # 4000 / 10000
+        # Resolved to Nixon's built-in mart destination, not skipped.
+        self.assertEqual(
+            (seen["project_id"], seen["dataset_id"]),
+            hq.marketing_service.default_destination(),
+        )
+
+    def test_non_nixon_without_project_is_still_skipped(self):
+        # The fallback is Nixon-only: a generic client with no project must not
+        # silently borrow Nixon's mart.
+        c = {
+            "client_slug": "someclient",
+            "label": "Some Client",
+            "monthly_budget_usd": 5000.0,
+            "gcp_project_id": None,
+            "bq_mart_dataset_id": None,
+        }
+        with patch.object(hq.client_dashboard_config, "list_budget_overview", return_value=[c]), \
+             patch.object(hq, "_client_mtd_spend", side_effect=AssertionError("should not read spend")), \
+             patch.object(hq, "_client_sessions_series", return_value=[]):
+            result = hq.build_hq_budget_overview()
+
+        row = result["clients"][0]
+        self.assertFalse(row["spend_available"])
+        self.assertEqual(row["pct_budget"], 0.0)  # budget set, spend unknown -> 0%
+
     def test_max_workers_env_override(self):
         with patch.dict("os.environ", {"HQ_MAX_WORKERS": "3"}):
             self.assertEqual(hq._hq_max_workers(), 3)
