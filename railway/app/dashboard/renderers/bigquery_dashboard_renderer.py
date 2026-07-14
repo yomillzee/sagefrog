@@ -766,6 +766,9 @@ def render_bigquery_dashboard_page(
     .lvl-campaign .tree-name {{ font-weight:800; color:var(--navy); }}
     .lvl-group .tree-name {{ font-weight:600; }}
     .lvl-ad td.left {{ color:var(--muted); }}
+    /* GA4-verified conversions column — set off from the platform-reported metrics. */
+    #explorerTable th.ga4-col, #explorerTable td.ga4-col {{ background:rgba(184,146,46,0.06); border-left:1px solid var(--border); }}
+    #explorerTable th.ga4-col {{ color:#8a6d1f; }}
     .pill {{ display:inline-block; padding:1px 7px; border-radius:999px; font-size:.64rem; font-weight:800; letter-spacing:.03em; text-transform:uppercase; vertical-align:middle; margin-right:7px; }}
     .pill-google {{ background:#e8f0fe; color:#1a73e8; }}
     .pill-linkedin {{ background:#e6f0f8; color:#0a66c2; }}
@@ -1115,6 +1118,7 @@ def render_bigquery_dashboard_page(
     const GOOGLE_ADS_KEYWORDS_API = "{_aurl(f'/api/clients/{api_client_key}/google-ads/keywords')}";
     const LINKEDIN_EXPLORER_API= "{_aurl(f'/api/clients/{api_client_key}/linkedin/explorer')}";
     const META_EXPLORER_API    = "{_aurl(f'/api/clients/{api_client_key}/meta/explorer')}";
+    const META_VERIFIED_API    = "{_aurl(f'/api/clients/{api_client_key}/meta/verified-conversions')}";
     const BACKFILL_API         = "{_aurl(f'/api/clients/{api_client_key}/backfill-linkedin')}";
     const PAGES_TOP_API        = "{_aurl(f'/api/clients/{api_client_key}/pages/top')}";
     const PAGES_SOURCES_API    = "{_aurl(f'/api/clients/{api_client_key}/pages/sources')}";
@@ -1925,6 +1929,7 @@ def render_bigquery_dashboard_page(
       {{key:'impressions',label:'Impr.',format:count}},
       {{key:'clicks',label:'Clicks',format:count}},
       {{key:'conversions',label:'Conv.',format:count}},
+      {{key:'verified',label:'Verified conv.',format:count,cls:'ga4-col',title:'GA4-verified conversions, matched to the Meta ad by id (utm_content) and rolled up. Independent of the platform-reported Conv.'}},
       {{key:'ctr',label:'CTR',format:pct}},
     ];
     // Explorer table sort — click a column header to sort every tree level (campaigns,
@@ -1941,6 +1946,7 @@ def render_bigquery_dashboard_page(
     const EXPLORER_FILTER_GROUPS = {explorer_filter_groups_json};
     const explorerFilterState = new Map(); // groupId -> Set of active chip labels
     let explorerRows = [];
+    let verifiedByAdId = {{}};
 
     function buildChips(container, keys, stateSet, onChange) {{
       const el = typeof container==='string' ? document.getElementById(container) : container;
@@ -2018,8 +2024,8 @@ def render_bigquery_dashboard_page(
       const platOk=!platformFilter.size||[...platformFilter].some(k=>k.toLowerCase()===(row.platform||''));
       return platOk;
     }}
-    function zeroMetrics() {{ return {{spend:0,impressions:0,clicks:0,conversions:0}}; }}
-    function addMetrics(acc,r) {{ acc.spend+=num(r.spend);acc.impressions+=num(r.impressions);acc.clicks+=num(r.clicks);acc.conversions+=num(r.conversions); }}
+    function zeroMetrics() {{ return {{spend:0,impressions:0,clicks:0,conversions:0,verified:0}}; }}
+    function addMetrics(acc,r) {{ acc.spend+=num(r.spend);acc.impressions+=num(r.impressions);acc.clicks+=num(r.clicks);acc.conversions+=num(r.conversions);acc.verified+=num(r.verified); }}
     function withCtr(m) {{ return {{...m,ctr:m.impressions?(num(m.clicks)/num(m.impressions)*100):0}}; }}
     function buildExplorerTree(rows) {{
       const campaigns=new Map();
@@ -2047,7 +2053,7 @@ def render_bigquery_dashboard_page(
       }}
       return new Map([...campaigns.entries()].sort(cmpNode));
     }}
-    function metricCells(m) {{ const wc=withCtr(m); return METRIC_COLS.map(c=>`<td>${{c.format(wc[c.key])}}</td>`).join(''); }}
+    function metricCells(m) {{ const wc=withCtr(m); return METRIC_COLS.map(c=>`<td${{c.cls?` class="${{c.cls}}"`:''}}>${{c.format(wc[c.key])}}</td>`).join(''); }}
     // Brand marks for the platform column — inline SVG so the tree reads as a
     // sleek icon rail instead of text pills. Google = 4-colour G, LinkedIn +
     // Meta = their single-path glyphs in brand colours.
@@ -2164,13 +2170,13 @@ def render_bigquery_dashboard_page(
       const scards=document.getElementById('explorerSummaryCards');
       if (scards) scards.innerHTML=[
         ['Spend',money(agg.spend)],['Impressions',count(agg.impressions)],['Clicks',count(agg.clicks)],
-        ['Conversions',count(agg.conversions)],['CTR',num(agg.ctr).toFixed(2)+'%'],
+        ['Conversions',count(agg.conversions)],['Verified conv. (GA4)',count(agg.verified)],['CTR',num(agg.ctr).toFixed(2)+'%'],
       ].map(([l,v])=>`<div class="card"><div class="card-title">${{l}}</div><div class="card-value">${{v}}</div></div>`).join('');
       const el=document.getElementById('explorerTable');
       const tree=buildExplorerTree(filtered);
       if (!tree.size) {{ el.innerHTML=`<tbody><tr><td class="empty">No campaigns match these filters.</td></tr></tbody>`; }} else {{
         const sArrow=k=>explorerSort.key===k?(explorerSort.dir==='asc'?' ▲':' ▼'):'';
-        const head=`<thead><tr><th class="left expl-sort${{explorerSort.key==='name'?' active':''}}" data-key="name">Campaign / Ad group / Ad${{sArrow('name')}}</th>${{METRIC_COLS.map(c=>`<th class="expl-sort${{explorerSort.key===c.key?' active':''}}" data-key="${{c.key}}">${{esc(c.label)}}${{sArrow(c.key)}}</th>`).join('')}}</tr></thead>`;
+        const head=`<thead><tr><th class="left expl-sort${{explorerSort.key==='name'?' active':''}}" data-key="name">Campaign / Ad group / Ad${{sArrow('name')}}</th>${{METRIC_COLS.map(c=>`<th class="expl-sort${{c.cls?' '+c.cls:''}}${{explorerSort.key===c.key?' active':''}}" data-key="${{c.key}}"${{c.title?` title="${{esc(c.title)}}"`:''}}>${{esc(c.label)}}${{sArrow(c.key)}}</th>`).join('')}}</tr></thead>`;
         let body='', cIdx=0;
         for (const camp of tree.values()) {{
           const cId='c'+(cIdx++), gCount=camp.groups.size;
@@ -2207,7 +2213,7 @@ def render_bigquery_dashboard_page(
         out.push({{platform:'linkedin',campaign_name:r.campaign_group_name||r.campaign_name,ad_group_name:r.campaign_name,ad_label:r.creative_name,thumbnail_url:r.thumbnail_url||r.image_url||'',image_url:r.image_url||'',video_url:r.video_url||'',media_type:r.media_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
       }}
       for (const r of (meta&&meta.rows?meta.rows:[])) {{
-        out.push({{platform:'meta',campaign_name:r.campaign_name,ad_group_name:r.adset_name,ad_label:r.ad_name,thumbnail_url:r.thumbnail_url||r.image_url||'',image_url:r.image_url||'',video_url:r.video_url||'',media_type:r.media_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
+        out.push({{platform:'meta',campaign_name:r.campaign_name,ad_group_name:r.adset_name,ad_label:r.ad_name,ad_id:r.ad_id,thumbnail_url:r.thumbnail_url||r.image_url||'',image_url:r.image_url||'',video_url:r.video_url||'',media_type:r.media_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
       }}
       return out;
     }}
@@ -2372,13 +2378,16 @@ def render_bigquery_dashboard_page(
       setStatus('explorerStatus','Loading…');
       document.getElementById('explorerSummaryCards').innerHTML = skelCards(5);
       document.getElementById('explorerTable').innerHTML = skelTable(6,8);
-      const [g,l,m,kw]=await Promise.all([
+      const [g,l,m,kw,ver]=await Promise.all([
         getJson(withDates(EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(LINKEDIN_EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(META_EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(GOOGLE_ADS_KEYWORDS_API)).catch(()=>({{rows:[]}})),
+        getJson(withDates(META_VERIFIED_API)).catch(()=>({{by_ad_id:{{}}}})),
       ]);
+      verifiedByAdId=(ver&&ver.by_ad_id)?ver.by_ad_id:{{}};
       explorerRows=normalizeExplorerRows(g,l,m);
+      for (const r of explorerRows) {{ r.verified = num(verifiedByAdId[String(r.ad_id||'')]); }}
       renderExplorer();
       // Keyword table: only show the section when this client actually has
       // Google Ads search-keyword data (empty for LinkedIn/Meta-only clients).

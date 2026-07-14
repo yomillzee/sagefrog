@@ -117,6 +117,11 @@ def _meta_ad_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.fact_meta_ads_ad_daily`"
 
 
+def _ga4_paid_entity_table() -> str:
+    # GA4 paid-entity mart lives in raw_ga4 (same project), not the marts dataset.
+    return f"`{_project_id()}.raw_ga4.ga4_paid_entity_daily`"
+
+
 def _page_path_daily_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.vw_page_path_daily`"
 
@@ -661,6 +666,52 @@ def fetch_meta_explorer(
         },
         "row_count": len(rows),
         "rows": rows,
+    }
+
+
+def fetch_meta_verified_conversions(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """GA4-verified conversions (key events) per Meta ad id, for the explorer.
+
+    Keyed on manual_ad_content (utm_content = Meta ad id) so the Campaign
+    Explorer can match by ad id and roll verified conversions up the
+    campaign/ad set/ad tree. Returns {ad_id: key_events}. If the mart has not
+    been synced yet the table is absent — return an empty map so the explorer
+    falls back to dashes rather than erroring.
+    """
+    sql = f"""
+    SELECT manual_ad_content AS ad_id, SUM(key_events) AS key_events
+    FROM {_ga4_paid_entity_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+      AND manual_ad_content NOT IN ('', '(not set)', '(other)')
+    GROUP BY manual_ad_content
+    """
+    try:
+        rows = _run_query(
+            sql,
+            params={
+                "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            },
+            max_rows=50000,
+        )
+    except Exception as exc:
+        if "not found" in str(exc).lower() or "was not found" in str(exc).lower():
+            rows = []
+        else:
+            raise
+    by_ad_id = {
+        str(r.get("ad_id")): int(r.get("key_events") or 0)
+        for r in rows if r.get("ad_id")
+    }
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "row_count": len(by_ad_id),
+        "by_ad_id": by_ad_id,
     }
 
 
