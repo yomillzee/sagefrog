@@ -10,7 +10,7 @@ import client_dashboard_config
 import dashboard_features
 import dashboard_theme
 from penn_config import PennDashboardConfig
-from ga4_attribution_service import build_ga4_campaign_index
+from ga4_attribution_service import build_ga4_campaign_index, build_ga4_level_index
 from penn_business_lines import (
     active_client_product_line_catalog,
     active_client_segment_catalog,
@@ -383,7 +383,7 @@ def campaign_explorer_content_html(
         )
     else:
         filter_note = "Use the channel filters at the top to narrow platforms — all are included by default."
-    empty_colspan = 10 + int(show_segment_filters) + int(show_product_line_column)
+    empty_colspan = 11 + int(show_segment_filters) + int(show_product_line_column)
     return f"""
             <section class="campaign-explorer-section" aria-label="Campaign performance">
               <div class="bl-summary" id="blSummary"></div>
@@ -406,6 +406,7 @@ def campaign_explorer_content_html(
                         <th class="sortable" data-sort="ctr" scope="col" aria-sort="none">CTR<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="conversions" scope="col" aria-sort="none">Conv.<span class="sort-icon" aria-hidden="true"></span></th>
                         <th class="sortable" data-sort="cpc" scope="col" aria-sort="none">CPC<span class="sort-icon" aria-hidden="true"></span></th>
+                        <th class="num ga4-col" scope="col" title="Verified conversions from GA4, matched to this campaign / ad set / ad by Meta object id (utm_id / utm_term / utm_content). Independent of Meta's self-reported Conv.">Verified conv.<span class="ga4-badge">GA4</span></th>
                       </tr>
                     </thead>
                     <tbody id="blTableBody" class="tree-table"></tbody>
@@ -607,15 +608,35 @@ def render_penn_html(
     aggregated = snapshot.get("aggregated_paid_media") or _aggregated_paid_media(totals)
     breakdowns_json = _json_for_html_script(breakdowns)
     ga4_campaign_metrics: dict[str, dict[str, dict[str, Any]]] = {}
+    ga4_adset_metrics: dict[str, dict[str, dict[str, Any]]] = {}
+    ga4_ad_metrics: dict[str, dict[str, dict[str, Any]]] = {}
     for platform in ("google", "linkedin", "meta"):
-        campaigns = (breakdowns.get(platform) or {}).get("campaign") or []
+        platform_bd = breakdowns.get(platform) or {}
+        campaigns = platform_bd.get("campaign") or []
+        adsets = platform_bd.get("adset") or []
+        ads = platform_bd.get("ad") or []
         report = ga4_platforms.get(platform) or {}
+        entity_rows = report.get("by_entity") or []
         ga4_campaign_metrics[platform] = (
             build_ga4_campaign_index(report.get("by_campaign") or [], campaigns)
             if campaigns and report
             else {}
         )
+        # Ad set / ad verified conversions join by exact Meta object id (utm_term /
+        # utm_content), so they only populate for platforms whose ads carry those params.
+        ga4_adset_metrics[platform] = (
+            build_ga4_level_index(entity_rows, adsets, level="adset")
+            if adsets and entity_rows
+            else {}
+        )
+        ga4_ad_metrics[platform] = (
+            build_ga4_level_index(entity_rows, ads, level="ad")
+            if ads and entity_rows
+            else {}
+        )
     ga4_campaign_metrics_json = _json_for_html_script(ga4_campaign_metrics)
+    ga4_adset_metrics_json = _json_for_html_script(ga4_adset_metrics)
+    ga4_ad_metrics_json = _json_for_html_script(ga4_ad_metrics)
     bl_campaigns = _business_line_campaigns_from_snapshot(snapshot)
     bl_campaigns_json = _json_for_html_script(bl_campaigns)
     bl_catalog_json = _json_for_html_script(
@@ -1943,6 +1964,18 @@ def render_penn_html(
       white-space: nowrap;
     }}
     .data-table td.ga4-col.muted {{ color: #9aa3ad; }}
+    .ga4-badge {{
+      display: inline-block;
+      margin-left: 4px;
+      padding: 0 4px;
+      border-radius: 3px;
+      background: rgba(184, 146, 46, 0.16);
+      color: #8a6d1f;
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      vertical-align: middle;
+    }}
     td.num {{ text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }}
     td.name {{ max-width: 340px; font-weight: 500; }}
     td.chevron, th.chevron-col {{
@@ -2942,6 +2975,8 @@ def render_penn_html(
   <script type="application/json" id="paid-overview-metrics-data">{paid_overview_metrics_json}</script>
   <script type="application/json" id="breakdowns-data">{breakdowns_json}</script>
   <script type="application/json" id="ga4-campaign-metrics">{ga4_campaign_metrics_json}</script>
+  <script type="application/json" id="ga4-adset-metrics">{ga4_adset_metrics_json}</script>
+  <script type="application/json" id="ga4-ad-metrics">{ga4_ad_metrics_json}</script>
   <script type="application/json" id="bl-campaigns-data">{bl_campaigns_json}</script>
   <script type="application/json" id="bl-catalog-data">{bl_catalog_json}</script>
   <script type="application/json" id="product-line-catalog-data">{product_line_catalog_json}</script>
@@ -2981,6 +3016,21 @@ def render_penn_html(
 
     const breakdowns = readJson('breakdowns-data', {{}});
     const ga4CampaignMetrics = readJson('ga4-campaign-metrics', {{}});
+    const ga4AdsetMetrics = readJson('ga4-adset-metrics', {{}});
+    const ga4AdMetrics = readJson('ga4-ad-metrics', {{}});
+    // Verified GA4 conversions keyed by entity id, resolved per drill level.
+    const GA4_METRICS_BY_LEVEL = {{
+      campaign: ga4CampaignMetrics,
+      adset: ga4AdsetMetrics,
+      ad: ga4AdMetrics,
+    }};
+    function ga4VerifiedConv(platform, level, id) {{
+      const byId = (GA4_METRICS_BY_LEVEL[level] || {{}})[platform];
+      if (!byId) return null;
+      const m = byId[String(id || '')];
+      if (!m || !(m.sessions || m.key_events)) return null;
+      return Number(m.key_events || 0);
+    }}
     const blCampaigns = readJson('bl-campaigns-data', []);
     const blCatalog = readJson('bl-catalog-data', []);
     const productLineCatalog = readJson('product-line-catalog-data', []);
@@ -4827,6 +4877,12 @@ def render_penn_html(
       return `<td class="name" style="padding-left:${{pad}}px">${{inner}}</td>`;
     }}
 
+    function buildVerifiedConvCell(platform, level, rowId) {{
+      const v = ga4VerifiedConv(platform, level, rowId);
+      if (v === null) return '<td class="num ga4-col muted">—</td>';
+      return `<td class="num ga4-col">${{fmtInt(v)}}</td>`;
+    }}
+
     function buildGa4Cells(platform, level, rowId) {{
       const platformMetrics = ga4CampaignMetrics[platform];
       if (!platformMetrics) return '';
@@ -4866,7 +4922,7 @@ def render_penn_html(
       return `${{beforeName}}<td class="name muted" style="padding-left:${{8 + (depth + 1) * 20}}px">No child rows for this period</td><td colspan="${{colspan}}"></td>`;
     }}
 
-    function buildTreeRow(r, platform, level, depth, prefixCellsHtml = '', includeGa4 = true) {{
+    function buildTreeRow(r, platform, level, depth, prefixCellsHtml = '', includeGa4 = true, blVerified = false) {{
       const spend = r.spend || 0;
       const clicks = r.clicks || 0;
       const impressions = r.impressions || 0;
@@ -4887,7 +4943,9 @@ def render_penn_html(
         tr.setAttribute('role', 'button');
         tr.setAttribute('aria-expanded', 'false');
       }}
-      const ga4Cells = includeGa4 ? buildGa4Cells(platform, level, r.id) : '';
+      const ga4Cells = includeGa4
+        ? buildGa4Cells(platform, level, r.id)
+        : (blVerified ? buildVerifiedConvCell(platform, level, r.id) : '');
       tr.innerHTML = `
         <td class="chevron-col">${{chevron}}</td>
         ${{prefixCellsHtml}}
@@ -4917,7 +4975,7 @@ def render_penn_html(
       const prefixCells = `
         <td><span class="platform-pill ${{escHtml(platform)}}">${{escHtml(r.platform_label)}}</span></td>${{blCell}}${{productCell}}`;
       const level = r.entity_level || blRootLevel(platform);
-      return buildTreeRow(r, platform, level, 0, prefixCells, false);
+      return buildTreeRow(r, platform, level, 0, prefixCells, false, true);
     }}
 
     function collapseDescendants(row) {{
@@ -4963,7 +5021,8 @@ def render_penn_html(
             rule.childLevel,
             depth + 1,
             childPrefix,
-            !isBlTable
+            !isBlTable,
+            isBlTable
           );
           insertAfter.after(childRow);
           insertAfter = childRow;
