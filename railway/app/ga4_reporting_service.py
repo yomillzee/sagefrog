@@ -392,6 +392,66 @@ def fetch_page_source_daily(
     return out
 
 
+def fetch_paid_entity_daily(
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
+) -> list[dict[str, Any]]:
+    """Paid session attribution at campaign / ad set / ad grain via UTM ids.
+
+    Meta (and other platforms) stamp the object ids into the landing URL with
+    dynamic params — utm_id -> campaign id, utm_term -> ad set id,
+    utm_content -> ad id — which GA4 exposes as sessionCampaignId /
+    sessionManualTerm / sessionManualAdContent. This report pulls those plus
+    keyEvents so on-site conversions can be joined to the exact ad-platform
+    entity by id, replacing the native event-export dependency.
+
+    Column names stay faithful to GA4 (manual_term / manual_ad_content); the
+    term->ad set / content->ad interpretation lives in the reader, since that
+    mapping is a tagging convention that can differ per client.
+
+    High cardinality (campaign x ad set x ad x day). If the API rejects the
+    combination it returns [] and logs, like fetch_page_source_daily.
+    """
+    try:
+        rows = _run_report(
+            property_id,
+            dimensions=[
+                "date", "sessionSourcePlatform", "sessionSource", "sessionMedium",
+                "sessionCampaignId", "sessionCampaignName",
+                "sessionManualTerm", "sessionManualAdContent",
+            ],
+            metrics=["sessions", "engagedSessions", "keyEvents", "screenPageViews"],
+            start=start, end=end, access_token=access_token,
+        )
+    except RuntimeError as exc:
+        _log.warning(
+            "GA4 paid_entity_daily skipped — API rejected dimension/metric combination "
+            "or returned error. Table will be empty for this sync. Error: %s", exc,
+        )
+        return []
+    synced_at = _now()
+    out = []
+    for r in rows:
+        out.append({
+            "client_key": client_key,
+            "property_id": property_id,
+            "date": _parse_date(r.get("date", "")),
+            "source_platform": r.get("sessionSourcePlatform") or "(not set)",
+            "session_source": r.get("sessionSource") or "(direct)",
+            "session_medium": r.get("sessionMedium") or "(none)",
+            "campaign_id": r.get("sessionCampaignId") or "",
+            "campaign_name": r.get("sessionCampaignName") or "(not set)",
+            "manual_term": r.get("sessionManualTerm") or "",
+            "manual_ad_content": r.get("sessionManualAdContent") or "",
+            "sessions": int(r.get("sessions") or 0),
+            "engaged_sessions": int(r.get("engagedSessions") or 0),
+            "key_events": int(float(r.get("keyEvents") or 0)),
+            "screen_page_views": int(r.get("screenPageViews") or 0),
+            "synced_at": synced_at,
+        })
+    return out
+
+
 def fetch_events_daily(
     property_id: str, start: str, end: str, access_token: str,
     *, client_key: str = "",
@@ -580,6 +640,15 @@ GA4_REPORTS = [
         "grain": ["date", "page_path", "session_source", "session_medium", "session_campaign_name"],
         "required": False,
         "notes": "True page-by-source without date-join fabrication. High cardinality — skipped if API rejects.",
+    },
+    {
+        "report_key": "paid_entity",
+        "table_name": "ga4_paid_entity_daily",
+        "dimensions": ["date", "sessionSourcePlatform", "sessionSource", "sessionMedium", "sessionCampaignId", "sessionCampaignName", "sessionManualTerm", "sessionManualAdContent"],
+        "metrics": ["sessions", "engagedSessions", "keyEvents", "screenPageViews"],
+        "grain": ["date", "source_platform", "campaign_id", "manual_term", "manual_ad_content"],
+        "required": False,
+        "notes": "Paid attribution by campaign/ad set/ad id (utm_id/utm_term/utm_content). Joins to ad-platform marts by exact id. High cardinality — skipped if API rejects. Replaces the native event-export dependency for verified conversions.",
     },
     {
         "report_key": "events",

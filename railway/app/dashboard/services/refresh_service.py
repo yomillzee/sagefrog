@@ -9,6 +9,7 @@ import client_config
 import dashboard_snapshots
 import ga4_attribution_service
 import ga4_page_service
+import ga4_paid_entity_service
 import google_ads_service
 import linkedin_service
 import meta_service
@@ -260,6 +261,16 @@ def refresh_client(
             )
         except Exception as exc:
             payload["errors"]["ga4_attribution"] = platform_error(exc)
+        # GA4 Data API path for verified conversions by campaign/ad set/ad id.
+        # Preferred over the event-export by_entity when populated; empty result
+        # (table not synced yet) leaves the renderer on the event-export fallback.
+        try:
+            payload["ga4_paid_entity"] = ga4_paid_entity_service.fetch_paid_entity_report(
+                date_range=preset,
+                client_key=cfg.ga4_client_key,
+            )
+        except Exception as exc:
+            payload["errors"]["ga4_paid_entity"] = platform_error(exc)
         try:
             _ga4_pages_by_preset = ga4_page_service.fetch_pages_for_all_presets(
                 client_key=cfg.ga4_client_key,
@@ -607,6 +618,12 @@ def refresh_bq_client(
             )
         except Exception as exc:
             snapshot.setdefault("errors", {})["ga4_attribution"] = platform_error(exc)
+        try:
+            snapshot["ga4_paid_entity"] = ga4_paid_entity_service.fetch_paid_entity_report(
+                date_range=preset, client_key=ga4_client_key,
+            )
+        except Exception as exc:
+            snapshot.setdefault("errors", {})["ga4_paid_entity"] = platform_error(exc)
         try:
             _ga4_by_preset = ga4_page_service.fetch_pages_for_all_presets(
                 client_key=ga4_client_key, client_slug=slug,
