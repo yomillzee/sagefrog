@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import hmac
 import logging
 import os
 import traceback
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Form, HTTPException, Query, Request, Security
+from fastapi import APIRouter, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 import bigquery_service
 import marketing_service
@@ -24,12 +22,9 @@ from dashboard.routes.helpers import (
     session_can_switch_clients,
     validate_client_slug,
 )
-from security import configured_api_key, is_production
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-_bearer = HTTPBearer(auto_error=False)
-_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 # Trailing window for the branded/target keyword weekly-position TREND chart
 # (~13 weeks). Independent of the dashboard's selected date range so a short
@@ -54,44 +49,6 @@ def _resolve_marketing_dates(
     if start_date > end_date:
         raise HTTPException(status_code=400, detail="start_date must be on or before end_date.")
     return start_date, end_date
-
-
-def _api_key_is_valid(
-    bearer_credentials: HTTPAuthorizationCredentials | None,
-    x_api_key: str | None,
-) -> bool:
-    expected = configured_api_key()
-    if not expected:
-        return not is_production()
-    token: str | None = None
-    if bearer_credentials and bearer_credentials.credentials:
-        token = bearer_credentials.credentials.strip()
-    elif x_api_key:
-        token = x_api_key.strip()
-    return bool(token and hmac.compare_digest(token, expected))
-
-
-def _authorize_nixon_api(
-    request: Request,
-    *,
-    bearer_credentials: HTTPAuthorizationCredentials | None,
-    x_api_key: str | None,
-) -> None:
-    if _api_key_is_valid(bearer_credentials, x_api_key):
-        return
-    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
-
-
-def _authorize_bq_client_api(
-    request: Request,
-    *,
-    client_slug: str,
-    bearer_credentials: HTTPAuthorizationCredentials | None,
-    x_api_key: str | None,
-) -> None:
-    if _api_key_is_valid(bearer_credentials, x_api_key):
-        return
-    web_auth.authenticate_dashboard_api(request, client_slug=client_slug)
 
 
 def _load_bq_test_config(slug: str) -> tuple[str, str]:
@@ -326,14 +283,8 @@ def nixon_marketing(
         le=100,
         description="Number of top campaigns by spend to return.",
     ),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request,
-        bearer_credentials=bearer_credentials,
-        x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -365,16 +316,10 @@ def client_summary(
         default=None,
         description="Inclusive end date. Defaults to today.",
     ),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     if normalized == "nixon":
-        _authorize_nixon_api(
-            request,
-            bearer_credentials=bearer_credentials,
-            x_api_key=x_api_key,
-        )
+        web_auth.authenticate_dashboard_api(request, client_slug="nixon")
         start, end = _resolve_marketing_dates(start_date, end_date)
         try:
             return _cached_bq_read(
@@ -386,12 +331,7 @@ def client_summary(
         except Exception as exc:
             raise _bq_endpoint_failure(exc) from exc
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request,
-        client_slug=normalized,
-        bearer_credentials=bearer_credentials,
-        x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -419,14 +359,8 @@ def nixon_marketing_health(
         le=500,
         description="Maximum mart_health rows to return.",
     ),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request,
-        bearer_credentials=bearer_credentials,
-        x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     try:
         return _cached_bq_read(
             "nixon.marketing.health", {"limit": limit}, ttl_seconds=900,
@@ -449,16 +383,10 @@ def client_health(
         le=500,
         description="Maximum health rows to return.",
     ),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     if normalized == "nixon":
-        _authorize_nixon_api(
-            request,
-            bearer_credentials=bearer_credentials,
-            x_api_key=x_api_key,
-        )
+        web_auth.authenticate_dashboard_api(request, client_slug="nixon")
         try:
             return _cached_bq_read(
                 "nixon.marketing.health", {"limit": limit}, ttl_seconds=900,
@@ -467,12 +395,7 @@ def client_health(
         except Exception as exc:
             raise _bq_endpoint_failure(exc) from exc
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request,
-        client_slug=normalized,
-        bearer_credentials=bearer_credentials,
-        x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     try:
         with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
@@ -493,12 +416,8 @@ def nixon_google_ads_keywords(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request, bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -527,14 +446,8 @@ def nixon_google_ads_explorer(
         default=None,
         description="Inclusive end date. Defaults to today.",
     ),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request,
-        bearer_credentials=bearer_credentials,
-        x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -564,14 +477,8 @@ def nixon_gsc_summary(
         default=None,
         description="Inclusive end date. Defaults to today.",
     ),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request,
-        bearer_credentials=bearer_credentials,
-        x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         import bq_gsc_service
@@ -599,12 +506,8 @@ def nixon_gsc_keyword_matches(
     exclude: str = Query(default="", description="Comma-separated exclude terms."),
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request, bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     term_list = [t.strip() for t in terms.split(",") if t.strip()]
     exclude_list = [t.strip() for t in exclude.split(",") if t.strip()]
     start, end = _resolve_marketing_dates(start_date, end_date)
@@ -646,14 +549,8 @@ def nixon_gsc_keyword_matches(
 )
 def nixon_semrush_summary(
     request: Request,
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request,
-        bearer_credentials=bearer_credentials,
-        x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     try:
         import bq_semrush_service
         # SEMrush routes by client_slug; the Nixon dashboard's BQ client is
@@ -678,14 +575,8 @@ def nixon_semrush_summary(
 def nixon_pagespeed_summary(
     request: Request,
     strategy: str = "desktop",
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request,
-        bearer_credentials=bearer_credentials,
-        x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     strat = (strategy or "desktop").strip().lower()
     if strat not in ("desktop", "mobile"):
         strat = "desktop"
@@ -719,14 +610,8 @@ def nixon_linkedin_explorer(
         default=None,
         description="Inclusive end date. Defaults to today.",
     ),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request,
-        bearer_credentials=bearer_credentials,
-        x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -751,13 +636,8 @@ def nixon_meta_debug_insights(
     request: Request,
     level: str = Query(default="campaign", description="campaign | adset | ad"),
     days: int = Query(default=7, description="How many trailing days to probe"),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     import oauth_store, meta_service
     from datetime import date, timedelta
     from meta_auth import load_meta_env
@@ -834,14 +714,8 @@ def nixon_meta_explorer(
         default=None,
         description="Inclusive end date. Defaults to today.",
     ),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request,
-        bearer_credentials=bearer_credentials,
-        x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -865,12 +739,8 @@ def nixon_pages_top(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request, bearer_credentials=bearer_credentials, x_api_key=x_api_key
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -891,12 +761,8 @@ def nixon_pages_sources(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request, bearer_credentials=bearer_credentials, x_api_key=x_api_key
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -917,12 +783,8 @@ def nixon_ai_traffic_daily(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request, bearer_credentials=bearer_credentials, x_api_key=x_api_key
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -943,12 +805,8 @@ def nixon_traffic_acquisition(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request, bearer_credentials=bearer_credentials, x_api_key=x_api_key
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -969,12 +827,8 @@ def nixon_device_split(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request, bearer_credentials=bearer_credentials, x_api_key=x_api_key
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -995,12 +849,8 @@ def nixon_landing_pages(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request, bearer_credentials=bearer_credentials, x_api_key=x_api_key
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -1021,10 +871,8 @@ def nixon_landing_page_events(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(request, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -1042,10 +890,8 @@ def nixon_top_pages_key_events(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(request, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -1062,10 +908,8 @@ def nixon_traffic_key_events(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(request, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -1082,10 +926,8 @@ def nixon_user_acq_key_events(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(request, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -1102,10 +944,8 @@ def nixon_conversion_events(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(request, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -1123,10 +963,8 @@ def nixon_user_acquisition(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(request, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -1144,10 +982,8 @@ def nixon_demographics(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(request, bearer_credentials=bearer_credentials, x_api_key=x_api_key)
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         return _cached_bq_read(
@@ -1168,15 +1004,10 @@ def client_marketing_health(
     client_key: str,
     request: Request,
     limit: int = Query(default=100, ge=1, le=500, description="Maximum mart_health rows to return."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     try:
         with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
@@ -1198,15 +1029,10 @@ def client_google_ads_explorer(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -1233,15 +1059,10 @@ def client_google_ads_keywords(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -1268,15 +1089,10 @@ def client_linkedin_explorer(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -1303,15 +1119,10 @@ def client_pages_top(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -1336,15 +1147,10 @@ def client_pages_sources(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -1369,15 +1175,10 @@ def client_ai_traffic_daily(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -1402,15 +1203,10 @@ def client_meta_explorer(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -1437,15 +1233,10 @@ def client_traffic_acquisition(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -1472,15 +1263,10 @@ def client_device_split(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -1505,15 +1291,10 @@ def client_landing_pages(
     request: Request,
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -1538,15 +1319,10 @@ def client_landing_page_events(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -1571,15 +1347,10 @@ def client_top_pages_key_events(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -1602,15 +1373,10 @@ def client_top_pages_key_events(
 def client_active_key_events(
     client_key: str,
     request: Request,
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     end = date.today() - timedelta(days=1)
     start = end - timedelta(days=90)
     try:
@@ -1636,15 +1402,10 @@ def client_traffic_key_events(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id):
@@ -1666,15 +1427,10 @@ def client_user_acq_key_events(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id):
@@ -1694,14 +1450,9 @@ def client_user_acq_key_events(
 async def save_ga4_key_events(
     client_key: str,
     request: Request,
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     try:
         body = await request.json()
     except Exception:
@@ -1723,17 +1474,12 @@ async def save_ga4_key_events(
 async def save_explorer_filters(
     client_key: str,
     request: Request,
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     """Persist the Campaign Explorer filter definition (one `Label = phrase`
     per line, optionally grouped under `[Group]` headers). Stored verbatim in
     client_dashboard_config; parsed into chips by the dashboard renderer."""
     normalized = (client_key or "").strip().lower()
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     try:
         body = await request.json()
     except Exception:
@@ -1757,15 +1503,10 @@ def client_conversion_events(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -1790,15 +1531,10 @@ def client_user_acquisition(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -1823,15 +1559,10 @@ def client_demographics(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         with marketing_service.route(
@@ -1856,14 +1587,9 @@ def client_gsc_summary(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
         import bq_gsc_service
@@ -1890,8 +1616,6 @@ def client_gsc_keyword_matches(
     exclude: str = Query(default="", description="Comma-separated exclude terms."),
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     """Unlike gsc/summary's top_queries (LIMIT 25 by clicks), this scans every
     query in range for the given terms -- so a branded/target keyword that
@@ -1901,10 +1625,7 @@ def client_gsc_keyword_matches(
     same terms over time, computed in the same request rather than a separate
     round trip."""
     normalized = (client_key or "").strip().lower()
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     term_list = [t.strip() for t in terms.split(",") if t.strip()]
     exclude_list = [t.strip() for t in exclude.split(",") if t.strip()]
     start, end = _resolve_marketing_dates(start_date, end_date)
@@ -1943,17 +1664,12 @@ def client_gsc_keyword_matches(
 async def save_gsc_keyword_config(
     client_key: str,
     request: Request,
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     """Persist the branded roots (brand-name stems) + specific target keywords
     used by the Search Console 'Branded & Target Keywords' section, plus optional
     per-group exclude roots. Stored one per line in client_dashboard_config."""
     normalized = (client_key or "").strip().lower()
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     try:
         body = await request.json()
     except Exception:
@@ -1980,17 +1696,12 @@ async def save_gsc_keyword_config(
 async def save_pagespeed_targets_endpoint(
     client_key: str,
     request: Request,
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     """Persist the Site Performance tab's per-KPI target bands. Body is
     {targets: {performance: {min, max}, ...}}; values are clamped to 0–100 and
     only the four Lighthouse category keys are kept."""
     normalized = (client_key or "").strip().lower()
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     try:
         body = await request.json()
     except Exception:
@@ -2029,15 +1740,10 @@ async def save_pagespeed_targets_endpoint(
 def client_semrush_summary(
     client_key: str,
     request: Request,
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     try:
         import bq_semrush_service
         return _cached_bq_read(
@@ -2058,18 +1764,13 @@ def client_pagespeed_summary(
     client_key: str,
     request: Request,
     strategy: str = "desktop",
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     strat = (strategy or "desktop").strip().lower()
     if strat not in ("desktop", "mobile"):
         strat = "desktop"
     project_id, dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     try:
         import bq_pagespeed_service
         return _cached_bq_read(
@@ -2089,15 +1790,11 @@ def client_pagespeed_summary(
 )
 def nixon_backfill_linkedin(
     request: Request,
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     """Run the 180-day onboarding ingestion for Nixon (writes raw_linkedin_ads +
     rebuilds the marts). Authed by the signed-in dashboard session or an API key
     — the same gate as the read endpoints — so no cron secret is needed."""
-    _authorize_nixon_api(
-        request, bearer_credentials=bearer_credentials, x_api_key=x_api_key
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     try:
         import dashboard_service
 
@@ -2127,14 +1824,10 @@ def nixon_backfill_linkedin(
 )
 def nixon_refresh(
     request: Request,
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     """Pull the last 30 days into BigQuery for Nixon (the rolling refresh). Same
     auth as the read endpoints — no cron secret needed."""
-    _authorize_nixon_api(
-        request, bearer_credentials=bearer_credentials, x_api_key=x_api_key
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     try:
         import dashboard_service
 
@@ -2164,8 +1857,6 @@ def nixon_refresh(
 def client_refresh(
     client_key: str,
     request: Request,
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     """Generic sibling of nixon_refresh -- pulls the last 30 days into BigQuery
     for any bigquery_nixon-mode client by running its connector syncs. Same
@@ -2174,10 +1865,7 @@ def client_refresh(
     # Ensure the client actually has a BQ dashboard configured before running
     # a (potentially slow) refresh; raises 404/503 the same way the reads do.
     _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     try:
         import dashboard_service
 
@@ -2198,8 +1886,6 @@ def client_refresh(
 def client_bq_verify(
     client_key: str,
     request: Request,
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     """Run the same provision + access check the connector wizard does, on
     demand — so an admin can confirm the GCP project exists and the shared
@@ -2208,10 +1894,7 @@ def client_bq_verify(
     (e.g. access revoked). Idempotent (create_dataset exists_ok=True)."""
     normalized = (client_key or "").strip().lower()
     project_id, _dataset_id = _load_bq_test_config(normalized)
-    _authorize_bq_client_api(
-        request, client_slug=normalized,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     try:
         import client_bigquery_setup
         result = client_bigquery_setup.ensure_client_datasets(project_id=project_id)
@@ -2236,14 +1919,8 @@ def client_bq_verify(
 @router.get("/api/debug/bq", summary="Debug BigQuery client identity")
 def debug_bigquery_identity(
     request: Request,
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
-    _authorize_nixon_api(
-        request,
-        bearer_credentials=bearer_credentials,
-        x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug="nixon")
     try:
         client = bigquery_service.build_client(project_id="nixon-medical")
         credentials = getattr(client, "_credentials", None) or getattr(client, "credentials", None)
@@ -2288,8 +1965,6 @@ def gtm_live_tags(
     refresh: bool = Query(default=False, description="Bypass 15-minute cache."),
     account_id: str | None = Query(default=None, description="GTM account ID override."),
     container_id: str | None = Query(default=None, description="GTM container ID override."),
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     """
     Returns the live GTM container version normalised into per-tag rows.
@@ -2300,12 +1975,7 @@ def gtm_live_tags(
     pass refresh=true to force a live fetch.
     """
     slug = (client_slug or "").strip().lower()
-    _authorize_bq_client_api(
-        request,
-        client_slug=slug,
-        bearer_credentials=bearer_credentials,
-        x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=slug)
 
     import connector_config_store
     import gtm_service
@@ -2377,14 +2047,9 @@ def gtm_live_tags(
 def ga4_raw_health(
     client_slug: str,
     request: Request,
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     slug = (client_slug or "").strip().lower()
-    _authorize_bq_client_api(
-        request, client_slug=slug,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=slug)
     import bq_ga4_service
     import connector_config_store
 
@@ -2424,14 +2089,9 @@ def ga4_raw_health(
 def ga4_mart_health(
     client_slug: str,
     request: Request,
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     slug = (client_slug or "").strip().lower()
-    _authorize_bq_client_api(
-        request, client_slug=slug,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=slug)
     import bq_ga4_mart_service
     import connector_config_store
 
@@ -2462,8 +2122,6 @@ def ga4_mart_health(
 def ga4_provision_views(
     client_slug: str,
     request: Request,
-    bearer_credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    x_api_key: str | None = Security(_api_key_header),
 ) -> dict:
     """Idempotent — safe to re-run.  Rebuilds all GA4 mart views from raw_ga4.
 
@@ -2471,10 +2129,7 @@ def ga4_provision_views(
       views — comma-separated list to rebuild only specific views (default: all)
     """
     slug = (client_slug or "").strip().lower()
-    _authorize_bq_client_api(
-        request, client_slug=slug,
-        bearer_credentials=bearer_credentials, x_api_key=x_api_key,
-    )
+    web_auth.authenticate_dashboard_api(request, client_slug=slug)
     import bq_ga4_mart_service
     import connector_config_store
 
