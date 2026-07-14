@@ -452,6 +452,55 @@ def fetch_paid_entity_daily(
     return out
 
 
+def fetch_paid_key_event_daily(
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
+) -> list[dict[str, Any]]:
+    """Paid key events broken out by event name, per campaign/ad set/ad id.
+
+    Same id grain as fetch_paid_entity_daily but with eventName so the Campaign
+    Explorer's Verified conv. column can be filtered to a single key event
+    (e.g. a form completion instead of a button-click micro-conversion). Only
+    rows where the event is actually a key event (key_events > 0) are kept, so
+    cardinality stays small. Degrades gracefully like the other paid reports.
+    """
+    try:
+        rows = _run_report(
+            property_id,
+            dimensions=[
+                "date", "sessionCampaignId", "sessionCampaignName",
+                "sessionManualTerm", "sessionManualAdContent", "eventName",
+            ],
+            metrics=["keyEvents"],
+            start=start, end=end, access_token=access_token,
+        )
+    except RuntimeError as exc:
+        _log.warning(
+            "GA4 paid_key_event_daily skipped — API rejected dimension/metric combination "
+            "or returned error. Table will be empty for this sync. Error: %s", exc,
+        )
+        return []
+    synced_at = _now()
+    out = []
+    for r in rows:
+        key_events = int(float(r.get("keyEvents") or 0))
+        if key_events <= 0:
+            continue
+        out.append({
+            "client_key": client_key,
+            "property_id": property_id,
+            "date": _parse_date(r.get("date", "")),
+            "campaign_id": r.get("sessionCampaignId") or "",
+            "campaign_name": r.get("sessionCampaignName") or "(not set)",
+            "manual_term": r.get("sessionManualTerm") or "",
+            "manual_ad_content": r.get("sessionManualAdContent") or "",
+            "event_name": r.get("eventName") or "(not set)",
+            "key_events": key_events,
+            "synced_at": synced_at,
+        })
+    return out
+
+
 def fetch_events_daily(
     property_id: str, start: str, end: str, access_token: str,
     *, client_key: str = "",
@@ -649,6 +698,15 @@ GA4_REPORTS = [
         "grain": ["date", "source_platform", "campaign_id", "manual_term", "manual_ad_content"],
         "required": False,
         "notes": "Paid attribution by campaign/ad set/ad id (utm_id/utm_term/utm_content). Joins to ad-platform marts by exact id. High cardinality — skipped if API rejects. Replaces the native event-export dependency for verified conversions.",
+    },
+    {
+        "report_key": "paid_key_event",
+        "table_name": "ga4_paid_key_event_daily",
+        "dimensions": ["date", "sessionCampaignId", "sessionCampaignName", "sessionManualTerm", "sessionManualAdContent", "eventName"],
+        "metrics": ["keyEvents"],
+        "grain": ["date", "campaign_id", "manual_term", "manual_ad_content", "event_name"],
+        "required": False,
+        "notes": "Paid key events split by event name, keyed by campaign/ad set/ad id. Powers the per-key-event selector on the Verified conv. column. Only rows with key_events > 0 are kept.",
     },
     {
         "report_key": "events",

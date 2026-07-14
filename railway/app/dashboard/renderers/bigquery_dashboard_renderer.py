@@ -769,6 +769,7 @@ def render_bigquery_dashboard_page(
     /* GA4-verified conversions column — set off from the platform-reported metrics. */
     #explorerTable th.ga4-col, #explorerTable td.ga4-col {{ background:rgba(184,146,46,0.06); border-left:1px solid var(--border); }}
     #explorerTable th.ga4-col {{ color:#8a6d1f; }}
+    #explorerTable th.ga4-col .ke-select {{ display:block; margin-top:3px; max-width:150px; font-size:.66rem; font-weight:500; color:var(--navy); border:1px solid var(--border); border-radius:4px; padding:1px 3px; background:#fff; cursor:pointer; }}
     .pill {{ display:inline-block; padding:1px 7px; border-radius:999px; font-size:.64rem; font-weight:800; letter-spacing:.03em; text-transform:uppercase; vertical-align:middle; margin-right:7px; }}
     .pill-google {{ background:#e8f0fe; color:#1a73e8; }}
     .pill-linkedin {{ background:#e6f0f8; color:#0a66c2; }}
@@ -1929,7 +1930,7 @@ def render_bigquery_dashboard_page(
       {{key:'impressions',label:'Impr.',format:count}},
       {{key:'clicks',label:'Clicks',format:count}},
       {{key:'conversions',label:'Conv.',format:count}},
-      {{key:'verified',label:'Verified conv.',format:count,cls:'ga4-col',title:'GA4-verified conversions, matched to the Meta ad by id (utm_content) and rolled up. Independent of the platform-reported Conv.'}},
+      {{key:'verified_sel',label:'Verified conv.',format:count,cls:'ga4-col',keSelect:true,title:'GA4-verified conversions, matched to the Meta ad by id (utm_content) and rolled up. Independent of the platform-reported Conv. Use the selector to isolate a single GA4 key event.'}},
       {{key:'ctr',label:'CTR',format:pct}},
     ];
     // Explorer table sort — click a column header to sort every tree level (campaigns,
@@ -1947,6 +1948,23 @@ def render_bigquery_dashboard_page(
     const explorerFilterState = new Map(); // groupId -> Set of active chip labels
     let explorerRows = [];
     let verifiedByAdId = {{}};
+    let verifiedByAdIdEvent = {{}};
+    let keyEventList = [];
+    const KE_STORAGE_KEY = 'ce_verified_ke_{api_client_key}';
+    let selectedKeyEvent = (function(){{ try {{ return localStorage.getItem(KE_STORAGE_KEY) || '__all__'; }} catch(e) {{ return '__all__'; }} }})();
+    function applyVerifiedSelection() {{
+      for (const r of explorerRows) {{
+        const id=String(r.ad_id||'');
+        r.verified = num(verifiedByAdId[id]);
+        r.verified_sel = (selectedKeyEvent==='__all__') ? r.verified : num((verifiedByAdIdEvent[id]||{{}})[selectedKeyEvent]);
+      }}
+    }}
+    function keSelectHtml() {{
+      if (!keyEventList.length) return '';
+      const opts=[['__all__','All key events'],...keyEventList.map(e=>[e,e])]
+        .map(([v,l])=>`<option value="${{esc(v)}}"${{selectedKeyEvent===v?' selected':''}}>${{esc(l)}}</option>`).join('');
+      return `<select class="ke-select" title="Show verified conversions for a single GA4 key event">${{opts}}</select>`;
+    }}
 
     function buildChips(container, keys, stateSet, onChange) {{
       const el = typeof container==='string' ? document.getElementById(container) : container;
@@ -2024,8 +2042,8 @@ def render_bigquery_dashboard_page(
       const platOk=!platformFilter.size||[...platformFilter].some(k=>k.toLowerCase()===(row.platform||''));
       return platOk;
     }}
-    function zeroMetrics() {{ return {{spend:0,impressions:0,clicks:0,conversions:0,verified:0}}; }}
-    function addMetrics(acc,r) {{ acc.spend+=num(r.spend);acc.impressions+=num(r.impressions);acc.clicks+=num(r.clicks);acc.conversions+=num(r.conversions);acc.verified+=num(r.verified); }}
+    function zeroMetrics() {{ return {{spend:0,impressions:0,clicks:0,conversions:0,verified:0,verified_sel:0}}; }}
+    function addMetrics(acc,r) {{ acc.spend+=num(r.spend);acc.impressions+=num(r.impressions);acc.clicks+=num(r.clicks);acc.conversions+=num(r.conversions);acc.verified+=num(r.verified);acc.verified_sel+=num(r.verified_sel); }}
     function withCtr(m) {{ return {{...m,ctr:m.impressions?(num(m.clicks)/num(m.impressions)*100):0}}; }}
     function buildExplorerTree(rows) {{
       const campaigns=new Map();
@@ -2176,7 +2194,7 @@ def render_bigquery_dashboard_page(
       const tree=buildExplorerTree(filtered);
       if (!tree.size) {{ el.innerHTML=`<tbody><tr><td class="empty">No campaigns match these filters.</td></tr></tbody>`; }} else {{
         const sArrow=k=>explorerSort.key===k?(explorerSort.dir==='asc'?' ▲':' ▼'):'';
-        const head=`<thead><tr><th class="left expl-sort${{explorerSort.key==='name'?' active':''}}" data-key="name">Campaign / Ad group / Ad${{sArrow('name')}}</th>${{METRIC_COLS.map(c=>`<th class="expl-sort${{c.cls?' '+c.cls:''}}${{explorerSort.key===c.key?' active':''}}" data-key="${{c.key}}"${{c.title?` title="${{esc(c.title)}}"`:''}}>${{esc(c.label)}}${{sArrow(c.key)}}</th>`).join('')}}</tr></thead>`;
+        const head=`<thead><tr><th class="left expl-sort${{explorerSort.key==='name'?' active':''}}" data-key="name">Campaign / Ad group / Ad${{sArrow('name')}}</th>${{METRIC_COLS.map(c=>`<th class="expl-sort${{c.cls?' '+c.cls:''}}${{explorerSort.key===c.key?' active':''}}" data-key="${{c.key}}"${{c.title?` title="${{esc(c.title)}}"`:''}}>${{esc(c.label)}}${{c.keSelect?keSelectHtml():''}}${{sArrow(c.key)}}</th>`).join('')}}</tr></thead>`;
         let body='', cIdx=0;
         for (const camp of tree.values()) {{
           const cId='c'+(cIdx++), gCount=camp.groups.size;
@@ -2386,8 +2404,11 @@ def render_bigquery_dashboard_page(
         getJson(withDates(META_VERIFIED_API)).catch(()=>({{by_ad_id:{{}}}})),
       ]);
       verifiedByAdId=(ver&&ver.by_ad_id)?ver.by_ad_id:{{}};
+      verifiedByAdIdEvent=(ver&&ver.by_ad_id_event)?ver.by_ad_id_event:{{}};
+      keyEventList=(ver&&ver.events)?ver.events:[];
+      if (selectedKeyEvent!=='__all__' && keyEventList.indexOf(selectedKeyEvent)<0) selectedKeyEvent='__all__';
       explorerRows=normalizeExplorerRows(g,l,m);
-      for (const r of explorerRows) {{ r.verified = num(verifiedByAdId[String(r.ad_id||'')]); }}
+      applyVerifiedSelection();
       renderExplorer();
       // Keyword table: only show the section when this client actually has
       // Google Ads search-keyword data (empty for LinkedIn/Meta-only clients).
@@ -3443,6 +3464,7 @@ def render_bigquery_dashboard_page(
         moreBtn.textContent = extra.hidden ? moreBtn.dataset.moreLabel : 'Show less';
         return;
       }}
+      if (ev.target.closest('.ke-select')) return;  // dropdown handles its own change
       const sortTh=ev.target.closest('th.expl-sort');
       if (sortTh) {{
         const key=sortTh.dataset.key;
@@ -3453,6 +3475,14 @@ def render_bigquery_dashboard_page(
       }}
       const row=ev.target.closest('tr[data-expandable]');
       if (row) toggleExplorerRow(row);
+    }});
+    document.getElementById('explorerTable').addEventListener('change',ev=>{{
+      const sel=ev.target.closest('.ke-select');
+      if (!sel) return;
+      selectedKeyEvent = sel.value || '__all__';
+      try {{ localStorage.setItem(KE_STORAGE_KEY, selectedKeyEvent); }} catch(e) {{}}
+      applyVerifiedSelection();
+      renderExplorer();
     }});
     // ---- Keyword Performance: search, match filter and column sorting ----
     document.getElementById('keywordSearch').addEventListener('input',ev=>{{
