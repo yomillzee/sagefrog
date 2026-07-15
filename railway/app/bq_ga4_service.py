@@ -244,6 +244,15 @@ def _schema_google_key_event():
     ]
 
 
+def _schema_linkedin_key_event():
+    bq = _bq()
+    return _common_fields(bq) + [
+        bq.SchemaField("campaign_name", "STRING", mode="NULLABLE"),
+        bq.SchemaField("event_name",    "STRING", mode="NULLABLE"),
+        bq.SchemaField("key_events",    "INT64",  mode="NULLABLE"),
+    ]
+
+
 def _schema_events():
     bq = _bq()
     return _common_fields(bq) + [
@@ -318,6 +327,7 @@ _TABLE_SCHEMAS = {
     "ga4_paid_key_event_daily": _schema_paid_key_event,
     "ga4_google_entity_daily": _schema_google_entity,
     "ga4_google_key_event_daily": _schema_google_key_event,
+    "ga4_linkedin_key_event_daily": _schema_linkedin_key_event,
     "ga4_events_daily":       _schema_events,
     "ga4_tech_daily":         _schema_tech,
     "ga4_user_acq_daily":     _schema_user_acq,
@@ -440,6 +450,7 @@ def sync_ga4_to_bq(
         ("paid_key_event", ga4.fetch_paid_key_event_daily, "ga4_paid_key_event_daily", _schema_paid_key_event),
         ("paid_google_entity", ga4.fetch_paid_google_entity_daily, "ga4_google_entity_daily", _schema_google_entity),
         ("paid_google_key_event", ga4.fetch_paid_google_key_event_daily, "ga4_google_key_event_daily", _schema_google_key_event),
+        ("paid_linkedin_key_event", ga4.fetch_paid_linkedin_key_event_daily, "ga4_linkedin_key_event_daily", _schema_linkedin_key_event),
         ("events",        ga4.fetch_events_daily,         "ga4_events_daily",        _schema_events),
         ("tech",          ga4.fetch_tech_daily,           "ga4_tech_daily",          _schema_tech),
         ("user_acq",      ga4.fetch_user_acq_daily,       "ga4_user_acq_daily",      _schema_user_acq),
@@ -449,7 +460,7 @@ def sync_ga4_to_bq(
     # Geo and demographics may return 0 rows (Google Signals not enabled, no
     # audience data) or a 400 from the API — treat as optional so they don't
     # surface as errors in the sync run status.
-    _OPTIONAL_KEYS = {"geo", "demographics", "paid_entity", "paid_key_event", "paid_google_entity", "paid_google_key_event"}
+    _OPTIONAL_KEYS = {"geo", "demographics", "paid_entity", "paid_key_event", "paid_google_entity", "paid_google_key_event", "paid_linkedin_key_event"}
 
     errors: dict[str, str] = {}
     counts: dict[str, int] = {}

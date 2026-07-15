@@ -1121,6 +1121,7 @@ def render_bigquery_dashboard_page(
     const META_EXPLORER_API    = "{_aurl(f'/api/clients/{api_client_key}/meta/explorer')}";
     const META_VERIFIED_API    = "{_aurl(f'/api/clients/{api_client_key}/meta/verified-conversions')}";
     const GOOGLE_VERIFIED_API  = "{_aurl(f'/api/clients/{api_client_key}/google-ads/verified-conversions')}";
+    const LINKEDIN_VERIFIED_API= "{_aurl(f'/api/clients/{api_client_key}/linkedin/verified-conversions')}";
     const BACKFILL_API         = "{_aurl(f'/api/clients/{api_client_key}/backfill-linkedin')}";
     const PAGES_TOP_API        = "{_aurl(f'/api/clients/{api_client_key}/pages/top')}";
     const PAGES_SOURCES_API    = "{_aurl(f'/api/clients/{api_client_key}/pages/sources')}";
@@ -1952,7 +1953,10 @@ def render_bigquery_dashboard_page(
     let verifiedByAdIdEvent = {{}};
     let verifiedByGoogleCampaignId = {{}};
     let verifiedByGoogleCampaignIdEvent = {{}};
+    let verifiedByLinkedinGroup = {{}};
+    let verifiedByLinkedinGroupEvent = {{}};
     let keyEventList = [];
+    function normalizeLiName(name) {{ return String(name||'').replace(/\\+/g,' ').replace(/\\s+/g,' ').trim().toLowerCase(); }}
     const KE_STORAGE_KEY = 'ce_verified_ke_{api_client_key}';
     let selectedKeyEvent = (function(){{ try {{ return localStorage.getItem(KE_STORAGE_KEY) || '__all__'; }} catch(e) {{ return '__all__'; }} }})();
     function applyVerifiedSelection() {{
@@ -2067,9 +2071,9 @@ def render_bigquery_dashboard_page(
       const cmpName=(x,y)=>mul*String(x).localeCompare(String(y),undefined,{{numeric:true}});
       const cmpMetric=(x,y)=>mul*(explorerMetricVal(x,key)-explorerMetricVal(y,key));
       const cmpNode=(a,b)=> key==='name' ? cmpName(a[1].name,b[1].name) : cmpMetric(a[1].metrics,b[1].metrics);
-      // No Google verified data yet (table not synced) -> show "—", not a
-      // misleading 0. Once synced, an unmatched campaign legitimately reads 0.
+      // No verified data yet (table not synced) -> show "—", not a misleading 0.
       const gHasData = Object.keys(verifiedByGoogleCampaignId).length > 0;
+      const lHasData = Object.keys(verifiedByLinkedinGroup).length > 0;
       for (const camp of campaigns.values()) {{
         // Google verified is a campaign-level number (native GA4 link); attach it
         // to the campaign node — sub-levels stay "—" (no reliable per-ad id).
@@ -2081,6 +2085,20 @@ def render_bigquery_dashboard_page(
             camp.metrics.verified_sel=(selectedKeyEvent==='__all__')
               ? gv
               : num((verifiedByGoogleCampaignIdEvent[cid]||{{}})[selectedKeyEvent]);
+          }} else {{
+            camp.metrics._verifiedNa=true;
+          }}
+        }}
+        // LinkedIn verified is campaign-group-level, matched by normalized name
+        // (no ids in GA4). Sub-levels (ad set / creative) stay "—".
+        else if (camp.platform==='linkedin') {{
+          if (lHasData) {{
+            const gname=normalizeLiName(camp.name);
+            const lv=num(verifiedByLinkedinGroup[gname]);
+            camp.metrics.verified=lv;
+            camp.metrics.verified_sel=(selectedKeyEvent==='__all__')
+              ? lv
+              : num((verifiedByLinkedinGroupEvent[gname]||{{}})[selectedKeyEvent]);
           }} else {{
             camp.metrics._verifiedNa=true;
           }}
@@ -2210,10 +2228,13 @@ def render_bigquery_dashboard_page(
       // Google campaign in the filtered set for the summary total.
       const gcSeen=new Set(); let googleVerifiedTotal=0;
       for (const r of filtered) {{ const cid=String(r.campaign_id||''); if (r.platform==='google' && cid && !gcSeen.has(cid)) {{ gcSeen.add(cid); googleVerifiedTotal+=num(verifiedByGoogleCampaignId[cid]); }} }}
+      // LinkedIn verified is campaign-group-level (name-matched); add once per group.
+      const liSeen=new Set(); let linkedinVerifiedTotal=0;
+      for (const r of filtered) {{ if (r.platform==='linkedin') {{ const gn=normalizeLiName(r.campaign_name||''); if (gn && !liSeen.has(gn)) {{ liSeen.add(gn); linkedinVerifiedTotal+=num(verifiedByLinkedinGroup[gn]); }} }} }}
       const scards=document.getElementById('explorerSummaryCards');
       if (scards) scards.innerHTML=[
         ['Spend',money(agg.spend)],['Impressions',count(agg.impressions)],['Clicks',count(agg.clicks)],
-        ['Conversions',count(agg.conversions)],['Verified conv. (GA4)',count(num(agg.verified)+googleVerifiedTotal)],['CTR',num(agg.ctr).toFixed(2)+'%'],
+        ['Conversions',count(agg.conversions)],['Verified conv. (GA4)',count(num(agg.verified)+googleVerifiedTotal+linkedinVerifiedTotal)],['CTR',num(agg.ctr).toFixed(2)+'%'],
       ].map(([l,v])=>`<div class="card"><div class="card-title">${{l}}</div><div class="card-value">${{v}}</div></div>`).join('');
       const el=document.getElementById('explorerTable');
       const tree=buildExplorerTree(filtered);
@@ -2253,7 +2274,7 @@ def render_bigquery_dashboard_page(
         out.push({{platform:'google',campaign_id:r.campaign_id,campaign_name:r.campaign_name,ad_group_name:r.ad_group_name,ad_label:r.ad_label,ad_id:r.ad_id,headlines:r.headlines,descriptions:r.descriptions,headline_1:r.headline_1,headline_2:r.headline_2,headline_3:r.headline_3,description_1:r.description_1,description_2:r.description_2,ad_name:r.ad_name,final_url:r.final_url,ad_type:r.ad_type,thumbnail_url:'',media_type:r.ad_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions),_verifiedNa:true}});
       }}
       for (const r of (linkedin&&linkedin.rows?linkedin.rows:[])) {{
-        out.push({{platform:'linkedin',campaign_name:r.campaign_group_name||r.campaign_name,ad_group_name:r.campaign_name,ad_label:r.creative_name,thumbnail_url:r.thumbnail_url||r.image_url||'',image_url:r.image_url||'',video_url:r.video_url||'',media_type:r.media_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
+        out.push({{platform:'linkedin',campaign_name:r.campaign_group_name||r.campaign_name,ad_group_name:r.campaign_name,ad_label:r.creative_name,thumbnail_url:r.thumbnail_url||r.image_url||'',image_url:r.image_url||'',video_url:r.video_url||'',media_type:r.media_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions),_verifiedNa:true}});
       }}
       for (const r of (meta&&meta.rows?meta.rows:[])) {{
         out.push({{platform:'meta',campaign_name:r.campaign_name,ad_group_name:r.adset_name,ad_label:r.ad_name,ad_id:r.ad_id,thumbnail_url:r.thumbnail_url||r.image_url||'',image_url:r.image_url||'',video_url:r.video_url||'',media_type:r.media_type||'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions)}});
@@ -2421,21 +2442,25 @@ def render_bigquery_dashboard_page(
       setStatus('explorerStatus','Loading…');
       document.getElementById('explorerSummaryCards').innerHTML = skelCards(5);
       document.getElementById('explorerTable').innerHTML = skelTable(6,8);
-      const [g,l,m,kw,ver,gver]=await Promise.all([
+      const [g,l,m,kw,ver,gver,lver]=await Promise.all([
         getJson(withDates(EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(LINKEDIN_EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(META_EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(GOOGLE_ADS_KEYWORDS_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(META_VERIFIED_API)).catch(()=>({{by_ad_id:{{}}}})),
         getJson(withDates(GOOGLE_VERIFIED_API)).catch(()=>({{by_campaign_id:{{}}}})),
+        getJson(withDates(LINKEDIN_VERIFIED_API)).catch(()=>({{by_group_name:{{}}}})),
       ]);
       verifiedByAdId=(ver&&ver.by_ad_id)?ver.by_ad_id:{{}};
       verifiedByAdIdEvent=(ver&&ver.by_ad_id_event)?ver.by_ad_id_event:{{}};
       verifiedByGoogleCampaignId=(gver&&gver.by_campaign_id)?gver.by_campaign_id:{{}};
       verifiedByGoogleCampaignIdEvent=(gver&&gver.by_campaign_id_event)?gver.by_campaign_id_event:{{}};
+      verifiedByLinkedinGroup=(lver&&lver.by_group_name)?lver.by_group_name:{{}};
+      verifiedByLinkedinGroupEvent=(lver&&lver.by_group_name_event)?lver.by_group_name_event:{{}};
       const metaEvents=(ver&&ver.events)?ver.events:[];
       const googleEvents=(gver&&gver.events)?gver.events:[];
-      keyEventList=[...new Set([...metaEvents,...googleEvents])];
+      const linkedinEvents=(lver&&lver.events)?lver.events:[];
+      keyEventList=[...new Set([...metaEvents,...googleEvents,...linkedinEvents])];
       if (selectedKeyEvent!=='__all__' && keyEventList.indexOf(selectedKeyEvent)<0) selectedKeyEvent='__all__';
       explorerRows=normalizeExplorerRows(g,l,m);
       applyVerifiedSelection();
