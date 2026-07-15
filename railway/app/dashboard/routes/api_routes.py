@@ -820,6 +820,30 @@ def nixon_google_verified_conversions(
 
 
 @router.get(
+    "/api/clients/nixon/linkedin/verified-conversions",
+    summary="Nixon GA4-verified conversions per LinkedIn campaign-group name from BigQuery",
+)
+def nixon_linkedin_verified_conversions(
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        return _cached_bq_read(
+            "nixon.explorer.linkedin_verified",
+            {"start": start.isoformat(), "end": end.isoformat()},
+            ttl_seconds=900,
+            fetch=lambda: marketing_service.fetch_linkedin_verified_key_events(
+                start_date=start, end_date=end,
+            ),
+        )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
     "/api/clients/nixon/pages/top",
     summary="Nixon top pages (all traffic) from BigQuery",
 )
@@ -1368,6 +1392,36 @@ def client_google_verified_conversions(
                 fetch=lambda: _merge_google_verified(
                     marketing_service.fetch_google_verified_conversions(start_date=start, end_date=end),
                     marketing_service.fetch_google_verified_key_events(start_date=start, end_date=end),
+                ),
+            )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/linkedin/verified-conversions",
+    summary="Client GA4-verified conversions per LinkedIn campaign-group name from BigQuery (generic BQ-test clients)",
+)
+def client_linkedin_verified_conversions(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        with marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer.linkedin_verified",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: marketing_service.fetch_linkedin_verified_key_events(
+                    start_date=start, end_date=end,
                 ),
             )
     except Exception as exc:

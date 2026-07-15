@@ -134,6 +134,21 @@ def _ga4_google_key_event_table() -> str:
     return f"`{_project_id()}.raw_ga4.ga4_google_key_event_daily`"
 
 
+def _ga4_linkedin_key_event_table() -> str:
+    return f"`{_project_id()}.raw_ga4.ga4_linkedin_key_event_daily`"
+
+
+def _normalize_li_name(name: str) -> str:
+    """Normalize a LinkedIn campaign-group name for name-based matching.
+
+    LinkedIn has no ids, so verified conversions match by name — normalize away
+    the usual drift (case, URL-encoded '+' for spaces, repeated whitespace).
+    """
+    import re
+    s = (name or "").replace("+", " ")
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
 def _page_path_daily_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.vw_page_path_daily`"
 
@@ -872,6 +887,61 @@ def fetch_google_verified_key_events(
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "events": ordered_events,
         "by_campaign_id_event": by_campaign_id_event,
+    }
+
+
+def fetch_linkedin_verified_key_events(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """GA4-verified LinkedIn conversions split by key event, per campaign group.
+
+    LinkedIn has no ids in GA4, so this matches by normalized campaign-group
+    name (utm_campaign). Returns {norm_group_name: {event_name: key_events}},
+    the derived {norm_group_name: total}, and the event list. Missing table
+    (not synced) yields empty maps.
+    """
+    sql = f"""
+    SELECT campaign_name, event_name, SUM(key_events) AS key_events
+    FROM {_ga4_linkedin_key_event_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+      AND campaign_name NOT IN ('', '(not set)')
+    GROUP BY campaign_name, event_name
+    """
+    try:
+        rows = _run_query(
+            sql,
+            params={
+                "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            },
+            max_rows=100000,
+        )
+    except Exception as exc:
+        if "not found" in str(exc).lower():
+            rows = []
+        else:
+            raise
+    by_group_event: dict[str, dict[str, int]] = {}
+    by_group: dict[str, int] = {}
+    events: dict[str, int] = {}
+    for r in rows:
+        grp = _normalize_li_name(str(r.get("campaign_name") or ""))
+        event = str(r.get("event_name") or "")
+        ke = int(r.get("key_events") or 0)
+        if not grp or not event or ke <= 0:
+            continue
+        by_group_event.setdefault(grp, {})[event] = by_group_event.get(grp, {}).get(event, 0) + ke
+        by_group[grp] = by_group.get(grp, 0) + ke
+        events[event] = events.get(event, 0) + ke
+    ordered_events = [e for e, _ in sorted(events.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "events": ordered_events,
+        "by_group_name": by_group,
+        "by_group_name_event": by_group_event,
     }
 
 
