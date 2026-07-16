@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from datetime import date, timedelta
 from typing import Any
 
@@ -8,6 +10,20 @@ import httpx
 
 from dates_util import resolve_date_range
 from meta_auth import MetaEnv, load_meta_env
+
+_log = logging.getLogger(__name__)
+
+# Meta's Graph edge intermittently drops connections mid-response — most often
+# on the ad-creative fetch, which pages over every ad (limit 500) with a heavy
+# creative{...} field expansion, so responses are large and slow. That surfaces
+# as "[Errno 104] Connection reset by peer" (an httpx.TransportError), which used
+# to fail the whole sync as meta_creative_fetch. Meta also rate-limits (429) and
+# its edge can hiccup with 5xx. Retry all of those a few times with exponential
+# backoff; non-transient statuses (400/403 — e.g. missing ads_read) fail fast so
+# callers can handle them.
+_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+_MAX_ATTEMPTS = 4
+_RETRY_BACKOFF_SECONDS = 2.0
 
 _ACCOUNT_FIELDS = "id,account_id,name,account_status,currency,business_name"
 _INSIGHT_FIELDS = (
@@ -88,16 +104,59 @@ def _graph_get(
     query = dict(params or {})
     query["access_token"] = access_token
     url = path if path.startswith("http") else f"{_graph_base(env)}{path}"
-    with httpx.Client(timeout=120.0) as client:
-        response = client.get(url, params=query, headers=_client_headers())
-    if response.status_code >= 400:
-        detail = response.text
+
+    # Retry transient failures — a connection reset mid-response (TransportError)
+    # or a 429/5xx — with exponential backoff. A non-transient status (e.g. 400
+    # missing ads_read) raises immediately so callers keep their existing
+    # handling. TransportError covers connect/read/write/protocol errors and
+    # timeouts, which is where "Connection reset by peer" lands.
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
-            detail = response.json()
-        except Exception:
-            pass
-        raise RuntimeError(f"Meta Graph API error {response.status_code} on {path}: {detail}")
-    return response.json()
+            with httpx.Client(timeout=120.0) as client:
+                response = client.get(url, params=query, headers=_client_headers())
+        except httpx.TransportError as exc:
+            if attempt >= _MAX_ATTEMPTS:
+                raise RuntimeError(
+                    f"Meta Graph API transport error on {path} after "
+                    f"{_MAX_ATTEMPTS} attempts: {exc}"
+                ) from exc
+            wait = _RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            _log.warning(
+                "Meta Graph %s transport error (%s); retrying in %.1fs (attempt %d/%d)",
+                path, exc, wait, attempt, _MAX_ATTEMPTS,
+            )
+            time.sleep(wait)
+            continue
+
+        if response.status_code in _RETRY_STATUSES and attempt < _MAX_ATTEMPTS:
+            wait = _retry_after_seconds(response, _RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)))
+            _log.warning(
+                "Meta Graph %s returned %d; retrying in %.1fs (attempt %d/%d)",
+                path, response.status_code, wait, attempt, _MAX_ATTEMPTS,
+            )
+            time.sleep(wait)
+            continue
+
+        if response.status_code >= 400:
+            detail = response.text
+            try:
+                detail = response.json()
+            except Exception:
+                pass
+            raise RuntimeError(f"Meta Graph API error {response.status_code} on {path}: {detail}")
+        return response.json()
+
+    # Unreachable: the loop either returns, raises, or continues; the final
+    # attempt cannot hit a `continue` branch. Guard anyway to satisfy type checkers.
+    raise RuntimeError(f"Meta Graph API request to {path} exhausted retries")
+
+
+def _retry_after_seconds(response: httpx.Response, default: float) -> float:
+    """Honour a numeric Retry-After header (delta-seconds); fall back to default."""
+    try:
+        return max(float(response.headers.get("Retry-After", "")), default)
+    except (TypeError, ValueError):
+        return default
 
 
 def _is_meta_ads_read_error(exc: Exception) -> bool:
