@@ -53,6 +53,7 @@ if "google.cloud.bigquery" not in sys.modules:
 from dashboard.services.agency_trends_service import (
     _channel_label,
     _window_bounds,
+    compute_agency_budget,
     compute_agency_trends,
 )
 
@@ -149,6 +150,108 @@ class ComputeAgencyTrendsTests(unittest.TestCase):
             rows, {"live": "Live", "idle": "Idle"}, today=TODAY,
         )
         self.assertEqual([c["label"] for c in res["clients"]], ["Live"])
+
+
+class ComputeAgencyBudgetTests(unittest.TestCase):
+    """The DuckDB reproduction of the HQ budget overview.
+
+    TODAY = 2026-07-12 → month_start 2026-07-01, 31-day month, day 12 elapsed.
+    Sessions window is the trailing 30 days ending yesterday (06-12 .. 07-11).
+    """
+
+    def _metas(self):
+        return [
+            {"client_slug": "penn", "label": "Penn Community Bank",
+             "monthly_budget": 10000.0, "spend_available": True, "sessions_available": True},
+            {"client_slug": "acme", "label": "Acme Manufacturing",
+             "monthly_budget": 5000.0, "spend_available": False, "sessions_available": False},
+        ]
+
+    def _spend(self):
+        return [
+            ("penn", "paid_google", dt.date(2026, 7, 2), 1000.0),
+            ("penn", "paid_google", dt.date(2026, 7, 5), 1000.0),
+            ("penn", "paid_meta", dt.date(2026, 7, 9), 1000.0),
+            # Before month_start — inside the fetch window but must not count to MTD.
+            ("penn", "paid_google", dt.date(2026, 6, 20), 999.0),
+        ]
+
+    def _sessions(self):
+        return [
+            ("penn", dt.date(2026, 7, 2), 120),
+            ("penn", dt.date(2026, 7, 1), 100),
+            ("penn", dt.date(2026, 6, 15), 50),
+            # Before the 30d window — must be excluded.
+            ("penn", dt.date(2026, 5, 1), 9999),
+        ]
+
+    def _run(self):
+        return compute_agency_budget(self._spend(), self._sessions(), self._metas(), today=TODAY)
+
+    def test_mtd_spend_excludes_pre_month_rows(self):
+        row = {r["client_slug"]: r for r in self._run()["clients"]}["penn"]
+        self.assertEqual(row["mtd_spend"], 3000.0)  # 3 x 1000, June row dropped
+
+    def test_pacing_fields_match_hq_math(self):
+        row = {r["client_slug"]: r for r in self._run()["clients"]}["penn"]
+        self.assertEqual(row["pct_budget"], 30.0)                 # 3000 / 10000
+        self.assertEqual(row["projected_month_end"], 7750.0)      # 3000 / 12 * 31
+        self.assertEqual(row["remaining_budget"], 7000.0)
+        self.assertEqual(row["status"], "under")                 # projected well below budget
+
+    def test_sessions_series_ordered_and_windowed(self):
+        row = {r["client_slug"]: r for r in self._run()["clients"]}["penn"]
+        self.assertEqual(row["sessions_series"], [50, 100, 120])  # chronological, May row excluded
+        self.assertEqual(row["sessions_total"], 270)
+        self.assertTrue(row["sessions_available"])
+
+    def test_unavailable_client_degrades_not_dropped(self):
+        row = {r["client_slug"]: r for r in self._run()["clients"]}["acme"]
+        self.assertFalse(row["spend_available"])
+        self.assertEqual(row["mtd_spend"], 0.0)
+        self.assertEqual(row["pct_budget"], 0.0)       # budget set, spend unknown -> 0%
+        self.assertIsNone(row["projected_month_end"])
+        self.assertEqual(row["status"], "on_track")
+        self.assertFalse(row["sessions_available"])
+
+    def test_totals_only_count_available_spend(self):
+        t = self._run()["totals"]
+        self.assertEqual(t["client_count"], 2)
+        self.assertAlmostEqual(t["monthly_budget"], 15000.0)  # both budgets
+        self.assertAlmostEqual(t["mtd_spend"], 3000.0)        # only penn contributes
+        self.assertAlmostEqual(t["projected_month_end"], 7750.0)
+        self.assertEqual(t["clients_over_pace"], 0)
+
+    def test_client_order_preserved(self):
+        slugs = [r["client_slug"] for r in self._run()["clients"]]
+        self.assertEqual(slugs, ["penn", "acme"])
+
+    def test_shape_matches_hq_feed_keys(self):
+        res = self._run()
+        for key in ("month_label", "as_of", "sessions_window", "days_in_month",
+                    "days_elapsed", "days_remaining", "pct_month_elapsed", "totals", "clients"):
+            self.assertIn(key, res)
+        row = res["clients"][0]
+        for key in ("client_slug", "label", "monthly_budget", "has_budget", "mtd_spend",
+                    "spend_available", "pct_budget", "expected_pace", "projected_month_end",
+                    "remaining_budget", "pace_delta", "status", "sessions_series",
+                    "sessions_total", "sessions_available"):
+            self.assertIn(key, row)
+
+    def test_over_pace_client_counts_and_colors(self):
+        metas = [{"client_slug": "hot", "label": "Hot", "monthly_budget": 1000.0,
+                  "spend_available": True, "sessions_available": False}]
+        # 900 by day 12 of 31 projects to ~2325 — well over the 1000 budget.
+        spend = [("hot", "paid_google", dt.date(2026, 7, d), 300.0) for d in (2, 6, 10)]
+        res = compute_agency_budget(spend, [], metas, today=TODAY)
+        self.assertEqual(res["clients"][0]["status"], "over")
+        self.assertEqual(res["totals"]["clients_over_pace"], 1)
+
+    def test_empty_inputs(self):
+        res = compute_agency_budget([], [], [], today=TODAY)
+        self.assertEqual(res["clients"], [])
+        self.assertEqual(res["totals"]["client_count"], 0)
+        self.assertEqual(res["totals"]["mtd_spend"], 0.0)
 
 
 if __name__ == "__main__":
