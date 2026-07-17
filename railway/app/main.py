@@ -1874,10 +1874,11 @@ def admin_agency_trends(request: Request):
 def admin_agency_trends_data(
     user: web_users.WebUser = Depends(web_auth.require_admin),
 ) -> dict:
-    """JSON feed for the Agency Trends page: cross-client week-over-week spend."""
-    from dashboard.services.agency_trends_service import build_agency_trends
+    """JSON feed for the Agency Trends page: the DuckDB HQ reproduction (spend vs
+    budget + sessions) plus cross-client week-over-week momentum."""
+    from dashboard.services.agency_trends_service import build_agency_overview
 
-    return build_agency_trends()
+    return build_agency_overview()
 
 
 @app.get("/admin/docs", include_in_schema=False, response_class=HTMLResponse)
