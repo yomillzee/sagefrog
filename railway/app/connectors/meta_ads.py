@@ -76,6 +76,16 @@ class MetaAdsConnector(ConnectorHandler):
                 bq_project_id=bq_project_id, meta_dataset_id=raw_dataset_id
             ):
                 bigquery_warehouse.create_paid_media_mart_views(client_key=client_slug)
+                # Also (re)build the Meta fact views and the unified
+                # fact_marketing_daily. build_snapshot reads fact_marketing_daily
+                # for its headline aggregate; without the Meta fact view present
+                # in that union, a client whose snapshot falls back to the
+                # per-platform sum drops Meta from the paid total entirely. These
+                # are idempotent CREATE OR REPLACE VIEWs, so it's safe to run on
+                # every sync (previously only the periodic BQ refresh orchestrator
+                # rebuilt them, leaving manual Meta syncs Meta-blind until then).
+                bigquery_warehouse.create_meta_mart_views()
+                bigquery_warehouse.rebuild_unified_marketing_mart(client_key=client_slug)
             rows = (
                 (result.get("campaign_rows") or 0)
                 + (result.get("adset_rows") or 0)

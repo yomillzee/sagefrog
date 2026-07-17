@@ -304,11 +304,17 @@ GA4 events are normalized into the warehouse metric shape:
 
 - **clicks = `session_start` count**, **impressions = `page_view` count**,
   **spend = 0**.
-- **conversions = `COUNTIF(event_name IN ('purchase','generate_lead','sign_up','form_submit'))`.**
-  ⚠️ **This key-event list is hard-coded.** If a client's actual GA4 key events
-  differ (custom event names), GA4 "conversions" here will not match their GA4 UI
-  key-event totals. This is the single most important accuracy item to verify per
-  client. Organic variant additionally filters `traffic_source.medium = 'organic'`.
+- **conversions = `COUNTIF(event_name IN (<client key events>))`.**
+  The key-event list is resolved per client by
+  `ga4_attribution_service.resolve_key_event_names()`: it reads the admin-set
+  `client_dashboard_config.ga4_key_events` (Settings page) and falls back to the
+  shared `KEY_EVENT_NAMES` default when unset. Names are validated to
+  `[A-Za-z0-9_]` before interpolation. The raw-export services (warehouse,
+  attribution, page) now share this one source of truth; the GA4 **Reporting-API**
+  paths (verified conversions/CPA) already use GA4's native `keyEvents` metric, so
+  all conversion definitions now honor the client's real key events. Organic
+  variant additionally filters `traffic_source.medium = 'organic'`.
+  _(Fixed — see §6.1.)_
 - Every day in the range is emitted (zero-filled) so downstream charts have no gaps.
 
 ### 5.5 Business-line classification (`penn_business_lines.py` + `business_line_rules.py`)
@@ -342,12 +348,15 @@ source and compute drift between the snapshot and BigQuery:
 
 Use these as verification steps, in rough priority order:
 
-1. **GA4 key-event definition** — confirm the hard-coded event list
-   (`purchase, generate_lead, sign_up, form_submit`) matches each client's real
-   GA4 key events; otherwise GA4 conversions/verified-CPA are wrong for that client
-   (§5.4).
-2. **`fact_marketing_daily` provisioned** for every client, so the headline
-   aggregate uses the all-platform view and not the Google+LinkedIn-only fallback
+1. **GA4 key-event definition** — _Fixed (§6.1)._ The list is now per-client
+   configurable via Settings (`ga4_key_events`), shared across the raw-export
+   services, with the built-in list as fallback. Remaining action is **operational**:
+   set each client's key events in Settings so raw-export conversions match GA4's
+   designation (the Reporting-API verified path already did) (§5.4).
+2. **`fact_marketing_daily` provisioned** — _Fixed (§6.1)._ The Meta connector now
+   rebuilds the Meta fact views + `fact_marketing_daily` on every sync, so the
+   headline aggregate uses the all-platform view instead of the Google+LinkedIn-only
+   fallback. Verify only if a client predates this change and hasn't re-synced Meta
    (§5.2).
 3. **Per-client BQ routing** — every connector sync goes through
    `bigquery_warehouse.route(bq_project_id=…)`; no source is falling back to Penn's
@@ -368,6 +377,18 @@ Use these as verification steps, in rough priority order:
    key (§3.4).
 10. **Secrets separation** — `CRON_SECRET ≠ API_KEY ≠ AUTH_SESSION_SECRET`, and
     `API_KEY` set in production (§4.4).
+
+### 6.1 Fixes applied
+
+| # | Fix | Files |
+|---|---|---|
+| 1 | **Per-client GA4 key events wired into the raw-export queries.** Added `resolve_key_event_names(client_key)` as the single source of truth: reads `client_dashboard_config.ga4_key_events`, validates names to `[A-Za-z0-9_]` (injection-safe), falls back to the shared `KEY_EVENT_NAMES`. Warehouse (`fetch_daily_metrics`, `fetch_organic_daily_metrics`), attribution (`_attribution_base_sql`, `_landing_pages_sql_suffix`), and page (`_key_events_sql_list`) services now thread `target.client_key` through. The Settings control now actually changes the numbers, and the previously-divergent 4-event (warehouse) vs 9-event (attribution) defaults are unified. | `ga4_attribution_service.py`, `ga4_page_service.py`, `ga4_warehouse_service.py` |
+| 2 | **Meta connector rebuilds `fact_meta_ads_campaign_daily` + `fact_marketing_daily` on sync.** Previously only the periodic refresh orchestrator rebuilt the unified mart, so a manual Meta sync left `fact_marketing_daily` without Meta and the snapshot fallback dropped Meta from the paid total. | `connectors/meta_ads.py` |
+
+> Behavior note for #1: for clients with **no** key events configured, raw-export
+> `conversions` now default to the 9-event `KEY_EVENT_NAMES` list (previously the
+> warehouse used only 4). This is intentional unification, but it will nudge those
+> clients' warehouse conversion counts upward until they set an explicit list.
 
 ---
 

@@ -7,7 +7,7 @@ from typing import Any
 
 from bigquery_service import env_summary, run_query
 from dates_util import resolve_date_range
-from ga4_attribution_service import KEY_EVENT_NAMES
+from ga4_attribution_service import resolve_key_event_names
 from ga4_clients import Ga4ClientTarget, resolve_target
 from penn_business_lines import classify_business_line, client_filter_profile
 
@@ -161,8 +161,8 @@ def _events_table(target: Ga4ClientTarget) -> str:
     return f"`{target.bq_project_id}.{target.bq_dataset_id}.events_*`"
 
 
-def _key_events_sql_list() -> str:
-    return ", ".join(f"'{name}'" for name in KEY_EVENT_NAMES)
+def _key_events_sql_list(client_key: str | None = None) -> str:
+    return ", ".join(f"'{name}'" for name in resolve_key_event_names(client_key))
 
 
 def _ensure_bq_ready(credentials_env: str | None = None) -> None:
@@ -188,7 +188,7 @@ def fetch_page_metrics(
     suffix_start = start.strftime("%Y%m%d")
     suffix_end = end.strftime("%Y%m%d")
     table = _events_table(target)
-    key_events = _key_events_sql_list()
+    key_events = _key_events_sql_list(target.client_key)
     row_limit = max(1, min(int(limit), 2000))
 
     sql = f"""
@@ -281,7 +281,7 @@ def fetch_site_metrics_summary(
     suffix_start = start.strftime("%Y%m%d")
     suffix_end = end.strftime("%Y%m%d")
     table = _events_table(target)
-    key_events = _key_events_sql_list()
+    key_events = _key_events_sql_list(target.client_key)
 
     sql = f"""
     WITH raw_events AS (

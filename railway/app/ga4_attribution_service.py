@@ -71,8 +71,44 @@ def _events_table(target: Ga4ClientTarget) -> str:
     return f"`{target.bq_project_id}.{target.bq_dataset_id}.events_*`"
 
 
-def _key_events_sql_list() -> str:
-    return ", ".join(f"'{name}'" for name in KEY_EVENT_NAMES)
+_GA4_EVENT_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+def resolve_key_event_names(client_key: str | None = None) -> tuple[str, ...]:
+    """Effective GA4 key-event names for a client.
+
+    Reads the admin-configured list from ``client_dashboard_config.ga4_key_events``
+    (newline-separated event names, set on the dashboard Settings page) and falls
+    back to the built-in :data:`KEY_EVENT_NAMES` when the client has configured
+    none. Names are validated against GA4's event-name grammar (``[A-Za-z0-9_]``)
+    so the result is always safe to interpolate into the ``COUNTIF(...)`` SQL.
+
+    This is the single source of truth for "what counts as a conversion" across
+    the attribution, page, and warehouse GA4 services — previously each hard-coded
+    its own list and the Settings control was wired to nothing.
+    """
+    slug = (client_key or "").strip().lower()
+    if slug:
+        raw = ""
+        try:
+            import client_dashboard_config
+
+            cfg = client_dashboard_config.get_config(slug)
+            raw = (cfg.ga4_key_events if cfg else "") or ""
+        except Exception:
+            raw = ""
+        names: list[str] = []
+        for line in raw.splitlines():
+            name = line.strip()
+            if name and _GA4_EVENT_NAME_RE.match(name) and name not in names:
+                names.append(name)
+        if names:
+            return tuple(names)
+    return KEY_EVENT_NAMES
+
+
+def _key_events_sql_list(client_key: str | None = None) -> str:
+    return ", ".join(f"'{name}'" for name in resolve_key_event_names(client_key))
 
 
 def _ensure_bq_ready(credentials_env: str | None = None) -> None:
@@ -84,8 +120,10 @@ def _ensure_bq_ready(credentials_env: str | None = None) -> None:
         )
 
 
-def _attribution_base_sql(table: str, suffix_start: str, suffix_end: str) -> str:
-    key_events = _key_events_sql_list()
+def _attribution_base_sql(
+    table: str, suffix_start: str, suffix_end: str, client_key: str | None = None
+) -> str:
+    key_events = _key_events_sql_list(client_key)
     return f"""
     WITH raw_events AS (
       SELECT
@@ -289,7 +327,7 @@ def fetch_paid_media_attribution(
     suffix_start = start.strftime("%Y%m%d")
     suffix_end = end.strftime("%Y%m%d")
     table = _events_table(target)
-    base = _attribution_base_sql(table, suffix_start, suffix_end)
+    base = _attribution_base_sql(table, suffix_start, suffix_end, target.client_key)
 
     daily_sql = (
         base
@@ -782,8 +820,9 @@ def _landing_pages_sql_suffix(
     suffix_start: str,
     suffix_end: str,
     row_limit: int,
+    client_key: str | None = None,
 ) -> str:
-    key_events = _key_events_sql_list()
+    key_events = _key_events_sql_list(client_key)
     return f"""
     , page_view_events AS (
       SELECT
@@ -902,11 +941,14 @@ def fetch_landing_page_rows(
     suffix_end = end.strftime("%Y%m%d")
     table = _events_table(target)
     row_limit = max(1, min(int(limit) * 6, 12000))
-    sql = _attribution_base_sql(table, suffix_start, suffix_end) + _landing_pages_sql_suffix(
+    sql = _attribution_base_sql(
+        table, suffix_start, suffix_end, target.client_key
+    ) + _landing_pages_sql_suffix(
         table=table,
         suffix_start=suffix_start,
         suffix_end=suffix_end,
         row_limit=row_limit,
+        client_key=target.client_key,
     )
     return run_query(sql, max_rows=row_limit, project_id=target.bq_project_id, credentials_env=target.credentials_env)
 
