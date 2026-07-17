@@ -203,6 +203,16 @@ def create_semrush_mart_views() -> dict[str, Any]:
               AND k.domain = latest.domain
               AND k.metric_date = latest.latest_date
         """,
+        # Daily time series (last 90 days) that drives the KPI sparklines.
+        "vw_semrush_overview_daily": f"""
+            SELECT
+              client_key, domain, metric_date,
+              organic_traffic, organic_keywords, authority_score,
+              total_backlinks, referring_domains,
+              ai_overview_keywords, ai_overview_cited
+            FROM {overview_table}
+            WHERE metric_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+        """,
     }
 
     results: dict[str, Any] = {}
@@ -381,6 +391,35 @@ def fetch_latest_snapshot(*, client_key: str, project: str | None = None, mart_d
     from semrush_service import _position_distribution
     position_dist = _position_distribution(keywords)
 
+    # Daily time series for the KPI sparklines. Resilient: the view may not exist
+    # until the first post-deploy sync rebuilds the marts, so fall back to [].
+    series: list[dict[str, Any]] = []
+    try:
+        daily_view = f"`{proj}.{mart_ds}.vw_semrush_overview_daily`"
+        s_rows = list(client.query(
+            f"SELECT metric_date, organic_traffic, organic_keywords, authority_score, "
+            f"total_backlinks, referring_domains, ai_overview_keywords, ai_overview_cited "
+            f"FROM {daily_view} WHERE client_key = @client_key ORDER BY metric_date",
+            job_config=_bq().QueryJobConfig(query_parameters=[
+                _bq().ScalarQueryParameter("client_key", "STRING", client_key),
+            ]),
+        ).result(timeout=30))
+        for sr in s_rows:
+            d = dict(sr.items())
+            md = d.get("metric_date")
+            series.append({
+                "date": md.isoformat() if md else None,
+                "organic_traffic": d.get("organic_traffic") or 0,
+                "organic_keywords": d.get("organic_keywords") or 0,
+                "authority_score": d.get("authority_score") or 0,
+                "total_backlinks": d.get("total_backlinks") or 0,
+                "referring_domains": d.get("referring_domains") or 0,
+                "ai_overview_keywords": d.get("ai_overview_keywords") or 0,
+                "ai_overview_cited": d.get("ai_overview_cited") or 0,
+            })
+    except Exception:
+        series = []
+
     return {
         "domain": ov.get("domain") or "",
         "database": ov.get("database") or "us",
@@ -411,6 +450,7 @@ def fetch_latest_snapshot(*, client_key: str, project: str | None = None, mart_d
             "keywords_with_aio": ov.get("ai_overview_keywords") or 0,
             "keywords_cited": ov.get("ai_overview_cited") or 0,
         },
+        "series": series,
         "position_distribution": position_dist,
         "fetched_at": ov.get("synced_at").isoformat() if ov.get("synced_at") else None,
     }

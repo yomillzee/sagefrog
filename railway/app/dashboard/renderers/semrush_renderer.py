@@ -37,14 +37,41 @@ def _aio_cell(kw: dict[str, Any]) -> str:
     return '<span class="smr-aio-pill none">—</span>'
 
 
-def _kpi_card(label: str, value: str, subtitle: str = "") -> str:
+def _kpi_card(
+    label: str,
+    value: str,
+    subtitle: str = "",
+    spark_id: str = "",
+    delta_html: str = "",
+) -> str:
     sub = f'<div class="smr-kpi-sub">{_esc(subtitle)}</div>' if subtitle else ""
+    delta = f'<div class="smr-kpi-delta">{delta_html}</div>' if delta_html else ""
+    spark = f'<canvas class="smr-spark" id="{spark_id}"></canvas>' if spark_id else ""
     return f"""
     <div class="smr-kpi">
       <div class="smr-kpi-label">{_esc(label)}</div>
       <div class="smr-kpi-value">{value}</div>
-      {sub}
+      {delta}{sub}{spark}
     </div>"""
+
+
+def _delta_badge(series: list[dict[str, Any]], key: str) -> str:
+    """First-vs-last delta over the series for a KPI card. '' when <2 points."""
+    vals = [s.get(key) for s in series if s.get(key) is not None]
+    if len(vals) < 2:
+        return ""
+    first, last = vals[0], vals[-1]
+    diff = last - first
+    if diff == 0:
+        return '<span class="smr-delta flat">±0</span>'
+    pct = (diff / first * 100) if first else 0.0
+    cls = "up" if diff > 0 else "down"
+    arrow = "▲" if diff > 0 else "▼"
+    sign = "+" if diff > 0 else "−"
+    return (
+        f'<span class="smr-delta {cls}">{arrow} {sign}{abs(diff):,} '
+        f'({sign}{abs(pct):.1f}%)</span> <span class="smr-delta-note">since {_esc(series[0].get("date") or "")}</span>'
+    )
 
 
 def semrush_section_html(data: dict[str, Any]) -> str:
@@ -53,6 +80,7 @@ def semrush_section_html(data: dict[str, Any]) -> str:
     backlinks = data.get("backlinks") or {}
     keywords  = data.get("keywords") or []
     ai_ov     = data.get("ai_overview") or {}
+    series    = data.get("series") or []
     pos_dist  = data.get("position_distribution") or []
     errors    = data.get("errors") or {}
     domain    = data.get("domain") or ""
@@ -85,10 +113,10 @@ def semrush_section_html(data: dict[str, Any]) -> str:
 
     kpi_html = f"""
     <div class="smr-kpis">
-      {_kpi_card("Organic Traffic (est.)", _fmt_int(overview.get("organic_traffic") or 0), f"{database.upper()} database · monthly")}
-      {_kpi_card("Organic Keywords", _fmt_int(overview.get("organic_keywords") or 0), "ranking in top 100")}
-      {_kpi_card("Authority Score", auth_value, "0–100 domain authority")}
-      {_kpi_card("Referring Domains", _bl("referring_domains"), ref_domains_subtitle)}
+      {_kpi_card("Organic Traffic (est.)", _fmt_int(overview.get("organic_traffic") or 0), f"{database.upper()} database · monthly", "smrSparkTraffic", _delta_badge(series, "organic_traffic"))}
+      {_kpi_card("Organic Keywords", _fmt_int(overview.get("organic_keywords") or 0), "ranking in top 100", "smrSparkKeywords", _delta_badge(series, "organic_keywords"))}
+      {_kpi_card("Authority Score", auth_value, "0–100 domain authority", "smrSparkAuthority", _delta_badge(series, "authority_score"))}
+      {_kpi_card("Referring Domains", _bl("referring_domains"), ref_domains_subtitle, "smrSparkRefDomains", _delta_badge(series, "referring_domains"))}
     </div>"""
 
     # ── Secondary KPIs ─────────────────────────────────────────────────────
@@ -148,6 +176,7 @@ def semrush_section_html(data: dict[str, Any]) -> str:
 
     # ── Charts ────────────────────────────────────────────────────────────
     pos_json = _safe_json(pos_dist)
+    series_json = _safe_json(series)
     charts_html = f"""
     <div class="smr-charts-row">
       <div class="smr-chart-card">
@@ -221,6 +250,50 @@ def semrush_section_html(data: dict[str, Any]) -> str:
 
 <script>
 (function() {{
+  // ── KPI sparklines ───────────────────────────────────────────────────
+  var smrSeries = {series_json};
+  function drawSpark(id, key, color) {{
+    var el = document.getElementById(id);
+    if (!el || typeof Chart === 'undefined' || !smrSeries || smrSeries.length < 2) return;
+    new Chart(el.getContext('2d'), {{
+      type: 'line',
+      data: {{
+        labels: smrSeries.map(function(r) {{ return r.date; }}),
+        datasets: [{{
+          data: smrSeries.map(function(r) {{ return r[key] || 0; }}),
+          borderColor: color,
+          backgroundColor: color + '22',
+          borderWidth: 1.5,
+          fill: true,
+          pointRadius: 0,
+          pointHoverRadius: 3,
+          tension: 0.35,
+        }}]
+      }},
+      options: {{
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {{
+          legend: {{ display: false }},
+          tooltip: {{
+            enabled: true, intersect: false, mode: 'index',
+            displayColors: false,
+            callbacks: {{
+              title: function(items) {{ return items[0].label; }},
+              label: function(ctx) {{ return (ctx.parsed.y || 0).toLocaleString(); }}
+            }}
+          }}
+        }},
+        scales: {{ x: {{ display: false }}, y: {{ display: false }} }},
+        animation: false,
+      }}
+    }});
+  }}
+  drawSpark('smrSparkTraffic',    'organic_traffic',   '#16a34a');
+  drawSpark('smrSparkKeywords',   'organic_keywords',  '#2563eb');
+  drawSpark('smrSparkAuthority',  'authority_score',   '#7c3aed');
+  drawSpark('smrSparkRefDomains', 'referring_domains', '#ff642d');
+
   // ── Position distribution chart ──────────────────────────────────────
   var posData = {pos_json};
   var posCanvas = document.getElementById('smrPositionChart');
@@ -373,6 +446,25 @@ SEMRUSH_CSS = """
       font-size: 0.68rem;
       color: var(--muted);
       margin-top: 3px;
+    }
+    .smr-kpi-delta {
+      font-size: 0.7rem;
+      margin-top: 3px;
+      display: flex;
+      align-items: baseline;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+    .smr-delta { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .smr-delta.up   { color: #16a34a; }
+    .smr-delta.down { color: #dc2626; }
+    .smr-delta.flat { color: var(--muted); }
+    .smr-delta-note { color: var(--muted); font-weight: 400; }
+    .smr-spark {
+      width: 100% !important;
+      height: 34px !important;
+      margin-top: 10px;
+      display: block;
     }
     /* Secondary metrics bar */
     .smr-secondary {
