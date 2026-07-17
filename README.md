@@ -370,4 +370,7 @@ python -m unittest tests.test_web_security
 - [`ARCHITECTURE_REVIEW.md`](ARCHITECTURE_REVIEW.md) — full architecture walk-through,
   environment-variable reference, technical-debt notes, and risk register.
 - [`docs/CREATING_A_NEW_DASHBOARD.md`](docs/CREATING_A_NEW_DASHBOARD.md) — how to onboard
-  a new client dashboard.
+  a new client dashboard (technical, code-mapped).
+- [`docs/DASHBOARD_SETUP_SIMPLE.md`](docs/DASHBOARD_SETUP_SIMPLE.md) — plain-English,
+  step-by-step setup guide for non-technical users (create the BigQuery project, link
+  billing, create the dashboard, connect data sources).
