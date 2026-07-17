@@ -35,6 +35,7 @@ def css() -> str:
     #sec-budget .info-tip:hover, #sec-budget .info-tip:focus { color:var(--navy); outline:none; }
     #sec-budget .ov-actions { display:flex; align-items:center; gap:10px; flex-shrink:0; }
     #sec-budget .status { color:var(--muted); font-size:.82rem; margin:0; }
+    #sec-budget .budget-retry { font:inherit; font-size:.82rem; color:var(--navy); background:none; border:0; padding:0; cursor:pointer; text-decoration:underline; }
     #sec-budget .chips { display:flex; flex-wrap:wrap; gap:5px; }
     #sec-budget .chip { border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:4px 12px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s, color .12s; }
     #sec-budget .chip.active { background:var(--navy); color:#fff; border-color:var(--navy); }
@@ -121,6 +122,7 @@ _JS_BODY = r"""
   const num = v => Number(v||0);
   const fmtDate = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   const setStatus = (id,txt) => { const el=document.getElementById(id); if (el) el.textContent = txt||''; };
+  const sleep = ms => new Promise(r=>setTimeout(r,ms));
   async function getJson(url){ const r = await fetch(url,{credentials:'same-origin'}); if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
   function withRange(base,s,e){ const sep=base.includes('?')?'&':'?'; return base+sep+'start_date='+s+'&end_date='+e; }
   const _charts = {};
@@ -164,10 +166,31 @@ _JS_BODY = r"""
     showBudgetSkeleton();
     const win=budgetWindow();
     const startStr=fmtDate(win.start), lastStr=fmtDate(win.lastData);
-    let daily=[];
-    try { const res=await getJson(withRange(BT_CFG.summaryApi,startStr,lastStr)); daily=(res&&res.daily)||[]; }
-    catch(e){ daily=[]; }
-    renderBudget(daily,win);
+    const url=withRange(BT_CFG.summaryApi,startStr,lastStr);
+    // The first paid-summary read on a cold Explorer open can fail/time out — the
+    // tab fires several BQ-backed queries at once and this one loses the race,
+    // then succeeds once warm (which is why a manual range toggle "fixed" it).
+    // Swallowing the error used to render as "No paid spend in this range", so
+    // the chart looked empty. Retry with backoff, and surface a real error state
+    // instead of masquerading a fetch failure as zero spend.
+    let res=null, lastErr=null;
+    for (let attempt=0; attempt<4; attempt++){
+      try { res=await getJson(url); lastErr=null; break; }
+      catch(e){ lastErr=e; if (attempt<3) await sleep(500*(attempt+1)); }
+    }
+    if (lastErr){ renderBudgetError(); return; }
+    renderBudget((res&&res.daily)||[],win);
+  }
+  function renderBudgetError(){
+    const _ch=document.getElementById('budgetChart');
+    if (_ch && _ch.parentElement) _ch.parentElement.classList.remove('is-loading');
+    const stats=document.getElementById('budgetStats'); if (stats) stats.innerHTML='';
+    destroyChart('budgetChart');
+    const st=document.getElementById('budgetStatus');
+    if (st){
+      st.innerHTML='Couldn’t load budget data. <button type="button" class="budget-retry">Retry</button>';
+      const b=st.querySelector('.budget-retry'); if (b) b.addEventListener('click',loadBudget);
+    }
   }
   function renderBudget(daily,win){
     const _ch=document.getElementById('budgetChart');
