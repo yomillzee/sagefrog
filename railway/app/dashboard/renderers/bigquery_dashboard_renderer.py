@@ -445,11 +445,7 @@ def render_bigquery_dashboard_page(
       </section>
 
       <section>
-        <div class="sec-head"><h2>Paid trends</h2><span class="status" id="chartStatus"></span></div>
-        <div class="filter-group" style="margin-bottom:12px">
-          <span class="filter-label">Metrics</span>
-          <div class="chips" id="metricChips"></div>
-        </div>
+        <div class="sec-head"><h2>Paid trends</h2><div class="sec-head-actions"><div class="chips" id="metricChips"></div><div class="chips seg" id="trendGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><span class="status" id="chartStatus"></span></div></div>
         <div class="chart-wrap" id="trendChartWrap">
           <div class="chart-canvas-host" style="height:260px"><canvas id="trendChart"></canvas></div>
         </div>
@@ -1483,6 +1479,24 @@ def render_bigquery_dashboard_page(
     ];
     const chartMetrics = new Set(['spend','clicks']);
     let chartDaily = [];
+    let trendGran = 'daily';
+
+    // Roll daily paid rows up into ISO (Monday-start) weeks: additive metrics
+    // are summed and the derived ratios (cpc/cpa/ctr) recomputed from the totals.
+    function aggregateChartWeekly(daily) {{
+      if (!daily || !daily.length) return [];
+      const out = []; let cur = null;
+      for (const d of daily) {{
+        const dt = new Date(String(d.date) + 'T00:00:00');
+        const dow = (dt.getDay() + 6) % 7;            // 0 = Monday
+        const mon = new Date(dt); mon.setDate(dt.getDate() - dow);
+        const key = `${{mon.getFullYear()}}-${{String(mon.getMonth()+1).padStart(2,'0')}}-${{String(mon.getDate()).padStart(2,'0')}}`;
+        if (!cur || cur.date !== key) {{ cur = {{ date: key, spend:0, impressions:0, clicks:0, conversions:0 }}; out.push(cur); }}
+        cur.spend += num(d.spend); cur.impressions += num(d.impressions); cur.clicks += num(d.clicks); cur.conversions += num(d.conversions);
+      }}
+      for (const w of out) {{ w.cpc = w.clicks ? w.spend/w.clicks : 0; w.cpa = w.conversions ? w.spend/w.conversions : 0; w.ctr = w.impressions ? w.clicks/w.impressions*100 : 0; }}
+      return out;
+    }}
 
     function buildChartDaily() {{
       const daily = (summaryPayload && summaryPayload.daily) ? summaryPayload.daily : [];
@@ -1500,16 +1514,17 @@ def render_bigquery_dashboard_page(
     }}
     function renderChart() {{
       chartDaily = buildChartDaily();
+      const rows = trendGran === 'weekly' ? aggregateChartWeekly(chartDaily) : chartDaily;
       clearSkelChart('trendChart');
-      const n = chartDaily.length;
+      const n = rows.length;
       if (!n) {{ __destroyChart('trendChart'); setStatus('chartStatus','No data for this range.'); return; }}
       const active = CHART_METRICS.filter(m => chartMetrics.has(m.key));
-      const labels = chartDaily.map(d => String(d.date).slice(5));
+      const labels = rows.map(d => String(d.date).slice(5));
       const single = active.length === 1;
       // Each metric keeps its own min–max scale, so normalize per-metric to 0–1
       // for plotting and carry the real values (raw) + formatter for tooltips.
       const series = active.map(m => {{
-        const raw = chartDaily.map(d => num(d[m.key]));
+        const raw = rows.map(d => num(d[m.key]));
         const mn = Math.min(...raw), mx = Math.max(...raw), span = (mx - mn) || 1;
         return {{ label: m.label, data: raw.map(v => (v - mn) / span), raw, fmt: m.fmt,
                  color: m.color, fill: single }};
@@ -1517,11 +1532,12 @@ def render_bigquery_dashboard_page(
       lineChart('trendChart', labels, series, {{
         yDisplay: false, xTicks: 6,
         tooltip: {{
-          title: items => items.length ? String(chartDaily[items[0].dataIndex].date) : '',
+          title: items => items.length ? String(rows[items[0].dataIndex].date) : '',
           label: c => `${{c.dataset.label}}: ${{c.dataset._fmt(c.dataset._raw[c.dataIndex])}}`,
         }},
       }});
-      setStatus('chartStatus', `${{n}} day(s) · ${{active.length}} metric(s)`);
+      const unit = trendGran === 'weekly' ? 'week' : 'day';
+      setStatus('chartStatus', `${{n}} ${{unit}}(s) · ${{active.length}} metric(s)`);
     }}
     function buildMetricChips() {{
       const el = document.getElementById('metricChips');
@@ -1533,6 +1549,15 @@ def render_bigquery_dashboard_page(
       }}));
       el.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', chartMetrics.has(b.dataset.key)));
     }}
+    // Daily/Weekly chips for the paid trends chart — re-render from cache, no refetch.
+    document.querySelectorAll('#trendGranChips .chip').forEach(btn =>
+      btn.addEventListener('click', () => {{
+        if (btn.dataset.gran === trendGran) return;
+        trendGran = btn.dataset.gran;
+        document.querySelectorAll('#trendGranChips .chip').forEach(b => b.classList.toggle('active', b === btn));
+        renderChart();
+      }})
+    );
     async function loadSummary() {{
       setStatus('summaryStatus','Loading…');
       summaryCards.innerHTML = skelCards(7);
