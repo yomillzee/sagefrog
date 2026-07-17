@@ -964,11 +964,6 @@ def render_bigquery_dashboard_page(
         <div class="table-wrap"><table id="keywordTable" class="compact"></table></div>
         <div class="pager" id="keywordPager"></div>
       </section>
-      <section id="sec-paid-sources" style="display:none">
-        <div class="sec-head"><h2>Paid campaign traffic</h2><span class="status" id="paidSourceStatus"></span></div>
-        <p class="chart-note" style="margin-top:0">Website sessions attributed to paid channels (GA4). Expand a channel to see its campaigns, then the pages each campaign drove. Campaigns come from the <code>utm_campaign</code> on the landing session — untagged traffic shows as “(not set).”</p>
-        <div class="table-wrap"><table id="paidSourceTable" class="compact"></table></div>
-      </section>
       {budget_section_html}
     </div>
 
@@ -1378,6 +1373,13 @@ def render_bigquery_dashboard_page(
       if (tab === 'explorer' && !explorerLoaded) {{
         explorerLoaded = true;
         loadExplorer();
+      }}
+      // The budget module lazy-loads via IntersectionObserver, which is
+      // unreliable when the pane is revealed below the fold (blank until a
+      // scroll/refresh/toggle). Trigger it directly on tab open; it's a no-op
+      // once already loaded. (Absent when the client has no paid-ads budget.)
+      if (tab === 'explorer' && typeof window.ensureBudgetLoaded === 'function') {{
+        window.ensureBudgetLoaded();
       }}
       if (tab === 'ai_traffic' && !aiTrafficLoaded) {{
         aiTrafficLoaded = true;
@@ -2549,7 +2551,6 @@ def render_bigquery_dashboard_page(
       }} else {{
         kwSec.style.display='none';
       }}
-      loadPaidSources();
     }}
 
     // ---- GA4: Top pages ----
@@ -2566,12 +2567,9 @@ def render_bigquery_dashboard_page(
     // Cap Top pages to the top N by views — the long tail past this is almost
     // always checkout steps and one-off paths that just add noise.
     const PAGES_TOP_LIMIT=50;
-    // Keys match fn_ga4_source_platform's paid_* outputs (bq_ga4_mart_service).
-    const PAID_SOURCE_LABELS={{paid_google:'Google Ads',paid_microsoft:'Microsoft Ads',paid_social:'Paid social',paid_linkedin:'LinkedIn',paid_meta:'Meta'}};
-    function paidLabel(src) {{ return PAID_SOURCE_LABELS[src]||String(src).replace(/^paid_/,'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()); }}
-    // Per-page source / AI-referral rows (vw_page_path_source_daily), shared by
-    // the AI Traffic tab and the Campaign Explorer paid-source module. Fetched
-    // once per date range and memoized so switching between them is instant.
+    // Per-page source / AI-referral rows (vw_page_path_source_daily), used by
+    // the AI Traffic tab. Fetched once per date range and memoized so switching
+    // between date ranges is instant.
     let pagesSourceLoadedFor=null;
     async function ensurePagesSources() {{
       const k=currentStart+'|'+currentEnd;
@@ -2773,52 +2771,6 @@ def render_bigquery_dashboard_page(
     }})();
 
     // ---- Campaign Explorer: paid-source module (paid_* from source_platform) ----
-    async function loadPaidSources() {{
-      const sec=document.getElementById('sec-paid-sources');
-      setStatus('paidSourceStatus','Loading…');
-      const rows=(await ensurePagesSources()).filter(r=>r.source_platform&&r.source_platform.startsWith('paid_'));
-      if (!rows.length) {{ if(sec) sec.style.display='none'; setStatus('paidSourceStatus',''); return; }}
-      if (sec) sec.style.display='';
-      // Channel -> Campaign (utm_campaign) -> Page, each level summing sessions/users/views.
-      const addMetrics=(g,r)=>{{g.sessions+=num(r.sessions);g.users+=num(r.users);g.page_views+=num(r.page_views);}};
-      const byChan=new Map();
-      for (const r of rows) {{
-        let c=byChan.get(r.source_platform);
-        if(!c){{c={{source:r.source_platform,sessions:0,users:0,page_views:0,camps:new Map()}};byChan.set(r.source_platform,c);}}
-        addMetrics(c,r);
-        const campName=(r.utm_campaign&&String(r.utm_campaign).trim())||'(not set)';
-        let cm=c.camps.get(campName);
-        if(!cm){{cm={{campaign:campName,sessions:0,users:0,page_views:0,pages:new Map()}};c.camps.set(campName,cm);}}
-        addMetrics(cm,r);
-        let p=cm.pages.get(r.page_path);
-        if(!p){{p={{page_path:r.page_path,sessions:0,users:0,page_views:0}};cm.pages.set(r.page_path,p);}}
-        addMetrics(p,r);
-      }}
-      const chanRows=[...byChan.values()].sort((a,b)=>b.sessions-a.sessions);
-      const cells=g=>`<td>${{count(g.sessions)}}</td><td>${{count(g.users)}}</td><td>${{count(g.page_views)}}</td>`;
-      const head=`<thead><tr><th class="left">Paid channel / Campaign / Page</th><th>Sessions</th><th>Users</th><th>Page views</th></tr></thead>`;
-      let body='', ci=0;
-      for (const c of chanRows) {{
-        const cId='pc'+(ci++), camps=[...c.camps.values()].sort((a,b)=>b.sessions-a.sessions);
-        body+=`<tr class="tree-row lvl-campaign" data-id="${{cId}}" data-expandable="1"><td class="left"><span class="caret"></span><span class="tree-name">${{esc(paidLabel(c.source))}}</span> <span class="muted">(${{camps.length}} campaign${{camps.length===1?'':'s'}})</span></td>${{cells(c)}}</tr>`;
-        let mi=0;
-        for (const cm of camps) {{
-          const mId=cId+'m'+(mi++), pages=[...cm.pages.values()].sort((a,b)=>b.sessions-a.sessions).slice(0,PAGES_TOP_LIMIT);
-          body+=`<tr class="tree-row lvl-group" data-id="${{mId}}" data-parent="${{cId}}" data-expandable="1" hidden><td class="left"><span class="indent1"></span><span class="caret"></span><span class="tree-name">${{esc(cm.campaign)}}</span> <span class="muted">(${{cm.pages.size}} page${{cm.pages.size===1?'':'s'}})</span></td>${{cells(cm)}}</tr>`;
-          for (const p of pages) {{
-            body+=`<tr class="tree-row lvl-ad" data-parent="${{mId}}" hidden><td class="left"><span class="indent2"></span><span class="page-path" title="${{esc(p.page_path)}}">${{esc(p.page_path)}}</span></td>${{cells(p)}}</tr>`;
-          }}
-        }}
-      }}
-      document.getElementById('paidSourceTable').innerHTML=head+`<tbody>${{body}}</tbody>`;
-      setStatus('paidSourceStatus', `${{chanRows.length}} channel(s)`);
-    }}
-    (function(){{
-      const t=document.getElementById('paidSourceTable');
-      if (!t) return;
-      t.addEventListener('click',ev=>{{ const row=ev.target.closest('tr[data-expandable]'); if (row) toggleExplorerRow(row); }});
-    }})();
-
     // ---- GA4: Traffic acquisition ----
     // Sessions/day for the current period (solid blue, filled) with the prior
     // period overlaid (dashed grey), aligned day-for-day by index so the shapes
