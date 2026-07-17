@@ -106,6 +106,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
     </div>
     <div class="head-actions">
       <a href="/admin/hq">HQ</a>
+      <a href="/admin/docs">Docs</a>
       <a href="/admin">&larr; Admin</a>
       <form method="post" action="/logout" style="display:inline"><button type="submit" class="link">Sign out</button></form>
     </div>

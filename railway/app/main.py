@@ -1880,6 +1880,19 @@ def admin_agency_trends_data(
     return build_agency_trends()
 
 
+@app.get("/admin/docs", include_in_schema=False, response_class=HTMLResponse)
+def admin_docs(request: Request):
+    """Admin-only 'Docs': how to set up a new client dashboard, in the portal."""
+    user = web_auth.get_current_user(request)
+    if not user:
+        return web_auth.redirect_to_login(request, next_path="/admin/docs")
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    from dashboard.renderers.docs_renderer import render_docs_page
+
+    return HTMLResponse(render_docs_page(user_email=user.email))
+
+
 @app.post("/admin/gcp-credentials", include_in_schema=False)
 async def admin_set_gcp_credentials(
     request: Request,
