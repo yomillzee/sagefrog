@@ -762,10 +762,25 @@ def render_bigquery_dashboard_page(
     .lvl-campaign .tree-name {{ font-weight:800; color:var(--navy); }}
     .lvl-group .tree-name {{ font-weight:600; }}
     .lvl-ad td.left {{ color:var(--muted); }}
-    /* GA4-verified conversions column — set off from the platform-reported metrics. */
-    #explorerTable th.ga4-col, #explorerTable td.ga4-col {{ background:rgba(184,146,46,0.06); border-left:1px solid var(--border); }}
-    #explorerTable th.ga4-col {{ color:#8a6d1f; }}
-    #explorerTable th.ga4-col .ke-select {{ display:block; margin-top:3px; max-width:150px; font-size:.66rem; font-weight:500; color:var(--navy); border:1px solid var(--border); border-radius:4px; padding:1px 3px; background:#fff; cursor:pointer; }}
+    /* GA4-verified conversions column — set off from the platform-reported metrics with a subtle gold accent. */
+    #explorerTable th.ga4-col, #explorerTable td.ga4-col {{ background:rgba(184,146,46,0.06); border-left:1px solid rgba(184,146,46,0.3); }}
+    #explorerTable td.ga4-col {{ font-variant-numeric:tabular-nums; }}
+    #explorerTable th.ga4-col {{ color:#8a6d1f; vertical-align:top; }}
+    /* Two-line header: GA4 badge + label + sort arrow on top, filter select below. */
+    .ga4-head {{ display:inline-flex; flex-direction:column; align-items:flex-end; gap:6px; }}
+    .ga4-head-top {{ display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }}
+    .ga4-badge {{ font-size:.55rem; font-weight:800; letter-spacing:.05em; color:#8a6d1f; background:rgba(184,146,46,0.16); border-radius:4px; padding:1px 5px; line-height:1.45; }}
+    .ga4-head-label {{ text-transform:uppercase; letter-spacing:.05em; }}
+    /* Modernized key-event filter control (pill select with leading funnel icon + custom caret). */
+    .ke-select-wrap {{ position:relative; display:inline-flex; align-items:center; }}
+    .ke-select-ico {{ position:absolute; left:8px; width:11px; height:11px; color:#a98b3a; pointer-events:none; }}
+    .ke-select-caret {{ position:absolute; right:8px; font-size:.62rem; color:#a98b3a; pointer-events:none; }}
+    #explorerTable th.ga4-col .ke-select {{ -webkit-appearance:none; appearance:none; max-width:158px; font-size:.68rem; font-weight:600; text-transform:none; letter-spacing:0; color:var(--navy); background:#fff; border:1px solid rgba(184,146,46,0.42); border-radius:999px; padding:3px 22px 3px 23px; cursor:pointer; text-overflow:ellipsis; transition:border-color .12s, background .12s, box-shadow .12s; }}
+    #explorerTable th.ga4-col .ke-select:hover {{ border-color:#c79a2e; }}
+    #explorerTable th.ga4-col .ke-select:focus-visible {{ outline:none; border-color:#b8922e; box-shadow:0 0 0 2px rgba(184,146,46,0.2); }}
+    /* Active state: a specific key event is isolated, so the control reads as a live filter. */
+    .ke-select-wrap.active .ke-select {{ background:rgba(184,146,46,0.13); border-color:#b8922e; color:#755a11; font-weight:700; }}
+    .ke-select-wrap.active .ke-select-ico, .ke-select-wrap.active .ke-select-caret {{ color:#8a6d1f; }}
     .pill {{ display:inline-block; padding:1px 7px; border-radius:999px; font-size:.64rem; font-weight:800; letter-spacing:.03em; text-transform:uppercase; vertical-align:middle; margin-right:7px; }}
     .pill-google {{ background:#e8f0fe; color:#1a73e8; }}
     .pill-linkedin {{ background:#e6f0f8; color:#0a66c2; }}
@@ -1995,7 +2010,9 @@ def render_bigquery_dashboard_page(
       if (!keyEventList.length) return '';
       const opts=[['__all__','All key events'],...keyEventList.map(e=>[e,e])]
         .map(([v,l])=>`<option value="${{esc(v)}}"${{selectedKeyEvent===v?' selected':''}}>${{esc(l)}}</option>`).join('');
-      return `<select class="ke-select" title="Show verified conversions for a single GA4 key event">${{opts}}</select>`;
+      const active = selectedKeyEvent!=='__all__';
+      const funnel = '<svg class="ke-select-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h12l-4.5 5.5V13L6.5 11.5V8.5z"/></svg>';
+      return `<span class="ke-select-wrap${{active?' active':''}}">${{funnel}}<select class="ke-select" title="Show GA4-verified conversions for a single key event">${{opts}}</select><span class="ke-select-caret" aria-hidden="true">▾</span></span>`;
     }}
 
     function buildChips(container, keys, stateSet, onChange) {{
@@ -2265,7 +2282,10 @@ def render_bigquery_dashboard_page(
       const tree=buildExplorerTree(filtered);
       if (!tree.size) {{ el.innerHTML=`<tbody><tr><td class="empty">No campaigns match these filters.</td></tr></tbody>`; }} else {{
         const sArrow=k=>explorerSort.key===k?(explorerSort.dir==='asc'?' ▲':' ▼'):'';
-        const head=`<thead><tr><th class="left expl-sort${{explorerSort.key==='name'?' active':''}}" data-key="name">Campaign / Ad group / Ad${{sArrow('name')}}</th>${{METRIC_COLS.map(c=>`<th class="expl-sort${{c.cls?' '+c.cls:''}}${{explorerSort.key===c.key?' active':''}}" data-key="${{c.key}}"${{c.title?` title="${{esc(c.title)}}"`:''}}>${{esc(c.label)}}${{c.keSelect?keSelectHtml():''}}${{sArrow(c.key)}}</th>`).join('')}}</tr></thead>`;
+        const thInner=c=>c.keSelect
+          ? `<span class="ga4-head"><span class="ga4-head-top"><span class="ga4-badge">GA4</span><span class="ga4-head-label">${{esc(c.label)}}</span>${{sArrow(c.key)}}</span>${{keSelectHtml()}}</span>`
+          : `${{esc(c.label)}}${{sArrow(c.key)}}`;
+        const head=`<thead><tr><th class="left expl-sort${{explorerSort.key==='name'?' active':''}}" data-key="name">Campaign / Ad group / Ad${{sArrow('name')}}</th>${{METRIC_COLS.map(c=>`<th class="expl-sort${{c.cls?' '+c.cls:''}}${{explorerSort.key===c.key?' active':''}}" data-key="${{c.key}}"${{c.title?` title="${{esc(c.title)}}"`:''}}>${{thInner(c)}}</th>`).join('')}}</tr></thead>`;
         let body='', cIdx=0;
         for (const camp of tree.values()) {{
           const cId='c'+(cIdx++), gCount=camp.groups.size;
@@ -3544,7 +3564,7 @@ def render_bigquery_dashboard_page(
         moreBtn.textContent = extra.hidden ? moreBtn.dataset.moreLabel : 'Show less';
         return;
       }}
-      if (ev.target.closest('.ke-select')) return;  // dropdown handles its own change
+      if (ev.target.closest('.ke-select-wrap')) return;  // filter select handles its own change
       const sortTh=ev.target.closest('th.expl-sort');
       if (sortTh) {{
         const key=sortTh.dataset.key;
