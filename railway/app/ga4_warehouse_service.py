@@ -22,7 +22,8 @@ def fetch_daily_metrics(
     Warehouse field mapping:
     - clicks = sessions (session_start events)
     - impressions = page_view events
-    - conversions = purchase + generate_lead + sign_up events
+    - conversions = the client's configured GA4 key events (falls back to the
+      shared KEY_EVENT_NAMES default); see ga4_attribution_service.resolve_key_event_names
     - spend = 0 (not applicable to GA4)
     """
     target = target or resolve_target()
@@ -33,6 +34,9 @@ def fetch_daily_metrics(
             or "GCP_SERVICE_ACCOUNT_JSON did not parse."
         )
 
+    from ga4_attribution_service import resolve_key_event_names
+
+    key_events = ", ".join(f"'{n}'" for n in resolve_key_event_names(target.client_key))
     suffix_start = start.strftime("%Y%m%d")
     suffix_end = end.strftime("%Y%m%d")
     table = f"`{target.bq_project_id}.{target.bq_dataset_id}.events_*`"
@@ -41,7 +45,7 @@ def fetch_daily_metrics(
           PARSE_DATE('%Y%m%d', event_date) AS metric_date,
           COUNTIF(event_name = 'session_start') AS sessions,
           COUNTIF(event_name = 'page_view') AS page_views,
-          COUNTIF(event_name IN ('purchase', 'generate_lead', 'sign_up', 'form_submit')) AS conversions
+          COUNTIF(event_name IN ({key_events})) AS conversions
         FROM {table}
         WHERE _TABLE_SUFFIX BETWEEN '{suffix_start}' AND '{suffix_end}'
         GROUP BY metric_date
@@ -96,6 +100,8 @@ def fetch_organic_daily_metrics(
     GA4 organic search sessions per day (traffic_source.medium = organic).
 
     Warehouse-style mapping: clicks=sessions, impressions=page_views, spend=0.
+    Conversions use the client's configured GA4 key events (see
+    ga4_attribution_service.resolve_key_event_names), restricted to organic.
     """
     target = target or resolve_target(client_key=client_key)
     summ = env_summary(credentials_env=target.credentials_env)
@@ -105,6 +111,11 @@ def fetch_organic_daily_metrics(
             or "GCP_SERVICE_ACCOUNT_JSON did not parse."
         )
 
+    from ga4_attribution_service import resolve_key_event_names
+
+    key_events = ", ".join(
+        f"'{n}'" for n in resolve_key_event_names(target.client_key or client_key)
+    )
     suffix_start = start.strftime("%Y%m%d")
     suffix_end = end.strftime("%Y%m%d")
     table = f"`{target.bq_project_id}.{target.bq_dataset_id}.events_*`"
@@ -120,7 +131,7 @@ def fetch_organic_daily_metrics(
             AND LOWER(COALESCE(traffic_source.medium, '')) = 'organic'
           ) AS page_views,
           COUNTIF(
-            event_name IN ('purchase', 'generate_lead', 'sign_up', 'form_submit')
+            event_name IN ({key_events})
             AND LOWER(COALESCE(traffic_source.medium, '')) = 'organic'
           ) AS conversions
         FROM {table}
