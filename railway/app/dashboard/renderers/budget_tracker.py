@@ -283,6 +283,11 @@ _JS_BODY = r"""
   // always-visible settings page and the initially-hidden Explorer tab alike.
   let started=false;
   function ensureLoad(){ if (started) return; started=true; loadBudget(); }
+  // Expose a manual trigger so a host page that reveals this section by un-hiding
+  // an ancestor (e.g. the Campaign Explorer tab) can fire the load directly,
+  // rather than depending on the IntersectionObserver noticing the change — which
+  // only fires on scroll and left the chart blank until a refresh/toggle.
+  window.ensureBudgetLoaded = ensureLoad;
   if (section.offsetParent !== null) ensureLoad();
   else {
     const io=new IntersectionObserver(ents=>{ if (ents.some(en=>en.isIntersecting)){ io.disconnect(); ensureLoad(); } }, { rootMargin:'300px' });
