@@ -160,6 +160,141 @@ def topbar_client_selector_html(
     return f'<span class="topbar-client-label" id="topbarClientLabel">{_esc(label)}</span>'
 
 
+# A small, stable palette for client avatar chips. Each client gets a colour
+# derived from its slug so the same client always reads the same — a quiet way
+# to make a long list scannable (à la Slack/Linear workspace avatars).
+_CLIENT_AVATAR_COLORS = (
+    "#0ea5e9", "#6366f1", "#8b5cf6", "#d946ef", "#ec4899",
+    "#f43f5e", "#f59e0b", "#10b981", "#14b8a6", "#3b82f6",
+)
+
+
+def _client_avatar_color(slug: str) -> str:
+    key = (slug or "").strip().lower() or "?"
+    return _CLIENT_AVATAR_COLORS[sum(ord(c) for c in key) % len(_CLIENT_AVATAR_COLORS)]
+
+
+def _client_avatar_initial(label: str) -> str:
+    return _esc((label or "?").strip()[:1].upper() or "?")
+
+
+def sidebar_client_switcher_html(
+    *,
+    client_slug: str,
+    label: str,
+    active_nav: str,
+    access_key: str | None,
+    use_session: bool,
+    session_is_admin: bool,
+    session_can_switch_clients: bool = False,
+) -> str:
+    """Modern client switcher for the sidebar footer.
+
+    Renders a trigger row (current client's avatar + name) that opens a
+    slide-out secondary drawer with a search box and a scrollable, keyboard-
+    navigable client list. Replaces the native ``<select>`` whose OS dropdown
+    looked dated and didn't scale past a handful of clients. ``client``-role
+    users who can't switch keep the plain label. The drawer + backdrop markup is
+    relocated to ``<body>`` on init (see ``dashboard_topbar_js``) so it escapes
+    the sidebar's ``overflow:hidden`` / mobile ``transform`` and overlays the
+    whole viewport.
+    """
+    if not ((session_is_admin or session_can_switch_clients) and use_session):
+        return f'<span class="topbar-client-label" id="topbarClientLabel">{_esc(label)}</span>'
+
+    import client_config
+
+    # Scope to new-build (connector platform) clients, mirroring the old select;
+    # legacy dashboards stay reachable by URL but drop out of the list. Always
+    # keep the current client so visiting a legacy page directly still works.
+    try:
+        import connector_config_store
+        _platform_slugs = connector_config_store.client_slugs_with_configs()
+    except Exception:
+        _platform_slugs = set()
+
+    current = (client_slug or "").strip().lower()
+    current_label = label
+    items: list[str] = []
+    for slug, client_label in client_config.list_dashboard_clients():
+        if _platform_slugs and slug not in _platform_slugs and slug != current:
+            continue
+        is_current = slug == current
+        if is_current:
+            current_label = client_label
+        dest = _client_switch_target_url(
+            client_slug=slug,
+            active_nav=active_nav,
+            access_key=access_key,
+            use_session=use_session,
+        )
+        cur_cls = " is-current" if is_current else ""
+        aria_cur = ' aria-current="true"' if is_current else ""
+        ava_style = f"background:{_client_avatar_color(slug)}"
+        items.append(
+            f'<a class="client-switch-item{cur_cls}" role="option"{aria_cur} '
+            f'href="{_esc(dest)}" data-name="{_esc(client_label)}">'
+            f'<span class="client-switch-ava" style="{ava_style}" aria-hidden="true">'
+            f'{_client_avatar_initial(client_label)}</span>'
+            f'<span class="client-switch-name">{_esc(client_label)}</span>'
+            f'<svg class="client-switch-check" viewBox="0 0 24 24" fill="none" '
+            f'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" '
+            f'stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>'
+            f'</a>'
+        )
+
+    count = len(items)
+    trigger_style = f"background:{_client_avatar_color(current)}"
+    icon_search = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
+    )
+    icon_close = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
+    )
+    icon_chevrons = (
+        '<svg class="client-switch-caret" viewBox="0 0 24 24" fill="none" '
+        'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+        'stroke-linejoin="round" aria-hidden="true"><polyline points="8 9 12 5 16 9"/>'
+        '<polyline points="16 15 12 19 8 15"/></svg>'
+    )
+
+    return f"""
+      <button type="button" class="client-switch-trigger" id="clientSwitchTrigger"
+        aria-haspopup="dialog" aria-expanded="false" aria-controls="clientSwitchDrawer">
+        <span class="client-switch-ava client-switch-ava--trigger" style="{trigger_style}"
+          aria-hidden="true">{_client_avatar_initial(current_label)}</span>
+        <span class="client-switch-trigger-text">
+          <span class="client-switch-eyebrow">Client</span>
+          <span class="client-switch-trigger-name">{_esc(current_label)}</span>
+        </span>
+        {icon_chevrons}
+      </button>
+      <div class="client-switch-backdrop" id="clientSwitchBackdrop" hidden></div>
+      <aside class="client-switch-drawer" id="clientSwitchDrawer" role="dialog"
+        aria-modal="true" aria-label="Switch client" aria-hidden="true">
+        <header class="client-switch-head">
+          <div class="client-switch-head-titles">
+            <h2 class="client-switch-title">Switch client</h2>
+            <span class="client-switch-count">{count} {"client" if count == 1 else "clients"}</span>
+          </div>
+          <button type="button" class="client-switch-close" aria-label="Close">{icon_close}</button>
+        </header>
+        <div class="client-switch-search">
+          {icon_search}
+          <input type="text" class="client-switch-search-input" placeholder="Search clients…"
+            aria-label="Search clients" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="client-switch-list" role="listbox" aria-label="Clients" tabindex="-1">
+          {"".join(items)}
+          <p class="client-switch-empty" hidden>No clients match your search.</p>
+        </div>
+      </aside>"""
+
+
 def dash_top_header_html(
     *,
     client_slug: str,
@@ -317,6 +452,119 @@ def dashboard_topbar_js() -> str:
       // Close the drawer after tapping a nav link on mobile.
       shell.querySelectorAll('.dash-sidebar a').forEach((a) => {
         a.addEventListener('click', () => { if (window.innerWidth <= 900) setOpen(false); });
+      });
+    })();
+
+    // ── Modern client switcher: slide-out drawer with search ──────────────
+    (function() {
+      const trigger = document.getElementById('clientSwitchTrigger');
+      const drawer = document.getElementById('clientSwitchDrawer');
+      const backdrop = document.getElementById('clientSwitchBackdrop');
+      if (!trigger || !drawer || !backdrop) return;
+      // Relocate the overlay to <body> so it escapes the sidebar's
+      // overflow:hidden and the mobile translateX() (a transformed ancestor
+      // would otherwise clip / re-anchor these position:fixed nodes).
+      document.body.appendChild(backdrop);
+      document.body.appendChild(drawer);
+
+      const search = drawer.querySelector('.client-switch-search-input');
+      const list = drawer.querySelector('.client-switch-list');
+      const empty = drawer.querySelector('.client-switch-empty');
+      const closeBtn = drawer.querySelector('.client-switch-close');
+      const items = Array.prototype.slice.call(
+        drawer.querySelectorAll('.client-switch-item')
+      );
+      let lastFocus = null;
+
+      // Carry the current dashboard tab (?view=) to the client we switch to, so
+      // leaving Client A on AI Traffic lands on Client B's AI Traffic instead of
+      // snapping back to Overview. Mirrors the legacy <select> handler.
+      function carryView(url) {
+        try {
+          const view = new URLSearchParams(location.search).get('view');
+          if (view) {
+            const u = new URL(url, location.origin);
+            if (!u.searchParams.has('view')) u.searchParams.set('view', view);
+            return u.pathname + u.search + u.hash;
+          }
+        } catch (e) { /* ignore */ }
+        return url;
+      }
+      items.forEach((a) => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          window.location.href = carryView(a.getAttribute('href'));
+        });
+      });
+
+      function isOpen() { return document.body.classList.contains('client-switch-active'); }
+
+      function filter(q) {
+        q = (q || '').trim().toLowerCase();
+        let shown = 0;
+        items.forEach((a) => {
+          const match = !q || (a.dataset.name || '').toLowerCase().indexOf(q) !== -1;
+          a.hidden = !match;
+          if (match) shown += 1;
+        });
+        if (empty) empty.hidden = shown > 0;
+      }
+
+      function open() {
+        lastFocus = document.activeElement;
+        backdrop.hidden = false;
+        drawer.setAttribute('aria-hidden', 'false');
+        trigger.setAttribute('aria-expanded', 'true');
+        // Force reflow so the enter transition runs from the off-canvas state.
+        void drawer.offsetWidth;
+        document.body.classList.add('client-switch-active');
+        if (search) { search.value = ''; }
+        filter('');
+        requestAnimationFrame(() => { if (search) search.focus(); });
+        const cur = drawer.querySelector('.client-switch-item.is-current');
+        if (cur) cur.scrollIntoView({ block: 'center' });
+      }
+
+      function close() {
+        document.body.classList.remove('client-switch-active');
+        drawer.setAttribute('aria-hidden', 'true');
+        trigger.setAttribute('aria-expanded', 'false');
+        const onEnd = () => {
+          if (!isOpen()) backdrop.hidden = true;
+          drawer.removeEventListener('transitionend', onEnd);
+        };
+        drawer.addEventListener('transitionend', onEnd);
+        if (lastFocus && lastFocus.focus) lastFocus.focus();
+      }
+
+      trigger.addEventListener('click', () => { isOpen() ? close() : open(); });
+      backdrop.addEventListener('click', close);
+      if (closeBtn) closeBtn.addEventListener('click', close);
+      if (search) search.addEventListener('input', () => filter(search.value));
+
+      // Keyboard: Esc closes; Up/Down roves through the visible rows.
+      drawer.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          const visible = items.filter((a) => !a.hidden);
+          if (!visible.length) return;
+          e.preventDefault();
+          let idx = visible.indexOf(document.activeElement);
+          if (e.key === 'ArrowDown') idx = idx < 0 ? 0 : (idx + 1) % visible.length;
+          else idx = idx <= 0 ? visible.length - 1 : idx - 1;
+          visible[idx].focus();
+          return;
+        }
+        // Focus trap.
+        if (e.key === 'Tab') {
+          const focusables = [search].concat(items.filter((a) => !a.hidden));
+          if (closeBtn) focusables.push(closeBtn);
+          const f = focusables.filter(Boolean);
+          if (!f.length) return;
+          const first = f[0], last = f[f.length - 1];
+          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
       });
     })();
     """
@@ -657,7 +905,7 @@ def render_sidebar(
         client_slug=client_slug, access_key=access_key, use_session=use_session
     ) or "#"
 
-    client_selector = topbar_client_selector_html(
+    client_selector = sidebar_client_switcher_html(
         client_slug=client_slug,
         label=label,
         active_nav=active_nav,
@@ -1247,6 +1495,248 @@ SIDEBAR_CSS = """
       outline: none;
     }
     .dash-sidebar-client .topbar-client-switcher option { color: #0f172a; }
+
+    /* ====== Modern client switcher (trigger + slide-out drawer) ====== */
+    /* Avatar chip — a colour-coded initial shared by the trigger and list rows. */
+    .client-switch-ava {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      flex-shrink: 0;
+      border-radius: 9px;
+      color: #fff;
+      font-size: 0.82rem;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: 0.01em;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+    }
+
+    /* Trigger row that lives in the sidebar footer. */
+    .client-switch-trigger {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 11px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      font-family: inherit;
+      cursor: pointer;
+      text-align: left;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .client-switch-trigger:hover {
+      background: rgba(255, 255, 255, 0.14);
+      border-color: rgba(255, 255, 255, 0.32);
+    }
+    .client-switch-trigger:focus-visible {
+      outline: 2px solid #7dd3fc;
+      outline-offset: 2px;
+    }
+    .client-switch-trigger-text {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .client-switch-eyebrow {
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: rgba(226, 236, 248, 0.62);
+    }
+    .client-switch-trigger-name {
+      font-size: 0.92rem;
+      font-weight: 650;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .client-switch-caret {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      color: rgba(226, 236, 248, 0.6);
+    }
+    .client-switch-trigger:hover .client-switch-caret { color: #fff; }
+
+    /* Backdrop + off-canvas drawer, relocated to <body> by JS. */
+    .client-switch-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 199;
+      background: rgba(8, 18, 33, 0.46);
+      opacity: 0;
+      transition: opacity 0.24s ease;
+      -webkit-backdrop-filter: blur(2px);
+      backdrop-filter: blur(2px);
+    }
+    body.client-switch-active .client-switch-backdrop { opacity: 1; }
+
+    .client-switch-drawer {
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      width: min(360px, 88vw);
+      height: 100vh;
+      height: 100dvh;
+      background: #f8fafc;
+      box-shadow: 12px 0 40px rgba(8, 18, 33, 0.32);
+      transform: translateX(-102%);
+      transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+      will-change: transform;
+    }
+    body.client-switch-active .client-switch-drawer { transform: translateX(0); }
+
+    .client-switch-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 20px 18px 14px;
+      background: linear-gradient(180deg, var(--sidebar-from, #0a2540), var(--sidebar-to, #123456));
+      color: #fff;
+      flex-shrink: 0;
+    }
+    .client-switch-head-titles { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+    .client-switch-title {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: #fff;
+    }
+    .client-switch-count {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: rgba(226, 236, 248, 0.7);
+      white-space: nowrap;
+    }
+    .client-switch-close {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 34px;
+      height: 34px;
+      flex-shrink: 0;
+      border: 0;
+      border-radius: 9px;
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .client-switch-close:hover { background: rgba(255, 255, 255, 0.24); }
+    .client-switch-close:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
+    .client-switch-close svg { width: 18px; height: 18px; }
+
+    .client-switch-search {
+      position: relative;
+      display: flex;
+      align-items: center;
+      padding: 14px 16px 10px;
+      flex-shrink: 0;
+    }
+    .client-switch-search svg {
+      position: absolute;
+      left: 28px;
+      width: 17px;
+      height: 17px;
+      color: #94a3b8;
+      pointer-events: none;
+    }
+    .client-switch-search-input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 14px 10px 40px;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      background: #fff;
+      color: #0f172a;
+      font: inherit;
+      font-size: 0.92rem;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .client-switch-search-input::placeholder { color: #94a3b8; }
+    .client-switch-search-input:focus-visible {
+      outline: none;
+      border-color: #7dd3fc;
+      box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.35);
+    }
+
+    .client-switch-list {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 4px 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .client-switch-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 9px 10px;
+      border-radius: 10px;
+      color: #0f172a;
+      text-decoration: none;
+      font-size: 0.92rem;
+      font-weight: 550;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    /* Explicit — the class sets display:flex, which would otherwise override the
+       [hidden] UA rule and leave filtered-out rows visible during search. */
+    .client-switch-item[hidden] { display: none; }
+    .client-switch-item:hover { background: #eef2f7; }
+    .client-switch-item:focus-visible {
+      outline: none;
+      background: #e6eefc;
+      box-shadow: inset 0 0 0 2px #7dd3fc;
+    }
+    .client-switch-name {
+      flex: 1 1 auto;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .client-switch-check {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+      color: #1d6fd0;
+      opacity: 0;
+    }
+    .client-switch-item.is-current {
+      background: #e8f1fd;
+      font-weight: 700;
+    }
+    .client-switch-item.is-current .client-switch-check { opacity: 1; }
+    .client-switch-empty {
+      margin: 18px 8px;
+      color: #94a3b8;
+      font-size: 0.9rem;
+      text-align: center;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .client-switch-drawer, .client-switch-backdrop { transition: none; }
+    }
+
     .dash-sidebar .sr-only {
       position: absolute;
       width: 1px;
