@@ -3386,8 +3386,8 @@ def render_bigquery_dashboard_page(
         .sort((a,b)=>num(a.avg_position)-num(b.avg_position))
         .slice(0,OV_KW_LEADERS);
       if (!top.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No matching queries in this range.</td></tr></tbody>`; return; }}
-      const head=`<thead><tr><th class="left">Keyword</th><th>Position</th><th>Movement</th></tr></thead>`;
-      const body=top.map(r=>`<tr><td class="left" title="${{esc(r.query)}}"><span>${{esc(r.query)}}</span></td><td>${{gscPos(r.avg_position)}}</td><td>${{gscDelta(r.delta_position)}}</td></tr>`).join('');
+      const head=`<thead><tr><th class="left">Keyword</th><th>Clicks</th><th>Position</th><th>Movement</th></tr></thead>`;
+      const body=top.map(r=>`<tr><td class="left" title="${{esc(r.query)}}"><span>${{esc(r.query)}}</span></td><td>${{count(r.clicks)}}</td><td>${{gscPos(r.avg_position)}}</td><td>${{gscDelta(r.delta_position)}}</td></tr>`).join('');
       el.innerHTML=head+`<tbody>${{body}}</tbody>`;
     }}
     async function loadOverviewHome() {{
