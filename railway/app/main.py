@@ -484,10 +484,13 @@ def health_ready(response: Response) -> HealthReadyResponse:
 
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon_ico() -> FileResponse:
-    path = STATIC_DIR / "favicon-32x32.png"
+    path = STATIC_DIR / "favicon.ico"
+    if not path.is_file():
+        path = STATIC_DIR / "favicon-32x32.png"
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Favicon not found")
-    return FileResponse(path, media_type="image/png")
+    media_type = "image/x-icon" if path.suffix == ".ico" else "image/png"
+    return FileResponse(path, media_type=media_type)
 
 
 @app.get(
