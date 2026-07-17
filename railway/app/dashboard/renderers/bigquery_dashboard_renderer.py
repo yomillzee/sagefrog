@@ -1982,16 +1982,30 @@ def render_bigquery_dashboard_page(
     makeTagEditor('gscTargetExcludeTags','Exclude terms', ()=>gscTargetExclude, t=>{{gscTargetExclude=t;}});
 
     // ---- SEMrush (domain-level snapshot — not date-range scoped) ----
-    function renderSemrushKpis(ov, bl) {{
-      ov = ov || {{}}; bl = bl || {{}};
+    function renderSemrushKpis(ov, bl, series, aio) {{
+      ov = ov || {{}}; bl = bl || {{}}; series = series || []; aio = aio || {{}};
+      const first = series.length ? series[0] : null;
+      const last  = series.length ? series[series.length-1] : null;
+      // Delta is first-vs-last over the ~90-day daily series (SEMrush snapshots
+      // are domain-level, not date-range scoped). Spark draws the same series.
+      const sdelta = (key,dir) => (series.length>=2 && first && last) ? summaryDeltaHtml(last[key], first[key], dir) : '';
+      const sspark = (key,color) => sparkSvg(series.map(d=>num(d[key])), color);
+      const aioFoot = (aio.keywords_cited!=null)
+        ? `<span class="cmp-delta flat" title="ranked keywords citing this domain in an AI Overview">${{count(aio.keywords_cited)}} cited</span>`
+        : '';
+      // [label, value, foot-delta html, spark html]. AI Overview keyword count
+      // has no "good" direction (more AIOs can cannibalize clicks), so it shows
+      // the cited count instead of a colored delta.
       const cards = [
-        ['Organic Traffic (est.)', count(ov.organic_traffic)],
-        ['Organic Keywords', count(ov.organic_keywords)],
-        ['Authority Score', bl.authority_score != null ? bl.authority_score + '/100' : '—'],
-        ['Referring Domains', count(bl.referring_domains)],
+        ['Organic Traffic (est.)', count(ov.organic_traffic), sdelta('organic_traffic','up'), sspark('organic_traffic','#1769aa')],
+        ['Organic Keywords', count(ov.organic_keywords), sdelta('organic_keywords','up'), sspark('organic_keywords','#7c3aed')],
+        ['Authority Score', bl.authority_score != null ? bl.authority_score + '/100' : '—', sdelta('authority_score','up'), sspark('authority_score','#0a7f3f')],
+        ['Referring Domains', count(bl.referring_domains), sdelta('referring_domains','up'), sspark('referring_domains','#d97706')],
+        ['Total Backlinks', count(bl.total_backlinks), sdelta('total_backlinks','up'), sspark('total_backlinks','#0891b2')],
+        ['AI Overview Keywords', count(aio.keywords_with_aio), aioFoot, sspark('ai_overview_keywords','#a855f7')],
       ];
-      document.getElementById('semrushKpis').innerHTML = cards.map(([label,val]) =>
-        `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{val}}</div></div>`).join('');
+      document.getElementById('semrushKpis').innerHTML = cards.map(([label,val,delta,spark]) =>
+        `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{val}}</div><div class="card-foot">${{delta}}${{spark}}</div></div>`).join('');
     }}
     async function loadSemrush() {{
       const host=document.getElementById('semrushKpis');
@@ -2001,11 +2015,11 @@ def render_bigquery_dashboard_page(
       try {{
         const p = await getJson(SEMRUSH_API);
         if (!p || !p.domain) {{
-          renderSemrushKpis({{}}, {{}});
+          renderSemrushKpis({{}}, {{}}, [], {{}});
           setStatus('semrushStatus','No SEMrush data yet.');
           return;
         }}
-        renderSemrushKpis(p.overview, p.backlinks);
+        renderSemrushKpis(p.overview, p.backlinks, p.series, p.ai_overview);
         setStatus('semrushStatus', esc(p.domain));
       }} catch(err) {{
         setStatus('semrushStatus', err.message||String(err), true);
