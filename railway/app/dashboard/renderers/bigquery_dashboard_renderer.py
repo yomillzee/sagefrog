@@ -769,8 +769,6 @@ def render_bigquery_dashboard_page(
     .tree-count .tc-dots {{ display:inline-flex; align-items:center; gap:3px; }}
     .tree-count .tc-dot {{ width:5px; height:5px; border-radius:50%; background:rgba(29,111,208,.55); }}
     .tree-count .tc-dot.tc-more {{ background:none; width:auto; height:auto; font-size:.62rem; font-weight:800; line-height:1; color:rgba(29,111,208,.65); letter-spacing:-.02em; }}
-    .tree-count .tc-num {{ font-size:.7rem; font-weight:700; color:var(--muted); font-variant-numeric:tabular-nums; }}
-    .tree-count .tc-unit {{ font-size:.66rem; font-weight:600; color:#9aa7bd; letter-spacing:.02em; }}
     .lvl-group .tree-count .tc-dot {{ background:rgba(107,122,144,.5); }}
     .lvl-group .tree-count .tc-dot.tc-more {{ color:rgba(107,122,144,.7); }}
     /* GA4-verified conversions column — set off from the platform-reported metrics with a subtle gold accent. */
@@ -2279,16 +2277,16 @@ def render_bigquery_dashboard_page(
       return `<div class="ad-cell">${{thumb}}<span class="ad-meta"><span class="ad-label">${{label}}${{idTag}}</span>${{type}}${{copy}}</span></div>`;
     }}
     // Sleek child-count indicator: up to 5 dots represent the count at a glance
-    // (a "+" marks overflow), followed by the number and unit label.
+    // (a "+" marks overflow). The exact count + unit ("3 ad groups") stays on
+    // the hover title rather than as inline text next to the row name.
     function treeCount(n, unit) {{
       const cap=Math.min(n, 5);
       let dots='';
       for (let i=0;i<cap;i++) dots+='<span class="tc-dot"></span>';
       if (n>5) dots+='<span class="tc-dot tc-more">+</span>';
       const label=esc(unit)+(n===1?'':'s');
-      return `<span class="tree-count" title="${{n}} ${{label}}">`
-        + `<span class="tc-dots" aria-hidden="true">${{dots}}</span>`
-        + `<span class="tc-num">${{n}}</span><span class="tc-unit">${{label}}</span></span>`;
+      return `<span class="tree-count" title="${{n}} ${{label}}" aria-label="${{n}} ${{label}}">`
+        + `<span class="tc-dots" aria-hidden="true">${{dots}}</span></span>`;
     }}
     function renderExplorer() {{
       const filtered=explorerRows.filter(explorerRowMatches);

@@ -27,7 +27,12 @@ def css() -> str:
     return """
     /* ---- Budget tracking module (shared: Explorer + Settings) ---- */
     #sec-budget .sec-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:16px; }
-    #sec-budget .sec-head h2 { margin:0; }
+    #sec-budget .sec-head h2 { margin:0; display:inline-flex; align-items:center; gap:6px; }
+    /* Info icon on the heading (self-contained so the settings host, which has
+       no global .info-tip, styles it the same as the Explorer host). */
+    #sec-budget .info-tip { display:inline-flex; align-items:center; cursor:help; color:#9aa7bd; line-height:0; }
+    #sec-budget .info-tip svg { display:block; }
+    #sec-budget .info-tip:hover, #sec-budget .info-tip:focus { color:var(--navy); outline:none; }
     #sec-budget .ov-actions { display:flex; align-items:center; gap:10px; flex-shrink:0; }
     #sec-budget .status { color:var(--muted); font-size:.82rem; margin:0; }
     #sec-budget .chips { display:flex; flex-wrap:wrap; gap:5px; }
@@ -74,10 +79,22 @@ def section_html(*, can_edit: bool) -> str:
           <button type="submit" class="chip budget-goal-save">Save goal</button>
           <span class="status" id="budgetGoalStatus"></span>
         </form>"""
+    _help = (
+        "Cumulative paid spend by platform against the monthly budget. Spend "
+        "resets at the start of each calendar month; the projection extends the "
+        "current month at its run-rate to month end."
+    )
+    _ico = (
+        '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" '
+        'stroke="currentColor" stroke-width="1.4" stroke-linecap="round" '
+        'aria-hidden="true"><circle cx="8" cy="8" r="6.5"/>'
+        '<path d="M8 7.3v3.4"/>'
+        '<circle cx="8" cy="4.9" r=".85" fill="currentColor" stroke="none"/></svg>'
+    )
     return f"""
       <section id="sec-budget">
         <div class="sec-head">
-          <h2>Budget tracking</h2>
+          <h2>Budget tracking<span class="info-tip" tabindex="0" role="img" aria-label="How this chart works. {_help}" title="{_help}">{_ico}</span></h2>
           <div class="ov-actions">
             <span class="status" id="budgetStatus"></span>
             <div class="chips" id="budgetRangeChips" role="tablist" aria-label="Budget range">
@@ -86,7 +103,6 @@ def section_html(*, can_edit: bool) -> str:
             </div>
           </div>
         </div>
-        <p class="chart-note" style="margin-top:0">Cumulative paid spend by platform against the monthly budget. Spend resets at the start of each calendar month; the projection extends the current month at its run-rate to month end.</p>
         {goal_editor}
         <div class="budget-stats" id="budgetStats"></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:260px"><canvas id="budgetChart"></canvas></div></div>
@@ -290,7 +306,14 @@ _JS_BODY = r"""
   window.ensureBudgetLoaded = ensureLoad;
   if (section.offsetParent !== null) ensureLoad();
   else {
-    const io=new IntersectionObserver(ents=>{ if (ents.some(en=>en.isIntersecting)){ io.disconnect(); ensureLoad(); } }, { rootMargin:'300px' });
+    const io=new IntersectionObserver(ents=>{
+      // Guard on real visibility (offsetParent). With a rootMargin a
+      // display:none target still reports isIntersecting — its 0x0 box sits at
+      // the origin, inside the expanded root — so without this guard the load
+      // latches while the pane is hidden and renders into a 0-size canvas,
+      // leaving the chart blank until a manual toggle. Only fire once laid out.
+      if (section.offsetParent !== null && ents.some(en=>en.isIntersecting)){ io.disconnect(); ensureLoad(); }
+    }, { rootMargin:'300px' });
     io.observe(section);
   }
 })();
