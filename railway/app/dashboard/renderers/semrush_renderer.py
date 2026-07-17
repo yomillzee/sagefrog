@@ -25,6 +25,18 @@ def _fmt_float(v: float, decimals: int = 2) -> str:
     return f"{float(v):.{decimals}f}" if v else "0"
 
 
+def _aio_cell(kw: dict[str, Any]) -> str:
+    """AI Overview status pill for a keyword row.
+
+    Cited (domain appears in the AI Overview) > Present (keyword triggers one) > —.
+    """
+    if kw.get("ai_overview_cited"):
+        return '<span class="smr-aio-pill cited">Cited</span>'
+    if kw.get("ai_overview"):
+        return '<span class="smr-aio-pill present">Present</span>'
+    return '<span class="smr-aio-pill none">—</span>'
+
+
 def _kpi_card(label: str, value: str, subtitle: str = "") -> str:
     sub = f'<div class="smr-kpi-sub">{_esc(subtitle)}</div>' if subtitle else ""
     return f"""
@@ -40,6 +52,7 @@ def semrush_section_html(data: dict[str, Any]) -> str:
     overview  = data.get("overview") or {}
     backlinks = data.get("backlinks") or {}
     keywords  = data.get("keywords") or []
+    ai_ov     = data.get("ai_overview") or {}
     pos_dist  = data.get("position_distribution") or []
     errors    = data.get("errors") or {}
     domain    = data.get("domain") or ""
@@ -90,6 +103,10 @@ def semrush_section_html(data: dict[str, Any]) -> str:
         <span class="smr-secondary-value">${_fmt_float(overview.get("organic_cost") or 0, 0)}</span>
       </div>
       <div class="smr-secondary-item">
+        <span class="smr-secondary-label">Total Backlinks</span>
+        <span class="smr-secondary-value">{_bl("total_backlinks")}</span>
+      </div>
+      <div class="smr-secondary-item">
         <span class="smr-secondary-label">Dofollow Links</span>
         <span class="smr-secondary-value">{_bl("dofollow")}</span>
       </div>
@@ -100,6 +117,32 @@ def semrush_section_html(data: dict[str, Any]) -> str:
       <div class="smr-secondary-item">
         <span class="smr-secondary-label">Paid Keywords</span>
         <span class="smr-secondary-value">{_fmt_int(overview.get("paid_keywords") or 0)}</span>
+      </div>
+    </div>"""
+
+    # ── AI Overview (Google AI Overviews visibility) ───────────────────────
+    aio_kw    = int(ai_ov.get("keywords_with_aio") or 0)
+    aio_cited = int(ai_ov.get("keywords_cited") or 0)
+    aio_share = (aio_cited / aio_kw * 100) if aio_kw else 0.0
+    aio_html = f"""
+    <div class="smr-aio">
+      <div class="smr-aio-head">
+        <span class="smr-aio-badge">AI</span>
+        <span class="smr-aio-title">Google AI Overview Visibility</span>
+      </div>
+      <div class="smr-aio-metrics">
+        <div class="smr-aio-metric">
+          <span class="smr-aio-value">{_fmt_int(aio_kw)}</span>
+          <span class="smr-aio-label">ranked keywords trigger an AI Overview</span>
+        </div>
+        <div class="smr-aio-metric">
+          <span class="smr-aio-value">{_fmt_int(aio_cited)}</span>
+          <span class="smr-aio-label">of those cite {_esc(domain) or "this domain"}</span>
+        </div>
+        <div class="smr-aio-metric">
+          <span class="smr-aio-value">{_fmt_float(aio_share, 1)}%</span>
+          <span class="smr-aio-label">AI Overview citation rate</span>
+        </div>
       </div>
     </div>"""
 
@@ -122,6 +165,7 @@ def semrush_section_html(data: dict[str, Any]) -> str:
           <th class="smr-th sortable num" data-col="search_volume">Search Vol.</th>
           <th class="smr-th sortable num" data-col="traffic_pct">Traffic %</th>
           <th class="smr-th sortable num" data-col="cpc">CPC ($)</th>
+          <th class="smr-th sortable" data-col="ai_overview">AI Overview</th>
           <th class="smr-th">URL</th>
         </tr>"""
         tbody_rows = ""
@@ -130,12 +174,14 @@ def semrush_section_html(data: dict[str, Any]) -> str:
             pos_cls = "smr-pos-top3" if pos <= 3 else "smr-pos-top10" if pos <= 10 else ""
             url = (kw.get("url") or "").strip()
             url_html = f'<a href="{_esc(url)}" target="_blank" rel="noopener" class="smr-url">{_esc(url[:60] + ("…" if len(url) > 60 else ""))}</a>' if url else ""
+            aio_cell = _aio_cell(kw)
             tbody_rows += f"""<tr>
               <td class="smr-td smr-kw">{_esc(kw.get("keyword") or "")}</td>
               <td class="smr-td num"><span class="smr-pos {pos_cls}">{pos}</span></td>
               <td class="smr-td num">{_fmt_int(kw.get("search_volume") or 0)}</td>
               <td class="smr-td num">{_fmt_float(kw.get("traffic_pct") or 0)}%</td>
               <td class="smr-td num">${_fmt_float(kw.get("cpc") or 0)}</td>
+              <td class="smr-td">{aio_cell}</td>
               <td class="smr-td">{url_html}</td>
             </tr>"""
         kw_table_html = f"""
@@ -160,6 +206,7 @@ def semrush_section_html(data: dict[str, Any]) -> str:
   {error_html}
   {kpi_html}
   {secondary_html}
+  {aio_html}
   {charts_html}
 
   <details class="smr-detail" open>
@@ -219,12 +266,18 @@ def semrush_section_html(data: dict[str, Any]) -> str:
           ? '<a href="' + url + '" target="_blank" rel="noopener" class="smr-url">' +
             (url.length > 60 ? url.substring(0, 60) + '…' : url) + '</a>'
           : '';
+        var aioHtml = kw.ai_overview_cited
+          ? '<span class="smr-aio-pill cited">Cited</span>'
+          : kw.ai_overview
+          ? '<span class="smr-aio-pill present">Present</span>'
+          : '<span class="smr-aio-pill none">—</span>';
         return '<tr>' +
           '<td class="smr-td smr-kw">' + (kw.keyword || '') + '</td>' +
           '<td class="smr-td num"><span class="smr-pos ' + posCls + '">' + pos + '</span></td>' +
           '<td class="smr-td num">' + (kw.search_volume || 0).toLocaleString() + '</td>' +
           '<td class="smr-td num">' + ((kw.traffic_pct || 0).toFixed(2)) + '%</td>' +
           '<td class="smr-td num">$' + ((kw.cpc || 0).toFixed(2)) + '</td>' +
+          '<td class="smr-td">' + aioHtml + '</td>' +
           '<td class="smr-td">' + urlHtml + '</td>' +
           '</tr>';
       }}).join('');
@@ -353,6 +406,65 @@ SEMRUSH_CSS = """
       color: var(--navy);
       font-variant-numeric: tabular-nums;
     }
+    /* AI Overview callout */
+    .smr-aio {
+      background: linear-gradient(135deg, #faf5ff 0%, #f5f3ff 100%);
+      border: 1px solid #d8b4fe;
+      border-radius: 10px;
+      padding: 14px 18px;
+      margin-bottom: 20px;
+    }
+    .smr-aio-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .smr-aio-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.62rem;
+      font-weight: 800;
+      letter-spacing: .04em;
+      color: #fff;
+      background: #7c3aed;
+      border-radius: 5px;
+      padding: 2px 6px;
+    }
+    .smr-aio-title {
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: #6b21a8;
+    }
+    .smr-aio-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+    @media (max-width: 640px) { .smr-aio-metrics { grid-template-columns: 1fr; } }
+    .smr-aio-metric { display: flex; flex-direction: column; gap: 2px; }
+    .smr-aio-value {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: #6b21a8;
+      letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
+    }
+    .smr-aio-label { font-size: 0.72rem; color: var(--muted); }
+    /* AI Overview keyword pills */
+    .smr-aio-pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+    .smr-aio-pill.cited   { background: #f3e8ff; color: #7c3aed; }
+    .smr-aio-pill.present { background: #eef2ff; color: #4f46e5; }
+    .smr-aio-pill.none    { background: transparent; color: var(--muted); font-weight: 400; }
     /* Charts */
     .smr-charts-row {
       display: grid;
