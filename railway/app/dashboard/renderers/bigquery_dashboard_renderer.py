@@ -756,12 +756,23 @@ def render_bigquery_dashboard_page(
     .indent2 {{ display:inline-block; width:36px; }}
     .tree-row[data-expandable] {{ cursor:pointer; }}
     .tree-row[data-expandable]:hover {{ background:#f3f8ff; }}
-    .caret {{ display:inline-block; width:14px; color:var(--muted); font-size:.8rem; }}
-    .tree-row[data-expandable] .caret::before {{ content:'\\25B8'; }}
-    .tree-row[data-expandable].open .caret::before {{ content:'\\25BE'; }}
+    /* Modern chevron caret: a rounded hover target whose chevron rotates on open. */
+    .caret {{ display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:6px; color:var(--muted); vertical-align:middle; transition:transform .18s ease, background .12s, color .12s; }}
+    .tree-row[data-expandable] .caret::before {{ content:''; width:5px; height:5px; border-top:1.7px solid currentColor; border-right:1.7px solid currentColor; transform:translateX(-1px) rotate(45deg); }}
+    .tree-row[data-expandable].open .caret {{ transform:rotate(90deg); }}
+    .tree-row[data-expandable]:hover .caret {{ background:rgba(29,111,208,.12); color:var(--accent); }}
     .lvl-campaign .tree-name {{ font-weight:800; color:var(--navy); }}
     .lvl-group .tree-name {{ font-weight:600; }}
     .lvl-ad td.left {{ color:var(--muted); }}
+    /* Sleek count indicator: dots representing the child count + a numeric badge. */
+    .tree-count {{ display:inline-flex; align-items:center; gap:6px; margin-left:11px; vertical-align:middle; }}
+    .tree-count .tc-dots {{ display:inline-flex; align-items:center; gap:3px; }}
+    .tree-count .tc-dot {{ width:5px; height:5px; border-radius:50%; background:rgba(29,111,208,.55); }}
+    .tree-count .tc-dot.tc-more {{ background:none; width:auto; height:auto; font-size:.62rem; font-weight:800; line-height:1; color:rgba(29,111,208,.65); letter-spacing:-.02em; }}
+    .tree-count .tc-num {{ font-size:.7rem; font-weight:700; color:var(--muted); font-variant-numeric:tabular-nums; }}
+    .tree-count .tc-unit {{ font-size:.66rem; font-weight:600; color:#9aa7bd; letter-spacing:.02em; }}
+    .lvl-group .tree-count .tc-dot {{ background:rgba(107,122,144,.5); }}
+    .lvl-group .tree-count .tc-dot.tc-more {{ color:rgba(107,122,144,.7); }}
     /* GA4-verified conversions column — set off from the platform-reported metrics with a subtle gold accent. */
     #explorerTable th.ga4-col, #explorerTable td.ga4-col {{ background:rgba(184,146,46,0.06); border-left:1px solid rgba(184,146,46,0.3); }}
     #explorerTable td.ga4-col {{ font-variant-numeric:tabular-nums; }}
@@ -801,12 +812,16 @@ def render_bigquery_dashboard_page(
     .ad-label {{ font-weight:600; color:#1f2d40; }}
     .ad-id {{ margin-left:6px; font-family:monospace; font-size:.68rem; font-weight:400; color:var(--muted); }}
     .ad-type {{ font-size:.68rem; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }}
-    .ad-copy {{ display:flex; flex-direction:column; gap:1px; margin-top:3px; }}
-    .ad-copy-line {{ font-size:.78rem; color:var(--muted); white-space:normal; }}
-    .ad-copy-tag {{ display:inline-block; min-width:34px; color:#9aa7bd; font-weight:700; font-size:.66rem; text-transform:uppercase; margin-right:5px; }}
-    .ad-copy-more {{ align-self:flex-start; margin:2px 0 1px 39px; padding:0; border:0; background:none; color:var(--accent, #2563eb); font-size:.72rem; font-weight:600; cursor:pointer; }}
-    .ad-copy-more:hover {{ text-decoration:underline; }}
-    .ad-copy-extra {{ display:flex; flex-direction:column; gap:1px; }}
+    /* Ad-row asset list — each headline/description on its own line with a small
+       tinted chip tag (blue for headlines, slate for descriptions). */
+    .ad-copy {{ display:flex; flex-direction:column; gap:3px; margin-top:5px; }}
+    .ad-copy-line {{ display:flex; align-items:baseline; gap:7px; font-size:.78rem; color:#43536b; line-height:1.4; white-space:normal; }}
+    .ad-copy-tag {{ flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; min-width:24px; padding:1px 6px; border-radius:5px; background:#eef2f8; color:#7688a2; font-weight:800; font-size:.6rem; letter-spacing:.03em; text-transform:uppercase; }}
+    .ad-copy-tag.ad-copy-tag--h {{ background:rgba(29,111,208,.1); color:#1d6fd0; }}
+    .ad-copy-tag.ad-copy-tag--d {{ background:rgba(107,122,144,.12); color:#5a6b82; }}
+    .ad-copy-more {{ align-self:flex-start; margin:4px 0 1px; padding:2px 10px; border:1px solid var(--line); border-radius:999px; background:#fff; color:var(--accent, #2563eb); font-size:.7rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s; }}
+    .ad-copy-more:hover {{ background:#f3f8ff; border-color:var(--accent); }}
+    .ad-copy-extra {{ display:flex; flex-direction:column; gap:3px; margin-top:3px; }}
     .ad-copy-extra[hidden] {{ display:none; }}
     /* Google search-ad preview — mimics a real SERP ad so the row reads like the
        live creative. White card + Google colours regardless of dashboard theme. */
@@ -2210,8 +2225,8 @@ def render_bigquery_dashboard_page(
       const disp=esc(gadsDisplayUrl(ad));
       const h0=hs.slice(0,3).map(esc).join(' | ');
       const d0=ds.slice(0,2).map(esc).join(' ');
-      const allH=hs.map((v,i)=>`<span class="ad-copy-line"><span class="ad-copy-tag">H${{i+1}}</span>${{esc(v)}}</span>`).join('');
-      const allD=ds.map((v,i)=>`<span class="ad-copy-line"><span class="ad-copy-tag">D${{i+1}}</span>${{esc(v)}}</span>`).join('');
+      const allH=hs.map((v,i)=>`<span class="ad-copy-line"><span class="ad-copy-tag ad-copy-tag--h">H${{i+1}}</span>${{esc(v)}}</span>`).join('');
+      const allD=ds.map((v,i)=>`<span class="ad-copy-line"><span class="ad-copy-tag ad-copy-tag--d">D${{i+1}}</span>${{esc(v)}}</span>`).join('');
       const cnt=`${{hs.length}} headline${{hs.length===1?'':'s'}} · ${{ds.length}} description${{ds.length===1?'':'s'}}`;
       const acc=(hs.length>3||ds.length>2)
         ? `<button type="button" class="ad-copy-more" data-more-label="All assets (${{cnt}})">All assets (${{cnt}})</button><div class="ad-copy-extra" hidden>${{allH}}${{allD}}</div>`
@@ -2250,7 +2265,7 @@ def render_bigquery_dashboard_page(
       const visibleLines=visible.map((v,i)=>['H'+(i+1),v]);
       const extraLines=extra.map((v,i)=>['H'+(i+1+HEADLINES_VISIBLE),v]);
       const descLines=ds.map((v,i)=>['D'+(i+1),v]);
-      const line=([tag,v])=>`<span class="ad-copy-line"><span class="ad-copy-tag">${{tag}}</span>${{esc(v)}}</span>`;
+      const line=([tag,v])=>`<span class="ad-copy-line"><span class="ad-copy-tag ad-copy-tag--${{(tag[0]||'').toLowerCase()}}">${{tag}}</span>${{esc(v)}}</span>`;
       const visibleHtml=visibleLines.filter(([,v])=>v).map(line).join('');
       const extraHtml=extraLines.filter(([,v])=>v).map(line).join('');
       const descHtml=descLines.filter(([,v])=>v).map(line).join('');
@@ -2260,6 +2275,18 @@ def render_bigquery_dashboard_page(
       const copyLines=visibleHtml+more+descHtml;
       const copy=copyLines?`<div class="ad-copy">${{copyLines}}</div>`:'';
       return `<div class="ad-cell">${{thumb}}<span class="ad-meta"><span class="ad-label">${{label}}${{idTag}}</span>${{type}}${{copy}}</span></div>`;
+    }}
+    // Sleek child-count indicator: up to 5 dots represent the count at a glance
+    // (a "+" marks overflow), followed by the number and unit label.
+    function treeCount(n, unit) {{
+      const cap=Math.min(n, 5);
+      let dots='';
+      for (let i=0;i<cap;i++) dots+='<span class="tc-dot"></span>';
+      if (n>5) dots+='<span class="tc-dot tc-more">+</span>';
+      const label=esc(unit)+(n===1?'':'s');
+      return `<span class="tree-count" title="${{n}} ${{label}}">`
+        + `<span class="tc-dots" aria-hidden="true">${{dots}}</span>`
+        + `<span class="tc-num">${{n}}</span><span class="tc-unit">${{label}}</span></span>`;
     }}
     function renderExplorer() {{
       const filtered=explorerRows.filter(explorerRowMatches);
@@ -2289,11 +2316,11 @@ def render_bigquery_dashboard_page(
         let body='', cIdx=0;
         for (const camp of tree.values()) {{
           const cId='c'+(cIdx++), gCount=camp.groups.size;
-          body+=`<tr class="tree-row lvl-campaign" data-id="${{cId}}" data-expandable="1"><td class="left"><span class="caret"></span>${{platformIcon(camp.platform)}}<span class="tree-name">${{esc(camp.name)}}</span> <span class="muted">(${{gCount}} ad group${{gCount===1?'':'s'}})</span></td>${{metricCells(camp.metrics)}}</tr>`;
+          body+=`<tr class="tree-row lvl-campaign" data-id="${{cId}}" data-expandable="1"><td class="left"><span class="caret"></span>${{platformIcon(camp.platform)}}<span class="tree-name">${{esc(camp.name)}}</span>${{treeCount(gCount,'ad group')}}</td>${{metricCells(camp.metrics)}}</tr>`;
           let gIdx=0;
           for (const grp of camp.groups.values()) {{
             const gId=cId+'g'+(gIdx++), aCount=grp.ads.length;
-            body+=`<tr class="tree-row lvl-group" data-id="${{gId}}" data-parent="${{cId}}" data-expandable="1" hidden><td class="left"><span class="indent1"></span><span class="caret"></span><span class="tree-name">${{esc(grp.name)}}</span> <span class="muted">(${{aCount}} ad${{aCount===1?'':'s'}})</span></td>${{metricCells(grp.metrics)}}</tr>`;
+            body+=`<tr class="tree-row lvl-group" data-id="${{gId}}" data-parent="${{cId}}" data-expandable="1" hidden><td class="left"><span class="indent1"></span><span class="caret"></span><span class="tree-name">${{esc(grp.name)}}</span>${{treeCount(aCount,'ad')}}</td>${{metricCells(grp.metrics)}}</tr>`;
             for (const ad of grp.ads) {{ body+=`<tr class="tree-row lvl-ad" data-parent="${{gId}}" hidden><td class="left"><span class="indent2"></span>${{adCell(ad)}}</td>${{metricCells(ad)}}</tr>`; }}
           }}
         }}
