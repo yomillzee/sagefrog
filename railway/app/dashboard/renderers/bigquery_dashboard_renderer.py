@@ -646,6 +646,23 @@ def render_bigquery_dashboard_page(
     #gscQueriesTable td.left > *, #gscPagesTable td.left > *,
     #gscBrandedTable td.left > *, #gscTargetTable td.left > *,
     .gsc-leaderboard td.left > * {{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; word-break:normal; }}
+    /* Mobile: the compact overview keyword leaderboards must fit the phone
+       viewport. The shared 600px table min-width (fine for the wide GSC-tab
+       tables) otherwise scrolls the Movement column off-screen and crushes the
+       keyword label down to a few characters. Drop the floor, switch to a fixed
+       layout, and pin the three numeric columns so the keyword gets the
+       remaining width and every column stays readable. */
+    @media (max-width:640px) {{
+      .gsc-leaderboard {{ min-width:0; table-layout:fixed; }}
+      .gsc-leaderboard th, .gsc-leaderboard td {{ padding:8px 6px; }}
+      .gsc-leaderboard th {{ font-size:.58rem; }}
+      .gsc-leaderboard td {{ font-size:.8rem; }}
+      .gsc-leaderboard td.left {{ max-width:none; }}
+      .gsc-leaderboard th:nth-child(2), .gsc-leaderboard td:nth-child(2) {{ width:17%; }}
+      .gsc-leaderboard th:nth-child(3), .gsc-leaderboard td:nth-child(3) {{ width:19%; }}
+      .gsc-leaderboard th:nth-child(4), .gsc-leaderboard td:nth-child(4) {{ width:26%; }}
+      .gsc-leaderboard .gsc-mv {{ font-size:.66rem; padding:2px 5px; }}
+    }}
     /* Drag-to-resize handle on the label column of the GSC/keyword tables. */
     th.col-resizable {{ position:relative; }}
     .col-resizer {{ position:absolute; top:0; right:0; width:9px; height:100%; cursor:col-resize; user-select:none; touch-action:none; }}
