@@ -109,6 +109,8 @@ def _schema_domain_overview_daily(bq):
         bq.SchemaField("paid_keywords",    "INT64",   mode="NULLABLE"),
         bq.SchemaField("paid_traffic",     "INT64",   mode="NULLABLE"),
         bq.SchemaField("authority_score",  "INT64",   mode="NULLABLE"),
+        bq.SchemaField("ai_overview_keywords", "INT64", mode="NULLABLE"),
+        bq.SchemaField("ai_overview_cited",     "INT64", mode="NULLABLE"),
         bq.SchemaField("total_backlinks",  "INT64",   mode="NULLABLE"),
         bq.SchemaField("referring_domains","INT64",   mode="NULLABLE"),
         bq.SchemaField("referring_ips",    "INT64",   mode="NULLABLE"),
@@ -131,6 +133,8 @@ def _schema_keywords_daily(bq):
         bq.SchemaField("cpc",            "FLOAT64", mode="NULLABLE"),
         bq.SchemaField("url",            "STRING",  mode="NULLABLE"),
         bq.SchemaField("traffic_pct",    "FLOAT64", mode="NULLABLE"),
+        bq.SchemaField("ai_overview",       "BOOL", mode="NULLABLE"),
+        bq.SchemaField("ai_overview_cited", "BOOL", mode="NULLABLE"),
         bq.SchemaField("synced_at",      "TIMESTAMP", mode="NULLABLE"),
     ]
 
@@ -199,6 +203,16 @@ def create_semrush_mart_views() -> dict[str, Any]:
               AND k.domain = latest.domain
               AND k.metric_date = latest.latest_date
         """,
+        # Daily time series (last 90 days) that drives the KPI sparklines.
+        "vw_semrush_overview_daily": f"""
+            SELECT
+              client_key, domain, metric_date,
+              organic_traffic, organic_keywords, authority_score,
+              total_backlinks, referring_domains,
+              ai_overview_keywords, ai_overview_cited
+            FROM {overview_table}
+            WHERE metric_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+        """,
     }
 
     results: dict[str, Any] = {}
@@ -238,6 +252,7 @@ def sync_semrush_to_bq(
     overview = snapshot.get("overview") or {}
     backlinks = snapshot.get("backlinks") or {}
     keywords = snapshot.get("keywords") or []
+    ai_overview = snapshot.get("ai_overview") or {}
     snap_errors = snapshot.get("errors") or {}
     if snap_errors:
         errors.update(snap_errors)
@@ -257,6 +272,8 @@ def sync_semrush_to_bq(
         "paid_keywords": int(overview.get("paid_keywords") or 0) or None,
         "paid_traffic": int(overview.get("paid_traffic") or 0) or None,
         "authority_score": int(backlinks.get("authority_score") or overview.get("authority_score") or 0) or None,
+        "ai_overview_keywords": int(ai_overview.get("keywords_with_aio") or 0) or None,
+        "ai_overview_cited": int(ai_overview.get("keywords_cited") or 0) or None,
         "total_backlinks": int(backlinks.get("total_backlinks") or 0) or None,
         "referring_domains": int(backlinks.get("referring_domains") or 0) or None,
         "referring_ips": int(backlinks.get("referring_ips") or 0) or None,
@@ -273,7 +290,12 @@ def sync_semrush_to_bq(
     ).result(timeout=120)
     client.load_table_from_json(
         [overview_row], table_id,
-        job_config=bq.LoadJobConfig(schema=_schema_domain_overview_daily(bq), write_disposition="WRITE_APPEND"),
+        job_config=bq.LoadJobConfig(
+            schema=_schema_domain_overview_daily(bq),
+            write_disposition="WRITE_APPEND",
+            # Backfill new columns (e.g. ai_overview_*) onto pre-existing tables.
+            schema_update_options=[bq.SchemaUpdateOption.ALLOW_FIELD_ADDITION],
+        ),
     ).result(timeout=180)
 
     keyword_rows = [
@@ -288,6 +310,8 @@ def sync_semrush_to_bq(
             "cpc": float(kw.get("cpc") or 0.0),
             "url": kw.get("url") or None,
             "traffic_pct": float(kw.get("traffic_pct") or 0.0),
+            "ai_overview": bool(kw.get("ai_overview")),
+            "ai_overview_cited": bool(kw.get("ai_overview_cited")),
             "synced_at": now,
         }
         for kw in keywords
@@ -303,7 +327,12 @@ def sync_semrush_to_bq(
         ).result(timeout=120)
         client.load_table_from_json(
             keyword_rows, kw_table_id,
-            job_config=bq.LoadJobConfig(schema=_schema_keywords_daily(bq), write_disposition="WRITE_APPEND"),
+            job_config=bq.LoadJobConfig(
+                schema=_schema_keywords_daily(bq),
+                write_disposition="WRITE_APPEND",
+                # Backfill new columns (e.g. ai_overview) onto pre-existing tables.
+                schema_update_options=[bq.SchemaUpdateOption.ALLOW_FIELD_ADDITION],
+            ),
         ).result(timeout=180)
         n_keywords = len(keyword_rows)
 
@@ -351,7 +380,7 @@ def fetch_latest_snapshot(*, client_key: str, project: str | None = None, mart_d
     ov = dict(rows[0].items())
 
     kw_rows = list(client.query(
-        f"SELECT keyword, position, search_volume, cpc, url, traffic_pct "
+        f"SELECT keyword, position, search_volume, cpc, url, traffic_pct, ai_overview, ai_overview_cited "
         f"FROM {keywords_view} WHERE client_key = @client_key ORDER BY traffic_pct DESC LIMIT 200",
         job_config=_bq().QueryJobConfig(query_parameters=[
             _bq().ScalarQueryParameter("client_key", "STRING", client_key),
@@ -361,6 +390,35 @@ def fetch_latest_snapshot(*, client_key: str, project: str | None = None, mart_d
 
     from semrush_service import _position_distribution
     position_dist = _position_distribution(keywords)
+
+    # Daily time series for the KPI sparklines. Resilient: the view may not exist
+    # until the first post-deploy sync rebuilds the marts, so fall back to [].
+    series: list[dict[str, Any]] = []
+    try:
+        daily_view = f"`{proj}.{mart_ds}.vw_semrush_overview_daily`"
+        s_rows = list(client.query(
+            f"SELECT metric_date, organic_traffic, organic_keywords, authority_score, "
+            f"total_backlinks, referring_domains, ai_overview_keywords, ai_overview_cited "
+            f"FROM {daily_view} WHERE client_key = @client_key ORDER BY metric_date",
+            job_config=_bq().QueryJobConfig(query_parameters=[
+                _bq().ScalarQueryParameter("client_key", "STRING", client_key),
+            ]),
+        ).result(timeout=30))
+        for sr in s_rows:
+            d = dict(sr.items())
+            md = d.get("metric_date")
+            series.append({
+                "date": md.isoformat() if md else None,
+                "organic_traffic": d.get("organic_traffic") or 0,
+                "organic_keywords": d.get("organic_keywords") or 0,
+                "authority_score": d.get("authority_score") or 0,
+                "total_backlinks": d.get("total_backlinks") or 0,
+                "referring_domains": d.get("referring_domains") or 0,
+                "ai_overview_keywords": d.get("ai_overview_keywords") or 0,
+                "ai_overview_cited": d.get("ai_overview_cited") or 0,
+            })
+    except Exception:
+        series = []
 
     return {
         "domain": ov.get("domain") or "",
@@ -388,6 +446,11 @@ def fetch_latest_snapshot(*, client_key: str, project: str | None = None, mart_d
             "nofollow": ov.get("nofollow") or 0,
             "error": None,
         },
+        "ai_overview": {
+            "keywords_with_aio": ov.get("ai_overview_keywords") or 0,
+            "keywords_cited": ov.get("ai_overview_cited") or 0,
+        },
+        "series": series,
         "position_distribution": position_dist,
         "fetched_at": ov.get("synced_at").isoformat() if ov.get("synced_at") else None,
     }

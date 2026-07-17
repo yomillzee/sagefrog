@@ -101,6 +101,21 @@ def _float(v: Any, default: float = 0.0) -> float:
         return default
 
 
+# SEMrush SERP-feature code for Google's AI Overview (used in the Fk/Fp columns).
+AI_OVERVIEW_CODE = "52"
+
+
+def _has_serp_feature(raw: Any, code: str = AI_OVERVIEW_CODE) -> bool:
+    """True if `code` is present in a SEMrush Fk/Fp SERP-feature column.
+
+    Fk/Fp values are comma-separated feature codes (e.g. "0,10,52"). We match on
+    whole tokens so code "52" (AI Overview) is not confused with "152", "521", etc.
+    """
+    if raw in (None, ""):
+        return False
+    return code in [c.strip() for c in str(raw).split(",") if c.strip()]
+
+
 # ---------------------------------------------------------------------------
 # Domain overview
 # ---------------------------------------------------------------------------
@@ -166,7 +181,10 @@ def fetch_organic_keywords(
 ) -> list[dict[str, Any]]:
     """Top organic keywords ranked for a domain, sorted by traffic share.
 
-    Each row: keyword, position, search_volume, cpc, url, traffic_pct.
+    Each row: keyword, position, search_volume, cpc, url, traffic_pct, plus AI
+    Overview flags derived from the Fk/Fp SERP-feature columns:
+      ai_overview       — the keyword triggers a Google AI Overview
+      ai_overview_cited — the domain is cited inside that AI Overview
     Returns [] on error (error is stored in the snapshot errors dict separately).
     """
     domain = domain or _domain()
@@ -176,7 +194,9 @@ def fetch_organic_keywords(
             "type": "domain_organic",
             "domain": domain,
             "database": db,
-            "export_columns": "Ph,Po,Nq,Cp,Ur,Tr",
+            # Fk = all SERP features the keyword triggers; Fp = features the
+            # domain actually appears in. Both are comma-separated code lists.
+            "export_columns": "Ph,Po,Nq,Cp,Ur,Tr,Fk,Fp",
             "display_limit": str(min(int(limit), 1000)),
             "display_sort": "tr_desc",
         })
@@ -186,6 +206,14 @@ def fetch_organic_keywords(
             keyword = r.get("Keyword") or r.get("Ph") or ""
             if not keyword:
                 continue
+            # Fp may share the "SERP Features" header with Fk on some API
+            # versions; fall back to column position (index 7) to disambiguate.
+            vals = list(r.values())
+            fk_raw = r.get("SERP Features") or r.get("Fk") or (vals[6] if len(vals) > 6 else "")
+            fp_raw = (
+                r.get("Domain SERP Features") or r.get("SERP Features (domain)")
+                or r.get("Fp") or (vals[7] if len(vals) > 7 else "")
+            )
             out.append({
                 "keyword":      keyword,
                 "position":     _int(r.get("Position") or r.get("Po")),
@@ -193,10 +221,51 @@ def fetch_organic_keywords(
                 "cpc":          _float(r.get("CPC") or r.get("Cp")),
                 "url":          (r.get("URL") or r.get("Ur") or "").strip(),
                 "traffic_pct":  _float(r.get("Traffic (%)") or r.get("Tr")),
+                "ai_overview":       _has_serp_feature(fk_raw),
+                "ai_overview_cited": _has_serp_feature(fp_raw),
             })
         return out
     except Exception:
         return []
+
+
+# ---------------------------------------------------------------------------
+# AI Overview (Google AI Overviews visibility)
+# ---------------------------------------------------------------------------
+
+def fetch_ai_overview_domain(
+    domain: str | None = None,
+    database: str | None = None,
+) -> dict[str, Any]:
+    """Domain-wide Google AI Overview presence via the domain_ranks report.
+
+    Uses SEMrush aggregate SERP-feature columns (code 52 = AI Overview):
+      FK52 — total keywords the domain ranks for that trigger an AI Overview
+      FP52 — of those, how many the domain is actually cited in
+
+    Kept in its own request so a rejected/unsupported column can never break the
+    main domain_overview fetch. Never raises — returns zeros + error on failure.
+    """
+    domain = domain or _domain()
+    db = database or _database()
+    try:
+        text = _get({
+            "type": "domain_ranks",
+            "domain": domain,
+            "database": db,
+            "export_columns": "Dn,FK52,FP52",
+            "display_limit": "1",
+        })
+        rows = _parse_csv(text)
+        if not rows:
+            return {"keywords_with_aio": 0, "keywords_cited": 0, "error": "No data returned for domain"}
+        r = rows[0]
+        vals = list(r.values())
+        fk = _int(r.get("FK52") or (vals[1] if len(vals) > 1 else 0))
+        fp = _int(r.get("FP52") or (vals[2] if len(vals) > 2 else 0))
+        return {"keywords_with_aio": fk, "keywords_cited": fp, "error": None}
+    except Exception as exc:
+        return {"keywords_with_aio": 0, "keywords_cited": 0, "error": str(exc)[:300]}
 
 
 # ---------------------------------------------------------------------------
@@ -315,10 +384,14 @@ def build_semrush_snapshot(
     def _bl():
         return fetch_backlinks_overview(domain)
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    def _aio():
+        return fetch_ai_overview_domain(domain, db)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
         ov_fut = pool.submit(_ov)
         kw_fut = pool.submit(_kw)
         bl_fut = pool.submit(_bl)
+        aio_fut = pool.submit(_aio)
 
         try:
             overview = ov_fut.result()
@@ -342,7 +415,30 @@ def build_semrush_snapshot(
             backlinks = {}
             errors["backlinks"] = str(exc)[:300]
 
+        try:
+            ai_overview = aio_fut.result()
+            if ai_overview.get("error"):
+                errors["ai_overview"] = ai_overview["error"]
+        except Exception as exc:
+            ai_overview = {}
+            errors["ai_overview"] = str(exc)[:300]
+
     position_dist = _position_distribution(keywords)
+
+    # AI Overview: prefer the domain-wide FK52/FP52 aggregate; if that call
+    # failed, fall back to counting within the top keywords we already pulled.
+    ai_overview = dict(ai_overview or {})
+    sample_aio = sum(1 for kw in keywords if kw.get("ai_overview"))
+    sample_cited = sum(1 for kw in keywords if kw.get("ai_overview_cited"))
+    if not ai_overview.get("keywords_with_aio") and sample_aio:
+        ai_overview["keywords_with_aio"] = sample_aio
+    if not ai_overview.get("keywords_cited") and sample_cited:
+        ai_overview["keywords_cited"] = sample_cited
+    ai_overview.setdefault("keywords_with_aio", 0)
+    ai_overview.setdefault("keywords_cited", 0)
+    ai_overview["sample_keywords_with_aio"] = sample_aio
+    ai_overview["sample_keywords_cited"] = sample_cited
+    ai_overview.pop("error", None)
 
     # If backlinks API returned no authority_score (call failed), fall back to
     # the As column that domain_ranks also provides.
@@ -360,6 +456,7 @@ def build_semrush_snapshot(
         "overview": overview,
         "keywords": keywords,
         "backlinks": backlinks,
+        "ai_overview": ai_overview,
         "position_distribution": position_dist,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
