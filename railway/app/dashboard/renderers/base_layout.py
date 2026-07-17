@@ -178,6 +178,24 @@ def _client_avatar_initial(label: str) -> str:
     return _esc((label or "?").strip()[:1].upper() or "?")
 
 
+def _client_avatar_html(
+    *, slug: str, label: str, logo: str | None, extra_cls: str = ""
+) -> str:
+    """Avatar chip for a client: the admin-uploaded logo when one exists, else a
+    colour-coded initial (colour derived from the slug so it stays stable). Same
+    logo/initials fallback the admin dashboards table uses."""
+    cls = "client-switch-ava" + (f" {extra_cls}" if extra_cls else "")
+    if logo:
+        return (
+            f'<span class="{cls} client-switch-ava--img" aria-hidden="true">'
+            f'<img src="{_esc(str(logo))}" alt="" loading="lazy"></span>'
+        )
+    return (
+        f'<span class="{cls}" style="background:{_client_avatar_color(slug)}" '
+        f'aria-hidden="true">{_client_avatar_initial(label)}</span>'
+    )
+
+
 def sidebar_client_switcher_html(
     *,
     client_slug: str,
@@ -213,6 +231,21 @@ def sidebar_client_switcher_html(
     except Exception:
         _platform_slugs = set()
 
+    # Pull admin-uploaded client logos (data URIs on the dashboard registry) so
+    # the switcher shows real brand marks, falling back to a colour-coded initial
+    # for clients without one. Registry may be disabled → plain initials.
+    logos: dict[str, str] = {}
+    try:
+        import dashboard_registry
+        if dashboard_registry.enabled():
+            logos = {
+                row.client_slug: row.logo
+                for row in dashboard_registry.list_clients()
+                if getattr(row, "logo", None)
+            }
+    except Exception:
+        logos = {}
+
     current = (client_slug or "").strip().lower()
     current_label = label
     items: list[str] = []
@@ -230,12 +263,13 @@ def sidebar_client_switcher_html(
         )
         cur_cls = " is-current" if is_current else ""
         aria_cur = ' aria-current="true"' if is_current else ""
-        ava_style = f"background:{_client_avatar_color(slug)}"
+        avatar = _client_avatar_html(
+            slug=slug, label=client_label, logo=logos.get(slug)
+        )
         items.append(
             f'<a class="client-switch-item{cur_cls}" role="option"{aria_cur} '
             f'href="{_esc(dest)}" data-name="{_esc(client_label)}">'
-            f'<span class="client-switch-ava" style="{ava_style}" aria-hidden="true">'
-            f'{_client_avatar_initial(client_label)}</span>'
+            f'{avatar}'
             f'<span class="client-switch-name">{_esc(client_label)}</span>'
             f'<svg class="client-switch-check" viewBox="0 0 24 24" fill="none" '
             f'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" '
@@ -244,7 +278,10 @@ def sidebar_client_switcher_html(
         )
 
     count = len(items)
-    trigger_style = f"background:{_client_avatar_color(current)}"
+    trigger_avatar = _client_avatar_html(
+        slug=current, label=current_label, logo=logos.get(current),
+        extra_cls="client-switch-ava--trigger",
+    )
     icon_search = (
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
         'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -265,8 +302,7 @@ def sidebar_client_switcher_html(
     return f"""
       <button type="button" class="client-switch-trigger" id="clientSwitchTrigger"
         aria-haspopup="dialog" aria-expanded="false" aria-controls="clientSwitchDrawer">
-        <span class="client-switch-ava client-switch-ava--trigger" style="{trigger_style}"
-          aria-hidden="true">{_client_avatar_initial(current_label)}</span>
+        {trigger_avatar}
         <span class="client-switch-trigger-text">
           <span class="client-switch-eyebrow">Client</span>
           <span class="client-switch-trigger-name">{_esc(current_label)}</span>
@@ -1512,6 +1548,19 @@ SIDEBAR_CSS = """
       line-height: 1;
       letter-spacing: 0.01em;
       box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+      overflow: hidden;
+    }
+    /* Logo variant: a white tile holding the admin-uploaded brand mark. */
+    .client-switch-ava--img {
+      background: #fff;
+      box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.12);
+    }
+    .client-switch-ava--img img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: inherit;
+      display: block;
     }
 
     /* Trigger row that lives in the sidebar footer. */
