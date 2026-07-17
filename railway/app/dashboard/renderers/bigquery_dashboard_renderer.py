@@ -445,7 +445,7 @@ def render_bigquery_dashboard_page(
       </section>
 
       <section>
-        <div class="sec-head"><h2>Paid trends</h2><div class="sec-head-actions"><div class="chips" id="metricChips"></div><div class="chips seg" id="trendGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><span class="status" id="chartStatus"></span></div></div>
+        <div class="sec-head"><h2>Paid trends</h2><div class="sec-head-actions"><div class="chips" id="metricChips"></div><details class="metric-dd" id="metricDropdown"><summary>Metrics <span class="metric-dd-count" id="metricDropdownCount">0</span><span class="metric-dd-caret" aria-hidden="true">&#9662;</span></summary><div class="metric-dd-menu" id="metricDropdownMenu"></div></details><div class="chips seg" id="trendGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><span class="status" id="chartStatus"></span></div></div>
         <div class="chart-wrap" id="trendChartWrap">
           <div class="chart-canvas-host" style="height:260px"><canvas id="trendChart"></canvas></div>
         </div>
@@ -582,6 +582,19 @@ def render_bigquery_dashboard_page(
     .sec-head h2 {{ margin:0; }}
     .sec-head .status {{ margin:0; font-size:.76rem; text-align:right; flex-shrink:0; }}
     .sec-head-actions {{ display:flex; align-items:center; gap:12px; flex-shrink:0; }}
+    /* Paid-trends metric picker: chips on desktop, a compact dropdown on phones
+       (see the max-width:720px block) where the chip row would overflow. */
+    .metric-dd {{ position:relative; display:none; }}
+    .metric-dd > summary {{ list-style:none; cursor:pointer; border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:4px 12px; font:inherit; font-size:.8rem; font-weight:700; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }}
+    .metric-dd > summary::-webkit-details-marker {{ display:none; }}
+    .metric-dd[open] > summary {{ border-color:var(--navy); }}
+    .metric-dd-count {{ background:var(--navy); color:#fff; border-radius:999px; min-width:18px; height:18px; padding:0 5px; font-size:.7rem; display:inline-flex; align-items:center; justify-content:center; }}
+    .metric-dd-caret {{ font-size:.7rem; line-height:1; color:var(--muted); }}
+    .metric-dd[open] .metric-dd-caret {{ transform:rotate(180deg); }}
+    .metric-dd-menu {{ position:absolute; right:0; top:calc(100% + 6px); z-index:30; background:#fff; border:1px solid var(--line); border-radius:10px; box-shadow:0 8px 24px rgba(16,33,67,.16); padding:6px; min-width:190px; display:flex; flex-direction:column; gap:2px; }}
+    .metric-opt {{ display:flex; align-items:center; gap:8px; padding:8px 9px; border-radius:7px; font-size:.85rem; font-weight:650; color:var(--navy); cursor:pointer; }}
+    .metric-opt:hover {{ background:#f4f8fd; }}
+    .metric-opt input {{ accent-color:var(--navy); width:15px; height:15px; margin:0; }}
     .ov-actions {{ display:flex; align-items:center; gap:12px; flex-shrink:0; }}
     .ov-more {{ display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border:1px solid var(--line); border-radius:999px; background:var(--card); color:var(--muted); padding:0; font:inherit; cursor:pointer; transition:color .14s, border-color .14s, background .14s, box-shadow .14s; }}
     .ov-more:hover {{ color:var(--accent); border-color:var(--accent); background:var(--card); box-shadow:0 1px 4px rgba(29,111,208,.18); }}
@@ -886,6 +899,9 @@ def render_bigquery_dashboard_page(
     .state-map-scale-bar {{ flex:1 1 auto; height:8px; border-radius:4px; background:linear-gradient(90deg,#eaf1fb,#1d6fd0); }}
     /* Sticky date bar clears the fixed 52px mobile top bar (see SIDEBAR_CSS). */
     @media (max-width:900px) {{ .cards {{ grid-template-columns:repeat(2,minmax(120px,1fr)); }} .two-col,.three-col {{ grid-template-columns:1fr; }} .date-bar {{ top:52px; }} }}
+    /* On phones the paid-trends metric chip row overflows the section head, so
+       swap it for the compact dropdown (#metricDropdown). */
+    @media (max-width:720px) {{ #metricChips {{ display:none; }} .metric-dd {{ display:block; }} }}
     /* On phones give the metric columns more room: tighten the path label cap. */
     @media (max-width:640px) {{ .page-path {{ max-width:44vw; }} }}
     /* ---- Skeleton loaders ---- */
@@ -1569,16 +1585,35 @@ def render_bigquery_dashboard_page(
       const unit = trendGran === 'weekly' ? 'week' : 'day';
       setStatus('chartStatus', `${{n}} ${{unit}}(s) · ${{active.length}} metric(s)`);
     }}
+    function toggleMetric(key) {{
+      chartMetrics.has(key) ? chartMetrics.delete(key) : chartMetrics.add(key);
+      syncMetricControls();
+      renderChart();
+    }}
+    // Keep the desktop chips and the mobile dropdown checkboxes reflecting the
+    // same chartMetrics Set, plus the dropdown's selected-count badge.
+    function syncMetricControls() {{
+      document.querySelectorAll('#metricChips .chip').forEach(b => b.classList.toggle('active', chartMetrics.has(b.dataset.key)));
+      document.querySelectorAll('#metricDropdownMenu input').forEach(i => {{ i.checked = chartMetrics.has(i.dataset.key); }});
+      const c = document.getElementById('metricDropdownCount');
+      if (c) c.textContent = chartMetrics.size;
+    }}
     function buildMetricChips() {{
       const el = document.getElementById('metricChips');
       el.innerHTML = CHART_METRICS.map(m => `<button type="button" class="chip" data-key="${{m.key}}"><span class="metric-swatch" style="background:${{m.color}}"></span>${{esc(m.label)}}</button>`).join('');
-      el.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {{
-        chartMetrics.has(btn.dataset.key) ? chartMetrics.delete(btn.dataset.key) : chartMetrics.add(btn.dataset.key);
-        el.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', chartMetrics.has(b.dataset.key)));
-        renderChart();
-      }}));
-      el.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', chartMetrics.has(b.dataset.key)));
+      el.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => toggleMetric(btn.dataset.key)));
+      // Mobile dropdown: same metrics as checkboxes (see .metric-dd CSS).
+      const menu = document.getElementById('metricDropdownMenu');
+      menu.innerHTML = CHART_METRICS.map(m => `<label class="metric-opt"><input type="checkbox" data-key="${{m.key}}"><span class="metric-swatch" style="background:${{m.color}}"></span>${{esc(m.label)}}</label>`).join('');
+      menu.querySelectorAll('input').forEach(inp => inp.addEventListener('change', () => toggleMetric(inp.dataset.key)));
+      syncMetricControls();
     }}
+    // Close the metric dropdown when clicking outside it (native <details>
+    // stays open on outside clicks).
+    document.addEventListener('click', e => {{
+      const dd = document.getElementById('metricDropdown');
+      if (dd && dd.open && !dd.contains(e.target)) dd.open = false;
+    }});
     // Daily/Weekly chips for the paid trends chart — re-render from cache, no refetch.
     document.querySelectorAll('#trendGranChips .chip').forEach(btn =>
       btn.addEventListener('click', () => {{
