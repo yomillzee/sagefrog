@@ -133,12 +133,15 @@ def pane_css() -> str:
     .ps-trend-copy span { font-size:.76rem; color:var(--muted); }
     .ps-trend-pulse { flex-shrink:0; width:11px; height:11px; border-radius:50%; background:var(--accent, #1d6fd0); box-shadow:0 0 0 0 rgba(29,111,208,.5); animation:psTrendPulse 1.9s cubic-bezier(.4,0,.2,1) infinite; }
     @keyframes psTrendPulse { 0% { box-shadow:0 0 0 0 rgba(29,111,208,.45); } 70% { box-shadow:0 0 0 11px rgba(29,111,208,0); } 100% { box-shadow:0 0 0 0 rgba(29,111,208,0); } }
-    /* ---- Core Web Vitals sparklines ---- */
+    /* ---- Core Web Vitals sparklines + health ---- */
     #psCwv .card { display:flex; flex-direction:column; }
     .ps-spark { margin-top:10px; height:26px; }
     .ps-spark svg { display:block; width:100%; height:100%; }
     .ps-spark--empty { position:relative; }
     .ps-spark--empty::after { content:""; position:absolute; left:0; right:0; top:50%; border-top:1.5px dashed var(--line); }
+    /* Health caption: colored band dot + status + the "good" goal. The full
+       Good/Needs improvement/Poor ranges live in its native title tooltip. */
+    .ps-cwv-target { margin-top:8px; font-size:.72rem; color:var(--muted); display:flex; align-items:center; gap:6px; cursor:help; }
     """
 
 
@@ -180,11 +183,38 @@ def pane_js() -> str:
       return `<div class="card"><div class="card-title">${esc(label)}</div>` +
              `<div class="card-value" style="color:${tc.color}">${shown}${suffix}</div>${target}</div>`;
     }
+    // Core Web Vitals lab thresholds (Lighthouse buckets, ms unless noted).
+    // value ≤ good → green, ≤ ni → amber, else red. Lower is always better.
+    const CWV_THRESHOLDS = {
+      lcp_ms:         { good: 2500, ni: 4000, ms: true },
+      cls:            { good: 0.1,  ni: 0.25, ms: false },
+      tbt_ms:         { good: 200,  ni: 600,  ms: true },
+      fcp_ms:         { good: 1800, ni: 3000, ms: true },
+      speed_index_ms: { good: 3400, ni: 5800, ms: true },
+      tti_ms:         { good: 3800, ni: 7300, ms: true },
+    };
+    function psCwvFmt(v, ms) { return ms ? psMs(v) : (Math.round(v * 1000) / 1000); }
+    // Classify a metric's current value into a good/needs-improvement/poor band,
+    // returning the band color (shared by the value text + sparkline), a status
+    // label, the "good" goal, and a full-range string for the hover tooltip.
+    function psCwvHealth(key, v) {
+      const t = CWV_THRESHOLDS[key];
+      if (!t) return {};
+      const g = psCwvFmt(t.good, t.ms), n = psCwvFmt(t.ni, t.ms);
+      const rangeTitle = `Good ≤ ${g}   ·   Needs improvement ≤ ${n}   ·   Poor > ${n}`;
+      if (v == null || !isFinite(Number(v))) {
+        return { targetText: g, statusLabel: 'Target', color: null, lightClass: null, rangeTitle };
+      }
+      v = Number(v);
+      if (v <= t.good) return { color: '#0c9d61', lightClass: 'green',  statusLabel: 'Good', targetText: g, rangeTitle };
+      if (v <= t.ni)   return { color: '#e8a13a', lightClass: 'yellow', statusLabel: 'Needs improvement', targetText: g, rangeTitle };
+      return                 { color: '#e5484d', lightClass: 'red',    statusLabel: 'Poor', targetText: g, rangeTitle };
+    }
     // Tiny inline-SVG sparkline for a Core Web Vitals card. `values` is the
-    // metric's history oldest→newest (nulls tolerated). Lab metrics are all
-    // "lower is better", so a net-downward series draws green, upward red, flat
-    // muted. Renders a faint baseline placeholder until there are ≥2 readings.
-    function psSparkline(values) {
+    // metric's history oldest→newest (nulls tolerated); `color` (from the card's
+    // current health band) tints the line so it reads good/bad at a glance,
+    // falling back to trend direction. Faint baseline placeholder until ≥2 reads.
+    function psSparkline(values, color) {
       const pts = (values || []).map(v => (v == null ? null : Number(v)));
       const nums = pts.filter(v => v != null && isFinite(v));
       if (nums.length < 2) return '<div class="ps-spark ps-spark--empty"></div>';
@@ -201,7 +231,7 @@ def pane_js() -> str:
         started = true; lastX = px; lastY = py;
       });
       const first = nums[0], last = nums[nums.length - 1];
-      const color = last < first ? '#0c9d61' : (last > first ? '#e5484d' : '#8595ab');
+      color = color || (last < first ? '#0c9d61' : (last > first ? '#e5484d' : '#8595ab'));
       const area = `${d}L${lastX.toFixed(1)} ${H} L${firstX.toFixed(1)} ${H} Z`;
       return `<div class="ps-spark"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">` +
         `<path d="${area}" fill="${color}" opacity="0.09"/>` +
@@ -231,9 +261,17 @@ def pane_js() -> str:
         ['Speed Index', 'speed_index_ms', psMs(p.speed_index_ms)],
         ['Time to Interactive', 'tti_ms', psMs(p.tti_ms)],
       ];
-      document.getElementById('psCwv').innerHTML = cwv.map(([l, key, v]) =>
-        `<div class="card"><div class="card-title">${esc(l)}</div><div class="card-value">${v}</div>` +
-        psSparkline(hist.map(r => r[key])) + `</div>`).join('');
+      document.getElementById('psCwv').innerHTML = cwv.map(([l, key, v]) => {
+        const h = psCwvHealth(key, p[key]);
+        const valStyle = h.color ? ` style="color:${h.color}"` : '';
+        const dot = h.lightClass ? `<span class="ps-light ps-light--${h.lightClass}"></span>` : '';
+        const caption = h.targetText
+          ? `<div class="ps-cwv-target" title="${esc(h.rangeTitle)}">${dot}${esc(h.statusLabel)} · goal ≤ ${esc(h.targetText)}</div>`
+          : '';
+        return `<div class="card"><div class="card-title">${esc(l)}</div>` +
+          `<div class="card-value"${valStyle}>${v}</div>` +
+          psSparkline(hist.map(r => r[key]), h.color) + caption + `</div>`;
+      }).join('');
       const hasCurrent = ['performance', 'accessibility', 'best_practices', 'seo'].some(k => p[k] != null);
       if (hist.length > 1) {
         psClearTrendState();
