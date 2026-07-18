@@ -76,7 +76,7 @@ def pane_html() -> str:
         <div class="cards" id="psCwv"></div>
       </section>
       <section id="sec-ps-trend">
-        <div class="sec-head"><h2>Scores over time</h2></div>
+        <div class="sec-head"><h2>Score trend</h2></div>
         <div class="ps-legend">
           <span class="ps-legend-item"><span class="ps-dot" style="background:#1d6fd0"></span>Performance</span>
           <span class="ps-legend-item"><span class="ps-dot" style="background:#0c9d61"></span>Accessibility</span>
@@ -139,9 +139,28 @@ def pane_css() -> str:
     .ps-spark svg { display:block; width:100%; height:100%; }
     .ps-spark--empty { position:relative; }
     .ps-spark--empty::after { content:""; position:absolute; left:0; right:0; top:50%; border-top:1.5px dashed var(--line); }
-    /* Health caption: colored band dot + status + the "good" goal. The full
+    /* Health caption: colored band dot + the "good" goal. The full
        Good/Needs improvement/Poor ranges live in its native title tooltip. */
     .ps-cwv-target { margin-top:8px; font-size:.72rem; color:var(--muted); display:flex; align-items:center; gap:6px; cursor:help; }
+    /* ---- Audited-URL chip on the first score card + modern tooltip ---- */
+    #psScores .card:first-child { position:relative; }
+    /* #psScores prefix beats the generic .ps-tip{position:relative} below so the
+       chip stays pinned to the card corner (it carries both classes). */
+    #psScores .ps-url-chip { position:absolute; top:10px; right:10px; width:26px; height:26px; padding:0; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--line); border-radius:7px; background:#fff; color:var(--muted); cursor:pointer; transition:color .12s, border-color .12s, background .12s; }
+    .ps-url-chip:hover, .ps-url-chip:focus-visible { color:var(--accent, #1d6fd0); border-color:#b9c8dc; background:var(--row-alt, #f4f7fb); outline:none; }
+    .ps-url-chip svg { width:15px; height:15px; }
+    /* Modern tooltip: dark rounded bubble with an arrow, revealed on hover or
+       keyboard focus; centered under the trigger so it clears the card edges. */
+    .ps-tip { position:relative; }
+    .ps-tip::after { content:attr(data-tip); position:absolute; top:calc(100% + 9px); left:50%; z-index:70;
+      background:#0b1020; color:#e8eefc; font-size:.74rem; font-weight:600; line-height:1.4; letter-spacing:.01em;
+      padding:8px 11px; border-radius:9px; width:max-content; max-width:230px; text-align:center; word-break:break-word;
+      box-shadow:0 12px 32px -10px rgba(11,16,32,.55); opacity:0; transform:translate(-50%, -4px); pointer-events:none;
+      transition:opacity .16s ease, transform .16s ease; }
+    .ps-tip::before { content:""; position:absolute; top:calc(100% + 4px); left:50%; z-index:71;
+      border:5px solid transparent; border-bottom-color:#0b1020; opacity:0; transform:translateX(-50%); transition:opacity .16s ease; }
+    .ps-tip:hover::after, .ps-tip:focus-visible::after { opacity:1; transform:translate(-50%, 0); }
+    .ps-tip:hover::before, .ps-tip:focus-visible::before { opacity:1; }
     """
 
 
@@ -238,6 +257,14 @@ def pane_js() -> str:
         `<path d="${d.trim()}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` +
         `<circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="1.9" fill="${color}"/></svg></div>`;
     }
+    // Small globe affordance pinned to the first score card. The audited URL
+    // lives in its modern tooltip (data-tip) rather than cluttering the header.
+    function psUrlChip(url) {
+      const safe = esc(url);
+      return `<button type="button" class="ps-url-chip ps-tip" data-tip="${safe}" aria-label="Audited page: ${safe}">` +
+        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+        `<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.5 3.8 5.7 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.7-3.8-9S9.5 5.5 12 3Z"/></svg></button>`;
+    }
     function renderPagespeed(p) {
       p = p || {};
       psLast = p;
@@ -247,8 +274,10 @@ def pane_js() -> str:
         ['Best Practices', 'best_practices', p.best_practices],
         ['SEO', 'seo', p.seo],
       ];
-      document.getElementById('psScores').innerHTML =
-        scores.map(([l, k, v]) => psScoreCard(l, v, PAGESPEED_TARGETS[k])).join('');
+      const psScoresEl = document.getElementById('psScores');
+      psScoresEl.innerHTML = scores.map(([l, k, v]) => psScoreCard(l, v, PAGESPEED_TARGETS[k])).join('');
+      const firstScoreCard = psScoresEl.querySelector('.card');
+      if (firstScoreCard && p.url) firstScoreCard.insertAdjacentHTML('beforeend', psUrlChip(p.url));
       const hist = p.history || [];
       const clsVal = p.cls == null ? '—' : (Math.round(p.cls * 1000) / 1000);
       // [label, history key, formatted current value]. Every lab metric is
@@ -266,7 +295,7 @@ def pane_js() -> str:
         const valStyle = h.color ? ` style="color:${h.color}"` : '';
         const dot = h.lightClass ? `<span class="ps-light ps-light--${h.lightClass}"></span>` : '';
         const caption = h.targetText
-          ? `<div class="ps-cwv-target" title="${esc(h.rangeTitle)}">${dot}${esc(h.statusLabel)} · goal ≤ ${esc(h.targetText)}</div>`
+          ? `<div class="ps-cwv-target" title="${esc(h.rangeTitle)}">${dot}goal ≤ ${esc(h.targetText)}</div>`
           : '';
         return `<div class="card"><div class="card-title">${esc(l)}</div>` +
           `<div class="card-value"${valStyle}>${v}</div>` +
@@ -406,7 +435,7 @@ def pane_js() -> str:
         }
         renderPagespeed(p);
         const when = p.metric_date ? (' · measured ' + p.metric_date) : '';
-        setStatus('psStatus', `${esc(strategy)} · ${esc(p.url)}${when}`);
+        setStatus('psStatus', `${esc(strategy)}${when}`);
       } catch (err) {
         setStatus('psStatus', err.message || String(err), true);
       }
