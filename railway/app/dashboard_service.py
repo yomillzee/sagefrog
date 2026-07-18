@@ -1,4 +1,4 @@
-"""Refresh Penn dashboard data and render HTML from Postgres snapshots.
+"""Dashboard data refresh + HTML rendering helpers.
 
 Compatibility façade: re-exports utils, services, and renderers so existing
 imports (`import dashboard_service`, `dashboard_service.refresh_penn`, etc.)

@@ -93,12 +93,12 @@ def default_features(
     label: str | None = None,
     ga4_client_key: str | None = None,
 ) -> DashboardFeatures:
-    """Slug-aware defaults (e.g. Penn hides budget pacing until enabled in settings)."""
+    """Slug-aware feature defaults."""
     slug = (client_slug or "").strip().lower()
     fk = _filter_kwargs(slug, cfg=cfg, label=label, ga4_client_key=ga4_client_key)
     return DashboardFeatures(
         overview=True,
-        budget_pacing=slug != "penn",
+        budget_pacing=True,
         performance_trend=True,
         campaign_explorer=True,
         website_analytics=True,
