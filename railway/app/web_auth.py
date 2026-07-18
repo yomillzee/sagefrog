@@ -558,6 +558,48 @@ def render_dashboards_page(*, user: WebUser, dashboards: list[tuple[str, str]]) 
 </html>"""
 
 
+def _parse_iso_utc(iso: str | None) -> datetime | None:
+    if not iso:
+        return None
+    text = str(iso).strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _format_last_login(iso: str | None) -> tuple[str, str]:
+    """Return (relative label, absolute tooltip) for a last-login timestamp.
+
+    Relative keeps the column scannable ("2h ago"); the tooltip carries the
+    exact UTC time for when precision matters."""
+    dt = _parse_iso_utc(iso)
+    if dt is None:
+        return "Never", "Has not signed in yet"
+    now = datetime.now(tz=UTC)
+    delta = now - dt
+    secs = int(delta.total_seconds())
+    if secs < 0:
+        secs = 0
+    if secs < 60:
+        rel = "Just now"
+    elif secs < 3600:
+        mins = secs // 60
+        rel = f"{mins}m ago"
+    elif secs < 86400:
+        rel = f"{secs // 3600}h ago"
+    elif secs < 86400 * 7:
+        rel = f"{secs // 86400}d ago"
+    elif secs < 86400 * 30:
+        rel = f"{secs // (86400 * 7)}w ago"
+    else:
+        rel = dt.strftime("%b %-d, %Y") if hasattr(dt, "strftime") else "—"
+    return rel, dt.strftime("%Y-%m-%d %H:%M UTC")
+
+
 def _format_audit_time(iso: str | None) -> str:
     if not iso:
         return "—"
@@ -576,6 +618,31 @@ def _format_audit_time(iso: str | None) -> str:
 # (not an f-string) — it's injected verbatim into the admin page.
 _ROLE_TOGGLE_JS = """
 (function () {
+  // Live "this user will see …" preview under each client-group picker. This is
+  // the redundancy check: the admin confirms the exact dashboards a group grants
+  // before saving, so nobody is bound to the wrong portal by a mistyped slug.
+  function syncGroupPreview(sel) {
+    var preview = sel.parentNode.querySelector('.group-preview');
+    if (!preview) return;
+    var opt = sel.options[sel.selectedIndex];
+    var labels = (opt && opt.getAttribute('data-labels')) || '';
+    if (!sel.value) {
+      preview.hidden = true;
+      preview.innerHTML = '';
+      return;
+    }
+    preview.hidden = false;
+    if (labels) {
+      var chips = labels.split(' · ').map(function (l) {
+        return '<span class="gp-chip">' + l.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</span>';
+      }).join('');
+      preview.innerHTML = '<span class="gp-label">Grants access to</span>' + chips;
+      preview.className = 'group-preview';
+    } else {
+      preview.innerHTML = '<span class="gp-warn">This group has no dashboards yet — the user would see nothing.</span>';
+      preview.className = 'group-preview is-warn';
+    }
+  }
   function sync(form) {
     var sel = form.querySelector('.role-select');
     if (!sel) return;
@@ -591,7 +658,37 @@ _ROLE_TOGGLE_JS = """
     var sel = form.querySelector('.role-select');
     if (sel) sel.addEventListener('change', function () { sync(form); });
     sync(form);
+    form.querySelectorAll('.group-select').forEach(function (g) {
+      g.addEventListener('change', function () { syncGroupPreview(g); });
+      syncGroupPreview(g);
+    });
   });
+})();
+"""
+
+# Client-side filter over the users table so a growing client roster stays
+# scannable. Matches the row's data-search key (email/role/group/slug) and keeps
+# a live count of what's visible.
+_USER_SEARCH_JS = """
+(function () {
+  var input = document.getElementById('userSearch');
+  var body = document.getElementById('userTableBody');
+  var count = document.getElementById('userCount');
+  var empty = document.getElementById('userSearchEmpty');
+  if (!input || !body) return;
+  var rows = Array.prototype.slice.call(body.querySelectorAll('tr.user-row'));
+  function apply() {
+    var q = input.value.trim().toLowerCase();
+    var shown = 0;
+    rows.forEach(function (row) {
+      var hit = !q || (row.getAttribute('data-search') || '').indexOf(q) !== -1;
+      row.hidden = !hit;
+      if (hit) shown++;
+    });
+    if (count) count.textContent = shown;
+    if (empty) empty.hidden = shown !== 0;
+  }
+  input.addEventListener('input', apply);
 })();
 """
 
@@ -750,17 +847,27 @@ def render_admin_page(
             )
         return '<div class="client-checks">' + "".join(items) + "</div>"
 
+    def _group_labels(g: dict) -> list[str]:
+        return [client_labels.get(s, s) for s in (g.get("client_slugs") or [])]
+
     def _group_select(selected_id: int | None) -> str:
-        opts = ['<option value="">Ungrouped — use a single client slug</option>']
+        opts = ['<option value="" data-labels="">Ungrouped — use a single client slug</option>']
         for g in groups or []:
-            n = len(g.get("client_slugs") or [])
+            labels = _group_labels(g)
+            n = len(labels)
             plural = "" if n == 1 else "s"
             sel = " selected" if selected_id is not None and int(g["id"]) == int(selected_id) else ""
+            data_labels = _esc(" · ".join(labels))
             opts.append(
-                f'<option value="{int(g["id"])}"{sel}>{_esc(g["name"])} &middot; '
-                f'{n} dashboard{plural}</option>'
+                f'<option value="{int(g["id"])}"{sel} data-labels="{data_labels}">'
+                f'{_esc(g["name"])} &middot; {n} dashboard{plural}</option>'
             )
-        return '<select name="group_id" class="group-select">' + "".join(opts) + "</select>"
+        return (
+            '<select name="group_id" class="group-select">'
+            + "".join(opts)
+            + "</select>"
+            + '<div class="group-preview" aria-live="polite" hidden></div>'
+        )
 
     rows = []
     for u in users:
@@ -802,6 +909,12 @@ def render_admin_page(
             '<span class="pill pill-on">Active</span>'
             if u.get("is_active")
             else '<span class="pill pill-off">Inactive</span>'
+        )
+        ll_rel, ll_abs = _format_last_login(u.get("last_login_at"))
+        never = u.get("last_login_at") is None
+        ll_cls = "last-login never" if never else "last-login"
+        last_login_cell = (
+            f'<span class="{ll_cls}" title="{_esc(ll_abs)}">{_esc(ll_rel)}</span>'
         )
         reset_html = f"""
         <details class="row-fold">
@@ -848,18 +961,33 @@ def render_admin_page(
                 f'<button type="submit" class="link danger">Deactivate</button></form>'
             )
         actions = f'<div class="row-actions">{reset_html}{role_html}{deactivate_html}</div>'
+        search_key = _esc(
+            " ".join(
+                filter(
+                    None,
+                    (
+                        email,
+                        role,
+                        str(group_name or ""),
+                        str(slug),
+                    ),
+                )
+            ).lower()
+        )
         rows.append(
-            f'<tr>'
+            f'<tr class="user-row" data-search="{search_key}">'
             f'<td class="col-av">{avatar_cell}</td>'
             f'<td class="col-user">{_esc(email)}</td>'
             f'<td>{role_badge}</td>'
             f'<td>{group_cell}</td>'
             f'<td class="mono">{_esc(str(slug))}</td>'
+            f'<td>{last_login_cell}</td>'
             f'<td>{status_badge}</td>'
             f'<td class="col-actions">{actions}</td>'
             f'</tr>'
         )
-    user_rows = "\n".join(rows) or '<tr><td colspan="7" class="muted">No users yet.</td></tr>'
+    user_rows = "\n".join(rows) or '<tr><td colspan="8" class="muted">No users yet.</td></tr>'
+    user_count = len(users)
 
     # ---- "View as user" card ----
     # Previously a floating bubble on the client dashboards; now a card here so it
@@ -1253,6 +1381,28 @@ def render_admin_page(
       background: #eef2ff; color: #3730a3; }}
     .group-select, .slug-fallback {{ width: 100%; max-width: 100%; margin-bottom: 8px; }}
     .slug-fallback {{ font-size: .86rem; }}
+    /* ---- Users: header, count chip, search ---- */
+    .users-head {{ display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      flex-wrap: wrap; margin-bottom: 14px; }}
+    .count-chip {{ display: inline-block; min-width: 22px; padding: 1px 9px; border-radius: 999px;
+      background: #eef2f7; color: var(--muted); font-size: .78rem; font-weight: 700; vertical-align: middle;
+      margin-left: 6px; }}
+    .users-search {{ position: relative; display: flex; align-items: center; }}
+    .users-search svg {{ position: absolute; left: 11px; color: var(--muted); pointer-events: none; }}
+    .users-search input {{ margin: 0; padding: 9px 12px 9px 34px; width: 280px; max-width: 60vw; font-size: .88rem; }}
+    .users-empty {{ padding: 18px 8px; text-align: center; font-size: .9rem; }}
+    /* ---- Last login column ---- */
+    .last-login {{ font-size: .84rem; color: #334155; font-variant-numeric: tabular-nums; white-space: nowrap; }}
+    .last-login.never {{ color: #94a3b8; font-style: italic; }}
+    /* ---- Group access preview (redundancy check) ---- */
+    .group-preview {{ display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -2px 0 10px;
+      padding: 8px 10px; border-radius: 9px; background: #f0f7f2; border: 1px solid #cbe6d5; }}
+    .group-preview.is-warn {{ background: #fff7ed; border-color: #f5d3ac; }}
+    .gp-label {{ font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+      color: #15803d; margin-right: 2px; }}
+    .gp-chip {{ display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .74rem; font-weight: 600;
+      background: #fff; color: #15803d; border: 1px solid #cbe6d5; }}
+    .gp-warn {{ font-size: .78rem; color: #b45309; font-weight: 600; }}
     /* ---- Client groups ---- */
     .groups-section {{ border-top: 3px solid #6366f1; }}
     .group-list {{ display: flex; flex-direction: column; gap: 8px; }}
@@ -1365,12 +1515,20 @@ def render_admin_page(
       </form>
     </section>
     <section>
-      <h2>Users</h2>
+      <div class="users-head">
+        <h2 style="margin:0">Users <span class="count-chip" id="userCount">{user_count}</span></h2>
+        <div class="users-search">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="search" id="userSearch" placeholder="Filter by name, role, group, or client…"
+            autocomplete="off" aria-label="Filter users">
+        </div>
+      </div>
       <div class="user-table-wrap">
       <table class="user-table">
-        <thead><tr><th class="col-av"></th><th>User</th><th>Role</th><th>Group</th><th>Client access</th><th>Status</th><th></th></tr></thead>
-        <tbody>{user_rows}</tbody>
+        <thead><tr><th class="col-av"></th><th>User</th><th>Role</th><th>Group</th><th>Client access</th><th>Last login</th><th>Status</th><th></th></tr></thead>
+        <tbody id="userTableBody">{user_rows}</tbody>
       </table>
+      <p class="users-empty muted" id="userSearchEmpty" hidden>No users match your filter.</p>
       </div>
     </section>
     {view_as_section_html}
@@ -1404,6 +1562,7 @@ def render_admin_page(
         f"<script>{dash_delete_js}</script>"
         f"<script>{_ADMIN_AVATAR_JS}</script>"
         f"<script>{_ROLE_TOGGLE_JS}</script>"
+        f"<script>{_USER_SEARCH_JS}</script>"
     )
     return render_admin_shell_page(
         active_nav="overview",

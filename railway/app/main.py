@@ -1634,6 +1634,7 @@ def login_submit(
         )
     login_rate_limit.clear_login_limits(ip=ctx.get("ip_address"), email=email)
     web_auth.login_user(request, user)
+    web_users.record_login(user.id)
     audit_log.record(
         action="login.success",
         actor_user_id=user.id,
