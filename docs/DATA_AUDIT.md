@@ -69,7 +69,7 @@ handler is registered for it — it is a reserved/manual type, not an active fee
 | Google Tag Manager | `gtm` | Per-client OAuth (`google_tag_manager`) | `list_containers` → `account:container` in `source_account_id` | `raw_gtm` | every tick | Live-container tag audit (no fact table; `rows_loaded` = tag count) |
 | HubSpot | `hubspot` | Per-client OAuth (`hubspot`), falls back to global `HUBSPOT_ACCESS_TOKEN` | Portal behind the token → portal id | `raw_hubspot` (mart dataset) | every tick | Contacts + deals sync |
 | SEMrush | `semrush` | **Agency** shared `SEMRUSH_API_KEY` (`no_oauth=True`, `manual_account_entry=True`) | Manually typed root domain | `raw_semrush` | every tick | Domain analytics rows |
-| PageSpeed Insights | `pagespeed` | Keyless / shared `PAGESPEED_API_KEY` (`no_oauth=True`, `manual_account_entry=True`) | Manually typed homepage URL | `raw_pagespeed` | **30 days** (`min_sync_interval_days=30`) | Lighthouse scores (per synced strategy) |
+| PageSpeed Insights | `pagespeed` | Keyless / shared `PAGESPEED_API_KEY` (`no_oauth=True`, `manual_account_entry=True`) | Manually typed homepage URL | `raw_pagespeed` | **7 days** (`min_sync_interval_days=7`) | Lighthouse scores (per synced strategy) |
 
 ### 2.2 Connector accuracy / cleanliness notes
 

@@ -1,4 +1,4 @@
-"""PageSpeed Insights connector — Lighthouse scores synced daily into BigQuery.
+"""PageSpeed Insights connector — Lighthouse scores synced weekly into BigQuery.
 
 No OAuth: PSI works keyless (or with a single shared PAGESPEED_API_KEY env var,
 agency-level like SEMRUSH_API_KEY). The only per-client input is the URL to
@@ -25,9 +25,9 @@ class PageSpeedConnector(ConnectorHandler):
     manual_account_entry = True
     manual_account_label = "Homepage URL (e.g. https://example.com)"
     # Live Lighthouse audits are slow/expensive and the scores barely move day to
-    # day, so the cron runs this ~monthly (on connect, then every ~30 days) rather
+    # day, so the cron runs this weekly (on connect, then every ~7 days) rather
     # than every night. Manual "Run sync now" still works any time.
-    min_sync_interval_days = 30
+    min_sync_interval_days = 7
 
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
         """Wizard "Test connection" step — verifies the URL actually returns a
