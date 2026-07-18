@@ -23,6 +23,51 @@ def _api_url(path: str, *, access_key: str | None) -> str:
     return f"{path}?{urlencode({'key': access_key})}"
 
 
+# Overview "home" cards an admin may pin to the top, in their natural (unpinned)
+# order. Keys are stable and stored per-client in
+# ``client_dashboard_config.overview_pinned_card``; titles are shown in the pin
+# control's tooltip. A card only renders when its data/connector is present, so
+# a stored key that isn't currently visible is simply ignored (the pin persists
+# and re-applies once that card comes back).
+OVERVIEW_PINNABLE_CARDS: dict[str, str] = {
+    "mql": "HubSpot MQL Tracker",
+    "paid": "Paid summary",
+    "website": "Website analytics",
+    "ai_traffic": "AI traffic",
+    "gsc": "Search Console",
+    "site_performance": "Site performance",
+}
+
+
+def _overview_pin_btn(card_key: str, pinned_key: str | None) -> str:
+    """Admin-only pin toggle injected into an Overview card's action row.
+
+    Hidden for non-admins via CSS (only shown under ``.is-admin``). The active
+    card renders in a "pinned" state and clicking it clears the pin; any other
+    card pins itself (replacing whatever was pinned before)."""
+    is_pinned = bool(pinned_key) and card_key == pinned_key
+    cls = "ov-pin is-pinned" if is_pinned else "ov-pin"
+    label = "Unpin from top of overview" if is_pinned else "Pin to top of overview"
+    # Filled pin when active, outline pin otherwise.
+    icon = (
+        '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" '
+        'aria-hidden="true"><path d="M16 3a1 1 0 0 1 .117 1.993L16 5v5.382l2.447 '
+        '2.447a1 1 0 0 1 .293.707V15a1 1 0 0 1-1 1h-4v4a1 1 0 0 1-1.993.117L11 '
+        '20v-4H7a1 1 0 0 1-1-1v-1.464a1 1 0 0 1 .293-.707L8.999 10.4 9 5a1 1 0 0 '
+        '1-.117-1.993L9 3h7Z"/></svg>'
+        if is_pinned else
+        '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" '
+        'stroke="currentColor" stroke-width="1.9" stroke-linecap="round" '
+        'stroke-linejoin="round" aria-hidden="true"><path d="M9 4h6"/>'
+        '<path d="M10 4v6l-3 3v1h10v-1l-3-3V4"/><path d="M12 17v4"/></svg>'
+    )
+    return (
+        f'<button type="button" class="{cls}" data-ov-pin="{card_key}" '
+        f'aria-pressed="{"true" if is_pinned else "false"}" '
+        f'title="{label}" aria-label="{label}">{icon}</button>'
+    )
+
+
 def _docs_enabled() -> bool:
     import client_insight_documents as docs
     return docs.enabled()
@@ -100,7 +145,7 @@ def resolve_explorer_filters(text: str | None) -> list[dict]:
     return parsed or DEFAULT_EXPLORER_FILTERS
 
 
-def hubspot_mql_section_html(report, lead_tracking_url: str | None) -> str:
+def hubspot_mql_section_html(report, lead_tracking_url: str | None, *, pin_btn: str = "") -> str:
     """Server-rendered HubSpot MQL tracker panel for the BigQuery dashboard's
     Overview home. Mirrors the Overview tracker on the snapshot dashboard, but
     uses this template's card markup. Each card only renders when its data
@@ -171,7 +216,7 @@ def hubspot_mql_section_html(report, lead_tracking_url: str | None) -> str:
     return (
         '<section class="ov-panel mql-panel">'
         '<div class="sec-head"><h2><span class="mql-dot"></span>HubSpot MQL Tracker</h2>'
-        f'<div class="ov-actions">{more}</div></div>'
+        f'<div class="ov-actions">{pin_btn}{more}</div></div>'
         f'<div class="cards">{"".join(cards)}</div></section>'
     )
 
@@ -233,6 +278,7 @@ def render_bigquery_dashboard_page(
     explorer_filters_cfg = ""
     monthly_budget_val: float | None = None
     pagespeed_targets_stored: dict | None = None
+    overview_pinned_card: str | None = None
     try:
         import client_dashboard_config as _cdc
         _kwcfg = _cdc.get_config(api_client_key) or _cdc.get_config(client_slug)
@@ -244,6 +290,7 @@ def render_bigquery_dashboard_page(
             ga4_key_events = _kwcfg.ga4_key_events or ""
             explorer_filters_cfg = _kwcfg.explorer_filters or ""
             monthly_budget_val = getattr(_kwcfg, "monthly_budget_usd", None)
+            overview_pinned_card = getattr(_kwcfg, "overview_pinned_card", None)
         pagespeed_targets_stored = (
             _cdc.get_pagespeed_targets(api_client_key)
             or _cdc.get_pagespeed_targets(client_slug)
@@ -291,6 +338,7 @@ def render_bigquery_dashboard_page(
                     access_key=access_key,
                     use_session=use_session,
                 ),
+                pin_btn=_overview_pin_btn("mql", overview_pinned_card),
             )
         except Exception:
             mql_section_html = ""
@@ -470,21 +518,27 @@ def render_bigquery_dashboard_page(
     # Overview is a "home": the top widget from each section, each with a
     # "See more" that jumps to that tab. Panels below are shared by all clients;
     # the paid panel is prepended only when the client runs paid ads.
-    ov_panels = f"""
+    # Admin-only "pin to top" toggle for each Overview card. Injected as the
+    # first child of the card's action row; hidden for non-admins via CSS.
+    _pin = lambda key: _overview_pin_btn(key, overview_pinned_card)  # noqa: E731
+
+    panel_website = f"""
       <section class="ov-panel">
-        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><div class="chips seg" id="ovSessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="analytics"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions">{_pin("website")}<div class="chips seg" id="ovSessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="analytics"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovSessionsTrend"></canvas></div></div>
         <div class="cmp-legend" id="ovSessionsLegend"></div>
-      </section>
+      </section>"""
 
+    panel_ai = f"""
       <section class="ov-panel">
-        <div class="sec-head"><h2>AI traffic</h2><div class="ov-actions"><div class="chips seg" id="ovAiGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="ai_traffic"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="sec-head"><h2>AI traffic</h2><div class="ov-actions">{_pin("ai_traffic")}<div class="chips seg" id="ovAiGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="ai_traffic"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovAiTrend"></canvas></div></div>
         <div class="cmp-legend" id="ovAiLegend"></div>
-      </section>
+      </section>"""
 
+    panel_gsc = f"""
       <section class="ov-panel">
-        <div class="sec-head"><h2>Search Console</h2><div class="ov-actions"><span class="status" id="ovGscStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="gsc"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="sec-head"><h2>Search Console</h2><div class="ov-actions">{_pin("gsc")}<span class="status" id="ovGscStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="gsc"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="two-col" style="margin-top:0">
           <div class="col-panel">
             <h3>Branded queries</h3>
@@ -502,16 +556,16 @@ def render_bigquery_dashboard_page(
           </div>
         </div>
       </section>"""
-    if show_pagespeed:
-        ov_panels += """
+
+    panel_pagespeed = f"""
       <section class="ov-panel">
-        <div class="sec-head"><h2>Site performance</h2><div class="ov-actions"><span class="status" id="ovPsStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="site_performance"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="sec-head"><h2>Site performance</h2><div class="ov-actions">{_pin("site_performance")}<span class="status" id="ovPsStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="site_performance"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="cards" id="ovPsScores"></div>
-      </section>"""
-    if has_paid_ads:
-        paid_panel = """
+      </section>""" if show_pagespeed else ""
+
+    paid_panel = f"""
       <section id="sec-overview">
-        <div class="sec-head"><h2>Paid summary</h2><div class="ov-actions"><span class="status" id="summaryStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="explorer"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="sec-head"><h2>Paid summary</h2><div class="ov-actions">{_pin("paid")}<span class="status" id="summaryStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="explorer"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="cards" id="summaryCards"></div>
       </section>
 
@@ -521,12 +575,32 @@ def render_bigquery_dashboard_page(
           <div class="chart-canvas-host" style="height:260px"><canvas id="trendChart"></canvas></div>
         </div>
         <p class="chart-note">Each line is normalized to its own min–max. Hover for actual values.</p>
-      </section>"""
-        overview_summary_html = paid_panel + ov_panels
-    else:
-        overview_summary_html = ov_panels
-    # Lead the Overview home with the HubSpot MQL tracker when it has data.
-    overview_summary_html = mql_section_html + overview_summary_html
+      </section>""" if has_paid_ads else ""
+
+    # Overview cards in natural order, each tagged with its stable pin key. The
+    # MQL tracker leads when it has data, then paid, then the shared panels.
+    ov_units: list[tuple[str, str]] = []
+    if mql_section_html:
+        ov_units.append(("mql", mql_section_html))
+    if paid_panel:
+        ov_units.append(("paid", paid_panel))
+    ov_units.append(("website", panel_website))
+    ov_units.append(("ai_traffic", panel_ai))
+    ov_units.append(("gsc", panel_gsc))
+    if panel_pagespeed:
+        ov_units.append(("site_performance", panel_pagespeed))
+
+    # Move the admin-pinned card to the top (if it's present this render). An
+    # unknown or currently-hidden key is ignored; the pin stays stored.
+    if overview_pinned_card:
+        _pin_idx = next(
+            (i for i, (k, _) in enumerate(ov_units) if k == overview_pinned_card),
+            None,
+        )
+        if _pin_idx is not None:
+            ov_units.insert(0, ov_units.pop(_pin_idx))
+
+    overview_summary_html = "".join(html for _, html in ov_units)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -659,6 +733,13 @@ def render_bigquery_dashboard_page(
     .ov-more:hover {{ color:var(--accent); border-color:var(--accent); background:var(--card); box-shadow:0 1px 4px rgba(29,111,208,.18); }}
     .ov-more-arrow {{ width:16px; height:16px; display:block; transition:transform .14s; }}
     .ov-more:hover .ov-more-arrow {{ transform:translateX(2px); }}
+    /* Admin-only "pin card to top" toggle — hidden unless the shell is .is-admin */
+    .ov-pin {{ display:none; }}
+    .is-admin .ov-pin {{ display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border:1px solid var(--line); border-radius:999px; background:var(--card); color:var(--muted); padding:0; font:inherit; cursor:pointer; transition:color .14s, border-color .14s, background .14s, box-shadow .14s; }}
+    .is-admin .ov-pin:hover {{ color:var(--accent); border-color:var(--accent); box-shadow:0 1px 4px rgba(29,111,208,.18); }}
+    .is-admin .ov-pin.is-pinned {{ color:#fff; background:var(--accent); border-color:var(--accent); }}
+    .is-admin .ov-pin.is-pinned:hover {{ background:var(--blue); border-color:var(--blue); box-shadow:none; }}
+    .ov-pin svg {{ display:block; }}
     .status {{ color:var(--muted); font-size:.82rem; margin:0 0 12px; }}
     .status.error {{ color:var(--bad); }}
     /* ---- Metric cards ---- */
@@ -1270,6 +1351,35 @@ def render_bigquery_dashboard_page(
     const TRAFFIC_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-key-events')}";
     const USER_ACQ_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acq-key-events')}";
     const GA4_KEY_EVENTS_SAVED = {json.dumps([s.strip() for s in ga4_key_events.splitlines() if s.strip()])};
+    const OVERVIEW_PIN_API = "{_aurl(f'/api/clients/{api_client_key}/overview/pinned-card')}";
+
+    // ---- Overview "pin card to top" (admin only) ----
+    // Delegated click: pin the clicked card (or unpin when it's already pinned),
+    // persist server-side, then reload so the server re-orders the Overview.
+    document.addEventListener('click', function (ev) {{
+      const btn = ev.target.closest && ev.target.closest('.ov-pin');
+      if (!btn) return;
+      ev.preventDefault();
+      if (btn.disabled) return;
+      const key = btn.getAttribute('data-ov-pin') || '';
+      const alreadyPinned = btn.getAttribute('aria-pressed') === 'true';
+      const next = alreadyPinned ? '' : key;
+      btn.disabled = true;
+      fetch(OVERVIEW_PIN_API, {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        credentials: 'same-origin',
+        body: JSON.stringify({{ card: next }}),
+      }}).then(function (r) {{
+        return r.json().catch(function () {{ return {{}}; }}).then(function (b) {{
+          if (!r.ok || !b.ok) throw new Error((b && b.detail && (b.detail.error || b.detail)) || r.statusText);
+          window.location.reload();
+        }});
+      }}).catch(function (err) {{
+        btn.disabled = false;
+        alert('Could not update the pinned card: ' + (err.message || err));
+      }});
+    }});
 
     // ---- Formatters ----
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
