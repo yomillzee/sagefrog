@@ -100,6 +100,82 @@ def resolve_explorer_filters(text: str | None) -> list[dict]:
     return parsed or DEFAULT_EXPLORER_FILTERS
 
 
+def hubspot_mql_section_html(report, lead_tracking_url: str | None) -> str:
+    """Server-rendered HubSpot MQL tracker panel for the BigQuery dashboard's
+    Overview home. Mirrors the Overview tracker on the snapshot dashboard, but
+    uses this template's card markup. Each card only renders when its data
+    exists, and the whole panel is dropped when nothing has synced yet.
+    """
+    if report is None or not getattr(report, "configured", False):
+        return ""
+
+    # Reuse the shared trend/delta/money helpers so both dashboards format MQL
+    # figures identically.
+    from dashboard.renderers.dashboard_renderer import (
+        _mql_money_compact as _money,
+        _mql_mom_delta as _mom,
+        _mql_sparkline as _spark,
+    )
+    from dashboard.utils.formatting import esc as _esc, fmt_int as _int, fmt_pct as _pct
+
+    cards: list[str] = []
+    if report.mql_count:
+        cards.append(
+            '<div class="card"><div class="card-title">MQLs</div>'
+            f'<div class="card-value">{_int(report.mql_count)}</div>'
+            f'{_spark(report.mqls_by_month, "#1d6fd0")}'
+            '<div class="card-foot">'
+            f'<span class="mql-sub">{_pct(report.mql_count, report.contact_count)} of contacts</span>'
+            f'{_mom(report.mqls_by_month)}</div></div>'
+        )
+    if report.contact_count:
+        cards.append(
+            '<div class="card"><div class="card-title">Contacts tracked</div>'
+            f'<div class="card-value">{_int(report.contact_count)}</div></div>'
+        )
+    if report.deal_count:
+        cards.append(
+            '<div class="card"><div class="card-title">Deals</div>'
+            f'<div class="card-value">{_int(report.deal_count)}</div>'
+            '<div class="card-foot">'
+            f'<span class="mql-sub">{_pct(report.deal_count, report.mql_count)} of MQLs</span></div></div>'
+        )
+    if report.pipeline_amount:
+        avg = (
+            f'<span class="mql-sub">{_money(report.pipeline_amount / report.deal_count)} avg deal</span>'
+            if report.deal_count else ""
+        )
+        cards.append(
+            '<div class="card"><div class="card-title">Pipeline</div>'
+            f'<div class="card-value">{_money(report.pipeline_amount)}</div>'
+            f'<div class="card-foot">{avg}</div></div>'
+        )
+    if report.won_amount:
+        cards.append(
+            '<div class="card"><div class="card-title">Won revenue</div>'
+            f'<div class="card-value">{_money(report.won_amount)}</div>'
+            '<div class="card-foot">'
+            f'<span class="mql-sub">{_pct(report.won_amount, report.pipeline_amount)} win rate</span></div></div>'
+        )
+
+    if not cards:
+        return ""
+
+    more = (
+        f'<a class="ov-more" href="{_esc(lead_tracking_url)}" aria-label="Open lead tracking">'
+        '<svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" '
+        'stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></a>'
+        if lead_tracking_url else ""
+    )
+    return (
+        '<section class="ov-panel mql-panel">'
+        '<div class="sec-head"><h2><span class="mql-dot"></span>HubSpot MQL Tracker</h2>'
+        f'<div class="ov-actions">{more}</div></div>'
+        f'<div class="cards">{"".join(cards)}</div></section>'
+    )
+
+
 def render_bigquery_dashboard_page(
     *,
     access_key: str | None = None,
@@ -193,9 +269,31 @@ def render_bigquery_dashboard_page(
         _pf = platform_nav_flags(client_slug)
         show_pagespeed = bool(_pf.get("show_pagespeed"))
         show_semrush = bool(_pf.get("show_semrush"))
+        show_lead_tracking = bool(_pf.get("show_lead_tracking"))
     except Exception:
         show_pagespeed = False
         show_semrush = False
+        show_lead_tracking = False
+
+    # HubSpot MQL tracker for the Overview home — only fetched when HubSpot is
+    # connected. Failures never break the dashboard; the helper drops any card
+    # (and the whole panel) that has no data behind it.
+    mql_section_html = ""
+    if show_lead_tracking:
+        try:
+            import hubspot_reports_service
+            from dashboard.utils.urls import lead_tracking_page_url
+            _mql_report = hubspot_reports_service.build_report(client_slug)
+            mql_section_html = hubspot_mql_section_html(
+                _mql_report,
+                lead_tracking_page_url(
+                    client_slug=client_slug,
+                    access_key=access_key,
+                    use_session=use_session,
+                ),
+            )
+        except Exception:
+            mql_section_html = ""
     # Organic Search Intelligence (SEMrush) — only when the SEMrush connector is
     # connected; otherwise the whole section is dropped from the GSC tab.
     semrush_section_html = """
@@ -427,6 +525,8 @@ def render_bigquery_dashboard_page(
         overview_summary_html = paid_panel + ov_panels
     else:
         overview_summary_html = ov_panels
+    # Lead the Overview home with the HubSpot MQL tracker when it has data.
+    overview_summary_html = mql_section_html + overview_summary_html
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -575,6 +675,15 @@ def render_bigquery_dashboard_page(
     .card-delta.up {{ color:var(--ok); }}
     .card-delta.down {{ color:var(--bad); }}
     .card-delta.flat {{ color:var(--muted); font-weight:600; }}
+    /* HubSpot MQL tracker (Overview home) */
+    .mql-panel .card {{ border-top-color:#ff7a59; }}
+    .mql-dot {{ display:inline-block; width:9px; height:9px; border-radius:50%; background:#ff7a59; margin-right:8px; vertical-align:middle; }}
+    .mql-sub {{ color:var(--muted); font-size:.74rem; }}
+    .mql-delta {{ font-size:.74rem; font-weight:700; white-space:nowrap; }}
+    .mql-delta.up {{ color:var(--ok); }}
+    .mql-delta.down {{ color:var(--bad); }}
+    .mql-delta.flat {{ color:var(--muted); font-weight:600; }}
+    .mql-spark {{ width:100%; height:30px; display:block; margin:7px 0 2px; }}
     .cmp-warn {{ display:inline-block; margin-left:6px; font-size:.85rem; cursor:help; color:#b78103; }}
     .cmp-warn[hidden] {{ display:none; }}
     /* ---- Tables ---- */
