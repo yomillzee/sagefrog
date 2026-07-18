@@ -64,7 +64,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
     .tile-sub {{ color:var(--muted); font-size:.75rem; margin-top:3px; }}
     /* Table */
     .table-wrap {{ overflow-x:auto; }}
-    table {{ width:100%; border-collapse:collapse; font-size:.9rem; min-width:860px; }}
+    table {{ width:100%; border-collapse:collapse; font-size:.9rem; min-width:960px; }}
     th, td {{ text-align:right; padding:11px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }}
     th:first-child, td:first-child {{ text-align:left; }}
     th {{ color:var(--muted); font-weight:700; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; }}
@@ -99,6 +99,16 @@ def render_agency_trends_page(*, user_email: str) -> str:
     .wow-pct.flat {{ color:var(--muted); }}
     .sess-cell {{ display:flex; align-items:center; justify-content:flex-end; gap:9px; }}
     .spark svg {{ display:block; }}
+    /* connector-health chip (links to the client's full data-source status) */
+    .chip {{ display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px;
+      font-size:.72rem; font-weight:700; text-decoration:none; border:1px solid var(--line);
+      background:#fff; color:var(--ink); white-space:nowrap; transition:border-color .12s, background .12s; }}
+    .chip:hover {{ border-color:#cbd5e1; background:#f6f9fd; }}
+    .chip .dot {{ width:8px; height:8px; border-radius:50%; background:#94a3b8; flex:0 0 auto; }}
+    .chip.ok .dot {{ background:var(--green); }}
+    .chip.warn .dot {{ background:var(--amber); }}
+    .chip.bad .dot {{ background:var(--danger); }}
+    .chip.idle {{ color:var(--muted); }}
     .chan {{ display:flex; align-items:center; gap:12px; margin:10px 0; }}
     .chan-name {{ width:92px; font-weight:700; color:var(--navy); text-transform:capitalize; font-size:.9rem; }}
     .chan-bar {{ flex:1; height:14px; background:#eef2f7; border-radius:7px; overflow:hidden; }}
@@ -149,6 +159,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
         <table id="atTable">
           <thead><tr>
             <th class="sortable" data-key="label">Client</th>
+            <th class="sortable" data-key="health_rank">Data</th>
             <th class="sortable active" data-key="pct_budget">% of budget</th>
             <th class="sortable" data-key="pct_change">Week over week</th>
             <th class="sortable" data-key="sessions_total">Sessions · 30d</th>
@@ -234,6 +245,25 @@ def render_agency_trends_page(*, user_email: str) -> str:
       if (!r.sessions_available) return '<span class="muted">—</span>';
       return `<div class="sess-cell">${{sparkline(r.sessions_series)}}</div>`;
     }}
+    // Connector-health chip. Colour by staleness (green current / amber lagging
+    // / red stale-or-failed / grey not-set-up); tooltip shows each channel's
+    // through-date and any reasons. Links to the client's settings page, which
+    // runs the full per-source status check on demand — so we never pay that
+    // cost for every client up front.
+    const HEALTH = {{
+      current:['ok','Current'], lagging:['warn','Lagging'], stale:['bad','Stale'],
+      error:['bad','Read failed'], no_data:['idle','No data'], not_configured:['idle','Not set up'],
+    }};
+    function healthCell(r) {{
+      const h = r.health || {{status:'no_data'}};
+      const [cls, label] = HEALTH[h.status] || HEALTH.no_data;
+      const lines = (h.reasons || []).slice();
+      (h.channels || []).forEach(c => lines.push(`${{c.source}} → ${{c.through || 'no data'}}`));
+      lines.push('Click for full connector status');
+      const href = `/dashboard/${{encodeURIComponent(r.client_slug)}}/settings`;
+      return `<a class="chip ${{cls}}" href="${{href}}" target="_blank" rel="noopener" title="${{esc(lines.join('\\n'))}}">`
+        + `<span class="dot"></span>${{esc(label)}}</a>`;
+    }}
     // Fold each client's week-over-week momentum onto its budget row so one
     // table shows the HQ view (spend vs budget + sessions) with a WoW column.
     function mergeMomentum() {{
@@ -262,11 +292,12 @@ def render_agency_trends_page(*, user_email: str) -> str:
 
       const rows = sortedRows();
       const body = document.getElementById('atBody');
-      if (!rows.length) {{ body.innerHTML = `<tr><td colspan="4" class="empty">No clients configured yet.</td></tr>`; }}
+      if (!rows.length) {{ body.innerHTML = `<tr><td colspan="5" class="empty">No clients configured yet.</td></tr>`; }}
       else body.innerHTML = rows.map(r => {{
         const dash = `/dashboard/${{encodeURIComponent(r.client_slug)}}`;
         return `<tr>`
           + `<td><div class="cl-name"><a href="${{dash}}">${{esc(r.label)}}</a></div><div class="cl-slug">${{esc(r.client_slug)}}</div></td>`
+          + `<td>${{healthCell(r)}}</td>`
           + `<td>${{pctCell(r)}}</td>`
           + `<td>${{wowCell(r)}}</td>`
           + `<td>${{sessCell(r)}}</td>`
@@ -276,7 +307,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
       const totPct = t.monthly_budget ? Math.round(t.mtd_spend / t.monthly_budget * 100) : null;
       const totTip = `${{money2(t.mtd_spend)}} spent of ${{money2(t.monthly_budget)}} budget`;
       document.getElementById('atFoot').innerHTML = rows.length
-        ? `<tr><td>All clients</td><td><div class="pct-cell" title="${{esc(totTip)}}"><span class="num">${{totPct==null?'—':totPct+'%'}}</span></div></td><td></td><td></td></tr>`
+        ? `<tr><td>All clients</td><td></td><td><div class="pct-cell" title="${{esc(totTip)}}"><span class="num">${{totPct==null?'—':totPct+'%'}}</span></div></td><td></td><td></td></tr>`
         : '';
 
       document.querySelectorAll('#atTable th.sortable').forEach(th =>
@@ -293,10 +324,13 @@ def render_agency_trends_page(*, user_email: str) -> str:
 
       const sw = atData.sessions_window || {{}};
       const L = (m.window || {{}}).last || {{}};
+      const issues = t.clients_with_data_issues || 0;
       document.getElementById('atNote').textContent =
         `Spend vs budget is month-to-date paid media (Google, LinkedIn, Meta) from each client's BigQuery mart, as of ${{atData.as_of}}. `
         + `Week over week compares the last 7 days (${{L.start||''}} → ${{L.end||''}}) with the 7 before. `
         + `Sessions sparkline is GA4 sessions per day over the trailing ${{sw.days||30}} days; green trending up, red down. `
+        + `The Data chip flags connector freshness inferred from these same reads — green current, amber lagging, red stale or failed`
+        + `${{issues ? ` (${{issues}} client${{issues===1?'':'s'}} need attention)` : ''}} — and links to that client's full connector status. `
         + `All rollups are computed in DuckDB from one set of reads. "—" / "new" means no data or no prior baseline yet.`;
     }}
     function skeleton() {{
@@ -306,7 +340,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
         + `<div class="skel" style="height:9px;width:40%;margin-top:7px"></div></div>`).join('');
       document.getElementById('atBody').innerHTML = Array.from({{length:6}}, () =>
         `<tr><td><span class="skel" style="width:150px"></span></td>`
-        + Array.from({{length:3}}, () => `<td><span class="skel" style="width:70px"></span></td>`).join('') + `</tr>`).join('');
+        + Array.from({{length:4}}, () => `<td><span class="skel" style="width:70px"></span></td>`).join('') + `</tr>`).join('');
     }}
     document.getElementById('atTable').querySelector('thead').addEventListener('click', ev => {{
       const th = ev.target.closest('th.sortable'); if (!th || !atData) return;
@@ -325,7 +359,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
         render();
       }} catch (e) {{
         document.getElementById('atSub').textContent = 'Failed to load agency trends.';
-        document.getElementById('atBody').innerHTML = `<tr><td colspan="4" class="empty">Could not load data (${{esc(e.message||'error')}}). Try refreshing.</td></tr>`;
+        document.getElementById('atBody').innerHTML = `<tr><td colspan="5" class="empty">Could not load data (${{esc(e.message||'error')}}). Try refreshing.</td></tr>`;
       }}
     }}
     load();

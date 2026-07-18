@@ -52,6 +52,7 @@ if "google.cloud.bigquery" not in sys.modules:
 
 from dashboard.services.agency_trends_service import (
     _channel_label,
+    _client_health,
     _window_bounds,
     compute_agency_budget,
     compute_agency_trends,
@@ -252,6 +253,94 @@ class ComputeAgencyBudgetTests(unittest.TestCase):
         self.assertEqual(res["clients"], [])
         self.assertEqual(res["totals"]["client_count"], 0)
         self.assertEqual(res["totals"]["mtd_spend"], 0.0)
+
+
+class ClientHealthTests(unittest.TestCase):
+    """Connector-freshness verdict. TODAY = 2026-07-12 → yesterday 2026-07-11."""
+
+    def _h(self, **kw):
+        base = dict(
+            configured=True, spend_available=True, sessions_available=True,
+            fresh_through=dt.date(2026, 7, 11), sessions_through=dt.date(2026, 7, 11),
+            channels=[], today=TODAY,
+        )
+        base.update(kw)
+        return _client_health(**base)
+
+    def test_current_when_fresh_through_yesterday(self):
+        self.assertEqual(self._h()["status"], "current")
+
+    def test_lagging_at_two_to_three_days(self):
+        self.assertEqual(self._h(fresh_through=dt.date(2026, 7, 9))["status"], "lagging")  # 2 days
+
+    def test_stale_at_four_plus_days(self):
+        h = self._h(fresh_through=dt.date(2026, 7, 6))  # 5 days behind
+        self.assertEqual(h["status"], "stale")
+        self.assertEqual(h["lag_days"], 5)
+
+    def test_failed_spend_read_is_error(self):
+        h = self._h(spend_available=False, fresh_through=None)
+        self.assertEqual(h["status"], "error")
+        self.assertIn("paid-media read failed", h["reasons"])
+
+    def test_not_configured_is_neutral(self):
+        h = self._h(configured=False)
+        self.assertEqual(h["status"], "not_configured")
+
+    def test_read_ok_but_no_rows_is_no_data(self):
+        self.assertEqual(self._h(fresh_through=None)["status"], "no_data")
+
+    def test_failed_traffic_read_bumps_to_at_least_amber(self):
+        # Paid feed is current, but GA4 sessions read failed → at least lagging.
+        h = self._h(sessions_available=False)
+        self.assertEqual(h["status"], "lagging")
+        self.assertIn("traffic read failed", h["reasons"])
+
+    def test_failed_traffic_never_downgrades_a_stale_paid_verdict(self):
+        h = self._h(fresh_through=dt.date(2026, 7, 6), sessions_available=False)
+        self.assertEqual(h["status"], "stale")
+
+    def test_stale_traffic_alone_bumps_to_amber(self):
+        h = self._h(sessions_through=dt.date(2026, 7, 5))  # 6 days behind
+        self.assertEqual(h["status"], "lagging")
+
+
+class ComputeAgencyBudgetHealthTests(unittest.TestCase):
+    """compute_agency_budget attaches a health verdict per client from the same rows."""
+
+    def test_stale_channel_flagged_and_pinpointed_in_tooltip(self):
+        metas = [{"client_slug": "acme", "label": "Acme", "monthly_budget": 5000.0,
+                  "configured": True, "spend_available": True, "sessions_available": True}]
+        # Google is current (through yesterday); Meta stopped 6 days ago. The
+        # client is still "current" because *some* channel is fresh, but both
+        # channels' through-dates ride along in the tooltip.
+        spend = [
+            ("acme", "paid_google", dt.date(2026, 7, 11), 200.0),
+            ("acme", "paid_meta", dt.date(2026, 7, 5), 150.0),
+        ]
+        sessions = [("acme", dt.date(2026, 7, 11), 40)]
+        res = compute_agency_budget(spend, sessions, metas, today=TODAY)
+        row = res["clients"][0]
+        self.assertEqual(row["health"]["status"], "current")
+        chans = {c["source"]: c["through"] for c in row["health"]["channels"]}
+        self.assertEqual(chans["google"], "2026-07-11")
+        self.assertEqual(chans["meta"], "2026-07-05")
+
+    def test_whole_feed_stale_is_flagged_and_counted(self):
+        metas = [{"client_slug": "old", "label": "Old", "monthly_budget": 1000.0,
+                  "configured": True, "spend_available": True, "sessions_available": True}]
+        spend = [("old", "paid_google", dt.date(2026, 7, 4), 100.0)]  # 7 days behind
+        res = compute_agency_budget(spend, [], metas, today=TODAY)
+        self.assertEqual(res["clients"][0]["health"]["status"], "stale")
+        self.assertGreaterEqual(res["clients"][0]["health_rank"], 2)
+        self.assertEqual(res["totals"]["clients_with_data_issues"], 1)
+
+    def test_unconfigured_client_not_counted_as_issue(self):
+        metas = [{"client_slug": "new", "label": "New", "monthly_budget": 0.0,
+                  "configured": False, "spend_available": False, "sessions_available": False}]
+        res = compute_agency_budget([], [], metas, today=TODAY)
+        self.assertEqual(res["clients"][0]["health"]["status"], "not_configured")
+        self.assertEqual(res["totals"]["clients_with_data_issues"], 0)
 
 
 if __name__ == "__main__":
