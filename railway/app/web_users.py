@@ -84,6 +84,12 @@ SCHEMA_SQL_STATEMENTS = [
     """
     CREATE INDEX IF NOT EXISTS web_users_group_idx ON web_users (group_id)
     """,
+    # Timestamp of the user's most recent successful sign-in. NULL until they
+    # log in for the first time; surfaced on the admin user list so usage is
+    # visible at a glance.
+    """
+    ALTER TABLE web_users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ
+    """,
 ]
 
 
@@ -261,13 +267,33 @@ def authenticate(email: str, password: str) -> WebUser | None:
     return get_user_by_email(email)
 
 
+def record_login(user_id: int) -> None:
+    """Stamp a user's most recent successful sign-in time.
+
+    Best-effort: a failure here must never block an otherwise-valid login, so
+    callers can ignore the return. Only touches active rows."""
+    if not enabled():
+        return
+    try:
+        ensure_schema()
+        with db.connection() as conn:
+            conn.execute(
+                "UPDATE web_users SET last_login_at = NOW() "
+                "WHERE id = %s AND is_active = TRUE",
+                (int(user_id),),
+            )
+    except Exception:
+        pass
+
+
 def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
     if not enabled():
         return []
     ensure_schema()
     cols = (
         "u.id, u.email, u.role, u.client_slug, u.is_active, u.created_at, "
-        "u.avatar, u.allowed_client_slugs, u.group_id, g.name, g.client_slugs"
+        "u.avatar, u.allowed_client_slugs, u.group_id, g.name, g.client_slugs, "
+        "u.last_login_at"
     )
     where = "" if include_inactive else "WHERE u.is_active = TRUE"
     with db.connection() as conn:
@@ -291,6 +317,7 @@ def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
                 "group_id": int(row[8]) if row[8] is not None else None,
                 "group_name": str(row[9]) if row[9] is not None else None,
                 "group_client_slugs": [str(s) for s in group_slugs],
+                "last_login_at": row[11].isoformat() if len(row) > 11 and row[11] else None,
             }
         )
     return out
