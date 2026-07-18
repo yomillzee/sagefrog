@@ -1910,11 +1910,15 @@ SIDEBAR_CSS = """
         width: 264px;
         transform: translateX(-100%);
         transition: transform 0.25s ease;
-        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.28);
       }
       /* The brand lives in the top bar now, so drop the drawer's own logo head. */
       .dash-sidebar-head { display: none; }
-      .app-shell.sidebar-open .dash-sidebar { transform: translateX(0); }
+      /* Only cast the shadow while open — docked off-canvas it bleeds onto the
+         visible edge and reads as a distracting line. */
+      .app-shell.sidebar-open .dash-sidebar {
+        transform: translateX(0);
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.28);
+      }
       .app-shell.sidebar-open .dash-sidebar-backdrop {
         display: block;
         position: fixed;
