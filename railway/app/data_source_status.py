@@ -204,10 +204,8 @@ def build_pipeline_summary(client_slug: str, sources: list[dict[str, Any]] | Non
 
     return {
         "mode": mode,
-        "mode_label": "BigQuery-first" if mode == "bigquery" else "API → warehouse",
-        "refresh_path": f"/internal/sync-bq/{slug}" if mode == "bigquery" else (
-            "/internal/sync-penn" if slug == "penn" else f"/dashboard/{slug}/refresh"
-        ),
+        "mode_label": "BigQuery",
+        "refresh_path": f"/internal/sync-bq/{slug}",
         "refreshed_at": refreshed_at,
         "snapshot_through": snapshot_through,
         "bq_fresh_through": bq_fresh_through,
