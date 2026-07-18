@@ -30,7 +30,7 @@ _RESERVED_SLUGS = frozenset(
         "openapi",
     }
 )
-_PROTECTED_SLUGS = frozenset({"penn"})
+_PROTECTED_SLUGS: frozenset[str] = frozenset()
 
 SCHEMA_SQL_STATEMENTS = [
     """
@@ -135,7 +135,7 @@ def _seed_defaults(conn) -> None:
     }
 
     now = datetime.now(tz=UTC)
-    seeds: list[tuple[str, str, str]] = [("penn", "Penn Community Bank", "builtin")]
+    seeds: list[tuple[str, str, str]] = []
     for slug, entry in client_config._BUILTIN_CLIENTS.items():
         label = str(entry.get("label") or slug.replace("-", " ").title())
         seeds.append((slug, label, "builtin"))
