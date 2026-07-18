@@ -955,6 +955,15 @@ def render_penn_html(
     else:
         _SEMRUSH_CSS = ""
 
+    # Presenter notes: a floating, client-specific notepad for agency users to
+    # keep talking points on hand while sharing this dashboard live. Agency-only
+    # (admins + agency-wide "standard" users), which is exactly who can switch
+    # clients — client-role users never see it.
+    notes_widget_html = ""
+    if session_can_switch_clients:
+        from dashboard.renderers import notes_widget as _notes_widget
+        notes_widget_html = _notes_widget.widget_html(client_slug=client_slug, label=str(label))
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5082,5 +5091,6 @@ def render_penn_html(
     applyGlobalFilters();
     {_dashboard_topbar_js()}
   </script>
+  {notes_widget_html}
 </body>
 </html>"""
