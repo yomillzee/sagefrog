@@ -1125,33 +1125,24 @@ def render_admin_page(
       </ul>
     </section>"""
 
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Admin · Sagefrog Marketing Group</title>
-  <style>
+    from dashboard.renderers.base_layout import render_admin_shell_page
+
+    # Admin home renders inside the shared navy-sidebar shell (see
+    # render_admin_shell_page): its component styles ride along as extra_css, the
+    # sections as content, and the row/avatar scripts as body_end. The standalone
+    # top bar is gone — HQ / Trends / Docs live in the sidebar, and the switcher
+    # carries the "Admin panel" parent entry above every client.
+    admin_css = f"""
     :root {{
       --navy:#0a2540; --ink:#0f1c2e; --muted:#5a6578; --border:#e3e8f0; --line:#e3e8f0;
       --accent:#2563eb; --accent-d:#1d4ed8; --green:#34b27b; --danger:#b42318;
     }}
-    * {{ box-sizing: border-box; }}
-    body {{ margin: 0; color: var(--ink);
+    body {{ color: var(--ink);
       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
-      background: linear-gradient(180deg,#eef2f7 0%,#e6edf5 100%); background-attachment: fixed; min-height: 100vh; }}
-    header {{ color: #fff; padding: 16px 24px; display: flex;
-      align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-      background: linear-gradient(120deg,#0a2540 0%,#0d2f57 100%); box-shadow: 0 2px 14px rgba(5,18,31,.28); }}
-    .brand-head {{ display: flex; align-items: center; gap: 12px; }}
-    .brand-mark {{ width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; overflow: hidden;
-      background: #fff; box-shadow: 0 6px 16px rgba(5,18,31,.4); flex-shrink: 0; }}
-    .brand-mark img {{ width: 100%; height: 100%; object-fit: cover; }}
-    header h1 {{ margin: 0; font-size: 1.05rem; letter-spacing: .2px; }}
-    header .who {{ font-size: .82rem; opacity: .7; }}
-  header a, header button.link {{ color: #fff; text-decoration: none; background: none; border: 0;
-      cursor: pointer; font: inherit; opacity: .9; }}
-    main {{ max-width: 980px; margin: 0 auto; padding: 26px 20px 56px; }}
+      background: linear-gradient(180deg,#eef2f7 0%,#e6edf5 100%); background-attachment: fixed; }}
+    main {{ max-width: 980px; margin: 0 auto; padding: 26px 24px 56px; }}
+    /* Keep the switcher search field clear of the generic input margins below. */
+    .client-switch-search-input {{ margin-bottom: 0; }}
     section {{ background: #fff; border: 1px solid var(--line); border-radius: 16px;
       padding: 22px 24px; margin-bottom: 18px; box-shadow: 0 6px 22px rgba(10,37,64,.06); }}
     h2 {{ margin: 0 0 16px; font-size: 1.05rem; color: var(--navy); }}
@@ -1328,26 +1319,8 @@ def render_admin_page(
     .add-dash-btn::-webkit-details-marker {{ display: none; }}
     .add-dash-btn:hover {{ filter: brightness(1.06); }}
     .add-dash-btn:active {{ transform: translateY(1px); }}
-  </style>
-</head>
-<body>
-  <header>
-    <div class="brand-head">
-      <div class="brand-mark">
-        <img src="/static/apple-touch-icon.png" alt="Sagefrog" width="40" height="40">
-      </div>
-      <div>
-        <h1>Sagefrog Marketing Group · Admin</h1>
-        <span class="who">Signed in as {_esc(user.email)}</span>
-      </div>
-    </div>
-    <div style="display:flex; align-items:center; gap:16px">
-      <a href="/admin/hq" style="color:#fff; opacity:.9; text-decoration:none; font-weight:600">HQ</a>
-      <a href="/admin/agency-trends" style="color:#fff; opacity:.9; text-decoration:none; font-weight:600">Trends</a>
-      <a href="/admin/docs" style="color:#fff; opacity:.9; text-decoration:none; font-weight:600">Docs</a>
-      <form method="post" action="/logout" style="display:inline"><button type="submit" class="link">Sign out</button></form>
-    </div>
-  </header>
+"""
+    content = f"""
   <main>
     {notice}
     {dashboard_manage_html}
@@ -1426,9 +1399,18 @@ def render_admin_page(
         </section>
       </div>
     </details>
-  </main>
-  <script>{dash_delete_js}</script>
-  <script>{_ADMIN_AVATAR_JS}</script>
-  <script>{_ROLE_TOGGLE_JS}</script>
-</body>
-</html>"""
+  </main>"""
+    scripts = (
+        f"<script>{dash_delete_js}</script>"
+        f"<script>{_ADMIN_AVATAR_JS}</script>"
+        f"<script>{_ROLE_TOGGLE_JS}</script>"
+    )
+    return render_admin_shell_page(
+        active_nav="overview",
+        page_title="Admin",
+        content_html=content,
+        session_email=user.email,
+        session_is_admin=True,
+        extra_css=admin_css,
+        body_end_html=scripts,
+    )

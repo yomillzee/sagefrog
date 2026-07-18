@@ -1,112 +1,76 @@
 """Admin "Docs" page: how to set up a new client dashboard, in the portal.
 
-Self-contained HTML that mirrors the /admin, HQ, and Trends chrome (same colour
-tokens, header, card styling). The content is the operational runbook for
-standing up a new client dashboard — the same material as
-docs/CREATING_A_NEW_DASHBOARD.md, rendered inline so admins can read it without
-leaving the portal.
+Rendered inside the shared admin shell (navy sidebar + client switcher) so Docs
+sits alongside the other admin sections rather than as a standalone page. The
+content is the operational runbook for standing up a new client dashboard — the
+same material as docs/CREATING_A_NEW_DASHBOARD.md, rendered inline so admins can
+read it without leaving the portal.
 """
 
 from __future__ import annotations
 
 import html
 
+from dashboard.renderers.base_layout import render_admin_shell_page
+
 
 def _esc(value: object) -> str:
     return html.escape(str(value if value is not None else ""))
 
 
-def render_docs_page(*, user_email: str) -> str:
-    """Full HTML for GET /admin/docs. Static content — no data fetch."""
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Docs · Sagefrog Marketing Group</title>
-  <link rel="icon" type="image/png" href="/static/favicon.png">
-  <style>
-    :root {{
+_DOCS_CSS = """
+    :root {
       --navy:#0a2540; --ink:#0f1c2e; --muted:#5a6578; --border:#e3e8f0; --line:#e3e8f0;
       --accent:#2563eb; --accent-d:#1d4ed8; --green:#0a7f3f; --amber:#b7791f; --danger:#b42318;
-    }}
-    * {{ box-sizing:border-box; }}
-    body {{ margin:0; color:var(--ink);
-      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
-      background:linear-gradient(180deg,#eef2f7 0%,#e6edf5 100%); background-attachment:fixed; min-height:100vh; }}
-    header {{ color:#fff; padding:16px 24px; display:flex; align-items:center; justify-content:space-between;
-      gap:16px; flex-wrap:wrap; background:linear-gradient(120deg,#0a2540 0%,#0d2f57 100%);
-      box-shadow:0 2px 14px rgba(5,18,31,.28); }}
-    .brand-head {{ display:flex; align-items:center; gap:12px; }}
-    .brand-mark {{ width:40px; height:40px; border-radius:11px; display:grid; place-items:center; overflow:hidden;
-      background:#fff; box-shadow:0 6px 16px rgba(5,18,31,.4); flex-shrink:0; }}
-    .brand-mark img {{ width:100%; height:100%; object-fit:cover; }}
-    header h1 {{ margin:0; font-size:1.05rem; letter-spacing:.2px; }}
-    header .who {{ font-size:.82rem; opacity:.7; }}
-    header a, header button.link {{ color:#fff; text-decoration:none; background:none; border:0;
-      cursor:pointer; font:inherit; opacity:.9; }}
-    header a:hover {{ opacity:1; text-decoration:underline; }}
-    .head-actions {{ display:flex; align-items:center; gap:16px; }}
-    main {{ max-width:920px; margin:0 auto; padding:26px 20px 56px; }}
-    section {{ background:#fff; border:1px solid var(--line); border-radius:16px;
-      padding:22px 26px; margin-bottom:18px; box-shadow:0 6px 22px rgba(10,37,64,.06); }}
-    .page-head h2 {{ margin:0; font-size:1.2rem; color:var(--navy); }}
-    .page-head .sub {{ color:var(--muted); font-size:.86rem; margin:6px 0 0; }}
-    h3 {{ margin:0 0 10px; font-size:1.02rem; color:var(--navy); }}
-    .step-num {{ display:inline-grid; place-items:center; width:24px; height:24px; border-radius:7px;
-      background:var(--accent); color:#fff; font-size:.8rem; font-weight:800; margin-right:9px; vertical-align:middle; }}
-    p {{ line-height:1.6; margin:0 0 12px; color:var(--ink); }}
-    ol, ul {{ line-height:1.6; margin:0 0 12px; padding-left:22px; }}
-    li {{ margin-bottom:7px; }}
-    a {{ color:var(--accent); }}
-    code {{ background:#f2f5fa; border:1px solid var(--line); border-radius:5px; padding:1px 6px;
-      font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace; font-size:.85em; color:var(--navy); }}
-    .muted {{ color:var(--muted); }}
-    .callout {{ border-left:3px solid var(--accent); background:#f6f9fd; border-radius:0 10px 10px 0;
-      padding:12px 16px; margin:0 0 14px; font-size:.9rem; }}
-    .callout.warn {{ border-left-color:var(--amber); background:#fdf9f0; }}
-    .callout strong {{ color:var(--navy); }}
-    .toc {{ margin:0; padding-left:0; list-style:none; columns:2; column-gap:26px; }}
-    .toc li {{ margin-bottom:6px; }}
-    table {{ width:100%; border-collapse:collapse; font-size:.88rem; margin:4px 0 12px; }}
-    th, td {{ text-align:left; padding:9px 11px; border-bottom:1px solid var(--line); vertical-align:top; }}
-    th {{ color:var(--muted); font-weight:700; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; }}
-    .badge {{ display:inline-block; font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em;
-      padding:2px 8px; border-radius:999px; }}
-    .badge.manual {{ background:#fdf0ee; color:var(--danger); }}
-    .badge.auto {{ background:#eaf6ee; color:var(--green); }}
-    .step {{ padding:16px 0; border-bottom:1px solid var(--line); }}
-    .step:last-child {{ border-bottom:0; padding-bottom:0; }}
-    .doc-links {{ display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); margin:2px 0 0; }}
-    .doc-link {{ display:flex; align-items:flex-start; gap:12px; text-decoration:none; color:inherit;
+    }
+    body { color:var(--ink);
+      background:linear-gradient(180deg,#eef2f7 0%,#e6edf5 100%); background-attachment:fixed; }
+    main { max-width:920px; margin:0 auto; padding:26px 24px 56px; }
+    section { background:#fff; border:1px solid var(--line); border-radius:16px;
+      padding:22px 26px; margin-bottom:18px; box-shadow:0 6px 22px rgba(10,37,64,.06); }"""
+
+
+def render_docs_page(*, user_email: str) -> str:
+    """Full HTML for GET /admin/docs. Static content — no data fetch."""
+    extra_css = _DOCS_CSS + """
+    .page-head h2 { margin:0; font-size:1.2rem; color:var(--navy); }
+    .page-head .sub { color:var(--muted); font-size:.86rem; margin:6px 0 0; }
+    h3 { margin:0 0 10px; font-size:1.02rem; color:var(--navy); }
+    .step-num { display:inline-grid; place-items:center; width:24px; height:24px; border-radius:7px;
+      background:var(--accent); color:#fff; font-size:.8rem; font-weight:800; margin-right:9px; vertical-align:middle; }
+    p { line-height:1.6; margin:0 0 12px; color:var(--ink); }
+    ol, ul { line-height:1.6; margin:0 0 12px; padding-left:22px; }
+    li { margin-bottom:7px; }
+    a { color:var(--accent); }
+    code { background:#f2f5fa; border:1px solid var(--line); border-radius:5px; padding:1px 6px;
+      font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace; font-size:.85em; color:var(--navy); }
+    .muted { color:var(--muted); }
+    .callout { border-left:3px solid var(--accent); background:#f6f9fd; border-radius:0 10px 10px 0;
+      padding:12px 16px; margin:0 0 14px; font-size:.9rem; }
+    .callout.warn { border-left-color:var(--amber); background:#fdf9f0; }
+    .callout strong { color:var(--navy); }
+    .toc { margin:0; padding-left:0; list-style:none; columns:2; column-gap:26px; }
+    .toc li { margin-bottom:6px; }
+    table { width:100%; border-collapse:collapse; font-size:.88rem; margin:4px 0 12px; }
+    th, td { text-align:left; padding:9px 11px; border-bottom:1px solid var(--line); vertical-align:top; }
+    th { color:var(--muted); font-weight:700; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; }
+    .badge { display:inline-block; font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em;
+      padding:2px 8px; border-radius:999px; }
+    .badge.manual { background:#fdf0ee; color:var(--danger); }
+    .badge.auto { background:#eaf6ee; color:var(--green); }
+    .step { padding:16px 0; border-bottom:1px solid var(--line); }
+    .step:last-child { border-bottom:0; padding-bottom:0; }
+    .doc-links { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); margin:2px 0 0; }
+    .doc-link { display:flex; align-items:flex-start; gap:12px; text-decoration:none; color:inherit;
       border:1px solid var(--line); border-radius:12px; padding:14px 16px; background:#fbfcfe;
-      transition:border-color .12s ease, box-shadow .12s ease, transform .12s ease; }}
-    .doc-link:hover {{ border-color:var(--accent); box-shadow:0 6px 18px rgba(37,99,235,.1); transform:translateY(-1px); }}
-    .doc-link .ic {{ flex-shrink:0; width:34px; height:34px; border-radius:9px; display:grid; place-items:center;
-      background:#eaf1fe; color:var(--accent); font-size:1.05rem; }}
-    .doc-link .t {{ font-weight:700; color:var(--navy); font-size:.92rem; }}
-    .doc-link .d {{ color:var(--muted); font-size:.8rem; margin-top:2px; line-height:1.45; }}
-    .doc-link.primary {{ background:#f4f8ff; border-color:#cfe0fb; }}
-  </style>
-</head>
-<body>
-  <header>
-    <div class="brand-head">
-      <div class="brand-mark">
-        <img src="/static/apple-touch-icon.png" alt="Sagefrog" width="40" height="40">
-      </div>
-      <div>
-        <h1>Sagefrog Marketing Group · Docs</h1>
-        <span class="who">Signed in as {_esc(user_email)}</span>
-      </div>
-    </div>
-    <div class="head-actions">
-      <a href="/admin/hq">HQ</a>
-      <a href="/admin/agency-trends">Trends</a>
-      <a href="/admin">&larr; Admin</a>
-      <form method="post" action="/logout" style="display:inline"><button type="submit" class="link">Sign out</button></form>
-    </div>
-  </header>
+      transition:border-color .12s ease, box-shadow .12s ease, transform .12s ease; }
+    .doc-link:hover { border-color:var(--accent); box-shadow:0 6px 18px rgba(37,99,235,.1); transform:translateY(-1px); }
+    .doc-link .ic { flex-shrink:0; width:34px; height:34px; border-radius:9px; display:grid; place-items:center;
+      background:#eaf1fe; color:var(--accent); font-size:1.05rem; }
+    .doc-link .t { font-weight:700; color:var(--navy); font-size:.92rem; }
+    .doc-link .d { color:var(--muted); font-size:.8rem; margin-top:2px; line-height:1.45; }
+    .doc-link.primary { background:#f4f8ff; border-color:#cfe0fb; }"""
+    content = f"""
   <main>
     <section>
       <div class="page-head">
@@ -287,6 +251,11 @@ def render_docs_page(*, user_email: str) -> str:
         </a>
       </div>
     </section>
-  </main>
-</body>
-</html>"""
+  </main>"""
+    return render_admin_shell_page(
+        active_nav="docs",
+        page_title="Docs",
+        content_html=content,
+        session_email=user_email,
+        extra_css=extra_css,
+    )
