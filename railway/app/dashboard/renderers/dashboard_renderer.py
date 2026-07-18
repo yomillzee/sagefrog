@@ -40,8 +40,16 @@ from dashboard.renderers.cards_renderer import (
     summary_cards_html as _summary_cards_html,
 )
 from dashboard.renderers.tables_renderer import ga4_platform_reports as _ga4_platform_reports
-from dashboard.utils.formatting import esc as _esc, json_for_html_script as _json_for_html_script
-from dashboard.utils.urls import settings_page_url as _settings_page_url
+from dashboard.utils.formatting import (
+    esc as _esc,
+    fmt_int as _fmt_int,
+    fmt_pct as _fmt_pct,
+    json_for_html_script as _json_for_html_script,
+)
+from dashboard.utils.urls import (
+    lead_tracking_page_url as _lead_tracking_page_url,
+    settings_page_url as _settings_page_url,
+)
 
 def _preset_to_label(preset: str) -> str:
     return {
@@ -131,6 +139,165 @@ def _patch_campaign_breakdowns(
             new_campaigns.append(row)
         patched[source] = {**src_data, "campaign": new_campaigns}
     return patched
+
+
+def _mql_money_compact(n: Any) -> str:
+    try:
+        v = float(n)
+    except (TypeError, ValueError):
+        return "$0"
+    a = abs(v)
+    if a >= 1_000_000:
+        return f"${v / 1_000_000:.1f}M".replace(".0M", "M")
+    if a >= 10_000:
+        return f"${v / 1_000:.0f}K"
+    return f"${v:,.0f}"
+
+
+def _mql_mom_delta(mqls_by_month: list[dict[str, Any]]) -> str:
+    """Month-over-month MQL change for the two most recent months with data."""
+    parsed: list[tuple[str, int]] = []
+    for r in mqls_by_month or []:
+        month = str(r.get("month") or "")
+        if not month:
+            continue
+        try:
+            parsed.append((month, int(r.get("contacts") or 0)))
+        except (TypeError, ValueError):
+            continue
+    if len(parsed) < 2:
+        return ""
+    parsed.sort()
+    prev, curr = parsed[-2][1], parsed[-1][1]
+    if prev == 0:
+        return "" if curr == 0 else '<span class="mql-delta up">New this month</span>'
+    change = (curr - prev) / prev * 100.0
+    if abs(change) < 0.5:
+        return '<span class="mql-delta flat">Flat MoM</span>'
+    if change > 0:
+        return f'<span class="mql-delta up">▲ {change:.0f}% MoM</span>'
+    return f'<span class="mql-delta down">▼ {abs(change):.0f}% MoM</span>'
+
+
+def _mql_sparkline(mqls_by_month: list[dict[str, Any]], accent: str = "#ff7a59") -> str:
+    """Tiny inline-SVG trend of monthly MQL volume (last 12 months).
+
+    Returns "" when there's fewer than two months of data — nothing to plot.
+    """
+    series: list[int] = []
+    for r in sorted(mqls_by_month or [], key=lambda x: str(x.get("month") or "")):
+        if not str(r.get("month") or ""):
+            continue
+        try:
+            series.append(int(r.get("contacts") or 0))
+        except (TypeError, ValueError):
+            continue
+    series = series[-12:]
+    if len(series) < 2:
+        return ""
+
+    w, h, pad = 132.0, 34.0, 3.0
+    peak = max(series) or 1
+    n = len(series)
+    step = (w - 2 * pad) / (n - 1)
+    pts = [
+        (pad + i * step, h - pad - (v / peak) * (h - 2 * pad))
+        for i, v in enumerate(series)
+    ]
+    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    area = (
+        f"M {pts[0][0]:.1f} {h - pad:.1f} "
+        + " ".join(f"L {x:.1f} {y:.1f}" for x, y in pts)
+        + f" L {pts[-1][0]:.1f} {h - pad:.1f} Z"
+    )
+    lx, ly = pts[-1]
+    return (
+        f'<svg class="mql-spark" viewBox="0 0 {w:.0f} {h:.0f}" preserveAspectRatio="none" '
+        f'role="img" aria-label="Monthly MQL trend">'
+        f'<path d="{area}" fill="{accent}" fill-opacity="0.12"/>'
+        f'<polyline points="{line}" fill="none" stroke="{accent}" stroke-width="1.6" '
+        f'stroke-linejoin="round" stroke-linecap="round"/>'
+        f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="2.2" fill="{accent}"/>'
+        f'</svg>'
+    )
+
+
+def hubspot_mql_overview_html(report: Any, lead_tracking_url: str | None) -> str:
+    """Compact HubSpot MQL tracker for the Overview page.
+
+    Each card only renders when its underlying data exists, and the whole panel
+    is omitted when nothing has synced — so a client with HubSpot connected but
+    no data yet never sees an empty shell.
+    """
+    if report is None or not getattr(report, "configured", False):
+        return ""
+
+    cards: list[str] = []
+    if report.mql_count:
+        spark = _mql_sparkline(report.mqls_by_month)
+        cards.append(
+            f'<div class="card">'
+            f'<div class="card-label">MQLs</div>'
+            f'<div class="card-value">{_fmt_int(report.mql_count)}</div>'
+            f'{spark}'
+            f'<div class="card-stats">'
+            f'<span>{_fmt_pct(report.mql_count, report.contact_count)} of contacts</span>'
+            f'{_mql_mom_delta(report.mqls_by_month)}'
+            f'</div></div>'
+        )
+    if report.contact_count:
+        cards.append(
+            f'<div class="card">'
+            f'<div class="card-label">Contacts tracked</div>'
+            f'<div class="card-value">{_fmt_int(report.contact_count)}</div>'
+            f'</div>'
+        )
+    if report.deal_count:
+        cards.append(
+            f'<div class="card">'
+            f'<div class="card-label">Deals</div>'
+            f'<div class="card-value">{_fmt_int(report.deal_count)}</div>'
+            f'<div class="card-stats"><span>{_fmt_pct(report.deal_count, report.mql_count)} of MQLs</span></div>'
+            f'</div>'
+        )
+    if report.pipeline_amount:
+        avg = (
+            f'<span>{_mql_money_compact(report.pipeline_amount / report.deal_count)} avg deal</span>'
+            if report.deal_count else ""
+        )
+        cards.append(
+            f'<div class="card">'
+            f'<div class="card-label">Pipeline</div>'
+            f'<div class="card-value">{_mql_money_compact(report.pipeline_amount)}</div>'
+            f'<div class="card-stats">{avg}</div>'
+            f'</div>'
+        )
+    if report.won_amount:
+        cards.append(
+            f'<div class="card">'
+            f'<div class="card-label">Won revenue</div>'
+            f'<div class="card-value">{_mql_money_compact(report.won_amount)}</div>'
+            f'<div class="card-stats"><span>{_fmt_pct(report.won_amount, report.pipeline_amount)} win rate</span></div>'
+            f'</div>'
+        )
+
+    if not cards:
+        return ""
+
+    link = (
+        f'<a class="mql-panel-link" href="{_esc(lead_tracking_url)}">View lead tracking →</a>'
+        if lead_tracking_url else ""
+    )
+    return f"""
+        <section class="panel mql-overview-panel" aria-label="HubSpot MQL tracker">
+          <div class="panel-head">
+            <h2><span class="mql-hs-dot"></span>HubSpot MQL Tracker</h2>
+            {link}
+          </div>
+          <div class="cards mql-overview-cards">
+            {''.join(cards)}
+          </div>
+        </section>"""
 
 
 def ga4_website_search_html(
@@ -747,6 +914,24 @@ def render_penn_html(
     # otherwise Lead Tracking/Connectors go missing on the dashboard while still
     # showing on the child pages that key off the URL slug.
     _pflags = _platform_nav_flags(slug)
+
+    # HubSpot MQL tracker for the Overview page — only fetched when HubSpot is
+    # connected. Failures never break the dashboard; the helper drops any card
+    # (and the whole panel) that has no data behind it.
+    mql_overview_html = ""
+    if _pflags["show_lead_tracking"]:
+        try:
+            import hubspot_reports_service
+            _mql_report = hubspot_reports_service.build_report(slug)
+            mql_overview_html = hubspot_mql_overview_html(
+                _mql_report,
+                _lead_tracking_page_url(
+                    client_slug=slug, access_key=access_key, use_session=use_session
+                ),
+            )
+        except Exception:
+            mql_overview_html = ""
+
     view_nav_html = _sidebar_view_nav_html(
         show_website=show_website_tab,
         show_campaigns=features.campaign_explorer,
@@ -1491,6 +1676,17 @@ def render_penn_html(
     }}
     .card-value {{ font-size: 1.75rem; font-weight: 700; margin: 8px 0 4px; letter-spacing: -0.02em; }}
     .card-stats {{ display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 0.84rem; color: var(--muted); }}
+    .mql-overview-panel {{ border-left: 4px solid #ff7a59; }}
+    .mql-overview-panel .panel-head h2 {{ display: inline-flex; align-items: center; gap: 8px; }}
+    .mql-hs-dot {{ width: 9px; height: 9px; border-radius: 50%; background: #ff7a59; flex-shrink: 0; }}
+    .mql-panel-link {{ font-size: 0.84rem; font-weight: 600; color: var(--accent); text-decoration: none; white-space: nowrap; }}
+    .mql-panel-link:hover {{ text-decoration: underline; }}
+    .mql-overview-cards {{ margin-bottom: 0; }}
+    .mql-spark {{ width: 100%; height: 34px; display: block; margin: 2px 0 6px; }}
+    .mql-delta {{ font-weight: 700; }}
+    .mql-delta.up {{ color: var(--ok); }}
+    .mql-delta.down {{ color: var(--err); }}
+    .mql-delta.flat {{ color: var(--muted); }}
     .chart-stack {{ display: flex; flex-direction: column; gap: 24px; }}
     .chart-legend-note {{
       margin: 12px 0 0;
@@ -2961,6 +3157,8 @@ def render_penn_html(
             {performance_trend_html}
 
             {budget_pacing_html}
+
+            {mql_overview_html}
           </div>
 
           {campaign_explorer_panel}
