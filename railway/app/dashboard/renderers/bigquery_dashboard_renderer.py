@@ -329,6 +329,15 @@ def render_bigquery_dashboard_page(
       </div>
     </div>"""
 
+    # Presenter notes: floating, client-specific notepad for agency users to keep
+    # talking points on hand while sharing this dashboard live. Agency-only
+    # (admins + agency-wide "standard" users, i.e. whoever can switch clients);
+    # client-role users never see it.
+    notes_widget_html = ""
+    if session_can_switch_clients:
+        from dashboard.renderers import notes_widget as _notes_widget
+        notes_widget_html = _notes_widget.widget_html(client_slug=client_slug, label=label)
+
     def _aurl(path: str) -> str:
         return _api_url(path, access_key=access_key)
 
@@ -3702,5 +3711,6 @@ def render_bigquery_dashboard_page(
     }})();
   </script>
   {budget_scripts}
+  {notes_widget_html}
 </body>
 </html>"""
