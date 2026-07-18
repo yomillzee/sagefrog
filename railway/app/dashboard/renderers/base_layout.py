@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-import client_config
 import dashboard_theme
 
-from dashboard.utils.auth import min_refresh_seconds, refresh_cooldown_status
 from dashboard.utils.formatting import esc as _esc
 from dashboard.utils.urls import (
     client_switch_target_url as _client_switch_target_url,
@@ -16,7 +12,6 @@ from dashboard.utils.urls import (
     files_page_url as _files_page_url,
     gtm_page_url as _gtm_page_url,
     lead_tracking_page_url as _lead_tracking_page_url,
-    refresh_action_url as _refresh_action_url,
     settings_page_url as _settings_page_url,
 )
 
@@ -51,67 +46,6 @@ def session_account_html(*, email: str | None, is_admin: bool) -> str:
       </div>
     </div>
     """
-
-
-def refresh_toolbar(
-    *,
-    client_slug: str = "penn",
-    access_key: str | None,
-    use_session: bool = False,
-    snapshot: dict[str, Any] | None,
-    flash_message: str | None = None,
-) -> str:
-    refresh_url = _refresh_action_url(
-        client_slug=client_slug,
-        access_key=access_key,
-        use_session=use_session,
-    )
-    if not refresh_url:
-        return ""
-    quick_allowed, quick_remaining = refresh_cooldown_status(snapshot, quick=True)
-    full_allowed, full_remaining = refresh_cooldown_status(snapshot, quick=False)
-    notice = ""
-    if flash_message:
-        notice = f'<div class="notice">{_esc(flash_message)}</div>'
-    elif min_refresh_seconds(quick=False) > 0 and not quick_allowed and not full_allowed:
-        mins = max(1, (min(quick_remaining, full_remaining) + 59) // 60)
-        notice = f'<div class="notice muted">Refresh available in ~{mins} min.</div>'
-    # Progressive enhancement: these stay ordinary POST forms and work with JS
-    # off. When htmx is loaded it intercepts the submit (hx-post), so the whole
-    # page no longer freezes during the multi-second refresh — instead the
-    # button disables (hx-disabled-elt) and a spinner shows (hx-indicator), and
-    # the server replies with an HX-Redirect to the freshly-synced dashboard.
-    # The hidden csrf_token the form middleware injects rides along in the body,
-    # so CSRF stays satisfied with no extra wiring.
-    hx = (
-        f'hx-post="{refresh_url}" hx-swap="none" '
-        'hx-disabled-elt="find button" hx-indicator="#refresh-indicator"'
-    )
-    if quick_allowed:
-        quick_btn = (
-            f'<form method="post" action="{refresh_url}" class="refresh-form" {hx}>'
-            f'<input type="hidden" name="quick" value="1">'
-            f'<button type="submit" class="refresh-btn">Quick refresh</button></form>'
-        )
-    else:
-        quick_btn = '<button type="button" class="refresh-btn" disabled>Quick refresh</button>'
-    if full_allowed:
-        full_btn = (
-            f'<form method="post" action="{refresh_url}" class="refresh-form" {hx}>'
-            f'<button type="submit" class="refresh-btn refresh-btn--secondary">'
-            f"Full refresh</button></form>"
-        )
-    else:
-        full_btn = (
-            '<button type="button" class="refresh-btn refresh-btn--secondary" disabled>'
-            "Full refresh</button>"
-        )
-    spinner = (
-        '<span id="refresh-indicator" class="refresh-spinner htmx-indicator" '
-        'role="status" aria-label="Refreshing"></span>'
-    )
-    buttons = f'<div class="refresh-actions">{quick_btn}{full_btn}{spinner}</div>'
-    return f'<div class="refresh-bar">{notice}{buttons}</div>'
 
 
 def topbar_client_selector_html(

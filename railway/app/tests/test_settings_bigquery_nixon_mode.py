@@ -35,29 +35,27 @@ class SettingsAlwaysBigqueryTests(unittest.TestCase):
     renders the BigQuery settings page, regardless of any legacy dashboard_mode."""
 
     def _render(self, mode: str):
-        """Returns (bq_settings_mock, penn_form_mock) after invoking the route.
+        """Returns the bq-settings mock after invoking the settings route.
 
-        Both renderers are patched so the assertion is purely about routing
-        (which renderer is chosen) and needs no database.
+        The renderer is patched so the assertion is purely about routing (the
+        BigQuery settings page is chosen) and needs no database.
         """
         with patch.object(settings_routes, "validate_client_slug", side_effect=lambda s: s), \
              patch.object(settings_routes.client_dashboard_config, "get_config",
                           return_value=_FakeCfgRow(mode)), \
              patch.object(settings_routes.web_auth, "authenticate_dashboard", return_value=_FakeAuth()), \
              patch.object(settings_routes, "_render_bq_nixon_settings",
-                          return_value="<html>bq-settings</html>") as bq_settings, \
-             patch.object(settings_routes.dashboard_settings, "render_settings_html") as penn_form:
+                          return_value="<html>bq-settings</html>") as bq_settings:
             settings_routes.dashboard_client_settings(
                 client_slug="test", request=types.SimpleNamespace()
             )
-        return bq_settings, penn_form
+        return bq_settings
 
     def test_renders_bigquery_settings_regardless_of_mode(self) -> None:
         for mode in ("bigquery_nixon", "bigquery", "api"):
             with self.subTest(mode=mode):
-                bq_settings, penn_form = self._render(mode)
+                bq_settings = self._render(mode)
                 bq_settings.assert_called_once()
-                penn_form.assert_not_called()
 
 
 if __name__ == "__main__":
