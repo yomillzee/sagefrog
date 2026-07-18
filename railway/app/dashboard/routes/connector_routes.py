@@ -430,6 +430,14 @@ async def connector_sync(
                         db_cache.invalidate_prefix("nixon.")
                 except Exception:
                     _log.warning("cache invalidation failed [%s/%s]", slug, ctype, exc_info=True)
+                # Re-warm the core card caches we just invalidated so the next
+                # dashboard load is served warm rather than paying a cold
+                # BigQuery query per card. Best-effort — never affects the sync.
+                try:
+                    from dashboard.services.dashboard_warm_service import warm_client_cache
+                    warm_client_cache("nixon" if slug.startswith("nixon") else slug)
+                except Exception:
+                    _log.warning("cache warm failed [%s/%s]", slug, ctype, exc_info=True)
         except Exception as exc:
             err = str(exc)[:500]
             connector_config_store.finish_sync_run(run_id, status="failed", error_message=err)
