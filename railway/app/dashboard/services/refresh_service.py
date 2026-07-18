@@ -11,12 +11,12 @@ import ga4_page_service
 import ga4_paid_entity_service
 import linkedin_service
 from dates_util import resolve_date_range
-from penn_config import PennDashboardConfig
+from dashboard_config import DashboardConfig
 
 from dashboard.services.warehouse_metrics_service import sync_meta
 
 
-def patch_snapshot_from_config(cfg: PennDashboardConfig) -> None:
+def patch_snapshot_from_config(cfg: DashboardConfig) -> None:
     """Sync label and account IDs onto an existing snapshot after settings save."""
     if not dashboard_snapshots.enabled():
         return

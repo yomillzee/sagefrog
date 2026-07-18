@@ -1,8 +1,5 @@
-"""Dashboard client config dataclass.
-
-Named PennDashboardConfig for historical reasons (it originated with the Penn
-dashboard) but it is the generic per-client config shape used by every client.
-"""
+"""Dashboard client config dataclass — the per-client config shape (account IDs,
+GA4 key, budget) that config loading returns for every client."""
 
 from __future__ import annotations
 
@@ -10,7 +7,7 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
-class PennDashboardConfig:
+class DashboardConfig:
     client_key: str
     label: str
     google_customer_id: str | None
