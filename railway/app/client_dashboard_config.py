@@ -84,6 +84,10 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config
       ADD COLUMN IF NOT EXISTS explorer_budget_tracker BOOLEAN NOT NULL DEFAULT TRUE
     """,
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS overview_pinned_card TEXT
+    """,
 ]
 
 
@@ -112,6 +116,7 @@ class ClientConfigRow:
     explorer_budget_tracker: bool = True
     gsc_branded_exclude: str | None = None
     gsc_target_exclude: str | None = None
+    overview_pinned_card: str | None = None
 
 
 def _get_db_url() -> str | None:
@@ -149,7 +154,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    gtm_account_id, gtm_container_id,
                    gsc_branded_roots, gsc_target_keywords, ga4_key_events,
                    explorer_filters, explorer_budget_tracker,
-                   gsc_branded_exclude, gsc_target_exclude
+                   gsc_branded_exclude, gsc_target_exclude,
+                   overview_pinned_card
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -187,6 +193,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         explorer_budget_tracker=bool(row[20]) if row[20] is not None else True,
         gsc_branded_exclude=_s(row[21]),
         gsc_target_exclude=_s(row[22]),
+        overview_pinned_card=_s(row[23]),
     )
 
 
@@ -404,6 +411,43 @@ def update_explorer_filters(
               updated_by = EXCLUDED.updated_by
             """,
             (slug, slug, now, _clean(updated_by), _clean(filters_text)),
+        )
+
+
+def update_overview_pinned_card(
+    client_slug: str,
+    *,
+    card_key: str | None,
+    updated_by: str | None = None,
+) -> None:
+    """Set which Overview card the admin has pinned to the top (BigQuery-mart
+    dashboard). Stores a single stable card key (e.g. ``"website"``); empty/None
+    clears the pin so the Overview falls back to its natural order. Touches only
+    that column."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save the pinned overview card.")
+
+    def _clean(val: str | None) -> str | None:
+        return (val or "").strip() or None
+
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, updated_at, updated_by, overview_pinned_card
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (client_slug) DO UPDATE SET
+              overview_pinned_card = EXCLUDED.overview_pinned_card,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, slug, now, _clean(updated_by), _clean(card_key)),
         )
 
 
