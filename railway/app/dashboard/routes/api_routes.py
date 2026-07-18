@@ -144,6 +144,72 @@ def _cached_bq_read(source: str, payload: dict, *, ttl_seconds: int, fetch) -> d
     return result
 
 
+# --- Shared card readers -------------------------------------------------------
+# The core paid-media card endpoints (summary / marketing / health) delegate to
+# these so the exact same cache source, payload, TTL, and fetch are defined in
+# one place. Post-sync cache warming (dashboard_warm_service) calls the very same
+# helpers, which guarantees a warmed entry is keyed identically to what the
+# endpoint later reads — no key can drift out of sync between the two paths.
+# Auth and date resolution stay in the endpoints; these assume an already
+# authorized, already normalized (lowercased) client_key and resolved dates.
+
+def _summary_read(
+    normalized: str,
+    start: date,
+    end: date,
+    *,
+    project_id: str | None = None,
+    dataset_id: str | None = None,
+) -> dict:
+    payload = {"start": start.isoformat(), "end": end.isoformat()}
+    fetch = lambda: marketing_service.fetch_summary(start_date=start, end_date=end)
+    if normalized == "nixon":
+        return _cached_bq_read("nixon.summary", payload, ttl_seconds=900, fetch=fetch)
+    with marketing_service.route(
+        client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+    ):
+        return _cached_bq_read(f"{normalized}.summary", payload, ttl_seconds=900, fetch=fetch)
+
+
+def _health_read(
+    normalized: str,
+    limit: int,
+    *,
+    project_id: str | None = None,
+    dataset_id: str | None = None,
+) -> dict:
+    fetch = lambda: marketing_service.fetch_marketing_health(limit=limit)
+    if normalized == "nixon":
+        return _cached_bq_read(
+            "nixon.marketing.health", {"limit": limit}, ttl_seconds=900, fetch=fetch,
+        )
+    with marketing_service.route(
+        client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+    ):
+        return _cached_bq_read(f"{normalized}.health", {"limit": limit}, ttl_seconds=900, fetch=fetch)
+
+
+def _marketing_read(
+    normalized: str,
+    start: date,
+    end: date,
+    top_limit: int = 10,
+    *,
+    project_id: str | None = None,
+    dataset_id: str | None = None,
+) -> dict:
+    payload = {"start": start.isoformat(), "end": end.isoformat(), "top_limit": top_limit}
+    fetch = lambda: marketing_service.fetch_marketing(
+        start_date=start, end_date=end, top_limit=top_limit,
+    )
+    if normalized == "nixon":
+        return _cached_bq_read("nixon.marketing", payload, ttl_seconds=900, fetch=fetch)
+    with marketing_service.route(
+        client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+    ):
+        return _cached_bq_read(f"{normalized}.marketing", payload, ttl_seconds=900, fetch=fetch)
+
+
 @router.get(
     "/dashboard/nixon-bq-test",
     response_class=HTMLResponse,
@@ -307,16 +373,7 @@ def nixon_marketing(
     web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        return _cached_bq_read(
-            "nixon.marketing",
-            {"start": start.isoformat(), "end": end.isoformat(), "top_limit": top_limit},
-            ttl_seconds=900,
-            fetch=lambda: marketing_service.fetch_marketing(
-                start_date=start,
-                end_date=end,
-                top_limit=top_limit,
-            ),
-        )
+        return _marketing_read("nixon", start, end, top_limit)
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
 
@@ -342,27 +399,16 @@ def client_summary(
         web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
         start, end = _resolve_marketing_dates(start_date, end_date)
         try:
-            return _cached_bq_read(
-                "nixon.summary",
-                {"start": start.isoformat(), "end": end.isoformat()},
-                ttl_seconds=900,
-                fetch=lambda: marketing_service.fetch_summary(start_date=start, end_date=end),
-            )
+            return _summary_read("nixon", start, end)
         except Exception as exc:
             raise _bq_endpoint_failure(exc) from exc
     project_id, dataset_id = _load_bq_test_config(normalized)
     web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with marketing_service.route(
-            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
-        ):
-            return _cached_bq_read(
-                f"{normalized}.summary",
-                {"start": start.isoformat(), "end": end.isoformat()},
-                ttl_seconds=900,
-                fetch=lambda: marketing_service.fetch_summary(start_date=start, end_date=end),
-            )
+        return _summary_read(
+            normalized, start, end, project_id=project_id, dataset_id=dataset_id,
+        )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
 
@@ -408,22 +454,15 @@ def client_health(
     if normalized == "nixon":
         web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
         try:
-            return _cached_bq_read(
-                "nixon.marketing.health", {"limit": limit}, ttl_seconds=900,
-                fetch=lambda: marketing_service.fetch_marketing_health(limit=limit),
-            )
+            return _health_read("nixon", limit)
         except Exception as exc:
             raise _bq_endpoint_failure(exc) from exc
     project_id, dataset_id = _load_bq_test_config(normalized)
     web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     try:
-        with marketing_service.route(
-            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
-        ):
-            return _cached_bq_read(
-                f"{normalized}.health", {"limit": limit}, ttl_seconds=900,
-                fetch=lambda: marketing_service.fetch_marketing_health(limit=limit),
-            )
+        return _health_read(
+            normalized, limit, project_id=project_id, dataset_id=dataset_id,
+        )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
 

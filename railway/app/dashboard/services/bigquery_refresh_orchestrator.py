@@ -324,4 +324,22 @@ def run_client_bigquery_refresh(
     result["pending_sources"] = pending
     result["last_refreshed_at"] = datetime.now(tz=UTC).isoformat()
     result["finished_at"] = result["last_refreshed_at"]
+
+    # The per-source syncs above dropped this client's cached card reads
+    # (db_cache.invalidate_prefix). Proactively re-warm the core cards now so the
+    # first dashboard viewer after this sync gets a warm/fast load instead of
+    # paying a cold BigQuery query per card. Best-effort: never affects the
+    # refresh outcome, and only ever repopulates the same cache the read
+    # endpoints use.
+    try:
+        from dashboard.services.dashboard_warm_service import warm_client_cache
+
+        # Nixon's card reads are cached under the literal "nixon." prefix even
+        # when its connectors sync under "nixon-bq-test" (mirrors the dual
+        # invalidate_prefix above).
+        warm_slug = "nixon" if client_slug.startswith("nixon") else client_slug
+        result["cache_warm"] = warm_client_cache(warm_slug)
+    except Exception:
+        LOGGER.warning("cache warm step failed [%s]", client_slug, exc_info=True)
+
     return result
