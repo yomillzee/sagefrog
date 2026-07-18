@@ -96,19 +96,57 @@ class UserTableTests(unittest.TestCase):
 
     def test_rows_carry_search_key(self) -> None:
         html = _render()
-        # data-search folds together email, role, group, and slug for filtering.
+        # data-search folds together email, role, group, and access for filtering.
         m = re.search(r'data-search="([^"]*client@pcb\.com[^"]*)"', html)
         self.assertIsNotNone(m)
         key = m.group(1)
         for token in ("client@pcb.com", "client", "penn medical", "penn"):
             self.assertIn(token, key)
         self.assertIn('id="userSearch"', html)
-        self.assertIn('id="userTableBody"', html)
 
     def test_user_count_chip(self) -> None:
         html = _render()
         self.assertIn('id="userCount"', html)
-        self.assertIn(">3</span>", html)  # three users
+        self.assertIn('id="userCount">3</span>', html)  # three users total
+
+
+class AudienceSeparationTests(unittest.TestCase):
+    """Clients and Sagefrog staff render in two separate, labelled tables."""
+
+    def test_two_labelled_panels(self) -> None:
+        html = _render()
+        self.assertIn('data-group="team"', html)
+        self.assertIn('data-group="client"', html)
+        self.assertIn(">Sagefrog team<", html)
+        self.assertIn(">Client portal users<", html)
+
+    def test_segmented_control_with_counts(self) -> None:
+        html = _render()
+        self.assertIn('data-scope="team"', html)
+        self.assertIn('data-scope="client"', html)
+        # Two team members (admin + standard), one client.
+        self.assertRegex(html, r'data-scope="team"[^>]*>Sagefrog team\s*<span class="seg-count">2</span>')
+        self.assertRegex(html, r'data-scope="client"[^>]*>Clients\s*<span class="seg-count">1</span>')
+
+    def test_client_lands_in_client_table_only(self) -> None:
+        html = _render()
+        client_panel = re.search(
+            r'data-group="client".*?</table>', html, re.S
+        ).group(0)
+        team_panel = re.search(
+            r'data-group="team".*?</table>', html, re.S
+        ).group(0)
+        self.assertIn("client@pcb.com", client_panel)
+        self.assertNotIn("client@pcb.com", team_panel)
+        # Staff/admin never appear in the client table.
+        self.assertIn("staff@sf.com", team_panel)
+        self.assertNotIn("staff@sf.com", client_panel)
+
+    def test_admin_access_shown_as_all_clients(self) -> None:
+        self.assertIn('class="chip-all">All clients</span>', _render())
+
+    def test_scope_filter_js_present(self) -> None:
+        self.assertIn(".seg-btn", _render())
 
 
 class GroupPreviewTests(unittest.TestCase):

@@ -666,29 +666,51 @@ _ROLE_TOGGLE_JS = """
 })();
 """
 
-# Client-side filter over the users table so a growing client roster stays
-# scannable. Matches the row's data-search key (email/role/group/slug) and keeps
-# a live count of what's visible.
+# Client-side filter over the two user tables so a growing roster stays
+# scannable. A segmented control scopes to the Sagefrog team, the clients, or
+# both; the search box matches each row's data-search key within the shown
+# panels. The header count reflects what's currently visible.
 _USER_SEARCH_JS = """
 (function () {
   var input = document.getElementById('userSearch');
-  var body = document.getElementById('userTableBody');
   var count = document.getElementById('userCount');
-  var empty = document.getElementById('userSearchEmpty');
-  if (!input || !body) return;
-  var rows = Array.prototype.slice.call(body.querySelectorAll('tr.user-row'));
+  var panels = Array.prototype.slice.call(document.querySelectorAll('.user-group'));
+  var segBtns = Array.prototype.slice.call(document.querySelectorAll('.seg-btn'));
+  if (!panels.length) return;
+  var scope = 'all';
   function apply() {
-    var q = input.value.trim().toLowerCase();
-    var shown = 0;
-    rows.forEach(function (row) {
-      var hit = !q || (row.getAttribute('data-search') || '').indexOf(q) !== -1;
-      row.hidden = !hit;
-      if (hit) shown++;
+    var q = (input ? input.value : '').trim().toLowerCase();
+    var total = 0;
+    panels.forEach(function (panel) {
+      var group = panel.getAttribute('data-group');
+      var inScope = (scope === 'all' || scope === group);
+      panel.hidden = !inScope;
+      var shown = 0;
+      var rows = panel.querySelectorAll('tr.user-row');
+      rows.forEach(function (row) {
+        var hit = inScope && (!q || (row.getAttribute('data-search') || '').indexOf(q) !== -1);
+        row.hidden = !hit;
+        if (hit) shown++;
+      });
+      var empty = panel.querySelector('.users-empty');
+      if (empty) empty.hidden = !(inScope && rows.length && shown === 0);
+      if (inScope) total += shown;
     });
-    if (count) count.textContent = shown;
-    if (empty) empty.hidden = shown !== 0;
+    if (count) count.textContent = total;
   }
-  input.addEventListener('input', apply);
+  segBtns.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      scope = btn.getAttribute('data-scope') || 'all';
+      segBtns.forEach(function (b) {
+        var on = (b === btn);
+        b.classList.toggle('is-active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      apply();
+    });
+  });
+  if (input) input.addEventListener('input', apply);
+  apply();
 })();
 """
 
@@ -869,27 +891,24 @@ def render_admin_page(
             + '<div class="group-preview" aria-live="polite" hidden></div>'
         )
 
-    rows = []
-    for u in users:
+    def _labels_for(slugs) -> list[str]:
+        return [client_labels.get(s, s) for s in (slugs or [])]
+
+    def _access_chips(labels: list[str], *, empty: str) -> str:
+        if not labels:
+            return f'<span class="chip-none">{_esc(empty)}</span>'
+        return '<div class="chip-row">' + "".join(
+            f'<span class="access-chip">{_esc(lbl)}</span>' for lbl in labels
+        ) + "</div>"
+
+    def _user_row(u: dict, kind: str) -> str:
+        """Render one user <tr>. ``kind`` is 'team' (admin/standard, internal)
+        or 'client' (external portal login); the two tables carry columns tuned
+        to their audience."""
         uid = int(u["id"])
         email = str(u.get("email") or "")
         role = str(u.get("role") or "")
         group_name = u.get("group_name")
-        if role == "standard":
-            allowed = u.get("allowed_client_slugs") or []
-            slug = ", ".join(allowed) if allowed else "none"
-        elif role == "admin":
-            slug = "all"
-        elif u.get("group_id"):
-            gslugs = u.get("group_client_slugs") or []
-            slug = ", ".join(gslugs) if gslugs else "none"
-        else:
-            slug = u.get("client_slug") or "—"
-        group_cell = (
-            f'<span class="group-badge">{_esc(str(group_name))}</span>'
-            if group_name
-            else '<span class="muted">—</span>'
-        )
         avatar = u.get("avatar")
         av_inner = (
             f'<img src="{_esc(str(avatar))}" alt="" class="avatar-img" id="avimg-{uid}">'
@@ -904,7 +923,6 @@ def render_admin_page(
             f'fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
             f'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span></label>'
         )
-        role_badge = f'<span class="role-badge role-{_esc(role)}">{_esc(role)}</span>'
         status_badge = (
             '<span class="pill pill-on">Active</span>'
             if u.get("is_active")
@@ -961,33 +979,75 @@ def render_admin_page(
                 f'<button type="submit" class="link danger">Deactivate</button></form>'
             )
         actions = f'<div class="row-actions">{reset_html}{role_html}{deactivate_html}</div>'
+
+        # Resolve the human-readable dashboards this user can reach (used for
+        # both the visible access cell and the search key).
+        if role == "admin":
+            access_labels = ["All clients"]
+        elif role == "standard":
+            access_labels = _labels_for(u.get("allowed_client_slugs"))
+        elif u.get("group_id"):
+            access_labels = _labels_for(u.get("group_client_slugs"))
+        else:
+            single = u.get("client_slug")
+            access_labels = _labels_for([single] if single else [])
         search_key = _esc(
             " ".join(
                 filter(
                     None,
-                    (
-                        email,
-                        role,
-                        str(group_name or ""),
-                        str(slug),
-                    ),
+                    (email, role, str(group_name or ""), " ".join(access_labels)),
                 )
             ).lower()
         )
-        rows.append(
-            f'<tr class="user-row" data-search="{search_key}">'
-            f'<td class="col-av">{avatar_cell}</td>'
-            f'<td class="col-user">{_esc(email)}</td>'
-            f'<td>{role_badge}</td>'
-            f'<td>{group_cell}</td>'
-            f'<td class="mono">{_esc(str(slug))}</td>'
-            f'<td>{last_login_cell}</td>'
-            f'<td>{status_badge}</td>'
-            f'<td class="col-actions">{actions}</td>'
-            f'</tr>'
-        )
-    user_rows = "\n".join(rows) or '<tr><td colspan="8" class="muted">No users yet.</td></tr>'
+
+        if kind == "team":
+            role_badge = f'<span class="role-badge role-{_esc(role)}">{_esc(role)}</span>'
+            access_cell = (
+                '<span class="chip-all">All clients</span>'
+                if role == "admin"
+                else _access_chips(access_labels, empty="No access")
+            )
+            cells = (
+                f'<td class="col-av">{avatar_cell}</td>'
+                f'<td class="col-user">{_esc(email)}</td>'
+                f'<td>{role_badge}</td>'
+                f'<td class="col-access">{access_cell}</td>'
+                f'<td>{last_login_cell}</td>'
+                f'<td>{status_badge}</td>'
+                f'<td class="col-actions">{actions}</td>'
+            )
+        else:  # client
+            group_cell = (
+                f'<span class="group-badge">{_esc(str(group_name))}</span>'
+                if group_name
+                else '<span class="chip-none">Ungrouped</span>'
+            )
+            access_cell = _access_chips(access_labels, empty="No dashboards")
+            cells = (
+                f'<td class="col-av">{avatar_cell}</td>'
+                f'<td class="col-user">{_esc(email)}</td>'
+                f'<td>{group_cell}</td>'
+                f'<td class="col-access">{access_cell}</td>'
+                f'<td>{last_login_cell}</td>'
+                f'<td>{status_badge}</td>'
+                f'<td class="col-actions">{actions}</td>'
+            )
+        return f'<tr class="user-row" data-search="{search_key}">{cells}</tr>'
+
+    # Split the roster in two: internal Sagefrog accounts (admin + standard) vs
+    # external client portal logins. Each gets its own audience-tuned table so
+    # the two audiences never blur together.
+    team_rows = [_user_row(u, "team") for u in users if str(u.get("role") or "") != "client"]
+    client_rows = [_user_row(u, "client") for u in users if str(u.get("role") or "") == "client"]
+    team_count = len(team_rows)
+    client_count = len(client_rows)
     user_count = len(users)
+    team_body = "\n".join(team_rows) or (
+        '<tr class="empty-row"><td colspan="7" class="muted">No Sagefrog team members yet.</td></tr>'
+    )
+    client_body = "\n".join(client_rows) or (
+        '<tr class="empty-row"><td colspan="7" class="muted">No client portal users yet.</td></tr>'
+    )
 
     # ---- "View as user" card ----
     # Previously a floating bubble on the client dashboards; now a card here so it
@@ -1381,16 +1441,49 @@ def render_admin_page(
       background: #eef2ff; color: #3730a3; }}
     .group-select, .slug-fallback {{ width: 100%; max-width: 100%; margin-bottom: 8px; }}
     .slug-fallback {{ font-size: .86rem; }}
-    /* ---- Users: header, count chip, search ---- */
-    .users-head {{ display: flex; align-items: center; justify-content: space-between; gap: 14px;
-      flex-wrap: wrap; margin-bottom: 14px; }}
+    /* ---- Users: header, count chip, search, segmented control ---- */
+    .users-head {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+      flex-wrap: wrap; margin-bottom: 18px; }}
+    .users-head-left {{ min-width: 200px; }}
+    .users-head-right {{ display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }}
+    .section-sub {{ margin: 4px 0 0; font-size: .84rem; color: var(--muted); }}
     .count-chip {{ display: inline-block; min-width: 22px; padding: 1px 9px; border-radius: 999px;
       background: #eef2f7; color: var(--muted); font-size: .78rem; font-weight: 700; vertical-align: middle;
       margin-left: 6px; }}
+    .seg {{ display: inline-flex; padding: 3px; background: #eef2f7; border-radius: 11px; gap: 2px; }}
+    .seg-btn {{ display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent;
+      padding: 6px 13px; border-radius: 8px; font-size: .83rem; font-weight: 650; color: var(--muted);
+      cursor: pointer; transition: background .14s, color .14s, box-shadow .14s; }}
+    .seg-btn:hover {{ color: var(--navy); }}
+    .seg-btn.is-active {{ background: #fff; color: var(--navy); box-shadow: 0 1px 3px rgba(10,37,64,.12); }}
+    .seg-count {{ display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 999px; font-size: .72rem;
+      font-weight: 700; background: rgba(10,37,64,.08); color: inherit; }}
+    .seg-btn.is-active .seg-count {{ background: #e6edf7; color: var(--accent); }}
     .users-search {{ position: relative; display: flex; align-items: center; }}
     .users-search svg {{ position: absolute; left: 11px; color: var(--muted); pointer-events: none; }}
     .users-search input {{ margin: 0; padding: 9px 12px 9px 34px; width: 280px; max-width: 60vw; font-size: .88rem; }}
     .users-empty {{ padding: 18px 8px; text-align: center; font-size: .9rem; }}
+    /* ---- Audience panels (team vs clients) ---- */
+    .user-group {{ margin-top: 8px; }}
+    .user-group + .user-group {{ margin-top: 22px; }}
+    .user-group-head {{ display: flex; align-items: center; gap: 11px; padding: 0 2px 10px;
+      border-bottom: 1px solid var(--line); margin-bottom: 4px; }}
+    .ug-icon {{ display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; flex-shrink: 0; }}
+    .ug-team {{ background: #eef2ff; color: #4338ca; }}
+    .ug-client {{ background: #ecfdf3; color: #15803d; }}
+    .ug-text {{ display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }}
+    .ug-title {{ font-weight: 750; font-size: .96rem; color: var(--navy); }}
+    .ug-sub {{ font-size: .77rem; color: var(--muted); }}
+    .user-group[hidden] {{ display: none; }}
+    /* ---- Access / dashboard chips ---- */
+    .col-access {{ max-width: 340px; }}
+    .chip-row {{ display: flex; flex-wrap: wrap; gap: 5px; }}
+    .access-chip {{ display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .74rem; font-weight: 600;
+      background: #f1f5f9; color: #334155; border: 1px solid var(--border); white-space: nowrap; }}
+    .chip-all {{ display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .74rem; font-weight: 700;
+      background: #eef2ff; color: #4338ca; }}
+    .chip-none {{ display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .74rem; font-weight: 600;
+      background: #f8fafc; color: #94a3b8; border: 1px dashed #cbd5e1; }}
     /* ---- Last login column ---- */
     .last-login {{ font-size: .84rem; color: #334155; font-variant-numeric: tabular-nums; white-space: nowrap; }}
     .last-login.never {{ color: #94a3b8; font-style: italic; }}
@@ -1514,21 +1607,60 @@ def render_admin_page(
         <button type="submit" class="primary">Create user</button>
       </form>
     </section>
-    <section>
+    <section class="users-section">
       <div class="users-head">
-        <h2 style="margin:0">Users <span class="count-chip" id="userCount">{user_count}</span></h2>
-        <div class="users-search">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-          <input type="search" id="userSearch" placeholder="Filter by name, role, group, or client…"
-            autocomplete="off" aria-label="Filter users">
+        <div class="users-head-left">
+          <h2 style="margin:0">Users <span class="count-chip" id="userCount">{user_count}</span></h2>
+          <p class="section-sub">Sagefrog staff and client portal logins, kept separate so access is never confused.</p>
+        </div>
+        <div class="users-head-right">
+          <div class="seg" role="tablist" aria-label="Filter by audience">
+            <button type="button" class="seg-btn is-active" data-scope="all" role="tab" aria-selected="true">All</button>
+            <button type="button" class="seg-btn" data-scope="team" role="tab" aria-selected="false">Sagefrog team <span class="seg-count">{team_count}</span></button>
+            <button type="button" class="seg-btn" data-scope="client" role="tab" aria-selected="false">Clients <span class="seg-count">{client_count}</span></button>
+          </div>
+          <div class="users-search">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <input type="search" id="userSearch" placeholder="Filter by name, group, or dashboard…"
+              autocomplete="off" aria-label="Filter users">
+          </div>
         </div>
       </div>
-      <div class="user-table-wrap">
-      <table class="user-table">
-        <thead><tr><th class="col-av"></th><th>User</th><th>Role</th><th>Group</th><th>Client access</th><th>Last login</th><th>Status</th><th></th></tr></thead>
-        <tbody id="userTableBody">{user_rows}</tbody>
-      </table>
-      <p class="users-empty muted" id="userSearchEmpty" hidden>No users match your filter.</p>
+
+      <div class="user-group" data-group="team">
+        <div class="user-group-head">
+          <span class="ug-icon ug-team" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+          <div class="ug-text">
+            <span class="ug-title">Sagefrog team</span>
+            <span class="ug-sub">Internal accounts — full admins and view-only staff</span>
+          </div>
+          <span class="count-chip">{team_count}</span>
+        </div>
+        <div class="user-table-wrap">
+          <table class="user-table">
+            <thead><tr><th class="col-av"></th><th>User</th><th>Role</th><th>Client access</th><th>Last login</th><th>Status</th><th></th></tr></thead>
+            <tbody>{team_body}</tbody>
+          </table>
+          <p class="users-empty muted" hidden>No Sagefrog team members match your filter.</p>
+        </div>
+      </div>
+
+      <div class="user-group" data-group="client">
+        <div class="user-group-head">
+          <span class="ug-icon ug-client" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 9h18"/><path d="M8 21h8"/></svg></span>
+          <div class="ug-text">
+            <span class="ug-title">Client portal users</span>
+            <span class="ug-sub">External logins — scoped to their group's dashboards only</span>
+          </div>
+          <span class="count-chip">{client_count}</span>
+        </div>
+        <div class="user-table-wrap">
+          <table class="user-table">
+            <thead><tr><th class="col-av"></th><th>User</th><th>Group</th><th>Dashboards</th><th>Last login</th><th>Status</th><th></th></tr></thead>
+            <tbody>{client_body}</tbody>
+          </table>
+          <p class="users-empty muted" hidden>No client portal users match your filter.</p>
+        </div>
       </div>
     </section>
     {view_as_section_html}
