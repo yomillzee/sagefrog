@@ -179,6 +179,49 @@ def _mql_mom_delta(mqls_by_month: list[dict[str, Any]]) -> str:
     return f'<span class="mql-delta down">▼ {abs(change):.0f}% MoM</span>'
 
 
+def _mql_sparkline(mqls_by_month: list[dict[str, Any]], accent: str = "#ff7a59") -> str:
+    """Tiny inline-SVG trend of monthly MQL volume (last 12 months).
+
+    Returns "" when there's fewer than two months of data — nothing to plot.
+    """
+    series: list[int] = []
+    for r in sorted(mqls_by_month or [], key=lambda x: str(x.get("month") or "")):
+        if not str(r.get("month") or ""):
+            continue
+        try:
+            series.append(int(r.get("contacts") or 0))
+        except (TypeError, ValueError):
+            continue
+    series = series[-12:]
+    if len(series) < 2:
+        return ""
+
+    w, h, pad = 132.0, 34.0, 3.0
+    peak = max(series) or 1
+    n = len(series)
+    step = (w - 2 * pad) / (n - 1)
+    pts = [
+        (pad + i * step, h - pad - (v / peak) * (h - 2 * pad))
+        for i, v in enumerate(series)
+    ]
+    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    area = (
+        f"M {pts[0][0]:.1f} {h - pad:.1f} "
+        + " ".join(f"L {x:.1f} {y:.1f}" for x, y in pts)
+        + f" L {pts[-1][0]:.1f} {h - pad:.1f} Z"
+    )
+    lx, ly = pts[-1]
+    return (
+        f'<svg class="mql-spark" viewBox="0 0 {w:.0f} {h:.0f}" preserveAspectRatio="none" '
+        f'role="img" aria-label="Monthly MQL trend">'
+        f'<path d="{area}" fill="{accent}" fill-opacity="0.12"/>'
+        f'<polyline points="{line}" fill="none" stroke="{accent}" stroke-width="1.6" '
+        f'stroke-linejoin="round" stroke-linecap="round"/>'
+        f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="2.2" fill="{accent}"/>'
+        f'</svg>'
+    )
+
+
 def hubspot_mql_overview_html(report: Any, lead_tracking_url: str | None) -> str:
     """Compact HubSpot MQL tracker for the Overview page.
 
@@ -191,10 +234,12 @@ def hubspot_mql_overview_html(report: Any, lead_tracking_url: str | None) -> str
 
     cards: list[str] = []
     if report.mql_count:
+        spark = _mql_sparkline(report.mqls_by_month)
         cards.append(
             f'<div class="card">'
             f'<div class="card-label">MQLs</div>'
             f'<div class="card-value">{_fmt_int(report.mql_count)}</div>'
+            f'{spark}'
             f'<div class="card-stats">'
             f'<span>{_fmt_pct(report.mql_count, report.contact_count)} of contacts</span>'
             f'{_mql_mom_delta(report.mqls_by_month)}'
@@ -1637,6 +1682,7 @@ def render_penn_html(
     .mql-panel-link {{ font-size: 0.84rem; font-weight: 600; color: var(--accent); text-decoration: none; white-space: nowrap; }}
     .mql-panel-link:hover {{ text-decoration: underline; }}
     .mql-overview-cards {{ margin-bottom: 0; }}
+    .mql-spark {{ width: 100%; height: 34px; display: block; margin: 2px 0 6px; }}
     .mql-delta {{ font-weight: 700; }}
     .mql-delta.up {{ color: var(--ok); }}
     .mql-delta.down {{ color: var(--err); }}
