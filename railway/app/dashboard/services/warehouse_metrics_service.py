@@ -25,57 +25,6 @@ def totals_from_daily_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def penn_sync_warehouses(
-    cfg: PennDashboardConfig,
-    preset: str,
-    payload: dict[str, Any],
-) -> str | None:
-    """Pull account daily metrics from ad APIs + GA4 BQ into Postgres metrics_daily."""
-    ga4_account: str | None = (payload.get("accounts") or {}).get("ga4")
-
-    if cfg.google_customer_id:
-        try:
-            payload["warehouse_sync"]["google"] = google_ads_service.sync_account_to_warehouse(
-                cfg.google_customer_id,
-                date_range=preset,
-            )
-        except Exception as exc:
-            payload["errors"]["google_sync"] = platform_error(exc)
-
-    if cfg.linkedin_account_id:
-        try:
-            payload["warehouse_sync"]["linkedin"] = linkedin_service.sync_account_to_warehouse(
-                cfg.linkedin_account_id,
-                date_range=preset,
-            )
-        except Exception as exc:
-            payload["errors"]["linkedin_sync"] = platform_error(exc)
-
-    if cfg.meta_account_id:
-        try:
-            payload["warehouse_sync"]["meta"] = meta_service.sync_account_to_warehouse(
-                cfg.meta_account_id,
-                date_range=preset,
-            )
-        except Exception as exc:
-            payload["errors"]["meta_sync"] = platform_error(exc)
-
-    if cfg.ga4_client_key:
-        try:
-            payload["warehouse_sync"]["ga4"] = ga4_warehouse_service.sync_to_warehouse(
-                date_range=preset,
-                client_key=cfg.ga4_client_key,
-            )
-            ga4_account = payload["warehouse_sync"]["ga4"].get("account_id")
-            accounts = dict(payload.get("accounts") or {})
-            accounts["ga4"] = ga4_account
-            payload["accounts"] = accounts
-        except Exception as exc:
-            payload["errors"]["ga4_sync"] = platform_error(exc)
-
-    return ga4_account
-
-
 def penn_load_daily_metrics_from_warehouse(
     cfg: PennDashboardConfig,
     *,

@@ -67,8 +67,6 @@ from dashboard.services.warehouse_metrics_service import (
     load_mtd_daily_metrics as _load_mtd_daily_metrics,
     load_organic_daily_metrics as _load_organic_daily_metrics,
     merge_linkedin_creative_media as _merge_linkedin_creative_media,
-    penn_load_daily_metrics_from_warehouse as _penn_load_daily_metrics_from_warehouse,
-    penn_sync_warehouses as _penn_sync_warehouses,
     sync_meta as _sync_meta,
     totals_from_daily_rows as _totals_from_daily_rows,
 )
