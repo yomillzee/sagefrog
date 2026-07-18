@@ -197,6 +197,19 @@ def _client_avatar_html(
     )
 
 
+def _parent_avatar_html(*, extra_cls: str = "") -> str:
+    """Avatar chip for the 'Admin panel' parent row: a navy tile with a layered
+    shield mark so the agency parent reads distinctly from the client avatars."""
+    cls = "client-switch-ava client-switch-ava--parent" + (f" {extra_cls}" if extra_cls else "")
+    icon = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/>'
+        '<path d="M9.5 12l1.8 1.8 3.4-3.6"/></svg>'
+    )
+    return f'<span class="{cls}" aria-hidden="true">{icon}</span>'
+
+
 def sidebar_client_switcher_html(
     *,
     client_slug: str,
@@ -206,6 +219,7 @@ def sidebar_client_switcher_html(
     use_session: bool,
     session_is_admin: bool,
     session_can_switch_clients: bool = False,
+    admin_context: bool = False,
 ) -> str:
     """Modern client switcher for the sidebar footer.
 
@@ -217,6 +231,12 @@ def sidebar_client_switcher_html(
     relocated to ``<body>`` on init (see ``dashboard_topbar_js``) so it escapes
     the sidebar's ``overflow:hidden`` / mobile ``transform`` and overlays the
     whole viewport.
+
+    Admins see an "Admin panel" parent row pinned at the top of the drawer (an
+    "Agency" group above the "Clients" group), so the whole portal reads as
+    Admin → clients rather than admin being a separate section. ``admin_context``
+    marks that we're currently *in* the admin environment: the trigger then shows
+    "Admin panel" as the current selection and the parent row is checked.
     """
     if not ((session_is_admin or session_can_switch_clients) and use_session):
         return f'<span class="topbar-client-label" id="topbarClientLabel">{_esc(label)}</span>'
@@ -253,7 +273,8 @@ def sidebar_client_switcher_html(
     for slug, client_label in client_config.list_dashboard_clients():
         if _platform_slugs and slug not in _platform_slugs and slug != current:
             continue
-        is_current = slug == current
+        # In the admin environment no client is "current" — the parent row is.
+        is_current = (not admin_context) and slug == current
         if is_current:
             current_label = client_label
         dest = _client_switch_target_url(
@@ -279,10 +300,38 @@ def sidebar_client_switcher_html(
         )
 
     count = len(items)
-    trigger_avatar = _client_avatar_html(
-        slug=current, label=current_label, logo=logos.get(current),
-        extra_cls="client-switch-ava--trigger",
-    )
+
+    # Admins get an "Admin panel" parent row pinned above the client list. It
+    # always carries data-name="Admin panel" so the search box matches it too, and
+    # it's the current selection when we're inside the admin environment.
+    admin_block = ""
+    if session_is_admin:
+        admin_cur_cls = " is-current" if admin_context else ""
+        admin_aria = ' aria-current="true"' if admin_context else ""
+        admin_block = (
+            '<div class="client-switch-group">Agency</div>'
+            f'<a class="client-switch-item client-switch-item--parent{admin_cur_cls}" '
+            f'role="option"{admin_aria} href="/admin" data-name="Admin panel">'
+            f'{_parent_avatar_html()}'
+            f'<span class="client-switch-name">Admin panel</span>'
+            f'<svg class="client-switch-check" viewBox="0 0 24 24" fill="none" '
+            f'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" '
+            f'stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>'
+            f'</a>'
+            '<div class="client-switch-group">Clients</div>'
+        )
+
+    if admin_context:
+        trigger_avatar = _parent_avatar_html(extra_cls="client-switch-ava--trigger")
+        trigger_eyebrow = "Agency"
+        trigger_name = "Admin panel"
+    else:
+        trigger_avatar = _client_avatar_html(
+            slug=current, label=current_label, logo=logos.get(current),
+            extra_cls="client-switch-ava--trigger",
+        )
+        trigger_eyebrow = "Client"
+        trigger_name = current_label
     icon_search = (
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
         'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -305,17 +354,17 @@ def sidebar_client_switcher_html(
         aria-haspopup="dialog" aria-expanded="false" aria-controls="clientSwitchDrawer">
         {trigger_avatar}
         <span class="client-switch-trigger-text">
-          <span class="client-switch-eyebrow">Client</span>
-          <span class="client-switch-trigger-name">{_esc(current_label)}</span>
+          <span class="client-switch-eyebrow">{_esc(trigger_eyebrow)}</span>
+          <span class="client-switch-trigger-name">{_esc(trigger_name)}</span>
         </span>
         {icon_chevrons}
       </button>
       <div class="client-switch-backdrop" id="clientSwitchBackdrop" hidden></div>
       <aside class="client-switch-drawer" id="clientSwitchDrawer" role="dialog"
-        aria-modal="true" aria-label="Switch client" aria-hidden="true">
+        aria-modal="true" aria-label="Switch workspace" aria-hidden="true">
         <header class="client-switch-head">
           <div class="client-switch-head-titles">
-            <h2 class="client-switch-title">Switch client</h2>
+            <h2 class="client-switch-title">Switch workspace</h2>
             <span class="client-switch-count">{count} {"client" if count == 1 else "clients"}</span>
           </div>
           <button type="button" class="client-switch-close" aria-label="Close">{icon_close}</button>
@@ -325,7 +374,8 @@ def sidebar_client_switcher_html(
           <input type="text" class="client-switch-search-input" placeholder="Search clients…"
             aria-label="Search clients" autocomplete="off" spellcheck="false" />
         </div>
-        <div class="client-switch-list" role="listbox" aria-label="Clients" tabindex="-1">
+        <div class="client-switch-list" role="listbox" aria-label="Workspaces" tabindex="-1">
+          {admin_block}
           {"".join(items)}
           <p class="client-switch-empty" hidden>No clients match your search.</p>
         </div>
@@ -536,6 +586,9 @@ def dashboard_topbar_js() -> str:
 
       function isOpen() { return document.body.classList.contains('client-switch-active'); }
 
+      const groups = Array.prototype.slice.call(
+        drawer.querySelectorAll('.client-switch-group')
+      );
       function filter(q) {
         q = (q || '').trim().toLowerCase();
         let shown = 0;
@@ -543,6 +596,17 @@ def dashboard_topbar_js() -> str:
           const match = !q || (a.dataset.name || '').toLowerCase().indexOf(q) !== -1;
           a.hidden = !match;
           if (match) shown += 1;
+        });
+        // Hide a group heading (Agency / Clients) when everything under it is
+        // filtered out, so search never leaves a lone label with no rows.
+        groups.forEach((g) => {
+          let hasVisible = false;
+          let n = g.nextElementSibling;
+          while (n && !n.classList.contains('client-switch-group')) {
+            if (n.classList.contains('client-switch-item') && !n.hidden) { hasVisible = true; break; }
+            n = n.nextElementSibling;
+          }
+          g.hidden = !hasVisible;
         });
         if (empty) empty.hidden = shown > 0;
       }
@@ -927,8 +991,15 @@ def render_sidebar(
     show_connectors: bool = False,
     view_nav_html: str,
     session_can_switch_clients: bool = False,
+    admin_context: bool = False,
 ) -> str:
-    """Navy drawer sidebar shared by the dashboard, settings, files, and connectors pages."""
+    """Navy drawer sidebar shared by the dashboard, settings, files, and connectors pages.
+
+    ``admin_context=True`` renders the same chrome for the Admin environment: the
+    top nav is the admin menu (passed in ``view_nav_html``), the footer drops the
+    per-client Files/Connectors/Settings links, and the switcher shows "Admin
+    panel" as the current workspace.
+    """
     overview_url = _dashboard_page_url(
         client_slug=client_slug, access_key=access_key, use_session=use_session
     ) or "#"
@@ -950,10 +1021,11 @@ def render_sidebar(
         use_session=use_session,
         session_is_admin=session_is_admin,
         session_can_switch_clients=session_can_switch_clients,
+        admin_context=admin_context,
     )
 
     files_btn = ""
-    if show_files:
+    if show_files and not admin_context:
         files_active = " active" if active_nav in ("files", "insights-upload") else ""
         aria = ' aria-current="page"' if files_active else ""
         files_btn = (
@@ -962,7 +1034,7 @@ def render_sidebar(
         )
 
     connectors_btn = ""
-    if show_connectors or active_nav == "connectors":
+    if (show_connectors or active_nav == "connectors") and not admin_context:
         connectors_active = " active" if active_nav == "connectors" else ""
         connectors_aria = ' aria-current="page"' if connectors_active else ""
         connectors_btn = (
@@ -970,14 +1042,20 @@ def render_sidebar(
             f'{_NAV_ICON_CONNECTORS}<span>Connectors</span></a>'
         )
 
-    settings_active = " active" if active_nav == "settings" else ""
-    settings_aria = ' aria-current="page"' if settings_active else ""
-    settings_btn = (
-        f'<a href="{_esc(settings_url)}" class="dash-sidebar-link{settings_active}"{settings_aria}>'
-        f'{_NAV_ICON_SETTINGS}<span>Settings</span></a>'
-    )
+    settings_btn = ""
+    if not admin_context:
+        settings_active = " active" if active_nav == "settings" else ""
+        settings_aria = ' aria-current="page"' if settings_active else ""
+        settings_btn = (
+            f'<a href="{_esc(settings_url)}" class="dash-sidebar-link{settings_active}"{settings_aria}>'
+            f'{_NAV_ICON_SETTINGS}<span>Settings</span></a>'
+        )
 
-    account_html = _sidebar_account_html(email=session_email, is_admin=session_is_admin)
+    # In the admin environment the switcher already carries the "Admin panel"
+    # entry, so the footer account row doesn't repeat an Admin link.
+    account_html = _sidebar_account_html(
+        email=session_email, is_admin=session_is_admin and not admin_context
+    )
 
     # Apply the client's saved sidebar gradient inline (as custom properties on the
     # aside itself) so it themes every page — including the dashboard/settings pages
@@ -1150,6 +1228,128 @@ def render_client_shell_page(
     </div>
   </div>
   <script>{dashboard_topbar_js()}</script>
+</body>
+</html>"""
+
+
+# ── Admin environment: same navy-sidebar shell as the client dashboards ──────
+# Admin is the parent of every client, so its pages live inside the identical
+# app-shell chrome (navy sidebar + client switcher) rather than a standalone
+# section. The sidebar's top nav is the admin menu below; the switcher carries
+# the "Admin panel" parent entry (see sidebar_client_switcher_html).
+
+_ADMIN_NAV_ICONS: dict[str, str] = {
+    "overview": _VIEW_ICONS["overview"],
+    "hq": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/>'
+        '<path d="M7 3h10a2 2 0 0 1 2 2v1H5V5a2 2 0 0 1 2-2z"/></svg>'
+    ),
+    "trends": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<path d="M3 3v18h18"/><polyline points="7 14 11 10 14 13 20 7"/>'
+        '<polyline points="20 11 20 7 16 7"/></svg>'
+    ),
+    "docs": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<path d="M4 5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/>'
+        '<path d="M14 3v5h5"/><line x1="8" y1="13" x2="16" y2="13"/>'
+        '<line x1="8" y1="17" x2="13" y2="17"/></svg>'
+    ),
+}
+
+_ADMIN_NAV_ITEMS: tuple[tuple[str, str, str], ...] = (
+    ("overview", "Overview", "/admin"),
+    ("hq", "Budget HQ", "/admin/hq"),
+    ("trends", "Agency Trends", "/admin/agency-trends"),
+    ("docs", "Docs", "/admin/docs"),
+)
+
+
+def admin_sidebar_nav_html(*, active_nav: str) -> str:
+    """Admin section nav for the sidebar — the counterpart to the client view nav.
+
+    ``active_nav`` is one of overview / hq / trends / docs (falls back to no
+    active item). Rendered as anchor links so it looks identical on every admin
+    page, mirroring the client dashboards' consistent sidebar.
+    """
+    active = (active_nav or "").strip().lower()
+    items: list[str] = []
+    for key, label, href in _ADMIN_NAV_ITEMS:
+        is_active = key == active
+        cls = " active" if is_active else ""
+        aria = ' aria-current="page"' if is_active else ""
+        icon = _ADMIN_NAV_ICONS.get(key, "")
+        items.append(
+            f'<a class="dash-view-btn{cls}"{aria} href="{href}">'
+            f'{icon}<span>{_esc(label)}</span></a>'
+        )
+    return (
+        '<nav class="dash-sidebar-nav" aria-label="Admin sections">'
+        f'{"".join(items)}</nav>'
+    )
+
+
+def render_admin_shell_page(
+    *,
+    active_nav: str,
+    page_title: str,
+    content_html: str,
+    session_email: str | None = None,
+    session_is_admin: bool = True,
+    extra_css: str = "",
+    body_end_html: str = "",
+) -> str:
+    """Full HTML for an admin page rendered inside the shared navy-sidebar shell.
+
+    ``content_html`` is the page body (its own ``<main>`` / sections), ``extra_css``
+    the page-specific styles, and ``body_end_html`` any trailing ``<script>`` the
+    page needs (loaded after the shared switcher JS). The sidebar top nav is the
+    admin menu; the footer switcher shows "Admin panel" as the current workspace
+    and lists every client beneath it.
+    """
+    sidebar = render_sidebar(
+        client_slug="",
+        label="Admin panel",
+        active_nav=active_nav,
+        access_key=None,
+        use_session=True,
+        session_is_admin=session_is_admin,
+        session_email=session_email,
+        show_files=False,
+        show_connectors=False,
+        view_nav_html=admin_sidebar_nav_html(active_nav=active_nav),
+        admin_context=True,
+    )
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{_esc(page_title)} · Sagefrog Marketing Group</title>
+  {favicon_head_html()}
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: var(--bg, #eef2f7); color: var(--ink, #0f1c2e); line-height: 1.5; -webkit-font-smoothing: antialiased; }}
+    .app-shell {{ display: flex; flex-direction: row; min-height: 100vh; }}
+    .dash-main {{ flex: 1; min-width: 0; display: flex; flex-direction: column; width: 100%; }}
+    {SIDEBAR_CSS}
+    {extra_css}
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    {sidebar}
+    <div class="dash-main">
+      {content_html}
+    </div>
+  </div>
+  <script>{dashboard_topbar_js()}</script>
+  {body_end_html}
 </body>
 </html>"""
 
@@ -1777,6 +1977,32 @@ SIDEBAR_CSS = """
       font-weight: 700;
     }
     .client-switch-item.is-current .client-switch-check { opacity: 1; }
+    /* Group headings (Agency / Clients) that structure the admin-aware list. */
+    .client-switch-group {
+      padding: 12px 12px 4px;
+      font-size: 0.66rem;
+      font-weight: 800;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: #94a3b8;
+    }
+    .client-switch-group[hidden] { display: none; }
+    .client-switch-group:first-child { padding-top: 4px; }
+    /* The "Admin panel" parent row: bordered card so the agency parent reads a
+       tier above the client rows it sits over. */
+    .client-switch-item--parent {
+      border: 1px solid #d7e0ee;
+      background: #fff;
+      font-weight: 650;
+      margin-bottom: 2px;
+    }
+    .client-switch-item--parent:hover { background: #f3f7ff; border-color: #b9cdea; }
+    .client-switch-item--parent.is-current { background: #e8f1fd; border-color: #b9cdea; }
+    .client-switch-ava--parent {
+      background: linear-gradient(135deg, #0a2540, #123456);
+      color: #fff;
+    }
+    .client-switch-ava--parent svg { width: 17px; height: 17px; }
     .client-switch-empty {
       margin: 18px 8px;
       color: #94a3b8;
