@@ -287,47 +287,11 @@ def render_bigquery_dashboard_page(
     )
 
     admin_class = "is-admin" if session_is_admin else ""
-    _ICON_ADMIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
-    admin_panel_html = ""
-    if session_is_admin:
-        import html as _html
-        _users = view_as_users or []
-        if _users:
-            _opts = "".join(
-                '<option value="{uid}">{email} — {role}</option>'.format(
-                    uid=int(u["id"]),
-                    email=_html.escape(str(u.get("email") or "")),
-                    role=_html.escape(
-                        str(u.get("role") or "")
-                        + (f" · {u['client_slug']}" if u.get("client_slug") else "")
-                    ),
-                )
-                for u in _users
-            )
-            view_as_body = f"""
-        <form method="post" action="/admin/view-as" class="admin-view-as-form">
-          <label for="viewAsSelect" class="admin-panel-label">View as user</label>
-          <select id="viewAsSelect" name="user_id" required>
-            <option value="" disabled selected>Select a user…</option>
-            {_opts}
-          </select>
-          <button type="submit" class="primary" style="width:100%">View as this user</button>
-        </form>
-        <span class="status" style="display:block;margin-top:8px">See the platform exactly as this user does. A banner lets you exit.</span>"""
-        else:
-            view_as_body = '<p class="admin-panel-note">No other users to view as yet.</p>'
-        admin_panel_html = f"""
-    <button class="admin-fab" id="adminFab" title="Admin tools" aria-label="Admin tools">{_ICON_ADMIN}</button>
-    <div class="admin-panel" id="adminPanel">
-      <div class="admin-panel-head">
-        <span class="admin-panel-title">Admin tools</span>
-        <button class="admin-panel-close" id="adminPanelClose" aria-label="Close">&#x2715;</button>
-      </div>
-      <div class="admin-panel-body">
-        <p class="admin-panel-note">{label} · admin only</p>
-        {view_as_body}
-      </div>
-    </div>"""
+    # The "View as user" tool used to live in a floating admin bubble here; it
+    # now has its own card on the /admin page (see web_auth.render_admin_page),
+    # so it no longer overlays the client dashboard during a live presentation.
+    # ``view_as_users`` is still accepted for call-site compatibility.
+    del view_as_users
 
     # Presenter notes: floating, client-specific notepad for agency users to keep
     # talking points on hand while sharing this dashboard live. Agency-only
@@ -496,21 +460,6 @@ def render_bigquery_dashboard_page(
     .date-bar {{ position:sticky; top:0; z-index:50; background:var(--card); border-bottom:1px solid var(--line); box-shadow:0 1px 0 rgba(16,33,67,.04), 0 6px 16px -12px rgba(16,33,67,.28); }}
     .date-bar[hidden] {{ display:none; }}
     .date-bar-inner {{ max-width:1320px; margin:0 auto; padding:13px 28px; display:flex; flex-direction:column; gap:10px; }}
-    /* ---- Admin FAB + slideout panel ---- */
-    .admin-fab {{ position:fixed; bottom:24px; right:24px; z-index:200; width:42px; height:42px; border-radius:50%; background:var(--navy); color:#fff; border:0; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 3px 14px rgba(0,0,0,.28); transition:transform .15s,box-shadow .15s; }}
-    .admin-fab:hover {{ transform:scale(1.08); box-shadow:0 5px 20px rgba(0,0,0,.35); }}
-    .admin-fab svg {{ width:18px; height:18px; }}
-    .admin-panel {{ position:fixed; bottom:0; right:0; z-index:199; width:300px; background:var(--card); border:1px solid var(--line); border-radius:14px 0 0 0; box-shadow:-4px 0 28px rgba(0,0,0,.12); transform:translateY(calc(100% + 4px)); transition:transform .25s cubic-bezier(.4,0,.2,1); }}
-    .admin-panel.open {{ transform:translateY(0); }}
-    .admin-panel-head {{ display:flex; align-items:center; justify-content:space-between; padding:12px 16px 10px; border-bottom:1px solid var(--line); }}
-    .admin-panel-title {{ font-weight:700; font-size:.82rem; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }}
-    .admin-panel-close {{ background:none; border:0; cursor:pointer; color:var(--muted); font-size:1rem; line-height:1; padding:2px 4px; border-radius:4px; }}
-    .admin-panel-close:hover {{ background:var(--row-alt); color:var(--text); }}
-    .admin-panel-body {{ padding:16px; display:flex; flex-direction:column; gap:8px; }}
-    .admin-panel-note {{ margin:0; font-size:.76rem; color:var(--muted); }}
-    .admin-view-as-form {{ display:flex; flex-direction:column; gap:8px; margin:0; }}
-    .admin-panel-label {{ font-size:.72rem; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:var(--muted); }}
-    .admin-view-as-form select {{ width:100%; padding:9px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--text); font:inherit; font-size:.86rem; }}
     .date-bar-top {{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }}
     .date-bar-bottom {{ display:flex; flex-wrap:wrap; gap:20px; align-items:center; }}
     label {{ display:grid; gap:5px; color:var(--muted); font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }}
@@ -3696,18 +3645,6 @@ def render_bigquery_dashboard_page(
       let target = (v && TABS.includes(v)) ? v : 'overview';
       if (prefs[target] === false) target = TABS.find(t => prefs[t] !== false) || 'overview';
       if (target !== currentTab) switchTab(target);
-    }})();
-  </script>
-  {admin_panel_html}
-  <script>
-    (function(){{
-      const fab=document.getElementById('adminFab');
-      const panel=document.getElementById('adminPanel');
-      const close=document.getElementById('adminPanelClose');
-      if (!fab||!panel) return;
-      fab.addEventListener('click',()=>panel.classList.toggle('open'));
-      if (close) close.addEventListener('click',()=>panel.classList.remove('open'));
-      document.addEventListener('keydown',e=>{{if(e.key==='Escape')panel.classList.remove('open');}});
     }})();
   </script>
   {budget_scripts}

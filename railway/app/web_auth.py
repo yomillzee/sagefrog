@@ -861,6 +861,45 @@ def render_admin_page(
         )
     user_rows = "\n".join(rows) or '<tr><td colspan="7" class="muted">No users yet.</td></tr>'
 
+    # ---- "View as user" card ----
+    # Previously a floating bubble on the client dashboards; now a card here so it
+    # never overlays a dashboard mid-presentation. Impersonate any other user to
+    # see the platform exactly as they do; the exit banner leaves "view as".
+    view_as_opts = []
+    for u in users:
+        uid = int(u["id"])
+        if uid == user.id:
+            continue
+        role = str(u.get("role") or "")
+        slug = str(u.get("client_slug") or "").strip()
+        meta = role + (f" · {slug}" if slug else "")
+        label_txt = str(u.get("email") or "")
+        if meta:
+            label_txt = f"{label_txt} — {meta}"
+        view_as_opts.append(f'<option value="{uid}">{_esc(label_txt)}</option>')
+    if view_as_opts:
+        view_as_body = f"""
+      <form method="post" action="/admin/view-as" class="role-form view-as-form">
+        <div class="row">
+          <div>
+            <label for="viewAsSelect">User</label>
+            <select id="viewAsSelect" name="user_id" class="role-select" required>
+              <option value="" disabled selected>Select a user…</option>
+              {"".join(view_as_opts)}
+            </select>
+          </div>
+        </div>
+        <button type="submit" class="primary">View as this user</button>
+      </form>"""
+    else:
+        view_as_body = '<p class="muted" style="margin:.35rem 0 0">No other users to view as yet.</p>'
+    view_as_section_html = f"""
+    <section>
+      <h2>View as user</h2>
+      <p class="muted" style="margin:0 0 12px;font-size:.9rem">See the platform exactly as another user does — useful for checking a client's branded dashboard. A banner keeps you one click from exiting.</p>
+      {view_as_body}
+    </section>"""
+
     # ---- Client groups management section ----
     group_rows_html = []
     for g in groups or []:
@@ -1361,6 +1400,7 @@ def render_admin_page(
       </table>
       </div>
     </section>
+    {view_as_section_html}
     {groups_section_html}
 
     <details class="advanced-fold">
