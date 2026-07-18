@@ -253,8 +253,9 @@ def render_docs_page(*, user_email: str) -> str:
           </tr>
         </tbody>
       </table>
-      <p class="muted">Full reference with data-flow diagrams and mart ownership lives in
-        <code>docs/CREATING_A_NEW_DASHBOARD.md</code> in the repo.</p>
+      <p class="muted">Simple step-by-step guide: <code>docs/DASHBOARD_SETUP_SIMPLE.md</code>.
+        Full reference with data-flow diagrams and mart ownership:
+        <code>docs/CREATING_A_NEW_DASHBOARD.md</code>.</p>
     </section>
   </main>
 </body>
