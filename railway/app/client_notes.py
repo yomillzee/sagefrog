@@ -48,7 +48,19 @@ SCHEMA_SQL_STATEMENTS = [
 # Keep titles/bodies bounded so a runaway paste can't bloat a row.
 MAX_TITLE_LEN = 200
 MAX_BODY_LEN = 100_000
-DEFAULT_TITLE = "Untitled note"
+
+
+def default_title(now: datetime | None = None) -> str:
+    """Default title for a new note: a nicely formatted current date.
+
+    Creating a note with no title stamps it with today's date (e.g.
+    "July 18, 2026") so notepads read as a dated running log out of the box,
+    while staying fully editable. The widget prefills the same thing client-side
+    from the browser's local date; this is the server-side fallback (UTC) for
+    the popup window and any blank-title save.
+    """
+    now = now or datetime.now(tz=UTC)
+    return f"{now:%B} {now.day}, {now.year}"
 
 
 @dataclass(frozen=True)
@@ -113,7 +125,7 @@ def _clean_slug(client_slug: str) -> str:
 def _clean_title(title: str | None) -> str:
     clean = (title or "").strip()
     if not clean:
-        clean = DEFAULT_TITLE
+        clean = default_title()
     return clean[:MAX_TITLE_LEN]
 
 

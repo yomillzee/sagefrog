@@ -229,6 +229,14 @@ _CONTROLLER_JS = r"""
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
+  // Default title for a new note: today's date in the viewer's locale, e.g.
+  // "July 18, 2026". Prefilled so the note is dated out of the box but still
+  // editable; the server applies the same fallback (in UTC) if left blank.
+  function defaultTitle() {
+    try {
+      return new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+    } catch (e) { return ''; }
+  }
 
   function loadInto(note) {
     currentId = note ? note.id : null;
@@ -323,11 +331,12 @@ _CONTROLLER_JS = r"""
   });
   if (els.neu) els.neu.addEventListener('click', function () {
     var proceed = function () {
-      els.name.value = '';
+      els.name.value = defaultTitle();
       els.body.value = '';
       currentId = null;
       loadedBody = ''; loadedTitle = '';
-      save({ create: true }).then(function () { els.name.focus(); });
+      // Select the prefilled title so the user can overtype it immediately.
+      save({ create: true }).then(function () { els.name.focus(); els.name.select(); });
     };
     if (dirty) { save().then(proceed); } else { proceed(); }
   });

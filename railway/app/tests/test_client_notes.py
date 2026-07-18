@@ -55,9 +55,23 @@ import client_notes  # noqa: E402
 
 
 class CleanHelperTests(unittest.TestCase):
-    def test_title_defaults_when_blank(self) -> None:
-        self.assertEqual(client_notes._clean_title("   "), client_notes.DEFAULT_TITLE)
-        self.assertEqual(client_notes._clean_title(None), client_notes.DEFAULT_TITLE)
+    def test_title_defaults_to_formatted_current_date_when_blank(self) -> None:
+        expected = client_notes.default_title()
+        self.assertEqual(client_notes._clean_title("   "), expected)
+        self.assertEqual(client_notes._clean_title(None), expected)
+
+    def test_default_title_is_a_well_formatted_date(self) -> None:
+        from datetime import UTC, datetime
+
+        self.assertEqual(
+            client_notes.default_title(datetime(2026, 7, 8, tzinfo=UTC)),
+            "July 8, 2026",
+        )
+        # No zero-padding on the day-of-month.
+        self.assertEqual(
+            client_notes.default_title(datetime(2026, 12, 25, tzinfo=UTC)),
+            "December 25, 2026",
+        )
 
     def test_title_is_trimmed_and_bounded(self) -> None:
         self.assertEqual(client_notes._clean_title("  Hi  "), "Hi")
