@@ -26,50 +26,40 @@ class _FakeAuth:
         self.user = types.SimpleNamespace(email="a@b.com", role="admin")
 
 
-class DashboardClientBigqueryNixonModeTests(unittest.TestCase):
-    def test_bigquery_nixon_mode_renders_nixon_template_not_penn_html(self) -> None:
+class DashboardClientRoutingTests(unittest.TestCase):
+    """The Penn dashboard has been removed: /dashboard/{slug} always renders the
+    BigQuery template, regardless of any legacy dashboard_mode on the row."""
+
+    def _run(self, mode: str) -> tuple[object, dict]:
         fake_cdc = types.SimpleNamespace(
-            get_config=lambda slug: _FakeCfgRow("bigquery_nixon", label="Acme Co"),
+            get_config=lambda slug: _FakeCfgRow(mode, label="Acme Co"),
         )
-        captured = {}
+        captured: dict = {}
 
         def fake_render(**kwargs):
             captured.update(kwargs)
-            return "<html>nixon-template</html>"
+            return "<html>bq-template</html>"
 
         with patch.dict(sys.modules, {"client_dashboard_config": fake_cdc}), \
              patch.object(core_routes, "validate_client_slug", side_effect=lambda s: s), \
-             patch.object(core_routes.web_users, "enabled", return_value=True), \
              patch.object(core_routes.web_auth, "authenticate_dashboard", return_value=_FakeAuth()), \
-             patch.object(core_routes, "render_bigquery_dashboard_page", fake_render), \
-             patch.object(core_routes.dashboard_service, "render_penn_html") as fake_render_penn:
-            request = types.SimpleNamespace()
-            resp = core_routes.dashboard_client(client_slug="acme", request=request, key=None)
+             patch.object(core_routes, "session_can_switch_clients", return_value=False), \
+             patch.object(core_routes, "_view_as_user_options", return_value=None), \
+             patch.object(core_routes, "penn_html_session_kwargs", return_value={}), \
+             patch.object(core_routes, "render_bigquery_dashboard_page", fake_render):
+            resp = core_routes.dashboard_client(
+                client_slug="acme", request=types.SimpleNamespace()
+            )
+        return resp, captured
 
-        self.assertIn("nixon-template", resp.body.decode())
-        fake_render_penn.assert_not_called()
-        self.assertEqual(captured["client_slug"], "acme")
-        self.assertEqual(captured["api_client_key"], "acme")
-        self.assertEqual(captured["label"], "Acme Co")
-
-    def test_bigquery_mode_still_renders_penn_html_unchanged(self) -> None:
-        fake_cdc = types.SimpleNamespace(
-            get_config=lambda slug: _FakeCfgRow("bigquery", label="Other Co"),
-        )
-
-        with patch.dict(sys.modules, {"client_dashboard_config": fake_cdc}), \
-             patch.object(core_routes, "validate_client_slug", side_effect=lambda s: s), \
-             patch.object(core_routes.web_users, "enabled", return_value=True), \
-             patch.object(core_routes.web_auth, "authenticate_dashboard", return_value=_FakeAuth()), \
-             patch.object(core_routes.dashboard_snapshots, "get_snapshot", return_value={"ok": True}), \
-             patch.object(core_routes, "render_bigquery_dashboard_page") as fake_render, \
-             patch.object(core_routes.dashboard_service, "render_penn_html", return_value="<html>penn</html>") as fake_render_penn:
-            request = types.SimpleNamespace()
-            resp = core_routes.dashboard_client(client_slug="other", request=request, key=None)
-
-        self.assertIn("penn", resp.body.decode())
-        fake_render.assert_not_called()
-        fake_render_penn.assert_called_once()
+    def test_renders_bigquery_template_regardless_of_mode(self) -> None:
+        for mode in ("bigquery_nixon", "bigquery", "api"):
+            with self.subTest(mode=mode):
+                resp, captured = self._run(mode)
+                self.assertIn("bq-template", resp.body.decode())
+                self.assertEqual(captured["client_slug"], "acme")
+                self.assertEqual(captured["api_client_key"], "acme")
+                self.assertEqual(captured["label"], "Acme Co")
 
 
 if __name__ == "__main__":
