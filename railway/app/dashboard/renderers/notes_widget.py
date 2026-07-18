@@ -132,14 +132,14 @@ _SHARED_CSS = """
 """
 
 _EMBEDDED_CSS = """
-  .sfnote-fab { position:fixed; bottom:24px; left:24px; z-index:200; display:inline-flex; align-items:center; gap:8px; height:44px; padding:0 16px 0 14px; border:0; border-radius:999px; background:#0a2540; color:#fff; font:inherit; font-size:.9rem; font-weight:650; cursor:pointer; box-shadow:0 3px 14px rgba(0,0,0,.28); transition:transform .15s, box-shadow .15s; }
+  .sfnote-fab { position:fixed; bottom:24px; right:24px; z-index:200; display:inline-flex; align-items:center; gap:8px; height:44px; padding:0 16px 0 14px; border:0; border-radius:999px; background:#0a2540; color:#fff; font:inherit; font-size:.9rem; font-weight:650; cursor:pointer; box-shadow:0 3px 14px rgba(0,0,0,.28); transition:transform .15s, box-shadow .15s; }
   .sfnote-fab:hover { transform:translateY(-1px); box-shadow:0 6px 20px rgba(0,0,0,.3); }
   .sfnote-fab svg { width:18px; height:18px; }
-  .sfnote-panel { position:fixed; bottom:24px; left:24px; z-index:201; width:min(380px, calc(100vw - 32px)); max-height:min(70vh, 620px); display:flex; flex-direction:column; background:#fff; border:1px solid #e2e8f0; border-radius:16px; box-shadow:0 18px 48px rgba(10,37,64,.24); opacity:0; transform:translateY(12px) scale(.98); transform-origin:bottom left; pointer-events:none; transition:opacity .18s, transform .18s; }
+  .sfnote-panel { position:fixed; bottom:24px; right:24px; z-index:201; width:min(380px, calc(100vw - 32px)); max-height:min(70vh, 620px); display:flex; flex-direction:column; background:#fff; border:1px solid #e2e8f0; border-radius:16px; box-shadow:0 18px 48px rgba(10,37,64,.24); opacity:0; transform:translateY(12px) scale(.98); transform-origin:bottom right; pointer-events:none; transition:opacity .18s, transform .18s; }
   body.sfnote-open .sfnote-panel { opacity:1; transform:none; pointer-events:auto; }
   body.sfnote-open .sfnote-fab { opacity:0; pointer-events:none; }
   .sfnote-panel .sfnote-body { min-height:180px; }
-  @media (max-width:520px) { .sfnote-panel { left:16px; right:16px; bottom:16px; width:auto; } .sfnote-fab { left:16px; bottom:16px; } }
+  @media (max-width:520px) { .sfnote-panel { left:16px; right:16px; bottom:16px; width:auto; } .sfnote-fab { right:16px; bottom:16px; } }
 """
 
 _WINDOW_CSS = """
