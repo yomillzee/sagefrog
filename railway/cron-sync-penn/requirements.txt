@@ -1,1 +1,0 @@
-# Cron worker uses Python stdlib only (urllib). File exists so Nixpacks detects Python.
