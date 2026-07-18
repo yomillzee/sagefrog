@@ -99,7 +99,6 @@ from dashboard.renderers.cards_renderer import (
     summary_card as _summary_card,
     summary_cards_html as _summary_cards_html,
 )
-from dashboard.renderers.dashboard_renderer import render_penn_html
 from dashboard.renderers.files_renderer import (
     client_files_browser_html as _client_files_browser_html,
     files_breadcrumb_html as _files_breadcrumb_html,
