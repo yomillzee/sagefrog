@@ -42,9 +42,7 @@ from dashboard.utils.urls import (
     insight_documents_action_url as _insight_documents_action_url,
     insight_folder_action_url as _insight_folder_action_url,
     insight_folder_delete_url as _insight_folder_delete_url,
-    insights_action_url as _insights_action_url,
     insights_upload_page_url as _insights_upload_page_url,
-    refresh_action_url as _refresh_action_url,
     settings_page_url as _settings_page_url,
 )
 
@@ -78,14 +76,12 @@ from dashboard.renderers.base_layout import (
     dashboard_topbar_js as _dashboard_topbar_js,
     dashboard_view_tabs_html as _dashboard_view_tabs_html,
     favicon_head_html as _favicon_head_html,
-    refresh_toolbar as _refresh_toolbar,
     render_client_shell_page,
     session_account_html as _session_account_html,
     topbar_client_selector_html as _topbar_client_selector_html,
 )
 from dashboard.renderers.cards_renderer import (
     aggregated_card as _aggregated_card,
-    budget_pacing_panel_html as _budget_pacing_panel_html,
     ga4_paid_key_events as _ga4_paid_key_events,
     paid_ad_overview_html as _paid_ad_overview_html,
     paid_ad_overview_metrics as _paid_ad_overview_metrics,
@@ -99,12 +95,6 @@ from dashboard.renderers.files_renderer import (
     files_page_js as _files_page_js,
     render_files_page,
     render_insights_upload_page,
-)
-from dashboard.renderers.settings_renderer import (
-    format_insights_body_html as _format_insights_body_html,
-    insights_card_html as _insights_card_html,
-    insights_editor_html as _insights_editor_html,
-    insights_from_snapshot as _insights_from_snapshot,
 )
 from dashboard.renderers.tables_renderer import (
     GA4_TABLE_HEADERS as _GA4_TABLE_HEADERS,

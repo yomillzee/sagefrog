@@ -111,34 +111,6 @@ def insights_upload_page_url(
     )
 
 
-def refresh_action_url(
-    *,
-    client_slug: str = "penn",
-    access_key: str | None,
-    use_session: bool,
-) -> str | None:
-    base = f"/dashboard/{client_slug}/refresh"
-    if use_session:
-        return base
-    if access_key:
-        return f"{base}?key={quote(access_key, safe='')}"
-    return None
-
-
-def insights_action_url(
-    *,
-    client_slug: str = "penn",
-    access_key: str | None,
-    use_session: bool,
-) -> str | None:
-    base = f"/dashboard/{client_slug}/insights"
-    if use_session:
-        return base
-    if access_key:
-        return f"{base}?key={quote(access_key, safe='')}"
-    return None
-
-
 def insight_documents_action_url(
     *,
     client_slug: str,
