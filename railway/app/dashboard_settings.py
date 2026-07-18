@@ -23,7 +23,7 @@ import oauth_flows
 import oauth_store
 import security
 import web_users
-from penn_config import PennDashboardConfig, load_penn_config
+from penn_config import PennDashboardConfig
 
 
 def _esc(val: Any) -> str:
@@ -1577,6 +1577,4 @@ def render_settings_html(
 
 def load_settings_config(client_slug: str) -> PennDashboardConfig:
     slug = client_slug.strip().lower()
-    if slug == "penn":
-        return load_penn_config()
     return client_config.load_client_config(slug)

@@ -1,4 +1,4 @@
-"""Refresh Penn dashboard data and render HTML from Postgres snapshots.
+"""Dashboard data refresh + HTML rendering helpers.
 
 Compatibility façade: re-exports utils, services, and renderers so existing
 imports (`import dashboard_service`, `dashboard_service.refresh_penn`, etc.)
@@ -52,11 +52,6 @@ from dashboard.utils.urls import (
 from dashboard.services.refresh_service import (
     patch_snapshot_from_config,
     refresh_bq_client,
-    refresh_client,
-    refresh_client_quick,
-    refresh_penn,
-    refresh_penn_quick,
-    save_penn_insights,
 )
 from dashboard.services.snapshot_metrics_service import (
     account_totals as _account_totals,
@@ -72,8 +67,6 @@ from dashboard.services.warehouse_metrics_service import (
     load_mtd_daily_metrics as _load_mtd_daily_metrics,
     load_organic_daily_metrics as _load_organic_daily_metrics,
     merge_linkedin_creative_media as _merge_linkedin_creative_media,
-    penn_load_daily_metrics_from_warehouse as _penn_load_daily_metrics_from_warehouse,
-    penn_sync_warehouses as _penn_sync_warehouses,
     sync_meta as _sync_meta,
     totals_from_daily_rows as _totals_from_daily_rows,
 )

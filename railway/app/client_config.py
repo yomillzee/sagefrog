@@ -6,7 +6,7 @@ import json
 import os
 from typing import Any
 
-from penn_config import PennDashboardConfig, load_penn_config
+from penn_config import PennDashboardConfig
 
 # Built-in clients besides Penn (account IDs optional — set in Settings or DASHBOARD_CLIENTS).
 # Trimmed to just the two portals still in use (nixon-bq-test, and "nixon" which
@@ -75,16 +75,15 @@ def list_client_slugs() -> list[str]:
     registry = _load_registry_from_env()
     slugs.update(slug for slug in registry.keys() if slug not in suppressed)
     slugs.update(slug for slug in _BUILTIN_CLIENTS.keys() if slug not in suppressed)
-    slugs.add("penn")
     return sorted(slugs)
 
 
 def is_builtin_slug(slug: str) -> bool:
-    """True for built-in client slugs (and Penn). These always resolve to a real
-    config, so callers can accept them even when suppressed from the dashboard
-    list — matching load_client_config's leniency."""
+    """True for built-in client slugs. These always resolve to a real config, so
+    callers can accept them even when suppressed from the dashboard list
+    (suppression hides a client from the picker; it should not break config access)."""
     s = (slug or "").strip().lower()
-    return s == "penn" or s in _BUILTIN_CLIENTS
+    return s in _BUILTIN_CLIENTS
 
 
 def list_dashboard_clients() -> list[tuple[str, str]]:
@@ -136,8 +135,6 @@ def _default_label(slug: str) -> str:
         label = _strip_env(str(registry[slug].get("label") or ""))
         if label:
             return label
-    if slug == "penn":
-        return load_penn_config().label
     return slug.replace("-", " ").title()
 
 
@@ -153,14 +150,11 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
     """Load merged config for a client slug (env defaults + DB overrides)."""
     slug = (client_slug or "").strip().lower()
     known = list_client_slugs()
-    # Built-in clients and Penn always have a real config, so they stay loadable
-    # even when suppressed from the dashboard list (suppression hides a client
-    # from the picker; it should not break refresh / API access to its config).
-    if slug not in known and slug not in _BUILTIN_CLIENTS and slug != "penn":
+    # Built-in clients always have a real config, so they stay loadable even when
+    # suppressed from the dashboard list (suppression hides a client from the
+    # picker; it should not break refresh / API access to its config).
+    if slug not in known and slug not in _BUILTIN_CLIENTS:
         raise ValueError(f"Unknown client '{client_slug}'. Known clients: {', '.join(known)}")
-
-    if slug == "penn":
-        return load_penn_config()
 
     registry = _load_registry_from_env()
     entry: dict[str, Any] = dict(registry.get(slug) or _BUILTIN_CLIENTS.get(slug) or {})
@@ -196,7 +190,6 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
 
     if (
         slug not in _BUILTIN_CLIENTS
-        and slug != "penn"
         and not in_registry
         and not any((google, linkedin, meta, ga4_key))
     ):
