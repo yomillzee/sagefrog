@@ -77,6 +77,16 @@ def render_docs_page(*, user_email: str) -> str:
     .badge.auto {{ background:#eaf6ee; color:var(--green); }}
     .step {{ padding:16px 0; border-bottom:1px solid var(--line); }}
     .step:last-child {{ border-bottom:0; padding-bottom:0; }}
+    .doc-links {{ display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); margin:2px 0 0; }}
+    .doc-link {{ display:flex; align-items:flex-start; gap:12px; text-decoration:none; color:inherit;
+      border:1px solid var(--line); border-radius:12px; padding:14px 16px; background:#fbfcfe;
+      transition:border-color .12s ease, box-shadow .12s ease, transform .12s ease; }}
+    .doc-link:hover {{ border-color:var(--accent); box-shadow:0 6px 18px rgba(37,99,235,.1); transform:translateY(-1px); }}
+    .doc-link .ic {{ flex-shrink:0; width:34px; height:34px; border-radius:9px; display:grid; place-items:center;
+      background:#eaf1fe; color:var(--accent); font-size:1.05rem; }}
+    .doc-link .t {{ font-weight:700; color:var(--navy); font-size:.92rem; }}
+    .doc-link .d {{ color:var(--muted); font-size:.8rem; margin-top:2px; line-height:1.45; }}
+    .doc-link.primary {{ background:#f4f8ff; border-color:#cfe0fb; }}
   </style>
 </head>
 <body>
@@ -253,8 +263,29 @@ def render_docs_page(*, user_email: str) -> str:
           </tr>
         </tbody>
       </table>
-      <p class="muted">Full reference with data-flow diagrams and mart ownership lives in
-        <code>docs/CREATING_A_NEW_DASHBOARD.md</code> in the repo.</p>
+    </section>
+
+    <section>
+      <div class="page-head">
+        <h2>Reference docs</h2>
+        <p class="sub">The full write-ups this page is based on, in the repo.</p>
+      </div>
+      <div class="doc-links">
+        <a class="doc-link primary" href="https://github.com/yomillzee/sagefrog/blob/main/docs/DASHBOARD_SETUP_SIMPLE.md" target="_blank" rel="noopener">
+          <span class="ic">&#9873;</span>
+          <span>
+            <span class="t">Simple setup guide &#8599;</span>
+            <span class="d">The plain-language checklist for standing up a new client dashboard — this page in Markdown.</span>
+          </span>
+        </a>
+        <a class="doc-link" href="https://github.com/yomillzee/sagefrog/blob/main/docs/CREATING_A_NEW_DASHBOARD.md" target="_blank" rel="noopener">
+          <span class="ic">&#128218;</span>
+          <span>
+            <span class="t">Full reference &#8599;</span>
+            <span class="d">Data-flow diagrams, mart ownership, and scalability notes for the connector-driven dashboard.</span>
+          </span>
+        </a>
+      </div>
     </section>
   </main>
 </body>
