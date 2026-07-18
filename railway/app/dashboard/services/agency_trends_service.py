@@ -51,6 +51,19 @@ _WINDOW_DAYS = 7
 # same trailing traffic momentum (and shares HQ's warm sessions cache).
 _SESSIONS_TRAILING_DAYS = 30
 _OVERVIEW_CACHE_SOURCE = "agency.overview"
+# Connector-health staleness, measured against yesterday (platform data lags ~1
+# day, so "current" = data through yesterday). Derived purely from the daily
+# rows already in DuckDB — no extra BigQuery probes. A lag of >=2 days is amber,
+# >=4 days is red; the full per-source diagnosis lives on the client's settings
+# page, which the chip links to.
+_HEALTH_LAGGING_DAYS = 2
+_HEALTH_STALE_DAYS = 4
+# Worst-first rank so the client table can sort problems to the top. Neutral
+# states (nothing wrong / nothing configured) share rank 0.
+_HEALTH_RANK = {
+    "current": 0, "no_data": 0, "not_configured": 0,
+    "lagging": 1, "stale": 2, "error": 3,
+}
 _CACHE_TTL_SECONDS = 900
 _CLIENT_TTL_SECONDS = 900
 _MAX_WORKERS = 8
@@ -193,6 +206,84 @@ def _pace_status(*, budget: float, projected: float | None) -> str:
     return "on_track"
 
 
+def _health_rank(status: str) -> int:
+    return _HEALTH_RANK.get(status, 0)
+
+
+def _worse(a: str, b: str) -> str:
+    """The more alarming of two health statuses."""
+    return a if _health_rank(a) >= _health_rank(b) else b
+
+
+def _client_health(
+    *,
+    configured: bool,
+    spend_available: bool,
+    sessions_available: bool,
+    fresh_through: date | None,
+    sessions_through: date | None,
+    channels: list[dict[str, Any]],
+    today: date,
+) -> dict[str, Any]:
+    """A lightweight connector-health verdict from data already in DuckDB.
+
+    We can't afford the per-source BigQuery probes the settings page runs for
+    every client at once, so we infer health from how fresh each client's feed
+    is: a healthy connector's data reaches ~yesterday, a stalled one stops
+    advancing. ``fresh_through`` is the newest paid-media date we hold for the
+    client (max over every channel), so a client is only flagged when *no*
+    channel is current — an intentionally-paused single channel (which simply
+    has an older through-date) never trips a false alarm on its own. A read that
+    outright failed is a hard error. The ``channels`` list carries each active
+    channel's through-date for the tooltip so the culprit is visible.
+    """
+    yesterday = today - timedelta(days=1)
+    reasons: list[str] = []
+
+    if not configured:
+        return {
+            "status": "not_configured", "lag_days": None,
+            "fresh_through": None, "sessions_through": None,
+            "channels": channels, "reasons": ["no BigQuery project configured"],
+        }
+
+    lag = (yesterday - fresh_through).days if fresh_through else None
+    sess_lag = (yesterday - sessions_through).days if sessions_through else None
+
+    if not spend_available:
+        status = "error"
+        reasons.append("paid-media read failed")
+    elif fresh_through is None:
+        status = "no_data"
+    elif lag >= _HEALTH_STALE_DAYS:
+        status = "stale"
+        reasons.append(f"paid data {lag} days behind")
+    elif lag >= _HEALTH_LAGGING_DAYS:
+        status = "lagging"
+        reasons.append(f"paid data {lag} days behind")
+    else:
+        status = "current"
+
+    # Traffic is a second feed (GA4 export). A failed read, or a sessions series
+    # that has fallen well behind, is at least amber — but never downgrades a
+    # harder paid-media verdict.
+    if not sessions_available:
+        reasons.append("traffic read failed")
+        status = _worse(status, "lagging")
+    elif sess_lag is not None and sess_lag >= _HEALTH_STALE_DAYS:
+        reasons.append(f"traffic {sess_lag} days behind")
+        status = _worse(status, "lagging")
+
+    return {
+        "status": status,
+        "lag_days": lag,
+        "fresh_through": fresh_through.isoformat() if fresh_through else None,
+        "sessions_through": sessions_through.isoformat() if sessions_through else None,
+        "channels": channels,
+        "reasons": reasons,
+    }
+
+
 def compute_agency_budget(
     spend_rows: list[tuple[str, str, date, float]],
     sessions_rows: list[tuple[str, date, int]],
@@ -209,11 +300,17 @@ def compute_agency_budget(
     shows. The returned payload is key-for-key identical to the HQ feed, so the
     same client list (spend vs budget + sessions sparkline) renders unchanged.
 
+    Each row also carries a lightweight ``health`` verdict (connector freshness
+    inferred from the same rows — see _client_health) plus a ``health_rank`` for
+    sorting problems to the top.
+
     ``spend_rows``    : (client_slug, source, metric_date, spend).
     ``sessions_rows`` : (client_slug, metric_date, sessions).
     ``clients``       : ordered client rows, each with client_slug, label,
-                        monthly_budget, and spend_available / sessions_available
-                        flags (whether that client's BigQuery read succeeded).
+                        monthly_budget, a ``configured`` flag (whether a
+                        BigQuery project is set), and spend_available /
+                        sessions_available flags (whether that client's read
+                        succeeded).
     """
     month_start = today.replace(day=1)
     days_in_month = calendar.monthrange(today.year, today.month)[1]
@@ -268,6 +365,37 @@ def compute_agency_budget(
                 [sessions_start, sessions_end],
             ).fetchall()
         }
+
+        # Connector-health freshness: the newest date each feed reaches. The
+        # freshest paid date overall (max across channels) grades the client;
+        # the per-channel through-dates feed the chip tooltip so the culprit is
+        # visible. All from the rows already loaded — no extra reads.
+        fresh_map = {
+            slug: mx
+            for slug, mx in con.execute(
+                "SELECT client_slug, MAX(metric_date) FROM d GROUP BY client_slug"
+            ).fetchall()
+        }
+        sess_fresh_map = {
+            slug: mx
+            for slug, mx in con.execute(
+                "SELECT client_slug, MAX(metric_date) FROM s GROUP BY client_slug"
+            ).fetchall()
+        }
+        chan_map: dict[str, list[dict[str, Any]]] = {}
+        for slug, src, mx, sp in con.execute(
+            """
+            SELECT client_slug, source, MAX(metric_date) AS mx, SUM(spend) AS sp
+            FROM d
+            GROUP BY client_slug, source
+            ORDER BY sp DESC
+            """
+        ).fetchall():
+            chan_map.setdefault(slug, []).append({
+                "source": _channel_label(src),
+                "through": mx.isoformat() if mx else None,
+                "spend": round(float(sp or 0.0), 2),
+            })
     finally:
         con.close()
 
@@ -276,6 +404,7 @@ def compute_agency_budget(
     tot_spend = 0.0
     tot_projected = 0.0
     n_over = 0
+    n_data_issues = 0
     for c in clients:
         slug = str(c["client_slug"])
         budget = float(c.get("monthly_budget") or 0.0)
@@ -296,6 +425,16 @@ def compute_agency_budget(
         pace_delta = round(projected - budget, 2) if (projected is not None and budget > 0) else None
         status = _pace_status(budget=budget, projected=projected)
 
+        health = _client_health(
+            configured=bool(c.get("configured")),
+            spend_available=spend_available,
+            sessions_available=sessions_available,
+            fresh_through=fresh_map.get(slug),
+            sessions_through=sess_fresh_map.get(slug),
+            channels=chan_map.get(slug, []),
+            today=today,
+        )
+
         rows.append({
             "client_slug": slug,
             "label": str(c.get("label") or slug),
@@ -312,6 +451,8 @@ def compute_agency_budget(
             "sessions_series": series,
             "sessions_total": sess_total,
             "sessions_available": sessions_available and bool(series),
+            "health": health,
+            "health_rank": _health_rank(health["status"]),
         })
 
         tot_budget += budget
@@ -321,6 +462,8 @@ def compute_agency_budget(
                 tot_projected += projected
             if status == "over":
                 n_over += 1
+        if health["status"] in ("stale", "error"):
+            n_data_issues += 1
 
     return {
         "month_label": month_start.strftime("%B %Y"),
@@ -339,6 +482,7 @@ def compute_agency_budget(
             "mtd_spend": round(tot_spend, 2),
             "projected_month_end": round(tot_projected, 2),
             "clients_over_pace": n_over,
+            "clients_with_data_issues": n_data_issues,
             "client_count": len(rows),
         },
         "clients": rows,
@@ -490,10 +634,12 @@ def build_agency_overview() -> dict[str, Any]:
             "client_slug": slug,
             "label": str(c.get("label") or slug),
             "monthly_budget": float(c.get("monthly_budget_usd") or 0.0),
+            "configured": False,
             "spend_available": False,
             "sessions_available": False,
         }
         project_id, dataset_id = _resolve_destination(c)
+        meta["configured"] = bool(project_id)
         if not project_id:
             return [], [], meta
 
