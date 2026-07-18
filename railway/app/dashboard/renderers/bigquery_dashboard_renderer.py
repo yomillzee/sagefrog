@@ -485,6 +485,7 @@ def render_bigquery_dashboard_page(
        as the cards below. A hairline border + soft shadow separate it from the
        scrolling content. */
     .date-bar {{ position:sticky; top:0; z-index:50; background:var(--card); border-bottom:1px solid var(--line); box-shadow:0 1px 0 rgba(16,33,67,.04), 0 6px 16px -12px rgba(16,33,67,.28); }}
+    .date-bar[hidden] {{ display:none; }}
     .date-bar-inner {{ max-width:1320px; margin:0 auto; padding:13px 28px; display:flex; flex-direction:column; gap:10px; }}
     /* ---- Admin FAB + slideout panel ---- */
     .admin-fab {{ position:fixed; bottom:24px; right:24px; z-index:200; width:42px; height:42px; border-radius:50%; background:var(--navy); color:#fff; border:0; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 3px 14px rgba(0,0,0,.28); transition:transform .15s,box-shadow .15s; }}
@@ -1390,6 +1391,11 @@ def render_bigquery_dashboard_page(
       if (pf) pf.hidden = tab === 'analytics' || tab === 'gsc' || tab === 'ai_traffic';
       const efb = document.getElementById('explorerFilterBar');
       if (efb) efb.hidden = !(tab === 'explorer' && EXPLORER_FILTER_GROUPS.length);
+      // Site Performance shows one latest PageSpeed snapshot plus its own trend,
+      // so the sticky Range/Platform filters have nothing to act on — hide the
+      // whole filter bar on that tab rather than leaving dead controls.
+      const dateBar = document.querySelector('.date-bar');
+      if (dateBar) dateBar.hidden = tab === 'site_performance';
       currentTab = tab;
       // Keep the tab in the URL so a refresh reopens the same page (not
       // Overview), and so switching clients can carry the tab across. Overview

@@ -83,7 +83,7 @@ def pane_html() -> str:
           <span class="ps-legend-item"><span class="ps-dot" style="background:#e8a13a"></span>Best Practices</span>
           <span class="ps-legend-item"><span class="ps-dot" style="background:#7c3aed"></span>SEO</span>
         </div>
-        <div class="chart-wrap">
+        <div class="chart-wrap" id="psTrendWrap">
           <div class="chart-canvas-host" style="height:220px"><canvas id="psTrendChart"></canvas></div>
         </div>
       </section>
@@ -117,6 +117,18 @@ def pane_css() -> str:
     .ps-legend { display:flex; flex-wrap:wrap; gap:16px; margin:0 0 12px; font-size:.8rem; color:var(--muted); }
     .ps-legend-item { display:inline-flex; align-items:center; gap:6px; }
     .ps-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+    /* ---- "Building history" trend states (≤1 reading) ---- */
+    /* Overlay floats a status card over the anchored-reading chart (or the
+       shimmer skeleton) without blocking the chart's own tooltips. */
+    #psTrendWrap { position:relative; }
+    .ps-trend-overlay { position:absolute; inset:10px 12px; display:flex; align-items:center; justify-content:center; pointer-events:none; z-index:2; }
+    .ps-trend-overlay--skel { border-radius:10px; overflow:hidden; background:linear-gradient(90deg,#eef2f7 25%,#e4eaf2 50%,#eef2f7 75%); background-size:200% 100%; animation:shimmer 1.6s ease-in-out infinite; }
+    .ps-trend-badge { pointer-events:auto; display:flex; align-items:center; gap:12px; max-width:86%; padding:12px 16px; background:rgba(255,255,255,.9); backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px); border:1px solid var(--line); border-radius:12px; box-shadow:0 10px 30px -14px rgba(16,33,67,.5); }
+    .ps-trend-copy { display:flex; flex-direction:column; gap:2px; }
+    .ps-trend-copy strong { font-size:.9rem; color:var(--navy, #0a2540); }
+    .ps-trend-copy span { font-size:.76rem; color:var(--muted); }
+    .ps-trend-pulse { flex-shrink:0; width:11px; height:11px; border-radius:50%; background:var(--accent, #1d6fd0); box-shadow:0 0 0 0 rgba(29,111,208,.5); animation:psTrendPulse 1.9s cubic-bezier(.4,0,.2,1) infinite; }
+    @keyframes psTrendPulse { 0% { box-shadow:0 0 0 0 rgba(29,111,208,.45); } 70% { box-shadow:0 0 0 11px rgba(29,111,208,0); } 100% { box-shadow:0 0 0 0 rgba(29,111,208,0); } }
     """
 
 
@@ -181,7 +193,9 @@ def pane_js() -> str:
       document.getElementById('psCwv').innerHTML = cwv.map(([l, v]) =>
         `<div class="card"><div class="card-title">${esc(l)}</div><div class="card-value">${v}</div></div>`).join('');
       const hist = p.history || [];
+      const hasCurrent = ['performance', 'accessibility', 'best_practices', 'seo'].some(k => p[k] != null);
       if (hist.length > 1) {
+        psClearTrendState();
         const labels = hist.map(r => String(r.metric_date || '').slice(5));
         lineChart('psTrendChart', labels, [
           { label: 'Performance', data: hist.map(r => r.performance), color: '#1d6fd0', fmt: v => v },
@@ -189,9 +203,112 @@ def pane_js() -> str:
           { label: 'Best Practices', data: hist.map(r => r.best_practices), color: '#e8a13a', fmt: v => v },
           { label: 'SEO', data: hist.map(r => r.seo), color: '#7c3aed', fmt: v => v },
         ], { points: true, yDisplay: true, beginAtZero: true });
+      } else if (hasCurrent) {
+        psRenderTrendBuilding(p);   // one reading: anchor it + project "incoming"
       } else {
-        __destroyChart('psTrendChart');
+        psRenderTrendSkeleton();    // no reading yet: shimmer placeholder
       }
+    }
+    // ---- "Scores over time" empty states ----
+    // A single PSI reading (or none) can't draw a trend, so instead of a blank
+    // canvas we show where the trend is heading: the reading anchored on the
+    // left, dashed "holds" fading into a shaded incoming band, and a status card
+    // naming the first-snapshot date.
+    const PS_TREND_KPIS = [
+      ['Performance', 'performance', '#1d6fd0'],
+      ['Accessibility', 'accessibility', '#0c9d61'],
+      ['Best Practices', 'best_practices', '#e8a13a'],
+      ['SEO', 'seo', '#7c3aed'],
+    ];
+    function psAddDays(iso, days) {
+      const d = iso ? new Date(iso + 'T00:00:00') : new Date();
+      const base = isNaN(d.getTime()) ? new Date() : d;
+      base.setDate(base.getDate() + days);
+      return base;
+    }
+    function psFmtMD(d) {
+      return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+    function psClearTrendState() {
+      const wrap = document.getElementById('psTrendWrap');
+      if (wrap) wrap.querySelectorAll('.ps-trend-overlay').forEach(el => el.remove());
+    }
+    function psTrendOverlay(html, extraClass) {
+      const wrap = document.getElementById('psTrendWrap');
+      if (!wrap) return;
+      psClearTrendState();
+      const ov = document.createElement('div');
+      ov.className = 'ps-trend-overlay' + (extraClass ? ' ' + extraClass : '');
+      ov.innerHTML = html;
+      wrap.appendChild(ov);
+    }
+    function psRenderTrendSkeleton() {
+      __destroyChart('psTrendChart');
+      psTrendOverlay(
+        '<div class="ps-trend-badge"><span class="ps-trend-pulse"></span>' +
+        '<div class="ps-trend-copy"><strong>Awaiting your first snapshot</strong>' +
+        '<span>Run a PageSpeed sync from Connectors — scores plot here once data lands.</span></div></div>',
+        'ps-trend-overlay--skel'
+      );
+    }
+    function psRenderTrendBuilding(p) {
+      const anchorISO = p.metric_date || new Date().toISOString().slice(0, 10);
+      const STEP = 7, FUTURE = 4;                 // project a month of weekly slots
+      const labels = [psFmtMD(psAddDays(anchorISO, 0))];
+      for (let i = 1; i <= FUTURE; i++) labels.push(psFmtMD(psAddDays(anchorISO, i * STEP)));
+      const datasets = PS_TREND_KPIS.map(([label, key, color]) => {
+        const v = p[key];
+        return {
+          label, borderColor: color + 'B3', borderWidth: 2, borderDash: [5, 5],
+          tension: 0, fill: false, spanGaps: true,
+          data: labels.map(() => (v == null ? null : v)),
+          pointRadius: ctx => (ctx.dataIndex === 0 && v != null ? 4 : 0),
+          pointHoverRadius: ctx => (ctx.dataIndex === 0 && v != null ? 5 : 0),
+          pointBackgroundColor: color, pointBorderColor: '#fff', pointBorderWidth: 1.5,
+        };
+      });
+      // Inline plugin: wash the future region and drop a soft "now" divider so
+      // the dashed holds read as pending rather than a flat forecast.
+      const incomingBand = {
+        id: 'psIncomingBand',
+        beforeDatasetsDraw(chart) {
+          const a = chart.chartArea, x = chart.scales.x, ctx = chart.ctx;
+          if (!a) return;
+          const x0 = x.getPixelForValue(0);
+          ctx.save();
+          const g = ctx.createLinearGradient(x0, 0, a.right, 0);
+          g.addColorStop(0, 'rgba(29,111,208,0.07)');
+          g.addColorStop(1, 'rgba(29,111,208,0.015)');
+          ctx.fillStyle = g;
+          ctx.fillRect(x0, a.top, a.right - x0, a.bottom - a.top);
+          ctx.beginPath();
+          ctx.moveTo(x0, a.top); ctx.lineTo(x0, a.bottom);
+          ctx.setLineDash([3, 3]); ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(16,33,67,0.2)';
+          ctx.stroke();
+          ctx.restore();
+        },
+      };
+      __chart('psTrendChart', {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            x: { grid: { display: false }, border: { display: false }, ticks: { maxRotation: 0, autoSkip: false } },
+            y: { beginAtZero: true, max: 100, grid: { color: '#f1f4f9' }, border: { display: false }, ticks: { maxTicksLimit: 4 } },
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: { filter: item => item.dataIndex === 0, callbacks: { label: c => `${c.dataset.label}: ${c.raw}` } },
+          },
+        },
+        plugins: [incomingBand],
+      });
+      psTrendOverlay(
+        '<div class="ps-trend-badge"><span class="ps-trend-pulse"></span>' +
+        '<div class="ps-trend-copy"><strong>Building your performance history</strong>' +
+        `<span>First snapshot ${esc(anchorISO)} · the trend fills in as new syncs land.</span></div></div>`
+      );
     }
     let sitePerfLoaded = false;
     async function loadSitePerformance(strategy) {
