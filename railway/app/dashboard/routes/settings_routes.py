@@ -109,26 +109,14 @@ def dashboard_client_settings(
         f"Settings saved, but BigQuery setup needs attention: {bq_error}" if bq_error else None
     )
     db_cfg = client_dashboard_config.get_config(slug)
-    is_nixon_mode = bool(db_cfg and db_cfg.dashboard_mode == "bigquery_nixon")
-
     auth = web_auth.authenticate_dashboard(request, client_slug=slug)
     if isinstance(auth, RedirectResponse):
         return auth
-    if is_nixon_mode:
-        return _render_bq_nixon_settings(
-            slug, db_cfg, flash=flash, flash_err=flash_err,
-            html_kw=dashboard_settings_session_kwargs(auth),
-        )
-    cfg = dashboard_settings.load_settings_config(slug)
-    return HTMLResponse(
-        dashboard_settings.render_settings_html(
-            client_slug=slug,
-            cfg=cfg,
-            flash_message=flash,
-            flash_error=flash_err,
-            db_config_updated_at=_config_updated_at(slug),
-            **dashboard_settings_session_kwargs(auth),
-        )
+    # Every dashboard uses the BigQuery settings page now that the Penn
+    # settings form has been removed.
+    return _render_bq_nixon_settings(
+        slug, db_cfg, flash=flash, flash_err=flash_err,
+        html_kw=dashboard_settings_session_kwargs(auth),
     )
 
 

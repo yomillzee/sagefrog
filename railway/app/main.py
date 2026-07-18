@@ -447,10 +447,7 @@ def root() -> dict:
         "warehouse_metrics": "/warehouse/metrics",
         "login": "/login",
         "admin": "/admin",
-        "dashboard_penn": "/dashboard/penn",
-        "dashboard_demo": "/dashboard/demo",
         "dashboard_client_settings": "/dashboard/{client_slug}/settings",
-        "internal_sync_penn": "POST /internal/sync-penn (header X-Cron-Secret)",
         "ga4_env": "/ga4/env",
     }
     if not _hide_api_docs:

@@ -30,35 +30,34 @@ class _FakeAuth:
         self.user = types.SimpleNamespace(email="a@b.com", role="admin")
 
 
-class SettingsBigqueryNixonModeTests(unittest.TestCase):
-    def test_nixon_mode_renders_nixon_settings_not_penn_form(self) -> None:
+class SettingsAlwaysBigqueryTests(unittest.TestCase):
+    """The Penn settings form has been removed: /dashboard/{slug}/settings always
+    renders the BigQuery settings page, regardless of any legacy dashboard_mode."""
+
+    def _render(self, mode: str):
+        """Returns (bq_settings_mock, penn_form_mock) after invoking the route.
+
+        Both renderers are patched so the assertion is purely about routing
+        (which renderer is chosen) and needs no database.
+        """
         with patch.object(settings_routes, "validate_client_slug", side_effect=lambda s: s), \
              patch.object(settings_routes.client_dashboard_config, "get_config",
-                          return_value=_FakeCfgRow("bigquery_nixon")), \
-             patch.object(settings_routes.web_users, "enabled", return_value=True), \
+                          return_value=_FakeCfgRow(mode)), \
              patch.object(settings_routes.web_auth, "authenticate_dashboard", return_value=_FakeAuth()), \
+             patch.object(settings_routes, "_render_bq_nixon_settings",
+                          return_value="<html>bq-settings</html>") as bq_settings, \
              patch.object(settings_routes.dashboard_settings, "render_settings_html") as penn_form:
-            resp = settings_routes.dashboard_client_settings(client_slug="test", request=types.SimpleNamespace(), key=None)
+            settings_routes.dashboard_client_settings(
+                client_slug="test", request=types.SimpleNamespace()
+            )
+        return bq_settings, penn_form
 
-        body = resp.body.decode()
-        # Nixon-style settings page, not the Penn account-ID form.
-        self.assertIn("Test Co — Settings", body)
-        self.assertIn("/api/clients/test/refresh", body)
-        self.assertNotIn("/api/clients/nixon/", body)
-        penn_form.assert_not_called()
-
-    def test_non_nixon_mode_still_renders_penn_form(self) -> None:
-        with patch.object(settings_routes, "validate_client_slug", side_effect=lambda s: s), \
-             patch.object(settings_routes.client_dashboard_config, "get_config",
-                          return_value=_FakeCfgRow("bigquery")), \
-             patch.object(settings_routes.web_users, "enabled", return_value=True), \
-             patch.object(settings_routes.web_auth, "authenticate_dashboard", return_value=_FakeAuth()), \
-             patch.object(settings_routes.dashboard_settings, "load_settings_config", return_value=object()), \
-             patch.object(settings_routes.dashboard_settings, "render_settings_html", return_value="<html>penn-form</html>") as penn_form:
-            resp = settings_routes.dashboard_client_settings(client_slug="other", request=types.SimpleNamespace(), key=None)
-
-        self.assertIn("penn-form", resp.body.decode())
-        penn_form.assert_called_once()
+    def test_renders_bigquery_settings_regardless_of_mode(self) -> None:
+        for mode in ("bigquery_nixon", "bigquery", "api"):
+            with self.subTest(mode=mode):
+                bq_settings, penn_form = self._render(mode)
+                bq_settings.assert_called_once()
+                penn_form.assert_not_called()
 
 
 if __name__ == "__main__":

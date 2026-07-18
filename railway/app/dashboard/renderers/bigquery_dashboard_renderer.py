@@ -17,6 +17,91 @@ from dashboard.renderers.base_layout import (
 from dashboard.renderers import pagespeed_renderer
 
 
+# ── HubSpot MQL tracker formatting helpers ──────────────────────────────────
+# Self-contained here so this renderer has no dependency on the (removed) Penn
+# renderer. Used by hubspot_mql_section_html below.
+
+def _mql_money_compact(n) -> str:
+    try:
+        v = float(n)
+    except (TypeError, ValueError):
+        return "$0"
+    a = abs(v)
+    if a >= 1_000_000:
+        return f"${v / 1_000_000:.1f}M".replace(".0M", "M")
+    if a >= 10_000:
+        return f"${v / 1_000:.0f}K"
+    return f"${v:,.0f}"
+
+
+def _mql_mom_delta(mqls_by_month) -> str:
+    """Month-over-month MQL change for the two most recent months with data."""
+    parsed: list[tuple[str, int]] = []
+    for r in mqls_by_month or []:
+        month = str(r.get("month") or "")
+        if not month:
+            continue
+        try:
+            parsed.append((month, int(r.get("contacts") or 0)))
+        except (TypeError, ValueError):
+            continue
+    if len(parsed) < 2:
+        return ""
+    parsed.sort()
+    prev, curr = parsed[-2][1], parsed[-1][1]
+    if prev == 0:
+        return "" if curr == 0 else '<span class="mql-delta up">New this month</span>'
+    change = (curr - prev) / prev * 100.0
+    if abs(change) < 0.5:
+        return '<span class="mql-delta flat">Flat MoM</span>'
+    if change > 0:
+        return f'<span class="mql-delta up">▲ {change:.0f}% MoM</span>'
+    return f'<span class="mql-delta down">▼ {abs(change):.0f}% MoM</span>'
+
+
+def _mql_sparkline(mqls_by_month, accent: str = "#ff7a59") -> str:
+    """Tiny inline-SVG trend of monthly MQL volume (last 12 months).
+
+    Returns "" when there's fewer than two months of data — nothing to plot.
+    """
+    series: list[int] = []
+    for r in sorted(mqls_by_month or [], key=lambda x: str(x.get("month") or "")):
+        if not str(r.get("month") or ""):
+            continue
+        try:
+            series.append(int(r.get("contacts") or 0))
+        except (TypeError, ValueError):
+            continue
+    series = series[-12:]
+    if len(series) < 2:
+        return ""
+
+    w, h, pad = 132.0, 34.0, 3.0
+    peak = max(series) or 1
+    n = len(series)
+    step = (w - 2 * pad) / (n - 1)
+    pts = [
+        (pad + i * step, h - pad - (v / peak) * (h - 2 * pad))
+        for i, v in enumerate(series)
+    ]
+    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    area = (
+        f"M {pts[0][0]:.1f} {h - pad:.1f} "
+        + " ".join(f"L {x:.1f} {y:.1f}" for x, y in pts)
+        + f" L {pts[-1][0]:.1f} {h - pad:.1f} Z"
+    )
+    lx, ly = pts[-1]
+    return (
+        f'<svg class="mql-spark" viewBox="0 0 {w:.0f} {h:.0f}" preserveAspectRatio="none" '
+        f'role="img" aria-label="Monthly MQL trend">'
+        f'<path d="{area}" fill="{accent}" fill-opacity="0.12"/>'
+        f'<polyline points="{line}" fill="none" stroke="{accent}" stroke-width="1.6" '
+        f'stroke-linejoin="round" stroke-linecap="round"/>'
+        f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="2.2" fill="{accent}"/>'
+        f'</svg>'
+    )
+
+
 def _api_url(path: str, *, access_key: str | None) -> str:
     if not access_key:
         return path
@@ -154,13 +239,7 @@ def hubspot_mql_section_html(report, lead_tracking_url: str | None, *, pin_btn: 
     if report is None or not getattr(report, "configured", False):
         return ""
 
-    # Reuse the shared trend/delta/money helpers so both dashboards format MQL
-    # figures identically.
-    from dashboard.renderers.dashboard_renderer import (
-        _mql_money_compact as _money,
-        _mql_mom_delta as _mom,
-        _mql_sparkline as _spark,
-    )
+    _money, _mom, _spark = _mql_money_compact, _mql_mom_delta, _mql_sparkline
     from dashboard.utils.formatting import esc as _esc, fmt_int as _int, fmt_pct as _pct
 
     cards: list[str] = []
