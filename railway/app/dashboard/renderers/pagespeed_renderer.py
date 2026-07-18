@@ -72,7 +72,7 @@ def pane_html() -> str:
         </div>
       </section>
       <section id="sec-ps-cwv">
-        <div class="sec-head"><h2>Core Web Vitals (lab)</h2></div>
+        <div class="sec-head"><h2>Core Web Vitals</h2></div>
         <div class="cards" id="psCwv"></div>
       </section>
       <section id="sec-ps-trend">
@@ -122,6 +122,10 @@ def pane_css() -> str:
        shimmer skeleton) without blocking the chart's own tooltips. */
     #psTrendWrap { position:relative; }
     .ps-trend-overlay { position:absolute; inset:10px 12px; display:flex; align-items:center; justify-content:center; pointer-events:none; z-index:2; }
+    /* One-reading state: park the card along the bottom so it sits under the
+       plotted scores (which cluster high) instead of covering them — matters
+       most on narrow/mobile widths where a centered card hides the whole chart. */
+    .ps-trend-overlay--bottom { align-items:flex-end; }
     .ps-trend-overlay--skel { border-radius:10px; overflow:hidden; background:linear-gradient(90deg,#eef2f7 25%,#e4eaf2 50%,#eef2f7 75%); background-size:200% 100%; animation:shimmer 1.6s ease-in-out infinite; }
     .ps-trend-badge { pointer-events:auto; display:flex; align-items:center; gap:12px; max-width:86%; padding:12px 16px; background:rgba(255,255,255,.9); backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px); border:1px solid var(--line); border-radius:12px; box-shadow:0 10px 30px -14px rgba(16,33,67,.5); }
     .ps-trend-copy { display:flex; flex-direction:column; gap:2px; }
@@ -129,6 +133,12 @@ def pane_css() -> str:
     .ps-trend-copy span { font-size:.76rem; color:var(--muted); }
     .ps-trend-pulse { flex-shrink:0; width:11px; height:11px; border-radius:50%; background:var(--accent, #1d6fd0); box-shadow:0 0 0 0 rgba(29,111,208,.5); animation:psTrendPulse 1.9s cubic-bezier(.4,0,.2,1) infinite; }
     @keyframes psTrendPulse { 0% { box-shadow:0 0 0 0 rgba(29,111,208,.45); } 70% { box-shadow:0 0 0 11px rgba(29,111,208,0); } 100% { box-shadow:0 0 0 0 rgba(29,111,208,0); } }
+    /* ---- Core Web Vitals sparklines ---- */
+    #psCwv .card { display:flex; flex-direction:column; }
+    .ps-spark { margin-top:10px; height:26px; }
+    .ps-spark svg { display:block; width:100%; height:100%; }
+    .ps-spark--empty { position:relative; }
+    .ps-spark--empty::after { content:""; position:absolute; left:0; right:0; top:50%; border-top:1.5px dashed var(--line); }
     """
 
 
@@ -170,6 +180,34 @@ def pane_js() -> str:
       return `<div class="card"><div class="card-title">${esc(label)}</div>` +
              `<div class="card-value" style="color:${tc.color}">${shown}${suffix}</div>${target}</div>`;
     }
+    // Tiny inline-SVG sparkline for a Core Web Vitals card. `values` is the
+    // metric's history oldest→newest (nulls tolerated). Lab metrics are all
+    // "lower is better", so a net-downward series draws green, upward red, flat
+    // muted. Renders a faint baseline placeholder until there are ≥2 readings.
+    function psSparkline(values) {
+      const pts = (values || []).map(v => (v == null ? null : Number(v)));
+      const nums = pts.filter(v => v != null && isFinite(v));
+      if (nums.length < 2) return '<div class="ps-spark ps-spark--empty"></div>';
+      const W = 120, H = 26, pad = 3, n = pts.length;
+      const min = Math.min(...nums), max = Math.max(...nums), span = (max - min) || 1;
+      const x = i => pad + (n === 1 ? (W - pad * 2) / 2 : (i / (n - 1)) * (W - pad * 2));
+      const y = v => H - pad - ((v - min) / span) * (H - pad * 2);
+      let d = '', firstX = null, lastX = 0, lastY = 0, started = false;
+      pts.forEach((v, i) => {
+        if (v == null || !isFinite(v)) return;
+        const px = x(i), py = y(v);
+        d += (started ? 'L' : 'M') + px.toFixed(1) + ' ' + py.toFixed(1) + ' ';
+        if (!started) firstX = px;
+        started = true; lastX = px; lastY = py;
+      });
+      const first = nums[0], last = nums[nums.length - 1];
+      const color = last < first ? '#0c9d61' : (last > first ? '#e5484d' : '#8595ab');
+      const area = `${d}L${lastX.toFixed(1)} ${H} L${firstX.toFixed(1)} ${H} Z`;
+      return `<div class="ps-spark"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">` +
+        `<path d="${area}" fill="${color}" opacity="0.09"/>` +
+        `<path d="${d.trim()}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` +
+        `<circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="1.9" fill="${color}"/></svg></div>`;
+    }
     function renderPagespeed(p) {
       p = p || {};
       psLast = p;
@@ -181,18 +219,21 @@ def pane_js() -> str:
       ];
       document.getElementById('psScores').innerHTML =
         scores.map(([l, k, v]) => psScoreCard(l, v, PAGESPEED_TARGETS[k])).join('');
-      const cls = p.cls == null ? '—' : (Math.round(p.cls * 1000) / 1000);
-      const cwv = [
-        ['Largest Contentful Paint', psMs(p.lcp_ms)],
-        ['Cumulative Layout Shift', cls],
-        ['Total Blocking Time', psMs(p.tbt_ms)],
-        ['First Contentful Paint', psMs(p.fcp_ms)],
-        ['Speed Index', psMs(p.speed_index_ms)],
-        ['Time to Interactive', psMs(p.tti_ms)],
-      ];
-      document.getElementById('psCwv').innerHTML = cwv.map(([l, v]) =>
-        `<div class="card"><div class="card-title">${esc(l)}</div><div class="card-value">${v}</div></div>`).join('');
       const hist = p.history || [];
+      const clsVal = p.cls == null ? '—' : (Math.round(p.cls * 1000) / 1000);
+      // [label, history key, formatted current value]. Every lab metric is
+      // "lower is better", so the sparkline colors a downward trend green.
+      const cwv = [
+        ['Largest Contentful Paint', 'lcp_ms', psMs(p.lcp_ms)],
+        ['Cumulative Layout Shift', 'cls', clsVal],
+        ['Total Blocking Time', 'tbt_ms', psMs(p.tbt_ms)],
+        ['First Contentful Paint', 'fcp_ms', psMs(p.fcp_ms)],
+        ['Speed Index', 'speed_index_ms', psMs(p.speed_index_ms)],
+        ['Time to Interactive', 'tti_ms', psMs(p.tti_ms)],
+      ];
+      document.getElementById('psCwv').innerHTML = cwv.map(([l, key, v]) =>
+        `<div class="card"><div class="card-title">${esc(l)}</div><div class="card-value">${v}</div>` +
+        psSparkline(hist.map(r => r[key])) + `</div>`).join('');
       const hasCurrent = ['performance', 'accessibility', 'best_practices', 'seo'].some(k => p[k] != null);
       if (hist.length > 1) {
         psClearTrendState();
@@ -307,7 +348,8 @@ def pane_js() -> str:
       psTrendOverlay(
         '<div class="ps-trend-badge"><span class="ps-trend-pulse"></span>' +
         '<div class="ps-trend-copy"><strong>Building your performance history</strong>' +
-        `<span>First snapshot ${esc(anchorISO)} · the trend fills in as new syncs land.</span></div></div>`
+        `<span>First snapshot ${esc(anchorISO)} · the trend fills in as new syncs land.</span></div></div>`,
+        'ps-trend-overlay--bottom'   // sit under the plotted reading, not over it
       );
     }
     let sitePerfLoaded = false;

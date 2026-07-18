@@ -283,12 +283,15 @@ def fetch_latest_snapshot(
     latest = dict(rows[0].items())
 
     hist_rows = list(client.query(
-        f"SELECT metric_date, performance, accessibility, best_practices, seo "
+        f"SELECT metric_date, performance, accessibility, best_practices, seo, "
+        f"lcp_ms, cls, tbt_ms, fcp_ms, speed_index_ms, tti_ms "
         f"FROM `{proj}.{raw_ds}.scores_daily` "
         f"WHERE client_key = @client_key AND strategy = @strat "
         f"ORDER BY metric_date ASC LIMIT 365",
         job_config=bq.QueryJobConfig(query_parameters=params),
     ).result(timeout=30))
+    # Scores drive the "Scores over time" trend; the lab metrics feed the
+    # Core Web Vitals sparklines. Both are per-date series oldest→newest.
     history = [
         {
             "metric_date": r["metric_date"].isoformat() if r["metric_date"] else None,
@@ -296,6 +299,12 @@ def fetch_latest_snapshot(
             "accessibility": r["accessibility"],
             "best_practices": r["best_practices"],
             "seo": r["seo"],
+            "lcp_ms": r["lcp_ms"],
+            "cls": r["cls"],
+            "tbt_ms": r["tbt_ms"],
+            "fcp_ms": r["fcp_ms"],
+            "speed_index_ms": r["speed_index_ms"],
+            "tti_ms": r["tti_ms"],
         }
         for r in hist_rows
     ]
