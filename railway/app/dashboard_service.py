@@ -52,11 +52,6 @@ from dashboard.utils.urls import (
 from dashboard.services.refresh_service import (
     patch_snapshot_from_config,
     refresh_bq_client,
-    refresh_client,
-    refresh_client_quick,
-    refresh_penn,
-    refresh_penn_quick,
-    save_penn_insights,
 )
 from dashboard.services.snapshot_metrics_service import (
     account_totals as _account_totals,
