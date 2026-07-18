@@ -14,7 +14,7 @@ from penn_business_lines import (
     build_client_segment_campaigns,
     client_filter_profile,
 )
-from penn_config import PennDashboardConfig
+from dashboard_config import DashboardConfig
 
 from dashboard.services.warehouse_metrics_service import totals_from_daily_rows
 
@@ -148,7 +148,7 @@ def aggregated_paid_media(platform_totals: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_budget_pacing_payload(
-    cfg: PennDashboardConfig,
+    cfg: DashboardConfig,
     *,
     snapshot_daily_metrics: dict[str, Any] | None = None,
     monthly_budget: float | None = None,

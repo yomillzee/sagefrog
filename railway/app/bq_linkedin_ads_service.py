@@ -17,7 +17,7 @@ from typing import Any
 import bigquery_service
 from dashboard.services.snapshot_metrics_service import aggregated_paid_media
 from penn_business_lines import build_client_segment_campaigns, client_filter_profile
-from penn_config import PennDashboardConfig
+from dashboard_config import DashboardConfig
 
 LOGGER = logging.getLogger(__name__)
 
@@ -804,7 +804,7 @@ def _normalize_creative_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 def build_snapshot(
     *,
-    cfg: PennDashboardConfig | None = None,
+    cfg: DashboardConfig | None = None,
     account_id: str | None = None,
     start: date,
     end: date,

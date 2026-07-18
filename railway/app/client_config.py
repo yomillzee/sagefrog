@@ -6,7 +6,7 @@ import json
 import os
 from typing import Any
 
-from penn_config import PennDashboardConfig
+from dashboard_config import DashboardConfig
 
 # Built-in clients besides Penn (account IDs optional — set in Settings or DASHBOARD_CLIENTS).
 # Trimmed to just the two portals still in use (nixon-bq-test, and "nixon" which
@@ -146,7 +146,7 @@ def client_label(slug: str) -> str:
     return _default_label(slug)
 
 
-def load_client_config(client_slug: str) -> PennDashboardConfig:
+def load_client_config(client_slug: str) -> DashboardConfig:
     """Load merged config for a client slug (env defaults + DB overrides)."""
     slug = (client_slug or "").strip().lower()
     known = list_client_slugs()
@@ -197,7 +197,7 @@ def load_client_config(client_slug: str) -> PennDashboardConfig:
             f"Client '{slug}' is not configured. Set DASHBOARD_CLIENTS or save account IDs in settings."
         )
 
-    return PennDashboardConfig(
+    return DashboardConfig(
         client_key=slug,
         label=label,
         google_customer_id=google or None,

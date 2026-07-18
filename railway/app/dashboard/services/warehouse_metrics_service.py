@@ -12,7 +12,7 @@ import linkedin_service
 import meta_service
 import warehouse
 from dashboard.utils.formatting import platform_error
-from penn_config import PennDashboardConfig
+from dashboard_config import DashboardConfig
 
 
 def totals_from_daily_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -26,7 +26,7 @@ def totals_from_daily_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def penn_load_daily_metrics_from_warehouse(
-    cfg: PennDashboardConfig,
+    cfg: DashboardConfig,
     *,
     start: date,
     end: date,
@@ -79,7 +79,7 @@ def penn_load_daily_metrics_from_warehouse(
         payload["platform_totals"] = platform_totals
 
 
-def load_mtd_daily_metrics(cfg: PennDashboardConfig) -> dict[str, Any]:
+def load_mtd_daily_metrics(cfg: DashboardConfig) -> dict[str, Any]:
     """Load paid-platform daily metrics for the current calendar month."""
     from dashboard.utils.dates import mtd_calendar_bounds
 
@@ -99,7 +99,7 @@ def load_mtd_daily_metrics(cfg: PennDashboardConfig) -> dict[str, Any]:
 
 
 def load_organic_daily_metrics(
-    cfg: PennDashboardConfig,
+    cfg: DashboardConfig,
     *,
     start: date,
     end: date,
@@ -184,7 +184,7 @@ def merge_linkedin_creative_media(
 
 
 def sync_campaign_daily(
-    cfg: PennDashboardConfig,
+    cfg: DashboardConfig,
     preset: str,
     payload: dict[str, Any],
 ) -> None:
@@ -257,7 +257,7 @@ def sync_campaign_daily(
 
 
 def load_campaign_daily_from_warehouse(
-    cfg: PennDashboardConfig,
+    cfg: DashboardConfig,
     *,
     start: date,
     end: date,
