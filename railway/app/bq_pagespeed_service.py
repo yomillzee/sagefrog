@@ -2,8 +2,9 @@
 
 PSI has no historical API — each audit is a point-in-time measurement. We call
 pagespeed_service.fetch_scores() once per sync and write the result as a dated
-row (metric_date = today), giving a daily time series in BQ that powers the
-score-over-time trend on the Site Performance tab.
+row (metric_date = today), building the dated time series in BQ (weekly cadence;
+see PageSpeedConnector.min_sync_interval_days) that powers the score-over-time
+trend on the Site Performance tab.
 
 All data lives in {project}.raw_pagespeed.scores_daily. Every row includes
 client_key + url + strategy for multi-tenant idempotency. DELETE is scoped to
