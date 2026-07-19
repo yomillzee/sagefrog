@@ -1842,17 +1842,11 @@ def admin_home(
     )
 
 
-@app.get("/admin/hq", include_in_schema=False, response_class=HTMLResponse)
+@app.get("/admin/hq", include_in_schema=False)
 def admin_budget_hq(request: Request):
-    """Admin-only 'Budget HQ': every client's monthly spend vs budget in one view."""
-    user = web_auth.get_current_user(request)
-    if not user:
-        return web_auth.redirect_to_login(request, next_path="/admin/hq")
-    if user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required.")
-    from dashboard.renderers.hq_renderer import render_hq_budget_page
-
-    return HTMLResponse(render_hq_budget_page(user_email=user.email))
+    """Legacy 'Budget HQ' — superseded by HQ (the DuckDB agency overview at
+    /admin/agency-trends). Redirect so old links/bookmarks land on the new HQ."""
+    return RedirectResponse(url="/admin/agency-trends", status_code=307)
 
 
 @app.get("/admin/hq/data", include_in_schema=False)

@@ -257,18 +257,6 @@ def build_hq_budget_overview() -> dict[str, Any]:
         results = []
 
     rows: list[dict[str, Any]] = [row for row, _ in results]
-
-    # Attach each client's latest Consent & Tracking Health verdict (one batched
-    # query, best-effort — never blocks the budget view if it fails).
-    try:
-        import consent_store
-        consent_map = consent_store.latest_health_by_slug()
-    except Exception:
-        LOGGER.warning("HQ: consent health lookup failed", exc_info=True)
-        consent_map = {}
-    for row in rows:
-        row["consent"] = consent_map.get(str(row["client_slug"]).strip().lower())
-
     tot_budget = 0.0
     tot_spend = 0.0
     tot_projected = 0.0
