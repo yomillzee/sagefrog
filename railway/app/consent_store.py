@@ -421,6 +421,38 @@ def list_runs(client_slug: str, *, limit: int = 20) -> list[ConsentScanRun]:
     return [_row_to_run(r, include_result=False) for r in rows]
 
 
+def latest_health_by_slug() -> dict[str, dict[str, Any]]:
+    """Latest completed scan health for every client, in a single query.
+
+    Used by the admin HQ tracker to show a per-client consent indicator without
+    N per-client reads. Returns {slug: {health, violation_count,
+    identifiers_before_consent, scanned_at}}.
+    """
+    if not enabled():
+        return {}
+    ensure_schema()
+    with db.connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT ON (client_slug)
+                   client_slug, health, violation_count,
+                   identifiers_before_consent, started_at
+            FROM consent_scan_runs
+            WHERE status = 'completed'
+            ORDER BY client_slug, started_at DESC
+            """
+        ).fetchall()
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        out[str(r[0]).strip().lower()] = {
+            "health": str(r[1] or "unknown"),
+            "violation_count": int(r[2] or 0),
+            "identifiers_before_consent": int(r[3] or 0),
+            "scanned_at": r[4].isoformat() if r[4] else None,
+        }
+    return out
+
+
 def fail_orphaned_runs(*, older_than_minutes: int = 0) -> int:
     """Close out 'running' scans left behind by a crash/redeploy (called at startup)."""
     if not enabled():
