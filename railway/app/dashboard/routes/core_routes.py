@@ -203,6 +203,16 @@ def dashboard_client(
     refresh_kind: str | None = None,
     refresh_error: str | None = None,
 ):
+    # Penn was retired from the client registry, so its dashboard now 404s.
+    # Stale bookmarks and phone home-screen shortcuts still point here, so send
+    # them to the dashboards picker (which routes each user to a dashboard they
+    # can actually open) instead of a dead page. This has to run before
+    # validate_client_slug, which would otherwise raise 404 for the unknown slug.
+    # It also has to live here, not on a separate /dashboard/penn route: the
+    # dynamic /dashboard/{client_slug} route is registered first and matches
+    # /dashboard/penn, so any standalone alias route is shadowed and never runs.
+    if (client_slug or "").strip().lower() == "penn":
+        return RedirectResponse(url="/dashboards", status_code=303)
     slug = validate_client_slug(client_slug)
     import client_dashboard_config as _cdc
 
@@ -321,14 +331,3 @@ def dashboard_client_json(client_slug: str, request: Request) -> dict:
             detail=f"No dashboard snapshot yet for '{slug}'. Run a refresh from Settings.",
         )
     return snapshot
-@router.get(
-    "/dashboard/penn",
-    summary="Penn dashboard (retired) — redirect to the dashboards picker",
-    include_in_schema=False,
-)
-def dashboard_penn_legacy(request: Request) -> RedirectResponse:
-    """Penn was removed from the client registry, so ``/dashboard/penn`` now
-    404s. Stale bookmarks and phone home-screen shortcuts still point here, so
-    send them to the dashboards picker, which routes each user to a dashboard
-    they can actually open (and forwards single-client users straight in)."""
-    return RedirectResponse(url="/dashboards", status_code=303)
