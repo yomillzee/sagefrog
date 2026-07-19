@@ -1,34 +1,25 @@
-# Runtime env for the consent scanner. These are best-effort — the scanner no
-# longer depends on them propagating to the runtime container (it searches known
-# install paths and auto-detects root for --no-sandbox), but they help when they
-# do apply.
+# Runtime env for the consent scanner. Best-effort — the scanner no longer
+# depends on these propagating to the runtime container (it searches known
+# install paths and auto-detects root for --no-sandbox).
 [variables]
 PLAYWRIGHT_BROWSERS_PATH = "/opt/pw-browsers"
 CONSENT_SCANNER_NO_SANDBOX = "1"
 
 [phases.setup]
 nixPkgs = ["python3", "gcc"]
-# Chromium's OS libraries for the Consent & Tracking Health scanner. Installed via
-# apt so they're reliably baked into the image (independent of the Playwright
-# browser download below, which can be flaky). This is the Playwright chromium
-# dependency set for the Debian base image.
-aptPkgs = [
-  "libnss3", "libnspr4", "libdbus-1-3", "libatk1.0-0", "libatk-bridge2.0-0",
-  "libcups2", "libdrm2", "libxkbcommon0", "libatspi2.0-0", "libxcomposite1",
-  "libxdamage1", "libxfixes3", "libxrandr2", "libgbm1", "libxcb1", "libxext6",
-  "libx11-6", "libpango-1.0-0", "libcairo2", "libasound2", "libxshmfence1",
-]
 
 [phases.install]
 cmds = [
   "python -m venv --copies /opt/venv",
   ". /opt/venv/bin/activate && python -m pip install --upgrade pip setuptools wheel",
   ". /opt/venv/bin/activate && python -m pip install --index-url https://pypi.org/simple -r requirements.txt",
-  # Install the Chromium browser used by the consent scanner into a stable path.
-  # Non-fatal (|| true): if the download is unavailable at build time the deploy
-  # still succeeds, and the scanner installs the browser on demand on the first
-  # scan. OS libraries are already provided by aptPkgs above.
-  ". /opt/venv/bin/activate && PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers python -m playwright install chromium || true"
+  # Install the Chromium browser + its OS libraries for the consent scanner.
+  # We use Playwright's own `--with-deps`, which picks the correct apt packages
+  # for the detected base image (Ubuntu 24.04 renamed several libs with a t64
+  # suffix, so a hand-written apt list is fragile). Non-fatal (|| true): if this
+  # can't complete at build time the deploy still succeeds and the scanner
+  # installs the browser on demand on the first scan.
+  ". /opt/venv/bin/activate && PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers python -m playwright install --with-deps chromium || true"
 ]
 
 [start]
