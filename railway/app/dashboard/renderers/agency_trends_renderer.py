@@ -112,6 +112,42 @@ _TRENDS_CSS = """
       .chan-name { width:64px; font-size:.82rem; }
       .chan-val { width:auto; min-width:92px; font-size:.78rem; }
       .status-note { font-size:.78rem; }
+    }
+    /* Mobile accordion: collapsed rows show the client name + a strip of small
+       colour-coded status icons (budget / website / consent); tap to expand the
+       full per-metric detail. Rendered from the same data as the table; only one
+       of the two is shown at a time (see the media query below). */
+    #atCards { display:none; }
+    .acc { border:1px solid var(--line); border-radius:12px; background:#fff; margin-bottom:10px; }
+    .acc-head { display:flex; align-items:center; gap:11px; padding:12px 14px; cursor:pointer; }
+    .acc-title { display:flex; flex-direction:column; min-width:0; flex:1; }
+    .acc-name { font-weight:700; color:var(--navy); text-decoration:none; font-size:.96rem;
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .acc-name:hover { text-decoration:underline; }
+    .acc-slug { color:var(--muted); font-size:.72rem; }
+    .acc-icons { display:flex; align-items:center; gap:6px; flex:0 0 auto; }
+    .acc-caret { color:var(--muted); flex:0 0 auto; display:flex; transition:transform .18s ease; }
+    .acc-caret svg { width:18px; height:18px; }
+    .acc.open .acc-caret { transform:rotate(180deg); }
+    .sicon { display:inline-flex; align-items:center; justify-content:center; width:27px; height:27px; border-radius:8px; }
+    .sicon svg { width:15px; height:15px; }
+    .sicon.good { color:var(--green); background:rgba(10,127,63,.10); }
+    .sicon.warn { color:var(--amber); background:rgba(183,121,31,.13); }
+    .sicon.bad { color:var(--danger); background:rgba(180,35,24,.10); }
+    .sicon.neutral { color:var(--accent); background:rgba(37,99,235,.10); }
+    .sicon.idle { color:var(--muted); background:#eef2f7; }
+    .acc-body { display:none; border-top:1px solid var(--line); padding:2px 14px 8px; }
+    .acc.open .acc-body { display:block; }
+    .acc-row { display:flex; align-items:center; justify-content:space-between; gap:14px;
+      padding:9px 0; border-bottom:1px solid #f0f3f8; }
+    .acc-row:last-child { border-bottom:0; }
+    .acc-k { color:var(--muted); font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; flex:0 0 auto; }
+    .acc-v { display:flex; align-items:center; justify-content:flex-end; min-width:0; }
+    .acc-empty { text-align:center; color:var(--muted); padding:24px 8px; border:1px solid var(--line); border-radius:12px; background:#fff; }
+    /* Phones: hide the wide scrolling table and show the accordion instead. */
+    @media (max-width: 640px) {
+      .table-wrap { display:none; }
+      #atCards { display:block; }
     }"""
 
 
@@ -138,6 +174,7 @@ _TRENDS_CONTENT = """
           <tfoot id="atFoot"></tfoot>
         </table>
       </div>
+      <div id="atCards"></div>
       <p class="status-note" id="atNote"></p>
     </section>
     <section>
@@ -263,6 +300,73 @@ def render_agency_trends_page(*, user_email: str) -> str:
         r.pct_change = mom ? mom.pct_change : null;
       });
     }
+    // ---- Mobile accordion -------------------------------------------------
+    // Collapsed rows carry a strip of small colour-coded status icons so the
+    // whole roster reads at a glance; expanding shows the same per-metric detail
+    // the desktop table columns do.
+    const ICON = {
+      dollar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="1.5" x2="12" y2="22.5"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
+      chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
+      shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+      caret: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>',
+    };
+    function trendDir(series) {
+      if (!series || series.length < 2) return null;
+      const n = series.length, k = Math.max(1, Math.floor(n / 3));
+      const avg = a => a.reduce((s, v) => s + v, 0) / a.length;
+      const first = avg(series.slice(0, k)), last = avg(series.slice(-k));
+      return last >= first * 1.02 ? 'up' : (last <= first * 0.98 ? 'down' : 'flat');
+    }
+    function statIcon(cls, svg, title) {
+      return `<span class="sicon ${cls}" title="${esc(title)}" role="img" aria-label="${esc(title)}">${svg}</span>`;
+    }
+    function budgetIcon(r) {
+      if (r.pct_budget == null) return statIcon('idle', ICON.dollar, 'Budget — no budget set');
+      const cls = r.status==='over'?'bad':(r.status==='under'?'good':'neutral');
+      return statIcon(cls, ICON.dollar, `Budget — ${r.pct_budget.toFixed(0)}% of budget · ${STATUS_LABEL[r.status]||r.status}`);
+    }
+    function webIcon(r) {
+      const d = r.sessions_available ? trendDir(r.sessions_series) : null;
+      const cls = d==='up'?'good':(d==='down'?'bad':(d==='flat'?'neutral':'idle'));
+      const txt = d ? `Website — GA4 sessions trending ${d}` : 'Website — no session data';
+      return statIcon(cls, ICON.chart, txt);
+    }
+    function consentIcon(r) {
+      const c = r.consent, h = c && c.health;
+      const map = { pass:['good','Healthy'], attention:['warn','Attention'], fail:['bad','Critical'] };
+      const [cls, label] = map[h] || ['idle','No data'];
+      return statIcon(cls, ICON.shield, `Consent — ${label}`);
+    }
+    function accRow(label, valueHtml) {
+      return `<div class="acc-row"><span class="acc-k">${esc(label)}</span><span class="acc-v">${valueHtml}</span></div>`;
+    }
+    function renderCards(rows) {
+      const el = document.getElementById('atCards');
+      if (!rows.length) { el.innerHTML = `<div class="acc-empty">No clients configured yet.</div>`; return; }
+      el.innerHTML = rows.map(r => {
+        const dash = `/dashboard/${encodeURIComponent(r.client_slug)}`;
+        const detail = accRow('Data', healthCell(r))
+          + accRow('% of budget', pctCell(r))
+          + accRow('Week over week', wowCell(r))
+          + accRow('Sessions · 30d', sessCell(r))
+          + accRow('Consent', consentCell(r));
+        return `<div class="acc">`
+          + `<div class="acc-head" role="button" tabindex="0" aria-expanded="false">`
+            + `<span class="acc-title"><a class="acc-name" href="${dash}">${esc(r.label)}</a>`
+            + `<span class="acc-slug">${esc(r.client_slug)}</span></span>`
+            + `<span class="acc-icons">${budgetIcon(r)}${webIcon(r)}${consentIcon(r)}</span>`
+            + `<span class="acc-caret">${ICON.caret}</span>`
+          + `</div>`
+          + `<div class="acc-body">${detail}</div>`
+        + `</div>`;
+      }).join('');
+    }
+    function toggleAcc(head) {
+      const acc = head.closest('.acc'); if (!acc) return;
+      const open = acc.classList.toggle('open');
+      head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    // ----------------------------------------------------------------------
     function render() {
       const t = atData.totals || {};
       document.getElementById('atSub').textContent =
@@ -282,6 +386,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
           + `<td>${consentCell(r)}</td>`
         + `</tr>`;
       }).join('');
+      renderCards(rows);
 
       const totPct = t.monthly_budget ? Math.round(t.mtd_spend / t.monthly_budget * 100) : null;
       const totTip = `${money2(t.mtd_spend)} spent of ${money2(t.monthly_budget)} budget`;
@@ -316,6 +421,9 @@ def render_agency_trends_page(*, user_email: str) -> str:
       document.getElementById('atBody').innerHTML = Array.from({length:6}, () =>
         `<tr><td><span class="skel" style="width:150px"></span></td>`
         + Array.from({length:5}, () => `<td><span class="skel" style="width:70px"></span></td>`).join('') + `</tr>`).join('');
+      document.getElementById('atCards').innerHTML = Array.from({length:6}, () =>
+        `<div class="acc"><div class="acc-head"><span class="acc-title"><span class="skel" style="width:120px;height:13px"></span></span>`
+        + `<span class="skel" style="width:96px;height:22px;border-radius:8px"></span></div></div>`).join('');
     }
     document.getElementById('atTable').querySelector('thead').addEventListener('click', ev => {
       const th = ev.target.closest('th.sortable'); if (!th || !atData) return;
@@ -323,6 +431,18 @@ def render_agency_trends_page(*, user_email: str) -> str:
       if (sort.key === key) sort.dir = sort.dir==='asc'?'desc':'asc';
       else sort = { key, dir: key==='label'?'asc':'desc' };
       render();
+    });
+    // Accordion: tap/click (or Enter/Space) anywhere on a head except the client
+    // name link toggles its detail panel.
+    const cardsEl = document.getElementById('atCards');
+    cardsEl.addEventListener('click', ev => {
+      if (ev.target.closest('.acc-name')) return;
+      const head = ev.target.closest('.acc-head'); if (head) toggleAcc(head);
+    });
+    cardsEl.addEventListener('keydown', ev => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      const head = ev.target.closest('.acc-head'); if (!head) return;
+      ev.preventDefault(); toggleAcc(head);
     });
     async function load() {
       skeleton();
@@ -334,7 +454,9 @@ def render_agency_trends_page(*, user_email: str) -> str:
         render();
       } catch (e) {
         document.getElementById('atSub').textContent = 'Failed to load agency trends.';
-        document.getElementById('atBody').innerHTML = `<tr><td colspan="6" class="empty">Could not load data (${esc(e.message||'error')}). Try refreshing.</td></tr>`;
+        const msg = `Could not load data (${esc(e.message||'error')}). Try refreshing.`;
+        document.getElementById('atBody').innerHTML = `<tr><td colspan="6" class="empty">${msg}</td></tr>`;
+        document.getElementById('atCards').innerHTML = `<div class="acc-empty">${msg}</div>`;
       }
     }
     load();
