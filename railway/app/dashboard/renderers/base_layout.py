@@ -8,6 +8,7 @@ from dashboard.utils.formatting import esc as _esc
 from dashboard.utils.urls import (
     client_switch_target_url as _client_switch_target_url,
     connectors_page_url as _connectors_page_url,
+    consent_page_url as _consent_page_url,
     dashboard_page_url as _dashboard_page_url,
     files_page_url as _files_page_url,
     gtm_page_url as _gtm_page_url,
@@ -654,6 +655,7 @@ _VIEW_ICONS: dict[str, str] = {
     "lead-tracking": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>',
     "event-tracking": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
     "site-performance": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20a8 8 0 10-8-8"/><path d="M4 12a8 8 0 018-8"/><line x1="12" y1="12" x2="16" y2="9"/><circle cx="12" cy="12" r="1.6"/></svg>',
+    "consent": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>',
 }
 
 _VIEW_LABELS: tuple[tuple[str, str], ...] = (
@@ -673,6 +675,7 @@ def sidebar_view_nav_html(
     show_semrush: bool = False,
     show_lead_tracking: bool = False,
     show_event_tracking: bool = False,
+    show_consent: bool = False,
     as_links: bool = False,
     client_slug: str = "penn",
     access_key: str | None = None,
@@ -739,6 +742,16 @@ def sidebar_view_nav_html(
         items.append(
             f'<a class="dash-view-btn{et_active}" href="{_esc(et_url)}">'
             f'{et_icon}<span class="dash-view-label">Event Tracking</span></a>'
+        )
+    # Consent & Tracking Health is a standalone page → always an anchor link.
+    if show_consent:
+        cu = _consent_page_url(
+            client_slug=client_slug, access_key=access_key, use_session=use_session
+        ) or "#"
+        c_active = " active" if active_view == "consent" else ""
+        items.append(
+            f'<a class="dash-view-btn{c_active}" href="{_esc(cu)}">'
+            f'{_VIEW_ICONS["consent"]}<span class="dash-view-label">Consent Health</span></a>'
         )
     role = "" if as_links else ' role="tablist"'
     return (
@@ -812,6 +825,14 @@ def dashboard_sidebar_view_nav_html(
             f'<a class="dash-view-btn" href="{_esc(et)}">'
             f'{_VIEW_ICONS["event-tracking"]}<span>Event Tracking</span></a>'
         )
+    if pflags.get("show_consent"):
+        cu = _consent_page_url(
+            client_slug=client_slug, access_key=access_key, use_session=use_session
+        ) or "#"
+        items.append(
+            f'<a class="dash-view-btn" href="{_esc(cu)}">'
+            f'{_VIEW_ICONS["consent"]}<span>Consent Health</span></a>'
+        )
     # Client-side page-visibility prefs from Settings > "Sidebar pages"
     # (localStorage 'nixon_sidebar_pages:<client_slug>'). Hides the core nav items
     # the user turned off, on every page that renders this nav so the sidebar stays
@@ -859,7 +880,20 @@ def platform_nav_flags(client_slug: str) -> dict[str, bool]:
         "show_gtm": _connected("gtm"),
         "show_pagespeed": _connected("pagespeed"),
         "show_semrush": _connected("semrush"),
+        # Consent & Tracking Health is available to any client on the connector
+        # platform — the page itself handles first-time setup. Show it whenever the
+        # client has connectors OR already has a consent config, so it's both
+        # discoverable for new clients and reachable once configured.
+        "show_consent": bool(configs) or _has_consent_config(client_slug),
     }
+
+
+def _has_consent_config(client_slug: str) -> bool:
+    try:
+        import consent_store
+        return consent_store.get_config(client_slug) is not None
+    except Exception:
+        return False
 
 _NAV_ICON_FILES = (
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
@@ -1111,6 +1145,7 @@ def render_client_shell_page(
             show_semrush=show_semrush,
             show_lead_tracking=pflags["show_lead_tracking"],
             show_event_tracking=pflags["show_gtm"],
+            show_consent=pflags.get("show_consent", False),
             as_links=True,
             client_slug=client_slug,
             access_key=access_key,
