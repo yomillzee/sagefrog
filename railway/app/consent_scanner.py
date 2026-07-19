@@ -204,22 +204,34 @@ _CHROMIUM_GLOBS = (
 )
 
 
+# Directories the Railway build may install Chromium into. We search these
+# unconditionally — the runtime container does not reliably inherit
+# PLAYWRIGHT_BROWSERS_PATH from the build, so we must not depend on that env var
+# being set at run time to locate a browser the build placed at a known path.
+_BROWSER_SEARCH_DIRS = (
+    "/opt/pw-browsers",
+    os.path.expanduser("~/.cache/ms-playwright"),
+    "/root/.cache/ms-playwright",
+)
+
+
 def _chromium_executable() -> str | None:
     explicit = (os.getenv("CONSENT_SCANNER_CHROMIUM_PATH") or "").strip()
     if explicit and os.path.exists(explicit):
         return explicit
-    # Auto-detect a Playwright-managed Chromium. Covers both an explicit
-    # PLAYWRIGHT_BROWSERS_PATH (our Railway build installs to /opt/pw-browsers)
-    # and the default per-user cache, and tolerates the several on-disk layouts
+    # Auto-detect a Playwright-managed Chromium across the paths our build may use
+    # and the default per-user cache, tolerating the several on-disk layouts
     # Playwright has used for the browser binary across versions.
-    search_dirs = []
-    base = (os.getenv("PLAYWRIGHT_BROWSERS_PATH") or "").strip()
-    if base:
-        search_dirs.append(base)
-    search_dirs.append(os.path.expanduser("~/.cache/ms-playwright"))
+    search_dirs: list[str] = []
+    env_base = (os.getenv("PLAYWRIGHT_BROWSERS_PATH") or "").strip()
+    if env_base:
+        search_dirs.append(env_base)
+    search_dirs.extend(_BROWSER_SEARCH_DIRS)
+    seen: set[str] = set()
     for directory in search_dirs:
-        if not directory or not os.path.isdir(directory):
+        if not directory or directory in seen or not os.path.isdir(directory):
             continue
+        seen.add(directory)
         for pat in _CHROMIUM_GLOBS:
             hits = sorted(glob.glob(os.path.join(directory, pat)))
             if hits:
@@ -227,9 +239,21 @@ def _chromium_executable() -> str | None:
     return None
 
 
+def _running_as_root() -> bool:
+    try:
+        return os.geteuid() == 0
+    except AttributeError:  # non-POSIX
+        return False
+
+
 def _launch_kwargs() -> dict[str, Any]:
     args: list[str] = ["--disable-dev-shm-usage"]
-    if (os.getenv("CONSENT_SCANNER_NO_SANDBOX") or "").strip() in ("1", "true", "yes"):
+    # Chromium refuses to start its sandbox as root, which is how the deploy
+    # container runs. Pass --no-sandbox when explicitly asked OR when we detect
+    # we're root, so a scan isn't silently blocked if the env var didn't
+    # propagate to the runtime container.
+    no_sandbox_env = (os.getenv("CONSENT_SCANNER_NO_SANDBOX") or "").strip() in ("1", "true", "yes")
+    if no_sandbox_env or _running_as_root():
         args.append("--no-sandbox")
     kwargs: dict[str, Any] = {"headless": True, "args": args}
     exe = _chromium_executable()
@@ -239,6 +263,72 @@ def _launch_kwargs() -> dict[str, Any]:
     if proxy:
         kwargs["proxy"] = {"server": proxy}
     return kwargs
+
+
+def _auto_install_enabled() -> bool:
+    # On by default: if the build never installed the browser, self-heal on the
+    # first scan rather than failing forever. Set CONSENT_SCANNER_AUTO_INSTALL=0
+    # to disable (e.g. air-gapped hosts).
+    return (os.getenv("CONSENT_SCANNER_AUTO_INSTALL") or "1").strip().lower() not in ("0", "false", "no")
+
+
+def _install_target_dir() -> str:
+    """A writable directory to install the browser into if one is missing."""
+    for candidate in ("/opt/pw-browsers", os.path.expanduser("~/.cache/ms-playwright")):
+        parent = candidate if os.path.isdir(candidate) else os.path.dirname(candidate)
+        if os.access(parent or "/", os.W_OK):
+            return candidate
+    return os.path.join(os.path.expanduser("~"), ".cache", "ms-playwright")
+
+
+def ensure_chromium_installed() -> str | None:
+    """Return a launchable Chromium path, installing it on demand if missing.
+
+    Downloads the browser (and best-effort its OS libraries, when root) into a
+    writable path the scanner searches. Returns the executable path, or None if it
+    still couldn't be resolved. Never raises.
+    """
+    exe = _chromium_executable()
+    if exe:
+        return exe
+    if not _auto_install_enabled():
+        return None
+
+    import subprocess
+    import sys
+
+    target = _install_target_dir()
+    env = dict(os.environ, PLAYWRIGHT_BROWSERS_PATH=target)
+    _log.info("consent scanner: no Chromium found; installing to %s", target)
+    # Best-effort OS libraries first (needs root/apt); ignore failures — the
+    # browser download below is what unblocks the "executable missing" error.
+    if _running_as_root():
+        try:
+            subprocess.run([sys.executable, "-m", "playwright", "install-deps", "chromium"],
+                           env=env, timeout=240, capture_output=True)
+        except Exception as exc:
+            _log.warning("consent scanner: install-deps failed (continuing): %s", exc)
+    try:
+        proc = subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
+                              env=env, timeout=420, capture_output=True)
+        if proc.returncode != 0:
+            _log.warning("consent scanner: playwright install exited %s: %s",
+                         proc.returncode, (proc.stderr or b"")[-400:].decode("utf-8", "replace"))
+    except Exception as exc:
+        _log.warning("consent scanner: playwright install failed: %s", exc)
+        return None
+    # Re-resolve, now including the freshly-populated target dir.
+    return _chromium_executable() or _find_in_dir(target)
+
+
+def _find_in_dir(directory: str) -> str | None:
+    if not directory or not os.path.isdir(directory):
+        return None
+    for pat in _CHROMIUM_GLOBS:
+        hits = sorted(glob.glob(os.path.join(directory, pat)))
+        if hits:
+            return hits[-1]
+    return None
 
 
 def _settle_ms() -> int:
@@ -433,16 +523,31 @@ def scan_pages(urls: list[str], *, config: dict[str, Any] | None = None) -> dict
 
     from playwright.sync_api import sync_playwright
 
+    # Resolve (and, if missing, install) a Chromium the build may not have placed
+    # where Playwright looks by default. When found we pass its path explicitly so
+    # we never depend on Playwright's default per-revision resolution.
+    resolved_exe = ensure_chromium_installed()
+
     phases = ("pre_consent", "reject_all", "accept_all")
     results: list[dict[str, Any]] = []
     try:
         with sync_playwright() as p:
+            launch_kwargs = _launch_kwargs()
+            if resolved_exe and "executable_path" not in launch_kwargs:
+                launch_kwargs["executable_path"] = resolved_exe
             try:
-                browser = p.chromium.launch(**_launch_kwargs())
+                browser = p.chromium.launch(**launch_kwargs)
             except Exception as exc:
+                hint = ""
+                if "executable doesn't exist" in str(exc).lower():
+                    hint = (" The Chromium binary is missing — the deploy build did not run "
+                            "`playwright install chromium`. See docs/CONSENT_TRACKING_HEALTH.md.")
+                elif "error while loading shared libraries" in str(exc).lower() or ".so" in str(exc):
+                    hint = (" Chromium's OS libraries are missing — run "
+                            "`playwright install-deps chromium` in the build.")
                 return {
                     "available": False,
-                    "error": f"Could not launch Chromium: {str(exc)[:240]}",
+                    "error": f"Could not launch Chromium: {str(exc)[:220]}{hint}",
                     "engine": "chromium",
                     "pages": [],
                 }
