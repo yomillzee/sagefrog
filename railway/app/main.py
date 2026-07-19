@@ -210,6 +210,17 @@ try:
     _orphaned = connector_config_store.fail_orphaned_sync_runs(older_than_minutes=_orphan_min)
     if _orphaned:
         print(f"Startup: closed {_orphaned} orphaned connector sync run(s).")
+    # Consent & Tracking Health: ensure schema and close out scans left 'running'
+    # by a redeploy/crash mid-scan (the background task died with the old process).
+    try:
+        import consent_store
+        consent_store.ensure_schema()
+        _consent_orphans = consent_store.fail_orphaned_runs(older_than_minutes=_orphan_min)
+        if _consent_orphans:
+            print(f"Startup: closed {_consent_orphans} orphaned consent scan run(s).")
+    except Exception as _consent_exc:
+        import sys as _sys
+        print(f"WARNING: consent scan schema init failed: {_consent_exc}", file=_sys.stderr)
     login_rate_limit.ensure_schema()
     boot = web_users.bootstrap_admin_from_env()
     if boot:

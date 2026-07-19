@@ -38,7 +38,16 @@ def main() -> int:
     slug = _strip_env(os.getenv("CLIENT_SLUG"))
     base = _strip_env(os.getenv("SYNC_BASE_URL")) or "https://sagefrog-production.up.railway.app"
     date_range = _strip_env(os.getenv("SYNC_DATE_RANGE")) or "LAST_30_DAYS"
-    if slug:
+
+    # CRON_JOB selects which job this worker runs. Unset (or "sync-bq") keeps the
+    # original BigQuery refresh behavior; "consent-scan-due" targets the Consent &
+    # Tracking Health scheduled-scan endpoint instead, so a second Railway cron
+    # service (same root dir) on its own schedule can drive consent scans.
+    job = (_strip_env(os.getenv("CRON_JOB")) or "sync-bq").lower()
+    if job in ("consent", "consent-scan-due"):
+        url = f"{base.rstrip('/')}/internal/consent/scan-due"
+        slug = ""  # the consent endpoint is always hands-off (all due clients)
+    elif slug:
         url = f"{base.rstrip('/')}/internal/sync-bq/{slug}?date_range={date_range}"
     else:
         url = f"{base.rstrip('/')}/internal/sync-bq-all?date_range={date_range}"
