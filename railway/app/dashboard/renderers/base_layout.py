@@ -603,6 +603,113 @@ def dashboard_topbar_js() -> str:
         }
       });
     })();
+
+    // ── Sidebar footer admin tools: icon buttons + popovers ───────────────
+    (function() {
+      const tools = document.querySelector('.dash-sidebar-tools');
+      if (!tools) return;
+      const btns = Array.prototype.slice.call(tools.querySelectorAll('.dash-tool-btn[data-pop]'));
+      const pops = Array.prototype.slice.call(tools.querySelectorAll('.dash-tool-pop'));
+      function refreshAria() {
+        btns.forEach((b) => {
+          const p = tools.querySelector('#pop-' + b.dataset.pop);
+          b.setAttribute('aria-expanded', (p && !p.hidden) ? 'true' : 'false');
+        });
+      }
+      function closeAll(except) {
+        pops.forEach((p) => { if (p !== except) p.hidden = true; });
+        refreshAria();
+      }
+      btns.forEach((b) => b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const pop = tools.querySelector('#pop-' + b.dataset.pop);
+        if (!pop) return;
+        const willOpen = pop.hidden;
+        closeAll(willOpen ? pop : null);
+        pop.hidden = !willOpen;
+        refreshAria();
+        if (willOpen && b.dataset.pop === 'editSidebar') syncTabs();
+      }));
+      pops.forEach((p) => {
+        p.addEventListener('click', (e) => e.stopPropagation());
+        const x = p.querySelector('.dash-tool-pop-x');
+        if (x) x.addEventListener('click', () => closeAll(null));
+      });
+      document.addEventListener('click', () => closeAll(null));
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAll(null); });
+
+      // Edit sidebar — gradient colors (live preview + save) and tab toggles.
+      const editPop = tools.querySelector('#pop-editSidebar');
+      const liveSidebar = document.getElementById('dashSidebar');
+      const from = document.getElementById('sbFrom'), to = document.getElementById('sbTo');
+      function applyColors() {
+        if (!liveSidebar || !from || !to) return;
+        liveSidebar.style.setProperty('--sidebar-from', from.value);
+        liveSidebar.style.setProperty('--sidebar-to', to.value);
+      }
+      function setStat(el, txt, err) { if (!el) return; el.textContent = txt; el.classList.toggle('err', !!err); }
+      if (editPop && from && to) {
+        from.addEventListener('input', applyColors);
+        to.addEventListener('input', applyColors);
+        const saveBtn = document.getElementById('sbSave');
+        const resetBtn = document.getElementById('sbReset');
+        const stat = document.getElementById('sbStatus');
+        if (resetBtn) resetBtn.addEventListener('click', () => {
+          from.value = editPop.dataset.defFrom; to.value = editPop.dataset.defTo; applyColors();
+        });
+        if (saveBtn) saveBtn.addEventListener('click', async () => {
+          saveBtn.disabled = true; setStat(stat, 'Saving…', false);
+          try {
+            const r = await fetch(editPop.dataset.themeUrl, {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({ sidebar_from: from.value, sidebar_to: to.value }),
+            });
+            const b = await r.json().catch(() => ({}));
+            if (!r.ok || !b.ok) throw new Error(b.error || ('HTTP ' + r.status));
+            setStat(stat, 'Saved. Reload other pages to see it.', false);
+          } catch (err) { setStat(stat, 'Save failed: ' + (err.message || err), true); }
+          finally { saveBtn.disabled = false; }
+        });
+      }
+      const lsKey = editPop ? editPop.dataset.lsKey : null;
+      function getTabs() { try { return JSON.parse(localStorage.getItem(lsKey) || '{}'); } catch (e) { return {}; } }
+      function applyTabsToNav() {
+        const m = getTabs();
+        document.querySelectorAll('.dash-sidebar-nav .dash-view-btn[data-tab]').forEach((el) => {
+          el.style.display = (m[el.dataset.tab] === false) ? 'none' : '';
+        });
+      }
+      function syncTabs() {
+        const m = getTabs();
+        tools.querySelectorAll('.dash-tab-toggle').forEach((inp) => { inp.checked = m[inp.dataset.tab] !== false; });
+      }
+      tools.querySelectorAll('.dash-tab-toggle').forEach((inp) => inp.addEventListener('change', () => {
+        const m = getTabs(); m[inp.dataset.tab] = inp.checked;
+        try { localStorage.setItem(lsKey, JSON.stringify(m)); } catch (e) {}
+        applyTabsToNav();
+      }));
+
+      // BigQuery connection — verify button drives the status pill.
+      const bqPop = tools.querySelector('#pop-bqConn');
+      if (bqPop) {
+        const vb = bqPop.querySelector('.dash-bq-verify');
+        const pill = bqPop.querySelector('.dash-bq-pill');
+        if (vb && pill) {
+          const setPill = (s, t) => { pill.dataset.state = s; pill.textContent = t; };
+          vb.addEventListener('click', async () => {
+            vb.disabled = true; setPill('checking', 'Checking…');
+            try {
+              const r = await fetch(vb.dataset.url, { method: 'POST', credentials: 'same-origin' });
+              const b = await r.json().catch(() => ({}));
+              if (b.ok) setPill('ok', b.message || 'Connected & readable');
+              else setPill('err', b.error || 'Verification failed');
+            } catch (err) { setPill('err', 'Failed: ' + (err.message || err)); }
+            finally { vb.disabled = false; }
+          });
+        }
+      }
+    })();
     """
 
 
@@ -934,24 +1041,214 @@ _NAV_ICON_MENU = (
 )
 
 
-def _sidebar_account_html(*, email: str | None, is_admin: bool) -> str:
+# Compact tool icons for the sidebar footer toolbar (match the nav icon style).
+_TOOL_ICON_THEME = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>'
+)
+_TOOL_ICON_VIEWAS = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
+)
+_TOOL_ICON_BQ = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"/>'
+    '<path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"/></svg>'
+)
+_TOOL_ICON_ADMIN = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>'
+)
+_TOOL_ICON_SIGNOUT = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/>'
+    '<line x1="21" y1="12" x2="9" y2="12"/></svg>'
+)
+
+# Client-facing tabs that admins can show/hide from the sidebar "Edit sidebar"
+# tool. Keys mirror the data-tab attributes in dashboard_sidebar_view_nav_html
+# and the localStorage 'nixon_sidebar_pages:<slug>' map the nav reads on load.
+_SIDEBAR_TAB_EDIT_ITEMS: tuple[tuple[str, str], ...] = (
+    ("overview", "Overview"),
+    ("explorer", "Campaign Explorer"),
+    ("analytics", "Website Analytics"),
+    ("ai_traffic", "AI Traffic"),
+    ("gsc", "Search Console"),
+)
+
+
+def _sidebar_bq_routing(client_slug: str) -> tuple[str | None, str | None]:
+    """(project, marts_dataset) for the BigQuery-connection tool, or (None, None).
+
+    Resolved from client_dashboard_config so the shared sidebar stays self-
+    sufficient (no new plumbing through every page renderer)."""
+    try:
+        import client_dashboard_config as cdc
+        if not cdc.enabled():
+            return (None, None)
+        cfg = cdc.get_config(client_slug)
+        if not cfg:
+            return (None, None)
+        return (cfg.gcp_project_id, cfg.bq_mart_dataset_id)
+    except Exception:
+        return (None, None)
+
+
+def _sidebar_view_as_options(*, current_email: str | None) -> str:
+    """<option> markup for the "View as user" tool (every other user)."""
+    try:
+        import web_users
+        if not web_users.enabled():
+            return ""
+        users = web_users.list_users()
+    except Exception:
+        return ""
+    opts = []
+    for u in users:
+        addr = str(u.get("email") or "")
+        if current_email and addr == current_email:
+            continue
+        role = str(u.get("role") or "")
+        slug = str(u.get("client_slug") or "").strip()
+        meta = role + (f" · {slug}" if slug else "")
+        label_txt = f"{addr} — {meta}" if meta else addr
+        opts.append(f'<option value="{int(u["id"])}">{_esc(label_txt)}</option>')
+    return "".join(opts)
+
+
+def _sidebar_footer_tools_html(
+    *,
+    client_slug: str,
+    email: str | None,
+    is_admin: bool,
+    access_key: str | None,
+    sidebar_from: str,
+    sidebar_to: str,
+    sidebar_default_from: str,
+    sidebar_default_to: str,
+    project: str | None,
+    marts_dataset: str | None,
+    view_as_options_html: str,
+) -> str:
+    """Sidebar footer toolbar: admin quick-tools as icon buttons with popovers,
+    plus an Admin-panel link (admin) and Sign out (any signed-in user).
+
+    Replaces the old email/Admin/Sign-out text row. Popovers relocate three
+    controls that used to live on other pages: the sidebar colour + tabs editor
+    and the BigQuery-connection check (both from Settings), and the "View as
+    user" impersonation tool (from Admin)."""
     if not email:
         return ""
-    admin_link = (
-        '<a class="dash-sidebar-account-link" href="/admin">Admin</a>'
-        '<span class="dash-sidebar-account-sep">·</span>'
+
+    def _key(path: str) -> str:
+        if not access_key:
+            return path
+        from urllib.parse import urlencode
+        return f"{path}?{urlencode({'key': access_key})}"
+
+    tool_buttons = ""
+    popovers = ""
+    if is_admin:
+        # ---- Edit sidebar (gradient + tabs) ----
+        theme_url = _key(f"/dashboard/{client_slug}/sidebar-theme")
+        tabs_html = "".join(
+            f'<label class="dash-pop-toggle"><span>{_esc(lbl)}</span>'
+            f'<input type="checkbox" class="dash-tab-toggle" data-tab="{key}" checked></label>'
+            for key, lbl in _SIDEBAR_TAB_EDIT_ITEMS
+        )
+        popovers += f"""
+        <div class="dash-tool-pop" id="pop-editSidebar" role="dialog" aria-label="Edit sidebar"
+             data-theme-url="{_esc(theme_url)}" data-def-from="{_esc(sidebar_default_from)}"
+             data-def-to="{_esc(sidebar_default_to)}" data-ls-key="nixon_sidebar_pages:{_esc(client_slug)}" hidden>
+          <div class="dash-tool-pop-head"><span>Edit sidebar</span>
+            <button type="button" class="dash-tool-pop-x" aria-label="Close">&times;</button></div>
+          <div class="dash-tool-pop-body">
+            <div class="dash-pop-label">Gradient</div>
+            <div class="dash-pop-colors">
+              <label class="dash-pop-color">Top<input type="color" id="sbFrom" value="{_esc(sidebar_from)}"></label>
+              <label class="dash-pop-color">Bottom<input type="color" id="sbTo" value="{_esc(sidebar_to)}"></label>
+            </div>
+            <div class="dash-pop-actions">
+              <button type="button" class="dash-pop-btn primary" id="sbSave">Save colors</button>
+              <button type="button" class="dash-pop-btn" id="sbReset">Reset</button>
+            </div>
+            <span class="dash-pop-status" id="sbStatus"></span>
+            <div class="dash-pop-label" style="margin-top:14px">Tabs</div>
+            <div class="dash-pop-tabs">{tabs_html}</div>
+            <span class="dash-pop-hint">Tabs are saved in this browser.</span>
+          </div>
+        </div>"""
+
+        # ---- View as user ----
+        view_as_body = (
+            f"""<form method="post" action="/admin/view-as" class="dash-pop-form">
+              <label for="sbViewAs">User</label>
+              <select id="sbViewAs" name="user_id" required>
+                <option value="" disabled selected>Select a user…</option>
+                {view_as_options_html}
+              </select>
+              <div class="dash-pop-actions"><button type="submit" class="dash-pop-btn primary">View as user</button></div>
+            </form>"""
+            if view_as_options_html
+            else '<p class="dash-pop-empty">No other users to view as yet.</p>'
+        )
+        popovers += f"""
+        <div class="dash-tool-pop" id="pop-viewAs" role="dialog" aria-label="View as user" hidden>
+          <div class="dash-tool-pop-head"><span>View as user</span>
+            <button type="button" class="dash-tool-pop-x" aria-label="Close">&times;</button></div>
+          <div class="dash-tool-pop-body">
+            <p class="dash-pop-desc">See the platform exactly as another user does. A banner keeps you one click from exiting.</p>
+            {view_as_body}
+          </div>
+        </div>"""
+
+        # ---- BigQuery connection ----
+        verify_url = _key(f"/api/clients/{client_slug}/bq-verify")
+        popovers += f"""
+        <div class="dash-tool-pop" id="pop-bqConn" role="dialog" aria-label="BigQuery connection" hidden>
+          <div class="dash-tool-pop-head"><span>BigQuery connection</span>
+            <button type="button" class="dash-tool-pop-x" aria-label="Close">&times;</button></div>
+          <div class="dash-tool-pop-body">
+            <div class="dash-pop-kv">
+              <div><span class="k">Project</span><span class="v">{_esc(project or '—')}</span></div>
+              <div><span class="k">Marts dataset</span><span class="v">{_esc(marts_dataset or 'marketing_marts')}</span></div>
+            </div>
+            <button type="button" class="dash-pop-btn primary dash-bq-verify" data-url="{_esc(verify_url)}">Verify connection</button>
+            <span class="dash-bq-pill" data-state="idle">Not verified yet</span>
+          </div>
+        </div>"""
+
+        tool_buttons = (
+            '<button type="button" class="dash-tool-btn" data-pop="editSidebar" aria-haspopup="dialog" '
+            f'aria-expanded="false" title="Edit sidebar" aria-label="Edit sidebar">{_TOOL_ICON_THEME}</button>'
+            '<button type="button" class="dash-tool-btn" data-pop="viewAs" aria-haspopup="dialog" '
+            f'aria-expanded="false" title="View as user" aria-label="View as user">{_TOOL_ICON_VIEWAS}</button>'
+            '<button type="button" class="dash-tool-btn" data-pop="bqConn" aria-haspopup="dialog" '
+            f'aria-expanded="false" title="BigQuery connection" aria-label="BigQuery connection">{_TOOL_ICON_BQ}</button>'
+        )
+
+    admin_link_btn = (
+        f'<a class="dash-tool-btn" href="/admin" title="Admin panel" aria-label="Admin panel">{_TOOL_ICON_ADMIN}</a>'
         if is_admin
         else ""
     )
+
     return f"""
-        <div class="dash-sidebar-account">
-          <span class="dash-sidebar-account-email" title="{_esc(email)}">{_esc(email)}</span>
-          <div class="dash-sidebar-account-actions">
-            {admin_link}
-            <form method="post" action="/logout" class="dash-sidebar-logout-form">
-              <button type="submit" class="dash-sidebar-account-link">Sign out</button>
+        <div class="dash-sidebar-tools" role="group" aria-label="Account tools">
+          <div class="dash-sidebar-tools-row">
+            {tool_buttons}
+            <span class="dash-tools-grow"></span>
+            {admin_link_btn}
+            <form method="post" action="/logout" class="dash-signout-form">
+              <button type="submit" class="dash-tool-btn" title="Sign out" aria-label="Sign out">{_TOOL_ICON_SIGNOUT}</button>
             </form>
           </div>
+          {popovers}
         </div>"""
 
 
@@ -1028,20 +1325,36 @@ def render_sidebar(
             f'{_NAV_ICON_SETTINGS}<span>Settings</span></a>'
         )
 
-    # In the admin environment the switcher already carries the "Admin panel"
-    # entry, so the footer account row doesn't repeat an Admin link.
-    account_html = _sidebar_account_html(
-        email=session_email, is_admin=session_is_admin and not admin_context
-    )
-
     # Apply the client's saved sidebar gradient inline (as custom properties on the
     # aside itself) so it themes every page — including the dashboard/settings pages
     # whose :root hardcodes the default --sidebar-from/--sidebar-to. Editable from
-    # Settings → Sidebar appearance.
+    # the footer "Edit sidebar" tool.
     _theme = dashboard_theme.load_client_theme(client_slug)
-    sidebar_style = (
-        f"--sidebar-from:{_theme.get('sidebar_from', '#0a2540')};"
-        f"--sidebar-to:{_theme.get('sidebar_to', '#123456')}"
+    _sb_from = _theme.get("sidebar_from", "#0a2540")
+    _sb_to = _theme.get("sidebar_to", "#123456")
+    sidebar_style = f"--sidebar-from:{_sb_from};--sidebar-to:{_sb_to}"
+
+    # Footer toolbar: admin quick-tools (edit sidebar, view-as, BigQuery
+    # connection) plus Admin-panel + Sign-out icons. In the admin environment the
+    # switcher already carries "Admin panel", so we drop the admin tools there.
+    _tools_admin = session_is_admin and not admin_context
+    _bq_project = _bq_marts = None
+    _view_as_opts = ""
+    if _tools_admin:
+        _bq_project, _bq_marts = _sidebar_bq_routing(client_slug)
+        _view_as_opts = _sidebar_view_as_options(current_email=session_email)
+    account_html = _sidebar_footer_tools_html(
+        client_slug=client_slug,
+        email=session_email,
+        is_admin=_tools_admin,
+        access_key=access_key,
+        sidebar_from=_sb_from,
+        sidebar_to=_sb_to,
+        sidebar_default_from=dashboard_theme.DEFAULT_THEME["sidebar_from"],
+        sidebar_default_to=dashboard_theme.DEFAULT_THEME["sidebar_to"],
+        project=_bq_project,
+        marts_dataset=_bq_marts,
+        view_as_options_html=_view_as_opts,
     )
 
     return f"""
@@ -2026,39 +2339,198 @@ SIDEBAR_CSS = """
     .dash-sidebar-link svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.85; }
     .dash-sidebar-link:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
     .dash-sidebar-link.active { background: rgba(255, 255, 255, 0.15); color: #fff; }
-    .dash-sidebar-account {
+    /* Footer toolbar: admin quick-tools + Admin/Sign-out as icon buttons */
+    .dash-sidebar-tools {
+      position: relative;
       margin-top: 12px;
-      padding-top: 12px;
+      padding-top: 10px;
       border-top: 1px solid rgba(255, 255, 255, 0.12);
     }
-    .dash-sidebar-account-email {
-      display: block;
-      font-size: 0.76rem;
-      color: #9fb3cc;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    .dash-sidebar-tools-row { display: flex; align-items: center; gap: 3px; }
+    .dash-tools-grow { flex: 1 1 auto; }
+    .dash-signout-form { display: inline-flex; margin: 0; }
+    .dash-tool-btn {
+      appearance: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: #c3d2e6;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
     }
-    .dash-sidebar-account-actions {
+    .dash-tool-btn svg { width: 18px; height: 18px; }
+    .dash-tool-btn:hover { background: rgba(255, 255, 255, 0.10); color: #fff; }
+    .dash-tool-btn[aria-expanded="true"] { background: rgba(255, 255, 255, 0.16); color: #fff; }
+    .dash-tool-btn:focus-visible { outline: 2px solid rgba(158, 203, 245, 0.9); outline-offset: 1px; }
+    /* Popover cards float above the toolbar (light cards on the navy rail) */
+    .dash-tool-pop {
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 0;
+      right: 0;
+      background: #fff;
+      color: #172337;
+      border-radius: 12px;
+      box-shadow: 0 14px 38px rgba(4, 12, 26, 0.45);
+      z-index: 60;
+      overflow: hidden;
+    }
+    .dash-tool-pop-head {
       display: flex;
       align-items: center;
-      gap: 6px;
-      margin-top: 3px;
-      font-size: 0.8rem;
+      justify-content: space-between;
+      padding: 10px 13px;
+      border-bottom: 1px solid #eef2f7;
+      font-size: 0.82rem;
+      font-weight: 750;
+      color: #0a2540;
     }
-    .dash-sidebar-account-link {
+    .dash-tool-pop-x {
       appearance: none;
       border: 0;
       background: none;
+      font-size: 1.2rem;
+      line-height: 1;
+      color: #8a97a8;
+      cursor: pointer;
+      padding: 0 2px;
+    }
+    .dash-tool-pop-x:hover { color: #172337; }
+    .dash-tool-pop-body { padding: 12px 13px; max-height: 62vh; overflow-y: auto; }
+    .dash-pop-label {
+      font-size: 0.62rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 800;
+      color: #6b7a90;
+      margin-bottom: 6px;
+    }
+    .dash-pop-desc, .dash-pop-empty {
+      margin: 0 0 10px;
+      font-size: 0.78rem;
+      line-height: 1.45;
+      color: #6b7a90;
+    }
+    .dash-pop-hint {
+      display: block;
+      margin-top: 8px;
+      font-size: 0.72rem;
+      color: #97a3b4;
+    }
+    .dash-pop-colors { display: flex; gap: 10px; }
+    .dash-pop-color {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #6b7a90;
+    }
+    .dash-pop-color input[type=color] {
+      width: 100%;
+      height: 30px;
       padding: 0;
-      font: inherit;
-      color: #9ecbf5;
-      text-decoration: none;
+      border: 1px solid #e2e8f0;
+      border-radius: 7px;
+      background: #fff;
       cursor: pointer;
     }
-    .dash-sidebar-account-link:hover { text-decoration: underline; color: #cfe5fb; }
-    .dash-sidebar-account-sep { color: #64768f; }
-    .dash-sidebar-logout-form { display: inline; margin: 0; }
+    .dash-pop-tabs { display: flex; flex-direction: column; gap: 1px; }
+    .dash-pop-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 5px 6px;
+      border-radius: 7px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #172337;
+      cursor: pointer;
+    }
+    .dash-pop-toggle:hover { background: #f4f7fb; }
+    .dash-pop-toggle input { accent-color: #1d6fd0; width: 16px; height: 16px; }
+    .dash-pop-actions { display: flex; gap: 8px; margin-top: 12px; }
+    .dash-pop-btn {
+      appearance: none;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 7px 12px;
+      font: inherit;
+      font-size: 0.8rem;
+      font-weight: 700;
+      background: #fff;
+      color: #0a2540;
+      cursor: pointer;
+    }
+    .dash-pop-btn:hover:not(:disabled) { border-color: #b9c8dc; background: #f4f8fd; }
+    .dash-pop-btn.primary { background: #1d6fd0; border-color: #1d6fd0; color: #fff; }
+    .dash-pop-btn.primary:hover:not(:disabled) { background: #1a62b8; }
+    .dash-pop-btn:disabled { opacity: 0.55; cursor: default; }
+    .dash-pop-status { display: block; margin-top: 8px; font-size: 0.76rem; color: #6b7a90; }
+    .dash-pop-status.err { color: #b42318; }
+    .dash-pop-kv { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+    .dash-pop-kv > div { display: flex; flex-direction: column; gap: 2px; }
+    .dash-pop-kv .k {
+      font-size: 0.62rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 800;
+      color: #6b7a90;
+    }
+    .dash-pop-kv .v {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #0a2540;
+      word-break: break-all;
+    }
+    .dash-pop-form label {
+      display: block;
+      font-size: 0.62rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 800;
+      color: #6b7a90;
+      margin-bottom: 5px;
+    }
+    .dash-pop-form select {
+      width: 100%;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font: inherit;
+      font-size: 0.84rem;
+      background: #fff;
+      color: #172337;
+    }
+    .dash-bq-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 10px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 4px 11px;
+      border-radius: 999px;
+      border: 1px solid #e2e8f0;
+      background: #f7f9fc;
+      color: #6b7a90;
+    }
+    .dash-bq-pill::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #c5cdd9; flex-shrink: 0; }
+    .dash-bq-pill[data-state="checking"] { color: #1d6fd0; border-color: #bcd4f0; background: #eef5fd; }
+    .dash-bq-pill[data-state="checking"]::before { background: #1d6fd0; }
+    .dash-bq-pill[data-state="ok"] { color: #0a7f3f; border-color: #b8dfc8; background: #e9f7ef; }
+    .dash-bq-pill[data-state="ok"]::before { background: #0a7f3f; }
+    .dash-bq-pill[data-state="err"] { color: #b42318; border-color: #f3c0bb; background: #fdecea; }
+    .dash-bq-pill[data-state="err"]::before { background: #b42318; }
 
     /* Mobile top bar: hamburger + brand (the bar is hidden on desktop, so the
        toggle inside it is too). Replaces the old lone floating hamburger. */
