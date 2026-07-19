@@ -1232,8 +1232,10 @@ _ADMIN_NAV_ICONS: dict[str, str] = {
 
 _ADMIN_NAV_ITEMS: tuple[tuple[str, str, str], ...] = (
     ("overview", "Overview", "/admin"),
-    ("hq", "Budget HQ", "/admin/hq"),
-    ("trends", "Agency Trends", "/admin/agency-trends"),
+    # "HQ" is the DuckDB-backed agency overview (formerly "Agency Trends"). The
+    # legacy "Budget HQ" (/admin/hq) has been phased out of the nav; its route
+    # still redirects there so old links keep working.
+    ("trends", "HQ", "/admin/agency-trends"),
     ("docs", "Docs", "/admin/docs"),
 )
 

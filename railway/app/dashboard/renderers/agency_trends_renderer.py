@@ -101,7 +101,10 @@ _TRENDS_CSS = """
     .status-note { font-size:.82rem; color:var(--muted); margin-top:12px; }
     .pill { display:inline-block; font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em;
       padding:2px 7px; border-radius:999px; background:#eef2f7; color:var(--muted); margin-left:7px; vertical-align:middle; }
-    .pill.duck { background:#fff7ed; color:#b7791f; }"""
+    .pill.duck { background:#fff7ed; color:#b7791f; }
+    .consent-pill { display:inline-flex; align-items:center; gap:6px; text-decoration:none; color:var(--navy); font-weight:650; font-size:.82rem; }
+    .consent-pill:hover { text-decoration:underline; }
+    .consent-dot { width:9px; height:9px; border-radius:50%; background:var(--cc,#5a6578); flex:0 0 auto; }"""
 
 
 _TRENDS_CONTENT = """
@@ -125,6 +128,7 @@ _TRENDS_CONTENT = """
             <th class="sortable active" data-key="pct_budget">% of budget</th>
             <th class="sortable" data-key="pct_change">Week over week</th>
             <th class="sortable" data-key="sessions_total">Sessions · 30d</th>
+            <th class="sortable" data-key="consent_rank">Consent</th>
           </tr></thead>
           <tbody id="atBody"></tbody>
           <tfoot id="atFoot"></tfoot>
@@ -150,10 +154,22 @@ def render_agency_trends_page(*, user_email: str) -> str:
     let atData = null;
     let sort = { key:'pct_budget', dir:'desc' };
 
+    const CONSENT_META = { pass:{c:'#0a7f3f',l:'Healthy',rank:1}, attention:{c:'#b7791f',l:'Attention',rank:2}, fail:{c:'#b42318',l:'Critical',rank:3} };
     function sortVal(r, key) {
       if (key === 'label') return (r.label||'').toLowerCase();
+      if (key === 'consent_rank') { const m = r.consent && CONSENT_META[r.consent.health]; return m ? m.rank : null; }
       const v = r[key];
       return (v == null) ? null : Number(v);
+    }
+    function consentCell(r) {
+      const c = r.consent;
+      if (!c || !c.health || c.health === 'unknown') return '<span class="muted">—</span>';
+      const m = CONSENT_META[c.health] || { c:'#5a6578', l:c.health };
+      const v = c.violation_count || 0;
+      const tip = `${m.l} · ${v} issue${v===1?'':'s'} before/after opt-out`
+        + (c.scanned_at ? ` · scanned ${String(c.scanned_at).slice(0,10)}` : '');
+      const url = `/dashboard/${encodeURIComponent(r.client_slug)}/consent`;
+      return `<a class="consent-pill" href="${url}" title="${esc(tip)}" style="--cc:${m.c}"><span class="consent-dot"></span>${esc(m.l)}</a>`;
     }
     function sortedRows() {
       const rows = (atData.clients||[]).slice();
@@ -258,7 +274,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
 
       const rows = sortedRows();
       const body = document.getElementById('atBody');
-      if (!rows.length) { body.innerHTML = `<tr><td colspan="5" class="empty">No clients configured yet.</td></tr>`; }
+      if (!rows.length) { body.innerHTML = `<tr><td colspan="6" class="empty">No clients configured yet.</td></tr>`; }
       else body.innerHTML = rows.map(r => {
         const dash = `/dashboard/${encodeURIComponent(r.client_slug)}`;
         return `<tr>`
@@ -267,13 +283,14 @@ def render_agency_trends_page(*, user_email: str) -> str:
           + `<td>${pctCell(r)}</td>`
           + `<td>${wowCell(r)}</td>`
           + `<td>${sessCell(r)}</td>`
+          + `<td>${consentCell(r)}</td>`
         + `</tr>`;
       }).join('');
 
       const totPct = t.monthly_budget ? Math.round(t.mtd_spend / t.monthly_budget * 100) : null;
       const totTip = `${money2(t.mtd_spend)} spent of ${money2(t.monthly_budget)} budget`;
       document.getElementById('atFoot').innerHTML = rows.length
-        ? `<tr><td>All clients</td><td></td><td><div class="pct-cell" title="${esc(totTip)}"><span class="num">${totPct==null?'—':totPct+'%'}</span></div></td><td></td><td></td></tr>`
+        ? `<tr><td>All clients</td><td></td><td><div class="pct-cell" title="${esc(totTip)}"><span class="num">${totPct==null?'—':totPct+'%'}</span></div></td><td></td><td></td><td></td></tr>`
         : '';
 
       document.querySelectorAll('#atTable th.sortable').forEach(th =>
@@ -306,7 +323,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
         + `<div class="skel" style="height:9px;width:40%;margin-top:7px"></div></div>`).join('');
       document.getElementById('atBody').innerHTML = Array.from({length:6}, () =>
         `<tr><td><span class="skel" style="width:150px"></span></td>`
-        + Array.from({length:4}, () => `<td><span class="skel" style="width:70px"></span></td>`).join('') + `</tr>`).join('');
+        + Array.from({length:5}, () => `<td><span class="skel" style="width:70px"></span></td>`).join('') + `</tr>`).join('');
     }
     document.getElementById('atTable').querySelector('thead').addEventListener('click', ev => {
       const th = ev.target.closest('th.sortable'); if (!th || !atData) return;
@@ -325,7 +342,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
         render();
       } catch (e) {
         document.getElementById('atSub').textContent = 'Failed to load agency trends.';
-        document.getElementById('atBody').innerHTML = `<tr><td colspan="5" class="empty">Could not load data (${esc(e.message||'error')}). Try refreshing.</td></tr>`;
+        document.getElementById('atBody').innerHTML = `<tr><td colspan="6" class="empty">Could not load data (${esc(e.message||'error')}). Try refreshing.</td></tr>`;
       }
     }
     load();
@@ -333,7 +350,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
 
     return render_admin_shell_page(
         active_nav="trends",
-        page_title="Agency Trends",
+        page_title="HQ",
         content_html=_TRENDS_CONTENT,
         session_email=user_email,
         extra_css=_TRENDS_CSS,
