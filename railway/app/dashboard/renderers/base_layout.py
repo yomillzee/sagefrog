@@ -1777,12 +1777,16 @@ SIDEBAR_CSS = """
       height: 100vh;
       height: 100dvh;
       background: #f8fafc;
-      box-shadow: 12px 0 40px rgba(8, 18, 33, 0.32);
       transform: translateX(-102%);
       transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
       will-change: transform;
     }
-    body.client-switch-active .client-switch-drawer { transform: translateX(0); }
+    /* Only cast the shadow while open — docked off-canvas the 40px blur reaches
+       back past the edge and bleeds onto the visible screen. */
+    body.client-switch-active .client-switch-drawer {
+      transform: translateX(0);
+      box-shadow: 12px 0 40px rgba(8, 18, 33, 0.32);
+    }
 
     .client-switch-head {
       display: flex;
