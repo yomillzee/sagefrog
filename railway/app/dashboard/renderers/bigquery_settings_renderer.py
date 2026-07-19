@@ -70,9 +70,9 @@ def render_bigquery_settings_page(
     show_bq_verify = client_slug == api_client_key
     verify_html = (
         """
-      <div class="btn-row" style="margin-top:14px">
-        <button type="button" class="primary ghost" id="bqVerifyBtn">Verify BigQuery access</button>
-        <span class="status" id="bqVerifyStatus"></span>
+      <div class="verify-row">
+        <button type="button" class="primary" id="bqVerifyBtn">Verify connection</button>
+        <span class="verify-pill" id="bqVerifyStatus" data-state="idle">Not verified yet</span>
       </div>"""
         if show_bq_verify else ""
     )
@@ -291,6 +291,28 @@ def render_bigquery_settings_page(
     .color-input {{ display:inline-flex; align-items:center; gap:9px; }}
     .color-input input[type=color] {{ width:44px; height:32px; padding:0; border:1px solid var(--line); border-radius:8px; background:#fff; cursor:pointer; }}
     .color-hex {{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.82rem; color:var(--navy); text-transform:uppercase; }}
+    /* Section heading with inline info tooltip */
+    .sec-head {{ display:flex; align-items:center; gap:8px; }}
+    .sec-head h2 {{ margin:0; }}
+    .tip-wrap {{ position:relative; display:inline-flex; }}
+    .info-btn {{ width:18px; height:18px; padding:0; border:1px solid var(--line); border-radius:50%; background:#f4f7fb; color:var(--muted); font:italic 700 .72rem/1 "Georgia",serif; cursor:help; display:inline-flex; align-items:center; justify-content:center; transition:border-color .15s,color .15s,background .15s; }}
+    .info-btn:hover, .info-btn:focus-visible {{ border-color:var(--accent); color:var(--accent); background:#eef5fd; outline:none; }}
+    .tip-bubble {{ position:absolute; top:calc(100% + 9px); left:50%; transform:translateX(-50%) translateY(4px); width:270px; max-width:70vw; background:var(--navy); color:#e8eff8; font-size:.76rem; font-weight:500; line-height:1.5; text-transform:none; letter-spacing:0; padding:11px 13px; border-radius:9px; box-shadow:0 8px 24px rgba(16,33,67,.24); opacity:0; visibility:hidden; transition:opacity .15s,transform .15s; z-index:30; }}
+    .tip-bubble::before {{ content:''; position:absolute; bottom:100%; left:50%; transform:translateX(-50%); border:6px solid transparent; border-bottom-color:var(--navy); }}
+    .tip-bubble strong {{ color:#fff; font-weight:700; }}
+    .tip-bubble a {{ color:#9cc7f6; }}
+    .tip-wrap:hover .tip-bubble, .info-btn:focus-visible + .tip-bubble, .tip-bubble:hover {{ opacity:1; visibility:visible; transform:translateX(-50%) translateY(0); }}
+    /* Verification action + status pill */
+    .verify-row {{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:18px; }}
+    .verify-pill {{ display:inline-flex; align-items:center; gap:7px; font-size:.82rem; font-weight:600; padding:5px 12px; border-radius:999px; border:1px solid var(--line); background:#f7f9fc; color:var(--muted); }}
+    .verify-pill::before {{ content:''; width:8px; height:8px; border-radius:50%; background:#c5cdd9; flex-shrink:0; }}
+    .verify-pill[data-state="checking"] {{ color:var(--accent); border-color:#bcd4f0; background:#eef5fd; }}
+    .verify-pill[data-state="checking"]::before {{ background:var(--accent); animation:verify-pulse 1s ease-in-out infinite; }}
+    .verify-pill[data-state="ok"] {{ color:var(--ok); border-color:#b8dfc8; background:#e9f7ef; }}
+    .verify-pill[data-state="ok"]::before {{ background:var(--ok); }}
+    .verify-pill[data-state="err"] {{ color:var(--bad); border-color:#f3c0bb; background:#fdecea; }}
+    .verify-pill[data-state="err"]::before {{ background:var(--bad); }}
+    @keyframes verify-pulse {{ 0%,100%{{ opacity:1; }} 50%{{ opacity:.3; }} }}
     {budget_css}
   </style>
 </head>
@@ -306,12 +328,18 @@ def render_bigquery_settings_page(
     {flash_html}
 
     <section>
-      <h2>BigQuery connection</h2>
+      <div class="sec-head">
+        <h2>BigQuery connection</h2>
+        <span class="tip-wrap">
+          <button type="button" class="info-btn" aria-label="Setup requirements">i</button>
+          <span class="tip-bubble" role="tooltip">Reads use the shared agency service account (managed once in <a href="/admin">Admin</a>), which needs the <strong>BigQuery Data Editor</strong> and <strong>BigQuery Job User</strong> roles on this project in GCP.</span>
+        </span>
+      </div>
+      <p class="hint">Confirm this client's project and marts dataset are connected and readable.</p>
       <div class="kv-grid">
         <div><span class="kv-label">Project</span><span class="kv-val mono">{_esc(project)}</span></div>
         <div><span class="kv-label">Marts dataset</span><span class="kv-val mono">{_esc(marts_dataset)}</span></div>
       </div>
-      <p class="hint">Reads use the shared agency service account (managed once in <a href="/admin">Admin</a>), which needs the <strong>BigQuery Data Editor</strong> and <strong>BigQuery Job User</strong> roles on this project in GCP. Use <strong>Verify BigQuery access</strong> to confirm the project is connected and readable.</p>
       {verify_html}
     </section>
 
@@ -406,15 +434,17 @@ def render_bigquery_settings_page(
     (function(){{ const b = document.getElementById('backfillBtn'); if (b) b.addEventListener('click', () => runJob(BACKFILL_API, 'Backfill ~180 days of LinkedIn into BigQuery?', 'Backfill')); }})();
     (function(){{
       const b = document.getElementById('bqVerifyBtn'); if (!b) return;
+      const pill = document.getElementById('bqVerifyStatus');
+      const setPill = (state, text) => {{ pill.dataset.state = state; pill.textContent = text; }};
       b.addEventListener('click', async () => {{
-        b.disabled = true; setStatus('bqVerifyStatus', 'Checking…');
+        b.disabled = true; setPill('checking', 'Checking…');
         try {{
           const r = await fetch(BQ_VERIFY_API, {{ method:'POST', credentials:'same-origin' }});
           const body = await r.json().catch(() => ({{}}));
-          if (body.ok) setStatus('bqVerifyStatus', body.message || 'Access verified.');
-          else setStatus('bqVerifyStatus', body.error || 'Verification failed.', true);
+          if (body.ok) setPill('ok', body.message || 'Connected & readable');
+          else setPill('err', body.error || 'Verification failed');
         }} catch (err) {{
-          setStatus('bqVerifyStatus', 'Verification failed: ' + (err.message || err), true);
+          setPill('err', 'Verification failed: ' + (err.message || err));
         }} finally {{ b.disabled = false; }}
       }});
     }})();
