@@ -19,6 +19,7 @@ from dashboard.renderers.base_layout import (
 from dashboard.renderers.bigquery_dashboard_renderer import _api_url
 from dashboard.renderers import budget_tracker
 from dashboard.utils.formatting import esc as _esc
+from dashboard.utils.urls import consent_page_url as _consent_page_url
 
 
 def _docs_enabled() -> bool:
@@ -43,6 +44,7 @@ def render_bigquery_settings_page(
     explorer_filters: str = "",
     monthly_budget: float | None = None,
     budget_tracker_enabled: bool = True,
+    consent_sidebar_enabled: bool = False,
 ) -> str:
     """Settings page for any BigQuery-mart (Nixon-style) client.
 
@@ -170,6 +172,32 @@ def render_bigquery_settings_page(
         <label class="toggle-switch" title="{'On' if budget_tracker_enabled else 'Off'}"><input type="checkbox" id="budgetVisibilityToggle"{budget_toggle_checked}><span class="toggle-track"></span></label>
       </div>
       <span class="status" id="budgetVisibilityStatus" style="display:block;margin-top:8px"></span>
+    </section>"""
+
+    # Consent & Tracking Health visibility (admin only). Off by default: most
+    # clients don't need the scanner in their nav, so it's hidden unless an admin
+    # turns it on here. The "Open Consent Health" link keeps the page reachable for
+    # admins to configure / run scans even while it's hidden from the sidebar.
+    consent_url = _consent_page_url(
+        client_slug=client_slug, access_key=access_key, use_session=use_session
+    ) or "#"
+    consent_visibility_url = _api_url(
+        f"/dashboard/{client_slug}/consent-visibility", access_key=access_key
+    )
+    consent_toggle_checked = " checked" if consent_sidebar_enabled else ""
+    consent_visibility_html = "" if not session_is_admin else f"""
+    <section>
+      <h2>Consent health</h2>
+      <p class="hint">The Consent &amp; Tracking Health scanner checks this client's site for tracking that fires before consent. Most clients don't need it in their sidebar, so it's hidden by default — turn it on only for clients who want to see it.</p>
+      <div class="module-toggle-row" style="margin-top:14px">
+        <div class="module-toggle-info">
+          <span class="module-toggle-label">Show on client sidebar</span>
+          <span class="module-toggle-desc">When on, Consent Health appears in this client's sidebar. When off, only admins reach it via the link below.</span>
+        </div>
+        <label class="toggle-switch" title="{'On' if consent_sidebar_enabled else 'Off'}"><input type="checkbox" id="consentSidebarToggle"{consent_toggle_checked}><span class="toggle-track"></span></label>
+      </div>
+      <span class="status" id="consentSidebarStatus" style="display:block;margin-top:8px"></span>
+      <p class="hint" style="margin-top:12px"><a href="{_esc(consent_url)}">Open Consent Health &rarr;</a> to review expectations and run a scan.</p>
     </section>"""
 
     return f"""<!DOCTYPE html>
@@ -333,6 +361,7 @@ def render_bigquery_settings_page(
     </section>
 
     {budget_visibility_html}
+    {consent_visibility_html}
     {budget_module_html}
   </main>
     </div>
@@ -522,6 +551,29 @@ def render_bigquery_settings_page(
         }} catch (err) {{
           t.checked = !t.checked;  // revert on failure
           setStatus('budgetVisibilityStatus', 'Save failed: ' + (err.message || err), true);
+        }} finally {{ t.disabled = false; }}
+      }});
+    }})();
+    // ---- Consent health: show-on-client-sidebar toggle ----
+    (function(){{
+      const t = document.getElementById('consentSidebarToggle');
+      if (!t) return;
+      t.addEventListener('change', async () => {{
+        t.disabled = true;
+        setStatus('consentSidebarStatus', 'Saving…');
+        try {{
+          const r = await fetch("{consent_visibility_url}", {{
+            method:'POST', credentials:'same-origin',
+            headers:{{'Content-Type':'application/x-www-form-urlencoded'}},
+            body: new URLSearchParams({{ show: t.checked ? '1' : '0' }}),
+          }});
+          const body = await r.json().catch(() => ({{}}));
+          if (!r.ok || !body.ok) throw new Error(body.error || ('HTTP ' + r.status));
+          t.closest('label').title = t.checked ? 'On' : 'Off';
+          setStatus('consentSidebarStatus', t.checked ? 'Shown in the client sidebar. Reload to see it.' : 'Hidden from the client sidebar.');
+        }} catch (err) {{
+          t.checked = !t.checked;  // revert on failure
+          setStatus('consentSidebarStatus', 'Save failed: ' + (err.message || err), true);
         }} finally {{ t.disabled = false; }}
       }});
     }})();
