@@ -1009,11 +1009,11 @@ def render_admin_page(
             )
             cells = (
                 f'<td class="col-av">{avatar_cell}</td>'
-                f'<td class="col-user">{_esc(email)}</td>'
-                f'<td>{role_badge}</td>'
-                f'<td class="col-access">{access_cell}</td>'
-                f'<td>{last_login_cell}</td>'
-                f'<td>{status_badge}</td>'
+                f'<td class="col-user" data-label="User">{_esc(email)}</td>'
+                f'<td data-label="Role">{role_badge}</td>'
+                f'<td class="col-access" data-label="Client access">{access_cell}</td>'
+                f'<td data-label="Last login">{last_login_cell}</td>'
+                f'<td data-label="Status">{status_badge}</td>'
                 f'<td class="col-actions">{actions}</td>'
             )
         else:  # client
@@ -1025,11 +1025,11 @@ def render_admin_page(
             access_cell = _access_chips(access_labels, empty="No dashboards")
             cells = (
                 f'<td class="col-av">{avatar_cell}</td>'
-                f'<td class="col-user">{_esc(email)}</td>'
-                f'<td>{group_cell}</td>'
-                f'<td class="col-access">{access_cell}</td>'
-                f'<td>{last_login_cell}</td>'
-                f'<td>{status_badge}</td>'
+                f'<td class="col-user" data-label="User">{_esc(email)}</td>'
+                f'<td data-label="Group">{group_cell}</td>'
+                f'<td class="col-access" data-label="Dashboards">{access_cell}</td>'
+                f'<td data-label="Last login">{last_login_cell}</td>'
+                f'<td data-label="Status">{status_badge}</td>'
                 f'<td class="col-actions">{actions}</td>'
             )
         return f'<tr class="user-row" data-search="{search_key}">{cells}</tr>'
@@ -1562,6 +1562,90 @@ def render_admin_page(
     .add-dash-btn::-webkit-details-marker {{ display: none; }}
     .add-dash-btn:hover {{ filter: brightness(1.06); }}
     .add-dash-btn:active {{ transform: translateY(1px); }}
+
+    /* ============================================================
+       Mobile (<= 640px). The navy sidebar already collapses to a
+       drawer in the shared shell; this reflows the admin content
+       itself — tighter chrome, full-width forms, and the user
+       tables re-laid out as stacked cards instead of a wide,
+       horizontally-scrolling grid.
+       ============================================================ */
+    @media (max-width: 640px) {{
+      /* main is a column flexbox item in the shell. Its desktop `margin:0 auto`
+         gives it auto cross-axis margins, which disable flex `stretch` and let
+         it size to content — so a wide child (the audit log table) drags the
+         whole page wider than the screen. Reset the margins and pin it to the
+         viewport width so inner scroll containers scroll instead. */
+      main {{ padding: 16px 13px 44px; margin: 0; width: 100%; min-width: 0; }}
+      section {{ padding: 17px 15px; border-radius: 14px; }}
+      h2 {{ font-size: 1rem; }}
+      /* Let form controls use the full column width on a phone. */
+      input, select {{ max-width: 100%; }}
+      .row {{ gap: 12px; }}
+      .row > div {{ min-width: 0; flex-basis: 100%; }}
+      button.primary {{ width: 100%; }}
+
+      /* Users section header: stack the title, filter pills, and
+         search so nothing is squeezed off the right edge. */
+      .users-head {{ flex-direction: column; gap: 14px; }}
+      .users-head-right {{ align-items: stretch; width: 100%; }}
+      .seg {{ width: 100%; justify-content: space-between; }}
+      .seg-btn {{ flex: 1; justify-content: center; }}
+      .users-search {{ width: 100%; }}
+      .users-search input {{ width: 100%; max-width: none; }}
+
+      /* User tables → cards. Drop the header row and let each user
+         become a bordered card: avatar + email on top, then one
+         labelled line per field, actions along the bottom. */
+      .user-table-wrap {{ overflow-x: visible; }}
+      .user-table thead {{ display: none; }}
+      .user-table, .user-table tbody {{ display: block; }}
+      .user-table tr.user-row {{
+        display: flex; flex-wrap: wrap; align-items: center;
+        border: 1px solid var(--line); border-radius: 12px; background: #fff;
+        padding: 12px 14px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(10,37,64,.05);
+      }}
+      .user-table td {{ display: block; border: none; padding: 0; }}
+      .user-table td.col-av {{ padding-right: 12px; }}
+      .user-table td.col-user {{ flex: 1; min-width: 0; font-size: .95rem;
+        font-weight: 700; color: var(--navy); overflow-wrap: anywhere; }}
+      .user-table td.col-user::before {{ display: none; }}
+      .user-table td:not(.col-av):not(.col-user) {{
+        width: 100%; display: flex; align-items: center; justify-content: space-between;
+        gap: 14px; padding: 9px 0 0; margin-top: 9px; border-top: 1px solid var(--line);
+        text-align: right; font-size: .86rem;
+      }}
+      .user-table td:not(.col-av):not(.col-user)::before {{
+        content: attr(data-label); flex-shrink: 0; text-align: left;
+        font-size: .7rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: .3px; color: var(--muted);
+      }}
+      .user-table td.col-access {{ align-items: flex-start; }}
+      .user-table td.col-access .chip-row {{ justify-content: flex-end; }}
+      .user-table td.col-actions {{ padding-top: 10px; }}
+      .user-table td.col-actions::before {{ content: none; }}
+      .user-table td.col-actions .row-actions {{ width: 100%; justify-content: flex-end; }}
+      .user-table tr.empty-row {{ display: block; padding: 14px 4px; }}
+      .user-table tr.empty-row td {{ display: block; width: 100%; }}
+
+      /* Section head with an inline "Add" button (Dashboards, Groups). */
+      .dash-section-head {{ flex-wrap: wrap; }}
+
+      /* Absolutely-positioned popovers (reset password, change role,
+         add/delete dashboard, edit group) can't fit beside their
+         trigger on a phone — float them as a full-width bottom sheet. */
+      .row-fold-form,
+      .dash-add-fold .dash-add-form,
+      .dash-delete-fold .dash-delete-form,
+      .dash-add-form {{
+        position: fixed; left: 12px; right: 12px; top: auto; bottom: 12px;
+        width: auto; max-width: none; max-height: 72vh; overflow-y: auto;
+        z-index: 130; box-shadow: 0 -6px 28px rgba(16,33,67,.22);
+      }}
+
+      /* Audit log stays a table but scrolls sideways rather than crushing. */
+      .audit-wrap table {{ min-width: 540px; }}
+    }}
 """
     content = f"""
   <main>
