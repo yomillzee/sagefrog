@@ -323,20 +323,12 @@ def dashboard_client_json(client_slug: str, request: Request) -> dict:
     return snapshot
 @router.get(
     "/dashboard/penn",
-    summary="Penn ads performance dashboard (HTML, legacy alias)",
-    response_class=HTMLResponse,
+    summary="Penn dashboard (retired) — redirect to the dashboards picker",
     include_in_schema=False,
 )
-def dashboard_penn_legacy(
-    request: Request,
-    view_range: str | None = None,
-    synced: str | None = None,
-    insights_saved: str | None = None,
-):
-    return dashboard_client(
-        client_slug="penn",
-        request=request,
-        view_range=view_range,
-        synced=synced,
-        insights_saved=insights_saved,
-    )
+def dashboard_penn_legacy(request: Request) -> RedirectResponse:
+    """Penn was removed from the client registry, so ``/dashboard/penn`` now
+    404s. Stale bookmarks and phone home-screen shortcuts still point here, so
+    send them to the dashboards picker, which routes each user to a dashboard
+    they can actually open (and forwards single-client users straight in)."""
+    return RedirectResponse(url="/dashboards", status_code=303)
