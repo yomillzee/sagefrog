@@ -144,11 +144,20 @@ Strictly-necessary cookies and the consent banner itself are always allowed.
 ## Deployment notes (Playwright)
 
 The scanner uses Playwright's Chromium. `playwright` is in
-`railway/app/requirements.txt`; the browser binary must be present at runtime.
+`railway/app/requirements.txt`, and the Railway build installs the browser
+automatically:
 
-- **Chromium binary:** install it in the build (`python -m playwright install
-  chromium`) or point `CONSENT_SCANNER_CHROMIUM_PATH` at an existing build. The
-  scanner also auto-detects a Chromium under `PLAYWRIGHT_BROWSERS_PATH`.
+- **`nixpacks.toml`** runs `playwright install --with-deps chromium` into
+  `/opt/pw-browsers` during the install phase (pulling the correct OS libraries
+  for the base image), and sets two runtime variables:
+  - `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers` — so the app finds the browser
+    installed at build time (the scanner also auto-detects the per-user cache and
+    tolerates the several on-disk layouts Playwright has used).
+  - `CONSENT_SCANNER_NO_SANDBOX=1` — the container runs as root, where Chromium
+    refuses to start its sandbox; the scanner passes `--no-sandbox` when this is
+    set.
+- **Other hosts:** point `CONSENT_SCANNER_CHROMIUM_PATH` at an existing Chromium,
+  or run `python -m playwright install chromium` yourself.
 - **If unavailable:** the scanner returns `available=false` and the scan is
   recorded as *failed* with a clear message — it never crashes the app.
 
