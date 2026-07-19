@@ -192,17 +192,36 @@ def playwright_available() -> bool:
         return False
 
 
+# Playwright browser layouts we can launch via executable_path, most-preferred
+# first. The full Chromium runs fine headless, so we prefer it; the headless
+# shell (whose directory/binary name has changed across Playwright versions) is
+# a fallback so a shell-only install still resolves.
+_CHROMIUM_GLOBS = (
+    "chromium-*/chrome-linux/chrome",
+    "chromium_headless_shell-*/chrome-linux/headless_shell",
+    "chromium_headless_shell-*/chrome-headless-shell-linux*/chrome-headless-shell",
+    "chromium-*/chrome-linux/headless_shell",
+)
+
+
 def _chromium_executable() -> str | None:
     explicit = (os.getenv("CONSENT_SCANNER_CHROMIUM_PATH") or "").strip()
     if explicit and os.path.exists(explicit):
         return explicit
-    # Auto-detect a Playwright-managed Chromium under PLAYWRIGHT_BROWSERS_PATH
-    # (covers the sandbox where the browser is pre-installed but the default
-    # revision lookup misses it).
+    # Auto-detect a Playwright-managed Chromium. Covers both an explicit
+    # PLAYWRIGHT_BROWSERS_PATH (our Railway build installs to /opt/pw-browsers)
+    # and the default per-user cache, and tolerates the several on-disk layouts
+    # Playwright has used for the browser binary across versions.
+    search_dirs = []
     base = (os.getenv("PLAYWRIGHT_BROWSERS_PATH") or "").strip()
-    if base and os.path.isdir(base):
-        for pat in ("chromium-*/chrome-linux/chrome", "chromium-*/chrome-linux/headless_shell"):
-            hits = sorted(glob.glob(os.path.join(base, pat)))
+    if base:
+        search_dirs.append(base)
+    search_dirs.append(os.path.expanduser("~/.cache/ms-playwright"))
+    for directory in search_dirs:
+        if not directory or not os.path.isdir(directory):
+            continue
+        for pat in _CHROMIUM_GLOBS:
+            hits = sorted(glob.glob(os.path.join(directory, pat)))
             if hits:
                 return hits[-1]
     return None
