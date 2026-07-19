@@ -82,7 +82,7 @@ class SidebarConsistencyTests(unittest.TestCase):
 
     def test_footer_nav_identical_on_every_page(self) -> None:
         pages = self._render_all()
-        expected = ["Files", "Connectors", "Settings"]
+        expected = ["Files", "Connectors", "Insights"]
         for name, html in pages.items():
             self.assertEqual(_footer_items(html), expected, f"footer nav differs on {name}")
 

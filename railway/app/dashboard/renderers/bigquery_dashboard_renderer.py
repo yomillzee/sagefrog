@@ -435,6 +435,28 @@ def render_bigquery_dashboard_page(
         resolve_explorer_filters(explorer_filters_cfg)
     ).replace("<", "\\u003c")
 
+    # Admin-only "Edit filters" affordance in the Campaign explorer header. The
+    # editor (textarea of chip rules) moved here from the Insights page so it
+    # lives with the thing it configures; it POSTs the same explorer/filters API.
+    from dashboard.utils.formatting import esc as _esc
+    explorer_filters_edit_html = "" if not session_is_admin else f"""<div class="ef-edit">
+          <button type="button" class="ef-edit-btn" id="efEditBtn" aria-haspopup="dialog" aria-expanded="false" title="Edit filter chips">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
+            <span>Edit filters</span>
+          </button>
+          <div class="ef-pop" id="efPop" role="dialog" aria-label="Edit campaign filters" hidden>
+            <div class="ef-pop-head"><span>Campaign explorer filters</span><button type="button" class="ef-pop-x" aria-label="Close">&times;</button></div>
+            <div class="ef-pop-body">
+              <p class="ef-pop-desc">One rule per line as <code>Chip label = phrase</code> (matches campaign names, case-insensitive). Comma-separate phrases to match any of them, and group rows under a <code>[Group name]</code> header. Leave blank for the defaults.</p>
+              <textarea id="efText" spellcheck="false" placeholder="[Product]&#10;Apparel = apparel&#10;Scrubs = scrub&#10;&#10;[Region]&#10;TX = tx&#10;FL = fl">{_esc(explorer_filters_cfg)}</textarea>
+              <div class="ef-pop-actions">
+                <button type="button" class="ef-pop-btn primary" id="efSave">Save filters</button>
+                <span class="ef-status" id="efStatus"></span>
+              </div>
+            </div>
+          </div>
+        </div>"""
+
     connectors_url = _api_url(f"/dashboard/{client_slug}/connectors", access_key=access_key)
     onboarding_html = "" if has_connectors else f"""
       <section class="onboarding-card onboarding-steps">
@@ -794,6 +816,28 @@ def render_bigquery_dashboard_page(
     .sec-head h2 {{ margin:0; }}
     .sec-head .status {{ margin:0; font-size:.76rem; text-align:right; flex-shrink:0; }}
     .sec-head-actions {{ display:flex; align-items:center; gap:12px; flex-shrink:0; }}
+    /* Campaign explorer: admin "Edit filters" button + popover */
+    .ef-edit {{ position:relative; }}
+    .ef-edit-btn {{ display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--navy); font:inherit; font-size:.8rem; font-weight:700; padding:6px 11px; cursor:pointer; transition:background .15s,border-color .15s; }}
+    .ef-edit-btn:hover {{ border-color:#b9c8dc; background:#f4f8fd; }}
+    .ef-edit-btn[aria-expanded="true"] {{ border-color:#9bbfe6; background:#eef5fd; }}
+    .ef-edit-btn svg {{ opacity:.8; }}
+    .ef-pop {{ position:absolute; top:calc(100% + 8px); right:0; width:340px; max-width:82vw; background:var(--card); border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 38px rgba(16,33,67,.22); z-index:50; text-align:left; }}
+    .ef-pop-head {{ display:flex; align-items:center; justify-content:space-between; padding:11px 14px; border-bottom:1px solid var(--line-soft); font-size:.85rem; font-weight:750; color:var(--navy); }}
+    .ef-pop-x {{ appearance:none; border:0; background:none; font-size:1.2rem; line-height:1; color:#8a97a8; cursor:pointer; padding:0 2px; }}
+    .ef-pop-x:hover {{ color:var(--navy); }}
+    .ef-pop-body {{ padding:13px 14px; }}
+    .ef-pop-desc {{ margin:0 0 10px; font-size:.76rem; line-height:1.5; color:var(--muted); }}
+    .ef-pop-desc code {{ background:#eef4fb; padding:1px 5px; border-radius:4px; }}
+    .ef-pop textarea {{ width:100%; min-height:150px; border:1px solid var(--line); border-radius:9px; padding:10px 12px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.82rem; resize:vertical; color:#102033; background:#fff; }}
+    .ef-pop textarea:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
+    .ef-pop-actions {{ display:flex; align-items:center; gap:12px; margin-top:12px; }}
+    .ef-pop-btn {{ appearance:none; border:0; border-radius:8px; padding:8px 14px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; }}
+    .ef-pop-btn.primary {{ background:var(--accent); color:#fff; }}
+    .ef-pop-btn.primary:hover:not(:disabled) {{ background:#1a62b8; }}
+    .ef-pop-btn:disabled {{ opacity:.55; cursor:default; }}
+    .ef-status {{ font-size:.78rem; color:var(--muted); }}
+    .ef-status.err {{ color:var(--bad); }}
     /* Paid-trends metric picker: chips on desktop, a compact dropdown on phones
        (see the max-width:720px block) where the chip row would overflow. */
     .metric-dd {{ position:relative; display:none; }}
@@ -1206,7 +1250,7 @@ def render_bigquery_dashboard_page(
     <!-- ===== EXPLORER TAB ===== -->
     <div id="pane-explorer" hidden>
       <section id="sec-explorer">
-        <div class="sec-head"><h2>Campaign explorer</h2><span class="status" id="explorerStatus"></span></div>
+        <div class="sec-head"><h2>Campaign explorer</h2><div class="sec-head-actions">{explorer_filters_edit_html}<span class="status" id="explorerStatus"></span></div></div>
         <div class="cards" id="explorerSummaryCards" style="margin-bottom:14px"></div>
         <!-- Filter groups (Product / Region / Business line …) live in the sticky
              top bar (#explorerFilterBar) as dropdowns; built by buildExplorerFilters()
@@ -2330,6 +2374,39 @@ def render_bigquery_dashboard_page(
     // phrases are pre-lowercased server-side; a chip matches a campaign whose
     // (lowercased) name contains any of its phrases.
     const EXPLORER_FILTER_GROUPS = {explorer_filter_groups_json};
+    const EXPLORER_FILTERS_API = "{_aurl(f'/api/clients/{api_client_key}/explorer/filters')}";
+    // Admin "Edit filters" popover in the Campaign explorer header. Saves the raw
+    // chip-rule text, then reloads so the rebuilt chips reflect the new config.
+    (function(){{
+      const btn = document.getElementById('efEditBtn'); if (!btn) return;
+      const pop = document.getElementById('efPop');
+      const save = document.getElementById('efSave');
+      const ta = document.getElementById('efText');
+      const status = document.getElementById('efStatus');
+      const setOpen = (o) => {{ pop.hidden = !o; btn.setAttribute('aria-expanded', o ? 'true' : 'false'); }};
+      btn.addEventListener('click', (e) => {{ e.stopPropagation(); setOpen(pop.hidden); }});
+      pop.addEventListener('click', (e) => e.stopPropagation());
+      pop.querySelector('.ef-pop-x').addEventListener('click', () => setOpen(false));
+      document.addEventListener('click', () => setOpen(false));
+      document.addEventListener('keydown', (e) => {{ if (e.key === 'Escape') setOpen(false); }});
+      save.addEventListener('click', async () => {{
+        save.disabled = true; status.className = 'ef-status'; status.textContent = 'Saving…';
+        try {{
+          const r = await fetch(EXPLORER_FILTERS_API, {{
+            method: 'POST', credentials: 'same-origin',
+            headers: {{ 'Content-Type': 'application/json' }},
+            body: JSON.stringify({{ filters: ta.value }}),
+          }});
+          const b = await r.json().catch(() => ({{}}));
+          if (!r.ok) throw new Error((b && (b.detail && (b.detail.error || b.detail) || b.detail)) || r.statusText);
+          status.textContent = 'Saved. Reloading…';
+          setTimeout(() => window.location.reload(), 600);
+        }} catch (err) {{
+          status.className = 'ef-status err'; status.textContent = 'Save failed: ' + (err.message || err);
+          save.disabled = false;
+        }}
+      }});
+    }})();
     const explorerFilterState = new Map(); // groupId -> Set of active chip labels
     let explorerRows = [];
     let verifiedByAdId = {{}};

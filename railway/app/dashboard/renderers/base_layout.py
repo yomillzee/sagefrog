@@ -1058,11 +1058,6 @@ _TOOL_ICON_BQ = (
     '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"/>'
     '<path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"/></svg>'
 )
-_TOOL_ICON_ADMIN = (
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-    '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>'
-)
 _TOOL_ICON_SIGNOUT = (
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
     'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -1232,8 +1227,13 @@ def _sidebar_footer_tools_html(
             f'aria-expanded="false" title="BigQuery connection" aria-label="BigQuery connection">{_TOOL_ICON_BQ}</button>'
         )
 
-    admin_link_btn = (
-        f'<a class="dash-tool-btn" href="/admin" title="Admin panel" aria-label="Admin panel">{_TOOL_ICON_ADMIN}</a>'
+    # Consent Health is a full page, so this is a link (not a popover). Admin only,
+    # and always offered here so admins can reach it to configure/run scans even
+    # when it's hidden from the client's own sidebar. Admin panel isn't repeated
+    # here — it already lives in the client switcher above.
+    consent_link_btn = (
+        f'<a class="dash-tool-btn" href="{_esc(_key(f"/dashboard/{client_slug}/consent"))}" '
+        f'title="Consent Health" aria-label="Consent Health">{_VIEW_ICONS["consent"]}</a>'
         if is_admin
         else ""
     )
@@ -1243,7 +1243,7 @@ def _sidebar_footer_tools_html(
           <div class="dash-sidebar-tools-row">
             {tool_buttons}
             <span class="dash-tools-grow"></span>
-            {admin_link_btn}
+            {consent_link_btn}
             <form method="post" action="/logout" class="dash-signout-form">
               <button type="submit" class="dash-tool-btn" title="Sign out" aria-label="Sign out">{_TOOL_ICON_SIGNOUT}</button>
             </form>
@@ -1322,7 +1322,7 @@ def render_sidebar(
         settings_aria = ' aria-current="page"' if settings_active else ""
         settings_btn = (
             f'<a href="{_esc(settings_url)}" class="dash-sidebar-link{settings_active}"{settings_aria}>'
-            f'{_NAV_ICON_SETTINGS}<span>Settings</span></a>'
+            f'{_NAV_ICON_SETTINGS}<span>Insights</span></a>'
         )
 
     # Apply the client's saved sidebar gradient inline (as custom properties on the
