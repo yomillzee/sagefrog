@@ -28,21 +28,14 @@ _TRENDS_CSS = """
     }
     body { color:var(--ink);
       background:linear-gradient(180deg,#eef2f7 0%,#e6edf5 100%); background-attachment:fixed; }
-    main { max-width:1180px; margin:0 auto; padding:26px 24px 56px; }
+    main { max-width:1180px; width:100%; min-width:0; margin:0 auto; padding:26px 24px 56px; }
     section { background:#fff; border:1px solid var(--line); border-radius:16px;
       padding:22px 24px; margin-bottom:18px; box-shadow:0 6px 22px rgba(10,37,64,.06); }
     .page-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:4px; }
     .page-head h2 { margin:0; font-size:1.15rem; color:var(--navy); }
     .sub { color:var(--muted); font-size:.86rem; margin:2px 0 0; }
-    /* Summary tiles */
-    .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin:16px 0 4px; }
-    .tile { border:1px solid var(--line); border-top:3px solid var(--accent); border-radius:12px; padding:13px 15px; background:#fff; }
-    .tile-label { color:var(--muted); font-size:.66rem; text-transform:uppercase; font-weight:800; letter-spacing:.06em; }
-    .tile-value { margin-top:7px; font-size:1.55rem; line-height:1.1; color:var(--navy); font-weight:800; letter-spacing:-.02em; }
-    .tile-value.up { color:var(--green); } .tile-value.down { color:var(--danger); }
-    .tile-sub { color:var(--muted); font-size:.75rem; margin-top:3px; }
     /* Table */
-    .table-wrap { overflow-x:auto; }
+    .table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
     table { width:100%; border-collapse:collapse; font-size:.9rem; min-width:960px; }
     th, td { text-align:right; padding:11px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
     th:first-child, td:first-child { text-align:left; }
@@ -104,7 +97,22 @@ _TRENDS_CSS = """
     .pill.duck { background:#fff7ed; color:#b7791f; }
     .consent-pill { display:inline-flex; align-items:center; gap:6px; text-decoration:none; color:var(--navy); font-weight:650; font-size:.82rem; }
     .consent-pill:hover { text-decoration:underline; }
-    .consent-dot { width:9px; height:9px; border-radius:50%; background:var(--cc,#5a6578); flex:0 0 auto; }"""
+    .consent-dot { width:9px; height:9px; border-radius:50%; background:var(--cc,#5a6578); flex:0 0 auto; }
+    /* Narrow screens: tighten padding, let the wide data table scroll on its own,
+       and stop the channel rows' fixed widths from overflowing. */
+    @media (max-width: 720px) {
+      main { padding:16px 13px 44px; }
+      section { padding:16px 15px; border-radius:14px; margin-bottom:14px; }
+      .page-head h2 { font-size:1.05rem; }
+      .sub { font-size:.82rem; }
+      th, td { padding:9px 10px; }
+      .pbar { flex-basis:64px; }
+      .wow-track { flex-basis:72px; }
+      .chan { gap:10px; margin:9px 0; }
+      .chan-name { width:64px; font-size:.82rem; }
+      .chan-val { width:auto; min-width:92px; font-size:.78rem; }
+      .status-note { font-size:.78rem; }
+    }"""
 
 
 _TRENDS_CONTENT = """
@@ -112,14 +120,10 @@ _TRENDS_CONTENT = """
     <section>
       <div class="page-head">
         <div>
-          <h2>Monthly budget pacing <span class="pill duck">DuckDB</span></h2>
+          <h2>By client <span class="pill duck">DuckDB</span></h2>
           <p class="sub" id="atSub">Loading…</p>
         </div>
       </div>
-      <div class="tiles" id="atTiles"></div>
-    </section>
-    <section>
-      <div class="page-head"><h2>By client</h2></div>
       <div class="table-wrap">
         <table id="atTable">
           <thead><tr>
@@ -263,14 +267,6 @@ def render_agency_trends_page(*, user_email: str) -> str:
       const t = atData.totals || {};
       document.getElementById('atSub').textContent =
         `${atData.month_label} · day ${atData.days_elapsed} of ${atData.days_in_month} (${atData.pct_month_elapsed}% elapsed) · ${t.client_count} clients`;
-      const tiles = [
-        ['Total monthly budget', money(t.monthly_budget), `${atData.days_remaining} days left`],
-        ['Spend month-to-date', money(t.mtd_spend), `${atData.pct_month_elapsed}% of month elapsed`],
-        ['Projected month-end', money(t.projected_month_end), 'at current run-rate'],
-        ['Clients over pace', String(t.clients_over_pace), `of ${t.client_count} clients`],
-      ];
-      document.getElementById('atTiles').innerHTML = tiles.map(([l,v,s]) =>
-        `<div class="tile"><div class="tile-label">${esc(l)}</div><div class="tile-value">${esc(v)}</div><div class="tile-sub">${esc(s)}</div></div>`).join('');
 
       const rows = sortedRows();
       const body = document.getElementById('atBody');
@@ -317,10 +313,6 @@ def render_agency_trends_page(*, user_email: str) -> str:
         + `All rollups are computed in DuckDB from one set of reads. "—" / "new" means no data or no prior baseline yet.`;
     }
     function skeleton() {
-      document.getElementById('atTiles').innerHTML = Array.from({length:4}, () =>
-        `<div class="tile"><div class="skel" style="height:10px;width:55%"></div>`
-        + `<div class="skel" style="height:26px;width:70%;margin-top:9px"></div>`
-        + `<div class="skel" style="height:9px;width:40%;margin-top:7px"></div></div>`).join('');
       document.getElementById('atBody').innerHTML = Array.from({length:6}, () =>
         `<tr><td><span class="skel" style="width:150px"></span></td>`
         + Array.from({length:5}, () => `<td><span class="skel" style="width:70px"></span></td>`).join('') + `</tr>`).join('');
