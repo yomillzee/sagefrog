@@ -880,12 +880,21 @@ def platform_nav_flags(client_slug: str) -> dict[str, bool]:
         "show_gtm": _connected("gtm"),
         "show_pagespeed": _connected("pagespeed"),
         "show_semrush": _connected("semrush"),
-        # Consent & Tracking Health is available to any client on the connector
-        # platform — the page itself handles first-time setup. Show it whenever the
-        # client has connectors OR already has a consent config, so it's both
-        # discoverable for new clients and reachable once configured.
-        "show_consent": bool(configs) or _has_consent_config(client_slug),
+        # Consent & Tracking Health is opt-in per client. Most clients don't need
+        # to see it — it only clutters their sidebar — so it stays hidden unless an
+        # admin turns it on from Settings ("Show on client sidebar"). Admins reach
+        # the page (to configure / run scans) via the Settings link regardless.
+        "show_consent": _consent_sidebar_enabled(client_slug),
     }
+
+
+def _consent_sidebar_enabled(client_slug: str) -> bool:
+    try:
+        import client_dashboard_config
+        cfg = client_dashboard_config.get_config(client_slug)
+        return bool(cfg and cfg.consent_sidebar_enabled)
+    except Exception:
+        return False
 
 
 def _has_consent_config(client_slug: str) -> bool:

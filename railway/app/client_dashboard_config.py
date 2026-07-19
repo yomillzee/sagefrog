@@ -88,6 +88,10 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config
       ADD COLUMN IF NOT EXISTS overview_pinned_card TEXT
     """,
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS consent_sidebar_enabled BOOLEAN NOT NULL DEFAULT FALSE
+    """,
 ]
 
 
@@ -117,6 +121,10 @@ class ClientConfigRow:
     gsc_branded_exclude: str | None = None
     gsc_target_exclude: str | None = None
     overview_pinned_card: str | None = None
+    # Whether Consent & Tracking Health appears in the client-viewable sidebar.
+    # Off by default: most clients don't need it, and it only clutters their nav —
+    # admins turn it on per client from Settings.
+    consent_sidebar_enabled: bool = False
 
 
 def _get_db_url() -> str | None:
@@ -155,7 +163,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    gsc_branded_roots, gsc_target_keywords, ga4_key_events,
                    explorer_filters, explorer_budget_tracker,
                    gsc_branded_exclude, gsc_target_exclude,
-                   overview_pinned_card
+                   overview_pinned_card, consent_sidebar_enabled
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -194,6 +202,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         gsc_branded_exclude=_s(row[21]),
         gsc_target_exclude=_s(row[22]),
         overview_pinned_card=_s(row[23]),
+        consent_sidebar_enabled=bool(row[24]) if row[24] is not None else False,
     )
 
 
@@ -477,6 +486,43 @@ def save_explorer_budget_tracker(
             ON CONFLICT (client_slug)
             DO UPDATE SET
               explorer_budget_tracker = EXCLUDED.explorer_budget_tracker,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, label, bool(show), now, (updated_by or "").strip() or None),
+        )
+    saved = get_config(slug)
+    if not saved:
+        raise RuntimeError("Failed to load saved client config.")
+    return saved
+
+
+def save_consent_sidebar_enabled(
+    client_slug: str,
+    show: bool,
+    *,
+    updated_by: str | None = None,
+) -> ClientConfigRow:
+    """Toggle whether Consent & Tracking Health shows in the client sidebar."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save client dashboard config.")
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    existing = get_config(slug)
+    label = existing.label if existing else slug
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, consent_sidebar_enabled, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              consent_sidebar_enabled = EXCLUDED.consent_sidebar_enabled,
               updated_at = EXCLUDED.updated_at,
               updated_by = EXCLUDED.updated_by
             """,

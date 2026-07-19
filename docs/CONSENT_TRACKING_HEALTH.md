@@ -31,10 +31,13 @@ declare which categories require opt-in for their jurisdiction.
 
 ## Where to find it
 
-Each client dashboard gains a **Consent Health** item in the sidebar
-(`/dashboard/{client_slug}/consent`). It appears once a client is on the
-connector platform or already has a consent config; the page itself handles
-first-time setup.
+The report lives at `/dashboard/{client_slug}/consent`; the page itself handles
+first-time setup. It's **hidden from the client sidebar by default** — most
+clients don't need the scanner in their nav, and it only adds confusion. An
+admin turns it on per client from **Settings → Consent health → "Show on client
+sidebar"**; while it's off, admins still reach the page from the same Settings
+section ("Open Consent Health"). The toggle is persisted per client
+(`client_dashboard_config.consent_sidebar_enabled`).
 
 ---
 

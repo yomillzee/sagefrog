@@ -344,6 +344,7 @@ def nixon_bq_settings_page(
             explorer_filters=(getattr(db_cfg, "explorer_filters", None) or ""),
             monthly_budget=getattr(db_cfg, "monthly_budget_usd", None),
             budget_tracker_enabled=bool(getattr(db_cfg, "explorer_budget_tracker", True)),
+            consent_sidebar_enabled=bool(getattr(db_cfg, "consent_sidebar_enabled", False)),
             **html_kw,
         )
     )
