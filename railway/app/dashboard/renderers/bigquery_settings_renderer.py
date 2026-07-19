@@ -57,25 +57,8 @@ def render_bigquery_settings_page(
     """
     routing = routing or {}
     account_ids = account_ids or {}
-    project = routing.get("project") or "—"
-    ga4_dataset = routing.get("ga4_dataset") or "—"
-    marts_dataset = routing.get("marts_dataset") or "marketing_marts"
 
     admin_class = "is-admin" if session_is_admin else ""
-
-    # The "Verify BigQuery access" control uses /api/clients/{api_client_key}/bq-verify,
-    # which resolves the project from client_dashboard_config. That only holds for
-    # generic bigquery_nixon clients (where api_client_key == client_slug); Nixon
-    # itself uses a hardcoded project under a different slug, so hide it there.
-    show_bq_verify = client_slug == api_client_key
-    verify_html = (
-        """
-      <div class="verify-row">
-        <button type="button" class="primary" id="bqVerifyBtn">Verify connection</button>
-        <span class="verify-pill" id="bqVerifyStatus" data-state="idle">Not verified yet</span>
-      </div>"""
-        if show_bq_verify else ""
-    )
 
     # Same canonical section nav as the dashboard (as links back to it), so the
     # sidebar is identical across the dashboard, settings, connectors, and files.
@@ -125,41 +108,6 @@ def render_bigquery_settings_page(
     )
     budget_toggle_checked = " checked" if budget_tracker_enabled else ""
 
-    # Sidebar gradient picker (admin only). Colors come from the client theme;
-    # saving writes sidebar_from / sidebar_to and re-themes the sidebar on every
-    # page (see base_layout.render_sidebar, which applies the theme inline).
-    import dashboard_theme
-    _theme = dashboard_theme.load_client_theme(client_slug)
-    sidebar_from = _theme.get("sidebar_from", "#0a2540")
-    sidebar_to = _theme.get("sidebar_to", "#123456")
-    sidebar_theme_url = _api_url(
-        f"/dashboard/{client_slug}/sidebar-theme", access_key=access_key
-    )
-    sidebar_default_from = dashboard_theme.DEFAULT_THEME["sidebar_from"]
-    sidebar_default_to = dashboard_theme.DEFAULT_THEME["sidebar_to"]
-    sidebar_theme_html = "" if not session_is_admin else f"""
-    <section>
-      <h2>Sidebar appearance</h2>
-      <p class="hint">The client sidebar is a top-to-bottom gradient. Pick the two colors; the change applies across this client's dashboard for everyone.</p>
-      <div class="sidebar-theme">
-        <div class="sidebar-theme-preview" id="sidebarThemePreview" style="background:linear-gradient(180deg, {_esc(sidebar_from)}, {_esc(sidebar_to)})">
-          <span class="sidebar-theme-preview-label">Sidebar</span>
-        </div>
-        <div class="sidebar-theme-controls">
-          <label class="color-field">Top color
-            <span class="color-input"><input type="color" id="sidebarFrom" value="{_esc(sidebar_from)}"><span class="color-hex" id="sidebarFromHex">{_esc(sidebar_from)}</span></span>
-          </label>
-          <label class="color-field">Bottom color
-            <span class="color-input"><input type="color" id="sidebarTo" value="{_esc(sidebar_to)}"><span class="color-hex" id="sidebarToHex">{_esc(sidebar_to)}</span></span>
-          </label>
-          <div class="btn-row" style="margin-top:4px">
-            <button type="button" class="primary" id="sidebarThemeSave">Save colors</button>
-            <button type="button" class="primary ghost" id="sidebarThemeReset">Reset to default</button>
-            <span class="status" id="sidebarThemeStatus"></span>
-          </div>
-        </div>
-      </div>
-    </section>"""
     budget_visibility_html = "" if not session_is_admin else f"""
     <section>
       <h2>Budget tracker visibility</h2>
@@ -282,37 +230,6 @@ def render_bigquery_settings_page(
     .acc[open] .acc-caret {{ transform:rotate(180deg); }}
     .acc > summary:hover .acc-title {{ color:var(--accent); }}
     .acc-body {{ padding:0 22px 20px; }}
-    /* Sidebar gradient picker */
-    .sidebar-theme {{ display:flex; gap:20px; align-items:stretch; margin-top:14px; flex-wrap:wrap; }}
-    .sidebar-theme-preview {{ width:120px; min-height:150px; border-radius:12px; border:1px solid var(--line); box-shadow:var(--shadow); display:flex; align-items:flex-start; padding:12px; flex-shrink:0; }}
-    .sidebar-theme-preview-label {{ color:rgba(255,255,255,.92); font-weight:700; font-size:.9rem; letter-spacing:.01em; }}
-    .sidebar-theme-controls {{ display:flex; flex-direction:column; gap:12px; justify-content:center; }}
-    .color-field {{ display:flex; flex-direction:column; gap:6px; }}
-    .color-input {{ display:inline-flex; align-items:center; gap:9px; }}
-    .color-input input[type=color] {{ width:44px; height:32px; padding:0; border:1px solid var(--line); border-radius:8px; background:#fff; cursor:pointer; }}
-    .color-hex {{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.82rem; color:var(--navy); text-transform:uppercase; }}
-    /* Section heading with inline info tooltip */
-    .sec-head {{ display:flex; align-items:center; gap:8px; }}
-    .sec-head h2 {{ margin:0; }}
-    .tip-wrap {{ position:relative; display:inline-flex; }}
-    .info-btn {{ width:18px; height:18px; padding:0; border:1px solid var(--line); border-radius:50%; background:#f4f7fb; color:var(--muted); font:italic 700 .72rem/1 "Georgia",serif; cursor:help; display:inline-flex; align-items:center; justify-content:center; transition:border-color .15s,color .15s,background .15s; }}
-    .info-btn:hover, .info-btn:focus-visible {{ border-color:var(--accent); color:var(--accent); background:#eef5fd; outline:none; }}
-    .tip-bubble {{ position:absolute; top:calc(100% + 9px); left:50%; transform:translateX(-50%) translateY(4px); width:270px; max-width:70vw; background:var(--navy); color:#e8eff8; font-size:.76rem; font-weight:500; line-height:1.5; text-transform:none; letter-spacing:0; padding:11px 13px; border-radius:9px; box-shadow:0 8px 24px rgba(16,33,67,.24); opacity:0; visibility:hidden; transition:opacity .15s,transform .15s; z-index:30; }}
-    .tip-bubble::before {{ content:''; position:absolute; bottom:100%; left:50%; transform:translateX(-50%); border:6px solid transparent; border-bottom-color:var(--navy); }}
-    .tip-bubble strong {{ color:#fff; font-weight:700; }}
-    .tip-bubble a {{ color:#9cc7f6; }}
-    .tip-wrap:hover .tip-bubble, .info-btn:focus-visible + .tip-bubble, .tip-bubble:hover {{ opacity:1; visibility:visible; transform:translateX(-50%) translateY(0); }}
-    /* Verification action + status pill */
-    .verify-row {{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:18px; }}
-    .verify-pill {{ display:inline-flex; align-items:center; gap:7px; font-size:.82rem; font-weight:600; padding:5px 12px; border-radius:999px; border:1px solid var(--line); background:#f7f9fc; color:var(--muted); }}
-    .verify-pill::before {{ content:''; width:8px; height:8px; border-radius:50%; background:#c5cdd9; flex-shrink:0; }}
-    .verify-pill[data-state="checking"] {{ color:var(--accent); border-color:#bcd4f0; background:#eef5fd; }}
-    .verify-pill[data-state="checking"]::before {{ background:var(--accent); animation:verify-pulse 1s ease-in-out infinite; }}
-    .verify-pill[data-state="ok"] {{ color:var(--ok); border-color:#b8dfc8; background:#e9f7ef; }}
-    .verify-pill[data-state="ok"]::before {{ background:var(--ok); }}
-    .verify-pill[data-state="err"] {{ color:var(--bad); border-color:#f3c0bb; background:#fdecea; }}
-    .verify-pill[data-state="err"]::before {{ background:var(--bad); }}
-    @keyframes verify-pulse {{ 0%,100%{{ opacity:1; }} 50%{{ opacity:.3; }} }}
     {budget_css}
   </style>
 </head>
@@ -326,33 +243,6 @@ def render_bigquery_settings_page(
       <p class="debug-only">Configure the BigQuery account connection and push / pull data.</p>
     </div>
     {flash_html}
-
-    <section>
-      <div class="sec-head">
-        <h2>BigQuery connection</h2>
-        <span class="tip-wrap">
-          <button type="button" class="info-btn" aria-label="Setup requirements">i</button>
-          <span class="tip-bubble" role="tooltip">Reads use the shared agency service account (managed once in <a href="/admin">Admin</a>), which needs the <strong>BigQuery Data Editor</strong> and <strong>BigQuery Job User</strong> roles on this project in GCP.</span>
-        </span>
-      </div>
-      <p class="hint">Confirm this client's project and marts dataset are connected and readable.</p>
-      <div class="kv-grid">
-        <div><span class="kv-label">Project</span><span class="kv-val mono">{_esc(project)}</span></div>
-        <div><span class="kv-label">Marts dataset</span><span class="kv-val mono">{_esc(marts_dataset)}</span></div>
-      </div>
-      {verify_html}
-    </section>
-
-    <section>
-      <h2>Sidebar pages</h2>
-      <p class="hint">Toggle which pages appear in the sidebar. Saved in your browser only (no server state).</p>
-      <div id="pageToggles" style="margin-top:14px; display:flex; flex-direction:column; gap:12px;"></div>
-      <div class="btn-row" style="margin-top:16px;">
-        <button type="button" class="primary ghost" id="resetPagesBtn">Reset to defaults (all on)</button>
-      </div>
-    </section>
-
-    {sidebar_theme_html}
 
     <section>
       <h2>Campaign explorer filters</h2>
@@ -398,7 +288,6 @@ def render_bigquery_settings_page(
     const REFRESH_API = "{_api_url(f'/api/clients/{api_client_key}/refresh', access_key=access_key)}";
     const BACKFILL_API = "{_api_url(f'/api/clients/{api_client_key}/backfill-linkedin', access_key=access_key)}";
     const HEALTH_API = "{_api_url(f'/api/clients/{api_client_key}/marketing/health', access_key=access_key)}";
-    const BQ_VERIFY_API = "{_api_url(f'/api/clients/{api_client_key}/bq-verify', access_key=access_key)}";
     const EXPLORER_FILTERS_API = "{_api_url(f'/api/clients/{api_client_key}/explorer/filters', access_key=access_key)}";
     const nums = new Intl.NumberFormat('en-US');
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
@@ -432,22 +321,6 @@ def render_bigquery_settings_page(
     }}
     document.getElementById('refreshBtn').addEventListener('click', () => runJob(REFRESH_API, null, 'Refresh'));
     (function(){{ const b = document.getElementById('backfillBtn'); if (b) b.addEventListener('click', () => runJob(BACKFILL_API, 'Backfill ~180 days of LinkedIn into BigQuery?', 'Backfill')); }})();
-    (function(){{
-      const b = document.getElementById('bqVerifyBtn'); if (!b) return;
-      const pill = document.getElementById('bqVerifyStatus');
-      const setPill = (state, text) => {{ pill.dataset.state = state; pill.textContent = text; }};
-      b.addEventListener('click', async () => {{
-        b.disabled = true; setPill('checking', 'Checking…');
-        try {{
-          const r = await fetch(BQ_VERIFY_API, {{ method:'POST', credentials:'same-origin' }});
-          const body = await r.json().catch(() => ({{}}));
-          if (body.ok) setPill('ok', body.message || 'Connected & readable');
-          else setPill('err', body.error || 'Verification failed');
-        }} catch (err) {{
-          setPill('err', 'Verification failed: ' + (err.message || err));
-        }} finally {{ b.disabled = false; }}
-      }});
-    }})();
     (function(){{
       const b = document.getElementById('explorerFiltersSaveBtn'); if (!b) return;
       b.addEventListener('click', async () => {{
@@ -485,82 +358,6 @@ def render_bigquery_settings_page(
     }}
     loadHealth();
 
-    // ---- Sidebar page toggles ----
-    // Mirrors the tab keys in bigquery_dashboard_renderer's TABS + the data-tab
-    // attributes in base_layout.dashboard_sidebar_view_nav_html. Stored in
-    // localStorage (client-side only); the sidebar nav on every page reads
-    // this to hide turned-off pages, and the dashboard falls back off a
-    // hidden active tab.
-    const ALL_PAGES = ['overview','explorer','analytics','ai_traffic','gsc'];
-    const PAGE_LABELS = {{
-      overview:'Overview', explorer:'Campaign Explorer',
-      analytics:'Website Analytics', ai_traffic:'AI Traffic', gsc:'Search Console',
-    }};
-    const PAGE_DESCS = {{
-      overview:'Paid media / web traffic summary and daily trend.',
-      explorer:'Campaign → ad group → ad drill-down across platforms.',
-      analytics:'GA4 pages, traffic, audience, landing, conversions and more.',
-      ai_traffic:'Website sessions referred by AI assistants, by source and landing page.',
-      gsc:'Search Console clicks, queries, pages and keyword tracking.',
-    }};
-    const LS_KEY = 'nixon_sidebar_pages:{client_slug}';  // scoped per client — a global key leaked toggles across portals
-    function getPages() {{
-      try {{ const s = localStorage.getItem(LS_KEY); const saved = s ? JSON.parse(s) : {{}}; return ALL_PAGES.reduce((o,k) => ({{...o,[k]:k in saved?saved[k]:true}}),{{}}); }} catch {{ return ALL_PAGES.reduce((o,k)=>({{...o,[k]:true}}),{{}}); }}
-    }}
-    function savePages(m) {{ try {{ localStorage.setItem(LS_KEY, JSON.stringify(m)); }} catch {{}} }}
-    function renderPageToggles() {{
-      const m = getPages();
-      const container = document.getElementById('pageToggles');
-      container.innerHTML = ALL_PAGES.map(key => {{
-        const checked = m[key] ? ' checked' : '';
-        return `<div class="module-toggle-row"><div class="module-toggle-info"><span class="module-toggle-label">${{esc(PAGE_LABELS[key])}}</span><span class="module-toggle-desc">${{esc(PAGE_DESCS[key])}}</span></div><label class="toggle-switch" title="${{m[key]?'On':'Off'}}"><input type="checkbox" data-page="${{key}}"${{checked}}><span class="toggle-track"></span></label></div>`;
-      }}).join('');
-      container.querySelectorAll('input[data-page]').forEach(inp => inp.addEventListener('change', () => {{
-        const cur = getPages(); cur[inp.dataset.page] = inp.checked; savePages(cur);
-        inp.closest('label').title = inp.checked ? 'On' : 'Off';
-      }}));
-    }}
-    document.getElementById('resetPagesBtn').addEventListener('click', () => {{
-      const all = ALL_PAGES.reduce((o,k)=>({{...o,[k]:true}}),{{}}); savePages(all); renderPageToggles();
-    }});
-    renderPageToggles();
-    // ---- Sidebar gradient picker ----
-    (function(){{
-      const from = document.getElementById('sidebarFrom');
-      const to = document.getElementById('sidebarTo');
-      if (!from || !to) return;
-      const preview = document.getElementById('sidebarThemePreview');
-      const fromHex = document.getElementById('sidebarFromHex');
-      const toHex = document.getElementById('sidebarToHex');
-      const liveSidebar = document.getElementById('dashSidebar');
-      const DEF_FROM = "{sidebar_default_from}", DEF_TO = "{sidebar_default_to}";
-      function apply() {{
-        const f = from.value, t = to.value;
-        if (preview) preview.style.background = `linear-gradient(180deg, ${{f}}, ${{t}})`;
-        if (fromHex) fromHex.textContent = f;
-        if (toHex) toHex.textContent = t;
-        if (liveSidebar) {{ liveSidebar.style.setProperty('--sidebar-from', f); liveSidebar.style.setProperty('--sidebar-to', t); }}
-      }}
-      from.addEventListener('input', apply);
-      to.addEventListener('input', apply);
-      document.getElementById('sidebarThemeReset').addEventListener('click', () => {{ from.value = DEF_FROM; to.value = DEF_TO; apply(); }});
-      document.getElementById('sidebarThemeSave').addEventListener('click', async () => {{
-        const btn = document.getElementById('sidebarThemeSave');
-        btn.disabled = true; setStatus('sidebarThemeStatus', 'Saving…');
-        try {{
-          const r = await fetch("{sidebar_theme_url}", {{
-            method:'POST', credentials:'same-origin',
-            headers:{{'Content-Type':'application/x-www-form-urlencoded'}},
-            body: new URLSearchParams({{ sidebar_from: from.value, sidebar_to: to.value }}),
-          }});
-          const body = await r.json().catch(() => ({{}}));
-          if (!r.ok || !body.ok) throw new Error(body.error || ('HTTP ' + r.status));
-          setStatus('sidebarThemeStatus', 'Saved. Reload other pages to see the update.');
-        }} catch (err) {{
-          setStatus('sidebarThemeStatus', 'Save failed: ' + (err.message || err), true);
-        }} finally {{ btn.disabled = false; }}
-      }});
-    }})();
     // ---- Budget tracker: show-on-explorer toggle ----
     (function(){{
       const t = document.getElementById('budgetVisibilityToggle');
