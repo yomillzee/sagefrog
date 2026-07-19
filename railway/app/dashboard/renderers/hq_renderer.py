@@ -68,7 +68,10 @@ _HQ_CSS = """
     .skel { display:inline-block; height:12px; border-radius:6px; background:linear-gradient(90deg,#eef2f7,#e2e8f0,#eef2f7); background-size:200% 100%; animation:sh 1.2s ease-in-out infinite; }
     @keyframes sh { 0%{background-position:200% 0;} 100%{background-position:-200% 0;} }
     tfoot td { font-weight:800; color:var(--navy); border-top:2px solid var(--line); border-bottom:0; }
-    .status-note { font-size:.82rem; color:var(--muted); margin-top:12px; }"""
+    .status-note { font-size:.82rem; color:var(--muted); margin-top:12px; }
+    .consent-pill { display:inline-flex; align-items:center; gap:6px; text-decoration:none; color:var(--navy); font-weight:650; font-size:.82rem; }
+    .consent-pill:hover { text-decoration:underline; }
+    .consent-dot { width:9px; height:9px; border-radius:50%; background:var(--cc,#5a6578); flex:0 0 auto; }"""
 
 
 _HQ_CONTENT = """
@@ -89,6 +92,7 @@ _HQ_CONTENT = """
             <th class="sortable" data-key="label">Client</th>
             <th class="sortable active" data-key="pct_budget">% of budget</th>
             <th class="sortable" data-key="sessions_total">Sessions · 30d</th>
+            <th class="sortable" data-key="consent_rank">Consent</th>
           </tr></thead>
           <tbody id="hqBody"></tbody>
           <tfoot id="hqFoot"></tfoot>
@@ -109,10 +113,22 @@ def render_hq_budget_page(*, user_email: str) -> str:
     let hqData = null;
     let sort = { key:'pct_budget', dir:'desc' };
 
+    const CONSENT_META = { pass:{c:'#0a7f3f',l:'Healthy',rank:1}, attention:{c:'#b7791f',l:'Attention',rank:2}, fail:{c:'#b42318',l:'Critical',rank:3} };
     function sortVal(r, key) {
       if (key === 'label') return (r.label||'').toLowerCase();
+      if (key === 'consent_rank') { const m = r.consent && CONSENT_META[r.consent.health]; return m ? m.rank : null; }
       const v = r[key];
       return (v == null) ? null : Number(v);
+    }
+    function consentCell(r) {
+      const c = r.consent;
+      if (!c || !c.health || c.health === 'unknown') return '<span class="muted">—</span>';
+      const m = CONSENT_META[c.health] || { c:'#5a6578', l:c.health };
+      const v = c.violation_count || 0;
+      const tip = `${m.l} · ${v} issue${v===1?'':'s'} before/after opt-out`
+        + (c.scanned_at ? ` · scanned ${String(c.scanned_at).slice(0,10)}` : '');
+      const url = `/dashboard/${encodeURIComponent(r.client_slug)}/consent`;
+      return `<a class="consent-pill" href="${url}" title="${esc(tip)}" style="--cc:${m.c}"><span class="consent-dot"></span>${esc(m.l)}</a>`;
     }
     function sortedRows() {
       const rows = (hqData.clients||[]).slice();
@@ -175,20 +191,21 @@ def render_hq_budget_page(*, user_email: str) -> str:
 
       const rows = sortedRows();
       const body = document.getElementById('hqBody');
-      if (!rows.length) { body.innerHTML = `<tr><td colspan="3" class="empty">No clients configured yet.</td></tr>`; }
+      if (!rows.length) { body.innerHTML = `<tr><td colspan="4" class="empty">No clients configured yet.</td></tr>`; }
       else body.innerHTML = rows.map(r => {
         const dash = `/dashboard/${encodeURIComponent(r.client_slug)}`;
         return `<tr>`
           + `<td><div class="cl-name"><a href="${dash}">${esc(r.label)}</a></div><div class="cl-slug">${esc(r.client_slug)}</div></td>`
           + `<td>${pctCell(r)}</td>`
           + `<td>${sessCell(r)}</td>`
+          + `<td>${consentCell(r)}</td>`
         + `</tr>`;
       }).join('');
 
       const totPct = t.monthly_budget ? Math.round(t.mtd_spend / t.monthly_budget * 100) : null;
       const totTip = `${money2(t.mtd_spend)} spent of ${money2(t.monthly_budget)} budget`;
       document.getElementById('hqFoot').innerHTML = rows.length
-        ? `<tr><td>All clients</td><td><div class="pct-cell" title="${esc(totTip)}"><span class="num">${totPct==null?'—':totPct+'%'}</span></div></td><td></td></tr>`
+        ? `<tr><td>All clients</td><td><div class="pct-cell" title="${esc(totTip)}"><span class="num">${totPct==null?'—':totPct+'%'}</span></div></td><td></td><td></td></tr>`
         : '';
 
       document.querySelectorAll('#hqTable th.sortable').forEach(th =>
@@ -206,7 +223,7 @@ def render_hq_budget_page(*, user_email: str) -> str:
         + `<div class="skel" style="height:9px;width:40%;margin-top:7px"></div></div>`).join('');
       document.getElementById('hqBody').innerHTML = Array.from({length:6}, () =>
         `<tr><td><span class="skel" style="width:140px"></span></td>`
-        + Array.from({length:2}, () => `<td><span class="skel" style="width:60px"></span></td>`).join('') + `</tr>`).join('');
+        + Array.from({length:3}, () => `<td><span class="skel" style="width:60px"></span></td>`).join('') + `</tr>`).join('');
     }
     document.getElementById('hqTable').querySelector('thead').addEventListener('click', ev => {
       const th = ev.target.closest('th.sortable'); if (!th || !hqData) return;
@@ -224,7 +241,7 @@ def render_hq_budget_page(*, user_email: str) -> str:
         render();
       } catch (e) {
         document.getElementById('hqSub').textContent = 'Failed to load budget data.';
-        document.getElementById('hqBody').innerHTML = `<tr><td colspan="3" class="empty">Could not load budget data (${esc(e.message||'error')}). Try refreshing.</td></tr>`;
+        document.getElementById('hqBody').innerHTML = `<tr><td colspan="4" class="empty">Could not load budget data (${esc(e.message||'error')}). Try refreshing.</td></tr>`;
       }
     }
     load();
