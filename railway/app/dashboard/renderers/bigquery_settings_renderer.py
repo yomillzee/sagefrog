@@ -153,7 +153,7 @@ def render_bigquery_settings_page(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{_esc(label)} — Settings</title>
+  <title>{_esc(label)} — Insights</title>
   {favicon_head_html()}
   <!-- Charts: Chart.js, vendored locally (served from /static/vendor) -->
   <script src="/static/vendor/chart.umd.min.js"></script>
@@ -239,24 +239,10 @@ def render_bigquery_settings_page(
     <div class="dash-main">
   <main>
     <div class="page-head">
-      <h1>{_esc(label)} — Settings</h1>
-      <p class="debug-only">Configure the BigQuery account connection and push / pull data.</p>
+      <h1>{_esc(label)} — Insights</h1>
+      <p class="debug-only">Budget pacing, consent health, and BigQuery data controls.</p>
     </div>
     {flash_html}
-
-    <section>
-      <h2>Campaign explorer filters</h2>
-      <p class="hint">Define the filter chips on the Campaign Explorer. One rule per line as
-        <code>Chip label = phrase</code>; a chip keeps campaigns whose name contains that phrase
-        (case-insensitive). Separate phrases with commas to match any of them, and group chips into
-        rows with a <code>[Group name]</code> header. Leave blank to use the built-in defaults.</p>
-      <label for="explorerFilters" style="margin-top:14px">Filter rules</label>
-      <textarea id="explorerFilters" spellcheck="false" placeholder="[Product]&#10;Apparel = apparel&#10;Scrubs = scrub&#10;Linens = linen&#10;&#10;[Region]&#10;TX = tx&#10;FL = fl&#10;MA = ma">{_esc(explorer_filters)}</textarea>
-      <div class="btn-row" style="margin-top:12px">
-        <button type="button" class="primary" id="explorerFiltersSaveBtn">Save filters</button>
-        <span class="status" id="explorerFiltersStatus"></span>
-      </div>
-    </section>
 
     <section class="acc-section">
       <details class="acc">
@@ -288,7 +274,6 @@ def render_bigquery_settings_page(
     const REFRESH_API = "{_api_url(f'/api/clients/{api_client_key}/refresh', access_key=access_key)}";
     const BACKFILL_API = "{_api_url(f'/api/clients/{api_client_key}/backfill-linkedin', access_key=access_key)}";
     const HEALTH_API = "{_api_url(f'/api/clients/{api_client_key}/marketing/health', access_key=access_key)}";
-    const EXPLORER_FILTERS_API = "{_api_url(f'/api/clients/{api_client_key}/explorer/filters', access_key=access_key)}";
     const nums = new Intl.NumberFormat('en-US');
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({{ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }}[c]));
@@ -321,25 +306,6 @@ def render_bigquery_settings_page(
     }}
     document.getElementById('refreshBtn').addEventListener('click', () => runJob(REFRESH_API, null, 'Refresh'));
     (function(){{ const b = document.getElementById('backfillBtn'); if (b) b.addEventListener('click', () => runJob(BACKFILL_API, 'Backfill ~180 days of LinkedIn into BigQuery?', 'Backfill')); }})();
-    (function(){{
-      const b = document.getElementById('explorerFiltersSaveBtn'); if (!b) return;
-      b.addEventListener('click', async () => {{
-        b.disabled = true; setStatus('explorerFiltersStatus', 'Saving…');
-        try {{
-          const filters = document.getElementById('explorerFilters').value;
-          const r = await fetch(EXPLORER_FILTERS_API, {{
-            method:'POST', credentials:'same-origin',
-            headers:{{'Content-Type':'application/json'}},
-            body: JSON.stringify({{ filters }}),
-          }});
-          const body = await r.json().catch(() => ({{}}));
-          if (!r.ok) throw new Error((body && (body.detail && (body.detail.error || body.detail) || body.detail)) || r.statusText);
-          setStatus('explorerFiltersStatus', 'Saved. Reload the dashboard to see the updated chips.');
-        }} catch (err) {{
-          setStatus('explorerFiltersStatus', 'Save failed: ' + (err.message || err), true);
-        }} finally {{ b.disabled = false; }}
-      }});
-    }})();
     async function loadHealth() {{
       setStatus('healthStatus', 'Loading mart health…');
       try {{
