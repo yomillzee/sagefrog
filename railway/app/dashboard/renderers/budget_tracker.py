@@ -26,14 +26,19 @@ def css() -> str:
     """Style block contents for the budget module (no surrounding <style>)."""
     return """
     /* ---- Budget tracking module (shared: Explorer + Settings) ---- */
-    #sec-budget .sec-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:16px; }
+    #sec-budget .sec-head { display:flex; align-items:center; justify-content:space-between; gap:10px 12px; margin-bottom:16px; flex-wrap:wrap; }
     #sec-budget .sec-head h2 { margin:0; display:inline-flex; align-items:center; gap:6px; }
     /* Info icon on the heading (self-contained so the settings host, which has
        no global .info-tip, styles it the same as the Explorer host). */
     #sec-budget .info-tip { display:inline-flex; align-items:center; cursor:help; color:#9aa7bd; line-height:0; }
     #sec-budget .info-tip svg { display:block; }
     #sec-budget .info-tip:hover, #sec-budget .info-tip:focus { color:var(--navy); outline:none; }
-    #sec-budget .ov-actions { display:flex; align-items:center; gap:10px; flex-shrink:0; }
+    #sec-budget .ov-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    /* On narrow screens let the header actions drop to their own full-width row
+       so the range chips never run off the edge. */
+    @media (max-width:640px) {
+      #sec-budget .ov-actions { width:100%; justify-content:space-between; }
+    }
     #sec-budget .status { color:var(--muted); font-size:.82rem; margin:0; }
     #sec-budget .budget-retry { font:inherit; font-size:.82rem; color:var(--navy); background:none; border:0; padding:0; cursor:pointer; text-decoration:underline; }
     #sec-budget .chips { display:flex; flex-wrap:wrap; gap:5px; }

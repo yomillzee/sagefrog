@@ -237,6 +237,13 @@ def render_bigquery_settings_page(
     .consent-pill[data-state="attention"]::before {{ background:#d99400; }}
     .consent-pill[data-state="fail"] {{ color:var(--bad); border-color:#f3c0bb; background:#fdecea; }}
     .consent-pill[data-state="fail"]::before {{ background:var(--bad); }}
+    @media (max-width:600px) {{
+      main {{ padding:22px 14px 44px; }}
+      h1 {{ font-size:1.3rem; }}
+      section {{ padding:16px 15px; }}
+      .summary-card {{ gap:12px; }}
+      .sc-actions {{ width:100%; justify-content:space-between; }}
+    }}
     {budget_css}
   </style>
 </head>
