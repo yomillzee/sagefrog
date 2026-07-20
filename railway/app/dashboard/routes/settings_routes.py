@@ -12,6 +12,7 @@ import dashboard_theme
 import web_auth
 import web_users
 from dashboard.routes.helpers import dashboard_settings_session_kwargs, validate_client_slug
+from dashboard.services import kpi_registry
 
 router = APIRouter(include_in_schema=False)
 
@@ -41,6 +42,7 @@ def _render_bq_nixon_settings(slug: str, db_cfg, *, flash, flash_err, html_kw) -
             monthly_budget=getattr(db_cfg, "monthly_budget_usd", None),
             budget_tracker_enabled=bool(getattr(db_cfg, "explorer_budget_tracker", True)),
             consent_sidebar_enabled=bool(getattr(db_cfg, "consent_sidebar_enabled", False)),
+            primary_kpi=getattr(db_cfg, "primary_kpi", None),
             **html_kw,
         )
     )
@@ -194,6 +196,73 @@ def dashboard_client_budget_visibility(
         **audit_log.request_context(request),
     )
     return JSONResponse({"ok": True, "explorer_budget_tracker": saved.explorer_budget_tracker})
+
+
+@router.post(
+    "/dashboard/{client_slug}/primary-kpi",
+    summary="Set a client's headline KPI for the HQ overview (JSON)",
+    include_in_schema=False,
+)
+def dashboard_client_primary_kpi_save(
+    client_slug: str,
+    request: Request,
+    type: str = Form(""),
+    label: str = Form(""),
+    goal: str = Form(""),
+):
+    """Admin-only: persist (or clear) the client's headline KPI spec shown on HQ.
+
+    An empty ``type`` clears the KPI. ``goal`` is optional; a blank or unparseable
+    value stores no goal (the KPI then shows its value without a progress bar)."""
+    slug = validate_client_slug(client_slug)
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
+    user = auth.user
+    session_is_admin = bool(user and user.role == "admin")
+    session_email = user.email if user else None
+
+    if web_users.enabled() and not session_is_admin:
+        return JSONResponse(
+            {"ok": False, "error": "Only admins can set the primary KPI."},
+            status_code=403,
+        )
+    if not client_dashboard_config.enabled():
+        return JSONResponse(
+            {"ok": False, "error": "DATABASE_URL is required to save the KPI."},
+            status_code=503,
+        )
+
+    kpi_type = str(type or "").strip()
+    if kpi_type and kpi_type not in kpi_registry.KPI_TYPES:
+        return JSONResponse({"ok": False, "error": "Unknown KPI type."}, status_code=400)
+
+    goal_raw = str(goal or "").strip()
+    goal_val: float | None = None
+    if goal_raw:
+        try:
+            goal_val = float(goal_raw)
+        except ValueError:
+            return JSONResponse({"ok": False, "error": "Goal must be a number."}, status_code=400)
+        if goal_val < 0:
+            return JSONResponse({"ok": False, "error": "Goal must be zero or greater."}, status_code=400)
+
+    spec = None if not kpi_type else {
+        "type": kpi_type,
+        "label": str(label or "").strip() or None,
+        "goal": goal_val,
+    }
+    try:
+        saved = client_dashboard_config.save_primary_kpi(
+            slug, spec, updated_by=session_email or "dashboard_key",
+        )
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    audit_log.record(
+        action="dashboard.primary_kpi_saved",
+        actor_email=session_email,
+        detail={"client_slug": slug, "primary_kpi": saved.primary_kpi},
+        **audit_log.request_context(request),
+    )
+    return JSONResponse({"ok": True, "primary_kpi": saved.primary_kpi})
 
 
 @router.post(

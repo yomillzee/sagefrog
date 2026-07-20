@@ -18,6 +18,7 @@ from dashboard.renderers.base_layout import (
 )
 from dashboard.renderers.bigquery_dashboard_renderer import _api_url
 from dashboard.renderers import budget_tracker
+from dashboard.services import kpi_registry
 from dashboard.utils.formatting import esc as _esc
 from dashboard.utils.urls import consent_page_url as _consent_page_url
 
@@ -45,6 +46,7 @@ def render_bigquery_settings_page(
     monthly_budget: float | None = None,
     budget_tracker_enabled: bool = True,
     consent_sidebar_enabled: bool = False,
+    primary_kpi: dict | None = None,
 ) -> str:
     """Settings page for any BigQuery-mart (Nixon-style) client.
 
@@ -148,6 +150,41 @@ def render_bigquery_settings_page(
       </div>
     </section>"""
 
+    # Primary KPI (admin only): the headline metric shown for this client on the
+    # HQ overview. Each client tracks a different KPI, so this is a small picker
+    # (type + optional custom label + optional monthly goal) backed by the KPI
+    # registry, saved per client.
+    primary_kpi = primary_kpi or {}
+    kpi_save_url = _api_url(f"/dashboard/{client_slug}/primary-kpi", access_key=access_key)
+    cur_type = str(primary_kpi.get("type") or "")
+    cur_label = str(primary_kpi.get("label") or "")
+    cur_goal = primary_kpi.get("goal")
+    cur_goal_val = "" if cur_goal in (None, "") else _esc(cur_goal)
+    kpi_options = "".join(
+        f'<option value="{_esc(val)}"{" selected" if val == cur_type else ""}>{_esc(text)}</option>'
+        for val, text in kpi_registry.KPI_CHOICES
+    )
+    kpi_section_html = "" if not session_is_admin else f"""
+    <section id="sec-kpi">
+      <h2>Primary KPI</h2>
+      <p class="hint">The headline metric shown for this client on the HQ overview. Google Ads KPIs come from the paid-media mart; MQLs come from HubSpot. Leave the goal blank to just show the value.</p>
+      <form class="form-grid" id="kpiForm" autocomplete="off">
+        <label for="kpiType">Metric
+          <select id="kpiType" name="type">{kpi_options}</select>
+        </label>
+        <label for="kpiLabel">Label (optional)
+          <input type="text" id="kpiLabel" name="label" maxlength="40" placeholder="Defaults to the metric name" value="{_esc(cur_label)}">
+        </label>
+        <label for="kpiGoal">Monthly goal (optional)
+          <input type="number" id="kpiGoal" name="goal" min="0" step="any" placeholder="e.g. 50" value="{cur_goal_val}">
+        </label>
+        <div class="form-actions btn-row">
+          <button type="submit" class="primary">Save KPI</button>
+          <span class="status" id="kpiStatus"></span>
+        </div>
+      </form>
+    </section>"""
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -191,6 +228,8 @@ def render_bigquery_settings_page(
     label {{ display:grid; gap:6px; color:var(--muted); font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }}
     input {{ border:1px solid var(--line); border-radius:var(--radius-sm); padding:9px 12px; font:inherit; font-weight:500; text-transform:none; letter-spacing:0; background:#fff; color:#102033; }}
     input:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
+    select {{ border:1px solid var(--line); border-radius:var(--radius-sm); padding:9px 12px; font:inherit; font-weight:500; text-transform:none; letter-spacing:0; background:#fff; color:#102033; }}
+    select:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
     textarea {{ width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:10px 12px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.84rem; font-weight:500; text-transform:none; letter-spacing:0; background:#fff; color:#102033; resize:vertical; min-height:150px; }}
     textarea:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
     .form-actions {{ grid-column:1 / -1; }}
@@ -259,6 +298,7 @@ def render_bigquery_settings_page(
     {flash_html}
 
     {consent_visibility_html}
+    {kpi_section_html}
     {budget_module_html}
   </main>
     </div>
@@ -332,6 +372,32 @@ def render_bigquery_settings_page(
           t.checked = !t.checked;  // revert on failure
           setStatus('consentSidebarStatus', 'Save failed: ' + (err.message || err), true);
         }} finally {{ t.disabled = false; }}
+      }});
+    }})();
+    // ---- Primary KPI: save the client's headline metric ----
+    (function(){{
+      const KPI_SAVE_URL = "{kpi_save_url}";
+      const form = document.getElementById('kpiForm'); if (!form) return;
+      form.addEventListener('submit', async (e) => {{
+        e.preventDefault();
+        const btn = form.querySelector('button[type=submit]');
+        const type = document.getElementById('kpiType').value;
+        const label = document.getElementById('kpiLabel').value.trim();
+        const goal = document.getElementById('kpiGoal').value.trim();
+        btn.disabled = true;
+        setStatus('kpiStatus', 'Saving…');
+        try {{
+          const r = await fetch(KPI_SAVE_URL, {{
+            method:'POST', credentials:'same-origin',
+            headers:{{'Content-Type':'application/x-www-form-urlencoded'}},
+            body: new URLSearchParams({{ type, label, goal }}),
+          }});
+          const body = await r.json().catch(() => ({{}}));
+          if (!r.ok || !body.ok) throw new Error(body.error || ('HTTP ' + r.status));
+          setStatus('kpiStatus', type ? 'Saved ✓' : 'KPI cleared ✓');
+        }} catch (err) {{
+          setStatus('kpiStatus', 'Save failed: ' + (err.message || err), true);
+        }} finally {{ btn.disabled = false; }}
       }});
     }})();
   </script>
