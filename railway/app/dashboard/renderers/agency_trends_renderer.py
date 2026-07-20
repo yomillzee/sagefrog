@@ -39,6 +39,7 @@ _TRENDS_CSS = """
     table { width:100%; border-collapse:collapse; font-size:.9rem; min-width:960px; }
     th, td { text-align:right; padding:11px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
     th:first-child, td:first-child { text-align:left; }
+    th.col-icon, td.col-icon { text-align:center; }
     th { color:var(--muted); font-weight:700; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; }
     th.sortable { cursor:pointer; user-select:none; transition:color .12s; }
     th.sortable:hover { color:var(--navy); }
@@ -71,16 +72,24 @@ _TRENDS_CSS = """
     .wow-pct.flat { color:var(--muted); }
     .sess-cell { display:flex; align-items:center; justify-content:flex-end; gap:9px; }
     .spark svg { display:block; }
-    /* connector-health chip (links to the client's full data-source status) */
-    .chip { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px;
-      font-size:.72rem; font-weight:700; text-decoration:none; border:1px solid var(--line);
-      background:#fff; color:var(--ink); white-space:nowrap; transition:border-color .12s, background .12s; }
-    .chip:hover { border-color:#cbd5e1; background:#f6f9fd; }
-    .chip .dot { width:8px; height:8px; border-radius:50%; background:#94a3b8; flex:0 0 auto; }
-    .chip.ok .dot { background:var(--green); }
-    .chip.warn .dot { background:var(--amber); }
-    .chip.bad .dot { background:var(--danger); }
-    .chip.idle { color:var(--muted); }
+    /* connector-health dot (icon-only; links to the client's full data-source
+       status). No text — colour is the whole signal, tooltip carries the detail. */
+    .hdot-link { display:inline-flex; align-items:center; justify-content:center; text-decoration:none; }
+    .hdot { width:11px; height:11px; border-radius:50%; background:#94a3b8;
+      box-shadow:0 0 0 3px rgba(148,163,184,.15); transition:transform .12s; }
+    .hdot-link:hover .hdot { transform:scale(1.18); }
+    .hdot.ok { background:var(--green); box-shadow:0 0 0 3px rgba(10,127,63,.16); }
+    .hdot.warn { background:var(--amber); box-shadow:0 0 0 3px rgba(183,121,31,.18); }
+    .hdot.bad { background:var(--danger); box-shadow:0 0 0 3px rgba(180,35,24,.16); }
+    .hdot.idle { background:#cbd5e1; box-shadow:none; }
+    /* Consent verdict as a colour-coded shield icon (no text). */
+    .cshield { display:inline-flex; align-items:center; justify-content:center; text-decoration:none; color:#94a3b8; transition:transform .12s; }
+    .cshield:hover { transform:scale(1.12); }
+    .cshield svg { width:17px; height:17px; }
+    .cshield.good { color:var(--green); }
+    .cshield.warn { color:var(--amber); }
+    .cshield.bad { color:var(--danger); }
+    .cshield.idle { color:#cbd5e1; }
     .chan { display:flex; align-items:center; gap:12px; margin:10px 0; }
     .chan-name { width:92px; font-weight:700; color:var(--navy); text-transform:capitalize; font-size:.9rem; }
     .chan-bar { flex:1; height:14px; background:#eef2f7; border-radius:7px; overflow:hidden; }
@@ -95,9 +104,20 @@ _TRENDS_CSS = """
     .pill { display:inline-block; font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em;
       padding:2px 7px; border-radius:999px; background:#eef2f7; color:var(--muted); margin-left:7px; vertical-align:middle; }
     .pill.duck { background:#fff7ed; color:#b7791f; }
-    .consent-pill { display:inline-flex; align-items:center; gap:6px; text-decoration:none; color:var(--navy); font-weight:650; font-size:.82rem; }
-    .consent-pill:hover { text-decoration:underline; }
-    .consent-dot { width:9px; height:9px; border-radius:50%; background:var(--cc,#5a6578); flex:0 0 auto; }
+    /* Primary KPI cell: value + optional goal progress bar, colour-paced. */
+    .kpi-cell { display:flex; flex-direction:column; align-items:flex-end; gap:3px; cursor:default; }
+    .kpi-top { display:flex; align-items:baseline; gap:6px; }
+    .kpi-val { font-variant-numeric:tabular-nums; font-weight:800; color:var(--navy); }
+    .kpi-name { color:var(--muted); font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em; }
+    .kpi-bar { flex:0 0 auto; width:96px; height:6px; border-radius:4px; background:#eef2f7; overflow:hidden; }
+    .kpi-bar > span { display:block; height:100%; border-radius:4px; background:var(--accent); }
+    .kpi-bar.good > span { background:var(--green); }
+    .kpi-bar.warn > span { background:var(--amber); }
+    .kpi-bar.bad > span { background:var(--danger); }
+    .kpi-goal { font-size:.68rem; color:var(--muted); font-variant-numeric:tabular-nums; }
+    .kpi-unset { color:var(--muted); font-size:.78rem; }
+    .kpi-unset a { color:var(--accent); text-decoration:none; }
+    .kpi-unset a:hover { text-decoration:underline; }
     /* Narrow screens: tighten padding, let the wide data table scroll on its own,
        and stop the channel rows' fixed widths from overflowing. */
     @media (max-width: 720px) {
@@ -164,11 +184,12 @@ _TRENDS_CONTENT = """
         <table id="atTable">
           <thead><tr>
             <th class="sortable" data-key="label">Client</th>
-            <th class="sortable" data-key="health_rank">Data</th>
+            <th class="sortable col-icon" data-key="health_rank">Data</th>
+            <th class="sortable" data-key="kpi_value">Primary KPI</th>
             <th class="sortable active" data-key="pct_budget">% of budget</th>
             <th class="sortable" data-key="pct_change">Week over week</th>
             <th class="sortable" data-key="sessions_total">Sessions · 30d</th>
-            <th class="sortable" data-key="consent_rank">Consent</th>
+            <th class="sortable col-icon" data-key="consent_rank">Consent</th>
           </tr></thead>
           <tbody id="atBody"></tbody>
           <tfoot id="atFoot"></tfoot>
@@ -199,18 +220,46 @@ def render_agency_trends_page(*, user_email: str) -> str:
     function sortVal(r, key) {
       if (key === 'label') return (r.label||'').toLowerCase();
       if (key === 'consent_rank') { const m = r.consent && CONSENT_META[r.consent.health]; return m ? m.rank : null; }
+      if (key === 'kpi_value') return (r.kpi && r.kpi.value != null) ? Number(r.kpi.value) : null;
       const v = r[key];
       return (v == null) ? null : Number(v);
     }
+    const CONSENT_SHIELD = { pass:['good','Healthy'], attention:['warn','Attention'], fail:['bad','Critical'] };
     function consentCell(r) {
       const c = r.consent;
       if (!c || !c.health || c.health === 'unknown') return '<span class="muted">—</span>';
-      const m = CONSENT_META[c.health] || { c:'#5a6578', l:c.health };
+      const [cls, label] = CONSENT_SHIELD[c.health] || ['idle', c.health];
       const v = c.violation_count || 0;
-      const tip = `${m.l} · ${v} issue${v===1?'':'s'} before/after opt-out`
+      const tip = `Consent — ${label} · ${v} issue${v===1?'':'s'} before/after opt-out`
         + (c.scanned_at ? ` · scanned ${String(c.scanned_at).slice(0,10)}` : '');
       const url = `/dashboard/${encodeURIComponent(r.client_slug)}/consent`;
-      return `<a class="consent-pill" href="${url}" title="${esc(tip)}" style="--cc:${m.c}"><span class="consent-dot"></span>${esc(m.l)}</a>`;
+      return `<a class="cshield ${cls}" href="${url}" title="${esc(tip)}" role="img" aria-label="${esc(tip)}">${ICON.shield}</a>`;
+    }
+    // Each client's KPI is a different metric (MQLs, Google Ads conversions,
+    // ROAS, …); the value carries its own format + label so one column reads for
+    // all of them. Goal-bearing KPIs get a pace-coloured progress bar.
+    function fmtKpiVal(v, format) {
+      if (v == null) return '—';
+      v = Number(v);
+      if (format === 'multiplier') return v.toFixed(1) + '×';
+      if (format === 'currency') return money(v);
+      return new Intl.NumberFormat('en-US', { maximumFractionDigits: Number.isInteger(v) ? 0 : 1 }).format(v);
+    }
+    function kpiCell(r) {
+      const k = r.kpi;
+      if (!k) return '<span class="kpi-unset">Not set</span>';
+      const valTxt = fmtKpiVal(k.value, k.format);
+      const name = k.label ? `<span class="kpi-name">${esc(k.label)}</span>` : '';
+      let bar = '', goalTxt = '';
+      if (k.goal != null && k.goal > 0) {
+        const cls = ['good','warn','bad'].includes(k.status) ? k.status : '';
+        const w = Math.max(2, Math.min(100, k.pct_to_goal == null ? 0 : k.pct_to_goal));
+        bar = `<span class="kpi-bar ${cls}"><span style="width:${w}%"></span></span>`;
+        const pctStr = k.pct_to_goal == null ? '' : Math.round(k.pct_to_goal) + '% of ';
+        goalTxt = `<span class="kpi-goal">${pctStr}${fmtKpiVal(k.goal, k.format)} goal</span>`;
+      }
+      return `<div class="kpi-cell" title="${esc(k.tooltip || '')}"><div class="kpi-top">`
+        + `<span class="kpi-val">${valTxt}</span>${name}</div>${bar}${goalTxt}</div>`;
     }
     function sortedRows() {
       const rows = (atData.clients||[]).slice();
@@ -280,12 +329,13 @@ def render_agency_trends_page(*, user_email: str) -> str:
     function healthCell(r) {
       const h = r.health || {status:'no_data'};
       const [cls, label] = HEALTH[h.status] || HEALTH.no_data;
-      const lines = (h.reasons || []).slice();
+      const lines = [`Data — ${label}`];
+      (h.reasons || []).forEach(x => lines.push(x));
       (h.channels || []).forEach(c => lines.push(`${c.source} → ${c.through || 'no data'}`));
       lines.push('Click for full connector status');
       const href = `/dashboard/${encodeURIComponent(r.client_slug)}/settings`;
-      return `<a class="chip ${cls}" href="${href}" target="_blank" rel="noopener" title="${esc(lines.join('\\n'))}">`
-        + `<span class="dot"></span>${esc(label)}</a>`;
+      return `<a class="hdot-link" href="${href}" target="_blank" rel="noopener" title="${esc(lines.join('\\n'))}" `
+        + `role="img" aria-label="${esc('Data — ' + label)}"><span class="hdot ${cls}"></span></a>`;
     }
     // Fold each client's week-over-week momentum onto its budget row so one
     // table shows the HQ view (spend vs budget + sessions) with a WoW column.
@@ -308,6 +358,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
       dollar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="1.5" x2="12" y2="22.5"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
       chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
       shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+      target: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg>',
       caret: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>',
     };
     function trendDir(series) {
@@ -337,6 +388,13 @@ def render_agency_trends_page(*, user_email: str) -> str:
       const [cls, label] = map[h] || ['idle','No data'];
       return statIcon(cls, ICON.shield, `Consent — ${label}`);
     }
+    function kpiIcon(r) {
+      const k = r.kpi;
+      if (!k) return statIcon('idle', ICON.target, 'Primary KPI — not set');
+      const cls = ['good','warn','bad'].includes(k.status) ? k.status : 'neutral';
+      const goal = (k.goal != null && k.goal > 0) ? ` of ${fmtKpiVal(k.goal, k.format)} goal` : '';
+      return statIcon(cls, ICON.target, `${k.label || 'Primary KPI'} — ${fmtKpiVal(k.value, k.format)}${goal}`);
+    }
     function accRow(label, valueHtml) {
       return `<div class="acc-row"><span class="acc-k">${esc(label)}</span><span class="acc-v">${valueHtml}</span></div>`;
     }
@@ -346,6 +404,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
       el.innerHTML = rows.map(r => {
         const dash = `/dashboard/${encodeURIComponent(r.client_slug)}`;
         const detail = accRow('Data', healthCell(r))
+          + accRow('Primary KPI', kpiCell(r))
           + accRow('% of budget', pctCell(r))
           + accRow('Week over week', wowCell(r))
           + accRow('Sessions · 30d', sessCell(r))
@@ -354,7 +413,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
           + `<div class="acc-head" role="button" tabindex="0" aria-expanded="false">`
             + `<span class="acc-title"><a class="acc-name" href="${dash}">${esc(r.label)}</a>`
             + `<span class="acc-slug">${esc(r.client_slug)}</span></span>`
-            + `<span class="acc-icons">${budgetIcon(r)}${webIcon(r)}${consentIcon(r)}</span>`
+            + `<span class="acc-icons">${budgetIcon(r)}${kpiIcon(r)}${webIcon(r)}${consentIcon(r)}</span>`
             + `<span class="acc-caret">${ICON.caret}</span>`
           + `</div>`
           + `<div class="acc-body">${detail}</div>`
@@ -374,16 +433,17 @@ def render_agency_trends_page(*, user_email: str) -> str:
 
       const rows = sortedRows();
       const body = document.getElementById('atBody');
-      if (!rows.length) { body.innerHTML = `<tr><td colspan="6" class="empty">No clients configured yet.</td></tr>`; }
+      if (!rows.length) { body.innerHTML = `<tr><td colspan="7" class="empty">No clients configured yet.</td></tr>`; }
       else body.innerHTML = rows.map(r => {
         const dash = `/dashboard/${encodeURIComponent(r.client_slug)}`;
         return `<tr>`
           + `<td><div class="cl-name"><a href="${dash}">${esc(r.label)}</a></div><div class="cl-slug">${esc(r.client_slug)}</div></td>`
-          + `<td>${healthCell(r)}</td>`
+          + `<td class="col-icon">${healthCell(r)}</td>`
+          + `<td>${kpiCell(r)}</td>`
           + `<td>${pctCell(r)}</td>`
           + `<td>${wowCell(r)}</td>`
           + `<td>${sessCell(r)}</td>`
-          + `<td>${consentCell(r)}</td>`
+          + `<td class="col-icon">${consentCell(r)}</td>`
         + `</tr>`;
       }).join('');
       renderCards(rows);
@@ -391,7 +451,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
       const totPct = t.monthly_budget ? Math.round(t.mtd_spend / t.monthly_budget * 100) : null;
       const totTip = `${money2(t.mtd_spend)} spent of ${money2(t.monthly_budget)} budget`;
       document.getElementById('atFoot').innerHTML = rows.length
-        ? `<tr><td>All clients</td><td></td><td><div class="pct-cell" title="${esc(totTip)}"><span class="num">${totPct==null?'—':totPct+'%'}</span></div></td><td></td><td></td><td></td></tr>`
+        ? `<tr><td>All clients</td><td></td><td></td><td><div class="pct-cell" title="${esc(totTip)}"><span class="num">${totPct==null?'—':totPct+'%'}</span></div></td><td></td><td></td><td></td></tr>`
         : '';
 
       document.querySelectorAll('#atTable th.sortable').forEach(th =>
@@ -413,14 +473,14 @@ def render_agency_trends_page(*, user_email: str) -> str:
         `Spend vs budget is month-to-date paid media (Google, LinkedIn, Meta) from each client's BigQuery mart, as of ${atData.as_of}. `
         + `Week over week compares the last 7 days (${L.start||''} → ${L.end||''}) with the 7 before. `
         + `Sessions sparkline is GA4 sessions per day over the trailing ${sw.days||30} days; green trending up, red down. `
-        + `The Data chip flags connector freshness inferred from these same reads — green current, amber lagging, red stale or failed`
+        + `The Data dot flags connector freshness inferred from these same reads — green current, amber lagging, red stale or failed`
         + `${issues ? ` (${issues} client${issues===1?'':'s'} need attention)` : ''} — and links to that client's full connector status. `
         + `All rollups are computed in DuckDB from one set of reads. "—" / "new" means no data or no prior baseline yet.`;
     }
     function skeleton() {
       document.getElementById('atBody').innerHTML = Array.from({length:6}, () =>
         `<tr><td><span class="skel" style="width:150px"></span></td>`
-        + Array.from({length:5}, () => `<td><span class="skel" style="width:70px"></span></td>`).join('') + `</tr>`).join('');
+        + Array.from({length:6}, () => `<td><span class="skel" style="width:70px"></span></td>`).join('') + `</tr>`).join('');
       document.getElementById('atCards').innerHTML = Array.from({length:6}, () =>
         `<div class="acc"><div class="acc-head"><span class="acc-title"><span class="skel" style="width:120px;height:13px"></span></span>`
         + `<span class="skel" style="width:96px;height:22px;border-radius:8px"></span></div></div>`).join('');
@@ -455,7 +515,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
       } catch (e) {
         document.getElementById('atSub').textContent = 'Failed to load agency trends.';
         const msg = `Could not load data (${esc(e.message||'error')}). Try refreshing.`;
-        document.getElementById('atBody').innerHTML = `<tr><td colspan="6" class="empty">${msg}</td></tr>`;
+        document.getElementById('atBody').innerHTML = `<tr><td colspan="7" class="empty">${msg}</td></tr>`;
         document.getElementById('atCards').innerHTML = `<div class="acc-empty">${msg}</div>`;
       }
     }

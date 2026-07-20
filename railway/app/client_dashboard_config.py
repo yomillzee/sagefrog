@@ -92,6 +92,14 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config
       ADD COLUMN IF NOT EXISTS consent_sidebar_enabled BOOLEAN NOT NULL DEFAULT FALSE
     """,
+    # Each client's headline KPI for the HQ view, stored as a small JSON spec
+    # ({"type","label","goal"}). Client KPIs differ widely (MQLs, Google Ads
+    # conversions, ROAS, …), so the type maps to a resolver rather than a fixed
+    # column — see dashboard.services.kpi_registry.
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS primary_kpi JSONB
+    """,
 ]
 
 
@@ -121,6 +129,9 @@ class ClientConfigRow:
     gsc_branded_exclude: str | None = None
     gsc_target_exclude: str | None = None
     overview_pinned_card: str | None = None
+    # Headline KPI spec for the HQ view: {"type": <registry id>, "label": str,
+    # "goal": float|None}. None when the client has no KPI configured.
+    primary_kpi: dict[str, Any] | None = None
     # Whether Consent & Tracking Health appears in the client-viewable sidebar.
     # Off by default: most clients don't need it, and it only clutters their nav —
     # admins turn it on per client from Settings.
@@ -163,7 +174,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    gsc_branded_roots, gsc_target_keywords, ga4_key_events,
                    explorer_filters, explorer_budget_tracker,
                    gsc_branded_exclude, gsc_target_exclude,
-                   overview_pinned_card, consent_sidebar_enabled
+                   overview_pinned_card, consent_sidebar_enabled, primary_kpi
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -203,7 +214,34 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         gsc_target_exclude=_s(row[22]),
         overview_pinned_card=_s(row[23]),
         consent_sidebar_enabled=bool(row[24]) if row[24] is not None else False,
+        primary_kpi=_normalize_kpi_spec(row[25]),
     )
+
+
+def _normalize_kpi_spec(payload: object) -> dict[str, Any] | None:
+    """Coerce a stored primary_kpi value into a clean spec dict (or None).
+
+    JSONB comes back as a dict from psycopg, but tolerate a JSON string too.
+    A spec is only meaningful with a non-empty ``type``."""
+    if payload is None:
+        return None
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(payload, dict):
+        return None
+    kpi_type = str(payload.get("type") or "").strip()
+    if not kpi_type:
+        return None
+    goal_raw = payload.get("goal")
+    try:
+        goal = float(goal_raw) if goal_raw is not None and goal_raw != "" else None
+    except (TypeError, ValueError):
+        goal = None
+    label = str(payload.get("label") or "").strip() or None
+    return {"type": kpi_type, "label": label, "goal": goal}
 
 
 def save_config(
@@ -579,6 +617,55 @@ def save_monthly_budget(
     return saved
 
 
+def get_primary_kpi(client_slug: str) -> dict[str, Any] | None:
+    """The client's headline KPI spec ({type,label,goal}) or None if unset."""
+    row = get_config(client_slug)
+    return row.primary_kpi if row else None
+
+
+def save_primary_kpi(
+    client_slug: str,
+    spec: dict[str, Any] | None,
+    *,
+    updated_by: str | None = None,
+) -> ClientConfigRow:
+    """Persist (or clear) the client's headline KPI spec. Touches only that column.
+
+    Passing None — or a spec with an empty ``type`` — clears the KPI. The spec is
+    normalized before storage so the HQ view always reads a clean shape."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save client dashboard config.")
+
+    normalized = _normalize_kpi_spec(spec) if spec else None
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    existing = get_config(slug)
+    label = existing.label if existing else slug
+    payload = json.dumps(normalized) if normalized is not None else None
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, primary_kpi, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              primary_kpi = EXCLUDED.primary_kpi,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, label, payload, now, (updated_by or "").strip() or None),
+        )
+    saved = get_config(slug)
+    if not saved:
+        raise RuntimeError("Failed to load saved client config.")
+    return saved
+
+
 def list_config_labels() -> dict[str, str]:
     """Return {client_slug: label} for all rows with a non-empty label."""
     if not enabled():
@@ -605,7 +692,7 @@ def list_budget_overview() -> list[dict[str, Any]]:
         rows = conn.execute(
             """
             SELECT client_slug, label, monthly_budget_usd,
-                   gcp_project_id, bq_mart_dataset_id, dashboard_mode
+                   gcp_project_id, bq_mart_dataset_id, dashboard_mode, primary_kpi
             FROM client_dashboard_config
             ORDER BY LOWER(NULLIF(label, '')), client_slug
             """
@@ -618,6 +705,7 @@ def list_budget_overview() -> list[dict[str, Any]]:
             "gcp_project_id": (str(r[3]).strip() or None) if r[3] else None,
             "bq_mart_dataset_id": (str(r[4]).strip() or None) if r[4] else None,
             "dashboard_mode": str(r[5] or "api"),
+            "primary_kpi": _normalize_kpi_spec(r[6]),
         }
         for r in rows
     ]

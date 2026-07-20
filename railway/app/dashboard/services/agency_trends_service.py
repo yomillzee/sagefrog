@@ -39,6 +39,7 @@ import duckdb
 import client_dashboard_config
 import db_cache
 import marketing_service
+from dashboard.services import kpi_registry
 from dashboard.utils.dates import mtd_calendar_bounds
 
 LOGGER = logging.getLogger(__name__)
@@ -549,11 +550,19 @@ def _client_daily_rows(
     dataset_id: str,
     start: date,
     end: date,
-) -> list[tuple[str, str, date, float]]:
+    month_start: date,
+) -> tuple[list[tuple[str, str, date, float]], dict[str, dict[str, float]]]:
     """One client's daily paid-media spend by channel, cached like /summary.
 
     Reuses marketing_service.fetch_summary — the same BigQuery read HQ and the
-    dashboards use — and keeps only its per-day/per-source ``daily`` series.
+    dashboards use — and returns two things from that one read:
+
+    * ``rows``     : the per-day/per-source spend series (for the spend rollups),
+    * ``paid_mtd`` : per-source month-to-date totals (spend / conversions /
+                     conversion_value) over ``month_start``..``end``, which the
+                     primary-KPI resolver reads for the paid KPI types. Computing
+                     it here means the Google Ads conversions / ROAS KPIs cost no
+                     extra BigQuery reads — they ride the summary we already pull.
     """
     payload = {"start": start.isoformat(), "end": end.isoformat()}
 
@@ -575,6 +584,7 @@ def _client_daily_rows(
             pass
 
     rows: list[tuple[str, str, date, float]] = []
+    paid_mtd: dict[str, dict[str, float]] = {}
     for r in (result or {}).get("daily") or []:
         raw_date = r.get("date")
         if not raw_date:
@@ -583,8 +593,41 @@ def _client_daily_rows(
             d = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d").date()
         except ValueError:
             continue
-        rows.append((slug, str(r.get("source") or "unknown"), d, float(r.get("spend") or 0.0)))
-    return rows
+        source = str(r.get("source") or "unknown")
+        spend = float(r.get("spend") or 0.0)
+        rows.append((slug, source, d, spend))
+        if month_start <= d <= end:
+            agg = paid_mtd.setdefault(source, {"spend": 0.0, "conversions": 0.0, "conversion_value": 0.0})
+            agg["spend"] += spend
+            agg["conversions"] += float(r.get("conversions") or 0.0)
+            agg["conversion_value"] += float(r.get("conversion_value") or 0.0)
+    return rows, paid_mtd
+
+
+def _client_mtd_mqls(*, slug: str, month_start: date, today: date) -> int | None:
+    """One client's month-to-date HubSpot MQL count, cached for the KPI column.
+
+    Routed through hubspot_reports_service (its own connector config picks the
+    HubSpot mart project/dataset, which may differ from the paid-media mart).
+    Returns None when HubSpot isn't configured or the read fails, so the KPI
+    simply reads as "no data" rather than blocking the HQ view.
+    """
+    payload = {"start": month_start.isoformat(), "end": today.isoformat()}
+    hit = db_cache.get_cached(f"{slug}.hq.mtd_mqls", payload)
+    if hit is not None:
+        val = hit.response_json.get("mqls") if isinstance(hit.response_json, dict) else None
+        return int(val) if val is not None else None
+
+    import hubspot_reports_service
+    count = hubspot_reports_service.fetch_mtd_mql_count(slug, start=month_start, end=today)
+    try:
+        db_cache.put_cached(
+            f"{slug}.hq.mtd_mqls", payload, response_json={"mqls": count},
+            row_count=0, ttl_seconds=_CLIENT_TTL_SECONDS,
+        )
+    except Exception:
+        pass
+    return count
 
 
 def _resolve_destination(c: dict[str, Any]) -> tuple[str | None, str]:
@@ -641,6 +684,7 @@ def build_agency_overview() -> dict[str, Any]:
         c: dict[str, Any],
     ) -> tuple[list[tuple[str, str, date, float]], list[tuple[str, date, int]], dict[str, Any]]:
         slug = str(c["client_slug"])
+        kpi_spec = c.get("primary_kpi")
         meta: dict[str, Any] = {
             "client_slug": slug,
             "label": str(c.get("label") or slug),
@@ -648,7 +692,19 @@ def build_agency_overview() -> dict[str, Any]:
             "configured": False,
             "spend_available": False,
             "sessions_available": False,
+            "primary_kpi_spec": kpi_spec,
+            "kpi_inputs": {"paid_mtd": {}, "mql_count": None},
         }
+        # HubSpot MQLs live in a separate mart, reachable even when the client
+        # has no paid-media project — so fetch them off the paid-media gate.
+        if kpi_registry.needs_hubspot(kpi_spec):
+            try:
+                meta["kpi_inputs"]["mql_count"] = _client_mtd_mqls(
+                    slug=slug, month_start=month_start, today=today,
+                )
+            except Exception:
+                LOGGER.exception("Agency overview: MQL read failed for %s", slug)
+
         project_id, dataset_id = _resolve_destination(c)
         meta["configured"] = bool(project_id)
         if not project_id:
@@ -657,11 +713,12 @@ def build_agency_overview() -> dict[str, Any]:
         spend_rows: list[tuple[str, str, date, float]] = []
         sessions_rows: list[tuple[str, date, int]] = []
         try:
-            spend_rows = _client_daily_rows(
+            spend_rows, paid_mtd = _client_daily_rows(
                 slug=slug, project_id=project_id, dataset_id=dataset_id,
-                start=spend_start, end=today,
+                start=spend_start, end=today, month_start=month_start,
             )
             meta["spend_available"] = True
+            meta["kpi_inputs"]["paid_mtd"] = paid_mtd
         except Exception:
             LOGGER.exception("Agency overview: spend read failed for %s", slug)
         try:
@@ -687,6 +744,21 @@ def build_agency_overview() -> dict[str, Any]:
     budget = compute_agency_budget(spend_all, sessions_all, metas, today=today)
     label_map = {m["client_slug"]: m["label"] for m in metas}
     momentum = compute_agency_trends(spend_all, label_map, today=today)
+
+    # Fold each client's primary KPI onto its budget row. The resolver is pure —
+    # it reads the paid MTD aggregate / MQL count gathered above — and grades
+    # progress against the same share of the month the budget view uses.
+    pct_elapsed = float(budget.get("pct_month_elapsed") or 0.0)
+    kpi_by_slug = {m["client_slug"]: m for m in metas}
+    for row in budget["clients"]:
+        m = kpi_by_slug.get(str(row["client_slug"]))
+        inputs = (m or {}).get("kpi_inputs") or {}
+        row["kpi"] = kpi_registry.resolve_kpi(
+            (m or {}).get("primary_kpi_spec"),
+            paid_mtd=inputs.get("paid_mtd") or {},
+            mql_count=inputs.get("mql_count"),
+            pct_month_elapsed=pct_elapsed,
+        )
 
     result = {**budget, "momentum": momentum}
     try:

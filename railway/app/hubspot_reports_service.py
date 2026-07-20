@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 
 import bigquery_service
@@ -56,6 +57,33 @@ def _resolve_target(client_slug: str) -> tuple[str | None, str]:
 
 def _rows(client, sql: str) -> list[dict[str, Any]]:
     return [dict(r) for r in client.query(sql).result()]
+
+
+def fetch_mtd_mql_count(client_slug: str, *, start: date, end: date) -> int | None:
+    """Count of contacts that became MQLs within [start, end] (inclusive).
+
+    A lightweight single-query read for the HQ "primary KPI" column, so the HQ
+    view can show a client's month-to-date MQLs without pulling the whole Lead
+    Tracking report. Returns None when HubSpot isn't configured for the client or
+    the read fails (e.g. the contacts table doesn't exist yet)."""
+    project, dataset = _resolve_target(client_slug)
+    if not project:
+        return None
+    try:
+        client = bigquery_service.build_client(project_id=project)
+        ct = f"`{project}.{dataset}.{_CONTACT_TABLE}`"
+        sql = f"""
+            SELECT COUNT(*) AS mqls
+            FROM {ct}
+            WHERE stage_filter = '{_MQL_STAGE}'
+              AND became_stage_date IS NOT NULL
+              AND DATE(became_stage_date) BETWEEN DATE('{start.isoformat()}') AND DATE('{end.isoformat()}')
+        """
+        rows = _rows(client, sql)
+        return int(rows[0].get("mqls") or 0) if rows else 0
+    except Exception as exc:
+        LOGGER.info("MTD MQL count skipped [%s]: %s", client_slug, exc)
+        return None
 
 
 def build_report(client_slug: str) -> LeadTrackingReport:

@@ -431,7 +431,8 @@ def fetch_summary(
       ROUND(SUM(COALESCE(spend, 0)), 2) AS spend,
       CAST(SUM(COALESCE(impressions, 0)) AS INT64) AS impressions,
       CAST(SUM(COALESCE(clicks, 0)) AS INT64) AS clicks,
-      SUM(COALESCE(conversions, 0)) AS conversions
+      SUM(COALESCE(conversions, 0)) AS conversions,
+      ROUND(SUM(COALESCE(conversion_value, 0)), 2) AS conversion_value
     FROM {_paid_media_view()}
     WHERE `date` BETWEEN @start_date AND @end_date
     GROUP BY `date`, source_platform
