@@ -193,6 +193,7 @@ def render_analytics_page(
           <button type="button" class="chip" data-preset="last_7">Last 7 days</button>
           <button type="button" class="chip" data-preset="last_30">Last 30 days</button>
           <button type="button" class="chip" data-preset="last_90">Last 90 days</button>
+          <button type="button" class="chip" data-preset="last_365">Last 365 days</button>
         </div>
       </div>
     </div>
@@ -541,6 +542,7 @@ def render_analytics_page(
       else if (name === 'last_7') lastNDays(7);
       else if (name === 'last_30') lastNDays(30);
       else if (name === 'last_90') lastNDays(90);
+      else if (name === 'last_365') lastNDays(365);
       else return null;
       return {{ start: fmtDate(s), end: fmtDate(e) }};
     }}

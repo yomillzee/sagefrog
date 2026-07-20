@@ -1214,6 +1214,7 @@ def render_bigquery_dashboard_page(
             <option value="last_7">Last 7 days</option>
             <option value="last_30" selected>Last 30 days</option>
             <option value="last_90">Last 90 days</option>
+            <option value="last_365">Last 365 days</option>
             <option value="this_week">This week</option>
             <option value="last_week">Last week</option>
             <option value="this_month">This month</option>
@@ -3904,6 +3905,7 @@ def render_bigquery_dashboard_page(
       }} else if (name==='last_7') lastN(7);
       else if (name==='last_30') lastN(30);
       else if (name==='last_90') lastN(90);
+      else if (name==='last_365') lastN(365);
       else return;
       currentStart=fmtDate(s); currentEnd=fmtDate(e);
       compareStart=fmtDate(cs); compareEnd=fmtDate(ce);
