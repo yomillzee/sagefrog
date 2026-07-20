@@ -961,6 +961,12 @@ def render_bigquery_dashboard_page(
     .tag-editor-exclude .tag-chip {{ background:#fdecec; color:#8a2020; }}
     .tag-editor-exclude .tag-chip button {{ background:rgba(138,32,32,.16); color:#8a2020; }}
     .tag-editor-exclude:focus-within {{ border-color:#e6a6a6; box-shadow:0 0 0 2px #fbe2e2; }}
+    /* "Edit" toggle in the branded/target headline row: reveals the include /
+       exclude tag editors (admin only, via .debug-only) so they stay tucked
+       away until needed. */
+    .kw-edit-btn {{ flex-shrink:0; border:1px solid var(--line); background:#fff; color:var(--muted); border-radius:var(--radius-sm); padding:3px 11px; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; cursor:pointer; transition:border-color .12s, color .12s; }}
+    .kw-edit-btn:hover {{ border-color:#9bbfe6; color:var(--navy); }}
+    .kw-edit-btn[aria-expanded="true"] {{ border-color:#9bbfe6; color:var(--navy); background:#eef4fb; }}
     .empty {{ color:var(--muted); padding:26px; text-align:center; }}
     code {{ background:#eef4fb; padding:2px 5px; border-radius:4px; font-size:.85em; }}
     .muted {{ color:var(--muted); font-size:.78rem; margin-left:6px; }}
@@ -1390,9 +1396,11 @@ def render_bigquery_dashboard_page(
         <div class="sec-head"><h2>Branded &amp; Target Keywords</h2><span class="status" id="gscKwStatus"></span></div>
         <div class="two-col">
           <div class="col-panel">
-            <h3>Branded queries <span class="muted" id="gscBrandedCount"></span></h3>
-            <div class="tag-editor" id="gscBrandedTags"></div>
-            <div class="tag-editor tag-editor-exclude" id="gscBrandedExcludeTags"></div>
+            <div class="col-panel-head"><h3>Branded queries <span class="muted" id="gscBrandedCount"></span></h3><button type="button" class="kw-edit-btn debug-only" data-kw-edit="gscBrandedEditors" aria-expanded="false">Edit</button></div>
+            <div class="kw-editors" id="gscBrandedEditors" hidden>
+              <div class="tag-editor" id="gscBrandedTags"></div>
+              <div class="tag-editor tag-editor-exclude" id="gscBrandedExcludeTags"></div>
+            </div>
             <div class="table-wrap"><table id="gscBrandedTable" class="compact"></table></div>
             <div class="pager" id="gscBrandedPager"></div>
             <div class="chart-wrap" style="margin-top:12px">
@@ -1401,9 +1409,11 @@ def render_bigquery_dashboard_page(
             </div>
           </div>
           <div class="col-panel">
-            <h3>Target queries <span class="muted" id="gscTargetCount"></span></h3>
-            <div class="tag-editor" id="gscTargetTags"></div>
-            <div class="tag-editor tag-editor-exclude" id="gscTargetExcludeTags"></div>
+            <div class="col-panel-head"><h3>Target queries <span class="muted" id="gscTargetCount"></span></h3><button type="button" class="kw-edit-btn debug-only" data-kw-edit="gscTargetEditors" aria-expanded="false">Edit</button></div>
+            <div class="kw-editors" id="gscTargetEditors" hidden>
+              <div class="tag-editor" id="gscTargetTags"></div>
+              <div class="tag-editor tag-editor-exclude" id="gscTargetExcludeTags"></div>
+            </div>
             <div class="table-wrap"><table id="gscTargetTable" class="compact"></table></div>
             <div class="pager" id="gscTargetPager"></div>
             <div class="chart-wrap" style="margin-top:12px">
@@ -2093,7 +2103,7 @@ def render_bigquery_dashboard_page(
       try {{ const u = new URL(url); return (u.pathname || '/') + (u.search || ''); }}
       catch {{ return url; }}
     }}
-    const GSC_LABEL_COL_WIDTH = 240;
+    const GSC_LABEL_COL_WIDTH = 185;
     const gscTables = {{
       queries: {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'query', labelText:'Query', tableId:'gscQueriesTable', pagerId:'gscQueriesPager', labelWidth:GSC_LABEL_COL_WIDTH}},
       pages:   {{rows:[], sortKey:'clicks', sortDir:'desc', page:1, labelKey:'page_url', labelText:'Page', tableId:'gscPagesTable', pagerId:'gscPagesPager', labelWidth:GSC_LABEL_COL_WIDTH, labelFormat:pathOnly}},
@@ -2287,6 +2297,15 @@ def render_bigquery_dashboard_page(
     makeTagEditor('gscBrandedExcludeTags','Exclude terms', ()=>gscBrandedExclude, t=>{{gscBrandedExclude=t;}});
     makeTagEditor('gscTargetTags','Include keywords', ()=>gscTargetKeywords, t=>{{gscTargetKeywords=t;}});
     makeTagEditor('gscTargetExcludeTags','Exclude terms', ()=>gscTargetExclude, t=>{{gscTargetExclude=t;}});
+    // Toggle the include/exclude tag editors from the "Edit" button in each
+    // keyword panel's headline row (keeps the editors tucked away by default).
+    document.querySelectorAll('.kw-edit-btn[data-kw-edit]').forEach(btn=>{{
+      btn.addEventListener('click',()=>{{
+        const box=document.getElementById(btn.dataset.kwEdit); if(!box) return;
+        const open=box.hidden; box.hidden=!open; btn.setAttribute('aria-expanded', open?'true':'false');
+        if(open){{const inp=box.querySelector('.tag-input'); if(inp) inp.focus();}}
+      }});
+    }});
 
     // ---- SEMrush (domain-level snapshot — not date-range scoped) ----
     function renderSemrushKpis(ov, bl, series, aio) {{
