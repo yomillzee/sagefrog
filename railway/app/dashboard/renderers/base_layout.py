@@ -2232,6 +2232,30 @@ SIDEBAR_CSS = """
       flex-direction: column;
       gap: 2px;
       -webkit-overflow-scrolling: touch;
+      /* Reserve the track's width so the row list doesn't reflow when the
+         scrollbar appears, and keep a slim, rounded thumb that echoes the
+         drawer's slate palette rather than the chunky OS default. */
+      scrollbar-gutter: stable;
+      scrollbar-width: thin;
+      scrollbar-color: #cbd5e1 transparent;
+    }
+    .client-switch-list::-webkit-scrollbar {
+      width: 8px;
+    }
+    .client-switch-list::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .client-switch-list::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 999px;
+      /* Transparent border painted over the thumb via background-clip insets it
+         from the track edge, so it reads as a floating pill. */
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+    .client-switch-list::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+      background-clip: padding-box;
     }
     .client-switch-item {
       display: flex;
