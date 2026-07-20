@@ -112,15 +112,30 @@ Strictly-necessary cookies and the consent banner itself are always allowed.
 
 ## The report
 
-- **Overall health** — Healthy / Needs attention / Critical issues, with a
-  one-line executive headline.
-- **Executive summary** — pages scanned, third-party vendors, identifiers before
-  consent, issues before consent and after Reject All, cookieless pings.
+The page is deliberately layered so a non-technical team member gets the answer
+first and detail-lovers can still drill all the way down. Everything above the
+fold answers one question — *is consent set up correctly?* — and every jargon
+term (cookieless pings, trackers before consent, the three consent states, …)
+carries a hover/focus **ⓘ tooltip** that explains what it is and why the number
+matters.
+
+**Above the fold (always visible):**
+
+- **Verdict hero** — Healthy / Needs attention / Critical issues, headed by the
+  literal question "Is consent set up correctly?", with a one-line headline.
+- **Key numbers** — the six figures that matter, each with a tooltip: trackers
+  before consent, issues before consent, issues after Reject All, cookieless
+  pings, third-party vendors, banner coverage. (These used to be duplicated
+  between the hero chips and a separate executive-summary row; now they live in
+  one place.)
 - **Changes since last scan** — new vs resolved violations, vendor add/remove,
   health delta.
+- **What to fix** — ranked violations with a plain-English reason and a concrete
+  recommendation.
 - **Consent states compared** — before / Reject / Accept side by side.
-- **Priority findings** — ranked violations with a plain-English reason and a
-  concrete recommendation.
+
+**Technical detail (one collapsed disclosure, all detail preserved):**
+
 - **Vendors & requests** — full inventory, category-filterable, with evidence
   types and an identifier flag.
 - **Page-by-page detail** — drill into every finding per phase.

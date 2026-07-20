@@ -48,8 +48,65 @@ _I_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width=
 _I_REFRESH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v5h-5"/></svg>'
 _I_SHIELD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>'
 _I_CHEVRON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>'
+_I_INFO = ('<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" '
+           'stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/>'
+           '<path d="M8 7.3v3.4"/><circle cx="8" cy="4.9" r=".85" fill="currentColor" stroke="none"/></svg>')
 
 _HEALTH_ICON = {"pass": _I_CHECK, "attention": _I_ALERT, "fail": _I_X, "unknown": _I_SHIELD}
+
+# Plain-English explanations for the jargon on the page. Surfaced through the
+# little ⓘ tooltips so a non-technical team member can read a number and know
+# both what it means and why it matters.
+_TOOLTIPS: dict[str, str] = {
+    "identifiers": (
+        "A tracking identifier is a value that can single out a visitor — a cookie like "
+        "_ga or _fbp, or an ID sent inside a request. If any are set or sent before the "
+        "visitor opts in, that's a genuine compliance problem, so this number should be 0."
+    ),
+    "pre_issues": (
+        "Anything that needs consent but fired before the visitor made a choice. These are "
+        "the items most likely to be a compliance risk — aim for 0."
+    ),
+    "reject_issues": (
+        "Anything that kept tracking the visitor after they clicked “Reject All”. Once "
+        "someone opts out, all non-essential tracking should stop — this should be 0."
+    ),
+    "cookieless": (
+        "Cookieless pings are anonymous signals Google Consent Mode sends before consent. "
+        "They carry no cookies or identifiers, so they're privacy-safe — a healthy count is "
+        "actually a good sign that Consent Mode is switched on and measuring without "
+        "tracking anyone."
+    ),
+    "vendors": (
+        "The distinct third-party companies (Google, Meta, LinkedIn, …) your pages loaded "
+        "scripts from or sent data to."
+    ),
+    "banner": (
+        "How many of the scanned pages actually showed a consent banner before anything "
+        "could track the visitor."
+    ),
+    "pre_consent": (
+        "What runs when a visitor first lands, before they've chosen anything. Only "
+        "strictly-necessary tracking and privacy-safe signals belong here."
+    ),
+    "reject_all": (
+        "What still runs after the visitor clicks “Reject All”. Nothing that needs consent "
+        "should fire in this state."
+    ),
+    "accept_all": (
+        "What runs once the visitor grants full consent — your baseline for everything the "
+        "site is allowed to load."
+    ),
+}
+
+
+def _tip(key: str) -> str:
+    """A small ⓘ affordance that reveals a plain-English explanation on hover/focus."""
+    text = _TOOLTIPS.get(key, "")
+    if not text:
+        return ""
+    return (f'<span class="cth-tip" tabindex="0" role="img" aria-label="{_esc(text)}">{_I_INFO}'
+            f'<span class="cth-tip-pop" aria-hidden="true">{_esc(text)}</span></span>')
 
 
 # ── Small helpers ───────────────────────────────────────────────────────────
@@ -112,51 +169,50 @@ def _health_hero(result: dict[str, Any]) -> str:
     summary = result.get("summary", {})
     headline = summary.get("headline", "")
     scanned = result.get("scanned_at")
-    chips = []
-    chip_defs = [
-        (summary.get("identifiers_before_consent", 0), "identifiers before consent", "danger"),
-        (summary.get("vendor_count", 0), "third-party vendors", "neutral"),
-        (summary.get("cookieless_pings", 0), "cookieless Consent Mode pings", "ok"),
-        (f"{summary.get('banner_pages', 0)}/{summary.get('pages_scanned', 0)}", "pages show a consent banner", "neutral"),
-    ]
-    for value, label, tone in chip_defs:
-        chips.append(
-            f'<div class="cth-hero-chip cth-tone-{tone}"><span class="cth-hero-chip-v">{_esc(str(value))}</span>'
-            f'<span class="cth-hero-chip-l">{_esc(label)}</span></div>'
-        )
     return f"""
     <section class="cth-hero cth-health-{health}" aria-label="Overall consent health">
       <div class="cth-hero-medallion" style="--ring:{hm['ring']};color:{hm['fg']}">
         <span class="cth-hero-icon">{icon}</span>
       </div>
       <div class="cth-hero-body">
+        <div class="cth-hero-eyebrow">Is consent set up correctly?</div>
         <div class="cth-hero-status" style="color:{hm['fg']}">{_esc(hm['label'])}</div>
         <p class="cth-hero-headline">{_esc(headline)}</p>
-        <div class="cth-hero-chips">{''.join(chips)}</div>
-        <div class="cth-hero-meta">Scanned {_esc(_rel_time(scanned))} · {_esc(str(result.get('engine','chromium')).title())} headless browser · {summary.get('pages_scanned',0)} page(s)</div>
+        <div class="cth-hero-meta">Scanned {_esc(_rel_time(scanned))} · {summary.get('pages_scanned',0)} page(s) · {_esc(str(result.get('engine','chromium')).title())} headless browser</div>
       </div>
     </section>"""
 
 
-def _exec_summary(result: dict[str, Any]) -> str:
+def _key_numbers(result: dict[str, Any]) -> str:
+    """The six numbers that matter, each with a plain-English tooltip.
+
+    This is the page's single source of headline metrics — the hero no longer
+    repeats them — so a non-technical reader gets the whole picture in one glance
+    and can hover any figure to learn what it means.
+    """
     s = result.get("summary", {})
     pt = result.get("phase_totals", {})
+    pre = pt.get("pre_consent", {}).get("violation_count", 0)
+    rej = pt.get("reject_all", {}).get("violation_count", 0)
+    ids = s.get("identifiers_before_consent", 0)
+    banner = f"{s.get('banner_pages', 0)}/{s.get('pages_scanned', 0)}"
+    # (label, value, sub, tone, tooltip-key)
     tiles = [
-        ("Pages scanned", s.get("pages_scanned", 0), "", "neutral"),
-        ("Third-party vendors", s.get("vendor_count", 0), "distinct", "neutral"),
-        ("Identifiers before consent", s.get("identifiers_before_consent", 0), "should be 0", "danger" if s.get("identifiers_before_consent") else "ok"),
-        ("Issues before consent", pt.get("pre_consent", {}).get("violation_count", 0), "pre-consent", "danger" if pt.get("pre_consent", {}).get("violation_count") else "ok"),
-        ("Issues after Reject All", pt.get("reject_all", {}).get("violation_count", 0), "post opt-out", "danger" if pt.get("reject_all", {}).get("violation_count") else "ok"),
-        ("Cookieless pings", s.get("cookieless_pings", 0), "allowed", "ok"),
+        ("Trackers before consent", ids, "should be 0", "danger" if ids else "ok", "identifiers"),
+        ("Issues before consent", pre, "before any choice", "danger" if pre else "ok", "pre_issues"),
+        ("Issues after “Reject All”", rej, "after opt-out", "danger" if rej else "ok", "reject_issues"),
+        ("Cookieless pings", s.get("cookieless_pings", 0), "privacy-safe", "ok", "cookieless"),
+        ("Third-party vendors", s.get("vendor_count", 0), "distinct companies", "neutral", "vendors"),
+        ("Banner coverage", banner, "pages with a banner", "neutral", "banner"),
     ]
     cells = []
-    for label, value, sub, tone in tiles:
+    for label, value, sub, tone, tip in tiles:
         sub_html = f'<div class="cth-tile-s">{_esc(sub)}</div>' if sub else ""
         cells.append(
             f'<div class="cth-tile cth-tone-{tone}"><div class="cth-tile-v">{_esc(str(value))}</div>'
-            f'<div class="cth-tile-l">{_esc(label)}</div>{sub_html}</div>'
+            f'<div class="cth-tile-l">{_esc(label)}{_tip(tip)}</div>{sub_html}</div>'
         )
-    return f'<section class="cth-tiles" aria-label="Executive summary">{"".join(cells)}</section>'
+    return f'<section class="cth-tiles" aria-label="Key numbers">{"".join(cells)}</section>'
 
 
 def _diff_section(result: dict[str, Any]) -> str:
@@ -235,7 +291,7 @@ def _phase_compare(result: dict[str, Any]) -> str:
         <div class="cth-phase cth-health-{status}">
           <div class="cth-phase-top">
             <span class="cth-phase-dot" style="background:{hm['ring']}"></span>
-            <div><div class="cth-phase-label">{_esc(label)}</div>
+            <div><div class="cth-phase-label">{_esc(label)}{_tip(key)}</div>
             <div class="cth-phase-status" style="color:{hm['fg']}">{_esc(headline)}</div></div>
           </div>
           <p class="cth-phase-desc">{_esc(desc)}</p>
@@ -263,9 +319,9 @@ def _priority_findings(result: dict[str, Any]) -> str:
     if not tops:
         return f"""
         <section class="cth-card">
-          <div class="cth-card-head"><h2 class="cth-h2">Priority findings</h2></div>
-          <div class="cth-empty-inline">{_I_CHECK}<div><strong>Nothing fired before consent.</strong>
-          No tracking that requires consent ran before the visitor opted in, and Reject All was honoured.</div></div>
+          <div class="cth-card-head"><h2 class="cth-h2">What to fix</h2></div>
+          <div class="cth-empty-inline">{_I_CHECK}<div><strong>Nothing to fix.</strong>
+          No tracking that requires consent ran before the visitor opted in, and “Reject All” was honoured.</div></div>
         </section>"""
     cards = []
     for f in tops[:20]:
@@ -290,7 +346,7 @@ def _priority_findings(result: dict[str, Any]) -> str:
         </article>""")
     return f"""
     <section class="cth-card">
-      <div class="cth-card-head"><h2 class="cth-h2">Priority findings</h2>
+      <div class="cth-card-head"><h2 class="cth-h2">What to fix</h2>
         <span class="cth-muted">{len(tops)} item(s) that need consent but fired before it</span></div>
       <div class="cth-findings">{''.join(cards)}</div>
     </section>"""
@@ -478,6 +534,32 @@ def _history_section(overview: dict[str, Any]) -> str:
     </section>"""
 
 
+def _technical_details(result: dict[str, Any], overview: dict[str, Any]) -> str:
+    """The full vendor inventory, per-page drill-down, methodology and history,
+    collapsed into a single disclosure so the top of the page stays scannable.
+
+    Detail is preserved in full — it's one click away for anyone who wants it,
+    but it no longer buries the verdict for team members who just need the answer.
+    """
+    inner = (
+        _vendors_section(result)
+        + _page_drilldown(result)
+        + _expectations_section(result)
+        + _history_section(overview)
+    )
+    if not inner.strip():
+        return ""
+    return f"""
+    <details class="cth-adv">
+      <summary class="cth-adv-summary">
+        <span class="cth-adv-title">Technical detail</span>
+        <span class="cth-adv-hint">Every vendor, request, cookie and storage entry — page by page</span>
+        <span class="cth-adv-chevron">{_I_CHEVRON}</span>
+      </summary>
+      <div class="cth-adv-body">{inner}</div>
+    </details>"""
+
+
 # ── Empty / loading / error states ──────────────────────────────────────────
 
 def _setup_state(client_slug: str, label: str, config: dict[str, Any] | None) -> str:
@@ -631,16 +713,20 @@ def render_consent_page(
         report_error = ""
         if not report.get("available"):
             report_error = _error_banner(report.get("error") or "")
-        body = (header + status_banner + report_error
-                + _health_hero(report)
-                + _exec_summary(report)
-                + _diff_section(report)
-                + _phase_compare(report)
-                + _priority_findings(report)
-                + _vendors_section(report)
-                + _page_drilldown(report)
-                + _expectations_section(report)
-                + _history_section(overview))
+        # Above the fold: the verdict and the things a non-technical reader needs
+        # to answer "is consent set up correctly?" — the health call, the key
+        # numbers, what changed, what to fix, and the three states side by side.
+        overview_html = (
+            _health_hero(report)
+            + _key_numbers(report)
+            + _diff_section(report)
+            + _priority_findings(report)
+            + _phase_compare(report)
+        )
+        # Below the fold: the exhaustive detail, tucked into a collapsed drawer so
+        # it's there for anyone who wants it without overwhelming everyone else.
+        technical_html = _technical_details(report, overview)
+        body = header + status_banner + report_error + overview_html + technical_html
 
     body += _config_drawer(config)
     body += f'<script>{_page_js(client_slug)}</script>'
@@ -760,21 +846,24 @@ _CSS = """
 .cth-hero-icon{position:relative;z-index:1;width:40px;height:40px;display:grid;place-items:center}
 .cth-hero-icon svg{width:40px;height:40px}
 .cth-hero-body{flex:1;min-width:0}
-.cth-hero-status{font-size:1.15rem;font-weight:780;letter-spacing:-.01em}
-.cth-hero-headline{margin:4px 0 14px;font-size:1.02rem;color:#1f2d3d;line-height:1.5;max-width:60ch}
-.cth-hero-chips{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
-.cth-hero-chip{display:flex;flex-direction:column;padding:8px 14px;border-radius:12px;background:#f8fafc;border:1px solid var(--border);min-width:96px}
-.cth-hero-chip-v{font-size:1.3rem;font-weight:770;color:var(--navy);line-height:1}
-.cth-hero-chip-l{font-size:.72rem;color:var(--muted);margin-top:3px;line-height:1.2}
-.cth-tone-danger .cth-hero-chip-v{color:#b42318}
-.cth-tone-ok .cth-hero-chip-v{color:#15803d}
+.cth-hero-eyebrow{font-size:.74rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:3px}
+.cth-hero-status{font-size:1.35rem;font-weight:800;letter-spacing:-.01em}
+.cth-hero-headline{margin:4px 0 12px;font-size:1.02rem;color:#1f2d3d;line-height:1.5;max-width:64ch}
 .cth-hero-meta{font-size:.76rem;color:var(--muted)}
+
+/* Tooltip (ⓘ) */
+.cth-tip{position:relative;display:inline-flex;align-items:center;vertical-align:middle;margin-left:5px;color:#9aa7bd;cursor:help;line-height:0}
+.cth-tip svg{width:14px;height:14px;display:block}
+.cth-tip:hover,.cth-tip:focus{color:var(--accent);outline:none}
+.cth-tip-pop{position:absolute;bottom:calc(100% + 9px);left:50%;transform:translateX(-50%);width:max-content;max-width:250px;background:#0f1f38;color:#fff;font-size:.76rem;font-weight:500;line-height:1.45;letter-spacing:normal;text-transform:none;text-align:left;padding:9px 11px;border-radius:9px;box-shadow:0 10px 28px rgba(10,25,47,.32);z-index:60;display:none;white-space:normal;pointer-events:none}
+.cth-tip-pop::after{content:"";position:absolute;top:100%;left:50%;transform:translateX(-50%);border:6px solid transparent;border-top-color:#0f1f38}
+.cth-tip:hover .cth-tip-pop,.cth-tip:focus .cth-tip-pop,.cth-tip:focus-within .cth-tip-pop{display:block}
 
 /* Tiles */
 .cth-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:20px}
 .cth-tile{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm)}
 .cth-tile-v{font-size:1.9rem;font-weight:780;color:var(--navy);line-height:1;letter-spacing:-.02em}
-.cth-tile-l{font-size:.8rem;color:#334155;margin-top:6px;font-weight:560}
+.cth-tile-l{font-size:.8rem;color:#334155;margin-top:6px;font-weight:560;display:flex;align-items:center}
 .cth-tile-s{font-size:.7rem;color:var(--muted);margin-top:2px}
 .cth-tile.cth-tone-danger{border-color:#fecaca;background:linear-gradient(180deg,#fff,#fef5f5)}
 .cth-tile.cth-tone-danger .cth-tile-v{color:#b42318}
@@ -917,6 +1006,22 @@ _CSS = """
 .cth-hdots{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
 .cth-hdot{width:16px;height:16px;border-radius:5px;display:inline-block;cursor:default}
 
+/* Technical detail disclosure */
+.cth-adv{border:1px solid var(--border);border-radius:16px;background:var(--panel);box-shadow:0 1px 2px rgba(16,33,67,.04);margin-bottom:20px;overflow:hidden}
+.cth-adv[open]{box-shadow:0 1px 2px rgba(16,33,67,.04),0 12px 30px -20px rgba(16,33,67,.22)}
+.cth-adv-summary{display:flex;align-items:center;gap:12px;padding:18px 22px;cursor:pointer;list-style:none;user-select:none}
+.cth-adv-summary::-webkit-details-marker{display:none}
+.cth-adv-summary:hover{background:#f8fafc}
+.cth-adv-summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.cth-adv-title{font-size:1.02rem;font-weight:720;color:var(--navy);letter-spacing:-.01em}
+.cth-adv-hint{font-size:.82rem;color:var(--muted)}
+.cth-adv-chevron{margin-left:auto;color:var(--muted);display:grid;place-items:center}
+.cth-adv-chevron svg{width:20px;height:20px;transition:transform .2s}
+.cth-adv[open] .cth-adv-chevron svg{transform:rotate(180deg)}
+.cth-adv-body{padding:2px 22px 20px}
+.cth-adv-body .cth-card{box-shadow:none;border-radius:12px}
+.cth-adv-body .cth-card:last-child{margin-bottom:0}
+
 /* Drawer */
 .cth-drawer{position:fixed;inset:0;z-index:1200}
 .cth-drawer-backdrop{position:absolute;inset:0;background:rgba(10,25,47,.45)}
@@ -933,7 +1038,7 @@ _CSS = """
   .cth-phase-grid{grid-template-columns:1fr}
   .cth-hero{flex-direction:column;text-align:center}
   .cth-hero-headline{margin-left:auto;margin-right:auto}
-  .cth-hero-chips{justify-content:center}
   .cth-finding-phase{margin-left:0}
+  .cth-adv-hint{display:none}
 }
 """
