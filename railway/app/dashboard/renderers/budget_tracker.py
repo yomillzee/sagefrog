@@ -68,8 +68,12 @@ def css() -> str:
     """
 
 
-def section_html(*, can_edit: bool) -> str:
-    """The budget module <section>. ``can_edit`` shows the inline goal editor."""
+def section_html(*, can_edit: bool, header_extra_html: str = "") -> str:
+    """The budget module <section>. ``can_edit`` shows the inline goal editor.
+
+    ``header_extra_html`` is injected at the start of the header actions row —
+    the Insights page uses it to fold the "show on Campaign Explorer" toggle
+    into this card's title instead of a separate section."""
     goal_editor = "" if not can_edit else """
         <form class="budget-goal-editor" id="budgetGoalForm" autocomplete="off">
           <label for="budgetGoalInput">Monthly goal (USD)</label>
@@ -97,6 +101,7 @@ def section_html(*, can_edit: bool) -> str:
         <div class="sec-head">
           <h2>Budget tracking<span class="info-tip" tabindex="0" role="img" aria-label="How this chart works. {_help}" title="{_help}">{_ico}</span></h2>
           <div class="ov-actions">
+            {header_extra_html}
             <span class="status" id="budgetStatus"></span>
             <div class="chips" id="budgetRangeChips" role="tablist" aria-label="Budget range">
               <button type="button" class="chip active" data-range="month">This month</button>
