@@ -95,7 +95,6 @@ def render_bigquery_settings_page(
     # editor). Admins also get a toggle for whether it appears on the client-facing
     # Campaign Explorer (server-persisted per client).
     budget_css = budget_tracker.css()
-    budget_module_html = budget_tracker.section_html(can_edit=session_is_admin)
     budget_scripts = budget_tracker.scripts(
         api_client_key=api_client_key,
         access_key=access_key,
@@ -108,19 +107,16 @@ def render_bigquery_settings_page(
     )
     budget_toggle_checked = " checked" if budget_tracker_enabled else ""
 
-    budget_visibility_html = "" if not session_is_admin else f"""
-    <section>
-      <h2>Budget tracker visibility</h2>
-      <p class="hint">This tracker always shows on this page. Toggle whether it also appears at the bottom of the client-facing Campaign Explorer.</p>
-      <div class="module-toggle-row" style="margin-top:14px">
-        <div class="module-toggle-info">
-          <span class="module-toggle-label">Show on Campaign Explorer</span>
-          <span class="module-toggle-desc">When on, clients see the budget tracker on their Campaign Explorer.</span>
-        </div>
-        <label class="toggle-switch" title="{'On' if budget_tracker_enabled else 'Off'}"><input type="checkbox" id="budgetVisibilityToggle"{budget_toggle_checked}><span class="toggle-track"></span></label>
-      </div>
-      <span class="status" id="budgetVisibilityStatus" style="display:block;margin-top:8px"></span>
-    </section>"""
+    # "Show on Campaign Explorer" folded into the budget card's title as a
+    # low-profile toggle (admin only), instead of its own section.
+    budget_vis_control = "" if not session_is_admin else f"""<label class="hdr-toggle" title="Show the budget tracker on the client-facing Campaign Explorer">
+              <span class="hdr-toggle-label">Show on Explorer</span>
+              <span class="toggle-switch"><input type="checkbox" id="budgetVisibilityToggle"{budget_toggle_checked}><span class="toggle-track"></span></span>
+              <span class="status" id="budgetVisibilityStatus"></span>
+            </label>"""
+    budget_module_html = budget_tracker.section_html(
+        can_edit=session_is_admin, header_extra_html=budget_vis_control
+    )
 
     # Consent & Tracking Health visibility (admin only). Off by default: most
     # clients don't need the scanner in their nav, so it's hidden unless an admin
@@ -134,18 +130,22 @@ def render_bigquery_settings_page(
     )
     consent_toggle_checked = " checked" if consent_sidebar_enabled else ""
     consent_visibility_html = "" if not session_is_admin else f"""
-    <section>
-      <h2>Consent health</h2>
-      <p class="hint">The Consent &amp; Tracking Health scanner checks this client's site for tracking that fires before consent. Most clients don't need it in their sidebar, so it's hidden by default — turn it on only for clients who want to see it.</p>
-      <div class="module-toggle-row" style="margin-top:14px">
-        <div class="module-toggle-info">
-          <span class="module-toggle-label">Show on client sidebar</span>
-          <span class="module-toggle-desc">When on, Consent Health appears in this client's sidebar. When off, only admins reach it via the link below.</span>
+    <section class="summary-card">
+      <div class="sc-main">
+        <div class="sc-head">
+          <span class="sc-title">Consent health</span>
+          <span class="consent-pill" id="consentPill" data-state="loading">Checking…</span>
         </div>
-        <label class="toggle-switch" title="{'On' if consent_sidebar_enabled else 'Off'}"><input type="checkbox" id="consentSidebarToggle"{consent_toggle_checked}><span class="toggle-track"></span></label>
+        <span class="sc-sub" id="consentSub">Scans this client's site for tracking that fires before consent.</span>
       </div>
-      <span class="status" id="consentSidebarStatus" style="display:block;margin-top:8px"></span>
-      <p class="hint" style="margin-top:12px"><a href="{_esc(consent_url)}">Open Consent Health &rarr;</a> to review expectations and run a scan.</p>
+      <div class="sc-actions">
+        <label class="hdr-toggle" title="Show Consent Health in this client's sidebar">
+          <span class="hdr-toggle-label">In sidebar</span>
+          <span class="toggle-switch"><input type="checkbox" id="consentSidebarToggle"{consent_toggle_checked}><span class="toggle-track"></span></span>
+          <span class="status" id="consentSidebarStatus"></span>
+        </label>
+        <a class="sc-link" href="{_esc(consent_url)}">Open &rarr;</a>
+      </div>
     </section>"""
 
     return f"""<!DOCTYPE html>
@@ -209,10 +209,6 @@ def render_bigquery_settings_page(
     th {{ background:#f4f7fb; color:#5a6b82; text-transform:uppercase; font-size:.68rem; letter-spacing:.04em; font-weight:800; }}
     th.left,td.left {{ text-align:left; }}
     .empty {{ color:var(--muted); padding:18px; text-align:center; }}
-    .module-toggle-row {{ display:flex; align-items:center; justify-content:space-between; padding:10px 14px; border:1px solid var(--line-soft); border-radius:var(--radius-sm); background:#fafcff; }}
-    .module-toggle-info {{ display:flex; flex-direction:column; gap:2px; }}
-    .module-toggle-label {{ font-size:.9rem; font-weight:650; color:var(--navy); }}
-    .module-toggle-desc {{ font-size:.76rem; color:var(--muted); }}
     .toggle-switch {{ position:relative; display:inline-block; width:42px; height:24px; flex-shrink:0; }}
     .toggle-switch input {{ opacity:0; width:0; height:0; position:absolute; }}
     .toggle-track {{ position:absolute; cursor:pointer; inset:0; background:#c5cdd9; border-radius:24px; transition:background .2s; }}
@@ -220,16 +216,27 @@ def render_bigquery_settings_page(
     .toggle-switch input:checked + .toggle-track {{ background:var(--accent); }}
     .toggle-switch input:checked + .toggle-track:before {{ transform:translateX(18px); }}
     .toggle-switch input:focus-visible + .toggle-track {{ outline:2px solid #bcd4f0; outline-offset:2px; }}
-    /* Accordion (Data & freshness) */
-    .acc-section {{ padding:0; }}
-    .acc > summary {{ list-style:none; cursor:pointer; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:20px 22px; }}
-    .acc > summary::-webkit-details-marker {{ display:none; }}
-    .acc-title {{ display:block; color:var(--navy); font-size:1.1rem; font-weight:750; }}
-    .acc-sub {{ display:block; font-size:.8rem; color:var(--muted); margin-top:2px; }}
-    .acc-caret {{ color:var(--muted); font-size:.9rem; transition:transform .18s; flex-shrink:0; }}
-    .acc[open] .acc-caret {{ transform:rotate(180deg); }}
-    .acc > summary:hover .acc-title {{ color:var(--accent); }}
-    .acc-body {{ padding:0 22px 20px; }}
+    /* Low-profile header toggle (folded into a card title) */
+    .hdr-toggle {{ display:inline-flex; align-items:center; gap:8px; margin:0; padding:0; text-transform:none; letter-spacing:0; cursor:pointer; }}
+    .hdr-toggle-label {{ font-size:.78rem; font-weight:650; color:var(--muted); }}
+    .hdr-toggle .status {{ font-size:.74rem; }}
+    /* Compact summary card (consent health) */
+    .summary-card {{ display:flex; align-items:center; justify-content:space-between; gap:18px; flex-wrap:wrap; }}
+    .sc-main {{ display:flex; flex-direction:column; gap:4px; min-width:0; }}
+    .sc-head {{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }}
+    .sc-title {{ font-size:1.05rem; font-weight:750; color:var(--navy); }}
+    .sc-sub {{ font-size:.8rem; color:var(--muted); }}
+    .sc-actions {{ display:flex; align-items:center; gap:18px; flex-shrink:0; flex-wrap:wrap; }}
+    .sc-link {{ font-size:.84rem; font-weight:700; color:var(--accent); text-decoration:none; white-space:nowrap; }}
+    .sc-link:hover {{ text-decoration:underline; }}
+    .consent-pill {{ display:inline-flex; align-items:center; gap:6px; font-size:.75rem; font-weight:700; padding:3px 10px; border-radius:999px; border:1px solid var(--line); background:#f7f9fc; color:var(--muted); }}
+    .consent-pill::before {{ content:''; width:7px; height:7px; border-radius:50%; background:#c5cdd9; flex-shrink:0; }}
+    .consent-pill[data-state="pass"] {{ color:var(--ok); border-color:#b8dfc8; background:#e9f7ef; }}
+    .consent-pill[data-state="pass"]::before {{ background:var(--ok); }}
+    .consent-pill[data-state="attention"] {{ color:#8a5a00; border-color:#f0d9a6; background:#fdf6e6; }}
+    .consent-pill[data-state="attention"]::before {{ background:#d99400; }}
+    .consent-pill[data-state="fail"] {{ color:var(--bad); border-color:#f3c0bb; background:#fdecea; }}
+    .consent-pill[data-state="fail"]::before {{ background:var(--bad); }}
     {budget_css}
   </style>
 </head>
@@ -240,89 +247,39 @@ def render_bigquery_settings_page(
   <main>
     <div class="page-head">
       <h1>{_esc(label)} — Insights</h1>
-      <p class="debug-only">Budget pacing, consent health, and BigQuery data controls.</p>
+      <p class="debug-only">Budget pacing and consent health.</p>
     </div>
     {flash_html}
 
-    <section class="acc-section">
-      <details class="acc">
-        <summary class="acc-summary">
-          <span><span class="acc-title">Data &amp; freshness</span><span class="acc-sub">Refresh / backfill BigQuery and check mart health</span></span>
-          <span class="acc-caret" aria-hidden="true">&#9662;</span>
-        </summary>
-        <div class="acc-body">
-          <p class="hint">Pull recent data, or backfill history, into BigQuery for {_esc(label)}.</p>
-          <div class="btn-row">
-            <button type="button" class="primary" id="refreshBtn">Refresh — last 30 days</button>
-            {'<button type="button" class="primary ghost" id="backfillBtn">Backfill LinkedIn — 180 days</button>' if show_linkedin_backfill else ''}
-            <span class="status" id="dataStatus"></span>
-          </div>
-          <h3 class="sub">Freshness — mart health</h3>
-          <div class="status" id="healthStatus">Loading…</div>
-          <div class="table-wrap"><table id="healthTable"></table></div>
-        </div>
-      </details>
-    </section>
-
-    {budget_visibility_html}
     {consent_visibility_html}
     {budget_module_html}
   </main>
     </div>
   </div>
   <script>
-    const REFRESH_API = "{_api_url(f'/api/clients/{api_client_key}/refresh', access_key=access_key)}";
-    const BACKFILL_API = "{_api_url(f'/api/clients/{api_client_key}/backfill-linkedin', access_key=access_key)}";
-    const HEALTH_API = "{_api_url(f'/api/clients/{api_client_key}/marketing/health', access_key=access_key)}";
-    const nums = new Intl.NumberFormat('en-US');
-    const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
-    const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({{ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }}[c]));
-    const count = v => nums.format(Math.round(Number(v || 0)));
-    const money = v => dollars.format(Number(v || 0));
-    const SOURCE_LABELS = {{ google:'Google Ads', linkedin:'LinkedIn', meta:'Meta', google_analytics:'Google Analytics' }};
-    const srcLabel = v => SOURCE_LABELS[String(v || '').toLowerCase()] || v;
-    const moneyD = v => (v == null ? '\\u2014' : money(v));
-    function setStatus(id, text, isErr) {{ const el = document.getElementById(id); el.textContent = text; el.className = isErr ? 'status error' : 'status'; }}
-    async function runJob(url, confirmMsg, label) {{
-      if (confirmMsg && !confirm(confirmMsg)) return;
-      const buttons = [document.getElementById('refreshBtn'), document.getElementById('backfillBtn')].filter(Boolean);
-      buttons.forEach(b => b.disabled = true);
-      setStatus('dataStatus', label + '… this can take 1–2 minutes. Leave this tab open.');
-      const t0 = Date.now();
-      try {{
-        const r = await fetch(url, {{ method:'POST', credentials:'same-origin' }});
-        const body = await r.json().catch(() => ({{}}));
-        if (!r.ok) throw new Error((body && (body.detail && (body.detail.error || body.detail) || body.detail)) || r.statusText);
-        const li = body.linkedin || {{}};
-        const secs = Math.round((Date.now() - t0) / 1000);
-        const extra = li.rows_fetched != null ? ` · LinkedIn ${{li.rows_fetched}} rows through ${{li.data_through || '—'}}` : '';
-        setStatus('dataStatus', `${{label}} done in ${{secs}}s${{extra}}. Refreshing freshness…`);
-        loadHealth();
-      }} catch (err) {{
-        setStatus('dataStatus', label + ' failed: ' + (err.message || err), true);
-      }} finally {{
-        buttons.forEach(b => b.disabled = false);
-      }}
-    }}
-    document.getElementById('refreshBtn').addEventListener('click', () => runJob(REFRESH_API, null, 'Refresh'));
-    (function(){{ const b = document.getElementById('backfillBtn'); if (b) b.addEventListener('click', () => runJob(BACKFILL_API, 'Backfill ~180 days of LinkedIn into BigQuery?', 'Backfill')); }})();
-    async function loadHealth() {{
-      setStatus('healthStatus', 'Loading mart health…');
-      try {{
-        const r = await fetch(HEALTH_API, {{ credentials:'same-origin' }});
-        const body = await r.json();
-        const rows = (body && body.rows) || [];
-        const el = document.getElementById('healthTable');
-        if (!rows.length) {{ el.innerHTML = '<tbody><tr><td class="empty">No mart health rows.</td></tr></tbody>'; setStatus('healthStatus', 'No data.'); return; }}
-        const head = '<thead><tr><th class="left">Source</th><th>Rows</th><th class="left">Earliest</th><th class="left">Latest</th><th>Spend</th></tr></thead>';
-        const tb = rows.map(s => `<tr><td class="left">${{esc(srcLabel(s.source))}}</td><td>${{count(s.row_count)}}</td><td class="left">${{esc(s.earliest_date || '—')}}</td><td class="left">${{esc(s.latest_date || '—')}}</td><td>${{moneyD(s.spend)}}</td></tr>`).join('');
-        el.innerHTML = head + `<tbody>${{tb}}</tbody>`;
-        setStatus('healthStatus', `${{rows.length}} source(s).`);
-      }} catch (err) {{
-        setStatus('healthStatus', err.message || String(err), true);
-      }}
-    }}
-    loadHealth();
+    const CONSENT_STATUS_API = "{_api_url(f'/dashboard/{client_slug}/consent/status', access_key=access_key)}";
+    function setStatus(id, text, isErr) {{ const el = document.getElementById(id); if (!el) return; el.textContent = text; el.className = isErr ? 'status error' : 'status'; }}
+
+    // ---- Consent summary card: pull the latest scan health into the pill ----
+    (function(){{
+      const pill = document.getElementById('consentPill'); if (!pill) return;
+      const sub = document.getElementById('consentSub');
+      const LABELS = {{ pass:'Healthy', attention:'Needs attention', fail:'Critical issues', unknown:'Not yet scanned' }};
+      fetch(CONSENT_STATUS_API, {{ credentials:'same-origin' }})
+        .then(r => r.json())
+        .then(b => {{
+          const st = b && b.status;
+          if (!st || st === 'none') {{ pill.dataset.state = 'unknown'; pill.textContent = 'Not yet scanned'; if (sub) sub.textContent = 'No scan has run for this client yet.'; return; }}
+          if (st === 'running' || st === 'queued') {{ pill.dataset.state = 'loading'; pill.textContent = 'Scanning…'; return; }}
+          if (st === 'error') {{ pill.dataset.state = 'fail'; pill.textContent = 'Scan error'; if (sub && b.error_message) sub.textContent = b.error_message; return; }}
+          const h = b.health || 'unknown';
+          pill.dataset.state = h;
+          pill.textContent = LABELS[h] || h;
+          const vc = Number(b.violation_count || 0);
+          if (sub) sub.textContent = vc > 0 ? (vc + ' issue' + (vc === 1 ? '' : 's') + ' in the latest scan.') : 'No issues in the latest scan.';
+        }})
+        .catch(() => {{ pill.dataset.state = 'unknown'; pill.textContent = 'Status unavailable'; }});
+    }})();
 
     // ---- Budget tracker: show-on-explorer toggle ----
     (function(){{
