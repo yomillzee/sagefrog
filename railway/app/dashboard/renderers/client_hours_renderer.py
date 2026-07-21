@@ -97,6 +97,9 @@ _HOURS_CSS = """
     .tag-modal { position:fixed; top:0; right:0; height:100vh; width:min(460px, 94vw); background:#fff;
       z-index:121; display:flex; flex-direction:column; box-shadow:-12px 0 40px rgba(10,37,64,.22);
       animation:slideIn .18s ease; }
+    /* display:flex/fixed above are author styles that would otherwise beat the
+       browser's [hidden]{display:none}, leaving the panel stuck open. */
+    .tag-modal[hidden], .modal-backdrop[hidden] { display:none; }
     @keyframes slideIn { from { transform:translateX(20px); opacity:.6; } to { transform:none; opacity:1; } }
     .tag-modal-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
       padding:18px 20px 12px; border-bottom:1px solid var(--line); }
