@@ -52,6 +52,7 @@ _HOURS_CSS = """
       white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .card-total { font-variant-numeric:tabular-nums; color:var(--muted); font-size:.78rem; margin-top:2px; }
     .card-total b { color:var(--navy); font-weight:800; }
+    .card-total .track { font-weight:800; }
     .period { color:var(--muted); font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; }
     .chart-wrap { position:relative; margin-top:8px; }
     .chart-wrap svg { display:block; width:100%; height:auto; }
@@ -64,8 +65,8 @@ _HOURS_CSS = """
     .goal-btn .g-set { color:var(--accent); }
     .goal-edit { display:none; align-items:center; gap:5px; }
     .goal-edit.on { display:flex; }
-    .goal-edit input { width:64px; border:1px solid var(--border); border-radius:8px; padding:4px 7px;
-      font:inherit; font-size:.8rem; text-align:right; }
+    .goal-edit input { width:118px; border:1px solid var(--border); border-radius:8px; padding:4px 8px;
+      font:inherit; font-size:.8rem; text-align:left; }
     .goal-edit button { appearance:none; border:0; border-radius:8px; padding:5px 9px; font:inherit;
       font-size:.76rem; font-weight:700; cursor:pointer; }
     .goal-save { background:var(--accent); color:#fff; }
@@ -116,16 +117,39 @@ def render_client_hours_page(*, user_email: str) -> str:
     const hrs = v => new Intl.NumberFormat('en-US',{maximumFractionDigits:1}).format(Number(v||0));
     let chData = null;
 
-    // Burn-up SVG: cumulative actual hours (solid) vs straight goal pace (dashed).
-    // x spans day 1..days_in_month; y spans 0..yMax. Actual is drawn only through
-    // the elapsed days; the goal line spans the whole month.
+    // On/off-track status by projecting the current run-rate to month end and
+    // comparing it to the goal (range, floor, or single value):
+    //   behind = projected under the floor · over = projected past the ceiling ·
+    //   on = landing inside the goal · none = no goal set (neutral blue).
+    const STATUS = {
+      on:     { color:'#0a7f3f', fill:'rgba(10,127,63,.10)',  label:'On track' },
+      over:   { color:'#b7791f', fill:'rgba(183,121,31,.11)', label:'Over pace' },
+      behind: { color:'#b42318', fill:'rgba(180,35,24,.09)',  label:'Behind' },
+      none:   { color:'#2f6df0', fill:'rgba(47,109,240,.10)', label:'' },
+    };
+    function trackStatus(c, meta) {
+      const lo = c.goal_min, hi = c.goal_max;
+      if (lo == null && hi == null) return 'none';
+      const frac = meta.days_in_month ? meta.days_elapsed / meta.days_in_month : 0;
+      const projected = frac > 0 ? c.total_hours / frac : c.total_hours;
+      if (lo != null && projected < lo * 0.95) return 'behind';
+      if (hi != null && projected > hi * 1.03) return 'over';
+      return 'on';
+    }
+
+    // Burn-up SVG: cumulative actual hours (solid, colored by track status) vs the
+    // goal pace — a straight line for a single goal, a dashed floor for an open
+    // "N+" goal, or a shaded corridor between the min and max pace for a range.
     function chart(c, meta) {
       const W = 320, H = 180, padL = 34, padR = 12, padT = 12, padB = 22;
       const days = meta.days_in_month, elapsed = meta.days_elapsed;
-      const goal = (c.goal != null && c.goal > 0) ? Number(c.goal) : null;
+      const lo = (c.goal_min != null && c.goal_min > 0) ? Number(c.goal_min) : null;
+      const hi = (c.goal_max != null && c.goal_max > 0) ? Number(c.goal_max) : null;
+      const gTop = (hi != null ? hi : lo);
       const series = c.series || [];
+      const st = STATUS[trackStatus(c, meta)] || STATUS.none;
       const actualMax = series.length ? Math.max.apply(null, series) : 0;
-      const yMax = Math.max(actualMax, goal || 0, 1) * 1.08;
+      const yMax = Math.max(actualMax, gTop || 0, 1) * 1.08;
       const x = d => padL + (W - padL - padR) * ((d - 1) / Math.max(1, days - 1));
       const y = v => H - padB - (H - padT - padB) * (v / yMax);
 
@@ -143,60 +167,67 @@ def render_client_hours_page(*, user_email: str) -> str:
         xlab += `<text x="${x(d).toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="9" fill="#94a3b8">${d}</text>`;
       });
 
-      // Goal pace line (0 at day 1 → goal at last day) + label.
+      // Goal pace element(s): all pace lines start at (day 1, 0).
       let goalEl = '';
-      if (goal != null) {
-        const gx1 = x(1).toFixed(1), gy1 = y(0).toFixed(1);
-        const gx2 = x(days).toFixed(1), gy2 = y(goal).toFixed(1);
-        goalEl = `<line x1="${gx1}" y1="${gy1}" x2="${gx2}" y2="${gy2}" stroke="var(--goal)" stroke-width="1.5" stroke-dasharray="4 3"/>`;
+      const gx1 = x(1).toFixed(1), gy0 = y(0).toFixed(1), gxN = x(days).toFixed(1);
+      if (lo != null && hi != null && hi !== lo) {
+        // Shaded corridor between the min-pace and max-pace lines + dashed edges.
+        const yLo = y(lo).toFixed(1), yHi = y(hi).toFixed(1);
+        goalEl = `<polygon points="${gx1},${gy0} ${gxN},${yLo} ${gxN},${yHi}" fill="rgba(154,167,184,.16)"/>`
+          + `<line x1="${gx1}" y1="${gy0}" x2="${gxN}" y2="${yLo}" stroke="var(--goal)" stroke-width="1.3" stroke-dasharray="4 3"/>`
+          + `<line x1="${gx1}" y1="${gy0}" x2="${gxN}" y2="${yHi}" stroke="var(--goal)" stroke-width="1.3" stroke-dasharray="4 3"/>`;
+      } else if (gTop != null) {
+        // Single goal or open-ended floor: one dashed pace line.
+        goalEl = `<line x1="${gx1}" y1="${gy0}" x2="${gxN}" y2="${y(gTop).toFixed(1)}" stroke="var(--goal)" stroke-width="1.5" stroke-dasharray="4 3"/>`;
       }
 
-      // Actual cumulative line + soft fill under it.
+      // Actual cumulative line + soft fill under it, colored by track status.
       let actualEl = '';
       if (series.length) {
         const pts = series.map((v, i) => `${x(i+1).toFixed(1)},${y(v).toFixed(1)}`);
         const line = pts.join(' ');
-        const areaBase = y(0).toFixed(1);
-        const area = `${x(1).toFixed(1)},${areaBase} ${line} ${x(elapsed).toFixed(1)},${areaBase}`;
-        actualEl = `<polygon points="${area}" fill="rgba(47,109,240,.10)"/>`
-          + `<polyline points="${line}" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>`;
+        const area = `${x(1).toFixed(1)},${gy0} ${line} ${x(elapsed).toFixed(1)},${gy0}`;
+        actualEl = `<polygon points="${area}" fill="${st.fill}"/>`
+          + `<polyline points="${line}" fill="none" stroke="${st.color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>`;
         const last = series[series.length-1];
-        actualEl += `<circle cx="${x(elapsed).toFixed(1)}" cy="${y(last).toFixed(1)}" r="2.6" fill="var(--accent)"/>`;
+        actualEl += `<circle cx="${x(elapsed).toFixed(1)}" cy="${y(last).toFixed(1)}" r="2.6" fill="${st.color}"/>`;
       }
       return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(c.name)} hours burn-up">`
         + grid + xlab + goalEl + actualEl + `</svg>`;
     }
 
     function goalEditor(c) {
-      const has = (c.goal != null && c.goal > 0);
-      const label = has ? `<span class="g-set">${hrs(c.goal)}h goal</span>` : 'Set goal';
+      const label = c.goal_label ? `<span class="g-set">${esc(c.goal_label)} goal</span>` : 'Set goal';
+      const cur = c.goal_label ? esc(c.goal_label.replace(/h/g, '').replace('–', '-')) : '';
       return `<div class="goal" data-cid="${esc(c.harvest_client_id)}" data-name="${esc(c.name)}">`
         + `<button type="button" class="goal-btn">${label}</button>`
         + `<span class="goal-edit">`
-          + `<input type="number" min="0" step="1" value="${has ? esc(c.goal) : ''}" placeholder="hrs" aria-label="Monthly hours goal">`
+          + `<input type="text" value="${cur}" placeholder="80 or 80-100 or 80+" aria-label="Monthly hours goal" title="A number (80), a range (80-100), or an open floor (80+)">`
           + `<button type="button" class="goal-save">Save</button>`
           + `<button type="button" class="goal-cancel">✕</button>`
         + `</span></div>`;
     }
 
     function card(c, meta) {
-      const pctTxt = (c.goal != null && c.goal > 0)
-        ? ` · ${Math.round(c.total_hours / c.goal * 100)}% of goal` : '';
+      const stKey = trackStatus(c, meta);
+      const st = STATUS[stKey] || STATUS.none;
+      const statusTxt = st.label
+        ? ` · <span class="track" style="color:${st.color}">${st.label}</span>` : '';
       return `<div class="card">`
         + `<div class="card-head">`
           + `<div style="min-width:0"><div class="card-title" title="${esc(c.name)}">${esc(c.name)}</div>`
-          + `<div class="card-total"><b>${hrs(c.total_hours)}h</b> logged${pctTxt}</div></div>`
+          + `<div class="card-total"><b>${hrs(c.total_hours)}h</b> logged${statusTxt}</div></div>`
           + goalEditor(c)
         + `</div>`
         + `<div class="chart-wrap">${chart(c, meta)}</div>`
-        + `<div class="legend"><span><i class="actual"></i>Hours logged</span>`
-          + `<span><i class="goal"></i>Goal pace</span></div>`
+        + `<div class="legend"><span><i class="actual" style="border-top-color:${st.color}"></i>Hours logged</span>`
+          + `<span><i class="goal"></i>${(c.goal_min != null && c.goal_max != null && c.goal_max !== c.goal_min) ? 'Goal range' : 'Goal pace'}</span></div>`
       + `</div>`;
     }
 
-    // "updated 3m ago" from an ISO timestamp — the burn-up data is cached
-    // server-side (default 15 min) so refreshes don't hammer Harvest; this shows
-    // how fresh the currently-displayed pull is.
+    // "updated 3h ago" from an ISO timestamp — the burn-up data is cached
+    // server-side (default 6h) so refreshes don't hammer Harvest; this shows how
+    // fresh the currently-displayed pull is.
     function agoTxt(iso) {
       if (!iso) return '';
       const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -252,16 +283,20 @@ def render_client_hours_page(*, user_email: str) -> str:
           const raw = editor.querySelector('input').value.trim();
           const saveBtn = g.querySelector('.goal-save'); saveBtn.disabled = true;
           try {
-            const body = new URLSearchParams({ harvest_client_id: cid, client_name: g.dataset.name, monthly_goal: raw });
+            // The server parses "80" / "80-100" / "80+" and returns the stored
+            // min/max + label; apply those so the chart re-colors immediately
+            // (no Harvest round-trip — the hours series is unchanged).
+            const body = new URLSearchParams({ harvest_client_id: cid, client_name: g.dataset.name, goal: raw });
             const r = await fetch('/admin/client-hours/goal', { method:'POST', credentials:'same-origin',
               headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
             const b = await r.json().catch(()=>({}));
             if (!r.ok || !b.ok) throw new Error(b.error || ('HTTP '+r.status));
             const client = (chData.clients||[]).find(c => String(c.harvest_client_id) === String(cid));
-            if (client) client.goal = (raw === '' ? null : Number(raw));
-            // Recompute goal total then re-render.
-            chData.totals = chData.totals || {};
-            chData.totals.goal = (chData.clients||[]).reduce((s,c)=> s + (c.goal||0), 0);
+            if (client) {
+              client.goal_min = (b.goal_min == null ? null : Number(b.goal_min));
+              client.goal_max = (b.goal_max == null ? null : Number(b.goal_max));
+              client.goal_label = b.goal_label || '';
+            }
             render();
           } catch (e) {
             saveBtn.disabled = false;

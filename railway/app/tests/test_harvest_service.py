@@ -98,16 +98,22 @@ class CacheBehaviourTest(unittest.TestCase):
              patch.object(harvest_service.db_cache, "get_cached", return_value=hit, create=True) as m_get, \
              patch.object(harvest_service, "_build_client_series",
                           side_effect=AssertionError("must not pull Harvest on a cache hit")), \
-             patch.object(harvest_service, "get_goals", return_value={"1": 20.0}):
+             patch.object(harvest_service, "get_goals",
+                          return_value={"1": {"min": 80.0, "max": 100.0}}):
             out = harvest_service.build_client_hours_overview(today=date(2026, 7, 21))
 
         m_get.assert_called_once()
         self.assertIsNone(out.get("error"))
         by_id = {c["harvest_client_id"]: c for c in out["clients"]}
-        self.assertEqual(by_id["1"]["goal"], 20.0)   # goal layered on fresh
-        self.assertIsNone(by_id["2"]["goal"])         # no goal set
+        # Range goal layered on the cached hours series, fresh.
+        self.assertEqual(by_id["1"]["goal_min"], 80.0)
+        self.assertEqual(by_id["1"]["goal_max"], 100.0)
+        self.assertEqual(by_id["1"]["goal_label"], "80–100h")
+        self.assertIsNone(by_id["2"]["goal_min"])       # no goal set
+        self.assertIsNone(by_id["2"]["goal_max"])
         self.assertEqual(out["totals"]["total_hours"], 42.0)
-        self.assertEqual(out["totals"]["goal"], 20.0)
+        self.assertEqual(out["totals"]["goal_min"], 80.0)
+        self.assertEqual(out["totals"]["goal_max"], 100.0)
         self.assertEqual(out["refreshed_at"], "2026-07-21T12:00:00+00:00")
 
     def test_force_refresh_bypasses_cache(self):
@@ -126,6 +132,48 @@ class CacheBehaviourTest(unittest.TestCase):
         m_build.assert_called_once()
         m_put.assert_called_once()  # fresh pull is written back to the cache
         self.assertEqual(out["totals"]["total_hours"], 42.0)
+
+
+class ParseGoalTextTest(unittest.TestCase):
+    def test_single_value(self):
+        self.assertEqual(harvest_service.parse_goal_text("80"), (80.0, 80.0))
+
+    def test_range(self):
+        self.assertEqual(harvest_service.parse_goal_text("80-100"), (80.0, 100.0))
+
+    def test_range_en_dash_and_spaces(self):
+        self.assertEqual(harvest_service.parse_goal_text(" 80 – 100 "), (80.0, 100.0))
+
+    def test_range_reversed_is_normalized(self):
+        self.assertEqual(harvest_service.parse_goal_text("100-80"), (80.0, 100.0))
+
+    def test_open_ended_floor(self):
+        self.assertEqual(harvest_service.parse_goal_text("160+"), (160.0, None))
+
+    def test_blank_clears(self):
+        self.assertEqual(harvest_service.parse_goal_text("  "), (None, None))
+
+    def test_negative_rejected(self):
+        with self.assertRaises(ValueError):
+            harvest_service.parse_goal_text("-5")
+
+    def test_garbage_rejected(self):
+        with self.assertRaises(ValueError):
+            harvest_service.parse_goal_text("abc")
+
+
+class FormatGoalTest(unittest.TestCase):
+    def test_single(self):
+        self.assertEqual(harvest_service.format_goal(80, 80), "80h")
+
+    def test_range(self):
+        self.assertEqual(harvest_service.format_goal(80, 100), "80–100h")
+
+    def test_open_ended(self):
+        self.assertEqual(harvest_service.format_goal(160, None), "160h+")
+
+    def test_unset(self):
+        self.assertEqual(harvest_service.format_goal(None, None), "")
 
 
 if __name__ == "__main__":

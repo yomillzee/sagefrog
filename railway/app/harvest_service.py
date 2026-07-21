@@ -43,7 +43,7 @@ _MAX_PAGES = 60
 # applied fresh on top so editing a goal is always instant. Override with
 # HARVEST_CACHE_TTL_SECONDS; set it to 0 to disable caching.
 _CACHE_SOURCE = "harvest.hours"
-_DEFAULT_CACHE_TTL = 900  # 15 minutes
+_DEFAULT_CACHE_TTL = 6 * 3600  # 6 hours
 
 
 def _cache_ttl_seconds() -> int:
@@ -55,15 +55,42 @@ def _cache_ttl_seconds() -> int:
     except ValueError:
         return _DEFAULT_CACHE_TTL
 
-GOALS_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS harvest_client_goals (
-  harvest_client_id TEXT PRIMARY KEY,
-  client_name       TEXT,
-  monthly_goal      NUMERIC,
-  updated_by        TEXT,
-  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
-)
-"""
+# Goals are a monthly-hours target that can be a single number, a range
+# (goal_min..goal_max), or open-ended (goal_min with goal_max NULL, e.g. "160+").
+# goal_min is always the floor; goal_max is the ceiling (NULL = no ceiling).
+GOALS_SCHEMA_SQL_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS harvest_client_goals (
+      harvest_client_id TEXT PRIMARY KEY,
+      client_name       TEXT,
+      goal_min          NUMERIC,
+      goal_max          NUMERIC,
+      updated_by        TEXT,
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    # Migrate the original single-value column (monthly_goal) to the min/max pair:
+    # add the columns if missing and backfill goal_min = goal_max = monthly_goal.
+    """
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'harvest_client_goals' AND column_name = 'monthly_goal'
+      ) THEN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'harvest_client_goals' AND column_name = 'goal_min'
+        ) THEN
+          ALTER TABLE harvest_client_goals ADD COLUMN goal_min NUMERIC;
+          ALTER TABLE harvest_client_goals ADD COLUMN goal_max NUMERIC;
+          UPDATE harvest_client_goals SET goal_min = monthly_goal, goal_max = monthly_goal
+            WHERE monthly_goal IS NOT NULL;
+        END IF;
+      END IF;
+    END $$
+    """,
+]
 
 
 # ---------------------------------------------------------------------------
@@ -327,26 +354,37 @@ def build_client_hours_overview(
     goals = get_goals()
     clients: list[dict[str, Any]] = []
     grand_total = 0.0
-    goal_total = 0.0
+    goal_min_total = 0.0
+    goal_max_total = 0.0
     for c in series_clients:
         cid = str(c.get("harvest_client_id"))
         total = float(c.get("total_hours") or 0.0)
         grand_total += total
-        goal = goals.get(cid)
-        if goal is not None:
-            goal_total += goal
+        goal = goals.get(cid) or {}
+        goal_min = goal.get("min")
+        goal_max = goal.get("max")
+        if goal_min is not None:
+            goal_min_total += goal_min
+        # For the max total, an open-ended floor ("N+") contributes its floor.
+        goal_max_total += goal_max if goal_max is not None else (goal_min or 0.0)
         clients.append(
             {
                 "harvest_client_id": cid,
                 "name": c.get("name"),
-                "goal": goal,
+                "goal_min": goal_min,
+                "goal_max": goal_max,
+                "goal_label": format_goal(goal_min, goal_max),
                 "total_hours": total,
                 "series": c.get("series") or [],
             }
         )
 
     base["clients"] = clients
-    base["totals"] = {"total_hours": round(grand_total, 2), "goal": round(goal_total, 2)}
+    base["totals"] = {
+        "total_hours": round(grand_total, 2),
+        "goal_min": round(goal_min_total, 2),
+        "goal_max": round(goal_max_total, 2),
+    }
     return base
 
 
@@ -371,6 +409,54 @@ def _today() -> date:
 # ---------------------------------------------------------------------------
 
 
+def parse_goal_text(text: str) -> tuple[float | None, float | None]:
+    """Parse an admin-entered goal into ``(goal_min, goal_max)``.
+
+    Accepts a single number ("80" → 80..80), a range ("80-100" or "80–100" →
+    80..100), or an open-ended floor ("80+" → 80..None). An empty string clears
+    the goal, returned as ``(None, None)``. Raises ValueError on anything else.
+    """
+    t = (text or "").strip().replace("–", "-").replace("—", "-").replace(" ", "")
+    if not t:
+        return None, None
+    if t.endswith("+"):
+        lo = float(t[:-1])
+        if lo < 0:
+            raise ValueError("Goal cannot be negative.")
+        return lo, None
+    # A "-" after the first character marks a range (guard the leading sign).
+    if "-" in t[1:]:
+        parts = [p for p in t.split("-") if p != ""]
+        if len(parts) != 2:
+            raise ValueError("Use a range like 80-100.")
+        lo, hi = float(parts[0]), float(parts[1])
+        if lo < 0 or hi < 0:
+            raise ValueError("Goal cannot be negative.")
+        if lo > hi:
+            lo, hi = hi, lo
+        return lo, hi
+    v = float(t)
+    if v < 0:
+        raise ValueError("Goal cannot be negative.")
+    return v, v
+
+
+def format_goal(goal_min: float | None, goal_max: float | None) -> str:
+    """Human-readable goal label: "80h", "80–100h", "80h+", or "" when unset."""
+    def _n(v: float) -> str:
+        return str(int(v)) if float(v).is_integer() else f"{v:g}"
+
+    if goal_min is None and goal_max is None:
+        return ""
+    if goal_min is not None and goal_max is None:
+        return f"{_n(goal_min)}h+"
+    if goal_min is not None and goal_max is not None:
+        if goal_min == goal_max:
+            return f"{_n(goal_min)}h"
+        return f"{_n(goal_min)}–{_n(goal_max)}h"
+    return f"≤{_n(goal_max)}h"
+
+
 def _goals_enabled() -> bool:
     return bool((os.getenv("DATABASE_URL") or "").strip())
 
@@ -379,62 +465,77 @@ def _ensure_goals_schema() -> bool:
     if not _goals_enabled():
         return False
     with db.connection() as conn:
-        conn.execute(GOALS_SCHEMA_SQL)
+        for stmt in GOALS_SCHEMA_SQL_STATEMENTS:
+            conn.execute(stmt)
     return True
 
 
-def get_goals() -> dict[str, float]:
-    """Return ``{harvest_client_id: monthly_goal}`` for all clients with a goal set."""
+def get_goals() -> dict[str, dict[str, float | None]]:
+    """Return ``{harvest_client_id: {"min": x, "max": y|None}}`` for clients with a goal."""
     if not _goals_enabled():
         return {}
     try:
         _ensure_goals_schema()
         with db.connection() as conn:
             rows = conn.execute(
-                "SELECT harvest_client_id, monthly_goal FROM harvest_client_goals "
-                "WHERE monthly_goal IS NOT NULL"
+                "SELECT harvest_client_id, goal_min, goal_max FROM harvest_client_goals "
+                "WHERE goal_min IS NOT NULL OR goal_max IS NOT NULL"
             ).fetchall()
     except Exception as exc:
         _log.warning("Harvest goals read failed: %s", exc)
         return {}
-    out: dict[str, float] = {}
-    for cid, goal in rows:
-        if goal is None:
-            continue
+    out: dict[str, dict[str, float | None]] = {}
+    for cid, gmin, gmax in rows:
         try:
-            out[str(cid)] = float(goal)
+            lo = float(gmin) if gmin is not None else None
+            hi = float(gmax) if gmax is not None else None
         except (TypeError, ValueError):
             continue
+        if lo is None and hi is None:
+            continue
+        out[str(cid)] = {"min": lo, "max": hi}
     return out
 
 
 def set_goal(
-    *, harvest_client_id: str, monthly_goal: float | None, client_name: str = "", updated_by: str = ""
+    *,
+    harvest_client_id: str,
+    goal_min: float | None,
+    goal_max: float | None,
+    client_name: str = "",
+    updated_by: str = "",
 ) -> None:
-    """Upsert (or clear, when ``monthly_goal`` is None) one client's monthly goal."""
+    """Upsert one client's monthly goal, or clear it when both bounds are None."""
     cid = (harvest_client_id or "").strip()
     if not cid:
         raise ValueError("harvest_client_id is required.")
     if not _goals_enabled():
         raise RuntimeError("DATABASE_URL is required to store Harvest goals.")
     _ensure_goals_schema()
-    goal_val: float | None = None
-    if monthly_goal is not None:
-        goal_val = float(monthly_goal)
-        if goal_val < 0:
-            raise ValueError("Monthly goal cannot be negative.")
+    lo = float(goal_min) if goal_min is not None else None
+    hi = float(goal_max) if goal_max is not None else None
+    if (lo is not None and lo < 0) or (hi is not None and hi < 0):
+        raise ValueError("Goal cannot be negative.")
+    if lo is not None and hi is not None and lo > hi:
+        lo, hi = hi, lo
+    if lo is None and hi is None:
+        # Clearing: remove the row so it drops out of get_goals entirely.
+        with db.connection() as conn:
+            conn.execute("DELETE FROM harvest_client_goals WHERE harvest_client_id = %s", (cid,))
+        return
     with db.connection() as conn:
         conn.execute(
             """
-            INSERT INTO harvest_client_goals (harvest_client_id, client_name, monthly_goal, updated_by, updated_at)
-            VALUES (%s, %s, %s, %s, NOW())
+            INSERT INTO harvest_client_goals (harvest_client_id, client_name, goal_min, goal_max, updated_by, updated_at)
+            VALUES (%s, %s, %s, %s, %s, NOW())
             ON CONFLICT (harvest_client_id) DO UPDATE SET
               client_name = COALESCE(EXCLUDED.client_name, harvest_client_goals.client_name),
-              monthly_goal = EXCLUDED.monthly_goal,
+              goal_min = EXCLUDED.goal_min,
+              goal_max = EXCLUDED.goal_max,
               updated_by = EXCLUDED.updated_by,
               updated_at = NOW()
             """,
-            (cid, (client_name or "").strip() or None, goal_val, (updated_by or "").strip() or None),
+            (cid, (client_name or "").strip() or None, lo, hi, (updated_by or "").strip() or None),
         )
 
 

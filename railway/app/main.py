@@ -1915,26 +1915,23 @@ def admin_client_hours_data(
 async def admin_client_hours_goal(
     request: Request,
     harvest_client_id: str = Form(...),
-    monthly_goal: str = Form(""),
+    goal: str = Form(""),
     client_name: str = Form(""),
 ):
-    """Set (or clear, when monthly_goal is blank) one client's monthly hours goal."""
+    """Set one client's monthly hours goal. ``goal`` accepts a single number
+    ("80"), a range ("80-100"), or an open-ended floor ("80+"); blank clears it."""
     user = await web_auth.require_admin(request)
     import harvest_service
 
-    raw = (monthly_goal or "").strip()
-    goal_val: float | None
-    if raw == "":
-        goal_val = None
-    else:
-        try:
-            goal_val = float(raw)
-        except ValueError:
-            return JSONResponse({"ok": False, "error": "Goal must be a number."}, status_code=400)
+    try:
+        goal_min, goal_max = harvest_service.parse_goal_text(goal)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
     try:
         harvest_service.set_goal(
             harvest_client_id=harvest_client_id,
-            monthly_goal=goal_val,
+            goal_min=goal_min,
+            goal_max=goal_max,
             client_name=client_name,
             updated_by=user.email,
         )
@@ -1943,10 +1940,15 @@ async def admin_client_hours_goal(
     audit_log.record(
         action="harvest.goal_set",
         actor_email=user.email,
-        detail={"harvest_client_id": harvest_client_id, "monthly_goal": goal_val},
+        detail={"harvest_client_id": harvest_client_id, "goal_min": goal_min, "goal_max": goal_max},
         **audit_log.request_context(request),
     )
-    return JSONResponse({"ok": True, "monthly_goal": goal_val})
+    return JSONResponse({
+        "ok": True,
+        "goal_min": goal_min,
+        "goal_max": goal_max,
+        "goal_label": harvest_service.format_goal(goal_min, goal_max),
+    })
 
 
 @app.get("/admin/docs", include_in_schema=False, response_class=HTMLResponse)
