@@ -40,6 +40,11 @@ _HOURS_CSS = """
       cursor:pointer; white-space:nowrap; }
     .seg-btn:hover { color:var(--navy); }
     .seg-btn.is-active { background:#fff; color:var(--navy); box-shadow:0 1px 3px rgba(10,37,64,.12); }
+    .head-select { appearance:none; border:1px solid var(--border); background:#fff
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%230a2540' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")
+      no-repeat right 12px center; border-radius:999px; color:var(--navy); font:inherit; font-size:.82rem;
+      font-weight:700; padding:8px 34px 8px 15px; cursor:pointer; }
+    .head-select:hover { border-color:#94a3b8; }
     .refresh-btn { appearance:none; display:inline-flex; align-items:center; gap:7px;
       border:1px solid var(--border); background:#fff; color:var(--navy); border-radius:999px;
       padding:8px 14px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; flex:0 0 auto; }
@@ -143,14 +148,14 @@ _HOURS_CONTENT = """
         <p class="sub" id="chSub">Loading Harvest hours…</p>
       </div>
       <div class="head-controls">
-        <div class="seg" id="chScope" role="group" aria-label="Work type">
-          <button type="button" class="seg-btn is-active" data-scope="all">All work</button>
-          <button type="button" class="seg-btn" data-scope="retainer">Retainer</button>
-          <button type="button" class="seg-btn" data-scope="project">Project</button>
-        </div>
+        <select id="chScope" class="head-select" aria-label="Work type">
+          <option value="retainer" selected>Retainer</option>
+          <option value="project">Project</option>
+          <option value="all">All work</option>
+        </select>
         <div class="seg" id="chMetric" role="group" aria-label="Hours type">
-          <button type="button" class="seg-btn is-active" data-metric="all">All hours</button>
-          <button type="button" class="seg-btn" data-metric="billable">Billable</button>
+          <button type="button" class="seg-btn is-active" data-metric="billable">Billable</button>
+          <button type="button" class="seg-btn" data-metric="nonbillable">Non-billable</button>
         </div>
         <div class="seg" id="chSort" role="group" aria-label="Sort order">
           <button type="button" class="seg-btn is-active" data-sort="hours">Highest</button>
@@ -198,9 +203,10 @@ def render_client_hours_page(*, user_email: str) -> str:
     const hrs = v => new Intl.NumberFormat('en-US',{maximumFractionDigits:1}).format(Number(v||0));
     let chData = null;
     // View state (client-side only — each client carries its projects with both
-    // all + billable series, so scope/metric/sort toggles never re-hit Harvest).
-    // scope: all|retainer|project · metric: all|billable · sort: hours|alpha.
-    const view = { scope: 'all', metric: 'all', sort: 'hours' };
+    // total + billable series, so scope/metric/sort toggles never re-hit
+    // Harvest). scope: all|retainer|project · metric: billable|nonbillable ·
+    // sort: hours|alpha. Defaults: retainer work, billable hours.
+    const view = { scope: 'retainer', metric: 'billable', sort: 'hours' };
     // Projects the current scope selects: everything under "all"; only projects
     // carrying the matching tag under "retainer"/"project" (untagged excluded).
     function projectsInScope(c) {
@@ -214,8 +220,20 @@ def render_client_hours_page(*, user_email: str) -> str:
       ps.forEach(p => { const s = p[key] || []; for (let i = 0; i < s.length; i++) out[i] = (out[i] || 0) + s[i]; });
       return out;
     }
-    const seriesOf = c => sumSeries(projectsInScope(c), view.metric === 'billable' ? 'series_billable' : 'series');
+    // The selected metric's cumulative series. Non-billable is derived as the
+    // total minus the billable series (both carried per project).
+    function metricSeries(ps) {
+      if (view.metric === 'nonbillable') {
+        const all = sumSeries(ps, 'series'), bil = sumSeries(ps, 'series_billable');
+        const out = [];
+        for (let i = 0; i < all.length; i++) out[i] = Math.max(0, (all[i] || 0) - (bil[i] || 0));
+        return out;
+      }
+      return sumSeries(ps, 'series_billable');
+    }
+    const seriesOf = c => metricSeries(projectsInScope(c));
     const totalOf  = c => { const s = seriesOf(c); return s.length ? s[s.length - 1] : 0; };
+    const metricLabel = () => (view.metric === 'nonbillable' ? 'non-billable' : 'billable');
 
     // On/off-track status by projecting the current run-rate to month end and
     // comparing it to the goal (range, floor, or single value):
@@ -314,7 +332,7 @@ def render_client_hours_page(*, user_email: str) -> str:
       const st = STATUS[stKey] || STATUS.none;
       const statusTxt = st.label
         ? ` · <span class="track" style="color:${st.color}">${st.label}</span>` : '';
-      const kind = view.metric === 'billable' ? 'billable' : 'logged';
+      const kind = metricLabel();
       return `<div class="card">`
         + `<div class="card-head">`
           + `<div style="min-width:0"><div class="card-title" title="${esc(c.name)}">${esc(c.name)}</div>`
@@ -360,7 +378,7 @@ def render_client_hours_page(*, user_email: str) -> str:
       const shown = sortedClients(meta);
       const totalShown = shown.reduce((s, c) => s + totalOf(c), 0);
       const scopeLabel = view.scope === 'retainer' ? 'retainer ' : (view.scope === 'project' ? 'project ' : '');
-      const kind = view.metric === 'billable' ? 'billable' : 'logged';
+      const kind = metricLabel();
       sub.textContent = `${meta.month_label} · day ${meta.days_elapsed} of ${meta.days_in_month}`
         + ` · ${shown.length} clients · ${hrs(totalShown)}h ${scopeLabel}${kind}`
         + (meta.account_name ? ` · ${meta.account_name}` : '') + fresh;
@@ -458,7 +476,10 @@ def render_client_hours_page(*, user_email: str) -> str:
         if (chData) render();
       });
     }
-    wireSeg('chScope', 'scope', 'scope');
+    document.getElementById('chScope').addEventListener('change', (ev) => {
+      view.scope = ev.target.value;
+      if (chData) render();
+    });
     wireSeg('chMetric', 'metric', 'metric');
     wireSeg('chSort', 'sort', 'sort');
     wireGoals();
