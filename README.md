@@ -356,6 +356,9 @@ Redirect URL, then connect once under **Admin → Platform connections → Harve
 Harvest account id is captured automatically during connect (override with
 `HARVEST_ACCOUNT_ID` if the token can reach several accounts); `HARVEST_TIMEZONE`
 (default `America/New_York`) anchors the "current month / through today" window.
+The hours pull is cached in Postgres (`api_cache`) so repeated loads don't hit the
+Harvest API on every refresh — tune with `HARVEST_CACHE_TTL_SECONDS` (default `900`,
+`0` disables); the page's **Refresh** button forces a fresh pull.
 
 ---
 
