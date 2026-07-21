@@ -60,6 +60,11 @@ def _oauth_platform_card_html(
     elif can_manage_oauth and not oauth_store.enabled():
         actions = '<p class="muted">Attach Postgres (DATABASE_URL) to store OAuth tokens.</p>'
 
+    # Harvest's payoff is the hours-by-client page; surface a direct link once
+    # it's connected so admins don't have to hunt for it in the sidebar.
+    if platform == "harvest" and pub.connected:
+        actions += '<a class="btn secondary btn-sm" href="/admin/client-hours">View hours by client →</a>'
+
     note = _esc(prereq.get("note") or "")
     return f"""
     <div class="oauth-card">
@@ -86,6 +91,7 @@ def render_admin_oauth_section(
             "linkedin": "LinkedIn",
             "meta": "Meta",
             "gsc": "Google Search Console",
+            "harvest": "Harvest",
         }
         notice += (
             f'<div class="notice ok">{_esc(labels.get(oauth_connected, oauth_connected))} '
@@ -101,6 +107,7 @@ def render_admin_oauth_section(
         ("linkedin", "LinkedIn"),
         ("meta", "Meta"),
         ("gsc", "Google Search Console"),
+        ("harvest", "Harvest"),
     ):
         cards.append(
             _oauth_platform_card_html(

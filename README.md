@@ -246,7 +246,7 @@ at rest** (Fernet) in `oauth_credentials`.
 | **Meta (Facebook)** | `httpx` (Graph API) | System-user token via OAuth | Campaign/ad-set insights, creative assets; needs `ads_read` + `business_management` |
 | **GA4 / BigQuery** | `google-cloud-bigquery` | GCP service account (per-client or global) | Raw SQL over GA4 events export, daily aggregation; multi-project via `GA4_CLIENTS` |
 | **Indeed** | `httpx` | Client-credentials OAuth | Job postings, registration analytics |
-| **Harvest** | `httpx` | OAuth refresh token | Time-tracking data (Files page) |
+| **Harvest** | `httpx` | OAuth refresh token (agency-wide) | Time-tracking hours by client → the admin **Client Hours** burn-up page (`/admin/client-hours`); connect once under Admin → Platform connections |
 | **HubSpot** | `httpx` | OAuth / token | CRM/marketing sync via `/internal/sync-hubspot` |
 | **ChatGPT Custom Actions** | — | shared `API_KEY` | `GET /openapi-gpt.json` returns a dynamic OpenAPI 3.1 schema |
 
@@ -349,6 +349,13 @@ Google Ads (`GOOGLE_ADS_*`), LinkedIn (`LINKEDIN_*`), Meta (`META_*`), GA4/BigQu
 (`GCP_SERVICE_ACCOUNT_JSON`, `BQ_PROJECT_ID`, `BQ_DATASET_ID`, `GA4_CLIENTS`,
 `GCP_CREDS_*_BASE64`), Indeed (`INDEED_*`), Harvest (`HARVEST_*`), and Penn-specific
 overrides (`PENN_*`). See the architecture review for the full list.
+
+**Harvest** (Client Hours page): set `HARVEST_CLIENT_ID` and `HARVEST_CLIENT_SECRET`
+from your Harvest OAuth2 app, add `<base-url>/oauth/harvest/callback` as that app's
+Redirect URL, then connect once under **Admin → Platform connections → Harvest**. The
+Harvest account id is captured automatically during connect (override with
+`HARVEST_ACCOUNT_ID` if the token can reach several accounts); `HARVEST_TIMEZONE`
+(default `America/New_York`) anchors the "current month / through today" window.
 
 ---
 
