@@ -20,12 +20,13 @@ import calendar
 import logging
 import os
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import httpx
 
 import db
+import db_cache
 import oauth_flows
 import oauth_store
 
@@ -36,6 +37,23 @@ _PLATFORM = "harvest"
 # Safety cap: current-month time entries for one agency should be well under this
 # many pages (100 entries each); the cap only guards against a runaway loop.
 _MAX_PAGES = 60
+# The Harvest hours pull is cached in Postgres (api_cache) so repeated page loads
+# and multiple admins don't each hit the Harvest API — which rate-limits at 100
+# requests / 15s. Within the TTL every request is served from cache; goals are
+# applied fresh on top so editing a goal is always instant. Override with
+# HARVEST_CACHE_TTL_SECONDS; set it to 0 to disable caching.
+_CACHE_SOURCE = "harvest.hours"
+_DEFAULT_CACHE_TTL = 900  # 15 minutes
+
+
+def _cache_ttl_seconds() -> int:
+    raw = (os.getenv("HARVEST_CACHE_TTL_SECONDS") or "").strip()
+    if not raw:
+        return _DEFAULT_CACHE_TTL
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return _DEFAULT_CACHE_TTL
 
 GOALS_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS harvest_client_goals (
@@ -169,13 +187,91 @@ def _cumulative_by_client(
     return by_client
 
 
-def build_client_hours_overview(*, today: date | None = None) -> dict[str, Any]:
+def _build_client_series(
+    *, account_id: str, first: date, today: date, days_elapsed: int
+) -> list[dict[str, Any]]:
+    """Pull the month's time entries from Harvest and fold them into a per-client
+    cumulative-hours series (no goals applied). This is the expensive, cacheable
+    part: one token refresh + paginated time_entries reads."""
+    access_token = _access_token()
+    entries = _fetch_month_entries(
+        access_token=access_token, account_id=account_id, start=first, end=today
+    )
+    by_client = _cumulative_by_client(entries, first=first, days_elapsed=days_elapsed)
+    clients: list[dict[str, Any]] = []
+    for cid, slot in by_client.items():
+        daily = slot["daily"]
+        running = 0.0
+        series: list[float] = []
+        for day in range(1, days_elapsed + 1):
+            running += daily.get(day, 0.0)
+            series.append(round(running, 2))
+        clients.append(
+            {
+                "harvest_client_id": cid,
+                "name": slot["name"],
+                "total_hours": round(running, 2),
+                "series": series,
+            }
+        )
+    clients.sort(key=lambda c: c["total_hours"], reverse=True)
+    return clients
+
+
+def _load_client_series(
+    *, account_id: str, first: date, today: date, days_elapsed: int, use_cache: bool
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Return (clients_series, refreshed_at_iso). Served from the Postgres cache
+    within the TTL so repeated loads don't re-hit Harvest; on a miss it pulls
+    fresh and stores the result. ``use_cache=False`` forces a fresh pull (the
+    page's manual refresh)."""
+    ttl = _cache_ttl_seconds()
+    # Key by account + calendar day: the same day reuses one pull (TTL bounds
+    # intraday freshness); a new day naturally starts a new cache entry.
+    payload = {
+        "account_id": account_id,
+        "year": today.year,
+        "month": today.month,
+        "day": days_elapsed,
+    }
+    if use_cache and ttl > 0:
+        try:
+            hit = db_cache.get_cached(_CACHE_SOURCE, payload)
+        except Exception as exc:
+            _log.warning("Harvest cache read failed: %s", exc)
+            hit = None
+        if hit and isinstance(hit.response_json, list):
+            created = getattr(hit, "created_at", None)
+            return hit.response_json, (created.isoformat() if created else None)
+
+    clients = _build_client_series(
+        account_id=account_id, first=first, today=today, days_elapsed=days_elapsed
+    )
+    if ttl > 0:
+        try:
+            db_cache.put_cached(
+                _CACHE_SOURCE, payload,
+                response_json=clients, row_count=len(clients), ttl_seconds=ttl,
+            )
+        except Exception as exc:
+            _log.warning("Harvest cache write failed: %s", exc)
+    return clients, datetime.now(tz=UTC).isoformat()
+
+
+def build_client_hours_overview(
+    *, today: date | None = None, use_cache: bool = True
+) -> dict[str, Any]:
     """Current-month hours-by-client for the Client Hours admin page.
+
+    The Harvest time-entry pull is cached (see _load_client_series); per-client
+    goals are applied fresh on every call so goal edits show immediately without
+    a Harvest round-trip. Pass ``use_cache=False`` to force a fresh pull.
 
     Shape (JSON-serialisable):
       {
         connected, account_id, account_name,
         month_label, year, month, days_in_month, days_elapsed, as_of,
+        refreshed_at, cache_ttl_seconds,
         clients: [ { harvest_client_id, name, goal,
                      total_hours, series:[cumhours per elapsed day] } ],
         totals: { total_hours, goal },
@@ -195,6 +291,8 @@ def build_client_hours_overview(*, today: date | None = None) -> dict[str, Any]:
         "days_in_month": days_in_month,
         "days_elapsed": days_elapsed,
         "as_of": today.isoformat(),
+        "refreshed_at": None,
+        "cache_ttl_seconds": _cache_ttl_seconds(),
         "clients": [],
         "totals": {"total_hours": 0.0, "goal": 0.0},
     }
@@ -216,29 +314,23 @@ def build_client_hours_overview(*, today: date | None = None) -> dict[str, Any]:
         return base
 
     try:
-        access_token = _access_token()
-        entries = _fetch_month_entries(
-            access_token=access_token, account_id=account_id, start=first, end=today
+        series_clients, refreshed_at = _load_client_series(
+            account_id=account_id, first=first, today=today,
+            days_elapsed=days_elapsed, use_cache=use_cache,
         )
     except Exception as exc:
         _log.warning("Harvest hours read failed: %s", exc)
         base["error"] = str(exc)[:300]
         return base
 
-    by_client = _cumulative_by_client(entries, first=first, days_elapsed=days_elapsed)
+    base["refreshed_at"] = refreshed_at
     goals = get_goals()
-
     clients: list[dict[str, Any]] = []
     grand_total = 0.0
     goal_total = 0.0
-    for cid, slot in by_client.items():
-        daily = slot["daily"]
-        running = 0.0
-        series: list[float] = []
-        for day in range(1, days_elapsed + 1):
-            running += daily.get(day, 0.0)
-            series.append(round(running, 2))
-        total = round(running, 2)
+    for c in series_clients:
+        cid = str(c.get("harvest_client_id"))
+        total = float(c.get("total_hours") or 0.0)
         grand_total += total
         goal = goals.get(cid)
         if goal is not None:
@@ -246,14 +338,13 @@ def build_client_hours_overview(*, today: date | None = None) -> dict[str, Any]:
         clients.append(
             {
                 "harvest_client_id": cid,
-                "name": slot["name"],
+                "name": c.get("name"),
                 "goal": goal,
                 "total_hours": total,
-                "series": series,
+                "series": c.get("series") or [],
             }
         )
 
-    clients.sort(key=lambda c: c["total_hours"], reverse=True)
     base["clients"] = clients
     base["totals"] = {"total_hours": round(grand_total, 2), "goal": round(goal_total, 2)}
     return base

@@ -1900,13 +1900,15 @@ def admin_client_hours(request: Request):
 
 @app.get("/admin/client-hours/data", include_in_schema=False)
 def admin_client_hours_data(
+    refresh: int = 0,
     user: web_users.WebUser = Depends(web_auth.require_admin),
 ) -> dict:
     """JSON feed for the Client Hours page: current-month cumulative hours per
-    client (live from the Harvest API) plus each client's monthly goal."""
+    client (cached; live from the Harvest API on a cache miss) plus each client's
+    monthly goal. ``?refresh=1`` forces a fresh Harvest pull, bypassing the cache."""
     import harvest_service
 
-    return harvest_service.build_client_hours_overview()
+    return harvest_service.build_client_hours_overview(use_cache=not bool(refresh))
 
 
 @app.post("/admin/client-hours/goal", include_in_schema=False)

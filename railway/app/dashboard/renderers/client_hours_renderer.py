@@ -28,9 +28,18 @@ _HOURS_CSS = """
     body { color:var(--ink);
       background:linear-gradient(180deg,#eef2f7 0%,#e6edf5 100%); background-attachment:fixed; }
     main { max-width:1180px; width:100%; min-width:0; margin:0 auto; padding:26px 24px 56px; }
-    .page-head { margin-bottom:14px; }
+    .page-head { margin-bottom:14px; display:flex; align-items:flex-start;
+      justify-content:space-between; gap:12px; flex-wrap:wrap; }
     .page-head h2 { margin:0; font-size:1.15rem; color:var(--navy); }
     .sub { color:var(--muted); font-size:.86rem; margin:3px 0 0; }
+    .refresh-btn { appearance:none; display:inline-flex; align-items:center; gap:7px;
+      border:1px solid var(--border); background:#fff; color:var(--navy); border-radius:999px;
+      padding:8px 14px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; flex:0 0 auto; }
+    .refresh-btn:hover { border-color:#94a3b8; }
+    .refresh-btn:disabled { opacity:.6; cursor:default; }
+    .refresh-btn svg { width:14px; height:14px; }
+    .refresh-btn.spin svg { animation:rot .8s linear infinite; }
+    @keyframes rot { to { transform:rotate(360deg); } }
     .notice { border-radius:12px; padding:14px 16px; margin-bottom:16px; font-size:.9rem; }
     .notice.err { background:#fef2f2; border:1px solid #fecaca; color:#b42318; }
     .notice.warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; }
@@ -83,8 +92,17 @@ _HOURS_CSS = """
 _HOURS_CONTENT = """
   <main>
     <div class="page-head">
-      <h2>Client Hours</h2>
-      <p class="sub" id="chSub">Loading Harvest hours…</p>
+      <div>
+        <h2>Client Hours</h2>
+        <p class="sub" id="chSub">Loading Harvest hours…</p>
+      </div>
+      <button type="button" class="refresh-btn" id="chRefresh" title="Pull fresh hours from Harvest">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        <span>Refresh</span>
+      </button>
     </div>
     <div id="chNotice"></div>
     <div class="grid" id="chGrid"></div>
@@ -176,13 +194,27 @@ def render_client_hours_page(*, user_email: str) -> str:
       + `</div>`;
     }
 
+    // "updated 3m ago" from an ISO timestamp — the burn-up data is cached
+    // server-side (default 15 min) so refreshes don't hammer Harvest; this shows
+    // how fresh the currently-displayed pull is.
+    function agoTxt(iso) {
+      if (!iso) return '';
+      const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+      if (secs < 60) return 'just now';
+      const m = Math.round(secs / 60);
+      if (m < 60) return `${m}m ago`;
+      const h = Math.round(m / 60);
+      return `${h}h ago`;
+    }
+
     function render() {
       const meta = chData;
       const sub = document.getElementById('chSub');
       const t = meta.totals || {};
+      const fresh = meta.refreshed_at ? ` · updated ${agoTxt(meta.refreshed_at)}` : '';
       sub.textContent = `${meta.month_label} · day ${meta.days_elapsed} of ${meta.days_in_month}`
         + ` · ${(meta.clients||[]).length} clients · ${hrs(t.total_hours)}h logged`
-        + (meta.account_name ? ` · ${meta.account_name}` : '');
+        + (meta.account_name ? ` · ${meta.account_name}` : '') + fresh;
 
       const notice = document.getElementById('chNotice');
       if (meta.error) {
@@ -239,22 +271,28 @@ def render_client_hours_page(*, user_email: str) -> str:
       });
     }
 
-    async function load() {
-      document.getElementById('chGrid').innerHTML =
+    async function load(force) {
+      const btn = document.getElementById('chRefresh');
+      if (force) { btn.disabled = true; btn.classList.add('spin'); }
+      else document.getElementById('chGrid').innerHTML =
         Array.from({length:6}, () => `<div class="skel-card"></div>`).join('');
       try {
-        const r = await fetch('/admin/client-hours/data', { credentials:'same-origin' });
+        const r = await fetch('/admin/client-hours/data' + (force ? '?refresh=1' : ''),
+          { credentials:'same-origin' });
         if (!r.ok) throw new Error('HTTP '+r.status);
         chData = await r.json();
         render();
       } catch (e) {
         document.getElementById('chSub').textContent = 'Failed to load Harvest hours.';
-        document.getElementById('chGrid').innerHTML =
+        if (!force) document.getElementById('chGrid').innerHTML =
           `<div class="empty">Could not load hours (${esc(e.message||'error')}). Try refreshing.</div>`;
+      } finally {
+        btn.disabled = false; btn.classList.remove('spin');
       }
     }
+    document.getElementById('chRefresh').addEventListener('click', () => load(true));
     wireGoals();
-    load();
+    load(false);
   </script>"""
 
     return render_admin_shell_page(
