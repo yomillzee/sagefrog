@@ -134,9 +134,39 @@ _HOURS_CSS = """
     .tag-seg button.on[data-tag="retainer"] { background:#0a7f3f; color:#fff; }
     .tag-seg button.on[data-tag="project"] { background:#2f6df0; color:#fff; }
     .tag-empty { text-align:center; color:var(--muted); padding:30px 8px; }
+    /* ── Agency billing summary card ─────────────────────────────────── */
+    .summary { background:#fff; border:1px solid var(--line); border-radius:16px;
+      box-shadow:0 6px 22px rgba(10,37,64,.06); padding:16px 18px 14px; margin-bottom:16px; }
+    .summary-head { display:flex; align-items:baseline; justify-content:space-between;
+      gap:10px 14px; flex-wrap:wrap; margin-bottom:13px; }
+    .summary-head h3 { margin:0; font-size:.98rem; color:var(--navy); font-weight:800; }
+    .summary-head .s-note { color:var(--muted); font-size:.75rem; font-variant-numeric:tabular-nums; }
+    .summary-head .s-note b { color:var(--ink); font-weight:700; }
+    .stat-row { display:grid; grid-template-columns:repeat(4, 1fr); gap:0; }
+    .stat { min-width:0; padding:0 16px; border-left:1px solid var(--line); }
+    .stat:first-child { padding-left:0; border-left:0; }
+    .stat .s-label { color:var(--muted); font-size:.7rem; text-transform:uppercase;
+      letter-spacing:.05em; font-weight:750; }
+    .stat .s-value { color:var(--navy); font-size:1.5rem; font-weight:800; line-height:1.1;
+      margin-top:4px; font-variant-numeric:tabular-nums; }
+    .stat .s-sub { color:var(--muted); font-size:.76rem; margin-top:3px; font-variant-numeric:tabular-nums; }
+    .stat .s-sub b { color:var(--ink); font-weight:700; }
+    /* Pacing meter: booked (solid) + projected (translucent) against a floor tick. */
+    .meter { position:relative; height:9px; border-radius:999px; background:#eef2f7; margin-top:9px; }
+    .meter .booked { position:absolute; left:0; top:0; bottom:0; border-radius:999px; }
+    .meter .proj { position:absolute; top:0; bottom:0; border-radius:0 999px 999px 0; opacity:.30; }
+    .meter .floor { position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--navy); border-radius:2px; }
+    .meter-legend { display:flex; align-items:center; gap:12px; margin-top:7px;
+      font-size:.68rem; color:var(--muted); }
+    .meter-legend span { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+    .meter-legend i { width:12px; height:8px; border-radius:2px; display:inline-block; flex:0 0 auto; }
+    .meter-legend i.floor { width:2px; height:11px; background:var(--navy); border-radius:2px; }
     @media (max-width: 720px) {
       main { padding:16px 13px 44px; }
       .grid { grid-template-columns:1fr; }
+      .stat-row { grid-template-columns:1fr 1fr; gap:14px 0; }
+      .stat { padding:0 14px; }
+      .stat:nth-child(odd) { padding-left:0; border-left:0; }
     }"""
 
 
@@ -178,6 +208,7 @@ _HOURS_CONTENT = """
       </div>
     </div>
     <div id="chNotice"></div>
+    <div id="chSummary"></div>
     <div class="grid" id="chGrid"></div>
   </main>
   <div class="modal-backdrop" id="tagBackdrop" hidden></div>
@@ -201,6 +232,17 @@ def render_client_hours_page(*, user_email: str) -> str:
     body_end = """<script>
     const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const hrs = v => new Intl.NumberFormat('en-US',{maximumFractionDigits:1}).format(Number(v||0));
+    // Standard blended billing rate — the summary card models revenue at this
+    // rate ("@ $165/hr standard"), so every dollar figure there is a modeled
+    // figure, not billed reality.
+    const STANDARD_RATE = 165;
+    const usd = v => new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',
+      maximumFractionDigits:0}).format(Number(v||0));
+    // Compact "$1.2k / $89k" money for tight sub-lines; full for the hero values.
+    const usdK = v => { const n = Number(v||0);
+      return Math.abs(n) >= 1000
+        ? '$' + new Intl.NumberFormat('en-US',{maximumFractionDigits:1}).format(n/1000) + 'k'
+        : usd(n); };
     let chData = null;
     // View state (client-side only — each client carries its projects with both
     // total + billable series, so scope/metric/sort toggles never re-hit
@@ -371,6 +413,99 @@ def render_client_hours_page(*, user_email: str) -> str:
       return clients;
     }
 
+    // ── Agency billing summary ────────────────────────────────────────────
+    // The strip above the grid: a always-billable, scope-aware billing read of
+    // the whole book. Deliberately independent of the Billable/Non-billable
+    // metric toggle (a billing summary is billable by definition); it does honor
+    // the scope dropdown so it always describes the same set as the cards below.
+    function scopeBillableHours(meta) {
+      let h = 0;
+      (meta.clients || []).forEach(c => {
+        const s = sumSeries(projectsInScope(c), 'series_billable');
+        h += s.length ? s[s.length - 1] : 0;
+      });
+      return h;
+    }
+    // Agency on/off-track from the pace projection vs the contracted floor/ceiling
+    // — the same run-rate method the per-client cards use, one level up.
+    function agencyStatus(projected, floor, ceil) {
+      if (!floor && !ceil) return 'none';
+      if (floor && projected < floor * 0.98) return 'behind';
+      if (ceil && projected > ceil * 1.03) return 'over';
+      return 'on';
+    }
+    function summaryCard(meta) {
+      const box = document.getElementById('chSummary');
+      const t = meta.totals || {};
+      const floor = Number(t.goal_min || 0);   // Σ contracted minimums (agency-wide).
+      const ceil  = Number(t.goal_max || 0);   // Σ ceilings (open "N+" floors contribute their floor).
+      const actual = scopeBillableHours(meta);
+      const frac = meta.days_in_month ? meta.days_elapsed / meta.days_in_month : 0;
+      const projected = frac > 0 ? actual / frac : actual;
+      const scopeLbl = view.scope === 'retainer' ? 'Retainer'
+        : (view.scope === 'project' ? 'Project' : 'All work');
+      // A retainer floor only means something against retainer/all billables — under
+      // a pure "Project" scope there's no contracted minimum to pace against. And
+      // the on/off-track colouring only reads right in retainer scope (under "All"
+      // the floor is beaten simply because project work is folded in), so there we
+      // still show the % but stay neutral.
+      const showFloor = floor > 0 && view.scope !== 'project';
+      const stKey = (showFloor && view.scope === 'retainer')
+        ? agencyStatus(projected, floor, ceil) : 'none';
+      const st = STATUS[stKey] || STATUS.none;
+      const projSub = st.label
+        ? `${usd(projected * STANDARD_RATE)} · <span style="color:${st.color};font-weight:800">${st.label}</span>`
+        : `${usd(projected * STANDARD_RATE)}`;
+
+      // Tile 1: contracted minimum (+ ceiling if a range). Tile 4: pacing meter —
+      // both only when there's a floor; otherwise a plain projected-revenue tile.
+      let floorTile, lastTile;
+      if (showFloor) {
+        const floorRev = floor * STANDARD_RATE, projRev = projected * STANDARD_RATE;
+        const pct = floorRev > 0 ? Math.round(projRev / floorRev * 100) : 0;
+        const delta = projRev - floorRev;
+        const deltaTxt = delta >= 0 ? `+${usdK(delta)} over floor` : `${usdK(Math.abs(delta))} to floor`;
+        const ceilLbl = (ceil && ceil !== floor) ? `–${hrs(ceil)}` : '';
+        floorTile = `<div class="stat"><div class="s-label">Contracted minimum</div>`
+          + `<div class="s-value">${hrs(floor)}${ceilLbl}h</div>`
+          + `<div class="s-sub"><b>${usd(floorRev)}</b> floor @ $${STANDARD_RATE}/hr</div></div>`;
+        // Booked (solid) + projected (translucent) bars against a floor tick.
+        const smax = Math.max(projected, floor, actual, 1) * 1.08;
+        const bk = (actual / smax * 100).toFixed(1);
+        const pjw = Math.max(0, (projected - actual) / smax * 100).toFixed(1);
+        const fl = (floor / smax * 100).toFixed(1);
+        lastTile = `<div class="stat"><div class="s-label">Pacing vs floor</div>`
+          + `<div class="s-value" style="color:${st.color}">${pct}%</div>`
+          + `<div class="meter">`
+            + `<div class="booked" style="width:${bk}%;background:${st.color}"></div>`
+            + `<div class="proj" style="left:${bk}%;width:${pjw}%;background:${st.color}"></div>`
+            + `<div class="floor" style="left:${fl}%"></div></div>`
+          + `<div class="s-sub" style="margin-top:6px">${deltaTxt}</div></div>`;
+      } else {
+        floorTile = `<div class="stat"><div class="s-label">Contracted minimum</div>`
+          + `<div class="s-value" style="color:var(--muted)">—</div>`
+          + `<div class="s-sub">${floor > 0 ? 'Not paced under Project scope' : 'Set client goals to pace revenue'}</div></div>`;
+        lastTile = `<div class="stat"><div class="s-label">Projected revenue</div>`
+          + `<div class="s-value">${usdK(projected * STANDARD_RATE)}</div>`
+          + `<div class="s-sub">month-end @ $${STANDARD_RATE}/hr</div></div>`;
+      }
+
+      box.className = 'summary';
+      box.innerHTML = `<div class="summary-head"><h3>Agency billing — ${esc(meta.month_label)}</h3>`
+        + `<span class="s-note">Billable · ${scopeLbl} · day <b>${meta.days_elapsed}</b> of ${meta.days_in_month}`
+        + ` · modeled @ $${STANDARD_RATE}/hr</span></div>`
+        + `<div class="stat-row">`
+        + floorTile
+        + `<div class="stat"><div class="s-label">Billable to date</div>`
+          + `<div class="s-value">${hrs(actual)}h</div>`
+          + `<div class="s-sub"><b>${usd(actual * STANDARD_RATE)}</b> billed</div></div>`
+        + `<div class="stat"><div class="s-label">Projected month-end</div>`
+          + `<div class="s-value">${hrs(projected)}h</div>`
+          + `<div class="s-sub">${projSub}</div></div>`
+        + lastTile
+        + `</div>`;
+    }
+
     function render() {
       const meta = chData;
       const sub = document.getElementById('chSub');
@@ -389,6 +524,10 @@ def render_client_hours_page(*, user_email: str) -> str:
           ? ' <a href="/admin">Connect Harvest →</a>' : '';
         notice.innerHTML = `<div class="notice ${meta.connected?'warn':'err'}">${esc(meta.error)}${connect}</div>`;
       } else notice.innerHTML = '';
+
+      const summary = document.getElementById('chSummary');
+      if (!meta.error && (meta.clients || []).length) summaryCard(meta);
+      else { summary.className = ''; summary.innerHTML = ''; }
 
       const grid = document.getElementById('chGrid');
       if (!shown.length) {
