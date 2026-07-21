@@ -134,6 +134,12 @@ def render_analytics_page(
     tbody tr:hover td {{ background:#f7faff; }}
     th {{ background:#f4f7fb; color:#5a6b82; text-transform:uppercase; font-size:.68rem; letter-spacing:.04em; font-weight:800; position:sticky; top:0; }}
     th.left,td.left {{ text-align:left; }}
+    th.sortable {{ cursor:pointer; user-select:none; }}
+    th.sortable:hover {{ background:#e9eff6; color:#33506f; }}
+    th.sorted {{ color:var(--accent); }}
+    th.sortable:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:-2px; }}
+    .sort-ind {{ margin-left:5px; font-size:.62rem; color:#9aa7bd; }}
+    .sort-ind.on {{ color:var(--accent); }}
     .empty {{ color:var(--muted); padding:26px; text-align:center; }}
     details.raw-json {{ margin-top:14px; }}
     summary {{ color:var(--accent); cursor:pointer; font-weight:700; font-size:.82rem; }}
@@ -306,6 +312,45 @@ def render_analytics_page(
       const m = Math.floor(secs / 60), s = secs % 60;
       return m + 'm ' + (s < 10 ? '0' : '') + s + 's';
     }}
+    // ---- Sortable tables (shared) ----
+    // Columns are configured with {{ key, label, left, numeric, accessor }}.
+    // Clicking a header sorts by that column; clicking the active header
+    // toggles direction. Numeric columns start descending, text ascending.
+    function sortIndicator(active, dir) {{
+      if (active) return `<span class="sort-ind on">${{dir === 'asc' ? '▲' : '▼'}}</span>`;
+      return '<span class="sort-ind">↕</span>';
+    }}
+    function buildSortHead(columns, sort) {{
+      return `<thead><tr>${{columns.map(c => {{
+        const active = c.key === sort.key;
+        const aria = active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
+        return `<th class="sortable${{c.left ? ' left' : ''}}${{active ? ' sorted' : ''}}" data-sort-key="${{esc(c.key)}}" role="button" tabindex="0" aria-sort="${{aria}}">${{esc(c.label)}}${{sortIndicator(active, sort.dir)}}</th>`;
+      }}).join('')}}</tr></thead>`;
+    }}
+    function sortRows(rows, columns, sort) {{
+      const col = columns.find(c => c.key === sort.key) || columns[0];
+      const acc = col.accessor || (r => r[col.key]);
+      const mult = sort.dir === 'asc' ? 1 : -1;
+      return rows.slice().sort((a, b) => {{
+        if (col.numeric) return (num(acc(a)) - num(acc(b))) * mult;
+        return String(acc(a) ?? '').localeCompare(String(acc(b) ?? '')) * mult;
+      }});
+    }}
+    function attachSortHandlers(tableId, columns, sort, onChange) {{
+      const el = document.getElementById(tableId);
+      el.querySelectorAll('th.sortable').forEach(th => {{
+        const fire = () => {{
+          const key = th.dataset.sortKey;
+          const col = columns.find(c => c.key === key);
+          if (!col) return;
+          if (sort.key === key) sort.dir = sort.dir === 'asc' ? 'desc' : 'asc';
+          else {{ sort.key = key; sort.dir = col.numeric ? 'desc' : 'asc'; }}
+          onChange();
+        }};
+        th.addEventListener('click', fire);
+        th.addEventListener('keydown', e => {{ if (e.key === 'Enter' || e.key === ' ') {{ e.preventDefault(); fire(); }} }});
+      }});
+    }}
     // ---- Top pages ----
     let pagesTopRows = [];
     let pagesSourceRows = [];
@@ -313,6 +358,14 @@ def render_analytics_page(
     const aiPlatformFilter = new Set();
     const PAGES_PER_PAGE = 10;
     let pagesPageNum = 1;
+    const PAGES_COLUMNS = [
+      {{ key:'page_path', label:'Page', left:true, numeric:false }},
+      {{ key:'page_views', label:'Views', numeric:true }},
+      {{ key:'users', label:'Users', numeric:true }},
+      {{ key:'key_events', label:'Key events', numeric:true }},
+      {{ key:'avg_engt', label:'Avg engt', numeric:true, accessor:p => p.users ? p.engagement_seconds / p.users : 0 }},
+    ];
+    let pagesSort = {{ key:'key_events', dir:'desc' }};
     const PAID_SOURCE_LABELS = {{ paid_google:'Google', paid_bing:'Bing', paid_linkedin:'LinkedIn', paid_meta:'Meta', paid_facebook:'Facebook' }};
     function paidLabel(src) {{
       return PAID_SOURCE_LABELS[src] || String(src).replace(/^paid_/, '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -341,18 +394,20 @@ def render_analytics_page(
         document.getElementById('pagesPager').innerHTML = '';
         return;
       }}
-      const totalPages = Math.max(1, Math.ceil(base.length / PAGES_PER_PAGE));
+      const sorted = sortRows(base, PAGES_COLUMNS, pagesSort);
+      const totalPages = Math.max(1, Math.ceil(sorted.length / PAGES_PER_PAGE));
       if (pagesPageNum > totalPages) pagesPageNum = totalPages;
       const startIdx = (pagesPageNum - 1) * PAGES_PER_PAGE;
-      const pageRows = base.slice(startIdx, startIdx + PAGES_PER_PAGE);
-      const head = `<thead><tr><th class="left">Page</th><th>Views</th><th>Users</th><th>Key events</th><th>Avg engt</th></tr></thead>`;
+      const pageRows = sorted.slice(startIdx, startIdx + PAGES_PER_PAGE);
+      const head = buildSortHead(PAGES_COLUMNS, pagesSort);
       const body = pageRows.map(p => {{
         const sub = p.page_group ? ` <span class="muted">${{esc(p.page_group)}}</span>` : '';
         const engt = p.users ? p.engagement_seconds / p.users : 0;
         return `<tr><td class="left"><span class="page-path">${{esc(p.page_path)}}</span>${{sub}}</td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;
       }}).join('');
       el.innerHTML = head + `<tbody>${{body}}</tbody>`;
-      setStatus('pagesStatus', `${{startIdx + 1}}–${{startIdx + pageRows.length}} of ${{base.length}} page(s)` + (pageFiltersActive() ? ' (filtered)' : '') + '.');
+      attachSortHandlers('pagesTable', PAGES_COLUMNS, pagesSort, () => {{ pagesPageNum = 1; renderPages(); }});
+      setStatus('pagesStatus', `${{startIdx + 1}}–${{startIdx + pageRows.length}} of ${{sorted.length}} page(s)` + (pageFiltersActive() ? ' (filtered)' : '') + '.');
       renderPagesPager(totalPages);
     }}
     function renderPagesPager(totalPages) {{
@@ -482,23 +537,35 @@ def render_analytics_page(
     const LANDING_PER_PAGE = 15;
     let landingPageNum = 1;
     let landingRows = [];
+    const LANDING_COLUMNS = [
+      {{ key:'page_path', label:'Landing page', left:true, numeric:false }},
+      {{ key:'sessions', label:'Sessions', numeric:true }},
+      {{ key:'users', label:'Users', numeric:true }},
+      {{ key:'new_users', label:'New users', numeric:true }},
+      {{ key:'key_events', label:'Key events', numeric:true }},
+      {{ key:'key_event_rate', label:'KE rate', numeric:true }},
+      {{ key:'avg_engagement_seconds', label:'Avg engt', numeric:true }},
+    ];
+    let landingSort = {{ key:'key_events', dir:'desc' }};
     function renderLanding() {{
-      const totalPages = Math.max(1, Math.ceil(landingRows.length / LANDING_PER_PAGE));
+      const sorted = sortRows(landingRows, LANDING_COLUMNS, landingSort);
+      const totalPages = Math.max(1, Math.ceil(sorted.length / LANDING_PER_PAGE));
       if (landingPageNum > totalPages) landingPageNum = totalPages;
       const startIdx = (landingPageNum - 1) * LANDING_PER_PAGE;
-      const rows = landingRows.slice(startIdx, startIdx + LANDING_PER_PAGE);
+      const rows = sorted.slice(startIdx, startIdx + LANDING_PER_PAGE);
       const el = document.getElementById('landingTable');
       if (!rows.length) {{
         el.innerHTML = `<tbody><tr><td class="empty">No landing page data for this range.</td></tr></tbody>`;
         document.getElementById('landingPager').innerHTML = '';
         return;
       }}
-      const head = `<thead><tr><th class="left">Landing page</th><th>Sessions</th><th>Users</th><th>New users</th><th>Key events</th><th>KE rate</th><th>Avg engt</th></tr></thead>`;
+      const head = buildSortHead(LANDING_COLUMNS, landingSort);
       const body = rows.map(r =>
         `<tr><td class="left"><span class="page-path">${{esc(r.page_path)}}</span></td><td>${{count(r.sessions)}}</td><td>${{count(r.users)}}</td><td>${{count(r.new_users)}}</td><td>${{count(r.key_events)}}</td><td>${{r.key_event_rate != null ? r.key_event_rate + '%' : '—'}}</td><td>${{fmtDuration(r.avg_engagement_seconds)}}</td></tr>`
       ).join('');
       el.innerHTML = head + `<tbody>${{body}}</tbody>`;
-      setStatus('landingStatus', `${{startIdx + 1}}–${{startIdx + rows.length}} of ${{landingRows.length}} page(s).`);
+      attachSortHandlers('landingTable', LANDING_COLUMNS, landingSort, () => {{ landingPageNum = 1; renderLanding(); }});
+      setStatus('landingStatus', `${{startIdx + 1}}–${{startIdx + rows.length}} of ${{sorted.length}} page(s).`);
       renderLandingPager(totalPages);
     }}
     function renderLandingPager(totalPages) {{
