@@ -1550,6 +1550,11 @@ _ADMIN_NAV_ICONS: dict[str, str] = {
         '<path d="M14 3v5h5"/><line x1="8" y1="13" x2="16" y2="13"/>'
         '<line x1="8" y1="17" x2="13" y2="17"/></svg>'
     ),
+    "hours": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>'
+    ),
 }
 
 _ADMIN_NAV_ITEMS: tuple[tuple[str, str, str], ...] = (
@@ -1558,6 +1563,9 @@ _ADMIN_NAV_ITEMS: tuple[tuple[str, str, str], ...] = (
     # legacy "Budget HQ" (/admin/hq) has been phased out of the nav; its route
     # still redirects there so old links keep working.
     ("trends", "HQ", "/admin/agency-trends"),
+    # "Client Hours" is the Harvest burn-up view (hours logged vs monthly goal
+    # for every client this month).
+    ("hours", "Client Hours", "/admin/client-hours"),
     ("docs", "Docs", "/admin/docs"),
 )
 

@@ -1824,7 +1824,7 @@ def admin_home(
     )
     flash = msg
     if oauth_disconnected and not flash:
-        labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta", "indeed": "Indeed"}
+        labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta", "indeed": "Indeed", "harvest": "Harvest"}
         flash = f"{labels.get(oauth_disconnected, oauth_disconnected)} disconnected."
 
     return HTMLResponse(
@@ -1882,6 +1882,69 @@ def admin_agency_trends_data(
     from dashboard.services.agency_trends_service import build_agency_overview
 
     return build_agency_overview()
+
+
+@app.get("/admin/client-hours", include_in_schema=False, response_class=HTMLResponse)
+def admin_client_hours(request: Request):
+    """Admin-only 'Client Hours': a Harvest burn-up chart (hours vs monthly goal)
+    for every client this month. Data loads from …/data."""
+    user = web_auth.get_current_user(request)
+    if not user:
+        return web_auth.redirect_to_login(request, next_path="/admin/client-hours")
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    from dashboard.renderers.client_hours_renderer import render_client_hours_page
+
+    return HTMLResponse(render_client_hours_page(user_email=user.email))
+
+
+@app.get("/admin/client-hours/data", include_in_schema=False)
+def admin_client_hours_data(
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+) -> dict:
+    """JSON feed for the Client Hours page: current-month cumulative hours per
+    client (live from the Harvest API) plus each client's monthly goal."""
+    import harvest_service
+
+    return harvest_service.build_client_hours_overview()
+
+
+@app.post("/admin/client-hours/goal", include_in_schema=False)
+async def admin_client_hours_goal(
+    request: Request,
+    harvest_client_id: str = Form(...),
+    monthly_goal: str = Form(""),
+    client_name: str = Form(""),
+):
+    """Set (or clear, when monthly_goal is blank) one client's monthly hours goal."""
+    user = await web_auth.require_admin(request)
+    import harvest_service
+
+    raw = (monthly_goal or "").strip()
+    goal_val: float | None
+    if raw == "":
+        goal_val = None
+    else:
+        try:
+            goal_val = float(raw)
+        except ValueError:
+            return JSONResponse({"ok": False, "error": "Goal must be a number."}, status_code=400)
+    try:
+        harvest_service.set_goal(
+            harvest_client_id=harvest_client_id,
+            monthly_goal=goal_val,
+            client_name=client_name,
+            updated_by=user.email,
+        )
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    audit_log.record(
+        action="harvest.goal_set",
+        actor_email=user.email,
+        detail={"harvest_client_id": harvest_client_id, "monthly_goal": goal_val},
+        **audit_log.request_context(request),
+    )
+    return JSONResponse({"ok": True, "monthly_goal": goal_val})
 
 
 @app.get("/admin/docs", include_in_schema=False, response_class=HTMLResponse)

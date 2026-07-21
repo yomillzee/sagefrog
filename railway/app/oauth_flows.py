@@ -17,11 +17,20 @@ import meta_auth
 
 _log = logging.getLogger(__name__)
 
-PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc", "google_analytics", "google_tag_manager", "hubspot"})
+PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc", "google_analytics", "google_tag_manager", "hubspot", "harvest"})
 
 HUBSPOT_AUTH_URL = "https://app.hubspot.com/oauth/authorize"
 HUBSPOT_TOKEN_URL = "https://api.hubapi.com/oauth/v1/token"
 HUBSPOT_SCOPES = "oauth crm.objects.contacts.read crm.objects.deals.read"
+
+# Harvest OAuth2 lives on the shared id.getharvest.com identity host; the data
+# API (time entries, reports) is on api.harvestapp.com and needs the
+# Harvest-Account-Id header alongside the bearer token. We capture that account
+# id during the token exchange (see fetch_harvest_accounts) and stash it in the
+# stored token's metadata so the hours page can call the API without extra env.
+HARVEST_AUTH_URL = "https://id.getharvest.com/oauth2/authorize"
+HARVEST_TOKEN_URL = "https://id.getharvest.com/api/v2/oauth2/token"
+HARVEST_ACCOUNTS_URL = "https://id.getharvest.com/api/v2/accounts"
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -236,6 +245,23 @@ def connect_prerequisites(platform: str) -> dict[str, Any]:
             ],
             "note": "Connect each client's own HubSpot portal; stores the refresh token in Postgres.",
         }
+    if slug == "harvest":
+        cid = (os.getenv("HARVEST_CLIENT_ID") or "").strip()
+        secret = (os.getenv("HARVEST_CLIENT_SECRET") or "").strip()
+        return {
+            "ready": bool(cid and secret),
+            "missing": [
+                label for val, label in (
+                    (cid, "HARVEST_CLIENT_ID"),
+                    (secret, "HARVEST_CLIENT_SECRET"),
+                ) if not val
+            ],
+            "note": (
+                "Connect the agency Harvest account once (all clients live under it). "
+                "Add this app's /oauth/harvest/callback as the Redirect URL in your "
+                "Harvest OAuth2 app. Stores the refresh token in Postgres."
+            ),
+        }
     summary = meta_auth.env_summary()
     return {
         "ready": bool(summary.get("has_app_id") and summary.get("has_app_secret")),
@@ -333,6 +359,17 @@ def build_authorize_url(platform: str, *, state: str) -> str:
             "state": state,
         }
         return f"{HUBSPOT_AUTH_URL}?{urlencode(params)}"
+    if slug == "harvest":
+        client_id = (os.getenv("HARVEST_CLIENT_ID") or "").strip()
+        if not client_id:
+            raise RuntimeError("Set HARVEST_CLIENT_ID before connecting Harvest.")
+        params = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "state": state,
+        }
+        return f"{HARVEST_AUTH_URL}?{urlencode(params)}"
     env = meta_auth._get_env(*meta_auth._ENV_ALIASES["app_id"])
     api_version = meta_auth._get_env(*meta_auth._ENV_ALIASES["api_version"]) or "v21.0"
     if not env:
@@ -362,7 +399,103 @@ def exchange_code(platform: str, *, code: str) -> dict[str, Any]:
         return _exchange_linkedin_code(code, redirect_uri=redirect_uri)
     if slug == "hubspot":
         return _exchange_hubspot_code(code, redirect_uri=redirect_uri)
+    if slug == "harvest":
+        return _exchange_harvest_code(code, redirect_uri=redirect_uri)
     return _exchange_meta_code(code, redirect_uri=redirect_uri)
+
+
+def _exchange_harvest_code(code: str, *, redirect_uri: str) -> dict[str, Any]:
+    client_id = (os.getenv("HARVEST_CLIENT_ID") or "").strip()
+    client_secret = (os.getenv("HARVEST_CLIENT_SECRET") or "").strip()
+    if not client_id or not client_secret:
+        raise RuntimeError("Set HARVEST_CLIENT_ID and HARVEST_CLIENT_SECRET before connecting Harvest.")
+    body = {
+        "code": code,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code",
+    }
+    with httpx.Client(timeout=60.0) as client:
+        response = client.post(
+            HARVEST_TOKEN_URL, data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+        )
+    if response.status_code >= 400:
+        raise RuntimeError(f"Harvest token exchange failed ({response.status_code}): {response.text[:500]}")
+    data = response.json()
+    refresh = (data.get("refresh_token") or "").strip()
+    if not refresh:
+        raise RuntimeError("Harvest did not return a refresh token.")
+    expires_in = int(data.get("expires_in") or 0)
+    expires_at = datetime.now(tz=UTC) + timedelta(seconds=expires_in) if expires_in else None
+    access = (data.get("access_token") or "").strip()
+    # Capture the Harvest account id (needed as the Harvest-Account-Id header on
+    # every data-API call) so the hours page works without extra env config.
+    account = fetch_harvest_accounts(access) if access else {}
+    return {
+        "refresh_token": refresh,
+        "access_token": access,
+        "token_expires_at": expires_at,
+        "scopes": (data.get("scope") or "").strip() or None,
+        "metadata": account or None,
+    }
+
+
+def fetch_harvest_accounts(access_token: str) -> dict[str, Any]:
+    """Return the first Harvest-product account the token can reach.
+
+    Best-effort: returns {} on any failure so it never blocks a token exchange.
+    An operator can still override with HARVEST_ACCOUNT_ID if a token has access
+    to several Harvest accounts and the wrong one is picked.
+    """
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.get(
+                HARVEST_ACCOUNTS_URL,
+                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+            )
+        resp.raise_for_status()
+        accounts = resp.json().get("accounts") or []
+    except Exception as exc:
+        _log.warning("Harvest accounts fetch failed: %s", exc)
+        return {}
+    harvest_accounts = [a for a in accounts if str(a.get("product") or "").lower() == "harvest"]
+    chosen = (harvest_accounts or accounts or [None])[0]
+    if not chosen:
+        return {}
+    out: dict[str, Any] = {}
+    acct_id = str(chosen.get("id") or "").strip()
+    if acct_id:
+        out["account_id"] = acct_id
+    if chosen.get("name"):
+        out["account_name"] = str(chosen["name"])
+    return out
+
+
+def refresh_harvest_access_token(refresh_token: str) -> str:
+    """Exchange a stored Harvest refresh token for a fresh access token."""
+    client_id = (os.getenv("HARVEST_CLIENT_ID") or "").strip()
+    client_secret = (os.getenv("HARVEST_CLIENT_SECRET") or "").strip()
+    if not client_id or not client_secret:
+        raise RuntimeError("HARVEST_CLIENT_ID / HARVEST_CLIENT_SECRET not set.")
+    body = {
+        "grant_type": "refresh_token",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": refresh_token,
+    }
+    with httpx.Client(timeout=60.0) as client:
+        response = client.post(
+            HARVEST_TOKEN_URL, data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+        )
+    if response.status_code >= 400:
+        raise RuntimeError(f"Harvest token refresh failed ({response.status_code}): {response.text[:400]}")
+    access = (response.json().get("access_token") or "").strip()
+    if not access:
+        raise RuntimeError("Harvest refresh returned no access token.")
+    return access
 
 
 def _exchange_hubspot_code(code: str, *, redirect_uri: str) -> dict[str, Any]:
