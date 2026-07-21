@@ -88,9 +88,16 @@ class _RecordingLinkedIn:
 class _NoopWarehouse:
     import contextlib as _contextlib
 
+    def __init__(self):
+        self.ensured_creative_metadata = False
+
     @_contextlib.contextmanager
     def route(self, *a, **k):
         yield
+
+    def ensure_linkedin_creative_metadata_table(self, *a, **k):
+        self.ensured_creative_metadata = True
+        return "test-proj.raw_linkedin_ads.creative_metadata"
 
     def mirror_linkedin_ad_daily_batch(self, *a, **k):
         return {"rows_upserted": 0}
@@ -133,6 +140,10 @@ class LinkedInCreativeSyncTokenTests(unittest.TestCase):
         self.assertEqual(fake_li.tokens.get("fetch_creative_daily_metrics"), "TOK-CLIENT-SCOPED")
         self.assertEqual(fake_li.tokens.get("creatives_performance"), "TOK-CLIENT-SCOPED")
         self.assertEqual(fake_li.tokens.get("fetch_creatives_metadata_by_ids"), "TOK-CLIENT-SCOPED")
+        # The backfill must ensure creative_metadata exists before its LEFT JOIN,
+        # otherwise a client with an empty 30-day creatives call (all paused)
+        # never gets the table and creative metadata stays unbuilt forever.
+        self.assertTrue(fake_wh.ensured_creative_metadata)
 
 
 if __name__ == "__main__":

@@ -455,6 +455,17 @@ def _backfill_missing_creative_metadata(
     project = _project_id()
     dataset = _dataset_id()
     creds = _routed_credentials_env()
+    # Ensure creative_metadata exists before the LEFT JOIN below. For a client
+    # whose 30-day creatives_performance call returned nothing (all campaigns
+    # paused), the empty mirror never created the table, so this join would
+    # 404 and the backfill would skip forever — leaving creative metadata
+    # unbuilt even though ad_daily already carries the creative_ids. Creating
+    # the empty table makes every ad_daily creative read as "missing" so the
+    # by-ID fetch below can populate historical/paused creatives.
+    try:
+        bigquery_warehouse.ensure_linkedin_creative_metadata_table()
+    except Exception:
+        pass
     safe_account = "".join(ch for ch in str(account_id_clean) if ch.isalnum())
     sql = f"""
     SELECT DISTINCT CAST(ad.creative_id AS STRING) AS creative_id

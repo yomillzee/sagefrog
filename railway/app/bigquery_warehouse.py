@@ -144,6 +144,29 @@ def ensure_linkedin_campaigns_table() -> str:
     client.create_table(table, exists_ok=True)
     return table_id
 
+
+def ensure_linkedin_creative_metadata_table() -> str:
+    """Create linkedin_ads.creative_metadata (empty) if it does not exist.
+
+    The by-ID creative backfill (_backfill_missing_creative_metadata) LEFT JOINs
+    this table to find creatives present in ad_daily but missing metadata.
+    mirror_linkedin_creative_metadata only creates the table when it has rows to
+    write, so a client whose 30-day creatives_performance call returns nothing
+    (e.g. all campaigns paused) never gets the table — and the backfill's join
+    then 404s, leaving creative metadata permanently unbuilt while campaign
+    metrics sync fine. Ensuring the empty table up front breaks that
+    chicken-and-egg so the backfill can populate historical/paused creatives.
+    """
+    bigquery = _bigquery()
+    client, table_id = _creative_metadata_table_id()
+    dataset_ref = ".".join(table_id.split(".")[:2])
+    client.create_dataset(bigquery.Dataset(dataset_ref), exists_ok=True)
+    table = bigquery.Table(table_id, schema=_creative_metadata_schema())
+    table.clustering_fields = ["source", "account_id", "creative_id"]
+    client.create_table(table, exists_ok=True)
+    return table_id
+
+
 def enabled(source: str | None = None) -> bool:
     flag = (os.getenv("BQ_WAREHOUSE_ENABLED") or os.getenv("BIGQUERY_WAREHOUSE_ENABLED") or "").strip().lower()
     if flag in {"1", "true", "yes", "on"}:
