@@ -41,10 +41,10 @@ class MonthBoundsTest(unittest.TestCase):
 class CumulativeByClientTest(unittest.TestCase):
     def _entries(self):
         return [
-            {"client": {"id": 1, "name": "ILC Dover"}, "spent_date": "2026-07-02", "hours": 5},
-            {"client": {"id": 1, "name": "ILC Dover"}, "spent_date": "2026-07-02", "hours": 3},
-            {"client": {"id": 1, "name": "ILC Dover"}, "spent_date": "2026-07-05", "hours": 4},
-            {"client": {"id": 2, "name": "EOS Worldwide"}, "spent_date": "2026-07-03", "hours": 10},
+            {"client": {"id": 1, "name": "ILC Dover"}, "spent_date": "2026-07-02", "hours": 5, "billable": True},
+            {"client": {"id": 1, "name": "ILC Dover"}, "spent_date": "2026-07-02", "hours": 3, "billable": False},
+            {"client": {"id": 1, "name": "ILC Dover"}, "spent_date": "2026-07-05", "hours": 4, "billable": True},
+            {"client": {"id": 2, "name": "EOS Worldwide"}, "spent_date": "2026-07-03", "hours": 10, "billable": True},
         ]
 
     def test_daily_hours_summed_per_client(self):
@@ -54,6 +54,15 @@ class CumulativeByClientTest(unittest.TestCase):
         self.assertEqual(by["1"]["daily"], {2: 8.0, 5: 4.0})
         self.assertEqual(by["1"]["name"], "ILC Dover")
         self.assertEqual(by["2"]["daily"], {3: 10.0})
+
+    def test_billable_hours_tracked_separately(self):
+        by = harvest_service._cumulative_by_client(
+            self._entries(), first=date(2026, 7, 1), days_elapsed=21
+        )
+        # Day 2 had 5 billable + 3 non-billable → total 8, billable 5.
+        self.assertEqual(by["1"]["daily"], {2: 8.0, 5: 4.0})
+        self.assertEqual(by["1"]["daily_billable"], {2: 5.0, 5: 4.0})
+        self.assertEqual(by["2"]["daily_billable"], {3: 10.0})
 
     def test_future_and_prior_month_entries_excluded(self):
         entries = self._entries() + [

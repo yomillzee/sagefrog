@@ -186,7 +186,13 @@ def _fetch_month_entries(
 def _cumulative_by_client(
     entries: list[dict[str, Any]], *, first: date, days_elapsed: int
 ) -> dict[str, dict[str, Any]]:
-    """Fold raw entries into ``{harvest_client_id: {name, daily[day]->hours}}``."""
+    """Fold raw entries into ``{harvest_client_id: {name, daily, daily_billable}}``.
+
+    ``daily`` sums every entry's hours (billable + non-billable); ``daily_billable``
+    sums only entries flagged billable in Harvest, so the page can toggle between
+    the two without re-hitting the API. Entries are grouped by Harvest *client*
+    only — project/task (and any retainer-vs-project distinction) is not applied.
+    """
     by_client: dict[str, dict[str, Any]] = {}
     for e in entries:
         client = e.get("client") or {}
@@ -208,9 +214,11 @@ def _cumulative_by_client(
         day_idx = d.day  # 1-based day of month
         if day_idx > days_elapsed:
             continue
-        slot = by_client.setdefault(cid, {"name": name, "daily": {}})
+        slot = by_client.setdefault(cid, {"name": name, "daily": {}, "daily_billable": {}})
         slot["name"] = name
         slot["daily"][day_idx] = slot["daily"].get(day_idx, 0.0) + hours
+        if bool(e.get("billable")):
+            slot["daily_billable"][day_idx] = slot["daily_billable"].get(day_idx, 0.0) + hours
     return by_client
 
 
@@ -225,20 +233,27 @@ def _build_client_series(
         access_token=access_token, account_id=account_id, start=first, end=today
     )
     by_client = _cumulative_by_client(entries, first=first, days_elapsed=days_elapsed)
-    clients: list[dict[str, Any]] = []
-    for cid, slot in by_client.items():
-        daily = slot["daily"]
+
+    def _cumulate(daily: dict[int, float]) -> tuple[list[float], float]:
         running = 0.0
         series: list[float] = []
         for day in range(1, days_elapsed + 1):
             running += daily.get(day, 0.0)
             series.append(round(running, 2))
+        return series, round(running, 2)
+
+    clients: list[dict[str, Any]] = []
+    for cid, slot in by_client.items():
+        series, total = _cumulate(slot["daily"])
+        series_b, total_b = _cumulate(slot["daily_billable"])
         clients.append(
             {
                 "harvest_client_id": cid,
                 "name": slot["name"],
-                "total_hours": round(running, 2),
+                "total_hours": total,
                 "series": series,
+                "total_billable": total_b,
+                "series_billable": series_b,
             }
         )
     clients.sort(key=lambda c: c["total_hours"], reverse=True)
@@ -354,12 +369,15 @@ def build_client_hours_overview(
     goals = get_goals()
     clients: list[dict[str, Any]] = []
     grand_total = 0.0
+    grand_billable = 0.0
     goal_min_total = 0.0
     goal_max_total = 0.0
     for c in series_clients:
         cid = str(c.get("harvest_client_id"))
         total = float(c.get("total_hours") or 0.0)
+        total_b = float(c.get("total_billable") or 0.0)
         grand_total += total
+        grand_billable += total_b
         goal = goals.get(cid) or {}
         goal_min = goal.get("min")
         goal_max = goal.get("max")
@@ -376,12 +394,15 @@ def build_client_hours_overview(
                 "goal_label": format_goal(goal_min, goal_max),
                 "total_hours": total,
                 "series": c.get("series") or [],
+                "total_billable": total_b,
+                "series_billable": c.get("series_billable") or [],
             }
         )
 
     base["clients"] = clients
     base["totals"] = {
         "total_hours": round(grand_total, 2),
+        "total_billable": round(grand_billable, 2),
         "goal_min": round(goal_min_total, 2),
         "goal_max": round(goal_max_total, 2),
     }
