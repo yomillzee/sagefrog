@@ -40,6 +40,20 @@ _HOURS_CSS = """
       cursor:pointer; white-space:nowrap; }
     .seg-btn:hover { color:var(--navy); }
     .seg-btn.is-active { background:#fff; color:var(--navy); box-shadow:0 1px 3px rgba(10,37,64,.12); }
+    .ch-search { position:relative; display:inline-flex; align-items:center; flex:0 0 auto; }
+    .ch-search svg { position:absolute; left:12px; width:14px; height:14px; color:var(--muted);
+      pointer-events:none; }
+    .ch-search input { appearance:none; border:1px solid var(--border); background:#fff;
+      border-radius:999px; color:var(--navy); font:inherit; font-size:.82rem; font-weight:600;
+      padding:8px 30px 8px 32px; width:190px; transition:border-color .12s, box-shadow .12s; }
+    .ch-search input::placeholder { color:var(--muted); font-weight:600; }
+    .ch-search input:hover { border-color:#94a3b8; }
+    .ch-search input:focus { outline:0; border-color:var(--accent);
+      box-shadow:0 0 0 3px rgba(47,109,240,.12); }
+    .ch-search-clear { position:absolute; right:8px; appearance:none; border:0; background:#eef2f7;
+      color:var(--muted); border-radius:50%; width:18px; height:18px; font-size:.7rem; line-height:1;
+      cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+    .ch-search-clear:hover { background:#e2e8f0; color:var(--navy); }
     .head-select { appearance:none; border:1px solid var(--border); background:#fff
       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%230a2540' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")
       no-repeat right 12px center; border-radius:999px; color:var(--navy); font:inherit; font-size:.82rem;
@@ -164,6 +178,9 @@ _HOURS_CSS = """
     @media (max-width: 720px) {
       main { padding:16px 13px 44px; }
       .grid { grid-template-columns:1fr; }
+      .head-controls { width:100%; }
+      .ch-search { flex:1 1 100%; }
+      .ch-search input { width:100%; }
       .stat-row { grid-template-columns:1fr 1fr; gap:14px 0; }
       .stat { padding:0 14px; }
       .stat:nth-child(odd) { padding-left:0; border-left:0; }
@@ -178,6 +195,14 @@ _HOURS_CONTENT = """
         <p class="sub" id="chSub">Loading Harvest hours…</p>
       </div>
       <div class="head-controls">
+        <div class="ch-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="chSearch" placeholder="Search clients…" autocomplete="off"
+            spellcheck="false" aria-label="Search clients by name">
+          <button type="button" class="ch-search-clear" id="chSearchClear" aria-label="Clear search" hidden>✕</button>
+        </div>
         <select id="chScope" class="head-select" aria-label="Work type">
           <option value="retainer" selected>Retainer</option>
           <option value="project">Project</option>
@@ -248,7 +273,7 @@ def render_client_hours_page(*, user_email: str) -> str:
     // total + billable series, so scope/metric/sort toggles never re-hit
     // Harvest). scope: all|retainer|project · metric: billable|nonbillable ·
     // sort: hours|alpha. Defaults: retainer work, billable hours.
-    const view = { scope: 'retainer', metric: 'billable', sort: 'hours' };
+    const view = { scope: 'retainer', metric: 'billable', sort: 'hours', search: '' };
     // Projects the current scope selects: everything under "all"; only projects
     // carrying the matching tag under "retainer"/"project" (untagged excluded).
     function projectsInScope(c) {
@@ -404,6 +429,10 @@ def render_client_hours_page(*, user_email: str) -> str:
       let clients = (meta.clients || []).slice();
       // In a split scope, drop clients with no hours of that type this month.
       if (view.scope !== 'all') clients = clients.filter(c => totalOf(c) > 0);
+      // Free-text name filter (case-insensitive substring) — the search bar
+      // narrows the visible cards without re-hitting Harvest.
+      const q = view.search.trim().toLowerCase();
+      if (q) clients = clients.filter(c => String(c.name||'').toLowerCase().includes(q));
       if (view.sort === 'alpha') {
         clients.sort((a, b) => String(a.name||'').localeCompare(String(b.name||''),
           undefined, { sensitivity: 'base' }));
@@ -531,9 +560,12 @@ def render_client_hours_page(*, user_email: str) -> str:
 
       const grid = document.getElementById('chGrid');
       if (!shown.length) {
-        const msg = meta.error ? '' : (view.scope === 'all'
-          ? `<div class="empty">No hours logged yet this month.</div>`
-          : `<div class="empty">No ${view.scope} hours this month. Tag projects to populate this view.</div>`);
+        const q = view.search.trim();
+        const msg = meta.error ? '' : (q
+          ? `<div class="empty">No clients match “${esc(q)}”.</div>`
+          : (view.scope === 'all'
+            ? `<div class="empty">No hours logged yet this month.</div>`
+            : `<div class="empty">No ${view.scope} hours this month. Tag projects to populate this view.</div>`));
         grid.innerHTML = msg;
         return;
       }
@@ -622,6 +654,25 @@ def render_client_hours_page(*, user_email: str) -> str:
     wireSeg('chMetric', 'metric', 'metric');
     wireSeg('chSort', 'sort', 'sort');
     wireGoals();
+
+    // Client name search: filter the cards live off the cached data as the user
+    // types (no Harvest round-trip). The clear button resets the field.
+    const chSearch = document.getElementById('chSearch');
+    const chSearchClear = document.getElementById('chSearchClear');
+    chSearch.addEventListener('input', () => {
+      view.search = chSearch.value;
+      chSearchClear.hidden = !chSearch.value;
+      if (chData) render();
+    });
+    chSearch.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && chSearch.value) { e.stopPropagation();
+        chSearch.value = ''; view.search = ''; chSearchClear.hidden = true;
+        if (chData) render(); }
+    });
+    chSearchClear.addEventListener('click', () => {
+      chSearch.value = ''; view.search = ''; chSearchClear.hidden = true;
+      chSearch.focus(); if (chData) render();
+    });
 
     // ── Tag-projects modal ────────────────────────────────────────────────
     // Lists every project seen this month (grouped by client) with a
