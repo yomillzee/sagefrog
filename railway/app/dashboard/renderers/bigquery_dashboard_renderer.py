@@ -3001,19 +3001,69 @@ def render_bigquery_dashboard_page(
       pagesSourceRows=src.rows||[]; pagesSourceLoadedFor=k;
       return pagesSourceRows;
     }}
+    // Click-to-sort for the Top pages and Landing pages tables. Follows the
+    // same house pattern as the GSC tables above (th.gsc-sort + ▴/▾ arrow,
+    // delegated click on the pane). Both default to Key events, highest first.
+    const PAGES_SORT_COLS=[
+      {{key:'page_path',label:'Page',left:true}},
+      {{key:'page_views',label:'Views',num:true}},
+      {{key:'users',label:'Users',num:true}},
+      {{key:'key_events',label:'Key events',num:true}},
+      {{key:'avg_engt',label:'Avg engt',num:true,get:p=>p.users?p.engagement_seconds/p.users:0}},
+    ];
+    let pagesSort={{key:'key_events',dir:'desc'}};
+    const LANDING_SORT_COLS=[
+      {{key:'page_path',label:'Landing page',left:true}},
+      {{key:'sessions',label:'Sessions',num:true}},
+      {{key:'users',label:'Users',num:true}},
+      {{key:'new_users',label:'New users',num:true}},
+      {{key:'key_events',label:'Key events',num:true}},
+      {{key:'key_event_rate',label:'KE rate',num:true}},
+      {{key:'avg_engagement_seconds',label:'Avg engt',num:true}},
+    ];
+    let landingSort={{key:'key_events',dir:'desc'}};
+    function analyticsSortHead(cols,sort,tableName) {{
+      const arrow=k=>sort.key===k?(sort.dir==='asc'?' \\u25B4':' \\u25BE'):'';
+      return `<thead><tr>`+cols.map(c=>`<th class="gsc-sort${{c.left?' left':''}}${{sort.key===c.key?' active':''}}" data-table="${{tableName}}" data-key="${{esc(c.key)}}" aria-sort="${{sort.key===c.key?(sort.dir==='asc'?'ascending':'descending'):'none'}}">${{esc(c.label)}}${{arrow(c.key)}}</th>`).join('')+`</tr></thead>`;
+    }}
+    function analyticsSort(rows,cols,sort) {{
+      const col=cols.find(c=>c.key===sort.key)||cols[0];
+      const get=col.get||(r=>r[col.key]);
+      const mult=sort.dir==='asc'?1:-1;
+      return rows.slice().sort((a,b)=>{{
+        if (col.num) return (num(get(a))-num(get(b)))*mult;
+        return String(get(a)??'').localeCompare(String(get(b)??''))*mult;
+      }});
+    }}
+    (function(){{
+      const pane=document.getElementById('pane-analytics');
+      if (!pane) return;
+      pane.addEventListener('click', ev=>{{
+        const th=ev.target.closest('th.gsc-sort'); if (!th) return;
+        const which=th.dataset.table;
+        const sort=which==='pages'?pagesSort:landingSort;
+        const cols=which==='pages'?PAGES_SORT_COLS:LANDING_SORT_COLS;
+        const col=cols.find(c=>c.key===th.dataset.key); if (!col) return;
+        if (sort.key===col.key) sort.dir=sort.dir==='asc'?'desc':'asc';
+        else {{ sort.key=col.key; sort.dir=col.num?'desc':'asc'; }}
+        if (which==='pages') {{ pagesPageNum=1; renderPages(); }}
+        else {{ landingPageNum=1; renderLanding(); }}
+      }});
+    }})();
     function renderPages() {{
       let base=applyPageEvents(pagesTopRows);
       // Rows are already sorted by views desc (server ORDER BY), so slicing
       // keeps the top N. Search then filters within that top set.
       base=base.slice(0, PAGES_TOP_LIMIT);
       if (pagesSearchQuery) {{ const q=pagesSearchQuery.toLowerCase(); base=base.filter(p=>p.page_path.toLowerCase().includes(q)); }}
+      base=analyticsSort(base,PAGES_SORT_COLS,pagesSort);
       const el=document.getElementById('pagesTable');
       if (!base.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No pages match${{pagesSearchQuery?' "'+esc(pagesSearchQuery)+'"':''}}.</td></tr></tbody>`; setStatus('pagesStatus','No results'); document.getElementById('pagesPager').innerHTML=''; return; }}
       const totalPages=Math.max(1,Math.ceil(base.length/PAGES_PER_PAGE));
       if (pagesPageNum>totalPages) pagesPageNum=totalPages;
       const startIdx=(pagesPageNum-1)*PAGES_PER_PAGE;
       const pageRows=base.slice(startIdx,startIdx+PAGES_PER_PAGE);
-      el.innerHTML=`<thead><tr><th class="left">Page</th><th>Views</th><th>Users</th><th>Key events</th><th>Avg engt</th></tr></thead>`+
+      el.innerHTML=analyticsSortHead(PAGES_SORT_COLS,pagesSort,'pages')+
         `<tbody>${{pageRows.map(p=>{{const engt=p.users?p.engagement_seconds/p.users:0;return`<tr><td class="left"><span class="page-path" title="${{esc(p.page_path)}}">${{esc(p.page_path)}}</span></td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;}}). join('')}}</tbody>`;
       const tag=pagesSearchQuery?' (filtered)':'';
       setStatus('pagesStatus', `${{startIdx+1}}–${{startIdx+pageRows.length}} of ${{base.length}}${{tag}}`);
@@ -3494,12 +3544,13 @@ def render_bigquery_dashboard_page(
     function renderLanding() {{
       let base=landingRows;
       if (landingSearchQuery) {{ const q=landingSearchQuery.toLowerCase(); base=base.filter(r=>String(r.page_path).toLowerCase().includes(q)); }}
+      base=analyticsSort(base,LANDING_SORT_COLS,landingSort);
       const el=document.getElementById('landingTable');
       if (!base.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No landing pages match${{landingSearchQuery?' "'+esc(landingSearchQuery)+'"':' this range'}}.</td></tr></tbody>`; setStatus('landingStatus', landingSearchQuery?'No results':''); document.getElementById('landingPager').innerHTML=''; return; }}
       const totalPages=Math.max(1,Math.ceil(base.length/LANDING_PER_PAGE));
       if (landingPageNum>totalPages) landingPageNum=totalPages;
       const startIdx=(landingPageNum-1)*LANDING_PER_PAGE, rows=base.slice(startIdx,startIdx+LANDING_PER_PAGE);
-      el.innerHTML=`<thead><tr><th class="left">Landing page</th><th>Sessions</th><th>Users</th><th>New users</th><th>Key events</th><th>KE rate</th><th>Avg engt</th></tr></thead>`+
+      el.innerHTML=analyticsSortHead(LANDING_SORT_COLS,landingSort,'landing')+
         `<tbody>${{rows.map(r=>`<tr><td class="left"><span class="page-path" title="${{esc(r.page_path)}}">${{esc(r.page_path)}}</span></td><td>${{count(r.sessions)}}</td><td>${{count(r.users)}}</td><td>${{count(r.new_users)}}</td><td>${{count(r.key_events)}}</td><td>${{r.key_event_rate!=null?r.key_event_rate+'%':'—'}}</td><td>${{fmtDuration(r.avg_engagement_seconds)}}</td></tr>`).join('')}}</tbody>`;
       setStatus('landingStatus',`${{startIdx+1}}–${{startIdx+rows.length}} of ${{base.length}}`+(landingSearchQuery?' (filtered)':''));
       const pager=document.getElementById('landingPager');
