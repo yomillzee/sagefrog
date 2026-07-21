@@ -32,6 +32,14 @@ _HOURS_CSS = """
       justify-content:space-between; gap:12px; flex-wrap:wrap; }
     .page-head h2 { margin:0; font-size:1.15rem; color:var(--navy); }
     .sub { color:var(--muted); font-size:.86rem; margin:3px 0 0; }
+    .head-controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .seg { display:inline-flex; background:#eef2f7; border:1px solid var(--border);
+      border-radius:999px; padding:2px; gap:2px; }
+    .seg-btn { appearance:none; border:0; background:transparent; color:var(--muted);
+      border-radius:999px; padding:6px 13px; font:inherit; font-size:.8rem; font-weight:700;
+      cursor:pointer; white-space:nowrap; }
+    .seg-btn:hover { color:var(--navy); }
+    .seg-btn.is-active { background:#fff; color:var(--navy); box-shadow:0 1px 3px rgba(10,37,64,.12); }
     .refresh-btn { appearance:none; display:inline-flex; align-items:center; gap:7px;
       border:1px solid var(--border); background:#fff; color:var(--navy); border-radius:999px;
       padding:8px 14px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; flex:0 0 auto; }
@@ -97,13 +105,23 @@ _HOURS_CONTENT = """
         <h2>Client Hours</h2>
         <p class="sub" id="chSub">Loading Harvest hours…</p>
       </div>
-      <button type="button" class="refresh-btn" id="chRefresh" title="Pull fresh hours from Harvest">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
-          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        <span>Refresh</span>
-      </button>
+      <div class="head-controls">
+        <div class="seg" id="chMetric" role="group" aria-label="Hours type">
+          <button type="button" class="seg-btn is-active" data-metric="all">All hours</button>
+          <button type="button" class="seg-btn" data-metric="billable">Billable</button>
+        </div>
+        <div class="seg" id="chSort" role="group" aria-label="Sort order">
+          <button type="button" class="seg-btn is-active" data-sort="hours">Highest</button>
+          <button type="button" class="seg-btn" data-sort="alpha">A–Z</button>
+        </div>
+        <button type="button" class="refresh-btn" id="chRefresh" title="Pull fresh hours from Harvest">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          <span>Refresh</span>
+        </button>
+      </div>
     </div>
     <div id="chNotice"></div>
     <div class="grid" id="chGrid"></div>
@@ -116,6 +134,11 @@ def render_client_hours_page(*, user_email: str) -> str:
     const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const hrs = v => new Intl.NumberFormat('en-US',{maximumFractionDigits:1}).format(Number(v||0));
     let chData = null;
+    // View state (client-side only — the data carries both all + billable series,
+    // so toggling never re-hits Harvest). metric: all|billable, sort: hours|alpha.
+    const view = { metric: 'all', sort: 'hours' };
+    const seriesOf = c => (view.metric === 'billable' ? (c.series_billable || []) : (c.series || []));
+    const totalOf  = c => (view.metric === 'billable' ? Number(c.total_billable || 0) : Number(c.total_hours || 0));
 
     // On/off-track status by projecting the current run-rate to month end and
     // comparing it to the goal (range, floor, or single value):
@@ -130,8 +153,9 @@ def render_client_hours_page(*, user_email: str) -> str:
     function trackStatus(c, meta) {
       const lo = c.goal_min, hi = c.goal_max;
       if (lo == null && hi == null) return 'none';
+      const total = totalOf(c);
       const frac = meta.days_in_month ? meta.days_elapsed / meta.days_in_month : 0;
-      const projected = frac > 0 ? c.total_hours / frac : c.total_hours;
+      const projected = frac > 0 ? total / frac : total;
       if (lo != null && projected < lo * 0.95) return 'behind';
       if (hi != null && projected > hi * 1.03) return 'over';
       return 'on';
@@ -146,7 +170,7 @@ def render_client_hours_page(*, user_email: str) -> str:
       const lo = (c.goal_min != null && c.goal_min > 0) ? Number(c.goal_min) : null;
       const hi = (c.goal_max != null && c.goal_max > 0) ? Number(c.goal_max) : null;
       const gTop = (hi != null ? hi : lo);
-      const series = c.series || [];
+      const series = seriesOf(c);
       const st = STATUS[trackStatus(c, meta)] || STATUS.none;
       const actualMax = series.length ? Math.max.apply(null, series) : 0;
       const yMax = Math.max(actualMax, gTop || 0, 1) * 1.08;
@@ -213,10 +237,11 @@ def render_client_hours_page(*, user_email: str) -> str:
       const st = STATUS[stKey] || STATUS.none;
       const statusTxt = st.label
         ? ` · <span class="track" style="color:${st.color}">${st.label}</span>` : '';
+      const kind = view.metric === 'billable' ? 'billable' : 'logged';
       return `<div class="card">`
         + `<div class="card-head">`
           + `<div style="min-width:0"><div class="card-title" title="${esc(c.name)}">${esc(c.name)}</div>`
-          + `<div class="card-total"><b>${hrs(c.total_hours)}h</b> logged${statusTxt}</div></div>`
+          + `<div class="card-total"><b>${hrs(totalOf(c))}h</b> ${kind}${statusTxt}</div></div>`
           + goalEditor(c)
         + `</div>`
         + `<div class="chart-wrap">${chart(c, meta)}</div>`
@@ -238,13 +263,26 @@ def render_client_hours_page(*, user_email: str) -> str:
       return `${h}h ago`;
     }
 
+    function sortedClients(meta) {
+      const clients = (meta.clients || []).slice();
+      if (view.sort === 'alpha') {
+        clients.sort((a, b) => String(a.name||'').localeCompare(String(b.name||''),
+          undefined, { sensitivity: 'base' }));
+      } else {
+        clients.sort((a, b) => totalOf(b) - totalOf(a));
+      }
+      return clients;
+    }
+
     function render() {
       const meta = chData;
       const sub = document.getElementById('chSub');
       const t = meta.totals || {};
       const fresh = meta.refreshed_at ? ` · updated ${agoTxt(meta.refreshed_at)}` : '';
+      const totalShown = view.metric === 'billable' ? (t.total_billable || 0) : (t.total_hours || 0);
+      const kind = view.metric === 'billable' ? 'billable' : 'logged';
       sub.textContent = `${meta.month_label} · day ${meta.days_elapsed} of ${meta.days_in_month}`
-        + ` · ${(meta.clients||[]).length} clients · ${hrs(t.total_hours)}h logged`
+        + ` · ${(meta.clients||[]).length} clients · ${hrs(totalShown)}h ${kind}`
         + (meta.account_name ? ` · ${meta.account_name}` : '') + fresh;
 
       const notice = document.getElementById('chNotice');
@@ -255,7 +293,7 @@ def render_client_hours_page(*, user_email: str) -> str:
       } else notice.innerHTML = '';
 
       const grid = document.getElementById('chGrid');
-      const clients = meta.clients || [];
+      const clients = sortedClients(meta);
       if (!clients.length) {
         grid.innerHTML = meta.error ? '' : `<div class="empty">No hours logged yet this month.</div>`;
         return;
@@ -326,6 +364,20 @@ def render_client_hours_page(*, user_email: str) -> str:
       }
     }
     document.getElementById('chRefresh').addEventListener('click', () => load(true));
+
+    // Segmented controls (All/Billable hours, Highest/A–Z sort): update view
+    // state and re-render off the cached data — no Harvest round-trip.
+    function wireSeg(id, key, attr) {
+      const seg = document.getElementById(id);
+      seg.addEventListener('click', (ev) => {
+        const b = ev.target.closest('.seg-btn'); if (!b) return;
+        view[key] = b.dataset[attr];
+        seg.querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('is-active', x === b));
+        if (chData) render();
+      });
+    }
+    wireSeg('chMetric', 'metric', 'metric');
+    wireSeg('chSort', 'sort', 'sort');
     wireGoals();
     load(false);
   </script>"""
