@@ -92,6 +92,40 @@ _HOURS_CSS = """
       background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent);
       animation:sh 1.2s ease-in-out infinite; }
     @keyframes sh { 0%{transform:translateX(-100%);} 100%{transform:translateX(100%);} }
+    /* Tag-projects modal */
+    .modal-backdrop { position:fixed; inset:0; background:rgba(10,37,64,.42); z-index:120; }
+    .tag-modal { position:fixed; top:0; right:0; height:100vh; width:min(460px, 94vw); background:#fff;
+      z-index:121; display:flex; flex-direction:column; box-shadow:-12px 0 40px rgba(10,37,64,.22);
+      animation:slideIn .18s ease; }
+    @keyframes slideIn { from { transform:translateX(20px); opacity:.6; } to { transform:none; opacity:1; } }
+    .tag-modal-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+      padding:18px 20px 12px; border-bottom:1px solid var(--line); }
+    .tag-modal-head h2 { margin:0; font-size:1.05rem; color:var(--navy); }
+    .tag-modal-sub { margin:4px 0 0; font-size:.78rem; color:var(--muted); line-height:1.4; }
+    .tag-modal-close { appearance:none; border:0; background:#eef2f7; color:var(--muted); border-radius:8px;
+      width:30px; height:30px; font-size:.95rem; cursor:pointer; flex:0 0 auto; }
+    .tag-modal-close:hover { background:#e2e8f0; color:var(--navy); }
+    .tag-modal-search { padding:12px 20px; border-bottom:1px solid var(--line); }
+    .tag-modal-search input { width:100%; border:1px solid var(--border); border-radius:9px; padding:9px 12px;
+      font:inherit; font-size:.85rem; }
+    .tag-modal-body { overflow-y:auto; padding:8px 20px 24px; flex:1; }
+    .tag-client { margin-top:14px; }
+    .tag-client-name { font-weight:750; color:var(--navy); font-size:.82rem; text-transform:uppercase;
+      letter-spacing:.03em; margin-bottom:6px; }
+    .tag-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 0;
+      border-bottom:1px solid #f0f3f8; }
+    .tag-row:last-child { border-bottom:0; }
+    .tag-proj { min-width:0; }
+    .tag-proj-name { font-size:.88rem; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .tag-proj-hrs { font-size:.72rem; color:var(--muted); font-variant-numeric:tabular-nums; }
+    .tag-seg { display:inline-flex; background:#eef2f7; border:1px solid var(--border); border-radius:999px;
+      padding:2px; gap:2px; flex:0 0 auto; }
+    .tag-seg button { appearance:none; border:0; background:transparent; color:var(--muted); border-radius:999px;
+      padding:4px 10px; font:inherit; font-size:.74rem; font-weight:700; cursor:pointer; }
+    .tag-seg button.on[data-tag=""] { background:#fff; color:var(--navy); box-shadow:0 1px 2px rgba(10,37,64,.12); }
+    .tag-seg button.on[data-tag="retainer"] { background:#0a7f3f; color:#fff; }
+    .tag-seg button.on[data-tag="project"] { background:#2f6df0; color:#fff; }
+    .tag-empty { text-align:center; color:var(--muted); padding:30px 8px; }
     @media (max-width: 720px) {
       main { padding:16px 13px 44px; }
       .grid { grid-template-columns:1fr; }
@@ -106,6 +140,11 @@ _HOURS_CONTENT = """
         <p class="sub" id="chSub">Loading Harvest hours…</p>
       </div>
       <div class="head-controls">
+        <div class="seg" id="chScope" role="group" aria-label="Work type">
+          <button type="button" class="seg-btn is-active" data-scope="all">All work</button>
+          <button type="button" class="seg-btn" data-scope="retainer">Retainer</button>
+          <button type="button" class="seg-btn" data-scope="project">Project</button>
+        </div>
         <div class="seg" id="chMetric" role="group" aria-label="Hours type">
           <button type="button" class="seg-btn is-active" data-metric="all">All hours</button>
           <button type="button" class="seg-btn" data-metric="billable">Billable</button>
@@ -114,6 +153,13 @@ _HOURS_CONTENT = """
           <button type="button" class="seg-btn is-active" data-sort="hours">Highest</button>
           <button type="button" class="seg-btn" data-sort="alpha">A–Z</button>
         </div>
+        <button type="button" class="refresh-btn" id="chTag" title="Tag projects as retainer or project">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+            <line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+          <span>Tag projects</span>
+        </button>
         <button type="button" class="refresh-btn" id="chRefresh" title="Pull fresh hours from Harvest">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -125,7 +171,21 @@ _HOURS_CONTENT = """
     </div>
     <div id="chNotice"></div>
     <div class="grid" id="chGrid"></div>
-  </main>"""
+  </main>
+  <div class="modal-backdrop" id="tagBackdrop" hidden></div>
+  <aside class="tag-modal" id="tagModal" role="dialog" aria-modal="true" aria-label="Tag projects" hidden>
+    <header class="tag-modal-head">
+      <div>
+        <h2>Tag projects</h2>
+        <p class="tag-modal-sub">Mark each Harvest project as retainer or one-off project. Untagged projects show only under “All work”.</p>
+      </div>
+      <button type="button" class="tag-modal-close" id="tagClose" aria-label="Close">✕</button>
+    </header>
+    <div class="tag-modal-search">
+      <input type="text" id="tagSearch" placeholder="Search projects or clients…" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="tag-modal-body" id="tagBody"></div>
+  </aside>"""
 
 
 def render_client_hours_page(*, user_email: str) -> str:
@@ -134,11 +194,25 @@ def render_client_hours_page(*, user_email: str) -> str:
     const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const hrs = v => new Intl.NumberFormat('en-US',{maximumFractionDigits:1}).format(Number(v||0));
     let chData = null;
-    // View state (client-side only — the data carries both all + billable series,
-    // so toggling never re-hits Harvest). metric: all|billable, sort: hours|alpha.
-    const view = { metric: 'all', sort: 'hours' };
-    const seriesOf = c => (view.metric === 'billable' ? (c.series_billable || []) : (c.series || []));
-    const totalOf  = c => (view.metric === 'billable' ? Number(c.total_billable || 0) : Number(c.total_hours || 0));
+    // View state (client-side only — each client carries its projects with both
+    // all + billable series, so scope/metric/sort toggles never re-hit Harvest).
+    // scope: all|retainer|project · metric: all|billable · sort: hours|alpha.
+    const view = { scope: 'all', metric: 'all', sort: 'hours' };
+    // Projects the current scope selects: everything under "all"; only projects
+    // carrying the matching tag under "retainer"/"project" (untagged excluded).
+    function projectsInScope(c) {
+      const ps = c.projects || [];
+      return view.scope === 'all' ? ps : ps.filter(p => p.tag === view.scope);
+    }
+    // Cumulative series are additive across disjoint projects, so summing them
+    // elementwise gives the scope's cumulative series.
+    function sumSeries(ps, key) {
+      const out = [];
+      ps.forEach(p => { const s = p[key] || []; for (let i = 0; i < s.length; i++) out[i] = (out[i] || 0) + s[i]; });
+      return out;
+    }
+    const seriesOf = c => sumSeries(projectsInScope(c), view.metric === 'billable' ? 'series_billable' : 'series');
+    const totalOf  = c => { const s = seriesOf(c); return s.length ? s[s.length - 1] : 0; };
 
     // On/off-track status by projecting the current run-rate to month end and
     // comparing it to the goal (range, floor, or single value):
@@ -264,7 +338,9 @@ def render_client_hours_page(*, user_email: str) -> str:
     }
 
     function sortedClients(meta) {
-      const clients = (meta.clients || []).slice();
+      let clients = (meta.clients || []).slice();
+      // In a split scope, drop clients with no hours of that type this month.
+      if (view.scope !== 'all') clients = clients.filter(c => totalOf(c) > 0);
       if (view.sort === 'alpha') {
         clients.sort((a, b) => String(a.name||'').localeCompare(String(b.name||''),
           undefined, { sensitivity: 'base' }));
@@ -277,12 +353,13 @@ def render_client_hours_page(*, user_email: str) -> str:
     function render() {
       const meta = chData;
       const sub = document.getElementById('chSub');
-      const t = meta.totals || {};
       const fresh = meta.refreshed_at ? ` · updated ${agoTxt(meta.refreshed_at)}` : '';
-      const totalShown = view.metric === 'billable' ? (t.total_billable || 0) : (t.total_hours || 0);
+      const shown = sortedClients(meta);
+      const totalShown = shown.reduce((s, c) => s + totalOf(c), 0);
+      const scopeLabel = view.scope === 'retainer' ? 'retainer ' : (view.scope === 'project' ? 'project ' : '');
       const kind = view.metric === 'billable' ? 'billable' : 'logged';
       sub.textContent = `${meta.month_label} · day ${meta.days_elapsed} of ${meta.days_in_month}`
-        + ` · ${(meta.clients||[]).length} clients · ${hrs(totalShown)}h ${kind}`
+        + ` · ${shown.length} clients · ${hrs(totalShown)}h ${scopeLabel}${kind}`
         + (meta.account_name ? ` · ${meta.account_name}` : '') + fresh;
 
       const notice = document.getElementById('chNotice');
@@ -293,12 +370,14 @@ def render_client_hours_page(*, user_email: str) -> str:
       } else notice.innerHTML = '';
 
       const grid = document.getElementById('chGrid');
-      const clients = sortedClients(meta);
-      if (!clients.length) {
-        grid.innerHTML = meta.error ? '' : `<div class="empty">No hours logged yet this month.</div>`;
+      if (!shown.length) {
+        const msg = meta.error ? '' : (view.scope === 'all'
+          ? `<div class="empty">No hours logged yet this month.</div>`
+          : `<div class="empty">No ${view.scope} hours this month. Tag projects to populate this view.</div>`);
+        grid.innerHTML = msg;
         return;
       }
-      grid.innerHTML = clients.map(c => card(c, meta)).join('');
+      grid.innerHTML = shown.map(c => card(c, meta)).join('');
     }
 
     // Inline goal editing: toggle the input, POST on save, then re-render just
@@ -376,9 +455,89 @@ def render_client_hours_page(*, user_email: str) -> str:
         if (chData) render();
       });
     }
+    wireSeg('chScope', 'scope', 'scope');
     wireSeg('chMetric', 'metric', 'metric');
     wireSeg('chSort', 'sort', 'sort');
     wireGoals();
+
+    // ── Tag-projects modal ────────────────────────────────────────────────
+    // Lists every project seen this month (grouped by client) with a
+    // Untagged / Retainer / Project selector. Changing one persists via
+    // /project-tag and updates the in-memory data so the charts + scope views
+    // re-color immediately (no Harvest round-trip).
+    const tagModal = document.getElementById('tagModal');
+    const tagBackdrop = document.getElementById('tagBackdrop');
+    const tagBody = document.getElementById('tagBody');
+    const tagSearch = document.getElementById('tagSearch');
+
+    function tagSegHtml(p) {
+      const opts = [['', 'Untagged'], ['retainer', 'Retainer'], ['project', 'Project']];
+      const cur = p.tag || '';
+      return `<div class="tag-seg" data-pid="${esc(p.project_id)}">`
+        + opts.map(([val, lbl]) =>
+            `<button type="button" data-tag="${val}" class="${cur === val ? 'on' : ''}">${lbl}</button>`).join('')
+        + `</div>`;
+    }
+    function renderTagBody() {
+      const q = (tagSearch.value || '').trim().toLowerCase();
+      const clients = (chData && chData.clients || []).slice()
+        .sort((a, b) => String(a.name||'').localeCompare(String(b.name||''), undefined, { sensitivity:'base' }));
+      let html = '';
+      clients.forEach(c => {
+        const projs = (c.projects || []).filter(p => {
+          if (!q) return true;
+          return (p.name||'').toLowerCase().includes(q) || (c.name||'').toLowerCase().includes(q);
+        }).sort((a, b) => (b.total_hours||0) - (a.total_hours||0));
+        if (!projs.length) return;
+        html += `<div class="tag-client"><div class="tag-client-name">${esc(c.name)}</div>`;
+        projs.forEach(p => {
+          html += `<div class="tag-row" data-cid="${esc(c.harvest_client_id)}" data-cname="${esc(c.name)}" data-pname="${esc(p.name)}">`
+            + `<div class="tag-proj"><div class="tag-proj-name" title="${esc(p.name)}">${esc(p.name)}</div>`
+            + `<div class="tag-proj-hrs">${hrs(p.total_hours||0)}h this month</div></div>`
+            + tagSegHtml(p) + `</div>`;
+        });
+        html += `</div>`;
+      });
+      tagBody.innerHTML = html || `<div class="tag-empty">No projects match.</div>`;
+    }
+    function openTags() {
+      if (!chData || !chData.connected) { alert('Connect Harvest first.'); return; }
+      tagSearch.value = '';
+      renderTagBody();
+      tagBackdrop.hidden = false; tagModal.hidden = false;
+    }
+    function closeTags() { tagBackdrop.hidden = true; tagModal.hidden = true; }
+    document.getElementById('chTag').addEventListener('click', openTags);
+    document.getElementById('tagClose').addEventListener('click', closeTags);
+    tagBackdrop.addEventListener('click', closeTags);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !tagModal.hidden) closeTags(); });
+    tagSearch.addEventListener('input', renderTagBody);
+
+    tagBody.addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('.tag-seg button'); if (!btn) return;
+      const seg = btn.closest('.tag-seg'); const row = btn.closest('.tag-row');
+      const pid = seg.dataset.pid; const newTag = btn.dataset.tag;
+      const prev = seg.querySelector('button.on');
+      // Optimistic: reflect the choice immediately.
+      seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
+      try {
+        const body = new URLSearchParams({ harvest_project_id: pid, tag: newTag,
+          project_name: row.dataset.pname, client_name: row.dataset.cname });
+        const r = await fetch('/admin/client-hours/project-tag', { method:'POST', credentials:'same-origin',
+          headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
+        const b = await r.json().catch(()=>({}));
+        if (!r.ok || !b.ok) throw new Error(b.error || ('HTTP '+r.status));
+        // Update in-memory project tag across the dataset, then re-render charts.
+        (chData.clients || []).forEach(c => (c.projects || []).forEach(p => {
+          if (String(p.project_id) === String(pid)) p.tag = (b.tag || null);
+        }));
+        render();
+      } catch (e) {
+        if (prev) seg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === prev));
+        alert('Could not save tag: ' + (e.message||e));
+      }
+    });
+
     load(false);
   </script>"""
 

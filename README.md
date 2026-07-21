@@ -357,8 +357,13 @@ Harvest account id is captured automatically during connect (override with
 `HARVEST_ACCOUNT_ID` if the token can reach several accounts); `HARVEST_TIMEZONE`
 (default `America/New_York`) anchors the "current month / through today" window.
 The hours pull is cached in Postgres (`api_cache`) so repeated loads don't hit the
-Harvest API on every refresh — tune with `HARVEST_CACHE_TTL_SECONDS` (default `900`,
-`0` disables); the page's **Refresh** button forces a fresh pull.
+Harvest API on every refresh — tune with `HARVEST_CACHE_TTL_SECONDS` (default `6h`,
+`0` disables); the page's **Refresh** button forces a fresh pull. Hours can be viewed
+as all vs billable-only, sorted by highest or A–Z, and split into retainer vs project
+work — tag each Harvest project via the page's **Tag projects** panel (untagged
+projects count only under "All work"). Per-client monthly goals accept a single value,
+a range (`80-100`), or an open floor (`80+`), and the burn-up line is colored by
+on/off-track pace.
 
 ---
 

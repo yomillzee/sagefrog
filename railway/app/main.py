@@ -1951,6 +1951,40 @@ async def admin_client_hours_goal(
     })
 
 
+@app.post("/admin/client-hours/project-tag", include_in_schema=False)
+async def admin_client_hours_project_tag(
+    request: Request,
+    harvest_project_id: str = Form(...),
+    tag: str = Form(""),
+    project_name: str = Form(""),
+    client_name: str = Form(""),
+):
+    """Tag one Harvest project as 'retainer' or 'project' (blank clears the tag,
+    so it counts only under the 'All' scope)."""
+    user = await web_auth.require_admin(request)
+    import harvest_service
+
+    try:
+        harvest_service.set_project_tag(
+            harvest_project_id=harvest_project_id,
+            tag=tag,
+            project_name=project_name,
+            client_name=client_name,
+            updated_by=user.email,
+        )
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    audit_log.record(
+        action="harvest.project_tagged",
+        actor_email=user.email,
+        detail={"harvest_project_id": harvest_project_id, "tag": (tag or "").strip().lower() or None},
+        **audit_log.request_context(request),
+    )
+    return JSONResponse({"ok": True, "tag": (tag or "").strip().lower() or None})
+
+
 @app.get("/admin/docs", include_in_schema=False, response_class=HTMLResponse)
 def admin_docs(request: Request):
     """Admin-only 'Docs': how to set up a new client dashboard, in the portal."""

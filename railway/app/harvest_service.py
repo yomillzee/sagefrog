@@ -92,6 +92,20 @@ GOALS_SCHEMA_SQL_STATEMENTS = [
     """,
 ]
 
+# Admin-assigned classification of each Harvest project as retainer vs one-off
+# project work. Untagged projects (no row) count only under the "All" scope.
+PROJECT_TAGS_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS harvest_project_tags (
+  harvest_project_id TEXT PRIMARY KEY,
+  project_name       TEXT,
+  client_name        TEXT,
+  tag                TEXT NOT NULL,
+  updated_by         TEXT,
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+"""
+VALID_PROJECT_TAGS = frozenset({"retainer", "project"})
+
 
 # ---------------------------------------------------------------------------
 # Connection helpers
@@ -186,20 +200,22 @@ def _fetch_month_entries(
 def _cumulative_by_client(
     entries: list[dict[str, Any]], *, first: date, days_elapsed: int
 ) -> dict[str, dict[str, Any]]:
-    """Fold raw entries into ``{harvest_client_id: {name, daily, daily_billable}}``.
+    """Fold raw entries into ``{client_id: {name, projects: {project_id: {name,
+    daily, daily_billable}}}}``.
 
-    ``daily`` sums every entry's hours (billable + non-billable); ``daily_billable``
-    sums only entries flagged billable in Harvest, so the page can toggle between
-    the two without re-hitting the API. Entries are grouped by Harvest *client*
-    only — project/task (and any retainer-vs-project distinction) is not applied.
+    Hours are bucketed by Harvest client *and project* so the page can split a
+    client's hours into retainer vs one-off project work (admins tag each
+    project). ``daily`` sums every entry's hours; ``daily_billable`` sums only
+    entries flagged billable in Harvest.
     """
     by_client: dict[str, dict[str, Any]] = {}
     for e in entries:
         client = e.get("client") or {}
-        cid = str(client.get("id") or "").strip()
-        if not cid:
-            cid = "0"
-        name = str(client.get("name") or "").strip() or "(No client)"
+        cid = str(client.get("id") or "").strip() or "0"
+        cname = str(client.get("name") or "").strip() or "(No client)"
+        project = e.get("project") or {}
+        pid = str(project.get("id") or "").strip() or "0"
+        pname = str(project.get("name") or "").strip() or "(No project)"
         spent = str(e.get("spent_date") or "").strip()
         try:
             hours = float(e.get("hours") or 0)
@@ -214,20 +230,27 @@ def _cumulative_by_client(
         day_idx = d.day  # 1-based day of month
         if day_idx > days_elapsed:
             continue
-        slot = by_client.setdefault(cid, {"name": name, "daily": {}, "daily_billable": {}})
-        slot["name"] = name
-        slot["daily"][day_idx] = slot["daily"].get(day_idx, 0.0) + hours
+        cslot = by_client.setdefault(cid, {"name": cname, "projects": {}})
+        cslot["name"] = cname
+        pslot = cslot["projects"].setdefault(pid, {"name": pname, "daily": {}, "daily_billable": {}})
+        pslot["name"] = pname
+        pslot["daily"][day_idx] = pslot["daily"].get(day_idx, 0.0) + hours
         if bool(e.get("billable")):
-            slot["daily_billable"][day_idx] = slot["daily_billable"].get(day_idx, 0.0) + hours
+            pslot["daily_billable"][day_idx] = pslot["daily_billable"].get(day_idx, 0.0) + hours
     return by_client
 
 
 def _build_client_series(
     *, account_id: str, first: date, today: date, days_elapsed: int
 ) -> list[dict[str, Any]]:
-    """Pull the month's time entries from Harvest and fold them into a per-client
-    cumulative-hours series (no goals applied). This is the expensive, cacheable
-    part: one token refresh + paginated time_entries reads."""
+    """Pull the month's time entries from Harvest and fold them into per-client,
+    per-project cumulative-hours series (no goals/tags applied). This is the
+    expensive, cacheable part: one token refresh + paginated time_entries reads.
+
+    Each client carries a ``projects`` list; the page sums the projects a scope
+    (all / retainer / project) selects, so tag and scope changes never re-hit
+    Harvest.
+    """
     access_token = _access_token()
     entries = _fetch_month_entries(
         access_token=access_token, account_id=account_id, start=first, end=today
@@ -243,20 +266,32 @@ def _build_client_series(
         return series, round(running, 2)
 
     clients: list[dict[str, Any]] = []
-    for cid, slot in by_client.items():
-        series, total = _cumulate(slot["daily"])
-        series_b, total_b = _cumulate(slot["daily_billable"])
+    for cid, cslot in by_client.items():
+        projects: list[dict[str, Any]] = []
+        client_total = 0.0
+        for pid, pslot in cslot["projects"].items():
+            series, total = _cumulate(pslot["daily"])
+            series_b, _ = _cumulate(pslot["daily_billable"])
+            client_total += total
+            projects.append(
+                {
+                    "project_id": pid,
+                    "name": pslot["name"],
+                    "series": series,
+                    "series_billable": series_b,
+                    "total_hours": total,
+                }
+            )
+        projects.sort(key=lambda p: p["total_hours"], reverse=True)
         clients.append(
             {
                 "harvest_client_id": cid,
-                "name": slot["name"],
-                "total_hours": total,
-                "series": series,
-                "total_billable": total_b,
-                "series_billable": series_b,
+                "name": cslot["name"],
+                "projects": projects,
+                "_total": round(client_total, 2),
             }
         )
-    clients.sort(key=lambda c: c["total_hours"], reverse=True)
+    clients.sort(key=lambda c: c["_total"], reverse=True)
     return clients
 
 
@@ -367,17 +402,32 @@ def build_client_hours_overview(
 
     base["refreshed_at"] = refreshed_at
     goals = get_goals()
+    tags = get_project_tags()
     clients: list[dict[str, Any]] = []
     grand_total = 0.0
-    grand_billable = 0.0
     goal_min_total = 0.0
     goal_max_total = 0.0
     for c in series_clients:
         cid = str(c.get("harvest_client_id"))
-        total = float(c.get("total_hours") or 0.0)
-        total_b = float(c.get("total_billable") or 0.0)
-        grand_total += total
-        grand_billable += total_b
+        # Attach each project's current tag (retainer|project|None) fresh, so tag
+        # edits show without waiting out the hours cache. Projects are summed
+        # client-side per the selected scope.
+        projects = []
+        client_total = 0.0
+        for p in c.get("projects") or []:
+            pid = str(p.get("project_id"))
+            client_total += float(p.get("total_hours") or 0.0)
+            projects.append(
+                {
+                    "project_id": pid,
+                    "name": p.get("name"),
+                    "tag": tags.get(pid),
+                    "series": p.get("series") or [],
+                    "series_billable": p.get("series_billable") or [],
+                    "total_hours": float(p.get("total_hours") or 0.0),
+                }
+            )
+        grand_total += client_total
         goal = goals.get(cid) or {}
         goal_min = goal.get("min")
         goal_max = goal.get("max")
@@ -392,17 +442,13 @@ def build_client_hours_overview(
                 "goal_min": goal_min,
                 "goal_max": goal_max,
                 "goal_label": format_goal(goal_min, goal_max),
-                "total_hours": total,
-                "series": c.get("series") or [],
-                "total_billable": total_b,
-                "series_billable": c.get("series_billable") or [],
+                "projects": projects,
             }
         )
 
     base["clients"] = clients
     base["totals"] = {
         "total_hours": round(grand_total, 2),
-        "total_billable": round(grand_billable, 2),
         "goal_min": round(goal_min_total, 2),
         "goal_max": round(goal_max_total, 2),
     }
@@ -557,6 +603,85 @@ def set_goal(
               updated_at = NOW()
             """,
             (cid, (client_name or "").strip() or None, lo, hi, (updated_by or "").strip() or None),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Per-project retainer/project tags
+# ---------------------------------------------------------------------------
+
+
+def _ensure_project_tags_schema() -> bool:
+    if not _goals_enabled():
+        return False
+    with db.connection() as conn:
+        conn.execute(PROJECT_TAGS_SCHEMA_SQL)
+    return True
+
+
+def get_project_tags() -> dict[str, str]:
+    """Return ``{harvest_project_id: tag}`` for every tagged project."""
+    if not _goals_enabled():
+        return {}
+    try:
+        _ensure_project_tags_schema()
+        with db.connection() as conn:
+            rows = conn.execute(
+                "SELECT harvest_project_id, tag FROM harvest_project_tags WHERE tag IS NOT NULL"
+            ).fetchall()
+    except Exception as exc:
+        _log.warning("Harvest project tags read failed: %s", exc)
+        return {}
+    out: dict[str, str] = {}
+    for pid, tag in rows:
+        t = str(tag or "").strip().lower()
+        if t in VALID_PROJECT_TAGS:
+            out[str(pid)] = t
+    return out
+
+
+def set_project_tag(
+    *,
+    harvest_project_id: str,
+    tag: str | None,
+    project_name: str = "",
+    client_name: str = "",
+    updated_by: str = "",
+) -> None:
+    """Set a project's tag ('retainer' or 'project'), or clear it when tag is
+    blank/None (the project then counts only under the 'All' scope)."""
+    pid = (harvest_project_id or "").strip()
+    if not pid:
+        raise ValueError("harvest_project_id is required.")
+    if not _goals_enabled():
+        raise RuntimeError("DATABASE_URL is required to store Harvest project tags.")
+    _ensure_project_tags_schema()
+    t = (tag or "").strip().lower()
+    if not t:
+        with db.connection() as conn:
+            conn.execute("DELETE FROM harvest_project_tags WHERE harvest_project_id = %s", (pid,))
+        return
+    if t not in VALID_PROJECT_TAGS:
+        raise ValueError("Tag must be 'retainer' or 'project'.")
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO harvest_project_tags (harvest_project_id, project_name, client_name, tag, updated_by, updated_at)
+            VALUES (%s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (harvest_project_id) DO UPDATE SET
+              project_name = COALESCE(EXCLUDED.project_name, harvest_project_tags.project_name),
+              client_name = COALESCE(EXCLUDED.client_name, harvest_project_tags.client_name),
+              tag = EXCLUDED.tag,
+              updated_by = EXCLUDED.updated_by,
+              updated_at = NOW()
+            """,
+            (
+                pid,
+                (project_name or "").strip() or None,
+                (client_name or "").strip() or None,
+                t,
+                (updated_by or "").strip() or None,
+            ),
         )
 
 

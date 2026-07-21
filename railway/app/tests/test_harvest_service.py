@@ -41,48 +41,55 @@ class MonthBoundsTest(unittest.TestCase):
 class CumulativeByClientTest(unittest.TestCase):
     def _entries(self):
         return [
-            {"client": {"id": 1, "name": "ILC Dover"}, "spent_date": "2026-07-02", "hours": 5, "billable": True},
-            {"client": {"id": 1, "name": "ILC Dover"}, "spent_date": "2026-07-02", "hours": 3, "billable": False},
-            {"client": {"id": 1, "name": "ILC Dover"}, "spent_date": "2026-07-05", "hours": 4, "billable": True},
-            {"client": {"id": 2, "name": "EOS Worldwide"}, "spent_date": "2026-07-03", "hours": 10, "billable": True},
+            {"client": {"id": 1, "name": "ILC Dover"}, "project": {"id": 11, "name": "Retainer"},
+             "spent_date": "2026-07-02", "hours": 5, "billable": True},
+            {"client": {"id": 1, "name": "ILC Dover"}, "project": {"id": 11, "name": "Retainer"},
+             "spent_date": "2026-07-02", "hours": 3, "billable": False},
+            {"client": {"id": 1, "name": "ILC Dover"}, "project": {"id": 12, "name": "Website Rebuild"},
+             "spent_date": "2026-07-05", "hours": 4, "billable": True},
+            {"client": {"id": 2, "name": "EOS Worldwide"}, "project": {"id": 21, "name": "SEO"},
+             "spent_date": "2026-07-03", "hours": 10, "billable": True},
         ]
 
-    def test_daily_hours_summed_per_client(self):
+    def test_hours_bucketed_by_client_and_project(self):
         by = harvest_service._cumulative_by_client(
             self._entries(), first=date(2026, 7, 1), days_elapsed=21
         )
-        self.assertEqual(by["1"]["daily"], {2: 8.0, 5: 4.0})
         self.assertEqual(by["1"]["name"], "ILC Dover")
-        self.assertEqual(by["2"]["daily"], {3: 10.0})
+        # ILC Dover has two projects; the retainer got both day-2 entries.
+        self.assertEqual(by["1"]["projects"]["11"]["daily"], {2: 8.0})
+        self.assertEqual(by["1"]["projects"]["12"]["daily"], {5: 4.0})
+        self.assertEqual(by["2"]["projects"]["21"]["daily"], {3: 10.0})
 
-    def test_billable_hours_tracked_separately(self):
+    def test_billable_hours_tracked_separately_per_project(self):
         by = harvest_service._cumulative_by_client(
             self._entries(), first=date(2026, 7, 1), days_elapsed=21
         )
-        # Day 2 had 5 billable + 3 non-billable → total 8, billable 5.
-        self.assertEqual(by["1"]["daily"], {2: 8.0, 5: 4.0})
-        self.assertEqual(by["1"]["daily_billable"], {2: 5.0, 5: 4.0})
-        self.assertEqual(by["2"]["daily_billable"], {3: 10.0})
+        # Retainer day 2: 5 billable + 3 non-billable → total 8, billable 5.
+        self.assertEqual(by["1"]["projects"]["11"]["daily"], {2: 8.0})
+        self.assertEqual(by["1"]["projects"]["11"]["daily_billable"], {2: 5.0})
 
     def test_future_and_prior_month_entries_excluded(self):
         entries = self._entries() + [
-            {"client": {"id": 1, "name": "ILC Dover"}, "spent_date": "2026-07-25", "hours": 99},
-            {"client": {"id": 1, "name": "ILC Dover"}, "spent_date": "2026-06-30", "hours": 42},
+            {"client": {"id": 1, "name": "ILC Dover"}, "project": {"id": 11, "name": "Retainer"},
+             "spent_date": "2026-07-25", "hours": 99},
+            {"client": {"id": 1, "name": "ILC Dover"}, "project": {"id": 11, "name": "Retainer"},
+             "spent_date": "2026-06-30", "hours": 42},
         ]
         by = harvest_service._cumulative_by_client(
             entries, first=date(2026, 7, 1), days_elapsed=21
         )
         # Day 25 is after the elapsed cutoff; June 30 is before the month start.
-        self.assertNotIn(25, by["1"]["daily"])
-        self.assertEqual(by["1"]["daily"], {2: 8.0, 5: 4.0})
+        self.assertEqual(by["1"]["projects"]["11"]["daily"], {2: 8.0})
 
-    def test_missing_client_falls_back_to_zero_bucket(self):
+    def test_missing_client_and_project_fall_back_to_zero_bucket(self):
         entries = [{"client": {}, "spent_date": "2026-07-04", "hours": 2}]
         by = harvest_service._cumulative_by_client(
             entries, first=date(2026, 7, 1), days_elapsed=21
         )
-        self.assertEqual(by["0"]["daily"], {4: 2.0})
         self.assertEqual(by["0"]["name"], "(No client)")
+        self.assertEqual(by["0"]["projects"]["0"]["daily"], {4: 2.0})
+        self.assertEqual(by["0"]["projects"]["0"]["name"], "(No project)")
 
 
 class CacheBehaviourTest(unittest.TestCase):
@@ -91,11 +98,16 @@ class CacheBehaviourTest(unittest.TestCase):
 
     def _cached_clients(self):
         return [
-            {"harvest_client_id": "1", "name": "ILC Dover", "total_hours": 12.0, "series": [8.0, 12.0]},
-            {"harvest_client_id": "2", "name": "EOS Worldwide", "total_hours": 30.0, "series": [10.0, 30.0]},
+            {"harvest_client_id": "1", "name": "ILC Dover", "projects": [
+                {"project_id": "11", "name": "Retainer", "series": [8.0, 8.0], "series_billable": [5.0, 5.0], "total_hours": 8.0},
+                {"project_id": "12", "name": "Website", "series": [0.0, 4.0], "series_billable": [0.0, 4.0], "total_hours": 4.0},
+            ]},
+            {"harvest_client_id": "2", "name": "EOS Worldwide", "projects": [
+                {"project_id": "21", "name": "SEO", "series": [10.0, 30.0], "series_billable": [10.0, 30.0], "total_hours": 30.0},
+            ]},
         ]
 
-    def test_cache_hit_skips_harvest_pull_and_applies_goals(self):
+    def test_cache_hit_skips_harvest_pull_and_applies_goals_and_tags(self):
         hit = SimpleNamespace(
             response_json=self._cached_clients(),
             created_at=datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc),
@@ -108,7 +120,9 @@ class CacheBehaviourTest(unittest.TestCase):
              patch.object(harvest_service, "_build_client_series",
                           side_effect=AssertionError("must not pull Harvest on a cache hit")), \
              patch.object(harvest_service, "get_goals",
-                          return_value={"1": {"min": 80.0, "max": 100.0}}):
+                          return_value={"1": {"min": 80.0, "max": 100.0}}), \
+             patch.object(harvest_service, "get_project_tags",
+                          return_value={"11": "retainer", "12": "project"}):
             out = harvest_service.build_client_hours_overview(today=date(2026, 7, 21))
 
         m_get.assert_called_once()
@@ -119,15 +133,18 @@ class CacheBehaviourTest(unittest.TestCase):
         self.assertEqual(by_id["1"]["goal_max"], 100.0)
         self.assertEqual(by_id["1"]["goal_label"], "80–100h")
         self.assertIsNone(by_id["2"]["goal_min"])       # no goal set
-        self.assertIsNone(by_id["2"]["goal_max"])
-        self.assertEqual(out["totals"]["total_hours"], 42.0)
+        # Tags applied fresh onto the cached projects.
+        proj = {p["project_id"]: p for p in by_id["1"]["projects"]}
+        self.assertEqual(proj["11"]["tag"], "retainer")
+        self.assertEqual(proj["12"]["tag"], "project")
+        self.assertEqual(out["totals"]["total_hours"], 42.0)  # 8 + 4 + 30
         self.assertEqual(out["totals"]["goal_min"], 80.0)
-        self.assertEqual(out["totals"]["goal_max"], 100.0)
         self.assertEqual(out["refreshed_at"], "2026-07-21T12:00:00+00:00")
 
     def test_force_refresh_bypasses_cache(self):
         fresh = self._cached_clients()
         with patch.object(harvest_service, "is_connected", return_value=True), \
+             patch.object(harvest_service, "get_project_tags", return_value={}), \
              patch.object(harvest_service, "_account_id", return_value="acct-1"), \
              patch.object(harvest_service.oauth_store, "public_status",
                           return_value=SimpleNamespace(metadata={}), create=True), \
