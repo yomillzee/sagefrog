@@ -40,6 +40,22 @@ _HOURS_CSS = """
       cursor:pointer; white-space:nowrap; }
     .seg-btn:hover { color:var(--navy); }
     .seg-btn.is-active { background:#fff; color:var(--navy); box-shadow:0 1px 3px rgba(10,37,64,.12); }
+    /* Pace filters: toggle chips that narrow the grid to at-risk / growth clients.
+       Colors mirror the per-card status (red=behind, amber=over pace). */
+    .pace-filters { display:inline-flex; gap:6px; }
+    .pace-chip { appearance:none; display:inline-flex; align-items:center; gap:6px;
+      border:1px solid var(--border); background:#fff; color:var(--muted); border-radius:999px;
+      padding:7px 12px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; white-space:nowrap; }
+    .pace-chip .dot { width:8px; height:8px; border-radius:50%; flex:0 0 auto; }
+    .pace-chip b { font-variant-numeric:tabular-nums; }
+    .pace-chip:hover:not(:disabled) { border-color:#94a3b8; }
+    .pace-chip:disabled { opacity:.5; cursor:default; }
+    .pace-chip.risk .dot { background:#b42318; }
+    .pace-chip.grow .dot { background:#b7791f; }
+    .pace-chip.risk.on { border-color:#b42318; color:#b42318; background:#fef2f2; }
+    .pace-chip.grow.on { border-color:#b7791f; color:#b7791f; background:#fffbeb; }
+    .no-goal-note { align-self:center; color:var(--muted); font-size:.75rem; font-weight:600;
+      font-variant-numeric:tabular-nums; cursor:default; }
     .ch-search { position:relative; display:inline-flex; align-items:center; flex:0 0 auto; }
     .ch-search svg { position:absolute; left:12px; width:14px; height:14px; color:var(--muted);
       pointer-events:none; }
@@ -216,6 +232,15 @@ _HOURS_CONTENT = """
           <button type="button" class="seg-btn is-active" data-sort="hours">Highest</button>
           <button type="button" class="seg-btn" data-sort="alpha">A–Z</button>
         </div>
+        <div class="pace-filters" id="chStatus" role="group" aria-label="Pace filter">
+          <button type="button" class="pace-chip risk" data-status="behind" id="chRisk"
+            aria-pressed="false" title="Clients projected to finish under their contracted minimum">
+            <span class="dot"></span>At risk <b id="chRiskCount">0</b></button>
+          <button type="button" class="pace-chip grow" data-status="over" id="chGrow"
+            aria-pressed="false" title="Clients projected to finish over their ceiling — growth opportunities">
+            <span class="dot"></span>Growth <b id="chGrowCount">0</b></button>
+        </div>
+        <span class="no-goal-note" id="chNoGoal" hidden></span>
         <button type="button" class="refresh-btn" id="chTag" title="Tag projects as retainer or project">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -273,7 +298,9 @@ def render_client_hours_page(*, user_email: str) -> str:
     // total + billable series, so scope/metric/sort toggles never re-hit
     // Harvest). scope: all|retainer|project · metric: billable|nonbillable ·
     // sort: hours|alpha. Defaults: retainer work, billable hours.
-    const view = { scope: 'retainer', metric: 'billable', sort: 'hours', search: '' };
+    // status: null | 'behind' | 'over' — the pace filter chips narrow the grid to
+    // just the at-risk (behind their minimum) or growth (over their ceiling) book.
+    const view = { scope: 'retainer', metric: 'billable', sort: 'hours', search: '', status: null };
     // Projects the current scope selects: everything under "all"; only projects
     // carrying the matching tag under "retainer"/"project" (untagged excluded).
     function projectsInScope(c) {
@@ -425,10 +452,32 @@ def render_client_hours_page(*, user_email: str) -> str:
       return `${h}h ago`;
     }
 
-    function sortedClients(meta) {
+    // The book the current scope selects (before search / pace filters) — the
+    // universe both the grid and the pace-chip counts are drawn from.
+    function clientsInScope(meta) {
       let clients = (meta.clients || []).slice();
       // In a split scope, drop clients with no hours of that type this month.
       if (view.scope !== 'all') clients = clients.filter(c => totalOf(c) > 0);
+      return clients;
+    }
+    // Tally the scoped book by pace: behind (won't hit minimum) / over (past
+    // ceiling) / no goal set. Drives the At risk · Growth chip counts + the
+    // "N no goal" flag, so blind spots (clients that can't be paced) stay visible.
+    function paceCounts(meta) {
+      let risk = 0, grow = 0, noGoal = 0;
+      clientsInScope(meta).forEach(c => {
+        const s = trackStatus(c, meta);
+        if (s === 'behind') risk++;
+        else if (s === 'over') grow++;
+        else if (s === 'none') noGoal++;
+      });
+      return { risk, grow, noGoal };
+    }
+
+    function sortedClients(meta) {
+      let clients = clientsInScope(meta);
+      // Pace filter (At risk / Growth chips): keep only clients at that status.
+      if (view.status) clients = clients.filter(c => trackStatus(c, meta) === view.status);
       // Free-text name filter (case-insensitive substring) — the search bar
       // narrows the visible cards without re-hitting Harvest.
       const q = view.search.trim().toLowerCase();
@@ -535,10 +584,35 @@ def render_client_hours_page(*, user_email: str) -> str:
         + `</div>`;
     }
 
+    // Refresh the At risk / Growth chip counts + the "N no goal" flag from the
+    // current scope, and reflect which chip (if any) is the active filter.
+    function updatePaceChips(meta) {
+      const { risk, grow, noGoal } = paceCounts(meta);
+      const riskBtn = document.getElementById('chRisk');
+      const growBtn = document.getElementById('chGrow');
+      document.getElementById('chRiskCount').textContent = risk;
+      document.getElementById('chGrowCount').textContent = grow;
+      // Keep an active chip clickable (so it can toggle off) even if its count is 0.
+      riskBtn.disabled = risk === 0 && view.status !== 'behind';
+      growBtn.disabled = grow === 0 && view.status !== 'over';
+      riskBtn.classList.toggle('on', view.status === 'behind');
+      growBtn.classList.toggle('on', view.status === 'over');
+      riskBtn.setAttribute('aria-pressed', String(view.status === 'behind'));
+      growBtn.setAttribute('aria-pressed', String(view.status === 'over'));
+      const note = document.getElementById('chNoGoal');
+      if (noGoal > 0) {
+        note.hidden = false;
+        note.textContent = `${noGoal} no goal`;
+        note.title = `${noGoal} client${noGoal===1?'':'s'} in view ${noGoal===1?'has':'have'} no goal set`
+          + ` — set a goal to include ${noGoal===1?'it':'them'} in the at-risk read`;
+      } else note.hidden = true;
+    }
+
     function render() {
       const meta = chData;
       const sub = document.getElementById('chSub');
       const fresh = meta.refreshed_at ? ` · updated ${agoTxt(meta.refreshed_at)}` : '';
+      updatePaceChips(meta);
       const shown = sortedClients(meta);
       const totalShown = shown.reduce((s, c) => s + totalOf(c), 0);
       const scopeLabel = view.scope === 'retainer' ? 'retainer ' : (view.scope === 'project' ? 'project ' : '');
@@ -561,11 +635,21 @@ def render_client_hours_page(*, user_email: str) -> str:
       const grid = document.getElementById('chGrid');
       if (!shown.length) {
         const q = view.search.trim();
-        const msg = meta.error ? '' : (q
-          ? `<div class="empty">No clients match “${esc(q)}”.</div>`
-          : (view.scope === 'all'
-            ? `<div class="empty">No hours logged yet this month.</div>`
-            : `<div class="empty">No ${view.scope} hours this month. Tag projects to populate this view.</div>`));
+        let msg;
+        if (meta.error) msg = '';
+        else if (view.status) {
+          // Pace filter active but nothing matches (possibly narrowed further by search).
+          const lbl = view.status === 'behind' ? 'at-risk' : 'growth-opportunity';
+          msg = q
+            ? `<div class="empty">No ${lbl} clients match “${esc(q)}”.</div>`
+            : `<div class="empty">No ${lbl} clients in this view.</div>`;
+        } else if (q) {
+          msg = `<div class="empty">No clients match “${esc(q)}”.</div>`;
+        } else if (view.scope === 'all') {
+          msg = `<div class="empty">No hours logged yet this month.</div>`;
+        } else {
+          msg = `<div class="empty">No ${view.scope} hours this month. Tag projects to populate this view.</div>`;
+        }
         grid.innerHTML = msg;
         return;
       }
@@ -653,6 +737,13 @@ def render_client_hours_page(*, user_email: str) -> str:
     });
     wireSeg('chMetric', 'metric', 'metric');
     wireSeg('chSort', 'sort', 'sort');
+    // Pace filter chips: toggle the At risk / Growth filter (re-click clears it).
+    document.getElementById('chStatus').addEventListener('click', (ev) => {
+      const b = ev.target.closest('.pace-chip'); if (!b || b.disabled) return;
+      const s = b.dataset.status;
+      view.status = (view.status === s) ? null : s;
+      if (chData) render();
+    });
     wireGoals();
 
     // Client name search: filter the cards live off the cached data as the user
