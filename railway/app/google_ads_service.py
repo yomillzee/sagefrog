@@ -558,6 +558,7 @@ def fetch_campaign_daily_metrics(
         SELECT
           campaign.id,
           campaign.name,
+          campaign.advertising_channel_type,
           segments.date,
           metrics.impressions,
           metrics.clicks,
@@ -579,6 +580,10 @@ def fetch_campaign_daily_metrics(
             by_key[key] = {
                 "campaign_id": cid,
                 "campaign_name": _dig(row, "campaign", "name") or "",
+                # MessageToDict returns the enum name, e.g. "PERFORMANCE_MAX".
+                # Performance Max / Smart campaigns have no ad_group_ad rows, so
+                # this lets the explorer mart surface them at the campaign grain.
+                "channel_type": str(_dig(row, "campaign", "advertising_channel_type") or "") or None,
                 "metric_date": day,
                 "spend": 0.0,
                 "clicks": 0,
