@@ -2,7 +2,11 @@
 builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
+# No startCommand here on purpose: Railway exec's a railway.toml startCommand
+# directly (no shell), so "--port $PORT" reaches uvicorn as the literal string
+# "$PORT" and the container crashloops. Instead we let the Dockerfile's CMD run —
+# it is `sh -c "uvicorn … --port ${PORT:-8000}"`, which expands $PORT in a shell
+# and falls back to 8000 for local runs.
 [deploy]
-startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 restartPolicyType = "on_failure"
