@@ -46,7 +46,8 @@ DEFAULT_REJECT_SELECTORS: tuple[str, ...] = (
     ".ot-pc-refuse-all-handler",
     "#CybotCookiebotDialogBodyButtonDecline",
     "#CybotCookiebotDialogBodyLevelButtonLevelOptinDeclineAll",
-    "button[data-cky-tag='reject-button']",
+    "[data-cky-tag='reject-button']",
+    ".cky-btn-reject",
     ".cmplz-deny",
     "#tarteaucitronAllDenied2",
     "[data-consent-action='reject']",
@@ -58,7 +59,8 @@ DEFAULT_ACCEPT_SELECTORS: tuple[str, ...] = (
     "#onetrust-accept-btn-handler",
     "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
     "#CybotCookiebotDialogBodyButtonAccept",
-    "button[data-cky-tag='accept-button']",
+    "[data-cky-tag='accept-button']",
+    ".cky-btn-accept",
     ".cmplz-accept",
     "#tarteaucitronPersonalize2",
     "[data-consent-action='accept']",
@@ -101,23 +103,61 @@ _SIGNAL_JS = r"""
       out.gtag_consent_default = JSON.stringify(window.google_tag_data.ics.entries || {}).slice(0,500);
     }
   } catch(e){}
-  // Heuristic banner detection: a visible element whose text mentions cookies/consent
-  // and contains a button, or a known CMP container.
+  // ---- Banner detection ----------------------------------------------------
+  // Many CMPs (CookieYes injected via GTM, Usercentrics, some OneTrust setups)
+  // render the banner inside an open shadow root or a same-origin iframe, which a
+  // plain document.querySelector never sees. Collect every reachable document /
+  // shadow root first, then run detection across all of them so a shadow-DOM or
+  // iframed banner is not silently reported as "no banner".
+  const roots = [];
+  (function collectRoots(root, depth) {
+    if (!root || depth > 8) return;
+    roots.push(root);
+    let all;
+    try { all = root.querySelectorAll('*'); } catch(e){ return; }
+    for (const node of all) {
+      if (node.shadowRoot) collectRoots(node.shadowRoot, depth + 1);
+      // Descend into same-origin iframes only; cross-origin access throws and is
+      // simply skipped.
+      if (node.tagName === 'IFRAME') {
+        try {
+          const doc = node.contentDocument;
+          if (doc) collectRoots(doc, depth + 1);
+        } catch(e){}
+      }
+    }
+  })(document, 0);
+
+  const queryAll = (sel) => {
+    const hits = [];
+    for (const root of roots) {
+      try { for (const el of root.querySelectorAll(sel)) hits.push(el); } catch(e){}
+    }
+    return hits;
+  };
+
+  // Known CMP containers (including CookieYes' several banner class names).
   const known = ['#onetrust-banner-sdk','#CybotCookiebotDialog','#usercentrics-root',
-                 '.cky-consent-container','#cookie-banner','[aria-label*="cookie" i]',
-                 '.cc-window','#cookie-consent','#consent-banner'];
+                 '#usercentrics-cmp-ui','.cky-consent-container','.cky-consent-bar',
+                 '.cky-modal','#cookieyes','#cookie-banner','[aria-label*="cookie" i]',
+                 '.cc-window','#cookie-consent','#consent-banner','[id*="cookieyes" i]'];
   for (const sel of known) {
-    try { const el = document.querySelector(sel);
+    for (const el of queryAll(sel)) {
       if (vis(el)) { out.banner_detected = true;
-        out.banner_text = (el.innerText||'').slice(0,200); break; } } catch(e){}
+        out.banner_text = (el.innerText||'').slice(0,200); break; }
+    }
+    if (out.banner_detected) break;
   }
   if (!out.banner_detected) {
     try {
-      const nodes = document.querySelectorAll('div,section,aside,dialog');
+      const nodes = queryAll('div,section,aside,dialog');
       for (const el of nodes) {
         if (!vis(el)) continue;
         const t = (el.innerText||'');
-        if (t.length < 500 && /cookie|consent|privacy/i.test(t) && el.querySelector('button,a[role="button"]')) {
+        // Raise the length ceiling from 500 to 1500: real consent notices are often
+        // long. Still bounded so we don't match the whole page body.
+        if (t.length < 1500 && /cookie|consent|privacy/i.test(t)
+            && el.querySelector("button,a[role='button'],[data-cky-tag],input[type='button']")) {
           out.banner_detected = true; out.banner_text = t.slice(0,200); break;
         }
       }
