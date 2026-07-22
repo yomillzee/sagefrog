@@ -98,6 +98,7 @@ def _schema_campaign_daily(bq):
         bq.SchemaField("account_id",       "STRING",    mode="REQUIRED"),
         bq.SchemaField("campaign_id",      "STRING",    mode="REQUIRED"),
         bq.SchemaField("campaign_name",    "STRING",    mode="NULLABLE"),
+        bq.SchemaField("channel_type",     "STRING",    mode="NULLABLE"),
         bq.SchemaField("metric_date",      "DATE",      mode="REQUIRED"),
         bq.SchemaField("spend",            "FLOAT64",   mode="NULLABLE"),
         bq.SchemaField("impressions",      "INT64",     mode="NULLABLE"),
@@ -216,6 +217,7 @@ def create_google_ads_mart_views() -> dict[str, Any]:
     mart_dataset = _mart_dataset_id()
     raw_ad_table = f"`{project}.{raw_dataset}.ad_daily`"
     raw_kw_table = f"`{project}.{raw_dataset}.keyword_daily`"
+    raw_campaign_table = f"`{project}.{raw_dataset}.campaign_daily`"
     mart_ref = f"{project}.{mart_dataset}"
 
     client.create_dataset(bq.Dataset(mart_ref), exists_ok=True, timeout=30)
@@ -299,6 +301,14 @@ def create_google_ads_mart_views() -> dict[str, Any]:
             FROM {raw_ad_table}
             GROUP BY 1, 2, 3, 4, 6
         """,
+        # explorer_google_ads_daily is the denormalized table the Campaign
+        # Explorer UI reads. Ad-level rows come from ad_daily (ad_group_ad).
+        # Performance Max / Smart campaigns have NO ad_group_ad rows, so they'd
+        # be invisible in the explorer. We UNION campaign-level rows from
+        # campaign_daily for any campaign that has no ad-level rows at all,
+        # surfacing PMax at the campaign grain (a synthetic single node per
+        # campaign). Dedup is on client_key+campaign_id so campaigns with real
+        # ad rows are never double-counted.
         "explorer_google_ads_daily": f"""
             SELECT
               'google_ads' AS source,
@@ -328,6 +338,40 @@ def create_google_ads_mart_views() -> dict[str, Any]:
               conversions,
               conversion_value
             FROM {raw_ad_table}
+            UNION ALL
+            SELECT
+              'google_ads' AS source,
+              c.client_key,
+              c.account_id,
+              c.campaign_id,
+              c.campaign_name,
+              c.campaign_id AS ad_group_id,
+              INITCAP(REPLACE(COALESCE(NULLIF(c.channel_type, ''), 'CAMPAIGN'), '_', ' ')) AS ad_group_name,
+              c.campaign_id AS ad_id,
+              COALESCE(NULLIF(c.campaign_name, ''), c.campaign_id) AS ad_label,
+              CAST(NULL AS STRING) AS headline_1,
+              CAST(NULL AS STRING) AS headline_2,
+              CAST(NULL AS STRING) AS headline_3,
+              CAST(NULL AS STRING) AS description_1,
+              CAST(NULL AS STRING) AS description_2,
+              CAST(NULL AS STRING) AS headlines,
+              CAST(NULL AS STRING) AS descriptions,
+              CAST(NULL AS STRING) AS image_ad_name,
+              CAST(NULL AS STRING) AS ad_name,
+              CAST(NULL AS STRING) AS final_url,
+              INITCAP(REPLACE(COALESCE(NULLIF(c.channel_type, ''), 'CAMPAIGN'), '_', ' ')) AS ad_type,
+              c.metric_date AS date,
+              c.spend,
+              c.impressions,
+              c.clicks,
+              c.conversions,
+              c.conversion_value
+            FROM {raw_campaign_table} c
+            WHERE NOT EXISTS (
+              SELECT 1 FROM {raw_ad_table} a
+              WHERE a.client_key = c.client_key
+                AND a.campaign_id = c.campaign_id
+            )
         """,
     }
     views.update(_kw_view)
@@ -501,6 +545,7 @@ def sync_google_ads_to_bq(
             "account_id": customer_id_clean,
             "campaign_id": str(r.get("campaign_id") or ""),
             "campaign_name": r.get("campaign_name") or None,
+            "channel_type": r.get("channel_type") or None,
             "metric_date": r.get("metric_date") or "",
             "spend": float(r.get("spend") or 0.0),
             "impressions": int(r.get("impressions") or 0),
