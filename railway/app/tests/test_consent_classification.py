@@ -36,6 +36,37 @@ class HostMatchingTests(unittest.TestCase):
         self.assertEqual(kb.classify_vendor("https://www.googletagmanager.com/gtm.js?id=GTM-1").key, "gtm")
 
 
+class CookieYesTests(unittest.TestCase):
+    """CookieYes (frequently injected via GTM) must be recognised as a CMP so its
+    script/cookies are never mistaken for a tracking leak, and the banner is
+    attributed correctly."""
+
+    def test_script_host_is_cmp(self):
+        v = kb.classify_vendor("https://cdn-cookieyes.com/client_data/abc/script.js")
+        self.assertIsNotNone(v)
+        self.assertEqual(v.key, "cookieyes")
+        self.assertEqual(v.category, kb.CATEGORY_CONSENT)
+        self.assertTrue(v.is_cmp)
+
+    def test_consent_cookie_attributed_and_essential(self):
+        v = kb.classify_cookie_vendor("cookieyes-consent")
+        self.assertEqual(v.key, "cookieyes")
+        self.assertTrue(kb.is_essential_cookie("cookieyes-consent"))
+
+    def test_consent_cookie_not_flagged_as_identifier(self):
+        # The CookieYes consent cookie carries a long value but is strictly-necessary
+        # consent state, not a tracking identifier.
+        f = cc.classify_cookie(
+            {"name": "cookieyes-consent",
+             "value": "consentid:abcdef1234567890,action:yes,necessary:yes",
+             "domain": "brg.example"},
+            page_host="www.brg.example")
+        self.assertEqual(f.category, kb.CATEGORY_CONSENT)
+        self.assertFalse(f.carries_identifier)
+        r = ev.evaluate_finding(f.as_dict(), phase=ev.PHASE_PRE, expectations=ev.normalize_expectations(None))
+        self.assertFalse(r["is_violation"])
+
+
 class ConsentModeTests(unittest.TestCase):
     def test_gcs_denied_is_cookieless_ping(self):
         sig = kb.parse_consent_mode("https://www.google-analytics.com/g/collect?v=2&tid=G-1&gcs=G100&en=page_view")

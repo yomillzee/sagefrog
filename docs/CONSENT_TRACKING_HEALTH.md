@@ -81,6 +81,17 @@ scripts downloaded, every network request (method, resource type, body snippet),
 cookies, `localStorage`/`sessionStorage`, and consent signals (TCF `__tcfapi`,
 GPP, Google Consent Mode defaults, and whether a banner was actually shown).
 
+**Banner detection pierces shadow DOM and same-origin iframes.** Several CMPs —
+notably **CookieYes injected via Google Tag Manager**, and Usercentrics — render
+the banner inside an *open shadow root* (or a same-origin iframe) that a plain
+`document.querySelector` never sees, which would otherwise produce a false “no
+banner” verdict. The in-page detection walks every reachable shadow root and
+same-origin iframe document, matches known CookieYes containers
+(`.cky-consent-container`, `.cky-consent-bar`, …), and its Reject/Accept
+selectors are element-agnostic (`[data-cky-tag='reject-button']`) because
+CookieYes renders those controls as links, not buttons. Cross-origin iframes are
+unreadable by design (same-origin policy) and are skipped.
+
 ### Sites with no consent banner
 
 If a page has **no CMP at all**, the reject/accept phases cannot actuate a

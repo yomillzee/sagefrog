@@ -118,6 +118,11 @@ VENDORS: tuple[Vendor, ...] = (
     Vendor("usercentrics", "Usercentrics", CATEGORY_CONSENT,
            ("usercentrics.eu", "app.usercentrics.eu"), ("uc_",),
            "Consent management platform.", is_cmp=True),
+    Vendor("cookieyes", "CookieYes", CATEGORY_CONSENT,
+           ("cdn-cookieyes.com", "app.cookieyes.com", "cookieyes.com", "log.cookieyes.com"),
+           ("cookieyes-consent", "cky-consent", "cky-action", "cky_"),
+           "Consent management platform — often injected via Google Tag Manager.",
+           is_cmp=True),
     Vendor("cmp_generic", "Consent banner", CATEGORY_CONSENT,
            (), ("euconsent-v2", "__cmpconsent", "cookieconsent_status", "cookie_consent"),
            "Cookie-consent banner.", is_cmp=True),
@@ -268,6 +273,7 @@ _ESSENTIAL_COOKIE_NAMES: frozenset[str] = frozenset({
     "xsrf-token", "session", "sessionid", "jsessionid", "phpsessid",
     "optanonconsent", "optanonalertboxclosed", "cookieconsent", "cookieconsent_status",
     "euconsent-v2", "_iub_cs", "termly", "uc_settings",
+    "cookieyes-consent", "cky-consent", "cky-action",
 })
 
 
