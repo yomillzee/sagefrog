@@ -164,42 +164,40 @@ _HOURS_CSS = """
     .tag-seg button.on[data-tag="retainer"] { background:#0a7f3f; color:#fff; }
     .tag-seg button.on[data-tag="project"] { background:#2f6df0; color:#fff; }
     .tag-empty { text-align:center; color:var(--muted); padding:30px 8px; }
-    /* ── Agency billing summary card ─────────────────────────────────── */
+    /* ── Agency billing summary: one full-width billables burn-up ──────── */
     .summary { background:#fff; border:1px solid var(--line); border-radius:16px;
       box-shadow:0 6px 22px rgba(10,37,64,.06); padding:16px 18px 14px; margin-bottom:16px; }
-    .summary-head { display:flex; align-items:baseline; justify-content:space-between;
-      gap:10px 14px; flex-wrap:wrap; margin-bottom:13px; }
+    .summary-head { display:flex; align-items:flex-start; justify-content:space-between;
+      gap:12px 18px; flex-wrap:wrap; }
     .summary-head h3 { margin:0; font-size:.98rem; color:var(--navy); font-weight:800; }
-    .summary-head .s-note { color:var(--muted); font-size:.75rem; font-variant-numeric:tabular-nums; }
+    .summary-head .s-note { color:var(--muted); font-size:.75rem; margin-top:3px;
+      font-variant-numeric:tabular-nums; }
     .summary-head .s-note b { color:var(--ink); font-weight:700; }
-    .stat-row { display:grid; grid-template-columns:repeat(4, 1fr); gap:0; }
-    .stat { min-width:0; padding:0 16px; border-left:1px solid var(--line); }
-    .stat:first-child { padding-left:0; border-left:0; }
-    .stat .s-label { color:var(--muted); font-size:.7rem; text-transform:uppercase;
-      letter-spacing:.05em; font-weight:750; }
-    .stat .s-value { color:var(--navy); font-size:1.5rem; font-weight:800; line-height:1.1;
-      margin-top:4px; font-variant-numeric:tabular-nums; }
-    .stat .s-sub { color:var(--muted); font-size:.76rem; margin-top:3px; font-variant-numeric:tabular-nums; }
-    .stat .s-sub b { color:var(--ink); font-weight:700; }
-    /* Pacing meter: booked (solid) + projected (translucent) against a floor tick. */
-    .meter { position:relative; height:9px; border-radius:999px; background:#eef2f7; margin-top:9px; }
-    .meter .booked { position:absolute; left:0; top:0; bottom:0; border-radius:999px; }
-    .meter .proj { position:absolute; top:0; bottom:0; border-radius:0 999px 999px 0; opacity:.30; }
-    .meter .floor { position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--navy); border-radius:2px; }
-    .meter-legend { display:flex; align-items:center; gap:12px; margin-top:7px;
-      font-size:.68rem; color:var(--muted); }
-    .meter-legend span { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
-    .meter-legend i { width:12px; height:8px; border-radius:2px; display:inline-block; flex:0 0 auto; }
-    .meter-legend i.floor { width:2px; height:11px; background:var(--navy); border-radius:2px; }
+    /* Hero: estimated billable dollars for the month (the projected read). */
+    .s-hero { text-align:right; min-width:0; }
+    .s-hero-label { color:var(--muted); font-size:.7rem; text-transform:uppercase;
+      letter-spacing:.05em; font-weight:750; display:inline-flex; align-items:center; gap:7px; }
+    .s-pill { font-size:.66rem; font-weight:800; letter-spacing:.02em; text-transform:none;
+      border-radius:999px; padding:2px 8px; }
+    .s-hero-value { color:var(--navy); font-size:1.85rem; font-weight:800; line-height:1.04;
+      margin-top:3px; font-variant-numeric:tabular-nums; }
+    .s-hero-sub { color:var(--muted); font-size:.77rem; margin-top:3px; font-variant-numeric:tabular-nums; }
+    .s-hero-sub b { color:var(--ink); font-weight:700; }
+    .summary-chart { margin-top:14px; }
+    .summary-chart svg { display:block; width:100%; height:auto; }
+    .summary-legend { display:flex; flex-wrap:wrap; gap:8px 18px; align-items:center; margin-top:8px;
+      font-size:.72rem; color:var(--muted); }
+    .summary-legend span { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+    .summary-legend i { width:16px; height:0; border-top-width:2px; display:inline-block; flex:0 0 auto; }
     @media (max-width: 720px) {
       main { padding:16px 13px 44px; }
       .grid { grid-template-columns:1fr; }
       .head-controls { width:100%; }
       .ch-search { flex:1 1 100%; }
       .ch-search input { width:100%; }
-      .stat-row { grid-template-columns:1fr 1fr; gap:14px 0; }
-      .stat { padding:0 14px; }
-      .stat:nth-child(odd) { padding-left:0; border-left:0; }
+      .summary-head { flex-direction:column; }
+      .s-hero { text-align:left; }
+      .s-hero-label { justify-content:flex-start; }
     }"""
 
 
@@ -496,13 +494,16 @@ def render_client_hours_page(*, user_email: str) -> str:
     // the whole book. Deliberately independent of the Billable/Non-billable
     // metric toggle (a billing summary is billable by definition); it does honor
     // the scope dropdown so it always describes the same set as the cards below.
-    function scopeBillableHours(meta) {
-      let h = 0;
+    // Agency-wide cumulative billable series for the current scope: sum each
+    // client's scoped billable series elementwise (all share the same day index),
+    // so out[i] is total billable hours logged agency-wide through day i+1.
+    function scopeBillableSeries(meta) {
+      const out = [];
       (meta.clients || []).forEach(c => {
         const s = sumSeries(projectsInScope(c), 'series_billable');
-        h += s.length ? s[s.length - 1] : 0;
+        for (let i = 0; i < s.length; i++) out[i] = (out[i] || 0) + s[i];
       });
-      return h;
+      return out;
     }
     // Agency on/off-track from the pace projection vs the contracted floor/ceiling
     // — the same run-rate method the per-client cards use, one level up.
@@ -512,13 +513,85 @@ def render_client_hours_page(*, user_email: str) -> str:
       if (ceil && projected > ceil * 1.03) return 'over';
       return 'on';
     }
+    // One full-width burn-up: cumulative billable hours (solid, status-colored) vs
+    // the total contracted-minimum pace (dashed grey), with a dotted projection
+    // from today's run-rate to month-end. Dual axis — hours left, modeled $ right —
+    // so the same line reads as both hours logged and billable dollars.
+    function summaryChart(ctx) {
+      const { floor, series, actual, projected, elapsed, days, st, showFloor } = ctx;
+      const W = 960, H = 280, padL = 46, padR = 92, padT = 18, padB = 30;
+      const yMax = Math.max(actual, projected, showFloor ? floor : 0, 1) * 1.12;
+      const x = d => padL + (W - padL - padR) * ((d - 1) / Math.max(1, days - 1));
+      const y = v => H - padB - (H - padT - padB) * (v / yMax);
+
+      // Horizontal gridlines + hours labels on the left. Dollars are carried by the
+      // hero figure and the projection endpoint, so the axis stays a single scale.
+      let grid = '';
+      [0, 0.25, 0.5, 0.75, 1].forEach(f => {
+        const t = yMax * f, yy = y(t).toFixed(1);
+        grid += `<line x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}" stroke="var(--grid)" stroke-width="1"/>`;
+        grid += `<text x="${padL-8}" y="${(y(t)+3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="#94a3b8">${Math.round(t)}h</text>`;
+      });
+      // X axis day labels (1 · quarters · last).
+      let xlab = '';
+      Array.from(new Set([1, Math.round(days/4), Math.round(days/2), Math.round(days*3/4), days]))
+        .forEach(d => {
+          xlab += `<text x="${x(d).toFixed(1)}" y="${H-9}" text-anchor="middle" font-size="11" fill="#94a3b8">${d}</text>`;
+        });
+
+      // "Today" divider — where booked hours end and the projection takes over.
+      const tx = x(elapsed).toFixed(1);
+      const todayEl = elapsed < days
+        ? `<line x1="${tx}" y1="${y(0).toFixed(1)}" x2="${tx}" y2="${padT}" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="2 3"/>`
+        : '';
+
+      // Contracted-minimum pace: dashed grey line from (day 1, 0) to (month end, floor).
+      let goalEl = '';
+      if (showFloor && floor > 0) {
+        goalEl = `<line x1="${x(1).toFixed(1)}" y1="${y(0).toFixed(1)}" x2="${x(days).toFixed(1)}" y2="${y(floor).toFixed(1)}"`
+          + ` stroke="var(--goal)" stroke-width="1.6" stroke-dasharray="5 4"/>`
+          + `<text x="${(x(days)-2).toFixed(1)}" y="${(y(floor)-6).toFixed(1)}" text-anchor="end" font-size="10.5"`
+          + ` font-weight="700" fill="#8794a6">Contracted min ${hrs(floor)}h</text>`;
+      }
+
+      // Booked billable line (solid + soft fill) up to today, colored by track status.
+      let actualEl = '';
+      if (series.length) {
+        const pts = series.map((v, i) => `${x(i+1).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+        const area = `${x(1).toFixed(1)},${y(0).toFixed(1)} ${pts} ${tx},${y(0).toFixed(1)}`;
+        actualEl = `<polygon points="${area}" fill="${st.fill}"/>`
+          + `<polyline points="${pts}" fill="none" stroke="${st.color}" stroke-width="2.6"`
+          + ` stroke-linejoin="round" stroke-linecap="round"/>`
+          + `<circle cx="${tx}" cy="${y(actual).toFixed(1)}" r="3.4" fill="${st.color}"/>`;
+      }
+
+      // Projection: dotted continuation of the run-rate from today to month-end,
+      // ending at an annotated marker (projected hours + modeled dollars).
+      let projEl = '';
+      if (elapsed < days && projected > 0) {
+        const ex = x(days).toFixed(1), ey = y(projected).toFixed(1);
+        projEl = `<line x1="${tx}" y1="${y(actual).toFixed(1)}" x2="${ex}" y2="${ey}"`
+          + ` stroke="${st.color}" stroke-width="2" stroke-dasharray="2 4" stroke-linecap="round" opacity="0.7"/>`
+          + `<circle cx="${ex}" cy="${ey}" r="3.4" fill="#fff" stroke="${st.color}" stroke-width="2"/>`
+          + `<text x="${(x(days)+8).toFixed(1)}" y="${(y(projected)-2).toFixed(1)}" text-anchor="start"`
+          + ` font-size="11" font-weight="800" fill="${st.color}">${hrs(projected)}h</text>`
+          + `<text x="${(x(days)+8).toFixed(1)}" y="${(y(projected)+11).toFixed(1)}" text-anchor="start"`
+          + ` font-size="10" fill="#94a3b8">${usdK(projected*STANDARD_RATE)}</text>`;
+      }
+
+      return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Agency billable hours burn-up">`
+        + grid + xlab + todayEl + goalEl + actualEl + projEl + `</svg>`;
+    }
+
     function summaryCard(meta) {
       const box = document.getElementById('chSummary');
       const t = meta.totals || {};
       const floor = Number(t.goal_min || 0);   // Σ contracted minimums (agency-wide).
       const ceil  = Number(t.goal_max || 0);   // Σ ceilings (open "N+" floors contribute their floor).
-      const actual = scopeBillableHours(meta);
-      const frac = meta.days_in_month ? meta.days_elapsed / meta.days_in_month : 0;
+      const series = scopeBillableSeries(meta);
+      const actual = series.length ? series[series.length - 1] : 0;
+      const elapsed = meta.days_elapsed, days = meta.days_in_month;
+      const frac = days ? elapsed / days : 0;
       const projected = frac > 0 ? actual / frac : actual;
       const scopeLbl = view.scope === 'retainer' ? 'Retainer'
         : (view.scope === 'project' ? 'Project' : 'All work');
@@ -526,61 +599,35 @@ def render_client_hours_page(*, user_email: str) -> str:
       // a pure "Project" scope there's no contracted minimum to pace against. And
       // the on/off-track colouring only reads right in retainer scope (under "All"
       // the floor is beaten simply because project work is folded in), so there we
-      // still show the % but stay neutral.
+      // still show the line but stay neutral.
       const showFloor = floor > 0 && view.scope !== 'project';
       const stKey = (showFloor && view.scope === 'retainer')
         ? agencyStatus(projected, floor, ceil) : 'none';
       const st = STATUS[stKey] || STATUS.none;
-      const projSub = st.label
-        ? `${usd(projected * STANDARD_RATE)} · <span style="color:${st.color};font-weight:800">${st.label}</span>`
-        : `${usd(projected * STANDARD_RATE)}`;
 
-      // Tile 1: contracted minimum (+ ceiling if a range). Tile 4: pacing meter —
-      // both only when there's a floor; otherwise a plain projected-revenue tile.
-      let floorTile, lastTile;
-      if (showFloor) {
-        const floorRev = floor * STANDARD_RATE, projRev = projected * STANDARD_RATE;
-        const pct = floorRev > 0 ? Math.round(projRev / floorRev * 100) : 0;
-        const delta = projRev - floorRev;
-        const deltaTxt = delta >= 0 ? `+${usdK(delta)} over floor` : `${usdK(Math.abs(delta))} to floor`;
-        const ceilLbl = (ceil && ceil !== floor) ? `–${hrs(ceil)}` : '';
-        floorTile = `<div class="stat"><div class="s-label">Contracted minimum</div>`
-          + `<div class="s-value">${hrs(floor)}${ceilLbl}h</div>`
-          + `<div class="s-sub"><b>${usd(floorRev)}</b> floor @ $${STANDARD_RATE}/hr</div></div>`;
-        // Booked (solid) + projected (translucent) bars against a floor tick.
-        const smax = Math.max(projected, floor, actual, 1) * 1.08;
-        const bk = (actual / smax * 100).toFixed(1);
-        const pjw = Math.max(0, (projected - actual) / smax * 100).toFixed(1);
-        const fl = (floor / smax * 100).toFixed(1);
-        lastTile = `<div class="stat"><div class="s-label">Pacing vs floor</div>`
-          + `<div class="s-value" style="color:${st.color}">${pct}%</div>`
-          + `<div class="meter">`
-            + `<div class="booked" style="width:${bk}%;background:${st.color}"></div>`
-            + `<div class="proj" style="left:${bk}%;width:${pjw}%;background:${st.color}"></div>`
-            + `<div class="floor" style="left:${fl}%"></div></div>`
-          + `<div class="s-sub" style="margin-top:6px">${deltaTxt}</div></div>`;
-      } else {
-        floorTile = `<div class="stat"><div class="s-label">Contracted minimum</div>`
-          + `<div class="s-value" style="color:var(--muted)">—</div>`
-          + `<div class="s-sub">${floor > 0 ? 'Not paced under Project scope' : 'Set client goals to pace revenue'}</div></div>`;
-        lastTile = `<div class="stat"><div class="s-label">Projected revenue</div>`
-          + `<div class="s-value">${usdK(projected * STANDARD_RATE)}</div>`
-          + `<div class="s-sub">month-end @ $${STANDARD_RATE}/hr</div></div>`;
-      }
+      const projRev = projected * STANDARD_RATE, actualRev = actual * STANDARD_RATE;
+      const pill = st.label
+        ? `<span class="s-pill" style="color:${st.color};background:${st.fill}">${st.label}</span>` : '';
+      const floorNote = showFloor
+        ? ` · ${projRev >= floor*STANDARD_RATE ? '+' : '−'}${usdK(Math.abs(projRev - floor*STANDARD_RATE))} vs floor`
+        : '';
 
       box.className = 'summary';
-      box.innerHTML = `<div class="summary-head"><h3>Agency billing — ${esc(meta.month_label)}</h3>`
-        + `<span class="s-note">Billable · ${scopeLbl} · day <b>${meta.days_elapsed}</b> of ${meta.days_in_month}`
-        + ` · modeled @ $${STANDARD_RATE}/hr</span></div>`
-        + `<div class="stat-row">`
-        + floorTile
-        + `<div class="stat"><div class="s-label">Billable to date</div>`
-          + `<div class="s-value">${hrs(actual)}h</div>`
-          + `<div class="s-sub"><b>${usd(actual * STANDARD_RATE)}</b> billed</div></div>`
-        + `<div class="stat"><div class="s-label">Projected month-end</div>`
-          + `<div class="s-value">${hrs(projected)}h</div>`
-          + `<div class="s-sub">${projSub}</div></div>`
-        + lastTile
+      box.innerHTML = `<div class="summary-head">`
+        + `<div><h3>Agency billing — ${esc(meta.month_label)}</h3>`
+          + `<div class="s-note">Billable · ${scopeLbl} · day <b>${elapsed}</b> of ${days}`
+            + ` · modeled @ $${STANDARD_RATE}/hr</div></div>`
+        + `<div class="s-hero"><div class="s-hero-label">Est. billable this month${pill}</div>`
+          + `<div class="s-hero-value">${usd(projRev)}</div>`
+          + `<div class="s-hero-sub"><b>${usd(actualRev)}</b> booked · ${hrs(actual)}h logged${floorNote}</div></div>`
+        + `</div>`
+        + `<div class="summary-chart">`
+          + summaryChart({ floor, series, actual, projected, elapsed, days, st, showFloor })
+        + `</div>`
+        + `<div class="summary-legend">`
+          + `<span><i style="border-top-color:${st.color};border-top-style:solid"></i>Billable logged</span>`
+          + (showFloor ? `<span><i style="border-top-color:var(--goal);border-top-style:dashed"></i>Contracted minimum</span>` : '')
+          + (elapsed < days ? `<span><i style="border-top-color:${st.color};border-top-style:dotted"></i>Projected month-end</span>` : '')
         + `</div>`;
     }
 
