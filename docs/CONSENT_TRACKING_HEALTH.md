@@ -162,18 +162,24 @@ matters.
 ## Deployment notes (Playwright)
 
 The scanner uses Playwright's Chromium. `playwright` is in
-`railway/app/requirements.txt`, and the Railway build installs the browser
-automatically:
+`railway/app/requirements.txt`, and the browser ships **inside the deploy image**:
 
-- **`nixpacks.toml`** runs `playwright install --with-deps chromium` into
-  `/opt/pw-browsers` during the install phase (pulling the correct OS libraries
-  for the base image), and sets two runtime variables:
-  - `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers` — so the app finds the browser
-    installed at build time (the scanner also auto-detects the per-user cache and
-    tolerates the several on-disk layouts Playwright has used).
-  - `CONSENT_SCANNER_NO_SANDBOX=1` — the container runs as root, where Chromium
-    refuses to start its sandbox; the scanner passes `--no-sandbox` when this is
-    set.
+- **`railway/app/Dockerfile`** is based on `mcr.microsoft.com/playwright/python`,
+  which comes with Chromium **and** all its OS libraries pre-installed at
+  `/ms-playwright` (with `PLAYWRIGHT_BROWSERS_PATH` already set). This replaced the
+  old `nixpacks.toml`, which ran `playwright install --with-deps chromium` on every
+  build — an apt install of ~30-40 packages plus a ~150 MB browser download that
+  pushed deploys past 10 minutes. With the browser baked into the cached base
+  image, per-deploy work is just `pip install`, so builds are dramatically faster.
+  - The image tag is pinned to the same Playwright version as `requirements.txt`
+    (`v1.61.0`), so the bundled browser always matches the client library — **bump
+    both together**.
+  - `CONSENT_SCANNER_NO_SANDBOX=1` is set in the Dockerfile — the container runs as
+    root, where Chromium refuses to start its sandbox; the scanner passes
+    `--no-sandbox` when this is set (it also auto-detects root as a fallback).
+  - The scanner still auto-detects the browser across `PLAYWRIGHT_BROWSERS_PATH`,
+    `/opt/pw-browsers`, and the per-user cache, tolerating the several on-disk
+    layouts Playwright has used — so it also self-heals if the browser is missing.
 - **Other hosts:** point `CONSENT_SCANNER_CHROMIUM_PATH` at an existing Chromium,
   or run `python -m playwright install chromium` yourself.
 - **If unavailable:** the scanner returns `available=false` and the scan is
