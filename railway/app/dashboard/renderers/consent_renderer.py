@@ -196,11 +196,20 @@ def _key_numbers(result: dict[str, Any]) -> str:
     rej = pt.get("reject_all", {}).get("violation_count", 0)
     ids = s.get("identifiers_before_consent", 0)
     banner = f"{s.get('banner_pages', 0)}/{s.get('pages_scanned', 0)}"
+    # When no opt-out control was ever found, "Issues after Reject All" is not a
+    # measurable number — there was no Reject All to honour. Show it as n/a rather
+    # than a green "0" that would imply the site correctly stops tracking on opt-out.
+    if s.get("reject_control_found"):
+        reject_tile = ("Issues after “Reject All”", rej, "after opt-out",
+                       "danger" if rej else "ok", "reject_issues")
+    else:
+        reject_tile = ("Issues after “Reject All”", "n/a", "no opt-out control",
+                       "neutral", "reject_issues")
     # (label, value, sub, tone, tooltip-key)
     tiles = [
         ("Trackers before consent", ids, "should be 0", "danger" if ids else "ok", "identifiers"),
         ("Issues before consent", pre, "before any choice", "danger" if pre else "ok", "pre_issues"),
-        ("Issues after “Reject All”", rej, "after opt-out", "danger" if rej else "ok", "reject_issues"),
+        reject_tile,
         ("Cookieless pings", s.get("cookieless_pings", 0), "privacy-safe", "ok", "cookieless"),
         ("Third-party vendors", s.get("vendor_count", 0), "distinct companies", "neutral", "vendors"),
         ("Banner coverage", banner, "pages with a banner", "neutral", "banner"),
@@ -269,6 +278,7 @@ def _diff_section(result: dict[str, Any]) -> str:
 
 def _phase_compare(result: dict[str, Any]) -> str:
     pt = result.get("phase_totals", {})
+    reject_control_found = result.get("summary", {}).get("reject_control_found", True)
     cols = []
     for key, label, desc in PHASE_META:
         data = pt.get(key, {})
@@ -277,6 +287,9 @@ def _phase_compare(result: dict[str, Any]) -> str:
         counts = data.get("counts", {})
         vio = data.get("violation_count", 0)
         ident = data.get("identifier_count", 0)
+        # The reject phase only measures a real "rejected" state if an opt-out
+        # control was actually found; otherwise it just repeats the pre-consent load.
+        reject_no_control = key == "reject_all" and not reject_control_found
         bars = []
         for sev in ("critical", "high", "medium", "low", "info", "ok"):
             n = counts.get(sev, 0)
@@ -285,7 +298,10 @@ def _phase_compare(result: dict[str, Any]) -> str:
             m = SEVERITY_META[sev]
             bars.append(f'<span class="cth-cnt" style="color:{m["fg"]};background:{m["bg"]};border-color:{m["bd"]}">'
                         f'{n} {_esc(m["label"].lower())}</span>')
-        headline = (f'{vio} issue{"s" if vio != 1 else ""}' if vio else "No consent issues")
+        if reject_no_control:
+            headline = "No opt-out control found"
+        else:
+            headline = (f'{vio} issue{"s" if vio != 1 else ""}' if vio else "No consent issues")
         return_note = f'{ident} identifier{"s" if ident != 1 else ""} present'
         cols.append(f"""
         <div class="cth-phase cth-health-{status}">

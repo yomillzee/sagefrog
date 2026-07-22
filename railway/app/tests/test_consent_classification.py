@@ -159,6 +159,22 @@ class EvaluatorTests(unittest.TestCase):
              "vendor_key": "meta", "carries_identifier": True}
         r = self._ev(f, ev.PHASE_REJECT)
         self.assertTrue(r["is_violation"])
+        # A genuine reject that was clicked and ignored is phrased as such.
+        self.assertIn("Reject All", r["rationale"])
+
+    def test_reject_without_control_is_not_a_violation(self):
+        # No "Reject All" control was actuated (no banner / control not found): the
+        # reject phase repeats the pre-consent load and must not be re-counted, nor
+        # described as an ignored opt-out.
+        f = {"evidence": cc.EV_IDENTIFIER_STORED, "category": "advertising",
+             "vendor_key": "meta", "carries_identifier": True}
+        r = ev.evaluate_finding(f, phase=ev.PHASE_REJECT, expectations=self.exp,
+                                reject_effective=False)
+        self.assertFalse(r["is_violation"])
+        self.assertNotIn("clicked", r["rationale"])
+        # The same finding, before consent, is still a critical violation.
+        pre = self._ev(f, ev.PHASE_PRE)
+        self.assertTrue(pre["is_violation"])
 
     def test_beacon_without_id_before_consent_is_high(self):
         f = {"evidence": cc.EV_TRACKING_BEACON, "category": "analytics", "vendor_key": "ga4"}
