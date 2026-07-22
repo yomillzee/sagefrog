@@ -100,8 +100,17 @@ def evaluate_finding(
     *,
     phase: str,
     expectations: dict[str, Any],
+    reject_effective: bool = True,
 ) -> dict[str, Any]:
-    """Return the finding annotated with severity, is_violation, and a rationale."""
+    """Return the finding annotated with severity, is_violation, and a rationale.
+
+    ``reject_effective`` says whether a "Reject All" control was actually actuated
+    in the reject phase. When it is False (no banner, or no reject control could be
+    found), the reject phase is *not* a distinct rejected state — it simply repeats
+    the pre-consent load — so we must not phrase its findings as "after the visitor
+    clicked Reject All", nor count them as separate violations (that would double
+    the pre-consent leak and invent an opt-out the site never offered).
+    """
     category = str(finding.get("category") or kb.CATEGORY_UNKNOWN)
     evidence = str(finding.get("evidence") or "")
     vendor_key = str(finding.get("vendor_key") or "")
@@ -118,6 +127,17 @@ def evaluate_finding(
         severity = SEV_OK
         rationale = "Observed with full consent granted — expected."
         return _annotate(finding, severity, False, rationale)
+
+    # A reject phase where no "Reject All" was actually clicked is not a real
+    # rejected state: it is a re-run of the pre-consent load and is already judged
+    # there. Record it as inventory so it is never double-counted or described as an
+    # ignored opt-out.
+    if phase == PHASE_REJECT and not reject_effective:
+        return _annotate(
+            finding, SEV_INFO, False,
+            "No “Reject All” control was available on this page, so this repeats the "
+            "pre-consent state (judged under “Before consent”) rather than a distinct "
+            "rejected state.")
 
     consent_denied_phase = phase in (PHASE_PRE, PHASE_REJECT)
 
@@ -223,9 +243,18 @@ def evaluate_phase(
     phase: str,
     expectations: dict[str, Any],
     banner_detected: bool = True,
+    reject_effective: bool = True,
 ) -> dict[str, Any]:
-    """Evaluate one phase's findings and roll up its status + counts."""
-    evaluated = [evaluate_finding(f, phase=phase, expectations=expectations) for f in findings]
+    """Evaluate one phase's findings and roll up its status + counts.
+
+    ``reject_effective`` is threaded to :func:`evaluate_finding` and also reported
+    back on the phase so callers can tell a genuinely-clean reject from one where no
+    opt-out control existed to exercise.
+    """
+    evaluated = [
+        evaluate_finding(f, phase=phase, expectations=expectations, reject_effective=reject_effective)
+        for f in findings
+    ]
     counts = {s: 0 for s in _SEV_RANK}
     for ev in evaluated:
         counts[ev.get("severity", SEV_INFO)] = counts.get(ev.get("severity", SEV_INFO), 0) + 1
@@ -254,6 +283,9 @@ def evaluate_phase(
         "identifier_count": sum(1 for e in evaluated if e.get("carries_identifier")),
         "banner_detected": banner_detected,
         "banner_issue": banner_issue,
+        # For the reject phase: was an opt-out control actually actuated? (Always
+        # True for pre/accept, where the flag is irrelevant.)
+        "control_found": reject_effective,
     }
 
 

@@ -83,18 +83,33 @@ def build_result(
     }
     top_findings: list[dict[str, Any]] = []
     cookieless_ping_count = 0
+    cookieless_seen: set[tuple[str, str]] = set()
+    reject_control_found = False
 
     for page in scan_raw.get("pages", []) or []:
         url = str(page.get("url") or "")
         page_phases_raw = page.get("phases", {}) or {}
         banner = _authoritative_banner(page_phases_raw)
+        # Did the reject phase actually actuate an opt-out control? If not (no
+        # banner, or no reject button found), the reject phase is a re-run of the
+        # pre-consent load, not a distinct rejected state — the evaluator records it
+        # as inventory so its findings are never double-counted or mislabelled as an
+        # ignored "Reject All".
+        reject_click = bool(
+            (page_phases_raw.get(ev.PHASE_REJECT) or {}).get("interaction", {}).get("clicked")
+        )
+        if reject_click:
+            reject_control_found = True
         phase_out: dict[str, Any] = {}
         page_statuses: list[str] = []
 
         for phase in ev.PHASE_ORDER:
             cap = page_phases_raw.get(phase) or {}
             findings = [f.as_dict() for f in cc.classify_phase(cap)]
-            pe = ev.evaluate_phase(findings, phase=phase, expectations=exp, banner_detected=banner)
+            pe = ev.evaluate_phase(
+                findings, phase=phase, expectations=exp, banner_detected=banner,
+                reject_effective=(reject_click if phase == ev.PHASE_REJECT else True),
+            )
             phase_out[phase] = {
                 "status": pe["status"],
                 "phase_label": pe["phase_label"],
@@ -119,8 +134,14 @@ def build_result(
                 pt["counts"][sev] = pt["counts"].get(sev, 0) + n
 
             for f in pe["findings"]:
-                if f.get("evidence") == cc.EV_COOKIELESS_PING:
-                    cookieless_ping_count += 1
+                # "Cookieless pings before consent" is a pre-consent measure; the
+                # same ping recurs in every phase, so count it once, from the
+                # pre-consent load, deduped by signature.
+                if f.get("evidence") == cc.EV_COOKIELESS_PING and phase == ev.PHASE_PRE:
+                    sig = (url, str(f.get("signature") or ""))
+                    if sig not in cookieless_seen:
+                        cookieless_seen.add(sig)
+                        cookieless_ping_count += 1
                 _index_vendor(vendor_index, f, phase)
                 category_tally[f.get("category", kb.CATEGORY_UNKNOWN)] = (
                     category_tally.get(f.get("category", kb.CATEGORY_UNKNOWN), 0) + 1
@@ -173,6 +194,13 @@ def build_result(
     reject_violations = phase_totals[ev.PHASE_REJECT]["violation_count"]
     ids_before_consent = _count_identifier_violations(pages_out)
     banner_pages = sum(1 for p in pages_out if p["banner_detected"])
+    # No consent mechanism at all: the client requires a banner, we scanned pages,
+    # and not one showed a banner or offered a reject control. This is a distinct
+    # (and more fundamental) finding than "a CMP that leaks" — nothing is gated.
+    no_cmp = bool(
+        available and pages_out and exp.get("banner_required")
+        and banner_pages == 0 and not reject_control_found
+    )
 
     summary = {
         "pages_scanned": len(pages_out),
@@ -183,6 +211,8 @@ def build_result(
         "cookieless_pings": cookieless_ping_count,
         "banner_pages": banner_pages,
         "banner_required": bool(exp.get("banner_required")),
+        "reject_control_found": reject_control_found,
+        "no_cmp": no_cmp,
         "advertising_vendors": sum(1 for v in vendors if v["category"] == kb.CATEGORY_ADVERTISING),
         "analytics_vendors": sum(1 for v in vendors if v["category"] == kb.CATEGORY_ANALYTICS),
     }
@@ -254,12 +284,19 @@ def _index_vendor(index: dict[str, dict[str, Any]], finding: dict[str, Any], pha
 
 
 def _count_identifier_violations(pages_out: list[dict[str, Any]]) -> int:
+    """Distinct tracking identifiers that ran *before consent*.
+
+    Counts the pre-consent phase only and dedupes by signature: the same leak
+    reappears in the reject phase, but that is surfaced separately as "Issues after
+    Reject All" — folding it in here (as the code once did) double-counts every
+    identifier, which is especially wrong for a site with no consent banner, where
+    the reject phase is just a re-run of the pre-consent load.
+    """
     seen: set[str] = set()
     for p in pages_out:
-        for phase in (ev.PHASE_PRE, ev.PHASE_REJECT):
-            for f in (p["phases"].get(phase, {}).get("findings") or []):
-                if f.get("is_violation") and f.get("carries_identifier"):
-                    seen.add(f"{p['url']}|{phase}|{f.get('signature')}")
+        for f in (p["phases"].get(ev.PHASE_PRE, {}).get("findings") or []):
+            if f.get("is_violation") and f.get("carries_identifier"):
+                seen.add(f"{p['url']}|{f.get('signature')}")
     return len(seen)
 
 
@@ -270,6 +307,16 @@ def _headline(health: str, summary: dict[str, Any], available: bool, error: Any)
         return "No pages were scanned."
     ids = summary["identifiers_before_consent"]
     pre = summary["pre_consent_violations"]
+    # No consent mechanism found: lead with the root cause rather than describing
+    # per-tag leaks or a "Reject All" the site never offered.
+    if summary.get("no_cmp") and (ids or pre or summary.get("vendor_count")):
+        if ids:
+            return (f"No consent banner was detected, so nothing is gated: "
+                    f"{ids} tracking identifier{'s' if ids != 1 else ''} fired with no way "
+                    f"for the visitor to opt in or out. Install and configure a consent "
+                    f"banner before launch.")
+        return ("No consent banner was detected on the scanned page(s), so tracking runs with "
+                "no way for the visitor to opt in or out.")
     if health == ev.HEALTH_FAIL:
         if ids:
             return (f"{ids} tracking identifier{'s' if ids != 1 else ''} were set or sent "

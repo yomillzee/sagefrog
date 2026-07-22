@@ -16,12 +16,17 @@ import consent_scanner  # noqa: E402
 import consent_service as svc  # noqa: E402
 
 
-def _capture(url, phase, *, requests=None, cookies=None, storage=None, banner=True):
+def _capture(url, phase, *, requests=None, cookies=None, storage=None, banner=True,
+             clicked=None):
+    # By default a control is "clicked" in the reject/accept phases, matching a site
+    # with a working CMP. Pass clicked=False to model a page with no such control.
+    if clicked is None:
+        clicked = phase != "pre_consent"
     return {
         "url": url, "final_url": url, "phase": phase,
         "requests": requests or [], "scripts": [], "cookies": cookies or [],
         "storage": storage or [], "consent_signals": {"banner_detected": banner},
-        "banner_detected": banner, "interaction": {"clicked": phase != "pre_consent"},
+        "banner_detected": banner, "interaction": {"clicked": clicked},
         "errors": [],
     }
 
@@ -104,6 +109,57 @@ class BuildResultTests(unittest.TestCase):
                                  expectations=self.exp, previous_result=None)
         regressed = svc.build_result(self.raw, expectations=self.exp, previous_result=clean)
         self.assertGreaterEqual(len(regressed["diff"]["new_violations"]), 1)
+
+
+def _no_banner_page(url):
+    """A site with NO consent banner: the same identifiers fire in every phase and
+    no reject/accept control can be found (clicked=False)."""
+    meta_req = {"url": "https://www.facebook.com/tr?id=1&ev=PageView&_fbp=fb.1.1.9",
+                "resource_type": "image", "post_data_snippet": None}
+    fbp_cookie = {"name": "_fbp", "value": "fb.1.1700000000.9", "domain": "brg.example"}
+    ga_cookie = {"name": "_ga", "value": "GA1.1.111222333.444555666", "domain": "brg.example"}
+    def cap(phase):
+        return _capture(url, phase, requests=[meta_req], cookies=[fbp_cookie, ga_cookie],
+                        banner=False, clicked=False)
+    return {"url": url, "phases": {ph: cap(ph) for ph in ("pre_consent", "reject_all", "accept_all")}}
+
+
+class NoConsentBannerTests(unittest.TestCase):
+    """A site with no CMP at all: tags fire unconditionally. The report must name the
+    root cause once, not double-count it across pre-consent and a reject that never
+    happened."""
+
+    def setUp(self):
+        self.raw = {"available": True, "error": None, "engine": "chromium",
+                    "pages": [_no_banner_page("https://www.brg.example/")]}
+        self.res = svc.build_result(self.raw, expectations=svc.default_expectations())
+
+    def test_flagged_as_no_cmp(self):
+        s = self.res["summary"]
+        self.assertTrue(s["no_cmp"])
+        self.assertFalse(s["reject_control_found"])
+        self.assertEqual(s["banner_pages"], 0)
+        self.assertIn("no consent banner", s["headline"].lower())
+        self.assertEqual(self.res["health"], "fail")
+
+    def test_reject_phase_not_counted_when_no_control(self):
+        # The reject phase repeats the pre-consent load; it must add no violations.
+        self.assertEqual(self.res["summary"]["reject_violations"], 0)
+        self.assertEqual(self.res["phase_totals"]["reject_all"]["violation_count"], 0)
+
+    def test_no_fabricated_reject_all_rationale(self):
+        for f in self.res["pages"][0]["phases"]["reject_all"]["findings"]:
+            self.assertNotIn("clicked", f.get("rationale", ""))
+
+    def test_identifiers_before_consent_not_doubled(self):
+        # Three distinct identifier leaks fire before consent (the _fbp in the beacon
+        # URL, the _fbp cookie, the _ga cookie) — counted once each, not once per
+        # phase. The pre-buggy code summed pre + reject and reported six.
+        self.assertEqual(self.res["summary"]["identifiers_before_consent"], 3)
+
+    def test_top_findings_only_from_preconsent(self):
+        phases = {f["phase"] for f in self.res["top_findings"]}
+        self.assertEqual(phases, {"pre_consent"})
 
 
 class UrlGuardTests(unittest.TestCase):

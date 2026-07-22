@@ -81,6 +81,22 @@ scripts downloaded, every network request (method, resource type, body snippet),
 cookies, `localStorage`/`sessionStorage`, and consent signals (TCF `__tcfapi`,
 GPP, Google Consent Mode defaults, and whether a banner was actually shown).
 
+### Sites with no consent banner
+
+If a page has **no CMP at all**, the reject/accept phases cannot actuate a
+control (`interaction.clicked` is `False`) — they simply re-run the pre-consent
+load. The evaluator therefore treats a reject phase whose control was never
+clicked as *inventory, not a distinct rejected state*: its findings are recorded
+but are **not** counted as violations and are **not** phrased as “after the
+visitor clicked Reject All” (there was no Reject All to click). This prevents the
+pre-consent leak being double-counted and stops the report inventing an opt-out
+the site never offered. When no page shows a banner and none offers a reject
+control, the run is flagged `no_cmp` and the verdict leads with the root cause —
+“No consent banner was detected, so nothing is gated” — rather than a per-tag
+list. A site whose CMP *is* present but ignores Reject All (the control was
+clicked and tracking continued) is still flagged as a genuine reject violation,
+exactly as before.
+
 ### Data model (Postgres)
 
 - **`consent_scan_configs`** — one row per client: `pages` (JSONB), consent
