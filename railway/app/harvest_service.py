@@ -106,6 +106,38 @@ CREATE TABLE IF NOT EXISTS harvest_project_tags (
 """
 VALID_PROJECT_TAGS = frozenset({"retainer", "project"})
 
+# Admin-assigned account owner for each client — the team member who owns the
+# relationship. Purely a label/filter on the Client Hours page; a client with no
+# row is "unassigned". The canonical roster is shared with the renderer (chip +
+# owner filter) and the write endpoint (validation).
+CLIENT_OWNERS = (
+    "Alyssa",
+    "Kristen",
+    "Mike",
+    "Sam",
+    "Kelly",
+    "Payton",
+    "Sukh",
+    "Andre",
+    "Libby",
+    "Joliene",
+    "April",
+)
+VALID_OWNERS = frozenset(CLIENT_OWNERS)
+# Case-insensitive lookup so an owner posted in any casing maps to the canonical
+# spelling stored/displayed.
+_OWNER_BY_LOWER = {o.lower(): o for o in CLIENT_OWNERS}
+
+CLIENT_OWNERS_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS harvest_client_owners (
+  harvest_client_id TEXT PRIMARY KEY,
+  client_name       TEXT,
+  owner             TEXT NOT NULL,
+  updated_by        TEXT,
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+"""
+
 
 # ---------------------------------------------------------------------------
 # Connection helpers
@@ -403,6 +435,7 @@ def build_client_hours_overview(
     base["refreshed_at"] = refreshed_at
     goals = get_goals()
     tags = get_project_tags()
+    owners = get_client_owners()
     clients: list[dict[str, Any]] = []
     grand_total = 0.0
     goal_min_total = 0.0
@@ -442,6 +475,7 @@ def build_client_hours_overview(
                 "goal_min": goal_min,
                 "goal_max": goal_max,
                 "goal_label": format_goal(goal_min, goal_max),
+                "owner": owners.get(cid),
                 "projects": projects,
             }
         )
@@ -683,6 +717,79 @@ def set_project_tag(
                 (updated_by or "").strip() or None,
             ),
         )
+
+
+# ---------------------------------------------------------------------------
+# Per-client account owner
+# ---------------------------------------------------------------------------
+
+
+def _ensure_client_owners_schema() -> bool:
+    if not _goals_enabled():
+        return False
+    with db.connection() as conn:
+        conn.execute(CLIENT_OWNERS_SCHEMA_SQL)
+    return True
+
+
+def get_client_owners() -> dict[str, str]:
+    """Return ``{harvest_client_id: owner}`` for every client with an owner set."""
+    if not _goals_enabled():
+        return {}
+    try:
+        _ensure_client_owners_schema()
+        with db.connection() as conn:
+            rows = conn.execute(
+                "SELECT harvest_client_id, owner FROM harvest_client_owners WHERE owner IS NOT NULL"
+            ).fetchall()
+    except Exception as exc:
+        _log.warning("Harvest client owners read failed: %s", exc)
+        return {}
+    out: dict[str, str] = {}
+    for cid, owner in rows:
+        canon = _OWNER_BY_LOWER.get(str(owner or "").strip().lower())
+        if canon:
+            out[str(cid)] = canon
+    return out
+
+
+def set_client_owner(
+    *,
+    harvest_client_id: str,
+    owner: str | None,
+    client_name: str = "",
+    updated_by: str = "",
+) -> str | None:
+    """Set a client's account owner, or clear it when ``owner`` is blank/None.
+    Returns the canonical owner name stored (or None when cleared)."""
+    cid = (harvest_client_id or "").strip()
+    if not cid:
+        raise ValueError("harvest_client_id is required.")
+    if not _goals_enabled():
+        raise RuntimeError("DATABASE_URL is required to store client owners.")
+    _ensure_client_owners_schema()
+    raw = (owner or "").strip()
+    if not raw:
+        with db.connection() as conn:
+            conn.execute("DELETE FROM harvest_client_owners WHERE harvest_client_id = %s", (cid,))
+        return None
+    canon = _OWNER_BY_LOWER.get(raw.lower())
+    if not canon:
+        raise ValueError("Unknown owner.")
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO harvest_client_owners (harvest_client_id, client_name, owner, updated_by, updated_at)
+            VALUES (%s, %s, %s, %s, NOW())
+            ON CONFLICT (harvest_client_id) DO UPDATE SET
+              client_name = COALESCE(EXCLUDED.client_name, harvest_client_owners.client_name),
+              owner = EXCLUDED.owner,
+              updated_by = EXCLUDED.updated_by,
+              updated_at = NOW()
+            """,
+            (cid, (client_name or "").strip() or None, canon, (updated_by or "").strip() or None),
+        )
+    return canon
 
 
 @dataclass(frozen=True)

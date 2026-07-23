@@ -113,6 +113,23 @@ _HOURS_CSS = """
       white-space:nowrap; }
     .goal-btn:hover { border-color:#94a3b8; background:#fff; }
     .goal-btn .g-set { color:var(--accent); }
+    /* Account-owner chip on each card. Admin: a pill-shaped <select> (owner
+       color when set, muted "+ Owner" affordance when not). Read-only: a static
+       colored pill, hidden entirely when unassigned. --oc carries the owner's
+       deterministic color. */
+    .card-meta { display:flex; align-items:center; gap:8px; margin-top:6px; flex-wrap:wrap; }
+    .owner-select { appearance:none; border:1px solid var(--border); background:#fff;
+      background:linear-gradient(#fff,#fff); color:var(--muted); border-radius:999px;
+      padding:4px 26px 4px 12px; font:inherit; font-size:.74rem; font-weight:700; cursor:pointer;
+      max-width:170px; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235a6578' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat:no-repeat; background-position:right 10px center; }
+    .owner-select:hover { border-color:#94a3b8; }
+    .owner-select.on { border-color:var(--oc); color:var(--oc);
+      background-color:color-mix(in srgb, var(--oc) 9%, #fff); }
+    .owner-chip { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--oc);
+      color:var(--oc); background-color:color-mix(in srgb, var(--oc) 9%, #fff);
+      border-radius:999px; padding:4px 11px; font-size:.74rem; font-weight:700; white-space:nowrap; }
+    .owner-chip::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--oc); flex:0 0 auto; }
     /* Read-only goal label (shared view has no editor) */
     .goal-ro { color:var(--muted); font-size:.76rem; font-weight:700; white-space:nowrap; }
     .goal-ro b { color:var(--accent); }
@@ -303,11 +320,25 @@ _ADMIN_MODALS = """
   </div>"""
 
 
+def _owner_filter_options() -> str:
+    """<option>s for the top-of-page owner filter: All owners · each roster name
+    · Unassigned. The roster is shared with the backend (validation) and the
+    per-card chip (via CH_CONFIG)."""
+    import harvest_service
+
+    opts = ['<option value="">All owners</option>']
+    for name in harvest_service.CLIENT_OWNERS:
+        opts.append(f'<option value="{_esc(name)}">{_esc(name)}</option>')
+    opts.append('<option value="__none__">Unassigned</option>')
+    return "".join(opts)
+
+
 def _content_html(*, read_only: bool) -> str:
     """The page body (`<main>` + any admin modals). ``read_only`` drops every
     mutation control for the public shared view."""
     head_buttons = "" if read_only else _ADMIN_HEAD_BUTTONS
     modals = "" if read_only else _ADMIN_MODALS
+    owner_options = _owner_filter_options()
     return f"""
   <main>
     <div class="page-head">
@@ -328,6 +359,9 @@ def _content_html(*, read_only: bool) -> str:
           <option value="retainer" selected>Retainer</option>
           <option value="project">Project</option>
           <option value="all">All work</option>
+        </select>
+        <select id="chOwner" class="head-select" aria-label="Filter by owner">
+          {owner_options}
         </select>
         <div class="seg" id="chMetric" role="group" aria-label="Hours type">
           <button type="button" class="seg-btn is-active" data-metric="billable">Billable</button>
@@ -379,7 +413,33 @@ _PAGE_JS = r"""
     // sort: hours|alpha. Defaults: retainer work, billable hours.
     // status: null | 'behind' | 'over' — the pace filter chips narrow the grid to
     // just the at-risk (behind their minimum) or growth (over their ceiling) book.
-    const view = { scope: 'retainer', metric: 'billable', sort: 'hours', search: '', status: null };
+    // owner: '' = all · '__none__' = unassigned only · else a specific owner name.
+    const view = { scope: 'retainer', metric: 'billable', sort: 'hours', search: '', status: null, owner: '' };
+
+    // Deterministic owner → color, so each owner's chip reads the same everywhere.
+    const OWNER_COLORS = ['#2f6df0','#0a7f3f','#b7791f','#b42318','#7c3aed','#0e7490',
+      '#be185d','#4d7c0f','#c2410c','#0369a1','#9333ea','#15803d'];
+    function ownerColor(name) {
+      const s = String(name || ''); let h = 0;
+      for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+      return OWNER_COLORS[h % OWNER_COLORS.length];
+    }
+    // The account-owner control on each card: an editable pill-select for admins,
+    // a static colored chip in the read-only view (hidden when unassigned).
+    function ownerChip(c) {
+      const owner = c.owner || '';
+      if (CH_CONFIG.readOnly) {
+        return owner
+          ? `<span class="owner-chip" style="--oc:${ownerColor(owner)}">${esc(owner)}</span>`
+          : '';
+      }
+      const opts = ['<option value="">+ Owner</option>'].concat(
+        (CH_CONFIG.owners || []).map(o =>
+          `<option value="${esc(o)}"${o === owner ? ' selected' : ''}>${esc(o)}</option>`));
+      return `<select class="owner-select${owner ? ' on' : ''}" data-cid="${esc(c.harvest_client_id)}"`
+        + ` data-name="${esc(c.name)}" style="--oc:${owner ? ownerColor(owner) : '#cbd5e1'}"`
+        + ` aria-label="Owner for ${esc(c.name)}">${opts.join('')}</select>`;
+    }
     // Projects the current scope selects: everything under "all"; only projects
     // carrying the matching tag under "retainer"/"project" (untagged excluded).
     function projectsInScope(c) {
@@ -513,12 +573,14 @@ _PAGE_JS = r"""
       const statusTxt = st.label
         ? ` · <span class="track" style="color:${st.color}">${st.label}</span>` : '';
       const kind = metricLabel();
+      const ownerHtml = ownerChip(c);
       return `<div class="card">`
         + `<div class="card-head">`
           + `<div style="min-width:0"><div class="card-title" title="${esc(c.name)}">${esc(c.name)}</div>`
           + `<div class="card-total"><b>${hrs(totalOf(c))}h</b> ${kind}${statusTxt}</div></div>`
           + goalEditor(c)
         + `</div>`
+        + (ownerHtml ? `<div class="card-meta">${ownerHtml}</div>` : '')
         + `<div class="chart-wrap">${chart(c, meta)}</div>`
         + `<div class="legend"><span><i class="actual" style="border-top-color:${st.color}"></i>Hours logged</span>`
           + `<span><i class="goal"></i>${(c.goal_min != null && c.goal_max != null && c.goal_max !== c.goal_min) ? 'Goal range' : 'Goal pace'}</span></div>`
@@ -564,6 +626,9 @@ _PAGE_JS = r"""
       let clients = clientsInScope(meta);
       // Pace filter (At risk / Growth chips): keep only clients at that status.
       if (view.status) clients = clients.filter(c => trackStatus(c, meta) === view.status);
+      // Owner filter: a specific owner, or unassigned-only.
+      if (view.owner === '__none__') clients = clients.filter(c => !c.owner);
+      else if (view.owner) clients = clients.filter(c => c.owner === view.owner);
       // Free-text name filter (case-insensitive substring) — the search bar
       // narrows the visible cards without re-hitting Harvest.
       const q = view.search.trim().toLowerCase();
@@ -780,6 +845,12 @@ _PAGE_JS = r"""
           msg = q
             ? `<div class="empty">No ${lbl} clients match “${esc(q)}”.</div>`
             : `<div class="empty">No ${lbl} clients in this view.</div>`;
+        } else if (view.owner) {
+          const who = view.owner === '__none__'
+            ? 'unassigned clients' : `clients owned by ${esc(view.owner)}`;
+          msg = q
+            ? `<div class="empty">No ${who} match “${esc(q)}”.</div>`
+            : `<div class="empty">No ${who} in this view.</div>`;
         } else if (q) {
           msg = `<div class="empty">No clients match “${esc(q)}”.</div>`;
         } else if (view.scope === 'all') {
@@ -826,6 +897,10 @@ _PAGE_JS = r"""
     }
     document.getElementById('chScope').addEventListener('change', (ev) => {
       view.scope = ev.target.value;
+      if (chData) render();
+    });
+    document.getElementById('chOwner').addEventListener('change', (ev) => {
+      view.owner = ev.target.value;
       if (chData) render();
     });
     wireSeg('chMetric', 'metric', 'metric');
@@ -913,6 +988,35 @@ _PAGE_JS_ADMIN = r"""
         });
       }
       wireGoals();
+
+      // Owner chip: on select change, persist via /owner and update the in-memory
+      // client so the chip re-colors and the owner filter stays consistent (no
+      // Harvest round-trip). Delegated on the grid, which re-renders in place.
+      function wireOwners() {
+        const grid = document.getElementById('chGrid');
+        grid.addEventListener('change', async (ev) => {
+          const sel = ev.target.closest('.owner-select'); if (!sel) return;
+          const cid = sel.dataset.cid;
+          const owner = sel.value;
+          const client = (chData.clients || []).find(c => String(c.harvest_client_id) === String(cid));
+          const prev = client ? (client.owner || '') : '';
+          sel.disabled = true;
+          try {
+            const body = new URLSearchParams({ harvest_client_id: cid, client_name: sel.dataset.name, owner });
+            const r = await fetch('/admin/client-hours/owner', { method:'POST', credentials:'same-origin',
+              headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
+            const b = await r.json().catch(()=>({}));
+            if (!r.ok || !b.ok) throw new Error(b.error || ('HTTP '+r.status));
+            if (client) client.owner = b.owner || null;
+            render();
+          } catch (e) {
+            sel.disabled = false;
+            sel.value = prev;
+            alert('Could not save owner: ' + (e.message||e));
+          }
+        });
+      }
+      wireOwners();
 
       // ── Tag-projects modal ──────────────────────────────────────────────
       // Lists every project seen this month (grouped by client) with a
@@ -1090,7 +1194,13 @@ def _page_script(*, data_url: str, read_only: bool) -> str:
     shared chart/view code, and — for the admin view only — the mutation wiring.
     The read-only shared page never receives the admin block, so its source
     contains no admin endpoints or controls."""
-    config = "const CH_CONFIG = " + json.dumps({"dataUrl": data_url, "readOnly": read_only}) + ";"
+    import harvest_service
+
+    config = "const CH_CONFIG = " + json.dumps({
+        "dataUrl": data_url,
+        "readOnly": read_only,
+        "owners": list(harvest_service.CLIENT_OWNERS),
+    }) + ";"
     admin = "" if read_only else _PAGE_JS_ADMIN
     return (
         "<script>\n    " + config + "\n"

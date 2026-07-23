@@ -1985,6 +1985,38 @@ async def admin_client_hours_project_tag(
     return JSONResponse({"ok": True, "tag": (tag or "").strip().lower() or None})
 
 
+@app.post("/admin/client-hours/owner", include_in_schema=False)
+async def admin_client_hours_owner(
+    request: Request,
+    harvest_client_id: str = Form(...),
+    owner: str = Form(""),
+    client_name: str = Form(""),
+):
+    """Set one client's account owner (a team member's name), or clear it when
+    ``owner`` is blank. The owner is a label/filter on the Client Hours page."""
+    user = await web_auth.require_admin(request)
+    import harvest_service
+
+    try:
+        stored = harvest_service.set_client_owner(
+            harvest_client_id=harvest_client_id,
+            owner=owner,
+            client_name=client_name,
+            updated_by=user.email,
+        )
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    audit_log.record(
+        action="harvest.owner_set",
+        actor_email=user.email,
+        detail={"harvest_client_id": harvest_client_id, "owner": stored},
+        **audit_log.request_context(request),
+    )
+    return JSONResponse({"ok": True, "owner": stored})
+
+
 # ---------------------------------------------------------------------------
 # Client Hours share links: read-only, no-login views of the burn-up page.
 # Admins mint/list/revoke unguessable tokens (…/share*); the public routes
