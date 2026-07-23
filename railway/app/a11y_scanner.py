@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -416,3 +417,131 @@ def size_band(agg: dict[str, Any]) -> str:
     if crit >= 3 or total >= 10:
         return "Medium"
     return "Small"
+
+
+# ── Root-cause clustering ────────────────────────────────────────────────────
+# A raw axe report can read like hundreds of independent problems when most of
+# them are one broken template hit N times (e.g. a nav that emits 100 empty links
+# and 100 mis-parented <li>s). For scoping, what matters is the *root cause*, not
+# the element count. We cluster affected elements by a shared CSS-selector root so
+# a repeated component defect shows up as one item spanning many elements, across
+# whatever mix of rules it trips. This is a heuristic — labelled as "likely" in the
+# UI — not a claim of certainty.
+
+# Sibling-index pseudo-classes are exactly what differ between repeated instances
+# of the same component, so we strip them before comparing selectors.
+_NTH_RE = re.compile(r":nth-(?:child|of-type|last-child|last-of-type)\([^)]*\)")
+# Generic wrappers that carry no component identity — skip them when picking a root.
+_GENERIC_SEGMENTS = {"html", "body", ":root", "div", "span"}
+
+# Component-type hints, matched against the root selector to give a friendly label.
+_COMPONENT_HINTS: tuple[tuple[str, str], ...] = (
+    ("nav", "Navigation"), ("header", "Header"), ("footer", "Footer"),
+    ("menu", "Menu / navigation"), ("breadcrumb", "Breadcrumbs"),
+    ("form", "Form"), ("search", "Search"), ("table", "Table"),
+    ("modal", "Modal / dialog"), ("dialog", "Modal / dialog"),
+    ("carousel", "Carousel / slider"), ("slider", "Carousel / slider"),
+    ("accordion", "Accordion"), ("tab", "Tabs"), ("aside", "Sidebar"),
+    ("sidebar", "Sidebar"), ("hero", "Hero"), ("banner", "Banner"),
+    ("card", "Cards"), ("gallery", "Gallery"), ("main", "Main content"),
+    ("article", "Article body"), ("widget", "Widget"),
+)
+
+
+def _selector_of(node: dict[str, Any]) -> str:
+    target = node.get("target") or []
+    if isinstance(target, list):
+        # For iframe/shadow targets axe nests selectors; the last is the deepest.
+        return str(target[-1]) if target else ""
+    return str(target)
+
+
+def _component_key(selector: str, *, depth: int = 2) -> str:
+    """Reduce a node selector to a stable 'component root' others can group on.
+
+    Strips sibling indices, drops generic top-level wrappers, and keeps the first
+    ``depth`` meaningful path segments — so ``nav.main > ul > li:nth-child(9) > a``
+    and ``nav.main > ul > li:nth-child(2)`` and ``nav.main > ul`` all reduce to
+    ``nav.main > ul`` and cluster together.
+    """
+    norm = _NTH_RE.sub("", selector or "").strip()
+    if not norm:
+        return ""
+    segs = [s.strip() for s in norm.split(">") if s.strip()]
+
+    def _base(seg: str) -> str:
+        return seg.split(":")[0].split("[")[0].split(".")[0].split("#")[0].strip().lower()
+
+    meaningful = [s for s in segs if _base(s) not in _GENERIC_SEGMENTS]
+    if not meaningful:
+        meaningful = segs
+    return " > ".join(meaningful[:depth]) if meaningful else norm
+
+
+def _component_label(key: str) -> str | None:
+    low = key.lower()
+    for kw, label in _COMPONENT_HINTS:
+        if kw in low:
+            return label
+    return None
+
+
+def cluster_components(scan: dict[str, Any], *, min_component_elements: int = 5) -> list[dict[str, Any]]:
+    """Group violation elements by shared selector root — likely single root causes.
+
+    Returns a list of clusters (most significant first)::
+
+      {
+        "key": "nav.main > ul",       # the shared selector root
+        "label": "Navigation" | None, # friendly component type, if recognised
+        "element_count": 205,         # affected elements in this cluster
+        "page_count": 2,
+        "rules": [ {"id","impact","help","helpUrl","count"}, ... ],  # rules it trips
+        "rule_count": 3,
+        "worst_impact": "serious",
+        "is_component": True,         # heuristic: enough elements to be a shared component
+      }
+
+    A cluster with many elements spanning several rules is the tell-tale of one
+    broken template — fix it once, not per element.
+    """
+    clusters: dict[str, dict[str, Any]] = {}
+    for pg in scan.get("pages") or []:
+        page_url = pg.get("url", "")
+        for v in pg.get("violations") or []:
+            rid = v["id"]
+            impact = (v.get("impact") or "minor").lower()
+            for n in v.get("nodes") or []:
+                key = _component_key(_selector_of(n))
+                c = clusters.setdefault(key, {"key": key, "element_count": 0,
+                                              "pages": set(), "rules": {}})
+                c["element_count"] += 1
+                c["pages"].add(page_url)
+                rr = c["rules"].setdefault(rid, {"id": rid, "impact": impact,
+                                                 "help": v.get("help", ""),
+                                                 "helpUrl": v.get("helpUrl", ""), "count": 0})
+                rr["count"] += 1
+
+    out: list[dict[str, Any]] = []
+    for c in clusters.values():
+        rules = sorted(
+            c["rules"].values(),
+            key=lambda r: (IMPACT_ORDER.index(r["impact"]) if r["impact"] in IMPACT_ORDER else 9,
+                           -r["count"]),
+        )
+        worst = rules[0]["impact"] if rules else "minor"
+        out.append({
+            "key": c["key"],
+            "label": _component_label(c["key"]),
+            "element_count": c["element_count"],
+            "page_count": len(c["pages"]),
+            "rules": rules,
+            "rule_count": len(rules),
+            "worst_impact": worst,
+            "is_component": c["element_count"] >= min_component_elements,
+        })
+
+    out.sort(key=lambda c: (0 if c["is_component"] else 1,
+                            IMPACT_ORDER.index(c["worst_impact"]) if c["worst_impact"] in IMPACT_ORDER else 9,
+                            -c["element_count"]))
+    return out

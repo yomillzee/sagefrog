@@ -117,6 +117,25 @@ def _render_markdown(scan: dict, agg: dict, client: str) -> str:
                      f"{agg['nodes_by_impact'].get(impact, 0)} |")
     lines.append("")
 
+    # Root-cause grouping — a big element count is usually a few broken components
+    # repeated, not N independent jobs. Lead with that so the report isn't alarmist.
+    clusters = a11y_scanner.cluster_components(scan)
+    components = [c for c in clusters if c["is_component"]]
+    if components:
+        lines.append("## Likely root causes")
+        lines.append("")
+        lines.append(f"The {agg['total_nodes']} affected elements group into "
+                     f"**{len(clusters)} likely root cause(s)** — a repeated component usually means "
+                     "one template fix, not many. Biggest first:")
+        lines.append("")
+        lines.append("| Component | Root selector | Elements | Rules | Worst impact |")
+        lines.append("| --- | --- | ---: | --- | --- |")
+        for c in components:
+            name = c["label"] or "Repeated component"
+            rules = ", ".join(f"`{r['id']}`" for r in c["rules"])
+            lines.append(f"| {name} | `{c['key']}` | {c['element_count']} | {rules} | {c['worst_impact']} |")
+        lines.append("")
+
     if agg["rules"]:
         lines.append("## Highest-leverage fixes (most-affected rules first)")
         lines.append("")

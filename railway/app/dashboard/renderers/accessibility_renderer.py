@@ -71,6 +71,25 @@ _EXTRA_CSS = """
 .a11y-node .pg { color:#94a3b8; font-size:.72rem; margin-top:6px; }
 .a11y-node .snip { font-family:ui-monospace,Menlo,monospace; font-size:.72rem; color:#7c5e10; background:#fffdf5; border:1px solid #f3ead0; border-radius:6px; padding:4px 6px; margin-top:6px; white-space:pre-wrap; word-break:break-all; }
 .a11y-more { color:#64748b; font-size:.78rem; padding:8px 14px; }
+/* Root-cause / component grouping */
+.a11y-banner { background:#fef2f2; border:1px solid #fecaca; color:#7a271a; border-radius:12px; padding:14px 16px; margin-bottom:18px; font-size:.9rem; line-height:1.5; }
+.a11y-banner strong { color:#b42318; }
+.a11y-comp { border:1px solid #e6eaf0; border-left:4px solid #cbd5e1; border-radius:12px; padding:14px 16px; margin-bottom:12px; background:#fff; }
+.a11y-comp.sev-critical { border-left-color:#ef4444; } .a11y-comp.sev-serious { border-left-color:#f97316; }
+.a11y-comp.sev-moderate { border-left-color:#f59e0b; } .a11y-comp.sev-minor { border-left-color:#94a3b8; }
+.a11y-comp-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+.a11y-comp-name { font-size:1rem; font-weight:700; color:#0f172a; }
+.a11y-comp-root { font-family:ui-monospace,Menlo,monospace; font-size:.76rem; color:#64748b; word-break:break-all; }
+.a11y-comp-meta { color:#475569; font-size:.83rem; margin:6px 0 8px; }
+.a11y-comp-meta b { color:#0f172a; }
+.a11y-comp-rules { list-style:none; margin:0; padding:0; }
+.a11y-comp-rules li { display:flex; align-items:center; gap:8px; padding:4px 0; font-size:.82rem; border-top:1px solid #f4f6fa; }
+.a11y-comp-rules li:first-child { border-top:none; }
+.a11y-comp-rules .rc { color:#64748b; font-variant-numeric:tabular-nums; }
+.a11y-comp-rules .rn { font-family:ui-monospace,Menlo,monospace; font-size:.78rem; }
+.a11y-comp-rules a { color:#0b5cab; text-decoration:none; font-size:.78rem; margin-left:auto; }
+.a11y-comp-fix { color:#15803d; font-size:.8rem; margin-top:8px; font-weight:600; }
+.a11y-other { color:#64748b; font-size:.82rem; margin-top:6px; }
 """
 
 # Cap elements listed per rule so a page with hundreds of identical failures (e.g.
@@ -86,6 +105,80 @@ def _impact_pill(impact: str) -> str:
 
 def _multiline(text: str) -> str:
     return _esc(text or "").replace("\n", "<br>")
+
+
+def _grouped_html(clusters: list[dict[str, Any]], agg: dict[str, Any]) -> str:
+    """Root-cause view: cluster elements by shared component so a repeated template
+    defect reads as ONE prioritised item, not N line items. Leads the report."""
+    if not clusters:
+        return ""
+    components = [c for c in clusters if c["is_component"]]
+    total_nodes = agg.get("total_nodes", 0) or 0
+
+    # Dominant-component banner: when one component accounts for a big share of all
+    # affected elements, say so up front — this is the number that reframes the audit.
+    banner = ""
+    if components:
+        top = components[0]
+        share = top["element_count"] / total_nodes if total_nodes else 0
+        if top["element_count"] >= 8 and share >= 0.4:
+            name = top["label"] or "one shared component"
+            banner = (
+                f'<div class="a11y-banner">⚠️ <strong>~{top["element_count"]} of {total_nodes} '
+                f'affected elements</strong> trace to <strong>{_esc(name.lower() if top["label"] else name)}</strong> '
+                f'(<span class="a11y-comp-root">{_esc(top["key"])}</span>). This is very likely a single '
+                f'template/component defect — fixing it once resolves most of this audit, not '
+                f'{top["element_count"]} separate tasks.</div>'
+            )
+
+    def _comp_card(c: dict[str, Any]) -> str:
+        sev = c["worst_impact"] if c["worst_impact"] in _IMPACT_META else "minor"
+        name = c["label"] or "Repeated component"
+        rules_li = ""
+        for r in c["rules"]:
+            help_link = (f'<a href="{_esc(r["helpUrl"])}" target="_blank" rel="noopener">Guidance &rarr;</a>'
+                         if r.get("helpUrl") else "")
+            rules_li += (f'<li>{_impact_pill(r["impact"])}<span class="rn">{_esc(r["id"])}</span>'
+                         f'<span class="rc">— {r["count"]} element{"s" if r["count"] != 1 else ""}</span>'
+                         f'{help_link}</li>')
+        pages = f' · {c["page_count"]} page{"s" if c["page_count"] != 1 else ""}' if c["page_count"] else ""
+        fix = ('<div class="a11y-comp-fix">Likely one shared template — fix once.</div>'
+               if c["is_component"] else "")
+        return f"""
+        <div class="a11y-comp sev-{sev}">
+          <div class="a11y-comp-head">
+            <span class="a11y-comp-name">{_esc(name)}</span>
+            <span class="a11y-comp-root">{_esc(c['key'])}</span>
+          </div>
+          <div class="a11y-comp-meta"><b>~{c['element_count']} affected element{'s' if c['element_count'] != 1 else ''}</b>
+            across {c['rule_count']} rule{'s' if c['rule_count'] != 1 else ''}{pages}</div>
+          <ul class="a11y-comp-rules">{rules_li}</ul>
+          {fix}
+        </div>"""
+
+    if components:
+        cards = "".join(_comp_card(c) for c in components)
+        other = len(clusters) - len(components)
+        other_line = (f'<p class="a11y-other">Plus {other} smaller, one-off issue group(s) — '
+                      f'see the full list below.</p>' if other else "")
+        sub = ("Elements grouped by the component they come from. A group spanning many elements "
+               "and rules is usually one template defect — fix it once.")
+    else:
+        # No repeated component — still group, but don't imply a shared root cause.
+        cards = "".join(_comp_card(c) for c in clusters[:8])
+        other = len(clusters) - min(len(clusters), 8)
+        other_line = (f'<p class="a11y-other">Plus {other} more group(s) — see the full list below.</p>'
+                      if other else "")
+        sub = "Issues grouped by where they occur. No single component dominates this audit."
+
+    return f"""
+    <div class="a11y-card">
+      <h2>Likely root causes</h2>
+      <p class="a11y-sub">{sub}</p>
+      {banner}
+      {cards}
+      {other_line}
+    </div>"""
 
 
 def _all_issues_html(scan: dict[str, Any]) -> str:
@@ -160,15 +253,21 @@ def _all_issues_html(scan: dict[str, Any]) -> str:
 
 
 def _results_html(scan: dict[str, Any], agg: dict[str, Any]) -> str:
+    import a11y_scanner
+
     band = "Clean" if agg["total_violations"] == 0 else _band_word(agg)
     state = _BAND_STATE.get(band, "attention")
     t = agg["totals_by_impact"]
     nodes = agg["nodes_by_impact"]
 
+    clusters = a11y_scanner.cluster_components(scan)
+    grouped_block = _grouped_html(clusters, agg)
+
     stats = f"""
     <div class="a11y-stats">
-      <div class="a11y-stat"><div class="n">{agg['total_violations']}</div><div class="l">Distinct issues</div></div>
+      <div class="a11y-stat"><div class="n">{len(clusters)}</div><div class="l">Likely root causes</div></div>
       <div class="a11y-stat"><div class="n">{agg['total_nodes']}</div><div class="l">Affected elements</div></div>
+      <div class="a11y-stat"><div class="n">{agg['total_violations']}</div><div class="l">Distinct rules failed</div></div>
       <div class="a11y-stat"><div class="n">{agg['incomplete_total']}</div><div class="l">Needs manual review</div></div>
       <div class="a11y-stat"><div class="n">{agg['pages_scanned']}/{agg['pages_requested']}</div><div class="l">Pages scanned</div></div>
     </div>"""
@@ -214,6 +313,7 @@ def _results_html(scan: dict[str, Any], agg: dict[str, Any]) -> str:
         <tbody>{sev_rows}</tbody>
       </table>
     </div>
+    {grouped_block}
     {issues_block}
     <div class="a11y-card">
       <h2>Per-page breakdown</h2>

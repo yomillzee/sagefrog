@@ -125,6 +125,50 @@ class PureTests(unittest.TestCase):
         self.assertEqual(ax.size_band(agg(crit=8)), "Large")
         self.assertEqual(ax.size_band(agg(minor=25)), "Large")
 
+    def test_component_key_collapses_repeated_instances(self):
+        # Same component, different sibling indices and leaf depths -> one key.
+        k1 = ax._component_key("html > body > nav.main > ul.menu > li:nth-child(9) > a")
+        k2 = ax._component_key("nav.main > ul.menu > li:nth-child(2)")
+        k3 = ax._component_key("nav.main > ul.menu")
+        self.assertEqual(k1, "nav.main > ul.menu")
+        self.assertEqual(k1, k2)
+        self.assertEqual(k1, k3)
+
+    def test_cluster_collapses_navigation_defect(self):
+        # 102 empty links + 102 mis-parented <li> + 1 invalid <ul>, across 3 rules,
+        # plus two unrelated one-off contrast issues.
+        def n(fmt, count):
+            return [{"target": [fmt.format(i=i)]} for i in range(1, count + 1)]
+        scan = {"pages": [{"url": "https://x/", "scanned": True, "violations": [
+            {"id": "link-name", "impact": "serious", "help": "h", "helpUrl": "u",
+             "nodes": n("nav#nav > ul.menu > li:nth-child({i}) > a", 102)},
+            {"id": "listitem", "impact": "serious", "help": "h", "helpUrl": "u",
+             "nodes": n("nav#nav > ul.menu > li:nth-child({i})", 102)},
+            {"id": "list", "impact": "serious", "help": "h", "helpUrl": "u",
+             "nodes": [{"target": ["nav#nav > ul.menu"]}]},
+            {"id": "color-contrast", "impact": "minor", "help": "h", "helpUrl": "u",
+             "nodes": [{"target": ["main > h1"]}, {"target": ["footer > p"]}]},
+        ]}]}
+        clusters = ax.cluster_components(scan)
+        top = clusters[0]
+        self.assertEqual(top["key"], "nav#nav > ul.menu")
+        self.assertEqual(top["element_count"], 205)
+        self.assertEqual(top["rule_count"], 3)
+        self.assertTrue(top["is_component"])
+        self.assertEqual(top["label"], "Navigation")
+        # The two contrast elements are separate, one-off (not flagged as a component).
+        others = [c for c in clusters if not c["is_component"]]
+        self.assertEqual(sum(c["element_count"] for c in others), 2)
+
+    def test_cluster_small_counts_are_not_components(self):
+        scan = {"pages": [{"url": "https://x/", "scanned": True, "violations": [
+            {"id": "image-alt", "impact": "critical", "help": "h", "helpUrl": "u",
+             "nodes": [{"target": ["main > img"]}]},
+        ]}]}
+        clusters = ax.cluster_components(scan)
+        self.assertEqual(len(clusters), 1)
+        self.assertFalse(clusters[0]["is_component"])
+
 
 @unittest.skipUnless(_BROWSER_READY, "requires Playwright + a Chromium binary")
 class BrowserTests(unittest.TestCase):
