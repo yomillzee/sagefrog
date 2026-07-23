@@ -5,3 +5,6 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
+
+# Generated per-client accessibility scoping reports (see docs/ACCESSIBILITY_AUDITS.md)
+a11y-reports/
