@@ -162,9 +162,9 @@ def render_bigquery_settings_page(
       <div class="sc-main">
         <div class="sc-head">
           <span class="sc-title">Accessibility</span>
-          <span class="consent-pill" data-state="loading">ADA / WCAG</span>
+          <span class="consent-pill" id="a11yPill" data-state="loading">Checking…</span>
         </div>
-        <span class="sc-sub">Run an axe-core scan of this client's site to scope ADA remediation work.</span>
+        <span class="sc-sub" id="a11ySub">Run an axe-core scan of this client's site to scope ADA remediation work.</span>
       </div>
       <div class="sc-actions">
         <a class="sc-link" href="{_esc(accessibility_url)}">Open &rarr;</a>
@@ -346,6 +346,30 @@ def render_bigquery_settings_page(
           pill.textContent = LABELS[h] || h;
           const vc = Number(b.violation_count || 0);
           if (sub) sub.textContent = vc > 0 ? (vc + ' issue' + (vc === 1 ? '' : 's') + ' in the latest scan.') : 'No issues in the latest scan.';
+        }})
+        .catch(() => {{ pill.dataset.state = 'unknown'; pill.textContent = 'Status unavailable'; }});
+    }})();
+
+    // ---- Accessibility summary card: pull the latest audit into the pill ----
+    (function(){{
+      const pill = document.getElementById('a11yPill'); if (!pill) return;
+      const sub = document.getElementById('a11ySub');
+      // Size band -> pill state: Clean/Small look healthy, Medium needs attention, Large is critical.
+      const STATE = {{ Clean:'pass', Small:'pass', Medium:'attention', Large:'fail' }};
+      fetch("{_api_url(f'/dashboard/{client_slug}/accessibility/status', access_key=access_key)}", {{ credentials:'same-origin' }})
+        .then(r => r.json())
+        .then(b => {{
+          const st = b && b.status;
+          if (!st || st === 'none') {{ pill.dataset.state = 'unknown'; pill.textContent = 'Not yet scanned'; return; }}
+          const band = b.band || 'unknown';
+          pill.dataset.state = STATE[band] || 'attention';
+          pill.textContent = band;
+          if (sub) {{
+            const nodes = Number(b.total_nodes || 0), rc = Number(b.root_cause_count || 0);
+            sub.textContent = nodes > 0
+              ? (nodes + ' element' + (nodes === 1 ? '' : 's') + ' · ' + rc + ' likely root cause' + (rc === 1 ? '' : 's') + (b.when ? ' · ' + b.when : ''))
+              : 'No issues in the latest audit.';
+          }}
         }})
         .catch(() => {{ pill.dataset.state = 'unknown'; pill.textContent = 'Status unavailable'; }});
     }})();

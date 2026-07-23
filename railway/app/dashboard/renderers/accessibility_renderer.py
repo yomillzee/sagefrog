@@ -90,6 +90,16 @@ _EXTRA_CSS = """
 .a11y-comp-rules a { color:#0b5cab; text-decoration:none; font-size:.78rem; margin-left:auto; }
 .a11y-comp-fix { color:#15803d; font-size:.8rem; margin-top:8px; font-weight:600; }
 .a11y-other { color:#64748b; font-size:.82rem; margin-top:6px; }
+/* Run metadata bar + export + history */
+.a11y-runmeta { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+.a11y-export-group { display:flex; gap:8px; }
+.a11y-export { display:inline-block; background:#0b5cab; color:#fff; text-decoration:none; font-size:.82rem; font-weight:600; padding:8px 14px; border-radius:8px; }
+.a11y-export.ghost { background:#fff; color:#0b5cab; border:1px solid #cbd5e1; }
+.a11y-history { list-style:none; margin:6px 0 0; padding:0; }
+.a11y-history li { padding:8px 0; border-top:1px solid #f1f5f9; font-size:.85rem; color:#475569; }
+.a11y-history li:first-child { border-top:none; }
+.a11y-history a { color:#0b5cab; text-decoration:none; }
+.a11y-band-sm { display:inline-block; font-size:.7rem; font-weight:700; color:#64748b; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:999px; padding:1px 8px; margin-left:4px; }
 """
 
 # Cap elements listed per rule so a page with hundreds of identical failures (e.g.
@@ -331,6 +341,42 @@ def _band_word(agg: dict[str, Any]) -> str:
     return a11y_scanner.size_band(agg)
 
 
+def _run_meta_html(run_meta: dict[str, Any] | None,
+                   export_csv_url: str | None, export_json_url: str | None) -> str:
+    if not run_meta:
+        return ""
+    by = f' by {_esc(run_meta["by"])}' if run_meta.get("by") else ""
+    exports = ""
+    if export_csv_url:
+        exports += f'<a class="a11y-export" href="{_esc(export_csv_url)}">⬇ Export CSV</a>'
+    if export_json_url:
+        exports += f'<a class="a11y-export ghost" href="{_esc(export_json_url)}">JSON</a>'
+    return (f'<div class="a11y-runmeta"><span class="a11y-muted">Saved audit from '
+            f'<b>{_esc(run_meta.get("when") or "")}</b>{by}</span>'
+            f'<span class="a11y-export-group">{exports}</span></div>')
+
+
+def _history_html(history: list[dict[str, Any]] | None) -> str:
+    if not history:
+        return ""
+    rows = ""
+    for h in history:
+        cur = ' style="font-weight:700"' if h.get("is_current") else ""
+        label = _esc(h.get("when") or f"Run #{h.get('id')}")
+        link = (f'<a href="{_esc(h["href"])}"{cur}>{label}</a>' if not h.get("is_current")
+                else f'<span{cur}>{label} · current</span>')
+        by = f' · {_esc(h["by"])}' if h.get("by") else ""
+        rows += (f'<li>{link} — <b>{h.get("total_nodes", 0)}</b> elements, '
+                 f'{h.get("root_cause_count", 0)} root causes '
+                 f'<span class="a11y-band-sm">{_esc(h.get("band") or "")}</span>{by}</li>')
+    return f"""
+    <div class="a11y-card">
+      <h2>Audit history</h2>
+      <p class="a11y-sub">Every saved run for this client. Open one to view or export it.</p>
+      <ul class="a11y-history">{rows}</ul>
+    </div>"""
+
+
 def render_accessibility_page(
     *,
     client_slug: str,
@@ -344,6 +390,10 @@ def render_accessibility_page(
     scan: dict[str, Any] | None = None,
     agg: dict[str, Any] | None = None,
     scan_error: str | None = None,
+    run_meta: dict[str, Any] | None = None,
+    history: list[dict[str, Any]] | None = None,
+    export_csv_url: str | None = None,
+    export_json_url: str | None = None,
 ) -> str:
     urls_text = "\n".join(submitted_urls if submitted_urls is not None else (default_urls or []))
     post_action = f"/dashboard/{_esc(client_slug)}/accessibility/scan"
@@ -355,7 +405,8 @@ def render_accessibility_page(
 
     error_html = f'<div class="a11y-warn">{_esc(scan_error)}</div>' if scan_error else ""
     if scan is not None and agg is not None and not scan_error:
-        results_html = _results_html(scan, agg)
+        meta_html = _run_meta_html(run_meta, export_csv_url, export_json_url)
+        results_html = meta_html + _results_html(scan, agg)
     else:
         results_html = ('<div class="a11y-card"><h2>Results</h2>'
                         '<p class="a11y-empty">Run an audit to see the scoping report here.</p></div>'
@@ -377,12 +428,13 @@ def render_accessibility_page(
           <textarea class="a11y-urls" name="urls" spellcheck="false" placeholder="https://www.example.com/">{_esc(urls_text)}</textarea>
           <div class="a11y-form-row">
             <button class="a11y-btn" type="submit">Run audit</button>
-            <span class="a11y-muted">Scans synchronously — allow ~5–15s per page.</span>
+            <span class="a11y-muted">Scans synchronously — allow ~5–15s per page. Saved automatically.</span>
           </div>
         </form>
       </div>
       {error_html}
       {results_html}
+      {_history_html(history)}
     </div>"""
 
     return render_client_shell_page(

@@ -169,6 +169,43 @@ class PureTests(unittest.TestCase):
         self.assertEqual(len(clusters), 1)
         self.assertFalse(clusters[0]["is_component"])
 
+    def test_issue_rows_and_csv_export(self):
+        scan = {"pages": [{"url": "https://x/", "title": "Home", "scanned": True, "violations": [
+            {"id": "color-contrast", "impact": "minor", "helpUrl": "http://c",
+             "tags": ["wcag2aa", "wcag143", "cat.color"],
+             "nodes": [{"target": ["footer > p"], "failureSummary": "low\n contrast"}]},
+            {"id": "link-name", "impact": "serious", "helpUrl": "http://l",
+             "tags": ["wcag2a", "wcag412"],
+             "nodes": [{"target": ["nav#n > ul > li:nth-child(1) > a"], "failureSummary": "empty"},
+                       {"target": ["nav#n > ul > li:nth-child(2) > a"], "failureSummary": "empty"}]},
+        ]}]}
+        rows = ax.issue_rows(scan)
+        self.assertEqual(len(rows), 3)
+        # Most-severe rule first; root-cause component tagged; only wcag* tags kept.
+        self.assertEqual(rows[0]["rule"], "link-name")
+        self.assertEqual(rows[0]["root_cause"], "Navigation")
+        self.assertEqual(rows[0]["root_cause_selector"], "nav#n > ul")
+        self.assertEqual(rows[0]["wcag_tags"], "wcag2a,wcag412")
+        # failure_summary is whitespace-collapsed for a clean single CSV cell.
+        self.assertEqual(rows[2]["failure_summary"], "low contrast")
+        csv_text = ax.issues_csv(scan)
+        header = csv_text.splitlines()[0]
+        self.assertTrue(header.startswith("page_url,page_title,root_cause,root_cause_selector,rule,"))
+        self.assertEqual(len(csv_text.strip().splitlines()), 4)  # header + 3 rows
+
+    def test_store_degrades_without_database(self):
+        import os
+        import a11y_store
+        had = os.environ.pop("DATABASE_URL", None)
+        try:
+            self.assertFalse(a11y_store.enabled())
+            self.assertEqual(a11y_store.save_run("x", summary={"total_nodes": 3}), 0)
+            self.assertIsNone(a11y_store.latest_run("x"))
+            self.assertEqual(a11y_store.list_runs("x"), [])
+        finally:
+            if had is not None:
+                os.environ["DATABASE_URL"] = had
+
 
 @unittest.skipUnless(_BROWSER_READY, "requires Playwright + a Chromium binary")
 class BrowserTests(unittest.TestCase):

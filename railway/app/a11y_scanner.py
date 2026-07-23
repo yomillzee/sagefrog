@@ -545,3 +545,58 @@ def cluster_components(scan: dict[str, Any], *, min_component_elements: int = 5)
                             IMPACT_ORDER.index(c["worst_impact"]) if c["worst_impact"] in IMPACT_ORDER else 9,
                             -c["element_count"]))
     return out
+
+
+# ── Export ───────────────────────────────────────────────────────────────────
+# A flat, one-row-per-element view of the audit for the dev team to review and
+# scope — sortable in a spreadsheet, importable into a tracker. Includes the
+# root-cause component so related elements can be grouped and assigned together.
+
+_EXPORT_FIELDS = (
+    "page_url", "page_title", "root_cause", "root_cause_selector",
+    "rule", "impact", "wcag_tags", "element_selector", "failure_summary", "help_url",
+)
+
+
+def issue_rows(scan: dict[str, Any]) -> list[dict[str, str]]:
+    """One dict per affected element, most-severe rules first, with root-cause tags."""
+    rows: list[dict[str, str]] = []
+    for pg in scan.get("pages") or []:
+        page_url = pg.get("url", "")
+        page_title = pg.get("title") or pg.get("final_url") or page_url
+        ranked = sorted(
+            pg.get("violations") or [],
+            key=lambda v: (IMPACT_ORDER.index((v.get("impact") or "minor").lower())
+                           if (v.get("impact") or "minor").lower() in IMPACT_ORDER else 9),
+        )
+        for v in ranked:
+            wcag = ",".join(t for t in (v.get("tags") or []) if str(t).startswith("wcag"))
+            for n in v.get("nodes") or []:
+                sel = _selector_of(n)
+                key = _component_key(sel)
+                rows.append({
+                    "page_url": page_url,
+                    "page_title": page_title,
+                    "root_cause": _component_label(key) or "",
+                    "root_cause_selector": key,
+                    "rule": v.get("id", ""),
+                    "impact": (v.get("impact") or "").lower(),
+                    "wcag_tags": wcag,
+                    "element_selector": sel,
+                    "failure_summary": " ".join((n.get("failureSummary") or "").split()),
+                    "help_url": v.get("helpUrl", ""),
+                })
+    return rows
+
+
+def issues_csv(scan: dict[str, Any]) -> str:
+    """The issue list as CSV text (UTF-8), one row per affected element."""
+    import csv
+    import io
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=list(_EXPORT_FIELDS), extrasaction="ignore")
+    writer.writeheader()
+    for row in issue_rows(scan):
+        writer.writerow(row)
+    return buf.getvalue()

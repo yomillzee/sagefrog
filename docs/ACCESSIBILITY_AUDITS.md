@@ -62,13 +62,24 @@ audit**. The scan runs on demand and the report renders straight back:
 It deliberately does **not** put an effort estimate on the page (developers scope
 that themselves). The CLI still prints an estimate for proposal use.
 
-It's intentionally **stateless** — no database, no background worker, no cron.
-The scan runs synchronously in the request (FastAPI's worker threadpool, which is
-where Playwright's sync API is safe), so allow ~5–15s per page and keep the list
-to a representative handful (capped at 12). Running a scan is **admin-only** and
-recorded in the audit log (`accessibility.scan_ran`); the card is hidden from
-non-admins. Nothing is persisted between runs — for a saved report, use the CLI
-below, which writes files.
+**Saved & reopenable.** When `DATABASE_URL` is set, every audit is persisted to
+`a11y_scan_runs` and the report lives at a stable URL (`?run=<id>`) — so reopening
+the page from the Insights card shows the **latest saved audit** instead of a blank
+form, the card's pill reflects the last run's size band, and an **Audit history**
+list links back to every past run. A scan uses Post/Redirect/Get, so refreshing
+never re-scans. (Without a `DATABASE_URL` it degrades to the old stateless
+behaviour — the report renders once and isn't saved.)
+
+**Export for the dev team.** A saved report has **Export CSV** and **JSON** buttons.
+The CSV is one row per affected element — `page`, `root_cause` (the component the
+element belongs to), `rule`, `impact`, `wcag_tags`, `element_selector`,
+`failure_summary`, `help_url` — so the team can sort, filter, and assign straight in
+a spreadsheet or import into a tracker. JSON is the full scan + summary blob.
+
+The scan runs synchronously in the request (FastAPI's worker threadpool, where
+Playwright's sync API is safe), so allow ~5–15s per page and keep the list to a
+representative handful (capped at 12). Running a scan is **admin-only** and recorded
+in the audit log (`accessibility.scan_ran`); the card is hidden from non-admins.
 
 ## Quick start (CLI)
 
