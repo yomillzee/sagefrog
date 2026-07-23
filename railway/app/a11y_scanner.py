@@ -77,6 +77,29 @@ IMPACT_WEIGHTS: dict[str, float] = {
 # Severity ordering, most-severe first — used when sorting rules for the report.
 IMPACT_ORDER: tuple[str, ...] = ("critical", "serious", "moderate", "minor")
 
+# WCAG conformance levels, least strict first. Conformance is *cumulative*: to
+# claim Level AA a site must pass every Level A **and** AA criterion, and AAA adds
+# AAA on top. Best-practice axe rules aren't part of WCAG conformance at all.
+WCAG_LEVELS: tuple[str, ...] = ("A", "AA", "AAA")
+# axe tags every WCAG rule with a version+level tag: wcag2a / wcag21a / wcag22a (A),
+# wcag2aa / wcag21aa / wcag22aa (AA), wcag2aaa (AAA). Match the level off those.
+_LVL_A = re.compile(r"^wcag\d+a$")
+_LVL_AA = re.compile(r"^wcag\d+aa$")
+_LVL_AAA = re.compile(r"^wcag\d+aaa$")
+
+
+def wcag_level(tags: Any) -> str | None:
+    """The WCAG conformance level ('A' / 'AA' / 'AAA') a rule maps to, from its axe
+    tags — or None for a best-practice / unclassified rule (not conformance-relevant)."""
+    low = [str(t).lower() for t in (tags or [])]
+    if any(_LVL_AAA.match(t) for t in low):
+        return "AAA"
+    if any(_LVL_AA.match(t) for t in low):
+        return "AA"
+    if any(_LVL_A.match(t) for t in low):
+        return "A"
+    return None
+
 
 def _settle_ms() -> int:
     try:
@@ -419,6 +442,41 @@ def size_band(agg: dict[str, Any]) -> str:
     return "Small"
 
 
+def conformance_summary(scan: dict[str, Any]) -> dict[str, Any]:
+    """Bucket failures by WCAG level and compute the *cumulative* gap to each level.
+
+    Returns::
+
+      {
+        "by_level":   {"A": {"issues", "elements"}, "AA": {...}, "AAA": {...}},
+        "best_practice": {"issues", "elements"},   # not conformance-relevant
+        "to_reach":   {"A": {...}, "AA": {...}, "AAA": {...}},  # cumulative totals
+      }
+
+    ``to_reach["AA"]`` is what a client cares about: every Level A **and** AA issue
+    that must be fixed to claim AA conformance — the ADA / Section 508 target.
+    "issues" counts distinct rule-failures (per page); "elements" counts nodes.
+    """
+    by_level = {lv: {"issues": 0, "elements": 0} for lv in WCAG_LEVELS}
+    best_practice = {"issues": 0, "elements": 0}
+    for pg in scan.get("pages") or []:
+        for v in pg.get("violations") or []:
+            n = len(v.get("nodes") or [])
+            lv = wcag_level(v.get("tags"))
+            bucket = by_level[lv] if lv in by_level else best_practice
+            bucket["issues"] += 1
+            bucket["elements"] += n
+
+    to_reach: dict[str, dict[str, int]] = {}
+    run_issues = run_elems = 0
+    for lv in WCAG_LEVELS:
+        run_issues += by_level[lv]["issues"]
+        run_elems += by_level[lv]["elements"]
+        to_reach[lv] = {"issues": run_issues, "elements": run_elems}
+
+    return {"by_level": by_level, "best_practice": best_practice, "to_reach": to_reach}
+
+
 # ── Root-cause clustering ────────────────────────────────────────────────────
 # A raw axe report can read like hundreds of independent problems when most of
 # them are one broken template hit N times (e.g. a nav that emits 100 empty links
@@ -545,3 +603,61 @@ def cluster_components(scan: dict[str, Any], *, min_component_elements: int = 5)
                             IMPACT_ORDER.index(c["worst_impact"]) if c["worst_impact"] in IMPACT_ORDER else 9,
                             -c["element_count"]))
     return out
+
+
+# ── Export ───────────────────────────────────────────────────────────────────
+# A flat, one-row-per-element view of the audit for the dev team to review and
+# scope — sortable in a spreadsheet, importable into a tracker. Includes the
+# root-cause component so related elements can be grouped and assigned together.
+
+_EXPORT_FIELDS = (
+    "page_url", "page_title", "root_cause", "root_cause_selector",
+    "rule", "impact", "wcag_level", "wcag_tags", "element_selector",
+    "failure_summary", "help_url",
+)
+
+
+def issue_rows(scan: dict[str, Any]) -> list[dict[str, str]]:
+    """One dict per affected element, most-severe rules first, with root-cause tags."""
+    rows: list[dict[str, str]] = []
+    for pg in scan.get("pages") or []:
+        page_url = pg.get("url", "")
+        page_title = pg.get("title") or pg.get("final_url") or page_url
+        ranked = sorted(
+            pg.get("violations") or [],
+            key=lambda v: (IMPACT_ORDER.index((v.get("impact") or "minor").lower())
+                           if (v.get("impact") or "minor").lower() in IMPACT_ORDER else 9),
+        )
+        for v in ranked:
+            wcag = ",".join(t for t in (v.get("tags") or []) if str(t).startswith("wcag"))
+            level = wcag_level(v.get("tags"))
+            for n in v.get("nodes") or []:
+                sel = _selector_of(n)
+                key = _component_key(sel)
+                rows.append({
+                    "page_url": page_url,
+                    "page_title": page_title,
+                    "root_cause": _component_label(key) or "",
+                    "root_cause_selector": key,
+                    "rule": v.get("id", ""),
+                    "impact": (v.get("impact") or "").lower(),
+                    "wcag_level": level or "best-practice",
+                    "wcag_tags": wcag,
+                    "element_selector": sel,
+                    "failure_summary": " ".join((n.get("failureSummary") or "").split()),
+                    "help_url": v.get("helpUrl", ""),
+                })
+    return rows
+
+
+def issues_csv(scan: dict[str, Any]) -> str:
+    """The issue list as CSV text (UTF-8), one row per affected element."""
+    import csv
+    import io
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=list(_EXPORT_FIELDS), extrasaction="ignore")
+    writer.writeheader()
+    for row in issue_rows(scan):
+        writer.writerow(row)
+    return buf.getvalue()

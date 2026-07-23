@@ -117,6 +117,26 @@ def _render_markdown(scan: dict, agg: dict, client: str) -> str:
                      f"{agg['nodes_by_impact'].get(impact, 0)} |")
     lines.append("")
 
+    # Path to conformance — WCAG levels are cumulative, so "reach AA" = all A + AA.
+    conf = a11y_scanner.conformance_summary(scan)
+    tr = conf["to_reach"]
+    lvl_note = {"A": "minimum legal floor", "AA": "ADA / Section 508 target",
+                "AAA": "highest bar, rarely required in full"}
+    lines.append("## Path to conformance")
+    lines.append("")
+    lines.append("WCAG conformance is cumulative — reaching AA means clearing every Level A *and* AA issue.")
+    lines.append("")
+    lines.append("| To reach | Issues to fix | Elements | Note |")
+    lines.append("| --- | ---: | ---: | --- |")
+    for lv in ("A", "AA", "AAA"):
+        r = tr.get(lv, {"issues": 0, "elements": 0})
+        star = " **(your target)**" if lv == "AA" else ""
+        lines.append(f"| Level {lv}{star} | {r['issues']} | {r['elements']} | {lvl_note[lv]} |")
+    bp = conf["best_practice"]
+    if bp["issues"]:
+        lines.append(f"| _Best practice_ | {bp['issues']} | {bp['elements']} | recommended, not required for conformance |")
+    lines.append("")
+
     # Root-cause grouping — a big element count is usually a few broken components
     # repeated, not N independent jobs. Lead with that so the report isn't alarmist.
     clusters = a11y_scanner.cluster_components(scan)
