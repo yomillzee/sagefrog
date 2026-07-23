@@ -48,16 +48,27 @@ page at `/dashboard/{slug}/accessibility`. There an admin edits the page list �
 audit**. The scan runs on demand and the report renders straight back:
 
 1. A severity summary.
-2. **Likely root causes** — affected elements clustered by the component they
+2. **Path to conformance** — the count of issues to fix to reach each WCAG level,
+   which is what a client actually asks ("how do we get to AA?"). Conformance is
+   **cumulative**: reaching AA means clearing every Level A *and* AA failure, so
+   the "reach AA" number includes the Level A issues — not just the AA-tagged
+   ones. **AA** is highlighted as the ADA / Section 508 target. Best-practice
+   issues (axe rules with no WCAG level) are counted separately, since they aren't
+   part of conformance. Levels come from axe's per-rule tags (`wcag2a`, `wcag21aa`,
+   `wcag2aaa`, …). In **All issues**, every rule carries an A / AA / AAA / Best-
+   practice badge, and filter chips ("Level A only", "Reach AA", …) narrow the list
+   to exactly the issues a given level requires. The Insights-card pill shows the
+   headline "N issues to reach WCAG AA".
+3. **Likely root causes** — affected elements clustered by the component they
    come from (shared CSS-selector root). A cluster spanning many elements and
    several rules is almost always **one broken template**, so the report leads
    with it: e.g. "~205 of 228 affected elements trace to the navigation — fix the
    shared template once, not 205 separate tasks." This keeps a big raw count from
    reading as hundreds of independent problems (technically accurate but
    commercially alarmist). The grouping is a **heuristic**, labelled "likely".
-3. **All issues** — the full element-level list, every violation grouped by rule
+4. **All issues** — the full element-level list, every violation grouped by rule
    with each element's selector, failure summary, and HTML snippet, for the devs.
-4. A per-page breakdown.
+5. A per-page breakdown.
 
 It deliberately does **not** put an effort estimate on the page (developers scope
 that themselves). The CLI still prints an estimate for proposal use.
@@ -72,9 +83,10 @@ behaviour — the report renders once and isn't saved.)
 
 **Export for the dev team.** A saved report has **Export CSV** and **JSON** buttons.
 The CSV is one row per affected element — `page`, `root_cause` (the component the
-element belongs to), `rule`, `impact`, `wcag_tags`, `element_selector`,
-`failure_summary`, `help_url` — so the team can sort, filter, and assign straight in
-a spreadsheet or import into a tracker. JSON is the full scan + summary blob.
+element belongs to), `rule`, `impact`, `wcag_level` (A / AA / AAA / best-practice),
+`wcag_tags`, `element_selector`, `failure_summary`, `help_url` — so the team can
+sort, filter (e.g. by `wcag_level` to scope an AA push), and assign straight in a
+spreadsheet or import into a tracker. JSON is the full scan + summary blob.
 
 The scan runs synchronously in the request (FastAPI's worker threadpool, where
 Playwright's sync API is safe), so allow ~5–15s per page and keep the list to a

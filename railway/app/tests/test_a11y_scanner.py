@@ -193,6 +193,44 @@ class PureTests(unittest.TestCase):
         self.assertTrue(header.startswith("page_url,page_title,root_cause,root_cause_selector,rule,"))
         self.assertEqual(len(csv_text.strip().splitlines()), 4)  # header + 3 rows
 
+    def test_wcag_level_from_tags(self):
+        self.assertEqual(ax.wcag_level(["cat.color", "wcag2aa", "wcag143"]), "AA")
+        self.assertEqual(ax.wcag_level(["wcag2a", "wcag412"]), "A")
+        self.assertEqual(ax.wcag_level(["wcag21a"]), "A")
+        self.assertEqual(ax.wcag_level(["wcag22aa"]), "AA")
+        self.assertEqual(ax.wcag_level(["wcag2aaa", "wcag146"]), "AAA")
+        self.assertEqual(ax.wcag_level(["wcag2a", "wcag2aa"]), "AA")  # highest present
+        self.assertIsNone(ax.wcag_level(["best-practice", "cat.semantics"]))
+        self.assertIsNone(ax.wcag_level([]))
+
+    def test_conformance_summary_is_cumulative(self):
+        scan = {"pages": [{"url": "u", "violations": [
+            {"id": "image-alt", "impact": "critical", "tags": ["wcag2a"], "nodes": [{}, {}]},
+            {"id": "link-name", "impact": "serious", "tags": ["wcag2a"], "nodes": [{}]},
+            {"id": "color-contrast", "impact": "serious", "tags": ["wcag2aa"], "nodes": [{}, {}, {}]},
+            {"id": "contrast-enh", "impact": "minor", "tags": ["wcag2aaa"], "nodes": [{}]},
+            {"id": "region", "impact": "minor", "tags": ["best-practice"], "nodes": [{}, {}]},
+        ]}]}
+        c = ax.conformance_summary(scan)
+        self.assertEqual(c["by_level"]["A"], {"issues": 2, "elements": 3})
+        self.assertEqual(c["by_level"]["AA"], {"issues": 1, "elements": 3})
+        self.assertEqual(c["best_practice"], {"issues": 1, "elements": 2})
+        # Cumulative: AA target = A + AA; AAA = A + AA + AAA.
+        self.assertEqual(c["to_reach"]["A"], {"issues": 2, "elements": 3})
+        self.assertEqual(c["to_reach"]["AA"], {"issues": 3, "elements": 6})
+        self.assertEqual(c["to_reach"]["AAA"], {"issues": 4, "elements": 7})
+
+    def test_issue_rows_include_wcag_level(self):
+        scan = {"pages": [{"url": "u", "title": "T", "scanned": True, "violations": [
+            {"id": "image-alt", "impact": "critical", "tags": ["wcag2a"], "helpUrl": "h",
+             "nodes": [{"target": ["main > img"], "failureSummary": "no alt"}]},
+            {"id": "region", "impact": "minor", "tags": ["best-practice"], "helpUrl": "h",
+             "nodes": [{"target": ["body > div"], "failureSummary": "landmark"}]},
+        ]}]}
+        rows = {r["rule"]: r for r in ax.issue_rows(scan)}
+        self.assertEqual(rows["image-alt"]["wcag_level"], "A")
+        self.assertEqual(rows["region"]["wcag_level"], "best-practice")
+
     def test_store_degrades_without_database(self):
         import os
         import a11y_store

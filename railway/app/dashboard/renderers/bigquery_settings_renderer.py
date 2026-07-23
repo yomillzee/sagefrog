@@ -365,9 +365,9 @@ def render_bigquery_settings_page(
           pill.dataset.state = STATE[band] || 'attention';
           pill.textContent = band;
           if (sub) {{
-            const nodes = Number(b.total_nodes || 0), rc = Number(b.root_cause_count || 0);
+            const nodes = Number(b.total_nodes || 0), aa = Number(b.aa_issues || 0);
             sub.textContent = nodes > 0
-              ? (nodes + ' element' + (nodes === 1 ? '' : 's') + ' · ' + rc + ' likely root cause' + (rc === 1 ? '' : 's') + (b.when ? ' · ' + b.when : ''))
+              ? (aa + ' issue' + (aa === 1 ? '' : 's') + ' to reach WCAG AA' + (b.when ? ' · ' + b.when : ''))
               : 'No issues in the latest audit.';
           }}
         }})

@@ -100,6 +100,29 @@ _EXTRA_CSS = """
 .a11y-history li:first-child { border-top:none; }
 .a11y-history a { color:#0b5cab; text-decoration:none; }
 .a11y-band-sm { display:inline-block; font-size:.7rem; font-weight:700; color:#64748b; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:999px; padding:1px 8px; margin-left:4px; }
+/* WCAG conformance path */
+.a11y-conf { display:grid; gap:10px; }
+.a11y-conf-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; border:1px solid #e6eaf0; border-radius:12px; padding:12px 14px; }
+.a11y-conf-row.target { border-color:#0b5cab; background:#f2f8ff; }
+.a11y-conf-row .lvl { font-weight:800; font-size:.95rem; min-width:64px; }
+.a11y-conf-row .goal { font-size:.86rem; color:#334155; }
+.a11y-conf-row .goal b { color:#0f172a; }
+.a11y-conf-row .tag { margin-left:auto; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#0b5cab; background:#e0edfb; border-radius:999px; padding:3px 10px; }
+.a11y-conf-row.clean { border-color:#b8dfc8; background:#e9f7ef; }
+.a11y-conf-bp { color:#64748b; font-size:.82rem; margin-top:2px; }
+/* Level badge + filter chips on the issue list */
+.a11y-lvl { display:inline-block; font-size:.66rem; font-weight:800; letter-spacing:.03em; padding:2px 7px; border-radius:5px; border:1px solid transparent; }
+.a11y-lvl.lvl-A { color:#7a271a; background:#fef2f2; border-color:#fecaca; }
+.a11y-lvl.lvl-AA { color:#7c2d12; background:#fff7ed; border-color:#fed7aa; }
+.a11y-lvl.lvl-AAA { color:#3730a3; background:#eef2ff; border-color:#c7d2fe; }
+.a11y-lvl.lvl-bp { color:#475569; background:#f1f5f9; border-color:#e2e8f0; }
+.a11y-chips { display:flex; gap:8px; flex-wrap:wrap; margin:4px 0 14px; }
+.a11y-chips button { font-size:.78rem; font-weight:600; color:#334155; background:#fff; border:1px solid #cbd5e1; border-radius:999px; padding:5px 12px; cursor:pointer; }
+.a11y-chips button.on { background:#0b5cab; color:#fff; border-color:#0b5cab; }
+.a11y-issues.flt-a .a11y-issue:not([data-level="A"]) { display:none; }
+.a11y-issues.flt-aa .a11y-issue[data-level="AAA"], .a11y-issues.flt-aa .a11y-issue[data-level="bp"] { display:none; }
+.a11y-issues.flt-aaa .a11y-issue[data-level="bp"] { display:none; }
+.a11y-issues.flt-bp .a11y-issue:not([data-level="bp"]) { display:none; }
 """
 
 # Cap elements listed per rule so a page with hundreds of identical failures (e.g.
@@ -191,10 +214,56 @@ def _grouped_html(clusters: list[dict[str, Any]], agg: dict[str, Any]) -> str:
     </div>"""
 
 
+_LEVEL_TARGET_NOTE = {
+    "A": "the minimum legal floor",
+    "AA": "the ADA / Section 508 target most US clients are held to",
+    "AAA": "the highest bar — rarely required in full",
+}
+
+
+def _conformance_html(conf: dict[str, Any]) -> str:
+    """The headline 'what would it take to conform' view — cumulative per level."""
+    to_reach = conf.get("to_reach") or {}
+    bp = conf.get("best_practice") or {"issues": 0, "elements": 0}
+    rows = ""
+    for lv in ("A", "AA", "AAA"):
+        r = to_reach.get(lv) or {"issues": 0, "elements": 0}
+        issues, elems = r["issues"], r["elements"]
+        target = lv == "AA"  # highlight the level clients are actually held to
+        if issues == 0:
+            body = (f'<span class="goal">✓ <b>No automated failures</b> blocking Level {lv} '
+                    f'— {_LEVEL_TARGET_NOTE[lv]}.</span>')
+            cls = "a11y-conf-row clean"
+        else:
+            body = (f'<span class="goal">Fix <b>{issues} issue{"s" if issues != 1 else ""}</b> '
+                    f'(<b>{elems} element{"s" if elems != 1 else ""}</b>) to reach '
+                    f'<b>Level {lv}</b> — {_LEVEL_TARGET_NOTE[lv]}.</span>')
+            cls = "a11y-conf-row target" if target else "a11y-conf-row"
+        tag = '<span class="tag">Your compliance target</span>' if target else ""
+        rows += f'<div class="{cls}"><span class="lvl">{lv}</span>{body}{tag}</div>'
+
+    bp_note = ""
+    if bp["issues"]:
+        bp_note = (f'<p class="a11y-conf-bp">Plus {bp["issues"]} best-practice issue'
+                   f'{"s" if bp["issues"] != 1 else ""} ({bp["elements"]} element'
+                   f'{"s" if bp["elements"] != 1 else ""}) — recommended, but not required for WCAG '
+                   f'conformance.</p>')
+
+    return f"""
+    <div class="a11y-card">
+      <h2>Path to conformance</h2>
+      <p class="a11y-sub">WCAG conformance is cumulative — reaching AA means clearing every Level A
+        <em>and</em> AA issue. Counts below are what automated testing found; a full audit adds manual checks.</p>
+      <div class="a11y-conf">{rows}</div>
+      {bp_note}
+    </div>"""
+
+
 def _all_issues_html(scan: dict[str, Any]) -> str:
     """Every violation across all pages, grouped by rule, with the affected
-    elements (selector + axe's failure summary) so a developer can act on each."""
-    from a11y_scanner import IMPACT_ORDER
+    elements (selector + axe's failure summary) so a developer can act on each.
+    Each rule carries its WCAG level so the list can be filtered by conformance goal."""
+    from a11y_scanner import IMPACT_ORDER, wcag_level
 
     multipage = len([p for p in (scan.get("pages") or []) if p.get("scanned")]) > 1
     # rule id -> {meta..., occurrences: [{page_url, page_title, sel, fs, html}]}
@@ -206,7 +275,8 @@ def _all_issues_html(scan: dict[str, Any]) -> str:
             r = rules.setdefault(v["id"], {
                 "id": v["id"], "impact": (v.get("impact") or "minor").lower(),
                 "help": v.get("help", ""), "helpUrl": v.get("helpUrl", ""),
-                "description": v.get("description", ""), "occurrences": [],
+                "description": v.get("description", ""),
+                "level": wcag_level(v.get("tags")), "occurrences": [],
             })
             for n in v.get("nodes") or []:
                 target = n.get("target") or []
@@ -243,10 +313,14 @@ def _all_issues_html(scan: dict[str, Any]) -> str:
             nodes_html += (f'<div class="a11y-more">+ {len(occ) - _MAX_NODES_PER_RULE} more element(s) '
                            f'with this issue — not listed.</div>')
         count = len(occ)
+        lvl = r.get("level")
+        data_level = lvl if lvl in ("A", "AA", "AAA") else "bp"
+        badge = (f'<span class="a11y-lvl lvl-{data_level}">'
+                 f'{"WCAG " + lvl if lvl else "Best practice"}</span>')
         blocks += f"""
-        <details class="a11y-issue" open>
+        <details class="a11y-issue" open data-level="{data_level}">
           <summary>
-            <span class="rid">{_esc(r['id'])}</span>{_impact_pill(r['impact'])}
+            <span class="rid">{_esc(r['id'])}</span>{_impact_pill(r['impact'])}{badge}
             {help_link}
             <span class="cnt">{count} element{'s' if count != 1 else ''}</span>
           </summary>
@@ -254,11 +328,31 @@ def _all_issues_html(scan: dict[str, Any]) -> str:
           {nodes_html}
         </details>"""
 
+    chips = """
+      <div class="a11y-chips" role="group" aria-label="Filter issues by conformance level">
+        <button type="button" data-flt="all" class="on">All issues</button>
+        <button type="button" data-flt="a">Level A only</button>
+        <button type="button" data-flt="aa">Reach AA (A + AA)</button>
+        <button type="button" data-flt="aaa">Reach AAA</button>
+        <button type="button" data-flt="bp">Best practice</button>
+      </div>"""
+    filter_js = """
+      <script>(function(){
+        var box=document.getElementById('a11yIssues'); if(!box)return;
+        var chips=box.parentNode.querySelectorAll('.a11y-chips [data-flt]');
+        chips.forEach(function(c){c.addEventListener('click',function(){
+          box.className='a11y-issues'+(c.dataset.flt==='all'?'':' flt-'+c.dataset.flt);
+          chips.forEach(function(x){x.classList.toggle('on',x===c);});
+        });});
+      })();</script>"""
     return f"""
     <div class="a11y-card">
       <h2>All issues</h2>
-      <p class="a11y-sub">Every failure axe-core found, grouped by rule (most severe first). Each element lists its CSS selector and how it fails.</p>
-      {blocks}
+      <p class="a11y-sub">Every failure axe-core found, grouped by rule (most severe first). Filter by the
+        conformance level each maps to — "Reach AA" shows every Level A and AA issue that AA conformance requires.</p>
+      {chips}
+      <div class="a11y-issues" id="a11yIssues">{blocks}</div>
+      {filter_js}
     </div>"""
 
 
@@ -272,6 +366,7 @@ def _results_html(scan: dict[str, Any], agg: dict[str, Any]) -> str:
 
     clusters = a11y_scanner.cluster_components(scan)
     grouped_block = _grouped_html(clusters, agg)
+    conformance_block = _conformance_html(a11y_scanner.conformance_summary(scan))
 
     stats = f"""
     <div class="a11y-stats">
@@ -323,6 +418,7 @@ def _results_html(scan: dict[str, Any], agg: dict[str, Any]) -> str:
         <tbody>{sev_rows}</tbody>
       </table>
     </div>
+    {conformance_block}
     {grouped_block}
     {issues_block}
     <div class="a11y-card">

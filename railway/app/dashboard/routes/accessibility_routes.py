@@ -259,12 +259,16 @@ def accessibility_status(client_slug: str, request: Request):
     web_auth.authenticate_dashboard_api(request, client_slug=slug)
     if not a11y_store.enabled():
         return JSONResponse({"status": "none"})
-    r = a11y_store.latest_run(slug, include_result=False)
+    r = a11y_store.latest_run(slug, include_result=True)
     if not r:
         return JSONResponse({"status": "none"})
+    aa = {"issues": 0, "elements": 0}
+    if r.result:
+        aa = a11y_scanner.conformance_summary(r.result)["to_reach"].get("AA", aa)
     return JSONResponse({
         "status": r.status, "band": r.band,
         "total_violations": r.total_violations, "total_nodes": r.total_nodes,
         "root_cause_count": r.root_cause_count,
+        "aa_issues": aa["issues"], "aa_elements": aa["elements"],
         "when": _when(r.created_at),
     })
