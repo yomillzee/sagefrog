@@ -45,9 +45,13 @@ Every client's **Insights** page (`/dashboard/{slug}/settings`) carries an
 **Accessibility** card next to *Consent health*; **Open →** goes to the audit
 page at `/dashboard/{slug}/accessibility`. There an admin edits the page list —
 **seeded from the client's Consent-scan pages** when configured — and clicks **Run
-audit**. The scan runs on demand and the scoping report renders straight back:
-severity summary, highest-leverage rules, per-page breakdown, size band, and an
-effort estimate.
+audit**. The scan runs on demand and the report renders straight back: a
+severity summary, then **All issues** — every violation grouped by rule
+(most-severe first), each affected element listing its CSS selector, how it
+fails, and its HTML snippet — plus a per-page breakdown. It's a full itemized
+report the dev team can work straight off; it deliberately does **not** put an
+effort estimate on the page (developers scope that themselves). The CLI still
+prints an estimate for proposal use.
 
 It's intentionally **stateless** — no database, no background worker, no cron.
 The scan runs synchronously in the request (FastAPI's worker threadpool, which is

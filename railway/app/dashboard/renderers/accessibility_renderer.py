@@ -56,13 +56,107 @@ _EXTRA_CSS = """
 .a11y-rule-id { font-family:ui-monospace,Menlo,monospace; font-size:.78rem; }
 .a11y-warn { background:#fffbeb; border:1px solid #fde68a; color:#8a5a00; border-radius:10px; padding:10px 12px; font-size:.8rem; margin-top:12px; }
 .a11y-empty { color:#64748b; font-size:.9rem; padding:8px 0; }
+/* Full issue report — one collapsible block per rule */
+.a11y-issue { border:1px solid #e6eaf0; border-radius:12px; margin-bottom:12px; overflow:hidden; }
+.a11y-issue > summary { list-style:none; cursor:pointer; padding:12px 14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; background:#fbfcfe; }
+.a11y-issue > summary::-webkit-details-marker { display:none; }
+.a11y-issue[open] > summary { border-bottom:1px solid #eef2f7; }
+.a11y-issue .rid { font-family:ui-monospace,Menlo,monospace; font-size:.82rem; font-weight:600; color:#0f172a; }
+.a11y-issue .cnt { margin-left:auto; color:#64748b; font-size:.78rem; }
+.a11y-issue .help { color:#0b5cab; font-size:.8rem; text-decoration:none; }
+.a11y-issue-desc { color:#475569; font-size:.82rem; padding:10px 14px 2px; }
+.a11y-node { padding:10px 14px; border-top:1px solid #f1f5f9; }
+.a11y-node .sel { font-family:ui-monospace,Menlo,monospace; font-size:.78rem; color:#0f172a; background:#f6f8fb; border:1px solid #eef2f7; border-radius:6px; padding:2px 6px; display:inline-block; word-break:break-all; }
+.a11y-node .fs { color:#475569; font-size:.8rem; margin-top:6px; white-space:pre-wrap; }
+.a11y-node .pg { color:#94a3b8; font-size:.72rem; margin-top:6px; }
+.a11y-node .snip { font-family:ui-monospace,Menlo,monospace; font-size:.72rem; color:#7c5e10; background:#fffdf5; border:1px solid #f3ead0; border-radius:6px; padding:4px 6px; margin-top:6px; white-space:pre-wrap; word-break:break-all; }
+.a11y-more { color:#64748b; font-size:.78rem; padding:8px 14px; }
 """
+
+# Cap elements listed per rule so a page with hundreds of identical failures (e.g.
+# color-contrast) stays readable; the count in the header is always the true total.
+_MAX_NODES_PER_RULE = 100
 
 
 def _impact_pill(impact: str) -> str:
     m = _IMPACT_META.get(impact, _IMPACT_META["minor"])
     return (f'<span class="a11y-pill" style="color:{m["fg"]};background:{m["bg"]};'
             f'border:1px solid {m["bd"]}">{m["label"]}</span>')
+
+
+def _multiline(text: str) -> str:
+    return _esc(text or "").replace("\n", "<br>")
+
+
+def _all_issues_html(scan: dict[str, Any]) -> str:
+    """Every violation across all pages, grouped by rule, with the affected
+    elements (selector + axe's failure summary) so a developer can act on each."""
+    from a11y_scanner import IMPACT_ORDER
+
+    multipage = len([p for p in (scan.get("pages") or []) if p.get("scanned")]) > 1
+    # rule id -> {meta..., occurrences: [{page_url, page_title, sel, fs, html}]}
+    rules: dict[str, dict[str, Any]] = {}
+    for pg in scan.get("pages") or []:
+        page_url = pg.get("url", "")
+        page_title = pg.get("title") or pg.get("final_url") or page_url
+        for v in pg.get("violations") or []:
+            r = rules.setdefault(v["id"], {
+                "id": v["id"], "impact": (v.get("impact") or "minor").lower(),
+                "help": v.get("help", ""), "helpUrl": v.get("helpUrl", ""),
+                "description": v.get("description", ""), "occurrences": [],
+            })
+            for n in v.get("nodes") or []:
+                target = n.get("target") or []
+                sel = " ".join(target) if isinstance(target, list) else str(target)
+                r["occurrences"].append({
+                    "page_url": page_url, "page_title": page_title,
+                    "sel": sel, "fs": n.get("failureSummary", ""), "html": n.get("html", ""),
+                })
+
+    if not rules:
+        return ""
+
+    ordered = sorted(
+        rules.values(),
+        key=lambda r: (IMPACT_ORDER.index(r["impact"]) if r["impact"] in IMPACT_ORDER else 9,
+                       -len(r["occurrences"])),
+    )
+
+    blocks = ""
+    for r in ordered:
+        occ = r["occurrences"]
+        help_link = (f'<a class="help" href="{_esc(r["helpUrl"])}" target="_blank" rel="noopener">Guidance &rarr;</a>'
+                     if r.get("helpUrl") else "")
+        desc = f'<div class="a11y-issue-desc">{_esc(r["description"])}</div>' if r.get("description") else ""
+        nodes_html = ""
+        for o in occ[:_MAX_NODES_PER_RULE]:
+            page_line = (f'<div class="pg">On: {_esc(o["page_title"])} — {_esc(o["page_url"])}</div>'
+                         if multipage else "")
+            fs = f'<div class="fs">{_multiline(o["fs"])}</div>' if o.get("fs") else ""
+            snip = f'<div class="snip">{_esc(o["html"])}</div>' if o.get("html") else ""
+            sel = f'<span class="sel">{_esc(o["sel"])}</span>' if o.get("sel") else ""
+            nodes_html += f'<div class="a11y-node">{sel}{fs}{snip}{page_line}</div>'
+        if len(occ) > _MAX_NODES_PER_RULE:
+            nodes_html += (f'<div class="a11y-more">+ {len(occ) - _MAX_NODES_PER_RULE} more element(s) '
+                           f'with this issue — not listed.</div>')
+        count = len(occ)
+        blocks += f"""
+        <details class="a11y-issue" open>
+          <summary>
+            <span class="rid">{_esc(r['id'])}</span>{_impact_pill(r['impact'])}
+            {help_link}
+            <span class="cnt">{count} element{'s' if count != 1 else ''}</span>
+          </summary>
+          {desc}
+          {nodes_html}
+        </details>"""
+
+    return f"""
+    <div class="a11y-card">
+      <h2>All issues</h2>
+      <p class="a11y-sub">Every failure axe-core found, grouped by rule (most severe first). Each element lists its CSS selector and how it fails.</p>
+      {blocks}
+    </div>"""
 
 
 def _results_html(scan: dict[str, Any], agg: dict[str, Any]) -> str:
@@ -73,10 +167,9 @@ def _results_html(scan: dict[str, Any], agg: dict[str, Any]) -> str:
 
     stats = f"""
     <div class="a11y-stats">
-      <div class="a11y-stat"><div class="n">{agg['total_violations']}</div><div class="l">Rule failures</div></div>
+      <div class="a11y-stat"><div class="n">{agg['total_violations']}</div><div class="l">Distinct issues</div></div>
       <div class="a11y-stat"><div class="n">{agg['total_nodes']}</div><div class="l">Affected elements</div></div>
       <div class="a11y-stat"><div class="n">{agg['incomplete_total']}</div><div class="l">Needs manual review</div></div>
-      <div class="a11y-stat"><div class="n">~{agg['est_dev_hours']}h</div><div class="l">Est. dev effort</div></div>
       <div class="a11y-stat"><div class="n">{agg['pages_scanned']}/{agg['pages_requested']}</div><div class="l">Pages scanned</div></div>
     </div>"""
 
@@ -86,23 +179,7 @@ def _results_html(scan: dict[str, Any], agg: dict[str, Any]) -> str:
         for i in ("critical", "serious", "moderate", "minor")
     )
 
-    rule_rows = ""
-    for r in agg["rules"][:25]:
-        help_txt = _esc(r.get("help") or r["id"])
-        help_cell = (f'<a href="{_esc(r["helpUrl"])}" target="_blank" rel="noopener">{help_txt}</a>'
-                     if r.get("helpUrl") else help_txt)
-        rule_rows += (f"<tr><td class='a11y-rule-id'>{_esc(r['id'])}</td><td>{_impact_pill(r['impact'])}</td>"
-                      f"<td class='num'>{r['page_count']}</td><td class='num'>{r['nodes']}</td>"
-                      f"<td>{help_cell}</td></tr>")
-    rules_block = (f"""
-    <div class="a11y-card">
-      <h2>Highest-leverage fixes</h2>
-      <p class="a11y-sub">Rules that fail on the most elements — start here.</p>
-      <table class="a11y-table">
-        <thead><tr><th>Rule</th><th>Impact</th><th class="num">Pages</th><th class="num">Elements</th><th>Guidance</th></tr></thead>
-        <tbody>{rule_rows}</tbody>
-      </table>
-    </div>""" if rule_rows else "")
+    issues_block = _all_issues_html(scan)
 
     page_rows = ""
     for pg in scan.get("pages") or []:
@@ -137,7 +214,7 @@ def _results_html(scan: dict[str, Any], agg: dict[str, Any]) -> str:
         <tbody>{sev_rows}</tbody>
       </table>
     </div>
-    {rules_block}
+    {issues_block}
     <div class="a11y-card">
       <h2>Per-page breakdown</h2>
       <table class="a11y-table">
