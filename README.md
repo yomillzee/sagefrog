@@ -363,7 +363,11 @@ as all vs billable-only, sorted by highest or A–Z, and split into retainer vs 
 work — tag each Harvest project via the page's **Tag projects** panel (untagged
 projects count only under "All work"). Per-client monthly goals accept a single value,
 a range (`80-100`), or an open floor (`80+`), and the burn-up line is colored by
-on/off-track pace.
+on/off-track pace. The page's **Share** button mints read-only, no-login links
+(`/share/client-hours/{token}`) so stakeholders can view the same burn-up without a
+portal account: the tokens are unguessable and revocable (view counts are tracked),
+the shared view drops every editing control, and its data feed is cache-only so a
+leaked link can't force live Harvest pulls.
 
 ---
 
