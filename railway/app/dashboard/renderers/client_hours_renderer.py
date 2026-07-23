@@ -117,7 +117,11 @@ _HOURS_CSS = """
        color when set, muted "+ Owner" affordance when not). Read-only: a static
        colored pill, hidden entirely when unassigned. --oc carries the owner's
        deterministic color. */
-    .card-meta { display:flex; align-items:center; gap:8px; margin-top:6px; flex-wrap:wrap; }
+    /* Card footer: legend on the left, owner chip pinned bottom-right. */
+    .card-foot { display:flex; align-items:center; justify-content:space-between;
+      gap:10px; margin-top:6px; }
+    .card-foot .legend { margin-top:0; min-width:0; }
+    .card-owner { flex:0 0 auto; margin-left:auto; }
     .owner-select { appearance:none; border:1px solid var(--border); background:#fff;
       background:linear-gradient(#fff,#fff); color:var(--muted); border-radius:999px;
       padding:4px 26px 4px 12px; font:inherit; font-size:.74rem; font-weight:700; cursor:pointer;
@@ -580,10 +584,12 @@ _PAGE_JS = r"""
           + `<div class="card-total"><b>${hrs(totalOf(c))}h</b> ${kind}${statusTxt}</div></div>`
           + goalEditor(c)
         + `</div>`
-        + (ownerHtml ? `<div class="card-meta">${ownerHtml}</div>` : '')
         + `<div class="chart-wrap">${chart(c, meta)}</div>`
-        + `<div class="legend"><span><i class="actual" style="border-top-color:${st.color}"></i>Hours logged</span>`
-          + `<span><i class="goal"></i>${(c.goal_min != null && c.goal_max != null && c.goal_max !== c.goal_min) ? 'Goal range' : 'Goal pace'}</span></div>`
+        + `<div class="card-foot">`
+          + `<div class="legend"><span><i class="actual" style="border-top-color:${st.color}"></i>Hours logged</span>`
+            + `<span><i class="goal"></i>${(c.goal_min != null && c.goal_max != null && c.goal_max !== c.goal_min) ? 'Goal range' : 'Goal pace'}</span></div>`
+          + (ownerHtml ? `<div class="card-owner">${ownerHtml}</div>` : '')
+        + `</div>`
       + `</div>`;
     }
 
