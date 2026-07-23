@@ -53,7 +53,7 @@ if str(APP_DIR) not in sys.path:
 
 import a11y_scanner  # noqa: E402
 
-_IMPACT_ORDER = ("critical", "serious", "moderate", "minor")
+_IMPACT_ORDER = a11y_scanner.IMPACT_ORDER
 
 
 def _slugify(name: str) -> str:
@@ -70,79 +70,19 @@ def _read_urls_file(path: str) -> list[str]:
     return out
 
 
+# The scoping roll-up and size band live in a11y_scanner so the CLI and the
+# in-dashboard Accessibility page count and estimate identically. Thin wrappers
+# keep the CLI's call sites (and tests) stable.
+
 def _aggregate(scan: dict) -> dict:
     """Roll per-page axe results up into client-level scoping numbers."""
-    pages = scan.get("pages") or []
-    totals = {k: 0 for k in _IMPACT_ORDER}
-    node_totals = {k: 0 for k in _IMPACT_ORDER}
-    incomplete_total = 0
-    # rule id -> {impact, help, helpUrl, pages: set, rule_instances, nodes}
-    rules: dict[str, dict] = {}
-
-    for pg in pages:
-        incomplete_total += pg.get("incomplete_count", 0)
-        for v in pg.get("violations") or []:
-            impact = (v.get("impact") or "minor").lower()
-            if impact not in totals:
-                totals[impact] = 0
-                node_totals[impact] = 0
-            n_nodes = len(v.get("nodes") or [])
-            totals[impact] += 1
-            node_totals[impact] += n_nodes
-            r = rules.setdefault(v["id"], {
-                "id": v["id"], "impact": impact, "help": v.get("help", ""),
-                "helpUrl": v.get("helpUrl", ""), "pages": set(),
-                "rule_instances": 0, "nodes": 0,
-            })
-            r["pages"].add(pg.get("url"))
-            r["rule_instances"] += 1
-            r["nodes"] += n_nodes
-
-    # Effort estimate: weight each *rule instance* (a rule failing on a page) by
-    # its impact. Fixing a rule usually generalises across the nodes it hit, so we
-    # don't multiply by node count — that would wildly over-count a single CSS or
-    # template fix. This is a floor for a first-pass quote, not a bid.
-    est_hours = 0.0
-    for impact in totals:
-        est_hours += totals[impact] * a11y_scanner.IMPACT_WEIGHTS.get(impact, 0.5)
-    # Manual review of axe's "incomplete" (undecidable) items, coarsely.
-    manual_hours = round(incomplete_total * 0.1, 1)
-
-    rule_rows = sorted(
-        rules.values(),
-        key=lambda r: (_IMPACT_ORDER.index(r["impact"]) if r["impact"] in _IMPACT_ORDER else 9,
-                       -r["nodes"]),
-    )
-    for r in rule_rows:
-        r["page_count"] = len(r["pages"])
-        r.pop("pages", None)
-
-    scanned_pages = [p for p in pages if p.get("scanned")]
-    return {
-        "totals_by_impact": totals,
-        "nodes_by_impact": node_totals,
-        "total_violations": sum(totals.values()),
-        "total_nodes": sum(node_totals.values()),
-        "incomplete_total": incomplete_total,
-        "pages_scanned": len(scanned_pages),
-        "pages_requested": len(pages),
-        "rules": rule_rows,
-        "est_dev_hours": round(est_hours, 1),
-        "est_manual_review_hours": manual_hours,
-    }
+    return a11y_scanner.aggregate(scan)
 
 
 def _band(agg: dict) -> str:
-    """A one-word size band for the top of a proposal."""
-    crit = agg["totals_by_impact"].get("critical", 0) + agg["totals_by_impact"].get("serious", 0)
-    total = agg["total_violations"]
-    if total == 0:
-        return "Clean (no automated violations)"
-    if crit >= 8 or total >= 25:
-        return "Large"
-    if crit >= 3 or total >= 10:
-        return "Medium"
-    return "Small"
+    """A one-word size band for the top of a proposal (CLI phrasing)."""
+    band = a11y_scanner.size_band(agg)
+    return "Clean (no automated violations)" if band == "Clean" else band
 
 
 def _render_markdown(scan: dict, agg: dict, client: str) -> str:

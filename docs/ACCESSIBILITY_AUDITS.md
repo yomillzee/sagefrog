@@ -39,7 +39,25 @@ extra setup.
 
 ---
 
-## Quick start
+## In the dashboard (per client)
+
+Every client's **Insights** page (`/dashboard/{slug}/settings`) carries an
+**Accessibility** card next to *Consent health*; **Open →** goes to the audit
+page at `/dashboard/{slug}/accessibility`. There an admin edits the page list —
+**seeded from the client's Consent-scan pages** when configured — and clicks **Run
+audit**. The scan runs on demand and the scoping report renders straight back:
+severity summary, highest-leverage rules, per-page breakdown, size band, and an
+effort estimate.
+
+It's intentionally **stateless** — no database, no background worker, no cron.
+The scan runs synchronously in the request (FastAPI's worker threadpool, which is
+where Playwright's sync API is safe), so allow ~5–15s per page and keep the list
+to a representative handful (capped at 12). Running a scan is **admin-only** and
+recorded in the audit log (`accessibility.scan_ran`); the card is hidden from
+non-admins. Nothing is persisted between runs — for a saved report, use the CLI
+below, which writes files.
+
+## Quick start (CLI)
 
 From `railway/app/`:
 
