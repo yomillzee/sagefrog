@@ -73,6 +73,9 @@ IMPACT_WEIGHTS: dict[str, float] = {
     "minor": 0.25,
 }
 
+# Severity ordering, most-severe first — used when sorting rules for the report.
+IMPACT_ORDER: tuple[str, ...] = ("critical", "serious", "moderate", "minor")
+
 
 def _settle_ms() -> int:
     try:
@@ -333,3 +336,83 @@ def scan_pages(urls: list[str], *, tags: list[str] | None = None) -> dict[str, A
         "pages": results,
         "rejected": rejected,
     }
+
+
+# ── Scoping roll-up ──────────────────────────────────────────────────────────
+# Turns the per-page scan into client-level numbers a proposal can quote. Shared
+# by the CLI (scripts/a11y_audit.py) and the in-dashboard Accessibility page so
+# both count and estimate identically.
+
+def aggregate(scan: dict[str, Any]) -> dict[str, Any]:
+    """Roll per-page axe results up into client-level scoping numbers."""
+    pages = scan.get("pages") or []
+    totals = {k: 0 for k in IMPACT_ORDER}
+    node_totals = {k: 0 for k in IMPACT_ORDER}
+    incomplete_total = 0
+    # rule id -> {impact, help, helpUrl, pages: set, rule_instances, nodes}
+    rules: dict[str, dict[str, Any]] = {}
+
+    for pg in pages:
+        incomplete_total += pg.get("incomplete_count", 0)
+        for v in pg.get("violations") or []:
+            impact = (v.get("impact") or "minor").lower()
+            if impact not in totals:
+                totals[impact] = 0
+                node_totals[impact] = 0
+            n_nodes = len(v.get("nodes") or [])
+            totals[impact] += 1
+            node_totals[impact] += n_nodes
+            r = rules.setdefault(v["id"], {
+                "id": v["id"], "impact": impact, "help": v.get("help", ""),
+                "helpUrl": v.get("helpUrl", ""), "pages": set(),
+                "rule_instances": 0, "nodes": 0,
+            })
+            r["pages"].add(pg.get("url"))
+            r["rule_instances"] += 1
+            r["nodes"] += n_nodes
+
+    # Effort estimate: weight each *rule instance* (a rule failing on a page) by
+    # its impact. Fixing a rule usually generalises across the nodes it hit, so we
+    # don't multiply by node count — that would wildly over-count a single CSS or
+    # template fix. A floor for a first-pass quote, not a bid.
+    est_hours = 0.0
+    for impact, count in totals.items():
+        est_hours += count * IMPACT_WEIGHTS.get(impact, 0.5)
+    manual_hours = round(incomplete_total * 0.1, 1)  # coarse manual-review budget
+
+    rule_rows = sorted(
+        rules.values(),
+        key=lambda r: (IMPACT_ORDER.index(r["impact"]) if r["impact"] in IMPACT_ORDER else 9,
+                       -r["nodes"]),
+    )
+    for r in rule_rows:
+        r["page_count"] = len(r["pages"])
+        r.pop("pages", None)
+
+    scanned_pages = [p for p in pages if p.get("scanned")]
+    return {
+        "totals_by_impact": totals,
+        "nodes_by_impact": node_totals,
+        "total_violations": sum(totals.values()),
+        "total_nodes": sum(node_totals.values()),
+        "incomplete_total": incomplete_total,
+        "pages_scanned": len(scanned_pages),
+        "pages_requested": len(pages),
+        "rules": rule_rows,
+        "est_dev_hours": round(est_hours, 1),
+        "est_manual_review_hours": manual_hours,
+    }
+
+
+def size_band(agg: dict[str, Any]) -> str:
+    """A one-word size band for the top of a proposal."""
+    by_impact = agg.get("totals_by_impact") or {}
+    crit = by_impact.get("critical", 0) + by_impact.get("serious", 0)
+    total = agg.get("total_violations", 0)
+    if total == 0:
+        return "Clean"
+    if crit >= 8 or total >= 25:
+        return "Large"
+    if crit >= 3 or total >= 10:
+        return "Medium"
+    return "Small"

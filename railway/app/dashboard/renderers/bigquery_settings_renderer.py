@@ -20,6 +20,7 @@ from dashboard.renderers.bigquery_dashboard_renderer import _api_url
 from dashboard.renderers import budget_tracker
 from dashboard.services import kpi_registry
 from dashboard.utils.formatting import esc as _esc
+from dashboard.utils.urls import accessibility_page_url as _accessibility_page_url
 from dashboard.utils.urls import consent_page_url as _consent_page_url
 
 
@@ -147,6 +148,26 @@ def render_bigquery_settings_page(
           <span class="status" id="consentSidebarStatus"></span>
         </label>
         <a class="sc-link" href="{_esc(consent_url)}">Open &rarr;</a>
+      </div>
+    </section>"""
+
+    # Accessibility (ADA / WCAG) scoping audit — an on-demand axe-core scan of the
+    # client's site. Admin-only, and a plain link (the scan runs on its own page),
+    # mirroring the Consent card above.
+    accessibility_url = _accessibility_page_url(
+        client_slug=client_slug, access_key=access_key, use_session=use_session
+    ) or "#"
+    accessibility_card_html = "" if not session_is_admin else f"""
+    <section class="summary-card">
+      <div class="sc-main">
+        <div class="sc-head">
+          <span class="sc-title">Accessibility</span>
+          <span class="consent-pill" data-state="loading">ADA / WCAG</span>
+        </div>
+        <span class="sc-sub">Run an axe-core scan of this client's site to scope ADA remediation work.</span>
+      </div>
+      <div class="sc-actions">
+        <a class="sc-link" href="{_esc(accessibility_url)}">Open &rarr;</a>
       </div>
     </section>"""
 
@@ -298,6 +319,7 @@ def render_bigquery_settings_page(
     {flash_html}
 
     {consent_visibility_html}
+    {accessibility_card_html}
     {kpi_section_html}
     {budget_module_html}
   </main>

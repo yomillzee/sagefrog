@@ -105,6 +105,26 @@ class PureTests(unittest.TestCase):
         self.assertEqual(a11y_audit._slugify("Penn Community Bank!"), "penn-community-bank")
         self.assertEqual(a11y_audit._slugify("   "), "client")
 
+    def test_public_aggregate_matches_cli_wrapper(self):
+        # The CLI now delegates to a11y_scanner.aggregate — same numbers either way.
+        scan = {"pages": [{
+            "url": "https://x/", "scanned": True, "incomplete_count": 0,
+            "violations": [{"id": "image-alt", "impact": "critical", "help": "h", "helpUrl": "u",
+                            "nodes": [{}]}],
+        }]}
+        self.assertEqual(a11y_audit._aggregate(scan), ax.aggregate(scan))
+
+    def test_size_band_thresholds(self):
+        def agg(crit=0, serious=0, moderate=0, minor=0):
+            by = {"critical": crit, "serious": serious, "moderate": moderate, "minor": minor}
+            return {"totals_by_impact": by, "total_violations": sum(by.values())}
+        self.assertEqual(ax.size_band(agg()), "Clean")
+        self.assertEqual(ax.size_band(agg(minor=2)), "Small")
+        self.assertEqual(ax.size_band(agg(crit=3)), "Medium")
+        self.assertEqual(ax.size_band(agg(moderate=10)), "Medium")
+        self.assertEqual(ax.size_band(agg(crit=8)), "Large")
+        self.assertEqual(ax.size_band(agg(minor=25)), "Large")
+
 
 @unittest.skipUnless(_BROWSER_READY, "requires Playwright + a Chromium binary")
 class BrowserTests(unittest.TestCase):
