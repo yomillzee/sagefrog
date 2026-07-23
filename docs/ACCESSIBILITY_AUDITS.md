@@ -45,13 +45,22 @@ Every client's **Insights** page (`/dashboard/{slug}/settings`) carries an
 **Accessibility** card next to *Consent health*; **Open →** goes to the audit
 page at `/dashboard/{slug}/accessibility`. There an admin edits the page list —
 **seeded from the client's Consent-scan pages** when configured — and clicks **Run
-audit**. The scan runs on demand and the report renders straight back: a
-severity summary, then **All issues** — every violation grouped by rule
-(most-severe first), each affected element listing its CSS selector, how it
-fails, and its HTML snippet — plus a per-page breakdown. It's a full itemized
-report the dev team can work straight off; it deliberately does **not** put an
-effort estimate on the page (developers scope that themselves). The CLI still
-prints an estimate for proposal use.
+audit**. The scan runs on demand and the report renders straight back:
+
+1. A severity summary.
+2. **Likely root causes** — affected elements clustered by the component they
+   come from (shared CSS-selector root). A cluster spanning many elements and
+   several rules is almost always **one broken template**, so the report leads
+   with it: e.g. "~205 of 228 affected elements trace to the navigation — fix the
+   shared template once, not 205 separate tasks." This keeps a big raw count from
+   reading as hundreds of independent problems (technically accurate but
+   commercially alarmist). The grouping is a **heuristic**, labelled "likely".
+3. **All issues** — the full element-level list, every violation grouped by rule
+   with each element's selector, failure summary, and HTML snippet, for the devs.
+4. A per-page breakdown.
+
+It deliberately does **not** put an effort estimate on the page (developers scope
+that themselves). The CLI still prints an estimate for proposal use.
 
 It's intentionally **stateless** — no database, no background worker, no cron.
 The scan runs synchronously in the request (FastAPI's worker threadpool, which is
