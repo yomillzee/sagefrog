@@ -1985,6 +1985,109 @@ async def admin_client_hours_project_tag(
     return JSONResponse({"ok": True, "tag": (tag or "").strip().lower() or None})
 
 
+# ---------------------------------------------------------------------------
+# Client Hours share links: read-only, no-login views of the burn-up page.
+# Admins mint/list/revoke unguessable tokens (…/share*); the public routes
+# (/share/client-hours/{token}) render the same page read-only and serve a
+# cache-only data feed so a leaked link can't force live Harvest pulls.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/admin/client-hours/shares", include_in_schema=False)
+async def admin_client_hours_shares(request: Request) -> JSONResponse:
+    """List the active read-only share links for the Client Hours page."""
+    await web_auth.require_admin(request)
+    import client_hours_share
+
+    return JSONResponse({"ok": True, "links": client_hours_share.list_share_links()})
+
+
+@app.post("/admin/client-hours/share", include_in_schema=False)
+async def admin_client_hours_share_create(
+    request: Request,
+    label: str = Form(""),
+) -> JSONResponse:
+    """Mint a new read-only share link. Returns the token + its full URL."""
+    user = await web_auth.require_admin(request)
+    import client_hours_share
+
+    try:
+        link = client_hours_share.create_share_link(created_by=user.email, label=label)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    audit_log.record(
+        action="client_hours.share_created",
+        actor_email=user.email,
+        detail={"token": link["token"][:8] + "…", "label": link.get("label")},
+        **audit_log.request_context(request),
+    )
+    link["url"] = f"{oauth_flows.public_base_url()}/share/client-hours/{link['token']}"
+    return JSONResponse({"ok": True, "link": link})
+
+
+@app.post("/admin/client-hours/share/revoke", include_in_schema=False)
+async def admin_client_hours_share_revoke(
+    request: Request,
+    token: str = Form(...),
+) -> JSONResponse:
+    """Revoke a read-only share link so it can no longer be viewed."""
+    user = await web_auth.require_admin(request)
+    import client_hours_share
+
+    try:
+        revoked = client_hours_share.revoke_share_link(token=token, revoked_by=user.email)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    if revoked:
+        audit_log.record(
+            action="client_hours.share_revoked",
+            actor_email=user.email,
+            detail={"token": (token or "")[:8] + "…"},
+            **audit_log.request_context(request),
+        )
+    return JSONResponse({"ok": True, "revoked": revoked})
+
+
+@app.get("/share/client-hours/{token}", include_in_schema=False, response_class=HTMLResponse)
+def shared_client_hours(token: str):
+    """Public, read-only Client Hours view for a valid share token — no login.
+    An invalid or revoked token renders a plain 404 page."""
+    import client_hours_share
+    from dashboard.renderers.client_hours_renderer import (
+        render_shared_client_hours_page,
+    )
+
+    link = client_hours_share.resolve_share_token(token)
+    if not link:
+        return HTMLResponse(
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<title>Link unavailable</title></head>"
+            "<body style='font-family:system-ui,sans-serif;max-width:520px;margin:80px auto;"
+            "padding:0 20px;color:#0f1c2e'>"
+            "<h1 style='font-size:1.3rem'>This link isn’t available</h1>"
+            "<p style='color:#5a6578'>The share link is invalid or has been revoked. "
+            "Ask the person who shared it for a new one.</p></body></html>",
+            status_code=404,
+        )
+    return HTMLResponse(
+        render_shared_client_hours_page(token=link["token"], label=link.get("label"))
+    )
+
+
+@app.get("/share/client-hours/{token}/data", include_in_schema=False)
+def shared_client_hours_data(token: str) -> JSONResponse:
+    """Public JSON feed for a shared Client Hours view. Cache-only — never forces
+    a live Harvest pull — so a leaked link can't be used to hammer the API."""
+    import client_hours_share
+
+    link = client_hours_share.resolve_share_token(token, record_view=False)
+    if not link:
+        return JSONResponse({"error": "This link is invalid or has been revoked."}, status_code=404)
+    import harvest_service
+
+    return JSONResponse(harvest_service.build_client_hours_overview(use_cache=True))
+
+
 @app.get("/admin/docs", include_in_schema=False, response_class=HTMLResponse)
 def admin_docs(request: Request):
     """Admin-only 'Docs': how to set up a new client dashboard, in the portal."""

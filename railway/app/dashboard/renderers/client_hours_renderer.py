@@ -7,13 +7,20 @@ client's cumulative hours-logged line against a straight goal-pace line — the
 same burn-up read the agency already uses for individual clients, now for every
 client at once. Each card's monthly goal is editable inline and saved to
 /admin/client-hours/goal.
+
+The same view is also served read-only, without a login, via a share link
+(``render_shared_client_hours_page`` → /share/client-hours/{token}). The shared
+page reuses this file's CSS and chart JS but drops every mutation affordance
+(goal editing, project tagging, the manual Harvest refresh, and the share
+manager) and points its data fetch at the public, cache-only feed.
 """
 
 from __future__ import annotations
 
 import html
+import json
 
-from dashboard.renderers.base_layout import render_admin_shell_page
+from dashboard.renderers.base_layout import favicon_head_html, render_admin_shell_page
 
 
 def _esc(value: object) -> str:
@@ -106,6 +113,9 @@ _HOURS_CSS = """
       white-space:nowrap; }
     .goal-btn:hover { border-color:#94a3b8; background:#fff; }
     .goal-btn .g-set { color:var(--accent); }
+    /* Read-only goal label (shared view has no editor) */
+    .goal-ro { color:var(--muted); font-size:.76rem; font-weight:700; white-space:nowrap; }
+    .goal-ro b { color:var(--accent); }
     .goal-edit { display:none; align-items:center; gap:5px; }
     .goal-edit.on { display:flex; }
     .goal-edit input { width:118px; border:1px solid var(--border); border-radius:8px; padding:4px 8px;
@@ -134,7 +144,7 @@ _HOURS_CSS = """
       animation:slideIn .18s ease; }
     /* display:flex/fixed above are author styles that would otherwise beat the
        browser's [hidden]{display:none}, leaving the panel stuck open. */
-    .tag-modal[hidden], .modal-backdrop[hidden] { display:none; }
+    .tag-modal[hidden], .share-modal[hidden], .modal-backdrop[hidden] { display:none; }
     @keyframes slideIn { from { transform:translateX(20px); opacity:.6; } to { transform:none; opacity:1; } }
     .tag-modal-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
       padding:18px 20px 12px; border-bottom:1px solid var(--line); }
@@ -164,6 +174,35 @@ _HOURS_CSS = """
     .tag-seg button.on[data-tag="retainer"] { background:#0a7f3f; color:#fff; }
     .tag-seg button.on[data-tag="project"] { background:#2f6df0; color:#fff; }
     .tag-empty { text-align:center; color:var(--muted); padding:30px 8px; }
+    /* Share-links modal (centered dialog) */
+    .share-modal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+      width:min(560px, 94vw); max-height:86vh; background:#fff; z-index:121; display:flex;
+      flex-direction:column; border-radius:16px; box-shadow:0 24px 60px rgba(10,37,64,.32);
+      animation:popIn .16s ease; }
+    @keyframes popIn { from { transform:translate(-50%,-48%); opacity:.7; } to { transform:translate(-50%,-50%); opacity:1; } }
+    .share-modal-body { overflow-y:auto; padding:6px 20px; flex:1; }
+    .share-modal-foot { display:flex; gap:8px; padding:14px 20px 18px; border-top:1px solid var(--line); }
+    .share-modal-foot input { flex:1; min-width:0; border:1px solid var(--border); border-radius:9px;
+      padding:9px 12px; font:inherit; font-size:.85rem; }
+    .share-create { background:var(--accent); color:#fff; border:0; border-radius:9px; padding:9px 16px;
+      font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; flex:0 0 auto; }
+    .share-create:disabled { opacity:.6; cursor:default; }
+    .share-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 0;
+      border-bottom:1px solid #f0f3f8; }
+    .share-row:last-child { border-bottom:0; }
+    .share-row-main { min-width:0; }
+    .share-url { font-size:.8rem; color:var(--navy); font-weight:600; white-space:nowrap; overflow:hidden;
+      text-overflow:ellipsis; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .share-meta { font-size:.72rem; color:var(--muted); margin-top:3px; }
+    .share-actions { display:flex; gap:6px; flex:0 0 auto; }
+    /* Read-only shared-page top bar */
+    .ro-topbar { background:var(--navy); color:#fff; padding:14px 24px; display:flex; align-items:center;
+      justify-content:space-between; gap:12px; flex-wrap:wrap; }
+    .ro-brand { display:flex; align-items:center; gap:12px; font-weight:800; font-size:1rem; min-width:0; }
+    .ro-brand .ro-title { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .ro-badge { font-size:.68rem; font-weight:800; letter-spacing:.04em; text-transform:uppercase;
+      background:rgba(255,255,255,.16); color:#fff; border-radius:999px; padding:4px 10px; flex:0 0 auto; }
+    .ro-note { color:rgba(255,255,255,.72); font-size:.78rem; font-weight:600; }
     /* ── Agency billing summary: one full-width billables burn-up ──────── */
     .summary { background:#fff; border:1px solid var(--line); border-radius:16px;
       box-shadow:0 6px 22px rgba(10,37,64,.06); padding:16px 18px 14px; margin-bottom:16px; }
@@ -201,7 +240,75 @@ _HOURS_CSS = """
     }"""
 
 
-_HOURS_CONTENT = """
+# The head-controls that only make sense when signed in as an admin: manual
+# Harvest refresh, project tagging, and the share-link manager. Omitted from the
+# read-only shared view, which is a pure viewer.
+_ADMIN_HEAD_BUTTONS = """
+        <button type="button" class="refresh-btn" id="chShare" title="Create a read-only link anyone can view">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          <span>Share</span>
+        </button>
+        <button type="button" class="refresh-btn" id="chTag" title="Tag projects as retainer or project">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+            <line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+          <span>Tag projects</span>
+        </button>
+        <button type="button" class="refresh-btn" id="chRefresh" title="Pull fresh hours from Harvest">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          <span>Refresh</span>
+        </button>"""
+
+
+# The admin-only modals (project tagging + share-link manager). Left out of the
+# read-only shared page entirely.
+_ADMIN_MODALS = """
+  <div class="modal-backdrop" id="tagBackdrop" hidden></div>
+  <aside class="tag-modal" id="tagModal" role="dialog" aria-modal="true" aria-label="Tag projects" hidden>
+    <header class="tag-modal-head">
+      <div>
+        <h2>Tag projects</h2>
+        <p class="tag-modal-sub">Mark each Harvest project as retainer or one-off project. Untagged projects show only under “All work”.</p>
+      </div>
+      <button type="button" class="tag-modal-close" id="tagClose" aria-label="Close">✕</button>
+    </header>
+    <div class="tag-modal-search">
+      <input type="text" id="tagSearch" placeholder="Search projects or clients…" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="tag-modal-body" id="tagBody"></div>
+  </aside>
+  <div class="modal-backdrop" id="shareBackdrop" hidden></div>
+  <div class="share-modal" id="shareModal" role="dialog" aria-modal="true" aria-label="Share Client Hours" hidden>
+    <header class="tag-modal-head">
+      <div>
+        <h2>Share Client Hours</h2>
+        <p class="tag-modal-sub">Anyone with an active link can view this page read-only, without signing in.
+          Links are unguessable — revoke one to disable it.</p>
+      </div>
+      <button type="button" class="tag-modal-close" id="shareClose" aria-label="Close">✕</button>
+    </header>
+    <div class="share-modal-body" id="shareBody"></div>
+    <div class="share-modal-foot">
+      <input type="text" id="shareLabel" placeholder="Label (optional, e.g. “Q3 leadership”)" maxlength="120"
+        autocomplete="off" spellcheck="false">
+      <button type="button" class="share-create" id="shareCreate">Create link</button>
+    </div>
+  </div>"""
+
+
+def _content_html(*, read_only: bool) -> str:
+    """The page body (`<main>` + any admin modals). ``read_only`` drops every
+    mutation control for the public shared view."""
+    head_buttons = "" if read_only else _ADMIN_HEAD_BUTTONS
+    modals = "" if read_only else _ADMIN_MODALS
+    return f"""
   <main>
     <div class="page-head">
       <div>
@@ -238,46 +345,20 @@ _HOURS_CONTENT = """
             aria-pressed="false" title="Clients projected to finish over their ceiling — growth opportunities">
             <span class="dot"></span>Growth <b id="chGrowCount">0</b></button>
         </div>
-        <span class="no-goal-note" id="chNoGoal" hidden></span>
-        <button type="button" class="refresh-btn" id="chTag" title="Tag projects as retainer or project">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-            <line x1="7" y1="7" x2="7.01" y2="7"/></svg>
-          <span>Tag projects</span>
-        </button>
-        <button type="button" class="refresh-btn" id="chRefresh" title="Pull fresh hours from Harvest">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          <span>Refresh</span>
-        </button>
+        <span class="no-goal-note" id="chNoGoal" hidden></span>{head_buttons}
       </div>
     </div>
     <div id="chNotice"></div>
     <div id="chSummary"></div>
     <div class="grid" id="chGrid"></div>
-  </main>
-  <div class="modal-backdrop" id="tagBackdrop" hidden></div>
-  <aside class="tag-modal" id="tagModal" role="dialog" aria-modal="true" aria-label="Tag projects" hidden>
-    <header class="tag-modal-head">
-      <div>
-        <h2>Tag projects</h2>
-        <p class="tag-modal-sub">Mark each Harvest project as retainer or one-off project. Untagged projects show only under “All work”.</p>
-      </div>
-      <button type="button" class="tag-modal-close" id="tagClose" aria-label="Close">✕</button>
-    </header>
-    <div class="tag-modal-search">
-      <input type="text" id="tagSearch" placeholder="Search projects or clients…" autocomplete="off" spellcheck="false">
-    </div>
-    <div class="tag-modal-body" id="tagBody"></div>
-  </aside>"""
+  </main>{modals}"""
 
 
-def render_client_hours_page(*, user_email: str) -> str:
-    """Full HTML for GET /admin/client-hours. Data loads from …/data."""
-    body_end = """<script>
+# The page's client-side logic. Kept identical between the admin and shared
+# views; behaviour that only applies to one is gated on ``CH_CONFIG.readOnly``.
+# ``CH_CONFIG`` (data URL + read-only flag) is injected ahead of this block by
+# ``_page_script``.
+_PAGE_JS = r"""
     const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const hrs = v => new Intl.NumberFormat('en-US',{maximumFractionDigits:1}).format(Number(v||0));
     // Standard blended billing rate — the summary card models revenue at this
@@ -407,7 +488,14 @@ def render_client_hours_page(*, user_email: str) -> str:
         + grid + xlab + goalEl + actualEl + `</svg>`;
     }
 
+    // Goal control: an inline editor for admins, a static label in the read-only
+    // shared view (no mutation affordance).
     function goalEditor(c) {
+      if (CH_CONFIG.readOnly) {
+        return c.goal_label
+          ? `<div class="goal"><span class="goal-ro"><b>${esc(c.goal_label)}</b> goal</span></div>`
+          : `<div class="goal"><span class="goal-ro">No goal</span></div>`;
+      }
       const label = c.goal_label ? `<span class="g-set">${esc(c.goal_label)} goal</span>` : 'Set goal';
       const cur = c.goal_label ? esc(c.goal_label.replace(/h/g, '').replace('–', '-')) : '';
       return `<div class="goal" data-cid="${esc(c.harvest_client_id)}" data-name="${esc(c.name)}">`
@@ -670,7 +758,9 @@ def render_client_hours_page(*, user_email: str) -> str:
 
       const notice = document.getElementById('chNotice');
       if (meta.error) {
-        const connect = !meta.connected
+        // The "Connect Harvest →" affordance is admin-only; a public viewer can't
+        // act on it, so the read-only page just shows the message.
+        const connect = (!meta.connected && !CH_CONFIG.readOnly)
           ? ' <a href="/admin">Connect Harvest →</a>' : '';
         notice.innerHTML = `<div class="notice ${meta.connected?'warn':'err'}">${esc(meta.error)}${connect}</div>`;
       } else notice.innerHTML = '';
@@ -695,7 +785,7 @@ def render_client_hours_page(*, user_email: str) -> str:
         } else if (view.scope === 'all') {
           msg = `<div class="empty">No hours logged yet this month.</div>`;
         } else {
-          msg = `<div class="empty">No ${view.scope} hours this month. Tag projects to populate this view.</div>`;
+          msg = `<div class="empty">No ${view.scope} hours this month.${CH_CONFIG.readOnly ? '' : ' Tag projects to populate this view.'}</div>`;
         }
         grid.innerHTML = msg;
         return;
@@ -703,56 +793,13 @@ def render_client_hours_page(*, user_email: str) -> str:
       grid.innerHTML = shown.map(c => card(c, meta)).join('');
     }
 
-    // Inline goal editing: toggle the input, POST on save, then re-render just
-    // that client's number (cheap full re-render off the cached data).
-    function wireGoals() {
-      const grid = document.getElementById('chGrid');
-      grid.addEventListener('click', async (ev) => {
-        const g = ev.target.closest('.goal'); if (!g) return;
-        const editor = g.querySelector('.goal-edit');
-        const btn = g.querySelector('.goal-btn');
-        if (ev.target.closest('.goal-btn')) {
-          editor.classList.add('on'); btn.style.display='none';
-          const inp = editor.querySelector('input'); inp.focus(); inp.select(); return;
-        }
-        if (ev.target.closest('.goal-cancel')) {
-          editor.classList.remove('on'); btn.style.display=''; return;
-        }
-        if (ev.target.closest('.goal-save')) {
-          const cid = g.dataset.cid;
-          const raw = editor.querySelector('input').value.trim();
-          const saveBtn = g.querySelector('.goal-save'); saveBtn.disabled = true;
-          try {
-            // The server parses "80" / "80-100" / "80+" and returns the stored
-            // min/max + label; apply those so the chart re-colors immediately
-            // (no Harvest round-trip — the hours series is unchanged).
-            const body = new URLSearchParams({ harvest_client_id: cid, client_name: g.dataset.name, goal: raw });
-            const r = await fetch('/admin/client-hours/goal', { method:'POST', credentials:'same-origin',
-              headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
-            const b = await r.json().catch(()=>({}));
-            if (!r.ok || !b.ok) throw new Error(b.error || ('HTTP '+r.status));
-            const client = (chData.clients||[]).find(c => String(c.harvest_client_id) === String(cid));
-            if (client) {
-              client.goal_min = (b.goal_min == null ? null : Number(b.goal_min));
-              client.goal_max = (b.goal_max == null ? null : Number(b.goal_max));
-              client.goal_label = b.goal_label || '';
-            }
-            render();
-          } catch (e) {
-            saveBtn.disabled = false;
-            alert('Could not save goal: ' + (e.message||e));
-          }
-        }
-      });
-    }
-
     async function load(force) {
       const btn = document.getElementById('chRefresh');
-      if (force) { btn.disabled = true; btn.classList.add('spin'); }
+      if (force && btn) { btn.disabled = true; btn.classList.add('spin'); }
       else document.getElementById('chGrid').innerHTML =
         Array.from({length:6}, () => `<div class="skel-card"></div>`).join('');
       try {
-        const r = await fetch('/admin/client-hours/data' + (force ? '?refresh=1' : ''),
+        const r = await fetch(CH_CONFIG.dataUrl + (force ? '?refresh=1' : ''),
           { credentials:'same-origin' });
         if (!r.ok) throw new Error('HTTP '+r.status);
         chData = await r.json();
@@ -762,10 +809,9 @@ def render_client_hours_page(*, user_email: str) -> str:
         if (!force) document.getElementById('chGrid').innerHTML =
           `<div class="empty">Could not load hours (${esc(e.message||'error')}). Try refreshing.</div>`;
       } finally {
-        btn.disabled = false; btn.classList.remove('spin');
+        if (btn) { btn.disabled = false; btn.classList.remove('spin'); }
       }
     }
-    document.getElementById('chRefresh').addEventListener('click', () => load(true));
 
     // Segmented controls (All/Billable hours, Highest/A–Z sort): update view
     // state and re-render off the cached data — no Harvest round-trip.
@@ -791,7 +837,6 @@ def render_client_hours_page(*, user_email: str) -> str:
       view.status = (view.status === s) ? null : s;
       if (chData) render();
     });
-    wireGoals();
 
     // Client name search: filter the cards live off the cached data as the user
     // types (no Harvest round-trip). The clear button resets the field.
@@ -812,92 +857,295 @@ def render_client_hours_page(*, user_email: str) -> str:
       chSearch.focus(); if (chData) render();
     });
 
-    // ── Tag-projects modal ────────────────────────────────────────────────
-    // Lists every project seen this month (grouped by client) with a
-    // Untagged / Retainer / Project selector. Changing one persists via
-    // /project-tag and updates the in-memory data so the charts + scope views
-    // re-color immediately (no Harvest round-trip).
-    const tagModal = document.getElementById('tagModal');
-    const tagBackdrop = document.getElementById('tagBackdrop');
-    const tagBody = document.getElementById('tagBody');
-    const tagSearch = document.getElementById('tagSearch');
+"""
 
-    function tagSegHtml(p) {
-      const opts = [['', 'Untagged'], ['retainer', 'Retainer'], ['project', 'Project']];
-      const cur = p.tag || '';
-      return `<div class="tag-seg" data-pid="${esc(p.project_id)}">`
-        + opts.map(([val, lbl]) =>
-            `<button type="button" data-tag="${val}" class="${cur === val ? 'on' : ''}">${lbl}</button>`).join('')
-        + `</div>`;
-    }
-    function renderTagBody() {
-      const q = (tagSearch.value || '').trim().toLowerCase();
-      const clients = (chData && chData.clients || []).slice()
-        .sort((a, b) => String(a.name||'').localeCompare(String(b.name||''), undefined, { sensitivity:'base' }));
-      let html = '';
-      clients.forEach(c => {
-        const projs = (c.projects || []).filter(p => {
-          if (!q) return true;
-          return (p.name||'').toLowerCase().includes(q) || (c.name||'').toLowerCase().includes(q);
-        }).sort((a, b) => (b.total_hours||0) - (a.total_hours||0));
-        if (!projs.length) return;
-        html += `<div class="tag-client"><div class="tag-client-name">${esc(c.name)}</div>`;
-        projs.forEach(p => {
-          html += `<div class="tag-row" data-cid="${esc(c.harvest_client_id)}" data-cname="${esc(c.name)}" data-pname="${esc(p.name)}">`
-            + `<div class="tag-proj"><div class="tag-proj-name" title="${esc(p.name)}">${esc(p.name)}</div>`
-            + `<div class="tag-proj-hrs">${hrs(p.total_hours||0)}h this month</div></div>`
-            + tagSegHtml(p) + `</div>`;
+
+# Admin-only client-side wiring — the manual Harvest refresh, inline goal editing,
+# the project-tag modal, and the share-link manager. Appended to the page JS only
+# for the signed-in admin view, so the read-only shared page ships none of it (not
+# even as dead source). The ``if (!CH_CONFIG.readOnly)`` guard is belt-and-braces.
+_PAGE_JS_ADMIN = r"""
+    // ── Admin-only wiring ─────────────────────────────────────────────────
+    if (!CH_CONFIG.readOnly) {
+      const chRefreshBtn = document.getElementById('chRefresh');
+      if (chRefreshBtn) chRefreshBtn.addEventListener('click', () => load(true));
+
+      // Inline goal editing: toggle the input, POST on save, then re-render just
+      // that client's number (cheap full re-render off the cached data).
+      function wireGoals() {
+        const grid = document.getElementById('chGrid');
+        grid.addEventListener('click', async (ev) => {
+          const g = ev.target.closest('.goal'); if (!g) return;
+          const editor = g.querySelector('.goal-edit');
+          const btn = g.querySelector('.goal-btn');
+          if (ev.target.closest('.goal-btn')) {
+            editor.classList.add('on'); btn.style.display='none';
+            const inp = editor.querySelector('input'); inp.focus(); inp.select(); return;
+          }
+          if (ev.target.closest('.goal-cancel')) {
+            editor.classList.remove('on'); btn.style.display=''; return;
+          }
+          if (ev.target.closest('.goal-save')) {
+            const cid = g.dataset.cid;
+            const raw = editor.querySelector('input').value.trim();
+            const saveBtn = g.querySelector('.goal-save'); saveBtn.disabled = true;
+            try {
+              // The server parses "80" / "80-100" / "80+" and returns the stored
+              // min/max + label; apply those so the chart re-colors immediately
+              // (no Harvest round-trip — the hours series is unchanged).
+              const body = new URLSearchParams({ harvest_client_id: cid, client_name: g.dataset.name, goal: raw });
+              const r = await fetch('/admin/client-hours/goal', { method:'POST', credentials:'same-origin',
+                headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
+              const b = await r.json().catch(()=>({}));
+              if (!r.ok || !b.ok) throw new Error(b.error || ('HTTP '+r.status));
+              const client = (chData.clients||[]).find(c => String(c.harvest_client_id) === String(cid));
+              if (client) {
+                client.goal_min = (b.goal_min == null ? null : Number(b.goal_min));
+                client.goal_max = (b.goal_max == null ? null : Number(b.goal_max));
+                client.goal_label = b.goal_label || '';
+              }
+              render();
+            } catch (e) {
+              saveBtn.disabled = false;
+              alert('Could not save goal: ' + (e.message||e));
+            }
+          }
         });
-        html += `</div>`;
-      });
-      tagBody.innerHTML = html || `<div class="tag-empty">No projects match.</div>`;
-    }
-    function openTags() {
-      if (!chData || !chData.connected) { alert('Connect Harvest first.'); return; }
-      tagSearch.value = '';
-      renderTagBody();
-      tagBackdrop.hidden = false; tagModal.hidden = false;
-    }
-    function closeTags() { tagBackdrop.hidden = true; tagModal.hidden = true; }
-    document.getElementById('chTag').addEventListener('click', openTags);
-    document.getElementById('tagClose').addEventListener('click', closeTags);
-    tagBackdrop.addEventListener('click', closeTags);
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !tagModal.hidden) closeTags(); });
-    tagSearch.addEventListener('input', renderTagBody);
-
-    tagBody.addEventListener('click', async (ev) => {
-      const btn = ev.target.closest('.tag-seg button'); if (!btn) return;
-      const seg = btn.closest('.tag-seg'); const row = btn.closest('.tag-row');
-      const pid = seg.dataset.pid; const newTag = btn.dataset.tag;
-      const prev = seg.querySelector('button.on');
-      // Optimistic: reflect the choice immediately.
-      seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
-      try {
-        const body = new URLSearchParams({ harvest_project_id: pid, tag: newTag,
-          project_name: row.dataset.pname, client_name: row.dataset.cname });
-        const r = await fetch('/admin/client-hours/project-tag', { method:'POST', credentials:'same-origin',
-          headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
-        const b = await r.json().catch(()=>({}));
-        if (!r.ok || !b.ok) throw new Error(b.error || ('HTTP '+r.status));
-        // Update in-memory project tag across the dataset, then re-render charts.
-        (chData.clients || []).forEach(c => (c.projects || []).forEach(p => {
-          if (String(p.project_id) === String(pid)) p.tag = (b.tag || null);
-        }));
-        render();
-      } catch (e) {
-        if (prev) seg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === prev));
-        alert('Could not save tag: ' + (e.message||e));
       }
-    });
+      wireGoals();
 
-    load(false);
-  </script>"""
+      // ── Tag-projects modal ──────────────────────────────────────────────
+      // Lists every project seen this month (grouped by client) with a
+      // Untagged / Retainer / Project selector. Changing one persists via
+      // /project-tag and updates the in-memory data so the charts + scope views
+      // re-color immediately (no Harvest round-trip).
+      const tagModal = document.getElementById('tagModal');
+      const tagBackdrop = document.getElementById('tagBackdrop');
+      const tagBody = document.getElementById('tagBody');
+      const tagSearch = document.getElementById('tagSearch');
 
+      function tagSegHtml(p) {
+        const opts = [['', 'Untagged'], ['retainer', 'Retainer'], ['project', 'Project']];
+        const cur = p.tag || '';
+        return `<div class="tag-seg" data-pid="${esc(p.project_id)}">`
+          + opts.map(([val, lbl]) =>
+              `<button type="button" data-tag="${val}" class="${cur === val ? 'on' : ''}">${lbl}</button>`).join('')
+          + `</div>`;
+      }
+      function renderTagBody() {
+        const q = (tagSearch.value || '').trim().toLowerCase();
+        const clients = (chData && chData.clients || []).slice()
+          .sort((a, b) => String(a.name||'').localeCompare(String(b.name||''), undefined, { sensitivity:'base' }));
+        let html = '';
+        clients.forEach(c => {
+          const projs = (c.projects || []).filter(p => {
+            if (!q) return true;
+            return (p.name||'').toLowerCase().includes(q) || (c.name||'').toLowerCase().includes(q);
+          }).sort((a, b) => (b.total_hours||0) - (a.total_hours||0));
+          if (!projs.length) return;
+          html += `<div class="tag-client"><div class="tag-client-name">${esc(c.name)}</div>`;
+          projs.forEach(p => {
+            html += `<div class="tag-row" data-cid="${esc(c.harvest_client_id)}" data-cname="${esc(c.name)}" data-pname="${esc(p.name)}">`
+              + `<div class="tag-proj"><div class="tag-proj-name" title="${esc(p.name)}">${esc(p.name)}</div>`
+              + `<div class="tag-proj-hrs">${hrs(p.total_hours||0)}h this month</div></div>`
+              + tagSegHtml(p) + `</div>`;
+          });
+          html += `</div>`;
+        });
+        tagBody.innerHTML = html || `<div class="tag-empty">No projects match.</div>`;
+      }
+      function openTags() {
+        if (!chData || !chData.connected) { alert('Connect Harvest first.'); return; }
+        tagSearch.value = '';
+        renderTagBody();
+        tagBackdrop.hidden = false; tagModal.hidden = false;
+      }
+      function closeTags() { tagBackdrop.hidden = true; tagModal.hidden = true; }
+      document.getElementById('chTag').addEventListener('click', openTags);
+      document.getElementById('tagClose').addEventListener('click', closeTags);
+      tagBackdrop.addEventListener('click', closeTags);
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !tagModal.hidden) closeTags(); });
+      tagSearch.addEventListener('input', renderTagBody);
+
+      tagBody.addEventListener('click', async (ev) => {
+        const btn = ev.target.closest('.tag-seg button'); if (!btn) return;
+        const seg = btn.closest('.tag-seg'); const row = btn.closest('.tag-row');
+        const pid = seg.dataset.pid; const newTag = btn.dataset.tag;
+        const prev = seg.querySelector('button.on');
+        // Optimistic: reflect the choice immediately.
+        seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
+        try {
+          const body = new URLSearchParams({ harvest_project_id: pid, tag: newTag,
+            project_name: row.dataset.pname, client_name: row.dataset.cname });
+          const r = await fetch('/admin/client-hours/project-tag', { method:'POST', credentials:'same-origin',
+            headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
+          const b = await r.json().catch(()=>({}));
+          if (!r.ok || !b.ok) throw new Error(b.error || ('HTTP '+r.status));
+          // Update in-memory project tag across the dataset, then re-render charts.
+          (chData.clients || []).forEach(c => (c.projects || []).forEach(p => {
+            if (String(p.project_id) === String(pid)) p.tag = (b.tag || null);
+          }));
+          render();
+        } catch (e) {
+          if (prev) seg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === prev));
+          alert('Could not save tag: ' + (e.message||e));
+        }
+      });
+
+      // ── Share-links modal ───────────────────────────────────────────────
+      // Mint / list / revoke read-only share links. A link points at
+      // /share/client-hours/{token}; anyone with an active one can view this
+      // page without logging in.
+      const shareModal = document.getElementById('shareModal');
+      const shareBackdrop = document.getElementById('shareBackdrop');
+      const shareBody = document.getElementById('shareBody');
+      const shareLabel = document.getElementById('shareLabel');
+      const shareCreate = document.getElementById('shareCreate');
+      const shareUrl = token => location.origin + '/share/client-hours/' + token;
+
+      function renderShareBody(links) {
+        if (!links || !links.length) {
+          shareBody.innerHTML = `<div class="tag-empty">No active links yet. Create one below — it works until you revoke it.</div>`;
+          return;
+        }
+        shareBody.innerHTML = links.map(l => {
+          const url = shareUrl(l.token);
+          const bits = [];
+          if (l.label) bits.push(esc(l.label));
+          bits.push(`${l.view_count||0} view${l.view_count===1?'':'s'}`);
+          return `<div class="share-row" data-token="${esc(l.token)}">`
+            + `<div class="share-row-main"><div class="share-url" title="${esc(url)}">${esc(url)}</div>`
+            + `<div class="share-meta">${bits.join(' · ')}</div></div>`
+            + `<div class="share-actions">`
+              + `<button type="button" class="goal-btn share-copy" data-url="${esc(url)}">Copy</button>`
+              + `<button type="button" class="goal-btn share-revoke">Revoke</button>`
+            + `</div></div>`;
+        }).join('');
+      }
+      async function loadShares() {
+        shareBody.innerHTML = `<div class="tag-empty">Loading…</div>`;
+        try {
+          const r = await fetch('/admin/client-hours/shares', { credentials:'same-origin' });
+          const b = await r.json().catch(()=>({}));
+          if (!r.ok) throw new Error(b.error || ('HTTP '+r.status));
+          renderShareBody(b.links || []);
+        } catch (e) {
+          shareBody.innerHTML = `<div class="tag-empty">Could not load links (${esc(e.message||'error')}).</div>`;
+        }
+      }
+      function openShare() { shareBackdrop.hidden = false; shareModal.hidden = false; loadShares(); }
+      function closeShare() { shareBackdrop.hidden = true; shareModal.hidden = true; }
+      document.getElementById('chShare').addEventListener('click', openShare);
+      document.getElementById('shareClose').addEventListener('click', closeShare);
+      shareBackdrop.addEventListener('click', closeShare);
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !shareModal.hidden) closeShare(); });
+
+      shareCreate.addEventListener('click', async () => {
+        shareCreate.disabled = true;
+        try {
+          const body = new URLSearchParams({ label: shareLabel.value || '' });
+          const r = await fetch('/admin/client-hours/share', { method:'POST', credentials:'same-origin',
+            headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
+          const b = await r.json().catch(()=>({}));
+          if (!r.ok || !b.ok) throw new Error(b.error || ('HTTP '+r.status));
+          shareLabel.value = '';
+          loadShares();
+        } catch (e) {
+          alert('Could not create link: ' + (e.message||e));
+        } finally { shareCreate.disabled = false; }
+      });
+
+      shareBody.addEventListener('click', async (ev) => {
+        const copyBtn = ev.target.closest('.share-copy');
+        if (copyBtn) {
+          const url = copyBtn.dataset.url;
+          try {
+            await navigator.clipboard.writeText(url);
+            const orig = copyBtn.textContent; copyBtn.textContent = 'Copied';
+            setTimeout(() => { copyBtn.textContent = orig; }, 1200);
+          } catch (_) { window.prompt('Copy this link:', url); }
+          return;
+        }
+        const revokeBtn = ev.target.closest('.share-revoke');
+        if (revokeBtn) {
+          const row = revokeBtn.closest('.share-row'); const token = row.dataset.token;
+          if (!window.confirm('Revoke this link? Anyone using it will lose access immediately.')) return;
+          revokeBtn.disabled = true;
+          try {
+            const body = new URLSearchParams({ token });
+            const r = await fetch('/admin/client-hours/share/revoke', { method:'POST', credentials:'same-origin',
+              headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
+            const b = await r.json().catch(()=>({}));
+            if (!r.ok || !b.ok) throw new Error(b.error || ('HTTP '+r.status));
+            loadShares();
+          } catch (e) { revokeBtn.disabled = false; alert('Could not revoke: ' + (e.message||e)); }
+        }
+      });
+    }
+"""
+
+
+def _page_script(*, data_url: str, read_only: bool) -> str:
+    """Assemble the page JS: a ``CH_CONFIG`` (data feed URL + read-only flag), the
+    shared chart/view code, and — for the admin view only — the mutation wiring.
+    The read-only shared page never receives the admin block, so its source
+    contains no admin endpoints or controls."""
+    config = "const CH_CONFIG = " + json.dumps({"dataUrl": data_url, "readOnly": read_only}) + ";"
+    admin = "" if read_only else _PAGE_JS_ADMIN
+    return (
+        "<script>\n    " + config + "\n"
+        + _PAGE_JS + admin
+        + "\n    load(false);\n  </script>"
+    )
+
+
+def render_client_hours_page(*, user_email: str) -> str:
+    """Full HTML for GET /admin/client-hours. Data loads from …/data."""
     return render_admin_shell_page(
         active_nav="hours",
         page_title="Client Hours",
-        content_html=_HOURS_CONTENT,
+        content_html=_content_html(read_only=False),
         session_email=user_email,
         extra_css=_HOURS_CSS,
-        body_end_html=body_end,
+        body_end_html=_page_script(data_url="/admin/client-hours/data", read_only=False),
     )
+
+
+def render_shared_client_hours_page(*, token: str, label: str | None = None) -> str:
+    """Full HTML for the public, read-only shared view
+    (GET /share/client-hours/{token}). Standalone (no admin sidebar / account
+    chip): a navy header with a "read-only" badge over the same burn-up grid,
+    fed by the token's cache-only data endpoint."""
+    data_url = f"/share/client-hours/{_esc(token)}/data"
+    label_html = (
+        f'<span class="ro-note">{_esc(label)}</span>' if (label or "").strip() else ""
+    )
+    body = f"""
+  <header class="ro-topbar">
+    <div class="ro-brand">
+      <span class="ro-title">Sagefrog · Client Hours</span>
+      <span class="ro-badge">Read-only</span>
+    </div>
+    {label_html}
+  </header>
+  {_content_html(read_only=True)}
+  {_page_script(data_url=data_url, read_only=True)}"""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Client Hours · Sagefrog Marketing Group</title>
+  {favicon_head_html()}
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      color: var(--ink, #0f1c2e); line-height: 1.5; -webkit-font-smoothing: antialiased; }}
+    {_HOURS_CSS}
+  </style>
+</head>
+<body>
+  {body}
+</body>
+</html>"""
