@@ -141,6 +141,25 @@ class CacheBehaviourTest(unittest.TestCase):
         self.assertEqual(out["totals"]["goal_min"], 80.0)
         self.assertEqual(out["refreshed_at"], "2026-07-21T12:00:00+00:00")
 
+    def test_owner_applied_fresh_onto_each_client(self):
+        hit = SimpleNamespace(
+            response_json=self._cached_clients(),
+            created_at=datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc),
+        )
+        with patch.object(harvest_service, "is_connected", return_value=True), \
+             patch.object(harvest_service, "_account_id", return_value="acct-1"), \
+             patch.object(harvest_service.oauth_store, "public_status",
+                          return_value=SimpleNamespace(metadata={}), create=True), \
+             patch.object(harvest_service.db_cache, "get_cached", return_value=hit, create=True), \
+             patch.object(harvest_service, "get_goals", return_value={}), \
+             patch.object(harvest_service, "get_project_tags", return_value={}), \
+             patch.object(harvest_service, "get_client_owners", return_value={"1": "Sam"}):
+            out = harvest_service.build_client_hours_overview(today=date(2026, 7, 21))
+
+        by_id = {c["harvest_client_id"]: c for c in out["clients"]}
+        self.assertEqual(by_id["1"]["owner"], "Sam")   # owner attached
+        self.assertIsNone(by_id["2"]["owner"])          # no owner set
+
     def test_force_refresh_bypasses_cache(self):
         fresh = self._cached_clients()
         with patch.object(harvest_service, "is_connected", return_value=True), \
@@ -158,6 +177,17 @@ class CacheBehaviourTest(unittest.TestCase):
         m_build.assert_called_once()
         m_put.assert_called_once()  # fresh pull is written back to the cache
         self.assertEqual(out["totals"]["total_hours"], 42.0)
+
+
+class ClientOwnerRosterTest(unittest.TestCase):
+    def test_roster_is_unique_and_case_insensitive(self):
+        self.assertEqual(len(harvest_service.CLIENT_OWNERS),
+                         len(set(harvest_service.CLIENT_OWNERS)))
+        self.assertIn("Sam", harvest_service.VALID_OWNERS)
+        # Any casing maps back to the canonical spelling.
+        self.assertEqual(harvest_service._OWNER_BY_LOWER.get("sam"), "Sam")
+        self.assertEqual(harvest_service._OWNER_BY_LOWER.get("ALYSSA".lower()), "Alyssa")
+        self.assertIsNone(harvest_service._OWNER_BY_LOWER.get("nobody"))
 
 
 class ParseGoalTextTest(unittest.TestCase):
