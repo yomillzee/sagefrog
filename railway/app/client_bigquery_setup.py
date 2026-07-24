@@ -12,6 +12,7 @@ def dataset_ids() -> dict[str, str]:
     return {
         "google": (os.getenv("BQ_GOOGLE_DATASET_ID") or "raw_google_ads").strip(),
         "linkedin": (os.getenv("BQ_LINKEDIN_DATASET_ID") or "raw_linkedin_ads").strip(),
+        "linkedin_organic": (os.getenv("BQ_LINKEDIN_ORGANIC_DATASET_ID") or "raw_linkedin_organic").strip(),
         "meta": (os.getenv("BQ_META_DATASET_ID") or "raw_meta_ads").strip(),
         "mart": (os.getenv("BQ_MART_DATASET_ID") or "marketing_marts").strip(),
     }

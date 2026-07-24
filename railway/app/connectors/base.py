@@ -89,6 +89,7 @@ def all_handlers() -> dict[str, ConnectorHandler]:
 # Ordered list for the directory page
 CONNECTOR_ORDER = [
     "linkedin_ads",
+    "linkedin_organic",
     "meta_ads",
     "google_ads",
     "ga4",

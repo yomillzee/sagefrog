@@ -11,6 +11,7 @@ from uuid import uuid4
 
 
 _DEFAULT_LINKEDIN_DATASET = "raw_linkedin_ads"
+_DEFAULT_LINKEDIN_ORGANIC_DATASET = "raw_linkedin_organic"
 _DEFAULT_GOOGLE_DATASET = "raw_google_ads"
 _DEFAULT_TABLE = "metrics_daily"
 _DEFAULT_CAMPAIGN_TABLE = "campaign_daily"
@@ -34,6 +35,7 @@ def route(
     credentials_env: str | None = None,
     google_dataset_id: str | None = None,
     linkedin_dataset_id: str | None = None,
+    linkedin_organic_dataset_id: str | None = None,
     meta_dataset_id: str | None = None,
     mart_dataset_id: str | None = None,
 ):
@@ -42,6 +44,7 @@ def route(
         "project": (bq_project_id or "").strip() or None,
         "credentials_env": (credentials_env or "").strip() or None,
         "linkedin_dataset": (linkedin_dataset_id or "").strip() or None,
+        "linkedin_organic_dataset": (linkedin_organic_dataset_id or "").strip() or None,
         "google_dataset": (google_dataset_id or "").strip() or None,
         "meta_dataset": (meta_dataset_id or "").strip() or None,
         "mart_dataset": (mart_dataset_id or "").strip() or None,
@@ -1433,3 +1436,308 @@ def create_linkedin_creative_mart_view() -> dict[str, Any]:
     """
     client.query(sql).result()
     return {"enabled": True, "table": table_id}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# LinkedIn *organic* (company-page) mirrors — raw_linkedin_organic dataset
+# ──────────────────────────────────────────────────────────────────────────────
+
+_DEFAULT_ORGANIC_POST_TABLE = "post_stats"
+_DEFAULT_ORGANIC_FOLLOWER_TABLE = "follower_daily"
+_DEFAULT_ORGANIC_PAGE_TABLE = "page_daily"
+_DEFAULT_LINKEDIN_ORGANIC_POST_FACT_TABLE = "fact_linkedin_organic_post_stats"
+
+
+def _organic_dataset_id() -> str:
+    return (
+        _route_value("linkedin_organic_dataset")
+        or os.getenv("BQ_LINKEDIN_ORGANIC_DATASET_ID")
+        or _DEFAULT_LINKEDIN_ORGANIC_DATASET
+    ).strip()
+
+
+def _organic_target(table_name: str) -> tuple[Any, str]:
+    """Return (client, fully-qualified table id) in the organic dataset.
+
+    Reuses the routed/env LinkedIn *project* (organic and ads share a project;
+    only the dataset differs), so a client's organic writes land in the same
+    BigQuery project as its ads data.
+    """
+    project_id = _linkedin_project_id()
+    dataset_id = _organic_dataset_id()
+    if not project_id or not dataset_id:
+        raise RuntimeError("Missing BigQuery project/dataset for LinkedIn organic.")
+    return _client(project_id), f"{project_id}.{dataset_id}.{table_name}"
+
+
+def _organic_post_schema() -> list[Any]:
+    bigquery = _bigquery()
+    return [
+        bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("org_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("post_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("post_urn", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("title", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("post_type", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("published_at", "DATE", mode="NULLABLE"),
+        bigquery.SchemaField("impressions", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("clicks", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("likes", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("comments", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("shares", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("engagement_rate", "FLOAT64", mode="REQUIRED"),
+        bigquery.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"),
+    ]
+
+
+def _organic_follower_schema() -> list[Any]:
+    bigquery = _bigquery()
+    return [
+        bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("org_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("metric_date", "DATE", mode="REQUIRED"),
+        bigquery.SchemaField("organic_follower_gain", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("paid_follower_gain", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("total_follower_gain", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("total_followers", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"),
+    ]
+
+
+def _organic_page_schema() -> list[Any]:
+    bigquery = _bigquery()
+    return [
+        bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("org_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("metric_date", "DATE", mode="REQUIRED"),
+        bigquery.SchemaField("page_views", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("unique_visitors", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"),
+    ]
+
+
+def mirror_linkedin_post_stats(org_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Upsert per-post organic stats to raw_linkedin_organic.post_stats.
+
+    Grain is post (org_id, post_id); LinkedIn exposes per-post engagement as
+    lifetime totals, so each sync refreshes the current totals.
+    """
+    if not rows or not enabled("linkedin"):
+        return {"enabled": False, "rows_upserted": 0, "table": None}
+
+    org_id_clean = str(org_id).strip().split(":")[-1]
+    client, table_id = _organic_target(_DEFAULT_ORGANIC_POST_TABLE)
+    bigquery = _bigquery()
+    client.create_dataset(bigquery.Dataset(".".join(table_id.split(".")[:2])), exists_ok=True)
+    schema = _organic_post_schema()
+    t = bigquery.Table(table_id, schema=schema)
+    t.clustering_fields = ["source", "org_id", "post_id"]
+    client.create_table(t, exists_ok=True)
+
+    synced_at = datetime.now(timezone.utc).isoformat()
+    payload = []
+    for row in rows:
+        post_id = str(row.get("post_id") or "").strip()
+        if not post_id:
+            continue
+        payload.append({
+            "source": "linkedin",
+            "org_id": org_id_clean,
+            "post_id": post_id,
+            "post_urn": str(row.get("post_urn") or "").strip() or None,
+            "title": str(row.get("title") or "").strip() or None,
+            "post_type": str(row.get("post_type") or "").strip() or None,
+            "published_at": (str(row.get("published_at") or "")[:10] or None),
+            "impressions": int(row.get("impressions") or 0),
+            "clicks": int(row.get("clicks") or 0),
+            "likes": int(row.get("likes") or 0),
+            "comments": int(row.get("comments") or 0),
+            "shares": int(row.get("shares") or 0),
+            "engagement_rate": float(row.get("engagement_rate") or 0.0),
+            "synced_at": synced_at,
+        })
+    if not payload:
+        return {"enabled": True, "rows_upserted": 0, "table": table_id}
+
+    temp_id = f"{table_id}_staging_{uuid4().hex}"
+    job_config = bigquery.LoadJobConfig(schema=schema, write_disposition="WRITE_TRUNCATE")
+    client.load_table_from_json(payload, temp_id, job_config=job_config).result()
+    merge_sql = f"""
+    MERGE `{table_id}` T
+    USING `{temp_id}` S
+    ON T.source = S.source AND T.org_id = S.org_id AND T.post_id = S.post_id
+    WHEN MATCHED THEN UPDATE SET
+      post_urn = S.post_urn, title = S.title, post_type = S.post_type,
+      published_at = S.published_at, impressions = S.impressions, clicks = S.clicks,
+      likes = S.likes, comments = S.comments, shares = S.shares,
+      engagement_rate = S.engagement_rate, synced_at = S.synced_at
+    WHEN NOT MATCHED THEN INSERT (
+      source, org_id, post_id, post_urn, title, post_type, published_at,
+      impressions, clicks, likes, comments, shares, engagement_rate, synced_at
+    ) VALUES (
+      S.source, S.org_id, S.post_id, S.post_urn, S.title, S.post_type, S.published_at,
+      S.impressions, S.clicks, S.likes, S.comments, S.shares, S.engagement_rate, S.synced_at
+    )
+    """
+    try:
+        client.query(merge_sql).result()
+    finally:
+        client.delete_table(temp_id, not_found_ok=True)
+    return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
+
+
+def mirror_linkedin_follower_daily(org_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Upsert per-day follower gains to raw_linkedin_organic.follower_daily."""
+    if not rows or not enabled("linkedin"):
+        return {"enabled": False, "rows_upserted": 0, "table": None}
+
+    org_id_clean = str(org_id).strip().split(":")[-1]
+    client, table_id = _organic_target(_DEFAULT_ORGANIC_FOLLOWER_TABLE)
+    bigquery = _bigquery()
+    client.create_dataset(bigquery.Dataset(".".join(table_id.split(".")[:2])), exists_ok=True)
+    schema = _organic_follower_schema()
+    t = bigquery.Table(table_id, schema=schema)
+    t.time_partitioning = bigquery.TimePartitioning(field="metric_date")
+    t.clustering_fields = ["source", "org_id"]
+    client.create_table(t, exists_ok=True)
+
+    synced_at = datetime.now(timezone.utc).isoformat()
+    payload = []
+    for row in rows:
+        metric_date = str(row.get("metric_date") or "")[:10]
+        if not metric_date:
+            continue
+        payload.append({
+            "source": "linkedin",
+            "org_id": org_id_clean,
+            "metric_date": metric_date,
+            "organic_follower_gain": int(row.get("organic_follower_gain") or 0),
+            "paid_follower_gain": int(row.get("paid_follower_gain") or 0),
+            "total_follower_gain": int(row.get("total_follower_gain") or 0),
+            "total_followers": int(row.get("total_followers") or 0),
+            "synced_at": synced_at,
+        })
+    if not payload:
+        return {"enabled": True, "rows_upserted": 0, "table": table_id}
+
+    temp_id = f"{table_id}_staging_{uuid4().hex}"
+    job_config = bigquery.LoadJobConfig(schema=schema, write_disposition="WRITE_TRUNCATE")
+    client.load_table_from_json(payload, temp_id, job_config=job_config).result()
+    merge_sql = f"""
+    MERGE `{table_id}` T
+    USING `{temp_id}` S
+    ON T.source = S.source AND T.org_id = S.org_id AND T.metric_date = S.metric_date
+    WHEN MATCHED THEN UPDATE SET
+      organic_follower_gain = S.organic_follower_gain,
+      paid_follower_gain = S.paid_follower_gain,
+      total_follower_gain = S.total_follower_gain,
+      total_followers = S.total_followers,
+      synced_at = S.synced_at
+    WHEN NOT MATCHED THEN INSERT (
+      source, org_id, metric_date, organic_follower_gain, paid_follower_gain,
+      total_follower_gain, total_followers, synced_at
+    ) VALUES (
+      S.source, S.org_id, S.metric_date, S.organic_follower_gain, S.paid_follower_gain,
+      S.total_follower_gain, S.total_followers, S.synced_at
+    )
+    """
+    try:
+        client.query(merge_sql).result()
+    finally:
+        client.delete_table(temp_id, not_found_ok=True)
+    return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
+
+
+def mirror_linkedin_page_daily(org_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Upsert per-day page views/visitors to raw_linkedin_organic.page_daily."""
+    if not rows or not enabled("linkedin"):
+        return {"enabled": False, "rows_upserted": 0, "table": None}
+
+    org_id_clean = str(org_id).strip().split(":")[-1]
+    client, table_id = _organic_target(_DEFAULT_ORGANIC_PAGE_TABLE)
+    bigquery = _bigquery()
+    client.create_dataset(bigquery.Dataset(".".join(table_id.split(".")[:2])), exists_ok=True)
+    schema = _organic_page_schema()
+    t = bigquery.Table(table_id, schema=schema)
+    t.time_partitioning = bigquery.TimePartitioning(field="metric_date")
+    t.clustering_fields = ["source", "org_id"]
+    client.create_table(t, exists_ok=True)
+
+    synced_at = datetime.now(timezone.utc).isoformat()
+    payload = []
+    for row in rows:
+        metric_date = str(row.get("metric_date") or "")[:10]
+        if not metric_date:
+            continue
+        payload.append({
+            "source": "linkedin",
+            "org_id": org_id_clean,
+            "metric_date": metric_date,
+            "page_views": int(row.get("page_views") or 0),
+            "unique_visitors": int(row.get("unique_visitors") or 0),
+            "synced_at": synced_at,
+        })
+    if not payload:
+        return {"enabled": True, "rows_upserted": 0, "table": table_id}
+
+    temp_id = f"{table_id}_staging_{uuid4().hex}"
+    job_config = bigquery.LoadJobConfig(schema=schema, write_disposition="WRITE_TRUNCATE")
+    client.load_table_from_json(payload, temp_id, job_config=job_config).result()
+    merge_sql = f"""
+    MERGE `{table_id}` T
+    USING `{temp_id}` S
+    ON T.source = S.source AND T.org_id = S.org_id AND T.metric_date = S.metric_date
+    WHEN MATCHED THEN UPDATE SET
+      page_views = S.page_views, unique_visitors = S.unique_visitors, synced_at = S.synced_at
+    WHEN NOT MATCHED THEN INSERT (
+      source, org_id, metric_date, page_views, unique_visitors, synced_at
+    ) VALUES (
+      S.source, S.org_id, S.metric_date, S.page_views, S.unique_visitors, S.synced_at
+    )
+    """
+    try:
+        client.query(merge_sql).result()
+    finally:
+        client.delete_table(temp_id, not_found_ok=True)
+    return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
+
+
+def create_linkedin_organic_post_mart_view() -> dict[str, Any]:
+    """Create or replace marketing_marts.fact_linkedin_organic_post_stats view."""
+    if not enabled("linkedin"):
+        return {"enabled": False, "table": None}
+    project_id = _linkedin_project_id()
+    raw_dataset = _organic_dataset_id()
+    mart_dataset = _mart_dataset_id()
+    mart_table = _DEFAULT_LINKEDIN_ORGANIC_POST_FACT_TABLE
+    client = _client(project_id)
+    bigquery = _bigquery()
+    client.create_dataset(bigquery.Dataset(f"{project_id}.{mart_dataset}"), exists_ok=True)
+    table_id = f"{project_id}.{mart_dataset}.{mart_table}"
+    sql = f"""
+    CREATE OR REPLACE VIEW `{table_id}` AS
+    SELECT
+      p.source AS source_platform,
+      CAST(p.org_id AS STRING) AS org_id,
+      CAST(p.post_id AS STRING) AS post_id,
+      p.post_urn,
+      COALESCE(NULLIF(TRIM(p.title), ''), CAST(p.post_id AS STRING)) AS title,
+      p.post_type,
+      p.published_at AS date,
+      p.impressions,
+      p.clicks,
+      p.likes,
+      p.comments,
+      p.shares,
+      p.engagement_rate,
+      p.synced_at
+    FROM `{project_id}.{raw_dataset}.{_DEFAULT_ORGANIC_POST_TABLE}` p
+    """
+    try:
+        existing = client.get_table(table_id)
+        if str(getattr(existing, "table_type", "")).upper() == "TABLE":
+            client.delete_table(table_id, not_found_ok=True)
+    except Exception:
+        pass
+    client.query(sql).result()
+    return {"enabled": True, "table": table_id, "object_type": "view"}
