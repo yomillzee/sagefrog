@@ -118,6 +118,36 @@ def lead_tracking_page(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# LinkedIn Organic page (company-page posts, followers, page analytics)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("/dashboard/{client_slug}/linkedin-organic", response_class=HTMLResponse)
+def linkedin_organic_page(
+    client_slug: str,
+    request: Request,
+):
+    slug = validate_client_slug(client_slug)
+    redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug)
+    if redirect:
+        return redirect
+
+    import client_config
+    import linkedin_organic_report_service
+    from dashboard.renderers import linkedin_organic_renderer
+
+    cfg = client_config.load_client_config(slug)
+    label = cfg.label if cfg else slug
+
+    report = linkedin_organic_report_service.build_report(slug)
+    return HTMLResponse(linkedin_organic_renderer.render_linkedin_organic(
+        client_slug=slug,
+        label=label,
+        report=report,
+        **_session_kw(access_key, use_session, session_email, session_is_admin),
+    ))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Connector detail page (wizard or management)
 # ──────────────────────────────────────────────────────────────────────────────
 

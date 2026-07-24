@@ -13,6 +13,7 @@ from dashboard.utils.urls import (
     files_page_url as _files_page_url,
     gtm_page_url as _gtm_page_url,
     lead_tracking_page_url as _lead_tracking_page_url,
+    linkedin_organic_page_url as _linkedin_organic_page_url,
     settings_page_url as _settings_page_url,
 )
 
@@ -760,6 +761,7 @@ _VIEW_ICONS: dict[str, str] = {
     "semrush": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg>',
     "ai-traffic": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 14v3M17.5 15.5h3"/></svg>',
     "lead-tracking": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>',
+    "linkedin-organic": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="M8 11v5"/><path d="M8 8v.01"/><path d="M12 16v-3a2 2 0 014 0v3"/><path d="M12 16v-5"/></svg>',
     "event-tracking": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
     "site-performance": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20a8 8 0 10-8-8"/><path d="M4 12a8 8 0 018-8"/><line x1="12" y1="12" x2="16" y2="9"/><circle cx="12" cy="12" r="1.6"/></svg>',
     "consent": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>',
@@ -924,6 +926,14 @@ def dashboard_sidebar_view_nav_html(
             f'<a class="dash-view-btn" href="{_esc(lt)}">'
             f'{_VIEW_ICONS["lead-tracking"]}<span>Lead Tracking</span></a>'
         )
+    if pflags.get("show_linkedin_organic"):
+        lo = _linkedin_organic_page_url(
+            client_slug=client_slug, access_key=access_key, use_session=use_session
+        ) or "#"
+        items.append(
+            f'<a class="dash-view-btn" href="{_esc(lo)}">'
+            f'{_VIEW_ICONS["linkedin-organic"]}<span>LinkedIn Organic</span></a>'
+        )
     if pflags.get("show_gtm"):
         et = _gtm_page_url(
             client_slug=client_slug, access_key=access_key, use_session=use_session
@@ -983,6 +993,7 @@ def platform_nav_flags(client_slug: str) -> dict[str, bool]:
     return {
         "show_connectors": bool(configs),
         "show_lead_tracking": _connected("hubspot"),
+        "show_linkedin_organic": _connected("linkedin_organic"),
         "show_gsc": _connected("gsc"),
         "show_gtm": _connected("gtm"),
         "show_pagespeed": _connected("pagespeed"),
