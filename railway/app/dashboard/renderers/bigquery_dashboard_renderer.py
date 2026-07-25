@@ -668,14 +668,6 @@ def render_bigquery_dashboard_page(
       <section id="sec-overview">
         <div class="sec-head"><h2>Paid summary</h2><div class="ov-actions">{_pin("paid")}<span class="status" id="summaryStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="explorer"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="cards" id="summaryCards"></div>
-      </section>
-
-      <section>
-        <div class="sec-head"><h2>Paid trends</h2><div class="sec-head-actions"><div class="chips" id="metricChips"></div><details class="metric-dd" id="metricDropdown"><summary>Metrics <span class="metric-dd-count" id="metricDropdownCount">0</span><span class="metric-dd-caret" aria-hidden="true">&#9662;</span></summary><div class="metric-dd-menu" id="metricDropdownMenu"></div></details><div class="chips seg" id="trendGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><span class="status" id="chartStatus"></span></div></div>
-        <div class="chart-wrap" id="trendChartWrap">
-          <div class="chart-canvas-host" style="height:260px"><canvas id="trendChart"></canvas></div>
-        </div>
-        <p class="chart-note">Each line is normalized to its own min–max. Hover for actual values.</p>
       </section>""" if has_paid_ads else ""
 
     # Overview cards in natural order, each tagged with its stable pin key. The
@@ -840,17 +832,6 @@ def render_bigquery_dashboard_page(
     .ef-status.err {{ color:var(--bad); }}
     /* Paid-trends metric picker: chips on desktop, a compact dropdown on phones
        (see the max-width:720px block) where the chip row would overflow. */
-    .metric-dd {{ position:relative; display:none; }}
-    .metric-dd > summary {{ list-style:none; cursor:pointer; border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:4px 12px; font:inherit; font-size:.8rem; font-weight:700; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }}
-    .metric-dd > summary::-webkit-details-marker {{ display:none; }}
-    .metric-dd[open] > summary {{ border-color:var(--navy); }}
-    .metric-dd-count {{ background:var(--navy); color:#fff; border-radius:999px; min-width:18px; height:18px; padding:0 5px; font-size:.7rem; display:inline-flex; align-items:center; justify-content:center; }}
-    .metric-dd-caret {{ font-size:.7rem; line-height:1; color:var(--muted); }}
-    .metric-dd[open] .metric-dd-caret {{ transform:rotate(180deg); }}
-    .metric-dd-menu {{ position:absolute; right:0; top:calc(100% + 6px); z-index:30; background:#fff; border:1px solid var(--line); border-radius:10px; box-shadow:0 8px 24px rgba(16,33,67,.16); padding:6px; min-width:190px; display:flex; flex-direction:column; gap:2px; }}
-    .metric-opt {{ display:flex; align-items:center; gap:8px; padding:8px 9px; border-radius:7px; font-size:.85rem; font-weight:650; color:var(--navy); cursor:pointer; }}
-    .metric-opt:hover {{ background:#f4f8fd; }}
-    .metric-opt input {{ accent-color:var(--navy); width:15px; height:15px; margin:0; }}
     .ov-actions {{ display:flex; align-items:center; gap:12px; flex-shrink:0; }}
     .ov-more {{ display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border:1px solid var(--line); border-radius:999px; background:var(--card); color:var(--muted); padding:0; font:inherit; cursor:pointer; transition:color .14s, border-color .14s, background .14s, box-shadow .14s; }}
     .ov-more:hover {{ color:var(--accent); border-color:var(--accent); background:var(--card); box-shadow:0 1px 4px rgba(29,111,208,.18); }}
@@ -984,7 +965,6 @@ def render_bigquery_dashboard_page(
     .pager-info {{ font-size:.8rem; color:var(--muted); font-weight:600; }}
     /* ---- Trend chart ---- */
     .chart-wrap {{ position:relative; border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px; background:#fafcff; }}
-    .trend-svg {{ width:100%; height:260px; display:block; }}
     .chart-note {{ font-size:.74rem; color:var(--muted); margin-top:8px; }}
     /* Small labelled caption above the keyword avg-position trend charts, with a
        hover/focus info glyph carrying the "how this chart works" tooltip. */
@@ -995,7 +975,6 @@ def render_bigquery_dashboard_page(
     .info-tip:hover, .info-tip:focus {{ color:var(--accent); outline:none; }}
     {budget_css}
     .chart-tip {{ position:absolute; pointer-events:none; background:#0b1020; color:#e8eefc; font-size:.74rem; line-height:1.5; padding:7px 9px; border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.25); transform:translate(-50%,-112%); white-space:nowrap; z-index:5; }}
-    .metric-swatch {{ width:10px; height:10px; border-radius:2px; display:inline-block; vertical-align:middle; margin-right:4px; }}
     /* ---- Bar lists ---- */
     .bar-row {{ display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--line-soft); }}
     .bar-row:last-child {{ border-bottom:0; }}
@@ -1194,9 +1173,6 @@ def render_bigquery_dashboard_page(
     .state-map-scale-bar {{ flex:1 1 auto; height:8px; border-radius:4px; background:linear-gradient(90deg,#eaf1fb,#1d6fd0); }}
     /* Sticky date bar clears the fixed 52px mobile top bar (see SIDEBAR_CSS). */
     @media (max-width:900px) {{ .cards {{ grid-template-columns:repeat(2,minmax(120px,1fr)); }} .two-col,.three-col {{ grid-template-columns:1fr; }} .date-bar {{ top:52px; }} }}
-    /* On phones the paid-trends metric chip row overflows the section head, so
-       swap it for the compact dropdown (#metricDropdown). */
-    @media (max-width:720px) {{ #metricChips {{ display:none; }} .metric-dd {{ display:block; }} }}
     /* On phones give the metric columns more room: tighten the path label cap. */
     @media (max-width:640px) {{ .page-path {{ max-width:44vw; }} }}
     /* ---- Skeleton loaders ---- */
@@ -1848,36 +1824,7 @@ def render_bigquery_dashboard_page(
       }}).join('');
     }}
 
-    // ---- Trend chart ----
-    const CHART_METRICS = [
-      {{ key:'spend', label:'Spend', color:'#1769aa', fmt:money }},
-      {{ key:'impressions', label:'Impressions', color:'#7c3aed', fmt:count }},
-      {{ key:'clicks', label:'Clicks', color:'#0a7f3f', fmt:count }},
-      {{ key:'cpc', label:'CPC', color:'#d97706', fmt:money }},
-      {{ key:'cpa', label:'CPA', color:'#dc2626', fmt:money }},
-      {{ key:'ctr', label:'CTR', color:'#0891b2', fmt:pct }},
-    ];
-    const chartMetrics = new Set(['spend','clicks']);
-    let chartDaily = [];
-    let trendGran = 'daily';
-
-    // Roll daily paid rows up into ISO (Monday-start) weeks: additive metrics
-    // are summed and the derived ratios (cpc/cpa/ctr) recomputed from the totals.
-    function aggregateChartWeekly(daily) {{
-      if (!daily || !daily.length) return [];
-      const out = []; let cur = null;
-      for (const d of daily) {{
-        const dt = new Date(String(d.date) + 'T00:00:00');
-        const dow = (dt.getDay() + 6) % 7;            // 0 = Monday
-        const mon = new Date(dt); mon.setDate(dt.getDate() - dow);
-        const key = `${{mon.getFullYear()}}-${{String(mon.getMonth()+1).padStart(2,'0')}}-${{String(mon.getDate()).padStart(2,'0')}}`;
-        if (!cur || cur.date !== key) {{ cur = {{ date: key, spend:0, impressions:0, clicks:0, conversions:0 }}; out.push(cur); }}
-        cur.spend += num(d.spend); cur.impressions += num(d.impressions); cur.clicks += num(d.clicks); cur.conversions += num(d.conversions);
-      }}
-      for (const w of out) {{ w.cpc = w.clicks ? w.spend/w.clicks : 0; w.cpa = w.conversions ? w.spend/w.conversions : 0; w.ctr = w.impressions ? w.clicks/w.impressions*100 : 0; }}
-      return out;
-    }}
-
+    // ---- Summary sparkline data (feeds the Paid summary cards) ----
     function buildChartDaily() {{
       const daily = (summaryPayload && summaryPayload.daily) ? summaryPayload.daily : [];
       const needles = platformFilter.size ? [...platformFilter].map(p => p.toLowerCase()) : null;
@@ -1892,75 +1839,9 @@ def render_bigquery_dashboard_page(
       for (const d of out) {{ d.cpc = d.clicks ? d.spend/d.clicks : 0; d.cpa = d.conversions ? d.spend/d.conversions : 0; d.ctr = d.impressions ? d.clicks/d.impressions*100 : 0; }}
       return out;
     }}
-    function renderChart() {{
-      chartDaily = buildChartDaily();
-      const rows = trendGran === 'weekly' ? aggregateChartWeekly(chartDaily) : chartDaily;
-      clearSkelChart('trendChart');
-      const n = rows.length;
-      if (!n) {{ __destroyChart('trendChart'); setStatus('chartStatus','No data for this range.'); return; }}
-      const active = CHART_METRICS.filter(m => chartMetrics.has(m.key));
-      const labels = rows.map(d => String(d.date).slice(5));
-      const single = active.length === 1;
-      // Each metric keeps its own min–max scale, so normalize per-metric to 0–1
-      // for plotting and carry the real values (raw) + formatter for tooltips.
-      const series = active.map(m => {{
-        const raw = rows.map(d => num(d[m.key]));
-        const mn = Math.min(...raw), mx = Math.max(...raw), span = (mx - mn) || 1;
-        return {{ label: m.label, data: raw.map(v => (v - mn) / span), raw, fmt: m.fmt,
-                 color: m.color, fill: single }};
-      }});
-      lineChart('trendChart', labels, series, {{
-        yDisplay: false, xTicks: 6,
-        tooltip: {{
-          title: items => items.length ? String(rows[items[0].dataIndex].date) : '',
-          label: c => `${{c.dataset.label}}: ${{c.dataset._fmt(c.dataset._raw[c.dataIndex])}}`,
-        }},
-      }});
-      const unit = trendGran === 'weekly' ? 'week' : 'day';
-      setStatus('chartStatus', `${{n}} ${{unit}}(s) · ${{active.length}} metric(s)`);
-    }}
-    function toggleMetric(key) {{
-      chartMetrics.has(key) ? chartMetrics.delete(key) : chartMetrics.add(key);
-      syncMetricControls();
-      renderChart();
-    }}
-    // Keep the desktop chips and the mobile dropdown checkboxes reflecting the
-    // same chartMetrics Set, plus the dropdown's selected-count badge.
-    function syncMetricControls() {{
-      document.querySelectorAll('#metricChips .chip').forEach(b => b.classList.toggle('active', chartMetrics.has(b.dataset.key)));
-      document.querySelectorAll('#metricDropdownMenu input').forEach(i => {{ i.checked = chartMetrics.has(i.dataset.key); }});
-      const c = document.getElementById('metricDropdownCount');
-      if (c) c.textContent = chartMetrics.size;
-    }}
-    function buildMetricChips() {{
-      const el = document.getElementById('metricChips');
-      el.innerHTML = CHART_METRICS.map(m => `<button type="button" class="chip" data-key="${{m.key}}"><span class="metric-swatch" style="background:${{m.color}}"></span>${{esc(m.label)}}</button>`).join('');
-      el.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => toggleMetric(btn.dataset.key)));
-      // Mobile dropdown: same metrics as checkboxes (see .metric-dd CSS).
-      const menu = document.getElementById('metricDropdownMenu');
-      menu.innerHTML = CHART_METRICS.map(m => `<label class="metric-opt"><input type="checkbox" data-key="${{m.key}}"><span class="metric-swatch" style="background:${{m.color}}"></span>${{esc(m.label)}}</label>`).join('');
-      menu.querySelectorAll('input').forEach(inp => inp.addEventListener('change', () => toggleMetric(inp.dataset.key)));
-      syncMetricControls();
-    }}
-    // Close the metric dropdown when clicking outside it (native <details>
-    // stays open on outside clicks).
-    document.addEventListener('click', e => {{
-      const dd = document.getElementById('metricDropdown');
-      if (dd && dd.open && !dd.contains(e.target)) dd.open = false;
-    }});
-    // Daily/Weekly chips for the paid trends chart — re-render from cache, no refetch.
-    document.querySelectorAll('#trendGranChips .chip').forEach(btn =>
-      btn.addEventListener('click', () => {{
-        if (btn.dataset.gran === trendGran) return;
-        trendGran = btn.dataset.gran;
-        document.querySelectorAll('#trendGranChips .chip').forEach(b => b.classList.toggle('active', b === btn));
-        renderChart();
-      }})
-    );
     async function loadSummary() {{
       setStatus('summaryStatus','Loading…');
       summaryCards.innerHTML = skelCards(7);
-      skelChart('trendChart','trend-svg');
       try {{
         const [curr, prev] = await Promise.all([
           getJson(withDates(SUMMARY_API)),
@@ -1968,7 +1849,7 @@ def render_bigquery_dashboard_page(
         ]);
         summaryPayload = curr;
         compareSummaryPayload = prev;
-        renderSummary(); renderChart();
+        renderSummary();
         // Date range is already shown by the Range dropdown, so keep this to
         // just the source note (blank unless the data is combined across sources).
         setStatus('summaryStatus', summaryPayload.by_source ? '' : 'combined');
@@ -3988,16 +3869,12 @@ def render_bigquery_dashboard_page(
 
     // ---- Platform chips ----
     if (HAS_PAID_ADS) {{
-      buildChips('platformChips',['Google','LinkedIn','Meta'],platformFilter,()=>{{renderSummary();renderChart();renderExplorer();}});
+      buildChips('platformChips',['Google','LinkedIn','Meta'],platformFilter,()=>{{renderSummary();renderExplorer();}});
     }}
 
     // ---- Explorer chips ----
     buildExplorerFilters();
 
-    // ---- Init ----
-    if (HAS_PAID_ADS) {{
-      buildMetricChips();
-    }}
     document.getElementById('explorerTable').addEventListener('click',ev=>{{
       const shuf=ev.target.closest('.gads-shuffle');
       if (shuf) {{
