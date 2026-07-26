@@ -276,7 +276,7 @@ def breakdowns_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 def business_line_campaigns_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     """Derive campaign rows from breakdowns when not stored on the snapshot."""
-    client_key = str(snapshot.get("client_key") or "penn")
+    client_key = str(snapshot.get("client_key") or "")
     breakdowns = breakdowns_from_snapshot(snapshot)
     accounts = snapshot.get("accounts") or {}
     filter_profile = client_filter_profile(

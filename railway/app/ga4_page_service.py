@@ -14,12 +14,12 @@ from penn_business_lines import classify_business_line, client_filter_profile
 
 def _load_custom_business_line_rules(client_slug: str) -> list[tuple[str, str, tuple[str, ...]]] | None:
     slug = (client_slug or "").strip().lower()
-    if slug != "penn":
+    if not slug:
         return None
     try:
         import business_line_rules as bl_rules
 
-        return bl_rules.rules_as_tuples(slug)
+        return bl_rules.rules_as_tuples(slug) or None
     except Exception:
         return None
 
@@ -31,7 +31,7 @@ def classify_page_segment(
     campaign_name: str = "",
     client_slug: str,
 ) -> dict[str, Any]:
-    """Keyword-based segment tag for a page (business line or Nixon region)."""
+    """Keyword-based segment tag for a page (business line or region)."""
     texts = tuple(
         t.strip()
         for t in (campaign_name, page_path, page_title)
@@ -42,7 +42,7 @@ def classify_page_segment(
     profile = client_filter_profile(client_slug)
     custom_rules = _load_custom_business_line_rules(client_slug)
 
-    if profile == "nixon":
+    if profile == "regions":
         from dashboard_regions import classify_regions
 
         region_ids, label = classify_regions(primary, extra_names=extras)

@@ -149,14 +149,6 @@ def _build_client_row(
     project_id = c.get("gcp_project_id")
     dataset_id = c.get("bq_mart_dataset_id") or "marketing_marts"
 
-    # Nixon's mart project/dataset live in marketing_service (module defaults),
-    # not on its client_dashboard_config row, so it comes back here with no
-    # gcp_project_id and would score 0% of budget. Fall back to that built-in
-    # destination so HQ prices Nixon's spend like every other client. (Removed
-    # once the Nixon config split is unified.)
-    if not project_id and slug in ("nixon", "nixon-bq-test"):
-        project_id, dataset_id = marketing_service.default_destination()
-
     spend: float | None = None
     spend_available = False
     sessions_series: list[int] = []

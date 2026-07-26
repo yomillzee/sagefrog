@@ -1,4 +1,12 @@
-"""BigQuery-mart client dashboard — paid media (Overview / Explorer) + Website Analytics tabs."""
+"""BigQuery-mart client dashboard — paid media (Overview / Explorer) + Website Analytics tabs.
+
+THIS IS THE SINGLE MASTER DASHBOARD TEMPLATE. Every client's dashboard — for every
+slug — renders through render_bigquery_dashboard_page() below. There are no
+client-specific dashboard renderers: edits here apply to all dashboards app-wide.
+Per-client differences (segment filters, mart destination, theming, feature
+flags) are driven by configuration (client_dashboard_config), never by branching
+on a client's name or slug. Keep it that way.
+"""
 
 from __future__ import annotations
 
