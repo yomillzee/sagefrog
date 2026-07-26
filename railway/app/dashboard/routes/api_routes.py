@@ -13,6 +13,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 import bigquery_service
 import marketing_service
 import web_auth
+from dashboard.utils import pacing
 from dashboard.renderers.bigquery_settings_renderer import render_bigquery_settings_page
 from dashboard.renderers.analytics_renderer import render_analytics_page
 from dashboard.renderers.gtm_renderer import render_gtm_page
@@ -169,6 +170,56 @@ def _summary_read(
         client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
     ):
         return _cached_bq_read(f"{normalized}.summary", payload, ttl_seconds=900, fetch=fetch)
+
+
+def _pacing_read(
+    normalized: str,
+    *,
+    project_id: str | None = None,
+    dataset_id: str | None = None,
+    budget_hint: float | None = None,
+) -> dict:
+    """Weekday-aware budget-pacing recommendation for one client.
+
+    Reuses the cached /summary read over a trailing window (ending yesterday, the
+    latest complete paid-data day), then runs the pure ``pacing`` module. The
+    monthly goal and the optional active-days override come from the same
+    ``client_dashboard_config`` the Budget tracking card reads; ``budget_hint``
+    (the goal already injected into the card) is the fallback when the client's
+    budget lives outside that table.
+    """
+    today = date.today()
+    as_of = today - timedelta(days=1)
+    start = as_of - timedelta(days=pacing.PROFILE_WINDOW_DAYS - 1)
+    summary = _summary_read(
+        normalized, start, as_of, project_id=project_id, dataset_id=dataset_id
+    )
+    daily_spend: dict[str, float] = {}
+    for row in summary.get("daily") or []:
+        key = str(row.get("date") or "")[:10]
+        if not key:
+            continue
+        daily_spend[key] = daily_spend.get(key, 0.0) + float(row.get("spend") or 0.0)
+
+    monthly_budget: float | None = budget_hint
+    override: list[int] = []
+    try:
+        import client_dashboard_config as cdc
+        cfg = cdc.get_config(normalized)
+        if cfg:
+            if cfg.monthly_budget_usd is not None:
+                monthly_budget = float(cfg.monthly_budget_usd)
+            override = cdc.parse_active_weekdays(cfg.pacing_active_weekdays)
+    except Exception:
+        logger.warning("pacing: config read failed for %s", normalized, exc_info=True)
+
+    result = pacing.compute_pacing(
+        monthly_budget=monthly_budget,
+        daily_spend=daily_spend,
+        today=today,
+        active_weekdays_override=override or None,
+    )
+    return result.to_dict()
 
 
 def _health_read(
@@ -409,6 +460,36 @@ def client_summary(
     try:
         return _summary_read(
             normalized, start, end, project_id=project_id, dataset_id=dataset_id,
+        )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/budget/pacing",
+    summary="Weekday-aware budget pacing recommendation (suggested daily budget)",
+)
+def client_budget_pacing(
+    client_key: str,
+    request: Request,
+    budget: float | None = Query(
+        default=None,
+        description="Monthly goal already shown on the card; used only when the "
+        "client's budget isn't stored in client_dashboard_config.",
+    ),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    if normalized == "nixon":
+        web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
+        try:
+            return _pacing_read("nixon", budget_hint=budget)
+        except Exception as exc:
+            raise _bq_endpoint_failure(exc) from exc
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    try:
+        return _pacing_read(
+            normalized, project_id=project_id, dataset_id=dataset_id, budget_hint=budget,
         )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
