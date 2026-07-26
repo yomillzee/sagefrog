@@ -190,6 +190,32 @@ on the web process (I/O-bound; minor request-latency impact during a run).
 
 ---
 
+## 6a. Optional: segment filters (business lines / regions)
+
+Some clients group their campaigns and pages into **segments** — either
+keyword-based **business lines** (e.g. a bank's Home Equity / HYS / Commercial)
+or **geographic regions**. This is a per-client setting, driven entirely by
+configuration — there is **no client-specific code**.
+
+- Set it on the **Settings page** (`/dashboard/{slug}/settings` → **Segment
+  filters**): choose **Business lines**, **Regions**, or **None**.
+- It is stored as `client_dashboard_config.segment_filter_profile`
+  (`business_lines`, `regions`, or empty) and read by
+  [`penn_business_lines.client_filter_profile`](../railway/app/penn_business_lines.py).
+  The value drives the filter UI label, the campaign grouping, and the Website
+  Analytics page segmentation.
+- **Business lines** use the built-in keyword taxonomy plus any custom rules an
+  admin adds (`business_line_rules`); **regions** use
+  [`dashboard_regions`](../railway/app/dashboard_regions.py).
+- Leave it **None** for clients who don't segment — most new clients.
+
+> Migration note: this replaced older logic that inferred the profile from a
+> client's slug/label/env vars. A one-time startup backfill in `main.py` seeds
+> the pre-existing clients (Nixon → `regions`) so their filters keep working; new
+> clients set it from Settings.
+
+---
+
 ## 7. Mart ownership — all app-built
 
 The dashboard reads ~13 marts; **every one is built by the Railway app** on
