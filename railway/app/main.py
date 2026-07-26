@@ -1854,7 +1854,37 @@ def admin_home(
             oauth_section_html=oauth_html,
             credentials_section_html=_gcp_credentials_section_html(),
             is_super_admin=web_auth.is_super_admin(user),
+            dashboard_cache_ttl=_dashboard_cache_ttl_seconds(),
         )
+    )
+
+
+def _dashboard_cache_ttl_seconds() -> int:
+    try:
+        import app_settings
+
+        return app_settings.dashboard_cache_ttl_seconds()
+    except Exception:
+        return 0
+
+
+@app.post("/admin/settings/dashboard-cache", include_in_schema=False)
+def admin_set_dashboard_cache_ttl(
+    request: Request,
+    ttl_seconds: int = Form(...),
+    admin: web_users.WebUser = Depends(web_auth.require_super_admin),
+):
+    """Persist the dashboard read-cache TTL floor (super admins only)."""
+    import app_settings
+
+    try:
+        app_settings.set_dashboard_cache_ttl_seconds(int(ttl_seconds), updated_by=admin.email)
+    except Exception:
+        return RedirectResponse(
+            url="/admin?err=Could+not+update+cache+setting", status_code=303
+        )
+    return RedirectResponse(
+        url="/admin?msg=Dashboard+cache+duration+updated", status_code=303
     )
 
 

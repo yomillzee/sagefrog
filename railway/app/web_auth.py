@@ -825,6 +825,7 @@ def render_admin_page(
     oauth_section_html: str = "",
     credentials_section_html: str = "",
     is_super_admin: bool = False,
+    dashboard_cache_ttl: int = 0,
 ) -> str:
     notice = ""
     if message:
@@ -1394,6 +1395,45 @@ def render_admin_page(
       <span class="fr-notice-cta">Review →</span>
     </a>"""
 
+    # ---- Dashboard performance (super admins only) ----
+    # Instance-wide read-cache TTL floor for the BigQuery dashboard cards. A
+    # longer floor keeps warmed/viewed cards warm between syncs; a sync
+    # invalidates the cache immediately, so it adds no staleness. See
+    # app_settings.dashboard_cache_ttl_seconds and api_routes._cached_bq_read.
+    dashboard_perf_html = ""
+    if is_super_admin:
+        try:
+            import app_settings
+
+            choices = app_settings.DASHBOARD_CACHE_TTL_CHOICES
+        except Exception:
+            choices = [(0, "Default (per-card, ~15 min)")]
+        opts = "".join(
+            f'<option value="{secs}"{" selected" if int(dashboard_cache_ttl) == secs else ""}>'
+            f"{_esc(label)}</option>"
+            for secs, label in choices
+        )
+        dashboard_perf_html = f"""
+        <section class="dash-perf-section">
+          <h2>Dashboard performance</h2>
+          <p class="muted" style="margin:0 0 12px;font-size:.9rem">How long a client's
+            dashboard cards stay cached between syncs. A longer window keeps the
+            morning-synced Overview instant all day; because a sync clears the cache
+            immediately, it never serves stale data — only the first view after a sync
+            is ever slow.</p>
+          <form method="post" action="/admin/settings/dashboard-cache" class="role-form">
+            <div class="row">
+              <div>
+                <label for="dashboard_cache_ttl">Cache duration</label>
+                <select id="dashboard_cache_ttl" name="ttl_seconds" class="role-select">
+                  {opts}
+                </select>
+              </div>
+            </div>
+            <button type="submit" class="primary">Save</button>
+          </form>
+        </section>"""
+
     from dashboard.renderers.base_layout import render_admin_shell_page
 
     # Admin home renders inside the shared navy-sidebar shell (see
@@ -1873,6 +1913,7 @@ def render_admin_page(
         <span class="advanced-caret" aria-hidden="true">&#9662;</span>
       </summary>
       <div class="advanced-body">
+        {dashboard_perf_html}
         {oauth_section_html}
         {credentials_section_html}
         <section>
