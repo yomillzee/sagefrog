@@ -33,6 +33,7 @@ from cron_security import require_cron_secret
 from security import configured_api_key, is_production, require_api_key
 import audit_log
 import client_config
+import feature_requests
 import client_dashboard_config
 import dashboard_registry
 import business_line_rules
@@ -1839,6 +1840,25 @@ def admin_home(
             credentials_section_html=_gcp_credentials_section_html(),
             is_super_admin=web_auth.is_super_admin(user),
         )
+    )
+
+
+@app.post("/admin/feature-requests/{request_id}/done", include_in_schema=False)
+def admin_feature_request_done(
+    request_id: int,
+    request: Request,
+    admin: web_users.WebUser = Depends(web_auth.require_super_admin),
+):
+    """Mark a team feature request handled — clears it from the notification badge."""
+    try:
+        feature_requests.mark_done(request_id, resolved_by=admin.email)
+    except Exception:
+        return RedirectResponse(
+            url="/admin?err=Could+not+update+feature+request#feature-requests",
+            status_code=303,
+        )
+    return RedirectResponse(
+        url="/admin?msg=Feature+request+marked+done#feature-requests", status_code=303
     )
 
 
