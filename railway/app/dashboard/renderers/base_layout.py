@@ -478,6 +478,33 @@ def dashboard_topbar_js() -> str:
       });
     })();
 
+    // ── Desktop sidebar collapse/expand ──────────────────────────────────
+    // A discreet chevron in the sidebar head tucks the rail away; a small
+    // floating button brings it back. The state is remembered per browser, and
+    // an inline script in the sidebar markup applies it before paint (no flash).
+    (function() {
+      const shell = document.querySelector('.app-shell');
+      const collapseBtn = document.getElementById('sidebarCollapse');
+      const reopenBtn = document.getElementById('sidebarReopen');
+      if (!shell || !collapseBtn || !reopenBtn) return;
+      const KEY = 'sf_sidebar_collapsed';
+      function setCollapsed(collapsed) {
+        shell.classList.toggle('sidebar-collapsed', collapsed);
+        collapseBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch (e) {}
+      }
+      // Reconcile the button state with whatever the pre-paint script applied.
+      collapseBtn.setAttribute(
+        'aria-expanded', shell.classList.contains('sidebar-collapsed') ? 'false' : 'true'
+      );
+      collapseBtn.addEventListener('click', () => setCollapsed(true));
+      reopenBtn.addEventListener('click', () => {
+        setCollapsed(false);
+        // Return focus to the collapse control so keyboard users aren't stranded.
+        requestAnimationFrame(() => collapseBtn.focus());
+      });
+    })();
+
     // ── Modern client switcher: slide-out drawer with search ──────────────
     (function() {
       const trigger = document.getElementById('clientSwitchTrigger');
@@ -950,6 +977,20 @@ _NAV_ICON_MENU = (
     '<line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>'
 )
 
+# Double-chevron pointing left — the discreet "collapse the sidebar" affordance
+# in the sidebar head (desktop only).
+_NAV_ICON_COLLAPSE = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg>'
+)
+# Sidebar-panel glyph for the floating button that brings the rail back.
+_NAV_ICON_SIDEBAR = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>'
+)
+
 
 # Compact tool icons for the sidebar footer toolbar (match the nav icon style).
 _TOOL_ICON_THEME = (
@@ -1284,6 +1325,8 @@ def render_sidebar(
           <span class="dash-sidebar-wordmark">Sagefrog</span>
         </a>
         <span class="dash-sidebar-beta">Beta</span>
+        <button type="button" class="dash-sidebar-collapse" id="sidebarCollapse"
+          aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">{_NAV_ICON_COLLAPSE}</button>
       </div>
       {view_nav_html}
       <div class="dash-sidebar-footer">
@@ -1295,7 +1338,10 @@ def render_sidebar(
         </nav>
         {account_html}
       </div>
-    </aside>"""
+    </aside>
+    <button type="button" class="dash-sidebar-reopen" id="sidebarReopen"
+      aria-label="Open sidebar" title="Open sidebar">{_NAV_ICON_SIDEBAR}</button>
+    <script>(function(){{try{{if(localStorage.getItem('sf_sidebar_collapsed')==='1'){{var s=document.currentScript.closest('.app-shell');if(s)s.classList.add('sidebar-collapsed');}}}}catch(e){{}}}})();</script>"""
 
 
 def render_client_shell_page(
@@ -2424,6 +2470,56 @@ SIDEBAR_CSS = """
     .dash-bq-pill[data-state="ok"]::before { background: #0a7f3f; }
     .dash-bq-pill[data-state="err"] { color: #b42318; border-color: #f3c0bb; background: #fdecea; }
     .dash-bq-pill[data-state="err"]::before { background: #b42318; }
+
+    /* Desktop collapse: a discreet chevron in the sidebar head tucks the whole
+       rail away; a small floating button brings it back. The choice is persisted
+       per browser (localStorage 'sf_sidebar_collapsed'). Mobile has its own
+       hamburger drawer, so both controls are hidden there. */
+    .dash-sidebar-collapse {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      margin-left: auto;
+      flex-shrink: 0;
+      border: 0;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #c3d2e6;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .dash-sidebar-collapse:hover { background: rgba(255, 255, 255, 0.16); color: #fff; }
+    .dash-sidebar-collapse svg { width: 18px; height: 18px; }
+    .dash-sidebar-collapse:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
+
+    .dash-sidebar-reopen {
+      display: none;
+      position: fixed;
+      top: 14px;
+      left: 14px;
+      z-index: 96;
+      width: 38px;
+      height: 38px;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--navy);
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(10, 37, 64, 0.12);
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+    }
+    .dash-sidebar-reopen:hover { background: #f0f6ff; border-color: #93c5fd; color: var(--accent, #1d6fd0); }
+    .dash-sidebar-reopen svg { width: 20px; height: 20px; }
+
+    /* Collapsed state — desktop only; the mobile drawer flow is untouched. */
+    @media (min-width: 901px) {
+      .app-shell.sidebar-collapsed .dash-sidebar { display: none; }
+      .app-shell.sidebar-collapsed .dash-sidebar-reopen { display: inline-flex; }
+    }
 
     /* Mobile top bar: hamburger + brand (the bar is hidden on desktop, so the
        toggle inside it is too). Replaces the old lone floating hamburger. */
