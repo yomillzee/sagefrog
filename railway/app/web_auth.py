@@ -1313,6 +1313,87 @@ def render_admin_page(
       </ul>
     </section>"""
 
+    # ---- Feature requests inbox (super admins only) ----
+    # Requests raised from the floating notes FAB on any client dashboard land
+    # here. New ones drive the notification banner at the top of the page.
+    feature_requests_html = ""
+    feature_requests_notice = ""
+    if is_super_admin:
+        try:
+            import feature_requests as _freq
+
+            reqs = _freq.list_requests(limit=200)
+        except Exception:
+            reqs = []
+        new_reqs = [r for r in reqs if r.status == "new"]
+        new_count = len(new_reqs)
+
+        def _fr_row(r) -> str:
+            when = _format_audit_time(r.created_at)
+            who = _esc(r.created_by or "—")
+            page_label = r.page_label or r.client_slug or "—"
+            page_path = r.page_path or ""
+            page_link = (
+                f'<a class="fr-page-link" href="{_esc(page_path)}">{_esc(str(page_label))}</a>'
+                if page_path
+                else f'<span>{_esc(str(page_label))}</span>'
+            )
+            path_note = (
+                f'<span class="fr-path mono">{_esc(page_path)}</span>' if page_path else ""
+            )
+            is_new = r.status == "new"
+            badge = (
+                '<span class="fr-badge fr-badge-new">New</span>'
+                if is_new
+                else '<span class="fr-badge fr-badge-done">Done</span>'
+            )
+            if is_new:
+                action = (
+                    f'<form method="post" action="/admin/feature-requests/{r.id}/done" class="inline-form">'
+                    f'<button type="submit" class="link">Mark done</button></form>'
+                )
+            else:
+                resolved = _esc(r.resolved_by or "")
+                by = f" by {resolved}" if resolved else ""
+                action = f'<span class="fr-resolved">Resolved{by}</span>'
+            return f"""
+        <div class="fr-row {'is-new' if is_new else 'is-done'}">
+          <div class="fr-row-head">
+            <div class="fr-row-where">{badge}{page_link}</div>
+            <div class="fr-row-actions">{action}</div>
+          </div>
+          {path_note}
+          <p class="fr-body">{_esc(r.body)}</p>
+          <div class="fr-row-meta"><span>{who}</span><span>{when}</span></div>
+        </div>"""
+
+        fr_rows = "".join(_fr_row(r) for r in reqs) or (
+            '<p class="muted" style="margin:0">No feature requests yet. They arrive '
+            "from the notes FAB on any client dashboard.</p>"
+        )
+        count_chip = (
+            f'<span class="count-chip fr-count-new">{new_count} new</span>'
+            if new_count
+            else '<span class="count-chip">0 new</span>'
+        )
+        feature_requests_html = f"""
+    <section class="fr-section" id="feature-requests">
+      <div class="dash-section-head">
+        <h2 style="margin:0">Feature requests {count_chip}</h2>
+      </div>
+      <p class="muted" style="margin:-4px 0 14px;font-size:.86rem">Raised by the team
+        from the notes FAB on client dashboards. Each one records the page it came from.</p>
+      <div class="fr-list">{fr_rows}</div>
+    </section>"""
+        if new_count:
+            plural = "" if new_count == 1 else "s"
+            feature_requests_notice = f"""
+    <a class="fr-notice" href="#feature-requests">
+      <span class="fr-notice-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>
+      <span class="fr-notice-text"><strong>{new_count}</strong> new feature request{plural} from the team</span>
+      <span class="fr-notice-cta">Review →</span>
+    </a>"""
+
     from dashboard.renderers.base_layout import render_admin_shell_page
 
     # Admin home renders inside the shared navy-sidebar shell (see
@@ -1383,6 +1464,37 @@ def render_admin_page(
     .settings-fold summary {{ cursor: pointer; color: var(--muted); }}
     .hint {{ color: var(--muted); font-size: .82rem; margin: 4px 0 0; }}
     .hint.mono {{ font-family: ui-monospace, monospace; }}
+    /* ---- Feature requests inbox + notification ---- */
+    .fr-notice {{ display: flex; align-items: center; gap: 12px; padding: 13px 18px; margin-bottom: 18px;
+      border-radius: 14px; text-decoration: none; color: #4c1d95;
+      background: linear-gradient(135deg, #f5f3ff, #ede9fe); border: 1px solid #ddd6fe;
+      box-shadow: 0 6px 22px rgba(124,58,237,.12); transition: filter .15s, transform .06s; }}
+    .fr-notice:hover {{ filter: brightness(1.02); transform: translateY(-1px); }}
+    .fr-notice-icon {{ display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px;
+      background: #7c3aed; color: #fff; flex-shrink: 0; }}
+    .fr-notice-text {{ flex: 1; font-size: .92rem; }}
+    .fr-notice-text strong {{ font-weight: 800; }}
+    .fr-notice-cta {{ font-weight: 700; font-size: .85rem; color: #6d28d9; flex-shrink: 0; }}
+    .fr-section {{ border-top: 3px solid #7c3aed; }}
+    .fr-count-new {{ background: #ede9fe; color: #6d28d9; }}
+    .fr-list {{ display: flex; flex-direction: column; gap: 10px; }}
+    .fr-row {{ border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 13px 15px;
+      transition: border-color .15s, box-shadow .15s; }}
+    .fr-row.is-new {{ border-color: #ddd6fe; background: #fbfaff; }}
+    .fr-row.is-done {{ opacity: .72; }}
+    .fr-row-head {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; }}
+    .fr-row-where {{ display: flex; align-items: center; gap: 9px; min-width: 0; }}
+    .fr-badge {{ display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .68rem; font-weight: 800;
+      text-transform: uppercase; letter-spacing: .04em; flex-shrink: 0; }}
+    .fr-badge-new {{ background: #ede9fe; color: #6d28d9; }}
+    .fr-badge-done {{ background: #f1f5f9; color: #64748b; }}
+    .fr-page-link {{ font-weight: 700; color: var(--navy); text-decoration: none; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; }}
+    .fr-page-link:hover {{ color: var(--accent); }}
+    .fr-path {{ display: block; font-size: .74rem; color: var(--muted); margin: 4px 0 0; overflow-wrap: anywhere; }}
+    .fr-body {{ margin: 8px 0 0; font-size: .92rem; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }}
+    .fr-row-meta {{ display: flex; gap: 14px; margin-top: 10px; font-size: .78rem; color: var(--muted); }}
+    .fr-resolved {{ font-size: .8rem; color: var(--muted); }}
     .dash-section {{ border-top: 3px solid var(--accent); }}
     .dash-section-head {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }}
     .dash-section-head h2 {{ margin: 0; }}
@@ -1650,7 +1762,9 @@ def render_admin_page(
     content = f"""
   <main>
     {notice}
+    {feature_requests_notice}
     {dashboard_manage_html}
+    {feature_requests_html}
     <section>
       <h2>Create user</h2>
       <form method="post" action="/admin/users" class="role-form">

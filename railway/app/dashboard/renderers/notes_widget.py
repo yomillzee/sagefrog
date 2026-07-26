@@ -28,6 +28,20 @@ _ICON_NOTE = (
     '<line x1="8" y1="17" x2="13" y2="17"/></svg>'
 )
 
+# The collapsed FAB glyph — a pencil-in-a-spark mark that reads as "jot / act".
+_ICON_FAB = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>'
+)
+
+_ICON_SPARK = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M12 3v4"/><path d="M12 17v4"/><path d="M3 12h4"/><path d="M17 12h4"/>'
+    '<path d="M12 8a4 4 0 0 0 4 4 4 4 0 0 0-4 4 4 4 0 0 0-4-4 4 4 0 0 0 4-4z"/></svg>'
+)
+
 
 def _notes_base(client_slug: str) -> str:
     return f"/dashboard/{client_slug}/notes"
@@ -97,6 +111,37 @@ def _panel_inner_html(*, embedded: bool) -> str:
       <p class="sfnote-empty" id="sfnoteEmpty" hidden>No notes yet for this client. Click <strong>+ New</strong> to start one.</p>"""
 
 
+def _fr_panel_inner_html() -> str:
+    """Feature-request composer: the page it was raised from + a request body.
+
+    Submissions land in the super-admin inbox on ``/admin`` and light up the
+    notification badge there. The current page (URL + label) is captured
+    client-side so the reviewer knows exactly where the ask came from.
+    """
+    close_btn = (
+        '<button type="button" class="sfnote-icon-btn" id="sffrClose" '
+        'title="Close" aria-label="Close feature request">'
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
+        '</button>'
+    )
+    return f"""
+      <div class="sfnote-head">
+        <div class="sfnote-head-titles">
+          <span class="sfnote-title">Feature request</span>
+          <span class="sfnote-sub">Sent to the Sagefrog admin inbox</span>
+        </div>
+        <div class="sfnote-head-actions">{close_btn}</div>
+      </div>
+      <div class="sffr-context" id="sffrContext" aria-live="polite"></div>
+      <textarea class="sfnote-body sffr-body" id="sffrBody" placeholder="What would make this dashboard better? Describe the feature or fix you'd like…" aria-label="Feature request" spellcheck="true"></textarea>
+      <div class="sfnote-footer">
+        <span class="sfnote-status" id="sffrStatus" role="status" aria-live="polite"></span>
+        <button type="button" class="sfnote-btn sfnote-btn--primary" id="sffrSend">Send request</button>
+      </div>"""
+
+
 # ── Styles ──────────────────────────────────────────────────────────────────
 # Shared editor/panel styling. The FAB + fixed-panel chrome lives in
 # ``_embedded_css`` (only needed inside the dashboard); the popup window reuses
@@ -132,14 +177,32 @@ _SHARED_CSS = """
 """
 
 _EMBEDDED_CSS = """
-  .sfnote-fab { position:fixed; bottom:24px; right:24px; z-index:200; display:inline-flex; align-items:center; gap:8px; height:44px; padding:0 16px 0 14px; border:0; border-radius:999px; background:#0a2540; color:#fff; font:inherit; font-size:.9rem; font-weight:650; cursor:pointer; box-shadow:0 3px 14px rgba(0,0,0,.28); transition:transform .15s, box-shadow .15s; }
-  .sfnote-fab:hover { transform:translateY(-1px); box-shadow:0 6px 20px rgba(0,0,0,.3); }
-  .sfnote-fab svg { width:18px; height:18px; }
+  /* Sleek round FAB that fans out a labelled menu on hover/focus. The whole
+     dock is one hover target so the menu doesn't flicker as the pointer travels
+     from the button up to the actions. */
+  .sfnote-dock { position:fixed; bottom:24px; right:24px; z-index:200; display:flex; flex-direction:column; align-items:flex-end; gap:10px; }
+  .sfnote-fab { display:inline-flex; align-items:center; justify-content:center; width:54px; height:54px; padding:0; border:0; border-radius:999px; background:linear-gradient(135deg,#123a63,#0a2540); color:#fff; cursor:pointer; box-shadow:0 6px 18px rgba(10,37,64,.32); transition:transform .16s, box-shadow .16s; }
+  .sfnote-fab:hover, .sfnote-fab:focus-visible { transform:translateY(-2px); box-shadow:0 10px 26px rgba(10,37,64,.38); outline:none; }
+  .sfnote-fab svg { width:22px; height:22px; }
+  .sfnote-menu { display:flex; flex-direction:column; align-items:flex-end; gap:8px; opacity:0; transform:translateY(8px) scale(.96); transform-origin:bottom right; pointer-events:none; transition:opacity .16s, transform .16s; }
+  .sfnote-dock:hover .sfnote-menu, .sfnote-dock:focus-within .sfnote-menu, .sfnote-dock.is-open .sfnote-menu { opacity:1; transform:none; pointer-events:auto; }
+  .sfnote-menu-item { display:inline-flex; align-items:center; gap:9px; height:40px; padding:0 15px; border:1px solid #e2e8f0; border-radius:999px; background:#fff; color:#0a2540; font:inherit; font-size:.86rem; font-weight:650; cursor:pointer; white-space:nowrap; box-shadow:0 4px 14px rgba(10,37,64,.16); transition:transform .12s, box-shadow .12s, border-color .12s; }
+  .sfnote-menu-item:hover { transform:translateY(-1px); border-color:#c6d5ea; box-shadow:0 6px 18px rgba(10,37,64,.22); }
+  .sfnote-menu-item svg { width:16px; height:16px; color:#123a63; }
+  .sfnote-menu-item--fr svg { color:#7c3aed; }
+  /* Collapse the dock while a panel is open so the FAB doesn't cover it. */
+  body.sfnote-open .sfnote-dock, body.sffr-open .sfnote-dock { opacity:0; pointer-events:none; }
   .sfnote-panel { position:fixed; bottom:24px; right:24px; z-index:201; width:min(380px, calc(100vw - 32px)); max-height:min(70vh, 620px); display:flex; flex-direction:column; background:#fff; border:1px solid #e2e8f0; border-radius:16px; box-shadow:0 18px 48px rgba(10,37,64,.24); opacity:0; transform:translateY(12px) scale(.98); transform-origin:bottom right; pointer-events:none; transition:opacity .18s, transform .18s; }
   body.sfnote-open .sfnote-panel { opacity:1; transform:none; pointer-events:auto; }
-  body.sfnote-open .sfnote-fab { opacity:0; pointer-events:none; }
   .sfnote-panel .sfnote-body { min-height:180px; }
-  @media (max-width:520px) { .sfnote-panel { left:16px; right:16px; bottom:16px; width:auto; } .sfnote-fab { right:16px; bottom:16px; } }
+  /* Feature-request panel reuses the notes-panel chrome. */
+  .sffr-panel { position:fixed; bottom:24px; right:24px; z-index:201; width:min(380px, calc(100vw - 32px)); max-height:min(70vh, 620px); display:flex; flex-direction:column; background:#fff; border:1px solid #e2e8f0; border-radius:16px; box-shadow:0 18px 48px rgba(10,37,64,.24); opacity:0; transform:translateY(12px) scale(.98); transform-origin:bottom right; pointer-events:none; transition:opacity .18s, transform .18s; }
+  body.sffr-open .sffr-panel { opacity:1; transform:none; pointer-events:auto; }
+  .sffr-context { display:flex; align-items:center; gap:8px; margin:12px 16px 6px; padding:8px 11px; border-radius:9px; background:#f5f3ff; border:1px solid #e4defb; color:#4c1d95; font-size:.78rem; }
+  .sffr-context svg { width:14px; height:14px; flex-shrink:0; }
+  .sffr-context .sffr-page { font-weight:650; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sffr-body { min-height:150px; margin-top:6px; }
+  @media (max-width:520px) { .sfnote-dock { right:16px; bottom:16px; } .sfnote-panel, .sffr-panel { left:16px; right:16px; bottom:16px; width:auto; } }
 """
 
 _WINDOW_CSS = """
@@ -368,16 +431,99 @@ _CONTROLLER_JS = r"""
 """
 
 
+# ── Feature-request composer (static; reads window.__sfNotesCfg) ────────────
+# Captures the current page + a free-text ask and POSTs it to the client-scoped
+# feature-request endpoint. The submission lands in the super-admin inbox on
+# /admin and lights the notification badge there.
+_FEATURE_REQUEST_JS = r"""
+(function () {
+  var cfg = window.__sfNotesCfg;
+  if (!cfg || !cfg.base) return;
+  var body = document.getElementById('sffrBody');
+  var send = document.getElementById('sffrSend');
+  var status = document.getElementById('sffrStatus');
+  var context = document.getElementById('sffrContext');
+  if (!body || !send) return;
+
+  var PIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6-5.686-6-10a6 6 0 0 1 12 0c0 4.314-6 10-6 10z"/><circle cx="12" cy="11" r="2"/></svg>';
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function currentPath() {
+    try { return window.location.pathname + window.location.search; } catch (e) { return ''; }
+  }
+  function pageLabel() {
+    return cfg.label || '';
+  }
+  function setStatus(msg, kind) {
+    if (!status) return;
+    status.textContent = msg || '';
+    status.className = 'sfnote-status' + (kind ? ' is-' + kind : '');
+  }
+  // Fill the "raised from" chip when the panel opens (path can change as the
+  // presenter navigates within the dashboard SPA-style).
+  window.__sfFrPrime = function () {
+    if (!context) return;
+    var lbl = pageLabel() || currentPath() || 'this page';
+    context.innerHTML = PIN + '<span class="sffr-page">' + escapeHtml(lbl) + '</span>';
+  };
+
+  send.addEventListener('click', function () {
+    var text = (body.value || '').trim();
+    if (!text) { setStatus('Add a short description first.', 'error'); body.focus(); return; }
+    send.disabled = true;
+    setStatus('Sending…');
+    var form = new URLSearchParams();
+    form.set('body', text);
+    form.set('page', currentPath());
+    form.set('page_label', pageLabel());
+    fetch(cfg.base + '/feature-request', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+      body: form.toString(),
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok || (j && j.ok === false)) {
+          throw new Error((j && j.error) || ('Request failed (' + r.status + ')'));
+        }
+        return j;
+      });
+    }).then(function () {
+      body.value = '';
+      setStatus('Sent to the Sagefrog admin inbox. Thank you!', 'saved');
+    }).catch(function (e) {
+      setStatus(e.message || 'Could not send request', 'error');
+    }).then(function () {
+      send.disabled = false;
+    });
+  });
+})();
+"""
+
+
 def widget_html(*, client_slug: str, label: str) -> str:
     """FAB + slide-up notes panel for injection before ``</body>`` on a dashboard.
 
     The panel is populated client-side from the notes API; caller must only
     render this for agency users (the routes enforce it too).
     """
-    fab = (
-        f'<button type="button" class="sfnote-fab" id="sfnoteFab" '
-        f'aria-label="Open presenter notes" aria-expanded="false">'
+    dock = (
+        '<div class="sfnote-dock" id="sfnoteDock">'
+        '<div class="sfnote-menu" id="sfnoteMenu" role="menu" aria-label="Notes actions">'
+        '<button type="button" class="sfnote-menu-item" id="sfnoteOpen" role="menuitem">'
         f'{_ICON_NOTE}<span>Notes</span></button>'
+        '<button type="button" class="sfnote-menu-item sfnote-menu-item--fr" id="sffrOpen" role="menuitem">'
+        f'{_ICON_SPARK}<span>Feature request</span></button>'
+        '</div>'
+        '<button type="button" class="sfnote-fab" id="sfnoteFab" '
+        'aria-haspopup="true" aria-expanded="false" '
+        'aria-label="Notes and feature requests">'
+        f'{_ICON_FAB}</button>'
+        '</div>'
     )
     panel = (
         '<aside class="sfnote-panel" id="sfnotePanel" role="dialog" '
@@ -385,35 +531,70 @@ def widget_html(*, client_slug: str, label: str) -> str:
         f'{_panel_inner_html(embedded=True)}'
         '</aside>'
     )
+    fr_panel = (
+        '<aside class="sffr-panel" id="sffrPanel" role="dialog" '
+        'aria-label="Feature request" aria-hidden="true">'
+        f'{_fr_panel_inner_html()}'
+        '</aside>'
+    )
     toggle_js = """
     (function(){
+      var dock=document.getElementById('sfnoteDock');
       var fab=document.getElementById('sfnoteFab');
+      var notesOpen=document.getElementById('sfnoteOpen');
+      var frOpen=document.getElementById('sffrOpen');
       var panel=document.getElementById('sfnotePanel');
+      var frPanel=document.getElementById('sffrPanel');
       var close=document.getElementById('sfnoteClose');
+      var frClose=document.getElementById('sffrClose');
       var popout=document.getElementById('sfnotePopout');
       var cfg=window.__sfNotesCfg||{};
-      if(!fab||!panel) return;
-      function setOpen(open){
-        document.body.classList.toggle('sfnote-open',open);
+      if(!dock||!fab) return;
+
+      // Pointer devices reveal the menu on hover (CSS); this toggle is the
+      // keyboard/touch affordance so the FAB works without a hover.
+      fab.addEventListener('click',function(){
+        var open=dock.classList.toggle('is-open');
         fab.setAttribute('aria-expanded',open?'true':'false');
-        panel.setAttribute('aria-hidden',open?'false':'true');
-        if(open){var b=document.getElementById('sfnoteBody');if(b)setTimeout(function(){b.focus();},60);}
+      });
+      function closeMenu(){dock.classList.remove('is-open');fab.setAttribute('aria-expanded','false');}
+      document.addEventListener('click',function(e){if(!dock.contains(e.target))closeMenu();});
+
+      function setNotesOpen(open){
+        document.body.classList.toggle('sfnote-open',open);
+        if(panel)panel.setAttribute('aria-hidden',open?'false':'true');
+        if(open){closeMenu();var b=document.getElementById('sfnoteBody');if(b)setTimeout(function(){b.focus();},60);}
       }
-      fab.addEventListener('click',function(){setOpen(true);});
-      if(close)close.addEventListener('click',function(){setOpen(false);});
-      document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.body.classList.contains('sfnote-open'))setOpen(false);});
+      function setFrOpen(open){
+        document.body.classList.toggle('sffr-open',open);
+        if(frPanel)frPanel.setAttribute('aria-hidden',open?'false':'true');
+        if(open){closeMenu();if(window.__sfFrPrime)window.__sfFrPrime();var b=document.getElementById('sffrBody');if(b)setTimeout(function(){b.focus();},60);}
+      }
+
+      if(notesOpen)notesOpen.addEventListener('click',function(){setNotesOpen(true);});
+      if(frOpen)frOpen.addEventListener('click',function(){setFrOpen(true);});
+      if(close)close.addEventListener('click',function(){setNotesOpen(false);});
+      if(frClose)frClose.addEventListener('click',function(){setFrOpen(false);});
+      document.addEventListener('keydown',function(e){
+        if(e.key!=='Escape')return;
+        if(document.body.classList.contains('sfnote-open'))setNotesOpen(false);
+        else if(document.body.classList.contains('sffr-open'))setFrOpen(false);
+        else closeMenu();
+      });
       if(popout)popout.addEventListener('click',function(){
         window.open(cfg.base+'/window','sfnotes_'+(cfg.slug||''),'width=460,height=640,menubar=no,toolbar=no,location=no,status=no');
-        setOpen(false);
+        setNotesOpen(false);
       });
     })();
     """
     return f"""
     {_config_script(client_slug=client_slug, label=label, embedded=True)}
     <style>{_SHARED_CSS}{_EMBEDDED_CSS}</style>
-    {fab}
+    {dock}
     {panel}
+    {fr_panel}
     <script>{_CONTROLLER_JS}</script>
+    <script>{_FEATURE_REQUEST_JS}</script>
     <script>{toggle_js}</script>"""
 
 

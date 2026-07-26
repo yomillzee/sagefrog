@@ -19,6 +19,7 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import client_notes
+import feature_requests
 import web_auth
 from dashboard.renderers import notes_widget
 from dashboard.routes.helpers import validate_client_slug
@@ -129,6 +130,35 @@ def update_client_note(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return JSONResponse({"ok": True, "notepad": pad.to_dict()})
+
+
+@router.post(
+    "/dashboard/{client_slug}/notes/feature-request",
+    summary="Log a feature request raised from a client dashboard",
+)
+def create_feature_request(
+    client_slug: str,
+    request: Request,
+    body: str = Form(""),
+    page: str = Form(""),
+    page_label: str = Form(""),
+) -> JSONResponse:
+    slug = validate_client_slug(client_slug)
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
+    user = _require_agency(auth)
+    try:
+        req = feature_requests.create_request(
+            body=body,
+            client_slug=slug,
+            page_path=page,
+            page_label=page_label,
+            created_by=_author(user),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"ok": True, "request": req.to_dict()}, status_code=201)
 
 
 @router.post(
