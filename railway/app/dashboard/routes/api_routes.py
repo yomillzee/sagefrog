@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import traceback
 from datetime import date, timedelta
 
@@ -114,12 +113,15 @@ def _cached_bq_read(source: str, payload: dict, *, ttl_seconds: int, fetch) -> d
     # Optional global TTL floor. These BQ tables only change on a sync, which
     # invalidates the cache immediately (see invalidate_prefix), so a longer TTL
     # keeps caches warm between syncs with zero staleness cost — only the first
-    # load after a sync is cold. Set DASH_CACHE_TTL_SECONDS in the environment to
-    # raise every dashboard read's TTL without editing call sites (e.g. 21600 =
-    # 6h, 86400 = 24h). Unset/0 keeps the per-endpoint defaults (15 min).
+    # load after a sync is cold. A super admin sets this from the Admin page
+    # (app_settings.dashboard_cache_ttl_seconds); it falls back to the
+    # DASH_CACHE_TTL_SECONDS environment variable, then to the per-endpoint
+    # defaults (15 min) when neither is set. The lookup is memoized in-process
+    # so this stays a cheap read on the hot path.
     try:
-        _floor = int(os.getenv("DASH_CACHE_TTL_SECONDS") or 0)
-    except ValueError:
+        import app_settings
+        _floor = app_settings.dashboard_cache_ttl_seconds()
+    except Exception:
         _floor = 0
     if _floor > 0:
         ttl_seconds = max(ttl_seconds, _floor)
@@ -259,6 +261,52 @@ def _marketing_read(
         client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
     ):
         return _cached_bq_read(f"{normalized}.marketing", payload, ttl_seconds=900, fetch=fetch)
+
+
+def _traffic_acquisition_read(
+    normalized: str,
+    start: date,
+    end: date,
+    *,
+    project_id: str | None = None,
+    dataset_id: str | None = None,
+) -> dict:
+    """GA4 traffic-acquisition breakdown — the Overview 'Website analytics' card."""
+    payload = {"start": start.isoformat(), "end": end.isoformat()}
+    fetch = lambda: marketing_service.fetch_traffic_acquisition(start_date=start, end_date=end)
+    if normalized == "nixon":
+        return _cached_bq_read(
+            "nixon.pages.traffic_acquisition", payload, ttl_seconds=900, fetch=fetch,
+        )
+    with marketing_service.route(
+        client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+    ):
+        return _cached_bq_read(
+            f"{normalized}.pages.traffic_acquisition", payload, ttl_seconds=900, fetch=fetch,
+        )
+
+
+def _ai_traffic_daily_read(
+    normalized: str,
+    start: date,
+    end: date,
+    *,
+    project_id: str | None = None,
+    dataset_id: str | None = None,
+) -> dict:
+    """Daily AI-referral sessions by platform — the Overview 'AI traffic' card."""
+    payload = {"start": start.isoformat(), "end": end.isoformat()}
+    fetch = lambda: marketing_service.fetch_ai_traffic_daily(start_date=start, end_date=end)
+    if normalized == "nixon":
+        return _cached_bq_read(
+            "nixon.ai_traffic.daily", payload, ttl_seconds=900, fetch=fetch,
+        )
+    with marketing_service.route(
+        client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+    ):
+        return _cached_bq_read(
+            f"{normalized}.ai_traffic.daily", payload, ttl_seconds=900, fetch=fetch,
+        )
 
 
 @router.get(
@@ -1020,12 +1068,7 @@ def nixon_ai_traffic_daily(
     web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        return _cached_bq_read(
-            "nixon.ai_traffic.daily",
-            {"start": start.isoformat(), "end": end.isoformat()},
-            ttl_seconds=900,
-            fetch=lambda: marketing_service.fetch_ai_traffic_daily(start_date=start, end_date=end),
-        )
+        return _ai_traffic_daily_read("nixon", start, end)
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
 
@@ -1042,12 +1085,7 @@ def nixon_traffic_acquisition(
     web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        return _cached_bq_read(
-            "nixon.pages.traffic_acquisition",
-            {"start": start.isoformat(), "end": end.isoformat()},
-            ttl_seconds=900,
-            fetch=lambda: marketing_service.fetch_traffic_acquisition(start_date=start, end_date=end),
-        )
+        return _traffic_acquisition_read("nixon", start, end)
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
 
@@ -1414,15 +1452,9 @@ def client_ai_traffic_daily(
     web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with marketing_service.route(
-            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
-        ):
-            return _cached_bq_read(
-                f"{normalized}.ai_traffic.daily",
-                {"start": start.isoformat(), "end": end.isoformat()},
-                ttl_seconds=900,
-                fetch=lambda: marketing_service.fetch_ai_traffic_daily(start_date=start, end_date=end),
-            )
+        return _ai_traffic_daily_read(
+            normalized, start, end, project_id=project_id, dataset_id=dataset_id,
+        )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
 
@@ -1564,17 +1596,9 @@ def client_traffic_acquisition(
     web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
     try:
-        with marketing_service.route(
-            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
-        ):
-            return _cached_bq_read(
-                f"{normalized}.pages.traffic_acquisition",
-                {"start": start.isoformat(), "end": end.isoformat()},
-                ttl_seconds=900,
-                fetch=lambda: marketing_service.fetch_traffic_acquisition(
-                    start_date=start, end_date=end,
-                ),
-            )
+        return _traffic_acquisition_read(
+            normalized, start, end, project_id=project_id, dataset_id=dataset_id,
+        )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
 

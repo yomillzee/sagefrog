@@ -1,4 +1,4 @@
-"""Post-sync cache warming for BigQuery dashboard card reads.
+"""Post-sync cache warming for the dashboard Overview page.
 
 When a client's BigQuery sync finishes it calls ``db_cache.invalidate_prefix``
 to drop that client's cached card reads immediately (new data just landed in
@@ -6,15 +6,27 @@ BQ). Without warming, the *first* dashboard viewer after every sync then pays a
 cold BigQuery query for each card, one per client-side fetch — that cold load is
 the multi-second "cards are slow" experience users actually notice.
 
-This module recomputes the core paid-media cards right after the sync, so the
-first load is served warm from ``api_cache`` instead.
+This module recomputes the **Overview** page's cards right after the sync — the
+page virtually every client and internal review opens first — so that first
+load is served warm from ``api_cache`` instead. Deeper tabs (Explorer,
+Analytics, GSC, …) are intentionally left cold to keep the daily BigQuery cost
+proportional to the one page people actually land on; the read-cache TTL floor
+(``app_settings.dashboard_cache_ttl_seconds``) then keeps whatever anyone opens
+warm for the rest of the day.
+
+The warmed windows mirror exactly what the Overview page requests on load: the
+default ``Last 30 days`` preset (see ``applyPreset('last_30')`` in
+``bigquery_dashboard_renderer``) — the current period **and** its prior-period
+comparison, since the summary / website / AI-traffic cards each fetch both. A
+warmed entry keyed to a different window than the endpoint later reads would
+silently not help, which is exactly the drift the cache-warm test guards against.
 
 Fail-safe by construction:
 
 * It warms by calling the **same** read helpers the endpoints use
-  (``api_routes._summary_read`` / ``_health_read`` / ``_marketing_read``), so a
-  warmed entry is always keyed identically to what the endpoint later reads —
-  the two paths cannot drift apart.
+  (``api_routes._summary_read`` / ``_health_read`` / ``_traffic_acquisition_read``
+  / ``_ai_traffic_daily_read``), so a warmed entry is always keyed identically to
+  what the endpoint later reads — the two paths cannot drift apart.
 * Every step is wrapped; any error is swallowed and logged. The worst case is
   simply "not warmed" (i.e. today's behavior). Warming can never change what a
   card returns, and never fails the sync it runs after.
@@ -29,18 +41,25 @@ from typing import Any
 LOGGER = logging.getLogger(__name__)
 
 
-def _default_window() -> tuple[date, date]:
-    """Last-30-days window — matches the endpoints' default (``_resolve_marketing_dates``).
+def _overview_windows(today: date | None = None) -> tuple[tuple[date, date], tuple[date, date]]:
+    """The current + prior-period windows the Overview's ``Last 30 days`` preset uses.
 
-    The default dashboard load requests no explicit dates, so this is the window
-    whose cache key the first viewer hits.
+    Mirrors ``lastN(30)`` in the page JS exactly: the current window ends
+    *yesterday* (today's data is usually unsynced) and spans 30 days; the
+    comparison window is the equal-length period immediately before it. Keeping
+    this in lockstep with the frontend is what makes the warmed cache entry land
+    on the same key the first viewer looks up.
     """
-    end = date.today()
-    return end - timedelta(days=29), end
+    today = today or date.today()
+    cur_end = today - timedelta(days=1)
+    cur_start = today - timedelta(days=30)
+    cmp_end = cur_start - timedelta(days=1)
+    cmp_start = cmp_end - timedelta(days=29)
+    return (cur_start, cur_end), (cmp_start, cmp_end)
 
 
 def warm_client_cache(client_slug: str) -> dict[str, Any]:
-    """Recompute the core card caches for ``client_slug``. Best-effort.
+    """Recompute the Overview card caches for ``client_slug``. Best-effort.
 
     Returns a small report ({"warmed": [...], "skipped": [...], "errors": {...}})
     for observability; callers can attach it to the refresh result but should not
@@ -61,7 +80,7 @@ def warm_client_cache(client_slug: str) -> dict[str, Any]:
         report["errors"]["import"] = "api_routes import failed"
         return report
 
-    start, end = _default_window()
+    (cur_start, cur_end), (cmp_start, cmp_end) = _overview_windows()
 
     project_id: str | None = None
     dataset_id: str | None = None
@@ -76,18 +95,29 @@ def warm_client_cache(client_slug: str) -> dict[str, Any]:
             report["errors"]["config"] = str(exc)[:200]
             return report
 
+    def _route(**kw: Any) -> dict[str, Any]:
+        return dict(project_id=project_id, dataset_id=dataset_id, **kw)
+
+    # Overview cards, each warmed for the exact window(s) the page requests. The
+    # summary / website / AI-traffic cards render a current-vs-prior comparison,
+    # so both windows are warmed; health takes no date range. The GSC keyword and
+    # PageSpeed cards are intentionally omitted: PageSpeed is a snapshot read on a
+    # 6h TTL (cheap and near-always warm), and GSC keyword-matches depends on each
+    # client's configured terms — both are left to the TTL floor rather than
+    # adding per-client warm logic and BigQuery cost here.
     tasks: list[tuple[str, Any]] = [
-        ("summary", lambda: _api._summary_read(
-            slug, start, end, project_id=project_id, dataset_id=dataset_id,
-        )),
-        ("health", lambda: _api._health_read(
-            slug, 100, project_id=project_id, dataset_id=dataset_id,
-        )),
+        ("summary", lambda: _api._summary_read(slug, cur_start, cur_end, **_route())),
+        ("summary_prev", lambda: _api._summary_read(slug, cmp_start, cmp_end, **_route())),
+        ("health", lambda: _api._health_read(slug, 100, **_route())),
+        ("traffic_acquisition", lambda: _api._traffic_acquisition_read(
+            slug, cur_start, cur_end, **_route())),
+        ("traffic_acquisition_prev", lambda: _api._traffic_acquisition_read(
+            slug, cmp_start, cmp_end, **_route())),
+        ("ai_traffic", lambda: _api._ai_traffic_daily_read(
+            slug, cur_start, cur_end, **_route())),
+        ("ai_traffic_prev", lambda: _api._ai_traffic_daily_read(
+            slug, cmp_start, cmp_end, **_route())),
     ]
-    # The top-campaigns card is only wired up as a read endpoint for Nixon today,
-    # so only Nixon has a cache entry worth warming for it.
-    if slug == "nixon":
-        tasks.append(("marketing", lambda: _api._marketing_read(slug, start, end)))
 
     for name, fn in tasks:
         try:
