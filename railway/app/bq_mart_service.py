@@ -1,9 +1,10 @@
-"""BigQuery marketing mart reader for the Penn BQ Test dashboard.
+"""BigQuery marketing mart reader for the dashboard.
 
 Reads from `fact_google_ads_campaign_daily` and `fact_linkedin_ads_campaign_daily`
-in the marketing_marts dataset and builds a snapshot dict that render_penn_html()
-can consume directly — giving Penn BQ Test the same Overview + Campaign Explorer
-template as other dashboards without touching the snapshot/refresh workflow.
+in the marketing_marts dataset and builds a snapshot dict that the master
+dashboard template (render_bigquery_dashboard_page) can consume directly —
+giving any BigQuery-mode client the same Overview + Campaign Explorer view
+without touching the snapshot/refresh workflow.
 
 Required env vars (falls back to defaults if unset):
   BQ_MART_PROJECT_ID         — GCP project (default: penn-community-b-1699391543298)
@@ -583,7 +584,7 @@ def build_snapshot(
     include_google: bool = True,
     include_linkedin: bool = True,
 ) -> dict[str, Any]:
-    """Query Google and LinkedIn marts and return a snapshot dict compatible with render_penn_html().
+    """Query Google and LinkedIn marts and return a snapshot dict the master dashboard template consumes.
 
     include_google / include_linkedin let callers skip a platform a client
     doesn't have (e.g. a client with no Google Ads). Skipped platforms simply

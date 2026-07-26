@@ -145,17 +145,16 @@ class HqBudgetOverviewTests(unittest.TestCase):
         self.assertGreater(len(seen_threads), 1)  # ran on multiple worker threads
         self.assertLess(elapsed, n * per_read)    # faster than the sequential sum
 
-    def test_nixon_budget_priced_despite_missing_project_on_config_row(self):
-        # nixon-bq-test carries a budget but no gcp_project_id on its config row
-        # (Nixon's mart lives in marketing_service defaults). Without the
-        # code-level fallback it would skip the spend read and show 0% of budget;
-        # with it, HQ resolves the built-in destination and prices spend.
+    def test_budget_priced_from_config_mart_destination(self):
+        # A client is priced from the gcp_project_id / bq_mart_dataset_id on its
+        # config row (Nixon's row is seeded with these at startup). No client-name
+        # fallback: the destination comes straight from config.
         nixon = {
             "client_slug": "nixon-bq-test",
             "label": "Nixon Medical",
             "monthly_budget_usd": 10000.0,
-            "gcp_project_id": None,
-            "bq_mart_dataset_id": None,
+            "gcp_project_id": "nixon-medical",
+            "bq_mart_dataset_id": "marketing_marts",
         }
         seen = {}
 
@@ -173,15 +172,15 @@ class HqBudgetOverviewTests(unittest.TestCase):
         self.assertTrue(row["spend_available"])
         self.assertEqual(row["mtd_spend"], 4000.0)
         self.assertEqual(row["pct_budget"], 40.0)  # 4000 / 10000
-        # Resolved to Nixon's built-in mart destination, not skipped.
+        # Resolved from the config row's mart destination, not skipped.
         self.assertEqual(
             (seen["project_id"], seen["dataset_id"]),
-            hq.marketing_service.default_destination(),
+            ("nixon-medical", "marketing_marts"),
         )
 
-    def test_non_nixon_without_project_is_still_skipped(self):
-        # The fallback is Nixon-only: a generic client with no project must not
-        # silently borrow Nixon's mart.
+    def test_client_without_project_is_skipped(self):
+        # Any client with no gcp_project_id on its config row is not
+        # spend-computable and is skipped — no client-name special cases.
         c = {
             "client_slug": "someclient",
             "label": "Some Client",

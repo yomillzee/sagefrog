@@ -197,6 +197,21 @@ try:
     except Exception as _bf_exc:
         import sys as _sys
         print(f"WARNING: standard-user access backfill failed: {_bf_exc}", file=_sys.stderr)
+    # One-time backfill: segment_filter_profile replaced runtime slug/label
+    # inference for the campaign/segment filters. Seed the clients that predate
+    # the column (only where unset) so their filters keep working; new clients
+    # set this from Settings. Idempotent — safe to run every boot.
+    try:
+        for _seed_slug in ("nixon", "nixon-bq-test"):
+            client_dashboard_config.backfill_segment_filter_profile(_seed_slug, "regions")
+            # Also persist Nixon's mart destination onto its config row so HQ /
+            # agency reads resolve it from config instead of a client-name fallback.
+            client_dashboard_config.backfill_marketing_mart_destination(
+                _seed_slug, "nixon-medical", "marketing_marts"
+            )
+    except Exception as _seg_exc:
+        import sys as _sys
+        print(f"WARNING: client config backfill failed: {_seg_exc}", file=_sys.stderr)
     business_line_rules.ensure_schema()
     client_insight_documents.ensure_schema()
     oauth_store.ensure_schema()

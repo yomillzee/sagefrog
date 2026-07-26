@@ -767,107 +767,6 @@ _VIEW_ICONS: dict[str, str] = {
     "consent": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>',
 }
 
-_VIEW_LABELS: tuple[tuple[str, str], ...] = (
-    ("overview", "Overview"),
-    ("campaigns", "Campaign Explorer"),
-    ("website", "Website Analytics"),
-    ("gsc", "Search Console"),
-    ("semrush", "SEMrush"),
-)
-
-
-def sidebar_view_nav_html(
-    *,
-    show_website: bool,
-    show_campaigns: bool = True,
-    show_gsc: bool = False,
-    show_semrush: bool = False,
-    show_lead_tracking: bool = False,
-    show_event_tracking: bool = False,
-    show_consent: bool = False,
-    as_links: bool = False,
-    client_slug: str = "penn",
-    access_key: str | None = None,
-    use_session: bool = False,
-    active_view: str | None = None,
-) -> str:
-    """Primary view navigation for the sidebar.
-
-    ``as_links=False`` (dashboard page): JS-driven tab buttons that switch the
-    in-page ``.view-panel`` sections. ``as_links=True`` (settings/files pages):
-    anchor links back to ``/dashboard?view=…`` so the sidebar looks identical
-    everywhere and one click returns to any dashboard view.
-    """
-    visible = {
-        "overview": True,
-        "campaigns": show_campaigns,
-        "gsc": show_gsc,
-        "website": show_website,
-        "semrush": show_semrush,
-    }
-    base_url = _dashboard_page_url(
-        client_slug=client_slug, access_key=access_key, use_session=use_session
-    )
-    items: list[str] = []
-    for view, label in _VIEW_LABELS:
-        if not visible.get(view):
-            continue
-        icon = _VIEW_ICONS.get(view, "")
-        inner = f'{icon}<span class="dash-view-label">{_esc(label)}</span>'
-        if as_links:
-            href = base_url
-            if view != "overview":
-                sep = "&" if "?" in href else "?"
-                href = f"{href}{sep}view={view}"
-            items.append(
-                f'<a class="dash-view-btn" href="{_esc(href)}">{inner}</a>'
-            )
-        else:
-            active = " active" if view == "overview" else ""
-            selected = "true" if view == "overview" else "false"
-            items.append(
-                f'<button type="button" class="dash-view-btn{active}" data-view="{view}" '
-                f'role="tab" aria-selected="{selected}">{inner}</button>'
-            )
-    # Lead Tracking is a standalone page, so it is ALWAYS an anchor link (even on
-    # the dashboard where the other items are JS tabs) and appears last.
-    if show_lead_tracking:
-        lt_url = _lead_tracking_page_url(
-            client_slug=client_slug, access_key=access_key, use_session=use_session
-        ) or "#"
-        lt_active = " active" if active_view == "lead-tracking" else ""
-        lt_icon = _VIEW_ICONS.get("lead-tracking", "")
-        items.append(
-            f'<a class="dash-view-btn{lt_active}" href="{_esc(lt_url)}">'
-            f'{lt_icon}<span class="dash-view-label">Lead Tracking</span></a>'
-        )
-    # Event Tracking (GTM) is likewise a standalone page → always an anchor link.
-    if show_event_tracking:
-        et_url = _gtm_page_url(
-            client_slug=client_slug, access_key=access_key, use_session=use_session
-        ) or "#"
-        et_active = " active" if active_view == "event-tracking" else ""
-        et_icon = _VIEW_ICONS.get("event-tracking", "")
-        items.append(
-            f'<a class="dash-view-btn{et_active}" href="{_esc(et_url)}">'
-            f'{et_icon}<span class="dash-view-label">Event Tracking</span></a>'
-        )
-    # Consent & Tracking Health is a standalone page → always an anchor link.
-    if show_consent:
-        cu = _consent_page_url(
-            client_slug=client_slug, access_key=access_key, use_session=use_session
-        ) or "#"
-        c_active = " active" if active_view == "consent" else ""
-        items.append(
-            f'<a class="dash-view-btn{c_active}" href="{_esc(cu)}">'
-            f'{_VIEW_ICONS["consent"]}<span class="dash-view-label">Consent Health</span></a>'
-        )
-    role = "" if as_links else ' role="tablist"'
-    return (
-        f'<nav class="dash-sidebar-nav"{role} aria-label="Dashboard views">'
-        f'{"".join(items)}</nav>'
-    )
-
 
 def dashboard_sidebar_view_nav_html(
     *,
@@ -1416,75 +1315,26 @@ def render_client_shell_page(
     show_business_line: bool | None = None,
     show_files: bool | None = None,
     show_connectors: bool | None = None,
-    show_campaigns: bool | None = None,
-    show_website: bool | None = None,
-    show_gsc: bool | None = None,
-    show_semrush: bool | None = None,
 ) -> str:
     """Shared dashboard chrome for settings, files, and other child pages."""
-    del page_subtitle, client_meta_tip, show_business_line
+    del page_subtitle, client_meta_tip, show_business_line, show_connectors
     theme = dashboard_theme.load_client_theme(client_slug)
     if show_files is None:
         import client_insight_documents as docs
 
         show_files = docs.enabled()
 
-    # Resolve the sidebar flags the SAME way the dashboard does so the sidebar is
-    # identical on every page for a given client (fixes items appearing/vanishing
-    # between pages). Platform items come from connector state; view tabs from the
-    # per-client feature config.
-    pflags = platform_nav_flags(client_slug)
-    if show_connectors is None:
-        show_connectors = pflags["show_connectors"]
-    if show_campaigns is None or show_website is None:
-        try:
-            import dashboard_features
-            feats = dashboard_features.resolve_features(client_slug)
-        except Exception:
-            feats = None
-        if show_campaigns is None:
-            show_campaigns = bool(getattr(feats, "campaign_explorer", True)) if feats else True
-        if show_website is None:
-            show_website = bool(getattr(feats, "website_analytics", True)) if feats else True
-    if show_gsc is None:
-        show_gsc = pflags["show_gsc"]
-    if show_semrush is None:
-        show_semrush = False
-
-    # Nixon-style (bigquery_nixon) clients use one canonical section nav on every
-    # child page so the sidebar is identical to their dashboard's (same four
-    # sections + Connectors always reachable), rather than the feature-flag-driven
-    # nav which would show a different item set per page.
-    try:
-        import client_dashboard_config as _cdc
-        _row = _cdc.get_config(client_slug)
-        _is_nixon_mode = bool(_row and _row.dashboard_mode == "bigquery_nixon")
-    except Exception:
-        _is_nixon_mode = False
-
-    if _is_nixon_mode:
-        show_connectors = True
-        view_nav_html = dashboard_sidebar_view_nav_html(
-            client_slug=client_slug,
-            access_key=access_key,
-            use_session=use_session,
-            as_tabs=False,
-        )
-    else:
-        view_nav_html = sidebar_view_nav_html(
-            show_website=show_website,
-            show_campaigns=show_campaigns,
-            show_gsc=show_gsc,
-            show_semrush=show_semrush,
-            show_lead_tracking=pflags["show_lead_tracking"],
-            show_event_tracking=pflags["show_gtm"],
-            show_consent=pflags.get("show_consent", False),
-            as_links=True,
-            client_slug=client_slug,
-            access_key=access_key,
-            use_session=use_session,
-            active_view=active_nav,
-        )
+    # Every dashboard uses ONE canonical section nav on every child page, so the
+    # sidebar is identical to the dashboard's (same sections + Connectors always
+    # reachable) and never changes shape between pages. There is no per-client nav
+    # variant — this is the single nav for every client.
+    show_connectors = True
+    view_nav_html = dashboard_sidebar_view_nav_html(
+        client_slug=client_slug,
+        access_key=access_key,
+        use_session=use_session,
+        as_tabs=False,
+    )
     sidebar = render_sidebar(
         client_slug=client_slug,
         label=label,

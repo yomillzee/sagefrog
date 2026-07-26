@@ -108,6 +108,15 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config
       ADD COLUMN IF NOT EXISTS pacing_active_weekdays TEXT
     """,
+    # How the campaign/segment filters classify this client's data:
+    #   'business_lines' — keyword-based business-line rules (see penn_business_lines)
+    #   'regions'        — geographic region rules (see dashboard_regions)
+    #   NULL             — no segment filters
+    # Drives the filter UI and data grouping with no client-name branching in code.
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS segment_filter_profile TEXT
+    """,
 ]
 
 
@@ -147,6 +156,9 @@ class ClientConfigRow:
     # Admin override of the client's active ad days for budget pacing, as an ISO
     # weekday CSV (Mon=1..Sun=7). None = auto-detect from spend history.
     pacing_active_weekdays: str | None = None
+    # Segment-filter classification: 'business_lines', 'regions', or None. Drives
+    # the campaign/segment filter UI and grouping — see penn_business_lines.
+    segment_filter_profile: str | None = None
 
 
 def _get_db_url() -> str | None:
@@ -186,7 +198,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    explorer_filters, explorer_budget_tracker,
                    gsc_branded_exclude, gsc_target_exclude,
                    overview_pinned_card, consent_sidebar_enabled, primary_kpi,
-                   pacing_active_weekdays
+                   pacing_active_weekdays, segment_filter_profile
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -228,6 +240,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         consent_sidebar_enabled=bool(row[24]) if row[24] is not None else False,
         primary_kpi=_normalize_kpi_spec(row[25]),
         pacing_active_weekdays=_s(row[26]),
+        segment_filter_profile=_s(row[27]),
     )
 
 
@@ -583,6 +596,117 @@ def save_consent_sidebar_enabled(
     if not saved:
         raise RuntimeError("Failed to load saved client config.")
     return saved
+
+
+SEGMENT_FILTER_PROFILES: tuple[str, ...] = ("business_lines", "regions")
+
+
+def save_segment_filter_profile(
+    client_slug: str,
+    profile: str | None,
+    *,
+    updated_by: str | None = None,
+) -> ClientConfigRow:
+    """Set how the campaign/segment filters classify this client's data.
+
+    ``profile`` must be one of SEGMENT_FILTER_PROFILES or None (no segment
+    filters). Empty string is treated as None.
+    """
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save client dashboard config.")
+    normalized = (profile or "").strip().lower() or None
+    if normalized is not None and normalized not in SEGMENT_FILTER_PROFILES:
+        raise ValueError(
+            f"segment_filter_profile must be one of {SEGMENT_FILTER_PROFILES} or empty."
+        )
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    existing = get_config(slug)
+    label = existing.label if existing else slug
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, segment_filter_profile, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              segment_filter_profile = EXCLUDED.segment_filter_profile,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, label, normalized, now, (updated_by or "").strip() or None),
+        )
+    saved = get_config(slug)
+    if not saved:
+        raise RuntimeError("Failed to load saved client config.")
+    return saved
+
+
+def backfill_segment_filter_profile(client_slug: str, profile: str) -> bool:
+    """One-time seed: set a client's segment_filter_profile only if currently NULL.
+
+    Clients that predate the segment_filter_profile column had their filter type
+    inferred from slug/label at runtime. This seeds those known clients so removing
+    that inference keeps their filters working; it never overwrites an existing
+    value (admin choices win). Returns True if a row was updated.
+    """
+    slug = (client_slug or "").strip().lower()
+    if not slug or not enabled():
+        return False
+    if profile not in SEGMENT_FILTER_PROFILES:
+        raise ValueError(
+            f"segment_filter_profile must be one of {SEGMENT_FILTER_PROFILES}."
+        )
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    with db.connection() as conn:
+        cur = conn.execute(
+            """
+            UPDATE client_dashboard_config
+               SET segment_filter_profile = %s, updated_at = %s
+             WHERE client_slug = %s AND segment_filter_profile IS NULL
+            """,
+            (profile, now, slug),
+        )
+    return bool(getattr(cur, "rowcount", 0))
+
+
+def backfill_marketing_mart_destination(
+    client_slug: str, project_id: str, dataset_id: str
+) -> bool:
+    """One-time seed: set a client's BigQuery mart project/dataset only where NULL.
+
+    Nixon's mart destination historically lived in marketing_service module
+    defaults rather than on its config row, so HQ/agency code carried a
+    client-name fallback. Seeding the row here makes the config self-describing so
+    that fallback can be removed. Never overwrites existing values. Returns True
+    if a row was updated.
+    """
+    slug = (client_slug or "").strip().lower()
+    proj = (project_id or "").strip()
+    ds = (dataset_id or "").strip()
+    if not slug or not proj or not ds or not enabled():
+        return False
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    with db.connection() as conn:
+        cur = conn.execute(
+            """
+            UPDATE client_dashboard_config
+               SET gcp_project_id = COALESCE(gcp_project_id, %s),
+                   bq_mart_dataset_id = COALESCE(bq_mart_dataset_id, %s),
+                   updated_at = %s
+             WHERE client_slug = %s
+               AND (gcp_project_id IS NULL OR bq_mart_dataset_id IS NULL)
+            """,
+            (proj, ds, now, slug),
+        )
+    return bool(getattr(cur, "rowcount", 0))
 
 
 def save_monthly_budget(

@@ -631,18 +631,13 @@ def _client_mtd_mqls(*, slug: str, month_start: date, today: date) -> int | None
 
 
 def _resolve_destination(c: dict[str, Any]) -> tuple[str | None, str]:
-    """(project_id, dataset_id) for a client's paid-media mart.
+    """(project_id, dataset_id) for a client's paid-media mart, from its config.
 
-    Mirrors hq_budget_service: Nixon's mart lives in marketing_service module
-    defaults rather than on its config row, so resolve that built-in destination
-    when the row has no project — otherwise Nixon would score no spend here just
-    as it once did on HQ.
+    A client with no gcp_project_id on its config row is not spend-computable and
+    is skipped by the caller — same as any other unconfigured client.
     """
     project_id = c.get("gcp_project_id")
     dataset_id = c.get("bq_mart_dataset_id") or "marketing_marts"
-    slug = str(c["client_slug"])
-    if not project_id and slug in ("nixon", "nixon-bq-test"):
-        project_id, dataset_id = marketing_service.default_destination()
     return project_id, dataset_id
 
 

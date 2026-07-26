@@ -48,6 +48,7 @@ def render_bigquery_settings_page(
     budget_tracker_enabled: bool = True,
     consent_sidebar_enabled: bool = False,
     primary_kpi: dict | None = None,
+    segment_filter_profile: str | None = None,
 ) -> str:
     """Settings page for any BigQuery-mart (Nixon-style) client.
 
@@ -206,6 +207,34 @@ def render_bigquery_settings_page(
       </form>
     </section>"""
 
+    # Segment filters — how this client's campaigns/pages are grouped in the
+    # Campaign Explorer and Website Analytics filters. Config-driven (no client
+    # name in code): 'business_lines' = keyword business-line rules, 'regions' =
+    # geographic regions, or none.
+    segment_save_url = _api_url(
+        f"/dashboard/{client_slug}/segment-filter-profile", access_key=access_key
+    )
+    cur_profile = (segment_filter_profile or "").strip().lower()
+    _segment_choices = (("", "None"), ("business_lines", "Business lines"), ("regions", "Regions"))
+    segment_options = "".join(
+        f'<option value="{_esc(val)}"{" selected" if val == cur_profile else ""}>{_esc(text)}</option>'
+        for val, text in _segment_choices
+    )
+    segment_section_html = "" if not session_is_admin else f"""
+    <section id="sec-segment">
+      <h2>Segment filters</h2>
+      <p class="hint">How this client's campaigns and pages are grouped in the Campaign Explorer and Website Analytics filters. Business lines use keyword rules; Regions use geographic rules. Choose None to hide segment filters.</p>
+      <form class="form-grid" id="segmentForm" autocomplete="off">
+        <label for="segmentProfile">Filter type
+          <select id="segmentProfile" name="profile">{segment_options}</select>
+        </label>
+        <div class="form-actions btn-row">
+          <button type="submit" class="primary">Save filters</button>
+          <span class="status" id="segmentStatus"></span>
+        </div>
+      </form>
+    </section>"""
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -321,6 +350,7 @@ def render_bigquery_settings_page(
     {consent_visibility_html}
     {accessibility_card_html}
     {kpi_section_html}
+    {segment_section_html}
     {budget_module_html}
   </main>
     </div>
@@ -443,6 +473,30 @@ def render_bigquery_settings_page(
           setStatus('kpiStatus', type ? 'Saved ✓' : 'KPI cleared ✓');
         }} catch (err) {{
           setStatus('kpiStatus', 'Save failed: ' + (err.message || err), true);
+        }} finally {{ btn.disabled = false; }}
+      }});
+    }})();
+    // ---- Segment filters: save the client's filter profile ----
+    (function(){{
+      const SEGMENT_SAVE_URL = "{segment_save_url}";
+      const form = document.getElementById('segmentForm'); if (!form) return;
+      form.addEventListener('submit', async (e) => {{
+        e.preventDefault();
+        const btn = form.querySelector('button[type=submit]');
+        const profile = document.getElementById('segmentProfile').value;
+        btn.disabled = true;
+        setStatus('segmentStatus', 'Saving…');
+        try {{
+          const r = await fetch(SEGMENT_SAVE_URL, {{
+            method:'POST', credentials:'same-origin',
+            headers:{{'Content-Type':'application/x-www-form-urlencoded'}},
+            body: new URLSearchParams({{ profile }}),
+          }});
+          const body = await r.json().catch(() => ({{}}));
+          if (!r.ok || !body.ok) throw new Error(body.error || ('HTTP ' + r.status));
+          setStatus('segmentStatus', 'Saved ✓ Reload to see the filters update.');
+        }} catch (err) {{
+          setStatus('segmentStatus', 'Save failed: ' + (err.message || err), true);
         }} finally {{ btn.disabled = false; }}
       }});
     }})();

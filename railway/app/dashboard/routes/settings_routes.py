@@ -43,6 +43,7 @@ def _render_bq_nixon_settings(slug: str, db_cfg, *, flash, flash_err, html_kw) -
             budget_tracker_enabled=bool(getattr(db_cfg, "explorer_budget_tracker", True)),
             consent_sidebar_enabled=bool(getattr(db_cfg, "consent_sidebar_enabled", False)),
             primary_kpi=getattr(db_cfg, "primary_kpi", None),
+            segment_filter_profile=getattr(db_cfg, "segment_filter_profile", None),
             **html_kw,
         )
     )
@@ -356,6 +357,52 @@ def dashboard_client_consent_visibility(
         **audit_log.request_context(request),
     )
     return JSONResponse({"ok": True, "consent_sidebar_enabled": saved.consent_sidebar_enabled})
+
+
+@router.post(
+    "/dashboard/{client_slug}/segment-filter-profile",
+    summary="Save the client's segment filter profile (JSON)",
+    include_in_schema=False,
+)
+def dashboard_client_segment_filter_profile(
+    client_slug: str,
+    request: Request,
+    profile: str = Form(""),
+):
+    """Admin-only: set how this client's campaigns/pages are grouped in the
+    Campaign Explorer + Website Analytics filters ('business_lines', 'regions',
+    or empty for none). Replaces the old slug/label inference."""
+    slug = validate_client_slug(client_slug)
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
+    user = auth.user
+    session_is_admin = bool(user and user.role == "admin")
+    session_email = user.email if user else None
+
+    if web_users.enabled() and not session_is_admin:
+        return JSONResponse(
+            {"ok": False, "error": "Only admins can change this setting."},
+            status_code=403,
+        )
+    if not client_dashboard_config.enabled():
+        return JSONResponse(
+            {"ok": False, "error": "DATABASE_URL is required to save this setting."},
+            status_code=503,
+        )
+    try:
+        saved = client_dashboard_config.save_segment_filter_profile(
+            slug, profile, updated_by=session_email or "dashboard_key",
+        )
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    audit_log.record(
+        action="dashboard.segment_filter_profile_saved",
+        actor_email=session_email,
+        detail={"client_slug": slug, "segment_filter_profile": saved.segment_filter_profile},
+        **audit_log.request_context(request),
+    )
+    return JSONResponse({"ok": True, "segment_filter_profile": saved.segment_filter_profile})
 
 
 @router.post(

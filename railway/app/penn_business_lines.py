@@ -1,8 +1,12 @@
-"""Classify Penn campaigns into business lines from naming conventions."""
+"""Classify campaigns into business lines from naming conventions.
+
+The built-in BUSINESS_LINE_RULES are a banking taxonomy (the original use case);
+clients opt into business-line classification via the ``business_lines`` segment
+filter profile, and can add their own rules via ``business_line_rules``. No
+client-name branching lives here — behavior is driven by config."""
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 # (id, label, keyword substrings — first match wins)
@@ -253,9 +257,7 @@ def _campaign_rows_from_breakdowns(breakdowns: dict[str, Any]) -> list[dict[str,
     return rows
 
 
-def _nixon_filter_slugs() -> set[str]:
-    raw = (os.getenv("NIXON_FILTER_SLUGS") or "nixon,demo").strip()
-    return {s.strip().lower() for s in raw.split(",") if s.strip()}
+SEGMENT_FILTER_PROFILES: tuple[str, ...] = ("business_lines", "regions")
 
 
 def client_filter_profile(
@@ -265,25 +267,26 @@ def client_filter_profile(
     label: str | None = None,
     ga4_client_key: str | None = None,
 ) -> str | None:
-    """Return filter profile: ``penn`` (business lines), ``nixon`` (regions), or None."""
-    slug = (client_slug or "").strip().lower()
-    if slug == "penn" or slug.startswith("penn-"):
-        return "penn"
-    if slug in _nixon_filter_slugs():
-        return "nixon"
+    """Return the client's segment-filter profile, or None.
 
-    ga4 = (ga4_client_key or "").strip().lower()
-    if not ga4 and cfg is not None:
-        ga4 = str(getattr(cfg, "ga4_client_key", "") or "").strip().lower()
-    if ga4 == "nixon":
-        return "nixon"
+    ``business_lines`` → keyword business-line filters (this module);
+    ``regions``        → geographic region filters (dashboard_regions).
 
-    resolved_label = (label or "").strip().lower()
-    if not resolved_label and cfg is not None:
-        resolved_label = str(getattr(cfg, "label", "") or "").strip().lower()
-    if "nixon" in resolved_label:
-        return "nixon"
-    return None
+    Driven ENTIRELY by the client's ``segment_filter_profile`` configuration —
+    never by the client's name, slug, label, or GA4 key. ``label`` and
+    ``ga4_client_key`` are accepted only for backward call-compatibility.
+    """
+    del label, ga4_client_key
+    profile = getattr(cfg, "segment_filter_profile", None) if cfg is not None else None
+    if profile is None:
+        try:
+            import client_dashboard_config as _cdc
+            row = _cdc.get_config(client_slug)
+            profile = getattr(row, "segment_filter_profile", None) if row else None
+        except Exception:
+            profile = None
+    profile = (profile or "").strip().lower() or None
+    return profile if profile in SEGMENT_FILTER_PROFILES else None
 
 
 def client_has_segment_filters(
@@ -317,7 +320,7 @@ def segment_filter_label(
         label=label,
         ga4_client_key=ga4_client_key,
     )
-    if profile == "nixon":
+    if profile == "regions":
         return "Region"
     return "Business line"
 
@@ -351,7 +354,7 @@ def client_has_product_line_filters(
             label=label,
             ga4_client_key=ga4_client_key,
         )
-        == "nixon"
+        == "regions"
     )
 
 
@@ -362,7 +365,7 @@ def active_client_product_line_catalog(
     filter_profile: str | None = None,
 ) -> list[dict[str, str]]:
     profile = filter_profile or client_filter_profile(client_slug)
-    if profile == "nixon":
+    if profile == "regions":
         from dashboard_regions import active_product_line_catalog
 
         return active_product_line_catalog(campaigns)
@@ -372,16 +375,18 @@ def active_client_product_line_catalog(
 def build_client_segment_campaigns(
     breakdowns: dict[str, Any],
     *,
-    client_slug: str = "penn",
+    client_slug: str = "",
     filter_profile: str | None = None,
 ) -> list[dict[str, Any]]:
     slug = (client_slug or "").strip().lower()
     profile = filter_profile or client_filter_profile(slug)
-    if profile == "nixon":
+    if profile == "regions":
         from dashboard_regions import build_region_campaigns
 
         return build_region_campaigns(breakdowns)
-    return build_business_line_campaigns(breakdowns, client_slug=slug)
+    return build_business_line_campaigns(
+        breakdowns, client_slug=slug, filter_profile=profile
+    )
 
 
 def active_client_segment_catalog(
@@ -391,7 +396,7 @@ def active_client_segment_catalog(
     filter_profile: str | None = None,
 ) -> list[dict[str, str]]:
     profile = filter_profile or client_filter_profile(client_slug)
-    if profile == "nixon":
+    if profile == "regions":
         from dashboard_regions import active_region_catalog
 
         return active_region_catalog(campaigns)
@@ -401,7 +406,8 @@ def active_client_segment_catalog(
 def build_business_line_campaigns(
     breakdowns: dict[str, Any],
     *,
-    client_slug: str = "penn",
+    client_slug: str = "",
+    filter_profile: str | None = None,
 ) -> list[dict[str, Any]]:
     slug = (client_slug or "").strip().lower()
     custom_rules: list[tuple[str, str, tuple[str, ...]]] | None = None
@@ -413,9 +419,11 @@ def build_business_line_campaigns(
     except Exception:
         custom_rules = None
 
-    # Only apply built-in Penn keyword defaults for Penn-profile clients.
-    # Other clients use only their own custom rules (or get "Other" if none set).
-    use_builtin = slug == "penn" or slug.startswith("penn-")
+    # Built-in keyword defaults (BUSINESS_LINE_RULES) apply only to clients whose
+    # segment profile is 'business_lines'. Clients without that profile use only
+    # their own custom rules (or get "Other" if none set) — no client-name checks.
+    profile = filter_profile or client_filter_profile(slug)
+    use_builtin = profile == "business_lines"
 
     out: list[dict[str, Any]] = []
     for row in _campaign_rows_from_breakdowns(breakdowns):
