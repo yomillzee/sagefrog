@@ -10,6 +10,7 @@ from typing import Any
 import psycopg
 import db
 
+import slack_notify
 import web_users
 
 SCHEMA_SQL_STATEMENTS = [
@@ -150,7 +151,9 @@ def create_note(
             (clean_title, (body or "").strip(), cat, now, now, author, author),
         ).fetchone()
     assert row
-    return _row_to_note(row)
+    result = _row_to_note(row)
+    slack_notify.notify_dev_note(result)
+    return result
 
 
 def update_note(

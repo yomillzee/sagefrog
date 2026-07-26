@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import db
+import slack_notify
 import web_users
 
 SCHEMA_SQL_STATEMENTS = [
@@ -214,7 +215,9 @@ def create_notepad(
             (slug, _clean_title(title), _clean_body(body), now, now, author, author),
         ).fetchone()
     assert row
-    return _row_to_notepad(row)
+    result = _row_to_notepad(row)
+    slack_notify.notify_client_note(result)
+    return result
 
 
 def update_notepad(
