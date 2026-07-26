@@ -100,6 +100,14 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config
       ADD COLUMN IF NOT EXISTS primary_kpi JSONB
     """,
+    # Optional admin override of a client's active ad days for budget pacing,
+    # stored as an ISO-weekday CSV (Mon=1..Sun=7, e.g. "1,2,3,4,5" for weekdays
+    # only). NULL means auto-detect the rhythm from spend history — see
+    # dashboard.utils.pacing.
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS pacing_active_weekdays TEXT
+    """,
 ]
 
 
@@ -136,6 +144,9 @@ class ClientConfigRow:
     # Off by default: most clients don't need it, and it only clutters their nav —
     # admins turn it on per client from Settings.
     consent_sidebar_enabled: bool = False
+    # Admin override of the client's active ad days for budget pacing, as an ISO
+    # weekday CSV (Mon=1..Sun=7). None = auto-detect from spend history.
+    pacing_active_weekdays: str | None = None
 
 
 def _get_db_url() -> str | None:
@@ -174,7 +185,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    gsc_branded_roots, gsc_target_keywords, ga4_key_events,
                    explorer_filters, explorer_budget_tracker,
                    gsc_branded_exclude, gsc_target_exclude,
-                   overview_pinned_card, consent_sidebar_enabled, primary_kpi
+                   overview_pinned_card, consent_sidebar_enabled, primary_kpi,
+                   pacing_active_weekdays
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -215,6 +227,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         overview_pinned_card=_s(row[23]),
         consent_sidebar_enabled=bool(row[24]) if row[24] is not None else False,
         primary_kpi=_normalize_kpi_spec(row[25]),
+        pacing_active_weekdays=_s(row[26]),
     )
 
 
@@ -610,6 +623,72 @@ def save_monthly_budget(
                 now,
                 (updated_by or "").strip() or None,
             ),
+        )
+    saved = get_config(slug)
+    if not saved:
+        raise RuntimeError("Failed to load saved client config.")
+    return saved
+
+
+def normalize_active_weekdays_csv(raw: str | None) -> str | None:
+    """Coerce free-form input into a clean ISO-weekday CSV, or None for auto.
+
+    Accepts "1,2,3,4,5" style input; ignores blanks and out-of-range values;
+    dedupes and sorts. Returns None when nothing valid is left (auto-detect)."""
+    if raw is None:
+        return None
+    days: set[int] = set()
+    for part in str(raw).replace(" ", "").split(","):
+        if not part:
+            continue
+        try:
+            n = int(part)
+        except ValueError:
+            raise ValueError("Active days must be numbers 1 (Mon) through 7 (Sun).")
+        if 1 <= n <= 7:
+            days.add(n)
+    if not days:
+        return None
+    return ",".join(str(d) for d in sorted(days))
+
+
+def parse_active_weekdays(value: str | None) -> list[int]:
+    """Parse a stored ISO-weekday CSV into a sorted list (empty for auto)."""
+    csv = normalize_active_weekdays_csv(value) if value else None
+    return [int(d) for d in csv.split(",")] if csv else []
+
+
+def save_pacing_active_weekdays(
+    client_slug: str,
+    active_weekdays_csv: str | None,
+    *,
+    updated_by: str | None = None,
+) -> ClientConfigRow:
+    """Set (or clear, with None) a client's active-ad-days override for pacing."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save client dashboard config.")
+    normalized = normalize_active_weekdays_csv(active_weekdays_csv)
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    existing = get_config(slug)
+    label = existing.label if existing else slug
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, pacing_active_weekdays, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              pacing_active_weekdays = EXCLUDED.pacing_active_weekdays,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, label, normalized, now, (updated_by or "").strip() or None),
         )
     saved = get_config(slug)
     if not saved:

@@ -199,6 +199,55 @@ def dashboard_client_budget_visibility(
 
 
 @router.post(
+    "/dashboard/{client_slug}/pacing-active-days",
+    summary="Set a client's active ad days for budget pacing (JSON)",
+    include_in_schema=False,
+)
+def dashboard_client_pacing_active_days(
+    client_slug: str,
+    request: Request,
+    active_weekdays: str = Form(""),
+):
+    """Admin-only override of which weekdays a client runs ads, for budget pacing.
+
+    ``active_weekdays`` is an ISO-weekday CSV (Mon=1..Sun=7); empty clears the
+    override so pacing auto-detects the rhythm from spend history."""
+    slug = validate_client_slug(client_slug)
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
+    user = auth.user
+    session_is_admin = bool(user and user.role == "admin")
+    session_email = user.email if user else None
+
+    if web_users.enabled() and not session_is_admin:
+        return JSONResponse(
+            {"ok": False, "error": "Only admins can change this setting."},
+            status_code=403,
+        )
+    if not client_dashboard_config.enabled():
+        return JSONResponse(
+            {"ok": False, "error": "DATABASE_URL is required to save this setting."},
+            status_code=503,
+        )
+    try:
+        saved = client_dashboard_config.save_pacing_active_weekdays(
+            slug, active_weekdays, updated_by=session_email or "dashboard_key",
+        )
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    audit_log.record(
+        action="dashboard.pacing_active_days_saved",
+        actor_email=session_email,
+        detail={"client_slug": slug, "pacing_active_weekdays": saved.pacing_active_weekdays},
+        **audit_log.request_context(request),
+    )
+    return JSONResponse(
+        {"ok": True, "pacing_active_weekdays": saved.pacing_active_weekdays}
+    )
+
+
+@router.post(
     "/dashboard/{client_slug}/primary-kpi",
     summary="Set a client's headline KPI for the HQ overview (JSON)",
     include_in_schema=False,
