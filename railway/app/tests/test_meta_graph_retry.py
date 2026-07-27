@@ -28,11 +28,13 @@ class _FakeResponse:
 class _FakeClient:
     """Context-manager httpx.Client stand-in. Each .get() pops the next queued
     item; a queued Exception is raised (simulating a transport error), a
-    _FakeResponse is returned."""
+    _FakeResponse is returned. Records the (url, params) of every call so tests
+    can assert on the page limit that was actually sent."""
 
     def __init__(self, outcomes):
         self._outcomes = list(outcomes)
         self.calls = 0
+        self.requests = []
 
     def __enter__(self):
         return self
@@ -42,10 +44,19 @@ class _FakeClient:
 
     def get(self, url, params=None, headers=None):
         self.calls += 1
+        self.requests.append((url, dict(params or {})))
         outcome = self._outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
+
+
+_REDUCE_DATA_BODY = {
+    "error": {
+        "code": 1,
+        "message": "Please reduce the amount of data you're asking for, then retry your request",
+    }
+}
 
 
 _ENV = meta_service.MetaEnv(
@@ -120,6 +131,62 @@ class MetaGraphRetryTests(unittest.TestCase):
         self.assertIn("400", str(ctx.exception))
         self.assertEqual(client.calls, 1)
         sleep.assert_not_called()
+
+
+class MetaReduceDataTests(unittest.TestCase):
+    """Meta's "Please reduce the amount of data you're asking for" 500 is a
+    request-size problem, not a transient blip. Retrying the same oversized page
+    just fails again, so _graph_get shrinks the page `limit` and retries."""
+
+    def test_reduce_data_shrinks_page_and_retries(self):
+        client = _FakeClient([
+            _FakeResponse(500, payload=_REDUCE_DATA_BODY),
+            _FakeResponse(200, payload={"data": [{"id": "1"}]}),
+        ])
+        with patch.object(meta_service.httpx, "Client", return_value=client), \
+                patch.object(meta_service.time, "sleep"):
+            result = meta_service._graph_get(
+                "/act_1/ads", access_token="tok", params={"limit": 50}, env=_ENV
+            )
+        self.assertEqual(result, {"data": [{"id": "1"}]})
+        self.assertEqual(client.calls, 2)
+        # first page requested at 50, retried at 25 (halved)
+        self.assertEqual(client.requests[0][1]["limit"], 50)
+        self.assertEqual(client.requests[1][1]["limit"], 25)
+
+    def test_reduce_data_shrinks_limit_baked_into_cursor_url(self):
+        # Later pages carry the limit in the pagination cursor URL, not params.
+        cursor = "https://graph.facebook.com/v21.0/act_1/ads?limit=50&after=CURSOR"
+        client = _FakeClient([
+            _FakeResponse(500, payload=_REDUCE_DATA_BODY),
+            _FakeResponse(200, payload={"data": []}),
+        ])
+        with patch.object(meta_service.httpx, "Client", return_value=client), \
+                patch.object(meta_service.time, "sleep"):
+            result = meta_service._graph_get(cursor, access_token="tok", env=_ENV)
+        self.assertEqual(result, {"data": []})
+        retry_url, retry_params = client.requests[1]
+        # the reduced limit moves into params and is stripped from the URL so
+        # httpx can't send two conflicting `limit` values; the cursor is kept.
+        self.assertEqual(retry_params["limit"], 25)
+        self.assertNotIn("limit=", retry_url)
+        self.assertIn("after=CURSOR", retry_url)
+
+    def test_persistent_reduce_data_shrinks_each_attempt_then_raises(self):
+        client = _FakeClient(
+            [_FakeResponse(500, payload=_REDUCE_DATA_BODY)] * meta_service._MAX_ATTEMPTS
+        )
+        with patch.object(meta_service.httpx, "Client", return_value=client), \
+                patch.object(meta_service.time, "sleep"):
+            with self.assertRaises(RuntimeError) as ctx:
+                meta_service._graph_get(
+                    "/act_1/ads", access_token="tok", params={"limit": 50}, env=_ENV
+                )
+        self.assertIn("500", str(ctx.exception))
+        self.assertEqual(client.calls, meta_service._MAX_ATTEMPTS)
+        # every retry halved the page: 50 -> 25 -> 12 -> 6
+        limits = [req[1].get("limit") for req in client.requests]
+        self.assertEqual(limits, [50, 25, 12, 6])
 
 
 if __name__ == "__main__":

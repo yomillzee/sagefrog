@@ -5,6 +5,7 @@ import logging
 import time
 from datetime import date, timedelta
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -14,16 +15,24 @@ from meta_auth import MetaEnv, load_meta_env
 _log = logging.getLogger(__name__)
 
 # Meta's Graph edge intermittently drops connections mid-response — most often
-# on the ad-creative fetch, which pages over every ad (limit 500) with a heavy
-# creative{...} field expansion, so responses are large and slow. That surfaces
-# as "[Errno 104] Connection reset by peer" (an httpx.TransportError), which used
-# to fail the whole sync as meta_creative_fetch. Meta also rate-limits (429) and
-# its edge can hiccup with 5xx. Retry all of those a few times with exponential
-# backoff; non-transient statuses (400/403 — e.g. missing ads_read) fail fast so
-# callers can handle them.
+# on the ad-creative fetch, which pages over every ad with a heavy creative{...}
+# field expansion, so responses are large and slow. That surfaces as "[Errno 104]
+# Connection reset by peer" (an httpx.TransportError), which used to fail the whole
+# sync as meta_creative_fetch. Meta also rate-limits (429) and its edge can hiccup
+# with 5xx. Retry all of those a few times with exponential backoff; non-transient
+# statuses (400/403 — e.g. missing ads_read) fail fast so callers can handle them.
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 _MAX_ATTEMPTS = 4
 _RETRY_BACKOFF_SECONDS = 2.0
+
+# When a single page is too expensive Meta returns a 500 whose body is error
+# code 1, "Please reduce the amount of data you're asking for, then retry your
+# request". That is driven by page size × field-expansion cost, not a transient
+# blip, so retrying the same request just fails again — _graph_get instead shrinks
+# the page `limit` and retries. The heavy creative{...} fetch therefore starts at a
+# modest page size and the adaptive shrink is the safety net as accounts grow.
+_AD_MEDIA_PAGE_LIMIT = 50
+_MIN_PAGE_LIMIT = 5
 
 _ACCOUNT_FIELDS = "id,account_id,name,account_status,currency,business_name"
 _INSIGHT_FIELDS = (
@@ -128,6 +137,21 @@ def _graph_get(
             time.sleep(wait)
             continue
 
+        # "Please reduce the amount of data..." is about request size, not a
+        # transient hiccup: shrink the page limit and retry the same page rather
+        # than hammering the identical oversized request until attempts run out.
+        if _is_reduce_data_error(response) and attempt < _MAX_ATTEMPTS:
+            current = _effective_limit(url, query)
+            if current is not None and current > _MIN_PAGE_LIMIT:
+                reduced = max(_MIN_PAGE_LIMIT, current // 2)
+                url, query = _with_reduced_limit(url, query, reduced)
+                _log.warning(
+                    "Meta Graph %s over-sized (reduce-data); shrinking page limit "
+                    "%d -> %d and retrying (attempt %d/%d)",
+                    path, current, reduced, attempt, _MAX_ATTEMPTS,
+                )
+                continue
+
         if response.status_code in _RETRY_STATUSES and attempt < _MAX_ATTEMPTS:
             wait = _retry_after_seconds(response, _RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)))
             _log.warning(
@@ -157,6 +181,60 @@ def _retry_after_seconds(response: httpx.Response, default: float) -> float:
         return max(float(response.headers.get("Retry-After", "")), default)
     except (TypeError, ValueError):
         return default
+
+
+def _is_reduce_data_error(response: httpx.Response) -> bool:
+    """True for Meta's "Please reduce the amount of data you're asking for" error.
+
+    Meta raises this (error code 1, HTTP 500) when a single page is too expensive
+    to compute — typically a large `limit` combined with heavy field expansion.
+    The distinctive message is the reliable signal across Graph versions.
+    """
+    try:
+        body = response.json()
+    except Exception:
+        return False
+    err = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(err, dict):
+        return False
+    return "reduce the amount of data" in str(err.get("message") or "").lower()
+
+
+def _effective_limit(url: str, query: dict[str, Any]) -> int | None:
+    """The page `limit` in effect for a request, whether it lives in the params
+    dict (first page) or is baked into a pagination cursor URL (later pages)."""
+    if "limit" in query:
+        try:
+            return int(query["limit"])
+        except (TypeError, ValueError):
+            return None
+    for key, val in parse_qsl(urlsplit(url).query):
+        if key == "limit":
+            try:
+                return int(val)
+            except ValueError:
+                return None
+    return None
+
+
+def _with_reduced_limit(
+    url: str, query: dict[str, Any], reduced: int
+) -> tuple[str, dict[str, Any]]:
+    """Return (url, query) with the page limit forced to `reduced`.
+
+    Any `limit` baked into the URL (Meta pagination cursors carry it) is stripped
+    so httpx doesn't send two conflicting `limit` values; the reduced limit rides
+    in the params dict instead. The cursor position (`after`) is untouched, so
+    paging resumes from the same spot at the smaller size.
+    """
+    parts = urlsplit(url)
+    kept = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "limit"]
+    new_url = urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(kept), parts.fragment)
+    )
+    new_query = dict(query)
+    new_query["limit"] = reduced
+    return new_url, new_query
 
 
 def _is_meta_ads_read_error(exc: Exception) -> bool:
@@ -934,7 +1012,7 @@ def _fetch_ad_media_index(
     account_id_clean = _normalize_account_id(account_id)
     params: dict[str, Any] = {
         "fields": _AD_MEDIA_FIELDS,
-        "limit": 500,
+        "limit": _AD_MEDIA_PAGE_LIMIT,
         "effective_status": json.dumps(
             ["ACTIVE", "PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "PENDING_REVIEW", "DISAPPROVED"]
         ),
@@ -1221,7 +1299,7 @@ def list_videos(
     filter_campaign = str(campaign_id or "").strip()
     params: dict[str, Any] = {
         "fields": _AD_MEDIA_FIELDS,
-        "limit": 500,
+        "limit": _AD_MEDIA_PAGE_LIMIT,
         "effective_status": json.dumps(
             ["ACTIVE", "PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "PENDING_REVIEW", "DISAPPROVED"]
         ),
@@ -1356,7 +1434,7 @@ def fetch_ad_creative_metadata(
             access_token=access_token,
             params={
                 "fields": _AD_MEDIA_FIELDS,
-                "limit": 500,
+                "limit": _AD_MEDIA_PAGE_LIMIT,
                 "effective_status": json.dumps(
                     ["ACTIVE", "PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "PENDING_REVIEW", "DISAPPROVED"]
                 ),
