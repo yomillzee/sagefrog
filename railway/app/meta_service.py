@@ -68,25 +68,156 @@ _ACCOUNT_STATUS = {
     100: "PENDING_CLOSURE",
     101: "CLOSED",
 }
-_CONVERSION_ACTION_HINTS = (
-    "purchase",
-    "lead",
-    "complete_registration",
-    "submit_application",
-    "offsite_conversion",
-    "omni_purchase",
-    "omni_lead",
-    "onsite_conversion",
-)
-_EXCLUDE_ACTION_HINTS = (
-    "link_click",
-    "landing_page_view",
-    "page_engagement",
-    "post_engagement",
-    "video_view",
-    "post_reaction",
-    "comment",
-    "like",
+# ---------------------------------------------------------------------------
+# Meta "Results" reconstruction
+#
+# Ads Manager's "Results" column is NOT a Marketing API field. For each ad set it
+# is the count of that ad set's `optimization_goal` event (for conversion
+# optimization, the specific pixel/custom event named in `promoted_object`),
+# read from the insights `actions` array as a SINGLE de-duplicated action_type
+# and rolled up. We reconstruct it here so the warehouse `conversions` column
+# matches what the client sees in Ads Manager.
+#
+# Each ad set resolves to one or more "result tokens" (e.g. "lead", "purchase").
+# A token maps to an ORDERED list of candidate action_types: Meta reports the
+# same event under several redundant buckets (offsite_/onsite_/omni_/bare event),
+# and summing them is exactly what turns one result into many. So per token we
+# take the value of the FIRST candidate present — one family only. DISTINCT
+# tokens ARE summed (a campaign optimizing both leads and purchases has
+# results = leads + purchases), which mirrors how Ads Manager rolls up.
+# ---------------------------------------------------------------------------
+_RESULT_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "purchase": (
+        "offsite_conversion.fb_pixel_purchase",
+        "onsite_conversion.purchase",
+        "omni_purchase",
+        "purchase",
+    ),
+    "lead": (
+        "onsite_conversion.lead_grouped",
+        "offsite_conversion.fb_pixel_lead",
+        "leadgen_grouped",
+        "leadgen.other",
+        "omni_lead",
+        "lead",
+    ),
+    "complete_registration": (
+        "offsite_conversion.fb_pixel_complete_registration",
+        "omni_complete_registration",
+        "complete_registration",
+    ),
+    "submit_application": (
+        "offsite_conversion.fb_pixel_submit_application",
+        "submit_application",
+    ),
+    "add_to_cart": (
+        "offsite_conversion.fb_pixel_add_to_cart",
+        "onsite_conversion.add_to_cart",
+        "omni_add_to_cart",
+        "add_to_cart",
+    ),
+    "initiate_checkout": (
+        "offsite_conversion.fb_pixel_initiate_checkout",
+        "omni_initiated_checkout",
+        "initiate_checkout",
+    ),
+    "view_content": (
+        "offsite_conversion.fb_pixel_view_content",
+        "omni_view_content",
+        "view_content",
+    ),
+    "search": ("offsite_conversion.fb_pixel_search", "omni_search", "search"),
+    "contact": ("offsite_conversion.fb_pixel_contact", "contact"),
+    "add_payment_info": (
+        "offsite_conversion.fb_pixel_add_payment_info",
+        "add_payment_info",
+    ),
+    "add_to_wishlist": (
+        "offsite_conversion.fb_pixel_add_to_wishlist",
+        "add_to_wishlist",
+    ),
+    "subscribe": ("offsite_conversion.fb_pixel_subscribe", "subscribe"),
+    "start_trial": ("offsite_conversion.fb_pixel_start_trial", "start_trial"),
+    "donate": ("offsite_conversion.fb_pixel_donate", "donate"),
+    "schedule": ("offsite_conversion.fb_pixel_schedule", "schedule"),
+    "link_click": ("link_click",),
+    "landing_page_view": ("landing_page_view",),
+    "post_engagement": ("post_engagement",),
+    "like": ("like",),
+    "rsvp": ("rsvp", "event_responses"),
+    "video_view": ("video_view",),
+    "thruplay": ("video_thruplay_watched_actions", "video_view"),
+    "app_install": ("mobile_app_install", "omni_app_install", "app_install"),
+    "messaging_conversation": (
+        "onsite_conversion.messaging_conversation_started_7d",
+        "onsite_conversion.total_messaging_connection",
+    ),
+}
+
+# Ad-set optimization_goal → result token. Awareness/reach goals (REACH,
+# IMPRESSIONS, AD_RECALL_LIFT, BRAND_AWARENESS) have no action_type result, so
+# they map to None → 0 conversions (correct: those campaigns legitimately report
+# 0 in a conversions column). "conversion" is a placeholder refined by
+# promoted_object.custom_event_type below.
+_OPT_GOAL_TOKEN: dict[str, str | None] = {
+    "OFFSITE_CONVERSIONS": "conversion",
+    "CONVERSIONS": "conversion",
+    "VALUE": "conversion",
+    "LEAD_GENERATION": "lead",
+    "QUALITY_LEAD": "lead",
+    "QUALITY_CALL": "contact",
+    "LINK_CLICKS": "link_click",
+    "LANDING_PAGE_VIEWS": "landing_page_view",
+    "POST_ENGAGEMENT": "post_engagement",
+    "PAGE_LIKES": "like",
+    "EVENT_RESPONSES": "rsvp",
+    "THRUPLAY": "thruplay",
+    "VIDEO_VIEWS": "video_view",
+    "APP_INSTALLS": "app_install",
+    "CONVERSATIONS": "messaging_conversation",
+    "REACH": None,
+    "IMPRESSIONS": None,
+    "AD_RECALL_LIFT": None,
+    "BRAND_AWARENESS": None,
+}
+
+# promoted_object.custom_event_type → result token, used when the ad set's
+# optimization_goal is conversion-based (maps to "conversion" above).
+_CUSTOM_EVENT_TOKEN: dict[str, str] = {
+    "PURCHASE": "purchase",
+    "LEAD": "lead",
+    "COMPLETE_REGISTRATION": "complete_registration",
+    "SUBMIT_APPLICATION": "submit_application",
+    "ADD_TO_CART": "add_to_cart",
+    "INITIATED_CHECKOUT": "initiate_checkout",
+    "CONTENT_VIEW": "view_content",
+    "VIEW_CONTENT": "view_content",
+    "SEARCH": "search",
+    "CONTACT": "contact",
+    "ADD_PAYMENT_INFO": "add_payment_info",
+    "ADD_TO_WISHLIST": "add_to_wishlist",
+    "SUBSCRIBE": "subscribe",
+    "START_TRIAL": "start_trial",
+    "DONATE": "donate",
+    "SCHEDULE": "schedule",
+}
+
+# Used when an ad set's optimization_goal can't be resolved (unknown goal, a
+# custom pixel conversion with no standard custom_event_type, or the legacy paths
+# that don't fetch ad-set config). Still de-duplicated PER TOKEN — unlike the old
+# "sum every matching bucket" logic — so a single lead reported across four
+# buckets counts once, not four times. It can still over-count a single-objective
+# campaign that also fires other standard events, which is why the sync path
+# resolves the real optimization_goal instead of relying on this.
+_FALLBACK_TOKENS: frozenset[str] = frozenset(
+    {
+        "purchase",
+        "lead",
+        "complete_registration",
+        "submit_application",
+        "add_to_cart",
+        "initiate_checkout",
+    }
 )
 
 
@@ -422,36 +553,165 @@ def _account_status_label(value: Any) -> str:
         return str(value or "")
 
 
-def _parse_conversions(actions: list[dict[str, Any]] | None) -> float:
-    total = 0.0
+def _result_tokens_for_adset(
+    optimization_goal: Any, promoted_object: Any
+) -> set[str]:
+    """Resolve an ad set's result token set from its optimization_goal.
+
+    Returns the set of result tokens whose counts make up this ad set's Ads
+    Manager "Results":
+      * a concrete conversion/engagement goal → {token}
+      * an awareness goal (REACH/IMPRESSIONS/…) → set() (no action-based result)
+      * an unknown goal, or a conversion goal with a non-standard custom event →
+        the de-duplicated fallback token set.
+    """
+    goal = str(optimization_goal or "").upper().strip()
+    if goal in _OPT_GOAL_TOKEN:
+        token = _OPT_GOAL_TOKEN[goal]
+        if token is None:
+            return set()
+        if token == "conversion":
+            custom_event = str(
+                (promoted_object or {}).get("custom_event_type") or ""
+            ).upper().strip()
+            mapped = _CUSTOM_EVENT_TOKEN.get(custom_event)
+            if mapped:
+                return {mapped}
+            # Custom conversion (custom_event_type OTHER/blank) — can't pin the
+            # exact standard event, so fall back to de-duplicated counting.
+            return set(_FALLBACK_TOKENS)
+        return {token}
+    return set(_FALLBACK_TOKENS)
+
+
+class ResultResolver:
+    """Maps Meta ad sets and campaigns to the result token set that defines
+    their Ads Manager "Results", so warehouse conversions match Ads Manager.
+
+    Ad sets present in the map with an empty token set (awareness goals) resolve
+    to 0 results. Ad sets/campaigns MISSING from the map (config we couldn't
+    fetch) fall back to de-duplicated counting rather than being zeroed out.
+    """
+
+    def __init__(
+        self,
+        adset_tokens: dict[str, set[str]],
+        campaign_tokens: dict[str, set[str]],
+    ) -> None:
+        self._adset_tokens = adset_tokens
+        self._campaign_tokens = campaign_tokens
+
+    def adset_tokens(self, adset_id: Any) -> set[str]:
+        key = str(adset_id or "").strip()
+        if key in self._adset_tokens:
+            return self._adset_tokens[key]
+        return set(_FALLBACK_TOKENS)
+
+    def campaign_tokens(self, campaign_id: Any) -> set[str]:
+        key = str(campaign_id or "").strip()
+        if key in self._campaign_tokens:
+            return self._campaign_tokens[key]
+        return set(_FALLBACK_TOKENS)
+
+
+def _actions_by_type(actions: list[dict[str, Any]] | None) -> dict[str, float]:
+    by_type: dict[str, float] = {}
     for item in actions or []:
         action_type = str(item.get("action_type") or "").lower()
-        if any(x in action_type for x in _EXCLUDE_ACTION_HINTS):
+        if not action_type:
             continue
-        if any(x in action_type for x in _CONVERSION_ACTION_HINTS):
-            total += float(item.get("value") or 0)
-    return total
+        by_type[action_type] = by_type.get(action_type, 0.0) + float(
+            item.get("value") or 0
+        )
+    return by_type
 
 
-def _parse_conversion_value(action_values: list[dict[str, Any]] | None) -> float:
+def _sum_result_tokens(by_type: dict[str, float], tokens: set[str]) -> float:
+    """Sum one value per token, taking the first candidate action_type present.
+
+    Distinct tokens are summed; within a token only the first present candidate
+    counts, which de-duplicates the offsite_/onsite_/omni_/bare buckets Meta
+    emits for the same event.
+    """
     total = 0.0
-    for item in action_values or []:
-        action_type = str(item.get("action_type") or "").lower()
-        if any(x in action_type for x in _EXCLUDE_ACTION_HINTS):
-            continue
-        if any(x in action_type for x in _CONVERSION_ACTION_HINTS):
-            total += float(item.get("value") or 0)
+    for token in tokens:
+        for candidate in _RESULT_CANDIDATES.get(token, (token,)):
+            if candidate in by_type:
+                total += by_type[candidate]
+                break
     return total
 
 
-def _parse_insight_row(row: dict[str, Any]) -> dict[str, Any]:
+def _parse_conversions(
+    actions: list[dict[str, Any]] | None, tokens: set[str] | None = None
+) -> float:
+    return _sum_result_tokens(
+        _actions_by_type(actions),
+        tokens if tokens is not None else set(_FALLBACK_TOKENS),
+    )
+
+
+def _parse_conversion_value(
+    action_values: list[dict[str, Any]] | None, tokens: set[str] | None = None
+) -> float:
+    return _sum_result_tokens(
+        _actions_by_type(action_values),
+        tokens if tokens is not None else set(_FALLBACK_TOKENS),
+    )
+
+
+def _parse_insight_row(
+    row: dict[str, Any], *, result_tokens: set[str] | None = None
+) -> dict[str, Any]:
     return {
         "spend": float(row.get("spend") or 0),
         "clicks": int(float(row.get("clicks") or 0)),
         "impressions": int(float(row.get("impressions") or 0)),
-        "conversions": _parse_conversions(row.get("actions")),
-        "conversion_value": _parse_conversion_value(row.get("action_values")),
+        "conversions": _parse_conversions(row.get("actions"), result_tokens),
+        "conversion_value": _parse_conversion_value(
+            row.get("action_values"), result_tokens
+        ),
     }
+
+
+def fetch_result_resolver(
+    account_id: str,
+    *,
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+) -> ResultResolver:
+    """Fetch every ad set's optimization_goal + promoted_object and build a
+    ResultResolver so daily insights count only each ad set's true result event.
+    """
+    env = env or load_meta_env(access_token=access_token)
+    access_token = access_token or env.access_token
+    account_id_clean = _normalize_account_id(account_id)
+
+    rows = _graph_get_all(
+        f"/{_act_id(account_id_clean)}/adsets",
+        access_token=access_token,
+        params={
+            "fields": "id,campaign_id,optimization_goal,promoted_object",
+            "limit": 500,
+        },
+        env=env,
+    )
+    _log.info("Meta result resolver: adsets=%d", len(rows))
+
+    adset_tokens: dict[str, set[str]] = {}
+    campaign_tokens: dict[str, set[str]] = {}
+    for row in rows:
+        adset_id = str(row.get("id") or "").strip()
+        if not adset_id:
+            continue
+        tokens = _result_tokens_for_adset(
+            row.get("optimization_goal"), row.get("promoted_object")
+        )
+        adset_tokens[adset_id] = tokens
+        campaign_id = str(row.get("campaign_id") or "").strip()
+        if campaign_id:
+            campaign_tokens.setdefault(campaign_id, set()).update(tokens)
+    return ResultResolver(adset_tokens, campaign_tokens)
 
 
 def _normalize_account_row(row: dict[str, Any], *, ownership: str) -> dict[str, Any]:
@@ -726,11 +986,16 @@ def fetch_campaign_daily_metrics(
     end: date,
     access_token: str | None = None,
     env: MetaEnv | None = None,
+    resolver: ResultResolver | None = None,
 ) -> list[dict[str, Any]]:
     """Per-campaign daily metrics for warehouse storage.
 
     Returns list of {campaign_id, campaign_name, metric_date, spend, clicks, impressions,
     conversions, conversion_value}. One row per (campaign, day).
+
+    When ``resolver`` is provided, ``conversions`` is the campaign's Ads Manager
+    "Results" (its ad sets' optimization-goal events); otherwise it falls back to
+    de-duplicated conversion counting.
     """
     import logging
     _log = logging.getLogger(__name__)
@@ -760,7 +1025,8 @@ def fetch_campaign_daily_metrics(
         campaign_id = str(row.get("campaign_id") or "").strip()
         if not metric_day or not campaign_id:
             continue
-        parsed = _parse_insight_row(row)
+        result_tokens = resolver.campaign_tokens(campaign_id) if resolver else None
+        parsed = _parse_insight_row(row, result_tokens=result_tokens)
         out.append({
             "campaign_id": campaign_id,
             "campaign_name": str(row.get("campaign_name") or ""),
@@ -778,8 +1044,14 @@ def fetch_adset_daily_metrics(
     end: date,
     access_token: str | None = None,
     env: MetaEnv | None = None,
+    resolver: ResultResolver | None = None,
 ) -> list[dict[str, Any]]:
-    """Per-adset daily metrics for BQ warehouse storage."""
+    """Per-adset daily metrics for BQ warehouse storage.
+
+    When ``resolver`` is provided, ``conversions`` is each ad set's Ads Manager
+    "Results" (its optimization-goal event); otherwise it falls back to
+    de-duplicated conversion counting.
+    """
     import logging
     _log = logging.getLogger(__name__)
 
@@ -809,7 +1081,8 @@ def fetch_adset_daily_metrics(
         adset_id = str(row.get("adset_id") or "").strip()
         if not metric_day or not adset_id:
             continue
-        parsed = _parse_insight_row(row)
+        result_tokens = resolver.adset_tokens(adset_id) if resolver else None
+        parsed = _parse_insight_row(row, result_tokens=result_tokens)
         out.append({
             "adset_id": adset_id,
             "adset_name": str(row.get("adset_name") or ""),
@@ -828,8 +1101,14 @@ def fetch_ad_daily_metrics(
     end: date,
     access_token: str | None = None,
     env: MetaEnv | None = None,
+    resolver: ResultResolver | None = None,
 ) -> list[dict[str, Any]]:
-    """Per-ad daily metrics for BQ warehouse storage."""
+    """Per-ad daily metrics for BQ warehouse storage.
+
+    When ``resolver`` is provided, ``conversions`` is the result event of the
+    ad's parent ad set (its optimization goal); otherwise it falls back to
+    de-duplicated conversion counting.
+    """
     import logging
     _log = logging.getLogger(__name__)
 
@@ -859,7 +1138,10 @@ def fetch_ad_daily_metrics(
         ad_id = str(row.get("ad_id") or "").strip()
         if not metric_day or not ad_id:
             continue
-        parsed = _parse_insight_row(row)
+        result_tokens = (
+            resolver.adset_tokens(row.get("adset_id")) if resolver else None
+        )
+        parsed = _parse_insight_row(row, result_tokens=result_tokens)
         out.append({
             "ad_id": ad_id,
             "ad_name": str(row.get("ad_name") or ""),
