@@ -41,7 +41,7 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 # Header/query credentials that indicate a non-cookie caller (API key, bearer
 # token, cron secret, or the legacy dashboard access key). Such requests are not
 # CSRF-prone — the browser does not attach these automatically — so they skip
-# the token check to avoid breaking ChatGPT actions, cron, and ?key= links.
+# the token check to avoid breaking API-key callers, cron, and ?key= links.
 _API_CREDENTIAL_HEADERS = ("authorization", "x-api-key", "x-cron-secret")
 
 
