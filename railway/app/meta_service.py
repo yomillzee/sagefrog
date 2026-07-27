@@ -102,6 +102,12 @@ def _act_id(account_id: str) -> str:
     return f"act_{clean}"
 
 
+def _chunked(seq: list[str], size: int) -> list[list[str]]:
+    """Split a list into consecutive chunks of at most `size` items."""
+    size = max(1, size)
+    return [seq[i:i + size] for i in range(0, len(seq), size)]
+
+
 _ACCESS_TOKEN_RE = re.compile(r"(access_token=)[^&\s]+", re.IGNORECASE)
 
 
@@ -1249,6 +1255,11 @@ _AD_MEDIA_FIELDS = (
     "}"
 )
 _VIDEO_DETAIL_FIELDS = "id,source,picture,title,permalink_url"
+# Meta's `?ids=` multi-get returns up to 50 objects per request. Batching video
+# lookups this way turns N per-video calls into ceil(N/50), which keeps the ad
+# account under its Ads API call limit (code 17 / subcode 2446079) on accounts
+# with many video creatives.
+_VIDEO_DETAIL_BATCH = 50
 
 
 def _dig_dict(data: dict[str, Any], *keys: str) -> dict[str, Any]:
@@ -1326,16 +1337,59 @@ def _extract_creative_media(creative: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _empty_video_detail() -> dict[str, str]:
+    return {"video_url": "", "thumbnail_url": "", "video_title": ""}
+
+
+def _parse_video_detail(payload: dict[str, Any]) -> dict[str, str]:
+    return {
+        "video_url": str(payload.get("source") or payload.get("permalink_url") or ""),
+        "thumbnail_url": str(payload.get("picture") or ""),
+        "video_title": str(payload.get("title") or ""),
+    }
+
+
 def _fetch_video_details(
     video_ids: set[str],
     *,
     access_token: str,
     env: MetaEnv,
 ) -> dict[str, dict[str, str]]:
+    """Map video_id -> {video_url, thumbnail_url, video_title}.
+
+    Videos are fetched in batches via Meta's `?ids=` multi-get so a large
+    creative set costs ceil(N/50) calls rather than N — the difference between
+    staying under and blowing through the ad account's Ads API call limit. If a
+    batch fails wholesale (e.g. one inaccessible id poisons the multi-get), fall
+    back to per-id fetches for that chunk so one bad video can't blank the rest.
+    """
+    ids = [v for v in sorted(video_ids) if v]
     details: dict[str, dict[str, str]] = {}
-    for video_id in sorted(video_ids):
-        if not video_id:
+    for chunk in _chunked(ids, _VIDEO_DETAIL_BATCH):
+        try:
+            payload = _graph_get(
+                "/",
+                access_token=access_token,
+                params={"ids": ",".join(chunk), "fields": _VIDEO_DETAIL_FIELDS},
+                env=env,
+            )
+        except Exception:
+            details.update(_fetch_video_details_individually(chunk, access_token=access_token, env=env))
             continue
+        for video_id in chunk:
+            item = payload.get(video_id) if isinstance(payload, dict) else None
+            details[video_id] = _parse_video_detail(item) if isinstance(item, dict) else _empty_video_detail()
+    return details
+
+
+def _fetch_video_details_individually(
+    video_ids: list[str],
+    *,
+    access_token: str,
+    env: MetaEnv,
+) -> dict[str, dict[str, str]]:
+    details: dict[str, dict[str, str]] = {}
+    for video_id in video_ids:
         try:
             payload = _graph_get(
                 f"/{video_id}",
@@ -1343,13 +1397,9 @@ def _fetch_video_details(
                 params={"fields": _VIDEO_DETAIL_FIELDS},
                 env=env,
             )
-            details[video_id] = {
-                "video_url": str(payload.get("source") or payload.get("permalink_url") or ""),
-                "thumbnail_url": str(payload.get("picture") or ""),
-                "video_title": str(payload.get("title") or ""),
-            }
+            details[video_id] = _parse_video_detail(payload)
         except Exception:
-            details[video_id] = {"video_url": "", "thumbnail_url": "", "video_title": ""}
+            details[video_id] = _empty_video_detail()
     return details
 
 
