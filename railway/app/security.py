@@ -1,4 +1,4 @@
-"""API key verification for external callers (e.g. ChatGPT Custom Actions)."""
+"""API key verification for external callers (server-to-server API clients)."""
 
 from __future__ import annotations
 

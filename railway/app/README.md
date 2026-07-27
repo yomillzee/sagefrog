@@ -79,7 +79,7 @@ Requires **Postgres** (`DATABASE_URL`). Uploaded `.docx` and `.pdf` files (up to
 
 Create additional users at `/admin` after signing in as admin. The **Audit log** section on `/admin` records sign-ins, sign-outs, failed logins, and user create/deactivate actions (with actor, target, IP).
 
-Dashboards are session-only: the legacy `?key=` share link (and its `DASHBOARD_SECRET`) has been retired — give a viewer a `client`-role login instead. **`API_KEY` is unchanged** — still used for `/google-ads/*`, ChatGPT, etc. `CRON_SECRET` is now dedicated to the internal `/internal/sync-*` cron endpoints only.
+Dashboards are session-only: the legacy `?key=` share link (and its `DASHBOARD_SECRET`) has been retired — give a viewer a `client`-role login instead. **`API_KEY` is unchanged** — still used for the `/google-ads/*`, `/linkedin/*`, `/meta/*` API routes. `CRON_SECRET` is now dedicated to the internal `/internal/sync-*` cron endpoints only.
 
 **Production hardening:** On Railway, `/docs` and `/openapi.json` are disabled automatically (`DISABLE_API_DOCS=0` to re-enable). Failed logins are rate-limited per IP/email (`AUTH_LOGIN_MAX_FAILURES`, default 5 per 15 minutes, then 15-minute lockout).
 
@@ -205,26 +205,7 @@ python -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1])), separ
 railway variables --set "GCP_SERVICE_ACCOUNT_JSON=$(cat key.json)"
 ```
 
-### ChatGPT Custom Action (GPT)
-
-1. Deploy this service on Railway and set **`API_KEY`** to a long random string.
-2. In the GPT Action, paste **`openapi-chatgpt-min.json`** for the full agency GPT, or a client file like **`openapi-chatgpt-penn.json`** for one client.
-3. **Authentication:** API key → header **`X-API-Key`**: `<API_KEY>` (same Railway secret for all client GPTs until per-client keys exist).
-4. Copy instructions from **`gpt-instructions-penn.md`** into the GPT’s Instructions field.
-5. Regenerate a client schema: `python make_chatgpt_openapi_client.py penn` (add more clients in `CLIENTS` inside that script).
-
-#### Client-scoped GPTs (instructions + schema only)
-
-Not server-enforced — same `API_KEY` can still reach other accounts if prompted. Good for internal use.
-
-| File | Purpose |
-|------|---------|
-| `openapi-chatgpt-penn.json` | Penn-only actions; omits multi-account / `ga4Clients` |
-| `gpt-instructions-penn.md` | Paste into Custom GPT Instructions |
-
-Optional: set `google_ads_customer_id`, `linkedin_account_id`, `meta_account_id` in `make_chatgpt_openapi_client.py` `CLIENTS["penn"]` to lock IDs in the schema once known.
-
-#### YouTube video links (recommended for video creative review)
+### YouTube video links (recommended for video creative review)
 
 Use **`POST /google-ads/youtube-videos`** — reads `asset.youtube_video_asset.youtube_video_id` from Google Ads (not ad name text).
 
@@ -238,8 +219,6 @@ Use **`POST /google-ads/youtube-videos`** — reads `asset.youtube_video_asset.y
 ```
 
 Example response fields per row: `campaign_name`, `ad_name`, `youtube_video_id`, `youtube_watch_url`, `youtube_embed_url`, `youtube_thumbnail_url`, `source` (`ad_group_ad_asset_view`, `video_ad`, or `asset`).
-
-**GPT instruction snippet:** “When the user asks for YouTube links for Google Ads videos, call `youtubeVideos` with their customer ID. Return `youtube_watch_url` and campaign/ad context from the response.”
 
 ## Endpoints
 

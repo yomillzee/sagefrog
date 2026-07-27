@@ -28,7 +28,6 @@ from auth import creds_fingerprint, env_summary
 from linkedin_auth import env_summary as linkedin_env_summary
 from meta_auth import env_summary as meta_env_summary
 from indeed_auth import env_summary as indeed_env_summary
-from openapi_gpt import build_chatgpt_openapi
 from cron_security import require_cron_secret
 from security import configured_api_key, is_production, require_api_key
 import audit_log
@@ -415,7 +414,8 @@ def custom_openapi() -> dict:
                 continue
             # Either Bearer or X-API-Key (OpenAPI: alternatives are OR).
             op["security"] = [{"BearerAuth": []}, {"ApiKeyHeader": []}]
-    # ChatGPT Custom Actions require a root-level `servers` URL (FastAPI omits it by default).
+    # Advertise a root-level `servers` URL (FastAPI omits it by default) so the
+    # published schema resolves absolute paths for external API clients.
     base_url = (
         os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
         or "https://sagefrog-production.up.railway.app"
@@ -426,17 +426,6 @@ def custom_openapi() -> dict:
 
 
 app.openapi = custom_openapi  # type: ignore[method-assign]
-
-_gpt_openapi_cache: dict | None = None
-
-
-@app.get("/openapi-gpt.json", include_in_schema=False)
-def openapi_for_chatgpt() -> JSONResponse:
-    """OpenAPI document compatible with ChatGPT Custom Actions (single auth scheme)."""
-    global _gpt_openapi_cache
-    if _gpt_openapi_cache is None:
-        _gpt_openapi_cache = build_chatgpt_openapi(app)
-    return JSONResponse(_gpt_openapi_cache)
 
 
 @app.get("/")
@@ -805,7 +794,7 @@ def google_ads_accounts() -> AccountsResponse:
     description=(
         "Returns YouTube links from Google Ads video assets (not parsed from ad names). "
         "Merges ad_group_ad_asset_view (Demand Gen, etc.), classic VIDEO ads, and optional "
-        "account-level YOUTUBE_VIDEO assets. Intended for ChatGPT Custom Actions."
+        "account-level YOUTUBE_VIDEO assets."
     ),
 )
 def google_ads_youtube_videos(body: YoutubeVideosRequest) -> YoutubeVideosResponse:
