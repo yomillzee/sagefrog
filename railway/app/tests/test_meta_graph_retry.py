@@ -133,6 +133,26 @@ class MetaGraphRetryTests(unittest.TestCase):
         sleep.assert_not_called()
 
 
+class MetaTokenRedactionTests(unittest.TestCase):
+    """Pagination cursor URLs carry the access_token in their query string. When
+    such a page errors, the raised message must not leak the credential."""
+
+    def test_error_on_cursor_url_redacts_access_token(self):
+        secret = "EAAL2HvUw2xcSECRETTOKENvalue123"
+        cursor = f"https://graph.facebook.com/v25.0/act_1/ads?access_token={secret}&after=CUR"
+        client = _FakeClient([
+            _FakeResponse(400, payload={"error": {"code": 100, "message": "bad request"}}),
+        ])
+        with patch.object(meta_service.httpx, "Client", return_value=client), \
+                patch.object(meta_service.time, "sleep"):
+            with self.assertRaises(RuntimeError) as ctx:
+                meta_service._graph_get(cursor, access_token=secret, env=_ENV)
+        msg = str(ctx.exception)
+        self.assertNotIn(secret, msg)
+        self.assertIn("[REDACTED]", msg)
+        self.assertIn("400", msg)
+
+
 class MetaReduceDataTests(unittest.TestCase):
     """Meta's "Please reduce the amount of data you're asking for" 500 is a
     request-size problem, not a transient blip. Retrying the same oversized page
