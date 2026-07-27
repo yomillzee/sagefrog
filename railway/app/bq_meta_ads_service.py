@@ -122,13 +122,29 @@ def sync_meta_to_bq(
     creative_rows: list[dict[str, Any]] = []
     errors: dict[str, str] = {}
 
+    # Resolve each ad set's optimization_goal FIRST so the daily insight parses
+    # count only the ad set's true "Result" event (matching Ads Manager) instead
+    # of summing every conversion-like action bucket. If this fails, fall back to
+    # de-duplicated counting (resolver=None) rather than failing the whole sync.
+    resolver = None
+    try:
+        resolver = meta_service.fetch_result_resolver(
+            account_id_clean, access_token=access_token
+        )
+    except Exception as exc:
+        errors["meta_result_resolver"] = str(exc)[:400]
+        _log.warning(
+            "Meta result resolver failed [%s]: %s — falling back to de-duplicated "
+            "conversion counting", client_key, exc,
+        )
+
     with ThreadPoolExecutor(max_workers=4) as pool:
         _cf = pool.submit(meta_service.fetch_campaign_daily_metrics, account_id_clean,
-                          start=start, end=end, access_token=access_token)
+                          start=start, end=end, access_token=access_token, resolver=resolver)
         _af = pool.submit(meta_service.fetch_adset_daily_metrics, account_id_clean,
-                          start=start, end=end, access_token=access_token)
+                          start=start, end=end, access_token=access_token, resolver=resolver)
         _adf = pool.submit(meta_service.fetch_ad_daily_metrics, account_id_clean,
-                           start=start, end=end, access_token=access_token)
+                           start=start, end=end, access_token=access_token, resolver=resolver)
         _crf = pool.submit(meta_service.fetch_ad_creative_metadata, account_id_clean,
                            access_token=access_token)
         try:
