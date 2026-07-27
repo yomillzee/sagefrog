@@ -27,6 +27,9 @@ RUN pip install -r requirements.txt
 
 # Application source.
 COPY . .
+RUN chmod +x docker-entrypoint.sh
 
-# Railway injects $PORT at runtime; fall back to 8000 for local runs.
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# The entrypoint optionally runs the staging sample-data seed (gated on
+# SEED_STAGING; a no-op in production) and then execs uvicorn. Railway injects
+# $PORT at runtime; the entrypoint falls back to 8000 for local runs.
+CMD ["sh", "docker-entrypoint.sh"]
