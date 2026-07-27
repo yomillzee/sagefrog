@@ -133,24 +133,96 @@ class MetaGraphRetryTests(unittest.TestCase):
         sleep.assert_not_called()
 
 
-class MetaTokenRedactionTests(unittest.TestCase):
-    """Pagination cursor URLs carry the access_token in their query string. When
-    such a page errors, the raised message must not leak the credential."""
+class MetaErrorMessageTests(unittest.TestCase):
+    """A pagination cursor URL carries the access_token and a long `after` blob in
+    its query string. The raised error must not leak the token, and must stay
+    compact so callers that truncate it to ~400 chars still show Meta's body."""
 
-    def test_error_on_cursor_url_redacts_access_token(self):
+    def test_error_on_cursor_url_drops_query_and_keeps_meta_body(self):
         secret = "EAAL2HvUw2xcSECRETTOKENvalue123"
-        cursor = f"https://graph.facebook.com/v25.0/act_1/ads?access_token={secret}&after=CUR"
-        client = _FakeClient([
-            _FakeResponse(400, payload={"error": {"code": 100, "message": "bad request"}}),
-        ])
+        long_after = "QVFI" + "x" * 300  # realistic oversized pagination cursor
+        cursor = (
+            f"https://graph.facebook.com/v25.0/act_1/ads"
+            f"?access_token={secret}&limit=25&after={long_after}"
+        )
+        # A non-rate-limit 400 (code 100) fails fast in one attempt, so we can
+        # assert on the raised message shape directly.
+        meta_body = {"error": {"code": 100, "message": "Unsupported get request on this edge"}}
+        client = _FakeClient([_FakeResponse(400, payload=meta_body)])
         with patch.object(meta_service.httpx, "Client", return_value=client), \
                 patch.object(meta_service.time, "sleep"):
             with self.assertRaises(RuntimeError) as ctx:
                 meta_service._graph_get(cursor, access_token=secret, env=_ENV)
         msg = str(ctx.exception)
         self.assertNotIn(secret, msg)
-        self.assertIn("[REDACTED]", msg)
-        self.assertIn("400", msg)
+        self.assertNotIn(long_after, msg)  # cursor blob dropped, not just the token
+        self.assertIn("act_1/ads", msg)
+        # Meta's own error body survives the caller's 400-char truncation.
+        self.assertIn("Unsupported get request on this edge", msg[:400])
+
+
+class MetaRateLimitTests(unittest.TestCase):
+    """Meta returns throttling as HTTP 400 with a rate-limit error code, not a
+    429. _graph_get must recognize those and back off/retry rather than failing
+    the sync outright on a transient limit."""
+
+    def test_user_request_limit_reached_is_retried(self):
+        client = _FakeClient([
+            _FakeResponse(400, payload={"error": {"code": 17, "message": "User request limit reached"}}),
+            _FakeResponse(200, payload={"data": [{"id": "1"}]}),
+        ])
+        with patch.object(meta_service.httpx, "Client", return_value=client), \
+                patch.object(meta_service.time, "sleep") as sleep:
+            result = meta_service._graph_get("/act_1/ads", access_token="tok", env=_ENV)
+        self.assertEqual(result, {"data": [{"id": "1"}]})
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(sleep.call_count, 1)
+
+    def test_business_use_case_rate_limit_code_is_retried(self):
+        client = _FakeClient([
+            _FakeResponse(400, payload={"error": {"code": 80004, "message": "There have been too many calls"}}),
+            _FakeResponse(200, payload={"data": []}),
+        ])
+        with patch.object(meta_service.httpx, "Client", return_value=client), \
+                patch.object(meta_service.time, "sleep"):
+            result = meta_service._graph_get("/act_1/ads", access_token="tok", env=_ENV)
+        self.assertEqual(result, {"data": []})
+        self.assertEqual(client.calls, 2)
+
+    def test_rate_limit_backoff_is_capped(self):
+        # A huge Retry-After must not make the worker sleep for minutes.
+        client = _FakeClient([
+            _FakeResponse(400, headers={"Retry-After": "600"},
+                          payload={"error": {"code": 17, "message": "User request limit reached"}}),
+            _FakeResponse(200, payload={}),
+        ])
+        with patch.object(meta_service.httpx, "Client", return_value=client), \
+                patch.object(meta_service.time, "sleep") as sleep:
+            meta_service._graph_get("/act_1/ads", access_token="tok", env=_ENV)
+        sleep.assert_called_once_with(meta_service._RATE_LIMIT_MAX_BACKOFF_SECONDS)
+
+    def test_persistent_rate_limit_eventually_raises(self):
+        client = _FakeClient(
+            [_FakeResponse(400, payload={"error": {"code": 17, "message": "User request limit reached"}})]
+            * meta_service._MAX_ATTEMPTS
+        )
+        with patch.object(meta_service.httpx, "Client", return_value=client), \
+                patch.object(meta_service.time, "sleep"):
+            with self.assertRaises(RuntimeError) as ctx:
+                meta_service._graph_get("/act_1/ads", access_token="tok", env=_ENV)
+        self.assertIn("400", str(ctx.exception))
+        self.assertEqual(client.calls, meta_service._MAX_ATTEMPTS)
+
+    def test_non_rate_limit_400_still_fails_fast(self):
+        client = _FakeClient([
+            _FakeResponse(400, payload={"error": {"code": 100, "message": "Invalid parameter"}}),
+        ])
+        with patch.object(meta_service.httpx, "Client", return_value=client), \
+                patch.object(meta_service.time, "sleep") as sleep:
+            with self.assertRaises(RuntimeError):
+                meta_service._graph_get("/act_1/ads", access_token="tok", env=_ENV)
+        self.assertEqual(client.calls, 1)
+        sleep.assert_not_called()
 
 
 class MetaReduceDataTests(unittest.TestCase):
