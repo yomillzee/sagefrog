@@ -35,6 +35,16 @@ _RETRY_BACKOFF_SECONDS = 2.0
 _AD_MEDIA_PAGE_LIMIT = 50
 _MIN_PAGE_LIMIT = 5
 
+# Meta returns throttling as HTTP 400 (not 429) with one of these error codes in
+# the body: 4 (app rate limit), 17 ("User request limit reached"), 32 (page rate
+# limit), 613 (custom rate limit), and the 80000-80014 business-use-case codes.
+# These are transient — back off and retry rather than failing the sync outright.
+_RATE_LIMIT_CODES = frozenset({4, 17, 32, 613})
+_RATE_LIMIT_MESSAGES = ("request limit reached", "rate limit", "calls to this api have exceeded")
+# Cap per-attempt backoff so a sustained limit fails this cycle (and retries on the
+# next scheduled sync) instead of blocking the worker for minutes.
+_RATE_LIMIT_MAX_BACKOFF_SECONDS = 30.0
+
 _ACCOUNT_FIELDS = "id,account_id,name,account_status,currency,business_name"
 _INSIGHT_FIELDS = (
     "spend,impressions,clicks,actions,action_values,"
@@ -102,6 +112,17 @@ def _redact(text: str) -> str:
     return _ACCESS_TOKEN_RE.sub(r"\1[REDACTED]", str(text))
 
 
+def _display_path(path: str) -> str:
+    """A short, safe identifier for a request in error/log messages: scheme +
+    host + path, with the query string dropped entirely. Pagination `next` URLs
+    carry a long `after` cursor (and the token) in their query — keeping it would
+    both leak the credential and, because callers truncate the stored error to
+    400 chars, push Meta's actual {'error': {...}} body off the end where it can't
+    be read. Dropping the query keeps the message compact and diagnostic."""
+    base = path.split("?", 1)[0]
+    return _redact(base)
+
+
 def _graph_base(env: MetaEnv) -> str:
     version = env.api_version.strip()
     if not version.startswith("v"):
@@ -137,13 +158,13 @@ def _graph_get(
         except httpx.TransportError as exc:
             if attempt >= _MAX_ATTEMPTS:
                 raise RuntimeError(
-                    f"Meta Graph API transport error on {_redact(path)} after "
+                    f"Meta Graph API transport error on {_display_path(path)} after "
                     f"{_MAX_ATTEMPTS} attempts: {exc}"
                 ) from exc
             wait = _RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
             _log.warning(
                 "Meta Graph %s transport error (%s); retrying in %.1fs (attempt %d/%d)",
-                _redact(path), exc, wait, attempt, _MAX_ATTEMPTS,
+                _display_path(path), exc, wait, attempt, _MAX_ATTEMPTS,
             )
             time.sleep(wait)
             continue
@@ -159,15 +180,30 @@ def _graph_get(
                 _log.warning(
                     "Meta Graph %s over-sized (reduce-data); shrinking page limit "
                     "%d -> %d and retrying (attempt %d/%d)",
-                    _redact(path), current, reduced, attempt, _MAX_ATTEMPTS,
+                    _display_path(path), current, reduced, attempt, _MAX_ATTEMPTS,
                 )
                 continue
+
+        # Meta signals throttling with HTTP 400 + a rate-limit error code, not a
+        # 429, so it slips past the status check below. Back off and retry those
+        # (capped) instead of surfacing a hard sync error on a transient limit.
+        if _is_rate_limit_error(response) and attempt < _MAX_ATTEMPTS:
+            wait = min(
+                _retry_after_seconds(response, _RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))),
+                _RATE_LIMIT_MAX_BACKOFF_SECONDS,
+            )
+            _log.warning(
+                "Meta Graph %s rate-limited; backing off %.1fs (attempt %d/%d)",
+                _display_path(path), wait, attempt, _MAX_ATTEMPTS,
+            )
+            time.sleep(wait)
+            continue
 
         if response.status_code in _RETRY_STATUSES and attempt < _MAX_ATTEMPTS:
             wait = _retry_after_seconds(response, _RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)))
             _log.warning(
                 "Meta Graph %s returned %d; retrying in %.1fs (attempt %d/%d)",
-                _redact(path), response.status_code, wait, attempt, _MAX_ATTEMPTS,
+                _display_path(path), response.status_code, wait, attempt, _MAX_ATTEMPTS,
             )
             time.sleep(wait)
             continue
@@ -179,13 +215,13 @@ def _graph_get(
             except Exception:
                 pass
             raise RuntimeError(
-                f"Meta Graph API error {response.status_code} on {_redact(path)}: {_redact(detail)}"
+                f"Meta Graph API error {response.status_code} on {_display_path(path)}: {_redact(detail)}"
             )
         return response.json()
 
     # Unreachable: the loop either returns, raises, or continues; the final
     # attempt cannot hit a `continue` branch. Guard anyway to satisfy type checkers.
-    raise RuntimeError(f"Meta Graph API request to {_redact(path)} exhausted retries")
+    raise RuntimeError(f"Meta Graph API request to {_display_path(path)} exhausted retries")
 
 
 def _retry_after_seconds(response: httpx.Response, default: float) -> float:
@@ -211,6 +247,31 @@ def _is_reduce_data_error(response: httpx.Response) -> bool:
     if not isinstance(err, dict):
         return False
     return "reduce the amount of data" in str(err.get("message") or "").lower()
+
+
+def _is_rate_limit_error(response: httpx.Response) -> bool:
+    """True for a Meta throttling error, which arrives as HTTP 400 (not 429).
+
+    Matches by error code — 4 (app), 17 ("User request limit reached"), 32
+    (page), 613 (custom), 80000-80014 (business use case) — with a message
+    fallback so a code we haven't enumerated but that plainly says "rate limit"
+    is still treated as throttling.
+    """
+    try:
+        body = response.json()
+    except Exception:
+        return False
+    err = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(err, dict):
+        return False
+    try:
+        code = int(err.get("code"))
+    except (TypeError, ValueError):
+        code = None
+    if code is not None and (code in _RATE_LIMIT_CODES or 80000 <= code <= 80014):
+        return True
+    msg = str(err.get("message") or "").lower()
+    return any(marker in msg for marker in _RATE_LIMIT_MESSAGES)
 
 
 def _effective_limit(url: str, query: dict[str, Any]) -> int | None:
