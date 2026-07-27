@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from datetime import date, timedelta
 from typing import Any
@@ -91,6 +92,16 @@ def _act_id(account_id: str) -> str:
     return f"act_{clean}"
 
 
+_ACCESS_TOKEN_RE = re.compile(r"(access_token=)[^&\s]+", re.IGNORECASE)
+
+
+def _redact(text: str) -> str:
+    """Mask any access_token value so credentials never reach logs or error
+    strings. Pagination cursor URLs carry the token in their query string, so an
+    unredacted `next` URL in an exception would leak it into the connector UI."""
+    return _ACCESS_TOKEN_RE.sub(r"\1[REDACTED]", str(text))
+
+
 def _graph_base(env: MetaEnv) -> str:
     version = env.api_version.strip()
     if not version.startswith("v"):
@@ -126,13 +137,13 @@ def _graph_get(
         except httpx.TransportError as exc:
             if attempt >= _MAX_ATTEMPTS:
                 raise RuntimeError(
-                    f"Meta Graph API transport error on {path} after "
+                    f"Meta Graph API transport error on {_redact(path)} after "
                     f"{_MAX_ATTEMPTS} attempts: {exc}"
                 ) from exc
             wait = _RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
             _log.warning(
                 "Meta Graph %s transport error (%s); retrying in %.1fs (attempt %d/%d)",
-                path, exc, wait, attempt, _MAX_ATTEMPTS,
+                _redact(path), exc, wait, attempt, _MAX_ATTEMPTS,
             )
             time.sleep(wait)
             continue
@@ -148,7 +159,7 @@ def _graph_get(
                 _log.warning(
                     "Meta Graph %s over-sized (reduce-data); shrinking page limit "
                     "%d -> %d and retrying (attempt %d/%d)",
-                    path, current, reduced, attempt, _MAX_ATTEMPTS,
+                    _redact(path), current, reduced, attempt, _MAX_ATTEMPTS,
                 )
                 continue
 
@@ -156,7 +167,7 @@ def _graph_get(
             wait = _retry_after_seconds(response, _RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)))
             _log.warning(
                 "Meta Graph %s returned %d; retrying in %.1fs (attempt %d/%d)",
-                path, response.status_code, wait, attempt, _MAX_ATTEMPTS,
+                _redact(path), response.status_code, wait, attempt, _MAX_ATTEMPTS,
             )
             time.sleep(wait)
             continue
@@ -167,12 +178,14 @@ def _graph_get(
                 detail = response.json()
             except Exception:
                 pass
-            raise RuntimeError(f"Meta Graph API error {response.status_code} on {path}: {detail}")
+            raise RuntimeError(
+                f"Meta Graph API error {response.status_code} on {_redact(path)}: {_redact(detail)}"
+            )
         return response.json()
 
     # Unreachable: the loop either returns, raises, or continues; the final
     # attempt cannot hit a `continue` branch. Guard anyway to satisfy type checkers.
-    raise RuntimeError(f"Meta Graph API request to {path} exhausted retries")
+    raise RuntimeError(f"Meta Graph API request to {_redact(path)} exhausted retries")
 
 
 def _retry_after_seconds(response: httpx.Response, default: float) -> float:
