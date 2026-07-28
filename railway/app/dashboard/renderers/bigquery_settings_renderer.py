@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dashboard.renderers.base_layout import (
     SIDEBAR_CSS,
+    admin_top_tabs_html,
     dashboard_topbar_js,
     favicon_head_html,
     dashboard_sidebar_view_nav_html,
@@ -87,6 +88,17 @@ def render_bigquery_settings_page(
         # exists (otherwise the link only appears once one is connected).
         show_connectors=True,
         view_nav_html=view_nav_html,
+    )
+
+    # The Insights page is the "Insights" tab of the Admin surface, so admins get
+    # the same top tab strip the Connectors/Consent/tool pages carry.
+    admin_tabs_html = (
+        admin_top_tabs_html(
+            client_slug=client_slug, active_tab="insights",
+            access_key=access_key, use_session=use_session,
+        )
+        if session_is_admin
+        else ""
     )
 
     flash_html = ""
@@ -341,6 +353,7 @@ def render_bigquery_settings_page(
     {sidebar_html}
     <div class="dash-main">
   <main>
+    {admin_tabs_html}
     <div class="page-head">
       <h1>{_esc(label)} — Insights</h1>
       <p class="debug-only">Budget pacing and consent health.</p>
