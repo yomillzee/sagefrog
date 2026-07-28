@@ -46,6 +46,31 @@ class MicrosoftAdsRegistrationTests(unittest.TestCase):
         self.assertEqual(handler.default_raw_dataset, "raw_microsoft_ads")
         self.assertFalse(handler.no_oauth)
 
+    def test_included_in_automated_sync(self) -> None:
+        # Without this, the cron + onboarding-backfill orchestrator never syncs
+        # Microsoft Ads (data would only land via a manual sync click).
+        import dashboard.services.bigquery_refresh_orchestrator as orch
+
+        self.assertIn("microsoft_ads", orch._SYNC_CONNECTORS)
+
+    def test_dataset_provisioning_includes_microsoft(self) -> None:
+        import client_bigquery_setup
+
+        self.assertEqual(
+            client_bigquery_setup.dataset_ids().get("microsoft"), "raw_microsoft_ads"
+        )
+
+    def test_paid_media_mart_unions_microsoft(self) -> None:
+        # The unified paid-media mart must union the microsoft raw campaign_daily
+        # so Microsoft spend reaches the dashboard Overview / totals / trend.
+        import inspect
+
+        import bigquery_warehouse
+
+        src = inspect.getsource(bigquery_warehouse.create_paid_media_mart_views)
+        self.assertIn("paid_microsoft", src)
+        self.assertIn('_dataset_id("microsoft")', src)
+
     def test_connect_prerequisites_ready(self) -> None:
         prereq = oauth_flows.connect_prerequisites("microsoft_ads")
         self.assertTrue(prereq["ready"])

@@ -366,7 +366,7 @@ def render_analytics_page(
       {{ key:'avg_engt', label:'Avg engt', numeric:true, accessor:p => p.users ? p.engagement_seconds / p.users : 0 }},
     ];
     let pagesSort = {{ key:'key_events', dir:'desc' }};
-    const PAID_SOURCE_LABELS = {{ paid_google:'Google', paid_bing:'Bing', paid_linkedin:'LinkedIn', paid_meta:'Meta', paid_facebook:'Facebook' }};
+    const PAID_SOURCE_LABELS = {{ paid_google:'Google', paid_bing:'Bing', paid_microsoft:'Microsoft', paid_linkedin:'LinkedIn', paid_meta:'Meta', paid_facebook:'Facebook' }};
     function paidLabel(src) {{
       return PAID_SOURCE_LABELS[src] || String(src).replace(/^paid_/, '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     }}

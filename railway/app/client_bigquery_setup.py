@@ -14,6 +14,7 @@ def dataset_ids() -> dict[str, str]:
         "linkedin": (os.getenv("BQ_LINKEDIN_DATASET_ID") or "raw_linkedin_ads").strip(),
         "linkedin_organic": (os.getenv("BQ_LINKEDIN_ORGANIC_DATASET_ID") or "raw_linkedin_organic").strip(),
         "meta": (os.getenv("BQ_META_DATASET_ID") or "raw_meta_ads").strip(),
+        "microsoft": (os.getenv("BQ_MICROSOFT_DATASET_ID") or "raw_microsoft_ads").strip(),
         "mart": (os.getenv("BQ_MART_DATASET_ID") or "marketing_marts").strip(),
     }
 
