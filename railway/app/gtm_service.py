@@ -13,6 +13,11 @@ _log = logging.getLogger(__name__)
 
 _GTM_BASE = "https://tagmanager.googleapis.com/tagmanager/v2"
 _CACHE_TTL = timedelta(minutes=15)
+# The account/container fan-out (one call per account) is the burst that trips
+# GTM's per-minute quota, and the wizard's "Select account" step re-fetches it on
+# every render and retry. Memoise it briefly so a single onboarding session pays
+# the fan-out at most once instead of re-tripping the 429 on each reload.
+_CONTAINERS_CACHE_TTL = timedelta(minutes=5)
 
 # GTM enforces a low per-minute quota, so a burst of calls (e.g. the connection
 # test fired repeatedly) can return 429 Too Many Requests, and Google's edge can
@@ -23,6 +28,9 @@ _RETRY_BACKOFF_SECONDS = 2
 
 # key: (client_slug, container_id) → (fetched_at, payload)
 _cache: dict[tuple[str, str], tuple[datetime, dict[str, Any]]] = {}
+
+# key: refresh_token → (fetched_at, container list) — see list_containers().
+_containers_cache: dict[str, tuple[datetime, list[dict[str, Any]]]] = {}
 
 # ── Friendly-name maps ────────────────────────────────────────────────────────
 
@@ -134,11 +142,28 @@ def _gtm_get(http: httpx.Client, url: str, access_token: str) -> httpx.Response:
     return resp
 
 
-def list_containers(refresh_token: str) -> list[dict[str, Any]]:
+def list_containers(
+    refresh_token: str, *, force_refresh: bool = False
+) -> list[dict[str, Any]]:
     """Return one entry per GTM container the token can access.
 
     Each entry: {"id": "accountId:containerId", "name": "Container (Account) • GTM-XXXXX"}
+
+    The result is cached briefly per token: this call fans out one request per
+    account, which is exactly the burst that trips GTM's per-minute quota, and the
+    wizard's "Select account" step re-fetches on every render. Serving repeats from
+    cache keeps a single onboarding session from re-tripping the 429.
     """
+    now = datetime.now(tz=UTC)
+    if not force_refresh and refresh_token in _containers_cache:
+        fetched_at, cached = _containers_cache[refresh_token]
+        if now - fetched_at < _CONTAINERS_CACHE_TTL:
+            _log.debug(
+                "GTM containers cache hit: age=%ds count=%d",
+                (now - fetched_at).seconds, len(cached),
+            )
+            return cached
+
     access_token = _get_access_token(refresh_token)
     with httpx.Client(timeout=30) as http:
         resp = _gtm_get(http, f"{_GTM_BASE}/accounts", access_token)
@@ -168,6 +193,8 @@ def list_containers(refresh_token: str) -> list[dict[str, Any]]:
                 if public_id:
                     label += f" • {public_id}"
                 containers.append({"id": f"{acct_id}:{cid}", "name": label})
+
+    _containers_cache[refresh_token] = (now, containers)
     return containers
 
 

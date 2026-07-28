@@ -81,6 +81,9 @@ class GtmRateLimitTests(unittest.TestCase):
         self.assertEqual(client.calls, 1)
         sleep.assert_not_called()
 
+    def setUp(self):
+        gtm_service._containers_cache.clear()
+
     def test_list_containers_surfaces_friendly_429(self):
         client = _FakeClient([_FakeResponse(429) for _ in range(gtm_service._MAX_ATTEMPTS)])
 
@@ -97,6 +100,91 @@ class GtmRateLimitTests(unittest.TestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 gtm_service.list_containers("refresh-tok")
         self.assertIn("rate-limiting", str(ctx.exception))
+
+
+def _cm(client):
+    class _CM:
+        def __enter__(self):
+            return client
+
+        def __exit__(self, *a):
+            return False
+
+    return _CM()
+
+
+def _accounts_fanout_responses():
+    """One account with one container — the minimal successful fan-out."""
+    return [
+        _FakeResponse(200, payload={"account": [{"accountId": "1", "name": "Acct"}]}),
+        _FakeResponse(200, payload={"container": [
+            {"containerId": "2", "name": "Cont", "publicId": "GTM-X"},
+        ]}),
+    ]
+
+
+class GtmContainerCacheTests(unittest.TestCase):
+    """list_containers fans out one request per account — the burst that trips
+    GTM's per-minute quota. The wizard re-fetches on every render, so the result
+    is cached briefly per token to keep a single session from re-tripping the 429."""
+
+    def setUp(self):
+        gtm_service._containers_cache.clear()
+
+    def test_second_call_served_from_cache_without_api_calls(self):
+        client = _FakeClient(_accounts_fanout_responses())
+        with patch.object(gtm_service, "_get_access_token", return_value="tok") as tok, \
+                patch.object(gtm_service.httpx, "Client", return_value=_cm(client)):
+            first = gtm_service.list_containers("refresh-tok")
+            second = gtm_service.list_containers("refresh-tok")
+
+        self.assertEqual(first, second)
+        self.assertEqual(first, [{"id": "1:2", "name": "Cont (Acct) • GTM-X"}])
+        # The fan-out fired exactly twice (accounts + one containers call) — the
+        # second list_containers() hit cache and issued no requests or token refresh.
+        self.assertEqual(client.calls, 2)
+        tok.assert_called_once()
+
+    def test_force_refresh_bypasses_cache(self):
+        client = _FakeClient(_accounts_fanout_responses() + _accounts_fanout_responses())
+        with patch.object(gtm_service, "_get_access_token", return_value="tok"), \
+                patch.object(gtm_service.httpx, "Client", return_value=_cm(client)):
+            gtm_service.list_containers("refresh-tok")
+            gtm_service.list_containers("refresh-tok", force_refresh=True)
+        self.assertEqual(client.calls, 4)
+
+    def test_failed_fanout_is_not_cached(self):
+        # A persistent 429 mid-fan-out must not poison the cache with a partial
+        # (or empty) list — the next attempt has to retry the real fan-out.
+        failing = _FakeClient([_FakeResponse(429) for _ in range(gtm_service._MAX_ATTEMPTS)])
+        with patch.object(gtm_service, "_get_access_token", return_value="tok"), \
+                patch.object(gtm_service.httpx, "Client", return_value=_cm(failing)), \
+                patch.object(gtm_service.time, "sleep"):
+            with self.assertRaises(RuntimeError):
+                gtm_service.list_containers("refresh-tok")
+        self.assertNotIn("refresh-tok", gtm_service._containers_cache)
+
+        ok = _FakeClient(_accounts_fanout_responses())
+        with patch.object(gtm_service, "_get_access_token", return_value="tok"), \
+                patch.object(gtm_service.httpx, "Client", return_value=_cm(ok)):
+            result = gtm_service.list_containers("refresh-tok")
+        self.assertEqual(result, [{"id": "1:2", "name": "Cont (Acct) • GTM-X"}])
+
+    def test_expired_cache_refetches(self):
+        from datetime import timedelta
+
+        client = _FakeClient(_accounts_fanout_responses() + _accounts_fanout_responses())
+        with patch.object(gtm_service, "_get_access_token", return_value="tok"), \
+                patch.object(gtm_service.httpx, "Client", return_value=_cm(client)):
+            gtm_service.list_containers("refresh-tok")
+            # Age the cache entry past its TTL and confirm the fan-out re-runs.
+            fetched_at, cached = gtm_service._containers_cache["refresh-tok"]
+            gtm_service._containers_cache["refresh-tok"] = (
+                fetched_at - gtm_service._CONTAINERS_CACHE_TTL - timedelta(seconds=1),
+                cached,
+            )
+            gtm_service.list_containers("refresh-tok")
+        self.assertEqual(client.calls, 4)
 
 
 if __name__ == "__main__":
