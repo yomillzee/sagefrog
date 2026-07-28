@@ -303,6 +303,57 @@ class MicrosoftAdsReportParsingTests(unittest.TestCase):
         self.assertEqual(report["Scope"]["AccountIds"], [12345])
         for col in ("TimePeriod", "CampaignId", "Spend", "Impressions", "Clicks", "Conversions", "Revenue"):
             self.assertIn(col, report["Columns"])
+        # Field names must be singular — the plural forms are ignored by the API,
+        # which then leaves metadata in the CSV and drops every data row.
+        self.assertTrue(report["ExcludeReportHeader"])
+        self.assertTrue(report["ExcludeReportFooter"])
+        self.assertNotIn("ExcludeReportHeaders", report)
+        self.assertNotIn("ExcludeReportFooters", report)
+
+    def test_parse_report_csv_skips_metadata_preamble(self) -> None:
+        """Regression: even if the CSV carries a report-metadata preamble, the
+        parser must locate the real column-header row (not drop every data row)."""
+        import io
+        import zipfile
+        from unittest import mock
+
+        import microsoft_ads_service as svc
+
+        csv_text = (
+            '"Report Name: Campaign Performance Report"\n'
+            '"Report Time: 1/1/2026-1/2/2026"\n'
+            '"Report Aggregation: Daily"\n'
+            "\n"
+            "TimePeriod,CampaignId,CampaignName,Spend,Impressions,Clicks,Conversions,Revenue\n"
+            "1/1/2026,222,Search,20.00,2000,80,4,300.00\n"
+            '"©2026 Microsoft Corporation"\n'
+        )
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("report.csv", csv_text)
+        zipped = buf.getvalue()
+
+        class _Resp:
+            status_code = 200
+            content = zipped
+
+        class _Client:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def get(self, *a, **k):
+                return _Resp()
+
+        with mock.patch.object(svc.httpx, "Client", return_value=_Client()):
+            rows = svc._parse_report_csv("https://dl/report", account_id="222")
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["campaign_id"], "222")
+        self.assertEqual(rows[0]["metric_date"], "2026-01-01")
+        self.assertEqual(rows[0]["spend"], 20.0)
 
 
 if __name__ == "__main__":

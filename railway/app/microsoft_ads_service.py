@@ -193,8 +193,13 @@ def fetch_campaign_daily_metrics(
         "ReportName": "SagefrogCampaignPerformanceDaily",
         "Format": "Csv",
         "Aggregation": "Daily",
-        "ExcludeReportHeaders": True,
-        "ExcludeReportFooters": True,
+        # Field names are singular (ExcludeReportHeader / ExcludeReportFooter).
+        # The plural forms are silently ignored by the API, which then leaves the
+        # metadata header block in the CSV and makes csv.DictReader read a metadata
+        # line as the column headers — dropping every data row (0 rows loaded).
+        "ExcludeReportHeader": True,
+        "ExcludeReportFooter": True,
+        "ExcludeColumnHeaders": False,
         "ReturnOnlyCompleteData": False,
         "Columns": [
             "TimePeriod",
@@ -220,9 +225,19 @@ def fetch_campaign_daily_metrics(
     if not report_request_id:
         raise RuntimeError("Microsoft Advertising reporting did not return a ReportRequestId.")
 
+    _log.info(
+        "Microsoft Ads report submitted [account=%s customer=%s range=%s→%s] request_id=%s",
+        account_id, customer_id, start.isoformat(), end.isoformat(), report_request_id,
+    )
     download_url = _poll_for_report(report_request_id, headers)
     if not download_url:
-        # Status resolved to Success with no data (no spend in range) — not an error.
+        # Status resolved to Success with no download URL — Microsoft returns this
+        # when the report has no data in range. Log it so a genuinely-empty account
+        # is distinguishable from a parse/scope problem.
+        _log.info(
+            "Microsoft Ads report returned no download URL (no data in range) [account=%s range=%s→%s]",
+            account_id, start.isoformat(), end.isoformat(),
+        )
         return []
     return _parse_report_csv(download_url, account_id=str(account_id))
 
@@ -260,13 +275,33 @@ def _parse_report_csv(download_url: str, *, account_id: str) -> list[dict[str, A
         with zipfile.ZipFile(io.BytesIO(content)) as zf:
             name = next((n for n in zf.namelist() if n.lower().endswith(".csv")), None)
             if not name:
+                _log.warning("Microsoft Ads report zip had no .csv member (names=%s)", zf.namelist())
                 return []
             text = zf.read(name).decode("utf-8-sig", errors="replace")
     else:
         text = content.decode("utf-8-sig", errors="replace")
 
+    # Locate the column-header row. With ExcludeReportHeader the CSV starts with
+    # the column headers, but be defensive: some reports still carry a metadata
+    # preamble ("Report Name", "Report Time", …). Skip lines until we find the
+    # row that actually names the columns, so DictReader keys on the right header
+    # instead of a metadata line (which would silently drop every data row).
+    all_lines = text.splitlines()
+    header_idx = None
+    for i, line in enumerate(all_lines):
+        low = line.lower()
+        if "campaignid" in low.replace('"', "").replace(" ", "") and "timeperiod" in low.replace('"', "").replace(" ", ""):
+            header_idx = i
+            break
+    if header_idx is None:
+        _log.warning(
+            "Microsoft Ads report: no column-header row found (first line: %r). Parsed 0 rows.",
+            (all_lines[0] if all_lines else "")[:200],
+        )
+        return []
+
     rows: list[dict[str, Any]] = []
-    reader = csv.DictReader(io.StringIO(text))
+    reader = csv.DictReader(io.StringIO("\n".join(all_lines[header_idx:])))
     for raw in reader:
         metric_date = _parse_report_date(raw.get("TimePeriod") or raw.get("GregorianDate") or "")
         campaign_id = str(raw.get("CampaignId") or "").strip()
@@ -284,6 +319,10 @@ def _parse_report_csv(download_url: str, *, account_id: str) -> list[dict[str, A
             "conversions": _to_float(raw.get("Conversions")),
             "conversion_value": _to_float(raw.get("Revenue")),
         })
+    _log.info(
+        "Microsoft Ads report parsed: %d data row(s) from %d CSV line(s) [account=%s]",
+        len(rows), max(0, len(all_lines) - header_idx - 1), account_id,
+    )
     return rows
 
 
