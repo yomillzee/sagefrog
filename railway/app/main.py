@@ -2869,6 +2869,44 @@ async def oauth_callback(
     return RedirectResponse(url=f"{dest}{sep}oauth_connected={quote(slug)}", status_code=303)
 
 
+def _register_microsoft_ads_callback() -> None:
+    """Mount the Microsoft Ads OAuth callback at the exact path Google redirects to.
+
+    The generic ``/oauth/{platform}/callback`` route already handles
+    ``/oauth/microsoft_ads/callback``. But MICROSOFT_ADS_REDIRECT_URI can point
+    anywhere (it must match what's registered in the Google Cloud console), so if
+    it resolves to a different path we mount an explicit alias there too — that
+    way Google's redirect never 404s regardless of how the URI is configured.
+    """
+    try:
+        path = oauth_flows.microsoft_ads_callback_path()
+    except Exception:
+        return
+    if not path or path == "/oauth/microsoft_ads/callback":
+        return  # already served by the generic parameterized route
+
+    async def _ms_ads_callback_alias(
+        request: Request,
+        code: str | None = None,
+        state: str | None = None,
+        error: str | None = None,
+        error_description: str | None = None,
+    ):
+        return await oauth_callback(
+            "microsoft_ads",
+            request,
+            code=code,
+            state=state,
+            error=error,
+            error_description=error_description,
+        )
+
+    app.add_api_route(path, _ms_ads_callback_alias, methods=["GET"], include_in_schema=False)
+
+
+_register_microsoft_ads_callback()
+
+
 @app.post(
     "/oauth/{platform}/disconnect",
     summary="Remove stored OAuth token (admin)",

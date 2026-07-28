@@ -252,6 +252,7 @@ at rest** (Fernet) in `oauth_credentials`.
 | **Google Ads** | `google-ads` | OAuth refresh token | GAQL queries, account listing, YouTube asset discovery, daily backfill |
 | **LinkedIn** | `httpx` | OAuth refresh token | Campaign/creative performance, video URLs, daily backfill; version via `LINKEDIN_VERSION` |
 | **Meta (Facebook)** | `httpx` (Graph API) | System-user token via OAuth | Campaign/ad-set insights, creative assets; needs `ads_read` + `business_management` |
+| **Microsoft Ads (Bing)** | `httpx` (REST v13) | Google OAuth (`IdentityProvider: Google`) + developer token | Customer Management account listing, CampaignPerformanceReport daily sync into `raw_microsoft_ads`; connect per-client via the connector wizard |
 | **GA4 / BigQuery** | `google-cloud-bigquery` | GCP service account (per-client or global) | Raw SQL over GA4 events export, daily aggregation; multi-project via `GA4_CLIENTS` |
 | **Indeed** | `httpx` | Client-credentials OAuth | Job postings, registration analytics |
 | **Harvest** | `httpx` | OAuth refresh token (agency-wide) | Time-tracking hours by client → the admin **Client Hours** burn-up page (`/admin/client-hours`); connect once under Admin → Platform connections |

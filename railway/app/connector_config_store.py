@@ -11,7 +11,7 @@ import db
 import web_users
 
 VALID_CONNECTOR_TYPES = frozenset(
-    {"linkedin_ads", "meta_ads", "google_ads", "ga4", "gsc", "hubspot", "circle", "gtm", "semrush", "pagespeed"}
+    {"linkedin_ads", "meta_ads", "google_ads", "microsoft_ads", "ga4", "gsc", "hubspot", "circle", "gtm", "semrush", "pagespeed"}
 )
 
 SCHEMA_SQL_STATEMENTS = [
