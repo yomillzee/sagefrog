@@ -211,6 +211,17 @@ try:
     except Exception as _seg_exc:
         import sys as _sys
         print(f"WARNING: client config backfill failed: {_seg_exc}", file=_sys.stderr)
+    # Built-in demo client: an always-available dashboard populated entirely
+    # with synthetic sample data (no GCP project / connectors / live data), for
+    # pitching prospects, walking clients through the portal, and training
+    # staff. Idempotent; opt out with DEMO_CLIENT_ENABLED=0. Never fatal.
+    try:
+        import demo_client
+        if demo_client.seed_demo_client():
+            print(f"Startup: demo client '{demo_client.DEMO_SLUG}' ready.")
+    except Exception as _demo_exc:
+        import sys as _sys
+        print(f"WARNING: demo client seed failed: {_demo_exc}", file=_sys.stderr)
     business_line_rules.ensure_schema()
     client_insight_documents.ensure_schema()
     oauth_store.ensure_schema()

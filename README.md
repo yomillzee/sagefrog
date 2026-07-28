@@ -399,3 +399,7 @@ python -m unittest tests.test_web_security
   environment-variable reference, technical-debt notes, and risk register.
 - [`docs/CREATING_A_NEW_DASHBOARD.md`](docs/CREATING_A_NEW_DASHBOARD.md) — how to onboard
   a new client dashboard.
+- [`docs/DEMO_CLIENT.md`](docs/DEMO_CLIENT.md) — the built-in **demo client**: a
+  fully-populated dashboard backed entirely by synthetic sample data (no GCP
+  project, connectors, or live data) for pitching prospects, walking clients
+  through the portal, and training staff.
