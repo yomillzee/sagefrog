@@ -73,6 +73,13 @@ def _load_bq_test_config(slug: str) -> tuple[str, str]:
         row = cdc.get_config(slug)
     except Exception:
         row = None
+    # The demo client has no GCP project by design — its data is synthetic and
+    # served by demo_data via _cached_bq_read (which short-circuits before any
+    # BigQuery read). Return a placeholder destination so the endpoint proceeds
+    # to that short-circuit instead of 503-ing on the missing project.
+    import demo_client
+    if demo_client.is_demo(slug):
+        return "demo", "marketing_marts"
     if row is None:
         raise HTTPException(status_code=404, detail=f"No dashboard configured for client '{slug}'.")
     project_id = (row.gcp_project_id or "").strip()
@@ -109,6 +116,18 @@ def _cached_bq_read(source: str, payload: dict, *, ttl_seconds: int, fetch) -> d
     immediately rather than after the TTL. `source` should be namespaced
     "{client_slug}.{thing}" so invalidation only clears that client's cache.
     """
+    # Demo client short-circuit: serve deterministic synthetic data instead of
+    # querying BigQuery. Every panel funnels through this helper with a source
+    # of the form "{slug}.{thing}", so this single hook populates the entire
+    # demo dashboard (and any future panel that reuses this helper) with no GCP
+    # project, connectors, or live data. See demo_data / demo_client.
+    import demo_client
+    _slug = source.split(".", 1)[0]
+    if demo_client.is_demo(_slug):
+        import demo_data
+        _key = source.split(".", 1)[1] if "." in source else ""
+        return demo_data.generate(_key, payload)
+
     import db_cache
     # Optional global TTL floor. These BQ tables only change on a sync, which
     # invalidates the cache immediately (see invalidate_prefix), so a longer TTL
