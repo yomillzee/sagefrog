@@ -60,20 +60,25 @@ _MICROSOFT_CAMPAIGNS = [
     ("3100000003", "NWH | Bing | Urgent Care"),
 ]
 
+# (ad_id, ad_name, campaign_name, adset_name). Meta's hierarchy in the explorer
+# is campaign → ad set (shown as the "ad group") → ad.
 _META_ADS = [
-    ("6100000001", "Employer Benefits — Carousel"),
-    ("6100000002", "Telehealth Launch — Video"),
-    ("6100000003", "Flu Season — Single Image"),
-    ("6100000004", "Occupational Health — Lead Form"),
-    ("6100000005", "Urgent Care Near You — Story"),
+    ("6100000001", "Employer Benefits — Carousel", "NWH | Prospecting", "Employers 35-54"),
+    ("6100000002", "Telehealth Launch — Video", "NWH | Prospecting", "Lookalike — Leads 1%"),
+    ("6100000003", "Flu Season — Single Image", "NWH | Prospecting", "Interest — Occupational Health"),
+    ("6100000004", "Occupational Health — Lead Form", "NWH | Retargeting", "Site Visitors 30d"),
+    ("6100000005", "Urgent Care Near You — Story", "NWH | Retargeting", "Lead Form Openers"),
 ]
 
+# (creative_id, creative_name, campaign_group_name, campaign_name). LinkedIn's
+# hierarchy is campaign group (shown as the campaign) → campaign (shown as the
+# "ad group") → creative (the ad).
 _LINKEDIN_CREATIVES = [
-    ("7100000001", "Employer Health Partnerships — Sponsored"),
-    ("7100000002", "Whitepaper: Workforce Wellness ROI"),
-    ("7100000003", "Webinar: Reducing Absenteeism"),
-    ("7100000004", "Case Study: Regional Manufacturer"),
-    ("7100000005", "Telehealth for Teams — Video"),
+    ("7100000001", "Employer Health Partnerships — Sponsored", "NWH | Employer Solutions", "Sponsored Content — HR Leaders"),
+    ("7100000002", "Whitepaper: Workforce Wellness ROI", "NWH | Employer Solutions", "Sponsored Content — HR Leaders"),
+    ("7100000003", "Webinar: Reducing Absenteeism", "NWH | Employer Solutions", "Message Ads — Benefits Managers"),
+    ("7100000004", "Case Study: Regional Manufacturer", "NWH | Thought Leadership", "Single Image — Case Study"),
+    ("7100000005", "Telehealth for Teams — Video", "NWH | Thought Leadership", "Video — Telehealth for Teams"),
 ]
 
 _KEYWORDS = [
@@ -98,6 +103,20 @@ _PAGES = [
     ("/resources/workforce-wellness", "Workforce Wellness Guide", "Resources"),
     ("/careers", "Careers", "Company"),
     ("/", "Homepage", "Home"),
+]
+
+# A fuller Search Console query set — the GSC panel lists up to ~25 top queries.
+_GSC_QUERIES = [
+    "northwind health", "occupational health near me", "urgent care philadelphia",
+    "employer telehealth services", "pre employment physical", "workplace flu clinic",
+    "walk in clinic near me", "virtual doctor visit", "workforce wellness program",
+    "same day physical exam", "dot physical near me", "drug screening for employers",
+    "occupational medicine clinic", "urgent care wait times", "employee health services",
+    "telehealth for small business", "flu shot clinic for employers", "on site health screening",
+    "workers comp injury care", "return to work exam", "respirator fit testing",
+    "hearing test occupational", "corporate wellness provider", "northwind urgent care hours",
+    "employee physical exam cost", "b2b healthcare services", "northwind telehealth login",
+    "occupational health philadelphia",
 ]
 
 _CHANNELS = ["Organic Search", "Paid Search", "Direct", "Organic Social", "Referral", "Paid Social", "Email"]
@@ -309,8 +328,8 @@ def _build_top_campaigns(start: date, end: date, limit: int) -> list[dict]:
     catalog = (
         [("google", cid, name) for cid, name in _GOOGLE_CAMPAIGNS]
         + [("microsoft", cid, name) for cid, name in _MICROSOFT_CAMPAIGNS]
-        + [("meta", cid, name) for cid, name in _META_ADS]
-        + [("linkedin", cid, name) for cid, name in _LINKEDIN_CREATIVES]
+        + [("meta", cid, name) for cid, name, *_ in _META_ADS]
+        + [("linkedin", cid, name) for cid, name, *_ in _LINKEDIN_CREATIVES]
     )
     rows = []
     for source, cid, name in catalog:
@@ -752,14 +771,17 @@ def _build_linkedin_explorer(payload: dict) -> dict:
     days = max(1, (end - start).days + 1)
     rows = []
     media_cycle = ["SINGLE_IMAGE", "VIDEO", "CAROUSEL", "SINGLE_IMAGE", "DOCUMENT"]
-    for idx, (crid, name) in enumerate(_LINKEDIN_CREATIVES):
+    for idx, (crid, name, group_name, adgroup_name) in enumerate(_LINKEDIN_CREATIVES):
         m = _explorer_metrics(crid, days, 30.0 + 55 * _u(crid, "b"), 9.0, 0.006, 0.03)
         media = media_cycle[idx % len(media_cycle)]
         rows.append({
             "creative_id": crid, "creative_name": name, "media_type": media,
             "thumbnail_url": None, "image_url": None,
             "video_url": f"https://media.example/{crid}.mp4" if media == "VIDEO" else None,
-            "campaign_group_name": "NWH | Employer Solutions",
+            # campaign_group_name = the LinkedIn campaign (top level); campaign_name
+            # is the campaign the explorer surfaces as the "ad group".
+            "campaign_group_name": group_name,
+            "campaign_name": adgroup_name,
             **m,
         })
     rows.sort(key=lambda r: r["spend"], reverse=True)
@@ -772,10 +794,13 @@ def _build_meta_explorer(payload: dict) -> dict:
     days = max(1, (end - start).days + 1)
     rows = []
     media_cycle = ["IMAGE", "VIDEO", "CAROUSEL", "IMAGE", "VIDEO"]
-    for idx, (adid, name) in enumerate(_META_ADS):
+    for idx, (adid, name, campaign_name, adset_name) in enumerate(_META_ADS):
         m = _explorer_metrics(adid, days, 24.0 + 45 * _u(adid, "b"), 1.4, 0.018, 0.037)
         rows.append({
-            "ad_id": adid, "ad_name": name, "campaign_name": "NWH | Prospecting",
+            "ad_id": adid, "ad_name": name,
+            "campaign_name": campaign_name,
+            # The explorer surfaces the Meta ad set as the "ad group".
+            "adset_name": adset_name,
             "media_type": media_cycle[idx % len(media_cycle)],
             "thumbnail_url": None, "image_url": None,
             **m,
@@ -794,7 +819,7 @@ def _build_meta_verified(payload: dict) -> dict:
     events = _verified_events_catalog()
     by_ad_id: dict[str, dict] = {}
     by_ad_id_event: dict[str, dict] = {}
-    for adid, name in _META_ADS:
+    for adid, name, *_ in _META_ADS:
         total = int((3 + 40 * _u("mv", adid)) * days / 10)
         by_ad_id[adid] = {"ad_name": name, "verified_conversions": total}
         by_ad_id_event[adid] = {ev: int(total * (0.2 + 0.5 * _u("mve", adid, ev))) for ev in events}
@@ -859,28 +884,30 @@ def _build_gsc_summary(payload: dict) -> dict:
         "prior_ctr": _round2(prior_clicks / prior_impr * 100) if prior_impr else 0.0,
         "prior_avg_position": _round2(avg_pos * (1.0 + 0.1 * _u("gscpp"))),
     }
-    queries = [
-        "northwind health", "occupational health near me", "urgent care philadelphia",
-        "employer telehealth services", "pre employment physical", "workplace flu clinic",
-        "walk in clinic", "virtual doctor visit", "workforce wellness program", "same day physical",
-    ]
     top_queries = []
-    for q in queries:
+    for q in _GSC_QUERIES:
         impressions = int(400 + 6000 * _u("gscq", q))
         ctr = 0.02 + 0.06 * _u("gscqc", q)
         clicks = int(impressions * ctr)
         pos = _round2(1 + 20 * _u("gscqp", q))
+        prior_pos = _round2(pos * (1 + 0.12 * (_u("gscqpp", q) - 0.5) * 2))
         top_queries.append({"query": q, "clicks": clicks, "impressions": impressions,
                            "ctr": _round2(ctr * 100), "avg_position": pos,
-                           "prior_avg_position": _round2(pos * (1 + 0.12 * _u("gscqpp", q)))})
+                           "prior_avg_position": prior_pos,
+                           # Δ position vs prior period (positive = improved/rose).
+                           "delta_position": _round2(prior_pos - pos)})
     top_queries.sort(key=lambda r: r["clicks"], reverse=True)
     top_pages = []
-    for path, _topic, _group in _PAGES:
+    for path, topic, _group in _PAGES:
         impressions = int(300 + 5000 * _u("gscpg", path))
         ctr = 0.02 + 0.06 * _u("gscpgc", path)
         clicks = int(impressions * ctr)
-        top_pages.append({"page": f"{_SITE_URL.rstrip('/')}{path}", "clicks": clicks,
-                         "impressions": impressions, "ctr": _round2(ctr * 100),
+        # The Search Console pages table renders the `page_url` column; give it a
+        # real, recognizable page URL (with a friendly page name alongside).
+        top_pages.append({"page_url": f"{_SITE_URL.rstrip('/')}{path}",
+                         "page": f"{_SITE_URL.rstrip('/')}{path}", "page_name": topic,
+                         "clicks": clicks, "impressions": impressions,
+                         "ctr": _round2(ctr * 100),
                          "avg_position": _round2(1 + 18 * _u("gscpgp", path))})
     top_pages.sort(key=lambda r: r["clicks"], reverse=True)
     return {"kpis": kpis, "daily": daily, "top_queries": top_queries, "top_pages": top_pages}
@@ -891,7 +918,11 @@ def _build_gsc_keyword_matches(payload: dict) -> list[dict]:
     start, end = _dates(payload)
     terms = payload.get("terms") or []
     base_terms = [t for t in terms] if isinstance(terms, list) else []
-    queries = base_terms or ["northwind health", "northwind urgent care", "northwind telehealth"]
+    queries = base_terms or [
+        "northwind health", "northwind urgent care", "northwind telehealth",
+        "northwind occupational health", "northwind health philadelphia",
+        "northwind health login", "northwind health locations", "northwind clinic near me",
+    ]
     rows = []
     for q in queries:
         impressions = int(200 + 4000 * _u("kmq", q))

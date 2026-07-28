@@ -359,6 +359,17 @@ def render_bigquery_dashboard_page(
     except Exception:
         has_connectors = True
         has_paid_ads = True
+    # The demo client has no real connectors (its data is synthetic), so the
+    # connector probe above would flag it as un-onboarded and show the "set up
+    # connectors" card while hiding the paid panels. Treat it as fully connected
+    # so the demo Overview renders complete, with no setup card.
+    try:
+        import demo_client
+        if demo_client.is_demo(client_slug) or demo_client.is_demo(api_client_key):
+            has_connectors = True
+            has_paid_ads = True
+    except Exception:
+        pass
     # Search Console branded roots + target keywords (client-configurable), used
     # by the "Branded & Target Keywords" section. Stored one per line.
     gsc_branded_roots = ""
