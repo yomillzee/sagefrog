@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
+
+_log = logging.getLogger(__name__)
 
 
 _DEFAULT_LINKEDIN_DATASET = "raw_linkedin_ads"
@@ -458,6 +461,9 @@ def _microsoft_ad_daily_schema() -> list[Any]:
         S("title_part_3", "STRING", mode="NULLABLE"),
         S("description_1", "STRING", mode="NULLABLE"),
         S("description_2", "STRING", mode="NULLABLE"),
+        # Full RSA asset lists (JSON string arrays) from Campaign Management.
+        S("headlines", "STRING", mode="NULLABLE"),
+        S("descriptions", "STRING", mode="NULLABLE"),
         S("path_1", "STRING", mode="NULLABLE"),
         S("path_2", "STRING", mode="NULLABLE"),
         S("display_url", "STRING", mode="NULLABLE"),
@@ -487,6 +493,18 @@ def mirror_microsoft_ad_daily_batch(account_id: str, rows: list[dict[str, Any]])
     table.time_partitioning = bigquery.TimePartitioning(field="metric_date")
     table.clustering_fields = ["source", "account_id", "campaign_id", "ad_group_id"]
     client.create_table(table, exists_ok=True)
+    # Add any columns an already-existing table lacks (e.g. headlines/descriptions
+    # added after the table was first created) — create_table(exists_ok) never
+    # alters schema, and the MERGE below would fail on the missing columns.
+    try:
+        existing = client.get_table(table_id)
+        existing_cols = {f.name for f in existing.schema}
+        missing = [f for f in schema if f.name not in existing_cols]
+        if missing:
+            existing.schema = list(existing.schema) + missing
+            client.update_table(existing, ["schema"])
+    except Exception:
+        _log.warning("Microsoft ad_daily schema sync skipped for %s", table_id, exc_info=True)
 
     synced_at = datetime.now(timezone.utc).isoformat()
     cols = [f.name for f in schema]
@@ -512,6 +530,8 @@ def mirror_microsoft_ad_daily_batch(account_id: str, rows: list[dict[str, Any]])
             "title_part_3": row.get("title_part_3"),
             "description_1": row.get("description_1"),
             "description_2": row.get("description_2"),
+            "headlines": row.get("headlines"),
+            "descriptions": row.get("descriptions"),
             "path_1": row.get("path_1"),
             "path_2": row.get("path_2"),
             "display_url": row.get("display_url"),
@@ -596,6 +616,8 @@ def create_microsoft_ads_mart_view() -> dict[str, Any]:
           title_part_3,
           description_1,
           description_2,
+          headlines,
+          descriptions,
           path_1,
           path_2,
           display_url,
@@ -621,6 +643,8 @@ def create_microsoft_ads_mart_view() -> dict[str, Any]:
           CAST(NULL AS STRING) AS title_part_3,
           CAST(NULL AS STRING) AS description_1,
           CAST(NULL AS STRING) AS description_2,
+          CAST(NULL AS STRING) AS headlines,
+          CAST(NULL AS STRING) AS descriptions,
           CAST(NULL AS STRING) AS path_1,
           CAST(NULL AS STRING) AS path_2,
           CAST(NULL AS STRING) AS display_url,

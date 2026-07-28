@@ -42,11 +42,22 @@ _log = logging.getLogger(__name__)
 _PROD = {
     "customer": "https://clientcenter.api.bingads.microsoft.com/CustomerManagement/v13",
     "reporting": "https://reporting.api.bingads.microsoft.com/Reporting/v13",
+    "campaign": "https://campaign.api.bingads.microsoft.com/CampaignManagement/v13",
 }
 _SANDBOX = {
     "customer": "https://clientcenter.api.sandbox.bingads.microsoft.com/CustomerManagement/v13",
     "reporting": "https://reporting.api.sandbox.bingads.microsoft.com/Reporting/v13",
+    "campaign": "https://campaign.api.sandbox.bingads.microsoft.com/CampaignManagement/v13",
 }
+
+# Text ad types whose creative copy we surface in the Campaign Explorer. The
+# reporting API only returns the *served* title parts (blank for RSAs), so the
+# full headline/description asset lists come from Campaign Management instead.
+_TEXT_AD_TYPES = ["ResponsiveSearch", "ExpandedText", "Text", "DynamicSearch"]
+# Cap how many ad groups we pull creative for per sync, so a very large account
+# can't turn one sync into thousands of metadata calls. Ad groups are visited
+# spend-first, so the highest-spend creatives are always covered.
+_MAX_AD_GROUPS_FOR_ASSETS = 300
 
 
 def _endpoints() -> dict[str, str]:
@@ -340,6 +351,87 @@ def fetch_ad_daily_metrics(
             "conversion_value": _to_float(raw.get("Revenue")),
         })
     return out
+
+
+def fetch_ad_assets(
+    account_id: str,
+    ad_group_ids: list[str],
+    *,
+    access_token: str,
+    customer_id: str,
+) -> dict[str, dict[str, Any]]:
+    """Return {ad_id: {headlines, descriptions, path_1, path_2, final_url, ad_type}}.
+
+    Uses Campaign Management GetAdsByAdGroupId to fetch the full creative copy the
+    reporting API can't provide (RSA headline/description asset lists). Best-effort
+    and bounded: a per-ad-group failure is logged and skipped, and at most
+    _MAX_AD_GROUPS_FOR_ASSETS ad groups are visited so a huge account can't blow up
+    one sync. Callers should pass ad_group_ids ordered spend-first.
+    """
+    headers = _headers(access_token, customer_id=customer_id, account_id=str(account_id))
+    url = f"{_endpoints()['campaign']}/Ads/QueryByAdGroupId"
+    out: dict[str, dict[str, Any]] = {}
+    seen_groups = 0
+    for ag_id in dict.fromkeys(str(g).strip() for g in ad_group_ids if str(g).strip()):
+        if seen_groups >= _MAX_AD_GROUPS_FOR_ASSETS:
+            _log.info("Microsoft Ads creative fetch capped at %d ad groups", _MAX_AD_GROUPS_FOR_ASSETS)
+            break
+        seen_groups += 1
+        try:
+            data = _post(url, headers, {"AdGroupId": int(ag_id), "AdTypes": _TEXT_AD_TYPES})
+        except Exception as exc:
+            _log.warning("Microsoft Ads GetAdsByAdGroupId failed [ad_group=%s]: %s", ag_id, exc)
+            continue
+        for ad in data.get("Ads") or []:
+            ad_id = str((ad or {}).get("Id") or "").strip()
+            if not ad_id:
+                continue
+            out[ad_id] = _extract_ad_assets(ad)
+    _log.info(
+        "Microsoft Ads creative fetched for %d ad(s) across %d ad group(s) [account=%s]",
+        len(out), seen_groups, account_id,
+    )
+    return out
+
+
+def _asset_texts(links: Any) -> list[str]:
+    """Pull the .Asset.Text values out of a ResponsiveSearchAd asset-link array."""
+    texts: list[str] = []
+    for link in links or []:
+        asset = (link or {}).get("Asset") or {}
+        text = str(asset.get("Text") or "").strip()
+        if text:
+            texts.append(text)
+    return texts
+
+
+def _extract_ad_assets(ad: dict[str, Any]) -> dict[str, Any]:
+    """Normalize any text ad type into {headlines[], descriptions[], path_1, path_2,
+    final_url, ad_type}."""
+    ad_type = str(ad.get("Type") or "").strip()
+    finals = ad.get("FinalUrls") or []
+    final_url = str(finals[0]).strip() if finals else str(ad.get("DestinationUrl") or "").strip()
+    headlines: list[str] = []
+    descriptions: list[str] = []
+    if ad.get("Headlines") or ad.get("Descriptions"):
+        # Responsive search ad — full asset lists.
+        headlines = _asset_texts(ad.get("Headlines"))
+        descriptions = _asset_texts(ad.get("Descriptions"))
+    else:
+        # Expanded/standard text ad — assemble from the discrete title/text parts.
+        headlines = [
+            str(ad.get(k) or "").strip()
+            for k in ("TitlePart1", "TitlePart2", "TitlePart3", "Title")
+        ]
+        descriptions = [str(ad.get(k) or "").strip() for k in ("Text", "TextPart2")]
+    return {
+        "ad_type": ad_type,
+        "headlines": [h for h in headlines if h],
+        "descriptions": [d for d in descriptions if d],
+        "path_1": str(ad.get("Path1") or "").strip(),
+        "path_2": str(ad.get("Path2") or "").strip(),
+        "final_url": final_url,
+    }
 
 
 def _run_report(

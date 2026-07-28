@@ -2677,8 +2677,10 @@ def render_bigquery_dashboard_page(
       // data syncs, the rows are campaign-grain (ad fields blank) and collapse to
       // a single campaign node. No GA4 verified mapping for Bing → verified "—".
       for (const r of (microsoft&&microsoft.rows?microsoft.rows:[])) {{
-        const heads=[r.title_part_1,r.title_part_2,r.title_part_3].filter(Boolean);
-        const descs=[r.description_1,r.description_2].filter(Boolean);
+        // Prefer the full RSA asset lists (JSON from Campaign Management); fall
+        // back to the served title parts when creative copy hasn't synced.
+        const heads=r.headlines||[r.title_part_1,r.title_part_2,r.title_part_3].filter(Boolean);
+        const descs=r.descriptions||[r.description_1,r.description_2].filter(Boolean);
         out.push({{platform:'microsoft',campaign_id:r.campaign_id,campaign_name:r.campaign_name,ad_group_name:r.ad_group_name||'',ad_id:r.ad_id,ad_label:r.ad_title||r.title_part_1||'',ad_name:r.ad_title||'',headlines:heads,descriptions:descs,headline_1:r.title_part_1,headline_2:r.title_part_2,headline_3:r.title_part_3,description_1:r.description_1,description_2:r.description_2,final_url:r.final_url,ad_type:r.ad_type,media_type:r.ad_type||'',thumbnail_url:'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions),_verifiedNa:true}});
       }}
       return out;

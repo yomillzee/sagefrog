@@ -465,5 +465,82 @@ class MicrosoftAdsAdReportTests(unittest.TestCase):
             self.assertIn(col, report["Columns"])
 
 
+class MicrosoftAdsCreativeAssetTests(unittest.TestCase):
+    def test_extract_rsa_assets(self) -> None:
+        import microsoft_ads_service as svc
+
+        ad = {
+            "Type": "ResponsiveSearchAd", "Id": "1",
+            "Headlines": [{"Asset": {"Text": "H1"}}, {"Asset": {"Text": "H2"}}, {"Asset": {"Text": ""}}],
+            "Descriptions": [{"Asset": {"Text": "D1"}}],
+            "Path1": "p1", "Path2": "p2", "FinalUrls": ["https://x.com/a"],
+        }
+        a = svc._extract_ad_assets(ad)
+        self.assertEqual(a["headlines"], ["H1", "H2"])
+        self.assertEqual(a["descriptions"], ["D1"])
+        self.assertEqual(a["path_1"], "p1")
+        self.assertEqual(a["final_url"], "https://x.com/a")
+
+    def test_extract_expanded_text_ad_assets(self) -> None:
+        import microsoft_ads_service as svc
+
+        ad = {
+            "Type": "ExpandedTextAd", "Id": "2",
+            "TitlePart1": "T1", "TitlePart2": "T2", "TitlePart3": "",
+            "Text": "TX", "TextPart2": "TX2", "FinalUrls": ["https://y.com"],
+        }
+        a = svc._extract_ad_assets(ad)
+        self.assertEqual(a["headlines"], ["T1", "T2"])
+        self.assertEqual(a["descriptions"], ["TX", "TX2"])
+        self.assertEqual(a["final_url"], "https://y.com")
+
+    def test_fetch_ad_assets_queries_campaign_management(self) -> None:
+        from unittest import mock
+
+        import microsoft_ads_service as svc
+
+        captured: dict = {}
+
+        def fake_post(url, headers, body):
+            captured.setdefault("urls", []).append(url)
+            captured.setdefault("bodies", []).append(body)
+            return {"Ads": [{"Type": "ResponsiveSearchAd", "Id": "900",
+                             "Headlines": [{"Asset": {"Text": "Buy Scrubs"}}],
+                             "Descriptions": [{"Asset": {"Text": "Fast ship"}}]}]}
+
+        with mock.patch.object(svc, "_post", side_effect=fake_post):
+            out = svc.fetch_ad_assets("999", ["50"], access_token="t", customer_id="c")
+
+        self.assertIn("900", out)
+        self.assertEqual(out["900"]["headlines"], ["Buy Scrubs"])
+        self.assertTrue(captured["urls"][0].endswith("/Ads/QueryByAdGroupId"))
+        self.assertEqual(captured["bodies"][0]["AdGroupId"], 50)
+
+    def test_enrich_ad_copy_merges_headlines_json(self) -> None:
+        import json
+
+        import connectors.microsoft_ads as mod
+
+        ad_rows = [
+            {"ad_id": "900", "ad_group_id": "50", "spend": 9.0},
+            {"ad_id": "901", "ad_group_id": "50", "spend": 1.0},
+        ]
+
+        class _Svc:
+            def fetch_ad_assets(self, account_id, group_ids, *, access_token, customer_id):
+                # highest-spend ad group visited first
+                assert group_ids[0] == "50"
+                return {"900": {"headlines": ["A", "B"], "descriptions": ["C"],
+                                "final_url": "https://z.com", "path_1": "", "path_2": "",
+                                "ad_type": "ResponsiveSearchAd"}}
+
+        mod._enrich_ad_copy(_Svc(), ad_rows, account_id="999", access_token="t", customer_id="c")
+        self.assertEqual(json.loads(ad_rows[0]["headlines"]), ["A", "B"])
+        self.assertEqual(json.loads(ad_rows[0]["descriptions"]), ["C"])
+        self.assertEqual(ad_rows[0]["final_url"], "https://z.com")
+        # Ad with no matching creative is left unchanged (no headlines key).
+        self.assertNotIn("headlines", ad_rows[1])
+
+
 if __name__ == "__main__":
     unittest.main()

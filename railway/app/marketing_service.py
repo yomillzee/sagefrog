@@ -536,6 +536,8 @@ def fetch_microsoft_explorer(
       ANY_VALUE(title_part_3) AS title_part_3,
       ANY_VALUE(description_1) AS description_1,
       ANY_VALUE(description_2) AS description_2,
+      ANY_VALUE(headlines) AS headlines,
+      ANY_VALUE(descriptions) AS descriptions,
       ANY_VALUE(path_1) AS path_1,
       ANY_VALUE(path_2) AS path_2,
       ANY_VALUE(display_url) AS display_url,
