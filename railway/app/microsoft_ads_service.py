@@ -218,6 +218,145 @@ def fetch_campaign_daily_metrics(
         },
     }
 
+    raw_rows = _run_report(
+        report_request, access_token=access_token, customer_id=customer_id,
+        account_id=str(account_id), start=start, end=end, label="campaign",
+    )
+    out: list[dict[str, Any]] = []
+    for raw in raw_rows:
+        metric_date = _parse_report_date(raw.get("TimePeriod") or raw.get("GregorianDate") or "")
+        campaign_id = str(raw.get("CampaignId") or "").strip()
+        if not metric_date or not campaign_id:
+            continue
+        out.append({
+            "source": "microsoft",
+            "account_id": str(account_id),
+            "campaign_id": campaign_id,
+            "campaign_name": str(raw.get("CampaignName") or "").strip(),
+            "metric_date": metric_date,
+            "spend": _to_float(raw.get("Spend")),
+            "clicks": _to_int(raw.get("Clicks")),
+            "impressions": _to_int(raw.get("Impressions")),
+            "conversions": _to_float(raw.get("Conversions")),
+            "conversion_value": _to_float(raw.get("Revenue")),
+        })
+    return out
+
+
+def fetch_ad_daily_metrics(
+    account_id: str,
+    *,
+    start: date,
+    end: date,
+    access_token: str,
+    customer_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Run a daily AdPerformanceReport and return ad_daily-shaped rows.
+
+    One row per (campaign, ad group, ad, day) with the served ad copy so the
+    Campaign Explorer can drill campaign → ad group → ad like Google text ads.
+    Microsoft's reporting exposes the served title parts / descriptions (not the
+    full RSA asset list), which map onto the same headline_1..3 / description_1..2
+    fields the dashboard already renders.
+    """
+    if customer_id is None:
+        customer_id = get_authenticated_customer_id(access_token)
+
+    report_request = {
+        "Type": "AdPerformanceReportRequest",
+        "ReportName": "SagefrogAdPerformanceDaily",
+        "Format": "Csv",
+        "Aggregation": "Daily",
+        "ExcludeReportHeader": True,
+        "ExcludeReportFooter": True,
+        "ExcludeColumnHeaders": False,
+        "ReturnOnlyCompleteData": False,
+        "Columns": [
+            "TimePeriod",
+            "CampaignId",
+            "CampaignName",
+            "AdGroupId",
+            "AdGroupName",
+            "AdId",
+            "AdType",
+            "AdTitle",
+            "TitlePart1",
+            "TitlePart2",
+            "TitlePart3",
+            "AdDescription",
+            "AdDescription2",
+            "Path1",
+            "Path2",
+            "DisplayUrl",
+            "FinalUrl",
+            "Spend",
+            "Impressions",
+            "Clicks",
+            "Conversions",
+            "Revenue",
+        ],
+        "Scope": {"AccountIds": [int(str(account_id).strip())]},
+        "Time": {
+            "CustomDateRangeStart": {"Year": start.year, "Month": start.month, "Day": start.day},
+            "CustomDateRangeEnd": {"Year": end.year, "Month": end.month, "Day": end.day},
+        },
+    }
+
+    raw_rows = _run_report(
+        report_request, access_token=access_token, customer_id=customer_id,
+        account_id=str(account_id), start=start, end=end, label="ad",
+    )
+    out: list[dict[str, Any]] = []
+    for raw in raw_rows:
+        metric_date = _parse_report_date(raw.get("TimePeriod") or raw.get("GregorianDate") or "")
+        ad_id = str(raw.get("AdId") or "").strip()
+        campaign_id = str(raw.get("CampaignId") or "").strip()
+        if not metric_date or not ad_id or not campaign_id:
+            continue
+        out.append({
+            "source": "microsoft",
+            "account_id": str(account_id),
+            "campaign_id": campaign_id,
+            "campaign_name": str(raw.get("CampaignName") or "").strip(),
+            "ad_group_id": str(raw.get("AdGroupId") or "").strip(),
+            "ad_group_name": str(raw.get("AdGroupName") or "").strip(),
+            "ad_id": ad_id,
+            "ad_type": str(raw.get("AdType") or "").strip(),
+            "ad_title": str(raw.get("AdTitle") or "").strip(),
+            "title_part_1": str(raw.get("TitlePart1") or "").strip(),
+            "title_part_2": str(raw.get("TitlePart2") or "").strip(),
+            "title_part_3": str(raw.get("TitlePart3") or "").strip(),
+            "description_1": str(raw.get("AdDescription") or "").strip(),
+            "description_2": str(raw.get("AdDescription2") or "").strip(),
+            "path_1": str(raw.get("Path1") or "").strip(),
+            "path_2": str(raw.get("Path2") or "").strip(),
+            "display_url": str(raw.get("DisplayUrl") or "").strip(),
+            "final_url": str(raw.get("FinalUrl") or "").strip(),
+            "metric_date": metric_date,
+            "spend": _to_float(raw.get("Spend")),
+            "clicks": _to_int(raw.get("Clicks")),
+            "impressions": _to_int(raw.get("Impressions")),
+            "conversions": _to_float(raw.get("Conversions")),
+            "conversion_value": _to_float(raw.get("Revenue")),
+        })
+    return out
+
+
+def _run_report(
+    report_request: dict[str, Any],
+    *,
+    access_token: str,
+    customer_id: str,
+    account_id: str,
+    start: date,
+    end: date,
+    label: str,
+) -> list[dict[str, str]]:
+    """Submit → poll → download a report; return raw CSV rows (column-keyed dicts).
+
+    Shared by the campaign and ad reports. Returns [] when Microsoft reports no
+    data in range (Success with an empty download URL).
+    """
     headers = _headers(access_token, customer_id=customer_id, account_id=str(account_id))
     submit_url = f"{_endpoints()['reporting']}/GenerateReport/Submit"
     submitted = _post(submit_url, headers, {"ReportRequest": report_request})
@@ -226,20 +365,17 @@ def fetch_campaign_daily_metrics(
         raise RuntimeError("Microsoft Advertising reporting did not return a ReportRequestId.")
 
     _log.info(
-        "Microsoft Ads report submitted [account=%s customer=%s range=%s→%s] request_id=%s",
-        account_id, customer_id, start.isoformat(), end.isoformat(), report_request_id,
+        "Microsoft Ads %s report submitted [account=%s customer=%s range=%s→%s] request_id=%s",
+        label, account_id, customer_id, start.isoformat(), end.isoformat(), report_request_id,
     )
     download_url = _poll_for_report(report_request_id, headers)
     if not download_url:
-        # Status resolved to Success with no download URL — Microsoft returns this
-        # when the report has no data in range. Log it so a genuinely-empty account
-        # is distinguishable from a parse/scope problem.
         _log.info(
-            "Microsoft Ads report returned no download URL (no data in range) [account=%s range=%s→%s]",
-            account_id, start.isoformat(), end.isoformat(),
+            "Microsoft Ads %s report returned no download URL (no data in range) [account=%s range=%s→%s]",
+            label, account_id, start.isoformat(), end.isoformat(),
         )
         return []
-    return _parse_report_csv(download_url, account_id=str(account_id))
+    return _download_report_rows(download_url, label=label, account_id=account_id)
 
 
 def _poll_for_report(report_request_id: str, headers: dict[str, str]) -> str:
@@ -262,8 +398,12 @@ def _poll_for_report(report_request_id: str, headers: dict[str, str]) -> str:
         time.sleep(_REPORT_POLL_INTERVAL_SECONDS)
 
 
-def _parse_report_csv(download_url: str, *, account_id: str) -> list[dict[str, Any]]:
-    """Download the (zipped) CSV report and map rows to campaign_daily shape."""
+def _download_report_rows(download_url: str, *, label: str, account_id: str) -> list[dict[str, str]]:
+    """Download the (zipped) CSV report and return raw column-keyed rows.
+
+    Robustly locates the column-header row (skipping any metadata preamble) so a
+    stray header block can't silently drop every data row.
+    """
     with httpx.Client(timeout=120.0, follow_redirects=True) as client:
         resp = client.get(download_url)
     if resp.status_code >= 400:
@@ -281,47 +421,27 @@ def _parse_report_csv(download_url: str, *, account_id: str) -> list[dict[str, A
     else:
         text = content.decode("utf-8-sig", errors="replace")
 
-    # Locate the column-header row. With ExcludeReportHeader the CSV starts with
-    # the column headers, but be defensive: some reports still carry a metadata
-    # preamble ("Report Name", "Report Time", …). Skip lines until we find the
-    # row that actually names the columns, so DictReader keys on the right header
-    # instead of a metadata line (which would silently drop every data row).
+    # Locate the column-header row. Both the campaign and ad reports carry
+    # CampaignId + TimePeriod columns, so keying on those finds the real header
+    # even if a metadata preamble ("Report Name", "Report Time", …) is present.
     all_lines = text.splitlines()
     header_idx = None
     for i, line in enumerate(all_lines):
-        low = line.lower()
-        if "campaignid" in low.replace('"', "").replace(" ", "") and "timeperiod" in low.replace('"', "").replace(" ", ""):
+        flat = line.lower().replace('"', "").replace(" ", "")
+        if "campaignid" in flat and "timeperiod" in flat:
             header_idx = i
             break
     if header_idx is None:
         _log.warning(
-            "Microsoft Ads report: no column-header row found (first line: %r). Parsed 0 rows.",
-            (all_lines[0] if all_lines else "")[:200],
+            "Microsoft Ads %s report: no column-header row found (first line: %r). Parsed 0 rows.",
+            label, (all_lines[0] if all_lines else "")[:200],
         )
         return []
 
-    rows: list[dict[str, Any]] = []
-    reader = csv.DictReader(io.StringIO("\n".join(all_lines[header_idx:])))
-    for raw in reader:
-        metric_date = _parse_report_date(raw.get("TimePeriod") or raw.get("GregorianDate") or "")
-        campaign_id = str(raw.get("CampaignId") or "").strip()
-        if not metric_date or not campaign_id:
-            continue
-        rows.append({
-            "source": "microsoft",
-            "account_id": str(account_id),
-            "campaign_id": campaign_id,
-            "campaign_name": str(raw.get("CampaignName") or "").strip(),
-            "metric_date": metric_date,
-            "spend": _to_float(raw.get("Spend")),
-            "clicks": _to_int(raw.get("Clicks")),
-            "impressions": _to_int(raw.get("Impressions")),
-            "conversions": _to_float(raw.get("Conversions")),
-            "conversion_value": _to_float(raw.get("Revenue")),
-        })
+    rows = list(csv.DictReader(io.StringIO("\n".join(all_lines[header_idx:]))))
     _log.info(
-        "Microsoft Ads report parsed: %d data row(s) from %d CSV line(s) [account=%s]",
-        len(rows), max(0, len(all_lines) - header_idx - 1), account_id,
+        "Microsoft Ads %s report parsed: %d data row(s) [account=%s]",
+        label, len(rows), account_id,
     )
     return rows
 

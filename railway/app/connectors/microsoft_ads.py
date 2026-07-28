@@ -56,7 +56,14 @@ class MicrosoftAdsConnector(ConnectorHandler):
         rows_written = 0
         try:
             access_token = microsoft_ads_service.resolve_access_token(client_slug)
+            # Campaign-grain metrics drive the Overview totals (source of truth —
+            # covers every campaign type). Ad-grain rows (with copy) drive the
+            # Campaign Explorer drilldown; not all campaign types have text ads, so
+            # ad_daily supplements — it never replaces — campaign_daily.
             daily_rows = microsoft_ads_service.fetch_campaign_daily_metrics(
+                account_id, start=start, end=end, access_token=access_token
+            )
+            ad_rows = microsoft_ads_service.fetch_ad_daily_metrics(
                 account_id, start=start, end=end, access_token=access_token
             )
             with bigquery_warehouse.route(
@@ -70,12 +77,19 @@ class MicrosoftAdsConnector(ConnectorHandler):
                     "microsoft", account_id, daily_rows
                 )
                 rows_written += mirrored.get("rows_upserted") or 0
+                # Per-ad rows (campaign → ad group → ad, with ad copy) for the
+                # Campaign Explorer drilldown.
+                ad_mirrored = bigquery_warehouse.mirror_microsoft_ad_daily_batch(
+                    account_id, ad_rows
+                )
+                rows_written += ad_mirrored.get("rows_upserted") or 0
                 # Rebuild vw_paid_media_daily + mart_health so the dashboard
                 # Overview populates from this sync. Idempotent; includes whichever
                 # of the raw campaign_daily tables currently exist.
                 bigquery_warehouse.create_paid_media_mart_views(client_key=client_slug)
-                # Campaign-level explorer view the Campaign Explorer tab reads
-                # (explorer_microsoft_ads_daily), mirroring the Google Ads explorer.
+                # Explorer view the Campaign Explorer tab reads
+                # (explorer_microsoft_ads_daily) — ad-level when ad_daily exists,
+                # campaign-level fallback otherwise.
                 bigquery_warehouse.create_microsoft_ads_mart_view()
             return SyncResult(rows_loaded=rows_written, range_start=start, range_end=end)
         except Exception as exc:
