@@ -440,15 +440,124 @@ def create_google_campaign_mart_view() -> dict[str, Any]:
     return {"status": "success", "table": table_id, "raw_table": raw_table_id}
 
 
+def _microsoft_ad_daily_schema() -> list[Any]:
+    bigquery = _bigquery()
+    S = bigquery.SchemaField
+    return [
+        S("source", "STRING", mode="REQUIRED"),
+        S("account_id", "STRING", mode="REQUIRED"),
+        S("campaign_id", "STRING", mode="REQUIRED"),
+        S("campaign_name", "STRING", mode="NULLABLE"),
+        S("ad_group_id", "STRING", mode="REQUIRED"),
+        S("ad_group_name", "STRING", mode="NULLABLE"),
+        S("ad_id", "STRING", mode="REQUIRED"),
+        S("ad_type", "STRING", mode="NULLABLE"),
+        S("ad_title", "STRING", mode="NULLABLE"),
+        S("title_part_1", "STRING", mode="NULLABLE"),
+        S("title_part_2", "STRING", mode="NULLABLE"),
+        S("title_part_3", "STRING", mode="NULLABLE"),
+        S("description_1", "STRING", mode="NULLABLE"),
+        S("description_2", "STRING", mode="NULLABLE"),
+        S("path_1", "STRING", mode="NULLABLE"),
+        S("path_2", "STRING", mode="NULLABLE"),
+        S("display_url", "STRING", mode="NULLABLE"),
+        S("final_url", "STRING", mode="NULLABLE"),
+        S("metric_date", "DATE", mode="REQUIRED"),
+        S("spend", "FLOAT64", mode="NULLABLE"),
+        S("impressions", "INT64", mode="NULLABLE"),
+        S("clicks", "INT64", mode="NULLABLE"),
+        S("conversions", "FLOAT64", mode="NULLABLE"),
+        S("conversion_value", "FLOAT64", mode="NULLABLE"),
+        S("synced_at", "TIMESTAMP", mode="NULLABLE"),
+    ]
+
+
+def mirror_microsoft_ad_daily_batch(account_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Upsert per-ad daily rows (with ad copy) into raw_microsoft_ads.ad_daily."""
+    if not rows or not enabled("microsoft"):
+        return {"enabled": False, "rows_upserted": 0, "table": None}
+    account_id_clean = str(account_id).strip().split(":")[-1]
+    client, base_table = _target("microsoft")
+    table_id = base_table.rsplit(".", 1)[0] + ".ad_daily"
+    bigquery = _bigquery()
+    schema = _microsoft_ad_daily_schema()
+    dataset_ref = ".".join(table_id.split(".")[:2])
+    client.create_dataset(bigquery.Dataset(dataset_ref), exists_ok=True)
+    table = bigquery.Table(table_id, schema=schema)
+    table.time_partitioning = bigquery.TimePartitioning(field="metric_date")
+    table.clustering_fields = ["source", "account_id", "campaign_id", "ad_group_id"]
+    client.create_table(table, exists_ok=True)
+
+    synced_at = datetime.now(timezone.utc).isoformat()
+    cols = [f.name for f in schema]
+    payload = []
+    for row in rows:
+        metric_date = row.get("metric_date")
+        ad_id = str(row.get("ad_id") or "").strip()
+        campaign_id = str(row.get("campaign_id") or "").strip()
+        if not metric_date or not ad_id or not campaign_id:
+            continue
+        rec = {
+            "source": str(row.get("source") or "microsoft"),
+            "account_id": account_id_clean,
+            "campaign_id": campaign_id,
+            "campaign_name": row.get("campaign_name"),
+            "ad_group_id": str(row.get("ad_group_id") or "").strip() or "0",
+            "ad_group_name": row.get("ad_group_name"),
+            "ad_id": ad_id,
+            "ad_type": row.get("ad_type"),
+            "ad_title": row.get("ad_title"),
+            "title_part_1": row.get("title_part_1"),
+            "title_part_2": row.get("title_part_2"),
+            "title_part_3": row.get("title_part_3"),
+            "description_1": row.get("description_1"),
+            "description_2": row.get("description_2"),
+            "path_1": row.get("path_1"),
+            "path_2": row.get("path_2"),
+            "display_url": row.get("display_url"),
+            "final_url": row.get("final_url"),
+            "metric_date": str(metric_date)[:10],
+            "spend": float(row.get("spend") or 0),
+            "impressions": int(row.get("impressions") or 0),
+            "clicks": int(row.get("clicks") or 0),
+            "conversions": float(row.get("conversions") or 0),
+            "conversion_value": float(row.get("conversion_value") or 0),
+            "synced_at": synced_at,
+        }
+        payload.append(rec)
+    if not payload:
+        return {"enabled": True, "rows_upserted": 0, "table": table_id}
+
+    temp_id = f"{table_id}_staging_{uuid4().hex}"
+    job_config = bigquery.LoadJobConfig(schema=schema, write_disposition="WRITE_TRUNCATE")
+    client.load_table_from_json(payload, temp_id, job_config=job_config).result()
+    set_cols = ", ".join(f"{c} = S.{c}" for c in cols if c not in ("source", "account_id", "campaign_id", "ad_group_id", "ad_id", "metric_date"))
+    insert_cols = ", ".join(cols)
+    insert_vals = ", ".join(f"S.{c}" for c in cols)
+    merge_sql = f"""
+    MERGE `{table_id}` T
+    USING `{temp_id}` S
+    ON T.source = S.source AND T.account_id = S.account_id AND T.campaign_id = S.campaign_id
+       AND T.ad_group_id = S.ad_group_id AND T.ad_id = S.ad_id AND T.metric_date = S.metric_date
+    WHEN MATCHED THEN UPDATE SET {set_cols}
+    WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})
+    """
+    try:
+        client.query(merge_sql).result()
+    finally:
+        client.delete_table(temp_id, not_found_ok=True)
+    return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
+
+
 def create_microsoft_ads_mart_view() -> dict[str, Any]:
     """Build the Microsoft Ads campaign explorer view the dashboard queries.
 
-    Microsoft is synced at campaign grain (raw_microsoft_ads.campaign_daily), so
-    the explorer view is a straight projection at campaign/day grain — the same
-    denormalized shape marketing_service.fetch_microsoft_explorer aggregates,
-    mirroring explorer_google_ads_daily. Returns pending_data when the raw table
-    doesn't exist yet (no sync has run), so the endpoint degrades to empty rather
-    than 500-ing.
+    Prefers the ad-level table (raw_microsoft_ads.ad_daily) so the Campaign
+    Explorer can drill campaign → ad group → ad with ad copy, mirroring
+    explorer_google_ads_daily. Falls back to campaign_daily (campaign grain, ad
+    fields NULL) when ad_daily hasn't been synced yet. The view always exposes
+    the same column set so fetch_microsoft_explorer reads it uniformly. Returns
+    pending_data when neither raw table exists.
     """
     project_id = _route_value("project") or (
         os.getenv("BQ_WAREHOUSE_PROJECT_ID") or os.getenv("BQ_PROJECT_ID") or ""
@@ -460,29 +569,70 @@ def create_microsoft_ads_mart_view() -> dict[str, Any]:
     client = _client(project_id)
     bigquery = _bigquery()
     client.create_dataset(bigquery.Dataset(f"{project_id}.{mart_dataset}"), exists_ok=True)
-    raw_table_id = f"{project_id}.{raw_dataset}.campaign_daily"
+    ad_table_id = f"{project_id}.{raw_dataset}.ad_daily"
+    campaign_table_id = f"{project_id}.{raw_dataset}.campaign_daily"
     view_id = f"{project_id}.{mart_dataset}.explorer_microsoft_ads_daily"
-    try:
-        client.get_table(raw_table_id)
-    except Exception as exc:
-        return {"status": "pending_data", "table": view_id, "raw_table": raw_table_id, "error": str(exc)[:400]}
-    _replace_object_with_view(
-        client,
-        view_id,
-        f"""SELECT
+
+    def _table_exists(tid: str) -> bool:
+        try:
+            client.get_table(tid)
+            return True
+        except Exception:
+            return False
+
+    if _table_exists(ad_table_id):
+        select_sql = f"""SELECT
           metric_date                       AS date,
           account_id,
           campaign_id,
           campaign_name,
-          spend,
-          impressions,
-          clicks,
-          conversions,
-          conversion_value,
-          synced_at
-        FROM `{raw_table_id}`""",
-    )
-    return {"status": "success", "table": view_id, "raw_table": raw_table_id}
+          ad_group_id,
+          ad_group_name,
+          ad_id,
+          ad_type,
+          ad_title,
+          title_part_1,
+          title_part_2,
+          title_part_3,
+          description_1,
+          description_2,
+          path_1,
+          path_2,
+          display_url,
+          final_url,
+          spend, impressions, clicks, conversions, conversion_value
+        FROM `{ad_table_id}`"""
+        source_table = ad_table_id
+    elif _table_exists(campaign_table_id):
+        # Campaign-grain fallback: ad-level columns are NULL so the view schema is
+        # identical whether or not ad_daily has been synced.
+        select_sql = f"""SELECT
+          metric_date                       AS date,
+          account_id,
+          campaign_id,
+          campaign_name,
+          CAST(NULL AS STRING) AS ad_group_id,
+          CAST(NULL AS STRING) AS ad_group_name,
+          CAST(NULL AS STRING) AS ad_id,
+          CAST(NULL AS STRING) AS ad_type,
+          CAST(NULL AS STRING) AS ad_title,
+          CAST(NULL AS STRING) AS title_part_1,
+          CAST(NULL AS STRING) AS title_part_2,
+          CAST(NULL AS STRING) AS title_part_3,
+          CAST(NULL AS STRING) AS description_1,
+          CAST(NULL AS STRING) AS description_2,
+          CAST(NULL AS STRING) AS path_1,
+          CAST(NULL AS STRING) AS path_2,
+          CAST(NULL AS STRING) AS display_url,
+          CAST(NULL AS STRING) AS final_url,
+          spend, impressions, clicks, conversions, conversion_value
+        FROM `{campaign_table_id}`"""
+        source_table = campaign_table_id
+    else:
+        return {"status": "pending_data", "table": view_id, "raw_table": campaign_table_id}
+
+    _replace_object_with_view(client, view_id, select_sql)
+    return {"status": "success", "table": view_id, "raw_table": source_table}
 
 
 def rebuild_unified_marketing_mart(client_key: str | None = None) -> dict[str, Any]:

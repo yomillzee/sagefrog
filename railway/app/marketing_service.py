@@ -514,17 +514,32 @@ def fetch_microsoft_explorer(
     start_date: date,
     end_date: date,
 ) -> dict[str, Any]:
-    """Microsoft Ads explorer (campaign grain).
+    """Microsoft Ads explorer (campaign → ad group → ad).
 
-    Microsoft is synced at campaign level only, so this returns one row per
-    campaign — no ad-group/ad/creative sub-levels. Same metric columns the
-    renderer reads; the dashboard maps each row to a top-level campaign node.
-    Returns empty rows (not an error) when the explorer view doesn't exist yet.
+    One row per ad (with the served ad copy) when ad-level data has synced, so
+    the dashboard can drill campaign → ad group → ad like Google text ads. Before
+    ad data exists, the explorer view falls back to campaign grain (ad columns
+    NULL) and this returns one row per campaign. Returns empty rows (not an error)
+    when the view doesn't exist yet.
     """
     sql = f"""
     SELECT
       campaign_id,
       campaign_name,
+      ad_group_id,
+      ad_group_name,
+      ad_id,
+      ANY_VALUE(ad_type) AS ad_type,
+      ANY_VALUE(ad_title) AS ad_title,
+      ANY_VALUE(title_part_1) AS title_part_1,
+      ANY_VALUE(title_part_2) AS title_part_2,
+      ANY_VALUE(title_part_3) AS title_part_3,
+      ANY_VALUE(description_1) AS description_1,
+      ANY_VALUE(description_2) AS description_2,
+      ANY_VALUE(path_1) AS path_1,
+      ANY_VALUE(path_2) AS path_2,
+      ANY_VALUE(display_url) AS display_url,
+      ANY_VALUE(final_url) AS final_url,
       ROUND(SUM(spend), 2) AS spend,
       SUM(impressions) AS impressions,
       SUM(clicks) AS clicks,
@@ -532,7 +547,7 @@ def fetch_microsoft_explorer(
       ROUND(SUM(conversion_value), 2) AS conversion_value
     FROM {_microsoft_ads_explorer_table()}
     WHERE date BETWEEN @start_date AND @end_date
-    GROUP BY campaign_id, campaign_name
+    GROUP BY campaign_id, campaign_name, ad_group_id, ad_group_name, ad_id
     ORDER BY spend DESC
     """
     try:

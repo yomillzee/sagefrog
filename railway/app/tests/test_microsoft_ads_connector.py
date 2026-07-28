@@ -73,6 +73,27 @@ class MicrosoftAdsRegistrationTests(unittest.TestCase):
         src = inspect.getsource(mod)
         self.assertIn("create_microsoft_ads_mart_view", src)
 
+    def test_ad_level_ingestion_wired(self) -> None:
+        import inspect
+
+        import bigquery_warehouse
+        import connectors.microsoft_ads as mod
+
+        self.assertTrue(hasattr(bigquery_warehouse, "mirror_microsoft_ad_daily_batch"))
+        src = inspect.getsource(mod)
+        self.assertIn("fetch_ad_daily_metrics", src)
+        self.assertIn("mirror_microsoft_ad_daily_batch", src)
+
+    def test_explorer_renders_ad_hierarchy(self) -> None:
+        import inspect
+
+        from dashboard.renderers import bigquery_dashboard_renderer as r
+
+        src = inspect.getsource(r)
+        # Microsoft rows carry ad-group / ad copy so the tree drills like Google.
+        self.assertIn("title_part_1", src)
+        self.assertIn("ad_group_name:r.ad_group_name", src)
+
     def test_explorer_endpoint_registered(self) -> None:
         import main
 
@@ -249,20 +270,67 @@ class MicrosoftAdsReportParsingTests(unittest.TestCase):
                 return _Resp()
 
         with mock.patch.object(svc.httpx, "Client", return_value=_Client()):
-            rows = svc._parse_report_csv("https://download.example/report", account_id="999")
+            rows = svc._download_report_rows(
+                "https://download.example/report", label="campaign", account_id="999"
+            )
 
+        # _download_report_rows returns raw column-keyed dicts; mapping to the
+        # campaign_daily shape happens in fetch_campaign_daily_metrics.
         self.assertEqual(len(rows), 2)
-        first = rows[0]
-        self.assertEqual(first["source"], "microsoft")
-        self.assertEqual(first["account_id"], "999")
-        self.assertEqual(first["campaign_id"], "111")
-        self.assertEqual(first["campaign_name"], "Brand")
-        self.assertEqual(first["metric_date"], "2026-01-01")
-        self.assertEqual(first["spend"], 12.5)
-        self.assertEqual(first["clicks"], 50)
-        self.assertEqual(first["impressions"], 1000)
-        self.assertEqual(first["conversions"], 3.0)
-        self.assertEqual(first["conversion_value"], 150.0)
+        self.assertEqual(rows[0]["CampaignId"], "111")
+        self.assertEqual(rows[0]["Spend"], "12.50")
+        self.assertEqual(rows[0]["TimePeriod"], "2026-01-01")
+
+    def test_fetch_campaign_daily_maps_raw_rows(self) -> None:
+        from unittest import mock
+
+        import microsoft_ads_service as svc
+
+        raw = [{
+            "TimePeriod": "2026-01-01", "CampaignId": "5", "CampaignName": "C",
+            "Spend": "2.50", "Impressions": "10", "Clicks": "1",
+            "Conversions": "0", "Revenue": "0",
+        }]
+        with mock.patch.object(svc, "_run_report", return_value=raw):
+            rows = svc.fetch_campaign_daily_metrics(
+                "999", start=date(2026, 1, 1), end=date(2026, 1, 2),
+                access_token="t", customer_id="c",
+            )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["source"], "microsoft")
+        self.assertEqual(rows[0]["campaign_id"], "5")
+        self.assertEqual(rows[0]["spend"], 2.5)
+
+    def test_fetch_ad_daily_maps_raw_rows(self) -> None:
+        from unittest import mock
+
+        import microsoft_ads_service as svc
+
+        raw = [{
+            "TimePeriod": "2026-01-01", "CampaignId": "5", "CampaignName": "C",
+            "AdGroupId": "50", "AdGroupName": "AG", "AdId": "900",
+            "AdType": "ResponsiveSearch", "AdTitle": "Buy Scrubs",
+            "TitlePart1": "Scrubs", "TitlePart2": "Fast Ship", "TitlePart3": "Save",
+            "AdDescription": "Great scrubs", "AdDescription2": "Order today",
+            "Path1": "scrubs", "Path2": "sale", "DisplayUrl": "nixon.com/scrubs",
+            "FinalUrl": "https://nixon.com/scrubs",
+            "Spend": "9.00", "Impressions": "100", "Clicks": "7",
+            "Conversions": "2", "Revenue": "40",
+        }]
+        with mock.patch.object(svc, "_run_report", return_value=raw):
+            rows = svc.fetch_ad_daily_metrics(
+                "999", start=date(2026, 1, 1), end=date(2026, 1, 2),
+                access_token="t", customer_id="c",
+            )
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual(r["ad_id"], "900")
+        self.assertEqual(r["ad_group_id"], "50")
+        self.assertEqual(r["ad_group_name"], "AG")
+        self.assertEqual(r["title_part_1"], "Scrubs")
+        self.assertEqual(r["description_1"], "Great scrubs")
+        self.assertEqual(r["final_url"], "https://nixon.com/scrubs")
+        self.assertEqual(r["spend"], 9.0)
 
     def test_report_request_columns_and_shape(self) -> None:
         """fetch_campaign_daily_metrics submits a daily CampaignPerformanceReport
@@ -279,9 +347,13 @@ class MicrosoftAdsReportParsingTests(unittest.TestCase):
             captured["body"] = body
             return {"ReportRequestId": "req-1"}
 
+        raw = [{
+            "TimePeriod": "2026-01-01", "CampaignId": "1", "CampaignName": "C",
+            "Spend": "1", "Impressions": "1", "Clicks": "1", "Conversions": "0", "Revenue": "0",
+        }]
         with mock.patch.object(svc, "_post", side_effect=fake_post), \
              mock.patch.object(svc, "_poll_for_report", return_value="https://dl/report"), \
-             mock.patch.object(svc, "_parse_report_csv", return_value=[{"campaign_id": "1"}]):
+             mock.patch.object(svc, "_download_report_rows", return_value=raw):
             rows = svc.fetch_campaign_daily_metrics(
                 "12345",
                 start=date(2026, 1, 1),
@@ -290,7 +362,7 @@ class MicrosoftAdsReportParsingTests(unittest.TestCase):
                 customer_id="cust-1",
             )
 
-        self.assertEqual(rows, [{"campaign_id": "1"}])
+        self.assertEqual(rows[0]["campaign_id"], "1")
         self.assertTrue(captured["url"].endswith("/GenerateReport/Submit"))
         self.assertEqual(captured["headers"]["IdentityProvider"], "Google")
         self.assertEqual(captured["headers"]["Authorization"], "Bearer tok")
@@ -348,12 +420,49 @@ class MicrosoftAdsReportParsingTests(unittest.TestCase):
                 return _Resp()
 
         with mock.patch.object(svc.httpx, "Client", return_value=_Client()):
-            rows = svc._parse_report_csv("https://dl/report", account_id="222")
+            rows = svc._download_report_rows("https://dl/report", label="campaign", account_id="222")
 
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["campaign_id"], "222")
-        self.assertEqual(rows[0]["metric_date"], "2026-01-01")
-        self.assertEqual(rows[0]["spend"], 20.0)
+        # The metadata preamble must be skipped (header located correctly), so the
+        # real data row is parsed with the right column keys. (The trailing footer
+        # line has no CampaignId and is dropped by the mapping layer downstream.)
+        data = [r for r in rows if (r.get("CampaignId") or "").strip().isdigit()]
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["CampaignId"], "222")
+        self.assertEqual(data[0]["Spend"], "20.00")
+
+
+class MicrosoftAdsAdReportTests(unittest.TestCase):
+    def test_ad_report_request_shape(self) -> None:
+        """fetch_ad_daily_metrics submits an AdPerformanceReport with the ad-copy
+        and hierarchy columns needed for the campaign → ad group → ad drilldown."""
+        from unittest import mock
+
+        import microsoft_ads_service as svc
+
+        captured: dict = {}
+
+        def fake_post(url, headers, body):
+            captured["body"] = body
+            return {"ReportRequestId": "req-ad"}
+
+        with mock.patch.object(svc, "_post", side_effect=fake_post), \
+             mock.patch.object(svc, "_poll_for_report", return_value="https://dl/ad"), \
+             mock.patch.object(svc, "_download_report_rows", return_value=[]):
+            svc.fetch_ad_daily_metrics(
+                "12345", start=date(2026, 1, 1), end=date(2026, 1, 31),
+                access_token="tok", customer_id="cust-1",
+            )
+
+        report = captured["body"]["ReportRequest"]
+        self.assertEqual(report["Type"], "AdPerformanceReportRequest")
+        self.assertEqual(report["Aggregation"], "Daily")
+        self.assertTrue(report["ExcludeReportHeader"])
+        for col in (
+            "AdGroupId", "AdGroupName", "AdId", "AdType", "AdTitle",
+            "TitlePart1", "TitlePart2", "TitlePart3", "AdDescription", "AdDescription2",
+            "FinalUrl", "TimePeriod", "CampaignId", "Spend", "Clicks",
+        ):
+            self.assertIn(col, report["Columns"])
 
 
 if __name__ == "__main__":
