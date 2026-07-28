@@ -17,6 +17,41 @@ from connectors.base import ConnectorHandler, SyncResult, register
 _log = logging.getLogger(__name__)
 
 
+def _enrich_ad_copy(svc, ad_rows: list[dict[str, Any]], *, account_id, access_token, customer_id) -> None:
+    """Merge Campaign-Management creative copy into ad rows (mutates in place).
+
+    Stores the full headline/description asset lists as JSON on each row so the
+    Campaign Explorer can show H1..Hn / D1..Dn like Google, and backfills the
+    final URL / paths / ad type from the ad's definition.
+    """
+    import json
+
+    # Visit ad groups highest-spend first so the cap (if hit) covers what matters.
+    ordered_groups = [
+        r.get("ad_group_id")
+        for r in sorted(ad_rows, key=lambda x: x.get("spend") or 0, reverse=True)
+        if r.get("ad_group_id")
+    ]
+    try:
+        assets = svc.fetch_ad_assets(
+            account_id, ordered_groups, access_token=access_token, customer_id=customer_id
+        )
+    except Exception as exc:
+        _log.warning("Microsoft Ads creative enrichment skipped: %s", exc)
+        return
+    for row in ad_rows:
+        a = assets.get(str(row.get("ad_id") or ""))
+        if not a:
+            continue
+        if a.get("headlines"):
+            row["headlines"] = json.dumps(a["headlines"])
+        if a.get("descriptions"):
+            row["descriptions"] = json.dumps(a["descriptions"])
+        for key in ("final_url", "path_1", "path_2", "ad_type"):
+            if a.get(key):
+                row[key] = a[key]
+
+
 class MicrosoftAdsConnector(ConnectorHandler):
     connector_type = "microsoft_ads"
     display_name = "Microsoft Ads"
@@ -56,16 +91,26 @@ class MicrosoftAdsConnector(ConnectorHandler):
         rows_written = 0
         try:
             access_token = microsoft_ads_service.resolve_access_token(client_slug)
+            customer_id = microsoft_ads_service.get_authenticated_customer_id(access_token)
             # Campaign-grain metrics drive the Overview totals (source of truth —
             # covers every campaign type). Ad-grain rows (with copy) drive the
             # Campaign Explorer drilldown; not all campaign types have text ads, so
             # ad_daily supplements — it never replaces — campaign_daily.
             daily_rows = microsoft_ads_service.fetch_campaign_daily_metrics(
-                account_id, start=start, end=end, access_token=access_token
+                account_id, start=start, end=end, access_token=access_token, customer_id=customer_id
             )
             ad_rows = microsoft_ads_service.fetch_ad_daily_metrics(
-                account_id, start=start, end=end, access_token=access_token
+                account_id, start=start, end=end, access_token=access_token, customer_id=customer_id
             )
+            # Enrich ad rows with the full creative copy (RSA headline/description
+            # asset lists) from Campaign Management — the reporting API returns
+            # blank title parts for responsive search ads. Best-effort: a failure
+            # here leaves the metrics intact, just without the headline breakdown.
+            if ad_rows:
+                _enrich_ad_copy(
+                    microsoft_ads_service, ad_rows, account_id=account_id,
+                    access_token=access_token, customer_id=customer_id,
+                )
             with bigquery_warehouse.route(
                 bq_project_id=bq_project_id,
                 microsoft_dataset_id=raw_dataset_id,
