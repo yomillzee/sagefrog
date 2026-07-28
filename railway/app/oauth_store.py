@@ -19,7 +19,7 @@ from security import is_production
 
 _log = logging.getLogger(__name__)
 
-PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc", "google_analytics", "google_tag_manager", "hubspot", "harvest"})
+PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc", "google_analytics", "google_tag_manager", "hubspot", "harvest", "microsoft_ads"})
 
 SCHEMA_SQL_STATEMENTS = [
     """

@@ -17,7 +17,7 @@ import meta_auth
 
 _log = logging.getLogger(__name__)
 
-PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc", "google_analytics", "google_tag_manager", "hubspot", "harvest"})
+PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc", "google_analytics", "google_tag_manager", "hubspot", "harvest", "microsoft_ads"})
 
 HUBSPOT_AUTH_URL = "https://app.hubspot.com/oauth/authorize"
 HUBSPOT_TOKEN_URL = "https://api.hubapi.com/oauth/v1/token"
@@ -45,6 +45,17 @@ LINKEDIN_SCOPES = "r_ads r_ads_reporting r_organization_social r_organization_ad
 
 META_SCOPES = "ads_read,business_management"
 
+# Microsoft Advertising via Google OAuth. Microsoft Advertising now supports
+# Google as an identity provider: the user authorizes through Google's normal
+# OAuth flow (Google is used ONLY to authenticate the user — the resulting
+# Google access token is presented to the Microsoft Advertising API with an
+# `IdentityProvider: Google` header alongside the Microsoft developer token).
+# Google's identity scopes are all that's needed; Microsoft enforces its own
+# advertiser permission checks. See microsoft_ads_service for the API side.
+#   https://learn.microsoft.com/advertising/guides/authentication-oauth-consent
+MICROSOFT_ADS_SCOPES = "profile email"
+GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+
 
 def public_base_url() -> str:
     explicit = (os.getenv("PUBLIC_BASE_URL") or "").strip().rstrip("/")
@@ -58,7 +69,44 @@ def public_base_url() -> str:
 
 def callback_url(platform: str) -> str:
     slug = _normalize_platform(platform)
+    if slug == "microsoft_ads":
+        # Google validates that the redirect_uri on the authorize request, the
+        # token exchange, and the value registered in the Google Cloud console
+        # all match byte-for-byte. Microsoft Advertising's connect flow is
+        # pinned to whatever is registered as MICROSOFT_ADS_REDIRECT_URI, so use
+        # that verbatim rather than deriving it — the callback route is mounted
+        # at this exact path (see main._register_microsoft_ads_callback).
+        explicit = (os.getenv("MICROSOFT_ADS_REDIRECT_URI") or "").strip()
+        if explicit:
+            return explicit
     return f"{public_base_url()}/oauth/{slug}/callback"
+
+
+def microsoft_ads_callback_path() -> str:
+    """Path component of MICROSOFT_ADS_REDIRECT_URI (e.g. '/oauth/microsoft_ads/callback').
+
+    Used to mount the callback route at the exact path Google will redirect to,
+    so the callback never 404s regardless of how the redirect URI is configured.
+    Falls back to the conventional per-platform path when the env var is unset.
+    """
+    from urllib.parse import urlsplit
+
+    explicit = (os.getenv("MICROSOFT_ADS_REDIRECT_URI") or "").strip()
+    if explicit:
+        path = urlsplit(explicit).path.strip()
+        if path.startswith("/"):
+            return path
+    return "/oauth/microsoft_ads/callback"
+
+
+def _microsoft_ads_env() -> dict[str, str]:
+    return {
+        "client_id": (os.getenv("MICROSOFT_ADS_CLIENT_ID") or "").strip(),
+        "client_secret": (os.getenv("MICROSOFT_ADS_CLIENT_SECRET") or "").strip(),
+        "redirect_uri": (os.getenv("MICROSOFT_ADS_REDIRECT_URI") or "").strip(),
+        "developer_token": (os.getenv("MICROSOFT_ADS_DEVELOPER_TOKEN") or "").strip(),
+        "provider": (os.getenv("MICROSOFT_ADS_OAUTH_PROVIDER") or "google").strip().lower(),
+    }
 
 
 def _normalize_platform(platform: str) -> str:
@@ -262,6 +310,26 @@ def connect_prerequisites(platform: str) -> dict[str, Any]:
                 "Harvest OAuth2 app. Stores the refresh token in Postgres."
             ),
         }
+    if slug == "microsoft_ads":
+        env = _microsoft_ads_env()
+        return {
+            "ready": bool(env["client_id"] and env["client_secret"] and env["redirect_uri"] and env["developer_token"]),
+            "missing": [
+                label
+                for val, label in (
+                    (env["client_id"], "MICROSOFT_ADS_CLIENT_ID"),
+                    (env["client_secret"], "MICROSOFT_ADS_CLIENT_SECRET"),
+                    (env["redirect_uri"], "MICROSOFT_ADS_REDIRECT_URI"),
+                    (env["developer_token"], "MICROSOFT_ADS_DEVELOPER_TOKEN"),
+                )
+                if not val
+            ],
+            "note": (
+                "Authorizes with Google (MICROSOFT_ADS_OAUTH_PROVIDER=google) and calls the "
+                "Microsoft Advertising API with the developer token. Connect with the Google "
+                "account that has access to the Microsoft Advertising accounts."
+            ),
+        }
     summary = meta_auth.env_summary()
     return {
         "ready": bool(summary.get("has_app_id") and summary.get("has_app_secret")),
@@ -370,6 +438,22 @@ def build_authorize_url(platform: str, *, state: str) -> str:
             "state": state,
         }
         return f"{HARVEST_AUTH_URL}?{urlencode(params)}"
+    if slug == "microsoft_ads":
+        ms = _microsoft_ads_env()
+        if not ms["client_id"]:
+            raise RuntimeError("Set MICROSOFT_ADS_CLIENT_ID before connecting Microsoft Ads.")
+        if not ms["redirect_uri"]:
+            raise RuntimeError("Set MICROSOFT_ADS_REDIRECT_URI before connecting Microsoft Ads.")
+        params = {
+            "client_id": ms["client_id"],
+            "redirect_uri": ms["redirect_uri"],
+            "response_type": "code",
+            "scope": MICROSOFT_ADS_SCOPES,
+            "access_type": "offline",
+            "prompt": "consent",
+            "state": state,
+        }
+        return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
     env = meta_auth._get_env(*meta_auth._ENV_ALIASES["app_id"])
     api_version = meta_auth._get_env(*meta_auth._ENV_ALIASES["api_version"]) or "v21.0"
     if not env:
@@ -401,7 +485,96 @@ def exchange_code(platform: str, *, code: str) -> dict[str, Any]:
         return _exchange_hubspot_code(code, redirect_uri=redirect_uri)
     if slug == "harvest":
         return _exchange_harvest_code(code, redirect_uri=redirect_uri)
+    if slug == "microsoft_ads":
+        return _exchange_microsoft_ads_code(code, redirect_uri=redirect_uri)
     return _exchange_meta_code(code, redirect_uri=redirect_uri)
+
+
+def _exchange_microsoft_ads_code(code: str, *, redirect_uri: str) -> dict[str, Any]:
+    """Exchange a Google authorization code for tokens (Microsoft Ads connector).
+
+    Microsoft Advertising delegates user authentication to Google, so the code
+    is redeemed at Google's token endpoint using the Microsoft-Ads-specific
+    Google OAuth client. The authenticated email is captured from Google's
+    userinfo endpoint and stored in token metadata so the connector UI can show
+    who authorized. Tokens themselves are never logged.
+    """
+    ms = _microsoft_ads_env()
+    if not ms["client_id"] or not ms["client_secret"]:
+        raise RuntimeError("Set MICROSOFT_ADS_CLIENT_ID and MICROSOFT_ADS_CLIENT_SECRET before connecting Microsoft Ads.")
+    body = {
+        "code": code,
+        "client_id": ms["client_id"],
+        "client_secret": ms["client_secret"],
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code",
+    }
+    with httpx.Client(timeout=60.0) as client:
+        response = client.post(GOOGLE_TOKEN_URL, data=body)
+    if response.status_code >= 400:
+        raise RuntimeError(f"Google token exchange failed ({response.status_code}): {response.text[:500]}")
+    data = response.json()
+    refresh = (data.get("refresh_token") or "").strip()
+    if not refresh:
+        raise RuntimeError(
+            "Google did not return a refresh token. Revoke this app's access at "
+            "https://myaccount.google.com/permissions and connect again (the flow requests "
+            "access_type=offline and prompt=consent)."
+        )
+    access = (data.get("access_token") or "").strip()
+    expires_in = int(data.get("expires_in") or 0)
+    expires_at = datetime.now(tz=UTC) + timedelta(seconds=expires_in) if expires_in else None
+    email = _fetch_google_userinfo_email(access) if access else ""
+    return {
+        "refresh_token": refresh,
+        "access_token": access,
+        "token_expires_at": expires_at,
+        "scopes": MICROSOFT_ADS_SCOPES,
+        "metadata": {"email": email} if email else None,
+    }
+
+
+def _fetch_google_userinfo_email(access_token: str) -> str:
+    """Return the authenticated Google account's email, or '' on any failure.
+
+    Best-effort: never blocks a token exchange. Used only to label the connection.
+    """
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.get(GOOGLE_USERINFO_URL, headers={"Authorization": f"Bearer {access_token}"})
+        resp.raise_for_status()
+        return str(resp.json().get("email") or "").strip()
+    except Exception as exc:
+        _log.warning("Google userinfo fetch failed for Microsoft Ads connect: %s", exc)
+        return ""
+
+
+def refresh_microsoft_ads_access_token(refresh_token: str) -> dict[str, Any]:
+    """Exchange a stored Google refresh token for a fresh access token.
+
+    Returns {"access_token": str, "token_expires_at": datetime|None}. Raises on
+    failure. Never logs the token.
+    """
+    ms = _microsoft_ads_env()
+    if not ms["client_id"] or not ms["client_secret"]:
+        raise RuntimeError("MICROSOFT_ADS_CLIENT_ID / MICROSOFT_ADS_CLIENT_SECRET not set.")
+    body = {
+        "grant_type": "refresh_token",
+        "client_id": ms["client_id"],
+        "client_secret": ms["client_secret"],
+        "refresh_token": refresh_token,
+    }
+    with httpx.Client(timeout=60.0) as client:
+        response = client.post(GOOGLE_TOKEN_URL, data=body)
+    if response.status_code >= 400:
+        raise RuntimeError(f"Google token refresh failed ({response.status_code}): {response.text[:400]}")
+    data = response.json()
+    access = (data.get("access_token") or "").strip()
+    if not access:
+        raise RuntimeError("Google refresh returned no access token.")
+    expires_in = int(data.get("expires_in") or 0)
+    expires_at = datetime.now(tz=UTC) + timedelta(seconds=expires_in) if expires_in else None
+    return {"access_token": access, "token_expires_at": expires_at}
 
 
 def _exchange_harvest_code(code: str, *, redirect_uri: str) -> dict[str, Any]:

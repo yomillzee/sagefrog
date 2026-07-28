@@ -92,6 +92,7 @@ CONNECTOR_ORDER = [
     "linkedin_organic",
     "meta_ads",
     "google_ads",
+    "microsoft_ads",
     "ga4",
     "gsc",
     "gtm",

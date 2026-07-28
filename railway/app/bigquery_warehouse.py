@@ -13,6 +13,7 @@ from uuid import uuid4
 _DEFAULT_LINKEDIN_DATASET = "raw_linkedin_ads"
 _DEFAULT_LINKEDIN_ORGANIC_DATASET = "raw_linkedin_organic"
 _DEFAULT_GOOGLE_DATASET = "raw_google_ads"
+_DEFAULT_MICROSOFT_DATASET = "raw_microsoft_ads"
 _DEFAULT_TABLE = "metrics_daily"
 _DEFAULT_CAMPAIGN_TABLE = "campaign_daily"
 _DEFAULT_CAMPAIGNS_TABLE = "campaigns"
@@ -37,6 +38,7 @@ def route(
     linkedin_dataset_id: str | None = None,
     linkedin_organic_dataset_id: str | None = None,
     meta_dataset_id: str | None = None,
+    microsoft_dataset_id: str | None = None,
     mart_dataset_id: str | None = None,
 ):
     """Route every warehouse read/write to one client's BigQuery identity."""
@@ -47,6 +49,7 @@ def route(
         "linkedin_organic_dataset": (linkedin_organic_dataset_id or "").strip() or None,
         "google_dataset": (google_dataset_id or "").strip() or None,
         "meta_dataset": (meta_dataset_id or "").strip() or None,
+        "microsoft_dataset": (microsoft_dataset_id or "").strip() or None,
         "mart_dataset": (mart_dataset_id or "").strip() or None,
     }
     token = _route_ctx.set(payload if any(payload.values()) else None)
@@ -151,7 +154,7 @@ def enabled(source: str | None = None) -> bool:
     flag = (os.getenv("BQ_WAREHOUSE_ENABLED") or os.getenv("BIGQUERY_WAREHOUSE_ENABLED") or "").strip().lower()
     if flag in {"1", "true", "yes", "on"}:
         return True
-    if _route_value("project") and source and source.strip().lower() in {"google", "linkedin", "meta"}:
+    if _route_value("project") and source and source.strip().lower() in {"google", "linkedin", "meta", "microsoft"}:
         return True
     return bool(source and source.strip().lower() == "linkedin" and _linkedin_project_id())
 
@@ -177,6 +180,8 @@ def _dataset_id(source: str) -> str:
         if source == "linkedin"
         else _DEFAULT_GOOGLE_DATASET
         if source == "google"
+        else _DEFAULT_MICROSOFT_DATASET
+        if source == "microsoft"
         else ""
     )
     return (
@@ -539,6 +544,7 @@ def create_paid_media_mart_views(client_key: str | None = None) -> dict[str, Any
         (_dataset_id("google"), "paid_google", "google"),
         (_dataset_id("linkedin"), "paid_linkedin", "linkedin"),
         (_meta_dataset_id(), "paid_meta", "meta"),
+        (_dataset_id("microsoft"), "paid_microsoft", "microsoft"),
     ]
 
     paid_selects: list[str] = []
