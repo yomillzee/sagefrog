@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -126,6 +126,19 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config
       ADD COLUMN IF NOT EXISTS sidebar_hidden_tabs JSONB
     """,
+    # Admin-authored per-tab card layout, stored as
+    #   {tab_key: {"order": [card_key, ...], "hidden": [card_key, ...]}}.
+    # An admin enters a tab's "edit mode" to hide a card, show one back, or drag
+    # to reorder; the choice is saved here and applied server-side on render, so
+    # (like sidebar_hidden_tabs) it holds for every user of that client's portal
+    # in every browser. Cards a client never sees are simply not emitted for
+    # them — they can't tell anything was hidden. Empty/NULL = every card shows
+    # in its natural order. Card keys are validated against the tab's known
+    # cards by the caller, so a stale/unknown key here is ignored on render.
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS card_layouts JSONB
+    """,
 ]
 
 # The client-facing section tabs an admin can show/hide from the Advanced admin
@@ -182,6 +195,10 @@ class ClientConfigRow:
     # Client-facing sidebar tabs an admin has hidden for this client, as a tuple
     # of tab keys (subset of SIDEBAR_TOGGLEABLE_TABS). Empty = every tab shows.
     sidebar_hidden_tabs: tuple[str, ...] = ()
+    # Admin-authored per-tab card layout: {tab_key: {"order": [...], "hidden":
+    # [...]}}. Empty dict = every card shows in natural order. See the
+    # card_layouts column comment above and get_card_layout / save_card_layout.
+    card_layouts: dict[str, dict[str, list[str]]] = field(default_factory=dict)
 
 
 def _get_db_url() -> str | None:
@@ -222,7 +239,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    gsc_branded_exclude, gsc_target_exclude,
                    overview_pinned_card, consent_sidebar_enabled, primary_kpi,
                    pacing_active_weekdays, segment_filter_profile,
-                   sidebar_hidden_tabs
+                   sidebar_hidden_tabs, card_layouts
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -266,6 +283,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         pacing_active_weekdays=_s(row[26]),
         segment_filter_profile=_s(row[27]),
         sidebar_hidden_tabs=_normalize_hidden_tabs(row[28]),
+        card_layouts=_normalize_card_layouts(row[29]),
     )
 
 
@@ -312,6 +330,116 @@ def _normalize_hidden_tabs(payload: object) -> tuple[str, ...]:
         return ()
     present = {str(v).strip() for v in payload}
     return tuple(tab for tab in SIDEBAR_TOGGLEABLE_TABS if tab in present)
+
+
+def _normalize_card_layouts(payload: object) -> dict[str, dict[str, list[str]]]:
+    """Coerce a stored card_layouts value into a clean {tab: {order, hidden}} map.
+
+    JSONB comes back as a dict from psycopg, but tolerate a JSON string too.
+    Every tab entry is reduced to two string lists — ``order`` and ``hidden`` —
+    each deduped (first occurrence wins) with blanks dropped. Card keys are NOT
+    validated here (this layer doesn't know a tab's card set); the renderer
+    ignores any key that isn't a real card, so a stale key is harmless. Tabs
+    with no usable order or hidden list are omitted entirely."""
+    if payload is None:
+        return {}
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(payload, dict):
+        return {}
+
+    def _clean_keys(values: object) -> list[str]:
+        if not isinstance(values, (list, tuple)):
+            return []
+        seen: list[str] = []
+        for v in values:
+            key = str(v).strip()
+            if key and key not in seen:
+                seen.append(key)
+        return seen
+
+    out: dict[str, dict[str, list[str]]] = {}
+    for tab, spec in payload.items():
+        tab_key = str(tab).strip()
+        if not tab_key or not isinstance(spec, dict):
+            continue
+        order = _clean_keys(spec.get("order"))
+        hidden = _clean_keys(spec.get("hidden"))
+        if order or hidden:
+            out[tab_key] = {"order": order, "hidden": hidden}
+    return out
+
+
+def get_card_layout(client_slug: str, tab_key: str) -> dict[str, list[str]]:
+    """The admin-authored layout for one tab: ``{"order": [...], "hidden": [...]}``.
+
+    Returns empty lists when the tab has no stored layout. Card keys are raw as
+    stored — the caller filters them against that tab's real card set."""
+    tab = (tab_key or "").strip()
+    row = get_config(client_slug)
+    layouts = row.card_layouts if row else {}
+    spec = layouts.get(tab) if tab else None
+    if not spec:
+        return {"order": [], "hidden": []}
+    return {"order": list(spec.get("order") or []), "hidden": list(spec.get("hidden") or [])}
+
+
+def save_card_layout(
+    client_slug: str,
+    tab_key: str,
+    *,
+    order: list[str] | tuple[str, ...] | None,
+    hidden: list[str] | tuple[str, ...] | None,
+    updated_by: str | None = None,
+) -> ClientConfigRow:
+    """Persist one tab's card layout (order + hidden set), merging into the
+    stored ``card_layouts`` map without disturbing other tabs' entries.
+
+    ``order`` is the full card order for the tab and ``hidden`` the cards an
+    admin has hidden; both are normalized (blanks dropped, deduped). Passing two
+    empty lists clears the tab's entry so it falls back to the natural order.
+    Server-side + per client, so the layout applies to every user of the
+    client's portal in every browser. Touches only the card_layouts column."""
+    slug = (client_slug or "").strip().lower()
+    tab = (tab_key or "").strip()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not tab:
+        raise ValueError("tab_key is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save client dashboard config.")
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    existing = get_config(slug)
+    label = existing.label if existing else slug
+    layouts = dict(existing.card_layouts) if existing else {}
+    normalized_entry = _normalize_card_layouts({tab: {"order": order or [], "hidden": hidden or []}})
+    if tab in normalized_entry:
+        layouts[tab] = normalized_entry[tab]
+    else:
+        layouts.pop(tab, None)
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, card_layouts, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              card_layouts = EXCLUDED.card_layouts,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, label, json.dumps(layouts), now, (updated_by or "").strip() or None),
+        )
+    saved = get_config(slug)
+    if not saved:
+        raise RuntimeError("Failed to load saved client config.")
+    return saved
 
 
 def save_sidebar_hidden_tabs(

@@ -161,6 +161,39 @@ def _overview_pin_btn(card_key: str, pinned_key: str | None) -> str:
     )
 
 
+# Drag-handle and hide/show glyphs for the Overview edit-mode controls.
+_OV_DRAG_ICON = (
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" '
+    'aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/>'
+    '<circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/>'
+    '<circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>'
+)
+
+
+def _ov_unit_wrapper(card_key: str, title: str, panel_html: str, *, hidden: bool) -> str:
+    """Wrap one Overview panel with its admin-only edit-mode controls.
+
+    The wrapper carries the stable ``data-ov-card`` key used for reorder/hide
+    persistence. The edit bar (drag handle, card name, Hide/Show toggle) is
+    display:none until the pane enters edit mode under ``.is-admin``; a hidden
+    card is greyed rather than removed while editing so an admin can show it back
+    (clients never receive hidden cards in their HTML at all — see the render
+    loop). The panel HTML itself is untouched."""
+    from dashboard.utils.formatting import esc as _esc
+
+    cls = "ov-unit ov-unit--hidden" if hidden else "ov-unit"
+    toggle_label = "Show" if hidden else "Hide"
+    return (
+        f'<div class="{cls}" data-ov-card="{_esc(card_key)}">'
+        f'<div class="ov-edit-bar">'
+        f'<span class="ov-drag" title="Drag to reorder" draggable="true">{_OV_DRAG_ICON}</span>'
+        f'<span class="ov-card-name">{_esc(title)}</span>'
+        f'<button type="button" class="ov-hide-toggle" data-ov-card="{_esc(card_key)}" '
+        f'aria-pressed="{"true" if hidden else "false"}">{toggle_label}</button>'
+        f'</div>{panel_html}</div>'
+    )
+
+
 def _docs_enabled() -> bool:
     import client_insight_documents as docs
     return docs.enabled()
@@ -381,6 +414,7 @@ def render_bigquery_dashboard_page(
     monthly_budget_val: float | None = None
     pagespeed_targets_stored: dict | None = None
     overview_pinned_card: str | None = None
+    overview_layout: dict[str, list[str]] = {"order": [], "hidden": []}
     try:
         import client_dashboard_config as _cdc
         _kwcfg = _cdc.get_config(api_client_key) or _cdc.get_config(client_slug)
@@ -393,6 +427,13 @@ def render_bigquery_dashboard_page(
             explorer_filters_cfg = _kwcfg.explorer_filters or ""
             monthly_budget_val = getattr(_kwcfg, "monthly_budget_usd", None)
             overview_pinned_card = getattr(_kwcfg, "overview_pinned_card", None)
+            _layouts = getattr(_kwcfg, "card_layouts", None) or {}
+            _ov = _layouts.get("overview") if isinstance(_layouts, dict) else None
+            if isinstance(_ov, dict):
+                overview_layout = {
+                    "order": [str(k) for k in (_ov.get("order") or [])],
+                    "hidden": [str(k) for k in (_ov.get("hidden") or [])],
+                }
         pagespeed_targets_stored = (
             _cdc.get_pagespeed_targets(api_client_key)
             or _cdc.get_pagespeed_targets(client_slug)
@@ -706,9 +747,18 @@ def render_bigquery_dashboard_page(
     if panel_pagespeed:
         ov_units.append(("site_performance", panel_pagespeed))
 
-    # Move the admin-pinned card to the top (if it's present this render). An
-    # unknown or currently-hidden key is ignored; the pin stays stored.
-    if overview_pinned_card:
+    # Apply the admin-authored layout (see client_dashboard_config.card_layouts).
+    # A stored ``order`` wins: cards are sorted by it, and any card not named in
+    # it keeps its natural position after the ordered ones. When no order is
+    # stored we fall back to the legacy single-card pin. Only keys that are real
+    # cards this render matter — a stale key is ignored.
+    _present = {k for k, _ in ov_units}
+    _stored_order = [k for k in overview_layout.get("order", []) if k in _present]
+    if _stored_order:
+        _rank = {k: i for i, k in enumerate(_stored_order)}
+        ov_units.sort(key=lambda kv: _rank.get(kv[0], len(_rank)))
+    elif overview_pinned_card:
+        # Legacy pin: move the pinned card to the top if it's present this render.
         _pin_idx = next(
             (i for i, (k, _) in enumerate(ov_units) if k == overview_pinned_card),
             None,
@@ -716,7 +766,38 @@ def render_bigquery_dashboard_page(
         if _pin_idx is not None:
             ov_units.insert(0, ov_units.pop(_pin_idx))
 
-    overview_summary_html = "".join(html for _, html in ov_units)
+    # Cards an admin has hidden. Clients never receive hidden cards in their HTML
+    # (nothing to inspect, no gap they could notice); admins keep them in the DOM
+    # so they can show one back from edit mode (greyed via CSS, and only visible
+    # while editing). Each card is wrapped with its edit-mode controls.
+    _hidden = {k for k in overview_layout.get("hidden", []) if k in _present}
+    _rendered_units: list[str] = []
+    for _key, _html in ov_units:
+        _is_hidden = _key in _hidden
+        if _is_hidden and not session_is_admin:
+            continue
+        _title = OVERVIEW_PINNABLE_CARDS.get(_key, _key)
+        _rendered_units.append(
+            _ov_unit_wrapper(_key, _title, _html, hidden=_is_hidden)
+        )
+    overview_summary_html = "".join(_rendered_units)
+
+    # Admin-only Overview edit-mode toolbar (hidden for clients via CSS). The
+    # button flips the pane into edit mode; hide/show and drag-reorder then
+    # persist to the card-layout endpoint. ``data-ov-layout-api`` carries the URL.
+    _ov_layout_api = _api_url(
+        f"/api/clients/{api_client_key}/tabs/overview/card-layout", access_key=access_key
+    )
+    overview_edit_toolbar_html = (
+        f'<div class="ov-edit-toolbar" data-ov-layout-api="{_esc(_ov_layout_api)}">'
+        f'<button type="button" id="ovEditToggle" class="ov-edit-btn">'
+        f'<span class="ov-edit-btn-on">Edit layout</span>'
+        f'<span class="ov-edit-btn-off">Done editing</span></button>'
+        f'<span class="ov-edit-hint">Drag cards to reorder, or Hide/Show them. '
+        f"Changes save automatically and only you (admins) see this.</span>"
+        f'<span class="ov-edit-status" id="ovEditStatus" role="status"></span>'
+        f"</div>"
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -867,6 +948,41 @@ def render_bigquery_dashboard_page(
     .is-admin .ov-pin.is-pinned {{ color:#fff; background:var(--accent); border-color:var(--accent); }}
     .is-admin .ov-pin.is-pinned:hover {{ background:var(--blue); border-color:var(--blue); box-shadow:none; }}
     .ov-pin svg {{ display:block; }}
+
+    /* ---- Overview edit mode (admin-only) ---- */
+    /* The toolbar and per-card edit bar are hidden for clients entirely; an
+       admin reveals the per-card controls by toggling edit mode on the pane. */
+    .ov-edit-toolbar {{ display:none; }}
+    .is-admin .ov-edit-toolbar {{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0 0 14px; padding:9px 12px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--card); }}
+    .ov-edit-btn {{ display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:999px; background:#fff; color:var(--ink); padding:6px 14px; font:inherit; font-size:.82rem; font-weight:600; cursor:pointer; transition:color .14s, border-color .14s, background .14s; }}
+    .ov-edit-btn:hover {{ color:var(--accent); border-color:var(--accent); }}
+    .ov-edit-btn .ov-edit-btn-off {{ display:none; }}
+    #pane-overview.is-editing .ov-edit-btn {{ color:#fff; background:var(--accent); border-color:var(--accent); }}
+    #pane-overview.is-editing .ov-edit-btn .ov-edit-btn-on {{ display:none; }}
+    #pane-overview.is-editing .ov-edit-btn .ov-edit-btn-off {{ display:inline; }}
+    .ov-edit-hint {{ color:var(--muted); font-size:.78rem; }}
+    #pane-overview:not(.is-editing) .ov-edit-hint {{ display:none; }}
+    .ov-edit-status {{ color:var(--muted); font-size:.76rem; margin-left:auto; }}
+    .ov-edit-status.is-error {{ color:var(--bad); }}
+
+    /* Per-card edit bar: revealed only while the admin is editing. */
+    .ov-edit-bar {{ display:none; }}
+    .is-admin #pane-overview.is-editing .ov-edit-bar {{ display:flex; align-items:center; gap:9px; margin:0 0 8px; padding:6px 10px; border:1px dashed var(--line); border-radius:var(--radius-sm); background:rgba(29,111,208,.05); }}
+    .ov-drag {{ display:inline-flex; align-items:center; justify-content:center; color:var(--muted); cursor:grab; }}
+    .ov-drag:active {{ cursor:grabbing; }}
+    .ov-drag svg {{ display:block; }}
+    .ov-card-name {{ font-size:.8rem; font-weight:600; color:var(--ink); }}
+    .ov-hide-toggle {{ margin-left:auto; border:1px solid var(--line); border-radius:999px; background:#fff; color:var(--muted); padding:4px 12px; font:inherit; font-size:.76rem; font-weight:600; cursor:pointer; transition:color .14s, border-color .14s, background .14s; }}
+    .ov-hide-toggle:hover {{ color:var(--accent); border-color:var(--accent); }}
+    .ov-unit.ov-unit--hidden .ov-hide-toggle {{ color:#fff; background:var(--accent); border-color:var(--accent); }}
+    /* A hidden card is gone for clients (never emitted) and, for an admin, only
+       reappears — greyed — while editing so it can be shown back. */
+    .ov-unit.ov-unit--hidden {{ display:none; }}
+    .is-admin #pane-overview.is-editing .ov-unit.ov-unit--hidden {{ display:block; opacity:.5; }}
+    #pane-overview.is-editing .ov-unit {{ border:1px solid transparent; border-radius:var(--radius-sm); padding:4px; transition:border-color .12s, background .12s; }}
+    #pane-overview.is-editing .ov-unit.is-drag-over {{ border-color:var(--accent); background:rgba(29,111,208,.04); }}
+    #pane-overview.is-editing .ov-unit.is-dragging {{ opacity:.4; }}
+
     .status {{ color:var(--muted); font-size:.82rem; margin:0 0 12px; }}
     .status.error {{ color:var(--bad); }}
     /* ---- Metric cards ---- */
@@ -1250,6 +1366,7 @@ def render_bigquery_dashboard_page(
     <!-- ===== OVERVIEW TAB ===== -->
     <div id="pane-overview">
       {onboarding_html}
+      {overview_edit_toolbar_html}
       {overview_summary_html}
     </div>
 
@@ -1514,6 +1631,121 @@ def render_bigquery_dashboard_page(
         alert('Could not update the pinned card: ' + (err.message || err));
       }});
     }});
+
+    // ---- Overview edit mode: hide / show / reorder cards (admin only) ----
+    // Admins toggle edit mode on the Overview pane, then hide a card (it greys
+    // out but stays, so it can be shown back), show a hidden one, or drag cards
+    // to reorder. Every change persists the full {{order, hidden}} for the tab
+    // to the card-layout endpoint; the server applies it on the next render (and
+    // omits hidden cards from clients' HTML entirely). Optimistic: the DOM is
+    // already correct after the edit, so we don't reload on success.
+    (function () {{
+      const shell = document.getElementById('appShell');
+      const pane = document.getElementById('pane-overview');
+      if (!pane || !shell || !shell.classList.contains('is-admin')) return;
+      const toolbar = pane.querySelector('.ov-edit-toolbar');
+      if (!toolbar) return;
+      const LAYOUT_API = toolbar.getAttribute('data-ov-layout-api') || '';
+      const toggleBtn = document.getElementById('ovEditToggle');
+      const statusEl = document.getElementById('ovEditStatus');
+
+      function setStatus(msg, isError) {{
+        if (!statusEl) return;
+        statusEl.textContent = msg || '';
+        statusEl.classList.toggle('is-error', !!isError);
+      }}
+
+      if (toggleBtn) {{
+        toggleBtn.addEventListener('click', function () {{
+          const editing = pane.classList.toggle('is-editing');
+          if (!editing) setStatus('');
+        }});
+      }}
+
+      // Collect the current layout from the live DOM: order = every card in
+      // document order; hidden = the ones flagged with the hidden class.
+      function currentLayout() {{
+        const units = Array.prototype.slice.call(pane.querySelectorAll('.ov-unit'));
+        const order = [], hidden = [];
+        units.forEach(function (u) {{
+          const key = u.getAttribute('data-ov-card');
+          if (!key) return;
+          order.push(key);
+          if (u.classList.contains('ov-unit--hidden')) hidden.push(key);
+        }});
+        return {{ order: order, hidden: hidden }};
+      }}
+
+      let saveSeq = 0;
+      function persist() {{
+        const payload = currentLayout();
+        const seq = ++saveSeq;
+        setStatus('Saving…', false);
+        fetch(LAYOUT_API, {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          credentials: 'same-origin',
+          body: JSON.stringify(payload),
+        }}).then(function (r) {{
+          return r.json().catch(function () {{ return {{}}; }}).then(function (b) {{
+            if (!r.ok || !b.ok) throw new Error((b && b.detail && (b.detail.error || b.detail)) || r.statusText);
+            if (seq === saveSeq) setStatus('Saved', false);
+          }});
+        }}).catch(function (err) {{
+          if (seq === saveSeq) setStatus('Could not save: ' + (err.message || err), true);
+        }});
+      }}
+
+      // Hide / show a card.
+      pane.addEventListener('click', function (ev) {{
+        const btn = ev.target.closest && ev.target.closest('.ov-hide-toggle');
+        if (!btn || !pane.contains(btn)) return;
+        ev.preventDefault();
+        const unit = btn.closest('.ov-unit');
+        if (!unit) return;
+        const nowHidden = unit.classList.toggle('ov-unit--hidden');
+        btn.setAttribute('aria-pressed', nowHidden ? 'true' : 'false');
+        btn.textContent = nowHidden ? 'Show' : 'Hide';
+        persist();
+      }});
+
+      // Drag to reorder. The handle is the drag source; we move its parent unit.
+      let dragUnit = null;
+      pane.addEventListener('dragstart', function (ev) {{
+        const handle = ev.target.closest && ev.target.closest('.ov-drag');
+        if (!handle || !pane.classList.contains('is-editing')) return;
+        dragUnit = handle.closest('.ov-unit');
+        if (!dragUnit) return;
+        dragUnit.classList.add('is-dragging');
+        if (ev.dataTransfer) {{
+          ev.dataTransfer.effectAllowed = 'move';
+          try {{ ev.dataTransfer.setData('text/plain', dragUnit.getAttribute('data-ov-card') || ''); }} catch (e) {{}}
+        }}
+      }});
+      pane.addEventListener('dragover', function (ev) {{
+        if (!dragUnit) return;
+        const over = ev.target.closest && ev.target.closest('.ov-unit');
+        if (!over || over === dragUnit || !pane.contains(over)) return;
+        ev.preventDefault();
+        if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+        const rect = over.getBoundingClientRect();
+        const after = (ev.clientY - rect.top) > rect.height / 2;
+        pane.querySelectorAll('.ov-unit.is-drag-over').forEach(function (u) {{ u.classList.remove('is-drag-over'); }});
+        over.classList.add('is-drag-over');
+        if (after) over.parentNode.insertBefore(dragUnit, over.nextSibling);
+        else over.parentNode.insertBefore(dragUnit, over);
+      }});
+      function endDrag(persistIt) {{
+        pane.querySelectorAll('.ov-unit.is-drag-over').forEach(function (u) {{ u.classList.remove('is-drag-over'); }});
+        if (dragUnit) {{
+          dragUnit.classList.remove('is-dragging');
+          dragUnit = null;
+          if (persistIt) persist();
+        }}
+      }}
+      pane.addEventListener('drop', function (ev) {{ if (dragUnit) {{ ev.preventDefault(); endDrag(true); }} }});
+      pane.addEventListener('dragend', function () {{ endDrag(true); }});
+    }})();
 
     // ---- Formatters ----
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
