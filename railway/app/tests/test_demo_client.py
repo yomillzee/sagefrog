@@ -113,6 +113,36 @@ class DemoDataShapeTests(unittest.TestCase):
         weekly = demo_data.generate("gsc.keyword_weekly_trend", _payload())
         self.assertIsInstance(weekly, list)
 
+    def test_gsc_has_fuller_keyword_list(self) -> None:
+        gsc = demo_data.generate("gsc.summary", _payload())
+        # A fuller Search Console keyword list, not just a handful.
+        self.assertGreaterEqual(len(gsc["top_queries"]), 20)
+        # keyword-matches has a fuller default branded set when no terms are given.
+        self.assertGreaterEqual(len(demo_data.generate("gsc.keyword_matches", {})), 6)
+
+    def test_gsc_pages_have_page_url_and_name(self) -> None:
+        gsc = demo_data.generate("gsc.summary", _payload())
+        self.assertTrue(gsc["top_pages"])
+        row = gsc["top_pages"][0]
+        # The GSC pages table renders the `page_url` column — it must be populated.
+        self.assertIn("page_url", row)
+        self.assertTrue(row["page_url"])
+        self.assertIn("page_name", row)
+
+    def test_linkedin_explorer_has_ad_group_name(self) -> None:
+        rows = demo_data.generate("explorer.linkedin", _payload())["rows"]
+        self.assertTrue(rows)
+        # The explorer surfaces LinkedIn's campaign_name as the ad group.
+        self.assertTrue(all(r.get("campaign_name") for r in rows))
+        self.assertTrue(all(r.get("campaign_group_name") for r in rows))
+
+    def test_meta_explorer_has_ad_group_name(self) -> None:
+        rows = demo_data.generate("explorer.meta", _payload())["rows"]
+        self.assertTrue(rows)
+        # The explorer surfaces Meta's adset_name as the ad group.
+        self.assertTrue(all(r.get("adset_name") for r in rows))
+        self.assertTrue(all(r.get("campaign_name") for r in rows))
+
     def test_semrush_shape(self) -> None:
         out = demo_data.generate("semrush.summary", {})
         for k in ("overview", "keywords", "backlinks", "series", "position_distribution"):
