@@ -250,10 +250,14 @@ def hubspot_mql_section_html(report, lead_tracking_url: str | None, *, pin_btn: 
     _money, _mom, _spark = _mql_money_compact, _mql_mom_delta, _mql_sparkline
     from dashboard.utils.formatting import esc as _esc, fmt_int as _int, fmt_pct as _pct
 
+    # Label follows the connector's configured lifecycle stage (MQL by default,
+    # but "Leads", "SQLs", … when the client tracks a different stage).
+    noun_plural = getattr(report, "stage_noun_plural", "MQLs") or "MQLs"
+
     cards: list[str] = []
     if report.mql_count:
         cards.append(
-            '<div class="card"><div class="card-title">MQLs</div>'
+            f'<div class="card"><div class="card-title">{_esc(noun_plural)}</div>'
             f'<div class="card-value">{_int(report.mql_count)}</div>'
             f'{_spark(report.mqls_by_month, "#1d6fd0")}'
             '<div class="card-foot">'
@@ -270,7 +274,7 @@ def hubspot_mql_section_html(report, lead_tracking_url: str | None, *, pin_btn: 
             '<div class="card"><div class="card-title">Deals</div>'
             f'<div class="card-value">{_int(report.deal_count)}</div>'
             '<div class="card-foot">'
-            f'<span class="mql-sub">{_pct(report.deal_count, report.mql_count)} of MQLs</span></div></div>'
+            f'<span class="mql-sub">{_pct(report.deal_count, report.mql_count)} of {_esc(noun_plural)}</span></div></div>'
         )
     if report.pipeline_amount:
         avg = (
