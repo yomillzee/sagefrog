@@ -74,6 +74,9 @@ class MicrosoftAdsConnector(ConnectorHandler):
                 # Overview populates from this sync. Idempotent; includes whichever
                 # of the raw campaign_daily tables currently exist.
                 bigquery_warehouse.create_paid_media_mart_views(client_key=client_slug)
+                # Campaign-level explorer view the Campaign Explorer tab reads
+                # (explorer_microsoft_ads_daily), mirroring the Google Ads explorer.
+                bigquery_warehouse.create_microsoft_ads_mart_view()
             return SyncResult(rows_loaded=rows_written, range_start=start, range_end=end)
         except Exception as exc:
             _log.warning("Microsoft Ads sync failed [%s]: %s", client_slug, exc)

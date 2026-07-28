@@ -440,6 +440,51 @@ def create_google_campaign_mart_view() -> dict[str, Any]:
     return {"status": "success", "table": table_id, "raw_table": raw_table_id}
 
 
+def create_microsoft_ads_mart_view() -> dict[str, Any]:
+    """Build the Microsoft Ads campaign explorer view the dashboard queries.
+
+    Microsoft is synced at campaign grain (raw_microsoft_ads.campaign_daily), so
+    the explorer view is a straight projection at campaign/day grain — the same
+    denormalized shape marketing_service.fetch_microsoft_explorer aggregates,
+    mirroring explorer_google_ads_daily. Returns pending_data when the raw table
+    doesn't exist yet (no sync has run), so the endpoint degrades to empty rather
+    than 500-ing.
+    """
+    project_id = _route_value("project") or (
+        os.getenv("BQ_WAREHOUSE_PROJECT_ID") or os.getenv("BQ_PROJECT_ID") or ""
+    ).strip()
+    if not project_id:
+        return {"status": "failed", "error": "missing_project"}
+    raw_dataset = _dataset_id("microsoft")
+    mart_dataset = _mart_dataset_id()
+    client = _client(project_id)
+    bigquery = _bigquery()
+    client.create_dataset(bigquery.Dataset(f"{project_id}.{mart_dataset}"), exists_ok=True)
+    raw_table_id = f"{project_id}.{raw_dataset}.campaign_daily"
+    view_id = f"{project_id}.{mart_dataset}.explorer_microsoft_ads_daily"
+    try:
+        client.get_table(raw_table_id)
+    except Exception as exc:
+        return {"status": "pending_data", "table": view_id, "raw_table": raw_table_id, "error": str(exc)[:400]}
+    _replace_object_with_view(
+        client,
+        view_id,
+        f"""SELECT
+          metric_date                       AS date,
+          account_id,
+          campaign_id,
+          campaign_name,
+          spend,
+          impressions,
+          clicks,
+          conversions,
+          conversion_value,
+          synced_at
+        FROM `{raw_table_id}`""",
+    )
+    return {"status": "success", "table": view_id, "raw_table": raw_table_id}
+
+
 def rebuild_unified_marketing_mart(client_key: str | None = None) -> dict[str, Any]:
     """Build the dashboard's single daily fact from available normalized facts.
 

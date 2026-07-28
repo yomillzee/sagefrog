@@ -60,6 +60,50 @@ class MicrosoftAdsRegistrationTests(unittest.TestCase):
             client_bigquery_setup.dataset_ids().get("microsoft"), "raw_microsoft_ads"
         )
 
+    def test_explorer_mart_view_builder_exists(self) -> None:
+        import bigquery_warehouse
+
+        self.assertTrue(hasattr(bigquery_warehouse, "create_microsoft_ads_mart_view"))
+
+    def test_connector_builds_explorer_view(self) -> None:
+        import inspect
+
+        import connectors.microsoft_ads as mod
+
+        src = inspect.getsource(mod)
+        self.assertIn("create_microsoft_ads_mart_view", src)
+
+    def test_explorer_endpoint_registered(self) -> None:
+        import main
+
+        paths = main.app.openapi()["paths"]
+        self.assertIn("/api/clients/{client_key}/microsoft-ads/explorer", paths)
+
+    def test_explorer_wired_into_dashboard_renderer(self) -> None:
+        import inspect
+
+        from dashboard.renderers import bigquery_dashboard_renderer as r
+
+        src = inspect.getsource(r)
+        self.assertIn("MICROSOFT_EXPLORER_API", src)
+        self.assertIn("normalizeExplorerRows(g,l,m,ms)", src)
+        self.assertIn("platform:'microsoft'", src)
+
+    def test_fetch_microsoft_explorer_degrades_to_empty(self) -> None:
+        from unittest import mock
+
+        import marketing_service
+
+        with marketing_service.route(client_key="t", project_id="p", mart_dataset_id="m"):
+            with mock.patch.object(
+                marketing_service, "_run_query", side_effect=RuntimeError("no such table")
+            ):
+                out = marketing_service.fetch_microsoft_explorer(
+                    start_date=date(2026, 1, 1), end_date=date(2026, 1, 31)
+                )
+        self.assertEqual(out["rows"], [])
+        self.assertEqual(out["row_count"], 0)
+
     def test_paid_media_mart_unions_microsoft(self) -> None:
         # The unified paid-media mart must union the microsoft raw campaign_daily
         # so Microsoft spend reaches the dashboard Overview / totals / trend.
