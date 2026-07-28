@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import audit_log
@@ -461,3 +461,57 @@ def dashboard_client_sidebar_theme(
         **audit_log.request_context(request),
     )
     return JSONResponse({"ok": True, "sidebar_from": from_hex, "sidebar_to": to_hex})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Admin surface: tool tabs (Advanced / View As / BQ Connection)
+# ──────────────────────────────────────────────────────────────────────────────
+# The per-client Admin page is a strip of tabs across the top. Connectors,
+# Insights, and Consent Health are their own existing pages; these three are
+# lightweight tool pages that share the same shell + tab strip.
+_ADMIN_TOOL_TABS = ("sidebar", "view-as", "bq")
+
+
+@router.get(
+    "/dashboard/{client_slug}/admin",
+    include_in_schema=False,
+    response_class=HTMLResponse,
+)
+def admin_tools_home(client_slug: str, request: Request):
+    """Admin landing → the first tab (Connectors)."""
+    slug = validate_client_slug(client_slug)
+    return RedirectResponse(url=f"/dashboard/{slug}/connectors", status_code=307)
+
+
+@router.get(
+    "/dashboard/{client_slug}/admin/{tab}",
+    include_in_schema=False,
+    response_class=HTMLResponse,
+)
+def admin_tools_tab(client_slug: str, request: Request, tab: str):
+    """One of the Admin tool tabs (admin only)."""
+    slug = validate_client_slug(client_slug)
+    if tab not in _ADMIN_TOOL_TABS:
+        raise HTTPException(status_code=404, detail=f"Unknown admin tab '{tab}'.")
+    auth = web_auth.authenticate_dashboard(request, client_slug=slug)
+    if isinstance(auth, RedirectResponse):
+        return auth
+    user = auth.user
+    session_is_admin = bool(user and user.role == "admin")
+    if web_users.enabled() and not session_is_admin:
+        # The admin tools are agency-only; bounce non-admins back to the dashboard.
+        return RedirectResponse(url=f"/dashboard/{slug}", status_code=303)
+
+    import client_config
+    from dashboard.renderers.base_layout import render_admin_tools_page
+
+    cfg = client_config.load_client_config(slug)
+    label = cfg.label if cfg else slug
+    return HTMLResponse(
+        render_admin_tools_page(
+            client_slug=slug,
+            label=label,
+            tab=tab,
+            **dashboard_settings_session_kwargs(auth),
+        )
+    )

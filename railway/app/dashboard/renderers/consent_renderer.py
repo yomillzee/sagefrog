@@ -758,6 +758,7 @@ def render_consent_page(
         use_session=use_session,
         session_email=session_email,
         session_is_admin=session_is_admin,
+        admin_tab="consent",
         extra_css=_CSS,
     )
 

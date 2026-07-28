@@ -30,10 +30,10 @@ def _footer_items(html: str) -> list[str]:
     return re.findall(r'<span>([^<]+)</span>', m.group(1))
 
 
-def _admin_section_items(html: str) -> list[str]:
-    m = re.search(r'<div class="dash-admin-body"[^>]*>(.*?)</div>\s*</div>', html, re.S)
-    assert m, "no admin section body found"
-    return re.findall(r'<span[^>]*>([^<]+)</span>', m.group(1))
+def _admin_tab_items(html: str) -> list[str]:
+    m = re.search(r'<nav class="admin-top-tabs"[^>]*>(.*?)</nav>', html, re.S)
+    assert m, "no admin tab strip found"
+    return re.findall(r'class="admin-top-tab[^"]*"[^>]*>([^<]+)<', m.group(1))
 
 
 class SidebarConsistencyTests(unittest.TestCase):
@@ -74,7 +74,8 @@ class SidebarConsistencyTests(unittest.TestCase):
                 routing={"project": "p"}, show_linkedin_backfill=False, **kw),
             "connectors": render_client_shell_page(
                 client_slug="test", label="Test Co", active_nav="connectors",
-                page_title="C", page_subtitle="", content_html="x", **kw),
+                page_title="C", page_subtitle="", content_html="x",
+                admin_tab="connectors", **kw),
             "files": render_client_shell_page(
                 client_slug="test", label="Test Co", active_nav="files",
                 page_title="F", page_subtitle="", content_html="x", **kw),
@@ -94,32 +95,41 @@ class SidebarConsistencyTests(unittest.TestCase):
         for name, html in pages.items():
             self.assertEqual(_footer_items(html), expected, f"footer nav differs on {name}")
 
-    def test_admin_section_identical_on_every_page(self) -> None:
-        # The admin-only "Admin" disclosure carries the same agency options on
-        # every page so they never shift as the admin moves between pages.
+    def test_admin_button_present_on_every_page(self) -> None:
+        # Admin is now a single footer button (not a disclosure) that admins see
+        # on every page, linking to the Admin surface.
+        pages = self._render_all()
+        for name, html in pages.items():
+            self.assertRegex(
+                html, r'class="dash-admin-link[^"]*"[^>]*>\s*<svg.*?</svg>\s*<span>Admin</span>',
+                f"Admin button missing on {name}",
+            )
+
+    def test_admin_tab_strip_carries_the_agency_options(self) -> None:
+        # The Admin surface pages (Connectors, Insights) render the same top tab
+        # strip so the agency options read as tabs of one page.
         pages = self._render_all()
         expected = [
             "Connectors", "Insights", "Consent Health",
-            "Sidebar editor", "View as user", "BigQuery connection",
+            "Advanced", "View As", "BQ Connection",
         ]
-        for name, html in pages.items():
+        for name in ("connectors", "settings"):
             self.assertEqual(
-                _admin_section_items(html), expected,
-                f"admin section differs on {name}",
+                _admin_tab_items(pages[name]), expected,
+                f"admin tab strip differs on {name}",
             )
 
-    def test_admin_section_hidden_from_non_admins(self) -> None:
-        # A non-admin session never renders the Admin disclosure.
+    def test_admin_affordances_hidden_from_non_admins(self) -> None:
+        # A non-admin session never renders the Admin button or the tab strip.
         from dashboard.renderers.base_layout import render_client_shell_page
         html = render_client_shell_page(
-            client_slug="test", label="Test Co", active_nav="files",
-            page_title="F", page_subtitle="", content_html="x",
+            client_slug="test", label="Test Co", active_nav="connectors",
+            page_title="C", page_subtitle="", content_html="x",
+            admin_tab="connectors",
             access_key="k", session_is_admin=False, session_email="c@x.com",
         )
-        # id= only appears in the rendered markup (the class name also lives in
-        # the shared CSS, so match on the element the section builds).
-        self.assertNotIn('id="adminSectionBody"', html)
-        self.assertNotIn("<span>Connectors</span>", html)
+        self.assertNotIn("<span>Admin</span>", html)
+        self.assertNotIn('<nav class="admin-top-tabs"', html)
 
 
 if __name__ == "__main__":

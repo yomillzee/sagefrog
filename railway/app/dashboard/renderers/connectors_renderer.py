@@ -381,6 +381,7 @@ def render_connectors_directory(
         use_session=use_session,
         session_email=session_email,
         session_is_admin=session_is_admin,
+        admin_tab="connectors",
         extra_css=_CONNECTOR_CSS,
     )
 
@@ -453,6 +454,7 @@ def render_connector_detail(
         use_session=use_session,
         session_email=session_email,
         session_is_admin=session_is_admin,
+        admin_tab="connectors",
         extra_css=_CONNECTOR_CSS,
     )
 
