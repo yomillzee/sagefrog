@@ -348,7 +348,7 @@ def render_bigquery_dashboard_page(
         configs = connector_config_store.list_configs(client_slug)
         has_connectors = bool(configs)
         has_paid_ads = any(
-            c.connector_type in ("google_ads", "linkedin_ads", "meta_ads")
+            c.connector_type in ("google_ads", "linkedin_ads", "meta_ads", "microsoft_ads")
             and c.status not in ("not_connected", "disconnected")
             for c in configs
         )

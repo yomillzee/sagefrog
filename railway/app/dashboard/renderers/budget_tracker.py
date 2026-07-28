@@ -172,9 +172,10 @@ _JS_BODY = r"""
     } catch(e){ return null; }
   }
   const PLATFORMS = [
-    { key:'paid_google',   label:'Google Ads', color:'#1d6fd0' },
-    { key:'paid_linkedin', label:'LinkedIn',   color:'#0a7f3f' },
-    { key:'paid_meta',     label:'Meta',       color:'#7c3aed' },
+    { key:'paid_google',    label:'Google Ads',   color:'#1d6fd0' },
+    { key:'paid_linkedin',  label:'LinkedIn',     color:'#0a7f3f' },
+    { key:'paid_meta',      label:'Meta',         color:'#7c3aed' },
+    { key:'paid_microsoft', label:'Microsoft Ads',color:'#00a4ef' },
   ];
   const monthKey = ds => String(ds).slice(0,7);
   function dayRange(from,to){ const out=[]; const d=new Date(from); while (d<=to){ out.push(fmtDate(d)); d.setDate(d.getDate()+1); } return out; }
