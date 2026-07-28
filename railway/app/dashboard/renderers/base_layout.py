@@ -705,6 +705,10 @@ def dashboard_sidebar_view_nav_html(
     always links and appear only when their connector is connected.
     """
     pflags = platform_nav_flags(client_slug)
+    # Admin-hidden core tabs (server-side, per client). We render these already
+    # hidden (no client-side flash) so a tab an admin turns off stays off for
+    # every user of this client's portal in every browser.
+    hidden_tabs = set(_sidebar_hidden_tabs(client_slug))
     dash_url = _dashboard_page_url(
         client_slug=client_slug, access_key=access_key, use_session=use_session
     ) or "#"
@@ -724,10 +728,11 @@ def dashboard_sidebar_view_nav_html(
     items: list[str] = []
     for i, (tab, label, icon) in enumerate(core):
         inner = f'{icon}<span>{_esc(label)}</span>'
+        hide_attr = ' style="display:none" data-hidden="1"' if tab in hidden_tabs else ""
         if as_tabs:
             active = " active" if i == 0 else ""
             items.append(
-                f'<button type="button" class="dash-view-btn tab-btn{active}" data-tab="{tab}">{inner}</button>'
+                f'<button type="button" class="dash-view-btn tab-btn{active}" data-tab="{tab}"{hide_attr}>{inner}</button>'
             )
         else:
             # Deep-link to the specific dashboard tab (?view=…) so clicking e.g.
@@ -736,7 +741,7 @@ def dashboard_sidebar_view_nav_html(
             href = dash_url if tab == "overview" else (
                 f"{dash_url}{'&' if '?' in dash_url else '?'}view={tab}"
             )
-            items.append(f'<a class="dash-view-btn" data-tab="{tab}" href="{_esc(href)}">{inner}</a>')
+            items.append(f'<a class="dash-view-btn" data-tab="{tab}" href="{_esc(href)}"{hide_attr}>{inner}</a>')
     if pflags.get("show_lead_tracking"):
         lt = _lead_tracking_page_url(
             client_slug=client_slug, access_key=access_key, use_session=use_session
@@ -769,21 +774,16 @@ def dashboard_sidebar_view_nav_html(
             f'<a class="dash-view-btn" href="{_esc(cu)}">'
             f'{_VIEW_ICONS["consent"]}<span>Consent Health</span></a>'
         )
-    # Client-side page-visibility prefs from Settings > "Sidebar pages"
-    # (localStorage 'nixon_sidebar_pages:<client_slug>'). Hides the core nav items
-    # the user turned off, on every page that renders this nav so the sidebar stays
-    # consistent. The key is SCOPED PER CLIENT — an unscoped global key leaked a
-    # toggle to every portal in the browser. Uses style.display, NOT the hidden
-    # attribute, because .dash-view-btn sets display:flex which would override
-    # [hidden]. The dashboard additionally falls back off a hidden active tab (see
-    # its deep-link init). Lead/Event Tracking items have no data-tab and are
-    # untouched (they gate on connector state instead).
+    # Core tabs an admin hid are already rendered hidden server-side (per client,
+    # for every user and browser). We publish the hidden set as a global so the
+    # dashboard's deep-link init can fall back off a hidden active tab. Replaces
+    # the old per-browser localStorage 'nixon_sidebar_pages:<slug>' prefs, which
+    # only hid tabs in the one browser that toggled them. Lead/Event Tracking
+    # items have no data-tab and are untouched (they gate on connector state).
+    import json as _json
     prefs_script = (
-        "<script>(function(){try{"
-        f"var p=JSON.parse(localStorage.getItem('nixon_sidebar_pages:{client_slug}')||'{{}}');"
-        "document.querySelectorAll('.dash-sidebar-nav .dash-view-btn[data-tab]')"
-        ".forEach(function(el){if(p[el.dataset.tab]===false)el.style.display='none';});"
-        "}catch(e){}})();</script>"
+        "<script>window.__sfHiddenTabs="
+        f"{_json.dumps(sorted(hidden_tabs))};</script>"
     )
     return (
         f'<nav class="dash-sidebar-nav" aria-label="Sections">{"".join(items)}</nav>'
@@ -832,6 +832,17 @@ def _consent_sidebar_enabled(client_slug: str) -> bool:
         return bool(cfg and cfg.consent_sidebar_enabled)
     except Exception:
         return False
+
+
+def _sidebar_hidden_tabs(client_slug: str) -> tuple[str, ...]:
+    """Core sidebar tabs an admin has hidden for this client (server-side, per
+    client). Empty on any error so a config hiccup never blanks the nav."""
+    try:
+        import client_dashboard_config
+        cfg = client_dashboard_config.get_config(client_slug)
+        return cfg.sidebar_hidden_tabs if cfg else ()
+    except Exception:
+        return ()
 
 
 def _has_consent_config(client_slug: str) -> bool:
@@ -920,8 +931,9 @@ _ADMIN_SECTION_ICON = (
 )
 
 # Client-facing tabs that admins can show/hide from the Advanced admin tab.
-# Keys mirror the data-tab attributes in dashboard_sidebar_view_nav_html
-# and the localStorage 'nixon_sidebar_pages:<slug>' map the nav reads on load.
+# Keys mirror the data-tab attributes in dashboard_sidebar_view_nav_html and the
+# server-side client_dashboard_config.sidebar_hidden_tabs list (persisted per
+# client, so a hidden tab stays hidden for every user in every browser).
 _SIDEBAR_TAB_EDIT_ITEMS: tuple[tuple[str, str], ...] = (
     ("overview", "Overview"),
     ("explorer", "Campaign Explorer"),
@@ -1345,13 +1357,26 @@ def _admin_tools_js() -> str:
           } catch(err){ setStat(stat,'Save failed: '+(err.message||err),true); }
           finally{ saveBtn.disabled=false; }
         });
-        var lsKey=card.dataset.lsKey;
-        function getTabs(){ try{return JSON.parse(localStorage.getItem(lsKey)||'{}');}catch(e){return {};} }
-        (function(){ var m=getTabs(); card.querySelectorAll('.dash-tab-toggle').forEach(function(inp){ inp.checked=m[inp.dataset.tab]!==false; }); })();
-        card.querySelectorAll('.dash-tab-toggle').forEach(function(inp){ inp.addEventListener('change', function(){
-          var m=getTabs(); m[inp.dataset.tab]=inp.checked;
-          try{ localStorage.setItem(lsKey, JSON.stringify(m)); }catch(e){}
-          document.querySelectorAll('.dash-sidebar-nav .dash-view-btn[data-tab]').forEach(function(el){ el.style.display=(m[el.dataset.tab]===false)?'none':''; });
+        // Tab visibility is server-side + per client: each toggle POSTs the full
+        // hidden set so the change sticks for every user in every browser. The
+        // live sidebar updates immediately; unchecked = hidden.
+        var tabsUrl=card.dataset.tabsUrl, tabsStat=document.getElementById('sbTabsStatus');
+        function hiddenList(){ var out=[]; card.querySelectorAll('.dash-tab-toggle').forEach(function(inp){ if(!inp.checked) out.push(inp.dataset.tab); }); return out; }
+        function applyTabVisibility(){
+          var hidden=hiddenList();
+          document.querySelectorAll('.dash-sidebar-nav .dash-view-btn[data-tab]').forEach(function(el){
+            el.style.display=(hidden.indexOf(el.dataset.tab)!==-1)?'none':'';
+          });
+        }
+        card.querySelectorAll('.dash-tab-toggle').forEach(function(inp){ inp.addEventListener('change', async function(){
+          applyTabVisibility();
+          setStat(tabsStat,'Saving…',false);
+          try {
+            var r=await fetch(tabsUrl,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({hidden:hiddenList().join(',')})});
+            var b=await r.json().catch(function(){return {};});
+            if(!r.ok||!b.ok) throw new Error(b.error||('HTTP '+r.status));
+            setStat(tabsStat,'Saved for all users.',false);
+          } catch(err){ setStat(tabsStat,'Save failed: '+(err.message||err),true); }
         }); });
       }
       // BigQuery connection — verify button drives the status pill.
@@ -1404,15 +1429,18 @@ def render_admin_tools_page(
         def_from = dashboard_theme.DEFAULT_THEME["sidebar_from"]
         def_to = dashboard_theme.DEFAULT_THEME["sidebar_to"]
         theme_url = _key(f"/dashboard/{client_slug}/sidebar-theme")
+        tabs_url = _key(f"/dashboard/{client_slug}/sidebar-tabs")
+        hidden_tabs = set(_sidebar_hidden_tabs(client_slug))
         tabs_html = "".join(
             f'<label class="dash-pop-toggle"><span>{_esc(lbl)}</span>'
-            f'<input type="checkbox" class="dash-tab-toggle" data-tab="{key}" checked></label>'
+            f'<input type="checkbox" class="dash-tab-toggle" data-tab="{key}"'
+            f'{"" if key in hidden_tabs else " checked"}></label>'
             for key, lbl in _SIDEBAR_TAB_EDIT_ITEMS
         )
         content = f"""
         <div class="admin-tool-card" id="adminSidebarCard"
              data-theme-url="{_esc(theme_url)}" data-def-from="{_esc(def_from)}"
-             data-def-to="{_esc(def_to)}" data-ls-key="nixon_sidebar_pages:{_esc(client_slug)}">
+             data-def-to="{_esc(def_to)}" data-tabs-url="{_esc(tabs_url)}">
           <h1 class="admin-tool-title">Advanced</h1>
           <p class="admin-tool-desc">Fine-tune this client's sidebar — its gradient colours and which section tabs appear.</p>
           <div class="dash-pop-label">Gradient</div>
@@ -1427,7 +1455,8 @@ def render_admin_tools_page(
           <span class="dash-pop-status" id="sbStatus"></span>
           <div class="dash-pop-label" style="margin-top:18px">Tabs</div>
           <div class="dash-pop-tabs">{tabs_html}</div>
-          <span class="dash-pop-hint">Tabs are saved in this browser.</span>
+          <span class="dash-pop-status" id="sbTabsStatus"></span>
+          <span class="dash-pop-hint">Tabs are saved for this client — the change applies to every user, in every browser.</span>
         </div>
         <script>{_admin_tools_js()}</script>"""
     elif tab == "view-as":

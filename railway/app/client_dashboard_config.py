@@ -117,7 +117,27 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config
       ADD COLUMN IF NOT EXISTS segment_filter_profile TEXT
     """,
+    # Which client-facing sidebar section tabs an admin has hidden for this
+    # client, stored as a JSON array of tab keys (e.g. ["ai_traffic"]). Empty /
+    # NULL means every core tab shows. This is server-side and per client, so a
+    # tab an admin hides stays hidden for every user of that client's portal in
+    # every browser — unlike the old per-browser localStorage toggle.
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS sidebar_hidden_tabs JSONB
+    """,
 ]
+
+# The client-facing section tabs an admin can show/hide from the Advanced admin
+# tab. Keys mirror the ``data-tab`` attributes the sidebar nav renders; anything
+# outside this set is ignored on save so a stray value can't wedge the sidebar.
+SIDEBAR_TOGGLEABLE_TABS: tuple[str, ...] = (
+    "overview",
+    "explorer",
+    "analytics",
+    "ai_traffic",
+    "gsc",
+)
 
 
 @dataclass(frozen=True)
@@ -159,6 +179,9 @@ class ClientConfigRow:
     # Segment-filter classification: 'business_lines', 'regions', or None. Drives
     # the campaign/segment filter UI and grouping — see penn_business_lines.
     segment_filter_profile: str | None = None
+    # Client-facing sidebar tabs an admin has hidden for this client, as a tuple
+    # of tab keys (subset of SIDEBAR_TOGGLEABLE_TABS). Empty = every tab shows.
+    sidebar_hidden_tabs: tuple[str, ...] = ()
 
 
 def _get_db_url() -> str | None:
@@ -198,7 +221,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    explorer_filters, explorer_budget_tracker,
                    gsc_branded_exclude, gsc_target_exclude,
                    overview_pinned_card, consent_sidebar_enabled, primary_kpi,
-                   pacing_active_weekdays, segment_filter_profile
+                   pacing_active_weekdays, segment_filter_profile,
+                   sidebar_hidden_tabs
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -241,6 +265,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         primary_kpi=_normalize_kpi_spec(row[25]),
         pacing_active_weekdays=_s(row[26]),
         segment_filter_profile=_s(row[27]),
+        sidebar_hidden_tabs=_normalize_hidden_tabs(row[28]),
     )
 
 
@@ -268,6 +293,75 @@ def _normalize_kpi_spec(payload: object) -> dict[str, Any] | None:
         goal = None
     label = str(payload.get("label") or "").strip() or None
     return {"type": kpi_type, "label": label, "goal": goal}
+
+
+def _normalize_hidden_tabs(payload: object) -> tuple[str, ...]:
+    """Coerce a stored sidebar_hidden_tabs value into a clean tuple of tab keys.
+
+    JSONB comes back as a list from psycopg, but tolerate a JSON string too.
+    Filters to SIDEBAR_TOGGLEABLE_TABS (dropping unknown/garbage keys), dedupes
+    while preserving the canonical tab order."""
+    if payload is None:
+        return ()
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return ()
+    if not isinstance(payload, (list, tuple)):
+        return ()
+    present = {str(v).strip() for v in payload}
+    return tuple(tab for tab in SIDEBAR_TOGGLEABLE_TABS if tab in present)
+
+
+def save_sidebar_hidden_tabs(
+    client_slug: str,
+    hidden_tabs: list[str] | tuple[str, ...] | None,
+    *,
+    updated_by: str | None = None,
+) -> ClientConfigRow:
+    """Persist which client-facing sidebar tabs are hidden for this client.
+
+    ``hidden_tabs`` is the set of tab keys to hide (any subset of
+    SIDEBAR_TOGGLEABLE_TABS); unknown keys are dropped. Server-side + per client,
+    so the choice applies to every user of the client's portal in every browser.
+    Touches only that column."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save client dashboard config.")
+    present = {str(v).strip() for v in (hidden_tabs or [])}
+    normalized = [tab for tab in SIDEBAR_TOGGLEABLE_TABS if tab in present]
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    existing = get_config(slug)
+    label = existing.label if existing else slug
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, sidebar_hidden_tabs, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              sidebar_hidden_tabs = EXCLUDED.sidebar_hidden_tabs,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, label, json.dumps(normalized), now, (updated_by or "").strip() or None),
+        )
+    saved = get_config(slug)
+    if not saved:
+        raise RuntimeError("Failed to load saved client config.")
+    return saved
+
+
+def get_sidebar_hidden_tabs(client_slug: str) -> tuple[str, ...]:
+    """The client-facing sidebar tabs an admin has hidden (empty if none/unset)."""
+    row = get_config(client_slug)
+    return row.sidebar_hidden_tabs if row else ()
 
 
 def save_config(

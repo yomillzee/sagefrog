@@ -119,6 +119,46 @@ class SidebarConsistencyTests(unittest.TestCase):
                 f"admin tab strip differs on {name}",
             )
 
+    def test_admin_hidden_tab_is_hidden_in_sidebar_server_side(self) -> None:
+        # A tab an admin hides (client_dashboard_config.sidebar_hidden_tabs) must
+        # render already hidden in the section nav — server-side, so it's gone for
+        # every user and browser, not just the one that toggled it.
+        import client_dashboard_config as cdc
+        cdc.get_config = lambda slug: types.SimpleNamespace(
+            dashboard_mode="bigquery_nixon", label="Test Co",
+            gcp_project_id="p", bq_mart_dataset_id="marketing_marts",
+            consent_sidebar_enabled=False, sidebar_hidden_tabs=("ai_traffic",),
+        )
+        pages = self._render_all()
+        for name, html in pages.items():
+            m = re.search(r'data-tab="ai_traffic"[^>]*>', html)
+            self.assertIsNotNone(m, f"AI Traffic nav item missing on {name}")
+            self.assertIn("display:none", m.group(0), f"AI Traffic not hidden on {name}")
+            self.assertIn('window.__sfHiddenTabs=["ai_traffic"]', html,
+                          f"hidden-tabs global missing on {name}")
+            # No per-browser localStorage prefs key lingering anywhere.
+            self.assertNotIn("nixon_sidebar_pages", html, f"stale prefs key on {name}")
+
+    def test_admin_advanced_tab_reflects_stored_hidden_tabs(self) -> None:
+        # The Advanced admin tab's checkboxes mirror the stored server state:
+        # a hidden tab is unchecked, everything else checked, and toggling POSTs
+        # to the per-client sidebar-tabs endpoint (no localStorage).
+        import client_dashboard_config as cdc
+        cdc.get_config = lambda slug: types.SimpleNamespace(
+            dashboard_mode="bigquery_nixon", label="Test Co",
+            gcp_project_id="p", bq_mart_dataset_id="marketing_marts",
+            consent_sidebar_enabled=False, sidebar_hidden_tabs=("ai_traffic",),
+        )
+        from dashboard.renderers.base_layout import render_admin_tools_page
+        html = render_admin_tools_page(
+            client_slug="test", label="Test Co", tab="sidebar",
+            access_key="k", session_is_admin=True, session_email="admin@sf.com",
+        )
+        self.assertRegex(html, r'data-tab="ai_traffic"\s*>')  # unchecked
+        self.assertRegex(html, r'data-tab="overview" checked>')
+        self.assertIn("/dashboard/test/sidebar-tabs", html)
+        self.assertNotIn("nixon_sidebar_pages", html)
+
     def test_admin_affordances_hidden_from_non_admins(self) -> None:
         # A non-admin session never renders the Admin button or the tab strip.
         from dashboard.renderers.base_layout import render_client_shell_page

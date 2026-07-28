@@ -463,6 +463,55 @@ def dashboard_client_sidebar_theme(
     return JSONResponse({"ok": True, "sidebar_from": from_hex, "sidebar_to": to_hex})
 
 
+@router.post(
+    "/dashboard/{client_slug}/sidebar-tabs",
+    summary="Save which client-facing sidebar tabs are hidden for this client (JSON)",
+    include_in_schema=False,
+)
+def dashboard_client_sidebar_tabs(
+    client_slug: str,
+    request: Request,
+    hidden: str = Form(""),
+):
+    """Admin-only: set which core sidebar section tabs are hidden for this client.
+
+    ``hidden`` is a comma-separated list of tab keys to hide (any subset of
+    ``client_dashboard_config.SIDEBAR_TOGGLEABLE_TABS``; unknown keys are
+    dropped). Server-side + per client, so the choice sticks for every user of
+    the client's portal in every browser — replacing the old per-browser
+    localStorage toggle."""
+    slug = validate_client_slug(client_slug)
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
+    user = auth.user
+    session_is_admin = bool(user and user.role == "admin")
+    session_email = user.email if user else None
+
+    if web_users.enabled() and not session_is_admin:
+        return JSONResponse(
+            {"ok": False, "error": "Only admins can change sidebar tabs."},
+            status_code=403,
+        )
+    if not client_dashboard_config.enabled():
+        return JSONResponse(
+            {"ok": False, "error": "DATABASE_URL is required to save this setting."},
+            status_code=503,
+        )
+    hidden_keys = [part.strip() for part in str(hidden or "").split(",") if part.strip()]
+    try:
+        saved = client_dashboard_config.save_sidebar_hidden_tabs(
+            slug, hidden_keys, updated_by=session_email or "dashboard_key",
+        )
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    audit_log.record(
+        action="dashboard.sidebar_tabs_saved",
+        actor_email=session_email,
+        detail={"client_slug": slug, "sidebar_hidden_tabs": list(saved.sidebar_hidden_tabs)},
+        **audit_log.request_context(request),
+    )
+    return JSONResponse({"ok": True, "hidden": list(saved.sidebar_hidden_tabs)})
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Admin surface: tool tabs (Advanced / View As / BQ Connection)
 # ──────────────────────────────────────────────────────────────────────────────
