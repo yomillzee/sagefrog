@@ -3967,15 +3967,16 @@ def render_bigquery_dashboard_page(
     applyPreset('last_30');
 
     // Deep-link + page-visibility prefs: land on the tab named in ?view= (set
-    // by the sidebar links on Settings/Files/Connectors), unless that page was
-    // turned off in Settings > "Sidebar pages" -- then fall back to the first
-    // enabled page. Runs last, after all loaders are initialized.
+    // by the sidebar links on Settings/Files/Connectors), unless an admin hid
+    // that tab for this client (Admin > Advanced) -- then fall back to the first
+    // visible page. The hidden set is server-side (window.__sfHiddenTabs, set by
+    // the sidebar nav), so it's the same for every user and browser. Runs last,
+    // after all loaders are initialized.
     (function(){{
-      let prefs = {{}};
-      try {{ prefs = JSON.parse(localStorage.getItem('nixon_sidebar_pages:{client_slug}') || '{{}}'); }} catch(e) {{}}
+      const hidden = new Set(Array.isArray(window.__sfHiddenTabs) ? window.__sfHiddenTabs : []);
       const v = new URLSearchParams(location.search).get('view');
       let target = (v && TABS.includes(v)) ? v : 'overview';
-      if (prefs[target] === false) target = TABS.find(t => prefs[t] !== false) || 'overview';
+      if (hidden.has(target)) target = TABS.find(t => !hidden.has(t)) || 'overview';
       if (target !== currentTab) switchTab(target);
     }})();
   </script>
