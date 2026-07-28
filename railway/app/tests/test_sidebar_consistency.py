@@ -30,6 +30,12 @@ def _footer_items(html: str) -> list[str]:
     return re.findall(r'<span>([^<]+)</span>', m.group(1))
 
 
+def _admin_section_items(html: str) -> list[str]:
+    m = re.search(r'<div class="dash-admin-body"[^>]*>(.*?)</div>\s*</div>', html, re.S)
+    assert m, "no admin section body found"
+    return re.findall(r'<span[^>]*>([^<]+)</span>', m.group(1))
+
+
 class SidebarConsistencyTests(unittest.TestCase):
     def setUp(self) -> None:
         import connector_config_store as ccs
@@ -59,7 +65,7 @@ class SidebarConsistencyTests(unittest.TestCase):
         from dashboard.renderers.bigquery_dashboard_renderer import render_bigquery_dashboard_page
         from dashboard.renderers.bigquery_settings_renderer import render_bigquery_settings_page
         from dashboard.renderers.base_layout import render_client_shell_page
-        kw = dict(access_key="k", session_is_admin=True)
+        kw = dict(access_key="k", session_is_admin=True, session_email="admin@sf.com")
         return {
             "dashboard": render_bigquery_dashboard_page(
                 client_slug="test", api_client_key="test", label="Test Co", **kw),
@@ -81,10 +87,39 @@ class SidebarConsistencyTests(unittest.TestCase):
             self.assertEqual(_section_items(html), expected, f"section nav differs on {name}")
 
     def test_footer_nav_identical_on_every_page(self) -> None:
+        # Connectors + Insights moved into the collapsible admin section, so the
+        # always-visible footer nav is just the client-facing Files link.
         pages = self._render_all()
-        expected = ["Files", "Connectors", "Insights"]
+        expected = ["Files"]
         for name, html in pages.items():
             self.assertEqual(_footer_items(html), expected, f"footer nav differs on {name}")
+
+    def test_admin_section_identical_on_every_page(self) -> None:
+        # The admin-only "Admin" disclosure carries the same agency options on
+        # every page so they never shift as the admin moves between pages.
+        pages = self._render_all()
+        expected = [
+            "Connectors", "Insights", "Consent Health",
+            "Sidebar editor", "View as user", "BigQuery connection",
+        ]
+        for name, html in pages.items():
+            self.assertEqual(
+                _admin_section_items(html), expected,
+                f"admin section differs on {name}",
+            )
+
+    def test_admin_section_hidden_from_non_admins(self) -> None:
+        # A non-admin session never renders the Admin disclosure.
+        from dashboard.renderers.base_layout import render_client_shell_page
+        html = render_client_shell_page(
+            client_slug="test", label="Test Co", active_nav="files",
+            page_title="F", page_subtitle="", content_html="x",
+            access_key="k", session_is_admin=False, session_email="c@x.com",
+        )
+        # id= only appears in the rendered markup (the class name also lives in
+        # the shared CSS, so match on the element the section builds).
+        self.assertNotIn('id="adminSectionBody"', html)
+        self.assertNotIn("<span>Connectors</span>", html)
 
 
 if __name__ == "__main__":
