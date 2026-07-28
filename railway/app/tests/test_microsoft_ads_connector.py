@@ -114,6 +114,23 @@ class MicrosoftAdsCallbackRouteTests(unittest.TestCase):
         )
         self.assertNotEqual(resp.status_code, 404)
 
+    def test_hyphenated_callback_path_resolves_not_404(self) -> None:
+        # Google redirect URIs are commonly registered with hyphens
+        # (/oauth/microsoft-ads/callback) while our platform key uses an
+        # underscore. The generic route must normalize the hyphen and resolve
+        # it instead of 404-ing (regression for the deployed callback 404).
+        from starlette.testclient import TestClient
+
+        import main
+
+        client = TestClient(main.app, raise_server_exceptions=False)
+        resp = client.get(
+            "/oauth/microsoft-ads/callback",
+            params={"error": "access_denied"},
+            follow_redirects=False,
+        )
+        self.assertNotEqual(resp.status_code, 404)
+
 
 class MicrosoftAdsReportParsingTests(unittest.TestCase):
     def test_parse_report_date_formats(self) -> None:

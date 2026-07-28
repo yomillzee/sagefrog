@@ -2699,7 +2699,11 @@ def admin_delete_snapshot(
     include_in_schema=False,
 )
 async def oauth_connect(platform: str, request: Request, return_to: str = "/admin", client: str = ""):
-    slug = platform.strip().lower()
+    # Accept hyphen or underscore in the platform segment. Redirect URIs are
+    # often registered with hyphens (e.g. /oauth/microsoft-ads/callback) while
+    # our platform keys use underscores (microsoft_ads); normalize so Google's
+    # redirect to the hyphenated path resolves instead of 404-ing.
+    slug = platform.strip().lower().replace("-", "_")
     if slug not in oauth_flows.PLATFORMS:
         raise HTTPException(status_code=404, detail="Unknown OAuth platform.")
     user = await web_auth.require_admin(request)
@@ -2730,7 +2734,11 @@ async def oauth_connect(platform: str, request: Request, return_to: str = "/admi
 async def connect_link(platform: str, client_slug: str, request: Request, t: str = ""):
     """Public, signed-token connect link. Lets a specialist/client authorize one
     client's connector (e.g. their HubSpot portal) without a portal login."""
-    slug = platform.strip().lower()
+    # Accept hyphen or underscore in the platform segment. Redirect URIs are
+    # often registered with hyphens (e.g. /oauth/microsoft-ads/callback) while
+    # our platform keys use underscores (microsoft_ads); normalize so Google's
+    # redirect to the hyphenated path resolves instead of 404-ing.
+    slug = platform.strip().lower().replace("-", "_")
     if slug not in oauth_flows.PLATFORMS:
         raise HTTPException(status_code=404, detail="Unknown OAuth platform.")
     verified = oauth_flows.verify_connect_state(t)
@@ -2774,7 +2782,11 @@ async def oauth_callback(
     error: str | None = None,
     error_description: str | None = None,
 ):
-    slug = platform.strip().lower()
+    # Accept hyphen or underscore in the platform segment. Redirect URIs are
+    # often registered with hyphens (e.g. /oauth/microsoft-ads/callback) while
+    # our platform keys use underscores (microsoft_ads); normalize so Google's
+    # redirect to the hyphenated path resolves instead of 404-ing.
+    slug = platform.strip().lower().replace("-", "_")
     if slug not in oauth_flows.PLATFORMS:
         raise HTTPException(status_code=404, detail="Unknown OAuth platform.")
 
@@ -2872,18 +2884,23 @@ async def oauth_callback(
 def _register_microsoft_ads_callback() -> None:
     """Mount the Microsoft Ads OAuth callback at the exact path Google redirects to.
 
-    The generic ``/oauth/{platform}/callback`` route already handles
-    ``/oauth/microsoft_ads/callback``. But MICROSOFT_ADS_REDIRECT_URI can point
-    anywhere (it must match what's registered in the Google Cloud console), so if
-    it resolves to a different path we mount an explicit alias there too — that
-    way Google's redirect never 404s regardless of how the URI is configured.
+    Any path shaped ``/oauth/<slug>/callback`` is already served by the generic
+    ``/oauth/{platform}/callback`` route (which normalizes hyphens to
+    underscores, so ``/oauth/microsoft-ads/callback`` resolves to the
+    ``microsoft_ads`` platform). Only a genuinely custom redirect path needs an
+    explicit alias — and it must be inserted AHEAD of the parameterized routes,
+    since Starlette matches in registration order and the generic route would
+    otherwise win and 404 on an unknown platform segment.
     """
     try:
         path = oauth_flows.microsoft_ads_callback_path()
     except Exception:
         return
-    if not path or path == "/oauth/microsoft_ads/callback":
-        return  # already served by the generic parameterized route
+    if not path:
+        return
+    parts = path.strip("/").split("/")
+    if len(parts) == 3 and parts[0] == "oauth" and parts[2] == "callback":
+        return  # /oauth/<slug>/callback — handled by the generic route
 
     async def _ms_ads_callback_alias(
         request: Request,
@@ -2902,6 +2919,9 @@ def _register_microsoft_ads_callback() -> None:
         )
 
     app.add_api_route(path, _ms_ads_callback_alias, methods=["GET"], include_in_schema=False)
+    # Move the freshly-appended route to the front so it precedes the generic
+    # /oauth/{platform}/callback route in match order.
+    app.router.routes.insert(0, app.router.routes.pop())
 
 
 _register_microsoft_ads_callback()
@@ -2917,7 +2937,11 @@ async def oauth_disconnect(
     request: Request,
     return_to: str = Form("/admin"),
 ):
-    slug = platform.strip().lower()
+    # Accept hyphen or underscore in the platform segment. Redirect URIs are
+    # often registered with hyphens (e.g. /oauth/microsoft-ads/callback) while
+    # our platform keys use underscores (microsoft_ads); normalize so Google's
+    # redirect to the hyphenated path resolves instead of 404-ing.
+    slug = platform.strip().lower().replace("-", "_")
     if slug not in oauth_flows.PLATFORMS:
         raise HTTPException(status_code=404, detail="Unknown OAuth platform.")
     user = await web_auth.require_admin(request)
