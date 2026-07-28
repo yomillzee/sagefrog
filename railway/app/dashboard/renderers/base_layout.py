@@ -632,11 +632,33 @@ def dashboard_topbar_js() -> str:
       });
     })();
 
-    // ── Sidebar footer admin tools: icon buttons + popovers ───────────────
+    // ── Collapsible "Admin" section: disclosure toggle ────────────────────
+    (function() {
+      const head = document.getElementById('adminSectionToggle');
+      const body = document.getElementById('adminSectionBody');
+      if (!head || !body) return;
+      const KEY = 'sf_admin_section_open';
+      function setOpen(open) {
+        head.setAttribute('aria-expanded', open ? 'true' : 'false');
+        body.hidden = !open;
+        try { localStorage.setItem(KEY, open ? '1' : '0'); } catch (e) {}
+      }
+      // Server may pre-open the section when we're on one of its pages; otherwise
+      // fall back to the browser-remembered state. Never force it shut when the
+      // current page lives inside it.
+      let open = head.getAttribute('aria-expanded') === 'true';
+      if (!open) {
+        try { open = localStorage.getItem(KEY) === '1'; } catch (e) {}
+      }
+      setOpen(open);
+      head.addEventListener('click', () => setOpen(head.getAttribute('aria-expanded') !== 'true'));
+    })();
+
+    // ── Sidebar footer admin tools: row buttons + popovers ────────────────
     (function() {
       const tools = document.querySelector('.dash-sidebar-tools');
       if (!tools) return;
-      const btns = Array.prototype.slice.call(tools.querySelectorAll('.dash-tool-btn[data-pop]'));
+      const btns = Array.prototype.slice.call(tools.querySelectorAll('[data-pop]'));
       const pops = Array.prototype.slice.call(tools.querySelectorAll('.dash-tool-pop'));
       function refreshAria() {
         btns.forEach((b) => {
@@ -1016,6 +1038,22 @@ _TOOL_ICON_SIGNOUT = (
     '<line x1="21" y1="12" x2="9" y2="12"/></svg>'
 )
 
+# Header glyph for the collapsible "Admin" section: a layered shield, echoing the
+# "Admin panel" parent avatar in the client switcher so both admin affordances
+# read as the same family.
+_ADMIN_SECTION_ICON = (
+    '<svg class="dash-admin-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/>'
+    '<path d="M9.5 12l1.8 1.8 3.4-3.6"/></svg>'
+)
+# Chevron that rotates when the Admin section is open (CSS handles the flip).
+_ADMIN_SECTION_CARET = (
+    '<svg class="dash-admin-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<polyline points="6 9 12 15 18 9"/></svg>'
+)
+
 # Client-facing tabs that admins can show/hide from the sidebar "Edit sidebar"
 # tool. Keys mirror the data-tab attributes in dashboard_sidebar_view_nav_html
 # and the localStorage 'nixon_sidebar_pages:<slug>' map the nav reads on load.
@@ -1073,6 +1111,7 @@ def _sidebar_footer_tools_html(
     email: str | None,
     is_admin: bool,
     access_key: str | None,
+    active_nav: str,
     sidebar_from: str,
     sidebar_to: str,
     sidebar_default_from: str,
@@ -1080,14 +1119,19 @@ def _sidebar_footer_tools_html(
     project: str | None,
     marts_dataset: str | None,
     view_as_options_html: str,
+    connectors_url: str,
+    settings_url: str,
+    consent_url: str,
 ) -> str:
-    """Sidebar footer toolbar: admin quick-tools as icon buttons with popovers,
-    plus an Admin-panel link (admin) and Sign out (any signed-in user).
+    """Sidebar footer: a collapsible **Admin** section (admin only) plus Sign out.
 
-    Replaces the old email/Admin/Sign-out text row. Popovers relocate three
-    controls that used to live on other pages: the sidebar colour + tabs editor
-    and the BigQuery-connection check (both from Settings), and the "View as
-    user" impersonation tool (from Admin)."""
+    The Admin section is a disclosure that only admins see; clicking its header
+    reveals the agency-only options — Connectors, Insights, Consent Health, the
+    sidebar editor, the "View as user" impersonation tool, and the BigQuery-
+    connection check. The three tools (editor / view-as / BigQuery) open the same
+    light popover cards they always have; the three pages are plain links. Sign
+    out sits below the section and is shown to every signed-in user.
+    """
     if not email:
         return ""
 
@@ -1097,17 +1141,27 @@ def _sidebar_footer_tools_html(
         from urllib.parse import urlencode
         return f"{path}?{urlencode({'key': access_key})}"
 
-    tool_buttons = ""
-    popovers = ""
-    if is_admin:
-        # ---- Edit sidebar (gradient + tabs) ----
-        theme_url = _key(f"/dashboard/{client_slug}/sidebar-theme")
-        tabs_html = "".join(
-            f'<label class="dash-pop-toggle"><span>{_esc(lbl)}</span>'
-            f'<input type="checkbox" class="dash-tab-toggle" data-tab="{key}" checked></label>'
-            for key, lbl in _SIDEBAR_TAB_EDIT_ITEMS
-        )
-        popovers += f"""
+    signout = f"""
+          <form method="post" action="/logout" class="dash-signout-form">
+            <button type="submit" class="dash-admin-link dash-signout-btn"
+              title="Sign out">{_TOOL_ICON_SIGNOUT}<span>Sign out</span></button>
+          </form>"""
+
+    if not is_admin:
+        # Non-admins get no Admin section — just Sign out.
+        return f"""
+        <div class="dash-sidebar-tools" role="group" aria-label="Account tools">
+          {signout}
+        </div>"""
+
+    # ---- Edit sidebar (gradient + tabs) ----
+    theme_url = _key(f"/dashboard/{client_slug}/sidebar-theme")
+    tabs_html = "".join(
+        f'<label class="dash-pop-toggle"><span>{_esc(lbl)}</span>'
+        f'<input type="checkbox" class="dash-tab-toggle" data-tab="{key}" checked></label>'
+        for key, lbl in _SIDEBAR_TAB_EDIT_ITEMS
+    )
+    popovers = f"""
         <div class="dash-tool-pop" id="pop-editSidebar" role="dialog" aria-label="Edit sidebar"
              data-theme-url="{_esc(theme_url)}" data-def-from="{_esc(sidebar_default_from)}"
              data-def-to="{_esc(sidebar_default_to)}" data-ls-key="nixon_sidebar_pages:{_esc(client_slug)}" hidden>
@@ -1130,9 +1184,9 @@ def _sidebar_footer_tools_html(
           </div>
         </div>"""
 
-        # ---- View as user ----
-        view_as_body = (
-            f"""<form method="post" action="/admin/view-as" class="dash-pop-form">
+    # ---- View as user ----
+    view_as_body = (
+        f"""<form method="post" action="/admin/view-as" class="dash-pop-form">
               <label for="sbViewAs">User</label>
               <select id="sbViewAs" name="user_id" required>
                 <option value="" disabled selected>Select a user…</option>
@@ -1140,10 +1194,10 @@ def _sidebar_footer_tools_html(
               </select>
               <div class="dash-pop-actions"><button type="submit" class="dash-pop-btn primary">View as user</button></div>
             </form>"""
-            if view_as_options_html
-            else '<p class="dash-pop-empty">No other users to view as yet.</p>'
-        )
-        popovers += f"""
+        if view_as_options_html
+        else '<p class="dash-pop-empty">No other users to view as yet.</p>'
+    )
+    popovers += f"""
         <div class="dash-tool-pop" id="pop-viewAs" role="dialog" aria-label="View as user" hidden>
           <div class="dash-tool-pop-head"><span>View as user</span>
             <button type="button" class="dash-tool-pop-x" aria-label="Close">&times;</button></div>
@@ -1153,9 +1207,9 @@ def _sidebar_footer_tools_html(
           </div>
         </div>"""
 
-        # ---- BigQuery connection ----
-        verify_url = _key(f"/api/clients/{client_slug}/bq-verify")
-        popovers += f"""
+    # ---- BigQuery connection ----
+    verify_url = _key(f"/api/clients/{client_slug}/bq-verify")
+    popovers += f"""
         <div class="dash-tool-pop" id="pop-bqConn" role="dialog" aria-label="BigQuery connection" hidden>
           <div class="dash-tool-pop-head"><span>BigQuery connection</span>
             <button type="button" class="dash-tool-pop-x" aria-label="Close">&times;</button></div>
@@ -1169,37 +1223,52 @@ def _sidebar_footer_tools_html(
           </div>
         </div>"""
 
-        tool_buttons = (
-            '<button type="button" class="dash-tool-btn" data-pop="editSidebar" aria-haspopup="dialog" '
-            f'aria-expanded="false" title="Edit sidebar" aria-label="Edit sidebar">{_TOOL_ICON_THEME}</button>'
-            '<button type="button" class="dash-tool-btn" data-pop="viewAs" aria-haspopup="dialog" '
-            f'aria-expanded="false" title="View as user" aria-label="View as user">{_TOOL_ICON_VIEWAS}</button>'
-            '<button type="button" class="dash-tool-btn" data-pop="bqConn" aria-haspopup="dialog" '
-            f'aria-expanded="false" title="BigQuery connection" aria-label="BigQuery connection">{_TOOL_ICON_BQ}</button>'
+    # Rows inside the Admin disclosure: three pages (links) + three tools (each
+    # opens the popover card above). ``active_nav`` marks the current page's row
+    # and, below, auto-opens the section so it isn't hidden on the page you're on.
+    def _link(url: str, label: str, icon: str, nav_keys: tuple[str, ...]) -> str:
+        active = " active" if active_nav in nav_keys else ""
+        aria = ' aria-current="page"' if active else ""
+        return (
+            f'<a class="dash-admin-link{active}"{aria} href="{_esc(url)}">'
+            f'{icon}<span>{_esc(label)}</span></a>'
         )
 
-    # Consent Health is a full page, so this is a link (not a popover). Admin only,
-    # and always offered here so admins can reach it to configure/run scans even
-    # when it's hidden from the client's own sidebar. Admin panel isn't repeated
-    # here — it already lives in the client switcher above.
-    consent_link_btn = (
-        f'<a class="dash-tool-btn" href="{_esc(_key(f"/dashboard/{client_slug}/consent"))}" '
-        f'title="Consent Health" aria-label="Consent Health">{_VIEW_ICONS["consent"]}</a>'
-        if is_admin
-        else ""
+    def _tool(pop: str, label: str, icon: str) -> str:
+        return (
+            f'<button type="button" class="dash-admin-link" data-pop="{pop}" '
+            f'aria-haspopup="dialog" aria-expanded="false">'
+            f'{icon}<span>{_esc(label)}</span></button>'
+        )
+
+    rows = (
+        _link(connectors_url, "Connectors", _NAV_ICON_CONNECTORS, ("connectors",))
+        + _link(settings_url, "Insights", _NAV_ICON_SETTINGS, ("settings", "insights-upload"))
+        + _link(consent_url, "Consent Health", _VIEW_ICONS["consent"], ("consent",))
+        + _tool("editSidebar", "Sidebar editor", _TOOL_ICON_THEME)
+        + _tool("viewAs", "View as user", _TOOL_ICON_VIEWAS)
+        + _tool("bqConn", "BigQuery connection", _TOOL_ICON_BQ)
     )
+
+    # Open the section by default when the current page is one of its members, so
+    # admins don't land on Connectors/Insights/Consent with the group collapsed.
+    expanded = active_nav in ("connectors", "settings", "insights-upload", "consent")
+    exp_attr = "true" if expanded else "false"
+    body_hidden = "" if expanded else " hidden"
 
     return f"""
         <div class="dash-sidebar-tools" role="group" aria-label="Account tools">
-          <div class="dash-sidebar-tools-row">
-            {tool_buttons}
-            <span class="dash-tools-grow"></span>
-            {consent_link_btn}
-            <form method="post" action="/logout" class="dash-signout-form">
-              <button type="submit" class="dash-tool-btn" title="Sign out" aria-label="Sign out">{_TOOL_ICON_SIGNOUT}</button>
-            </form>
+          <div class="dash-admin">
+            <button type="button" class="dash-admin-head" id="adminSectionToggle"
+              aria-expanded="{exp_attr}" aria-controls="adminSectionBody">
+              {_ADMIN_SECTION_ICON}<span class="dash-admin-title">Admin</span>{_ADMIN_SECTION_CARET}
+            </button>
+            <div class="dash-admin-body" id="adminSectionBody"{body_hidden}>
+              {rows}
+            </div>
           </div>
           {popovers}
+          {signout}
         </div>"""
 
 
@@ -1258,23 +1327,15 @@ def render_sidebar(
             f'{_NAV_ICON_FILES}<span>Files</span></a>'
         )
 
-    connectors_btn = ""
-    if (show_connectors or active_nav == "connectors") and not admin_context:
-        connectors_active = " active" if active_nav == "connectors" else ""
-        connectors_aria = ' aria-current="page"' if connectors_active else ""
-        connectors_btn = (
-            f'<a href="{_esc(connectors_url)}" class="dash-sidebar-link{connectors_active}"{connectors_aria}>'
-            f'{_NAV_ICON_CONNECTORS}<span>Connectors</span></a>'
-        )
-
-    settings_btn = ""
-    if not admin_context:
-        settings_active = " active" if active_nav == "settings" else ""
-        settings_aria = ' aria-current="page"' if settings_active else ""
-        settings_btn = (
-            f'<a href="{_esc(settings_url)}" class="dash-sidebar-link{settings_active}"{settings_aria}>'
-            f'{_NAV_ICON_SETTINGS}<span>Insights</span></a>'
-        )
+    # Connectors + Insights (Settings) are agency-only, so they no longer live in
+    # the always-visible footer nav — they moved into the collapsible "Admin"
+    # section rendered by _sidebar_footer_tools_html (admin only). ``show_connectors``
+    # is kept in the signature for callers but the section always offers Connectors
+    # to admins.
+    del show_connectors
+    consent_url = _consent_page_url(
+        client_slug=client_slug, access_key=access_key, use_session=use_session
+    ) or "#"
 
     # Apply the client's saved sidebar gradient inline (as custom properties on the
     # aside itself) so it themes every page — including the dashboard/settings pages
@@ -1299,6 +1360,7 @@ def render_sidebar(
         email=session_email,
         is_admin=_tools_admin,
         access_key=access_key,
+        active_nav=active_nav,
         sidebar_from=_sb_from,
         sidebar_to=_sb_to,
         sidebar_default_from=dashboard_theme.DEFAULT_THEME["sidebar_from"],
@@ -1306,6 +1368,9 @@ def render_sidebar(
         project=_bq_project,
         marts_dataset=_bq_marts,
         view_as_options_html=_view_as_opts,
+        connectors_url=connectors_url,
+        settings_url=settings_url,
+        consent_url=consent_url,
     )
 
     return f"""
@@ -1333,8 +1398,6 @@ def render_sidebar(
         <div class="dash-sidebar-client">{client_selector}</div>
         <nav class="dash-sidebar-links" aria-label="Account navigation">
           {files_btn}
-          {connectors_btn}
-          {settings_btn}
         </nav>
         {account_html}
       </div>
@@ -2278,16 +2341,82 @@ SIDEBAR_CSS = """
     .dash-sidebar-link svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.85; }
     .dash-sidebar-link:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
     .dash-sidebar-link.active { background: rgba(255, 255, 255, 0.15); color: #fff; }
-    /* Footer toolbar: admin quick-tools + Admin/Sign-out as icon buttons */
+    /* Footer: collapsible "Admin" section (admin only) + Sign out */
     .dash-sidebar-tools {
       position: relative;
       margin-top: 12px;
-      padding-top: 10px;
+      padding-top: 8px;
       border-top: 1px solid rgba(255, 255, 255, 0.12);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
     }
-    .dash-sidebar-tools-row { display: flex; align-items: center; gap: 3px; }
-    .dash-tools-grow { flex: 1 1 auto; }
-    .dash-signout-form { display: inline-flex; margin: 0; }
+    .dash-signout-form { display: block; margin: 0; }
+    /* Admin disclosure */
+    .dash-admin { display: flex; flex-direction: column; gap: 2px; }
+    .dash-admin-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      padding: 10px 12px;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: #c3d2e6;
+      font-family: inherit;
+      font-size: 0.9rem;
+      font-weight: 650;
+      line-height: 1.2;
+      text-align: left;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .dash-admin-head:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+    .dash-admin-head[aria-expanded="true"] { color: #fff; }
+    .dash-admin-head:focus-visible { outline: 2px solid #7dd3fc; outline-offset: -2px; }
+    .dash-admin-shield { width: 19px; height: 19px; flex-shrink: 0; opacity: 0.85; }
+    .dash-admin-title { flex: 1 1 auto; }
+    .dash-admin-caret {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      opacity: 0.7;
+      transition: transform 0.18s ease;
+    }
+    .dash-admin-head[aria-expanded="true"] .dash-admin-caret { transform: rotate(180deg); }
+    .dash-admin-body { display: flex; flex-direction: column; gap: 2px; padding-bottom: 2px; }
+    .dash-admin-body[hidden] { display: none; }
+    .dash-admin-link {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      /* Extra left pad indents the members beneath the "Admin" header. */
+      padding: 9px 12px 9px 22px;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: #c3d2e6;
+      font-family: inherit;
+      font-size: 0.88rem;
+      font-weight: 600;
+      line-height: 1.2;
+      text-align: left;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .dash-admin-link svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.85; }
+    .dash-admin-link:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+    .dash-admin-link.active {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+      box-shadow: inset 3px 0 0 #7dd3fc;
+    }
+    .dash-admin-link[aria-expanded="true"] { background: rgba(255, 255, 255, 0.10); color: #fff; }
+    .dash-admin-link:focus-visible { outline: 2px solid #7dd3fc; outline-offset: -2px; }
+    .dash-signout-btn { padding-left: 12px; }
     .dash-tool-btn {
       appearance: none;
       display: inline-flex;
