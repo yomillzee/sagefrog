@@ -1322,6 +1322,36 @@ def client_google_ads_explorer(
 
 
 @router.get(
+    "/api/clients/{client_key}/microsoft-ads/explorer",
+    summary="Client Microsoft Ads campaign explorer from BigQuery marketing mart (generic BQ-test clients)",
+)
+def client_microsoft_ads_explorer(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        with marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer.microsoft_ads",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: marketing_service.fetch_microsoft_explorer(
+                    start_date=start, end_date=end,
+                ),
+            )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
     "/api/clients/{client_key}/google-ads/keywords",
     summary="Client Google Ads search-keyword performance (Cost by Keyword) (generic BQ-test clients)",
 )

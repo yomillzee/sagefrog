@@ -105,6 +105,10 @@ def _google_ads_keyword_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.explorer_google_ads_keyword_daily`"
 
 
+def _microsoft_ads_explorer_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.explorer_microsoft_ads_daily`"
+
+
 def _linkedin_creative_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.fact_linkedin_ads_creative_daily`"
 
@@ -494,6 +498,56 @@ def fetch_google_ads_explorer(
         },
         max_rows=20000,
     )
+    return {
+        "client": _client_key(),
+        "date_range": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
+def fetch_microsoft_explorer(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Microsoft Ads explorer (campaign grain).
+
+    Microsoft is synced at campaign level only, so this returns one row per
+    campaign — no ad-group/ad/creative sub-levels. Same metric columns the
+    renderer reads; the dashboard maps each row to a top-level campaign node.
+    Returns empty rows (not an error) when the explorer view doesn't exist yet.
+    """
+    sql = f"""
+    SELECT
+      campaign_id,
+      campaign_name,
+      ROUND(SUM(spend), 2) AS spend,
+      SUM(impressions) AS impressions,
+      SUM(clicks) AS clicks,
+      SUM(conversions) AS conversions,
+      ROUND(SUM(conversion_value), 2) AS conversion_value
+    FROM {_microsoft_ads_explorer_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY campaign_id, campaign_name
+    ORDER BY spend DESC
+    """
+    try:
+        rows = _run_query(
+            sql,
+            params={
+                "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            },
+            max_rows=20000,
+        )
+    except Exception:
+        # No explorer view yet (no sync has run) — degrade to empty so the
+        # Campaign Explorer simply omits Microsoft rather than erroring.
+        rows = []
     return {
         "client": _client_key(),
         "date_range": {
