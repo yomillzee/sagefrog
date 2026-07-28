@@ -1927,6 +1927,71 @@ async def save_overview_pinned_card(
     return {"ok": True, "card": card}
 
 
+# Tabs that support admin card-layout editing, mapped to the set of card keys
+# that tab knows about. Keys outside the set are rejected so a stale/garbage key
+# can't wedge the tab's render. Overview is the first (and, for now, only) tab.
+_CARD_LAYOUT_TABS: dict[str, set[str]] = {}
+
+
+def _card_layout_tab_keys(tab_key: str) -> set[str] | None:
+    """Known card keys for a layout-editable tab, or None if the tab isn't one."""
+    from dashboard.renderers.bigquery_dashboard_renderer import OVERVIEW_PINNABLE_CARDS
+
+    if not _CARD_LAYOUT_TABS:
+        _CARD_LAYOUT_TABS["overview"] = set(OVERVIEW_PINNABLE_CARDS)
+    return _CARD_LAYOUT_TABS.get(tab_key)
+
+
+@router.post(
+    "/api/clients/{client_key}/tabs/{tab_key}/card-layout",
+    summary="Save a tab's card order + hidden set (admin only)",
+)
+async def save_tab_card_layout(
+    client_key: str,
+    tab_key: str,
+    request: Request,
+) -> dict:
+    """Persist the admin-authored card layout for one tab of the BigQuery-mart
+    dashboard. Body: ``{"order": [<card_key>, ...], "hidden": [<card_key>, ...]}``.
+    Both lists are filtered to the tab's known cards; unknown keys are dropped
+    rather than rejected so a card that's simply not present this render (its
+    connector is off) can't fail the save. Admin-only — clients cannot reorder
+    or hide cards on another client's dashboard."""
+    normalized = (client_key or "").strip().lower()
+    tab = (tab_key or "").strip().lower()
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    if not (auth.user and auth.user.role == "admin"):
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    known = _card_layout_tab_keys(tab)
+    if known is None:
+        raise HTTPException(status_code=400, detail="Unknown tab.")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    def _keys(values: object) -> list[str]:
+        if not isinstance(values, (list, tuple)):
+            return []
+        out: list[str] = []
+        for v in values:
+            key = str(v).strip()
+            if key in known and key not in out:
+                out.append(key)
+        return out
+
+    order = _keys(body.get("order"))
+    hidden = _keys(body.get("hidden"))
+    try:
+        import client_dashboard_config as cdc
+        cdc.save_card_layout(
+            normalized, tab, order=order, hidden=hidden, updated_by="dashboard",
+        )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+    return {"ok": True, "order": order, "hidden": hidden}
+
+
 @router.get(
     "/api/clients/{client_key}/analytics/conversions",
     summary="Client GA4 conversion events breakdown (generic BQ-test clients)",
