@@ -227,7 +227,8 @@ def _month_label(y: int, mo: int, *, with_year: bool) -> str:
     return f"{base} '{y % 100:02d}" if with_year else base
 
 
-def _area_chart(series: list[tuple[int, int, int]], accent: str) -> str:
+def _area_chart(series: list[tuple[int, int, int]], accent: str,
+                noun: str = "MQL", noun_plural: str = "MQLs") -> str:
     """Inline SVG area+line trend chart with a JS-driven hover tooltip."""
     if len(series) < 2:
         return '<div class="lt-empty">Not enough monthly history yet to plot a trend.</div>'
@@ -299,7 +300,7 @@ def _area_chart(series: list[tuple[int, int, int]], accent: str) -> str:
     grad_id = "ltArea"
     svg = f"""
       <svg viewBox="0 0 {_VBW} {_VBH}" role="img"
-           aria-label="Monthly MQL trend" preserveAspectRatio="xMidYMid meet">
+           aria-label="Monthly {_esc(noun)} trend" preserveAspectRatio="xMidYMid meet">
         <defs>
           <linearGradient id="{grad_id}" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stop-color="{accent}" stop-opacity="0.22"/>
@@ -316,7 +317,7 @@ def _area_chart(series: list[tuple[int, int, int]], accent: str) -> str:
       </svg>
     """
     return f"""
-      <div class="lt-chart" data-lt-points='{points_json}'>
+      <div class="lt-chart" data-lt-points='{points_json}' data-lt-noun="{_esc(noun_plural)}">
         {svg}
         <div class="lt-chart-guide" data-lt-guide style="top:{_PAD_T / _VBH * 100:.2f}%;height:{_PLOT_H / _VBH * 100:.2f}%"></div>
         <div class="lt-chart-dot" data-lt-hoverdot></div>
@@ -333,6 +334,7 @@ _CHART_JS = """
     try { pts = JSON.parse(chart.getAttribute('data-lt-points')); }
     catch (e) { return; }
     if (!pts || !pts.length) return;
+    var noun  = chart.getAttribute('data-lt-noun') || 'MQLs';
     var guide = chart.querySelector('[data-lt-guide]');
     var dot   = chart.querySelector('[data-lt-hoverdot]');
     var tip   = chart.querySelector('[data-lt-tip]');
@@ -343,7 +345,7 @@ _CHART_JS = """
       dot.style.left = xp + '%'; dot.style.top = yp + '%'; dot.style.opacity = 1;
       tip.style.left = xp + '%'; tip.style.top = yp + '%'; tip.style.opacity = 1;
       tip.innerHTML = '<span class="lt-tip-m">' + p.label + '</span><br><b>' +
-                      p.value + '</b> MQLs';
+                      p.value + '</b> ' + noun;
     }
     function hide() { guide.style.opacity = 0; dot.style.opacity = 0; tip.style.opacity = 0; }
 
@@ -432,9 +434,11 @@ def _source_bars(rows: list[dict[str, Any]], colors: list[str]) -> str:
 
 
 def _source_performance(
-    leads: list[dict[str, Any]], deals: list[dict[str, Any]]
+    leads: list[dict[str, Any]], deals: list[dict[str, Any]],
+    noun: str = "MQL", noun_plural: str = "MQLs",
 ) -> str:
-    """Unified per-source table joining MQL volume with deal/revenue outcomes."""
+    """Unified per-source table joining lead-stage volume with deal/revenue
+    outcomes."""
     merged: dict[str, dict[str, Any]] = {}
     for r in leads:
         key = str(r.get("source") or "Unknown")
@@ -470,9 +474,9 @@ def _source_performance(
         )
     return (
         '<div class="lt-table-wrap"><table class="lt-table"><thead><tr>'
-        '<th>Source</th><th class="num">MQLs</th><th class="num">Deals</th>'
+        f'<th>Source</th><th class="num">{_esc(noun_plural)}</th><th class="num">Deals</th>'
         '<th class="num">Pipeline</th><th class="num">Won</th>'
-        '<th class="num">MQL→Deal</th></tr></thead><tbody>'
+        f'<th class="num">{_esc(noun)}→Deal</th></tr></thead><tbody>'
         + "".join(body) + '</tbody></table></div>'
     )
 
@@ -501,6 +505,12 @@ def render_lead_tracking(
     accent = "#0b5cab"
     source_colors = [theme.get(k, "#0b5cab") for k in _SOURCE_PALETTE_KEYS]
 
+    # The page reports on whichever lifecycle stage the connector is configured
+    # to import (MQL by default, but "Lead", "SQL", etc. are all valid), so the
+    # labels follow that stage rather than being hard-wired to "MQL".
+    noun = getattr(report, "stage_noun", "MQL") or "MQL"
+    noun_plural = getattr(report, "stage_noun_plural", "MQLs") or "MQLs"
+
     note = ""
     if not report.contacts_available and not report.deals_available:
         note = ('<div class="lt-note">No HubSpot data has synced yet. Run a sync from the '
@@ -509,11 +519,11 @@ def render_lead_tracking(
     # KPI tiles with derived context.
     tiles = (
         '<div class="lt-tiles">'
-        + _tile("mql", "MQLs", _fmt_int(report.mql_count),
+        + _tile("mql", noun_plural, _fmt_int(report.mql_count),
                 f'<strong>{_pct_str(report.mql_count, report.contact_count)}</strong> of contacts')
         + _tile("contacts", "Contacts tracked", _fmt_int(report.contact_count))
         + _tile("deals", "Deals", _fmt_int(report.deal_count),
-                f'<strong>{_pct_str(report.deal_count, report.mql_count)}</strong> of MQLs')
+                f'<strong>{_pct_str(report.deal_count, report.mql_count)}</strong> of {noun_plural}')
         + _tile("pipeline", "Pipeline", _fmt_money_compact(report.pipeline_amount),
                 (f'<strong>{_fmt_money_compact(report.pipeline_amount / report.deal_count)}</strong> avg deal'
                  if report.deal_count else ""))
@@ -522,20 +532,20 @@ def render_lead_tracking(
         + '</div>'
     )
 
-    # Hero: MQL trend over time.
+    # Hero: primary-stage trend over time.
     series = _fill_months(report.mqls_by_month)
-    chart_html = _area_chart(series, accent)
+    chart_html = _area_chart(series, accent, noun, noun_plural)
     delta = _delta_badge(series)
     chart_card = (
         '<div class="lt-card">'
-        '<div class="lt-card-head"><h2>MQLs over time</h2>'
+        f'<div class="lt-card-head"><h2>{_esc(noun_plural)} over time</h2>'
         f'{delta}</div>{chart_html}</div>'
     )
 
     # Funnel + top sources.
     funnel_html = _funnel([
         ("Contacts tracked", report.contact_count, theme.get("sidebar_from", "#0a2540")),
-        ("MQLs", report.mql_count, accent),
+        (noun_plural, report.mql_count, accent),
         ("Deals", report.deal_count, theme.get("organic", "#16a34a")),
     ])
     sources_html = _source_bars(report.leads_by_source, source_colors)
@@ -543,16 +553,16 @@ def render_lead_tracking(
         '<div class="lt-cols">'
         f'<div class="lt-card"><div class="lt-card-head"><h2>Lead-to-deal funnel</h2></div>{funnel_html}</div>'
         f'<div class="lt-card"><div class="lt-card-head"><h2>Top lead sources</h2>'
-        '<span class="lt-card-note">by MQL volume</span></div>'
+        f'<span class="lt-card-note">by {_esc(noun)} volume</span></div>'
         f'{sources_html}</div>'
         '</div>'
     )
 
     # Unified source performance.
-    perf_html = _source_performance(report.leads_by_source, report.deals_by_source)
+    perf_html = _source_performance(report.leads_by_source, report.deals_by_source, noun, noun_plural)
     perf_card = (
         '<div class="lt-card"><div class="lt-card-head"><h2>Source performance</h2>'
-        '<span class="lt-card-note">MQLs, pipeline &amp; conversion by channel</span></div>'
+        f'<span class="lt-card-note">{_esc(noun_plural)}, pipeline &amp; conversion by channel</span></div>'
         f'{perf_html}</div>'
     )
 
@@ -567,13 +577,13 @@ def render_lead_tracking(
         )
         recent_html = (
             '<div class="lt-table-wrap"><table class="lt-table"><thead><tr><th>Email</th><th>Company</th>'
-            '<th>Original source</th><th>Became MQL</th></tr></thead><tbody>'
+            f'<th>Original source</th><th>Became {_esc(noun)}</th></tr></thead><tbody>'
             + recent_rows + '</tbody></table></div>'
         )
     else:
-        recent_html = '<div class="lt-empty">No MQLs synced yet.</div>'
+        recent_html = f'<div class="lt-empty">No {_esc(noun_plural)} synced yet.</div>'
     recent_card = (
-        '<div class="lt-card"><div class="lt-card-head"><h2>Recent MQLs</h2>'
+        f'<div class="lt-card"><div class="lt-card-head"><h2>Recent {_esc(noun_plural)}</h2>'
         '<span class="lt-card-note">latest 20</span></div>'
         f'{recent_html}</div>'
     )

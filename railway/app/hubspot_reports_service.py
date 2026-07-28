@@ -8,6 +8,7 @@ Every query is guarded so the page renders gracefully before a table exists
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -23,12 +24,60 @@ _CONTACT_TABLE = "fact_hubspot_contacts"
 _DEAL_TABLE = "fact_hubspot_deals"
 _MQL_STAGE = "marketingqualifiedlead"
 
+# Lifecycle stages this report can track, mapped to display nouns. The keys
+# match the `stage_filter` values written by the HubSpot sync
+# (see hubspot_sync_service._LIFECYCLE_FUNNEL). The report is not hard-wired to
+# MQLs: whichever stage the admin configured the connector to import is the one
+# the page reports on, so a client tracking "leads" doesn't see an empty page.
+_STAGE_NOUNS: dict[str, tuple[str, str]] = {
+    "subscriber":             ("Subscriber", "Subscribers"),
+    "lead":                   ("Lead", "Leads"),
+    "marketingqualifiedlead": ("MQL", "MQLs"),
+    "salesqualifiedlead":     ("SQL", "SQLs"),
+    "opportunity":            ("Opportunity", "Opportunities"),
+    "customer":               ("Customer", "Customers"),
+}
+
+
+def _stage_nouns(stage: str) -> tuple[str, str]:
+    """(singular, plural) display noun for a lifecycle stage, e.g.
+    'marketingqualifiedlead' -> ('MQL', 'MQLs'). Falls back to a title-cased key
+    for any custom stage a connector might sync."""
+    known = _STAGE_NOUNS.get(stage)
+    if known:
+        return known
+    label = (stage or "").replace("_", " ").strip().title() or "Lead"
+    return label, f"{label}s"
+
+
+def _resolve_stage(client_slug: str) -> str:
+    """Which lifecycle stage this client's report tracks.
+
+    Reads the connector's configured `lifecycle_stage` (the same option the
+    connectors page exposes) and defaults to MQL. Only recognised stage keys are
+    accepted, so the value is always safe to interpolate into SQL."""
+    cfg = connector_config_store.get_config(client_slug, "hubspot")
+    if cfg and cfg.sync_options:
+        try:
+            raw = str((json.loads(cfg.sync_options) or {}).get("lifecycle_stage") or "").strip()
+        except Exception:
+            raw = ""
+        if raw in _STAGE_NOUNS:
+            return raw
+    return _MQL_STAGE
+
 
 @dataclass
 class LeadTrackingReport:
     project: str
     dataset: str
     configured: bool = True
+    # Which lifecycle stage this report tracks, plus its display nouns. The
+    # counts below (mql_count etc.) are really "primary stage" counts — the
+    # field names are kept for backwards compatibility.
+    stage: str = _MQL_STAGE
+    stage_noun: str = "MQL"
+    stage_noun_plural: str = "MQLs"
     # Summary tiles
     mql_count: int = 0
     contact_count: int = 0
@@ -69,13 +118,14 @@ def fetch_mtd_mql_count(client_slug: str, *, start: date, end: date) -> int | No
     project, dataset = _resolve_target(client_slug)
     if not project:
         return None
+    stage = _resolve_stage(client_slug)
     try:
         client = bigquery_service.build_client(project_id=project)
         ct = f"`{project}.{dataset}.{_CONTACT_TABLE}`"
         sql = f"""
             SELECT COUNT(*) AS mqls
             FROM {ct}
-            WHERE stage_filter = '{_MQL_STAGE}'
+            WHERE stage_filter = '{stage}'
               AND became_stage_date IS NOT NULL
               AND DATE(became_stage_date) BETWEEN DATE('{start.isoformat()}') AND DATE('{end.isoformat()}')
         """
@@ -92,7 +142,8 @@ def build_report(client_slug: str) -> LeadTrackingReport:
         return LeadTrackingReport(project="", dataset=dataset, configured=False,
                                   error="HubSpot BigQuery destination is not configured for this client.")
 
-    report = LeadTrackingReport(project=project, dataset=dataset)
+    stage = _resolve_stage(client_slug)
+    report = LeadTrackingReport(project=project, dataset=dataset, stage=stage)
     try:
         client = bigquery_service.build_client(project_id=project)
     except Exception as exc:
@@ -101,6 +152,31 @@ def build_report(client_slug: str) -> LeadTrackingReport:
 
     ct = f"`{project}.{dataset}.{_CONTACT_TABLE}`"
     dt = f"`{project}.{dataset}.{_DEAL_TABLE}`"
+
+    # Prefer the configured stage, but if the contacts were imported under a
+    # different lifecycle stage than the one currently configured (e.g. the
+    # admin switched the connector to "lead"), the configured stage can be empty
+    # while real data sits under another stage_filter. Detect the populated
+    # stages and only keep the configured one when it actually has rows —
+    # otherwise the whole page would render empty against a populated table.
+    # Fallback is restricted to recognised stage keys, so `stage` stays safe to
+    # interpolate into the queries below.
+    try:
+        dist = _rows(client, f"""
+            SELECT stage_filter, COUNT(*) AS n
+            FROM {ct}
+            WHERE stage_filter IS NOT NULL
+            GROUP BY stage_filter
+        """)
+        present = {str(r.get("stage_filter")): int(r.get("n") or 0)
+                   for r in dist if r.get("stage_filter") in _STAGE_NOUNS}
+        if present and not present.get(stage):
+            stage = max(present, key=present.get)
+    except Exception as exc:
+        LOGGER.info("Lead Tracking stage detection skipped [%s]: %s", client_slug, exc)
+
+    report.stage = stage
+    report.stage_noun, report.stage_noun_plural = _stage_nouns(stage)
 
     # These 6 queries are independent, so run them concurrently instead of
     # back-to-back — the page was slow because it blocked the HTML render on ~6
@@ -111,7 +187,7 @@ def build_report(client_slug: str) -> LeadTrackingReport:
     sqls = {
         "contacts_summary": f"""
             SELECT
-              COUNTIF(stage_filter = '{_MQL_STAGE}')        AS mql_count,
+              COUNTIF(stage_filter = '{stage}')             AS mql_count,
               COUNT(DISTINCT contact_id)                    AS contact_count
             FROM {ct}
         """,
@@ -119,21 +195,21 @@ def build_report(client_slug: str) -> LeadTrackingReport:
             SELECT FORMAT_DATE('%Y-%m', DATE(became_stage_date)) AS month,
                    COUNT(*) AS contacts
             FROM {ct}
-            WHERE stage_filter = '{_MQL_STAGE}' AND became_stage_date IS NOT NULL
+            WHERE stage_filter = '{stage}' AND became_stage_date IS NOT NULL
             GROUP BY month ORDER BY month
         """,
         "leads_by_source": f"""
             SELECT COALESCE(hs_analytics_source, 'Unknown') AS source,
                    COUNT(*) AS contacts
             FROM {ct}
-            WHERE stage_filter = '{_MQL_STAGE}'
+            WHERE stage_filter = '{stage}'
             GROUP BY source ORDER BY contacts DESC
         """,
         "recent_mqls": f"""
             SELECT email, company, hs_analytics_source AS source,
                    became_stage_date
             FROM {ct}
-            WHERE stage_filter = '{_MQL_STAGE}'
+            WHERE stage_filter = '{stage}'
             ORDER BY became_stage_date DESC
             LIMIT 20
         """,
