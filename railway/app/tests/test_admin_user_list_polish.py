@@ -56,7 +56,7 @@ def _groups():
 
 def _render():
     return web_auth.render_admin_page(
-        user=_Admin(), users=_users(), groups=_groups(), audit_events=[]
+        user=_Admin(), users=_users(), groups=_groups(), audit_events=[], page="users"
     )
 
 

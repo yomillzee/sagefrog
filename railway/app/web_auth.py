@@ -826,7 +826,19 @@ def render_admin_page(
     credentials_section_html: str = "",
     is_super_admin: bool = False,
     dashboard_cache_ttl: int = 0,
+    page: str = "clients",
 ) -> str:
+    """Render one admin destination.
+
+    The old single Overview has been split into focused pages, selected by
+    ``page``: ``clients`` (dashboards register), ``users`` (team + client
+    logins + groups), ``feature-requests`` (the team inbox), and ``advanced``
+    (debug / platform settings). All sections are still built below regardless;
+    ``page`` only chooses which get placed into the rendered body.
+    """
+    page = (page or "clients").strip().lower()
+    if page not in ("clients", "users", "feature-requests", "advanced"):
+        page = "clients"
     notice = ""
     if message:
         notice += f'<div class="notice ok">{_esc(message)}</div>'
@@ -1050,44 +1062,10 @@ def render_admin_page(
         '<tr class="empty-row"><td colspan="7" class="muted">No client portal users yet.</td></tr>'
     )
 
-    # ---- "View as user" card ----
-    # Previously a floating bubble on the client dashboards; now a card here so it
-    # never overlays a dashboard mid-presentation. Impersonate any other user to
-    # see the platform exactly as they do; the exit banner leaves "view as".
-    view_as_opts = []
-    for u in users:
-        uid = int(u["id"])
-        if uid == user.id:
-            continue
-        role = str(u.get("role") or "")
-        slug = str(u.get("client_slug") or "").strip()
-        meta = role + (f" · {slug}" if slug else "")
-        label_txt = str(u.get("email") or "")
-        if meta:
-            label_txt = f"{label_txt} — {meta}"
-        view_as_opts.append(f'<option value="{uid}">{_esc(label_txt)}</option>')
-    if view_as_opts:
-        view_as_body = f"""
-      <form method="post" action="/admin/view-as" class="role-form view-as-form">
-        <div class="row">
-          <div>
-            <label for="viewAsSelect">User</label>
-            <select id="viewAsSelect" name="user_id" class="role-select" required>
-              <option value="" disabled selected>Select a user…</option>
-              {"".join(view_as_opts)}
-            </select>
-          </div>
-        </div>
-        <button type="submit" class="primary">View as this user</button>
-      </form>"""
-    else:
-        view_as_body = '<p class="muted" style="margin:.35rem 0 0">No other users to view as yet.</p>'
-    view_as_section_html = f"""
-    <section>
-      <h2>View as user</h2>
-      <p class="muted" style="margin:0 0 12px;font-size:.9rem">See the platform exactly as another user does — useful for checking a client's branded dashboard. A banner keeps you one click from exiting.</p>
-      {view_as_body}
-    </section>"""
+    # NOTE: the "View as user" card that used to live here has been removed —
+    # impersonation is now offered per-client from the client shell's "View As"
+    # tool tab (see admin_tool_card_html), so a global picker on this page is
+    # redundant. The /admin/view-as backend route stays for that per-client tab.
 
     # ---- Client groups management section ----
     group_rows_html = []
@@ -1401,7 +1379,7 @@ def render_admin_page(
         if new_count:
             plural = "" if new_count == 1 else "s"
             feature_requests_notice = f"""
-    <a class="fr-notice" href="#feature-requests">
+    <a class="fr-notice" href="/admin/feature-requests">
       <span class="fr-notice-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>
       <span class="fr-notice-text"><strong>{new_count}</strong> new feature request{plural} from the team</span>
       <span class="fr-notice-cta">Review →</span>
@@ -1462,6 +1440,10 @@ def render_admin_page(
       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
       background: linear-gradient(180deg,#eef2f7 0%,#e6edf5 100%); background-attachment: fixed; }}
     main {{ max-width: 980px; margin: 0 auto; padding: 26px 24px 56px; }}
+    /* Per-page header — the split-out admin destinations each get a clear title. */
+    .admin-page-head {{ margin: 2px 0 18px; }}
+    .admin-page-head h1 {{ margin: 0; font-size: 1.5rem; color: var(--navy); letter-spacing: -.01em; }}
+    .admin-page-head p {{ margin: 6px 0 0; color: var(--muted); font-size: .92rem; max-width: 60ch; }}
     /* Keep the switcher search field clear of the generic input margins below. */
     .client-switch-search-input {{ margin-bottom: 0; }}
     section {{ background: #fff; border: 1px solid var(--line); border-radius: 16px;
@@ -1681,19 +1663,6 @@ def render_admin_page(
     .group-row-actions {{ display: flex; align-items: center; gap: 6px 14px; flex-shrink: 0; position: relative; }}
     .group-edit-form {{ width: 300px; }}
     .group-edit-form input {{ max-width: 100%; }}
-    /* ---- Advanced fold ---- */
-    .advanced-fold {{ background: #fff; border: 1px solid var(--line); border-radius: 16px; margin-bottom: 18px;
-      box-shadow: 0 6px 22px rgba(10,37,64,.06); overflow: hidden; }}
-    .advanced-summary {{ list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between;
-      gap: 14px; padding: 20px 24px; }}
-    .advanced-summary::-webkit-details-marker {{ display: none; }}
-    .advanced-title {{ display: block; font-size: 1.05rem; font-weight: 750; color: var(--navy); }}
-    .advanced-sub {{ display: block; font-size: .82rem; color: var(--muted); margin-top: 2px; }}
-    .advanced-caret {{ color: var(--muted); transition: transform .18s; flex-shrink: 0; }}
-    .advanced-fold[open] .advanced-caret {{ transform: rotate(180deg); }}
-    .advanced-summary:hover .advanced-title {{ color: var(--accent); }}
-    .advanced-body {{ padding: 0 20px 8px; }}
-    .advanced-body > section, .advanced-body > .admin-oauth-section {{ box-shadow: none; }}
     /* ---- Dashboards list (one row each) ---- */
     .dash-list {{ display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }}
     .dash-row {{ display: flex; align-items: center; gap: 14px; padding: 10px 14px; border: 1px solid var(--line);
@@ -1816,12 +1785,8 @@ def render_admin_page(
       .audit-wrap table {{ min-width: 540px; }}
     }}
 """
-    content = f"""
-  <main>
-    {notice}
-    {feature_requests_notice}
-    {dashboard_manage_html}
-    {feature_requests_html}
+    # ---- Create-user section (lives on the Users page) ----
+    create_user_html = f"""
     <section>
       <h2>Create user</h2>
       <form method="post" action="/admin/users" class="role-form">
@@ -1861,7 +1826,10 @@ def render_admin_page(
         </div>
         <button type="submit" class="primary">Create user</button>
       </form>
-    </section>
+    </section>"""
+
+    # ---- Users roster section (lives on the Users page) ----
+    users_html = f"""
     <section class="users-section">
       <div class="users-head">
         <div class="users-head-left">
@@ -1917,22 +1885,13 @@ def render_admin_page(
           <p class="users-empty muted" hidden>No client portal users match your filter.</p>
         </div>
       </div>
-    </section>
-    {view_as_section_html}
-    {groups_section_html}
+    </section>"""
 
-    <details class="advanced-fold">
-      <summary class="advanced-summary">
-        <span class="advanced-head">
-          <span class="advanced-title">Advanced settings</span>
-          <span class="advanced-sub">Platform connections, GCP service credentials, and the audit log</span>
-        </span>
-        <span class="advanced-caret" aria-hidden="true">&#9662;</span>
-      </summary>
-      <div class="advanced-body">
-        {dashboard_perf_html}
-        {oauth_section_html}
-        {credentials_section_html}
+    # ---- Advanced settings sections (lives on the Advanced page) ----
+    # The audit log + platform connections + GCP credentials + dashboard cache
+    # used to hide behind a collapsible fold on Overview; they now get their own
+    # page, so we render the sections straight (no fold).
+    audit_section_html = f"""
         <section>
           <h2>Audit log</h2>
           <p class="muted" style="margin:0 0 12px;font-size:.9rem">Sign-ins, sign-outs, and admin user changes (latest 150).</p>
@@ -1942,9 +1901,62 @@ def render_admin_page(
               <tbody>{audit_table}</tbody>
             </table>
           </div>
-        </section>
-      </div>
-    </details>
+        </section>"""
+    advanced_html = (
+        f"{dashboard_perf_html}{oauth_section_html}"
+        f"{credentials_section_html}{audit_section_html}"
+    )
+
+    # ---- Per-page header + body assembly ----
+    # A single render function serves four sidebar destinations; `page` selects
+    # which sections land in the body, and each gets a matching page header.
+    _PAGE_HEADS = {
+        "clients": (
+            "Clients",
+            "Every client dashboard in one place — open one, or add a new one.",
+        ),
+        "users": (
+            "Users",
+            "Sagefrog staff and client portal logins, plus the client groups that grant dashboard access.",
+        ),
+        "feature-requests": (
+            "Feature requests",
+            "The team's inbox — requests raised from the notes FAB on any client dashboard.",
+        ),
+        "advanced": (
+            "Advanced settings",
+            "Debug and platform plumbing — dashboard cache, connections, GCP credentials, and the audit log.",
+        ),
+    }
+    head_title, head_sub = _PAGE_HEADS.get(page, _PAGE_HEADS["clients"])
+    page_head_html = (
+        f'<header class="admin-page-head">'
+        f'<h1>{_esc(head_title)}</h1>'
+        f'<p>{_esc(head_sub)}</p></header>'
+    )
+
+    if page == "users":
+        body = f"{create_user_html}{users_html}{groups_section_html}"
+    elif page == "feature-requests":
+        body = feature_requests_html or (
+            '<section><p class="muted" style="margin:0">Feature requests are only '
+            "available to super admins.</p></section>"
+        )
+    elif page == "advanced":
+        body = advanced_html
+    else:  # clients
+        body = dashboard_manage_html
+
+    # The new-feature-request nudge is a cross-page banner; show it everywhere
+    # except the Feature requests page itself (where you're already looking).
+    banner = feature_requests_notice if page != "feature-requests" else ""
+
+    content = f"""
+  <main>
+    {notice}
+    {banner}
+    {page_head_html}
+    {body}
   </main>"""
     scripts = (
         f"<script>{dash_delete_js}</script>"
@@ -1953,8 +1965,8 @@ def render_admin_page(
         f"<script>{_USER_SEARCH_JS}</script>"
     )
     return render_admin_shell_page(
-        active_nav="overview",
-        page_title="Admin",
+        active_nav=page,
+        page_title=f"Admin · {head_title}",
         content_html=content,
         session_email=user.email,
         session_is_admin=True,

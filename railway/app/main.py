@@ -1814,18 +1814,22 @@ def dashboards_home(request: Request):
     return HTMLResponse(web_auth.render_dashboards_page(user=user, dashboards=items))
 
 
-@app.get("/admin", include_in_schema=False, response_class=HTMLResponse)
-def admin_home(
+def _render_admin_page(
     request: Request,
+    *,
+    page: str,
     msg: str | None = None,
     err: str | None = None,
     oauth_connected: str | None = None,
     oauth_error: str | None = None,
     oauth_disconnected: str | None = None,
 ):
+    """Shared renderer for the split-out admin destinations (Clients, Users,
+    Feature requests, Advanced settings). Each lives at its own /admin/* route
+    but shares auth, data loading, and the navy-sidebar shell."""
     user = web_auth.get_current_user(request)
     if not user:
-        return web_auth.redirect_to_login(request, next_path="/admin")
+        return web_auth.redirect_to_login(request, next_path=f"/admin/{page}")
     if user.role != "admin":
         # Logged in but not an admin: 403, never bounce back to /login. The
         # login page redirects an already-authenticated user straight to `next`,
@@ -1833,11 +1837,17 @@ def admin_home(
         raise HTTPException(status_code=403, detail="Admin access required.")
     users = web_users.list_users(include_inactive=False)
     events = audit_log.list_recent(limit=40)
-    oauth_html = dashboard_settings.render_admin_oauth_section(
-        return_url="/admin",
-        oauth_connected=oauth_connected,
-        oauth_error=(oauth_error or "").strip()[:300] or None,
-    )
+    # OAuth + GCP credentials only surface on the Advanced page, so only build
+    # those (and read their return URL) there.
+    oauth_html = ""
+    credentials_html = ""
+    if page == "advanced":
+        oauth_html = dashboard_settings.render_admin_oauth_section(
+            return_url="/admin/advanced",
+            oauth_connected=oauth_connected,
+            oauth_error=(oauth_error or "").strip()[:300] or None,
+        )
+        credentials_html = _gcp_credentials_section_html()
     flash = msg
     if oauth_disconnected and not flash:
         labels = {"google_ads": "Google Ads", "linkedin": "LinkedIn", "meta": "Meta", "indeed": "Indeed", "harvest": "Harvest"}
@@ -1852,10 +1862,65 @@ def admin_home(
             message=flash,
             error=err,
             oauth_section_html=oauth_html,
-            credentials_section_html=_gcp_credentials_section_html(),
+            credentials_section_html=credentials_html,
             is_super_admin=web_auth.is_super_admin(user),
             dashboard_cache_ttl=_dashboard_cache_ttl_seconds(),
+            page=page,
         )
+    )
+
+
+@app.get("/admin", include_in_schema=False)
+def admin_home(request: Request) -> RedirectResponse:
+    """The old catch-all Overview has been split into focused pages. Land on
+    Clients so bookmarks to /admin keep working."""
+    return RedirectResponse(url="/admin/clients", status_code=307)
+
+
+@app.get("/admin/clients", include_in_schema=False, response_class=HTMLResponse)
+def admin_clients(
+    request: Request,
+    msg: str | None = None,
+    err: str | None = None,
+):
+    return _render_admin_page(request, page="clients", msg=msg, err=err)
+
+
+@app.get("/admin/users", include_in_schema=False, response_class=HTMLResponse)
+def admin_users_page(
+    request: Request,
+    msg: str | None = None,
+    err: str | None = None,
+):
+    return _render_admin_page(request, page="users", msg=msg, err=err)
+
+
+@app.get("/admin/feature-requests", include_in_schema=False, response_class=HTMLResponse)
+def admin_feature_requests_page(
+    request: Request,
+    msg: str | None = None,
+    err: str | None = None,
+):
+    return _render_admin_page(request, page="feature-requests", msg=msg, err=err)
+
+
+@app.get("/admin/advanced", include_in_schema=False, response_class=HTMLResponse)
+def admin_advanced_page(
+    request: Request,
+    msg: str | None = None,
+    err: str | None = None,
+    oauth_connected: str | None = None,
+    oauth_error: str | None = None,
+    oauth_disconnected: str | None = None,
+):
+    return _render_admin_page(
+        request,
+        page="advanced",
+        msg=msg,
+        err=err,
+        oauth_connected=oauth_connected,
+        oauth_error=oauth_error,
+        oauth_disconnected=oauth_disconnected,
     )
 
 
@@ -1881,10 +1946,10 @@ def admin_set_dashboard_cache_ttl(
         app_settings.set_dashboard_cache_ttl_seconds(int(ttl_seconds), updated_by=admin.email)
     except Exception:
         return RedirectResponse(
-            url="/admin?err=Could+not+update+cache+setting", status_code=303
+            url="/admin/advanced?err=Could+not+update+cache+setting", status_code=303
         )
     return RedirectResponse(
-        url="/admin?msg=Dashboard+cache+duration+updated", status_code=303
+        url="/admin/advanced?msg=Dashboard+cache+duration+updated", status_code=303
     )
 
 
@@ -1899,11 +1964,11 @@ def admin_feature_request_done(
         feature_requests.mark_done(request_id, resolved_by=admin.email)
     except Exception:
         return RedirectResponse(
-            url="/admin?err=Could+not+update+feature+request#feature-requests",
+            url="/admin/feature-requests?err=Could+not+update+feature+request",
             status_code=303,
         )
     return RedirectResponse(
-        url="/admin?msg=Feature+request+marked+done#feature-requests", status_code=303
+        url="/admin/feature-requests?msg=Feature+request+marked+done", status_code=303
     )
 
 
@@ -1918,11 +1983,11 @@ def admin_feature_request_archive(
         feature_requests.archive_request(request_id, archived_by=admin.email)
     except Exception:
         return RedirectResponse(
-            url="/admin?err=Could+not+archive+feature+request#feature-requests",
+            url="/admin/feature-requests?err=Could+not+archive+feature+request",
             status_code=303,
         )
     return RedirectResponse(
-        url="/admin?msg=Feature+request+archived#feature-requests", status_code=303
+        url="/admin/feature-requests?msg=Feature+request+archived", status_code=303
     )
 
 
@@ -1937,11 +2002,11 @@ def admin_feature_request_delete(
         feature_requests.delete_request(request_id)
     except Exception:
         return RedirectResponse(
-            url="/admin?err=Could+not+delete+feature+request#feature-requests",
+            url="/admin/feature-requests?err=Could+not+delete+feature+request",
             status_code=303,
         )
     return RedirectResponse(
-        url="/admin?msg=Feature+request+deleted#feature-requests", status_code=303
+        url="/admin/feature-requests?msg=Feature+request+deleted", status_code=303
     )
 
 
@@ -2253,7 +2318,7 @@ async def admin_set_gcp_credentials(
     name = ga4_credentials.GLOBAL_GCP_CREDENTIALS_ENV
     if not railway_api.enabled():
         return RedirectResponse(
-            url="/admin?err=" + quote(
+            url="/admin/advanced?err=" + quote(
                 "Railway API is not configured "
                 "(set RAILWAY_API_TOKEN / RAILWAY_PROJECT_ID / RAILWAY_ENVIRONMENT_ID / RAILWAY_SERVICE_ID)."
             ),
@@ -2265,7 +2330,7 @@ async def admin_set_gcp_credentials(
         railway_api.set_variable(name, encoded)
     except Exception as exc:
         return RedirectResponse(
-            url="/admin?err=" + quote(f"Upload failed: {str(exc)[:200]}"),
+            url="/admin/advanced?err=" + quote(f"Upload failed: {str(exc)[:200]}"),
             status_code=303,
         )
 
@@ -2276,7 +2341,7 @@ async def admin_set_gcp_credentials(
         **audit_log.request_context(request),
     )
     return RedirectResponse(
-        url="/admin?msg=" + quote(
+        url="/admin/advanced?msg=" + quote(
             f"Set {name} for {client_email}. Railway is redeploying — live in ~1–2 min."
         ),
         status_code=303,
@@ -2311,7 +2376,7 @@ def admin_create_group(
             name=name, client_slugs=client_slugs, description=description
         )
     except ValueError as exc:
-        return RedirectResponse(url=f"/admin?err={quote(str(exc))}", status_code=303)
+        return RedirectResponse(url=f"/admin/users?err={quote(str(exc))}", status_code=303)
     audit_log.record(
         action="group.created",
         actor_user_id=admin.id,
@@ -2319,7 +2384,7 @@ def admin_create_group(
         detail={"name": created["name"], "client_slugs": created["client_slugs"]},
         **ctx,
     )
-    return RedirectResponse(url="/admin?msg=Group+created", status_code=303)
+    return RedirectResponse(url="/admin/users?msg=Group+created", status_code=303)
 
 
 @app.post("/admin/groups/{group_id}", include_in_schema=False)
@@ -2337,9 +2402,9 @@ def admin_update_group(
             group_id, name=name, client_slugs=client_slugs, description=description
         )
     except ValueError as exc:
-        return RedirectResponse(url=f"/admin?err={quote(str(exc))}", status_code=303)
+        return RedirectResponse(url=f"/admin/users?err={quote(str(exc))}", status_code=303)
     if not updated:
-        return RedirectResponse(url="/admin?err=Group+not+found", status_code=303)
+        return RedirectResponse(url="/admin/users?err=Group+not+found", status_code=303)
     audit_log.record(
         action="group.updated",
         actor_user_id=admin.id,
@@ -2347,7 +2412,7 @@ def admin_update_group(
         detail={"name": updated["name"], "client_slugs": updated["client_slugs"]},
         **ctx,
     )
-    return RedirectResponse(url="/admin?msg=Group+updated", status_code=303)
+    return RedirectResponse(url="/admin/users?msg=Group+updated", status_code=303)
 
 
 @app.post("/admin/groups/{group_id}/delete", include_in_schema=False)
@@ -2359,10 +2424,10 @@ def admin_delete_group(
     ctx = audit_log.request_context(request)
     target = web_users.get_group(group_id)
     if not target:
-        return RedirectResponse(url="/admin?err=Group+not+found", status_code=303)
+        return RedirectResponse(url="/admin/users?err=Group+not+found", status_code=303)
     if not web_users.delete_group(group_id):
         return RedirectResponse(
-            url="/admin?err=Remove+its+members+before+deleting+the+group",
+            url="/admin/users?err=Remove+its+members+before+deleting+the+group",
             status_code=303,
         )
     audit_log.record(
@@ -2372,7 +2437,7 @@ def admin_delete_group(
         detail={"name": target["name"]},
         **ctx,
     )
-    return RedirectResponse(url="/admin?msg=Group+deleted", status_code=303)
+    return RedirectResponse(url="/admin/users?msg=Group+deleted", status_code=303)
 
 
 @app.post("/admin/users", include_in_schema=False)
@@ -2404,7 +2469,8 @@ def admin_create_user(
                 user=user,
                 users=users,
                 audit_events=events,
-                    error=str(e),
+                error=str(e),
+                page="users",
             ),
             status_code=400,
         )
@@ -2421,7 +2487,7 @@ def admin_create_user(
         },
         **ctx,
     )
-    return RedirectResponse(url="/admin?msg=User+created", status_code=303)
+    return RedirectResponse(url="/admin/users?msg=User+created", status_code=303)
 
 
 @app.post("/admin/users/{user_id}/deactivate", include_in_schema=False)
@@ -2432,10 +2498,10 @@ def admin_deactivate_user(
 ):
     ctx = audit_log.request_context(request)
     if user_id == admin.id:
-        return RedirectResponse(url="/admin?err=Cannot+deactivate+your+own+account", status_code=303)
+        return RedirectResponse(url="/admin/users?err=Cannot+deactivate+your+own+account", status_code=303)
     target = web_users.get_user_record(user_id)
     if target and target.role == "admin" and web_users.count_admins() <= 1:
-        return RedirectResponse(url="/admin?err=Cannot+deactivate+the+only+admin", status_code=303)
+        return RedirectResponse(url="/admin/users?err=Cannot+deactivate+the+only+admin", status_code=303)
     if target and web_users.deactivate_user(user_id):
         audit_log.record(
             action="user.deactivated",
@@ -2445,7 +2511,7 @@ def admin_deactivate_user(
             detail={"role": target.role, "client_slug": target.client_slug},
             **ctx,
         )
-    return RedirectResponse(url="/admin?msg=User+deactivated", status_code=303)
+    return RedirectResponse(url="/admin/users?msg=User+deactivated", status_code=303)
 
 
 @app.post("/admin/users/{user_id}/reset-password", include_in_schema=False)
@@ -2458,11 +2524,11 @@ def admin_reset_password(
     ctx = audit_log.request_context(request)
     target = web_users.get_user_record(user_id)
     if not target:
-        return RedirectResponse(url="/admin?err=User+not+found", status_code=303)
+        return RedirectResponse(url="/admin/users?err=User+not+found", status_code=303)
     try:
         ok = web_users.set_password(user_id, new_password)
     except ValueError as exc:
-        return RedirectResponse(url=f"/admin?err={quote(str(exc))}", status_code=303)
+        return RedirectResponse(url=f"/admin/users?err={quote(str(exc))}", status_code=303)
     if ok:
         audit_log.record(
             action="user.password_reset",
@@ -2472,9 +2538,9 @@ def admin_reset_password(
             **ctx,
         )
         return RedirectResponse(
-            url=f"/admin?msg=Password+reset+for+{quote(target.email)}", status_code=303
+            url=f"/admin/users?msg=Password+reset+for+{quote(target.email)}", status_code=303
         )
-    return RedirectResponse(url="/admin?err=Password+reset+failed", status_code=303)
+    return RedirectResponse(url="/admin/users?err=Password+reset+failed", status_code=303)
 
 
 # Cap the stored data URI. Avatars are resized client-side to ~160px, so a real
@@ -2531,22 +2597,22 @@ def admin_set_user_role(
 ):
     ctx = audit_log.request_context(request)
     if user_id == admin.id:
-        return RedirectResponse(url="/admin?err=Cannot+change+your+own+role", status_code=303)
+        return RedirectResponse(url="/admin/users?err=Cannot+change+your+own+role", status_code=303)
     target = web_users.get_user_record(user_id)
     if not target:
-        return RedirectResponse(url="/admin?err=User+not+found", status_code=303)
+        return RedirectResponse(url="/admin/users?err=User+not+found", status_code=303)
     new_role = (role or "").strip().lower()
     # Never let the last remaining admin be demoted out of the admin role.
     if target.role == "admin" and new_role != "admin" and web_users.count_admins() <= 1:
-        return RedirectResponse(url="/admin?err=Cannot+change+the+only+admin%27s+role", status_code=303)
+        return RedirectResponse(url="/admin/users?err=Cannot+change+the+only+admin%27s+role", status_code=303)
     try:
         updated = web_users.set_role(
             user_id, new_role, client_slug, allowed_client_slugs, _parse_group_id(group_id)
         )
     except ValueError as exc:
-        return RedirectResponse(url=f"/admin?err={quote(str(exc))}", status_code=303)
+        return RedirectResponse(url=f"/admin/users?err={quote(str(exc))}", status_code=303)
     if not updated:
-        return RedirectResponse(url="/admin?err=Role+update+failed", status_code=303)
+        return RedirectResponse(url="/admin/users?err=Role+update+failed", status_code=303)
     audit_log.record(
         action="user.role_changed",
         actor_user_id=admin.id,
@@ -2561,7 +2627,7 @@ def admin_set_user_role(
         **ctx,
     )
     return RedirectResponse(
-        url=f"/admin?msg=Role+updated+for+{quote(updated.email)}", status_code=303
+        url=f"/admin/users?msg=Role+updated+for+{quote(updated.email)}", status_code=303
     )
 
 
@@ -2582,14 +2648,13 @@ def admin_create_dashboard(
     except ValueError as exc:
         users = web_users.list_users(include_inactive=False)
         events = audit_log.list_recent(limit=150)
-        oauth_html = dashboard_settings.render_admin_oauth_section(return_url="/admin")
         return HTMLResponse(
             web_auth.render_admin_page(
                 user=user,
                 users=users,
                 audit_events=events,
-                    error=str(exc),
-                oauth_section_html=oauth_html,
+                error=str(exc),
+                page="clients",
             ),
             status_code=400,
         )
@@ -2605,7 +2670,7 @@ def admin_create_dashboard(
     # place. Provisioning runs in admin_save_gsc_config(), once the client's
     # BigQuery destination is known.
     return RedirectResponse(
-        url=f"/admin?msg=Dashboard+{quote(created.label)}+created",
+        url=f"/admin/clients?msg=Dashboard+{quote(created.label)}+created",
         status_code=303,
     )
 
@@ -2639,7 +2704,7 @@ def admin_convert_dashboard_mode(
         )
     except Exception as exc:
         return RedirectResponse(
-            url=f"/admin?msg=Convert+failed:+{quote(str(exc)[:120])}", status_code=303
+            url=f"/admin/clients?msg=Convert+failed:+{quote(str(exc)[:120])}", status_code=303
         )
     audit_log.record(
         action="dashboard.mode_changed",
@@ -2648,7 +2713,7 @@ def admin_convert_dashboard_mode(
         **ctx,
     )
     return RedirectResponse(
-        url=f"/admin?msg=Dashboard+{quote(slug)}+now+uses+the+new+template", status_code=303
+        url=f"/admin/clients?msg=Dashboard+{quote(slug)}+now+uses+the+new+template", status_code=303
     )
 
 
@@ -2698,14 +2763,13 @@ def admin_delete_dashboard(
     except ValueError as exc:
         users = web_users.list_users(include_inactive=False)
         events = audit_log.list_recent(limit=150)
-        oauth_html = dashboard_settings.render_admin_oauth_section(return_url="/admin")
         return HTMLResponse(
             web_auth.render_admin_page(
                 user=user,
                 users=users,
                 audit_events=events,
-                    error=str(exc),
-                oauth_section_html=oauth_html,
+                error=str(exc),
+                page="clients",
             ),
             status_code=400,
         )
@@ -2716,7 +2780,7 @@ def admin_delete_dashboard(
         **ctx,
     )
     return RedirectResponse(
-        url=f"/admin?msg=Dashboard+{quote(deleted['label'])}+deleted",
+        url=f"/admin/clients?msg=Dashboard+{quote(deleted['label'])}+deleted",
         status_code=303,
     )
 
@@ -2737,7 +2801,7 @@ def admin_delete_snapshot(
         **audit_log.request_context(request),
     )
     return RedirectResponse(
-        url=f"/admin?msg=Snapshot+cleared+for+{quote(slug)}",
+        url=f"/admin/clients?msg=Snapshot+cleared+for+{quote(slug)}",
         status_code=303,
     )
 
