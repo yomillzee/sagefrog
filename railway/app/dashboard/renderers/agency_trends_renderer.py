@@ -524,7 +524,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
 
     return render_admin_shell_page(
         active_nav="trends",
-        page_title="HQ",
+        page_title="Health",
         content_html=_TRENDS_CONTENT,
         session_email=user_email,
         extra_css=_TRENDS_CSS,

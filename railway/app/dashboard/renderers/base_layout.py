@@ -1738,22 +1738,25 @@ _ADMIN_NAV_ICONS: dict[str, str] = {
 
 _ADMIN_NAV_ITEMS: tuple[tuple[str, str, str], ...] = (
     # The Overview page has been split into focused destinations so its mixed
-    # bag of tools (dashboards, users, feature requests, debug settings) each
-    # gets its own page. /admin still resolves — it redirects to Clients.
-    ("clients", "Clients", "/admin/clients"),
+    # bag of tools (accounts, users, notifications, debug settings) each gets
+    # its own page. /admin still resolves — it redirects to Accounts.
+    # NOTE: the internal keys (route segments) are unchanged; only the visible
+    # labels and their order differ, so URLs and active-state keys stay stable.
+    ("clients", "Accounts", "/admin/clients"),
     ("users", "Users", "/admin/users"),
-    ("feature-requests", "Feature requests", "/admin/feature-requests"),
-    # "HQ" is the DuckDB-backed agency overview (formerly "Agency Trends"). The
-    # legacy "Budget HQ" (/admin/hq) has been phased out of the nav; its route
-    # still redirects there so old links keep working.
-    ("trends", "HQ", "/admin/agency-trends"),
-    # "Client Hours" is the Harvest burn-up view (hours logged vs monthly goal
-    # for every client this month).
-    ("hours", "Client Hours", "/admin/client-hours"),
     ("docs", "Docs", "/admin/docs"),
-    # "Advanced settings" collects the debug / platform-plumbing tools that used
-    # to hide behind a fold on Overview.
-    ("advanced", "Advanced settings", "/admin/advanced"),
+    # "Health" is the DuckDB-backed agency overview (formerly "HQ" / "Agency
+    # Trends"). The legacy "Budget HQ" (/admin/hq) has been phased out of the
+    # nav; its route still redirects there so old links keep working.
+    ("trends", "Health", "/admin/agency-trends"),
+    # "Hours" is the Harvest burn-up view (hours logged vs monthly goal for
+    # every client this month).
+    ("hours", "Hours", "/admin/client-hours"),
+    # "Notifications" is the team inbox raised from the notes FAB.
+    ("feature-requests", "Notifications", "/admin/feature-requests"),
+    # "Advanced" collects the debug / platform-plumbing tools that used to hide
+    # behind a fold on Overview.
+    ("advanced", "Advanced", "/admin/advanced"),
 )
 
 

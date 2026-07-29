@@ -1912,19 +1912,19 @@ def render_admin_page(
     # which sections land in the body, and each gets a matching page header.
     _PAGE_HEADS = {
         "clients": (
-            "Clients",
-            "Every client dashboard in one place — open one, or add a new one.",
+            "Accounts",
+            "Every client account in one place — open a dashboard, or add a new one.",
         ),
         "users": (
             "Users",
             "Sagefrog staff and client portal logins, plus the client groups that grant dashboard access.",
         ),
         "feature-requests": (
-            "Feature requests",
+            "Notifications",
             "The team's inbox — requests raised from the notes FAB on any client dashboard.",
         ),
         "advanced": (
-            "Advanced settings",
+            "Advanced",
             "Debug and platform plumbing — dashboard cache, connections, GCP credentials, and the audit log.",
         ),
     }

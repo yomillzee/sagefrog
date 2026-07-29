@@ -347,7 +347,7 @@ def _content_html(*, read_only: bool) -> str:
   <main>
     <div class="page-head">
       <div>
-        <h2>Client Hours</h2>
+        <h2>Hours</h2>
         <p class="sub" id="chSub">Loading Harvest hours…</p>
       </div>
       <div class="head-controls">
@@ -1219,7 +1219,7 @@ def render_client_hours_page(*, user_email: str) -> str:
     """Full HTML for GET /admin/client-hours. Data loads from …/data."""
     return render_admin_shell_page(
         active_nav="hours",
-        page_title="Client Hours",
+        page_title="Hours",
         content_html=_content_html(read_only=False),
         session_email=user_email,
         extra_css=_HOURS_CSS,
