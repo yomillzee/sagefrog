@@ -95,14 +95,44 @@ _HOURS_CSS = """
     .notice.warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; }
     .notice a { color:inherit; font-weight:700; }
     .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:16px; }
-    .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:16px 16px 12px;
-      box-shadow:0 6px 22px rgba(10,37,64,.06); }
+    .card { position:relative; background:#fff; border:1px solid var(--line); border-radius:16px;
+      padding:16px 16px 12px; box-shadow:0 6px 22px rgba(10,37,64,.06); }
     .card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:2px; }
+    /* Low-profile "more details" toggle (kebab) + the popout it reveals. The
+       popout tucks away per-card metadata (owner, goal, hard-ceiling) so the card
+       face stays quiet: title, hours, and the status-colored burn-up. */
+    .card-more { appearance:none; border:1px solid var(--border); background:#f8fafc; color:var(--muted);
+      border-radius:8px; width:30px; height:26px; cursor:pointer; flex:0 0 auto; display:inline-flex;
+      align-items:center; justify-content:center; }
+    .card-more:hover { border-color:#94a3b8; color:var(--navy); background:#fff; }
+    .card-more[aria-expanded="true"] { border-color:var(--accent); color:var(--accent); background:#fff; }
+    .card-more svg { width:16px; height:16px; }
+    .card-details { position:absolute; top:46px; right:14px; z-index:30; width:244px; background:#fff;
+      border:1px solid var(--line); border-radius:12px; padding:12px 13px;
+      box-shadow:0 14px 34px rgba(10,37,64,.20); display:flex; flex-direction:column; gap:11px; }
+    .card-details[hidden] { display:none; }
+    .cd-row { display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }
+    .cd-row.cd-goal { flex-direction:column; align-items:stretch; gap:6px; }
+    .cd-label { font-size:.68rem; font-weight:750; text-transform:uppercase; letter-spacing:.04em;
+      color:var(--muted); flex:0 0 auto; }
+    .cd-muted { color:var(--muted); font-size:.8rem; }
+    .cd-val { font-size:.8rem; font-weight:700; color:var(--navy); font-variant-numeric:tabular-nums; }
+    .card-details .goal { justify-content:flex-start; }
+    .card-details .goal-edit input { width:92px; }
+    .card-details .owner-select { max-width:150px; }
+    /* Hard-ceiling toggle: stop-at cap. Red accent mirrors the ceiling line on
+       the chart. Dimmed + disabled until a goal ceiling exists to cap against. */
+    .cd-cap { padding-top:10px; border-top:1px solid var(--line); }
+    .cap-toggle { display:inline-flex; align-items:center; gap:8px; font-size:.8rem; font-weight:700;
+      color:var(--navy); cursor:pointer; }
+    .cap-toggle.is-dim { color:var(--muted); cursor:default; }
+    .cap-toggle input { width:15px; height:15px; accent-color:#b42318; cursor:pointer; flex:0 0 auto; }
+    .cap-toggle input:disabled { cursor:default; }
+    .cap-note { font-size:.72rem; font-weight:700; color:#b42318; font-variant-numeric:tabular-nums; }
     .card-title { font-weight:750; color:var(--navy); font-size:.98rem; line-height:1.25;
       white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .card-total { font-variant-numeric:tabular-nums; color:var(--muted); font-size:.78rem; margin-top:2px; }
     .card-total b { color:var(--navy); font-weight:800; }
-    .card-total .track { font-weight:800; }
     .period { color:var(--muted); font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; }
     .chart-wrap { position:relative; margin-top:8px; }
     .chart-wrap svg { display:block; width:100%; height:auto; }
@@ -113,15 +143,14 @@ _HOURS_CSS = """
       white-space:nowrap; }
     .goal-btn:hover { border-color:#94a3b8; background:#fff; }
     .goal-btn .g-set { color:var(--accent); }
-    /* Account-owner chip on each card. Admin: a pill-shaped <select> (owner
-       color when set, muted "+ Owner" affordance when not). Read-only: a static
-       colored pill, hidden entirely when unassigned. --oc carries the owner's
+    /* Account-owner control, now housed in the per-card details popout. Admin: a
+       pill-shaped <select> (owner color when set, muted "+ Owner" affordance when
+       not). Read-only: a static colored pill. --oc carries the owner's
        deterministic color. */
-    /* Card footer: legend on the left, owner chip pinned bottom-right. */
+    /* Card footer: just the burn-up legend now (owner moved into the popout). */
     .card-foot { display:flex; align-items:center; justify-content:space-between;
       gap:10px; margin-top:6px; }
     .card-foot .legend { margin-top:0; min-width:0; }
-    .card-owner { flex:0 0 auto; margin-left:auto; }
     .owner-select { appearance:none; border:1px solid var(--border); background:#fff;
       background:linear-gradient(#fff,#fff); color:var(--muted); border-radius:999px;
       padding:4px 26px 4px 12px; font:inherit; font-size:.74rem; font-weight:700; cursor:pointer;
@@ -537,6 +566,17 @@ _PAGE_JS = r"""
         goalEl = `<line x1="${gx1}" y1="${gy0}" x2="${gxN}" y2="${y(gTop).toFixed(1)}" stroke="var(--goal)" stroke-width="1.5" stroke-dasharray="4 3"/>`;
       }
 
+      // Hard ceiling: a solid red cap line at the ceiling (goal_max) with a faint
+      // "no-bill zone" tint above it — the team must stop here every month.
+      let capEl = '';
+      if (c.goal_hard && hi != null) {
+        const yc = y(hi), plotW = (W - padL - padR).toFixed(1);
+        const zoneH = Math.max(0, yc - padT).toFixed(1);
+        capEl = `<rect x="${padL}" y="${padT}" width="${plotW}" height="${zoneH}" fill="rgba(180,35,24,.055)"/>`
+          + `<line x1="${padL}" y1="${yc.toFixed(1)}" x2="${W-padR}" y2="${yc.toFixed(1)}" stroke="#b42318" stroke-width="1.5"/>`
+          + `<text x="${W-padR}" y="${(yc-4).toFixed(1)}" text-anchor="end" font-size="8.5" font-weight="800" fill="#b42318">Ceiling</text>`;
+      }
+
       // Actual cumulative line + soft fill under it, colored by track status.
       let actualEl = '';
       if (series.length) {
@@ -549,7 +589,7 @@ _PAGE_JS = r"""
         actualEl += `<circle cx="${x(elapsed).toFixed(1)}" cy="${y(last).toFixed(1)}" r="2.6" fill="${st.color}"/>`;
       }
       return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(c.name)} hours burn-up">`
-        + grid + xlab + goalEl + actualEl + `</svg>`;
+        + grid + xlab + goalEl + capEl + actualEl + `</svg>`;
     }
 
     // Goal control: an inline editor for admins, a static label in the read-only
@@ -571,25 +611,75 @@ _PAGE_JS = r"""
         + `</span></div>`;
     }
 
+    // Reconstruct the goal-text form of a client's stored bounds ("80" / "80-100"
+    // / "80+"), so the hard-ceiling toggle can re-POST to /goal without a separate
+    // endpoint. Mirrors parse_goal_text server-side.
+    function goalText(c) {
+      const lo = c.goal_min, hi = c.goal_max;
+      if (lo == null && hi == null) return '';
+      if (hi == null) return `${lo}+`;
+      if (lo == null) return `${hi}`;
+      return lo === hi ? `${lo}` : `${lo}-${hi}`;
+    }
+
+    // Hard-ceiling control inside the details popout. Admin: a checkbox that draws
+    // the cap line (disabled until a goal ceiling exists). Read-only: a static
+    // "Hard cap / Flexible" read, shown only when the client has a ceiling.
+    function hardCeilingControl(c) {
+      const hasCeil = c.goal_max != null;
+      if (CH_CONFIG.readOnly) {
+        if (!hasCeil) return '';
+        return `<div class="cd-row cd-cap"><span class="cd-label">Ceiling</span>`
+          + (c.goal_hard
+              ? `<span class="cap-note">Hard cap · ${hrs(c.goal_max)}h</span>`
+              : `<span class="cd-muted">Flexible</span>`)
+          + `</div>`;
+      }
+      const dis = hasCeil ? '' : ' disabled';
+      const title = hasCeil
+        ? 'Draw a hard cap at the ceiling — the team stops here, no billing over'
+        : 'Set a goal with a ceiling (e.g. 40 or 80-100) to enable a hard cap';
+      return `<div class="cd-row cd-cap" data-cid="${esc(c.harvest_client_id)}" data-name="${esc(c.name)}">`
+        + `<label class="cap-toggle${hasCeil ? '' : ' is-dim'}" title="${esc(title)}">`
+          + `<input type="checkbox" class="cap-check"${c.goal_hard ? ' checked' : ''}${dis}>`
+          + `<span>Hard ceiling${hasCeil ? ` at ${hrs(c.goal_max)}h` : ''}</span>`
+        + `</label></div>`;
+    }
+
+    // The per-card details popout: owner, goal, and the hard-ceiling toggle, tucked
+    // behind the kebab so the card face stays quiet.
+    function detailsPanel(c) {
+      const ownerHtml = ownerChip(c);
+      const ownerCell = ownerHtml || '<span class="cd-muted">Unassigned</span>';
+      return `<div class="card-details" hidden>`
+        + `<div class="cd-row"><span class="cd-label">Owner</span>${ownerCell}</div>`
+        + `<div class="cd-row cd-goal"><span class="cd-label">Monthly goal</span>${goalEditor(c)}</div>`
+        + hardCeilingControl(c)
+      + `</div>`;
+    }
+
     function card(c, meta) {
       const stKey = trackStatus(c, meta);
       const st = STATUS[stKey] || STATUS.none;
-      const statusTxt = st.label
-        ? ` · <span class="track" style="color:${st.color}">${st.label}</span>` : '';
       const kind = metricLabel();
-      const ownerHtml = ownerChip(c);
+      const goalSwatch = c.goal_hard && c.goal_max != null
+        ? `<span><i class="goal"></i>Goal pace</span><span><i style="border-top-color:#b42318"></i>Hard ceiling</span>`
+        : `<span><i class="goal"></i>${(c.goal_min != null && c.goal_max != null && c.goal_max !== c.goal_min) ? 'Goal range' : 'Goal pace'}</span>`;
       return `<div class="card">`
         + `<div class="card-head">`
           + `<div style="min-width:0"><div class="card-title" title="${esc(c.name)}">${esc(c.name)}</div>`
-          + `<div class="card-total"><b>${hrs(totalOf(c))}h</b> ${kind}${statusTxt}</div></div>`
-          + goalEditor(c)
+          + `<div class="card-total"><b>${hrs(totalOf(c))}h</b> ${kind}</div></div>`
+          + `<button type="button" class="card-more" aria-label="Details for ${esc(c.name)}" aria-expanded="false" title="Details">`
+            + `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">`
+            + `<circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>`
+          + `</button>`
         + `</div>`
         + `<div class="chart-wrap">${chart(c, meta)}</div>`
         + `<div class="card-foot">`
           + `<div class="legend"><span><i class="actual" style="border-top-color:${st.color}"></i>Hours logged</span>`
-            + `<span><i class="goal"></i>${(c.goal_min != null && c.goal_max != null && c.goal_max !== c.goal_min) ? 'Goal range' : 'Goal pace'}</span></div>`
-          + (ownerHtml ? `<div class="card-owner">${ownerHtml}</div>` : '')
+            + goalSwatch + `</div>`
         + `</div>`
+        + detailsPanel(c)
       + `</div>`;
     }
 
@@ -938,6 +1028,33 @@ _PAGE_JS = r"""
       chSearch.focus(); if (chData) render();
     });
 
+    // Per-card details popout (kebab): open one at a time, close others. Shared by
+    // the admin and read-only views. Clicks inside the panel (goal editor, owner,
+    // ceiling toggle) are handled by their own delegated listeners.
+    function closeDetails(except) {
+      document.querySelectorAll('.card-details').forEach(p => {
+        if (p !== except) p.setAttribute('hidden', ''); });
+      document.querySelectorAll('.card-more').forEach(b => {
+        const panel = b.closest('.card').querySelector('.card-details');
+        b.setAttribute('aria-expanded', String(!!panel && !panel.hasAttribute('hidden')));
+      });
+    }
+    document.getElementById('chGrid').addEventListener('click', (ev) => {
+      const btn = ev.target.closest('.card-more'); if (!btn) return;
+      const panel = btn.closest('.card').querySelector('.card-details');
+      const willOpen = panel.hasAttribute('hidden');
+      if (willOpen) panel.removeAttribute('hidden'); else panel.setAttribute('hidden', '');
+      closeDetails(willOpen ? panel : null);
+    });
+    // Click outside any popout (and not on a kebab) closes them all.
+    document.addEventListener('click', (ev) => {
+      if (ev.target.closest('.card-details') || ev.target.closest('.card-more')) return;
+      closeDetails(null);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeDetails(null);
+    });
+
 """
 
 
@@ -969,12 +1086,16 @@ _PAGE_JS_ADMIN = r"""
           if (ev.target.closest('.goal-save')) {
             const cid = g.dataset.cid;
             const raw = editor.querySelector('input').value.trim();
+            // Preserve the current hard-ceiling choice from the same popout.
+            const panel = g.closest('.card-details');
+            const capChk = panel ? panel.querySelector('.cap-check') : null;
             const saveBtn = g.querySelector('.goal-save'); saveBtn.disabled = true;
             try {
               // The server parses "80" / "80-100" / "80+" and returns the stored
               // min/max + label; apply those so the chart re-colors immediately
               // (no Harvest round-trip — the hours series is unchanged).
-              const body = new URLSearchParams({ harvest_client_id: cid, client_name: g.dataset.name, goal: raw });
+              const body = new URLSearchParams({ harvest_client_id: cid, client_name: g.dataset.name,
+                goal: raw, hard_ceiling: (capChk && capChk.checked) ? '1' : '' });
               const r = await fetch('/admin/client-hours/goal', { method:'POST', credentials:'same-origin',
                 headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
               const b = await r.json().catch(()=>({}));
@@ -983,6 +1104,7 @@ _PAGE_JS_ADMIN = r"""
               if (client) {
                 client.goal_min = (b.goal_min == null ? null : Number(b.goal_min));
                 client.goal_max = (b.goal_max == null ? null : Number(b.goal_max));
+                client.goal_hard = !!b.goal_hard;
                 client.goal_label = b.goal_label || '';
               }
               render();
@@ -994,6 +1116,38 @@ _PAGE_JS_ADMIN = r"""
         });
       }
       wireGoals();
+
+      // Hard-ceiling toggle: on check/uncheck, re-POST the client's existing goal
+      // to /goal with the new hard flag. Re-render so the cap line draws/clears
+      // immediately (no Harvest round-trip). Delegated on the grid.
+      function wireCeilings() {
+        const grid = document.getElementById('chGrid');
+        grid.addEventListener('change', async (ev) => {
+          const chk = ev.target.closest('.cap-check'); if (!chk) return;
+          const row = chk.closest('.cd-cap'); const cid = row.dataset.cid;
+          const client = (chData.clients || []).find(c => String(c.harvest_client_id) === String(cid));
+          if (!client) return;
+          const want = chk.checked;
+          chk.disabled = true;
+          try {
+            const body = new URLSearchParams({ harvest_client_id: cid, client_name: row.dataset.name,
+              goal: goalText(client), hard_ceiling: want ? '1' : '' });
+            const r = await fetch('/admin/client-hours/goal', { method:'POST', credentials:'same-origin',
+              headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
+            const b = await r.json().catch(()=>({}));
+            if (!r.ok || !b.ok) throw new Error(b.error || ('HTTP '+r.status));
+            client.goal_hard = !!b.goal_hard;
+            client.goal_min = (b.goal_min == null ? null : Number(b.goal_min));
+            client.goal_max = (b.goal_max == null ? null : Number(b.goal_max));
+            client.goal_label = b.goal_label || '';
+            render();
+          } catch (e) {
+            chk.disabled = false; chk.checked = !want;
+            alert('Could not update ceiling: ' + (e.message||e));
+          }
+        });
+      }
+      wireCeilings();
 
       // Owner chip: on select change, persist via /owner and update the in-memory
       // client so the chip re-colors and the owner filter stays consistent (no

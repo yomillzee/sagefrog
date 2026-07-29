@@ -2100,22 +2100,28 @@ async def admin_client_hours_goal(
     request: Request,
     harvest_client_id: str = Form(...),
     goal: str = Form(""),
+    hard_ceiling: str = Form(""),
     client_name: str = Form(""),
 ):
     """Set one client's monthly hours goal. ``goal`` accepts a single number
-    ("80"), a range ("80-100"), or an open-ended floor ("80+"); blank clears it."""
+    ("80"), a range ("80-100"), or an open-ended floor ("80+"); blank clears it.
+    ``hard_ceiling`` (truthy) marks goal_max as a hard cap the team stops at."""
     user = await web_auth.require_admin(request)
     import harvest_service
 
+    hard = (hard_ceiling or "").strip().lower() in ("1", "true", "on", "yes")
     try:
         goal_min, goal_max = harvest_service.parse_goal_text(goal)
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    # A hard ceiling only means something when there's a ceiling to stop at.
+    hard = hard and goal_max is not None
     try:
         harvest_service.set_goal(
             harvest_client_id=harvest_client_id,
             goal_min=goal_min,
             goal_max=goal_max,
+            hard_ceiling=hard,
             client_name=client_name,
             updated_by=user.email,
         )
@@ -2124,13 +2130,15 @@ async def admin_client_hours_goal(
     audit_log.record(
         action="harvest.goal_set",
         actor_email=user.email,
-        detail={"harvest_client_id": harvest_client_id, "goal_min": goal_min, "goal_max": goal_max},
+        detail={"harvest_client_id": harvest_client_id, "goal_min": goal_min,
+                "goal_max": goal_max, "hard_ceiling": hard},
         **audit_log.request_context(request),
     )
     return JSONResponse({
         "ok": True,
         "goal_min": goal_min,
         "goal_max": goal_max,
+        "goal_hard": hard,
         "goal_label": harvest_service.format_goal(goal_min, goal_max),
     })
 

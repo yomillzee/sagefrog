@@ -58,6 +58,8 @@ def _cache_ttl_seconds() -> int:
 # Goals are a monthly-hours target that can be a single number, a range
 # (goal_min..goal_max), or open-ended (goal_min with goal_max NULL, e.g. "160+").
 # goal_min is always the floor; goal_max is the ceiling (NULL = no ceiling).
+# hard_ceiling marks goal_max as a *hard* cap — the team must stop at the ceiling
+# every month (no billing over it). It only applies when goal_max is set.
 GOALS_SCHEMA_SQL_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS harvest_client_goals (
@@ -65,9 +67,15 @@ GOALS_SCHEMA_SQL_STATEMENTS = [
       client_name       TEXT,
       goal_min          NUMERIC,
       goal_max          NUMERIC,
+      hard_ceiling      BOOLEAN NOT NULL DEFAULT FALSE,
       updated_by        TEXT,
       updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+    """,
+    # Backfill the hard_ceiling flag onto tables created before it existed.
+    """
+    ALTER TABLE harvest_client_goals
+      ADD COLUMN IF NOT EXISTS hard_ceiling BOOLEAN NOT NULL DEFAULT FALSE
     """,
     # Migrate the original single-value column (monthly_goal) to the min/max pair:
     # add the columns if missing and backfill goal_min = goal_max = monthly_goal.
@@ -475,6 +483,8 @@ def build_client_hours_overview(
                 "goal_min": goal_min,
                 "goal_max": goal_max,
                 "goal_label": format_goal(goal_min, goal_max),
+                # Hard ceiling only reads true when there's a ceiling to stop at.
+                "goal_hard": bool(goal.get("hard")) and goal_max is not None,
                 "owner": owners.get(cid),
                 "projects": projects,
             }
@@ -571,22 +581,24 @@ def _ensure_goals_schema() -> bool:
     return True
 
 
-def get_goals() -> dict[str, dict[str, float | None]]:
-    """Return ``{harvest_client_id: {"min": x, "max": y|None}}`` for clients with a goal."""
+def get_goals() -> dict[str, dict[str, float | bool | None]]:
+    """Return ``{harvest_client_id: {"min": x, "max": y|None, "hard": bool}}`` for
+    clients with a goal. ``hard`` marks goal_max as a hard ceiling (stop-at cap)."""
     if not _goals_enabled():
         return {}
     try:
         _ensure_goals_schema()
         with db.connection() as conn:
             rows = conn.execute(
-                "SELECT harvest_client_id, goal_min, goal_max FROM harvest_client_goals "
+                "SELECT harvest_client_id, goal_min, goal_max, hard_ceiling "
+                "FROM harvest_client_goals "
                 "WHERE goal_min IS NOT NULL OR goal_max IS NOT NULL"
             ).fetchall()
     except Exception as exc:
         _log.warning("Harvest goals read failed: %s", exc)
         return {}
-    out: dict[str, dict[str, float | None]] = {}
-    for cid, gmin, gmax in rows:
+    out: dict[str, dict[str, float | bool | None]] = {}
+    for cid, gmin, gmax, hard in rows:
         try:
             lo = float(gmin) if gmin is not None else None
             hi = float(gmax) if gmax is not None else None
@@ -594,7 +606,8 @@ def get_goals() -> dict[str, dict[str, float | None]]:
             continue
         if lo is None and hi is None:
             continue
-        out[str(cid)] = {"min": lo, "max": hi}
+        # A hard ceiling only means something with a ceiling to stop at.
+        out[str(cid)] = {"min": lo, "max": hi, "hard": bool(hard) and hi is not None}
     return out
 
 
@@ -603,10 +616,16 @@ def set_goal(
     harvest_client_id: str,
     goal_min: float | None,
     goal_max: float | None,
+    hard_ceiling: bool = False,
     client_name: str = "",
     updated_by: str = "",
 ) -> None:
-    """Upsert one client's monthly goal, or clear it when both bounds are None."""
+    """Upsert one client's monthly goal, or clear it when both bounds are None.
+
+    ``hard_ceiling`` marks goal_max as a hard cap (the team stops at the ceiling).
+    It is forced off when there is no ceiling (goal_max is None), since there is
+    nothing to cap against.
+    """
     cid = (harvest_client_id or "").strip()
     if not cid:
         raise ValueError("harvest_client_id is required.")
@@ -619,6 +638,7 @@ def set_goal(
         raise ValueError("Goal cannot be negative.")
     if lo is not None and hi is not None and lo > hi:
         lo, hi = hi, lo
+    hard = bool(hard_ceiling) and hi is not None
     if lo is None and hi is None:
         # Clearing: remove the row so it drops out of get_goals entirely.
         with db.connection() as conn:
@@ -627,16 +647,17 @@ def set_goal(
     with db.connection() as conn:
         conn.execute(
             """
-            INSERT INTO harvest_client_goals (harvest_client_id, client_name, goal_min, goal_max, updated_by, updated_at)
-            VALUES (%s, %s, %s, %s, %s, NOW())
+            INSERT INTO harvest_client_goals (harvest_client_id, client_name, goal_min, goal_max, hard_ceiling, updated_by, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, NOW())
             ON CONFLICT (harvest_client_id) DO UPDATE SET
               client_name = COALESCE(EXCLUDED.client_name, harvest_client_goals.client_name),
               goal_min = EXCLUDED.goal_min,
               goal_max = EXCLUDED.goal_max,
+              hard_ceiling = EXCLUDED.hard_ceiling,
               updated_by = EXCLUDED.updated_by,
               updated_at = NOW()
             """,
-            (cid, (client_name or "").strip() or None, lo, hi, (updated_by or "").strip() or None),
+            (cid, (client_name or "").strip() or None, lo, hi, hard, (updated_by or "").strip() or None),
         )
 
 
