@@ -1,9 +1,10 @@
-"""The "view as user" tool lives as a card on the admin page.
+"""The global "view as user" card no longer lives on the admin page.
 
-It used to be a floating bubble overlaying the client dashboards; it now renders
-inside ``render_admin_page`` so it never covers a dashboard mid-presentation.
-These tests pin that card's presence, its exclusion of the signed-in admin, and
-that the dashboard renderer no longer emits the old floating admin FAB/panel.
+It used to be a floating bubble overlaying the client dashboards, then briefly a
+card inside ``render_admin_page``. Impersonation is now offered per-client from
+the client shell's "View As" tool tab, so the global picker on the admin page is
+gone. These tests pin that removal (on every split-out admin page) and that the
+dashboard renderer still carries no floating admin FAB/panel.
 """
 
 from __future__ import annotations
@@ -25,11 +26,13 @@ class _Admin:
     role = "admin"
 
 
-def _render(users):
-    return web_auth.render_admin_page(user=_Admin(), users=users, groups=[], audit_events=[])
+def _render(users, *, page="users"):
+    return web_auth.render_admin_page(
+        user=_Admin(), users=users, groups=[], audit_events=[], page=page
+    )
 
 
-class AdminViewAsCardTests(unittest.TestCase):
+class AdminViewAsCardRemovedTests(unittest.TestCase):
     def _users(self):
         return [
             {"id": 1, "email": "admin@sf.com", "role": "admin", "is_active": True},
@@ -39,28 +42,11 @@ class AdminViewAsCardTests(unittest.TestCase):
              "allowed_client_slugs": ["penn"], "is_active": True},
         ]
 
-    def test_card_and_form_present(self) -> None:
-        html = _render(self._users())
-        self.assertIn("<h2>View as user</h2>", html)
-        self.assertIn('action="/admin/view-as"', html)
-        self.assertIn('name="user_id"', html)
-
-    def test_other_users_are_listed(self) -> None:
-        html = _render(self._users())
-        self.assertIn("client@pcb.com — client · penn", html)
-        self.assertIn("staff@sf.com — standard", html)
-
-    def test_signed_in_admin_is_not_an_option(self) -> None:
-        html = _render(self._users())
-        import re
-
-        section = re.search(r"View as user.*?</section>", html, re.S).group(0)
-        self.assertNotIn('value="1"', section)
-
-    def test_empty_state_when_no_other_users(self) -> None:
-        html = _render([{"id": 1, "email": "admin@sf.com", "role": "admin", "is_active": True}])
-        self.assertIn("<h2>View as user</h2>", html)
-        self.assertIn("No other users to view as yet.", html)
+    def test_no_view_as_card_on_any_admin_page(self) -> None:
+        for page in ("clients", "users", "feature-requests", "advanced"):
+            html = _render(self._users(), page=page)
+            self.assertNotIn("<h2>View as user</h2>", html, f"view-as card leaked onto {page}")
+            self.assertNotIn('action="/admin/view-as"', html, f"view-as form leaked onto {page}")
 
 
 class DashboardNoLongerHasAdminFabTests(unittest.TestCase):
