@@ -1892,41 +1892,6 @@ async def save_explorer_filters(
     return {"ok": True}
 
 
-@router.post(
-    "/api/clients/{client_key}/overview/pinned-card",
-    summary="Pin one Overview card to the top (admin only)",
-)
-async def save_overview_pinned_card(
-    client_key: str,
-    request: Request,
-) -> dict:
-    """Persist which Overview card an admin has pinned to the top of the
-    BigQuery-mart dashboard. Body: ``{"card": "<key>"}`` where key is one of the
-    known Overview cards, or an empty string to clear the pin. Admin-only —
-    clients cannot re-order another client's dashboard."""
-    from dashboard.renderers.bigquery_dashboard_renderer import OVERVIEW_PINNABLE_CARDS
-
-    normalized = (client_key or "").strip().lower()
-    auth = web_auth.authenticate_dashboard_api(request, client_slug=normalized)
-    if not (auth.user and auth.user.role == "admin"):
-        raise HTTPException(status_code=403, detail="Admin access required.")
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    card = str(body.get("card") or "").strip()
-    if card and card not in OVERVIEW_PINNABLE_CARDS:
-        raise HTTPException(status_code=400, detail="Unknown overview card.")
-    try:
-        import client_dashboard_config as cdc
-        cdc.update_overview_pinned_card(
-            normalized, card_key=card or None, updated_by="dashboard",
-        )
-    except Exception as exc:
-        raise _bq_endpoint_failure(exc) from exc
-    return {"ok": True, "card": card}
-
-
 # Tabs that support admin card-layout editing, mapped to the set of card keys
 # that tab knows about. Keys outside the set are rejected so a stale/garbage key
 # can't wedge the tab's render. Overview is the first (and, for now, only) tab.

@@ -10,10 +10,12 @@ APP_DIR = Path(__file__).resolve().parents[1]
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-# On the BigQuery-mart dashboard's Overview home, an admin can pin ONE card to
-# the top. The choice is stored per-client in
-# client_dashboard_config.overview_pinned_card and applied server-side by
-# reordering the Overview panels on render.
+# On the BigQuery-mart dashboard's Overview home, admins reorder cards with
+# drag-and-drop in edit mode (see test_overview_card_layout). The older
+# per-client overview_pinned_card is kept as a UI-less ordering fallback: when a
+# client has a stored pin but no explicit card_layouts order, that card is still
+# floated to the top on render. These tests cover that fallback (no pin control
+# is rendered anymore).
 
 
 def _overview_headings(html: str) -> list[str]:
@@ -78,9 +80,9 @@ class OverviewPinnedCardTests(unittest.TestCase):
         html = self._render("gsc")
         heads = _overview_headings(html)
         self.assertEqual(heads[0], "Search Console")
-        # Exactly one card is rendered in the pinned state, and it's the GSC one.
-        self.assertEqual(html.count("ov-pin is-pinned"), 1)
-        self.assertIn('class="ov-pin is-pinned" data-ov-pin="gsc"', html)
+        # The pin is now a UI-less legacy fallback (drag-and-drop replaced the pin
+        # button), so it only reorders — there is no pin control in the markup.
+        self.assertNotIn("data-ov-pin", html)
 
     def test_unknown_pinned_key_is_ignored(self) -> None:
         html = self._render("does-not-exist")
