@@ -129,6 +129,19 @@ _HOURS_CSS = """
     .cap-toggle input { width:15px; height:15px; accent-color:#b42318; cursor:pointer; flex:0 0 auto; }
     .cap-toggle input:disabled { cursor:default; }
     .cap-note { font-size:.72rem; font-weight:700; color:#b42318; font-variant-numeric:tabular-nums; }
+    /* Project tags inside the popout: one row per project (name + hours over a
+       full-width Untagged/Retainer/Project segmented control). Reuses the .tag-seg
+       colors from the old modal; the list scrolls if a client has many projects. */
+    .cd-projects { display:flex; flex-direction:column; gap:9px; padding-top:10px;
+      border-top:1px solid var(--line); max-height:230px; overflow-y:auto; }
+    .cd-proj { display:flex; flex-direction:column; gap:5px; }
+    .cd-proj-name { display:flex; align-items:baseline; justify-content:space-between; gap:8px;
+      font-size:.78rem; color:var(--ink); min-width:0; }
+    .cd-proj-name .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .cd-proj-hrs { color:var(--muted); font-size:.7rem; font-weight:700;
+      font-variant-numeric:tabular-nums; flex:0 0 auto; }
+    .cd-projects .tag-seg { display:flex; width:100%; }
+    .cd-projects .tag-seg button { flex:1 1 0; padding:4px 6px; font-size:.7rem; text-align:center; }
     .card-title { font-weight:750; color:var(--navy); font-size:.98rem; line-height:1.25;
       white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .card-total { font-variant-numeric:tabular-nums; color:var(--muted); font-size:.78rem; margin-top:2px; }
@@ -187,15 +200,13 @@ _HOURS_CSS = """
       background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent);
       animation:sh 1.2s ease-in-out infinite; }
     @keyframes sh { 0%{transform:translateX(-100%);} 100%{transform:translateX(100%);} }
-    /* Tag-projects modal */
+    /* Modals + shared bits. The share-link manager (below) reuses the
+       .tag-modal-* header styles and .tag-empty; the .tag-seg segmented control is
+       reused by the per-card project-tag rows in the details popout. */
     .modal-backdrop { position:fixed; inset:0; background:rgba(10,37,64,.42); z-index:120; }
-    .tag-modal { position:fixed; top:0; right:0; height:100vh; width:min(460px, 94vw); background:#fff;
-      z-index:121; display:flex; flex-direction:column; box-shadow:-12px 0 40px rgba(10,37,64,.22);
-      animation:slideIn .18s ease; }
-    /* display:flex/fixed above are author styles that would otherwise beat the
-       browser's [hidden]{display:none}, leaving the panel stuck open. */
-    .tag-modal[hidden], .share-modal[hidden], .modal-backdrop[hidden] { display:none; }
-    @keyframes slideIn { from { transform:translateX(20px); opacity:.6; } to { transform:none; opacity:1; } }
+    /* display:flex/fixed on .share-modal are author styles that would otherwise
+       beat the browser's [hidden]{display:none}, leaving the panel stuck open. */
+    .share-modal[hidden], .modal-backdrop[hidden] { display:none; }
     .tag-modal-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
       padding:18px 20px 12px; border-bottom:1px solid var(--line); }
     .tag-modal-head h2 { margin:0; font-size:1.05rem; color:var(--navy); }
@@ -203,19 +214,6 @@ _HOURS_CSS = """
     .tag-modal-close { appearance:none; border:0; background:#eef2f7; color:var(--muted); border-radius:8px;
       width:30px; height:30px; font-size:.95rem; cursor:pointer; flex:0 0 auto; }
     .tag-modal-close:hover { background:#e2e8f0; color:var(--navy); }
-    .tag-modal-search { padding:12px 20px; border-bottom:1px solid var(--line); }
-    .tag-modal-search input { width:100%; border:1px solid var(--border); border-radius:9px; padding:9px 12px;
-      font:inherit; font-size:.85rem; }
-    .tag-modal-body { overflow-y:auto; padding:8px 20px 24px; flex:1; }
-    .tag-client { margin-top:14px; }
-    .tag-client-name { font-weight:750; color:var(--navy); font-size:.82rem; text-transform:uppercase;
-      letter-spacing:.03em; margin-bottom:6px; }
-    .tag-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 0;
-      border-bottom:1px solid #f0f3f8; }
-    .tag-row:last-child { border-bottom:0; }
-    .tag-proj { min-width:0; }
-    .tag-proj-name { font-size:.88rem; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .tag-proj-hrs { font-size:.72rem; color:var(--muted); font-variant-numeric:tabular-nums; }
     .tag-seg { display:inline-flex; background:#eef2f7; border:1px solid var(--border); border-radius:999px;
       padding:2px; gap:2px; flex:0 0 auto; }
     .tag-seg button { appearance:none; border:0; background:transparent; color:var(--muted); border-radius:999px;
@@ -301,13 +299,6 @@ _ADMIN_HEAD_BUTTONS = """
             <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
           <span>Share</span>
         </button>
-        <button type="button" class="refresh-btn" id="chTag" title="Tag projects as retainer or project">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-            <line x1="7" y1="7" x2="7.01" y2="7"/></svg>
-          <span>Tag projects</span>
-        </button>
         <button type="button" class="refresh-btn" id="chRefresh" title="Pull fresh hours from Harvest">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -317,23 +308,10 @@ _ADMIN_HEAD_BUTTONS = """
         </button>"""
 
 
-# The admin-only modals (project tagging + share-link manager). Left out of the
-# read-only shared page entirely.
+# The admin-only share-link manager modal. Project tagging now lives in each
+# card's details popout, so there is no longer a separate tag modal. Left out of
+# the read-only shared page entirely.
 _ADMIN_MODALS = """
-  <div class="modal-backdrop" id="tagBackdrop" hidden></div>
-  <aside class="tag-modal" id="tagModal" role="dialog" aria-modal="true" aria-label="Tag projects" hidden>
-    <header class="tag-modal-head">
-      <div>
-        <h2>Tag projects</h2>
-        <p class="tag-modal-sub">Mark each Harvest project as retainer or one-off project. Untagged projects show only under “All work”.</p>
-      </div>
-      <button type="button" class="tag-modal-close" id="tagClose" aria-label="Close">✕</button>
-    </header>
-    <div class="tag-modal-search">
-      <input type="text" id="tagSearch" placeholder="Search projects or clients…" autocomplete="off" spellcheck="false">
-    </div>
-    <div class="tag-modal-body" id="tagBody"></div>
-  </aside>
   <div class="modal-backdrop" id="shareBackdrop" hidden></div>
   <div class="share-modal" id="shareModal" role="dialog" aria-modal="true" aria-label="Share Client Hours" hidden>
     <header class="tag-modal-head">
@@ -646,8 +624,32 @@ _PAGE_JS = r"""
         + `</label></div>`;
     }
 
-    // The per-card details popout: owner, goal, and the hard-ceiling toggle, tucked
-    // behind the kebab so the card face stays quiet.
+    // Project tags for this client, listed in the popout: each Harvest project
+    // with an Untagged / Retainer / Project segmented control. Admin-only (the
+    // read-only view has no tagging), and only when the client has projects.
+    // Replaces the old slide-out "Tag projects" modal.
+    function projectTagsSection(c) {
+      if (CH_CONFIG.readOnly) return '';
+      const ps = (c.projects || []).slice()
+        .sort((a, b) => (b.total_hours || 0) - (a.total_hours || 0));
+      if (!ps.length) return '';
+      const opts = [['', 'Untagged'], ['retainer', 'Retainer'], ['project', 'Project']];
+      const rows = ps.map(p => {
+        const cur = p.tag || '';
+        const seg = `<div class="tag-seg" data-pid="${esc(p.project_id)}" data-cid="${esc(c.harvest_client_id)}"`
+          + ` data-cname="${esc(c.name)}" data-pname="${esc(p.name)}">`
+          + opts.map(([v, l]) =>
+              `<button type="button" data-tag="${v}" class="${cur === v ? 'on' : ''}">${l}</button>`).join('')
+          + `</div>`;
+        return `<div class="cd-proj"><div class="cd-proj-name">`
+          + `<span class="nm" title="${esc(p.name)}">${esc(p.name)}</span>`
+          + `<span class="cd-proj-hrs">${hrs(p.total_hours || 0)}h</span></div>${seg}</div>`;
+      }).join('');
+      return `<div class="cd-projects"><span class="cd-label">Projects</span>${rows}</div>`;
+    }
+
+    // The per-card details popout: owner, goal, the hard-ceiling toggle, and the
+    // project tags — tucked behind the kebab so the card face stays quiet.
     function detailsPanel(c) {
       const ownerHtml = ownerChip(c);
       const ownerCell = ownerHtml || '<span class="cd-muted">Unassigned</span>';
@@ -655,6 +657,7 @@ _PAGE_JS = r"""
         + `<div class="cd-row"><span class="cd-label">Owner</span>${ownerCell}</div>`
         + `<div class="cd-row cd-goal"><span class="cd-label">Monthly goal</span>${goalEditor(c)}</div>`
         + hardCeilingControl(c)
+        + projectTagsSection(c)
       + `</div>`;
     }
 
@@ -665,7 +668,7 @@ _PAGE_JS = r"""
       const goalSwatch = c.goal_hard && c.goal_max != null
         ? `<span><i class="goal"></i>Goal pace</span><span><i style="border-top-color:#b42318"></i>Hard ceiling</span>`
         : `<span><i class="goal"></i>${(c.goal_min != null && c.goal_max != null && c.goal_max !== c.goal_min) ? 'Goal range' : 'Goal pace'}</span>`;
-      return `<div class="card">`
+      return `<div class="card" data-cid="${esc(c.harvest_client_id)}">`
         + `<div class="card-head">`
           + `<div style="min-width:0"><div class="card-title" title="${esc(c.name)}">${esc(c.name)}</div>`
           + `<div class="card-total"><b>${hrs(totalOf(c))}h</b> ${kind}</div></div>`
@@ -952,7 +955,7 @@ _PAGE_JS = r"""
         } else if (view.scope === 'all') {
           msg = `<div class="empty">No hours logged yet this month.</div>`;
         } else {
-          msg = `<div class="empty">No ${view.scope} hours this month.${CH_CONFIG.readOnly ? '' : ' Tag projects to populate this view.'}</div>`;
+          msg = `<div class="empty">No ${view.scope} hours this month.${CH_CONFIG.readOnly ? '' : ' Switch to “All work” and open a card’s details (⋯) to tag its projects.'}</div>`;
         }
         grid.innerHTML = msg;
         return;
@@ -1178,69 +1181,33 @@ _PAGE_JS_ADMIN = r"""
       }
       wireOwners();
 
-      // ── Tag-projects modal ──────────────────────────────────────────────
-      // Lists every project seen this month (grouped by client) with a
-      // Untagged / Retainer / Project selector. Changing one persists via
-      // /project-tag and updates the in-memory data so the charts + scope views
-      // re-color immediately (no Harvest round-trip).
-      const tagModal = document.getElementById('tagModal');
-      const tagBackdrop = document.getElementById('tagBackdrop');
-      const tagBody = document.getElementById('tagBody');
-      const tagSearch = document.getElementById('tagSearch');
-
-      function tagSegHtml(p) {
-        const opts = [['', 'Untagged'], ['retainer', 'Retainer'], ['project', 'Project']];
-        const cur = p.tag || '';
-        return `<div class="tag-seg" data-pid="${esc(p.project_id)}">`
-          + opts.map(([val, lbl]) =>
-              `<button type="button" data-tag="${val}" class="${cur === val ? 'on' : ''}">${lbl}</button>`).join('')
-          + `</div>`;
+      // ── Project tags (in the per-card details popout) ───────────────────
+      // Each card's popout lists the client's projects with an Untagged /
+      // Retainer / Project selector. Changing one persists via /project-tag and
+      // updates the in-memory data so the charts + scope views re-color
+      // immediately (no Harvest round-trip). After the re-render we reopen the
+      // same card's popout, so several of a client's projects can be tagged in
+      // one sitting. Delegated on the grid.
+      function openDetailsFor(cid) {
+        if (cid == null) return;
+        const sel = (window.CSS && CSS.escape) ? CSS.escape(String(cid)) : String(cid);
+        const card = document.querySelector(`.card[data-cid="${sel}"]`);
+        if (!card) return;
+        const panel = card.querySelector('.card-details');
+        const kebab = card.querySelector('.card-more');
+        if (panel) panel.removeAttribute('hidden');
+        if (kebab) kebab.setAttribute('aria-expanded', 'true');
       }
-      function renderTagBody() {
-        const q = (tagSearch.value || '').trim().toLowerCase();
-        const clients = (chData && chData.clients || []).slice()
-          .sort((a, b) => String(a.name||'').localeCompare(String(b.name||''), undefined, { sensitivity:'base' }));
-        let html = '';
-        clients.forEach(c => {
-          const projs = (c.projects || []).filter(p => {
-            if (!q) return true;
-            return (p.name||'').toLowerCase().includes(q) || (c.name||'').toLowerCase().includes(q);
-          }).sort((a, b) => (b.total_hours||0) - (a.total_hours||0));
-          if (!projs.length) return;
-          html += `<div class="tag-client"><div class="tag-client-name">${esc(c.name)}</div>`;
-          projs.forEach(p => {
-            html += `<div class="tag-row" data-cid="${esc(c.harvest_client_id)}" data-cname="${esc(c.name)}" data-pname="${esc(p.name)}">`
-              + `<div class="tag-proj"><div class="tag-proj-name" title="${esc(p.name)}">${esc(p.name)}</div>`
-              + `<div class="tag-proj-hrs">${hrs(p.total_hours||0)}h this month</div></div>`
-              + tagSegHtml(p) + `</div>`;
-          });
-          html += `</div>`;
-        });
-        tagBody.innerHTML = html || `<div class="tag-empty">No projects match.</div>`;
-      }
-      function openTags() {
-        if (!chData || !chData.connected) { alert('Connect Harvest first.'); return; }
-        tagSearch.value = '';
-        renderTagBody();
-        tagBackdrop.hidden = false; tagModal.hidden = false;
-      }
-      function closeTags() { tagBackdrop.hidden = true; tagModal.hidden = true; }
-      document.getElementById('chTag').addEventListener('click', openTags);
-      document.getElementById('tagClose').addEventListener('click', closeTags);
-      tagBackdrop.addEventListener('click', closeTags);
-      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !tagModal.hidden) closeTags(); });
-      tagSearch.addEventListener('input', renderTagBody);
-
-      tagBody.addEventListener('click', async (ev) => {
-        const btn = ev.target.closest('.tag-seg button'); if (!btn) return;
-        const seg = btn.closest('.tag-seg'); const row = btn.closest('.tag-row');
-        const pid = seg.dataset.pid; const newTag = btn.dataset.tag;
+      document.getElementById('chGrid').addEventListener('click', async (ev) => {
+        const btn = ev.target.closest('.cd-projects .tag-seg button'); if (!btn) return;
+        const seg = btn.closest('.tag-seg');
+        const pid = seg.dataset.pid, cid = seg.dataset.cid, newTag = btn.dataset.tag;
         const prev = seg.querySelector('button.on');
         // Optimistic: reflect the choice immediately.
         seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
         try {
           const body = new URLSearchParams({ harvest_project_id: pid, tag: newTag,
-            project_name: row.dataset.pname, client_name: row.dataset.cname });
+            project_name: seg.dataset.pname, client_name: seg.dataset.cname });
           const r = await fetch('/admin/client-hours/project-tag', { method:'POST', credentials:'same-origin',
             headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
           const b = await r.json().catch(()=>({}));
@@ -1250,6 +1217,7 @@ _PAGE_JS_ADMIN = r"""
             if (String(p.project_id) === String(pid)) p.tag = (b.tag || null);
           }));
           render();
+          openDetailsFor(cid);
         } catch (e) {
           if (prev) seg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === prev));
           alert('Could not save tag: ' + (e.message||e));
