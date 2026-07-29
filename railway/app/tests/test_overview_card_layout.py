@@ -95,11 +95,27 @@ class OverviewCardLayoutTests(unittest.TestCase):
         )
         self.assertNotIn('class="ov-unit ov-unit--hidden"', html)
 
-    def test_edit_toolbar_present_with_endpoint(self) -> None:
+    def test_edit_entry_and_banner_present(self) -> None:
         html = self._render(None, is_admin=True)
-        self.assertIn('class="ov-edit-toolbar"', html)
+        # Edit mode is entered from the sidebar kebab, not an always-on toolbar.
+        self.assertIn('class="dash-view-kebab"', html)
+        self.assertIn('data-action="edit-layout"', html)
+        # The in-edit banner carries the persistence endpoint.
+        self.assertIn('class="ov-editing-banner"', html)
         self.assertIn("/api/clients/test/tabs/overview/card-layout", html)
-        self.assertIn('id="ovEditToggle"', html)
+        self.assertIn('id="ovEditDone"', html)
+        # The old pin control is gone.
+        self.assertNotIn("data-ov-pin", html)
+        self.assertNotIn("ov-pin", html)
+
+    def test_kebab_scoped_to_overview_nav_item(self) -> None:
+        html = self._render(None, is_admin=True)
+        # The editable wrapper + kebab belong to the Overview nav item only.
+        self.assertIn('data-view-item="overview"', html)
+        self.assertIn('data-edit-tab="overview"', html)
+        self.assertNotIn('data-view-item="explorer"', html)
+        # Other tabs remain plain nav buttons.
+        self.assertIn('data-tab="explorer"', html)
 
     def test_wrapper_keys_are_known_cards(self) -> None:
         from dashboard.renderers.bigquery_dashboard_renderer import (

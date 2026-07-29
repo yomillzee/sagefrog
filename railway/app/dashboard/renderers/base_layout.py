@@ -687,6 +687,24 @@ _VIEW_ICONS: dict[str, str] = {
     "consent": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>',
 }
 
+# Sidebar section tabs that expose an admin "⋮" kebab menu for editing that
+# tab's layout in place. Overview is the first (and, for now, only) one; adding
+# a tab here plus its card wiring lights up the same menu on that tab.
+_EDIT_MENU_TABS: frozenset[str] = frozenset({"overview"})
+
+# Kebab (vertical dots) shown on hover of an editable nav item, and the pencil
+# used by its "Edit layout" menu entry.
+_NAV_ICON_KEBAB = (
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" '
+    'aria-hidden="true"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/>'
+    '<circle cx="12" cy="19" r="1.7"/></svg>'
+)
+_NAV_ICON_EDIT_LAYOUT = (
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>'
+)
+
 
 def dashboard_sidebar_view_nav_html(
     *,
@@ -731,9 +749,34 @@ def dashboard_sidebar_view_nav_html(
         hide_attr = ' style="display:none" data-hidden="1"' if tab in hidden_tabs else ""
         if as_tabs:
             active = " active" if i == 0 else ""
-            items.append(
-                f'<button type="button" class="dash-view-btn tab-btn{active}" data-tab="{tab}"{hide_attr}>{inner}</button>'
+            btn = (
+                f'<button type="button" class="dash-view-btn tab-btn{active}" '
+                f'data-tab="{tab}">{inner}</button>'
             )
+            if tab in _EDIT_MENU_TABS:
+                # Editable tab: wrap the button with a hover-revealed kebab (⋮)
+                # whose menu drops the admin into that tab's edit mode. The menu
+                # is admin-only via CSS; open/close + actions are wired by the
+                # dashboard page JS. The hide attr moves to the wrapper so hiding
+                # the tab hides the whole row (kebab included).
+                items.append(
+                    f'<div class="dash-view-item" data-view-item="{tab}"{hide_attr}>'
+                    f'{btn}'
+                    f'<button type="button" class="dash-view-kebab" data-edit-tab="{tab}" '
+                    f'aria-haspopup="true" aria-expanded="false" '
+                    f'aria-label="{_esc(label)} options" title="{_esc(label)} options">'
+                    f'{_NAV_ICON_KEBAB}</button>'
+                    f'<div class="dash-view-menu" role="menu" hidden>'
+                    f'<button type="button" class="dash-view-menu-item" role="menuitem" '
+                    f'data-action="edit-layout">{_NAV_ICON_EDIT_LAYOUT}'
+                    f'<span>Edit layout</span></button>'
+                    f'</div></div>'
+                )
+            else:
+                items.append(
+                    f'<button type="button" class="dash-view-btn tab-btn{active}" '
+                    f'data-tab="{tab}"{hide_attr}>{inner}</button>'
+                )
         else:
             # Deep-link to the specific dashboard tab (?view=…) so clicking e.g.
             # "Search Console" from Settings/Files/Connectors lands on that tab,
@@ -1365,7 +1408,8 @@ def _admin_tools_js() -> str:
         function applyTabVisibility(){
           var hidden=hiddenList();
           document.querySelectorAll('.dash-sidebar-nav .dash-view-btn[data-tab]').forEach(function(el){
-            el.style.display=(hidden.indexOf(el.dataset.tab)!==-1)?'none':'';
+            var target=el.closest('.dash-view-item')||el;
+            target.style.display=(hidden.indexOf(el.dataset.tab)!==-1)?'none':'';
           });
         }
         card.querySelectorAll('.dash-tab-toggle').forEach(function(inp){ inp.addEventListener('change', async function(){
@@ -1985,6 +2029,82 @@ SIDEBAR_CSS = """
       outline: 2px solid #7dd3fc;
       outline-offset: -2px;
     }
+
+    /* Editable-tab kebab (⋮): a subtle affordance that fades in on hover/focus
+       of the nav row, admin-only. Its menu drops the admin into edit mode. */
+    .dash-sidebar-nav .dash-view-item { position: relative; }
+    .dash-sidebar-nav .dash-view-item .dash-view-btn { width: 100%; }
+    .dash-view-kebab { display: none; }
+    .is-admin .dash-sidebar-nav .dash-view-item .dash-view-kebab {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      position: absolute;
+      top: 50%;
+      right: 6px;
+      transform: translateY(-50%);
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: #c3d2e6;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity .14s, background .14s, color .14s;
+    }
+    .is-admin .dash-sidebar-nav .dash-view-item:hover .dash-view-kebab,
+    .is-admin .dash-sidebar-nav .dash-view-item:focus-within .dash-view-kebab,
+    .is-admin .dash-sidebar-nav .dash-view-item.menu-open .dash-view-kebab { opacity: 1; }
+    .is-admin .dash-sidebar-nav .dash-view-item .dash-view-kebab:hover {
+      background: rgba(255,255,255,.16);
+      color: #fff;
+    }
+    .is-admin .dash-sidebar-nav .dash-view-item.menu-open .dash-view-kebab {
+      background: rgba(255,255,255,.16);
+      color: #fff;
+    }
+    /* Give the row a touch of right padding on hover so the label never tucks
+       under the kebab. */
+    .is-admin .dash-sidebar-nav .dash-view-item:hover .dash-view-btn,
+    .is-admin .dash-sidebar-nav .dash-view-item.menu-open .dash-view-btn { padding-right: 36px; }
+    .dash-view-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 4px;
+      z-index: 60;
+      min-width: 176px;
+      padding: 6px;
+      background: #0d2a49;
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 10px;
+      box-shadow: 0 12px 30px rgba(0,0,0,.38);
+    }
+    .dash-view-menu[hidden] { display: none; }
+    .dash-view-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      width: 100%;
+      padding: 8px 10px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: #e6eef8;
+      font-family: inherit;
+      font-size: .85rem;
+      font-weight: 600;
+      text-align: left;
+      cursor: pointer;
+    }
+    .dash-view-menu-item:hover { background: rgba(255,255,255,.10); }
+    .dash-view-menu-item svg { flex-shrink: 0; opacity: .85; }
+    /* Collapsed (icon-only) sidebar: drop the kebab so it never overlaps the
+       centered icon; edit mode is still reachable once the sidebar is expanded. */
+    .app-shell.sidebar-collapsed .dash-view-kebab,
+    .app-shell.sidebar-collapsed .dash-view-menu { display: none !important; }
+    .app-shell.sidebar-collapsed .dash-sidebar-nav .dash-view-item:hover .dash-view-btn { padding-right: 13px; }
 
     /* Footer: client selector + Files / Settings + account */
     .dash-sidebar-footer {

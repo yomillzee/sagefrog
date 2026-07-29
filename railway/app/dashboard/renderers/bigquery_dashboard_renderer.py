@@ -116,12 +116,12 @@ def _api_url(path: str, *, access_key: str | None) -> str:
     return f"{path}?{urlencode({'key': access_key})}"
 
 
-# Overview "home" cards an admin may pin to the top, in their natural (unpinned)
-# order. Keys are stable and stored per-client in
-# ``client_dashboard_config.overview_pinned_card``; titles are shown in the pin
-# control's tooltip. A card only renders when its data/connector is present, so
-# a stored key that isn't currently visible is simply ignored (the pin persists
-# and re-applies once that card comes back).
+# Overview "home" cards an admin can reorder or hide in edit mode. Keys are
+# stable and used both as the layout keys stored per-client in
+# ``client_dashboard_config.card_layouts`` and as the card titles shown in the
+# edit bar. A card only renders when its data/connector is present, so a stored
+# key that isn't currently visible is simply ignored (the layout persists and
+# re-applies once that card comes back).
 OVERVIEW_PINNABLE_CARDS: dict[str, str] = {
     "mql": "HubSpot MQL Tracker",
     "paid": "Paid summary",
@@ -130,35 +130,6 @@ OVERVIEW_PINNABLE_CARDS: dict[str, str] = {
     "gsc": "Search Console",
     "site_performance": "Site performance",
 }
-
-
-def _overview_pin_btn(card_key: str, pinned_key: str | None) -> str:
-    """Admin-only pin toggle injected into an Overview card's action row.
-
-    Hidden for non-admins via CSS (only shown under ``.is-admin``). The active
-    card renders in a "pinned" state and clicking it clears the pin; any other
-    card pins itself (replacing whatever was pinned before)."""
-    is_pinned = bool(pinned_key) and card_key == pinned_key
-    cls = "ov-pin is-pinned" if is_pinned else "ov-pin"
-    label = "Unpin from top of overview" if is_pinned else "Pin to top of overview"
-    # Filled pin when active, outline pin otherwise.
-    icon = (
-        '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" '
-        'aria-hidden="true"><path d="M16 3a1 1 0 0 1 .117 1.993L16 5v5.382l2.447 '
-        '2.447a1 1 0 0 1 .293.707V15a1 1 0 0 1-1 1h-4v4a1 1 0 0 1-1.993.117L11 '
-        '20v-4H7a1 1 0 0 1-1-1v-1.464a1 1 0 0 1 .293-.707L8.999 10.4 9 5a1 1 0 0 '
-        '1-.117-1.993L9 3h7Z"/></svg>'
-        if is_pinned else
-        '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" '
-        'stroke="currentColor" stroke-width="1.9" stroke-linecap="round" '
-        'stroke-linejoin="round" aria-hidden="true"><path d="M9 4h6"/>'
-        '<path d="M10 4v6l-3 3v1h10v-1l-3-3V4"/><path d="M12 17v4"/></svg>'
-    )
-    return (
-        f'<button type="button" class="{cls}" data-ov-pin="{card_key}" '
-        f'aria-pressed="{"true" if is_pinned else "false"}" '
-        f'title="{label}" aria-label="{label}">{icon}</button>'
-    )
 
 
 # Drag-handle and hide/show glyphs for the Overview edit-mode controls.
@@ -271,7 +242,7 @@ def resolve_explorer_filters(text: str | None) -> list[dict]:
     return parsed or DEFAULT_EXPLORER_FILTERS
 
 
-def hubspot_mql_section_html(report, lead_tracking_url: str | None, *, pin_btn: str = "") -> str:
+def hubspot_mql_section_html(report, lead_tracking_url: str | None) -> str:
     """Server-rendered HubSpot MQL tracker panel for the BigQuery dashboard's
     Overview home. Mirrors the Overview tracker on the snapshot dashboard, but
     uses this template's card markup. Each card only renders when its data
@@ -340,7 +311,7 @@ def hubspot_mql_section_html(report, lead_tracking_url: str | None, *, pin_btn: 
     return (
         '<section class="ov-panel mql-panel">'
         '<div class="sec-head"><h2><span class="mql-dot"></span>HubSpot MQL Tracker</h2>'
-        f'<div class="ov-actions">{pin_btn}{more}</div></div>'
+        f'<div class="ov-actions">{more}</div></div>'
         f'<div class="cards">{"".join(cards)}</div></section>'
     )
 
@@ -481,7 +452,6 @@ def render_bigquery_dashboard_page(
                     access_key=access_key,
                     use_session=use_session,
                 ),
-                pin_btn=_overview_pin_btn("mql", overview_pinned_card),
             )
         except Exception:
             mql_section_html = ""
@@ -682,28 +652,27 @@ def render_bigquery_dashboard_page(
 
     # Overview is a "home": the top widget from each section, each with a
     # "See more" that jumps to that tab. Panels below are shared by all clients;
-    # the paid panel is prepended only when the client runs paid ads.
-    # Admin-only "pin to top" toggle for each Overview card. Injected as the
-    # first child of the card's action row; hidden for non-admins via CSS.
-    _pin = lambda key: _overview_pin_btn(key, overview_pinned_card)  # noqa: E731
+    # the paid panel is prepended only when the client runs paid ads. Card order
+    # and visibility are managed by admins in edit mode (entered from the sidebar
+    # kebab); see the layout handling and _ov_unit_wrapper below.
 
     panel_website = f"""
       <section class="ov-panel">
-        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions">{_pin("website")}<div class="chips seg" id="ovSessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="analytics"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><div class="chips seg" id="ovSessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="analytics"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovSessionsTrend"></canvas></div></div>
         <div class="cmp-legend" id="ovSessionsLegend"></div>
       </section>"""
 
     panel_ai = f"""
       <section class="ov-panel">
-        <div class="sec-head"><h2>AI traffic</h2><div class="ov-actions">{_pin("ai_traffic")}<div class="chips seg" id="ovAiGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="ai_traffic"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="sec-head"><h2>AI traffic</h2><div class="ov-actions"><div class="chips seg" id="ovAiGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="ai_traffic"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovAiTrend"></canvas></div></div>
         <div class="cmp-legend" id="ovAiLegend"></div>
       </section>"""
 
     panel_gsc = f"""
       <section class="ov-panel">
-        <div class="sec-head"><h2>Search Console</h2><div class="ov-actions">{_pin("gsc")}<span class="status" id="ovGscStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="gsc"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="sec-head"><h2>Search Console</h2><div class="ov-actions"><span class="status" id="ovGscStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="gsc"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="two-col" style="margin-top:0">
           <div class="col-panel">
             <h3>Branded queries</h3>
@@ -724,13 +693,13 @@ def render_bigquery_dashboard_page(
 
     panel_pagespeed = f"""
       <section class="ov-panel">
-        <div class="sec-head"><h2>Site performance</h2><div class="ov-actions">{_pin("site_performance")}<span class="status" id="ovPsStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="site_performance"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="sec-head"><h2>Site performance</h2><div class="ov-actions"><span class="status" id="ovPsStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="site_performance"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="cards" id="ovPsScores"></div>
       </section>""" if show_pagespeed else ""
 
     paid_panel = f"""
       <section id="sec-overview">
-        <div class="sec-head"><h2>Paid summary</h2><div class="ov-actions">{_pin("paid")}<span class="status" id="summaryStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="explorer"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="sec-head"><h2>Paid summary</h2><div class="ov-actions"><span class="status" id="summaryStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="explorer"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="cards" id="summaryCards"></div>
       </section>""" if has_paid_ads else ""
 
@@ -782,20 +751,21 @@ def render_bigquery_dashboard_page(
         )
     overview_summary_html = "".join(_rendered_units)
 
-    # Admin-only Overview edit-mode toolbar (hidden for clients via CSS). The
-    # button flips the pane into edit mode; hide/show and drag-reorder then
-    # persist to the card-layout endpoint. ``data-ov-layout-api`` carries the URL.
+    # Edit mode is entered from the sidebar kebab (⋮ on the Overview nav item),
+    # so there's no always-on toolbar cluttering the page. This slim banner shows
+    # only while editing: it explains the mode, reflects save state, and offers a
+    # Done button. It stays in the DOM (hidden via CSS until #pane-overview is
+    # .is-editing) so the edit JS can read the layout endpoint off it any time.
     _ov_layout_api = _api_url(
         f"/api/clients/{api_client_key}/tabs/overview/card-layout", access_key=access_key
     )
-    overview_edit_toolbar_html = (
-        f'<div class="ov-edit-toolbar" data-ov-layout-api="{_esc(_ov_layout_api)}">'
-        f'<button type="button" id="ovEditToggle" class="ov-edit-btn">'
-        f'<span class="ov-edit-btn-on">Edit layout</span>'
-        f'<span class="ov-edit-btn-off">Done editing</span></button>'
-        f'<span class="ov-edit-hint">Drag cards to reorder, or Hide/Show them. '
-        f"Changes save automatically and only you (admins) see this.</span>"
+    overview_edit_banner_html = (
+        f'<div class="ov-editing-banner" data-ov-layout-api="{_esc(_ov_layout_api)}">'
+        f'<span class="ov-editing-badge">Editing layout</span>'
+        f'<span class="ov-edit-hint">Drag cards to reorder, or use Hide / Show. '
+        f"Changes save automatically — only admins see this.</span>"
         f'<span class="ov-edit-status" id="ovEditStatus" role="status"></span>'
+        f'<button type="button" id="ovEditDone" class="ov-edit-done">Done</button>'
         f"</div>"
     )
 
@@ -941,29 +911,18 @@ def render_bigquery_dashboard_page(
     .ov-more:hover {{ color:var(--accent); border-color:var(--accent); background:var(--card); box-shadow:0 1px 4px rgba(29,111,208,.18); }}
     .ov-more-arrow {{ width:16px; height:16px; display:block; transition:transform .14s; }}
     .ov-more:hover .ov-more-arrow {{ transform:translateX(2px); }}
-    /* Admin-only "pin card to top" toggle — hidden unless the shell is .is-admin */
-    .ov-pin {{ display:none; }}
-    .is-admin .ov-pin {{ display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border:1px solid var(--line); border-radius:999px; background:var(--card); color:var(--muted); padding:0; font:inherit; cursor:pointer; transition:color .14s, border-color .14s, background .14s, box-shadow .14s; }}
-    .is-admin .ov-pin:hover {{ color:var(--accent); border-color:var(--accent); box-shadow:0 1px 4px rgba(29,111,208,.18); }}
-    .is-admin .ov-pin.is-pinned {{ color:#fff; background:var(--accent); border-color:var(--accent); }}
-    .is-admin .ov-pin.is-pinned:hover {{ background:var(--blue); border-color:var(--blue); box-shadow:none; }}
-    .ov-pin svg {{ display:block; }}
-
     /* ---- Overview edit mode (admin-only) ---- */
-    /* The toolbar and per-card edit bar are hidden for clients entirely; an
-       admin reveals the per-card controls by toggling edit mode on the pane. */
-    .ov-edit-toolbar {{ display:none; }}
-    .is-admin .ov-edit-toolbar {{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0 0 14px; padding:9px 12px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--card); }}
-    .ov-edit-btn {{ display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:999px; background:#fff; color:var(--ink); padding:6px 14px; font:inherit; font-size:.82rem; font-weight:600; cursor:pointer; transition:color .14s, border-color .14s, background .14s; }}
-    .ov-edit-btn:hover {{ color:var(--accent); border-color:var(--accent); }}
-    .ov-edit-btn .ov-edit-btn-off {{ display:none; }}
-    #pane-overview.is-editing .ov-edit-btn {{ color:#fff; background:var(--accent); border-color:var(--accent); }}
-    #pane-overview.is-editing .ov-edit-btn .ov-edit-btn-on {{ display:none; }}
-    #pane-overview.is-editing .ov-edit-btn .ov-edit-btn-off {{ display:inline; }}
+    /* Entered from the sidebar kebab; no always-on chrome. This banner and the
+       per-card edit bars appear only while #pane-overview is .is-editing. */
+    .ov-editing-banner {{ display:none; }}
+    #pane-overview.is-editing .ov-editing-banner {{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0 0 14px; padding:9px 13px; border:1px solid var(--accent); border-radius:var(--radius-sm); background:rgba(29,111,208,.06); position:sticky; top:8px; z-index:20; }}
+    .ov-editing-badge {{ display:inline-flex; align-items:center; gap:6px; font-size:.76rem; font-weight:800; letter-spacing:.03em; text-transform:uppercase; color:var(--accent); }}
+    .ov-editing-badge::before {{ content:""; width:8px; height:8px; border-radius:999px; background:var(--accent); box-shadow:0 0 0 3px rgba(29,111,208,.18); }}
     .ov-edit-hint {{ color:var(--muted); font-size:.78rem; }}
-    #pane-overview:not(.is-editing) .ov-edit-hint {{ display:none; }}
     .ov-edit-status {{ color:var(--muted); font-size:.76rem; margin-left:auto; }}
     .ov-edit-status.is-error {{ color:var(--bad); }}
+    .ov-edit-done {{ border:1px solid var(--accent); border-radius:999px; background:var(--accent); color:#fff; padding:6px 16px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; transition:background .14s, border-color .14s; }}
+    .ov-edit-done:hover {{ background:var(--blue); border-color:var(--blue); }}
 
     /* Per-card edit bar: revealed only while the admin is editing. */
     .ov-edit-bar {{ display:none; }}
@@ -971,7 +930,7 @@ def render_bigquery_dashboard_page(
     .ov-drag {{ display:inline-flex; align-items:center; justify-content:center; color:var(--muted); cursor:grab; }}
     .ov-drag:active {{ cursor:grabbing; }}
     .ov-drag svg {{ display:block; }}
-    .ov-card-name {{ font-size:.8rem; font-weight:600; color:var(--ink); }}
+    .ov-card-name {{ font-size:.8rem; font-weight:600; color:var(--navy); }}
     .ov-hide-toggle {{ margin-left:auto; border:1px solid var(--line); border-radius:999px; background:#fff; color:var(--muted); padding:4px 12px; font:inherit; font-size:.76rem; font-weight:600; cursor:pointer; transition:color .14s, border-color .14s, background .14s; }}
     .ov-hide-toggle:hover {{ color:var(--accent); border-color:var(--accent); }}
     .ov-unit.ov-unit--hidden .ov-hide-toggle {{ color:#fff; background:var(--accent); border-color:var(--accent); }}
@@ -1365,8 +1324,8 @@ def render_bigquery_dashboard_page(
 
     <!-- ===== OVERVIEW TAB ===== -->
     <div id="pane-overview">
+      {overview_edit_banner_html}
       {onboarding_html}
-      {overview_edit_toolbar_html}
       {overview_summary_html}
     </div>
 
@@ -1602,35 +1561,6 @@ def render_bigquery_dashboard_page(
     const TRAFFIC_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-key-events')}";
     const USER_ACQ_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acq-key-events')}";
     const GA4_KEY_EVENTS_SAVED = {json.dumps([s.strip() for s in ga4_key_events.splitlines() if s.strip()])};
-    const OVERVIEW_PIN_API = "{_aurl(f'/api/clients/{api_client_key}/overview/pinned-card')}";
-
-    // ---- Overview "pin card to top" (admin only) ----
-    // Delegated click: pin the clicked card (or unpin when it's already pinned),
-    // persist server-side, then reload so the server re-orders the Overview.
-    document.addEventListener('click', function (ev) {{
-      const btn = ev.target.closest && ev.target.closest('.ov-pin');
-      if (!btn) return;
-      ev.preventDefault();
-      if (btn.disabled) return;
-      const key = btn.getAttribute('data-ov-pin') || '';
-      const alreadyPinned = btn.getAttribute('aria-pressed') === 'true';
-      const next = alreadyPinned ? '' : key;
-      btn.disabled = true;
-      fetch(OVERVIEW_PIN_API, {{
-        method: 'POST',
-        headers: {{ 'Content-Type': 'application/json' }},
-        credentials: 'same-origin',
-        body: JSON.stringify({{ card: next }}),
-      }}).then(function (r) {{
-        return r.json().catch(function () {{ return {{}}; }}).then(function (b) {{
-          if (!r.ok || !b.ok) throw new Error((b && b.detail && (b.detail.error || b.detail)) || r.statusText);
-          window.location.reload();
-        }});
-      }}).catch(function (err) {{
-        btn.disabled = false;
-        alert('Could not update the pinned card: ' + (err.message || err));
-      }});
-    }});
 
     // ---- Overview edit mode: hide / show / reorder cards (admin only) ----
     // Admins toggle edit mode on the Overview pane, then hide a card (it greys
@@ -1643,10 +1573,9 @@ def render_bigquery_dashboard_page(
       const shell = document.getElementById('appShell');
       const pane = document.getElementById('pane-overview');
       if (!pane || !shell || !shell.classList.contains('is-admin')) return;
-      const toolbar = pane.querySelector('.ov-edit-toolbar');
-      if (!toolbar) return;
-      const LAYOUT_API = toolbar.getAttribute('data-ov-layout-api') || '';
-      const toggleBtn = document.getElementById('ovEditToggle');
+      const banner = pane.querySelector('.ov-editing-banner');
+      if (!banner) return;
+      const LAYOUT_API = banner.getAttribute('data-ov-layout-api') || '';
       const statusEl = document.getElementById('ovEditStatus');
 
       function setStatus(msg, isError) {{
@@ -1655,12 +1584,70 @@ def render_bigquery_dashboard_page(
         statusEl.classList.toggle('is-error', !!isError);
       }}
 
-      if (toggleBtn) {{
-        toggleBtn.addEventListener('click', function () {{
-          const editing = pane.classList.toggle('is-editing');
-          if (!editing) setStatus('');
+      function setEditing(on) {{
+        pane.classList.toggle('is-editing', !!on);
+        if (!on) setStatus('');
+        else {{
+          // Bring the pane into view when entering from the sidebar.
+          try {{ pane.scrollIntoView({{ behavior: 'smooth', block: 'start' }}); }} catch (e) {{}}
+        }}
+      }}
+
+      // Exit via the banner's Done button.
+      const doneBtn = document.getElementById('ovEditDone');
+      if (doneBtn) doneBtn.addEventListener('click', function () {{ setEditing(false); }});
+
+      // ---- Entry point: the sidebar kebab (⋮) on the Overview nav item ----
+      // A small popover menu whose "Edit layout" item switches to Overview and
+      // drops into edit mode. Menu open/close is handled here so the sidebar
+      // renderer stays presentational.
+      function closeMenus() {{
+        document.querySelectorAll('.dash-view-item.menu-open').forEach(function (it) {{
+          it.classList.remove('menu-open');
+          const k = it.querySelector('.dash-view-kebab');
+          const m = it.querySelector('.dash-view-menu');
+          if (k) k.setAttribute('aria-expanded', 'false');
+          if (m) m.hidden = true;
         }});
       }}
+      document.addEventListener('click', function (ev) {{
+        const kebab = ev.target.closest && ev.target.closest('.dash-view-kebab');
+        if (kebab) {{
+          ev.preventDefault();
+          ev.stopPropagation();
+          const item = kebab.closest('.dash-view-item');
+          const menu = item && item.querySelector('.dash-view-menu');
+          const willOpen = !(item && item.classList.contains('menu-open'));
+          closeMenus();
+          if (willOpen && item) {{
+            item.classList.add('menu-open');
+            kebab.setAttribute('aria-expanded', 'true');
+            if (menu) menu.hidden = false;
+          }}
+          return;
+        }}
+        const action = ev.target.closest && ev.target.closest('.dash-view-menu-item');
+        if (action) {{
+          ev.preventDefault();
+          ev.stopPropagation();
+          closeMenus();
+          if (action.getAttribute('data-action') === 'edit-layout') {{
+            // Make sure Overview is the active tab, then enter edit mode.
+            const navBtn = document.querySelector('.dash-view-btn[data-tab="overview"]');
+            if (navBtn && !navBtn.classList.contains('active')) navBtn.click();
+            setEditing(true);
+          }}
+          return;
+        }}
+        // A click anywhere else dismisses any open kebab menu.
+        closeMenus();
+      }});
+      document.addEventListener('keydown', function (ev) {{
+        if (ev.key === 'Escape') {{
+          if (pane.classList.contains('is-editing')) setEditing(false);
+          closeMenus();
+        }}
+      }});
 
       // Collect the current layout from the live DOM: order = every card in
       // document order; hidden = the ones flagged with the hidden class.
