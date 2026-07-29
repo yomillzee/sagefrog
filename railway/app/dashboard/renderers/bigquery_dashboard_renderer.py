@@ -2502,9 +2502,9 @@ def render_bigquery_dashboard_page(
       {{key:'spend',label:'Spend',format:money}},
       {{key:'impressions',label:'Impr.',format:count}},
       {{key:'clicks',label:'Clicks',format:count}},
+      {{key:'ctr',label:'CTR',format:pct}},
       {{key:'conversions',label:'Conv.',format:count}},
       {{key:'verified_sel',label:'Verified conv.',format:count,cls:'ga4-col',keSelect:true,title:'GA4-verified conversions, matched to the Meta ad by id (utm_content) and rolled up. Independent of the platform-reported Conv. Use the selector to isolate a single GA4 key event.'}},
-      {{key:'ctr',label:'CTR',format:pct}},
     ];
     // Explorer table sort — click a column header to sort every tree level (campaigns,
     // ad groups, ads) by it. 'name' sorts the label column alphabetically.
@@ -2856,8 +2856,8 @@ def render_bigquery_dashboard_page(
       for (const r of filtered) {{ if (r.platform==='linkedin') {{ const gn=normalizeLiName(r.campaign_name||''); if (gn && !liSeen.has(gn)) {{ liSeen.add(gn); linkedinVerifiedTotal+=num(verifiedByLinkedinGroup[gn]); }} }} }}
       const scards=document.getElementById('explorerSummaryCards');
       if (scards) scards.innerHTML=[
-        ['Spend',money(agg.spend)],['Impressions',count(agg.impressions)],['Clicks',count(agg.clicks)],
-        ['Conversions',count(agg.conversions)],['Verified conv. (GA4)',count(num(agg.verified)+googleVerifiedTotal+linkedinVerifiedTotal)],['CTR',num(agg.ctr).toFixed(2)+'%'],
+        ['Spend',money(agg.spend)],['Impressions',count(agg.impressions)],['Clicks',count(agg.clicks)],['CTR',num(agg.ctr).toFixed(2)+'%'],
+        ['Conversions',count(agg.conversions)],['Verified conv. (GA4)',count(num(agg.verified)+googleVerifiedTotal+linkedinVerifiedTotal)],
       ].map(([l,v])=>`<div class="card"><div class="card-title">${{l}}</div><div class="card-value">${{v}}</div></div>`).join('');
       const el=document.getElementById('explorerTable');
       const tree=buildExplorerTree(filtered);
