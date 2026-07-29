@@ -631,6 +631,30 @@ def dashboard_topbar_js() -> str:
         }
       });
     })();
+
+    // ── Account profile dropdown (sidebar footer) ─────────────────────────
+    // Toggles the Settings / Sign out popover; closes on outside click or Esc.
+    (function() {
+      const wrap = document.querySelector('.dash-profile');
+      const trigger = document.getElementById('dashProfileTrigger');
+      const menu = document.getElementById('dashProfileMenu');
+      if (!wrap || !trigger || !menu) return;
+      function setOpen(open) {
+        wrap.classList.toggle('is-open', open);
+        trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        menu.hidden = !open;
+      }
+      trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setOpen(menu.hidden);
+      });
+      document.addEventListener('click', (e) => {
+        if (!wrap.contains(e.target)) setOpen(false);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !menu.hidden) { setOpen(false); trigger.focus(); }
+      });
+    })();
     """
 
 
@@ -1099,47 +1123,133 @@ def admin_top_tabs_html(
       </div>"""
 
 
+def _person_initials(email: str) -> str:
+    """Up to two initials from an email's local part (avatar fallback)."""
+    local = (email or "").split("@")[0]
+    for sep in (".", "-", "_", "+"):
+        local = local.replace(sep, " ")
+    parts = [p for p in local.split(" ") if p]
+    if len(parts) >= 2:
+        return _esc((parts[0][0] + parts[1][0]).upper())
+    return _esc((local[:2] or "?").upper())
+
+
+def _display_name_from_email(email: str) -> str:
+    """A human-ish display name derived from an email (there is no stored name):
+    the local part split on separators and title-cased — "mike.miller@x" → "Mike
+    Miller". Falls back to the raw email when the local part is empty."""
+    local = (email or "").split("@")[0]
+    for sep in (".", "-", "_", "+"):
+        local = local.replace(sep, " ")
+    parts = [p for p in local.split() if p]
+    if not parts:
+        return email or ""
+    return " ".join(p[:1].upper() + p[1:] for p in parts)
+
+
+def _person_avatar_html(*, email: str, avatar: str | None) -> str:
+    """Avatar chip for the signed-in person: their uploaded headshot when one
+    exists, else colour-coded initials (colour derived from the email so it stays
+    stable). Mirrors the client-switcher avatar treatment."""
+    if avatar:
+        return (
+            '<span class="dash-profile-ava dash-profile-ava--img" aria-hidden="true">'
+            f'<img src="{_esc(str(avatar))}" alt="" loading="lazy"></span>'
+        )
+    return (
+        f'<span class="dash-profile-ava" style="background:{_client_avatar_color(email)}" '
+        f'aria-hidden="true">{_person_initials(email)}</span>'
+    )
+
+
 def _sidebar_footer_tools_html(
     *,
     email: str | None,
-    is_admin: bool,
+    session_is_admin: bool,
     active_nav: str,
     connectors_url: str,
+    admin_context: bool = False,
 ) -> str:
-    """Sidebar footer: a single **Admin** button (admin only) plus Sign out.
+    """Sidebar footer: a profile dropdown (avatar + name) holding Settings and
+    Sign out.
 
-    The button links to the Admin page (its first tab, Connectors); the page
-    itself carries the agency options as tabs across the top — Connectors,
-    Insights, Consent Health, Advanced, View As, and BQ Connection. Sign out sits
-    below and is shown to every signed-in user.
+    The trigger shows the signed-in person's avatar and name; clicking it opens a
+    small popover. **Settings** (the renamed old "Admin" button) links to the
+    Admin page — Connectors, Insights, Consent Health, Advanced, View As, BQ
+    Connection across the top — and is shown only to internal users (admin +
+    standard), never to client logins. Inside the admin environment it's dropped
+    because the workspace switcher already carries "Admin panel". **Sign out** is
+    available to every signed-in user.
     """
     if not email:
         return ""
 
-    signout = f"""
-          <form method="post" action="/logout" class="dash-signout-form">
-            <button type="submit" class="dash-admin-link dash-signout-btn"
-              title="Sign out">{_TOOL_ICON_SIGNOUT}<span>Sign out</span></button>
-          </form>"""
+    # Resolve the signed-in person's avatar + role so the trigger can show a real
+    # headshot and the menu can gate "Settings" by role. Self-sufficient lookup
+    # (like the other footer helpers) so callers don't have to thread it through;
+    # falls back to initials + the admin flag if the lookup is unavailable. Under
+    # "view as" the email is the impersonated user's, so this renders as they'd see
+    # it — matching the rest of the platform.
+    avatar: str | None = None
+    role = "admin" if session_is_admin else ""
+    try:
+        import web_users
+        u = web_users.get_user_by_email(email) if web_users.enabled() else None
+        if u:
+            avatar = u.avatar
+            role = u.role
+    except Exception:
+        pass
 
-    if not is_admin:
-        # Non-admins get no Admin button — just Sign out.
-        return f"""
-        <div class="dash-sidebar-tools" role="group" aria-label="Account tools">
-          {signout}
-        </div>"""
+    # Settings is for internal users (admins + agency-wide "standard" accounts),
+    # never client-role logins. It's also redundant inside the admin environment,
+    # so drop it there. Fail closed: an unknown role only sees Settings if the
+    # admin flag says so.
+    show_settings = (
+        (session_is_admin or role in ("admin", "standard"))
+        and role != "client"
+        and not admin_context
+    )
 
-    admin_active = " active" if active_nav in _ADMIN_NAV_TO_TAB else ""
-    aria = ' aria-current="page"' if admin_active else ""
-    admin_btn = (
-        f'<a class="dash-admin-link{admin_active}"{aria} href="{_esc(connectors_url)}">'
-        f'{_ADMIN_SECTION_ICON}<span>Admin</span></a>'
+    name = _display_name_from_email(email)
+    avatar_html = _person_avatar_html(email=email, avatar=avatar)
+
+    settings_item = ""
+    if show_settings:
+        settings_active = " is-active" if active_nav in _ADMIN_NAV_TO_TAB else ""
+        aria = ' aria-current="page"' if settings_active else ""
+        settings_item = (
+            f'<a class="dash-profile-item{settings_active}"{aria} role="menuitem" '
+            f'href="{_esc(connectors_url)}">{_NAV_ICON_SETTINGS}<span>Settings</span></a>'
+        )
+
+    signout_item = (
+        '<form method="post" action="/logout" class="dash-profile-signout">'
+        '<button type="submit" class="dash-profile-item" role="menuitem">'
+        f'{_TOOL_ICON_SIGNOUT}<span>Sign out</span></button></form>'
+    )
+
+    caret = (
+        '<svg class="dash-profile-caret" viewBox="0 0 24 24" fill="none" '
+        'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+        'stroke-linejoin="round" aria-hidden="true"><polyline points="6 15 12 9 18 15"/></svg>'
     )
 
     return f"""
-        <div class="dash-sidebar-tools" role="group" aria-label="Account tools">
-          {admin_btn}
-          {signout}
+        <div class="dash-profile" role="group" aria-label="Account">
+          <button type="button" class="dash-profile-trigger" id="dashProfileTrigger"
+            aria-haspopup="true" aria-expanded="false" aria-controls="dashProfileMenu">
+            {avatar_html}
+            <span class="dash-profile-text">
+              <span class="dash-profile-name">{_esc(name)}</span>
+              <span class="dash-profile-email" title="{_esc(email)}">{_esc(email)}</span>
+            </span>
+            {caret}
+          </button>
+          <div class="dash-profile-menu" id="dashProfileMenu" role="menu" hidden>
+            {settings_item}
+            {signout_item}
+          </div>
         </div>"""
 
 
@@ -1211,15 +1321,16 @@ def render_sidebar(
     _sb_to = _theme.get("sidebar_to", "#123456")
     sidebar_style = f"--sidebar-from:{_sb_from};--sidebar-to:{_sb_to}"
 
-    # Footer: a single "Admin" button (admin only) that opens the Admin page, plus
-    # Sign out. In the admin environment the switcher already carries "Admin
-    # panel", so we drop the Admin button there.
-    _tools_admin = session_is_admin and not admin_context
+    # Footer: a profile dropdown (avatar + name) holding Settings + Sign out.
+    # Settings (the renamed old "Admin" link) is shown to internal users only; in
+    # the admin environment it's dropped because the switcher already carries
+    # "Admin panel". Role gating lives in the helper.
     account_html = _sidebar_footer_tools_html(
         email=session_email,
-        is_admin=_tools_admin,
+        session_is_admin=session_is_admin,
         active_nav=active_nav,
         connectors_url=connectors_url,
+        admin_context=admin_context,
     )
 
     return f"""
@@ -2488,23 +2599,108 @@ SIDEBAR_CSS = """
     .dash-sidebar-link:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
     .dash-sidebar-link.active { background: rgba(255, 255, 255, 0.15); color: #fff; }
     /* Footer: single "Admin" button (admin only) + Sign out */
-    .dash-sidebar-tools {
+    .dash-admin-shield { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.85; }
+    /* Footer: profile dropdown (avatar + name) holding Settings + Sign out. */
+    .dash-profile {
       position: relative;
       margin-top: 12px;
       padding-top: 8px;
       border-top: 1px solid rgba(255, 255, 255, 0.12);
+    }
+    .dash-profile-trigger {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 11px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      font-family: inherit;
+      cursor: pointer;
+      text-align: left;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .dash-profile-trigger:hover {
+      background: rgba(255, 255, 255, 0.14);
+      border-color: rgba(255, 255, 255, 0.32);
+    }
+    .dash-profile-trigger:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
+    .dash-profile-ava {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      flex-shrink: 0;
+      border-radius: 9px;
+      color: #fff;
+      font-size: 0.8rem;
+      font-weight: 700;
+      line-height: 1;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+      overflow: hidden;
+    }
+    .dash-profile-ava--img { background: #fff; box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.12); }
+    .dash-profile-ava--img img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: inherit;
+      display: block;
+    }
+    .dash-profile-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+    .dash-profile-name {
+      font-size: 0.9rem;
+      font-weight: 650;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .dash-profile-email {
+      font-size: 0.72rem;
+      color: rgba(226, 236, 248, 0.62);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .dash-profile-caret {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      color: rgba(226, 236, 248, 0.6);
+      transition: transform 0.18s ease;
+    }
+    .dash-profile-trigger:hover .dash-profile-caret { color: #fff; }
+    .dash-profile.is-open .dash-profile-caret { transform: rotate(180deg); }
+    /* Pop-up menu, anchored above the trigger (the footer sits at the sidebar
+       bottom, so the menu opens upward). */
+    .dash-profile-menu {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: calc(100% + 8px);
+      z-index: 60;
       display: flex;
       flex-direction: column;
       gap: 2px;
+      padding: 6px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: #0d2a49;
+      box-shadow: 0 -10px 30px rgba(3, 12, 24, 0.5);
     }
-    .dash-signout-form { display: block; margin: 0; }
-    .dash-admin-shield { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.85; }
-    /* Footer rows: the "Admin" button and "Sign out" share this style. */
-    .dash-admin-link {
+    .dash-profile-menu[hidden] { display: none; }
+    .dash-profile-signout { display: block; margin: 0; }
+    .dash-profile-item {
       display: flex;
       align-items: center;
       gap: 12px;
       width: 100%;
+      box-sizing: border-box;
       padding: 10px 12px;
       border: 0;
       border-radius: 9px;
@@ -2519,14 +2715,10 @@ SIDEBAR_CSS = """
       cursor: pointer;
       transition: background 0.15s, color 0.15s;
     }
-    .dash-admin-link svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.85; }
-    .dash-admin-link:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
-    .dash-admin-link.active {
-      background: rgba(255, 255, 255, 0.15);
-      color: #fff;
-      box-shadow: inset 3px 0 0 #7dd3fc;
-    }
-    .dash-admin-link:focus-visible { outline: 2px solid #7dd3fc; outline-offset: -2px; }
+    .dash-profile-item svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.85; }
+    .dash-profile-item:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+    .dash-profile-item.is-active { background: rgba(255, 255, 255, 0.12); color: #fff; }
+    .dash-profile-item:focus-visible { outline: 2px solid #7dd3fc; outline-offset: -2px; }
     /* The Admin page's top tab strip (light content area). Rendered above the
        Connectors / Insights / Consent / Advanced / View As / BQ tabs so they all
        read as one Admin surface. .dash-pop-* below style the tool-card controls
