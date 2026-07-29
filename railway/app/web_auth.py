@@ -714,6 +714,31 @@ _USER_SEARCH_JS = """
 })();
 """
 
+# Client-side filter for the Accounts grid: hides account cards whose name/slug
+# don't match the query, keeps the count chip live, and toggles an empty state.
+_DASH_SEARCH_JS = """
+(function () {
+  var input = document.getElementById('dashSearch');
+  var count = document.getElementById('dashCount');
+  var empty = document.getElementById('dashEmpty');
+  var cards = Array.prototype.slice.call(document.querySelectorAll('.dash-list .dash-row'));
+  if (!input || !cards.length) return;
+  function apply() {
+    var q = input.value.trim().toLowerCase();
+    var shown = 0;
+    cards.forEach(function (card) {
+      var hit = !q || (card.getAttribute('data-search') || '').indexOf(q) !== -1;
+      card.hidden = !hit;
+      if (hit) shown++;
+    });
+    if (count) count.textContent = shown;
+    if (empty) empty.hidden = shown !== 0;
+  }
+  input.addEventListener('input', apply);
+  apply();
+})();
+"""
+
 _ADMIN_AVATAR_JS = """
 function _avatarResize(file, size) {
   return new Promise((resolve, reject) => {
@@ -1210,8 +1235,9 @@ def render_admin_page(
                       </form>
                     </details>"""
 
+                search_key = _esc(f"{label} {slug}".lower())
                 dash_rows.append(f"""
-        <div class="dash-row">
+        <div class="dash-row" data-search="{search_key}">
           {logo_cell}
           <a class="dash-row-main" href="/dashboard/{_esc(slug)}">
             <span class="dash-row-name">{_esc(label)}</span>
@@ -1222,6 +1248,7 @@ def render_admin_page(
             {delete_ctl}
           </div>
         </div>""")
+            dash_count = len(dash_rows)
             dash_list = (
                 "".join(dash_rows)
                 or '<p class="muted" style="margin:0">No dashboards yet.</p>'
@@ -1233,28 +1260,36 @@ def render_admin_page(
             dashboard_manage_html = f"""
     <section class="dash-section">
       <div class="dash-section-head">
-        <h2>Dashboards</h2>
-        <details class="dash-add-fold">
-          <summary class="add-dash-btn"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Add dashboard</summary>
-          <form method="post" action="/admin/dashboards" class="dash-add-form">
-            <div class="row">
-              <div>
-                <label for="dash_slug">Slug</label>
-                <input id="dash_slug" name="client_slug" type="text" required
-                  pattern="[a-z0-9-]+" placeholder="nixon" maxlength="64">
-                <p class="hint">Lowercase URL segment, e.g. <code>nixon</code> → /dashboard/nixon</p>
+        <h2 style="margin:0">All accounts <span class="count-chip" id="dashCount">{dash_count}</span></h2>
+        <div class="dash-head-right">
+          <div class="dash-search">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <input type="search" id="dashSearch" placeholder="Filter accounts…"
+              autocomplete="off" aria-label="Filter accounts">
+          </div>
+          <details class="dash-add-fold">
+            <summary class="add-dash-btn"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Add account</summary>
+            <form method="post" action="/admin/dashboards" class="dash-add-form">
+              <div class="row">
+                <div>
+                  <label for="dash_slug">Slug</label>
+                  <input id="dash_slug" name="client_slug" type="text" required
+                    pattern="[a-z0-9-]+" placeholder="nixon" maxlength="64">
+                  <p class="hint">Lowercase URL segment, e.g. <code>nixon</code> → /dashboard/nixon</p>
+                </div>
+                <div>
+                  <label for="dash_label">Display name</label>
+                  <input id="dash_label" name="label" type="text" required maxlength="120"
+                    placeholder="Nixon Medical">
+                </div>
               </div>
-              <div>
-                <label for="dash_label">Display name</label>
-                <input id="dash_label" name="label" type="text" required maxlength="120"
-                  placeholder="Nixon Medical">
-              </div>
-            </div>
-            <button type="submit" class="primary">Add dashboard</button>
-          </form>
-        </details>
+              <button type="submit" class="primary">Add account</button>
+            </form>
+          </details>
+        </div>
       </div>
       <div class="dash-list">{dash_list}</div>
+      <p class="dash-empty muted" id="dashEmpty" hidden>No accounts match your filter.</p>
     </section>"""
             dash_delete_js = """
     document.querySelectorAll('.dash-delete-form input[name="confirm_label"]').forEach((input) => {
@@ -1294,9 +1329,9 @@ def render_admin_page(
 
     # ---- Feature requests inbox (super admins only) ----
     # Requests raised from the floating notes FAB on any client dashboard land
-    # here. New ones drive the notification banner at the top of the page.
+    # here, on the Notifications page. They are intentionally NOT surfaced as a
+    # cross-page banner — the inbox lives only on its own page.
     feature_requests_html = ""
-    feature_requests_notice = ""
     if is_super_admin:
         try:
             import feature_requests as _freq
@@ -1376,14 +1411,6 @@ def render_admin_page(
         from the notes FAB on client dashboards. Each one records the page it came from.</p>
       <div class="fr-list">{fr_rows}</div>
     </section>"""
-        if new_count:
-            plural = "" if new_count == 1 else "s"
-            feature_requests_notice = f"""
-    <a class="fr-notice" href="/admin/feature-requests">
-      <span class="fr-notice-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>
-      <span class="fr-notice-text"><strong>{new_count}</strong> new feature request{plural} from the team</span>
-      <span class="fr-notice-cta">Review →</span>
-    </a>"""
 
     # ---- Dashboard performance (super admins only) ----
     # Instance-wide read-cache TTL floor for the BigQuery dashboard cards. A
@@ -1440,6 +1467,11 @@ def render_admin_page(
       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
       background: linear-gradient(180deg,#eef2f7 0%,#e6edf5 100%); background-attachment: fixed; }}
     main {{ max-width: 980px; margin: 0 auto; padding: 26px 24px 56px; }}
+    /* The Accounts page runs wider so its account-card grid gets multiple
+       columns. width:100% is required because <main> sits in a flex-column
+       shell with margin:0 auto — without an explicit width it shrinks to fit
+       its content instead of filling (and capping at) the wide canvas. */
+    main.admin-main--wide {{ max-width: 1240px; width: 100%; }}
     /* Per-page header — the split-out admin destinations each get a clear title. */
     .admin-page-head {{ margin: 2px 0 18px; }}
     .admin-page-head h1 {{ margin: 0; font-size: 1.5rem; color: var(--navy); letter-spacing: -.01em; }}
@@ -1498,17 +1530,7 @@ def render_admin_page(
     .settings-fold summary {{ cursor: pointer; color: var(--muted); }}
     .hint {{ color: var(--muted); font-size: .82rem; margin: 4px 0 0; }}
     .hint.mono {{ font-family: ui-monospace, monospace; }}
-    /* ---- Feature requests inbox + notification ---- */
-    .fr-notice {{ display: flex; align-items: center; gap: 12px; padding: 13px 18px; margin-bottom: 18px;
-      border-radius: 14px; text-decoration: none; color: #4c1d95;
-      background: linear-gradient(135deg, #f5f3ff, #ede9fe); border: 1px solid #ddd6fe;
-      box-shadow: 0 6px 22px rgba(124,58,237,.12); transition: filter .15s, transform .06s; }}
-    .fr-notice:hover {{ filter: brightness(1.02); transform: translateY(-1px); }}
-    .fr-notice-icon {{ display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px;
-      background: #7c3aed; color: #fff; flex-shrink: 0; }}
-    .fr-notice-text {{ flex: 1; font-size: .92rem; }}
-    .fr-notice-text strong {{ font-weight: 800; }}
-    .fr-notice-cta {{ font-weight: 700; font-size: .85rem; color: #6d28d9; flex-shrink: 0; }}
+    /* ---- Feature requests inbox (Notifications page) ---- */
     .fr-section {{ border-top: 3px solid #7c3aed; }}
     .fr-count-new {{ background: #ede9fe; color: #6d28d9; }}
     .fr-list {{ display: flex; flex-direction: column; gap: 10px; }}
@@ -1663,11 +1685,22 @@ def render_admin_page(
     .group-row-actions {{ display: flex; align-items: center; gap: 6px 14px; flex-shrink: 0; position: relative; }}
     .group-edit-form {{ width: 300px; }}
     .group-edit-form input {{ max-width: 100%; }}
-    /* ---- Dashboards list (one row each) ---- */
-    .dash-list {{ display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }}
-    .dash-row {{ display: flex; align-items: center; gap: 14px; padding: 10px 14px; border: 1px solid var(--line);
-      border-radius: 12px; background: #fff; transition: border-color .15s, box-shadow .15s; }}
-    .dash-row:hover {{ border-color: #c6d5ea; box-shadow: 0 4px 16px rgba(16,33,67,.08); }}
+    /* ---- Accounts: filterable head + responsive card grid ---- */
+    .dash-head-right {{ display: flex; align-items: center; gap: 10px; flex-shrink: 0; }}
+    .dash-search {{ display: flex; align-items: center; gap: 7px; padding: 7px 12px; border: 1px solid var(--line);
+      border-radius: 10px; background: #fff; color: var(--muted); transition: border-color .12s, box-shadow .12s; }}
+    .dash-search:focus-within {{ border-color: #b9c8dc; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }}
+    .dash-search svg {{ flex-shrink: 0; }}
+    .dash-search input {{ border: 0; outline: 0; background: transparent; font-size: .88rem; color: var(--ink);
+      width: 190px; max-width: 40vw; margin: 0; padding: 0; }}
+    .dash-empty {{ margin: 14px 2px 2px; }}
+    /* Cards flow into as many columns as the (wider) Accounts canvas allows. */
+    .dash-list {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 10px; margin-top: 4px; }}
+    .dash-row {{ display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--line);
+      border-radius: 12px; background: #fff; transition: border-color .15s, box-shadow .15s, transform .1s; }}
+    .dash-row[hidden] {{ display: none; }}
+    .dash-row:hover {{ border-color: #c6d5ea; box-shadow: 0 6px 18px rgba(16,33,67,.09); transform: translateY(-1px); }}
     .dash-logo {{ position: relative; display: inline-flex; width: 40px; height: 40px; cursor: pointer; flex-shrink: 0; }}
     .logo-img, .logo-initials {{ width: 40px; height: 40px; border-radius: 10px; object-fit: cover; display: grid; place-items: center; }}
     .logo-initials {{ color: #fff; font-weight: 800; font-size: .86rem; letter-spacing: .02em;
@@ -1678,8 +1711,9 @@ def render_admin_page(
       opacity: 0; transition: opacity .12s; }}
     .dash-logo:hover .logo-edit {{ opacity: 1; }}
     .dash-logo.is-uploading {{ opacity: .5; pointer-events: none; }}
-    .dash-row-main {{ display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 1px; text-decoration: none; }}
-    .dash-row-name {{ font-weight: 700; font-size: .98rem; color: var(--navy); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .dash-row-main {{ display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 2px; text-decoration: none; }}
+    .dash-row-name {{ font-weight: 700; font-size: .98rem; color: var(--navy); overflow: hidden;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.25; }}
     .dash-row-main:hover .dash-row-name {{ color: var(--accent); }}
     .dash-row-slug {{ font-size: .76rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
     .dash-row-actions {{ display: flex; align-items: center; gap: 6px; flex-shrink: 0; position: relative; }}
@@ -1947,14 +1981,12 @@ def render_admin_page(
     else:  # clients
         body = dashboard_manage_html
 
-    # The new-feature-request nudge is a cross-page banner; show it everywhere
-    # except the Feature requests page itself (where you're already looking).
-    banner = feature_requests_notice if page != "feature-requests" else ""
-
+    # The Accounts page uses a wider canvas so its card grid can breathe; the
+    # other pages keep the narrower reading width.
+    main_cls = " admin-main--wide" if page == "clients" else ""
     content = f"""
-  <main>
+  <main class="admin-main{main_cls}">
     {notice}
-    {banner}
     {page_head_html}
     {body}
   </main>"""
@@ -1963,6 +1995,7 @@ def render_admin_page(
         f"<script>{_ADMIN_AVATAR_JS}</script>"
         f"<script>{_ROLE_TOGGLE_JS}</script>"
         f"<script>{_USER_SEARCH_JS}</script>"
+        f"<script>{_DASH_SEARCH_JS}</script>"
     )
     return render_admin_shell_page(
         active_nav=page,
