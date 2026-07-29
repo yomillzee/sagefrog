@@ -95,15 +95,25 @@ class SidebarConsistencyTests(unittest.TestCase):
         for name, html in pages.items():
             self.assertEqual(_footer_items(html), expected, f"footer nav differs on {name}")
 
-    def test_admin_button_present_on_every_page(self) -> None:
-        # Admin is now a single footer button (not a disclosure) that admins see
-        # on every page, linking to the Admin surface.
+    def test_settings_link_present_in_profile_for_admins(self) -> None:
+        # The old footer "Admin" button now lives inside the profile dropdown as a
+        # "Settings" item that admins (and standard users) see on every page,
+        # linking to the same Admin surface.
         pages = self._render_all()
         for name, html in pages.items():
             self.assertRegex(
-                html, r'class="dash-admin-link[^"]*"[^>]*>\s*<svg.*?</svg>\s*<span>Admin</span>',
-                f"Admin button missing on {name}",
+                html,
+                r'class="dash-profile-item[^"]*"[^>]*>\s*<svg.*?</svg>\s*<span>Settings</span>',
+                f"Settings link missing on {name}",
             )
+
+    def test_profile_dropdown_present_on_every_page(self) -> None:
+        # Every page carries the profile dropdown trigger (avatar + name) and a
+        # Sign out item inside it.
+        pages = self._render_all()
+        for name, html in pages.items():
+            self.assertIn('id="dashProfileTrigger"', html, f"profile trigger missing on {name}")
+            self.assertIn("<span>Sign out</span>", html, f"Sign out missing on {name}")
 
     def test_admin_tab_strip_carries_the_agency_options(self) -> None:
         # The Admin surface pages (Connectors, Insights) render the same top tab
@@ -160,7 +170,9 @@ class SidebarConsistencyTests(unittest.TestCase):
         self.assertNotIn("nixon_sidebar_pages", html)
 
     def test_admin_affordances_hidden_from_non_admins(self) -> None:
-        # A non-admin session never renders the Admin button or the tab strip.
+        # A non-admin session never renders the admin tab strip, and (with no
+        # resolvable internal role) no Settings link — but still gets the profile
+        # dropdown with Sign out.
         from dashboard.renderers.base_layout import render_client_shell_page
         html = render_client_shell_page(
             client_slug="test", label="Test Co", active_nav="connectors",
@@ -169,7 +181,63 @@ class SidebarConsistencyTests(unittest.TestCase):
             access_key="k", session_is_admin=False, session_email="c@x.com",
         )
         self.assertNotIn("<span>Admin</span>", html)
+        self.assertNotIn("<span>Settings</span>", html)
         self.assertNotIn('<nav class="admin-top-tabs"', html)
+        self.assertIn('id="dashProfileTrigger"', html)
+        self.assertIn("<span>Sign out</span>", html)
+
+    def test_settings_gated_by_role(self) -> None:
+        # Settings shows for admin + standard internal users, never for client
+        # logins. Role is resolved from web_users, so drive the footer helper
+        # directly with a stubbed lookup (isolated from the DB-backed page render).
+        import web_users
+        from dashboard.renderers import base_layout
+
+        orig_enabled = web_users.enabled
+        orig_lookup = web_users.get_user_by_email
+        web_users.enabled = lambda: True
+
+        def _footer(role: str) -> str:
+            web_users.get_user_by_email = lambda email: types.SimpleNamespace(
+                role=role, avatar=None
+            )
+            return base_layout._sidebar_footer_tools_html(
+                email="person@example.com",
+                session_is_admin=(role == "admin"),
+                active_nav="files",
+                connectors_url="/dashboard/test/connectors",
+            )
+
+        try:
+            for role in ("admin", "standard"):
+                html = _footer(role)
+                self.assertIn("<span>Settings</span>", html,
+                              f"Settings should show for {role}")
+                self.assertIn('id="dashProfileTrigger"', html)
+                self.assertIn("<span>Sign out</span>", html)
+            client_html = _footer("client")
+            self.assertNotIn("<span>Settings</span>", client_html,
+                             "Settings must be hidden for client logins")
+            # A client still gets the profile dropdown + Sign out.
+            self.assertIn('id="dashProfileTrigger"', client_html)
+            self.assertIn("<span>Sign out</span>", client_html)
+        finally:
+            web_users.enabled = orig_enabled
+            web_users.get_user_by_email = orig_lookup
+
+    def test_settings_dropped_in_admin_context(self) -> None:
+        # Inside the admin environment the workspace switcher already carries
+        # "Admin panel", so the profile menu drops Settings (keeps Sign out).
+        from dashboard.renderers import base_layout
+        html = base_layout._sidebar_footer_tools_html(
+            email="admin@sf.com",
+            session_is_admin=True,
+            active_nav="connectors",
+            connectors_url="/dashboard/test/connectors",
+            admin_context=True,
+        )
+        self.assertNotIn("<span>Settings</span>", html)
+        self.assertIn("<span>Sign out</span>", html)
 
 
 if __name__ == "__main__":
