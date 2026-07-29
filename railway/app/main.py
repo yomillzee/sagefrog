@@ -314,6 +314,22 @@ async def _security_headers(request: Request, call_next):
 
 
 @app.middleware("http")
+async def _track_last_seen(request: Request, call_next):
+    """Stamp the signed-in user's last-activity time (throttled, best-effort).
+
+    Long-lived sessions mean last_login_at alone can't show whether a user has
+    returned since; this keeps last_seen_at current from any authenticated
+    request. touch_last_seen throttles the write and swallows its own errors, so
+    this never blocks or fails the request. Runs inner to the session
+    middleware, so request.session is populated and the throttle marker it sets
+    is serialized back into the cookie on the way out.
+    """
+    response = await call_next(request)
+    web_auth.touch_last_seen(request)
+    return response
+
+
+@app.middleware("http")
 async def _csrf_protect(request: Request, call_next):
     """Reject cookie-authenticated state changes that lack a valid CSRF token."""
     if web_security.requires_csrf(request):

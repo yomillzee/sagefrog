@@ -24,6 +24,13 @@ SESSION_USER_ID = "user_id"
 # resolves to the impersonated user so every downstream access check and page
 # renders exactly as that user would see them.
 SESSION_VIEW_AS_ID = "view_as_user_id"
+# Epoch-seconds of the last time this session's activity was flushed to the
+# user's last_seen_at. Used to throttle those writes (see touch_last_seen).
+SESSION_LAST_SEEN_STAMP = "last_seen_stamp"
+# Only flush activity to the DB this often per session. A long-lived session
+# would otherwise write on every request; a few minutes keeps last_seen_at
+# usefully fresh on the admin list without turning reads into writes.
+LAST_SEEN_THROTTLE_SECONDS = 5 * 60
 
 
 def session_secret() -> str:
@@ -142,6 +149,35 @@ def login_user(request: Request, user: WebUser) -> None:
 
 def logout_user(request: Request) -> None:
     request.session.clear()
+
+
+def touch_last_seen(request: Request) -> None:
+    """Record that the signed-in account is active right now (throttled).
+
+    Stamps the *real* signed-in user (SESSION_USER_ID), not any "view as"
+    target, so impersonation never rewrites someone else's activity. Writes are
+    throttled per session via SESSION_LAST_SEEN_STAMP so a busy session touches
+    the DB at most once every LAST_SEEN_THROTTLE_SECONDS.
+
+    Best-effort and never raises: activity tracking must never affect the
+    request it rides along on."""
+    try:
+        if "session" not in request.scope:
+            return
+        raw = request.session.get(SESSION_USER_ID)
+        if raw is None:
+            return
+        user_id = int(raw)
+        now = int(datetime.now(tz=UTC).timestamp())
+        last = request.session.get(SESSION_LAST_SEEN_STAMP)
+        if isinstance(last, (int, float)) and now - int(last) < LAST_SEEN_THROTTLE_SECONDS:
+            return
+        # Update the throttle marker first so a slow/failed DB write doesn't
+        # cause every subsequent request to retry the write.
+        request.session[SESSION_LAST_SEEN_STAMP] = now
+        web_users.record_activity(user_id)
+    except Exception:
+        pass
 
 
 def impersonation_banner_html(request: Request) -> str:
@@ -571,8 +607,8 @@ def _parse_iso_utc(iso: str | None) -> datetime | None:
     return dt.astimezone(UTC)
 
 
-def _format_last_login(iso: str | None) -> tuple[str, str]:
-    """Return (relative label, absolute tooltip) for a last-login timestamp.
+def _format_last_seen(iso: str | None) -> tuple[str, str]:
+    """Return (relative label, absolute tooltip) for a last-activity timestamp.
 
     Relative keeps the column scannable ("2h ago"); the tooltip carries the
     exact UTC time for when precision matters."""
@@ -966,8 +1002,13 @@ def render_admin_page(
             if u.get("is_active")
             else '<span class="pill pill-off">Inactive</span>'
         )
-        ll_rel, ll_abs = _format_last_login(u.get("last_login_at"))
-        never = u.get("last_login_at") is None
+        # Prefer last activity (any authenticated request) over last login: a
+        # long-lived session means a week-old login can hide someone who's been
+        # back every day. Fall back to the login stamp for rows recorded before
+        # activity tracking existed.
+        last_activity = u.get("last_seen_at") or u.get("last_login_at")
+        ll_rel, ll_abs = _format_last_seen(last_activity)
+        never = last_activity is None
         ll_cls = "last-login never" if never else "last-login"
         last_login_cell = (
             f'<span class="{ll_cls}" title="{_esc(ll_abs)}">{_esc(ll_rel)}</span>'
@@ -1050,7 +1091,7 @@ def render_admin_page(
                 f'<td class="col-user" data-label="User">{_esc(email)}</td>'
                 f'<td data-label="Role">{role_badge}</td>'
                 f'<td class="col-access" data-label="Client access">{access_cell}</td>'
-                f'<td data-label="Last login">{last_login_cell}</td>'
+                f'<td data-label="Last session">{last_login_cell}</td>'
                 f'<td data-label="Status">{status_badge}</td>'
                 f'<td class="col-actions">{actions}</td>'
             )
@@ -1066,7 +1107,7 @@ def render_admin_page(
                 f'<td class="col-user" data-label="User">{_esc(email)}</td>'
                 f'<td data-label="Group">{group_cell}</td>'
                 f'<td class="col-access" data-label="Dashboards">{access_cell}</td>'
-                f'<td data-label="Last login">{last_login_cell}</td>'
+                f'<td data-label="Last session">{last_login_cell}</td>'
                 f'<td data-label="Status">{status_badge}</td>'
                 f'<td class="col-actions">{actions}</td>'
             )
@@ -1657,7 +1698,7 @@ def render_admin_page(
       background: #eef2ff; color: #4338ca; }}
     .chip-none {{ display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .74rem; font-weight: 600;
       background: #f8fafc; color: #94a3b8; border: 1px dashed #cbd5e1; }}
-    /* ---- Last login column ---- */
+    /* ---- Last session (last-activity) column ---- */
     .last-login {{ font-size: .84rem; color: #334155; font-variant-numeric: tabular-nums; white-space: nowrap; }}
     .last-login.never {{ color: #94a3b8; font-style: italic; }}
     /* ---- Group access preview (redundancy check) ---- */
@@ -1895,7 +1936,7 @@ def render_admin_page(
         </div>
         <div class="user-table-wrap">
           <table class="user-table">
-            <thead><tr><th class="col-av"></th><th>User</th><th>Role</th><th>Client access</th><th>Last login</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th class="col-av"></th><th>User</th><th>Role</th><th>Client access</th><th>Last session</th><th>Status</th><th></th></tr></thead>
             <tbody>{team_body}</tbody>
           </table>
           <p class="users-empty muted" hidden>No Sagefrog team members match your filter.</p>
@@ -1913,7 +1954,7 @@ def render_admin_page(
         </div>
         <div class="user-table-wrap">
           <table class="user-table">
-            <thead><tr><th class="col-av"></th><th>User</th><th>Group</th><th>Dashboards</th><th>Last login</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th class="col-av"></th><th>User</th><th>Group</th><th>Dashboards</th><th>Last session</th><th>Status</th><th></th></tr></thead>
             <tbody>{client_body}</tbody>
           </table>
           <p class="users-empty muted" hidden>No client portal users match your filter.</p>
