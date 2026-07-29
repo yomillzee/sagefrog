@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -14,23 +15,50 @@ _log = logging.getLogger(__name__)
 _GTM_BASE = "https://tagmanager.googleapis.com/tagmanager/v2"
 _CACHE_TTL = timedelta(minutes=15)
 # The account/container fan-out (one call per account) is the burst that trips
-# GTM's per-minute quota, and the wizard's "Select account" step re-fetches it on
-# every render and retry. Memoise it briefly so a single onboarding session pays
-# the fan-out at most once instead of re-tripping the 429 on each reload.
-_CONTAINERS_CACHE_TTL = timedelta(minutes=5)
+# GTM's per-user quota, and the wizard's "Select account" step re-fetches it on
+# every render and retry. Memoise it so a single onboarding session pays the
+# fan-out at most once instead of re-tripping the 429 on each reload. The TTL is
+# generous (a wizard walk-through — connect, pick account, test — easily spans
+# several minutes) so the listing survives the whole session, not just the first
+# few steps.
+_CONTAINERS_CACHE_TTL = timedelta(minutes=15)
 
-# GTM enforces a low per-minute quota, so a burst of calls (e.g. the connection
+# GTM enforces a low per-user quota, so a burst of calls (e.g. the connection
 # test fired repeatedly) can return 429 Too Many Requests, and Google's edge can
-# hiccup with 500/502/503. Retry those a couple of times with a short backoff.
+# hiccup with 500/502/503. Retry those a few times with a short backoff.
 _RETRY_STATUSES = frozenset({429, 500, 502, 503})
-_MAX_ATTEMPTS = 3
+_MAX_ATTEMPTS = 4
 _RETRY_BACKOFF_SECONDS = 2
+
+# The container fan-out issues one request per account. Fired back-to-back that
+# burst is exactly what trips GTM's per-user quota, so space the per-account
+# calls out into a steady stream that stays under the limit. A typical client
+# token sees a handful of accounts (sub-second added), and even a large agency
+# token completes and then serves from cache for the rest of the session.
+_FANOUT_PACE_SECONDS = 0.3
 
 # key: (client_slug, container_id) → (fetched_at, payload)
 _cache: dict[tuple[str, str], tuple[datetime, dict[str, Any]]] = {}
 
 # key: refresh_token → (fetched_at, container list) — see list_containers().
 _containers_cache: dict[str, tuple[datetime, list[dict[str, Any]]]] = {}
+
+# Single-flight guard: overlapping wizard loads (rapid step clicks, multiple
+# workers) must not each launch the fan-out — that multiplies the very burst we
+# are trying to avoid. Callers that miss the cache serialise on a per-token lock
+# and re-check the cache once inside, so the fan-out runs once and everyone else
+# rides its result.
+_containers_locks: dict[str, threading.Lock] = {}
+_containers_locks_guard = threading.Lock()
+
+
+def _containers_lock(refresh_token: str) -> threading.Lock:
+    with _containers_locks_guard:
+        lock = _containers_locks.get(refresh_token)
+        if lock is None:
+            lock = threading.Lock()
+            _containers_locks[refresh_token] = lock
+        return lock
 
 # ── Friendly-name maps ────────────────────────────────────────────────────────
 
@@ -149,21 +177,56 @@ def list_containers(
 
     Each entry: {"id": "accountId:containerId", "name": "Container (Account) • GTM-XXXXX"}
 
-    The result is cached briefly per token: this call fans out one request per
-    account, which is exactly the burst that trips GTM's per-minute quota, and the
-    wizard's "Select account" step re-fetches on every render. Serving repeats from
-    cache keeps a single onboarding session from re-tripping the 429.
-    """
-    now = datetime.now(tz=UTC)
-    if not force_refresh and refresh_token in _containers_cache:
-        fetched_at, cached = _containers_cache[refresh_token]
-        if now - fetched_at < _CONTAINERS_CACHE_TTL:
-            _log.debug(
-                "GTM containers cache hit: age=%ds count=%d",
-                (now - fetched_at).seconds, len(cached),
-            )
-            return cached
+    The result is cached per token: this call fans out one request per account,
+    which is exactly the burst that trips GTM's per-user quota, and the wizard's
+    "Select account" step re-fetches on every render. Serving repeats from cache
+    keeps a single onboarding session from re-tripping the 429.
 
+    The fan-out itself is defended two ways so the *first* (uncached) call also
+    stays under quota: overlapping callers single-flight on a per-token lock (so
+    the burst runs once, not once per concurrent load), and the per-account
+    requests are paced apart rather than fired back-to-back.
+    """
+    cached = _cached_containers(refresh_token, force_refresh=force_refresh)
+    if cached is not None:
+        return cached
+
+    lock = _containers_lock(refresh_token)
+    with lock:
+        # Another caller may have completed the fan-out while we waited on the
+        # lock — re-check the cache before paying for it again.
+        cached = _cached_containers(refresh_token, force_refresh=force_refresh)
+        if cached is not None:
+            return cached
+        return _fetch_containers(refresh_token)
+
+
+def _cached_containers(
+    refresh_token: str, *, force_refresh: bool
+) -> list[dict[str, Any]] | None:
+    """Return the cached container list if fresh, else None."""
+    if force_refresh:
+        return None
+    entry = _containers_cache.get(refresh_token)
+    if entry is None:
+        return None
+    fetched_at, cached = entry
+    if datetime.now(tz=UTC) - fetched_at >= _CONTAINERS_CACHE_TTL:
+        return None
+    _log.debug(
+        "GTM containers cache hit: age=%ds count=%d",
+        (datetime.now(tz=UTC) - fetched_at).seconds, len(cached),
+    )
+    return cached
+
+
+def _fetch_containers(refresh_token: str) -> list[dict[str, Any]]:
+    """Run the accounts → containers fan-out and cache the result.
+
+    Callers hold the per-token single-flight lock. The per-account calls are
+    paced (``_FANOUT_PACE_SECONDS`` apart) so the burst stays under GTM's
+    per-user quota instead of tripping 429 before it can finish and cache.
+    """
     access_token = _get_access_token(refresh_token)
     with httpx.Client(timeout=30) as http:
         resp = _gtm_get(http, f"{_GTM_BASE}/accounts", access_token)
@@ -177,7 +240,11 @@ def list_containers(
 
     containers: list[dict[str, Any]] = []
     with httpx.Client(timeout=30) as http:
-        for acct in accounts:
+        for i, acct in enumerate(accounts):
+            if i:
+                # Space the fan-out into a steady stream (skipped before the
+                # first account and, naturally, when there is only one).
+                time.sleep(_FANOUT_PACE_SECONDS)
             acct_id = str(acct.get("accountId", ""))
             acct_name = str(acct.get("name", acct_id))
             cr = _gtm_get(
@@ -194,7 +261,7 @@ def list_containers(
                     label += f" • {public_id}"
                 containers.append({"id": f"{acct_id}:{cid}", "name": label})
 
-    _containers_cache[refresh_token] = (now, containers)
+    _containers_cache[refresh_token] = (datetime.now(tz=UTC), containers)
     return containers
 
 
