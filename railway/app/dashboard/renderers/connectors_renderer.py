@@ -725,6 +725,8 @@ def _render_wizard(
     var _manualAccountEntry = {'true' if handler.manual_account_entry else 'false'};
     var _selectedAccountId = null;
     var _selectedAccountName = null;
+    var _accountsLoading = false;
+    var _accountsLoaded = false;
     var _configuredBqProject = null;
     var _configuredRawDs = null;
     var _configuredMartDs = null;
@@ -781,8 +783,14 @@ def _render_wizard(
     }});
 
     function loadAccounts() {{
+      // Revisiting step 2 (or a double-fire from activateStep) must not launch a
+      // second fan-out — that multiplies the burst GTM rate-limits on. Fetch at
+      // most once; a failure clears the flag so the user can retry.
+      if (_accountsLoading || _accountsLoaded) return;
+      _accountsLoading = true;
       var url = '/dashboard/' + _clientSlug + '/connectors/' + _connType + '/accounts';
       fetch(url).then(r => r.json()).then(data => {{
+        _accountsLoading = false;
         document.getElementById('accountLoading').style.display = 'none';
         if (!data.ok) {{
           var err = document.getElementById('accountError');
@@ -815,7 +823,9 @@ def _render_wizard(
         if (!data.accounts || !data.accounts.length) {{
           list.innerHTML = '<p style="color:var(--muted);font-size:.9rem">No accounts found for this connection.</p>';
         }}
+        _accountsLoaded = true;  // don't re-fan-out on revisits once it succeeds
       }}).catch(err => {{
+        _accountsLoading = false;  // allow a retry after a network failure
         document.getElementById('accountLoading').style.display = 'none';
         var errEl = document.getElementById('accountError');
         errEl.textContent = 'Failed to load accounts: ' + err.message;
