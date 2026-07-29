@@ -90,6 +90,15 @@ SCHEMA_SQL_STATEMENTS = [
     """
     ALTER TABLE web_users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ
     """,
+    # Timestamp of the user's most recent authenticated activity (any request,
+    # not just a sign-in). Sessions are long-lived (a 14-day cookie), so a
+    # week-old last_login_at can't tell whether the user has actually come back
+    # since. This is stamped — throttled to at most once every few minutes per
+    # session — on active requests, so the admin list reflects real recency of
+    # use rather than only when a fresh login last happened.
+    """
+    ALTER TABLE web_users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ
+    """,
 ]
 
 
@@ -270,15 +279,40 @@ def authenticate(email: str, password: str) -> WebUser | None:
 def record_login(user_id: int) -> None:
     """Stamp a user's most recent successful sign-in time.
 
-    Best-effort: a failure here must never block an otherwise-valid login, so
-    callers can ignore the return. Only touches active rows."""
+    Also seeds last_seen_at so activity recency is never behind the login it
+    started from. Best-effort: a failure here must never block an otherwise-valid
+    login, so callers can ignore the return. Only touches active rows."""
     if not enabled():
         return
     try:
         ensure_schema()
         with db.connection() as conn:
             conn.execute(
-                "UPDATE web_users SET last_login_at = NOW() "
+                "UPDATE web_users SET last_login_at = NOW(), last_seen_at = NOW() "
+                "WHERE id = %s AND is_active = TRUE",
+                (int(user_id),),
+            )
+    except Exception:
+        pass
+
+
+def record_activity(user_id: int) -> None:
+    """Stamp a user's most recent authenticated activity time.
+
+    Unlike record_login this fires on ordinary authenticated requests, so an
+    admin can tell a still-active user (using a long-lived session) apart from
+    one who signed in once and never returned. Callers are expected to throttle
+    (see web_auth.touch_last_seen) so this is not a per-request write.
+
+    Best-effort: a failure here must never affect the request. Only active
+    rows are touched."""
+    if not enabled():
+        return
+    try:
+        ensure_schema()
+        with db.connection() as conn:
+            conn.execute(
+                "UPDATE web_users SET last_seen_at = NOW() "
                 "WHERE id = %s AND is_active = TRUE",
                 (int(user_id),),
             )
@@ -293,7 +327,7 @@ def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
     cols = (
         "u.id, u.email, u.role, u.client_slug, u.is_active, u.created_at, "
         "u.avatar, u.allowed_client_slugs, u.group_id, g.name, g.client_slugs, "
-        "u.last_login_at"
+        "u.last_login_at, u.last_seen_at"
     )
     where = "" if include_inactive else "WHERE u.is_active = TRUE"
     with db.connection() as conn:
@@ -318,6 +352,7 @@ def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
                 "group_name": str(row[9]) if row[9] is not None else None,
                 "group_client_slugs": [str(s) for s in group_slugs],
                 "last_login_at": row[11].isoformat() if len(row) > 11 and row[11] else None,
+                "last_seen_at": row[12].isoformat() if len(row) > 12 and row[12] else None,
             }
         )
     return out

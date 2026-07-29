@@ -1,10 +1,12 @@
-"""Polish on the admin user list: last-login column, search, and the
+"""Polish on the admin user list: last-session column, search, and the
 client-group access preview.
 
 These pin the pieces that make a growing client roster safe and scannable:
-a relative "last login" per user (usage at a glance), a client-side filter
-box, and a live preview of exactly which dashboards a chosen group grants —
-the redundancy that stops a client being bound to the wrong portal.
+a relative "last session" per user (recency of use at a glance — last
+activity, not just last login, so a long-lived session that keeps coming
+back isn't hidden behind a stale login), a client-side filter box, and a
+live preview of exactly which dashboards a chosen group grants — the
+redundancy that stops a client being bound to the wrong portal.
 """
 
 from __future__ import annotations
@@ -60,39 +62,64 @@ def _render():
     )
 
 
-class LastLoginFormatTests(unittest.TestCase):
+class LastSeenFormatTests(unittest.TestCase):
     def test_never_when_missing(self) -> None:
-        rel, tip = web_auth._format_last_login(None)
+        rel, tip = web_auth._format_last_seen(None)
         self.assertEqual(rel, "Never")
         self.assertIn("not signed in", tip.lower())
 
     def test_relative_hours(self) -> None:
-        rel, tip = web_auth._format_last_login(_iso_ago(hours=2))
+        rel, tip = web_auth._format_last_seen(_iso_ago(hours=2))
         self.assertEqual(rel, "2h ago")
         self.assertIn("UTC", tip)
 
     def test_relative_days_and_weeks(self) -> None:
-        self.assertEqual(web_auth._format_last_login(_iso_ago(days=3))[0], "3d ago")
-        self.assertEqual(web_auth._format_last_login(_iso_ago(days=14))[0], "2w ago")
+        self.assertEqual(web_auth._format_last_seen(_iso_ago(days=3))[0], "3d ago")
+        self.assertEqual(web_auth._format_last_seen(_iso_ago(days=14))[0], "2w ago")
 
     def test_just_now(self) -> None:
-        self.assertEqual(web_auth._format_last_login(_iso_ago(seconds=5))[0], "Just now")
+        self.assertEqual(web_auth._format_last_seen(_iso_ago(seconds=5))[0], "Just now")
 
     def test_bad_input_is_never(self) -> None:
-        self.assertEqual(web_auth._format_last_login("not-a-date")[0], "Never")
+        self.assertEqual(web_auth._format_last_seen("not-a-date")[0], "Never")
 
 
 class UserTableTests(unittest.TestCase):
-    def test_last_login_column_header(self) -> None:
-        self.assertIn("<th>Last login</th>", _render())
+    def test_last_session_column_header(self) -> None:
+        self.assertIn("<th>Last session</th>", _render())
 
-    def test_last_login_cells(self) -> None:
+    def test_last_session_cells(self) -> None:
         html = _render()
         self.assertIn("2h ago", html)
         self.assertIn("3d ago", html)
-        # The never-logged-in client is flagged distinctly.
+        # The never-active client is flagged distinctly.
         self.assertIn('class="last-login never"', html)
         self.assertIn(">Never<", html)
+
+    def test_last_seen_takes_precedence_over_login(self) -> None:
+        # A user who logged in a week ago but was active 10 minutes ago reads as
+        # recent — the whole point of tracking activity rather than just login.
+        users = [
+            {"id": 5, "email": "back@sf.com", "role": "admin", "is_active": True,
+             "last_login_at": _iso_ago(days=7), "last_seen_at": _iso_ago(minutes=10)},
+        ]
+        html = web_auth.render_admin_page(
+            user=_Admin(), users=users, groups=_groups(), audit_events=[], page="users"
+        )
+        self.assertIn("10m ago", html)
+        self.assertNotIn("7d ago", html)
+
+    def test_falls_back_to_login_without_activity(self) -> None:
+        # Rows recorded before activity tracking (no last_seen_at) still show the
+        # login stamp rather than collapsing to "Never".
+        users = [
+            {"id": 6, "email": "legacy@sf.com", "role": "admin", "is_active": True,
+             "last_login_at": _iso_ago(days=3), "last_seen_at": None},
+        ]
+        html = web_auth.render_admin_page(
+            user=_Admin(), users=users, groups=_groups(), audit_events=[], page="users"
+        )
+        self.assertIn("3d ago", html)
 
     def test_rows_carry_search_key(self) -> None:
         html = _render()
