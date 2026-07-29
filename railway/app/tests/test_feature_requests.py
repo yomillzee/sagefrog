@@ -72,8 +72,14 @@ class CleanHelperTests(unittest.TestCase):
 
     def test_status_normalizes_unknown_to_new(self) -> None:
         self.assertEqual(feature_requests._normalize_status("done"), "done")
+        self.assertEqual(feature_requests._normalize_status("archived"), "archived")
         self.assertEqual(feature_requests._normalize_status("bogus"), "new")
         self.assertEqual(feature_requests._normalize_status(None), "new")
+
+    def test_archived_is_a_recognized_status(self) -> None:
+        # Archiving dismisses a request from the inbox; it must be a valid status
+        # so list_requests can filter on it and _normalize_status keeps it.
+        self.assertIn("archived", feature_requests.STATUSES)
 
 
 class RequestShapeTests(unittest.TestCase):
