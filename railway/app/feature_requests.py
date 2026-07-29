@@ -10,7 +10,8 @@ gets lost in a chat thread.
 Storage mirrors ``admin_dev_notes`` / ``client_notes`` — a single table, raw SQL
 via ``db`` v3, idempotent ``ensure_schema()``, no ORM. A request starts life as
 ``status = 'new'`` (an unread notification) and a super admin marks it
-``'done'`` once handled.
+``'done'`` once handled. A super admin can also ``'archived'`` a request to
+dismiss it from the inbox without losing the row, or hard-delete it outright.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ SCHEMA_SQL_STATEMENTS = [
     """,
 ]
 
-STATUSES = ("new", "done")
+STATUSES = ("new", "done", "archived")
 
 # Keep the free-text fields bounded so a runaway paste can't bloat a row.
 MAX_BODY_LEN = 20_000
@@ -200,7 +201,14 @@ def _notify_slack(request: FeatureRequest) -> None:
         _log.exception("Failed to send Slack notification for feature request %s", request.id)
 
 
-def list_requests(*, status: str | None = None, limit: int = 200) -> list[FeatureRequest]:
+def list_requests(
+    *, status: str | None = None, include_archived: bool = False, limit: int = 200
+) -> list[FeatureRequest]:
+    """List requests newest-first.
+
+    Archived requests are dismissed from the inbox: they're excluded unless
+    ``include_archived`` is set or ``status='archived'`` is asked for explicitly.
+    """
     if not enabled():
         return []
     ensure_schema()
@@ -210,6 +218,8 @@ def list_requests(*, status: str | None = None, limit: int = 200) -> list[Featur
     if status:
         where = "WHERE status = %s"
         params.append(_normalize_status(status))
+    elif not include_archived:
+        where = "WHERE status <> 'archived'"
     params.append(limit)
     with db.connection() as conn:
         rows = conn.execute(
@@ -266,6 +276,41 @@ def reopen(request_id: int) -> bool:
             SET status = 'new', resolved_at = NULL, resolved_by = NULL
             WHERE id = %s AND status <> 'new'
             """,
+            (int(request_id),),
+        )
+    return bool(cur.rowcount)
+
+
+def archive_request(request_id: int, *, archived_by: str | None = None) -> bool:
+    """Dismiss a request from the inbox without deleting it.
+
+    Reuses ``resolved_at`` / ``resolved_by`` to record who cleared it and when.
+    """
+    if not enabled():
+        return False
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    actor = (archived_by or "").strip() or None
+    with db.connection() as conn:
+        cur = conn.execute(
+            """
+            UPDATE feature_requests
+            SET status = 'archived', resolved_at = %s, resolved_by = %s
+            WHERE id = %s AND status <> 'archived'
+            """,
+            (now, actor, int(request_id)),
+        )
+    return bool(cur.rowcount)
+
+
+def delete_request(request_id: int) -> bool:
+    """Permanently remove a request. Unlike archiving, this can't be undone."""
+    if not enabled():
+        return False
+    ensure_schema()
+    with db.connection() as conn:
+        cur = conn.execute(
+            "DELETE FROM feature_requests WHERE id = %s",
             (int(request_id),),
         )
     return bool(cur.rowcount)

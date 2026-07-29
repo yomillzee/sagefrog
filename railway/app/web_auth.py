@@ -1349,14 +1349,26 @@ def render_admin_page(
                 else '<span class="fr-badge fr-badge-done">Done</span>'
             )
             if is_new:
-                action = (
+                primary = (
                     f'<form method="post" action="/admin/feature-requests/{r.id}/done" class="inline-form">'
                     f'<button type="submit" class="link">Mark done</button></form>'
                 )
             else:
                 resolved = _esc(r.resolved_by or "")
                 by = f" by {resolved}" if resolved else ""
-                action = f'<span class="fr-resolved">Resolved{by}</span>'
+                primary = f'<span class="fr-resolved">Resolved{by}</span>'
+            # Archive dismisses the request from the inbox (keeps the row);
+            # delete removes it for good behind a confirm.
+            archive_action = (
+                f'<form method="post" action="/admin/feature-requests/{r.id}/archive" class="inline-form">'
+                f'<button type="submit" class="link fr-archive">Archive</button></form>'
+            )
+            delete_action = (
+                f'<form method="post" action="/admin/feature-requests/{r.id}/delete" class="inline-form" '
+                f"onsubmit=\"return confirm('Delete this feature request? This can\\'t be undone.');\">"
+                f'<button type="submit" class="link fr-delete">Delete</button></form>'
+            )
+            action = f"{primary}{archive_action}{delete_action}"
             return f"""
         <div class="fr-row {'is-new' if is_new else 'is-done'}">
           <div class="fr-row-head">
@@ -1523,6 +1535,11 @@ def render_admin_page(
     .fr-row.is-new {{ border-color: #ddd6fe; background: #fbfaff; }}
     .fr-row.is-done {{ opacity: .72; }}
     .fr-row-head {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; }}
+    .fr-row-actions {{ display: flex; align-items: center; gap: 12px; flex-shrink: 0; }}
+    .fr-archive {{ color: var(--muted); }}
+    .fr-archive:hover {{ color: var(--navy); }}
+    .fr-delete {{ color: #b91c1c; }}
+    .fr-delete:hover {{ color: #7f1d1d; }}
     .fr-row-where {{ display: flex; align-items: center; gap: 9px; min-width: 0; }}
     .fr-badge {{ display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .68rem; font-weight: 800;
       text-transform: uppercase; letter-spacing: .04em; flex-shrink: 0; }}

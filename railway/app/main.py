@@ -1907,6 +1907,44 @@ def admin_feature_request_done(
     )
 
 
+@app.post("/admin/feature-requests/{request_id}/archive", include_in_schema=False)
+def admin_feature_request_archive(
+    request_id: int,
+    request: Request,
+    admin: web_users.WebUser = Depends(web_auth.require_super_admin),
+):
+    """Archive a team feature request — dismisses it from the inbox, keeps the row."""
+    try:
+        feature_requests.archive_request(request_id, archived_by=admin.email)
+    except Exception:
+        return RedirectResponse(
+            url="/admin?err=Could+not+archive+feature+request#feature-requests",
+            status_code=303,
+        )
+    return RedirectResponse(
+        url="/admin?msg=Feature+request+archived#feature-requests", status_code=303
+    )
+
+
+@app.post("/admin/feature-requests/{request_id}/delete", include_in_schema=False)
+def admin_feature_request_delete(
+    request_id: int,
+    request: Request,
+    admin: web_users.WebUser = Depends(web_auth.require_super_admin),
+):
+    """Permanently delete a team feature request — can't be undone."""
+    try:
+        feature_requests.delete_request(request_id)
+    except Exception:
+        return RedirectResponse(
+            url="/admin?err=Could+not+delete+feature+request#feature-requests",
+            status_code=303,
+        )
+    return RedirectResponse(
+        url="/admin?msg=Feature+request+deleted#feature-requests", status_code=303
+    )
+
+
 @app.get("/admin/hq", include_in_schema=False)
 def admin_budget_hq(request: Request):
     """Legacy 'Budget HQ' — superseded by HQ (the DuckDB agency overview at
