@@ -118,43 +118,60 @@ def list_organizations(
     access_token: str | None = None,
     env: LinkedInEnv | None = None,
 ) -> list[dict[str, Any]]:
-    """List organization pages the authenticated user administers.
+    """List organization pages the authenticated user has a role on.
 
-    Uses ``/organizationAcls?q=roleAssignee`` (ADMINISTRATOR role) and hydrates
-    each organizational target with its localized name. Shaped like
-    ``linkedin_service.list_ad_accounts`` so the connector wizard renders the
-    same account-picker UX.
+    Uses ``/organizationAcls?q=roleAssignee`` and hydrates each organizational
+    target with its localized name. Shaped like ``linkedin_service.list_ad_accounts``
+    so the connector wizard renders the same account-picker UX.
+
+    Deliberately does NOT filter to ``role=ADMINISTRATOR``: agency staff are often
+    added to a client's page as a Content Admin / Analyst (distinct ACL roles), and
+    filtering to ADMINISTRATOR would silently hide those pages and surface as an
+    empty "No accounts found". We list every page the member holds any approved
+    role on; the sync itself degrades gracefully if a given role lacks a stat scope.
     """
     token, env = _resolve_token(access_token, env)
 
+    # Try approved grants first, then fall back to an unfiltered roleAssignee query
+    # (covers pages whose ACL state isn't reported as APPROVED). The first query
+    # that yields rows wins.
     elements: list[dict[str, Any]] = []
     acl_error: Exception | None = None
-    for role in ("ADMINISTRATOR",):
+    for query in ("q=roleAssignee&state=APPROVED", "q=roleAssignee"):
         try:
             payload = _linkedin_get(
-                f"/organizationAcls?q=roleAssignee&role={role}&state=APPROVED",
-                access_token=token,
-                env=env,
+                f"/organizationAcls?{query}", access_token=token, env=env,
             )
-            elements.extend(payload.get("elements") or [])
+            elements = payload.get("elements") or []
         except Exception as exc:  # pragma: no cover - network dependent
-            _log.warning("organizationAcls role=%s failed: %s", role, exc)
+            _log.warning("organizationAcls (%s) failed: %s", query, exc)
             acl_error = exc
+            continue
+        if elements:
+            break
 
     # A hard API failure (missing scope, revoked token, wrong app) must surface in
     # the wizard, not masquerade as "No accounts found" — that empty state is
     # reserved for an authenticated member who genuinely administers no pages.
-    if acl_error is not None and not elements:
+    if not elements and acl_error is not None:
         raise RuntimeError(f"LinkedIn organization lookup failed: {str(acl_error)[:300]}")
 
     org_ids: list[str] = []
     seen: set[str] = set()
     for row in elements:
-        target = str(row.get("organizationalTarget") or row.get("organizationalTarget~") or "")
+        target = str(
+            row.get("organizationalTarget")
+            or row.get("organizationalTarget~")
+            or row.get("organization")
+            or ""
+        )
         oid = _urn_id(target)
         if oid and oid not in seen:
             seen.add(oid)
             org_ids.append(oid)
+    _log.info(
+        "linkedin organizationAcls: %d acl rows, %d distinct orgs", len(elements), len(org_ids)
+    )
 
     accounts: list[dict[str, Any]] = []
     for oid in org_ids:

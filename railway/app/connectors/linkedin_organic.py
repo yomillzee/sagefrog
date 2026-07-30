@@ -34,7 +34,19 @@ class LinkedInOrganicConnector(ConnectorHandler):
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
         access_token = _get_access_token(client_slug)
         import linkedin_organic_service
-        return linkedin_organic_service.list_organizations(access_token=access_token)
+        orgs = linkedin_organic_service.list_organizations(access_token=access_token)
+        if not orgs:
+            # Turn a silent "No accounts found" into an actionable message: an
+            # authenticated token that surfaces zero pages almost always means the
+            # LinkedIn member who authorized isn't listed on any company page (or
+            # was added after authorizing). Raising here routes this text to the
+            # wizard's error slot instead of the bland empty state.
+            raise RuntimeError(
+                "Connected, but this LinkedIn account isn't a member of any company "
+                "page the app can see. Add the account as an admin (super, content, "
+                "or analyst) of the LinkedIn Page, then click Re-authorize."
+            )
+        return orgs
 
     def run_sync(self, *, client_slug: str, date_range: str = "LAST_30_DAYS") -> SyncResult:
         import bq_linkedin_organic_service

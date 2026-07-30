@@ -55,5 +55,40 @@ class OrganicOAuthWiringTests(unittest.TestCase):
         self.assertTrue(q["redirect_uri"][0].endswith("/oauth/linkedin_organic/callback"))
 
 
+class ListAccountsGuidanceTests(unittest.TestCase):
+    def test_empty_discovery_raises_actionable_message(self) -> None:
+        import connectors.linkedin_organic as lo
+        import linkedin_organic_service as los
+
+        orig_token = lo._get_access_token
+        orig_list = los.list_organizations
+        lo._get_access_token = lambda slug: "TOK"  # type: ignore
+        los.list_organizations = lambda **kw: []  # type: ignore
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                lo.LinkedInOrganicConnector().list_accounts(client_slug="apex")
+        finally:
+            lo._get_access_token = orig_token
+            los.list_organizations = orig_list
+        msg = str(ctx.exception).lower()
+        self.assertIn("company page", msg)
+        self.assertIn("re-authorize", msg)
+
+    def test_discovered_accounts_pass_through(self) -> None:
+        import connectors.linkedin_organic as lo
+        import linkedin_organic_service as los
+
+        orig_token = lo._get_access_token
+        orig_list = los.list_organizations
+        lo._get_access_token = lambda slug: "TOK"  # type: ignore
+        los.list_organizations = lambda **kw: [{"id": "1", "name": "Apex", "status": ""}]  # type: ignore
+        try:
+            out = lo.LinkedInOrganicConnector().list_accounts(client_slug="apex")
+        finally:
+            lo._get_access_token = orig_token
+            los.list_organizations = orig_list
+        self.assertEqual(out, [{"id": "1", "name": "Apex", "status": ""}])
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

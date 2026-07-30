@@ -106,6 +106,26 @@ class OrganicFetchTests(unittest.TestCase):
         organic._linkedin_get = lambda path, **kw: {"elements": []}  # type: ignore
         self.assertEqual(organic.list_organizations(access_token="TOK"), [])
 
+    def test_list_organizations_lists_non_admin_roles(self) -> None:
+        # Discovery must not filter to role=ADMINISTRATOR: a Content Admin / Analyst
+        # grant should still surface the page. The query carries no role facet.
+        seen_paths: list[str] = []
+
+        def _get(path, **kw):
+            seen_paths.append(path)
+            return {"elements": [
+                {"role": "ANALYST", "state": "APPROVED",
+                 "organizationalTarget": "urn:li:organization:999"},
+            ]}
+
+        organic._linkedin_get = _get  # type: ignore
+        organic._linkedin_get_with_versions = lambda path, **kw: {  # type: ignore
+            "localizedName": "Apex Co", "status": "OPERATING",
+        }
+        orgs = organic.list_organizations(access_token="TOK")
+        self.assertEqual([o["id"] for o in orgs], ["999"])
+        self.assertTrue(all("role=" not in p for p in seen_paths))
+
     def test_fetch_posts_with_stats_filters_window_and_joins_stats(self) -> None:
         in_window = date(2026, 6, 10)
         out_window = date(2026, 1, 1)
