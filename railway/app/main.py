@@ -2699,6 +2699,48 @@ def admin_create_dashboard(
     )
 
 
+@app.post("/admin/dashboards/{client_slug}/rename", include_in_schema=False)
+def admin_rename_dashboard(
+    client_slug: str,
+    request: Request,
+    label: str = Form(...),
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    """Rename a dashboard's display label. The slug is the immutable internal key
+    (routes, BigQuery routing, OAuth tokens, config lookups all key on it); only
+    the human-facing name changes, so this is safe to expose to any admin."""
+    ctx = audit_log.request_context(request)
+    try:
+        renamed = dashboard_registry.rename_client(
+            client_slug=client_slug,
+            label=label,
+            updated_by=user.email,
+        )
+    except ValueError as exc:
+        users = web_users.list_users(include_inactive=False)
+        events = audit_log.list_recent(limit=150)
+        return HTMLResponse(
+            web_auth.render_admin_page(
+                user=user,
+                users=users,
+                audit_events=events,
+                error=str(exc),
+                page="clients",
+            ),
+            status_code=400,
+        )
+    audit_log.record(
+        action="dashboard.renamed",
+        actor_email=user.email,
+        detail={"client_slug": renamed.client_slug, "label": renamed.label},
+        **ctx,
+    )
+    return RedirectResponse(
+        url=f"/admin/clients?msg=Dashboard+renamed+to+{quote(renamed.label)}",
+        status_code=303,
+    )
+
+
 @app.post("/admin/dashboards/{client_slug}/mode", include_in_schema=False)
 def admin_convert_dashboard_mode(
     client_slug: str,

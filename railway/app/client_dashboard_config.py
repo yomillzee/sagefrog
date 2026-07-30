@@ -492,6 +492,36 @@ def get_sidebar_hidden_tabs(client_slug: str) -> tuple[str, ...]:
     return row.sidebar_hidden_tabs if row else ()
 
 
+def set_label(client_slug: str, label: str, *, updated_by: str | None = None) -> bool:
+    """Rename a client's display label, touching only the label column.
+
+    Accounts, layouts, budgets and every other setting are left untouched. This
+    deliberately does NOT create a row when none exists — ``dashboard_clients`` is
+    the source of truth for a client's name, and this only keeps a pre-existing
+    config row's label (which ``client_label()`` and the dashboard header read)
+    in step. Returns True when an existing row was updated."""
+    slug = (client_slug or "").strip().lower()
+    name = (label or "").strip()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not name:
+        raise ValueError("label is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save client dashboard config.")
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    with db.connection() as conn:
+        cur = conn.execute(
+            """
+            UPDATE client_dashboard_config
+            SET label = %s, updated_at = %s, updated_by = %s
+            WHERE client_slug = %s
+            """,
+            (name, now, (updated_by or "").strip() or None, slug),
+        )
+        return cur.rowcount > 0
+
+
 def save_config(
     client_slug: str,
     *,

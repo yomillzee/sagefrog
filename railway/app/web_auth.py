@@ -1276,6 +1276,20 @@ def render_admin_page(
                       </form>
                     </details>"""
 
+                # Rename edits the display label only — the slug (and every route,
+                # BigQuery route, OAuth token and config that keys on it) is left
+                # untouched, so this is safe for any admin.
+                rename_ctl = f"""
+                    <details class="dash-rename-fold">
+                      <summary class="dash-icon-btn" title="Rename dashboard" aria-label="Rename dashboard"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></summary>
+                      <form method="post" action="/admin/dashboards/{_esc(slug)}/rename" class="dash-rename-form">
+                        <p class="hint">Display name only — the URL <code>/dashboard/{_esc(slug)}</code> stays the same.</p>
+                        <input type="text" name="label" value="{_esc(label)}" maxlength="120" required
+                          autocomplete="off" aria-label="New display name">
+                        <button type="submit" class="link">Save name</button>
+                      </form>
+                    </details>"""
+
                 search_key = _esc(f"{label} {slug}".lower())
                 dash_rows.append(f"""
         <div class="dash-row" data-search="{search_key}">
@@ -1286,6 +1300,7 @@ def render_admin_page(
           </a>
           <div class="dash-row-actions">
             <a class="dash-icon-btn" href="/dashboard/{_esc(slug)}" title="Open dashboard" aria-label="Open dashboard"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg></a>
+            {rename_ctl}
             {delete_ctl}
           </div>
         </div>""")
@@ -1613,6 +1628,11 @@ def render_admin_page(
     .dash-delete-fold summary::-webkit-details-marker {{ display: none; }}
     .dash-delete-form {{ margin-top: 8px; padding: 10px; background: #fafbfc; border-radius: 8px; border: 1px solid var(--border); }}
     .dash-delete-form input {{ max-width: 100%; margin-bottom: 8px; }}
+    .dash-rename-fold {{ margin: 0; font-size: .88rem; }}
+    .dash-rename-fold summary {{ cursor: pointer; list-style: none; }}
+    .dash-rename-fold summary::-webkit-details-marker {{ display: none; }}
+    .dash-rename-form {{ margin-top: 8px; padding: 10px; background: #fafbfc; border-radius: 8px; border: 1px solid var(--border); }}
+    .dash-rename-form input {{ max-width: 100%; margin-bottom: 8px; }}
     /* ---- Users table (modern) ---- */
     .user-table-wrap {{ overflow-x: auto; }}
     .user-table {{ font-size: .92rem; }}
@@ -1768,6 +1788,9 @@ def render_admin_page(
     .dash-delete-fold[open] > .dash-icon-btn.danger {{ background: #fef2f2; color: var(--danger); border-color: #f3c0bb; }}
     .dash-delete-fold .dash-delete-form {{ position: absolute; right: 0; top: calc(100% + 6px); z-index: 6; width: 260px;
       max-width: 80vw; margin: 0; box-shadow: 0 8px 24px rgba(16,33,67,.16); }}
+    .dash-rename-fold[open] > .dash-icon-btn {{ background: #f4f8fd; color: var(--accent); border-color: #b9c8dc; }}
+    .dash-rename-fold .dash-rename-form {{ position: absolute; right: 0; top: calc(100% + 6px); z-index: 6; width: 280px;
+      max-width: 80vw; margin: 0; box-shadow: 0 8px 24px rgba(16,33,67,.16); }}
     /* Modern "Add dashboard" button */
     .add-dash-btn {{ display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px; border-radius: 10px;
       background: linear-gradient(135deg, var(--accent), var(--accent-d)); color: #fff; font-size: .88rem; font-weight: 700;
@@ -1850,6 +1873,7 @@ def render_admin_page(
       .row-fold-form,
       .dash-add-fold .dash-add-form,
       .dash-delete-fold .dash-delete-form,
+      .dash-rename-fold .dash-rename-form,
       .dash-add-form {{
         position: fixed; left: 12px; right: 12px; top: auto; bottom: 12px;
         width: auto; max-width: none; max-height: 72vh; overflow-y: auto;
