@@ -89,6 +89,23 @@ class OrganicFetchTests(unittest.TestCase):
         self.assertEqual(len(orgs), 1)
         self.assertEqual(orgs[0], {"id": "777", "name": "Acme Corp", "status": "OPERATING"})
 
+    def test_list_organizations_raises_on_acl_failure(self) -> None:
+        # A hard API failure (missing scope / revoked token) must surface, not be
+        # swallowed into an empty list that the wizard shows as "No accounts found".
+        def _boom(path, **kw):
+            raise RuntimeError("LinkedIn API error 403 on /organizationAcls: ACCESS_DENIED")
+
+        organic._linkedin_get = _boom  # type: ignore
+        with self.assertRaises(RuntimeError) as ctx:
+            organic.list_organizations(access_token="TOK")
+        self.assertIn("organization lookup failed", str(ctx.exception))
+
+    def test_list_organizations_empty_when_no_pages(self) -> None:
+        # An authenticated member who administers no pages is a legitimate empty,
+        # not an error.
+        organic._linkedin_get = lambda path, **kw: {"elements": []}  # type: ignore
+        self.assertEqual(organic.list_organizations(access_token="TOK"), [])
+
     def test_fetch_posts_with_stats_filters_window_and_joins_stats(self) -> None:
         in_window = date(2026, 6, 10)
         out_window = date(2026, 1, 1)

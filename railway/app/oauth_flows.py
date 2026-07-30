@@ -17,7 +17,7 @@ import meta_auth
 
 _log = logging.getLogger(__name__)
 
-PLATFORMS = frozenset({"google_ads", "linkedin", "meta", "gsc", "google_analytics", "google_tag_manager", "hubspot", "harvest", "microsoft_ads"})
+PLATFORMS = frozenset({"google_ads", "linkedin", "linkedin_organic", "meta", "gsc", "google_analytics", "google_tag_manager", "hubspot", "harvest", "microsoft_ads"})
 
 HUBSPOT_AUTH_URL = "https://app.hubspot.com/oauth/authorize"
 HUBSPOT_TOKEN_URL = "https://api.hubapi.com/oauth/v1/token"
@@ -42,6 +42,12 @@ GTM_SCOPE = "https://www.googleapis.com/auth/tagmanager.readonly"
 LINKEDIN_AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization"
 LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 LINKEDIN_SCOPES = "r_ads r_ads_reporting r_organization_social r_organization_admin"
+
+# Organic (company-page) connector runs against its own Community-Management
+# app. These are the real, current scope names LinkedIn exposes for that product
+# (note rw_organization_admin — there is no r_organization_admin scope), and it
+# deliberately omits the r_ads* scopes the organic app isn't granted.
+LINKEDIN_ORGANIC_SCOPES = "r_organization_social rw_organization_admin r_organization_followers"
 
 META_SCOPES = "ads_read,business_management"
 
@@ -280,6 +286,24 @@ def connect_prerequisites(platform: str) -> dict[str, Any]:
             ],
             "note": "Connect stores the refresh token in Postgres.",
         }
+    if slug == "linkedin_organic":
+        summary = linkedin_auth.organic_env_summary()
+        return {
+            "ready": bool(summary.get("has_client_id") and summary.get("has_client_secret")),
+            "missing": [
+                label
+                for key, label in (
+                    ("has_client_id", "LINKEDIN_ORGANIC_CLIENT_ID"),
+                    ("has_client_secret", "LINKEDIN_ORGANIC_CLIENT_SECRET"),
+                )
+                if not summary.get(key)
+            ],
+            "note": (
+                "Uses the Community-Management LinkedIn app. Add "
+                "/oauth/linkedin_organic/callback to that app's authorized "
+                "redirect URLs, and connect as an admin of the company page."
+            ),
+        }
     if slug == "hubspot":
         cid = (os.getenv("HUBSPOT_CLIENT_ID") or "").strip()
         secret = (os.getenv("HUBSPOT_CLIENT_SECRET") or "").strip()
@@ -416,6 +440,20 @@ def build_authorize_url(platform: str, *, state: str) -> str:
             "scope": LINKEDIN_SCOPES,
         }
         return f"{LINKEDIN_AUTH_URL}?{urlencode(params)}"
+    if slug == "linkedin_organic":
+        client_id = linkedin_auth._get_env(*linkedin_auth._ORGANIC_ENV_ALIASES["client_id"])
+        if not client_id:
+            raise RuntimeError(
+                "Set LINKEDIN_ORGANIC_CLIENT_ID before connecting LinkedIn Organic."
+            )
+        params = {
+            "response_type": "code",
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "scope": LINKEDIN_ORGANIC_SCOPES,
+        }
+        return f"{LINKEDIN_AUTH_URL}?{urlencode(params)}"
     if slug == "hubspot":
         client_id = (os.getenv("HUBSPOT_CLIENT_ID") or "").strip()
         if not client_id:
@@ -481,6 +519,8 @@ def exchange_code(platform: str, *, code: str) -> dict[str, Any]:
         return _exchange_google_code(code, redirect_uri=redirect_uri, scope_label=GTM_SCOPE)
     if slug == "linkedin":
         return _exchange_linkedin_code(code, redirect_uri=redirect_uri)
+    if slug == "linkedin_organic":
+        return _exchange_linkedin_code(code, redirect_uri=redirect_uri, organic=True)
     if slug == "hubspot":
         return _exchange_hubspot_code(code, redirect_uri=redirect_uri)
     if slug == "harvest":
@@ -830,9 +870,13 @@ def _exchange_google_code(code: str, *, redirect_uri: str, scope_label: str = GO
     }
 
 
-def _exchange_linkedin_code(code: str, *, redirect_uri: str) -> dict[str, Any]:
-    client_id = linkedin_auth._get_required_env(*linkedin_auth._ENV_ALIASES["client_id"])
-    client_secret = linkedin_auth._get_required_env(*linkedin_auth._ENV_ALIASES["client_secret"])
+def _exchange_linkedin_code(
+    code: str, *, redirect_uri: str, organic: bool = False
+) -> dict[str, Any]:
+    aliases = linkedin_auth._ORGANIC_ENV_ALIASES if organic else linkedin_auth._ENV_ALIASES
+    scopes = LINKEDIN_ORGANIC_SCOPES if organic else LINKEDIN_SCOPES
+    client_id = linkedin_auth._get_required_env(*aliases["client_id"])
+    client_secret = linkedin_auth._get_required_env(*aliases["client_secret"])
     body = {
         "grant_type": "authorization_code",
         "code": code,
@@ -858,7 +902,7 @@ def _exchange_linkedin_code(code: str, *, redirect_uri: str) -> dict[str, Any]:
         "refresh_token": refresh,
         "access_token": data.get("access_token"),
         "token_expires_at": expires_at,
-        "scopes": LINKEDIN_SCOPES,
+        "scopes": scopes,
     }
 
 

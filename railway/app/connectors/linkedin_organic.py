@@ -1,10 +1,12 @@
 """LinkedIn Organic connector — company-page posts, followers, page analytics.
 
-Sibling to ``linkedin_ads``. Reuses the same LinkedIn OAuth connection (same
-``oauth_platform = "linkedin"`` token store) but reads organic organization
-metrics instead of sponsored/paid ones, writing to the ``raw_linkedin_organic``
-dataset. The "account" here is a LinkedIn *organization* (company page), not an
-ad account, so ``list_accounts`` discovers admin'd organizations.
+Sibling to ``linkedin_ads``, but authenticates against its own LinkedIn app —
+the one approved for the Community Management API — rather than the paid/ads
+app. It therefore uses a dedicated ``oauth_platform = "linkedin_organic"`` token
+store (separate from Ads) and the ``LINKEDIN_ORGANIC_*`` credentials. It reads
+organic organization metrics and writes to the ``raw_linkedin_organic`` dataset.
+The "account" here is a LinkedIn *organization* (company page), not an ad
+account, so ``list_accounts`` discovers admin'd organizations.
 """
 
 from __future__ import annotations
@@ -16,16 +18,17 @@ from connectors.base import ConnectorHandler, SyncResult, register
 
 _log = logging.getLogger(__name__)
 
-# Scope required for follower + page + share statistics. Tokens minted before
-# this scope was added to oauth_flows.LINKEDIN_SCOPES won't carry it, so the
-# wizard prompts a reconnect (see needs_scope_reauth).
-ORGANIC_ADMIN_SCOPE = "r_organization_admin"
+# Scope required for follower + page + share statistics (Community Management).
+# This is the real LinkedIn scope name — there is no ``r_organization_admin``.
+# Tokens minted without it (e.g. against the old shared ads app) won't carry it,
+# so the wizard prompts a reconnect (see needs_scope_reauth).
+ORGANIC_ADMIN_SCOPE = "rw_organization_admin"
 
 
 class LinkedInOrganicConnector(ConnectorHandler):
     connector_type = "linkedin_organic"
     display_name = "LinkedIn Organic"
-    oauth_platform = "linkedin"
+    oauth_platform = "linkedin_organic"
     default_raw_dataset = "raw_linkedin_organic"
 
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
@@ -81,7 +84,7 @@ def needs_scope_reauth(client_slug: str) -> bool:
     """
     try:
         import oauth_store
-        status = oauth_store.public_status("linkedin", client_slug=client_slug)
+        status = oauth_store.public_status("linkedin_organic", client_slug=client_slug)
     except Exception:
         return False
     if not status or not status.connected:
@@ -96,22 +99,24 @@ def needs_scope_reauth(client_slug: str) -> bool:
 def _get_access_token(client_slug: str) -> str:
     import oauth_store
     import linkedin_service
-    from linkedin_auth import LinkedInEnv, _get_required_env, _get_env, _ENV_ALIASES
+    from linkedin_auth import LinkedInEnv, _get_required_env, _get_env, _ORGANIC_ENV_ALIASES
 
-    refresh = oauth_store.get_refresh_token("linkedin", client_slug=client_slug)
+    refresh = oauth_store.get_refresh_token("linkedin_organic", client_slug=client_slug)
     if not refresh:
         raise RuntimeError(oauth_store.token_error(
-            "linkedin", client_slug=client_slug,
+            "linkedin_organic", client_slug=client_slug,
             missing=(
-                f"No LinkedIn OAuth token found for client '{client_slug}'. "
-                "Connect LinkedIn in the connector setup wizard."
+                f"No LinkedIn Organic OAuth token found for client '{client_slug}'. "
+                "Connect LinkedIn Organic in the connector setup wizard."
             ),
         ))
+    # Refresh against the organic (Community-Management) app's credentials, which
+    # are distinct from the paid/ads app the linkedin_ads connector uses.
     env = LinkedInEnv(
-        client_id=_get_required_env(*_ENV_ALIASES["client_id"]),
-        client_secret=_get_required_env(*_ENV_ALIASES["client_secret"]),
+        client_id=_get_required_env(*_ORGANIC_ENV_ALIASES["client_id"]),
+        client_secret=_get_required_env(*_ORGANIC_ENV_ALIASES["client_secret"]),
         refresh_token=refresh,
-        version=_get_env(*_ENV_ALIASES["version"]) or "202509",
+        version=_get_env(*_ORGANIC_ENV_ALIASES["version"]) or "202509",
     )
     data = linkedin_service.refresh_access_token(env)
     return data["access_token"]

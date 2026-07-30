@@ -9,6 +9,16 @@ _ENV_ALIASES: dict[str, tuple[str, ...]] = {
     "version": ("LINKEDIN_VERSION",),
 }
 
+# The LinkedIn *organic* connector authenticates against its own app (approved
+# for the Community Management API) rather than the paid/ads app. Its credentials
+# live under LINKEDIN_ORGANIC_* env vars, falling back to the shared paid-app
+# vars so single-app deployments that never split the two keep working.
+_ORGANIC_ENV_ALIASES: dict[str, tuple[str, ...]] = {
+    "client_id": ("LINKEDIN_ORGANIC_CLIENT_ID", "LINKEDIN_CLIENT_ID"),
+    "client_secret": ("LINKEDIN_ORGANIC_CLIENT_SECRET", "LINKEDIN_CLIENT_SECRET"),
+    "version": ("LINKEDIN_VERSION",),
+}
+
 
 def _strip_env_value(val: str) -> str:
     val = val.strip()
@@ -91,4 +101,12 @@ def env_summary() -> dict:
         "has_refresh_token": has_refresh,
         "linkedin_version": _get_env(*_ENV_ALIASES["version"]) or "202509",
         "refresh_token_stored": has_refresh,
+    }
+
+
+def organic_env_summary() -> dict:
+    """Credential readiness for the organic app (Community Management)."""
+    return {
+        "has_client_id": bool(_get_env(*_ORGANIC_ENV_ALIASES["client_id"])),
+        "has_client_secret": bool(_get_env(*_ORGANIC_ENV_ALIASES["client_secret"])),
     }
