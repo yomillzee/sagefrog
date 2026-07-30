@@ -128,6 +128,7 @@ def list_organizations(
     token, env = _resolve_token(access_token, env)
 
     elements: list[dict[str, Any]] = []
+    acl_error: Exception | None = None
     for role in ("ADMINISTRATOR",):
         try:
             payload = _linkedin_get(
@@ -138,6 +139,13 @@ def list_organizations(
             elements.extend(payload.get("elements") or [])
         except Exception as exc:  # pragma: no cover - network dependent
             _log.warning("organizationAcls role=%s failed: %s", role, exc)
+            acl_error = exc
+
+    # A hard API failure (missing scope, revoked token, wrong app) must surface in
+    # the wizard, not masquerade as "No accounts found" — that empty state is
+    # reserved for an authenticated member who genuinely administers no pages.
+    if acl_error is not None and not elements:
+        raise RuntimeError(f"LinkedIn organization lookup failed: {str(acl_error)[:300]}")
 
     org_ids: list[str] = []
     seen: set[str] = set()

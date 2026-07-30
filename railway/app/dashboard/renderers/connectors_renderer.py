@@ -581,10 +581,11 @@ def _render_wizard(
                 '</div>'
             )
         if handler.connector_type == "linkedin_organic":
-            # A LinkedIn token minted before r_organization_admin was added to the
-            # scope set can't read follower/page/post analytics. Prompt a reconnect
-            # (the OAuth start URL requests the current LINKEDIN_SCOPES). The
-            # existing LinkedIn Ads connection is unaffected — same token store.
+            # An organic token missing rw_organization_admin (e.g. minted before
+            # this connector moved to its own Community-Management app) can't read
+            # follower/page/post analytics. Prompt a reconnect — the OAuth start
+            # URL requests the current LINKEDIN_ORGANIC_SCOPES. This token store is
+            # separate from LinkedIn Ads, so Ads is unaffected either way.
             try:
                 from connectors.linkedin_organic import needs_scope_reauth as _needs_reauth
                 _reauth = _needs_reauth(client_slug)
@@ -594,9 +595,9 @@ def _render_wizard(
                 step1_body += (
                     '<div style="margin-top:16px;padding:12px 14px;border:1px solid #e0a800;'
                     'border-radius:8px;background:rgba(224,168,0,.08)">'
-                    '<p style="font-size:.9rem;margin:0 0 10px">Your existing LinkedIn connection was '
-                    'authorized before organic access (followers, page &amp; post analytics) was enabled. '
-                    'Reconnect to grant the <code>r_organization_admin</code> scope — your LinkedIn Ads '
+                    '<p style="font-size:.9rem;margin:0 0 10px">This LinkedIn Organic connection is '
+                    'missing organic access (followers, page &amp; post analytics). '
+                    'Reconnect to grant the <code>rw_organization_admin</code> scope — your LinkedIn Ads '
                     'connection is unaffected.</p>'
                     f'<a href="{_esc(oauth_start_url)}" class="btn-connect">Reconnect LinkedIn for organic</a>'
                     '</div>'
