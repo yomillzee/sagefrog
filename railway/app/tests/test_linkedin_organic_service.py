@@ -69,6 +69,21 @@ class OrganicHelpersTests(unittest.TestCase):
 
 
 class OrganicFetchTests(unittest.TestCase):
+    # These tests patch module-level transport/helper functions on ``organic``.
+    # Snapshot and restore them so the suite stays order-independent (otherwise a
+    # leaked ``_total_followers`` stub breaks the fallback tests elsewhere).
+    _PATCHED = (
+        "_linkedin_get", "_linkedin_get_with_versions", "_list_org_posts",
+        "_share_stats_by_urn", "_total_followers", "_reactions_by_urn",
+    )
+
+    def setUp(self) -> None:
+        self._orig = {name: getattr(organic, name) for name in self._PATCHED}
+
+    def tearDown(self) -> None:
+        for name, fn in self._orig.items():
+            setattr(organic, name, fn)
+
     def test_list_organizations(self) -> None:
         acls = {
             "elements": [
@@ -191,6 +206,96 @@ class OrganicFetchTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["page_views"], 50)
         self.assertEqual(rows[0]["unique_visitors"], 35)
+
+    def test_parse_share_stats_includes_reach(self) -> None:
+        out = organic._parse_share_stats(
+            {"impressionCount": 100, "uniqueImpressionsCount": 80, "likeCount": 5}
+        )
+        self.assertEqual(out["impressions"], 100)
+        self.assertEqual(out["unique_impressions"], 80)
+
+    def test_fetch_page_daily_breakdown_columns(self) -> None:
+        day = date(2026, 6, 5)
+        payload = {
+            "elements": [
+                {
+                    "timeRange": {"start": organic._epoch_ms(day)},
+                    "totalPageStatistics": {
+                        "views": {
+                            "allDesktopPageViews": {"pageViews": 30, "uniquePageViews": 20},
+                            "allMobilePageViews": {"pageViews": 20, "uniquePageViews": 15},
+                            "careersPageViews": {"pageViews": 12, "uniquePageViews": 9},
+                        }
+                    },
+                }
+            ]
+        }
+        organic._linkedin_get_with_versions = lambda path, **kw: payload  # type: ignore
+        rows = organic.fetch_page_daily(
+            "777", start=date(2026, 6, 1), end=date(2026, 6, 30), access_token="TOK"
+        )
+        self.assertEqual(rows[0]["desktop_page_views"], 30)
+        self.assertEqual(rows[0]["mobile_page_views"], 20)
+        self.assertEqual(rows[0]["careers_page_views"], 12)
+        self.assertEqual(rows[0]["overview_page_views"], 0)
+
+    def test_humanize_staff_range(self) -> None:
+        self.assertEqual(organic._humanize_staff_range("SIZE_51_TO_200"), "51-200")
+        self.assertEqual(organic._humanize_staff_range("SIZE_10001_OR_MORE"), "10,001+")
+
+    def test_fetch_follower_demographics_parses_and_labels(self) -> None:
+        payload = {"elements": [{
+            "followerCountsBySeniority": [
+                {"seniority": "urn:li:seniority:4",
+                 "followerCounts": {"organicFollowerCount": 6, "paidFollowerCount": 1}},
+                {"seniority": "urn:li:seniority:3",
+                 "followerCounts": {"organicFollowerCount": 2, "paidFollowerCount": 0}},
+            ],
+            "followerCountsByStaffCountRange": [
+                {"staffCountRange": "SIZE_51_TO_200",
+                 "followerCounts": {"organicFollowerCount": 4, "paidFollowerCount": 0}},
+            ],
+        }]}
+        organic._linkedin_get_with_versions = lambda path, **kw: payload  # type: ignore
+        rows = organic.fetch_follower_demographics("777", access_token="TOK")
+        seniority = [r for r in rows if r["dimension"] == "seniority"]
+        # Sorted by total desc: Senior (7) before Entry (2).
+        self.assertEqual([r["category"] for r in seniority], ["Senior", "Entry"])
+        self.assertEqual(seniority[0]["total_followers"], 7)
+        company = [r for r in rows if r["dimension"] == "company_size"]
+        self.assertEqual(company[0]["category"], "51-200")
+
+    def test_fetch_engagement_daily_parses_totals(self) -> None:
+        day = date(2026, 6, 7)
+        payload = {"elements": [{
+            "timeRange": {"start": organic._epoch_ms(day)},
+            "totalShareStatistics": {
+                "impressionCount": 400, "uniqueImpressionsCount": 320,
+                "clickCount": 8, "likeCount": 15, "commentCount": 2,
+                "shareCount": 3, "engagement": 0.07,
+            },
+        }]}
+        organic._linkedin_get_with_versions = lambda path, **kw: payload  # type: ignore
+        rows = organic.fetch_engagement_daily(
+            "777", start=date(2026, 6, 1), end=date(2026, 6, 30), access_token="TOK"
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["impressions"], 400)
+        self.assertEqual(rows[0]["unique_impressions"], 320)
+        self.assertAlmostEqual(rows[0]["engagement_rate"], 0.07)
+
+    def test_reactions_by_urn_parses_summaries(self) -> None:
+        organic._linkedin_get_with_versions = lambda path, **kw: {  # type: ignore
+            "reactionSummaries": {
+                "LIKE": {"count": 10, "reactionType": "LIKE"},
+                "PRAISE": {"count": 3},
+                "EMPATHY": {"count": 0},
+            }
+        }
+        out = organic._reactions_by_urn(
+            ["urn:li:share:1"], access_token="TOK", env=None  # type: ignore
+        )
+        self.assertEqual(out["urn:li:share:1"], {"LIKE": 10, "PRAISE": 3})
 
 
 if __name__ == "__main__":

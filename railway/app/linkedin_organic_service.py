@@ -299,6 +299,9 @@ def _share_stats_by_urn(
 
 def _parse_share_stats(raw: dict[str, Any]) -> dict[str, Any]:
     impressions = int(raw.get("impressionCount") or 0)
+    # Reach: distinct members who saw the post, always <= impressions. Distinct
+    # from impressionCount, which counts every view including repeats.
+    unique_impressions = int(raw.get("uniqueImpressionsCount") or 0)
     clicks = int(raw.get("clickCount") or 0)
     likes = int(raw.get("likeCount") or 0)
     comments = int(raw.get("commentCount") or 0)
@@ -309,12 +312,65 @@ def _parse_share_stats(raw: dict[str, Any]) -> dict[str, Any]:
         engagement_rate = (likes + comments + shares + clicks) / impressions
     return {
         "impressions": impressions,
+        "unique_impressions": unique_impressions,
         "clicks": clicks,
         "likes": likes,
         "comments": comments,
         "shares": shares,
         "engagement_rate": engagement_rate,
     }
+
+
+# LinkedIn reaction types (Community Management ``reactionSummaries``). We keep
+# the human-facing subset; anything LinkedIn adds later still round-trips through
+# the raw key so no reaction is silently dropped.
+_REACTION_LABELS = {
+    "LIKE": "Like",
+    "PRAISE": "Celebrate",
+    "APPRECIATION": "Love",
+    "EMPATHY": "Support",
+    "INTEREST": "Insightful",
+    "ENTERTAINMENT": "Funny",
+    "MAYBE": "Curious",
+}
+
+
+def _reactions_by_urn(
+    post_urns: list[str],
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+) -> dict[str, dict[str, int]]:
+    """Best-effort per-post reaction-type counts via ``/socialActions/{urn}``.
+
+    Returns ``{post_urn: {REACTION_TYPE: count}}``. LinkedIn exposes reaction
+    breakdowns only per entity (not batched), so this is one call per post; each
+    is isolated so a single failure (or a version that omits ``reactionSummaries``)
+    just yields no breakdown for that post rather than failing the sync.
+    """
+    out: dict[str, dict[str, int]] = {}
+    for urn in post_urns:
+        try:
+            payload = _linkedin_get_with_versions(
+                f"/socialActions/{quote(urn, safe='')}",
+                access_token=access_token,
+                env=env,
+            )
+        except Exception as exc:  # pragma: no cover - network dependent
+            _log.warning("reaction summary failed for %s: %s", urn, exc)
+            continue
+        summaries = payload.get("reactionSummaries") or {}
+        counts: dict[str, int] = {}
+        for rtype, summary in summaries.items():
+            if isinstance(summary, dict):
+                c = int(summary.get("count") or 0)
+            else:
+                c = int(summary or 0)
+            if c:
+                counts[str(rtype).upper()] = c
+        if counts:
+            out[urn] = counts
+    return out
 
 
 def fetch_posts_with_stats(
@@ -324,6 +380,7 @@ def fetch_posts_with_stats(
     end: date,
     access_token: str | None = None,
     env: LinkedInEnv | None = None,
+    with_reactions: bool = True,
 ) -> list[dict[str, Any]]:
     """Return one row per organization post published within [start, end].
 
@@ -331,7 +388,11 @@ def fetch_posts_with_stats(
     lifetime totals, so each sync refreshes the current totals for posts in the
     window. Row shape:
       {post_id, post_urn, org_id, title, post_type, published_at,
-       impressions, clicks, likes, comments, shares, engagement_rate}
+       impressions, unique_impressions, clicks, likes, comments, shares,
+       engagement_rate, reactions_by_type}
+    ``reactions_by_type`` is a ``{REACTION_TYPE: count}`` dict (empty when the
+    breakdown is unavailable); pass ``with_reactions=False`` to skip the extra
+    per-post reaction calls.
     """
     token, env = _resolve_token(access_token, env)
     org_id_clean = _normalize_org_id(org_id)
@@ -362,6 +423,12 @@ def fetch_posts_with_stats(
         access_token=token,
         env=env,
     )
+    reactions_by_urn = (
+        _reactions_by_urn(
+            [p["urn"] for p in in_window], access_token=token, env=env
+        )
+        if with_reactions else {}
+    )
 
     out: list[dict[str, Any]] = []
     for entry in in_window:
@@ -376,6 +443,7 @@ def fetch_posts_with_stats(
                 "title": _post_title(post),
                 "post_type": _post_type(post),
                 "published_at": entry["published"].isoformat() if entry["published"] else "",
+                "reactions_by_type": reactions_by_urn.get(urn, {}),
                 **parsed,
             }
         )
@@ -425,6 +493,183 @@ def _lifetime_followers_from_stats(
                 dim_total += int(counts.get("paidFollowerCount") or 0)
             best = max(best, dim_total)
     return best
+
+
+# Stable LinkedIn taxonomies — resolved locally so the common demographic
+# dimensions need no extra reference-data calls. (Industry and geo are far larger
+# and version-dependent, so those resolve against the API with a raw-id fallback.)
+_SENIORITY_LABELS = {
+    "1": "Unpaid", "2": "In training", "3": "Entry", "4": "Senior",
+    "5": "Manager", "6": "Director", "7": "VP", "8": "CXO",
+    "9": "Partner", "10": "Owner",
+}
+_FUNCTION_LABELS = {
+    "1": "Accounting", "2": "Administrative", "3": "Arts & Design",
+    "4": "Business Development", "5": "Community & Social Services",
+    "6": "Consulting", "7": "Education", "8": "Engineering",
+    "9": "Entrepreneurship", "10": "Finance", "11": "Healthcare Services",
+    "12": "Human Resources", "13": "Information Technology", "14": "Legal",
+    "15": "Marketing", "16": "Media & Communications",
+    "17": "Military & Protective Services", "18": "Operations",
+    "19": "Product Management", "20": "Program & Project Management",
+    "21": "Purchasing", "22": "Quality Assurance", "23": "Real Estate",
+    "24": "Research", "25": "Sales", "26": "Support",
+}
+
+# followerCountsBy<X> array key -> (dimension id, entry field holding the value).
+_FOLLOWER_DIMENSIONS = {
+    "followerCountsBySeniority": ("seniority", "seniority"),
+    "followerCountsByFunction": ("function", "function"),
+    "followerCountsByIndustry": ("industry", "industry"),
+    "followerCountsByStaffCountRange": ("company_size", "staffCountRange"),
+    "followerCountsByGeoCountry": ("region", "geoCountry"),
+    "followerCountsByGeo": ("region", "geo"),
+    "followerCountsByRegion": ("region", "region"),
+    "followerCountsByAssociationType": ("association", "associationType"),
+}
+
+
+def _humanize_staff_range(value: str) -> str:
+    """``SIZE_1_TO_10`` -> ``1-10``; ``SIZE_10001_OR_MORE`` -> ``10,001+``."""
+    text = str(value or "").replace("SIZE_", "").strip()
+    if not text:
+        return "Unknown"
+    if text.endswith("OR_MORE"):
+        num = text.replace("_OR_MORE", "")
+        try:
+            return f"{int(num):,}+"
+        except ValueError:
+            return f"{num}+"
+    parts = text.split("_TO_")
+    try:
+        if len(parts) == 2:
+            return f"{int(parts[0]):,}-{int(parts[1]):,}"
+        return f"{int(parts[0]):,}"
+    except ValueError:
+        return text.replace("_", " ").title()
+
+
+def _humanize_enum(value: str) -> str:
+    return str(value or "").replace("_", " ").title() or "Unknown"
+
+
+def _resolve_reference_label(
+    kind: str, ref_id: str, *, access_token: str, env: LinkedInEnv,
+    cache: dict[str, str],
+) -> str:
+    """Best-effort localized name for an ``industry``/``geo`` id, cached per sync.
+
+    Falls back to a readable placeholder when the reference endpoint is
+    unavailable or shaped differently across API versions."""
+    key = f"{kind}:{ref_id}"
+    if key in cache:
+        return cache[key]
+    fallback = f"{kind.title()} {ref_id}"
+    try:
+        payload = _linkedin_get_with_versions(
+            f"/{kind}s/{ref_id}", access_token=access_token, env=env
+        )
+        label = (
+            payload.get("localizedName")
+            or (payload.get("defaultLocalizedName") or {}).get("value")
+            or (payload.get("name") or {}).get("localized", {}).get("en_US")
+            or fallback
+        )
+    except Exception as exc:  # pragma: no cover - network dependent
+        _log.warning("%s label lookup failed for %s: %s", kind, ref_id, exc)
+        label = fallback
+    cache[key] = str(label)
+    return cache[key]
+
+
+def fetch_follower_demographics(
+    org_id: str,
+    *,
+    access_token: str | None = None,
+    env: LinkedInEnv | None = None,
+    top_n: int = 25,
+) -> list[dict[str, Any]]:
+    """Lifetime follower breakdown by seniority, function, industry, company
+    size, and region.
+
+    Reads the same ``organizationalEntityFollowerStatistics`` payload the total
+    follower count is derived from (no timeIntervals -> lifetime segments), but
+    keeps the per-category counts instead of summing them away. Each row:
+      {org_id, dimension, category, category_urn,
+       organic_followers, paid_followers, total_followers}
+    Capped to the ``top_n`` categories per dimension by follower count.
+    """
+    token, env = _resolve_token(access_token, env)
+    org_id_clean = _normalize_org_id(org_id)
+    org_urn = quote(_org_urn(org_id_clean), safe="")
+    path = (
+        f"/organizationalEntityFollowerStatistics?q=organizationalEntity"
+        f"&organizationalEntity={org_urn}"
+    )
+    try:
+        payload = _linkedin_get_with_versions(path, access_token=token, env=env)
+    except Exception as exc:  # pragma: no cover - network dependent
+        _log.warning("follower demographics failed for %s: %s", org_id_clean, exc)
+        return []
+
+    label_cache: dict[str, str] = {}
+    rows: list[dict[str, Any]] = []
+    for element in payload.get("elements") or []:
+        for array_key, (dimension, value_field) in _FOLLOWER_DIMENSIONS.items():
+            entries = element.get(array_key)
+            if not isinstance(entries, list):
+                continue
+            dim_rows: list[dict[str, Any]] = []
+            for entry in entries:
+                raw_value = str(entry.get(value_field) or "")
+                if not raw_value:
+                    continue
+                counts = entry.get("followerCounts") or {}
+                organic = int(counts.get("organicFollowerCount") or 0)
+                paid = int(counts.get("paidFollowerCount") or 0)
+                total = organic + paid
+                if total <= 0:
+                    continue
+                dim_rows.append({
+                    "org_id": org_id_clean,
+                    "dimension": dimension,
+                    "category": _demographic_label(
+                        dimension, raw_value, token=token, env=env, cache=label_cache
+                    ),
+                    "category_urn": raw_value,
+                    "organic_followers": organic,
+                    "paid_followers": paid,
+                    "total_followers": total,
+                })
+            dim_rows.sort(key=lambda r: r["total_followers"], reverse=True)
+            rows.extend(dim_rows[:top_n])
+    return rows
+
+
+def _demographic_label(
+    dimension: str, raw_value: str, *, token: str, env: LinkedInEnv,
+    cache: dict[str, str],
+) -> str:
+    """Human label for a follower-demographic category value."""
+    ref_id = _urn_id(raw_value)
+    if dimension == "seniority":
+        return _SENIORITY_LABELS.get(ref_id, f"Seniority {ref_id}")
+    if dimension == "function":
+        return _FUNCTION_LABELS.get(ref_id, f"Function {ref_id}")
+    if dimension == "company_size":
+        return _humanize_staff_range(raw_value)
+    if dimension == "association":
+        return _humanize_enum(raw_value)
+    if dimension == "industry":
+        return _resolve_reference_label(
+            "industry", ref_id, access_token=token, env=env, cache=cache
+        )
+    if dimension == "region":
+        kind = "country" if raw_value.startswith("urn:li:country") else "geo"
+        return _resolve_reference_label(
+            kind, ref_id, access_token=token, env=env, cache=cache
+        )
+    return _humanize_enum(raw_value)
 
 
 def _total_followers(
@@ -525,6 +770,31 @@ def _sum_page_views(views: dict[str, Any]) -> tuple[int, int]:
     return page_views, unique
 
 
+# ``totalPageStatistics.views`` key -> our breakdown column. Device rows split
+# desktop vs. mobile; section rows attribute views to a page tab. LinkedIn only
+# populates the keys that apply to a given page, so absent buckets stay 0.
+_PAGE_VIEW_BUCKETS = {
+    "allDesktopPageViews": "desktop_page_views",
+    "allMobilePageViews": "mobile_page_views",
+    "overviewPageViews": "overview_page_views",
+    "careersPageViews": "careers_page_views",
+    "jobsPageViews": "jobs_page_views",
+    "lifeAtPageViews": "life_page_views",
+    "productsPageViews": "products_page_views",
+    "peoplePageViews": "people_page_views",
+}
+
+
+def _page_view_breakdown(views: dict[str, Any]) -> dict[str, int]:
+    """Pull the desktop/mobile + per-section view counts out of ``views``."""
+    out = {col: 0 for col in _PAGE_VIEW_BUCKETS.values()}
+    for key, col in _PAGE_VIEW_BUCKETS.items():
+        section = (views or {}).get(key)
+        if isinstance(section, dict):
+            out[col] = int(section.get("pageViews") or 0)
+    return out
+
+
 def fetch_page_daily(
     org_id: str,
     *,
@@ -554,15 +824,72 @@ def fetch_page_daily(
         if not day:
             continue
         total = row.get("totalPageStatistics") or {}
-        page_views, unique = _sum_page_views(total.get("views") or {})
+        views = total.get("views") or {}
+        page_views, unique = _sum_page_views(views)
         out.append(
             {
                 "metric_date": day.isoformat(),
                 "org_id": org_id_clean,
                 "page_views": page_views,
                 "unique_visitors": unique,
+                **_page_view_breakdown(views),
             }
         )
+    out.sort(key=lambda r: r["metric_date"])
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Organization-level engagement over time (daily aggregate share statistics)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def fetch_engagement_daily(
+    org_id: str,
+    *,
+    start: date,
+    end: date,
+    access_token: str | None = None,
+    env: LinkedInEnv | None = None,
+) -> list[dict[str, Any]]:
+    """One row per day of organization-wide engagement.
+
+    Queries ``organizationalEntityShareStatistics`` WITH a day-granular
+    timeIntervals param, giving a page-level engagement trend (impressions,
+    reach, clicks, reactions, comments, shares, engagement rate) independent of
+    the per-post lifetime totals. Row shape:
+      {metric_date, org_id, impressions, unique_impressions, clicks,
+       likes, comments, shares, engagement_rate}
+    """
+    token, env = _resolve_token(access_token, env)
+    org_id_clean = _normalize_org_id(org_id)
+    org_urn = quote(_org_urn(org_id_clean), safe="")
+    path = (
+        f"/organizationalEntityShareStatistics?q=organizationalEntity"
+        f"&organizationalEntity={org_urn}&timeIntervals={_time_intervals(start, end)}"
+    )
+    try:
+        payload = _linkedin_get_with_versions(path, access_token=token, env=env)
+    except Exception as exc:  # pragma: no cover - network dependent
+        _log.warning("engagement statistics failed for %s: %s", org_id_clean, exc)
+        return []
+
+    out: list[dict[str, Any]] = []
+    for row in payload.get("elements") or []:
+        day = _date_from_epoch_ms((row.get("timeRange") or {}).get("start"))
+        if not day:
+            continue
+        parsed = _parse_share_stats(row.get("totalShareStatistics") or {})
+        out.append({
+            "metric_date": day.isoformat(),
+            "org_id": org_id_clean,
+            "impressions": parsed["impressions"],
+            "unique_impressions": parsed["unique_impressions"],
+            "clicks": parsed["clicks"],
+            "likes": parsed["likes"],
+            "comments": parsed["comments"],
+            "shares": parsed["shares"],
+            "engagement_rate": parsed["engagement_rate"],
+        })
     out.sort(key=lambda r: r["metric_date"])
     return out
 

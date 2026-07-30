@@ -87,6 +87,85 @@ class RendererTests(unittest.TestCase):
         self.assertIn("&lt;b&gt;post&lt;/b&gt;", html)
 
 
+class NewPanelsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._orig_shell = R.render_client_shell_page
+        R.render_client_shell_page = lambda **kw: kw["content_html"]  # type: ignore
+
+    def tearDown(self) -> None:
+        R.render_client_shell_page = self._orig_shell  # type: ignore
+
+    def _report_with_extras(self) -> LinkedInOrganicReport:
+        r = _report()
+        r.total_unique_impressions = 2600
+        r.top_posts[0]["unique_impressions"] = 1500
+        r.top_posts[0]["reactions"] = {"LIKE": 90, "PRAISE": 10}
+        r.follower_demographics = {
+            "seniority": [
+                {"category": "Senior", "total_followers": 700, "organic_followers": 690, "paid_followers": 10},
+                {"category": "Manager", "total_followers": 300, "organic_followers": 300, "paid_followers": 0},
+            ],
+            "industry": [
+                {"category": "Hospitals & Health Care", "total_followers": 800,
+                 "organic_followers": 800, "paid_followers": 0},
+            ],
+        }
+        r.engagement_series = [
+            {"metric_date": "2026-07-01", "impressions": 400, "unique_impressions": 320,
+             "clicks": 8, "likes": 15, "comments": 2, "shares": 3, "engagement_rate": 0.07},
+            {"metric_date": "2026-07-02", "impressions": 520, "unique_impressions": 410,
+             "clicks": 9, "likes": 18, "comments": 1, "shares": 2, "engagement_rate": 0.06},
+        ]
+        r.page_desktop_views = 700
+        r.page_mobile_views = 432
+        r.page_sections = [{"label": "Careers", "views": 210}, {"label": "Jobs", "views": 120}]
+        return r
+
+    def _html(self) -> str:
+        return R.render_linkedin_organic(
+            client_slug="nixon", label="Nixon Medical",
+            report=self._report_with_extras(), use_session=True,
+        )
+
+    def test_reach_tile_and_column(self) -> None:
+        html = self._html()
+        self.assertIn(">Reach<", html)
+        self.assertIn("2,600", html)  # reach KPI tile
+        self.assertIn("1,500", html)  # per-post reach cell
+
+    def test_demographics_panels(self) -> None:
+        html = self._html()
+        self.assertIn("Follower demographics", html)
+        self.assertIn("By seniority", html)
+        self.assertIn("Hospitals &amp; Health Care", html)
+
+    def test_engagement_chart_present(self) -> None:
+        html = self._html()
+        self.assertIn('id="loEngagementChart"', html)
+        self.assertIn("drawLine", html)
+
+    def test_visitor_split(self) -> None:
+        html = self._html()
+        self.assertIn("Page visitors", html)
+        self.assertIn("Desktop vs. mobile", html)
+        self.assertIn("Careers", html)
+
+    def test_reaction_breakdown_tooltip(self) -> None:
+        html = self._html()
+        # Reaction split surfaces as a hover title on the reactions cell.
+        self.assertIn("Celebrate 10", html)
+
+    def test_extras_absent_when_no_data(self) -> None:
+        # A bare report (no demographics/engagement/splits) omits the new panels.
+        html = R.render_linkedin_organic(
+            client_slug="nixon", label="Nixon Medical", report=_report(),
+            use_session=True,
+        )
+        self.assertNotIn("Follower demographics", html)
+        self.assertNotIn("Page visitors", html)
+        self.assertNotIn('id="loEngagementChart"', html)
+
+
 class FollowerTotalFallbackTests(unittest.TestCase):
     def test_sums_largest_segment_dimension(self) -> None:
         payload = {"elements": [{

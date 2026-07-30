@@ -81,8 +81,29 @@ _EXTRA_CSS = """
 .lo-post-title { font-weight:650; color:var(--navy); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:420px; }
 .lo-post-meta { font-size:.72rem; color:var(--muted); }
 .lo-chip { display:inline-block; font-size:.64rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:#0a66c2; background:#e9f1fb; border-radius:5px; padding:2px 6px; margin-left:6px; }
+.lo-react { color:var(--muted); font-size:.72rem; cursor:default; }
 
-@media (max-width:820px){ .lo-two{ grid-template-columns:1fr; } }
+/* Ranked horizontal bars (demographics, sections). */
+.lo-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:16px; }
+.lo-bar-card h3 { margin:0 0 12px; font-size:.82rem; font-weight:750; color:var(--navy); }
+.lo-bars { display:flex; flex-direction:column; gap:11px; }
+.lo-bar-row { display:grid; grid-template-columns:1fr auto; gap:4px 12px; align-items:center; font-size:.8rem; }
+.lo-bar-label { color:var(--text); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.lo-bar-val { text-align:right; color:var(--navy); font-variant-numeric:tabular-nums; font-weight:700; }
+.lo-bar-val span { color:var(--muted); font-weight:600; font-size:.72rem; margin-left:5px; }
+.lo-bar-track { grid-column:1 / -1; background:var(--surface); border-radius:6px; height:8px; overflow:hidden; }
+.lo-bar-fill { height:100%; border-radius:6px; min-width:3px; background:#0a66c2; }
+
+/* Device split — a single desktop/mobile stacked bar. */
+.lo-split { display:flex; height:14px; border-radius:7px; overflow:hidden; background:var(--surface); margin:2px 0 12px; }
+.lo-split-seg { height:100%; }
+.lo-split-legend { display:flex; gap:20px; flex-wrap:wrap; font-size:.8rem; }
+.lo-split-legend div { display:flex; align-items:center; gap:7px; color:var(--text); }
+.lo-split-legend .sw { width:10px; height:10px; border-radius:3px; }
+.lo-split-legend b { color:var(--navy); font-variant-numeric:tabular-nums; }
+.lo-split-legend span { color:var(--muted); }
+
+@media (max-width:820px){ .lo-two{ grid-template-columns:1fr; } .lo-grid{ grid-template-columns:1fr; } }
 """
 
 
@@ -109,6 +130,25 @@ def _card(title: str, value: str, *, spark: str = "", foot: str = "") -> str:
 
 def _sub(text_html: str) -> str:
     return f'<span class="card-sub">{text_html}</span>'
+
+
+# Reaction-type codes -> label, matching linkedin_organic_service._REACTION_LABELS.
+_REACTION_LABELS = {
+    "LIKE": "Like", "PRAISE": "Celebrate", "APPRECIATION": "Love",
+    "EMPATHY": "Support", "INTEREST": "Insightful", "ENTERTAINMENT": "Funny",
+    "MAYBE": "Curious",
+}
+
+
+def _reactions_note(reactions: dict[str, int] | None) -> str:
+    """A hover note listing the reaction-type split for a post, when available."""
+    if not reactions:
+        return ""
+    items = sorted(reactions.items(), key=lambda kv: kv[1], reverse=True)
+    title = " · ".join(
+        f"{_REACTION_LABELS.get(t, t.title())} {_fmt_int(v)}" for t, v in items
+    )
+    return f' <span class="lo-react" title="{_esc(title)}">▾</span>'
 
 
 def _period_delta(gain: int) -> str:
@@ -178,6 +218,102 @@ def _follower_sparkline(series: list[dict[str, Any]]) -> str:
     )
 
 
+_DEMO_PANELS = (
+    ("seniority", "By seniority"),
+    ("function", "By job function"),
+    ("industry", "By industry"),
+    ("company_size", "By company size"),
+    ("region", "By region"),
+)
+
+
+def _ranked_bars(rows: list[dict[str, Any]], *, label_key: str, value_key: str,
+                 top: int = 6) -> str:
+    """Ranked horizontal bars with a share-of-total note."""
+    ranked = [r for r in rows if int(r.get(value_key) or 0) > 0][:top]
+    if not ranked:
+        return '<div class="lo-empty">No data yet.</div>'
+    total = sum(int(r.get(value_key) or 0) for r in rows) or 1
+    peak = max(int(r.get(value_key) or 0) for r in ranked) or 1
+    out = ['<div class="lo-bars">']
+    for r in ranked:
+        v = int(r.get(value_key) or 0)
+        width = max(3.0, v / peak * 100.0)
+        share = v / total * 100.0
+        out.append(
+            '<div class="lo-bar-row">'
+            f'<span class="lo-bar-label">{_esc(str(r.get(label_key) or "Unknown"))}</span>'
+            f'<span class="lo-bar-val">{_fmt_int(v)}<span>{share:.0f}%</span></span>'
+            f'<span class="lo-bar-track"><span class="lo-bar-fill" style="width:{width:.1f}%"></span></span>'
+            '</div>'
+        )
+    out.append('</div>')
+    return "".join(out)
+
+
+def _demographics_section(report: LinkedInOrganicReport) -> str:
+    """Follower demographics — one ranked-bar card per available dimension."""
+    demo = report.follower_demographics or {}
+    cards = []
+    for dim, title in _DEMO_PANELS:
+        rows = demo.get(dim) or []
+        if not rows:
+            continue
+        cards.append(
+            '<div class="lo-bar-card">'
+            f'<h3>{_esc(title)}</h3>'
+            f'{_ranked_bars(rows, label_key="category", value_key="total_followers")}'
+            '</div>'
+        )
+    if not cards:
+        return ""
+    return (
+        '<section><div class="sec-head"><h2>Follower demographics</h2>'
+        '<span class="status">who follows this page · lifetime</span></div>'
+        f'<div class="lo-grid">{"".join(cards)}</div></section>'
+    )
+
+
+def _visitors_section(report: LinkedInOrganicReport) -> str:
+    """Page-visitor breakdown: desktop vs mobile split + views by page section."""
+    desktop = int(report.page_desktop_views or 0)
+    mobile = int(report.page_mobile_views or 0)
+    sections = report.page_sections or []
+    if not (desktop or mobile or sections):
+        return ""
+
+    device_html = ""
+    if desktop or mobile:
+        total = desktop + mobile or 1
+        d_pct = desktop / total * 100.0
+        m_pct = mobile / total * 100.0
+        device_html = (
+            '<div class="lo-bar-card"><h3>Desktop vs. mobile</h3>'
+            '<div class="lo-split">'
+            f'<span class="lo-split-seg" style="width:{d_pct:.1f}%;background:#0a66c2"></span>'
+            f'<span class="lo-split-seg" style="width:{m_pct:.1f}%;background:#38bdf8"></span>'
+            '</div>'
+            '<div class="lo-split-legend">'
+            f'<div><span class="sw" style="background:#0a66c2"></span>Desktop&nbsp;<b>{_fmt_int(desktop)}</b>&nbsp;<span>{d_pct:.0f}%</span></div>'
+            f'<div><span class="sw" style="background:#38bdf8"></span>Mobile&nbsp;<b>{_fmt_int(mobile)}</b>&nbsp;<span>{m_pct:.0f}%</span></div>'
+            '</div></div>'
+        )
+
+    section_html = ""
+    if sections:
+        section_html = (
+            '<div class="lo-bar-card"><h3>Views by page section</h3>'
+            f'{_ranked_bars(sections, label_key="label", value_key="views", top=8)}'
+            '</div>'
+        )
+
+    return (
+        '<section><div class="sec-head"><h2>Page visitors</h2>'
+        f'<span class="status">last {_WINDOW_DAYS} days</span></div>'
+        f'<div class="lo-grid">{device_html}{section_html}</div></section>'
+    )
+
+
 def _chart_block(canvas_id: str, series: list[dict[str, Any]]) -> str:
     """Canvas host for a Chart.js daily bar chart (empty state when no data)."""
     if not series:
@@ -192,21 +328,36 @@ def _chart_series(series: list[dict[str, Any]], value_key: str) -> dict[str, lis
     }
 
 
+def _engagement_chart_series(series: list[dict[str, Any]]) -> dict[str, list]:
+    return {
+        "labels": [str(r.get("metric_date") or "") for r in series],
+        "impressions": [float(r.get("impressions") or 0) for r in series],
+        "reach": [float(r.get("unique_impressions") or 0) for r in series],
+    }
+
+
 def _charts_script(
     follower_series: list[dict[str, Any]],
     page_series: list[dict[str, Any]],
+    engagement_series: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Chart.js loader + init for the follower-gain and page-view bar charts."""
+    """Chart.js loader + init for the follower/page bar charts and the
+    organization-wide engagement line chart."""
     payload = json.dumps({
         "follower": {**_chart_series(follower_series, "total_follower_gain"),
                      "color": _LI_BLUE, "canvas": "loFollowerChart"},
         "page": {**_chart_series(page_series, "page_views"),
                  "color": _PAGE_GREEN, "canvas": "loPageChart"},
+        "engagement": {**_engagement_chart_series(engagement_series or []),
+                       "canvas": "loEngagementChart"},
     }).replace("<", "\\u003c")
     return (
         '<script src="/static/vendor/chart.umd.min.js"></script>'
         "<script>(function(){\n"
         f"  var LO_CHARTS = {payload};\n"
+        "  var GRID={color:'rgba(148,163,184,.15)'};\n"
+        "  var XT={maxRotation:0, autoSkip:true, maxTicksLimit:8, font:{size:10}, color:'#94a3b8'};\n"
+        "  var YT={precision:0, font:{size:10}, color:'#94a3b8', maxTicksLimit:5};\n"
         "  function draw(spec){\n"
         "    var el = document.getElementById(spec.canvas);\n"
         "    if(!el || !window.Chart || !spec.labels.length) return;\n"
@@ -219,15 +370,32 @@ def _charts_script(
         "        plugins:{legend:{display:false},\n"
         "          tooltip:{displayColors:false, padding:8,\n"
         "            callbacks:{label:function(c){return c.formattedValue;}}}},\n"
-        "        scales:{\n"
-        "          x:{grid:{display:false}, ticks:{maxRotation:0, autoSkip:true,\n"
-        "             maxTicksLimit:8, font:{size:10}, color:'#94a3b8'}},\n"
-        "          y:{beginAtZero:true, grid:{color:'rgba(148,163,184,.15)'},\n"
-        "             ticks:{precision:0, font:{size:10}, color:'#94a3b8', maxTicksLimit:5},\n"
-        "             border:{display:false}}}}\n"
+        "        scales:{x:{grid:{display:false}, ticks:XT},\n"
+        "          y:{beginAtZero:true, grid:GRID, ticks:YT, border:{display:false}}}}\n"
         "    });\n"
         "  }\n"
-        "  function init(){ draw(LO_CHARTS.follower); draw(LO_CHARTS.page); }\n"
+        "  function drawLine(spec){\n"
+        "    var el = document.getElementById(spec.canvas);\n"
+        "    if(!el || !window.Chart || !spec.labels.length) return;\n"
+        "    function ds(label,data,color){return {label:label, data:data, borderColor:color,\n"
+        "      backgroundColor:color, fill:false, tension:.3, borderWidth:2, pointRadius:0,\n"
+        "      pointHoverRadius:4};}\n"
+        "    new Chart(el, {\n"
+        "      type:'line',\n"
+        "      data:{labels:spec.labels, datasets:[\n"
+        "        ds('Impressions', spec.impressions, '"+_LI_BLUE+"'),\n"
+        "        ds('Reach', spec.reach, '#38bdf8')]},\n"
+        "      options:{responsive:true, maintainAspectRatio:false, animation:false,\n"
+        "        interaction:{mode:'index', intersect:false},\n"
+        "        plugins:{legend:{display:true, position:'bottom',\n"
+        "            labels:{boxWidth:10, boxHeight:10, font:{size:11}, color:'#64748b'}},\n"
+        "          tooltip:{padding:8}},\n"
+        "        scales:{x:{grid:{display:false}, ticks:XT},\n"
+        "          y:{beginAtZero:true, grid:GRID, ticks:YT, border:{display:false}}}}\n"
+        "    });\n"
+        "  }\n"
+        "  function init(){ draw(LO_CHARTS.follower); draw(LO_CHARTS.page);\n"
+        "    drawLine(LO_CHARTS.engagement); }\n"
         "  if(document.readyState!=='loading') init();\n"
         "  else document.addEventListener('DOMContentLoaded', init);\n"
         "})();</script>"
@@ -302,19 +470,26 @@ def render_linkedin_organic(
         if report.follower_series
         else _sub("lifetime total")
     )
-    cards = (
-        '<div class="cards">'
-        + _card("Followers", _fmt_int(report.total_followers),
-                spark=_follower_sparkline(report.follower_series), foot=follower_foot)
-        + _card("Posts", _fmt_int(report.post_count), foot=_sub("in selected period"))
-        + _card("Impressions", _fmt_int(report.total_impressions), foot=_sub("across posts"))
-        + _card("Reactions", _fmt_int(report.total_likes), foot=_sub("likes on posts"))
-        + _card("Comments", _fmt_int(report.total_comments))
-        + _card("Avg. engagement", _fmt_pct(avg_engagement), foot=_sub("per post"))
-        + _card("Page views", _fmt_int(report.total_page_views),
-                foot=_sub(f'<strong>{_fmt_int(report.total_unique_visitors)}</strong> unique visitors'))
-        + '</div>'
-    )
+    card_list = [
+        _card("Followers", _fmt_int(report.total_followers),
+              spark=_follower_sparkline(report.follower_series), foot=follower_foot),
+        _card("Posts", _fmt_int(report.post_count), foot=_sub("in selected period")),
+        _card("Impressions", _fmt_int(report.total_impressions), foot=_sub("across posts")),
+    ]
+    # Reach only renders once a sync has captured unique-impression data.
+    if report.total_unique_impressions:
+        card_list.append(
+            _card("Reach", _fmt_int(report.total_unique_impressions),
+                  foot=_sub("unique impressions"))
+        )
+    card_list += [
+        _card("Reactions", _fmt_int(report.total_likes), foot=_sub("likes on posts")),
+        _card("Comments", _fmt_int(report.total_comments)),
+        _card("Avg. engagement", _fmt_pct(avg_engagement), foot=_sub("per post")),
+        _card("Page views", _fmt_int(report.total_page_views),
+              foot=_sub(f'<strong>{_fmt_int(report.total_unique_visitors)}</strong> unique visitors')),
+    ]
+    cards = '<div class="cards">' + "".join(card_list) + '</div>'
     kpi_section = (
         '<section>'
         '<div class="sec-head"><h2><span class="lo-dot"></span>Performance</h2>'
@@ -338,26 +513,47 @@ def render_linkedin_organic(
         '</div></section>'
     )
 
+    # Organization-wide engagement over time (only once the series has synced).
+    engagement_section = ""
+    if report.engagement_series:
+        engagement_section = (
+            '<section><div class="sec-head"><h2>Engagement over time</h2>'
+            f'<span class="status">impressions &amp; reach / day, last {_WINDOW_DAYS} days</span></div>'
+            '<div class="lo-chart" style="height:220px"><canvas id="loEngagementChart"></canvas></div>'
+            '</section>'
+        )
+
+    demographics_section = _demographics_section(report)
+    visitors_section = _visitors_section(report)
+
     if report.top_posts:
+        show_reach = any(p.get("unique_impressions") for p in report.top_posts)
         rows = []
         for p in report.top_posts:
             meta = p["published_at"] or ""
             chip = f'<span class="lo-chip">{_esc(p["post_type"])}</span>' if p["post_type"] else ""
+            reach_cell = (
+                f'<td data-val="{p.get("unique_impressions", 0)}">{_fmt_int(p.get("unique_impressions", 0))}</td>'
+                if show_reach else ""
+            )
             rows.append(
                 '<tr>'
                 f'<td class="left" data-val="{_esc(p["title"])}"><span class="lo-post-title">{_esc(p["title"])}{chip}</span>'
                 f'<span class="lo-post-meta">{_esc(meta)}</span></td>'
                 f'<td data-val="{p["impressions"]}">{_fmt_int(p["impressions"])}</td>'
-                f'<td data-val="{p["likes"]}">{_fmt_int(p["likes"])}</td>'
+                f'{reach_cell}'
+                f'<td data-val="{p["likes"]}">{_fmt_int(p["likes"])}{_reactions_note(p.get("reactions"))}</td>'
                 f'<td data-val="{p["comments"]}">{_fmt_int(p["comments"])}</td>'
                 f'<td data-val="{p["shares"]}">{_fmt_int(p["shares"])}</td>'
                 f'<td data-val="{p["clicks"]}">{_fmt_int(p["clicks"])}</td>'
                 f'<td data-val="{p["engagement_rate"]}">{_fmt_pct(p["engagement_rate"])}</td>'
                 '</tr>'
             )
+        reach_th = '<th data-sort="num">Reach</th>' if show_reach else ""
         posts_html = (
             '<div class="lo-table-wrap"><table id="loPostsTable" class="lo-table"><thead><tr>'
             '<th class="left" data-sort="text">Post</th><th data-sort="num">Impressions</th>'
+            f'{reach_th}'
             '<th data-sort="num">Reactions</th><th data-sort="num">Comments</th>'
             '<th data-sort="num">Shares</th><th data-sort="num">Clicks</th>'
             '<th data-sort="num">Engagement</th></tr></thead><tbody>'
@@ -371,7 +567,9 @@ def render_linkedin_organic(
         f'{posts_html}</section>'
     )
 
-    charts_script = _charts_script(report.follower_series, report.page_series)
+    charts_script = _charts_script(
+        report.follower_series, report.page_series, report.engagement_series
+    )
     sort_script = _sort_script() if report.top_posts else ""
     content = f"""
       <div class="lo-wrap">
@@ -384,6 +582,9 @@ def render_linkedin_organic(
         {note}
         {kpi_section}
         {trends_section}
+        {engagement_section}
+        {demographics_section}
+        {visitors_section}
         {posts_section}
       </div>
       {charts_script}
