@@ -553,6 +553,22 @@ def _humanize_enum(value: str) -> str:
     return str(value or "").replace("_", " ").title() or "Unknown"
 
 
+# Reference-data endpoint paths (NOT a naive plural of the kind — "industry" ->
+# "industries", "geo" has no trailing 's'). A wrong path 404s and every label
+# silently falls back to the raw id, so keep this mapping explicit.
+_REFERENCE_ENDPOINTS = {
+    "industry": "industries",
+    "geo": "geo",
+    "country": "countries",
+}
+# Friendlier placeholder when a lookup can't resolve, per kind.
+_REFERENCE_FALLBACK = {
+    "industry": "Industry",
+    "geo": "Region",
+    "country": "Country",
+}
+
+
 def _resolve_reference_label(
     kind: str, ref_id: str, *, access_token: str, env: LinkedInEnv,
     cache: dict[str, str],
@@ -564,15 +580,18 @@ def _resolve_reference_label(
     key = f"{kind}:{ref_id}"
     if key in cache:
         return cache[key]
-    fallback = f"{kind.title()} {ref_id}"
+    fallback = f"{_REFERENCE_FALLBACK.get(kind, kind.title())} {ref_id}"
+    endpoint = _REFERENCE_ENDPOINTS.get(kind, kind)
     try:
         payload = _linkedin_get_with_versions(
-            f"/{kind}s/{ref_id}", access_token=access_token, env=env
+            f"/{endpoint}/{ref_id}", access_token=access_token, env=env
         )
+        name = payload.get("name")
         label = (
             payload.get("localizedName")
             or (payload.get("defaultLocalizedName") or {}).get("value")
-            or (payload.get("name") or {}).get("localized", {}).get("en_US")
+            # ``name`` is sometimes a localized object, sometimes a plain string.
+            or (name.get("localized", {}).get("en_US") if isinstance(name, dict) else name)
             or fallback
         )
     except Exception as exc:  # pragma: no cover - network dependent

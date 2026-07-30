@@ -284,6 +284,30 @@ class OrganicFetchTests(unittest.TestCase):
         self.assertEqual(rows[0]["unique_impressions"], 320)
         self.assertAlmostEqual(rows[0]["engagement_rate"], 0.07)
 
+    def test_reference_label_uses_correct_endpoint(self) -> None:
+        seen = {}
+
+        def _get(path, **kw):
+            seen["path"] = path
+            return {"name": {"localized": {"en_US": "Hospitals & Health Care"}}}
+
+        organic._linkedin_get_with_versions = _get  # type: ignore
+        label = organic._resolve_reference_label(
+            "industry", "2063", access_token="TOK", env=None, cache={}  # type: ignore
+        )
+        self.assertEqual(seen["path"], "/industries/2063")  # not "/industrys/"
+        self.assertEqual(label, "Hospitals & Health Care")
+
+    def test_reference_label_falls_back_readably(self) -> None:
+        def _boom(path, **kw):
+            raise RuntimeError("404")
+
+        organic._linkedin_get_with_versions = _boom  # type: ignore
+        label = organic._resolve_reference_label(
+            "geo", "90000077", access_token="TOK", env=None, cache={}  # type: ignore
+        )
+        self.assertEqual(label, "Region 90000077")
+
     def test_reactions_by_urn_parses_summaries(self) -> None:
         organic._linkedin_get_with_versions = lambda path, **kw: {  # type: ignore
             "reactionSummaries": {
