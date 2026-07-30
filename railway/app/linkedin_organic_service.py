@@ -386,13 +386,60 @@ def fetch_posts_with_stats(
 # Follower statistics
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _lifetime_followers_from_stats(
+    org_id: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+) -> int:
+    """Total followers summed from lifetime follower statistics segments.
+
+    ``organizationalEntityFollowerStatistics`` WITHOUT a timeIntervals param
+    returns lifetime counts broken out by several dimensions
+    (``followerCountsByAssociationType``, ``…BySeniority``, ``…ByFunction``,
+    ``…ByStaffCountRange`` …). Each dimension partitions the whole audience, so
+    summing organic+paid across one dimension yields the total. Dimensions differ
+    in how many followers they can bucket (some land in no seniority/function),
+    so we take the largest dimension sum as the most complete estimate.
+    """
+    org_urn = quote(_org_urn(org_id), safe="")
+    path = (
+        f"/organizationalEntityFollowerStatistics?q=organizationalEntity"
+        f"&organizationalEntity={org_urn}"
+    )
+    try:
+        payload = _linkedin_get_with_versions(path, access_token=access_token, env=env)
+    except Exception as exc:  # pragma: no cover - network dependent
+        _log.warning("lifetime follower statistics failed for %s: %s", org_id, exc)
+        return 0
+
+    best = 0
+    for element in payload.get("elements") or []:
+        for key, rows in element.items():
+            if not key.startswith("followerCountsBy") or not isinstance(rows, list):
+                continue
+            dim_total = 0
+            for row in rows:
+                counts = row.get("followerCounts") or {}
+                dim_total += int(counts.get("organicFollowerCount") or 0)
+                dim_total += int(counts.get("paidFollowerCount") or 0)
+            best = max(best, dim_total)
+    return best
+
+
 def _total_followers(
     org_id: str,
     *,
     access_token: str,
     env: LinkedInEnv,
 ) -> int:
-    """Lifetime follower count via ``/networkSizes/{orgUrn}``."""
+    """Lifetime follower count.
+
+    Prefers ``/networkSizes/{orgUrn}`` (a single point-in-time number), and falls
+    back to summing lifetime follower-statistics segments when networkSizes is
+    unavailable or returns 0 — some org/app/version combinations return no
+    firstDegreeSize even though the follower-statistics endpoint has the data.
+    """
     org_urn = quote(_org_urn(org_id), safe="")
     try:
         payload = _linkedin_get_with_versions(
@@ -400,10 +447,13 @@ def _total_followers(
             access_token=access_token,
             env=env,
         )
-        return int(payload.get("firstDegreeSize") or 0)
+        size = int(payload.get("firstDegreeSize") or 0)
+        if size:
+            return size
     except Exception as exc:  # pragma: no cover - network dependent
         _log.warning("networkSizes lookup failed for %s: %s", org_id, exc)
-        return 0
+
+    return _lifetime_followers_from_stats(org_id, access_token=access_token, env=env)
 
 
 def fetch_follower_daily(
