@@ -110,6 +110,72 @@ def _mql_sparkline(mqls_by_month, accent: str = "#ff7a59") -> str:
     )
 
 
+def _li_follower_sparkline(follower_series, accent: str = "#0A66C2") -> str:
+    """Tiny inline-SVG follower-growth curve for the Overview card.
+
+    Reconstructs the absolute follower count across the window from the daily
+    ``total_follower_gain`` values, anchored to the most recent lifetime
+    ``total_followers`` snapshot when one is present (otherwise it plots the
+    running cumulative gain from zero). Unlike the MQL sparkline this scales
+    between the series min and max — a follower count rarely starts near zero, so
+    a 0-based axis would flatten the whole line against the top.
+
+    Returns "" when there are fewer than two days to plot.
+    """
+    rows = [r for r in (follower_series or []) if str(r.get("metric_date") or "")]
+    rows.sort(key=lambda r: str(r.get("metric_date") or ""))
+    if len(rows) < 2:
+        return ""
+
+    gains = [int(r.get("total_follower_gain") or 0) for r in rows]
+    total = 0
+    for r in reversed(rows):
+        snapshot = int(r.get("total_followers") or 0)
+        if snapshot:
+            total = snapshot
+            break
+
+    if total:
+        # Walk backward from the known current total using each day's gain.
+        counts = [0] * len(rows)
+        counts[-1] = total
+        for i in range(len(rows) - 1, 0, -1):
+            counts[i - 1] = counts[i] - gains[i]
+        values = counts
+    else:
+        running = 0
+        values = []
+        for g in gains:
+            running += g
+            values.append(running)
+
+    w, h, pad = 132.0, 34.0, 3.0
+    lo, hi = min(values), max(values)
+    span = (hi - lo) or 1
+    n = len(values)
+    step = (w - 2 * pad) / (n - 1)
+    pts = [
+        (pad + i * step, h - pad - ((v - lo) / span) * (h - 2 * pad))
+        for i, v in enumerate(values)
+    ]
+    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    area = (
+        f"M {pts[0][0]:.1f} {h - pad:.1f} "
+        + " ".join(f"L {x:.1f} {y:.1f}" for x, y in pts)
+        + f" L {pts[-1][0]:.1f} {h - pad:.1f} Z"
+    )
+    lx, ly = pts[-1]
+    return (
+        f'<svg class="mql-spark" viewBox="0 0 {w:.0f} {h:.0f}" preserveAspectRatio="none" '
+        f'role="img" aria-label="Follower growth">'
+        f'<path d="{area}" fill="{accent}" fill-opacity="0.12"/>'
+        f'<polyline points="{line}" fill="none" stroke="{accent}" stroke-width="1.6" '
+        f'stroke-linejoin="round" stroke-linecap="round"/>'
+        f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="2.2" fill="{accent}"/>'
+        f'</svg>'
+    )
+
+
 def _api_url(path: str, *, access_key: str | None) -> str:
     if not access_key:
         return path
@@ -126,6 +192,7 @@ OVERVIEW_PINNABLE_CARDS: dict[str, str] = {
     "mql": "HubSpot MQL Tracker",
     "paid": "Paid summary",
     "website": "Website analytics",
+    "linkedin_organic": "LinkedIn Followers",
     "ai_traffic": "AI traffic",
     "gsc": "Search Console",
     "site_performance": "Site performance",
@@ -316,6 +383,75 @@ def hubspot_mql_section_html(report, lead_tracking_url: str | None) -> str:
     )
 
 
+def linkedin_followers_section_html(
+    report, more_url: str | None, *, window_days: int = 90
+) -> str:
+    """Server-rendered LinkedIn follower-growth panel for the Overview home.
+
+    Reads the organic connector's follower series (see
+    ``linkedin_organic_report_service.build_report``): a "Total followers" card
+    with a growth sparkline, plus a "Net new followers" card with the
+    organic/paid split over the window. Mirrors the MQL tracker's card markup so
+    it inherits the same Overview styling. Returns "" when nothing has synced yet
+    so the whole card drops rather than showing an empty shell.
+    """
+    if report is None or not getattr(report, "configured", False):
+        return ""
+
+    from dashboard.utils.formatting import esc as _esc, fmt_int as _int
+
+    total_followers = int(getattr(report, "total_followers", 0) or 0)
+    net_gain = int(getattr(report, "follower_gain", 0) or 0)
+    series = getattr(report, "follower_series", []) or []
+    organic = sum(int(r.get("organic_follower_gain") or 0) for r in series)
+    paid = sum(int(r.get("paid_follower_gain") or 0) for r in series)
+
+    # Absent source (connected but never synced) → no card at all.
+    if not total_followers and not series:
+        return ""
+
+    def _delta(n: int) -> str:
+        if n > 0:
+            return f'<span class="mql-delta up">▲ {_int(n)} in {window_days} days</span>'
+        if n < 0:
+            return f'<span class="mql-delta down">▼ {_int(abs(n))} in {window_days} days</span>'
+        return f'<span class="mql-delta flat">No change in {window_days} days</span>'
+
+    cards: list[str] = []
+    if total_followers:
+        cards.append(
+            '<div class="card"><div class="card-title">Total followers</div>'
+            f'<div class="card-value">{_int(total_followers)}</div>'
+            f'{_li_follower_sparkline(series)}'
+            f'<div class="card-foot">{_delta(net_gain)}</div></div>'
+        )
+    split = (
+        f'<span class="mql-sub">{_int(organic)} organic · {_int(paid)} paid</span>'
+        if (organic or paid)
+        else ""
+    )
+    cards.append(
+        '<div class="card"><div class="card-title">Net new followers</div>'
+        f'<div class="card-value">{_int(net_gain)}</div>'
+        f'<div class="card-foot">{split}</div></div>'
+    )
+
+    more = (
+        f'<a class="ov-more" href="{_esc(more_url)}" aria-label="Open LinkedIn Organic">'
+        '<svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" '
+        'stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></a>'
+        if more_url else ""
+    )
+    return (
+        '<section class="ov-panel">'
+        '<div class="sec-head"><h2>'
+        '<span class="mql-dot" style="background:#0A66C2"></span>LinkedIn Followers</h2>'
+        f'<div class="ov-actions">{more}</div></div>'
+        f'<div class="cards">{"".join(cards)}</div></section>'
+    )
+
+
 def render_bigquery_dashboard_page(
     *,
     access_key: str | None = None,
@@ -431,10 +567,12 @@ def render_bigquery_dashboard_page(
         show_pagespeed = bool(_pf.get("show_pagespeed"))
         show_semrush = bool(_pf.get("show_semrush"))
         show_lead_tracking = bool(_pf.get("show_lead_tracking"))
+        show_linkedin_organic = bool(_pf.get("show_linkedin_organic"))
     except Exception:
         show_pagespeed = False
         show_semrush = False
         show_lead_tracking = False
+        show_linkedin_organic = False
 
     # HubSpot MQL tracker for the Overview home — only fetched when HubSpot is
     # connected. Failures never break the dashboard; the helper drops any card
@@ -455,6 +593,30 @@ def render_bigquery_dashboard_page(
             )
         except Exception:
             mql_section_html = ""
+    # LinkedIn follower growth for the Overview home — only when the organic
+    # connector is connected. Reads the follower series the connector syncs into
+    # BigQuery; failures never break the dashboard, and the helper drops the card
+    # entirely when nothing has synced yet.
+    linkedin_organic_section_html = ""
+    if show_linkedin_organic:
+        try:
+            import linkedin_organic_report_service
+            from dashboard.utils.urls import linkedin_organic_page_url
+            _lo_window = 90
+            _lo_report = linkedin_organic_report_service.build_report(
+                client_slug, days=_lo_window
+            )
+            linkedin_organic_section_html = linkedin_followers_section_html(
+                _lo_report,
+                linkedin_organic_page_url(
+                    client_slug=client_slug,
+                    access_key=access_key,
+                    use_session=use_session,
+                ),
+                window_days=_lo_window,
+            )
+        except Exception:
+            linkedin_organic_section_html = ""
     # Organic Search Intelligence (SEMrush) — only when the SEMrush connector is
     # connected; otherwise the whole section is dropped from the GSC tab.
     semrush_section_html = """
@@ -711,6 +873,8 @@ def render_bigquery_dashboard_page(
     if paid_panel:
         ov_units.append(("paid", paid_panel))
     ov_units.append(("website", panel_website))
+    if linkedin_organic_section_html:
+        ov_units.append(("linkedin_organic", linkedin_organic_section_html))
     ov_units.append(("ai_traffic", panel_ai))
     ov_units.append(("gsc", panel_gsc))
     if panel_pagespeed:
