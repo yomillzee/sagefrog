@@ -1253,42 +1253,43 @@ def render_admin_page(
                     f'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span></label>'
                 )
 
-                # Delete is destructive → super admins only. Others just see the
-                # protected/absence of the control.
-                if not is_super_admin or slug == "penn":
-                    delete_ctl = (
-                        '<span class="dash-row-note">Protected</span>'
-                        if slug == "penn"
-                        else ""
-                    )
+                # All row actions live in one kebab (⋮) menu: Open, Rename, and —
+                # for super admins — Delete. Rename/Delete swap the menu for an
+                # inline panel (see the kebab JS) so no popover floats loose over
+                # the card grid.
+                _svg_kebab = ('<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">'
+                             '<circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>')
+                _svg_open = ('<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+                            '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>')
+                _svg_pencil = ('<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+                              '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>')
+                _svg_trash = ('<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+                             '<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>')
+                _svg_back = ('<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+                            '<path d="M15 18l-6-6 6-6"/></svg>')
+
+                # Delete is destructive → super admins only; "penn" is protected.
+                if slug == "penn":
+                    delete_item = '<div class="dash-kebab-note">Protected — can’t be deleted</div>'
+                    delete_panel = ""
+                elif not is_super_admin:
+                    delete_item = ""
+                    delete_panel = ""
                 else:
                     field_id = f"confirm-{slug.replace('-', '_')}"
                     btn_id = f"delete-btn-{slug.replace('-', '_')}"
-                    delete_ctl = f"""
-                    <details class="dash-delete-fold">
-                      <summary class="dash-icon-btn danger" title="Delete dashboard" aria-label="Delete dashboard"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></summary>
-                      <form method="post" action="/admin/dashboards/{_esc(slug)}/delete" class="dash-delete-form">
-                        <p class="hint">Type <strong>{_esc(label)}</strong> to confirm deletion.</p>
-                        <input type="text" id="{field_id}" name="confirm_label"
-                          placeholder="{_esc(label)}" autocomplete="off"
-                          data-expected="{_esc(label)}" data-btn-id="{btn_id}">
-                        <button type="submit" id="{btn_id}" class="link danger" disabled>Delete dashboard</button>
-                      </form>
-                    </details>"""
-
-                # Rename edits the display label only — the slug (and every route,
-                # BigQuery route, OAuth token and config that keys on it) is left
-                # untouched, so this is safe for any admin.
-                rename_ctl = f"""
-                    <details class="dash-rename-fold">
-                      <summary class="dash-icon-btn" title="Rename dashboard" aria-label="Rename dashboard"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></summary>
-                      <form method="post" action="/admin/dashboards/{_esc(slug)}/rename" class="dash-rename-form">
-                        <p class="hint">Display name only — the URL <code>/dashboard/{_esc(slug)}</code> stays the same.</p>
-                        <input type="text" name="label" value="{_esc(label)}" maxlength="120" required
-                          autocomplete="off" aria-label="New display name">
-                        <button type="submit" class="link">Save name</button>
-                      </form>
-                    </details>"""
+                    delete_item = (
+                        '<button type="button" class="dash-kebab-item danger" role="menuitem" data-kebab-panel="delete">'
+                        f'{_svg_trash}<span>Delete…</span></button>'
+                    )
+                    delete_panel = f"""
+                <form method="post" action="/admin/dashboards/{_esc(slug)}/delete" class="dash-kebab-panel" data-panel="delete" hidden>
+                  <button type="button" class="dash-kebab-back" data-kebab-panel="menu">{_svg_back}<span>Back</span></button>
+                  <p class="hint">Type <strong>{_esc(label)}</strong> to confirm deletion.</p>
+                  <input type="text" id="{field_id}" name="confirm_label" placeholder="{_esc(label)}"
+                    autocomplete="off" data-expected="{_esc(label)}" data-btn-id="{btn_id}">
+                  <button type="submit" id="{btn_id}" class="dash-kebab-submit danger" disabled>Delete dashboard</button>
+                </form>"""
 
                 search_key = _esc(f"{label} {slug}".lower())
                 dash_rows.append(f"""
@@ -1299,9 +1300,24 @@ def render_admin_page(
             <span class="dash-row-slug mono">/dashboard/{_esc(slug)}</span>
           </a>
           <div class="dash-row-actions">
-            <a class="dash-icon-btn" href="/dashboard/{_esc(slug)}" title="Open dashboard" aria-label="Open dashboard"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg></a>
-            {rename_ctl}
-            {delete_ctl}
+            <details class="dash-kebab">
+              <summary class="dash-icon-btn" title="Actions" aria-label="Actions" aria-haspopup="menu">{_svg_kebab}</summary>
+              <div class="dash-kebab-menu">
+                <div class="dash-kebab-list" data-panel="menu" role="menu">
+                  <a class="dash-kebab-item" role="menuitem" href="/dashboard/{_esc(slug)}">{_svg_open}<span>Open dashboard</span></a>
+                  <button type="button" class="dash-kebab-item" role="menuitem" data-kebab-panel="rename">{_svg_pencil}<span>Rename…</span></button>
+                  {delete_item}
+                </div>
+                <form method="post" action="/admin/dashboards/{_esc(slug)}/rename" class="dash-kebab-panel" data-panel="rename" hidden>
+                  <button type="button" class="dash-kebab-back" data-kebab-panel="menu">{_svg_back}<span>Back</span></button>
+                  <label class="dash-kebab-label">Display name</label>
+                  <input type="text" name="label" value="{_esc(label)}" maxlength="120" required autocomplete="off" aria-label="New display name">
+                  <p class="hint">The URL <code>/dashboard/{_esc(slug)}</code> stays the same.</p>
+                  <button type="submit" class="dash-kebab-submit primary">Save name</button>
+                </form>
+                {delete_panel}
+              </div>
+            </details>
           </div>
         </div>""")
             dash_count = len(dash_rows)
@@ -1348,7 +1364,25 @@ def render_admin_page(
       <p class="dash-empty muted" id="dashEmpty" hidden>No accounts match your filter.</p>
     </section>"""
             dash_delete_js = """
-    document.querySelectorAll('.dash-delete-form input[name="confirm_label"]').forEach((input) => {
+    // Kebab row menus: swap between the action list and the rename/delete panels,
+    // gate the delete button on a matching confirmation, and close on outside
+    // click or Escape (a native <details> won't do that on its own).
+    document.querySelectorAll('.dash-kebab').forEach((kebab) => {
+      const panels = kebab.querySelectorAll('.dash-kebab-menu [data-panel]');
+      const show = (name) => {
+        panels.forEach((p) => { p.hidden = p.dataset.panel !== name; });
+        if (name !== 'menu') {
+          const inp = kebab.querySelector('[data-panel="' + name + '"] input');
+          if (inp) requestAnimationFrame(() => inp.focus());
+        }
+      };
+      kebab.querySelectorAll('[data-kebab-panel]').forEach((b) => {
+        b.addEventListener('click', () => show(b.dataset.kebabPanel));
+      });
+      // Always (re)open on the action list, and reset to it on close.
+      kebab.addEventListener('toggle', () => show('menu'));
+    });
+    document.querySelectorAll('.dash-kebab input[name="confirm_label"]').forEach((input) => {
       const expected = input.dataset.expected || '';
       const btn = document.getElementById(input.dataset.btnId || '');
       const sync = () => {
@@ -1356,6 +1390,16 @@ def render_admin_page(
       };
       input.addEventListener('input', sync);
       sync();
+    });
+    document.addEventListener('click', (e) => {
+      document.querySelectorAll('.dash-kebab[open]').forEach((k) => {
+        if (!k.contains(e.target)) k.open = false;
+      });
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        document.querySelectorAll('.dash-kebab[open]').forEach((k) => { k.open = false; });
+      }
     });"""
         else:
             dashboard_links = "\n".join(
@@ -1623,16 +1667,40 @@ def render_admin_page(
       box-shadow: 0 4px 20px rgba(16,33,67,.12); }}
     .dash-table {{ margin-top: 4px; }}
     .dash-table td {{ vertical-align: middle; }}
-    .dash-delete-fold {{ margin: 0; font-size: .88rem; }}
-    .dash-delete-fold summary {{ cursor: pointer; list-style: none; }}
-    .dash-delete-fold summary::-webkit-details-marker {{ display: none; }}
-    .dash-delete-form {{ margin-top: 8px; padding: 10px; background: #fafbfc; border-radius: 8px; border: 1px solid var(--border); }}
-    .dash-delete-form input {{ max-width: 100%; margin-bottom: 8px; }}
-    .dash-rename-fold {{ margin: 0; font-size: .88rem; }}
-    .dash-rename-fold summary {{ cursor: pointer; list-style: none; }}
-    .dash-rename-fold summary::-webkit-details-marker {{ display: none; }}
-    .dash-rename-form {{ margin-top: 8px; padding: 10px; background: #fafbfc; border-radius: 8px; border: 1px solid var(--border); }}
-    .dash-rename-form input {{ max-width: 100%; margin-bottom: 8px; }}
+    /* ---- Account row kebab (⋮) menu ---- */
+    .dash-kebab {{ position: relative; margin: 0; font-size: .88rem; }}
+    .dash-kebab > summary {{ cursor: pointer; list-style: none; }}
+    .dash-kebab > summary::-webkit-details-marker {{ display: none; }}
+    .dash-kebab[open] > .dash-icon-btn {{ background: #f4f8fd; border-color: #b9c8dc; color: var(--accent); }}
+    .dash-kebab-menu {{ position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; width: 244px; max-width: 80vw;
+      background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 6px;
+      box-shadow: 0 12px 32px rgba(16,33,67,.18); }}
+    .dash-kebab-list {{ display: flex; flex-direction: column; gap: 2px; }}
+    /* A class selector's display beats the UA [hidden] rule, so re-assert it with
+       higher specificity — otherwise the rename/delete panels never hide. */
+    .dash-kebab-list[hidden], .dash-kebab-panel[hidden] {{ display: none; }}
+    .dash-kebab-item {{ display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0;
+      border-radius: 8px; background: transparent; color: var(--navy); font-size: .88rem; font-weight: 600;
+      text-align: left; text-decoration: none; cursor: pointer; transition: background .12s, color .12s; }}
+    .dash-kebab-item svg {{ flex-shrink: 0; }}
+    .dash-kebab-item:hover {{ background: #f4f8fd; color: var(--accent); }}
+    .dash-kebab-item.danger {{ color: var(--danger); }}
+    .dash-kebab-item.danger:hover {{ background: #fef2f2; color: var(--danger); }}
+    .dash-kebab-note {{ padding: 9px 10px; font-size: .76rem; color: var(--muted); font-weight: 600; }}
+    .dash-kebab-panel {{ display: flex; flex-direction: column; gap: 8px; padding: 6px 6px 4px; }}
+    .dash-kebab-panel .hint {{ margin: 0; }}
+    .dash-kebab-panel input {{ max-width: 100%; margin: 0; }}
+    .dash-kebab-label {{ font-size: .68rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }}
+    .dash-kebab-back {{ display: inline-flex; align-items: center; gap: 5px; align-self: flex-start; border: 0; background: transparent;
+      color: var(--muted); font-size: .78rem; font-weight: 600; cursor: pointer; padding: 2px 0; }}
+    .dash-kebab-back:hover {{ color: var(--accent); }}
+    .dash-kebab-submit {{ width: 100%; padding: 8px; border-radius: 8px; border: 0; font-weight: 700; font-size: .85rem;
+      cursor: pointer; transition: filter .12s, opacity .12s; }}
+    .dash-kebab-submit.primary {{ background: linear-gradient(135deg, var(--accent), var(--accent-d)); color: #fff; }}
+    .dash-kebab-submit.primary:hover {{ filter: brightness(1.06); }}
+    .dash-kebab-submit.danger {{ background: var(--danger); color: #fff; }}
+    .dash-kebab-submit.danger:disabled {{ opacity: .5; cursor: not-allowed; }}
+    .dash-kebab-submit.danger:not(:disabled):hover {{ filter: brightness(1.06); }}
     /* ---- Users table (modern) ---- */
     .user-table-wrap {{ overflow-x: auto; }}
     .user-table {{ font-size: .92rem; }}
@@ -1785,12 +1853,6 @@ def render_admin_page(
     .dash-icon-btn::-webkit-details-marker {{ display: none; }}
     .dash-icon-btn:hover {{ background: #f4f8fd; border-color: #b9c8dc; color: var(--accent); }}
     .dash-icon-btn.danger:hover {{ background: #fef2f2; border-color: #f3c0bb; color: var(--danger); }}
-    .dash-delete-fold[open] > .dash-icon-btn.danger {{ background: #fef2f2; color: var(--danger); border-color: #f3c0bb; }}
-    .dash-delete-fold .dash-delete-form {{ position: absolute; right: 0; top: calc(100% + 6px); z-index: 6; width: 260px;
-      max-width: 80vw; margin: 0; box-shadow: 0 8px 24px rgba(16,33,67,.16); }}
-    .dash-rename-fold[open] > .dash-icon-btn {{ background: #f4f8fd; color: var(--accent); border-color: #b9c8dc; }}
-    .dash-rename-fold .dash-rename-form {{ position: absolute; right: 0; top: calc(100% + 6px); z-index: 6; width: 280px;
-      max-width: 80vw; margin: 0; box-shadow: 0 8px 24px rgba(16,33,67,.16); }}
     /* Modern "Add dashboard" button */
     .add-dash-btn {{ display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px; border-radius: 10px;
       background: linear-gradient(135deg, var(--accent), var(--accent-d)); color: #fff; font-size: .88rem; font-weight: 700;
@@ -1872,8 +1934,7 @@ def render_admin_page(
          trigger on a phone — float them as a full-width bottom sheet. */
       .row-fold-form,
       .dash-add-fold .dash-add-form,
-      .dash-delete-fold .dash-delete-form,
-      .dash-rename-fold .dash-rename-form,
+      .dash-kebab .dash-kebab-menu,
       .dash-add-form {{
         position: fixed; left: 12px; right: 12px; top: auto; bottom: 12px;
         width: auto; max-width: none; max-height: 72vh; overflow-y: auto;
