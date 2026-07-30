@@ -12,6 +12,7 @@ absent source, not an error, and surfaces as an empty (unconfigured) report.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -26,6 +27,18 @@ _DEFAULT_ORGANIC_DATASET = "raw_linkedin_organic"
 _POST_TABLE = "post_stats"
 _FOLLOWER_TABLE = "follower_daily"
 _PAGE_TABLE = "page_daily"
+_DEMOGRAPHICS_TABLE = "follower_demographics"
+_ENGAGEMENT_TABLE = "engagement_daily"
+
+# Page-section columns -> display label, in the order we surface them.
+_PAGE_SECTIONS = (
+    ("overview_page_views", "Overview"),
+    ("careers_page_views", "Careers"),
+    ("jobs_page_views", "Jobs"),
+    ("life_page_views", "Life"),
+    ("products_page_views", "Products"),
+    ("people_page_views", "People"),
+)
 
 
 @dataclass
@@ -39,14 +52,23 @@ class LinkedInOrganicReport:
     total_likes: int = 0
     total_comments: int = 0
     total_shares: int = 0
+    total_unique_impressions: int = 0
     total_followers: int = 0
     follower_gain: int = 0
     total_page_views: int = 0
     total_unique_visitors: int = 0
+    # Page-view splits over the window
+    page_desktop_views: int = 0
+    page_mobile_views: int = 0
+    page_sections: list[dict[str, Any]] = field(default_factory=list)  # [{label, views}]
     # Series / tables
     top_posts: list[dict[str, Any]] = field(default_factory=list)
     follower_series: list[dict[str, Any]] = field(default_factory=list)
     page_series: list[dict[str, Any]] = field(default_factory=list)
+    engagement_series: list[dict[str, Any]] = field(default_factory=list)
+    # Lifetime follower demographics keyed by dimension
+    # (seniority/function/industry/company_size/region) -> ranked category rows.
+    follower_demographics: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
 def _resolve_routing(client_slug: str) -> tuple[str | None, str, str | None]:
@@ -71,6 +93,28 @@ def _resolve_routing(client_slug: str) -> tuple[str | None, str, str | None]:
             pass
     dataset = (dataset or os.getenv("BQ_LINKEDIN_ORGANIC_DATASET_ID") or _DEFAULT_ORGANIC_DATASET).strip()
     return project, dataset, None
+
+
+def _parse_reactions(raw: Any) -> dict[str, int]:
+    """Decode the ``reactions_by_type`` JSON string column into {TYPE: count}."""
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        data = raw
+    else:
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            return {}
+    out: dict[str, int] = {}
+    for key, value in (data or {}).items():
+        try:
+            count = int(value)
+        except (TypeError, ValueError):
+            continue
+        if count:
+            out[str(key).upper()] = count
+    return out
 
 
 def _is_table_not_found(exc: Exception) -> bool:
@@ -128,17 +172,51 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
             "post_type": str(r.get("post_type") or ""),
             "published_at": str(r.get("published_at") or ""),
             "impressions": int(r.get("impressions") or 0),
+            "unique_impressions": 0,
             "clicks": int(r.get("clicks") or 0),
             "likes": int(r.get("likes") or 0),
             "comments": int(r.get("comments") or 0),
             "shares": int(r.get("shares") or 0),
             "engagement_rate": float(r.get("engagement_rate") or 0.0),
+            "reactions": {},
         })
     report.post_count = len(report.top_posts)
     report.total_impressions = sum(p["impressions"] for p in report.top_posts)
     report.total_likes = sum(p["likes"] for p in report.top_posts)
     report.total_comments = sum(p["comments"] for p in report.top_posts)
     report.total_shares = sum(p["shares"] for p in report.top_posts)
+
+    # Reach (unique_impressions) + per-reaction breakdown live in columns added
+    # after the table's first version, so they're read in a separate, tolerant
+    # query: a table that predates them simply yields no reach/reactions rather
+    # than breaking the whole posts read.
+    if report.top_posts:
+        by_post = {p["post_id"]: p for p in report.top_posts}
+        try:
+            extra_rows = bigquery_service.run_query(
+                f"""
+                SELECT post_id, unique_impressions, reactions_by_type
+                FROM {_tbl(_POST_TABLE)}
+                WHERE published_at IS NULL
+                   OR published_at BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+                ORDER BY impressions DESC
+                LIMIT 50
+                """,
+                project_id=project,
+                credentials_env=creds,
+                max_rows=50,
+            )
+        except Exception as exc:
+            if not _is_table_not_found(exc):
+                _log.info("organic post reach/reactions read skipped [%s]: %s", client_slug, exc)
+            extra_rows = []
+        for r in extra_rows:
+            post = by_post.get(str(r.get("post_id") or ""))
+            if not post:
+                continue
+            post["unique_impressions"] = int(r.get("unique_impressions") or 0)
+            post["reactions"] = _parse_reactions(r.get("reactions_by_type"))
+    report.total_unique_impressions = sum(p["unique_impressions"] for p in report.top_posts)
 
     # ── Followers (daily series + latest lifetime total) ──────────────────────
     try:
@@ -201,6 +279,91 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
         })
     report.total_page_views = sum(r["page_views"] for r in report.page_series)
     report.total_unique_visitors = sum(r["unique_visitors"] for r in report.page_series)
+
+    # ── Page views by device + section (tolerant: columns added after v1) ──────
+    _section_cols = ", ".join(f"SUM({c}) AS {c}" for c, _ in _PAGE_SECTIONS)
+    try:
+        split_rows = bigquery_service.run_query(
+            f"""
+            SELECT SUM(desktop_page_views) AS desktop, SUM(mobile_page_views) AS mobile,
+                   {_section_cols}
+            FROM {_tbl(_PAGE_TABLE)}
+            WHERE metric_date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+            """,
+            project_id=project,
+            credentials_env=creds,
+            max_rows=1,
+        )
+    except Exception as exc:
+        if not _is_table_not_found(exc):
+            _log.info("organic page split read skipped [%s]: %s", client_slug, exc)
+        split_rows = []
+    if split_rows:
+        row = split_rows[0]
+        report.page_desktop_views = int(row.get("desktop") or 0)
+        report.page_mobile_views = int(row.get("mobile") or 0)
+        report.page_sections = [
+            {"label": label, "views": int(row.get(col) or 0)}
+            for col, label in _PAGE_SECTIONS
+            if int(row.get(col) or 0) > 0
+        ]
+
+    # ── Follower demographics (lifetime segments by dimension) ─────────────────
+    try:
+        demo_rows = bigquery_service.run_query(
+            f"""
+            SELECT dimension, category, organic_followers, paid_followers, total_followers
+            FROM {_tbl(_DEMOGRAPHICS_TABLE)}
+            ORDER BY dimension ASC, total_followers DESC
+            """,
+            project_id=project,
+            credentials_env=creds,
+            max_rows=500,
+        )
+    except Exception as exc:
+        if not _is_table_not_found(exc):
+            _log.info("organic demographics read skipped [%s]: %s", client_slug, exc)
+        demo_rows = []
+    for r in demo_rows:
+        dim = str(r.get("dimension") or "")
+        if not dim:
+            continue
+        report.follower_demographics.setdefault(dim, []).append({
+            "category": str(r.get("category") or "Unknown"),
+            "organic_followers": int(r.get("organic_followers") or 0),
+            "paid_followers": int(r.get("paid_followers") or 0),
+            "total_followers": int(r.get("total_followers") or 0),
+        })
+
+    # ── Organization-level engagement over time ────────────────────────────────
+    try:
+        eng_rows = bigquery_service.run_query(
+            f"""
+            SELECT CAST(metric_date AS STRING) AS metric_date, impressions,
+                   unique_impressions, clicks, likes, comments, shares, engagement_rate
+            FROM {_tbl(_ENGAGEMENT_TABLE)}
+            WHERE metric_date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+            ORDER BY metric_date ASC
+            """,
+            project_id=project,
+            credentials_env=creds,
+            max_rows=1000,
+        )
+    except Exception as exc:
+        if not _is_table_not_found(exc):
+            _log.info("organic engagement read skipped [%s]: %s", client_slug, exc)
+        eng_rows = []
+    for r in eng_rows:
+        report.engagement_series.append({
+            "metric_date": str(r.get("metric_date") or ""),
+            "impressions": int(r.get("impressions") or 0),
+            "unique_impressions": int(r.get("unique_impressions") or 0),
+            "clicks": int(r.get("clicks") or 0),
+            "likes": int(r.get("likes") or 0),
+            "comments": int(r.get("comments") or 0),
+            "shares": int(r.get("shares") or 0),
+            "engagement_rate": float(r.get("engagement_rate") or 0.0),
+        })
 
     report.org_id = org_id
     return report

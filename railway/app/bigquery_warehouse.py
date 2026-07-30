@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -1695,6 +1696,25 @@ def _organic_target(table_name: str) -> tuple[Any, str]:
     return _client(project_id), f"{project_id}.{dataset_id}.{table_name}"
 
 
+def _sync_table_columns(client: Any, table_id: str, schema: list[Any]) -> None:
+    """Add any NULLABLE columns an already-existing table is missing.
+
+    ``create_table(exists_ok=True)`` never alters an existing table's schema, so a
+    table created before a column was added would make the MERGE below fail on the
+    missing column. This backfills the schema (nullable additions only, which is
+    all BigQuery allows) so new metrics land on long-lived tables.
+    """
+    try:
+        existing = client.get_table(table_id)
+        existing_cols = {f.name for f in existing.schema}
+        missing = [f for f in schema if f.name not in existing_cols]
+        if missing:
+            existing.schema = list(existing.schema) + missing
+            client.update_table(existing, ["schema"])
+    except Exception:
+        _log.warning("organic schema sync skipped for %s", table_id, exc_info=True)
+
+
 def _organic_post_schema() -> list[Any]:
     bigquery = _bigquery()
     return [
@@ -1706,11 +1726,18 @@ def _organic_post_schema() -> list[Any]:
         bigquery.SchemaField("post_type", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("published_at", "DATE", mode="NULLABLE"),
         bigquery.SchemaField("impressions", "INT64", mode="REQUIRED"),
+        # Reach (distinct viewers). NULLABLE so it can be added to tables created
+        # before this column existed via the schema-sync in the mirror below.
+        bigquery.SchemaField("unique_impressions", "INT64", mode="NULLABLE"),
         bigquery.SchemaField("clicks", "INT64", mode="REQUIRED"),
         bigquery.SchemaField("likes", "INT64", mode="REQUIRED"),
         bigquery.SchemaField("comments", "INT64", mode="REQUIRED"),
         bigquery.SchemaField("shares", "INT64", mode="REQUIRED"),
         bigquery.SchemaField("engagement_rate", "FLOAT64", mode="REQUIRED"),
+        # Per-reaction-type counts as a JSON object string (e.g.
+        # {"LIKE": 30, "PRAISE": 4}); empty/absent when the breakdown is
+        # unavailable for the post.
+        bigquery.SchemaField("reactions_by_type", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"),
     ]
 
@@ -1729,16 +1756,30 @@ def _organic_follower_schema() -> list[Any]:
     ]
 
 
+_ORGANIC_PAGE_BREAKDOWN_COLS = (
+    "desktop_page_views", "mobile_page_views", "overview_page_views",
+    "careers_page_views", "jobs_page_views", "life_page_views",
+    "products_page_views", "people_page_views",
+)
+
+
 def _organic_page_schema() -> list[Any]:
     bigquery = _bigquery()
-    return [
+    schema = [
         bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("org_id", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("metric_date", "DATE", mode="REQUIRED"),
         bigquery.SchemaField("page_views", "INT64", mode="REQUIRED"),
         bigquery.SchemaField("unique_visitors", "INT64", mode="REQUIRED"),
-        bigquery.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"),
     ]
+    # Device (desktop/mobile) + per-section view splits. NULLABLE so they can be
+    # backfilled onto page_daily tables created before these columns existed.
+    schema += [
+        bigquery.SchemaField(col, "INT64", mode="NULLABLE")
+        for col in _ORGANIC_PAGE_BREAKDOWN_COLS
+    ]
+    schema.append(bigquery.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"))
+    return schema
 
 
 def mirror_linkedin_post_stats(org_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1758,6 +1799,7 @@ def mirror_linkedin_post_stats(org_id: str, rows: list[dict[str, Any]]) -> dict[
     t = bigquery.Table(table_id, schema=schema)
     t.clustering_fields = ["source", "org_id", "post_id"]
     client.create_table(t, exists_ok=True)
+    _sync_table_columns(client, table_id, schema)
 
     synced_at = datetime.now(timezone.utc).isoformat()
     payload = []
@@ -1765,6 +1807,7 @@ def mirror_linkedin_post_stats(org_id: str, rows: list[dict[str, Any]]) -> dict[
         post_id = str(row.get("post_id") or "").strip()
         if not post_id:
             continue
+        reactions = row.get("reactions_by_type") or {}
         payload.append({
             "source": "linkedin",
             "org_id": org_id_clean,
@@ -1774,11 +1817,13 @@ def mirror_linkedin_post_stats(org_id: str, rows: list[dict[str, Any]]) -> dict[
             "post_type": str(row.get("post_type") or "").strip() or None,
             "published_at": (str(row.get("published_at") or "")[:10] or None),
             "impressions": int(row.get("impressions") or 0),
+            "unique_impressions": int(row.get("unique_impressions") or 0),
             "clicks": int(row.get("clicks") or 0),
             "likes": int(row.get("likes") or 0),
             "comments": int(row.get("comments") or 0),
             "shares": int(row.get("shares") or 0),
             "engagement_rate": float(row.get("engagement_rate") or 0.0),
+            "reactions_by_type": (json.dumps(reactions, separators=(",", ":")) if reactions else None),
             "synced_at": synced_at,
         })
     if not payload:
@@ -1793,15 +1838,19 @@ def mirror_linkedin_post_stats(org_id: str, rows: list[dict[str, Any]]) -> dict[
     ON T.source = S.source AND T.org_id = S.org_id AND T.post_id = S.post_id
     WHEN MATCHED THEN UPDATE SET
       post_urn = S.post_urn, title = S.title, post_type = S.post_type,
-      published_at = S.published_at, impressions = S.impressions, clicks = S.clicks,
+      published_at = S.published_at, impressions = S.impressions,
+      unique_impressions = S.unique_impressions, clicks = S.clicks,
       likes = S.likes, comments = S.comments, shares = S.shares,
-      engagement_rate = S.engagement_rate, synced_at = S.synced_at
+      engagement_rate = S.engagement_rate, reactions_by_type = S.reactions_by_type,
+      synced_at = S.synced_at
     WHEN NOT MATCHED THEN INSERT (
       source, org_id, post_id, post_urn, title, post_type, published_at,
-      impressions, clicks, likes, comments, shares, engagement_rate, synced_at
+      impressions, unique_impressions, clicks, likes, comments, shares,
+      engagement_rate, reactions_by_type, synced_at
     ) VALUES (
       S.source, S.org_id, S.post_id, S.post_urn, S.title, S.post_type, S.published_at,
-      S.impressions, S.clicks, S.likes, S.comments, S.shares, S.engagement_rate, S.synced_at
+      S.impressions, S.unique_impressions, S.clicks, S.likes, S.comments, S.shares,
+      S.engagement_rate, S.reactions_by_type, S.synced_at
     )
     """
     try:
@@ -1887,6 +1936,7 @@ def mirror_linkedin_page_daily(org_id: str, rows: list[dict[str, Any]]) -> dict[
     t.time_partitioning = bigquery.TimePartitioning(field="metric_date")
     t.clustering_fields = ["source", "org_id"]
     client.create_table(t, exists_ok=True)
+    _sync_table_columns(client, table_id, schema)
 
     synced_at = datetime.now(timezone.utc).isoformat()
     payload = []
@@ -1900,6 +1950,178 @@ def mirror_linkedin_page_daily(org_id: str, rows: list[dict[str, Any]]) -> dict[
             "metric_date": metric_date,
             "page_views": int(row.get("page_views") or 0),
             "unique_visitors": int(row.get("unique_visitors") or 0),
+            **{col: int(row.get(col) or 0) for col in _ORGANIC_PAGE_BREAKDOWN_COLS},
+            "synced_at": synced_at,
+        })
+    if not payload:
+        return {"enabled": True, "rows_upserted": 0, "table": table_id}
+
+    breakdown_set = ", ".join(f"{c} = S.{c}" for c in _ORGANIC_PAGE_BREAKDOWN_COLS)
+    breakdown_cols = ", ".join(_ORGANIC_PAGE_BREAKDOWN_COLS)
+    breakdown_vals = ", ".join(f"S.{c}" for c in _ORGANIC_PAGE_BREAKDOWN_COLS)
+    temp_id = f"{table_id}_staging_{uuid4().hex}"
+    job_config = bigquery.LoadJobConfig(schema=schema, write_disposition="WRITE_TRUNCATE")
+    client.load_table_from_json(payload, temp_id, job_config=job_config).result()
+    merge_sql = f"""
+    MERGE `{table_id}` T
+    USING `{temp_id}` S
+    ON T.source = S.source AND T.org_id = S.org_id AND T.metric_date = S.metric_date
+    WHEN MATCHED THEN UPDATE SET
+      page_views = S.page_views, unique_visitors = S.unique_visitors,
+      {breakdown_set}, synced_at = S.synced_at
+    WHEN NOT MATCHED THEN INSERT (
+      source, org_id, metric_date, page_views, unique_visitors, {breakdown_cols}, synced_at
+    ) VALUES (
+      S.source, S.org_id, S.metric_date, S.page_views, S.unique_visitors, {breakdown_vals}, S.synced_at
+    )
+    """
+    try:
+        client.query(merge_sql).result()
+    finally:
+        client.delete_table(temp_id, not_found_ok=True)
+    return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
+
+
+_DEFAULT_ORGANIC_DEMOGRAPHICS_TABLE = "follower_demographics"
+_DEFAULT_ORGANIC_ENGAGEMENT_TABLE = "engagement_daily"
+
+
+def _organic_demographics_schema() -> list[Any]:
+    bigquery = _bigquery()
+    return [
+        bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("org_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("dimension", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("category", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("category_urn", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("organic_followers", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("paid_followers", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("total_followers", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"),
+    ]
+
+
+def _organic_engagement_schema() -> list[Any]:
+    bigquery = _bigquery()
+    return [
+        bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("org_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("metric_date", "DATE", mode="REQUIRED"),
+        bigquery.SchemaField("impressions", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("unique_impressions", "INT64", mode="NULLABLE"),
+        bigquery.SchemaField("clicks", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("likes", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("comments", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("shares", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("engagement_rate", "FLOAT64", mode="REQUIRED"),
+        bigquery.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"),
+    ]
+
+
+def mirror_linkedin_follower_demographics(org_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Replace this org's lifetime follower demographics in
+    raw_linkedin_organic.follower_demographics.
+
+    Grain is (source, org_id, dimension, category_urn). Since each sync carries a
+    complete lifetime snapshot, stale categories for this org are deleted so a
+    demographic that drops out doesn't linger.
+    """
+    if not rows or not enabled("linkedin"):
+        return {"enabled": False, "rows_upserted": 0, "table": None}
+
+    org_id_clean = str(org_id).strip().split(":")[-1]
+    client, table_id = _organic_target(_DEFAULT_ORGANIC_DEMOGRAPHICS_TABLE)
+    bigquery = _bigquery()
+    client.create_dataset(bigquery.Dataset(".".join(table_id.split(".")[:2])), exists_ok=True)
+    schema = _organic_demographics_schema()
+    t = bigquery.Table(table_id, schema=schema)
+    t.clustering_fields = ["source", "org_id", "dimension"]
+    client.create_table(t, exists_ok=True)
+    _sync_table_columns(client, table_id, schema)
+
+    synced_at = datetime.now(timezone.utc).isoformat()
+    payload = []
+    for row in rows:
+        category_urn = str(row.get("category_urn") or "").strip()
+        dimension = str(row.get("dimension") or "").strip()
+        if not category_urn or not dimension:
+            continue
+        payload.append({
+            "source": "linkedin",
+            "org_id": org_id_clean,
+            "dimension": dimension,
+            "category": str(row.get("category") or "").strip() or None,
+            "category_urn": category_urn,
+            "organic_followers": int(row.get("organic_followers") or 0),
+            "paid_followers": int(row.get("paid_followers") or 0),
+            "total_followers": int(row.get("total_followers") or 0),
+            "synced_at": synced_at,
+        })
+    if not payload:
+        return {"enabled": True, "rows_upserted": 0, "table": table_id}
+
+    temp_id = f"{table_id}_staging_{uuid4().hex}"
+    job_config = bigquery.LoadJobConfig(schema=schema, write_disposition="WRITE_TRUNCATE")
+    client.load_table_from_json(payload, temp_id, job_config=job_config).result()
+    merge_sql = f"""
+    MERGE `{table_id}` T
+    USING `{temp_id}` S
+    ON T.source = S.source AND T.org_id = S.org_id
+       AND T.dimension = S.dimension AND T.category_urn = S.category_urn
+    WHEN MATCHED THEN UPDATE SET
+      category = S.category, organic_followers = S.organic_followers,
+      paid_followers = S.paid_followers, total_followers = S.total_followers,
+      synced_at = S.synced_at
+    WHEN NOT MATCHED THEN INSERT (
+      source, org_id, dimension, category, category_urn,
+      organic_followers, paid_followers, total_followers, synced_at
+    ) VALUES (
+      S.source, S.org_id, S.dimension, S.category, S.category_urn,
+      S.organic_followers, S.paid_followers, S.total_followers, S.synced_at
+    )
+    WHEN NOT MATCHED BY SOURCE AND T.source = 'linkedin' AND T.org_id = '{org_id_clean}'
+      THEN DELETE
+    """
+    try:
+        client.query(merge_sql).result()
+    finally:
+        client.delete_table(temp_id, not_found_ok=True)
+    return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
+
+
+def mirror_linkedin_engagement_daily(org_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Upsert org-level daily engagement to raw_linkedin_organic.engagement_daily."""
+    if not rows or not enabled("linkedin"):
+        return {"enabled": False, "rows_upserted": 0, "table": None}
+
+    org_id_clean = str(org_id).strip().split(":")[-1]
+    client, table_id = _organic_target(_DEFAULT_ORGANIC_ENGAGEMENT_TABLE)
+    bigquery = _bigquery()
+    client.create_dataset(bigquery.Dataset(".".join(table_id.split(".")[:2])), exists_ok=True)
+    schema = _organic_engagement_schema()
+    t = bigquery.Table(table_id, schema=schema)
+    t.time_partitioning = bigquery.TimePartitioning(field="metric_date")
+    t.clustering_fields = ["source", "org_id"]
+    client.create_table(t, exists_ok=True)
+    _sync_table_columns(client, table_id, schema)
+
+    synced_at = datetime.now(timezone.utc).isoformat()
+    payload = []
+    for row in rows:
+        metric_date = str(row.get("metric_date") or "")[:10]
+        if not metric_date:
+            continue
+        payload.append({
+            "source": "linkedin",
+            "org_id": org_id_clean,
+            "metric_date": metric_date,
+            "impressions": int(row.get("impressions") or 0),
+            "unique_impressions": int(row.get("unique_impressions") or 0),
+            "clicks": int(row.get("clicks") or 0),
+            "likes": int(row.get("likes") or 0),
+            "comments": int(row.get("comments") or 0),
+            "shares": int(row.get("shares") or 0),
+            "engagement_rate": float(row.get("engagement_rate") or 0.0),
             "synced_at": synced_at,
         })
     if not payload:
@@ -1913,11 +2135,15 @@ def mirror_linkedin_page_daily(org_id: str, rows: list[dict[str, Any]]) -> dict[
     USING `{temp_id}` S
     ON T.source = S.source AND T.org_id = S.org_id AND T.metric_date = S.metric_date
     WHEN MATCHED THEN UPDATE SET
-      page_views = S.page_views, unique_visitors = S.unique_visitors, synced_at = S.synced_at
+      impressions = S.impressions, unique_impressions = S.unique_impressions,
+      clicks = S.clicks, likes = S.likes, comments = S.comments, shares = S.shares,
+      engagement_rate = S.engagement_rate, synced_at = S.synced_at
     WHEN NOT MATCHED THEN INSERT (
-      source, org_id, metric_date, page_views, unique_visitors, synced_at
+      source, org_id, metric_date, impressions, unique_impressions, clicks,
+      likes, comments, shares, engagement_rate, synced_at
     ) VALUES (
-      S.source, S.org_id, S.metric_date, S.page_views, S.unique_visitors, S.synced_at
+      S.source, S.org_id, S.metric_date, S.impressions, S.unique_impressions, S.clicks,
+      S.likes, S.comments, S.shares, S.engagement_rate, S.synced_at
     )
     """
     try:
@@ -1950,11 +2176,13 @@ def create_linkedin_organic_post_mart_view() -> dict[str, Any]:
       p.post_type,
       p.published_at AS date,
       p.impressions,
+      p.unique_impressions,
       p.clicks,
       p.likes,
       p.comments,
       p.shares,
       p.engagement_rate,
+      p.reactions_by_type,
       p.synced_at
     FROM `{project_id}.{raw_dataset}.{_DEFAULT_ORGANIC_POST_TABLE}` p
     """

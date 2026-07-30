@@ -89,7 +89,7 @@ def run_organic_sync(
         _log.warning("organic followers sync failed [%s]: %s", org_id_clean, exc)
         result["followers"] = {"error": str(exc)[:300]}
 
-    # Page / visitor analytics
+    # Page / visitor analytics (incl. device + section breakdown)
     try:
         pages = organic.fetch_page_daily(
             org_id_clean, start=start, end=end, access_token=access_token
@@ -100,6 +100,34 @@ def run_organic_sync(
     except Exception as exc:
         _log.warning("organic page sync failed [%s]: %s", org_id_clean, exc)
         result["pages"] = {"error": str(exc)[:300]}
+
+    # Follower demographics (lifetime segments by seniority/function/industry/…)
+    try:
+        demographics = organic.fetch_follower_demographics(
+            org_id_clean, access_token=access_token
+        )
+        mirror = bigquery_warehouse.mirror_linkedin_follower_demographics(
+            org_id_clean, demographics
+        )
+        rows_upserted += int(mirror.get("rows_upserted") or 0)
+        result["demographics"] = {"fetched": len(demographics), **mirror}
+    except Exception as exc:
+        _log.warning("organic demographics sync failed [%s]: %s", org_id_clean, exc)
+        result["demographics"] = {"error": str(exc)[:300]}
+
+    # Organization-level engagement over time
+    try:
+        engagement = organic.fetch_engagement_daily(
+            org_id_clean, start=start, end=end, access_token=access_token
+        )
+        mirror = bigquery_warehouse.mirror_linkedin_engagement_daily(
+            org_id_clean, engagement
+        )
+        rows_upserted += int(mirror.get("rows_upserted") or 0)
+        result["engagement"] = {"fetched": len(engagement), **mirror}
+    except Exception as exc:
+        _log.warning("organic engagement sync failed [%s]: %s", org_id_clean, exc)
+        result["engagement"] = {"error": str(exc)[:300]}
 
     # Rebuild the post mart view (idempotent; safe even if some families failed).
     try:

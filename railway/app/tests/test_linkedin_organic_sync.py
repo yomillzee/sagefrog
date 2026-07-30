@@ -35,6 +35,15 @@ class _RecordingOrganic:
         self.tokens["pages"] = access_token
         return [{"metric_date": "2026-06-01", "page_views": 5}]
 
+    def fetch_follower_demographics(self, org_id, *, access_token=None):
+        self.tokens["demographics"] = access_token
+        return [{"dimension": "seniority", "category": "Senior",
+                 "category_urn": "urn:li:seniority:4", "total_followers": 9}]
+
+    def fetch_engagement_daily(self, org_id, *, start, end, access_token=None):
+        self.tokens["engagement"] = access_token
+        return [{"metric_date": "2026-06-01", "impressions": 40}]
+
 
 class _RecordingWarehouse:
     def mirror_linkedin_post_stats(self, org_id, rows):
@@ -44,6 +53,12 @@ class _RecordingWarehouse:
         return {"rows_upserted": len(rows)}
 
     def mirror_linkedin_page_daily(self, org_id, rows):
+        return {"rows_upserted": len(rows)}
+
+    def mirror_linkedin_follower_demographics(self, org_id, rows):
+        return {"rows_upserted": len(rows)}
+
+    def mirror_linkedin_engagement_daily(self, org_id, rows):
         return {"rows_upserted": len(rows)}
 
     def create_linkedin_organic_post_mart_view(self):
@@ -77,15 +92,19 @@ class RunOrganicSyncTests(unittest.TestCase):
         self.assertEqual(organic_mod.tokens["posts"], "TOK-CLIENT-SCOPED")
         self.assertEqual(organic_mod.tokens["followers"], "TOK-CLIENT-SCOPED")
         self.assertEqual(organic_mod.tokens["pages"], "TOK-CLIENT-SCOPED")
-        self.assertEqual(result["rows_upserted"], 3)  # 1 post + 1 follower + 1 page
+        self.assertEqual(organic_mod.tokens["demographics"], "TOK-CLIENT-SCOPED")
+        self.assertEqual(organic_mod.tokens["engagement"], "TOK-CLIENT-SCOPED")
+        # 1 each: post + follower + page + demographic + engagement
+        self.assertEqual(result["rows_upserted"], 5)
         self.assertEqual(result["org_id"], "777")
 
     def test_failing_family_is_isolated(self) -> None:
         result = self._run(_FailingPagesOrganic())
-        # Posts + followers still counted; pages recorded an error, run not aborted.
-        self.assertEqual(result["rows_upserted"], 2)
+        # Every other family still counted; pages recorded an error, run not aborted.
+        self.assertEqual(result["rows_upserted"], 4)
         self.assertIn("error", result["pages"])
         self.assertNotIn("error", result["posts"])
+        self.assertNotIn("error", result["demographics"])
 
     def test_missing_org_id_short_circuits(self) -> None:
         result = sync.run_organic_sync(
