@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from dashboard.renderers.base_layout import render_client_shell_page
@@ -9,14 +10,13 @@ from dashboard.utils.formatting import esc as _esc
 from linkedin_organic_report_service import LinkedInOrganicReport
 
 _LI_BLUE = "#0a66c2"
+_PAGE_GREEN = "#16a34a"
 
 _EXTRA_CSS = """
 .lo-wrap { max-width: 1200px; }
 .lo-head { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:4px; }
 .lo-title { font-size:1.6rem; font-weight:750; color:var(--navy); margin:0; letter-spacing:-.01em; }
 .lo-sub { font-size:.9rem; color:var(--muted); margin:6px 0 0; }
-.lo-tag { display:inline-flex; align-items:center; gap:7px; padding:7px 13px; border-radius:999px; background:#e6f0f8; border:1px solid #cfe0f2; color:#0a66c2; font-size:.78rem; font-weight:650; white-space:nowrap; }
-.lo-tag-dot { width:8px; height:8px; border-radius:50%; background:#0a66c2; }
 .lo-note { font-size:.88rem; color:var(--muted); background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin:16px 0; }
 
 .lo-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:16px; margin:22px 0 24px; }
@@ -33,13 +33,19 @@ _EXTRA_CSS = """
 .lo-cols { display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:start; }
 .lo-cols .lo-card { margin-bottom:0; height:100%; }
 
-.lo-chart svg { display:block; width:100%; height:auto; }
+.lo-chart { position:relative; height:180px; }
+.lo-chart canvas { display:block; width:100% !important; }
 .lo-empty { font-size:.86rem; color:var(--muted); padding:22px 0; text-align:center; }
 
 .lo-table-wrap { overflow-x:auto; }
 .lo-table { width:100%; border-collapse:collapse; font-size:.85rem; }
 .lo-table th { text-align:right; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); font-weight:700; padding:8px 10px; border-bottom:1px solid var(--border); }
 .lo-table th:first-child { text-align:left; }
+.lo-table th[data-sort] { cursor:pointer; user-select:none; white-space:nowrap; }
+.lo-table th[data-sort]:hover { color:var(--navy); }
+.lo-table th[data-sort]::after { content:"\\2195"; opacity:.3; margin-left:5px; font-size:.85em; }
+.lo-table th[data-dir="asc"]::after { content:"\\2191"; opacity:.9; }
+.lo-table th[data-dir="desc"]::after { content:"\\2193"; opacity:.9; }
 .lo-table td { padding:10px; border-bottom:1px solid var(--line,#eef1f4); text-align:right; font-variant-numeric:tabular-nums; }
 .lo-table td:first-child { text-align:left; color:var(--text); max-width:420px; }
 .lo-post-title { font-weight:600; color:var(--navy); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:420px; }
@@ -69,27 +75,91 @@ def _tile(label: str, value: str, sub: str = "") -> str:
     )
 
 
-def _bar_chart(series: list[dict[str, Any]], value_key: str, color: str) -> str:
-    """Compact SVG bar chart over a daily series (no JS)."""
-    pts = [(r.get("metric_date", ""), float(r.get(value_key) or 0)) for r in series]
-    if not pts:
+def _chart_block(canvas_id: str, series: list[dict[str, Any]]) -> str:
+    """Canvas host for a Chart.js daily bar chart (empty state when no data)."""
+    if not series:
         return '<div class="lo-empty">No data for this period yet.</div>'
-    w, h, pad = 720, 160, 6
-    n = len(pts)
-    max_v = max((v for _, v in pts), default=0) or 1
-    bw = (w - pad * 2) / n
-    bars = []
-    for i, (_, v) in enumerate(pts):
-        bh = (h - pad * 2) * (v / max_v)
-        x = pad + i * bw
-        y = h - pad - bh
-        bars.append(
-            f'<rect x="{x:.1f}" y="{y:.1f}" width="{max(bw - 1.5, 0.8):.1f}" '
-            f'height="{bh:.1f}" rx="1.5" fill="{color}" opacity="0.85"></rect>'
-        )
+    return f'<div class="lo-chart"><canvas id="{_esc(canvas_id)}"></canvas></div>'
+
+
+def _chart_series(series: list[dict[str, Any]], value_key: str) -> dict[str, list]:
+    return {
+        "labels": [str(r.get("metric_date") or "") for r in series],
+        "values": [float(r.get(value_key) or 0) for r in series],
+    }
+
+
+def _charts_script(
+    follower_series: list[dict[str, Any]],
+    page_series: list[dict[str, Any]],
+) -> str:
+    """Chart.js loader + init for the follower-gain and page-view bar charts."""
+    payload = json.dumps({
+        "follower": {**_chart_series(follower_series, "total_follower_gain"),
+                     "color": _LI_BLUE, "canvas": "loFollowerChart"},
+        "page": {**_chart_series(page_series, "page_views"),
+                 "color": _PAGE_GREEN, "canvas": "loPageChart"},
+    }).replace("<", "\\u003c")
     return (
-        f'<div class="lo-chart"><svg viewBox="0 0 {w} {h}" preserveAspectRatio="none" '
-        f'role="img" aria-label="Daily {_esc(value_key)}">{"".join(bars)}</svg></div>'
+        '<script src="/static/vendor/chart.umd.min.js"></script>'
+        "<script>(function(){\n"
+        f"  var LO_CHARTS = {payload};\n"
+        "  function draw(spec){\n"
+        "    var el = document.getElementById(spec.canvas);\n"
+        "    if(!el || !window.Chart || !spec.labels.length) return;\n"
+        "    new Chart(el, {\n"
+        "      type:'bar',\n"
+        "      data:{labels:spec.labels, datasets:[{data:spec.values,\n"
+        "        backgroundColor:spec.color, hoverBackgroundColor:spec.color,\n"
+        "        borderRadius:3, borderSkipped:false, maxBarThickness:22}]},\n"
+        "      options:{responsive:true, maintainAspectRatio:false, animation:false,\n"
+        "        plugins:{legend:{display:false},\n"
+        "          tooltip:{displayColors:false, padding:8,\n"
+        "            callbacks:{label:function(c){return c.formattedValue;}}}},\n"
+        "        scales:{\n"
+        "          x:{grid:{display:false}, ticks:{maxRotation:0, autoSkip:true,\n"
+        "             maxTicksLimit:8, font:{size:10}, color:'#94a3b8'}},\n"
+        "          y:{beginAtZero:true, grid:{color:'rgba(148,163,184,.15)'},\n"
+        "             ticks:{precision:0, font:{size:10}, color:'#94a3b8', maxTicksLimit:5},\n"
+        "             border:{display:false}}}}\n"
+        "    });\n"
+        "  }\n"
+        "  function init(){ draw(LO_CHARTS.follower); draw(LO_CHARTS.page); }\n"
+        "  if(document.readyState!=='loading') init();\n"
+        "  else document.addEventListener('DOMContentLoaded', init);\n"
+        "})();</script>"
+    )
+
+
+def _sort_script() -> str:
+    """Click-to-sort for the Top posts table (numeric + text columns)."""
+    return (
+        "<script>(function(){\n"
+        "  function initSort(table){\n"
+        "    var ths = Array.prototype.slice.call(table.querySelectorAll('th[data-sort]'));\n"
+        "    ths.forEach(function(th){\n"
+        "      var idx = Array.prototype.indexOf.call(th.parentNode.children, th);\n"
+        "      th.addEventListener('click', function(){\n"
+        "        var numeric = th.getAttribute('data-sort')==='num';\n"
+        "        var asc = th.getAttribute('data-dir')!=='asc';\n"
+        "        ths.forEach(function(o){ if(o!==th) o.removeAttribute('data-dir'); });\n"
+        "        th.setAttribute('data-dir', asc?'asc':'desc');\n"
+        "        var tbody = table.querySelector('tbody');\n"
+        "        var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));\n"
+        "        rows.sort(function(a,b){\n"
+        "          var av=a.children[idx].getAttribute('data-val')||'';\n"
+        "          var bv=b.children[idx].getAttribute('data-val')||'';\n"
+        "          if(numeric){ return asc?(parseFloat(av)||0)-(parseFloat(bv)||0):(parseFloat(bv)||0)-(parseFloat(av)||0); }\n"
+        "          return asc?av.toLowerCase().localeCompare(bv.toLowerCase()):bv.toLowerCase().localeCompare(av.toLowerCase());\n"
+        "        });\n"
+        "        rows.forEach(function(r){ tbody.appendChild(r); });\n"
+        "      });\n"
+        "    });\n"
+        "  }\n"
+        "  function init(){ var t=document.getElementById('loPostsTable'); if(t) initSort(t); }\n"
+        "  if(document.readyState!=='loading') init();\n"
+        "  else document.addEventListener('DOMContentLoaded', init);\n"
+        "})();</script>"
     )
 
 
@@ -139,8 +209,8 @@ def render_linkedin_organic(
         + '</div>'
     )
 
-    follower_chart = _bar_chart(report.follower_series, "total_follower_gain", _LI_BLUE)
-    page_chart = _bar_chart(report.page_series, "page_views", "#16a34a")
+    follower_chart = _chart_block("loFollowerChart", report.follower_series)
+    page_chart = _chart_block("loPageChart", report.page_series)
     cols = (
         '<div class="lo-cols">'
         '<div class="lo-card"><div class="lo-card-head"><h2>Follower gains</h2>'
@@ -159,20 +229,22 @@ def render_linkedin_organic(
             chip = f'<span class="lo-chip">{_esc(p["post_type"])}</span>' if p["post_type"] else ""
             rows.append(
                 '<tr>'
-                f'<td><span class="lo-post-title">{_esc(p["title"])}{chip}</span>'
+                f'<td data-val="{_esc(p["title"])}"><span class="lo-post-title">{_esc(p["title"])}{chip}</span>'
                 f'<span class="lo-post-meta">{_esc(meta)}</span></td>'
-                f'<td>{_fmt_int(p["impressions"])}</td>'
-                f'<td>{_fmt_int(p["likes"])}</td>'
-                f'<td>{_fmt_int(p["comments"])}</td>'
-                f'<td>{_fmt_int(p["shares"])}</td>'
-                f'<td>{_fmt_int(p["clicks"])}</td>'
-                f'<td>{_fmt_pct(p["engagement_rate"])}</td>'
+                f'<td data-val="{p["impressions"]}">{_fmt_int(p["impressions"])}</td>'
+                f'<td data-val="{p["likes"]}">{_fmt_int(p["likes"])}</td>'
+                f'<td data-val="{p["comments"]}">{_fmt_int(p["comments"])}</td>'
+                f'<td data-val="{p["shares"]}">{_fmt_int(p["shares"])}</td>'
+                f'<td data-val="{p["clicks"]}">{_fmt_int(p["clicks"])}</td>'
+                f'<td data-val="{p["engagement_rate"]}">{_fmt_pct(p["engagement_rate"])}</td>'
                 '</tr>'
             )
         posts_html = (
-            '<div class="lo-table-wrap"><table class="lo-table"><thead><tr>'
-            '<th>Post</th><th>Impressions</th><th>Reactions</th><th>Comments</th>'
-            '<th>Shares</th><th>Clicks</th><th>Engagement</th></tr></thead><tbody>'
+            '<div class="lo-table-wrap"><table id="loPostsTable" class="lo-table"><thead><tr>'
+            '<th data-sort="text">Post</th><th data-sort="num">Impressions</th>'
+            '<th data-sort="num">Reactions</th><th data-sort="num">Comments</th>'
+            '<th data-sort="num">Shares</th><th data-sort="num">Clicks</th>'
+            '<th data-sort="num">Engagement</th></tr></thead><tbody>'
             + "".join(rows) + '</tbody></table></div>'
         )
     else:
@@ -183,6 +255,8 @@ def render_linkedin_organic(
         f'{posts_html}</div>'
     )
 
+    charts_script = _charts_script(report.follower_series, report.page_series)
+    sort_script = _sort_script() if report.top_posts else ""
     content = f"""
       <div class="lo-wrap">
         <div class="lo-head">
@@ -190,13 +264,14 @@ def render_linkedin_organic(
             <h1 class="lo-title">LinkedIn Organic</h1>
             <p class="lo-sub">Company-page posts, followers &amp; page analytics for {_esc(label)}.</p>
           </div>
-          <span class="lo-tag"><span class="lo-tag-dot"></span>LinkedIn Organic</span>
         </div>
         {note}
         {tiles}
         {cols}
         {posts_card}
       </div>
+      {charts_script}
+      {sort_script}
     """
     return _shell(client_slug, label, content, access_key, use_session, session_email, session_is_admin)
 
