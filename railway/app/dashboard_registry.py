@@ -287,6 +287,50 @@ def create_client(
     return row
 
 
+def rename_client(
+    *,
+    client_slug: str,
+    label: str,
+    updated_by: str | None = None,
+) -> DashboardClientRow:
+    """Change a dashboard's display label, keeping the slug intact.
+
+    The slug is the immutable internal key: routes (``/dashboard/<slug>/…``),
+    BigQuery routing, OAuth token storage, and config lookups all key on it, so
+    only the human-facing label changes here. Updates the registry row and — when
+    one exists — the matching ``client_dashboard_config`` row, so the picker,
+    workspace switcher, and dashboard header all read the new name.
+    """
+    slug = normalize_slug(client_slug)
+    name = validate_label(label)
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to manage dashboards.")
+
+    ensure_schema(seed_defaults=False)
+    if not get_client(slug):
+        raise ValueError(f"Unknown dashboard '{slug}'.")
+
+    with db.connection() as conn:
+        conn.execute(
+            "UPDATE dashboard_clients SET label = %s WHERE client_slug = %s",
+            (name, slug),
+        )
+
+    # Keep the client_dashboard_config label (read by client_label() and the
+    # dashboard header) in step. No-op when the client has no config row yet.
+    try:
+        import client_dashboard_config as cdc
+
+        cdc.set_label(slug, name, updated_by=updated_by)
+    except Exception:
+        pass
+
+    row = get_client(slug)
+    if not row:
+        raise RuntimeError("Failed to load renamed dashboard.")
+    return row
+
+
 def delete_client(
     *,
     client_slug: str,
