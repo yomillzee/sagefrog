@@ -1,4 +1,11 @@
-"""HTML renderer for the LinkedIn Organic page (company-page analytics)."""
+"""HTML renderer for the LinkedIn Organic page (company-page analytics).
+
+Uses the same visual language as the Overview / Campaign Explorer dashboards —
+``section`` panels with a ``.sec-head``, compact ``.card`` KPI tiles with a
+top-accent border and sparkline, and the shared modern table styling — rather
+than the older bespoke tile layout. Charts stay on Chart.js and the Top posts
+table stays client-sortable.
+"""
 
 from __future__ import annotations
 
@@ -11,46 +18,71 @@ from linkedin_organic_report_service import LinkedInOrganicReport
 
 _LI_BLUE = "#0a66c2"
 _PAGE_GREEN = "#16a34a"
+_WINDOW_DAYS = 90
 
+# Component styles mirror the BigQuery dashboard's card/section/table language so
+# this page reads as part of the same product. A couple of design tokens the
+# shell's :root doesn't define (--line-soft, --radius-sm) are inlined here.
 _EXTRA_CSS = """
-.lo-wrap { max-width: 1200px; }
-.lo-head { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:4px; }
-.lo-title { font-size:1.6rem; font-weight:750; color:var(--navy); margin:0; letter-spacing:-.01em; }
-.lo-sub { font-size:.9rem; color:var(--muted); margin:6px 0 0; }
-.lo-note { font-size:.88rem; color:var(--muted); background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin:16px 0; }
+.lo-wrap { width:100%; }
+.lo-head { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:18px; }
+.lo-title { font-size:1.5rem; font-weight:800; color:var(--navy); margin:0; letter-spacing:-.02em; }
+.lo-sub { font-size:.9rem; color:var(--muted); margin:5px 0 0; }
+.lo-note { font-size:.88rem; color:var(--muted); background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin:0 0 16px; }
 
-.lo-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:16px; margin:22px 0 24px; }
-.lo-tile { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:18px 20px; box-shadow:var(--shadow-sm); position:relative; overflow:hidden; }
-.lo-tile::before { content:""; position:absolute; inset:0 auto 0 0; width:4px; background:#0a66c2; opacity:.85; }
-.lo-tile-label { font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:700; margin-bottom:8px; }
-.lo-tile-value { font-size:1.9rem; font-weight:750; color:var(--navy); line-height:1.05; letter-spacing:-.01em; font-variant-numeric:tabular-nums; }
-.lo-tile-sub { font-size:.78rem; color:var(--muted); margin-top:6px; }
+/* Section panels — matches the Overview/Explorer `section` chrome. */
+.lo-wrap section { background:#fff; border:1px solid var(--border); border-radius:var(--radius); padding:18px 20px 20px; margin-bottom:16px; box-shadow:var(--shadow-sm); }
+.lo-wrap .sec-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+.lo-wrap .sec-head h2 { margin:0; font-size:1rem; font-weight:750; color:var(--navy); display:flex; align-items:center; }
+.lo-wrap .sec-head .status { margin:0; color:var(--muted); font-size:.78rem; text-align:right; flex-shrink:0; }
+.lo-dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:#0a66c2; margin-right:8px; }
 
-.lo-card { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:20px 22px; margin-bottom:20px; box-shadow:var(--shadow-sm); }
-.lo-card-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin:0 0 16px; flex-wrap:wrap; }
-.lo-card h2 { font-size:1rem; font-weight:700; color:var(--navy); margin:0; }
-.lo-card-note { font-size:.78rem; color:var(--muted); }
-.lo-cols { display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:start; }
-.lo-cols .lo-card { margin-bottom:0; height:100%; }
+/* KPI cards — compact, top-accent border, sparkline + delta foot. */
+.lo-wrap .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+.lo-wrap .card { border:1px solid var(--line-soft,#eff3f8); border-top:3px solid var(--accent); border-radius:var(--radius-sm,9px); padding:14px 15px 15px; background:#fff; }
+.lo-wrap .card-title { color:var(--muted); font-size:.66rem; text-transform:uppercase; font-weight:800; letter-spacing:.06em; }
+.lo-wrap .card-value { margin-top:7px; font-size:1.55rem; line-height:1.1; color:var(--navy); font-weight:800; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
+.lo-wrap .card-foot { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:9px; min-height:20px; }
+.lo-wrap .card-sub { color:var(--muted); font-size:.74rem; }
+.lo-wrap .card-sub strong { color:var(--text); font-weight:700; }
+.lo-spark { width:100%; height:30px; display:block; margin:8px 0 2px; }
+.lo-delta { font-size:.74rem; font-weight:700; white-space:nowrap; }
+.lo-delta.up { color:var(--ok); }
+.lo-delta.down { color:var(--err); }
+.lo-delta.flat { color:var(--muted); font-weight:600; }
 
+/* Trend charts */
+.lo-two { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.lo-two > * { min-width:0; }
+.lo-chart-box { border:1px solid var(--line-soft,#eff3f8); border-radius:10px; padding:12px 14px; background:#fafcff; }
+.lo-chart-lab { display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:8px; }
+.lo-chart-lab h3 { margin:0; font-size:.86rem; font-weight:700; color:var(--navy); }
+.lo-chart-lab span { font-size:.72rem; color:var(--muted); }
 .lo-chart { position:relative; height:180px; }
 .lo-chart canvas { display:block; width:100% !important; }
-.lo-empty { font-size:.86rem; color:var(--muted); padding:22px 0; text-align:center; }
+.lo-empty { font-size:.85rem; color:var(--muted); padding:26px 0; text-align:center; }
 
-.lo-table-wrap { overflow-x:auto; }
-.lo-table { width:100%; border-collapse:collapse; font-size:.85rem; }
-.lo-table th { text-align:right; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); font-weight:700; padding:8px 10px; border-bottom:1px solid var(--border); }
-.lo-table th:first-child { text-align:left; }
-.lo-table th[data-sort] { cursor:pointer; user-select:none; white-space:nowrap; }
-.lo-table th[data-sort]:hover { color:var(--navy); }
-.lo-table th[data-sort]::after { content:"\\2195"; opacity:.3; margin-left:5px; font-size:.85em; }
+/* Top posts table — shared modern table styling. */
+.lo-table-wrap { overflow:auto; border:1px solid var(--line-soft,#eff3f8); border-radius:var(--radius-sm,9px); }
+.lo-table { border-collapse:collapse; width:100%; min-width:640px; font-size:.85rem; }
+.lo-table th, .lo-table td { padding:10px 13px; border-bottom:1px solid var(--line-soft,#eff3f8); text-align:right; white-space:nowrap; }
+.lo-table tbody tr:last-child td { border-bottom:0; }
+.lo-table tbody tr:hover td { background:#f7faff; }
+.lo-table th { background:#f4f7fb; color:#5a6b82; text-transform:uppercase; font-size:.67rem; letter-spacing:.05em; font-weight:800; }
+.lo-table th.left, .lo-table td.left { text-align:left; }
+.lo-table td.left { max-width:420px; }
+.lo-table th[data-sort] { cursor:pointer; user-select:none; transition:background .12s,color .12s; }
+.lo-table th[data-sort]:hover { background:#e9eef5; color:#33455e; }
+.lo-table th[data-sort]::after { content:"\\2195"; opacity:.35; margin-left:5px; font-size:.85em; }
+.lo-table th[data-dir="asc"] { color:var(--accent); }
 .lo-table th[data-dir="asc"]::after { content:"\\2191"; opacity:.9; }
+.lo-table th[data-dir="desc"] { color:var(--accent); }
 .lo-table th[data-dir="desc"]::after { content:"\\2193"; opacity:.9; }
-.lo-table td { padding:10px; border-bottom:1px solid var(--line,#eef1f4); text-align:right; font-variant-numeric:tabular-nums; }
-.lo-table td:first-child { text-align:left; color:var(--text); max-width:420px; }
-.lo-post-title { font-weight:600; color:var(--navy); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:420px; }
+.lo-post-title { font-weight:650; color:var(--navy); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:420px; }
 .lo-post-meta { font-size:.72rem; color:var(--muted); }
-.lo-chip { display:inline-block; font-size:.68rem; font-weight:650; text-transform:uppercase; letter-spacing:.03em; color:#0a66c2; background:#e6f0f8; border-radius:6px; padding:2px 7px; margin-left:6px; }
+.lo-chip { display:inline-block; font-size:.64rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:#0a66c2; background:#e9f1fb; border-radius:5px; padding:2px 6px; margin-left:6px; }
+
+@media (max-width:820px){ .lo-two{ grid-template-columns:1fr; } }
 """
 
 
@@ -65,13 +97,84 @@ def _fmt_pct(x: float) -> str:
     return f"{x * 100:.1f}%"
 
 
-def _tile(label: str, value: str, sub: str = "") -> str:
-    sub_html = f'<div class="lo-tile-sub">{sub}</div>' if sub else ""
+def _card(title: str, value: str, *, spark: str = "", foot: str = "") -> str:
+    foot_html = f'<div class="card-foot">{foot}</div>' if foot else ""
     return (
-        '<div class="lo-tile">'
-        f'<div class="lo-tile-label">{_esc(label)}</div>'
-        f'<div class="lo-tile-value">{_esc(value)}</div>'
-        f'{sub_html}</div>'
+        '<div class="card">'
+        f'<div class="card-title">{_esc(title)}</div>'
+        f'<div class="card-value">{_esc(value)}</div>'
+        f'{spark}{foot_html}</div>'
+    )
+
+
+def _sub(text_html: str) -> str:
+    return f'<span class="card-sub">{text_html}</span>'
+
+
+def _period_delta(gain: int) -> str:
+    """▲/▼ follower change over the reporting window, styled like the Overview
+    card's delta badge."""
+    if gain > 0:
+        return f'<span class="lo-delta up">▲ {_fmt_int(gain)} in {_WINDOW_DAYS} days</span>'
+    if gain < 0:
+        return f'<span class="lo-delta down">▼ {_fmt_int(abs(gain))} in {_WINDOW_DAYS} days</span>'
+    return f'<span class="lo-delta flat">No change in {_WINDOW_DAYS} days</span>'
+
+
+def _follower_sparkline(series: list[dict[str, Any]]) -> str:
+    """Tiny inline-SVG follower-growth curve, reconstructing absolute follower
+    counts from the daily gains anchored to the latest lifetime total. Returns
+    "" with fewer than two days to plot (nothing to draw)."""
+    rows = [r for r in (series or []) if str(r.get("metric_date") or "")]
+    rows.sort(key=lambda r: str(r.get("metric_date") or ""))
+    if len(rows) < 2:
+        return ""
+
+    gains = [int(r.get("total_follower_gain") or 0) for r in rows]
+    total = 0
+    for r in reversed(rows):
+        snapshot = int(r.get("total_followers") or 0)
+        if snapshot:
+            total = snapshot
+            break
+
+    if total:
+        counts = [0] * len(rows)
+        counts[-1] = total
+        for i in range(len(rows) - 1, 0, -1):
+            counts[i - 1] = counts[i] - gains[i]
+        values = counts
+    else:
+        running = 0
+        values = []
+        for g in gains:
+            running += g
+            values.append(running)
+
+    w, h, pad = 132.0, 34.0, 3.0
+    lo, hi = min(values), max(values)
+    span = (hi - lo) or 1
+    n = len(values)
+    step = (w - 2 * pad) / (n - 1)
+    pts = [
+        (pad + i * step, h - pad - ((v - lo) / span) * (h - 2 * pad))
+        for i, v in enumerate(values)
+    ]
+    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    area = (
+        f"M {pts[0][0]:.1f} {h - pad:.1f} "
+        + " ".join(f"L {x:.1f} {y:.1f}" for x, y in pts)
+        + f" L {pts[-1][0]:.1f} {h - pad:.1f} Z"
+    )
+    lx, ly = pts[-1]
+    return (
+        f'<svg class="lo-spark" viewBox="0 0 {w:.0f} {h:.0f}" preserveAspectRatio="none" '
+        f'role="img" aria-label="Follower growth">'
+        f'<path d="{area}" fill="{_LI_BLUE}" fill-opacity="0.12"/>'
+        f'<polyline points="{line}" fill="none" stroke="{_LI_BLUE}" stroke-width="1.6" '
+        f'stroke-linejoin="round" stroke-linecap="round"/>'
+        f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="2.2" fill="{_LI_BLUE}"/>'
+        f'</svg>'
     )
 
 
@@ -194,32 +297,45 @@ def render_linkedin_organic(
         if report.post_count else 0.0
     )
 
-    tiles = (
-        '<div class="lo-tiles">'
-        + _tile("Followers", _fmt_int(report.total_followers),
-                (f'<strong>+{_fmt_int(report.follower_gain)}</strong> in period'
-                 if report.follower_gain else "lifetime total"))
-        + _tile("Posts", _fmt_int(report.post_count), "in selected period")
-        + _tile("Impressions", _fmt_int(report.total_impressions), "across posts")
-        + _tile("Reactions", _fmt_int(report.total_likes), "likes on posts")
-        + _tile("Comments", _fmt_int(report.total_comments))
-        + _tile("Avg. engagement", _fmt_pct(avg_engagement), "per post")
-        + _tile("Page views", _fmt_int(report.total_page_views),
-                f'<strong>{_fmt_int(report.total_unique_visitors)}</strong> unique visitors')
+    follower_foot = (
+        _period_delta(report.follower_gain)
+        if report.follower_series
+        else _sub("lifetime total")
+    )
+    cards = (
+        '<div class="cards">'
+        + _card("Followers", _fmt_int(report.total_followers),
+                spark=_follower_sparkline(report.follower_series), foot=follower_foot)
+        + _card("Posts", _fmt_int(report.post_count), foot=_sub("in selected period"))
+        + _card("Impressions", _fmt_int(report.total_impressions), foot=_sub("across posts"))
+        + _card("Reactions", _fmt_int(report.total_likes), foot=_sub("likes on posts"))
+        + _card("Comments", _fmt_int(report.total_comments))
+        + _card("Avg. engagement", _fmt_pct(avg_engagement), foot=_sub("per post"))
+        + _card("Page views", _fmt_int(report.total_page_views),
+                foot=_sub(f'<strong>{_fmt_int(report.total_unique_visitors)}</strong> unique visitors'))
         + '</div>'
+    )
+    kpi_section = (
+        '<section>'
+        '<div class="sec-head"><h2><span class="lo-dot"></span>Performance</h2>'
+        f'<span class="status">last {_WINDOW_DAYS} days</span></div>'
+        f'{cards}</section>'
     )
 
     follower_chart = _chart_block("loFollowerChart", report.follower_series)
     page_chart = _chart_block("loPageChart", report.page_series)
-    cols = (
-        '<div class="lo-cols">'
-        '<div class="lo-card"><div class="lo-card-head"><h2>Follower gains</h2>'
-        '<span class="lo-card-note">net new followers/day</span></div>'
+    trends_section = (
+        '<section>'
+        '<div class="sec-head"><h2>Trends</h2>'
+        f'<span class="status">daily, last {_WINDOW_DAYS} days</span></div>'
+        '<div class="lo-two">'
+        '<div class="lo-chart-box"><div class="lo-chart-lab"><h3>Follower gains</h3>'
+        '<span>net new / day</span></div>'
         f'{follower_chart}</div>'
-        '<div class="lo-card"><div class="lo-card-head"><h2>Page views</h2>'
-        '<span class="lo-card-note">organization page/day</span></div>'
+        '<div class="lo-chart-box"><div class="lo-chart-lab"><h3>Page views</h3>'
+        '<span>organization page / day</span></div>'
         f'{page_chart}</div>'
-        '</div>'
+        '</div></section>'
     )
 
     if report.top_posts:
@@ -229,7 +345,7 @@ def render_linkedin_organic(
             chip = f'<span class="lo-chip">{_esc(p["post_type"])}</span>' if p["post_type"] else ""
             rows.append(
                 '<tr>'
-                f'<td data-val="{_esc(p["title"])}"><span class="lo-post-title">{_esc(p["title"])}{chip}</span>'
+                f'<td class="left" data-val="{_esc(p["title"])}"><span class="lo-post-title">{_esc(p["title"])}{chip}</span>'
                 f'<span class="lo-post-meta">{_esc(meta)}</span></td>'
                 f'<td data-val="{p["impressions"]}">{_fmt_int(p["impressions"])}</td>'
                 f'<td data-val="{p["likes"]}">{_fmt_int(p["likes"])}</td>'
@@ -241,7 +357,7 @@ def render_linkedin_organic(
             )
         posts_html = (
             '<div class="lo-table-wrap"><table id="loPostsTable" class="lo-table"><thead><tr>'
-            '<th data-sort="text">Post</th><th data-sort="num">Impressions</th>'
+            '<th class="left" data-sort="text">Post</th><th data-sort="num">Impressions</th>'
             '<th data-sort="num">Reactions</th><th data-sort="num">Comments</th>'
             '<th data-sort="num">Shares</th><th data-sort="num">Clicks</th>'
             '<th data-sort="num">Engagement</th></tr></thead><tbody>'
@@ -249,10 +365,10 @@ def render_linkedin_organic(
         )
     else:
         posts_html = '<div class="lo-empty">No posts synced for this period yet.</div>'
-    posts_card = (
-        '<div class="lo-card"><div class="lo-card-head"><h2>Top posts</h2>'
-        '<span class="lo-card-note">by impressions</span></div>'
-        f'{posts_html}</div>'
+    posts_section = (
+        '<section><div class="sec-head"><h2>Top posts</h2>'
+        '<span class="status">by impressions</span></div>'
+        f'{posts_html}</section>'
     )
 
     charts_script = _charts_script(report.follower_series, report.page_series)
@@ -266,9 +382,9 @@ def render_linkedin_organic(
           </div>
         </div>
         {note}
-        {tiles}
-        {cols}
-        {posts_card}
+        {kpi_section}
+        {trends_section}
+        {posts_section}
       </div>
       {charts_script}
       {sort_script}
