@@ -146,6 +146,7 @@ _HOURS_CSS = """
       white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .card-total { font-variant-numeric:tabular-nums; color:var(--muted); font-size:.78rem; margin-top:2px; }
     .card-total b { color:var(--navy); font-weight:800; }
+    .card-total .card-goal { white-space:nowrap; }
     .period { color:var(--muted); font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; }
     .chart-wrap { position:relative; margin-top:8px; }
     .chart-wrap svg { display:block; width:100%; height:auto; }
@@ -668,10 +669,14 @@ _PAGE_JS = r"""
       const goalSwatch = c.goal_hard && c.goal_max != null
         ? `<span><i class="goal"></i>Goal pace</span><span><i style="border-top-color:#b42318"></i>Hard ceiling</span>`
         : `<span><i class="goal"></i>${(c.goal_min != null && c.goal_max != null && c.goal_max !== c.goal_min) ? 'Goal range' : 'Goal pace'}</span>`;
+      // Surface the monthly goal on the card face ("12h billable · goal 80–100h");
+      // it's still edited from the popout. No goal set → just the hours read.
+      const goalTxt = c.goal_label
+        ? ` · <span class="card-goal">goal <b>${esc(c.goal_label)}</b></span>` : '';
       return `<div class="card" data-cid="${esc(c.harvest_client_id)}">`
         + `<div class="card-head">`
           + `<div style="min-width:0"><div class="card-title" title="${esc(c.name)}">${esc(c.name)}</div>`
-          + `<div class="card-total"><b>${hrs(totalOf(c))}h</b> ${kind}</div></div>`
+          + `<div class="card-total"><b>${hrs(totalOf(c))}h</b> ${kind}${goalTxt}</div></div>`
           + `<button type="button" class="card-more" aria-label="Details for ${esc(c.name)}" aria-expanded="false" title="Details">`
             + `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">`
             + `<circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>`
