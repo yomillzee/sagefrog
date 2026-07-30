@@ -91,8 +91,8 @@ _EXTRA_CSS = """
 .lo-bar-label { color:var(--text); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .lo-bar-val { text-align:right; color:var(--navy); font-variant-numeric:tabular-nums; font-weight:700; }
 .lo-bar-val span { color:var(--muted); font-weight:600; font-size:.72rem; margin-left:5px; }
-.lo-bar-track { grid-column:1 / -1; background:var(--surface); border-radius:6px; height:8px; overflow:hidden; }
-.lo-bar-fill { height:100%; border-radius:6px; min-width:3px; background:#0a66c2; }
+.lo-bar-track { grid-column:1 / -1; display:block; background:#e9eef5; border-radius:6px; height:8px; overflow:hidden; }
+.lo-bar-fill { display:block; height:100%; border-radius:6px; min-width:3px; background:#0a66c2; }
 
 /* Device split — a single desktop/mobile stacked bar. */
 .lo-split { display:flex; height:14px; border-radius:7px; overflow:hidden; background:var(--surface); margin:2px 0 12px; }
