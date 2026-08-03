@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -165,13 +166,42 @@ def enabled() -> bool:
     return bool(_get_db_url())
 
 
+# The schema is idempotent DDL that only needs to run once per process, but
+# several hot-path helpers call ensure_schema() on every invocation:
+# get_user_record runs on every authenticated request (and the last-seen
+# middleware), so the naive version issued 20 DDL statements per request. Worse,
+# each ALTER / CREATE INDEX takes an AccessExclusiveLock on web_users that (in
+# psycopg's default transaction mode) is held until the surrounding transaction
+# commits, so concurrent requests deadlocked -> psycopg.errors.DeadlockDetected.
+#
+# Guard it two ways: a process-level flag (with a lock, since sync FastAPI
+# handlers run in a threadpool) so the DDL runs at most once per process; and a
+# transaction-scoped advisory lock so concurrent processes/replicas serialize
+# the one run instead of deadlocking on the exclusive table locks.
+_schema_ready = False
+_schema_lock = threading.Lock()
+# Stable, app-specific 64-bit key for the migration advisory lock.
+_SCHEMA_ADVISORY_LOCK_KEY = 4_021_769_001
+
+
 def ensure_schema() -> bool:
+    global _schema_ready
     url = _get_db_url()
     if not url:
         return False
-    with db.connection() as conn:
-        for stmt in SCHEMA_SQL_STATEMENTS:
-            conn.execute(stmt)
+    if _schema_ready:
+        return True
+    with _schema_lock:
+        if _schema_ready:
+            return True
+        with db.connection() as conn:
+            # Only one process runs the migration at a time; the rest block here,
+            # then re-run the IF NOT EXISTS statements as cheap no-ops. The lock
+            # is released automatically when the transaction commits or rolls back.
+            conn.execute("SELECT pg_advisory_xact_lock(%s)", (_SCHEMA_ADVISORY_LOCK_KEY,))
+            for stmt in SCHEMA_SQL_STATEMENTS:
+                conn.execute(stmt)
+        _schema_ready = True
     return True
 
 
