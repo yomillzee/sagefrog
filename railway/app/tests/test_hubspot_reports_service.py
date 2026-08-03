@@ -46,13 +46,16 @@ if "google.cloud.bigquery" not in sys.modules:
         "google.oauth2": oauth2, "google.oauth2.service_account": sa,
     })
 
-# connector_config_store imports db -> psycopg, which isn't installed in the
-# test image. Stub it; tests set get_config on the imported module directly.
-if "connector_config_store" not in sys.modules or not hasattr(
-    sys.modules["connector_config_store"], "_hs_test_stub"
-):
+# Prefer the real connector_config_store (it imports db -> psycopg, which is
+# present in CI and any deps-installed env). These tests patch
+# svc.connector_config_store.get_config with save/restore in setUp/tearDown, so
+# using the real module is safe and — unlike the old import-time stub — never
+# leaks a partial module into other tests. Only fall back to a stub if the real
+# import genuinely fails (e.g. psycopg missing in a bare local checkout).
+try:
+    import connector_config_store  # noqa: F401
+except Exception:
     _ccs = types.ModuleType("connector_config_store")
-    _ccs._hs_test_stub = True
     _ccs.get_config = lambda slug, ctype: None
     sys.modules["connector_config_store"] = _ccs
 
