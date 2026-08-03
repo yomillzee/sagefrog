@@ -175,10 +175,17 @@ they never gate read/write calls either.
   ledger, inert. No behavior change.
 - **Phase 1 — adopt baselines:** for each module, wrap its current DDL list as a
   `:0001_baseline` migration and register it. `run_migrations()` is added to
-  startup *alongside* the existing `ensure_schema()` calls. Because the existing
-  DDL is all `IF NOT EXISTS`, a baseline is safe to run once on already-migrated
-  production DBs, then recorded. Verify parity, then remove the module's startup
-  `ensure_schema()` call.
+  startup *alongside* the existing `ensure_schema()` calls (nothing is removed).
+  The runner **runs then records** the baseline — it must never "fake-apply"
+  (record without running) on an existing DB, or a database that missed an
+  earlier column would never converge. This is safe because the current DDL is
+  idempotent by construction — `CREATE … IF NOT EXISTS`, `ADD COLUMN IF NOT
+  EXISTS`, and ordered `DROP … IF EXISTS` / `ADD` pairs (e.g. the `web_users`
+  role-check constraint) — so re-running it on an already-migrated DB is a
+  no-op that preserves all data. **Each module's baseline must be audited to be
+  non-destructive before adoption** (no `DROP TABLE`/`DROP COLUMN`/`TRUNCATE`, no
+  unguarded rewrite); adopt one module per PR and verify parity before removing
+  its startup `ensure_schema()` call.
 - **Phase 2 — de-fang read/write:** module by module, delete the per-call
   `ensure_schema()` invocations (163 → 0). Each module is independent and small;
   `web_users` first (already guarded), then the 7 lazy-only modules (highest risk).
@@ -190,7 +197,20 @@ they never gate read/write calls either.
 ## Risks & mitigations
 
 - **Already-migrated prod DBs.** Baselines are the current idempotent DDL, so
-  applying then recording them is a no-op on existing databases.
+  applying then recording them **preserves all data** on an existing database.
+  (It is not literally a no-op — e.g. a `DROP CONSTRAINT` + `ADD CONSTRAINT` pair
+  re-validates the constraint under a brief lock — but it is non-destructive, and
+  the ledger ensures it runs only once, not per process/request.)
+- **Transition-period deadlock (critical).** During Phase 1 both the new runner
+  *and* the legacy `ensure_schema()` execute the same DDL. If they used different
+  advisory-lock keys they could take `AccessExclusiveLock` on the same table
+  concurrently across replicas and reintroduce the exact #297 deadlock. Mitigation:
+  the runner and every `ensure_schema()` path **share one canonical schema
+  advisory-lock key** (`db_migrate.SCHEMA_ADVISORY_LOCK_KEY`, seeded from the value
+  #297 already uses for `web_users`), so all schema DDL — old path and new — is
+  globally serialized. Corollary: a module's baseline is only adopted into the
+  runner once that module's `ensure_schema()` also takes the shared lock (web_users
+  already does; others get it as they're adopted).
 - **Multi-replica cold start.** The transaction-scoped advisory lock serializes
   the run; this is the same mechanism #297 introduced, proven under a concurrency
   harness.
