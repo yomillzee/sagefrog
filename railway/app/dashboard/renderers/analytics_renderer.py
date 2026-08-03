@@ -146,7 +146,14 @@ def render_analytics_page(
     pre {{ max-height:360px; overflow:auto; background:#0b1020; color:#d7e3ff; border-radius:var(--radius-sm); padding:12px; font-size:.78rem; margin-top:10px; }}
     code {{ background:#eef4fb; padding:2px 5px; border-radius:4px; }}
     .muted {{ color:var(--muted); font-size:.78rem; margin-left:6px; }}
-    .page-path {{ font-weight:600; color:#1f2d40; word-break:break-all; }}
+    .page-path {{ font-weight:600; color:#1f2d40; white-space:nowrap; cursor:help; }}
+    /* Drag-to-resize columns (Pages / Landing Pages tables). */
+    table.resizable {{ table-layout:fixed; }}
+    table.resizable th, table.resizable td {{ overflow:hidden; text-overflow:ellipsis; }}
+    .col-resizer {{ position:absolute; top:0; right:0; width:9px; height:100%; cursor:col-resize; user-select:none; touch-action:none; }}
+    .col-resizer::after {{ content:""; position:absolute; top:25%; right:4px; width:1px; height:50%; background:transparent; transition:background .12s; }}
+    .col-resizer:hover::after {{ background:var(--accent); }}
+    body.col-resizing, body.col-resizing * {{ cursor:col-resize !important; user-select:none !important; }}
     table.compact {{ min-width:0; font-size:.84rem; }}
     table.compact th, table.compact td {{ padding:8px 12px; }}
     .pager {{ display:flex; align-items:center; justify-content:flex-end; gap:12px; margin-top:12px; }}
@@ -218,7 +225,7 @@ def render_analytics_page(
         </div>
       </div>
       <div class="status" id="pagesStatus">Waiting…</div>
-      <div class="table-wrap"><table id="pagesTable" class="compact"></table></div>
+      <div class="table-wrap"><table id="pagesTable" class="compact resizable"></table></div>
       <div class="pager" id="pagesPager"></div>
       <details class="raw-json"><summary>Raw page JSON</summary><pre id="pagesJson">{{}}</pre></details>
     </section>
@@ -257,7 +264,7 @@ def render_analytics_page(
       <h2>Landing pages</h2>
       <p class="src-note"><code>GET .../pages/landing</code><span class="arrow">→</span><code>analytics_test.ga4_LandingPage_*</code></p>
       <div class="status" id="landingStatus">Waiting…</div>
-      <div class="table-wrap"><table id="landingTable" class="compact"></table></div>
+      <div class="table-wrap"><table id="landingTable" class="compact resizable"></table></div>
       <div class="pager" id="landingPager"></div>
       <details class="raw-json"><summary>Raw landing JSON</summary><pre id="landingJson">{{}}</pre></details>
     </section>
@@ -275,6 +282,19 @@ def render_analytics_page(
     const num = v => Number(v || 0);
     const nums = new Intl.NumberFormat('en-US');
     const count = v => v == null ? '—' : nums.format(Math.round(num(v)));
+    // Shorten long URL paths for display; the full value stays available via the
+    // cell tooltip. Uses a middle ellipsis so the leading segment and the
+    // distinguishing tail both stay visible.
+    const PATH_MAX = 24;
+    function truncPath(path, max) {{
+      max = max || PATH_MAX;
+      const s = String(path == null ? '' : path);
+      if (s.length <= max) return s;
+      const keep = max - 1;
+      const head = Math.ceil(keep / 2);
+      const tail = keep - head;
+      return s.slice(0, head) + '…' + s.slice(s.length - tail);
+    }}
     function setStatus(id, msg, isErr) {{
       const el = document.getElementById(id);
       if (!el) return;
@@ -351,6 +371,50 @@ def render_analytics_page(
         th.addEventListener('keydown', e => {{ if (e.key === 'Enter' || e.key === ' ') {{ e.preventDefault(); fire(); }} }});
       }});
     }}
+    // ---- Drag-to-resize columns ----
+    // Column widths persist per table across re-renders/pagination. On the first
+    // render we freeze the auto-computed widths, then switch to a fixed layout so
+    // columns can be both widened and narrowed by dragging their right edge.
+    const colWidths = {{}};
+    function enableColResize(tableId) {{
+      const table = document.getElementById(tableId);
+      if (!table) return;
+      const ths = [...table.querySelectorAll('thead th')];
+      if (!ths.length) return;
+      const store = colWidths[tableId] || (colWidths[tableId] = {{}});
+      // Measure natural widths (auto layout) once, then lock them in.
+      table.style.tableLayout = 'auto';
+      ths.forEach((th, idx) => {{ if (store[idx] == null) store[idx] = Math.round(th.getBoundingClientRect().width); }});
+      ths.forEach((th, idx) => {{ th.style.width = store[idx] + 'px'; }});
+      table.style.tableLayout = 'fixed';
+      ths.forEach((th, idx) => {{
+        const grip = document.createElement('span');
+        grip.className = 'col-resizer';
+        grip.title = 'Drag to resize';
+        // Don't let the grip trigger the header's sort handler.
+        grip.addEventListener('click', e => e.stopPropagation());
+        grip.addEventListener('mousedown', e => {{
+          e.preventDefault();
+          e.stopPropagation();
+          const startX = e.pageX;
+          const startW = th.getBoundingClientRect().width;
+          document.body.classList.add('col-resizing');
+          const onMove = ev => {{
+            const w = Math.max(48, Math.round(startW + (ev.pageX - startX)));
+            th.style.width = w + 'px';
+            store[idx] = w;
+          }};
+          const onUp = () => {{
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.body.classList.remove('col-resizing');
+          }};
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        }});
+        th.appendChild(grip);
+      }});
+    }}
     // ---- Top pages ----
     let pagesTopRows = [];
     let pagesSourceRows = [];
@@ -403,10 +467,11 @@ def render_analytics_page(
       const body = pageRows.map(p => {{
         const sub = p.page_group ? ` <span class="muted">${{esc(p.page_group)}}</span>` : '';
         const engt = p.users ? p.engagement_seconds / p.users : 0;
-        return `<tr><td class="left"><span class="page-path">${{esc(p.page_path)}}</span>${{sub}}</td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;
+        return `<tr><td class="left"><span class="page-path" title="${{esc(p.page_path)}}">${{esc(truncPath(p.page_path))}}</span>${{sub}}</td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;
       }}).join('');
       el.innerHTML = head + `<tbody>${{body}}</tbody>`;
       attachSortHandlers('pagesTable', PAGES_COLUMNS, pagesSort, () => {{ pagesPageNum = 1; renderPages(); }});
+      enableColResize('pagesTable');
       setStatus('pagesStatus', `${{startIdx + 1}}–${{startIdx + pageRows.length}} of ${{sorted.length}} page(s)` + (pageFiltersActive() ? ' (filtered)' : '') + '.');
       renderPagesPager(totalPages);
     }}
@@ -561,10 +626,11 @@ def render_analytics_page(
       }}
       const head = buildSortHead(LANDING_COLUMNS, landingSort);
       const body = rows.map(r =>
-        `<tr><td class="left"><span class="page-path">${{esc(r.page_path)}}</span></td><td>${{count(r.sessions)}}</td><td>${{count(r.users)}}</td><td>${{count(r.new_users)}}</td><td>${{count(r.key_events)}}</td><td>${{r.key_event_rate != null ? r.key_event_rate + '%' : '—'}}</td><td>${{fmtDuration(r.avg_engagement_seconds)}}</td></tr>`
+        `<tr><td class="left"><span class="page-path" title="${{esc(r.page_path)}}">${{esc(truncPath(r.page_path))}}</span></td><td>${{count(r.sessions)}}</td><td>${{count(r.users)}}</td><td>${{count(r.new_users)}}</td><td>${{count(r.key_events)}}</td><td>${{r.key_event_rate != null ? r.key_event_rate + '%' : '—'}}</td><td>${{fmtDuration(r.avg_engagement_seconds)}}</td></tr>`
       ).join('');
       el.innerHTML = head + `<tbody>${{body}}</tbody>`;
       attachSortHandlers('landingTable', LANDING_COLUMNS, landingSort, () => {{ landingPageNum = 1; renderLanding(); }});
+      enableColResize('landingTable');
       setStatus('landingStatus', `${{startIdx + 1}}–${{startIdx + rows.length}} of ${{sorted.length}} page(s).`);
       renderLandingPager(totalPages);
     }}
