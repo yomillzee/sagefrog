@@ -59,13 +59,28 @@ class ShareLinkStoreTest(unittest.TestCase):
     table this module owns, exercising the SQL branches without a real Postgres."""
 
     def setUp(self):
+        self._prev_db_url = os.environ.get("DATABASE_URL")
         os.environ["DATABASE_URL"] = "postgres://fake"
         self.rows: dict[str, dict] = {}
-        fake_db = sys.modules["db"]
-        fake_db.connection = self._fake_connection  # type: ignore[attr-defined]
+        self._db = sys.modules["db"]
+        # Save and restore db.connection so this in-memory fake never leaks into
+        # other tests. It previously did not restore it, poisoning the shared db
+        # module for every later DB-backed test in the same run.
+        self._orig_connection = getattr(self._db, "connection", None)
+        self._db.connection = self._fake_connection  # type: ignore[attr-defined]
 
     def tearDown(self):
-        os.environ.pop("DATABASE_URL", None)
+        if self._orig_connection is not None:
+            self._db.connection = self._orig_connection  # type: ignore[attr-defined]
+        else:
+            try:
+                del self._db.connection  # type: ignore[attr-defined]
+            except AttributeError:
+                pass
+        if self._prev_db_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = self._prev_db_url
 
     # A tiny context-manager + cursor that understands only the handful of
     # statements client_hours_share issues (matched by substring).
