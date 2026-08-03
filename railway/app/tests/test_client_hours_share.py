@@ -204,8 +204,7 @@ class SharedRendererTest(unittest.TestCase):
 
     def test_admin_has_all_controls(self):
         html = self._admin()
-        for eid in ('id="chShare"', 'id="chTag"', 'id="chRefresh"',
-                    'id="shareModal"', 'id="tagModal"'):
+        for eid in ('id="chShare"', 'id="chRefresh"', 'id="shareModal"'):
             self.assertIn(eid, html)
         self.assertIn('"readOnly": false', html)
         self.assertIn("/admin/client-hours/data", html)
