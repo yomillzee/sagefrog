@@ -103,10 +103,9 @@ SCHEMA_SQL_STATEMENTS = [
     """,
 ]
 
-# Register this module's schema with the central migration runner (Phase 1). The
-# runner applies + records this once at startup; the per-call ensure_schema()
-# below stays as-is (safeguard kept until the runner is proven) and shares the
-# same advisory lock, so the two paths can never run DDL concurrently.
+# Register this module's schema with the central migration runner. The runner
+# applies + records this once at startup as web_users:0001_baseline; the
+# read/write helpers no longer run schema DDL themselves (Phase 2).
 db_migrate.register(
     [db_migrate.Migration(id="web_users:0001_baseline", statements=tuple(SCHEMA_SQL_STATEMENTS))]
 )
@@ -175,22 +174,22 @@ def enabled() -> bool:
     return bool(_get_db_url())
 
 
-# The schema is idempotent DDL that only needs to run once per process, but
-# several hot-path helpers call ensure_schema() on every invocation:
-# get_user_record runs on every authenticated request (and the last-seen
-# middleware), so the naive version issued 20 DDL statements per request. Worse,
-# each ALTER / CREATE INDEX takes an AccessExclusiveLock on web_users that (in
-# psycopg's default transaction mode) is held until the surrounding transaction
-# commits, so concurrent requests deadlocked -> psycopg.errors.DeadlockDetected.
+# Schema creation now lives in the central migration runner: db_migrate applies
+# web_users:0001_baseline once at startup, before any request is served. The
+# read/write helpers below no longer call ensure_schema() (Phase 2) — that used
+# to run the full DDL on every authenticated request and deadlocked under
+# concurrency (see #297).
 #
-# Guard it two ways: a process-level flag (with a lock, since sync FastAPI
-# handlers run in a threadpool) so the DDL runs at most once per process; and a
-# transaction-scoped advisory lock so concurrent processes/replicas serialize
-# the one run instead of deadlocking on the exclusive table locks.
+# ensure_schema() is retained only as a startup safety net (still invoked once
+# from main.py alongside the runner). It stays guarded two ways so it can never
+# reintroduce that problem: a process-level flag (with a lock, since sync FastAPI
+# handlers run in a threadpool) so the DDL runs at most once per process, and a
+# transaction-scoped advisory lock shared with the runner so the two startup
+# paths serialize on one lock instead of racing on web_users' exclusive locks.
 _schema_ready = False
 _schema_lock = threading.Lock()
-# Shared with the central migration runner so the legacy path and the runner
-# serialize on one lock (see db_migrate.SCHEMA_ADVISORY_LOCK_KEY).
+# Shared with the central migration runner so this path and the runner serialize
+# on one lock (see db_migrate.SCHEMA_ADVISORY_LOCK_KEY).
 _SCHEMA_ADVISORY_LOCK_KEY = db_migrate.SCHEMA_ADVISORY_LOCK_KEY
 
 
@@ -255,7 +254,6 @@ _USER_FROM = "FROM web_users u LEFT JOIN client_groups g ON g.id = u.group_id"
 def get_user_by_email(email: str) -> WebUser | None:
     if not enabled():
         return None
-    ensure_schema()
     normalized = email.strip().lower()
     with db.connection() as conn:
         row = conn.execute(
@@ -281,7 +279,6 @@ def get_user_by_id(user_id: int) -> WebUser | None:
 def get_user_record(user_id: int) -> WebUser | None:
     if not enabled():
         return None
-    ensure_schema()
     with db.connection() as conn:
         row = conn.execute(
             f"""
@@ -299,7 +296,6 @@ def get_user_record(user_id: int) -> WebUser | None:
 def get_password_hash(email: str) -> str | None:
     if not enabled():
         return None
-    ensure_schema()
     normalized = email.strip().lower()
     with db.connection() as conn:
         row = conn.execute(
@@ -325,7 +321,6 @@ def record_login(user_id: int) -> None:
     if not enabled():
         return
     try:
-        ensure_schema()
         with db.connection() as conn:
             conn.execute(
                 "UPDATE web_users SET last_login_at = NOW(), last_seen_at = NOW() "
@@ -349,7 +344,6 @@ def record_activity(user_id: int) -> None:
     if not enabled():
         return
     try:
-        ensure_schema()
         with db.connection() as conn:
             conn.execute(
                 "UPDATE web_users SET last_seen_at = NOW() "
@@ -363,7 +357,6 @@ def record_activity(user_id: int) -> None:
 def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
     if not enabled():
         return []
-    ensure_schema()
     cols = (
         "u.id, u.email, u.role, u.client_slug, u.is_active, u.created_at, "
         "u.avatar, u.allowed_client_slugs, u.group_id, g.name, g.client_slugs, "
@@ -402,7 +395,6 @@ def set_avatar(user_id: int, avatar: str | None) -> bool:
     """Set (or clear, with None) a user's avatar data URI."""
     if not enabled():
         return False
-    ensure_schema()
     with db.connection() as conn:
         cur = conn.execute(
             """
@@ -418,7 +410,6 @@ def set_avatar(user_id: int, avatar: str | None) -> bool:
 def count_admins() -> int:
     if not enabled():
         return 0
-    ensure_schema()
     with db.connection() as conn:
         row = conn.execute(
             "SELECT COUNT(*) FROM web_users WHERE role = 'admin' AND is_active = TRUE"
@@ -467,7 +458,6 @@ def create_user(
         raise ValueError("role must be admin, client, or standard.")
     if len(password) < 10:
         raise ValueError("Password must be at least 10 characters.")
-    ensure_schema()
     slug, gid = _resolve_client_scope(role, client_slug, group_id)
     # Only 'standard' users carry a per-client access list; other roles store NULL.
     allowed = _normalize_slug_list(allowed_client_slugs) if role == "standard" else None
@@ -526,7 +516,6 @@ def set_password(user_id: int, new_password: str) -> bool:
         return False
     if len(new_password) < 10:
         raise ValueError("Password must be at least 10 characters.")
-    ensure_schema()
     pw_hash = hash_password(new_password)
     with db.connection() as conn:
         cur = conn.execute(
@@ -554,7 +543,6 @@ def set_role(
     role = (role or "").strip().lower()
     if role not in ("admin", "client", "standard"):
         raise ValueError("role must be admin, client, or standard.")
-    ensure_schema()
     slug, gid = _resolve_client_scope(role, client_slug, group_id)
     # Only 'standard' users carry a per-client access list; other roles reset to NULL.
     allowed = _normalize_slug_list(allowed_client_slugs) if role == "standard" else None
@@ -575,7 +563,6 @@ def set_role(
 def deactivate_user(user_id: int) -> bool:
     if not enabled():
         return False
-    ensure_schema()
     with db.connection() as conn:
         cur = conn.execute(
             """
@@ -598,7 +585,6 @@ def backfill_standard_all_access(all_slugs: list[str]) -> int:
     an explicit (possibly empty) array and are left untouched (IS NULL guard)."""
     if not enabled():
         return 0
-    ensure_schema()
     slugs = _normalize_slug_list(all_slugs)
     with db.connection() as conn:
         cur = conn.execute(
@@ -638,7 +624,6 @@ _GROUP_SELECT = (
 def list_groups(*, include_inactive: bool = False) -> list[dict[str, Any]]:
     if not enabled():
         return []
-    ensure_schema()
     where = "" if include_inactive else "WHERE g.is_active = TRUE"
     with db.connection() as conn:
         rows = conn.execute(
@@ -650,7 +635,6 @@ def list_groups(*, include_inactive: bool = False) -> list[dict[str, Any]]:
 def get_group(group_id: int) -> dict[str, Any] | None:
     if not enabled():
         return None
-    ensure_schema()
     with db.connection() as conn:
         row = conn.execute(
             f"SELECT {_GROUP_SELECT} FROM client_groups g WHERE g.id = %s",
@@ -669,7 +653,6 @@ def create_group(
         raise ValueError("Group name is required.")
     slugs = _normalize_slug_list(client_slugs)
     desc = (description or "").strip() or None
-    ensure_schema()
     now = datetime.now(tz=UTC)
     with db.connection() as conn:
         try:
@@ -700,7 +683,6 @@ def update_group(
     are changed. Returns the updated group, or None if it doesn't exist."""
     if not enabled():
         return None
-    ensure_schema()
     sets: list[str] = []
     params: list[Any] = []
     if name is not None:
@@ -736,7 +718,6 @@ def delete_group(group_id: int) -> bool:
     members — reassign or remove them first so nobody silently loses access."""
     if not enabled():
         return False
-    ensure_schema()
     with db.connection() as conn:
         members = conn.execute(
             "SELECT COUNT(*) FROM web_users WHERE group_id = %s AND is_active = TRUE",
