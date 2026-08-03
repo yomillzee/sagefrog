@@ -206,6 +206,10 @@ class SharedRendererTest(unittest.TestCase):
         html = self._admin()
         for eid in ('id="chShare"', 'id="chRefresh"', 'id="shareModal"'):
             self.assertIn(eid, html)
+        # Tagging moved out of the old #chTag button / #tagModal into the per-card
+        # popout (#282, "drop the tag modal"). Assert its admin-only write
+        # endpoint so the "admin can tag" coverage those ids provided is kept.
+        self.assertIn("/admin/client-hours/project-tag", html)
         self.assertIn('"readOnly": false', html)
         self.assertIn("/admin/client-hours/data", html)
         self.assertNotIn('<header class="ro-topbar"', html)
