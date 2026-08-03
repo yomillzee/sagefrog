@@ -1216,7 +1216,14 @@ def render_bigquery_dashboard_page(
     /* Cap the path label so a long URL can't balloon the column and shove the
        metric columns off the horizontal scroller (worst on mobile). Truncates
        with an ellipsis; the full path stays available via the title tooltip. */
-    .page-path {{ display:inline-block; max-width:min(52vw,460px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; font-weight:600; color:#1f2d40; }}
+    .page-path {{ display:inline-block; max-width:min(52vw,460px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; font-weight:600; color:#1f2d40; cursor:help; }}
+    /* Drag-to-resize columns (Pages / Landing Pages tables). */
+    table.resizable {{ table-layout:fixed; }}
+    table.resizable th, table.resizable td {{ overflow:hidden; text-overflow:ellipsis; }}
+    .col-resizer {{ position:absolute; top:0; right:0; width:9px; height:100%; cursor:col-resize; user-select:none; touch-action:none; }}
+    .col-resizer::after {{ content:""; position:absolute; top:25%; right:4px; width:1px; height:50%; background:transparent; transition:background .12s; }}
+    .col-resizer:hover::after {{ background:var(--accent); }}
+    body.col-resizing, body.col-resizing * {{ cursor:col-resize !important; user-select:none !important; }}
     table.compact {{ min-width:0; font-size:.84rem; }}
     table.compact th, table.compact td {{ padding:8px 12px; }}
     /* ---- Pager ---- */
@@ -1529,14 +1536,14 @@ def render_bigquery_dashboard_page(
       <section id="sec-pages">
         <div class="sec-head"><h2>Pages</h2><span class="status" id="pagesStatus"></span></div>
         <input class="page-search" id="pagesSearch" type="search" placeholder="Filter by path…" autocomplete="off">
-        <div class="table-wrap"><table id="pagesTable" class="compact"></table></div>
+        <div class="table-wrap"><table id="pagesTable" class="compact resizable"></table></div>
         <div class="pager" id="pagesPager"></div>
       </section>
 
       <section id="sec-landing">
         <div class="sec-head"><h2>Landing Pages</h2><span class="status" id="landingStatus"></span></div>
         <input class="page-search" id="landingSearch" type="search" placeholder="Filter by path…" autocomplete="off">
-        <div class="table-wrap"><table id="landingTable" class="compact"></table></div>
+        <div class="table-wrap"><table id="landingTable" class="compact resizable"></table></div>
         <div class="pager" id="landingPager"></div>
       </section>
       </div>
@@ -1902,6 +1909,62 @@ def render_bigquery_dashboard_page(
     const dollars = new Intl.NumberFormat('en-US', {{ style:'currency', currency:'USD', maximumFractionDigits:2 }});
     const nums    = new Intl.NumberFormat('en-US');
     const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
+    // Shorten long URL paths for display; the full value stays in the cell
+    // tooltip. Middle ellipsis keeps the leading segment and the distinguishing
+    // tail both visible (paths often share a long common prefix).
+    const PATH_MAX = 24;
+    function truncPath(path, max) {{
+      max = max || PATH_MAX;
+      const s = String(path == null ? '' : path);
+      if (s.length <= max) return s;
+      const keep = max - 1;
+      const head = Math.ceil(keep / 2);
+      const tail = keep - head;
+      return s.slice(0, head) + '\\u2026' + s.slice(s.length - tail);
+    }}
+    // Drag-to-resize table columns. Widths persist per table across re-renders
+    // and pagination. On first render we freeze the auto-computed widths, then
+    // switch to a fixed layout so columns can be widened *or* narrowed by
+    // dragging their right edge.
+    const colWidths = {{}};
+    function enableColResize(tableId) {{
+      const table = document.getElementById(tableId);
+      if (!table) return;
+      const ths = [...table.querySelectorAll('thead th')];
+      if (!ths.length) return;
+      const store = colWidths[tableId] || (colWidths[tableId] = {{}});
+      table.style.tableLayout = 'auto';
+      ths.forEach((th, idx) => {{ if (store[idx] == null) store[idx] = Math.round(th.getBoundingClientRect().width); }});
+      ths.forEach((th, idx) => {{ th.style.width = store[idx] + 'px'; }});
+      table.style.tableLayout = 'fixed';
+      ths.forEach((th, idx) => {{
+        const grip = document.createElement('span');
+        grip.className = 'col-resizer';
+        grip.title = 'Drag to resize';
+        // Keep the grip from triggering the header's (delegated) sort handler.
+        grip.addEventListener('click', e => e.stopPropagation());
+        grip.addEventListener('mousedown', e => {{
+          e.preventDefault();
+          e.stopPropagation();
+          const startX = e.pageX;
+          const startW = th.getBoundingClientRect().width;
+          document.body.classList.add('col-resizing');
+          const onMove = ev => {{
+            const w = Math.max(48, Math.round(startW + (ev.pageX - startX)));
+            th.style.width = w + 'px';
+            store[idx] = w;
+          }};
+          const onUp = () => {{
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.body.classList.remove('col-resizing');
+          }};
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        }});
+        th.appendChild(grip);
+      }});
+    }}
     const num  = v => Number(v || 0);
     const money  = v => dollars.format(num(v));
     const count  = v => nums.format(Math.round(num(v)));
@@ -3370,7 +3433,8 @@ def render_bigquery_dashboard_page(
       const startIdx=(pagesPageNum-1)*PAGES_PER_PAGE;
       const pageRows=base.slice(startIdx,startIdx+PAGES_PER_PAGE);
       el.innerHTML=analyticsSortHead(PAGES_SORT_COLS,pagesSort,'pages')+
-        `<tbody>${{pageRows.map(p=>{{const engt=p.users?p.engagement_seconds/p.users:0;return`<tr><td class="left"><span class="page-path" title="${{esc(p.page_path)}}">${{esc(p.page_path)}}</span></td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;}}). join('')}}</tbody>`;
+        `<tbody>${{pageRows.map(p=>{{const engt=p.users?p.engagement_seconds/p.users:0;return`<tr><td class="left"><span class="page-path" title="${{esc(p.page_path)}}">${{esc(truncPath(p.page_path))}}</span></td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;}}). join('')}}</tbody>`;
+      enableColResize('pagesTable');
       const tag=pagesSearchQuery?' (filtered)':'';
       setStatus('pagesStatus', `${{startIdx+1}}–${{startIdx+pageRows.length}} of ${{base.length}}${{tag}}`);
       renderPagesPager(totalPages);
@@ -3857,7 +3921,8 @@ def render_bigquery_dashboard_page(
       if (landingPageNum>totalPages) landingPageNum=totalPages;
       const startIdx=(landingPageNum-1)*LANDING_PER_PAGE, rows=base.slice(startIdx,startIdx+LANDING_PER_PAGE);
       el.innerHTML=analyticsSortHead(LANDING_SORT_COLS,landingSort,'landing')+
-        `<tbody>${{rows.map(r=>`<tr><td class="left"><span class="page-path" title="${{esc(r.page_path)}}">${{esc(r.page_path)}}</span></td><td>${{count(r.sessions)}}</td><td>${{count(r.users)}}</td><td>${{count(r.new_users)}}</td><td>${{count(r.key_events)}}</td><td>${{r.key_event_rate!=null?r.key_event_rate+'%':'—'}}</td><td>${{fmtDuration(r.avg_engagement_seconds)}}</td></tr>`).join('')}}</tbody>`;
+        `<tbody>${{rows.map(r=>`<tr><td class="left"><span class="page-path" title="${{esc(r.page_path)}}">${{esc(truncPath(r.page_path))}}</span></td><td>${{count(r.sessions)}}</td><td>${{count(r.users)}}</td><td>${{count(r.new_users)}}</td><td>${{count(r.key_events)}}</td><td>${{r.key_event_rate!=null?r.key_event_rate+'%':'—'}}</td><td>${{fmtDuration(r.avg_engagement_seconds)}}</td></tr>`).join('')}}</tbody>`;
+      enableColResize('landingTable');
       setStatus('landingStatus',`${{startIdx+1}}–${{startIdx+rows.length}} of ${{base.length}}`+(landingSearchQuery?' (filtered)':''));
       const pager=document.getElementById('landingPager');
       if (totalPages<=1) {{ pager.innerHTML=''; return; }}
