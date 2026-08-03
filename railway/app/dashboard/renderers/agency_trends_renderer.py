@@ -4,10 +4,11 @@ Rendered inside the shared admin shell (navy sidebar + client switcher) so Agenc
 Trends sits alongside the other admin sections rather than as a standalone page.
 It fetches /admin/agency-trends/data for the numbers, so the DuckDB rollup never
 blocks first paint. The page reproduces exactly what HQ shows (every client's
-spend vs budget and its trailing-30d web-traffic sparkline) and adds
-week-over-week paid-media momentum and channel mix on top, all computed from one
-concurrent set of BigQuery reads by dashboard.services.agency_trends_service
-(build_agency_overview).
+spend vs budget and its trailing-30d web-traffic sparkline), folds in each
+client's primary KPI — whose window a date-range filter re-scopes (this month /
+last complete week / last 30 days) without touching budget pacing — and adds a
+channel-mix breakdown on top, all computed from one concurrent set of BigQuery
+reads by dashboard.services.agency_trends_service (build_agency_overview).
 """
 
 from __future__ import annotations
@@ -60,16 +61,6 @@ _TRENDS_CSS = """
     .pbar > span { display:block; height:100%; border-radius:4px; background:var(--accent); }
     .pbar.over > span { background:var(--danger); }
     .pbar.under > span { background:var(--green); }
-    /* diverging week-over-week bar, centered at zero */
-    .wow-cell { display:flex; align-items:center; justify-content:flex-end; gap:10px; }
-    .wow-track { position:relative; flex:0 0 96px; height:9px; background:#eef2f7; border-radius:5px; }
-    .wow-mid { position:absolute; left:50%; top:-2px; bottom:-2px; width:1px; background:#cbd5e1; }
-    .wow-fill { position:absolute; top:0; bottom:0; border-radius:5px; }
-    .wow-fill.pos { left:50%; background:var(--green); }
-    .wow-fill.neg { right:50%; background:var(--danger); }
-    .wow-pct { min-width:56px; text-align:right; font-variant-numeric:tabular-nums; font-weight:700; }
-    .wow-pct.pos { color:var(--green); } .wow-pct.neg { color:var(--danger); }
-    .wow-pct.flat { color:var(--muted); }
     .sess-cell { display:flex; align-items:center; justify-content:flex-end; gap:9px; }
     .spark svg { display:block; }
     /* connector-health dot (icon-only; links to the client's full data-source
@@ -118,6 +109,19 @@ _TRENDS_CSS = """
     .kpi-unset { color:var(--muted); font-size:.78rem; }
     .kpi-unset a { color:var(--accent); text-decoration:none; }
     .kpi-unset a:hover { text-decoration:underline; }
+    /* Primary-KPI date-range filter (re-scopes only the KPI column). A small
+       segmented control + an "include today" checkbox that applies to Last 30d. */
+    .kpi-filter { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+    .kpi-filter .flabel { color:var(--muted); font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+    .seg { display:inline-flex; background:#eef2f7; border:1px solid var(--border); border-radius:9px; padding:2px; }
+    .seg button { appearance:none; border:0; background:transparent; cursor:pointer; color:var(--muted);
+      font:inherit; font-size:.8rem; font-weight:700; padding:5px 11px; border-radius:7px; transition:background .12s,color .12s; white-space:nowrap; }
+    .seg button:hover { color:var(--navy); }
+    .seg button.active { background:#fff; color:var(--navy); box-shadow:0 1px 3px rgba(10,37,64,.14); }
+    .kpi-today { display:inline-flex; align-items:center; gap:6px; font-size:.8rem; color:var(--muted); cursor:pointer; user-select:none; }
+    .kpi-today input { accent-color:var(--accent); cursor:pointer; }
+    .kpi-today.disabled { opacity:.42; cursor:not-allowed; }
+    .kpi-today.disabled input { cursor:not-allowed; }
     /* Narrow screens: tighten padding, let the wide data table scroll on its own,
        and stop the channel rows' fixed widths from overflowing. */
     @media (max-width: 720px) {
@@ -127,7 +131,6 @@ _TRENDS_CSS = """
       .sub { font-size:.82rem; }
       th, td { padding:9px 10px; }
       .pbar { flex-basis:64px; }
-      .wow-track { flex-basis:72px; }
       .chan { gap:10px; margin:9px 0; }
       .chan-name { width:64px; font-size:.82rem; }
       .chan-val { width:auto; min-width:92px; font-size:.78rem; }
@@ -179,6 +182,17 @@ _TRENDS_CONTENT = """
           <h2>By client <span class="pill duck">DuckDB</span></h2>
           <p class="sub" id="atSub">Loading…</p>
         </div>
+        <div class="kpi-filter">
+          <span class="flabel">Primary KPI</span>
+          <div class="seg" id="kpiRange" role="group" aria-label="Primary KPI date range">
+            <button type="button" data-range="month" class="active">This month</button>
+            <button type="button" data-range="last_week">Last week</button>
+            <button type="button" data-range="last_30d">Last 30 days</button>
+          </div>
+          <label class="kpi-today disabled" id="kpiTodayWrap" title="Applies to Last 30 days">
+            <input type="checkbox" id="kpiToday" disabled> Include today
+          </label>
+        </div>
       </div>
       <div class="table-wrap">
         <table id="atTable">
@@ -187,7 +201,6 @@ _TRENDS_CONTENT = """
             <th class="sortable col-icon" data-key="health_rank">Data</th>
             <th class="sortable" data-key="kpi_value">Primary KPI</th>
             <th class="sortable active" data-key="pct_budget">% of budget</th>
-            <th class="sortable" data-key="pct_change">Week over week</th>
             <th class="sortable" data-key="sessions_total">Sessions · 30d</th>
             <th class="sortable col-icon" data-key="consent_rank">Consent</th>
           </tr></thead>
@@ -211,10 +224,12 @@ def render_agency_trends_page(*, user_email: str) -> str:
     const money = v => new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(Number(v||0));
     const money2 = v => new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format(Number(v||0));
     const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const pctTxt = p => (p>0?'+':'') + Number(p).toFixed(1) + '%';
     const STATUS_LABEL = { over:'Over pace', under:'Under pace', on_track:'On track', no_budget:'No budget' };
     let atData = null;
     let sort = { key:'pct_budget', dir:'desc' };
+    // Primary-KPI date-range filter state (re-scopes only the KPI column).
+    let kpiRange = 'month';       // month | last_week | last_30d
+    let includeToday = false;     // applies to last_30d only
 
     const CONSENT_META = { pass:{c:'#0a7f3f',l:'Healthy',rank:1}, attention:{c:'#b7791f',l:'Attention',rank:2}, fail:{c:'#b42318',l:'Critical',rank:3} };
     function sortVal(r, key) {
@@ -285,16 +300,6 @@ def render_agency_trends_page(*, user_email: str) -> str:
       return `<div class="pct-cell" title="${esc(tip)}"><span class="num ${cls}">${r.pct_budget.toFixed(0)}%</span>`
         + `<span class="pbar ${bar}"><span style="width:${w}%"></span></span></div>`;
     }
-    function wowCell(r) {
-      if (r.pct_change == null) return '<div class="wow-cell"><span class="muted">new</span></div>';
-      const pos = r.pct_change >= 0;
-      const cls = r.pct_change > 0 ? 'pos' : (r.pct_change < 0 ? 'neg' : 'flat');
-      const w = Math.min(50, Math.abs(r.pct_change) / 60 * 50); // 60% saturates half the track
-      const fill = `<span class="wow-fill ${pos?'pos':'neg'}" style="width:${w}%"></span>`;
-      const tip = `${money(r.last_7)} last 7 days vs ${money(r.prior_7)} prior 7 days`;
-      return `<div class="wow-cell" title="${esc(tip)}"><span class="wow-track"><span class="wow-mid"></span>${fill}</span>`
-        + `<span class="wow-pct ${cls}">${pctTxt(r.pct_change)}</span></div>`;
-    }
     // Inline SVG sparkline of daily sessions. Colour tints up (green) / down
     // (red) / flat (blue) by comparing the last third of the window to the first.
     function sparkline(series) {
@@ -336,19 +341,6 @@ def render_agency_trends_page(*, user_email: str) -> str:
       const href = `/dashboard/${encodeURIComponent(r.client_slug)}/settings`;
       return `<a class="hdot-link" href="${href}" target="_blank" rel="noopener" title="${esc(lines.join('\\n'))}" `
         + `role="img" aria-label="${esc('Data — ' + label)}"><span class="hdot ${cls}"></span></a>`;
-    }
-    // Fold each client's week-over-week momentum onto its budget row so one
-    // table shows the HQ view (spend vs budget + sessions) with a WoW column.
-    function mergeMomentum() {
-      const m = atData.momentum || {};
-      const bySlug = {};
-      (m.clients || []).forEach(c => { bySlug[c.client_slug] = c; });
-      (atData.clients || []).forEach(r => {
-        const mom = bySlug[r.client_slug];
-        r.last_7 = mom ? mom.last_7 : null;
-        r.prior_7 = mom ? mom.prior_7 : null;
-        r.pct_change = mom ? mom.pct_change : null;
-      });
     }
     // ---- Mobile accordion -------------------------------------------------
     // Collapsed rows carry a strip of small colour-coded status icons so the
@@ -406,7 +398,6 @@ def render_agency_trends_page(*, user_email: str) -> str:
         const detail = accRow('Data', healthCell(r))
           + accRow('Primary KPI', kpiCell(r))
           + accRow('% of budget', pctCell(r))
-          + accRow('Week over week', wowCell(r))
           + accRow('Sessions · 30d', sessCell(r))
           + accRow('Consent', consentCell(r));
         return `<div class="acc">`
@@ -433,7 +424,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
 
       const rows = sortedRows();
       const body = document.getElementById('atBody');
-      if (!rows.length) { body.innerHTML = `<tr><td colspan="7" class="empty">No clients configured yet.</td></tr>`; }
+      if (!rows.length) { body.innerHTML = `<tr><td colspan="6" class="empty">No clients configured yet.</td></tr>`; }
       else body.innerHTML = rows.map(r => {
         const dash = `/dashboard/${encodeURIComponent(r.client_slug)}`;
         return `<tr>`
@@ -441,7 +432,6 @@ def render_agency_trends_page(*, user_email: str) -> str:
           + `<td class="col-icon">${healthCell(r)}</td>`
           + `<td>${kpiCell(r)}</td>`
           + `<td>${pctCell(r)}</td>`
-          + `<td>${wowCell(r)}</td>`
           + `<td>${sessCell(r)}</td>`
           + `<td class="col-icon">${consentCell(r)}</td>`
         + `</tr>`;
@@ -451,7 +441,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
       const totPct = t.monthly_budget ? Math.round(t.mtd_spend / t.monthly_budget * 100) : null;
       const totTip = `${money2(t.mtd_spend)} spent of ${money2(t.monthly_budget)} budget`;
       document.getElementById('atFoot').innerHTML = rows.length
-        ? `<tr><td>All clients</td><td></td><td></td><td><div class="pct-cell" title="${esc(totTip)}"><span class="num">${totPct==null?'—':totPct+'%'}</span></div></td><td></td><td></td><td></td></tr>`
+        ? `<tr><td>All clients</td><td></td><td></td><td><div class="pct-cell" title="${esc(totTip)}"><span class="num">${totPct==null?'—':totPct+'%'}</span></div></td><td></td><td></td></tr>`
         : '';
 
       document.querySelectorAll('#atTable th.sortable').forEach(th =>
@@ -467,20 +457,21 @@ def render_agency_trends_page(*, user_email: str) -> str:
         : `<p class="empty">No spend by channel in this window.</p>`;
 
       const sw = atData.sessions_window || {};
-      const L = (m.window || {}).last || {};
+      const kw = atData.kpi_window || {};
       const issues = t.clients_with_data_issues || 0;
+      const kwRange = (kw.start && kw.end) ? ` (${kw.start} → ${kw.end})` : '';
       document.getElementById('atNote').textContent =
         `Spend vs budget is month-to-date paid media (Google, LinkedIn, Meta) from each client's BigQuery mart, as of ${atData.as_of}. `
-        + `Week over week compares the last 7 days (${L.start||''} → ${L.end||''}) with the 7 before. `
+        + `Primary KPI is measured over ${kw.label||'month to date'}${kwRange} — use the date range above to re-scope it. `
         + `Sessions sparkline is GA4 sessions per day over the trailing ${sw.days||30} days; green trending up, red down. `
         + `The Data dot flags connector freshness inferred from these same reads — green current, amber lagging, red stale or failed`
         + `${issues ? ` (${issues} client${issues===1?'':'s'} need attention)` : ''} — and links to that client's full connector status. `
-        + `All rollups are computed in DuckDB from one set of reads. "—" / "new" means no data or no prior baseline yet.`;
+        + `All rollups are computed in DuckDB from one set of reads. "—" means no data yet.`;
     }
     function skeleton() {
       document.getElementById('atBody').innerHTML = Array.from({length:6}, () =>
         `<tr><td><span class="skel" style="width:150px"></span></td>`
-        + Array.from({length:6}, () => `<td><span class="skel" style="width:70px"></span></td>`).join('') + `</tr>`).join('');
+        + Array.from({length:5}, () => `<td><span class="skel" style="width:70px"></span></td>`).join('') + `</tr>`).join('');
       document.getElementById('atCards').innerHTML = Array.from({length:6}, () =>
         `<div class="acc"><div class="acc-head"><span class="acc-title"><span class="skel" style="width:120px;height:13px"></span></span>`
         + `<span class="skel" style="width:96px;height:22px;border-radius:8px"></span></div></div>`).join('');
@@ -504,21 +495,46 @@ def render_agency_trends_page(*, user_email: str) -> str:
       const head = ev.target.closest('.acc-head'); if (!head) return;
       ev.preventDefault(); toggleAcc(head);
     });
+    // ---- Primary-KPI date-range filter -----------------------------------
+    // Switching range / toggling "include today" re-fetches the feed with the
+    // new window (only the KPI column changes; budget + sessions are fixed).
+    function syncFilterUI() {
+      document.querySelectorAll('#kpiRange button').forEach(b =>
+        b.classList.toggle('active', b.dataset.range === kpiRange));
+      const wrap = document.getElementById('kpiTodayWrap');
+      const box = document.getElementById('kpiToday');
+      const on = kpiRange === 'last_30d';   // "include today" only applies to last 30 days
+      box.disabled = !on;
+      wrap.classList.toggle('disabled', !on);
+      box.checked = on && includeToday;
+    }
+    document.getElementById('kpiRange').addEventListener('click', ev => {
+      const b = ev.target.closest('button[data-range]'); if (!b) return;
+      if (b.dataset.range === kpiRange) return;
+      kpiRange = b.dataset.range;
+      syncFilterUI();
+      load();
+    });
+    document.getElementById('kpiToday').addEventListener('change', ev => {
+      includeToday = ev.target.checked;
+      load();
+    });
     async function load() {
       skeleton();
       try {
-        const r = await fetch('/admin/agency-trends/data', { credentials:'same-origin' });
+        const qs = new URLSearchParams({ kpi_range: kpiRange, include_today: includeToday ? '1' : '0' });
+        const r = await fetch('/admin/agency-trends/data?' + qs.toString(), { credentials:'same-origin' });
         if (!r.ok) throw new Error('HTTP '+r.status);
         atData = await r.json();
-        mergeMomentum();
         render();
       } catch (e) {
         document.getElementById('atSub').textContent = 'Failed to load agency trends.';
         const msg = `Could not load data (${esc(e.message||'error')}). Try refreshing.`;
-        document.getElementById('atBody').innerHTML = `<tr><td colspan="7" class="empty">${msg}</td></tr>`;
+        document.getElementById('atBody').innerHTML = `<tr><td colspan="6" class="empty">${msg}</td></tr>`;
         document.getElementById('atCards').innerHTML = `<div class="acc-empty">${msg}</div>`;
       }
     }
+    syncFilterUI();
     load();
   </script>"""
 

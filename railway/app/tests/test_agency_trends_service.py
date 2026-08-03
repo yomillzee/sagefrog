@@ -53,6 +53,7 @@ if "google.cloud.bigquery" not in sys.modules:
 from dashboard.services.agency_trends_service import (
     _channel_label,
     _client_health,
+    _kpi_window_bounds,
     _window_bounds,
     compute_agency_budget,
     compute_agency_trends,
@@ -81,6 +82,49 @@ class WindowBoundsTests(unittest.TestCase):
         self.assertEqual(last_lo, dt.date(2026, 7, 5))    # 7 days inclusive
         self.assertEqual(prior_hi, dt.date(2026, 7, 4))
         self.assertEqual(prior_lo, dt.date(2026, 6, 28))
+
+
+class KpiWindowBoundsTests(unittest.TestCase):
+    """Primary-KPI date-range filter windows. TODAY = 2026-07-12 (a Sunday)."""
+
+    def test_month_is_month_to_date(self):
+        start, end, days, label = _kpi_window_bounds(TODAY, "month", include_today=False)
+        self.assertEqual(start, dt.date(2026, 7, 1))
+        self.assertEqual(end, TODAY)
+        self.assertEqual(days, 12)          # day-of-month, for share-of-month pacing
+        self.assertEqual(label, "month to date")
+
+    def test_last_week_is_most_recent_complete_mon_to_sun(self):
+        start, end, days, label = _kpi_window_bounds(TODAY, "last_week", include_today=True)
+        self.assertEqual(start, dt.date(2026, 6, 29))   # Monday
+        self.assertEqual(start.weekday(), 0)
+        self.assertEqual(end, dt.date(2026, 7, 5))      # Sunday, before today
+        self.assertEqual(end.weekday(), 6)
+        self.assertEqual(days, 7)
+        self.assertEqual(label, "last week")
+
+    def test_last_week_from_midweek_still_ends_prior_sunday(self):
+        wednesday = dt.date(2026, 7, 8)  # a Wednesday
+        start, end, _, _ = _kpi_window_bounds(wednesday, "last_week", include_today=False)
+        self.assertEqual(start, dt.date(2026, 6, 29))
+        self.assertEqual(end, dt.date(2026, 7, 5))
+
+    def test_last_30d_excludes_today_by_default(self):
+        start, end, days, label = _kpi_window_bounds(TODAY, "last_30d", include_today=False)
+        self.assertEqual(end, dt.date(2026, 7, 11))     # yesterday
+        self.assertEqual(start, dt.date(2026, 6, 12))   # 30 days inclusive
+        self.assertEqual(days, 30)
+        self.assertEqual(label, "last 30 days")
+
+    def test_last_30d_include_today_shifts_window_forward(self):
+        start, end, days, _ = _kpi_window_bounds(TODAY, "last_30d", include_today=True)
+        self.assertEqual(end, TODAY)
+        self.assertEqual(start, dt.date(2026, 6, 13))
+        self.assertEqual(days, 30)
+
+    def test_unknown_range_falls_back_to_month(self):
+        # build_agency_overview guards this too, but the resolver defaults safely.
+        self.assertEqual(_kpi_window_bounds(TODAY, "bogus", include_today=False)[3], "month to date")
 
 
 class ChannelLabelTests(unittest.TestCase):
