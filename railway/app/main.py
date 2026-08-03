@@ -2045,8 +2045,8 @@ def admin_budget_hq_data(
 
 @app.get("/admin/agency-trends", include_in_schema=False, response_class=HTMLResponse)
 def admin_agency_trends(request: Request):
-    """Admin-only 'Agency Trends': every client's week-over-week paid-media
-    momentum plus channel mix, computed in one DuckDB scan over metrics_daily."""
+    """Admin-only 'Agency Trends': every client's spend vs budget, primary KPI
+    (date-range filterable), and channel mix, computed in one DuckDB scan."""
     user = web_auth.get_current_user(request)
     if not user:
         return web_auth.redirect_to_login(request, next_path="/admin/agency-trends")
@@ -2059,13 +2059,18 @@ def admin_agency_trends(request: Request):
 
 @app.get("/admin/agency-trends/data", include_in_schema=False)
 def admin_agency_trends_data(
+    kpi_range: str = "month",
+    include_today: bool = False,
     user: web_users.WebUser = Depends(web_auth.require_admin),
 ) -> dict:
     """JSON feed for the Agency Trends page: the DuckDB HQ reproduction (spend vs
-    budget + sessions) plus cross-client week-over-week momentum."""
+    budget + sessions) plus cross-client week-over-week momentum.
+
+    ``kpi_range`` (month | last_week | last_30d) and ``include_today`` scope only
+    the primary-KPI column; budget pacing and the sessions sparkline are fixed."""
     from dashboard.services.agency_trends_service import build_agency_overview
 
-    return build_agency_overview()
+    return build_agency_overview(kpi_range=kpi_range, include_today=include_today)
 
 
 @app.get("/admin/client-hours", include_in_schema=False, response_class=HTMLResponse)

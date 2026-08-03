@@ -79,6 +79,46 @@ def _window_bounds(today: date) -> tuple[date, date, date, date]:
     return last_lo, last_hi, prior_lo, prior_hi
 
 
+# Date-range choices for the primary-KPI filter (the only thing the filter
+# re-scopes — budget pacing stays month-to-date). Each entry maps to a bounds
+# resolver in _kpi_window_bounds; "month" is the default and reproduces the
+# original month-to-date KPI column.
+KPI_RANGES = ("month", "last_week", "last_30d")
+_KPI_RANGE_DAYS = 30  # last_30d window length
+
+
+def _kpi_window_bounds(
+    today: date, kpi_range: str, *, include_today: bool
+) -> tuple[date, date, int, str]:
+    """(start, end, window_days, label) for the primary-KPI aggregation window.
+
+    * ``month``     — month_start..today (month-to-date), the default. window_days
+                      is the number of days elapsed so pacing matches the budget
+                      view's share-of-month.
+    * ``last_week`` — the most recent *complete* Monday–Sunday week (ends last
+                      Sunday). Always 7 whole days, so ``include_today`` is moot.
+    * ``last_30d``  — the trailing 30 days; ends today when ``include_today`` is
+                      set, otherwise yesterday (platform data lags a day).
+
+    ``window_days`` feeds the paced-KPI grader: it is the share of a monthly goal
+    the window represents (a complete week is ~7/30 of the goal), so a client on
+    monthly pace reads as on-pace for the shorter window too.
+    """
+    if kpi_range == "last_week":
+        # weekday(): Mon=0 … Sun=6. The most recent finished Sunday is
+        # today minus (weekday + 1) days; the week's Monday is six days before it.
+        last_sunday = today - timedelta(days=today.weekday() + 1)
+        start = last_sunday - timedelta(days=6)
+        return start, last_sunday, _WINDOW_DAYS, "last week"
+    if kpi_range == "last_30d":
+        end = today if include_today else today - timedelta(days=1)
+        start = end - timedelta(days=_KPI_RANGE_DAYS - 1)
+        return start, end, _KPI_RANGE_DAYS, "last 30 days"
+    # Default: month-to-date.
+    month_start = today.replace(day=1)
+    return month_start, today, today.day, "month to date"
+
+
 def _channel_label(source_platform: str) -> str:
     """vw_paid_media_daily uses 'paid_google' / 'paid_meta' / 'paid_linkedin';
     show the bare channel."""
@@ -550,7 +590,8 @@ def _client_daily_rows(
     dataset_id: str,
     start: date,
     end: date,
-    month_start: date,
+    kpi_start: date,
+    kpi_end: date,
 ) -> tuple[list[tuple[str, str, date, float]], dict[str, dict[str, float]]]:
     """One client's daily paid-media spend by channel, cached like /summary.
 
@@ -558,11 +599,14 @@ def _client_daily_rows(
     dashboards use — and returns two things from that one read:
 
     * ``rows``     : the per-day/per-source spend series (for the spend rollups),
-    * ``paid_mtd`` : per-source month-to-date totals (spend / conversions /
-                     conversion_value) over ``month_start``..``end``, which the
-                     primary-KPI resolver reads for the paid KPI types. Computing
-                     it here means the Google Ads conversions / ROAS KPIs cost no
-                     extra BigQuery reads — they ride the summary we already pull.
+    * ``paid_kpi`` : per-source totals (spend / conversions / conversion_value)
+                     over the primary-KPI window ``kpi_start``..``kpi_end``, which
+                     the KPI resolver reads for the paid KPI types. The read spans
+                     the wider ``start``..``end`` fetch window so the same cached
+                     summary serves every KPI date-range choice; we simply sum the
+                     slice the selected range asks for. Computing it here means the
+                     Google Ads conversions / ROAS KPIs cost no extra BigQuery
+                     reads — they ride the summary we already pull.
     """
     payload = {"start": start.isoformat(), "end": end.isoformat()}
 
@@ -584,7 +628,7 @@ def _client_daily_rows(
             pass
 
     rows: list[tuple[str, str, date, float]] = []
-    paid_mtd: dict[str, dict[str, float]] = {}
+    paid_kpi: dict[str, dict[str, float]] = {}
     for r in (result or {}).get("daily") or []:
         raw_date = r.get("date")
         if not raw_date:
@@ -596,30 +640,33 @@ def _client_daily_rows(
         source = str(r.get("source") or "unknown")
         spend = float(r.get("spend") or 0.0)
         rows.append((slug, source, d, spend))
-        if month_start <= d <= end:
-            agg = paid_mtd.setdefault(source, {"spend": 0.0, "conversions": 0.0, "conversion_value": 0.0})
+        if kpi_start <= d <= kpi_end:
+            agg = paid_kpi.setdefault(source, {"spend": 0.0, "conversions": 0.0, "conversion_value": 0.0})
             agg["spend"] += spend
             agg["conversions"] += float(r.get("conversions") or 0.0)
             agg["conversion_value"] += float(r.get("conversion_value") or 0.0)
-    return rows, paid_mtd
+    return rows, paid_kpi
 
 
-def _client_mtd_mqls(*, slug: str, month_start: date, today: date) -> int | None:
-    """One client's month-to-date HubSpot MQL count, cached for the KPI column.
+def _client_mqls(*, slug: str, start: date, end: date) -> int | None:
+    """One client's HubSpot MQL count over ``start``..``end``, cached for the KPI
+    column. The window follows the primary-KPI date-range filter (month-to-date
+    by default), so the cache key carries the window and distinct ranges never
+    collide.
 
     Routed through hubspot_reports_service (its own connector config picks the
     HubSpot mart project/dataset, which may differ from the paid-media mart).
     Returns None when HubSpot isn't configured or the read fails, so the KPI
     simply reads as "no data" rather than blocking the HQ view.
     """
-    payload = {"start": month_start.isoformat(), "end": today.isoformat()}
+    payload = {"start": start.isoformat(), "end": end.isoformat()}
     hit = db_cache.get_cached(f"{slug}.hq.mtd_mqls", payload)
     if hit is not None:
         val = hit.response_json.get("mqls") if isinstance(hit.response_json, dict) else None
         return int(val) if val is not None else None
 
     import hubspot_reports_service
-    count = hubspot_reports_service.fetch_mtd_mql_count(slug, start=month_start, end=today)
+    count = hubspot_reports_service.fetch_mtd_mql_count(slug, start=start, end=end)
     try:
         db_cache.put_cached(
             f"{slug}.hq.mtd_mqls", payload, response_json={"mqls": count},
@@ -641,7 +688,9 @@ def _resolve_destination(c: dict[str, Any]) -> tuple[str | None, str]:
     return project_id, dataset_id
 
 
-def build_agency_overview() -> dict[str, Any]:
+def build_agency_overview(
+    *, kpi_range: str = "month", include_today: bool = False
+) -> dict[str, Any]:
     """Full DuckDB-powered payload for the Agency Trends page.
 
     One concurrent pass of per-client BigQuery reads (each client's daily paid
@@ -655,20 +704,37 @@ def build_agency_overview() -> dict[str, Any]:
     * ``momentum`` (nested) — week-over-week paid-media change and channel mix,
       which the front-end folds onto each client row by slug.
 
+    ``kpi_range`` / ``include_today`` scope *only* the primary-KPI column (see
+    _kpi_window_bounds); spend-vs-budget pacing and the sessions sparkline are
+    always month-to-date / trailing-30d respectively. The daily reads span a
+    fixed window wide enough for every choice, so switching the KPI range never
+    triggers a fresh paid-media read — only the aggregation slice changes.
+
     Reading spend and sessions once per client (rather than the HQ page and the
     trends page each doing their own reads) is the load-time and BigQuery-usage
     win: the columnar rollups are cheap once the daily rows are in DuckDB.
     """
+    if kpi_range not in KPI_RANGES:
+        kpi_range = "month"
     _, _, today = mtd_calendar_bounds()
     month_start = today.replace(day=1)
     _, _, prior_lo, _ = _window_bounds(today)
-    # Widest window either view needs: MTD spend starts at month_start, the
-    # week-over-week prior window starts at prior_lo, whichever is earlier.
-    spend_start = min(month_start, prior_lo)
+    kpi_start, kpi_end, kpi_window_days, kpi_window_label = _kpi_window_bounds(
+        today, kpi_range, include_today=include_today
+    )
+    # Widest window any view needs: MTD spend from month_start, the week-over-week
+    # prior window from prior_lo, and the KPI filter's earliest reach (the last
+    # 30 days ending yesterday, i.e. today-30) — whichever is earliest. Fetching a
+    # fixed span keeps the per-client summary cache shared across KPI ranges.
+    spend_start = min(month_start, prior_lo, today - timedelta(days=_KPI_RANGE_DAYS))
     sessions_end = today - timedelta(days=1)
     sessions_start = sessions_end - timedelta(days=_SESSIONS_TRAILING_DAYS - 1)
 
-    cache_key = {"today": today.isoformat()}
+    cache_key = {
+        "today": today.isoformat(),
+        "kpi_range": kpi_range,
+        "include_today": bool(include_today),
+    }
     hit = db_cache.get_cached(_OVERVIEW_CACHE_SOURCE, cache_key)
     if hit is not None:
         return hit.response_json
@@ -694,8 +760,8 @@ def build_agency_overview() -> dict[str, Any]:
         # has no paid-media project — so fetch them off the paid-media gate.
         if kpi_registry.needs_hubspot(kpi_spec):
             try:
-                meta["kpi_inputs"]["mql_count"] = _client_mtd_mqls(
-                    slug=slug, month_start=month_start, today=today,
+                meta["kpi_inputs"]["mql_count"] = _client_mqls(
+                    slug=slug, start=kpi_start, end=kpi_end,
                 )
             except Exception:
                 LOGGER.exception("Agency overview: MQL read failed for %s", slug)
@@ -708,12 +774,12 @@ def build_agency_overview() -> dict[str, Any]:
         spend_rows: list[tuple[str, str, date, float]] = []
         sessions_rows: list[tuple[str, date, int]] = []
         try:
-            spend_rows, paid_mtd = _client_daily_rows(
+            spend_rows, paid_kpi = _client_daily_rows(
                 slug=slug, project_id=project_id, dataset_id=dataset_id,
-                start=spend_start, end=today, month_start=month_start,
+                start=spend_start, end=today, kpi_start=kpi_start, kpi_end=kpi_end,
             )
             meta["spend_available"] = True
-            meta["kpi_inputs"]["paid_mtd"] = paid_mtd
+            meta["kpi_inputs"]["paid_mtd"] = paid_kpi
         except Exception:
             LOGGER.exception("Agency overview: spend read failed for %s", slug)
         try:
@@ -741,9 +807,12 @@ def build_agency_overview() -> dict[str, Any]:
     momentum = compute_agency_trends(spend_all, label_map, today=today)
 
     # Fold each client's primary KPI onto its budget row. The resolver is pure —
-    # it reads the paid MTD aggregate / MQL count gathered above — and grades
-    # progress against the same share of the month the budget view uses.
-    pct_elapsed = float(budget.get("pct_month_elapsed") or 0.0)
+    # it reads the paid aggregate / MQL count gathered above — and grades progress
+    # against the share of a monthly goal the selected window represents (a full
+    # month-to-date uses the share of the month elapsed; a complete week is ~7/30
+    # of the goal), so a client on monthly pace reads on-pace for shorter windows.
+    days_in_month = int(budget.get("days_in_month") or 30) or 30
+    expected_pct = round(min(100.0, 100.0 * kpi_window_days / days_in_month), 1)
     kpi_by_slug = {m["client_slug"]: m for m in metas}
     for row in budget["clients"]:
         m = kpi_by_slug.get(str(row["client_slug"]))
@@ -752,10 +821,21 @@ def build_agency_overview() -> dict[str, Any]:
             (m or {}).get("primary_kpi_spec"),
             paid_mtd=inputs.get("paid_mtd") or {},
             mql_count=inputs.get("mql_count"),
-            pct_month_elapsed=pct_elapsed,
+            pct_month_elapsed=expected_pct,
+            window_label=kpi_window_label,
         )
 
-    result = {**budget, "momentum": momentum}
+    result = {
+        **budget,
+        "momentum": momentum,
+        "kpi_window": {
+            "range": kpi_range,
+            "label": kpi_window_label,
+            "start": kpi_start.isoformat(),
+            "end": kpi_end.isoformat(),
+            "include_today": bool(include_today),
+        },
+    }
     try:
         db_cache.put_cached(
             _OVERVIEW_CACHE_SOURCE, cache_key, response_json=result,

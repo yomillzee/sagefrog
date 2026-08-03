@@ -28,7 +28,7 @@ _GOOGLE = "paid_google"
 #             elapsed. False for rate metrics (ROAS) graded straight vs goal.
 KPI_TYPES: dict[str, dict[str, Any]] = {
     "google_ads_conversions": {
-        "label": "Google Ads conv.",
+        "label": "Conv.",
         "format": "number",
         "source": "paid",
         "paced": True,
@@ -122,12 +122,19 @@ def resolve_kpi(
     paid_mtd: dict[str, dict[str, float]] | None = None,
     mql_count: float | None = None,
     pct_month_elapsed: float = 0.0,
+    window_label: str = "month to date",
 ) -> dict[str, Any] | None:
     """Turn a stored KPI spec + gathered inputs into a render-ready payload.
 
     Returns None when the spec is unset or names an unknown type. Otherwise a
     dict with: type, label, format, value, goal, pct_to_goal, status, tooltip.
     A ``value`` of None means "no data yet" (renders as an em dash).
+
+    ``pct_month_elapsed`` is the expected share of the goal for the window the
+    value covers — for a month-to-date value that is the share of the month
+    elapsed, but the Agency Trends filter can scope the value to a complete week
+    or the last 30 days and pass that window's expected share instead.
+    ``window_label`` names that window for the tooltip.
     """
     kpi_type = spec_type(spec)
     if kpi_type is None:
@@ -157,7 +164,7 @@ def resolve_kpi(
     elif value is None:
         tooltip = f"{label}: no data yet"
     else:
-        tooltip = f"{label}: {val_txt} (month to date)"
+        tooltip = f"{label}: {val_txt} ({window_label})"
 
     return {
         "type": kpi_type,
