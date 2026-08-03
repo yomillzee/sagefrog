@@ -17,7 +17,6 @@ class ClientBqVerifyTests(unittest.TestCase):
     def _call(self):
         return api_routes.client_bq_verify(
             client_key="acme", request=types.SimpleNamespace(),
-            key=None, bearer_credentials=None, x_api_key=None,
         )
 
     def test_ok_when_access_verified(self):
@@ -25,7 +24,7 @@ class ClientBqVerifyTests(unittest.TestCase):
             ensure_client_datasets=lambda *, project_id: {"ok": True, "datasets": ["acme-proj.marketing_marts"]},
         )
         with patch.object(api_routes, "_load_bq_test_config", return_value=("acme-proj", "marketing_marts")), \
-             patch.object(api_routes, "_authorize_bq_client_api", return_value=None), \
+             patch.object(api_routes.web_auth, "authenticate_dashboard_api", return_value=None), \
              patch.dict(sys.modules, {"client_bigquery_setup": fake_setup}):
             out = self._call()
         self.assertTrue(out["ok"])
@@ -37,7 +36,7 @@ class ClientBqVerifyTests(unittest.TestCase):
             raise RuntimeError("403 Access Denied: bigquery.jobs.create")
         fake_setup = types.SimpleNamespace(ensure_client_datasets=_boom)
         with patch.object(api_routes, "_load_bq_test_config", return_value=("acme-proj", "marketing_marts")), \
-             patch.object(api_routes, "_authorize_bq_client_api", return_value=None), \
+             patch.object(api_routes.web_auth, "authenticate_dashboard_api", return_value=None), \
              patch.dict(sys.modules, {"client_bigquery_setup": fake_setup}):
             out = self._call()
         self.assertFalse(out["ok"])

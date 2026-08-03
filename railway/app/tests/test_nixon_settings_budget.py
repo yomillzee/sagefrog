@@ -40,7 +40,7 @@ class NixonSettingsBudgetTests(unittest.TestCase):
     def _render(self, db_cfg) -> str:
         import client_dashboard_config
 
-        with patch.object(api_routes.web_auth, "authenticate_dashboard", return_value=_FakeAuth()), \
+        with patch.object(api_routes.web_auth, "authenticate_dashboard_any", return_value=_FakeAuth()), \
              patch.object(api_routes, "_nixon_settings_context", return_value=({"marts_dataset": "marketing_marts"}, {})), \
              patch.object(client_dashboard_config, "get_config", return_value=db_cfg) as get_config:
             resp = api_routes.nixon_bq_settings_page(request=types.SimpleNamespace())

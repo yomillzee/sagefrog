@@ -1,0 +1,63 @@
+name: CI
+
+# First CI for the repo. Runs the test suite against a throwaway Postgres (so the
+# DATABASE_URL-gated tests actually run instead of skipping) and enforces the
+# schema-migration guard. See railway/app/docs/staging-and-ci-proposal.md.
+#
+# CI never touches production or production data — every job uses an ephemeral,
+# synthetic Postgres created for the run.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sagefrog_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # Ephemeral, synthetic DB — the migration + DB-gated tests run against this.
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/sagefrog_test
+    defaults:
+      run:
+        working-directory: railway/app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: railway/app/requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+      - name: Run tests
+        run: python -m pytest -q
+
+  guard:
+    # Fast, no services: keeps schema DDL off read/write paths in migrated modules.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Schema-migration guard
+        run: bash railway/app/scripts/check_ddl_guard.sh
