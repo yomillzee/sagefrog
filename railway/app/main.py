@@ -180,6 +180,12 @@ app = FastAPI(
 )
 
 try:
+    # Central, versioned migration runner (Phase 0/1). Applies registered
+    # baselines (currently web_users) once, recorded in schema_migrations, under a
+    # shared advisory lock. Runs alongside the per-module ensure_schema() calls
+    # below, which stay in place until the runner is proven.
+    import db_migrate
+    db_migrate.run_migrations()
     db_cache.ensure_schema()
     warehouse.ensure_schema()
     dashboard_snapshots.ensure_schema()
