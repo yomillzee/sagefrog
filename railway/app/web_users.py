@@ -12,6 +12,7 @@ from typing import Any
 import bcrypt
 import psycopg
 import db
+import db_migrate
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -102,6 +103,14 @@ SCHEMA_SQL_STATEMENTS = [
     """,
 ]
 
+# Register this module's schema with the central migration runner (Phase 1). The
+# runner applies + records this once at startup; the per-call ensure_schema()
+# below stays as-is (safeguard kept until the runner is proven) and shares the
+# same advisory lock, so the two paths can never run DDL concurrently.
+db_migrate.register(
+    [db_migrate.Migration(id="web_users:0001_baseline", statements=tuple(SCHEMA_SQL_STATEMENTS))]
+)
+
 
 def _normalize_slug_list(slugs: list[str] | tuple[str, ...] | None) -> list[str]:
     """Lowercase, strip, drop blanks, and de-dupe a list of client slugs."""
@@ -180,8 +189,9 @@ def enabled() -> bool:
 # the one run instead of deadlocking on the exclusive table locks.
 _schema_ready = False
 _schema_lock = threading.Lock()
-# Stable, app-specific 64-bit key for the migration advisory lock.
-_SCHEMA_ADVISORY_LOCK_KEY = 4_021_769_001
+# Shared with the central migration runner so the legacy path and the runner
+# serialize on one lock (see db_migrate.SCHEMA_ADVISORY_LOCK_KEY).
+_SCHEMA_ADVISORY_LOCK_KEY = db_migrate.SCHEMA_ADVISORY_LOCK_KEY
 
 
 def ensure_schema() -> bool:
