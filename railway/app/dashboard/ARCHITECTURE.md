@@ -54,7 +54,6 @@ dashboard/
     bigquery_settings_renderer.py   # Settings page for BigQuery-mode clients
     cards_renderer.py      # Summary cards, hero metrics, budget pacing panel
     tables_renderer.py     # Drill-down platform tables, GA4 row cells
-    analytics_renderer.py  # Website Analytics (GA4) view
     budget_tracker.py, agency_trends_renderer.py, hq_renderer.py
     lead_tracking_renderer.py, gsc_renderer.py, gtm_renderer.py, semrush_renderer.py
     pagespeed_renderer.py, consent_renderer.py, accessibility_renderer.py
@@ -86,7 +85,7 @@ dashboard/
 | Sidebar / nav / shell | `renderers/base_layout.py` |
 | Summary cards, hero row, budget pacing panel | `renderers/cards_renderer.py` |
 | Platform drill-down tables | `renderers/tables_renderer.py` |
-| Website Analytics (GA4) | `renderers/analytics_renderer.py` |
+| Website Analytics (GA4) | the Analytics pane in `renderers/bigquery_dashboard_renderer.py` (`pane-analytics`) |
 | A new per-feature view | a dedicated `renderers/<feature>_renderer.py` |
 | Settings page body | `renderers/bigquery_settings_renderer.py`, `dashboard_settings.py` |
 | Refresh / sync behavior | `services/refresh_service.py`, `services/bigquery_refresh_orchestrator.py` |

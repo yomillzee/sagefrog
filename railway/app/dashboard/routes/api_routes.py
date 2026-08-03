@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import traceback
 from datetime import date, timedelta
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -14,7 +15,6 @@ import marketing_service
 import web_auth
 from dashboard.utils import pacing
 from dashboard.renderers.bigquery_settings_renderer import render_bigquery_settings_page
-from dashboard.renderers.analytics_renderer import render_analytics_page
 from dashboard.renderers.gtm_renderer import render_gtm_page
 from dashboard.renderers.bigquery_dashboard_renderer import render_bigquery_dashboard_page
 from dashboard.routes.helpers import (
@@ -345,14 +345,17 @@ def nixon_bigquery_test_dashboard(request: Request):
 
 @router.get(
     "/dashboard/nixon-bq-test/analytics",
-    response_class=HTMLResponse,
     include_in_schema=False,
 )
 def nixon_analytics_dashboard(request: Request):
-    auth = web_auth.authenticate_dashboard_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
-    if isinstance(auth, RedirectResponse):
-        return auth
-    return HTMLResponse(render_analytics_page(**penn_html_session_kwargs(auth)))
+    # The standalone Nixon analytics page was retired in favor of the shared
+    # BigQuery dashboard's built-in Analytics view. Redirect the old URL there
+    # (preserving any query params, e.g. the access key) so links keep working.
+    params = dict(request.query_params)
+    params["view"] = "analytics"
+    return RedirectResponse(
+        "/dashboard/nixon-bq-test?" + urlencode(params), status_code=308
+    )
 
 
 @router.get(
