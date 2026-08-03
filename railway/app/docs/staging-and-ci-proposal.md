@@ -1,8 +1,10 @@
 # Staging environment & CI — proposal
 
-Status: **proposal only** — no infrastructure, workflows, or Railway resources are
-created by this PR. It exists to be reviewed and decided on before the remaining
-schema migrations continue.
+Status: **agreed plan** — this document only. Decisions are recorded below.
+Proposal A (CI) is implemented in a **separate follow-up PR** (kept out of this
+doc PR on purpose). Proposal B (staging) is deferred per the decision to do CI
+first; a cost estimate is included below. No code, workflows, or Railway resources
+are part of this PR.
 
 ## Why now
 
@@ -115,16 +117,35 @@ I'd recommend doing Step 1 before resuming migrations even if Step 2 waits.
   etc.) — needs a scrub step in the restore.
 - A `staging` branch adds one promotion hop; worth it for schema changes.
 
-## Decisions I need from you
+## Decisions (agreed)
 
-1. **Railway resources** — OK to provision a second service + Postgres for
-   staging, and roughly what budget?
-2. **Prod data sensitivity** — does the DB hold PII that must be scrubbed before it
-   lands in staging? (Drives the restore/sanitize step.)
-3. **Branch model** — a `staging` branch + promotion, or Railway's per-PR
-   environments?
-4. **Scope of first step** — ship CI (Proposal A) first and resume migrations
-   behind it while staging is built, or wait for both?
-5. **Lint** — adopt `ruff` now or keep it out of scope?
+1. **CI** — build now. Implemented in a separate follow-up PR (Proposal A).
+2. **Staging** — yes, but **after CI**, and with a cost estimate (below). Deferred
+   to a follow-up PR.
+3. **Production data** — treat as sensitive; **never clone it raw**. CI uses only an
+   ephemeral synthetic Postgres. Staging must restore from a **sanitized/scrubbed**
+   snapshot (PII removed), never a raw prod copy.
+4. **Branch model** — a **persistent `staging` branch/environment**, not per-PR
+   environments.
+5. **Lint (`ruff`)** — later; out of scope for now.
 
-Nothing here is built until you pick a direction.
+## Staging cost estimate (rough)
+
+For firming up when Proposal B is built; Railway is usage-based so actuals depend
+on the plan and how prod-shaped the staging DB is.
+
+- **App service (staging):** a small always-on container mirroring prod —
+  order of **~$5–10/mo** of compute at low traffic.
+- **Postgres (staging):** a managed Postgres instance — **~$5–15/mo** depending on
+  size and storage; larger if the staging DB mirrors a big prod dataset.
+- **Sanitized restore job:** a periodic task (scrub PII, load into staging) —
+  negligible compute if run on a schedule; main cost is the one-time work to write
+  the scrub/restore script.
+- **CI (this PR):** GitHub Actions minutes only — expected within the free tier for
+  this repo's volume.
+
+**Ballpark: ~$15–30/mo** for a modest staging environment, plus the one-time
+scrub-script work. To be confirmed against the actual Railway plan and chosen
+staging DB size before provisioning.
+
+Nothing further is built until Proposal B is scheduled.
