@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import traceback
 from datetime import date, timedelta
 from urllib.parse import urlencode
@@ -104,6 +105,19 @@ def _bq_endpoint_failure(exc: Exception) -> HTTPException:
     )
 
 
+def _live_fetch_disabled() -> bool:
+    """True when this instance is opted out of live BigQuery reads on a cache miss.
+
+    Set ``DASH_DISABLE_LIVE_FETCH=1`` on staging: reads then serve seeded/cached
+    data only and never fall through to a live BigQuery query, capping staging's
+    BQ spend at ~zero even for a panel that was never seeded. Off by default, so
+    production is unaffected.
+    """
+    return (os.getenv("DASH_DISABLE_LIVE_FETCH") or "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 def _cached_bq_read(source: str, payload: dict, *, ttl_seconds: int, fetch) -> dict:
     """DB-backed cache for BigQuery-mart dashboard read endpoints (any client).
 
@@ -153,6 +167,26 @@ def _cached_bq_read(source: str, payload: dict, *, ttl_seconds: int, fetch) -> d
         hit = None
     if hit is not None:
         return hit.response_json
+
+    # Fail-closed live-fetch guard (staging). With DASH_DISABLE_LIVE_FETCH set, a
+    # cache miss must NOT query BigQuery -- staging is seeded from prod's cache and
+    # frozen (no cron sync, long TTL), so this caps its BQ spend at ~zero even for
+    # a newly added or unseeded panel. Serve the last cached row regardless of TTL
+    # if one exists; otherwise return an empty-but-valid response. Off by default.
+    if _live_fetch_disabled():
+        try:
+            stale = db_cache.get_cached_stale(source, payload)
+        except Exception:
+            stale = None
+        if stale is not None:
+            return stale.response_json
+        logger.info(
+            "live fetch disabled (DASH_DISABLE_LIVE_FETCH) and no cached row for %s; "
+            "returning empty response instead of querying BigQuery",
+            source,
+        )
+        return {}
+
     result = fetch()
     try:
         db_cache.put_cached(

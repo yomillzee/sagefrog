@@ -148,6 +148,39 @@ def get_cached(source: str, payload: dict[str, Any]) -> CacheHit | None:
         )
 
 
+def get_cached_stale(source: str, payload: dict[str, Any]) -> CacheHit | None:
+    """Return the cached row for (source, payload) **ignoring expiry**, or None.
+
+    Unlike ``get_cached``, this does not filter on ``expires_at``, so it returns a
+    row even after its TTL has lapsed. Used only by the staging live-fetch guard
+    (DASH_DISABLE_LIVE_FETCH): when live BigQuery reads are disabled, serving a
+    stale-but-real cached value beats both querying BigQuery and returning empty.
+    The unique (source, request_key) index means there is at most one such row.
+    """
+    url = _get_db_url()
+    if not url:
+        return None
+
+    key = _hash_key(source, payload)
+    sql = """
+      SELECT row_count, response_json, created_at, expires_at
+      FROM api_cache
+      WHERE source = %s AND request_key = %s
+      LIMIT 1
+    """
+    with db.connection() as conn:
+        row = conn.execute(sql, (source, key)).fetchone()
+        if not row:
+            return None
+        row_count, response_json, created_at, expires_at = row
+        return CacheHit(
+            row_count=int(row_count or 0),
+            response_json=response_json,
+            created_at=created_at,
+            expires_at=expires_at,
+        )
+
+
 def invalidate_prefix(prefix: str) -> int:
     """Delete every cache row whose `source` starts with `prefix`.
 
