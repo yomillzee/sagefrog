@@ -83,21 +83,6 @@ Dashboards are session-only: the legacy `?key=` share link (and its `DASHBOARD_S
 
 **Production hardening:** On Railway, `/docs` and `/openapi.json` are disabled automatically (`DISABLE_API_DOCS=0` to re-enable). Failed logins are rate-limited per IP/email (`AUTH_LOGIN_MAX_FAILURES`, default 5 per 15 minutes, then 15-minute lockout).
 
-### Slack notifications (feature requests)
-
-Optional. When agency users flag a feature request from a client dashboard, the
-app can post it to a Slack channel in addition to the `/admin` inbox. Set both:
-
-- `SLACK_BOT_TOKEN` — a Slack app **bot token** (`xoxb-…`) with the `chat:write`
-  scope. Invite the bot to the target channel (`/invite @your-app`).
-- `SLACK_FEATURE_REQUEST_CHANNEL` — where requests post: a channel id
-  (`C0123ABCD`, preferred — survives renames) or `#channel-name`.
-
-When either is unset the integration is off and requests behave exactly as
-before. Posting is best-effort: a Slack outage or misconfig is logged and never
-blocks the request from being saved. If `PUBLIC_BASE_URL` is set, each Slack
-message links back to the `/admin#feature-requests` inbox.
-
 ### Multiple GA4 clients (different GCP projects)
 
 Railway `BQ_PROJECT_ID` / `BQ_DATASET_ID` stay the **default** (e.g. Penn). Add other projects via **`GA4_CLIENTS`** (one-line JSON) or per-request overrides on sync.
