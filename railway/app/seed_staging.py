@@ -114,15 +114,43 @@ def _count(conn: psycopg.Connection, table: str) -> int:
     return int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
 
 
-def _copy_table(src: psycopg.Connection, dst: psycopg.Connection, table: str) -> None:
-    """Stream every row of `table` from src to dst using server-side COPY (text).
+def _columns(conn: psycopg.Connection, table: str) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = %s
+        ORDER BY ordinal_position
+        """,
+        (table,),
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def _shared_columns(src: psycopg.Connection, dst: psycopg.Connection, table: str) -> list[str]:
+    """Columns present in BOTH databases, in the target's column order.
+
+    Prod and staging schemas can drift (a migration adds a column on one side
+    first), and a whole-row COPY then fails with "extra data after last expected
+    column". Copying only the shared columns by explicit list is drift-proof:
+    a source-only column is dropped, a target-only column keeps its default/NULL.
+    """
+    src_cols = set(_columns(src, table))
+    return [c for c in _columns(dst, table) if c in src_cols]
+
+
+def _copy_table(
+    src: psycopg.Connection, dst: psycopg.Connection, table: str, columns: list[str]
+) -> None:
+    """Stream `table` from src to dst via server-side COPY (text), one explicit
+    column list on both sides so the copy is robust to schema drift.
 
     Text COPY is portable across Postgres versions and streams block-by-block, so
     even a large api_cache/metrics_daily copies without buffering the whole table
     in memory.
     """
-    with src.cursor().copy(f'COPY "{table}" TO STDOUT') as reader:
-        with dst.cursor().copy(f'COPY "{table}" FROM STDIN') as writer:
+    col_list = ", ".join(f'"{c}"' for c in columns)
+    with src.cursor().copy(f'COPY "{table}" ({col_list}) TO STDOUT') as reader:
+        with dst.cursor().copy(f'COPY "{table}" ({col_list}) FROM STDIN') as writer:
             for chunk in reader:
                 writer.write(chunk)
 
@@ -196,11 +224,14 @@ def run(*, apply: bool) -> int:
                 print(f"  plan  {table:<32} would copy {src_rows} rows")
                 continue
 
+            columns = _shared_columns(src, dst, table)
+            dropped = [c for c in _columns(src, table) if c not in set(columns)]
             _clear(dst, table)
             with dst.transaction():
-                _copy_table(src, dst, table)
+                _copy_table(src, dst, table, columns)
                 _reset_sequences(dst, table)
-            print(f"  copy  {table:<32} {src_rows} rows -> {_count(dst, table)} rows")
+            note = f"  (dropped source-only cols: {', '.join(dropped)})" if dropped else ""
+            print(f"  copy  {table:<32} {src_rows} rows -> {_count(dst, table)} rows{note}")
             copied += 1
 
     print("-" * 72)
