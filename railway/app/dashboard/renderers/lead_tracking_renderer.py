@@ -33,6 +33,10 @@ _EXTRA_CSS = """
 .lt-tile.t-deals::before { background:var(--organic); }
 .lt-tile.t-pipeline::before { background:var(--business-line); }
 .lt-tile.t-won::before { background:var(--ok); }
+.lt-tile.t-deliveries::before { background:var(--navy); }
+.lt-tile.t-open::before { background:var(--accent); }
+.lt-tile.t-click::before { background:var(--business-line); }
+.lt-tile.t-unsub::before { background:var(--err); }
 .lt-tile-label { font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:700; margin-bottom:8px; }
 .lt-tile-value { font-size:1.9rem; font-weight:750; color:var(--navy); line-height:1.05; letter-spacing:-.01em; font-variant-numeric:tabular-nums; }
 .lt-tile-sub { font-size:.78rem; color:var(--muted); margin-top:6px; }
@@ -97,6 +101,14 @@ _EXTRA_CSS = """
 .lt-email { font-weight:600; color:var(--text); }
 .lt-muted { color:var(--muted); }
 
+/* Email performance */
+.lt-email-select { max-width:min(340px,100%); padding:7px 32px 7px 12px; border:1px solid var(--border); border-radius:9px; background:var(--panel); color:var(--text); font-size:.85rem; font-weight:600; cursor:pointer; appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 10px center; }
+.lt-email-select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(11,92,171,.15); }
+.lt-email-meta { font-size:.82rem; color:var(--muted); margin:-6px 0 16px; }
+.lt-email-meta .lt-email-subj { color:var(--text); font-weight:600; }
+.lt-email-meta strong { color:var(--text); font-weight:700; font-variant-numeric:tabular-nums; }
+.lt-email-tiles { margin:0; }
+
 .lt-empty { color:var(--muted); font-size:.85rem; padding:20px 4px; text-align:center; }
 .lt-note { background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; border-radius:12px; padding:13px 16px; font-size:.85rem; margin-bottom:20px; }
 
@@ -144,6 +156,19 @@ def _pct_str(num: float, den: float) -> str:
     if not den:
         return "—"
     return f"{100.0 * num / den:.0f}%"
+
+
+def _rate_str(num: Any, den: Any, decimals: int = 1) -> str:
+    """Percentage of `num` over `den`, for email engagement rates. Unlike
+    _pct_str these are small fractions (open/click/unsub over deliveries) so they
+    carry a decimal, and a missing denominator reads as an em dash."""
+    try:
+        n, d = float(num or 0), float(den or 0)
+    except (TypeError, ValueError):
+        return "—"
+    if d <= 0:
+        return "—"
+    return f"{100.0 * n / d:.{decimals}f}%"
 
 
 def _fmt_dt(v: Any) -> str:
@@ -481,6 +506,103 @@ def _source_performance(
     )
 
 
+def _email_performance_card(emails: list[dict[str, Any]]) -> str:
+    """Email-performance card: a picker of recent marketing emails driving a row
+    of delivery / open-rate / click-rate / unsub-rate tiles. Rates are computed
+    over deliveries here, and the per-email values are embedded as JSON so the
+    dropdown swaps them client-side without a round-trip."""
+    if not emails:
+        return ""
+
+    payload = []
+    options = []
+    for i, e in enumerate(emails):
+        delivered = e.get("delivered") or 0
+        name = e.get("name") or e.get("subject") or "Untitled email"
+        when = _fmt_dt(e.get("publish_date"))
+        payload.append({
+            "label":      name,
+            "subject":    e.get("subject") or "",
+            "when":       when,
+            "deliveries": _fmt_int(delivered),
+            "open":       _rate_str(e.get("opens"), delivered),
+            "click":      _rate_str(e.get("clicks"), delivered),
+            "unsub":      _rate_str(e.get("unsubscribed"), delivered, decimals=2),
+            "sent":       _fmt_int(e.get("sent") or 0),
+        })
+        label = name if len(name) <= 70 else name[:69] + "…"
+        options.append(f'<option value="{i}">{_esc(label)}</option>')
+
+    first = payload[0]
+
+    def _etile(kind: str, label: str, metric: str, value: str) -> str:
+        return (
+            f'<div class="lt-tile t-{kind}">'
+            f'<div class="lt-tile-label">{_esc(label)}</div>'
+            f'<div class="lt-tile-value" data-lt-metric="{metric}">{value}</div>'
+            f'</div>'
+        )
+
+    tiles = (
+        '<div class="lt-tiles lt-email-tiles">'
+        + _etile("deliveries", "Deliveries", "deliveries", first["deliveries"])
+        + _etile("open", "Open rate", "open", first["open"])
+        + _etile("click", "Click rate", "click", first["click"])
+        + _etile("unsub", "Unsub rate", "unsub", first["unsub"])
+        + '</div>'
+    )
+
+    return (
+        f'<div class="lt-card lt-email-card" data-lt-emails=\'{_json(payload)}\'>'
+        '<div class="lt-card-head"><h2>Email performance</h2>'
+        f'<select class="lt-email-select" data-lt-email-select aria-label="Select a marketing email">'
+        f'{"".join(options)}</select></div>'
+        f'<div class="lt-email-meta" data-lt-email-meta>{_email_meta_html(first)}</div>'
+        f'{tiles}</div>'
+    )
+
+
+def _email_meta_html(p: dict[str, Any]) -> str:
+    subj = f'<span class="lt-email-subj">{_esc(p["subject"])}</span> · ' if p.get("subject") else ""
+    return (f'{subj}Sent <strong>{_esc(p["sent"])}</strong> · {_esc(p["when"])}')
+
+
+_EMAIL_JS = """
+<script>
+(function () {
+  document.querySelectorAll('.lt-email-card[data-lt-emails]').forEach(function (card) {
+    var emails;
+    try { emails = JSON.parse(card.getAttribute('data-lt-emails')); }
+    catch (e) { return; }
+    if (!emails || !emails.length) return;
+    var sel  = card.querySelector('[data-lt-email-select]');
+    var meta = card.querySelector('[data-lt-email-meta]');
+    var vals = {};
+    card.querySelectorAll('[data-lt-metric]').forEach(function (el) {
+      vals[el.getAttribute('data-lt-metric')] = el;
+    });
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+      });
+    }
+    function apply(i) {
+      var e = emails[i]; if (!e) return;
+      ['deliveries','open','click','unsub'].forEach(function (m) {
+        if (vals[m]) vals[m].textContent = e[m];
+      });
+      if (meta) {
+        var subj = e.subject ? '<span class="lt-email-subj">' + esc(e.subject) + '</span> · ' : '';
+        meta.innerHTML = subj + 'Sent <strong>' + esc(e.sent) + '</strong> · ' + esc(e.when);
+      }
+    }
+    if (sel) sel.addEventListener('change', function () { apply(parseInt(sel.value, 10) || 0); });
+  });
+})();
+</script>
+"""
+
+
 def render_lead_tracking(
     *,
     client_slug: str,
@@ -566,6 +688,10 @@ def render_lead_tracking(
         f'{perf_html}</div>'
     )
 
+    # Email performance — only rendered when this client's portal syncs marketing
+    # email stats (Marketing Hub tiers with the `content` scope).
+    email_card = _email_performance_card(getattr(report, "emails", []) or [])
+
     # Recent MQLs.
     if report.recent_mqls:
         recent_rows = "".join(
@@ -602,9 +728,11 @@ def render_lead_tracking(
         {chart_card}
         {cols}
         {perf_card}
+        {email_card}
         {recent_card}
       </div>
       {_CHART_JS}
+      {_EMAIL_JS}
     """
     return _shell(client_slug, label, content, access_key, use_session, session_email, session_is_admin)
 

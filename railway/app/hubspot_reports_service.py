@@ -22,6 +22,7 @@ LOGGER = logging.getLogger(__name__)
 
 _CONTACT_TABLE = "fact_hubspot_contacts"
 _DEAL_TABLE = "fact_hubspot_deals"
+_EMAIL_TABLE = "fact_hubspot_emails"
 _MQL_STAGE = "marketingqualifiedlead"
 
 # Lifecycle stages this report can track, mapped to display nouns. The keys
@@ -89,9 +90,13 @@ class LeadTrackingReport:
     leads_by_source: list[dict[str, Any]] = field(default_factory=list)
     deals_by_source: list[dict[str, Any]] = field(default_factory=list)
     recent_mqls: list[dict[str, Any]] = field(default_factory=list)
+    # Marketing-email performance (only synced for Marketing Hub tiers that grant
+    # the `content` scope; empty/unavailable for everyone else).
+    emails: list[dict[str, Any]] = field(default_factory=list)
     # Section availability (False when the underlying table is missing)
     contacts_available: bool = False
     deals_available: bool = False
+    emails_available: bool = False
     error: str | None = None
 
 
@@ -152,6 +157,7 @@ def build_report(client_slug: str) -> LeadTrackingReport:
 
     ct = f"`{project}.{dataset}.{_CONTACT_TABLE}`"
     dt = f"`{project}.{dataset}.{_DEAL_TABLE}`"
+    et = f"`{project}.{dataset}.{_EMAIL_TABLE}`"
 
     # Prefer the configured stage, but if the contacts were imported under a
     # different lifecycle stage than the one currently configured (e.g. the
@@ -228,6 +234,17 @@ def build_report(client_slug: str) -> LeadTrackingReport:
             FROM {dt}
             GROUP BY source ORDER BY deals DESC
         """,
+        # Recent marketing emails for the email-performance picker. Only sent
+        # emails carry meaningful stats, so filter to sent > 0 and show the most
+        # recent 50 by publish date.
+        "recent_emails": f"""
+            SELECT email_id, name, subject, email_type, publish_date,
+                   sent, delivered, opens, clicks, unsubscribed, bounces
+            FROM {et}
+            WHERE COALESCE(sent, 0) > 0
+            ORDER BY publish_date DESC
+            LIMIT 50
+        """,
     }
 
     def _q(name: str) -> list[dict[str, Any]] | None:
@@ -262,5 +279,12 @@ def build_report(client_slug: str) -> LeadTrackingReport:
             report.pipeline_amount = float(dsum[0].get("pipeline_amount") or 0.0)
             report.won_amount = float(dsum[0].get("won_amount") or 0.0)
         report.deals_by_source = res["deals_by_source"] or []
+
+    # ---- Marketing emails ---- (available only when the table exists, i.e. the
+    # client is on a Marketing tier whose sync populated it)
+    emails = res["recent_emails"]
+    if emails is not None:
+        report.emails_available = True
+        report.emails = emails or []
 
     return report

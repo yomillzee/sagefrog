@@ -18,6 +18,7 @@ import logging
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -31,6 +32,10 @@ LOGGER = logging.getLogger(__name__)
 
 _CONTACTS_SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/contacts/search"
 _DEALS_SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/deals/search"
+# Marketing email statistics — metadata + post-send performance in one response.
+# Requires the `content` OAuth scope (Marketing Hub tier gated), so a client on a
+# lower tier gets a 403 here and the email sync is skipped, not failed.
+_EMAILS_STATS_URL = "https://api.hubapi.com/marketing/v3/emails/statistics/list"
 _PAGE_SIZE = 200
 _RATE_DELAY = 0.22   # ~4.5 req/s, well under HubSpot's 5/s search limit
 
@@ -179,8 +184,27 @@ _DEAL_SCHEMA = [
     bigquery.SchemaField("synced_at",                "TIMESTAMP"),
 ]
 
+_EMAIL_SCHEMA = [
+    bigquery.SchemaField("email_id",     "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("name",         "STRING"),   # internal email name
+    bigquery.SchemaField("subject",      "STRING"),
+    bigquery.SchemaField("email_type",   "STRING"),   # BATCH_EMAIL, AB_EMAIL, AUTOMATED_EMAIL, ...
+    bigquery.SchemaField("state",        "STRING"),   # PUBLISHED, DRAFT, ...
+    bigquery.SchemaField("publish_date", "TIMESTAMP"),
+    # Raw counters — rates are derived at read time (open/delivered etc.) to match
+    # how contacts/deals store counts, not pre-computed percentages.
+    bigquery.SchemaField("sent",         "INTEGER"),
+    bigquery.SchemaField("delivered",    "INTEGER"),
+    bigquery.SchemaField("opens",        "INTEGER"),
+    bigquery.SchemaField("clicks",       "INTEGER"),
+    bigquery.SchemaField("unsubscribed", "INTEGER"),
+    bigquery.SchemaField("bounces",      "INTEGER"),
+    bigquery.SchemaField("synced_at",    "TIMESTAMP"),
+]
+
 _CONTACT_TABLE = "fact_hubspot_contacts"
 _DEAL_TABLE    = "fact_hubspot_deals"
+_EMAIL_TABLE   = "fact_hubspot_emails"
 _MQL_VIEW      = "fact_hubspot_mql_daily"
 _DEALS_VIEW    = "fact_hubspot_deals_daily"
 
@@ -233,6 +257,65 @@ def _search(url: str, *, token: str, body: dict[str, Any]) -> dict[str, Any]:
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def _get_json(url: str, *, token: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    """GET a HubSpot v3 endpoint (marketing email stats are read via GET)."""
+    if params:
+        url = f"{url}?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(
+        url,
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _parse_email_row(result: dict[str, Any], synced_at: str) -> dict[str, Any]:
+    """Flatten one /marketing/v3/emails/statistics/list object.
+
+    Counters live under stats.counters; we keep the raw counts the report needs
+    and let the read side derive open/click/unsub rates over `delivered`.
+    """
+    counters = ((result.get("stats") or {}).get("counters")) or {}
+    # publishDate is the send/publish timestamp; fall back to updated/created so a
+    # row is never dropped for a missing field. HubSpot returns these as epoch ms
+    # or ISO strings depending on age — BigQuery's TIMESTAMP load accepts both.
+    published = (result.get("publishDate") or result.get("publishedAt")
+                 or result.get("updated") or result.get("created") or None)
+    return {
+        "email_id":     str(result.get("id")),
+        "name":         result.get("name") or None,
+        "subject":      result.get("subject") or None,
+        "email_type":   result.get("type") or None,
+        "state":        result.get("state") or None,
+        "publish_date": _epoch_ms_to_iso(published),
+        "sent":         _to_int(counters.get("sent")),
+        "delivered":    _to_int(counters.get("delivered")),
+        "opens":        _to_int(counters.get("open")),
+        "clicks":       _to_int(counters.get("click")),
+        "unsubscribed": _to_int(counters.get("unsubscribed")),
+        "bounces":      _to_int(counters.get("bounce")),
+        "synced_at":    synced_at,
+    }
+
+
+def _epoch_ms_to_iso(v: Any) -> str | None:
+    """Normalise a publish timestamp to an ISO string BigQuery can load.
+
+    HubSpot returns epoch-millisecond integers (or numeric strings) on the stats
+    endpoint; pass ISO strings through untouched."""
+    if v in (None, ""):
+        return None
+    try:
+        ms = int(v)
+    except (TypeError, ValueError):
+        return str(v)  # already an ISO-8601 string
+    return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
 
 
 def _parse_contact_row(result: dict[str, Any], synced_at: str, *, stage: str, date_property: str) -> dict[str, Any]:
@@ -604,4 +687,87 @@ def sync_hubspot_deals(
         "synced_at": synced_at,
     }
     LOGGER.info("HubSpot deals sync done: %s", summary)
+    return summary
+
+
+def sync_hubspot_emails(
+    *,
+    project_id: str | None = None,
+    dataset_id: str | None = None,
+    access_token: str | None = None,
+    bq_client: bigquery.Client | None = None,
+) -> dict[str, Any]:
+    """Backfill marketing-email performance into fact_hubspot_emails.
+
+    Pulls every marketing email plus its post-send counters (sent, delivered,
+    opens, clicks, unsubscribes, bounces) from /marketing/v3/emails/statistics/list
+    and upserts one row per email. The full list is refreshed each run so stats on
+    older sends keep climbing as engagement trickles in.
+
+    Requires the `content` OAuth scope, which is only granted on the matching
+    Marketing Hub tier. A portal without it returns 403 — that's expected for
+    non-Pro clients, so we return status="skipped" instead of raising, letting the
+    contacts/deals sync succeed on its own.
+    """
+    project, dataset = _resolve_target(project_id, dataset_id)
+    token  = (access_token or "").strip() or _token()
+    client = bq_client or bigquery_service.build_client(project_id=project)
+
+    synced_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+    LOGGER.info("HubSpot emails sync — project=%s, dataset=%s", project, dataset)
+    t0 = time.monotonic()
+    rows: list[dict[str, Any]] = []
+    after: str | None = None
+    pages = 0
+
+    while True:
+        params: dict[str, Any] = {"limit": 100}
+        if after:
+            params["after"] = after
+        try:
+            resp = _get_json(_EMAILS_STATS_URL, token=token, params=params)
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                # Missing `content` scope / not on a Marketing tier that exposes
+                # email stats. Expected for non-Pro clients — skip, don't fail.
+                LOGGER.info("HubSpot email stats unavailable (HTTP %s) — skipping "
+                            "email sync for this portal", exc.code)
+                return {"status": "skipped", "reason": f"http_{exc.code}",
+                        "rows_synced": 0, "elapsed_s": round(time.monotonic() - t0, 1)}
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"HubSpot email stats API {exc.code}: {detail[:400]}") from exc
+
+        pages += 1
+        # The stats endpoint has returned results under "results" (and, on older
+        # variants, "objects") — accept either so a shape change doesn't blank the
+        # report.
+        batch = resp.get("results") or resp.get("objects") or []
+        rows += [_parse_email_row(r, synced_at) for r in batch]
+        LOGGER.info("Emails page %d: %d results (%d total)", pages, len(batch), len(rows))
+
+        next_after = ((resp.get("paging") or {}).get("next") or {}).get("after")
+        if not next_after or not batch:
+            break
+        after = next_after
+        time.sleep(_RATE_DELAY)
+
+    _ensure_table(
+        client, project, dataset,
+        table_name=_EMAIL_TABLE, schema=_EMAIL_SCHEMA,
+        partition_field="publish_date", clustering_fields=["email_type", "email_id"],
+    )
+    if rows:
+        _upsert(client, project, dataset, table_name=_EMAIL_TABLE,
+                schema=_EMAIL_SCHEMA, id_col="email_id", rows=rows)
+    else:
+        LOGGER.info("No marketing emails returned — nothing to upsert")
+
+    summary = {
+        "status": "ok",
+        "rows_synced": len(rows),
+        "pages": pages,
+        "elapsed_s": round(time.monotonic() - t0, 1),
+        "synced_at": synced_at,
+    }
+    LOGGER.info("HubSpot emails sync done: %s", summary)
     return summary
