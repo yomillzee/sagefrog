@@ -35,13 +35,13 @@ _DEALS_SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/deals/search"
 # Marketing email statistics — metadata + post-send performance in one response.
 # Requires the `content` OAuth scope (Marketing Hub tier gated), so a client on a
 # lower tier gets a 403 here and the email sync is skipped, not failed.
-_EMAILS_STATS_URL = "https://api.hubapi.com/marketing/v3/emails/statistics/list"
-# statistics/list requires a time span, and HubSpot binds these two params as
-# epoch MILLISECONDS (ISO strings raise "Unable to parse value for query
-# parameter: startTimestamp"). We pass a very wide window so the per-email
-# counters returned approximate lifetime performance, matching the app's
-# "Performance" tab.
-_EMAIL_STATS_LOOKBACK_DAYS = 3650  # ~10 years
+# Per-email performance comes from the emails LIST endpoint with includeStats:
+# it returns each email's metadata (name, subject, publishDate, state) AND a
+# per-email `stats` object in one paged response. (The sibling
+# /marketing/v3/emails/statistics/list endpoint only returns *aggregate* totals
+# plus a bare list of email IDs — not per-email rows — so it's the wrong tool
+# here.) Cursor-paginated via `after`; no required timestamps.
+_EMAILS_LIST_URL = "https://api.hubapi.com/marketing/v3/emails"
 _PAGE_SIZE = 200
 _RATE_DELAY = 0.22   # ~4.5 req/s, well under HubSpot's 5/s search limit
 
@@ -289,15 +289,18 @@ def _parse_email_row(result: dict[str, Any], synced_at: str) -> dict[str, Any]:
     """
     counters = ((result.get("stats") or {}).get("counters")) or {}
     # publishDate is the send/publish timestamp; fall back to updated/created so a
-    # row is never dropped for a missing field. HubSpot returns these as epoch ms
-    # or ISO strings depending on age — BigQuery's TIMESTAMP load accepts both.
+    # row is never dropped for a missing field. v3 returns ISO strings, but
+    # _epoch_ms_to_iso also passes those through untouched.
     published = (result.get("publishDate") or result.get("publishedAt")
-                 or result.get("updated") or result.get("created") or None)
+                 or result.get("updatedAt") or result.get("updated")
+                 or result.get("createdAt") or result.get("created") or None)
     return {
         "email_id":     str(result.get("id")),
         "name":         result.get("name") or None,
         "subject":      result.get("subject") or None,
-        "email_type":   result.get("type") or None,
+        # v3 exposes the email kind as `subcategory` (e.g. batch, automated);
+        # keep `type` as a fallback for older payloads.
+        "email_type":   result.get("subcategory") or result.get("type") or None,
         "state":        result.get("state") or None,
         "publish_date": _epoch_ms_to_iso(published),
         "sent":         _to_int(counters.get("sent")),
@@ -706,9 +709,9 @@ def sync_hubspot_emails(
     """Backfill marketing-email performance into fact_hubspot_emails.
 
     Pulls every marketing email plus its post-send counters (sent, delivered,
-    opens, clicks, unsubscribes, bounces) from /marketing/v3/emails/statistics/list
-    and upserts one row per email. The full list is refreshed each run so stats on
-    older sends keep climbing as engagement trickles in.
+    opens, clicks, unsubscribes, bounces) from GET /marketing/v3/emails with
+    includeStats=true and upserts one row per email. The full list is refreshed
+    each run so stats on older sends keep climbing as engagement trickles in.
 
     Requires the `content` OAuth scope, which is only granted on the matching
     Marketing Hub tier. A portal without it returns 403 — that's expected for
@@ -719,29 +722,20 @@ def sync_hubspot_emails(
     token  = (access_token or "").strip() or _token()
     client = bq_client or bigquery_service.build_client(project_id=project)
 
-    now = datetime.now(timezone.utc)
-    synced_at = now.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
-    # Epoch-millisecond window (see _EMAIL_STATS_LOOKBACK_DAYS). end is nudged a
-    # day into the future so a portal-vs-UTC clock skew never clips the newest send.
-    start_ms = int((now - timedelta(days=_EMAIL_STATS_LOOKBACK_DAYS)).timestamp() * 1000)
-    end_ms   = int((now + timedelta(days=1)).timestamp() * 1000)
-
+    synced_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
     LOGGER.info("HubSpot emails sync — project=%s, dataset=%s", project, dataset)
     t0 = time.monotonic()
     rows: list[dict[str, Any]] = []
-    offset = 0
+    after: str | None = None
     limit = 100
     pages = 0
 
     while True:
-        params: dict[str, Any] = {
-            "startTimestamp": start_ms,
-            "endTimestamp": end_ms,
-            "limit": limit,
-            "offset": offset,
-        }
+        params: dict[str, Any] = {"includeStats": "true", "limit": limit}
+        if after:
+            params["after"] = after
         try:
-            resp = _get_json(_EMAILS_STATS_URL, token=token, params=params)
+            resp = _get_json(_EMAILS_LIST_URL, token=token, params=params)
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
                 # Missing `content` scope / not on a Marketing tier that exposes
@@ -754,23 +748,19 @@ def sync_hubspot_emails(
             raise RuntimeError(f"HubSpot email stats API {exc.code}: {detail[:400]}") from exc
 
         pages += 1
-        # Results have appeared under "results" and, on older variants, "objects" —
-        # accept either so a shape change doesn't silently blank the report.
-        batch = resp.get("results") or resp.get("objects") or []
+        batch = resp.get("results") or []
         rows += [_parse_email_row(r, synced_at) for r in batch]
-        LOGGER.info("Emails page %d (offset %d): %d results (%d total)",
-                    pages, offset, len(batch), len(rows))
+        LOGGER.info("Emails page %d: %d results (%d total)", pages, len(batch), len(rows))
 
-        # statistics/list is offset-paginated. Stop on a short/empty page; also
-        # honour a cursor if one is ever present, and hard-cap pages so a quirky
-        # response can never loop forever.
+        # Cursor pagination: follow paging.next.after until it's gone. Hard-cap
+        # pages so a quirky response can never loop forever.
         next_after = ((resp.get("paging") or {}).get("next") or {}).get("after")
-        if len(batch) < limit and not next_after:
+        if not next_after or not batch:
             break
         if pages >= 100:
             LOGGER.warning("HubSpot emails sync hit page cap (%d) — stopping", pages)
             break
-        offset += limit
+        after = next_after
         time.sleep(_RATE_DELAY)
 
     _ensure_table(
