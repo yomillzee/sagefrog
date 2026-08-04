@@ -36,6 +36,12 @@ _DEALS_SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/deals/search"
 # Requires the `content` OAuth scope (Marketing Hub tier gated), so a client on a
 # lower tier gets a 403 here and the email sync is skipped, not failed.
 _EMAILS_STATS_URL = "https://api.hubapi.com/marketing/v3/emails/statistics/list"
+# statistics/list requires a time span, and HubSpot binds these two params as
+# epoch MILLISECONDS (ISO strings raise "Unable to parse value for query
+# parameter: startTimestamp"). We pass a very wide window so the per-email
+# counters returned approximate lifetime performance, matching the app's
+# "Performance" tab.
+_EMAIL_STATS_LOOKBACK_DAYS = 3650  # ~10 years
 _PAGE_SIZE = 200
 _RATE_DELAY = 0.22   # ~4.5 req/s, well under HubSpot's 5/s search limit
 
@@ -713,17 +719,27 @@ def sync_hubspot_emails(
     token  = (access_token or "").strip() or _token()
     client = bq_client or bigquery_service.build_client(project_id=project)
 
-    synced_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+    now = datetime.now(timezone.utc)
+    synced_at = now.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+    # Epoch-millisecond window (see _EMAIL_STATS_LOOKBACK_DAYS). end is nudged a
+    # day into the future so a portal-vs-UTC clock skew never clips the newest send.
+    start_ms = int((now - timedelta(days=_EMAIL_STATS_LOOKBACK_DAYS)).timestamp() * 1000)
+    end_ms   = int((now + timedelta(days=1)).timestamp() * 1000)
+
     LOGGER.info("HubSpot emails sync — project=%s, dataset=%s", project, dataset)
     t0 = time.monotonic()
     rows: list[dict[str, Any]] = []
-    after: str | None = None
+    offset = 0
+    limit = 100
     pages = 0
 
     while True:
-        params: dict[str, Any] = {"limit": 100}
-        if after:
-            params["after"] = after
+        params: dict[str, Any] = {
+            "startTimestamp": start_ms,
+            "endTimestamp": end_ms,
+            "limit": limit,
+            "offset": offset,
+        }
         try:
             resp = _get_json(_EMAILS_STATS_URL, token=token, params=params)
         except urllib.error.HTTPError as exc:
@@ -738,17 +754,23 @@ def sync_hubspot_emails(
             raise RuntimeError(f"HubSpot email stats API {exc.code}: {detail[:400]}") from exc
 
         pages += 1
-        # The stats endpoint has returned results under "results" (and, on older
-        # variants, "objects") — accept either so a shape change doesn't blank the
-        # report.
+        # Results have appeared under "results" and, on older variants, "objects" —
+        # accept either so a shape change doesn't silently blank the report.
         batch = resp.get("results") or resp.get("objects") or []
         rows += [_parse_email_row(r, synced_at) for r in batch]
-        LOGGER.info("Emails page %d: %d results (%d total)", pages, len(batch), len(rows))
+        LOGGER.info("Emails page %d (offset %d): %d results (%d total)",
+                    pages, offset, len(batch), len(rows))
 
+        # statistics/list is offset-paginated. Stop on a short/empty page; also
+        # honour a cursor if one is ever present, and hard-cap pages so a quirky
+        # response can never loop forever.
         next_after = ((resp.get("paging") or {}).get("next") or {}).get("after")
-        if not next_after or not batch:
+        if len(batch) < limit and not next_after:
             break
-        after = next_after
+        if pages >= 100:
+            LOGGER.warning("HubSpot emails sync hit page cap (%d) — stopping", pages)
+            break
+        offset += limit
         time.sleep(_RATE_DELAY)
 
     _ensure_table(
