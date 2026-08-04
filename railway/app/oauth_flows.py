@@ -21,12 +21,19 @@ PLATFORMS = frozenset({"google_ads", "linkedin", "linkedin_organic", "meta", "gs
 
 HUBSPOT_AUTH_URL = "https://app.hubspot.com/oauth/authorize"
 HUBSPOT_TOKEN_URL = "https://api.hubapi.com/oauth/v1/token"
-# `content` is what unlocks the Marketing Email statistics API
+HUBSPOT_SCOPES = "oauth crm.objects.contacts.read crm.objects.deals.read"
+# `content` unlocks the Marketing Email statistics API
 # (/marketing/v3/emails/statistics/list) used by the email-performance report.
-# It's only granted on portals with the matching Marketing Hub tier, so clients
-# on a lower tier simply won't have it — the email sync skips a 403 gracefully.
-# Adding it here means existing clients must re-connect HubSpot once to grant it.
-HUBSPOT_SCOPES = "oauth crm.objects.contacts.read crm.objects.deals.read content"
+# It is requested as an OPTIONAL scope (via the install URL's `optional_scope`
+# param), NOT a required one, for two reasons:
+#   1. Only Marketing Hub tiers expose it — putting it in the required `scope`
+#      would block every lower-tier portal from connecting HubSpot at all.
+#   2. It must also be declared on the HubSpot app itself (Developer account →
+#      the app → Auth → Scopes → Optional). HubSpot rejects the install URL if it
+#      requests a scope the app doesn't declare, so the app-side setting and this
+#      constant have to stay in lockstep.
+# Portals that don't grant it just 403 on the email sync, which is skipped.
+HUBSPOT_OPTIONAL_SCOPES = "content"
 
 # Harvest OAuth2 lives on the shared id.getharvest.com identity host; the data
 # API (time entries, reports) is on api.harvestapp.com and needs the
@@ -467,6 +474,10 @@ def build_authorize_url(platform: str, *, state: str) -> str:
             "client_id": client_id,
             "redirect_uri": redirect_uri,
             "scope": HUBSPOT_SCOPES,
+            # Marketing-email access, granted only by portals whose tier has it.
+            # optional_scope means a lower-tier portal can still complete the
+            # install without it (see HUBSPOT_OPTIONAL_SCOPES).
+            "optional_scope": HUBSPOT_OPTIONAL_SCOPES,
             "state": state,
         }
         return f"{HUBSPOT_AUTH_URL}?{urlencode(params)}"
@@ -746,11 +757,16 @@ def _exchange_hubspot_code(code: str, *, redirect_uri: str) -> dict[str, Any]:
     # the client being configured (and so we have a tamper-evident record of which
     # HubSpot account a client's token belongs to).
     portal = fetch_hubspot_portal_info(access) if access else {}
+    # Prefer the scopes HubSpot actually granted (space-separated in the token
+    # response) over the static requested set — with an optional scope like
+    # `content`, "requested" and "granted" diverge, and the granted list is what
+    # tells us whether marketing-email access came through for this portal.
+    granted = (data.get("scope") or "").strip() or HUBSPOT_SCOPES
     return {
         "refresh_token": refresh,
         "access_token": access,
         "token_expires_at": expires_at,
-        "scopes": HUBSPOT_SCOPES,
+        "scopes": granted,
         "metadata": portal or None,
     }
 
