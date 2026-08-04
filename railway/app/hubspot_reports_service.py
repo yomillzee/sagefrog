@@ -90,14 +90,53 @@ class LeadTrackingReport:
     leads_by_source: list[dict[str, Any]] = field(default_factory=list)
     deals_by_source: list[dict[str, Any]] = field(default_factory=list)
     recent_mqls: list[dict[str, Any]] = field(default_factory=list)
-    # Marketing-email performance (only synced for Marketing Hub tiers that grant
-    # the `content` scope; empty/unavailable for everyone else).
-    emails: list[dict[str, Any]] = field(default_factory=list)
     # Section availability (False when the underlying table is missing)
     contacts_available: bool = False
     deals_available: bool = False
-    emails_available: bool = False
     error: str | None = None
+
+
+@dataclass
+class EmailPerformanceReport:
+    """Backing data for the standalone Email Performance page: every synced
+    marketing email with its post-send counters, newest first."""
+    configured: bool = True
+    available: bool = False          # False when fact_hubspot_emails doesn't exist yet
+    emails: list[dict[str, Any]] = field(default_factory=list)
+    error: str | None = None
+
+
+def fetch_email_performance(client_slug: str) -> EmailPerformanceReport:
+    """Recent marketing emails + counters for the Email Performance page.
+
+    Reads only fact_hubspot_emails (no contacts/deals), so the page stays light.
+    Fails soft: an unconfigured client or a missing table yields an empty,
+    non-erroring report the renderer shows as an empty state."""
+    project, dataset = _resolve_target(client_slug)
+    if not project:
+        return EmailPerformanceReport(
+            configured=False,
+            error="HubSpot BigQuery destination is not configured for this client.",
+        )
+    report = EmailPerformanceReport()
+    try:
+        client = bigquery_service.build_client(project_id=project)
+        et = f"`{project}.{dataset}.{_EMAIL_TABLE}`"
+        rows = _rows(client, f"""
+            SELECT email_id, name, subject, email_type, state, publish_date,
+                   sent, delivered, opens, clicks, unsubscribed, bounces
+            FROM {et}
+            WHERE COALESCE(sent, 0) > 0
+            ORDER BY publish_date DESC
+            LIMIT 500
+        """)
+        report.available = True
+        report.emails = rows
+    except Exception as exc:
+        # Table not created yet (email sync hasn't run / not a Marketing tier),
+        # or a transient read error — either way the page renders an empty state.
+        LOGGER.info("Email Performance read skipped [%s]: %s", client_slug, exc)
+    return report
 
 
 def _resolve_target(client_slug: str) -> tuple[str | None, str]:
@@ -157,7 +196,6 @@ def build_report(client_slug: str) -> LeadTrackingReport:
 
     ct = f"`{project}.{dataset}.{_CONTACT_TABLE}`"
     dt = f"`{project}.{dataset}.{_DEAL_TABLE}`"
-    et = f"`{project}.{dataset}.{_EMAIL_TABLE}`"
 
     # Prefer the configured stage, but if the contacts were imported under a
     # different lifecycle stage than the one currently configured (e.g. the
@@ -234,17 +272,6 @@ def build_report(client_slug: str) -> LeadTrackingReport:
             FROM {dt}
             GROUP BY source ORDER BY deals DESC
         """,
-        # Recent marketing emails for the email-performance picker. Only sent
-        # emails carry meaningful stats, so filter to sent > 0 and show the most
-        # recent 50 by publish date.
-        "recent_emails": f"""
-            SELECT email_id, name, subject, email_type, publish_date,
-                   sent, delivered, opens, clicks, unsubscribed, bounces
-            FROM {et}
-            WHERE COALESCE(sent, 0) > 0
-            ORDER BY publish_date DESC
-            LIMIT 50
-        """,
     }
 
     def _q(name: str) -> list[dict[str, Any]] | None:
@@ -279,12 +306,5 @@ def build_report(client_slug: str) -> LeadTrackingReport:
             report.pipeline_amount = float(dsum[0].get("pipeline_amount") or 0.0)
             report.won_amount = float(dsum[0].get("won_amount") or 0.0)
         report.deals_by_source = res["deals_by_source"] or []
-
-    # ---- Marketing emails ---- (available only when the table exists, i.e. the
-    # client is on a Marketing tier whose sync populated it)
-    emails = res["recent_emails"]
-    if emails is not None:
-        report.emails_available = True
-        report.emails = emails or []
 
     return report

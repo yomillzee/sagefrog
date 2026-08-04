@@ -1,9 +1,9 @@
 """Tests for HubSpot marketing-email performance.
 
 Covers the two ends the feature adds: the sync-side parsing of the
-/marketing/v3/emails/statistics/list payload (hubspot_sync_service) and the
-read/render-side email-performance card (lead_tracking_renderer), including the
-rate math over deliveries and the graceful "no emails" case.
+GET /marketing/v3/emails?includeStats=true payload (hubspot_sync_service) and
+the Email Performance page's rate math over deliveries + display payload
+(email_performance_renderer), including the graceful "no emails" case.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 import hubspot_sync_service as sync  # noqa: E402
-from dashboard.renderers import lead_tracking_renderer as ltr  # noqa: E402
+from dashboard.renderers import email_performance_renderer as epr  # noqa: E402
 
 
 class EpochTimestampTests(unittest.TestCase):
@@ -84,44 +84,49 @@ class ParseEmailRowTests(unittest.TestCase):
 
 class RateStrTests(unittest.TestCase):
     def test_rate_over_denominator(self):
-        self.assertEqual(ltr._rate_str(40, 100), "40.0%")
-        self.assertEqual(ltr._rate_str(1, 100, decimals=2), "1.00%")
+        self.assertEqual(epr._rate_str(40, 100), "40.0%")
+        self.assertEqual(epr._rate_str(1, 100, decimals=2), "1.00%")
 
     def test_zero_or_missing_denominator_is_dash(self):
-        self.assertEqual(ltr._rate_str(5, 0), "—")
-        self.assertEqual(ltr._rate_str(5, None), "—")
+        self.assertEqual(epr._rate_str(5, 0), "—")
+        self.assertEqual(epr._rate_str(5, None), "—")
 
 
-class EmailCardTests(unittest.TestCase):
+class EmailPayloadTests(unittest.TestCase):
     def _emails(self):
         return [
             {"email_id": "1", "name": "August Newsletter", "subject": "Your update",
-             "email_type": "BATCH_EMAIL", "publish_date": None,
+             "email_type": "batch", "publish_date": None,
              "sent": 12000, "delivered": 11800, "opens": 4720,
              "clicks": 590, "unsubscribed": 24, "bounces": 200},
         ]
 
-    def test_empty_emails_renders_nothing(self):
-        self.assertEqual(ltr._email_performance_card([]), "")
+    def test_empty_emails_yields_empty_payload(self):
+        self.assertEqual(epr._email_payload([]), [])
 
-    def test_card_shows_rates_over_deliveries(self):
-        html = ltr._email_performance_card(self._emails())
-        self.assertIn("Email performance", html)
-        self.assertIn("August Newsletter", html)
-        self.assertIn("11,800", html)      # deliveries
-        self.assertIn("40.0%", html)       # 4720/11800 open rate
-        self.assertIn("5.0%", html)        # 590/11800 click rate
-        self.assertIn("0.20%", html)       # 24/11800 unsub rate (2dp)
-        self.assertIn("data-lt-emails", html)  # JSON payload for the picker
+    def test_payload_computes_rates_over_deliveries(self):
+        p = epr._email_payload(self._emails())[0]
+        self.assertEqual(p["id"], "1")
+        self.assertEqual(p["name"], "August Newsletter")
+        self.assertEqual(p["deliveries"], "11,800")
+        self.assertEqual(p["open"], "40.0%")    # 4720/11800
+        self.assertEqual(p["click"], "5.0%")    # 590/11800
+        self.assertEqual(p["unsub"], "0.20%")   # 24/11800 (2dp)
 
-    def test_card_survives_zero_deliveries(self):
+    def test_payload_survives_zero_deliveries(self):
         emails = [{"email_id": "9", "name": "No sends", "subject": "",
-                   "email_type": "AB_EMAIL", "publish_date": None,
+                   "email_type": "ab", "publish_date": None,
                    "sent": 3, "delivered": 0, "opens": 0,
                    "clicks": 0, "unsubscribed": 0, "bounces": 0}]
-        html = ltr._email_performance_card(emails)
-        self.assertIn("Email performance", html)
-        self.assertIn("—", html)  # rates fall back to em dash, no ZeroDivisionError
+        p = epr._email_payload(emails)[0]
+        # rates fall back to em dash, no ZeroDivisionError
+        self.assertEqual(p["open"], "—")
+        self.assertEqual(p["click"], "—")
+        self.assertEqual(p["unsub"], "—")
+
+    def test_untitled_fallback_for_missing_name(self):
+        p = epr._email_payload([{"email_id": "7", "delivered": 0}])[0]
+        self.assertEqual(p["name"], "Untitled email")
 
 
 if __name__ == "__main__":
