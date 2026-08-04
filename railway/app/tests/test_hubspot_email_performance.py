@@ -56,6 +56,24 @@ class ParseEmailRowTests(unittest.TestCase):
         self.assertEqual(row["unsubscribed"], 1)
         self.assertEqual(row["bounces"], 2)
 
+    def test_includestats_list_shape(self):
+        # GET /marketing/v3/emails?includeStats=true returns the email kind under
+        # `subcategory` and an ISO8601 publishDate, with per-email stats nested
+        # under `stats.counters`.
+        row = sync._parse_email_row({
+            "id": 55, "name": "Spring Promo", "subject": "Save now",
+            "subcategory": "batch", "state": "PUBLISHED",
+            "publishDate": "2026-03-01T10:00:00Z",
+            "stats": {"counters": {
+                "sent": 200, "delivered": 195, "open": 80,
+                "click": 12, "unsubscribed": 2, "bounce": 5,
+            }},
+        }, "2026-08-04T00:00:00Z")
+        self.assertEqual(row["email_type"], "batch")   # subcategory preferred
+        self.assertEqual(row["publish_date"], "2026-03-01T10:00:00Z")
+        self.assertEqual(row["delivered"], 195)
+        self.assertEqual(row["opens"], 80)
+
     def test_missing_stats_does_not_crash(self):
         row = sync._parse_email_row({"id": 7}, "x")
         self.assertEqual(row["email_id"], "7")
