@@ -118,6 +118,36 @@ def lead_tracking_page(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Email Performance page (HubSpot marketing emails)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("/dashboard/{client_slug}/email-performance", response_class=HTMLResponse)
+def email_performance_page(
+    client_slug: str,
+    request: Request,
+):
+    slug = validate_client_slug(client_slug)
+    redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug)
+    if redirect:
+        return redirect
+
+    import client_config
+    import hubspot_reports_service
+    from dashboard.renderers import email_performance_renderer
+
+    cfg = client_config.load_client_config(slug)
+    label = cfg.label if cfg else slug
+
+    report = hubspot_reports_service.fetch_email_performance(slug)
+    return HTMLResponse(email_performance_renderer.render_email_performance(
+        client_slug=slug,
+        label=label,
+        report=report,
+        **_session_kw(access_key, use_session, session_email, session_is_admin),
+    ))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # LinkedIn Organic page (company-page posts, followers, page analytics)
 # ──────────────────────────────────────────────────────────────────────────────
 
