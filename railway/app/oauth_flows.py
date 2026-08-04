@@ -21,7 +21,12 @@ PLATFORMS = frozenset({"google_ads", "linkedin", "linkedin_organic", "meta", "gs
 
 HUBSPOT_AUTH_URL = "https://app.hubspot.com/oauth/authorize"
 HUBSPOT_TOKEN_URL = "https://api.hubapi.com/oauth/v1/token"
-HUBSPOT_SCOPES = "oauth crm.objects.contacts.read crm.objects.deals.read"
+# `content` is what unlocks the Marketing Email statistics API
+# (/marketing/v3/emails/statistics/list) used by the email-performance report.
+# It's only granted on portals with the matching Marketing Hub tier, so clients
+# on a lower tier simply won't have it — the email sync skips a 403 gracefully.
+# Adding it here means existing clients must re-connect HubSpot once to grant it.
+HUBSPOT_SCOPES = "oauth crm.objects.contacts.read crm.objects.deals.read content"
 
 # Harvest OAuth2 lives on the shared id.getharvest.com identity host; the data
 # API (time entries, reports) is on api.harvestapp.com and needs the

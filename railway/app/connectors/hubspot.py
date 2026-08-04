@@ -98,6 +98,20 @@ class HubSpotConnector(ConnectorHandler):
             _log.warning("HubSpot deals sync failed [%s]: %s", client_slug, exc)
             errors.append(f"deals: {str(exc)[:200]}")
 
+        # Marketing-email performance. Self-gates to Marketing Hub tiers: a portal
+        # without the `content` scope returns status="skipped" (not an error), so
+        # this never breaks a non-Pro client's contacts/deals sync.
+        try:
+            e = hubspot_sync_service.sync_hubspot_emails(
+                project_id=project_id or None,
+                dataset_id=dataset_id or None,
+                access_token=access_token,
+            )
+            rows += e.get("rows_synced") or 0
+        except Exception as exc:
+            _log.warning("HubSpot emails sync failed [%s]: %s", client_slug, exc)
+            errors.append(f"emails: {str(exc)[:200]}")
+
         return SyncResult(rows_loaded=rows, error="; ".join(errors) if errors else None)
 
 
