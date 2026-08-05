@@ -174,22 +174,39 @@ def _sub(text_html: str) -> str:
 
 
 def _range_picker(current_days: int) -> str:
-    """Date-range dropdown. Changing it reloads the page with ``?range=`` set,
-    preserving any other query params on the current URL."""
+    """Date-range dropdown. The reload-on-change handler is wired up by
+    ``_range_script`` (an addEventListener block) rather than an inline
+    ``onchange`` attribute, matching the page's other interactive controls."""
     options = []
     for value, days, label in _RANGE_PRESETS:
         sel = " selected" if days == current_days else ""
         options.append(f'<option value="{value}"{sel}>{_esc(label)}</option>')
-    onchange = (
-        "(function(v){var u=new URL(window.location.href);"
-        "u.searchParams.set('range',v);window.location.href=u.toString();})(this.value)"
-    )
     return (
         '<div class="lo-range">'
         '<label for="loRange">Date range</label>'
-        f'<select id="loRange" aria-label="Date range" onchange="{onchange}">'
+        f'<select id="loRange" aria-label="Date range">'
         f'{"".join(options)}</select>'
         '</div>'
+    )
+
+
+def _range_script() -> str:
+    """Reload the page with the chosen ``?range=`` when the date-range select
+    changes, preserving any other query params on the current URL."""
+    return (
+        "<script>(function(){\n"
+        "  function init(){\n"
+        "    var sel = document.getElementById('loRange');\n"
+        "    if(!sel) return;\n"
+        "    sel.addEventListener('change', function(){\n"
+        "      var u = new URL(window.location.href);\n"
+        "      u.searchParams.set('range', sel.value);\n"
+        "      window.location.href = u.toString();\n"
+        "    });\n"
+        "  }\n"
+        "  if(document.readyState!=='loading') init();\n"
+        "  else document.addEventListener('DOMContentLoaded', init);\n"
+        "})();</script>"
     )
 
 
@@ -573,6 +590,7 @@ def render_linkedin_organic(
 ) -> str:
     window_days = sanitize_range_days(range_days)
     range_picker = _range_picker(window_days)
+    range_script = _range_script()
     if not report.configured:
         content = (
             '<div class="lo-wrap">'
@@ -581,6 +599,7 @@ def render_linkedin_organic(
             f'<div class="lo-note">{_esc(report.error or "LinkedIn Organic is not configured for this client.")} '
             'Connect the LinkedIn Organic connector and run a sync to enable these reports.</div>'
             '</div>'
+            f'{range_script}'
         )
         return _shell(client_slug, label, content, access_key, use_session, session_email, session_is_admin)
 
@@ -722,6 +741,7 @@ def render_linkedin_organic(
       </div>
       {charts_script}
       {sort_script}
+      {range_script}
     """
     return _shell(client_slug, label, content, access_key, use_session, session_email, session_is_admin)
 
