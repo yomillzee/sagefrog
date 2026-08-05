@@ -20,6 +20,30 @@ _LI_BLUE = "#0a66c2"
 _PAGE_GREEN = "#16a34a"
 _WINDOW_DAYS = 90
 
+# Date-range presets for the page filter: (query value, days, label). The query
+# value is what lands in ``?range=`` and is validated by ``sanitize_range_days``
+# so a stale or hand-typed value can't reach the report service.
+_RANGE_PRESETS: tuple[tuple[str, int, str], ...] = (
+    ("7", 7, "Last 7 days"),
+    ("30", 30, "Last 30 days"),
+    ("90", 90, "Last 90 days"),
+    ("180", 180, "Last 180 days"),
+    ("365", 365, "Last 365 days"),
+)
+_DEFAULT_RANGE_DAYS = _WINDOW_DAYS
+
+
+def sanitize_range_days(raw: Any) -> int:
+    """Map a raw ``?range=`` value to one of the preset day counts, falling back
+    to the default window when it's missing or unrecognized."""
+    if raw is None:
+        return _DEFAULT_RANGE_DAYS
+    token = str(raw).strip()
+    for value, days, _label in _RANGE_PRESETS:
+        if token == value:
+            return days
+    return _DEFAULT_RANGE_DAYS
+
 # Component styles mirror the BigQuery dashboard's card/section/table language so
 # this page reads as part of the same product. A couple of design tokens the
 # shell's :root doesn't define (--line-soft, --radius-sm) are inlined here.
@@ -29,6 +53,13 @@ _EXTRA_CSS = """
 .lo-title { font-size:1.5rem; font-weight:800; color:var(--navy); margin:0; letter-spacing:-.02em; }
 .lo-sub { font-size:.9rem; color:var(--muted); margin:5px 0 0; }
 .lo-note { font-size:.88rem; color:var(--muted); background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin:0 0 16px; }
+
+/* Date-range filter — native select styled to match the dashboard chrome. */
+.lo-range { display:flex; align-items:center; gap:9px; flex-shrink:0; }
+.lo-range label { font-size:.7rem; text-transform:uppercase; letter-spacing:.05em; font-weight:800; color:var(--muted); }
+.lo-range select { font:inherit; font-size:.82rem; font-weight:650; color:var(--navy); background-color:#fff; border:1px solid var(--border); border-radius:9px; padding:7px 30px 7px 12px; cursor:pointer; -webkit-appearance:none; appearance:none; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6l4 4 4-4'/></svg>"); background-repeat:no-repeat; background-position:right 10px center; background-size:12px; transition:border-color .12s; }
+.lo-range select:hover { border-color:var(--accent); }
+.lo-range select:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
 
 /* Section panels — matches the Overview/Explorer `section` chrome. */
 .lo-wrap section { background:#fff; border:1px solid var(--border); border-radius:var(--radius); padding:18px 20px 20px; margin-bottom:16px; box-shadow:var(--shadow-sm); }
@@ -142,6 +173,26 @@ def _sub(text_html: str) -> str:
     return f'<span class="card-sub">{text_html}</span>'
 
 
+def _range_picker(current_days: int) -> str:
+    """Date-range dropdown. Changing it reloads the page with ``?range=`` set,
+    preserving any other query params on the current URL."""
+    options = []
+    for value, days, label in _RANGE_PRESETS:
+        sel = " selected" if days == current_days else ""
+        options.append(f'<option value="{value}"{sel}>{_esc(label)}</option>')
+    onchange = (
+        "(function(v){var u=new URL(window.location.href);"
+        "u.searchParams.set('range',v);window.location.href=u.toString();})(this.value)"
+    )
+    return (
+        '<div class="lo-range">'
+        '<label for="loRange">Date range</label>'
+        f'<select id="loRange" aria-label="Date range" onchange="{onchange}">'
+        f'{"".join(options)}</select>'
+        '</div>'
+    )
+
+
 # Reaction-type codes -> label, matching linkedin_organic_service._REACTION_LABELS.
 _REACTION_LABELS = {
     "LIKE": "Like", "PRAISE": "Celebrate", "APPRECIATION": "Love",
@@ -161,14 +212,14 @@ def _reactions_note(reactions: dict[str, int] | None) -> str:
     return f' <span class="lo-react" title="{_esc(title)}">▾</span>'
 
 
-def _period_delta(gain: int) -> str:
+def _period_delta(gain: int, window_days: int = _WINDOW_DAYS) -> str:
     """▲/▼ follower change over the reporting window, styled like the Overview
     card's delta badge."""
     if gain > 0:
-        return f'<span class="lo-delta up">▲ {_fmt_int(gain)} in {_WINDOW_DAYS} days</span>'
+        return f'<span class="lo-delta up">▲ {_fmt_int(gain)} in {window_days} days</span>'
     if gain < 0:
-        return f'<span class="lo-delta down">▼ {_fmt_int(abs(gain))} in {_WINDOW_DAYS} days</span>'
-    return f'<span class="lo-delta flat">No change in {_WINDOW_DAYS} days</span>'
+        return f'<span class="lo-delta down">▼ {_fmt_int(abs(gain))} in {window_days} days</span>'
+    return f'<span class="lo-delta flat">No change in {window_days} days</span>'
 
 
 def _follower_sparkline(series: list[dict[str, Any]]) -> str:
@@ -284,7 +335,7 @@ def _demographics_section(report: LinkedInOrganicReport) -> str:
     )
 
 
-def _visitors_section(report: LinkedInOrganicReport) -> str:
+def _visitors_section(report: LinkedInOrganicReport, window_days: int = _WINDOW_DAYS) -> str:
     """Page-visitor breakdown: desktop vs mobile split + views by page section."""
     desktop = int(report.page_desktop_views or 0)
     mobile = int(report.page_mobile_views or 0)
@@ -316,7 +367,7 @@ def _visitors_section(report: LinkedInOrganicReport) -> str:
 
     return (
         '<section><div class="sec-head"><h2>Page visitors</h2>'
-        f'<span class="status">last {_WINDOW_DAYS} days</span></div>'
+        f'<span class="status">last {window_days} days</span></div>'
         f'<div class="lo-grid">{device_html}{section_html}</div></section>'
     )
 
@@ -514,15 +565,19 @@ def render_linkedin_organic(
     client_slug: str,
     label: str,
     report: LinkedInOrganicReport,
+    range_days: int = _DEFAULT_RANGE_DAYS,
     access_key: str | None = None,
     use_session: bool = False,
     session_email: str | None = None,
     session_is_admin: bool = False,
 ) -> str:
+    window_days = sanitize_range_days(range_days)
+    range_picker = _range_picker(window_days)
     if not report.configured:
         content = (
             '<div class="lo-wrap">'
-            '<div class="lo-head"><div><h1 class="lo-title">LinkedIn Organic</h1></div></div>'
+            '<div class="lo-head"><div><h1 class="lo-title">LinkedIn Organic</h1></div>'
+            f'{range_picker}</div>'
             f'<div class="lo-note">{_esc(report.error or "LinkedIn Organic is not configured for this client.")} '
             'Connect the LinkedIn Organic connector and run a sync to enable these reports.</div>'
             '</div>'
@@ -541,7 +596,7 @@ def render_linkedin_organic(
     )
 
     follower_foot = (
-        _period_delta(report.follower_gain)
+        _period_delta(report.follower_gain, window_days)
         if report.follower_series
         else _sub("lifetime total")
     )
@@ -568,7 +623,7 @@ def render_linkedin_organic(
     kpi_section = (
         '<section>'
         '<div class="sec-head"><h2><span class="lo-dot"></span>Performance</h2>'
-        f'<span class="status">last {_WINDOW_DAYS} days</span></div>'
+        f'<span class="status">last {window_days} days</span></div>'
         f'{cards}</section>'
     )
 
@@ -577,7 +632,7 @@ def render_linkedin_organic(
     trends_section = (
         '<section>'
         '<div class="sec-head"><h2>Trends</h2>'
-        f'<span class="status">daily, last {_WINDOW_DAYS} days</span></div>'
+        f'<span class="status">daily, last {window_days} days</span></div>'
         '<div class="lo-two">'
         '<div class="lo-chart-box"><div class="lo-chart-lab"><h3>Follower gains</h3>'
         '<span>net new / day</span></div>'
@@ -593,13 +648,13 @@ def render_linkedin_organic(
     if report.engagement_series:
         engagement_section = (
             '<section><div class="sec-head"><h2>Engagement over time</h2>'
-            f'<span class="status">impressions &amp; reach / day, last {_WINDOW_DAYS} days</span></div>'
+            f'<span class="status">impressions &amp; reach / day, last {window_days} days</span></div>'
             '<div class="lo-chart" style="height:220px"><canvas id="loEngagementChart"></canvas></div>'
             '</section>'
         )
 
     demographics_section = _demographics_section(report)
-    visitors_section = _visitors_section(report)
+    visitors_section = _visitors_section(report, window_days)
 
     if report.top_posts:
         show_reach = any(p.get("unique_impressions") for p in report.top_posts)
@@ -655,6 +710,7 @@ def render_linkedin_organic(
             <h1 class="lo-title">LinkedIn Organic</h1>
             <p class="lo-sub">Company-page posts, followers &amp; page analytics for {_esc(label)}.</p>
           </div>
+          {range_picker}
         </div>
         {note}
         {kpi_section}
