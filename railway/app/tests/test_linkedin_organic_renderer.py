@@ -209,6 +209,16 @@ class DateRangeFilterTests(unittest.TestCase):
             self.assertIn(f'value="{value}"', html)
             self.assertIn(label, html)
 
+    def test_reload_wired_via_script_not_inline_onchange(self) -> None:
+        # The select changes the page via an addEventListener block (like the
+        # page's other controls), not an inline onchange attribute that some
+        # environments won't execute.
+        html = self._html(90)
+        self.assertNotIn("onchange", html)
+        self.assertIn("getElementById('loRange')", html)
+        self.assertIn("addEventListener('change'", html)
+        self.assertIn("searchParams.set('range'", html)
+
     def test_selected_option_matches_range(self) -> None:
         self.assertIn('<option value="30" selected>', self._html(30))
         self.assertIn('<option value="365" selected>', self._html(365))
