@@ -142,6 +142,7 @@ def create_feature_request(
     body: str = Form(""),
     page: str = Form(""),
     page_label: str = Form(""),
+    scope: str = Form("global"),
 ) -> JSONResponse:
     slug = validate_client_slug(client_slug)
     auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
@@ -152,6 +153,7 @@ def create_feature_request(
             client_slug=slug,
             page_path=page,
             page_label=page_label,
+            scope=scope,
             created_by=_author(user),
         )
     except RuntimeError as exc:

@@ -32,12 +32,18 @@ SCHEMA_SQL_STATEMENTS = [
       page_path TEXT,
       page_label TEXT,
       body TEXT NOT NULL DEFAULT '',
+      scope TEXT NOT NULL DEFAULT 'global',
       status TEXT NOT NULL DEFAULT 'new',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       created_by TEXT,
       resolved_at TIMESTAMPTZ,
       resolved_by TEXT
     )
+    """,
+    # Backfill the scope column on databases created before it existed.
+    """
+    ALTER TABLE feature_requests
+      ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'global'
     """,
     """
     CREATE INDEX IF NOT EXISTS feature_requests_status_created_idx
@@ -46,6 +52,11 @@ SCHEMA_SQL_STATEMENTS = [
 ]
 
 STATUSES = ("new", "done", "archived")
+
+# A request is either a "global" ask (applies to every client's shared
+# dashboard) or scoped to the single client it was raised from. The composer
+# defaults to global; the "This client only" checkbox flips it to client scope.
+SCOPES = ("global", "client")
 
 # Keep the free-text fields bounded so a runaway paste can't bloat a row.
 MAX_BODY_LEN = 20_000
@@ -60,6 +71,7 @@ class FeatureRequest:
     page_path: str | None
     page_label: str | None
     body: str
+    scope: str
     status: str
     created_at: str | None
     created_by: str | None
@@ -73,6 +85,7 @@ class FeatureRequest:
             "page_path": self.page_path,
             "page_label": self.page_label,
             "body": self.body,
+            "scope": self.scope,
             "status": self.status,
             "created_at": self.created_at,
             "created_by": self.created_by,
@@ -105,6 +118,11 @@ def _normalize_status(raw: str | None) -> str:
     return status if status in STATUSES else "new"
 
 
+def _normalize_scope(raw: str | None) -> str:
+    scope = (raw or "global").strip().lower()
+    return scope if scope in SCOPES else "global"
+
+
 def _clean_body(body: str | None) -> str:
     clean = (body or "").strip()
     return clean[:MAX_BODY_LEN]
@@ -126,25 +144,26 @@ def _clean_slug(client_slug: str | None) -> str | None:
 
 
 _SELECT_COLS = (
-    "id, client_slug, page_path, page_label, body, status, "
+    "id, client_slug, page_path, page_label, body, scope, status, "
     "created_at, created_by, resolved_at, resolved_by"
 )
 
 
 def _row_to_request(row: tuple[Any, ...]) -> FeatureRequest:
-    created = row[6]
-    resolved = row[8]
+    created = row[7]
+    resolved = row[9]
     return FeatureRequest(
         id=int(row[0]),
         client_slug=str(row[1]) if row[1] else None,
         page_path=str(row[2]) if row[2] else None,
         page_label=str(row[3]) if row[3] else None,
         body=str(row[4] or ""),
-        status=_normalize_status(str(row[5] or "")),
+        scope=_normalize_scope(str(row[5] or "")),
+        status=_normalize_status(str(row[6] or "")),
         created_at=created.isoformat() if created else None,
-        created_by=str(row[7]) if row[7] else None,
+        created_by=str(row[8]) if row[8] else None,
         resolved_at=resolved.isoformat() if resolved else None,
-        resolved_by=str(row[9]) if row[9] else None,
+        resolved_by=str(row[10]) if row[10] else None,
     )
 
 
@@ -154,6 +173,7 @@ def create_request(
     client_slug: str | None = None,
     page_path: str | None = None,
     page_label: str | None = None,
+    scope: str | None = None,
     created_by: str | None = None,
 ) -> FeatureRequest:
     clean_body = _clean_body(body)
@@ -168,8 +188,8 @@ def create_request(
         row = conn.execute(
             f"""
             INSERT INTO feature_requests
-              (client_slug, page_path, page_label, body, status, created_at, created_by)
-            VALUES (%s, %s, %s, %s, 'new', %s, %s)
+              (client_slug, page_path, page_label, body, scope, status, created_at, created_by)
+            VALUES (%s, %s, %s, %s, %s, 'new', %s, %s)
             RETURNING {_SELECT_COLS}
             """,
             (
@@ -177,6 +197,7 @@ def create_request(
                 _clean_path(page_path),
                 _clean_label(page_label),
                 clean_body,
+                _normalize_scope(scope),
                 now,
                 author,
             ),

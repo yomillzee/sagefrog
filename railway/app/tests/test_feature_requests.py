@@ -76,6 +76,15 @@ class CleanHelperTests(unittest.TestCase):
         self.assertEqual(feature_requests._normalize_status("bogus"), "new")
         self.assertEqual(feature_requests._normalize_status(None), "new")
 
+    def test_scope_normalizes_to_global_by_default(self) -> None:
+        # The composer defaults to a global ask; only an explicit "client"
+        # (from the "This client only" checkbox) narrows the scope.
+        self.assertEqual(feature_requests._normalize_scope("client"), "client")
+        self.assertEqual(feature_requests._normalize_scope("global"), "global")
+        self.assertEqual(feature_requests._normalize_scope("bogus"), "global")
+        self.assertEqual(feature_requests._normalize_scope(None), "global")
+        self.assertIn("client", feature_requests.SCOPES)
+
     def test_archived_is_a_recognized_status(self) -> None:
         # Archiving dismisses a request from the inbox; it must be a valid status
         # so list_requests can filter on it and _normalize_status keeps it.
@@ -90,6 +99,7 @@ class RequestShapeTests(unittest.TestCase):
             page_path="/dashboard/penn",
             page_label="Penn Community Bank",
             body="Add a dark mode toggle.",
+            scope="client",
             status="new",
             created_at="2026-07-26T00:00:00+00:00",
             created_by="who@agency.com",
@@ -101,6 +111,7 @@ class RequestShapeTests(unittest.TestCase):
         d = self._req().to_dict()
         self.assertEqual(d["id"], 3)
         self.assertEqual(d["page_label"], "Penn Community Bank")
+        self.assertEqual(d["scope"], "client")
         self.assertEqual(d["status"], "new")
         self.assertEqual(d["body"], "Add a dark mode toggle.")
 
@@ -150,6 +161,9 @@ class WidgetMenuTests(unittest.TestCase):
         self.assertIn('id="sfnotePanel"', html)
         self.assertIn('id="sffrPanel"', html)
         self.assertIn('id="sffrBody"', html)
+        # "This client only" checkbox lets the submitter mark scope.
+        self.assertIn('id="sffrScope"', html)
+        self.assertIn("This client only", html)
         # Submit posts to the client-scoped feature-request endpoint.
         self.assertIn("/feature-request", html)
 
