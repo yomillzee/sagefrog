@@ -1461,6 +1461,19 @@ def render_admin_page(
                 if is_new
                 else '<span class="fr-badge fr-badge-done">Done</span>'
             )
+            # Scope: a "client" request is only for the dashboard it came from;
+            # anything else is a global ask against the shared dashboard.
+            if r.scope == "client":
+                scope_slug = _esc(r.client_slug or "this client")
+                scope_badge = (
+                    f'<span class="fr-badge fr-badge-scope-client" '
+                    f'title="Requested for {scope_slug} only">{scope_slug} only</span>'
+                )
+            else:
+                scope_badge = (
+                    '<span class="fr-badge fr-badge-scope-global" '
+                    'title="Applies to every client dashboard">Global</span>'
+                )
             if is_new:
                 primary = (
                     f'<form method="post" action="/admin/feature-requests/{r.id}/done" class="inline-form">'
@@ -1485,7 +1498,7 @@ def render_admin_page(
             return f"""
         <div class="fr-row {'is-new' if is_new else 'is-done'}">
           <div class="fr-row-head">
-            <div class="fr-row-where">{badge}{page_link}</div>
+            <div class="fr-row-where">{badge}{scope_badge}{page_link}</div>
             <div class="fr-row-actions">{action}</div>
           </div>
           {path_note}
@@ -1649,6 +1662,9 @@ def render_admin_page(
       text-transform: uppercase; letter-spacing: .04em; flex-shrink: 0; }}
     .fr-badge-new {{ background: #ede9fe; color: #6d28d9; }}
     .fr-badge-done {{ background: #f1f5f9; color: #64748b; }}
+    .fr-badge-scope-global {{ background: #dbeafe; color: #1d4ed8; }}
+    .fr-badge-scope-client {{ background: #fef3c7; color: #b45309; text-transform: none; letter-spacing: 0;
+      max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
     .fr-page-link {{ font-weight: 700; color: var(--navy); text-decoration: none; overflow: hidden;
       text-overflow: ellipsis; white-space: nowrap; }}
     .fr-page-link:hover {{ color: var(--accent); }}

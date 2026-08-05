@@ -136,6 +136,13 @@ def _fr_panel_inner_html() -> str:
       </div>
       <div class="sffr-context" id="sffrContext" aria-live="polite"></div>
       <textarea class="sfnote-body sffr-body" id="sffrBody" placeholder="What would make this dashboard better? Describe the feature or fix you'd like…" aria-label="Feature request" spellcheck="true"></textarea>
+      <label class="sffr-scope" for="sffrScope">
+        <input type="checkbox" id="sffrScope">
+        <span class="sffr-scope-text">
+          <span class="sffr-scope-label">This client only</span>
+          <span class="sffr-scope-hint">Leave unchecked if this should apply to every client's dashboard.</span>
+        </span>
+      </label>
       <div class="sfnote-footer">
         <span class="sfnote-status" id="sffrStatus" role="status" aria-live="polite"></span>
         <button type="button" class="sfnote-btn sfnote-btn--primary" id="sffrSend">Send request</button>
@@ -174,6 +181,11 @@ _SHARED_CSS = """
   .sfnote-status.is-saved { color:#15803d; }
   .sfnote-status.is-error { color:#b91c1c; }
   .sfnote-empty { margin:0 16px 14px; font-size:.82rem; color:#64748b; }
+  .sffr-scope { display:flex; align-items:flex-start; gap:9px; margin:10px 16px 2px; cursor:pointer; }
+  .sffr-scope input { margin:2px 0 0; width:15px; height:15px; flex-shrink:0; accent-color:#7c3aed; cursor:pointer; }
+  .sffr-scope-text { display:flex; flex-direction:column; gap:1px; min-width:0; }
+  .sffr-scope-label { font-size:.82rem; font-weight:650; color:#0a2540; line-height:1.3; }
+  .sffr-scope-hint { font-size:.73rem; color:#64748b; line-height:1.35; }
 """
 
 _EMBEDDED_CSS = """
@@ -443,6 +455,7 @@ _FEATURE_REQUEST_JS = r"""
   var send = document.getElementById('sffrSend');
   var status = document.getElementById('sffrStatus');
   var context = document.getElementById('sffrContext');
+  var scope = document.getElementById('sffrScope');
   if (!body || !send) return;
 
   var PIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6-5.686-6-10a6 6 0 0 1 12 0c0 4.314-6 10-6 10z"/><circle cx="12" cy="11" r="2"/></svg>';
@@ -480,6 +493,7 @@ _FEATURE_REQUEST_JS = r"""
     form.set('body', text);
     form.set('page', currentPath());
     form.set('page_label', pageLabel());
+    form.set('scope', (scope && scope.checked) ? 'client' : 'global');
     fetch(cfg.base + '/feature-request', {
       method: 'POST',
       credentials: 'same-origin',
@@ -494,6 +508,7 @@ _FEATURE_REQUEST_JS = r"""
       });
     }).then(function () {
       body.value = '';
+      if (scope) scope.checked = false;
       setStatus('Sent to the Sagefrog admin inbox. Thank you!', 'saved');
     }).catch(function (e) {
       setStatus(e.message || 'Could not send request', 'error');
