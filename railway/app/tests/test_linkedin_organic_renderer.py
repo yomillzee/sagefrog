@@ -86,6 +86,19 @@ class RendererTests(unittest.TestCase):
         self.assertNotIn("<b>post</b>", html)
         self.assertIn("&lt;b&gt;post&lt;/b&gt;", html)
 
+    def test_post_column_resizable(self) -> None:
+        html = self._html()
+        # A drag handle rides the Post header and the column width is a CSS var
+        # the resizer JS updates.
+        self.assertIn("lo-col-resizer", html)
+        self.assertIn("initResize", html)
+        self.assertIn("--lo-post-w", html)
+
+    def test_post_title_hover_shows_full_text(self) -> None:
+        html = self._html()
+        # The truncated post title carries a title= tooltip with the full text.
+        self.assertIn('class="lo-post-title" title=', html)
+
 
 class NewPanelsTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -149,6 +162,14 @@ class NewPanelsTests(unittest.TestCase):
         self.assertIn("Page visitors", html)
         self.assertIn("Desktop vs. mobile", html)
         self.assertIn("Careers", html)
+
+    def test_device_split_is_pie(self) -> None:
+        html = self._html()
+        # Desktop vs. mobile now renders as a Chart.js doughnut, not a bar.
+        self.assertIn('id="loDeviceChart"', html)
+        self.assertIn("drawPie", html)
+        self.assertIn("doughnut", html)
+        self.assertNotIn("lo-split-seg", html)
 
     def test_reaction_breakdown_tooltip(self) -> None:
         html = self._html()
