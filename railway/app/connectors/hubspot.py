@@ -84,7 +84,7 @@ class HubSpotConnector(ConnectorHandler):
             rows += c.get("rows_synced") or 0
         except Exception as exc:
             _log.warning("HubSpot contacts sync failed [%s]: %s", client_slug, exc)
-            errors.append(f"contacts: {str(exc)[:200]}")
+            errors.append(f"contacts: {str(exc)[:500]}")
 
         try:
             d = hubspot_sync_service.sync_hubspot_deals(
@@ -96,7 +96,7 @@ class HubSpotConnector(ConnectorHandler):
             rows += d.get("rows_synced") or 0
         except Exception as exc:
             _log.warning("HubSpot deals sync failed [%s]: %s", client_slug, exc)
-            errors.append(f"deals: {str(exc)[:200]}")
+            errors.append(f"deals: {str(exc)[:500]}")
 
         # Marketing-email performance. Self-gates to Marketing Hub tiers: a portal
         # without the `content` scope returns status="skipped" (not an error), so
@@ -110,7 +110,7 @@ class HubSpotConnector(ConnectorHandler):
             rows += e.get("rows_synced") or 0
         except Exception as exc:
             _log.warning("HubSpot emails sync failed [%s]: %s", client_slug, exc)
-            errors.append(f"emails: {str(exc)[:200]}")
+            errors.append(f"emails: {str(exc)[:500]}")
 
         return SyncResult(rows_loaded=rows, error="; ".join(errors) if errors else None)
 

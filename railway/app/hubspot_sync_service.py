@@ -423,6 +423,61 @@ def _ensure_table(
     LOGGER.debug("Ensured table %s", ref)
 
 
+# Substrings that mark a BigQuery error as transient — safe to retry the same
+# statement. The big one here is concurrent-DML serialization: nothing stops a
+# manual sync from overlapping the cron sync (or another manual) for the same
+# client, so two runs can MERGE into one fact_hubspot_* table at once. BigQuery
+# rejects the loser with a 400 "Could not serialize access due to concurrent
+# update", which retrying clears once the other run's MERGE commits. The longest
+# step (emails, ~thousands of rows) is the most exposed, which is why it was the
+# one surfacing "emails: 400 GET https://bigquery.googleapis.com/..." while
+# contacts/deals slipped through.
+_TRANSIENT_BQ_MARKERS = (
+    "concurrent update",
+    "could not serialize",
+    "serialize access",
+    "was modified",
+    "retrying may solve",
+    "try again",
+    "rate limit",
+    "ratelimitexceeded",
+    "backend error",
+    "internal error",
+    "service unavailable",
+    "deadline exceeded",
+)
+
+
+def _is_transient_bq_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    if any(m in msg for m in _TRANSIENT_BQ_MARKERS):
+        return True
+    # google.api_core exceptions carry an HTTP-ish .code; 429/500/503 are retryable.
+    code = getattr(exc, "code", None)
+    return code in (429, 500, 502, 503, 504)
+
+
+def _run_bq_with_retry(fn, *, what: str, attempts: int = 4):
+    """Run a BigQuery statement, retrying transient failures with backoff.
+
+    Only transient errors (see ``_is_transient_bq_error``) are retried; a genuine
+    schema/SQL error raises immediately so it isn't masked by a retry loop.
+    """
+    delay = 2.0
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 — re-raised below unless transient
+            if i == attempts - 1 or not _is_transient_bq_error(exc):
+                raise
+            LOGGER.warning(
+                "%s failed (attempt %d/%d), retrying in %.0fs: %s",
+                what, i + 1, attempts, delay, str(exc)[:200],
+            )
+            time.sleep(delay)
+            delay *= 2
+
+
 def _upsert(
     client: bigquery.Client,
     project: str,
@@ -435,16 +490,19 @@ def _upsert(
 ) -> None:
     stg_id = f"{project}.{dataset}._hs_stg_{uuid4().hex[:12]}"
     try:
-        job = client.load_table_from_json(
-            rows,
-            stg_id,
-            job_config=bigquery.LoadJobConfig(
-                schema=schema,
-                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-            ),
-        )
-        job.result()
+        def _load():
+            job = client.load_table_from_json(
+                rows,
+                stg_id,
+                job_config=bigquery.LoadJobConfig(
+                    schema=schema,
+                    write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                ),
+            )
+            job.result()
+
+        _run_bq_with_retry(_load, what=f"load→{stg_id}")
         LOGGER.info("Staged %d rows → %s", len(rows), stg_id)
 
         target  = f"`{project}.{dataset}.{table_name}`"
@@ -462,7 +520,11 @@ WHEN MATCHED THEN
 WHEN NOT MATCHED THEN
   INSERT ({insert_cols}) VALUES ({insert_vals})
 """
-        client.query(merge_sql).result()
+        # The MERGE is idempotent, so retrying it after a concurrent-update abort
+        # is safe: it re-reads the same staging table and re-applies the same upsert.
+        _run_bq_with_retry(
+            lambda: client.query(merge_sql).result(), what=f"MERGE→{table_name}"
+        )
         LOGGER.info("MERGE complete: %d rows upserted into %s", len(rows), table_name)
     finally:
         client.delete_table(stg_id, not_found_ok=True)
