@@ -62,15 +62,17 @@ _EXTRA_CSS = """
 .lo-chart canvas { display:block; width:100% !important; }
 .lo-empty { font-size:.85rem; color:var(--muted); padding:26px 0; text-align:center; }
 
-/* Top posts table — shared modern table styling. */
+/* Top posts table — shared modern table styling. The Post column width is a
+   CSS var so a drag-resizer can widen/narrow it (and its text truncation). */
 .lo-table-wrap { overflow:auto; border:1px solid var(--line-soft,#eff3f8); border-radius:var(--radius-sm,9px); }
-.lo-table { border-collapse:collapse; width:100%; min-width:640px; font-size:.85rem; }
+.lo-table { border-collapse:collapse; width:100%; min-width:640px; font-size:.85rem; --lo-post-w:420px; }
 .lo-table th, .lo-table td { padding:10px 13px; border-bottom:1px solid var(--line-soft,#eff3f8); text-align:right; white-space:nowrap; }
 .lo-table tbody tr:last-child td { border-bottom:0; }
 .lo-table tbody tr:hover td { background:#f7faff; }
 .lo-table th { background:#f4f7fb; color:#5a6b82; text-transform:uppercase; font-size:.67rem; letter-spacing:.05em; font-weight:800; }
 .lo-table th.left, .lo-table td.left { text-align:left; }
-.lo-table td.left { max-width:420px; }
+.lo-table th.left { position:relative; width:var(--lo-post-w,420px); }
+.lo-table td.left { max-width:var(--lo-post-w,420px); }
 .lo-table th[data-sort] { cursor:pointer; user-select:none; transition:background .12s,color .12s; }
 .lo-table th[data-sort]:hover { background:#e9eef5; color:#33455e; }
 .lo-table th[data-sort]::after { content:"\\2195"; opacity:.35; margin-left:5px; font-size:.85em; }
@@ -78,8 +80,18 @@ _EXTRA_CSS = """
 .lo-table th[data-dir="asc"]::after { content:"\\2191"; opacity:.9; }
 .lo-table th[data-dir="desc"] { color:var(--accent); }
 .lo-table th[data-dir="desc"]::after { content:"\\2193"; opacity:.9; }
-.lo-post-title { font-weight:650; color:var(--navy); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:420px; }
+.lo-post-title { font-weight:650; color:var(--navy); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:var(--lo-post-w,420px); cursor:help; }
 .lo-post-meta { font-size:.72rem; color:var(--muted); }
+
+/* Drag handle to resize the Post column. Sits on the header's right edge and
+   doesn't trigger the column's click-to-sort (JS stops propagation). */
+.lo-col-resizer { position:absolute; top:0; right:0; width:9px; height:100%; cursor:col-resize; user-select:none; touch-action:none; z-index:2; }
+.lo-col-resizer::before { content:""; position:absolute; top:22%; right:3px; width:2px; height:56%; background:#c4cfdd; border-radius:2px; transition:background .12s; }
+.lo-col-resizer:hover::before, .lo-table th.lo-resizing .lo-col-resizer::before { background:var(--accent); }
+
+/* Desktop vs. mobile doughnut. */
+.lo-pie { position:relative; height:170px; max-width:220px; margin:2px auto 12px; }
+.lo-pie canvas { display:block; }
 .lo-chip { display:inline-block; font-size:.64rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:#0a66c2; background:#e9f1fb; border-radius:5px; padding:2px 6px; margin-left:6px; }
 .lo-react { color:var(--muted); font-size:.72rem; cursor:default; }
 
@@ -94,10 +106,8 @@ _EXTRA_CSS = """
 .lo-bar-track { grid-column:1 / -1; display:block; background:#e9eef5; border-radius:6px; height:8px; overflow:hidden; }
 .lo-bar-fill { display:block; height:100%; border-radius:6px; min-width:3px; background:#0a66c2; }
 
-/* Device split — a single desktop/mobile stacked bar. */
-.lo-split { display:flex; height:14px; border-radius:7px; overflow:hidden; background:var(--surface); margin:2px 0 12px; }
-.lo-split-seg { height:100%; }
-.lo-split-legend { display:flex; gap:20px; flex-wrap:wrap; font-size:.8rem; }
+/* Device split legend — accompanies the desktop/mobile doughnut. */
+.lo-split-legend { display:flex; gap:20px; flex-wrap:wrap; font-size:.8rem; justify-content:center; }
 .lo-split-legend div { display:flex; align-items:center; gap:7px; color:var(--text); }
 .lo-split-legend .sw { width:10px; height:10px; border-radius:3px; }
 .lo-split-legend b { color:var(--navy); font-variant-numeric:tabular-nums; }
@@ -289,10 +299,7 @@ def _visitors_section(report: LinkedInOrganicReport) -> str:
         m_pct = mobile / total * 100.0
         device_html = (
             '<div class="lo-bar-card"><h3>Desktop vs. mobile</h3>'
-            '<div class="lo-split">'
-            f'<span class="lo-split-seg" style="width:{d_pct:.1f}%;background:#0a66c2"></span>'
-            f'<span class="lo-split-seg" style="width:{m_pct:.1f}%;background:#38bdf8"></span>'
-            '</div>'
+            '<div class="lo-pie"><canvas id="loDeviceChart"></canvas></div>'
             '<div class="lo-split-legend">'
             f'<div><span class="sw" style="background:#0a66c2"></span>Desktop&nbsp;<b>{_fmt_int(desktop)}</b>&nbsp;<span>{d_pct:.0f}%</span></div>'
             f'<div><span class="sw" style="background:#38bdf8"></span>Mobile&nbsp;<b>{_fmt_int(mobile)}</b>&nbsp;<span>{m_pct:.0f}%</span></div>'
@@ -340,9 +347,12 @@ def _charts_script(
     follower_series: list[dict[str, Any]],
     page_series: list[dict[str, Any]],
     engagement_series: list[dict[str, Any]] | None = None,
+    *,
+    desktop_views: int = 0,
+    mobile_views: int = 0,
 ) -> str:
-    """Chart.js loader + init for the follower/page bar charts and the
-    organization-wide engagement line chart."""
+    """Chart.js loader + init for the follower/page bar charts, the
+    organization-wide engagement line chart, and the device-split pie."""
     payload = json.dumps({
         "follower": {**_chart_series(follower_series, "total_follower_gain"),
                      "color": _LI_BLUE, "canvas": "loFollowerChart"},
@@ -350,6 +360,9 @@ def _charts_script(
                  "color": _PAGE_GREEN, "canvas": "loPageChart"},
         "engagement": {**_engagement_chart_series(engagement_series or []),
                        "canvas": "loEngagementChart"},
+        "device": {"labels": ["Desktop", "Mobile"],
+                   "values": [int(desktop_views or 0), int(mobile_views or 0)],
+                   "colors": [_LI_BLUE, "#38bdf8"], "canvas": "loDeviceChart"},
     }).replace("<", "\\u003c")
     return (
         '<script src="/static/vendor/chart.umd.min.js"></script>'
@@ -394,8 +407,25 @@ def _charts_script(
         "          y:{beginAtZero:true, grid:GRID, ticks:YT, border:{display:false}}}}\n"
         "    });\n"
         "  }\n"
+        "  function drawPie(spec){\n"
+        "    var el = document.getElementById(spec.canvas);\n"
+        "    var tot = (spec.values||[]).reduce(function(a,b){return a+b;},0);\n"
+        "    if(!el || !window.Chart || !tot) return;\n"
+        "    new Chart(el, {\n"
+        "      type:'doughnut',\n"
+        "      data:{labels:spec.labels, datasets:[{data:spec.values,\n"
+        "        backgroundColor:spec.colors, borderColor:'#fff', borderWidth:2}]},\n"
+        "      options:{responsive:true, maintainAspectRatio:false, animation:false,\n"
+        "        cutout:'58%',\n"
+        "        plugins:{legend:{display:false},\n"
+        "          tooltip:{displayColors:false, padding:8,\n"
+        "            callbacks:{label:function(c){\n"
+        "              var p = tot ? Math.round(c.parsed/tot*100) : 0;\n"
+        "              return c.label+': '+c.formattedValue+' ('+p+'%)';}}}}}\n"
+        "    });\n"
+        "  }\n"
         "  function init(){ draw(LO_CHARTS.follower); draw(LO_CHARTS.page);\n"
-        "    drawLine(LO_CHARTS.engagement); }\n"
+        "    drawLine(LO_CHARTS.engagement); drawPie(LO_CHARTS.device); }\n"
         "  if(document.readyState!=='loading') init();\n"
         "  else document.addEventListener('DOMContentLoaded', init);\n"
         "})();</script>"
@@ -428,6 +458,51 @@ def _sort_script() -> str:
         "    });\n"
         "  }\n"
         "  function init(){ var t=document.getElementById('loPostsTable'); if(t) initSort(t); }\n"
+        "  if(document.readyState!=='loading') init();\n"
+        "  else document.addEventListener('DOMContentLoaded', init);\n"
+        "})();</script>"
+    )
+
+
+def _resize_script() -> str:
+    """Drag-to-resize the Top posts 'Post' column via a --lo-post-w CSS var."""
+    return (
+        "<script>(function(){\n"
+        "  var MIN=140, MAX=900;\n"
+        "  function initResize(table){\n"
+        "    var grip = table.querySelector('.lo-col-resizer');\n"
+        "    if(!grip) return;\n"
+        "    var th = grip.closest('th');\n"
+        "    var startX=0, startW=0, dragging=false;\n"
+        "    function onMove(e){\n"
+        "      if(!dragging) return;\n"
+        "      if(e.cancelable) e.preventDefault();\n"
+        "      var pt = e.touches ? e.touches[0] : e;\n"
+        "      var w = Math.max(MIN, Math.min(MAX, startW + (pt.clientX - startX)));\n"
+        "      table.style.setProperty('--lo-post-w', w + 'px');\n"
+        "    }\n"
+        "    function onUp(){\n"
+        "      dragging=false; th.classList.remove('lo-resizing');\n"
+        "      document.removeEventListener('mousemove', onMove);\n"
+        "      document.removeEventListener('mouseup', onUp);\n"
+        "      document.removeEventListener('touchmove', onMove);\n"
+        "      document.removeEventListener('touchend', onUp);\n"
+        "    }\n"
+        "    function onDown(e){\n"
+        "      e.preventDefault(); e.stopPropagation();\n"
+        "      var pt = e.touches ? e.touches[0] : e;\n"
+        "      dragging=true; startX=pt.clientX; startW=th.getBoundingClientRect().width;\n"
+        "      th.classList.add('lo-resizing');\n"
+        "      document.addEventListener('mousemove', onMove);\n"
+        "      document.addEventListener('mouseup', onUp);\n"
+        "      document.addEventListener('touchmove', onMove, {passive:false});\n"
+        "      document.addEventListener('touchend', onUp);\n"
+        "    }\n"
+        "    grip.addEventListener('mousedown', onDown);\n"
+        "    grip.addEventListener('touchstart', onDown, {passive:false});\n"
+        "    grip.addEventListener('click', function(e){ e.stopPropagation(); });\n"
+        "  }\n"
+        "  function init(){ var t=document.getElementById('loPostsTable'); if(t) initResize(t); }\n"
         "  if(document.readyState!=='loading') init();\n"
         "  else document.addEventListener('DOMContentLoaded', init);\n"
         "})();</script>"
@@ -538,7 +613,7 @@ def render_linkedin_organic(
             )
             rows.append(
                 '<tr>'
-                f'<td class="left" data-val="{_esc(p["title"])}"><span class="lo-post-title">{_esc(p["title"])}{chip}</span>'
+                f'<td class="left" data-val="{_esc(p["title"])}"><span class="lo-post-title" title="{_esc(p["title"])}">{_esc(p["title"])}{chip}</span>'
                 f'<span class="lo-post-meta">{_esc(meta)}</span></td>'
                 f'<td data-val="{p["impressions"]}">{_fmt_int(p["impressions"])}</td>'
                 f'{reach_cell}'
@@ -552,7 +627,8 @@ def render_linkedin_organic(
         reach_th = '<th data-sort="num">Reach</th>' if show_reach else ""
         posts_html = (
             '<div class="lo-table-wrap"><table id="loPostsTable" class="lo-table"><thead><tr>'
-            '<th class="left" data-sort="text">Post</th><th data-sort="num">Impressions</th>'
+            '<th class="left" data-sort="text">Post<span class="lo-col-resizer" aria-hidden="true"></span></th>'
+            '<th data-sort="num">Impressions</th>'
             f'{reach_th}'
             '<th data-sort="num">Reactions</th><th data-sort="num">Comments</th>'
             '<th data-sort="num">Shares</th><th data-sort="num">Clicks</th>'
@@ -568,9 +644,10 @@ def render_linkedin_organic(
     )
 
     charts_script = _charts_script(
-        report.follower_series, report.page_series, report.engagement_series
+        report.follower_series, report.page_series, report.engagement_series,
+        desktop_views=report.page_desktop_views, mobile_views=report.page_mobile_views,
     )
-    sort_script = _sort_script() if report.top_posts else ""
+    sort_script = (_sort_script() + _resize_script()) if report.top_posts else ""
     content = f"""
       <div class="lo-wrap">
         <div class="lo-head">
