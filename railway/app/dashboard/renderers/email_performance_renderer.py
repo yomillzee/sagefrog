@@ -21,12 +21,11 @@ from hubspot_reports_service import EmailPerformanceReport
 _DEFAULT_SELECTED = 5
 
 _EXTRA_CSS = """
-.ep-wrap { max-width: 1200px; }
+/* Match Overview: a centered content column instead of hugging the sidebar. */
+.ep-wrap { max-width:1320px; margin:0 auto; }
 .ep-head { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:4px; }
 .ep-title { font-size:1.6rem; font-weight:750; color:var(--navy); margin:0; letter-spacing:-.01em; }
 .ep-sub { font-size:.9rem; color:var(--muted); margin:6px 0 0; }
-.ep-hs-tag { display:inline-flex; align-items:center; gap:7px; padding:7px 13px; border-radius:999px; background:#fff3ed; border:1px solid #ffd9c7; color:#c2410c; font-size:.78rem; font-weight:650; white-space:nowrap; }
-.ep-hs-dot { width:8px; height:8px; border-radius:50%; background:#ff7a59; }
 
 .ep-card { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:20px 22px; margin:22px 0 20px; box-shadow:var(--shadow-sm); }
 .ep-card-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin:0 0 14px; flex-wrap:wrap; }
@@ -263,7 +262,6 @@ def render_email_performance(
         '<div class="ep-head">'
         '<div><h1 class="ep-title">Email Performance</h1>'
         f'<p class="ep-sub">HubSpot marketing email reporting for {_esc(label)}.</p></div>'
-        '<span class="ep-hs-tag"><span class="ep-hs-dot"></span>HubSpot</span>'
         '</div>'
     )
 
