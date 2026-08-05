@@ -1895,6 +1895,69 @@ async def save_explorer_filters(
     return {"ok": True}
 
 
+@router.post(
+    "/api/clients/{client_key}/default-date-range",
+    summary="Set the date-range preset the dashboard lands on for this client (admin only)",
+)
+async def save_default_date_range(
+    client_key: str,
+    request: Request,
+) -> dict:
+    """Persist the client's landing date-range preset. Body: ``{"preset":
+    "last_month"}`` (one of the known presets; empty clears it). Admin-only — the
+    landing range is portal-wide config, not a per-viewer preference."""
+    normalized = (client_key or "").strip().lower()
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    if not (auth.user and auth.user.role == "admin"):
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        import client_dashboard_config as cdc
+        saved = cdc.save_default_date_preset(
+            normalized, str(body.get("preset") or ""), updated_by="dashboard",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+    return {"ok": True, "preset": saved.default_date_preset or ""}
+
+
+@router.post(
+    "/api/clients/{client_key}/explorer/campaigns",
+    summary="Set the Campaign Explorer campaign allowlist for this client (admin only)",
+)
+async def save_explorer_campaign_allowlist(
+    client_key: str,
+    request: Request,
+) -> dict:
+    """Persist which campaigns the portal's client may see in the Campaign
+    Explorer. Body: ``{"campaigns": ["Name A", "Name B"]}`` (empty list clears
+    the restriction). Admin-only — this scopes what a client's portal exposes."""
+    normalized = (client_key or "").strip().lower()
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    if not (auth.user and auth.user.role == "admin"):
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    campaigns = body.get("campaigns")
+    if not isinstance(campaigns, (list, tuple)):
+        campaigns = []
+    try:
+        import client_dashboard_config as cdc
+        saved = cdc.save_explorer_campaign_allowlist(
+            normalized, [str(c) for c in campaigns], updated_by="dashboard",
+        )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+    return {"ok": True, "campaigns": list(saved.explorer_campaign_allowlist)}
+
+
 # Tabs that support admin card-layout editing, mapped to the set of card keys
 # that tab knows about. Keys outside the set are rejected so a stale/garbage key
 # can't wedge the tab's render. Overview is the first (and, for now, only) tab.

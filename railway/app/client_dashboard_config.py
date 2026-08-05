@@ -139,7 +139,38 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config
       ADD COLUMN IF NOT EXISTS card_layouts JSONB
     """,
+    # The date-range preset the dashboard lands on for this client, chosen by an
+    # admin via the Range picker's "Make default" control (e.g. 'last_month').
+    # NULL means fall back to the renderer's built-in default ('last_30'). Only
+    # one of the known DATE_RANGE_PRESETS is ever stored.
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS default_date_preset TEXT
+    """,
+    # Campaign allowlist for the Campaign Explorer, stored as a JSON array of
+    # campaign names. When set, the Explorer table (and its summary cards) only
+    # shows these campaigns — used when the account pulls more campaigns than the
+    # portal's client should see. Empty/NULL = show every campaign. Set by an
+    # admin from the Explorer's "Campaigns" picker.
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS explorer_campaign_allowlist JSONB
+    """,
 ]
+
+# The date-range presets the dashboard's Range picker offers; a stored
+# default_date_preset must be one of these (mirrors the <option> values in
+# bigquery_dashboard_renderer's #datePresets select).
+DATE_RANGE_PRESETS: tuple[str, ...] = (
+    "last_7",
+    "last_30",
+    "last_90",
+    "last_365",
+    "this_week",
+    "last_week",
+    "this_month",
+    "last_month",
+)
 
 # The client-facing section tabs an admin can show/hide from the Advanced admin
 # tab. Keys mirror the ``data-tab`` attributes the sidebar nav renders; anything
@@ -199,6 +230,12 @@ class ClientConfigRow:
     # [...]}}. Empty dict = every card shows in natural order. See the
     # card_layouts column comment above and get_card_layout / save_card_layout.
     card_layouts: dict[str, dict[str, list[str]]] = field(default_factory=dict)
+    # Date-range preset the dashboard lands on for this client (one of
+    # DATE_RANGE_PRESETS), or None to use the renderer's built-in default.
+    default_date_preset: str | None = None
+    # Campaign Explorer allowlist: campaign names the portal's client is allowed
+    # to see. Empty = show every campaign. See the column comment above.
+    explorer_campaign_allowlist: tuple[str, ...] = ()
 
 
 def _get_db_url() -> str | None:
@@ -239,7 +276,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    gsc_branded_exclude, gsc_target_exclude,
                    overview_pinned_card, consent_sidebar_enabled, primary_kpi,
                    pacing_active_weekdays, segment_filter_profile,
-                   sidebar_hidden_tabs, card_layouts
+                   sidebar_hidden_tabs, card_layouts,
+                   default_date_preset, explorer_campaign_allowlist
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -284,7 +322,41 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         segment_filter_profile=_s(row[27]),
         sidebar_hidden_tabs=_normalize_hidden_tabs(row[28]),
         card_layouts=_normalize_card_layouts(row[29]),
+        default_date_preset=_normalize_date_preset(row[30]),
+        explorer_campaign_allowlist=_normalize_campaign_allowlist(row[31]),
     )
+
+
+def _normalize_date_preset(value: object) -> str | None:
+    """Coerce a stored default_date_preset into a known preset id, or None.
+
+    Anything outside DATE_RANGE_PRESETS (stale/garbage) collapses to None so the
+    renderer falls back to its built-in default."""
+    preset = str(value or "").strip().lower()
+    return preset if preset in DATE_RANGE_PRESETS else None
+
+
+def _normalize_campaign_allowlist(payload: object) -> tuple[str, ...]:
+    """Coerce a stored explorer_campaign_allowlist into a clean tuple of names.
+
+    JSONB comes back as a list from psycopg, but tolerate a JSON string too.
+    Blanks are dropped and duplicates removed (first occurrence wins); order is
+    preserved. Empty result means 'no restriction — show every campaign'."""
+    if payload is None:
+        return ()
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return ()
+    if not isinstance(payload, (list, tuple)):
+        return ()
+    seen: list[str] = []
+    for v in payload:
+        name = str(v).strip()
+        if name and name not in seen:
+            seen.append(name)
+    return tuple(seen)
 
 
 def _normalize_kpi_spec(payload: object) -> dict[str, Any] | None:
@@ -737,6 +809,93 @@ def update_explorer_filters(
             """,
             (slug, slug, now, _clean(updated_by), _clean(filters_text)),
         )
+
+
+def save_default_date_preset(
+    client_slug: str,
+    preset: str | None,
+    *,
+    updated_by: str | None = None,
+) -> ClientConfigRow:
+    """Set (or clear, with None/empty) the date-range preset the dashboard lands
+    on for this client. ``preset`` must be one of DATE_RANGE_PRESETS or empty.
+
+    Server-side + per client, so the landing range applies to every user of the
+    client's portal in every browser. Touches only that column."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save client dashboard config.")
+    normalized = (preset or "").strip().lower() or None
+    if normalized is not None and normalized not in DATE_RANGE_PRESETS:
+        raise ValueError(
+            f"default_date_preset must be one of {DATE_RANGE_PRESETS} or empty."
+        )
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    existing = get_config(slug)
+    label = existing.label if existing else slug
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, default_date_preset, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              default_date_preset = EXCLUDED.default_date_preset,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, label, normalized, now, (updated_by or "").strip() or None),
+        )
+    saved = get_config(slug)
+    if not saved:
+        raise RuntimeError("Failed to load saved client config.")
+    return saved
+
+
+def save_explorer_campaign_allowlist(
+    client_slug: str,
+    campaigns: list[str] | tuple[str, ...] | None,
+    *,
+    updated_by: str | None = None,
+) -> ClientConfigRow:
+    """Set (or clear, with an empty list) the Campaign Explorer allowlist — the
+    campaign names the portal's client is allowed to see. Empty = show every
+    campaign. Names are normalized (blanks dropped, deduped). Touches only that
+    column."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save client dashboard config.")
+    normalized = list(_normalize_campaign_allowlist(list(campaigns or [])))
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    existing = get_config(slug)
+    label = existing.label if existing else slug
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, explorer_campaign_allowlist, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              explorer_campaign_allowlist = EXCLUDED.explorer_campaign_allowlist,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, label, json.dumps(normalized), now, (updated_by or "").strip() or None),
+        )
+    saved = get_config(slug)
+    if not saved:
+        raise RuntimeError("Failed to load saved client config.")
+    return saved
 
 
 def update_overview_pinned_card(

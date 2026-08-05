@@ -518,6 +518,8 @@ def render_bigquery_dashboard_page(
     gsc_target_exclude = ""
     ga4_key_events = ""
     explorer_filters_cfg = ""
+    default_date_preset: str = ""
+    explorer_campaign_allowlist: list[str] = []
     monthly_budget_val: float | None = None
     pagespeed_targets_stored: dict | None = None
     overview_pinned_card: str | None = None
@@ -532,6 +534,10 @@ def render_bigquery_dashboard_page(
             gsc_target_exclude = getattr(_kwcfg, "gsc_target_exclude", None) or ""
             ga4_key_events = _kwcfg.ga4_key_events or ""
             explorer_filters_cfg = _kwcfg.explorer_filters or ""
+            default_date_preset = getattr(_kwcfg, "default_date_preset", None) or ""
+            explorer_campaign_allowlist = list(
+                getattr(_kwcfg, "explorer_campaign_allowlist", None) or ()
+            )
             monthly_budget_val = getattr(_kwcfg, "monthly_budget_usd", None)
             overview_pinned_card = getattr(_kwcfg, "overview_pinned_card", None)
             _layouts = getattr(_kwcfg, "card_layouts", None) or {}
@@ -631,6 +637,42 @@ def render_bigquery_dashboard_page(
         resolve_explorer_filters(explorer_filters_cfg)
     ).replace("<", "\\u003c")
 
+    # Landing date-range preset: the admin-chosen client default, else last_30.
+    # Validated against the known presets so a stale value can't wedge the picker.
+    _DATE_PRESETS = (
+        "last_7", "last_30", "last_90", "last_365",
+        "this_week", "last_week", "this_month", "last_month",
+    )
+    effective_default_preset = (
+        default_date_preset if default_date_preset in _DATE_PRESETS else "last_30"
+    )
+    default_date_preset_json = json.dumps(effective_default_preset)
+    _DATE_PRESET_LABELS = [
+        ("last_7", "Last 7 days"), ("last_30", "Last 30 days"),
+        ("last_90", "Last 90 days"), ("last_365", "Last 365 days"),
+        ("this_week", "This week"), ("last_week", "Last week"),
+        ("this_month", "This month"), ("last_month", "Last month"),
+    ]
+    date_preset_options_html = "".join(
+        f'<option value="{v}"{" selected" if v == effective_default_preset else ""}>{lbl}</option>'
+        for v, lbl in _DATE_PRESET_LABELS
+    )
+    # Admin-only "Make default" control next to the Range picker: checking it and
+    # clicking Apply saves the currently-selected preset as this client's landing
+    # range (portal-wide); unchecking + Apply clears it. Non-admins never see it.
+    # ``checked`` reflects whether a client default is currently stored.
+    range_default_html = "" if not session_is_admin else f"""<label class="range-default" title="Land on the selected range for this client">
+            <input type="checkbox" id="rangeMakeDefault"{" checked" if default_date_preset in _DATE_PRESETS else ""}>
+            <span>Make default</span>
+          </label>
+          <button type="button" class="range-apply" id="rangeApply">Apply</button>
+          <span class="range-default-status" id="rangeDefaultStatus"></span>"""
+    # Campaign Explorer allowlist (campaign names the client may see). Empty list
+    # = no restriction. Escape "<" so a campaign name can't break the <script>.
+    explorer_campaign_allowlist_json = json.dumps(
+        explorer_campaign_allowlist
+    ).replace("<", "\\u003c")
+
     # Admin-only "Edit filters" affordance in the Campaign explorer header. The
     # editor (textarea of chip rules) moved here from the Insights page so it
     # lives with the thing it configures; it POSTs the same explorer/filters API.
@@ -648,6 +690,32 @@ def render_bigquery_dashboard_page(
               <div class="ef-pop-actions">
                 <button type="button" class="ef-pop-btn primary" id="efSave">Save filters</button>
                 <span class="ef-status" id="efStatus"></span>
+              </div>
+            </div>
+          </div>
+        </div>"""
+
+    # Admin-only "Campaigns" picker in the Campaign explorer header. Restricts the
+    # Explorer to a chosen subset of campaigns — for portals whose account pulls
+    # more campaigns than the client should see. The checklist is filled by JS
+    # from the campaigns actually loaded (plus any already-saved names), and it
+    # POSTs the selected set to the explorer/campaigns API. The `1` badge count is
+    # only shown when a restriction is active (JS updates it after load).
+    explorer_campaigns_edit_html = "" if not session_is_admin else """<div class="ef-edit">
+          <button type="button" class="ef-edit-btn" id="ecEditBtn" aria-haspopup="dialog" aria-expanded="false" title="Limit which campaigns this portal shows">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16"/><path d="M7 12h10"/><path d="M10 18h4"/></svg>
+            <span>Campaigns</span><span class="ec-badge" id="ecBadge" hidden></span>
+          </button>
+          <div class="ef-pop ec-pop" id="ecPop" role="dialog" aria-label="Choose visible campaigns" hidden>
+            <div class="ef-pop-head"><span>Visible campaigns</span><button type="button" class="ef-pop-x" aria-label="Close">&times;</button></div>
+            <div class="ef-pop-body">
+              <p class="ef-pop-desc">Tick the campaigns this portal should show. Leave everything unticked to show <strong>all</strong> campaigns. Only campaigns seen in the current date range (plus ones already chosen) are listed.</p>
+              <input type="text" class="ec-search" id="ecSearch" placeholder="Search campaigns…" autocomplete="off">
+              <div class="ec-tools"><button type="button" class="ec-tool" id="ecSelectAll">Select all</button><button type="button" class="ec-tool" id="ecClear">Clear</button><span class="ec-count" id="ecCount"></span></div>
+              <div class="ec-list" id="ecList"></div>
+              <div class="ef-pop-actions">
+                <button type="button" class="ef-pop-btn primary" id="ecSave">Save campaigns</button>
+                <span class="ef-status" id="ecStatus"></span>
               </div>
             </div>
           </div>
@@ -981,6 +1049,16 @@ def render_bigquery_dashboard_page(
     .range-select {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:8px; padding:5px 28px 5px 11px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%230a2540' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 9px center; }}
     .range-select:hover {{ border-color:#b9c8dc; background-color:#f4f8fd; }}
     .range-select:focus {{ outline:none; border-color:var(--accent); }}
+    /* Admin-only "Make default" range control (checkbox + Apply). The generic
+       label rule above forces grid/uppercase, so reset to an inline checkbox. */
+    .range-default {{ display:inline-flex; align-items:center; gap:5px; margin:0; text-transform:none; letter-spacing:0; font-size:.74rem; font-weight:700; color:var(--muted); cursor:pointer; white-space:nowrap; }}
+    .range-default input {{ margin:0; cursor:pointer; accent-color:var(--accent); }}
+    .range-apply {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:8px; padding:5px 12px; font:inherit; font-size:.76rem; font-weight:700; cursor:pointer; transition:background .15s,border-color .15s; }}
+    .range-apply:hover:not(:disabled) {{ border-color:#b9c8dc; background:#f4f8fd; }}
+    .range-apply:disabled {{ opacity:.55; cursor:default; }}
+    .range-default-status {{ font-size:.72rem; font-weight:600; text-transform:none; letter-spacing:0; color:var(--muted); }}
+    .range-default-status.err {{ color:var(--bad); }}
+    .range-default-status.ok {{ color:#178a4c; }}
     .chips {{ display:flex; flex-wrap:wrap; gap:5px; }}
     .chip {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:4px 12px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s, color .12s; }}
     .chip:hover {{ border-color:#b9c8dc; background:#f4f8fd; }}
@@ -1068,6 +1146,23 @@ def render_bigquery_dashboard_page(
     .ef-pop-btn:disabled {{ opacity:.55; cursor:default; }}
     .ef-status {{ font-size:.78rem; color:var(--muted); }}
     .ef-status.err {{ color:var(--bad); }}
+    .ef-status.ok {{ color:#178a4c; }}
+    /* Campaign explorer: admin "Campaigns" allowlist picker (checklist popover) */
+    .ec-badge {{ display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:var(--accent); color:#fff; font-size:.66rem; font-weight:800; }}
+    .ec-badge[hidden] {{ display:none; }}
+    .ec-search {{ width:100%; border:1px solid var(--line); border-radius:8px; padding:7px 10px; font:inherit; font-size:.82rem; color:#102033; background:#fff; margin-bottom:8px; }}
+    .ec-search:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }}
+    .ec-tools {{ display:flex; align-items:center; gap:10px; margin-bottom:8px; }}
+    .ec-tool {{ appearance:none; border:0; background:none; color:var(--accent); font:inherit; font-size:.76rem; font-weight:700; cursor:pointer; padding:0; }}
+    .ec-tool:hover {{ text-decoration:underline; }}
+    .ec-count {{ margin-left:auto; font-size:.72rem; color:var(--muted); }}
+    .ec-list {{ max-height:240px; overflow-y:auto; border:1px solid var(--line); border-radius:9px; padding:4px; }}
+    .ec-list .ec-empty {{ padding:14px 10px; font-size:.78rem; color:var(--muted); text-align:center; }}
+    .ec-option {{ display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:7px; font-size:.82rem; color:var(--navy); cursor:pointer; text-transform:none; letter-spacing:0; font-weight:500; }}
+    .ec-option:hover {{ background:#f4f8fd; }}
+    .ec-option input {{ margin:0; cursor:pointer; accent-color:var(--accent); flex-shrink:0; }}
+    .ec-option .ec-name {{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+    .ec-option[hidden] {{ display:none; }}
     /* Paid-trends metric picker: chips on desktop, a compact dropdown on phones
        (see the max-width:720px block) where the chip row would overflow. */
     .ov-actions {{ display:flex; align-items:center; gap:12px; flex-shrink:0; }}
@@ -1462,15 +1557,9 @@ def render_bigquery_dashboard_page(
         <div class="filter-group">
           <span class="filter-label">Range</span>
           <select class="range-select" id="datePresets" aria-label="Date range">
-            <option value="last_7">Last 7 days</option>
-            <option value="last_30" selected>Last 30 days</option>
-            <option value="last_90">Last 90 days</option>
-            <option value="last_365">Last 365 days</option>
-            <option value="this_week">This week</option>
-            <option value="last_week">Last week</option>
-            <option value="this_month">This month</option>
-            <option value="last_month">Last month</option>
+            {date_preset_options_html}
           </select>
+          {range_default_html}
         </div>
         <div class="filter-group" id="keyEventFilterGroup" hidden>
           <span class="filter-label">Events</span>
@@ -1503,7 +1592,7 @@ def render_bigquery_dashboard_page(
     <!-- ===== EXPLORER TAB ===== -->
     <div id="pane-explorer" hidden>
       <section id="sec-explorer">
-        <div class="sec-head"><h2>Campaign explorer</h2><div class="sec-head-actions">{explorer_filters_edit_html}<span class="status" id="explorerStatus"></span></div></div>
+        <div class="sec-head"><h2>Campaign explorer</h2><div class="sec-head-actions">{explorer_campaigns_edit_html}{explorer_filters_edit_html}<span class="status" id="explorerStatus"></span></div></div>
         <div class="cards" id="explorerSummaryCards" style="margin-bottom:14px"></div>
         <!-- Filter groups (Product / Region / Business line …) live in the sticky
              top bar (#explorerFilterBar) as dropdowns; built by buildExplorerFilters()
@@ -1732,6 +1821,14 @@ def render_bigquery_dashboard_page(
     const TRAFFIC_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-key-events')}";
     const USER_ACQ_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acq-key-events')}";
     const GA4_KEY_EVENTS_SAVED = {json.dumps([s.strip() for s in ga4_key_events.splitlines() if s.strip()])};
+    // Landing date-range preset (admin-chosen client default, else last_30) and
+    // the admin-only save endpoint for the "Make default" control.
+    const DEFAULT_DATE_PRESET = {default_date_preset_json};
+    const DEFAULT_DATE_RANGE_API = "{_aurl(f'/api/clients/{api_client_key}/default-date-range')}";
+    // Campaign Explorer allowlist (campaign names the client may see; empty = all)
+    // and the admin-only endpoint that saves it from the "Campaigns" picker.
+    const EXPLORER_CAMPAIGN_ALLOWLIST = {explorer_campaign_allowlist_json};
+    const EXPLORER_CAMPAIGNS_API = "{_aurl(f'/api/clients/{api_client_key}/explorer/campaigns')}";
 
     // ---- Overview edit mode: hide / show / reorder cards (admin only) ----
     // Admins toggle edit mode on the Overview pane, then hide a card (it greys
@@ -2778,6 +2875,72 @@ def render_bigquery_dashboard_page(
         }}
       }});
     }})();
+    // Admin "Campaigns" picker: restrict the Explorer to a chosen subset of
+    // campaigns. The checklist is built (on open) from the campaigns currently
+    // loaded plus any already-saved names; Save POSTs the ticked set and reloads.
+    (function(){{
+      const btn = document.getElementById('ecEditBtn'); if (!btn) return;
+      const pop = document.getElementById('ecPop');
+      const list = document.getElementById('ecList');
+      const search = document.getElementById('ecSearch');
+      const selAll = document.getElementById('ecSelectAll');
+      const clr = document.getElementById('ecClear');
+      const save = document.getElementById('ecSave');
+      const status = document.getElementById('ecStatus');
+      const count = document.getElementById('ecCount');
+      const badge = document.getElementById('ecBadge');
+      const chosen = new Set(EXPLORER_CAMPAIGN_ALLOWLIST);
+      if (EXPLORER_CAMPAIGN_ALLOWLIST.length) {{ badge.hidden=false; badge.textContent=String(EXPLORER_CAMPAIGN_ALLOWLIST.length); }}
+      const updateCount = () => {{
+        const n = list.querySelectorAll('input:checked').length;
+        count.textContent = n ? (n + ' selected') : 'All campaigns';
+      }};
+      function build(){{
+        // Union of currently-loaded campaign names and any already-saved ones, so
+        // a saved campaign with no spend in the current range still shows (checked).
+        const names = new Set();
+        for (const r of explorerRows) {{ const n=String(r.campaign_name||''); if (n) names.add(n); }}
+        for (const n of chosen) names.add(n);
+        const sorted = [...names].sort((a,b)=>a.localeCompare(b));
+        if (!sorted.length) {{ list.innerHTML = '<div class="ec-empty">No campaigns loaded yet.</div>'; updateCount(); return; }}
+        list.innerHTML = sorted.map(n=>`<label class="ec-option"><input type="checkbox" value="${{esc(n)}}"${{chosen.has(n)?' checked':''}}><span class="ec-name" title="${{esc(n)}}">${{esc(n)}}</span></label>`).join('');
+        updateCount();
+      }}
+      const setOpen = (o) => {{ pop.hidden = !o; btn.setAttribute('aria-expanded', o ? 'true' : 'false'); if (o) {{ build(); search.value=''; status.className='ef-status'; status.textContent=''; }} }};
+      btn.addEventListener('click', (e) => {{ e.stopPropagation(); setOpen(pop.hidden); }});
+      pop.addEventListener('click', (e) => e.stopPropagation());
+      pop.querySelector('.ef-pop-x').addEventListener('click', () => setOpen(false));
+      document.addEventListener('click', () => setOpen(false));
+      document.addEventListener('keydown', (e) => {{ if (e.key === 'Escape') setOpen(false); }});
+      list.addEventListener('change', updateCount);
+      search.addEventListener('input', () => {{
+        const q = search.value.trim().toLowerCase();
+        list.querySelectorAll('.ec-option').forEach(o => {{
+          const n = o.querySelector('.ec-name').textContent.toLowerCase();
+          o.hidden = !!q && !n.includes(q);
+        }});
+      }});
+      selAll.addEventListener('click', () => {{ list.querySelectorAll('.ec-option:not([hidden]) input').forEach(cb=>cb.checked=true); updateCount(); }});
+      clr.addEventListener('click', () => {{ list.querySelectorAll('input').forEach(cb=>cb.checked=false); updateCount(); }});
+      save.addEventListener('click', async () => {{
+        const campaigns = [...list.querySelectorAll('input:checked')].map(cb=>cb.value);
+        save.disabled = true; status.className='ef-status'; status.textContent='Saving…';
+        try {{
+          const r = await fetch(EXPLORER_CAMPAIGNS_API, {{
+            method:'POST', credentials:'same-origin',
+            headers:{{ 'Content-Type':'application/json' }},
+            body: JSON.stringify({{ campaigns }}),
+          }});
+          const b = await r.json().catch(() => ({{}}));
+          if (!r.ok) throw new Error((b && (b.detail && (b.detail.error || b.detail) || b.detail)) || r.statusText);
+          status.className='ef-status ok'; status.textContent='Saved. Reloading…';
+          setTimeout(() => window.location.reload(), 600);
+        }} catch (err) {{
+          status.className='ef-status err'; status.textContent='Save failed: ' + (err.message || err);
+          save.disabled = false;
+        }}
+      }});
+    }})();
     const explorerFilterState = new Map(); // groupId -> Set of active chip labels
     let explorerRows = [];
     let verifiedByAdId = {{}};
@@ -3069,8 +3232,17 @@ def render_bigquery_dashboard_page(
       return `<span class="tree-count" title="${{n}} ${{label}}" aria-label="${{n}} ${{label}}">`
         + `<span class="tc-dots" aria-hidden="true">${{dots}}</span></span>`;
     }}
+    // Campaign allowlist: when an admin has scoped this portal to specific
+    // campaigns, everything the Explorer shows (table + summary cards + counts)
+    // is limited to that set. Empty allowlist = no restriction.
+    const _campaignAllowSet = new Set(EXPLORER_CAMPAIGN_ALLOWLIST);
+    function explorerAllowedRows() {{
+      if (!_campaignAllowSet.size) return explorerRows;
+      return explorerRows.filter(r => _campaignAllowSet.has(String(r.campaign_name||'')));
+    }}
     function renderExplorer() {{
-      const filtered=explorerRows.filter(explorerRowMatches);
+      const base=explorerAllowedRows();
+      const filtered=base.filter(explorerRowMatches);
       // Aggregate summary cards — slice with the same filters as the table
       // (date range, Platform chips, and the explorer filter chips).
       const agg=withCtr(filtered.reduce((a,r)=>{{addMetrics(a,r);return a;}}, zeroMetrics()));
@@ -3108,9 +3280,9 @@ def render_bigquery_dashboard_page(
         el.innerHTML=head+`<tbody>${{body}}</tbody>`;
       }}
       const filterActive=[...explorerFilterState.values()].some(s=>s.size);
-      const totalCampaigns=new Set(explorerRows.map(r=>r.campaign_name||'—')).size;
-      setStatus('explorerStatus', explorerRows.length
-        ? (filterActive ? `${{tree.size}} of ${{totalCampaigns}} campaign(s)` : `${{tree.size}} campaign(s) · ${{explorerRows.length}} ads`)
+      const totalCampaigns=new Set(base.map(r=>r.campaign_name||'—')).size;
+      setStatus('explorerStatus', base.length
+        ? (filterActive ? `${{tree.size}} of ${{totalCampaigns}} campaign(s)` : `${{tree.size}} campaign(s) · ${{base.length}} ads`)
         : 'No campaigns found');
     }}
     function toggleExplorerRow(row) {{
@@ -4356,6 +4528,38 @@ def render_bigquery_dashboard_page(
     document.getElementById('datePresets').addEventListener('change',ev=>{{
       applyPreset(ev.target.value);
     }});
+    // ---- Admin "Make default" range control ----
+    // Checking "Make default" and clicking Apply saves the currently-selected
+    // preset as this client's landing range (portal-wide); unchecking + Apply
+    // clears it back to the built-in default. Admin-only (the button/checkbox
+    // aren't rendered for clients).
+    (function(){{
+      const apply = document.getElementById('rangeApply');
+      const chk = document.getElementById('rangeMakeDefault');
+      const sel = document.getElementById('datePresets');
+      const status = document.getElementById('rangeDefaultStatus');
+      if (!apply || !chk || !sel) return;
+      apply.addEventListener('click', async () => {{
+        const preset = chk.checked ? (sel.value || '') : '';
+        apply.disabled = true; status.className = 'range-default-status'; status.textContent = 'Saving…';
+        try {{
+          const r = await fetch(DEFAULT_DATE_RANGE_API, {{
+            method: 'POST', credentials: 'same-origin',
+            headers: {{ 'Content-Type': 'application/json' }},
+            body: JSON.stringify({{ preset }}),
+          }});
+          const b = await r.json().catch(() => ({{}}));
+          if (!r.ok) throw new Error((b && (b.detail && (b.detail.error || b.detail) || b.detail)) || r.statusText);
+          status.className = 'range-default-status ok';
+          status.textContent = chk.checked ? 'Saved as default' : 'Default cleared';
+          setTimeout(() => {{ if (status.textContent==='Saved as default' || status.textContent==='Default cleared') {{ status.className='range-default-status'; status.textContent=''; }} }}, 2600);
+        }} catch (err) {{
+          status.className = 'range-default-status err'; status.textContent = 'Save failed';
+        }} finally {{
+          apply.disabled = false;
+        }}
+      }});
+    }})();
 
     // ---- Platform chips ----
     if (HAS_PAID_ADS) {{
@@ -4446,7 +4650,7 @@ def render_bigquery_dashboard_page(
     }}
     document.querySelectorAll('[data-close-preview]').forEach(el=>el.addEventListener('click', closeCreativePreview));
     document.addEventListener('keydown', ev=>{{ if (ev.key==='Escape') closeCreativePreview(); }});
-    applyPreset('last_30');
+    applyPreset(DEFAULT_DATE_PRESET || 'last_30');
 
     // Deep-link + page-visibility prefs: land on the tab named in ?view= (set
     // by the sidebar links on Settings/Files/Connectors), unless an admin hid
