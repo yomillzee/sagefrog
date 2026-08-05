@@ -187,6 +187,49 @@ class NewPanelsTests(unittest.TestCase):
         self.assertNotIn('id="loEngagementChart"', html)
 
 
+class DateRangeFilterTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._orig_shell = R.render_client_shell_page
+        R.render_client_shell_page = lambda **kw: kw["content_html"]  # type: ignore
+
+    def tearDown(self) -> None:
+        R.render_client_shell_page = self._orig_shell  # type: ignore
+
+    def _html(self, range_days) -> str:
+        return R.render_linkedin_organic(
+            client_slug="nixon", label="Nixon Medical", report=_report(),
+            range_days=range_days, use_session=True,
+        )
+
+    def test_picker_present_with_all_presets(self) -> None:
+        html = self._html(90)
+        self.assertIn('id="loRange"', html)
+        self.assertIn("Date range", html)
+        for value, _days, label in R._RANGE_PRESETS:
+            self.assertIn(f'value="{value}"', html)
+            self.assertIn(label, html)
+
+    def test_selected_option_matches_range(self) -> None:
+        self.assertIn('<option value="30" selected>', self._html(30))
+        self.assertIn('<option value="365" selected>', self._html(365))
+
+    def test_window_labels_track_selected_range(self) -> None:
+        # The "last N days" status text reflects the chosen window, not a constant.
+        self.assertIn("last 7 days", self._html(7))
+        self.assertIn("in 7 days", self._html(7))  # follower delta badge
+        self.assertNotIn("last 90 days", self._html(7))
+
+    def test_default_and_bogus_fall_back_to_90(self) -> None:
+        for bad in ("bogus", 999, None):
+            self.assertIn('<option value="90" selected>', self._html(bad))
+
+    def test_sanitize_range_days(self) -> None:
+        self.assertEqual(R.sanitize_range_days("30"), 30)
+        self.assertEqual(R.sanitize_range_days(180), 180)
+        self.assertEqual(R.sanitize_range_days("999"), 90)
+        self.assertEqual(R.sanitize_range_days(None), 90)
+
+
 class FollowerTotalFallbackTests(unittest.TestCase):
     def test_sums_largest_segment_dimension(self) -> None:
         payload = {"elements": [{

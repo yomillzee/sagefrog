@@ -168,11 +168,15 @@ def linkedin_organic_page(
     cfg = client_config.load_client_config(slug)
     label = cfg.label if cfg else slug
 
-    report = linkedin_organic_report_service.build_report(slug)
+    range_days = linkedin_organic_renderer.sanitize_range_days(
+        request.query_params.get("range")
+    )
+    report = linkedin_organic_report_service.build_report(slug, days=range_days)
     return HTMLResponse(linkedin_organic_renderer.render_linkedin_organic(
         client_slug=slug,
         label=label,
         report=report,
+        range_days=range_days,
         **_session_kw(access_key, use_session, session_email, session_is_admin),
     ))
 
