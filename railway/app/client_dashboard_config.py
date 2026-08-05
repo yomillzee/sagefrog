@@ -159,8 +159,8 @@ SCHEMA_SQL_STATEMENTS = [
 ]
 
 # The date-range presets the dashboard's Range picker offers; a stored
-# default_date_preset must be one of these (mirrors the <option> values in
-# bigquery_dashboard_renderer's #datePresets select).
+# default_date_preset must be one of these (mirrors the preset rows in
+# bigquery_dashboard_renderer's #rangeDropdown).
 DATE_RANGE_PRESETS: tuple[str, ...] = (
     "last_7",
     "last_30",

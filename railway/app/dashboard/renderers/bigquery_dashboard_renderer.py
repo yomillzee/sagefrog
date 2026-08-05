@@ -653,20 +653,33 @@ def render_bigquery_dashboard_page(
         ("this_week", "This week"), ("last_week", "Last week"),
         ("this_month", "This month"), ("last_month", "Last month"),
     ]
-    date_preset_options_html = "".join(
-        f'<option value="{v}"{" selected" if v == effective_default_preset else ""}>{lbl}</option>'
+    date_preset_labels_json = json.dumps(dict(_DATE_PRESET_LABELS))
+    # The raw stored default ('' when the client has none) — distinct from the
+    # effective preset above, which falls back to last_30. The dropdown JS uses it
+    # to decide whether "Make default" starts ticked and whether Apply clears.
+    stored_default_preset_json = json.dumps(
+        default_date_preset if default_date_preset in _DATE_PRESETS else ""
+    )
+    # The Range picker is a custom dropdown (so the admin "Make default" + Apply
+    # controls live inside the panel, under the preset list). Each preset is a
+    # selectable row; the built-in default row starts active.
+    range_option_rows_html = "".join(
+        f'<button type="button" class="range-opt{" active" if v == effective_default_preset else ""}" role="option" data-preset="{v}">{lbl}</button>'
         for v, lbl in _DATE_PRESET_LABELS
     )
-    # Admin-only "Make default" control next to the Range picker: checking it and
-    # clicking Apply saves the currently-selected preset as this client's landing
-    # range (portal-wide); unchecking + Apply clears it. Non-admins never see it.
-    # ``checked`` reflects whether a client default is currently stored.
-    range_default_html = "" if not session_is_admin else f"""<label class="range-default" title="Land on the selected range for this client">
-            <input type="checkbox" id="rangeMakeDefault"{" checked" if default_date_preset in _DATE_PRESETS else ""}>
-            <span>Make default</span>
-          </label>
-          <button type="button" class="range-apply" id="rangeApply">Apply</button>
-          <span class="range-default-status" id="rangeDefaultStatus"></span>"""
+    effective_default_label = next(
+        (lbl for v, lbl in _DATE_PRESET_LABELS if v == effective_default_preset),
+        "Last 30 days",
+    )
+    # Admin-only footer inside the Range dropdown: a "Make default" checkbox +
+    # Apply button that saves the applied preset as this client's landing range
+    # (or clears it). Non-admins see only the preset list. The checkbox's ticked
+    # state and Apply's save/clear behavior are driven by the dropdown JS.
+    range_default_html = "" if not session_is_admin else """<div class="range-dd-foot">
+              <label class="range-default" title="Land on the applied range for this client"><input type="checkbox" id="rangeMakeDefault"><span>Make default</span></label>
+              <button type="button" class="range-apply" id="rangeApply">Apply</button>
+              <span class="range-default-status" id="rangeDefaultStatus"></span>
+            </div>"""
     # Campaign Explorer allowlist (campaign names the client may see). Empty list
     # = no restriction. Escape "<" so a campaign name can't break the <script>.
     explorer_campaign_allowlist_json = json.dumps(
@@ -1046,17 +1059,24 @@ def render_bigquery_dashboard_page(
        Platform filter to Overview/Explorer via switchTab()'s pf.hidden toggle. */
     .filter-group[hidden] {{ display:none; }}
     .filter-label {{ color:var(--muted); font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }}
-    .range-select {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:8px; padding:5px 28px 5px 11px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%230a2540' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 9px center; }}
-    .range-select:hover {{ border-color:#b9c8dc; background-color:#f4f8fd; }}
-    .range-select:focus {{ outline:none; border-color:var(--accent); }}
-    /* Admin-only "Make default" range control (checkbox + Apply). The generic
+    /* Range picker: a custom dropdown so the admin "Make default" + Apply
+       controls live inside the panel, under the preset list. Reuses the .ke-dd-*
+       base styling (toggle/panel/caret); these tune sizing + the option rows. */
+    .range-dd-toggle {{ min-width:150px; }}
+    .range-dd-panel {{ width:220px; }}
+    .range-dd-list {{ max-height:none; }}
+    .range-opt {{ display:block; width:100%; text-align:left; border:0; background:none; border-radius:6px; padding:7px 9px; font:inherit; font-size:.82rem; font-weight:600; color:var(--navy); cursor:pointer; }}
+    .range-opt:hover {{ background:#f4f8fd; }}
+    .range-opt.active {{ background:#eaf2fd; color:var(--accent); }}
+    /* Admin footer inside the Range dropdown (checkbox + Apply). The generic
        label rule above forces grid/uppercase, so reset to an inline checkbox. */
+    .range-dd-foot {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px; padding-top:8px; border-top:1px solid var(--line-soft); }}
     .range-default {{ display:inline-flex; align-items:center; gap:5px; margin:0; text-transform:none; letter-spacing:0; font-size:.74rem; font-weight:700; color:var(--muted); cursor:pointer; white-space:nowrap; }}
     .range-default input {{ margin:0; cursor:pointer; accent-color:var(--accent); }}
     .range-apply {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:8px; padding:5px 12px; font:inherit; font-size:.76rem; font-weight:700; cursor:pointer; transition:background .15s,border-color .15s; }}
     .range-apply:hover:not(:disabled) {{ border-color:#b9c8dc; background:#f4f8fd; }}
     .range-apply:disabled {{ opacity:.55; cursor:default; }}
-    .range-default-status {{ font-size:.72rem; font-weight:600; text-transform:none; letter-spacing:0; color:var(--muted); }}
+    .range-default-status {{ flex-basis:100%; font-size:.72rem; font-weight:600; text-transform:none; letter-spacing:0; color:var(--muted); }}
     .range-default-status.err {{ color:var(--bad); }}
     .range-default-status.ok {{ color:#178a4c; }}
     .chips {{ display:flex; flex-wrap:wrap; gap:5px; }}
@@ -1556,10 +1576,18 @@ def render_bigquery_dashboard_page(
       <div class="date-bar-bottom">
         <div class="filter-group">
           <span class="filter-label">Range</span>
-          <select class="range-select" id="datePresets" aria-label="Date range">
-            {date_preset_options_html}
-          </select>
-          {range_default_html}
+          <div class="ke-dropdown range-dd" id="rangeDropdown">
+            <button type="button" class="ke-dd-toggle range-dd-toggle" id="rangeToggle" aria-haspopup="listbox" aria-expanded="false">
+              <span id="rangeToggleLabel">{effective_default_label}</span>
+              <span class="ke-dd-caret">▾</span>
+            </button>
+            <div class="ke-dd-panel range-dd-panel" id="rangePanel" hidden>
+              <div class="ke-dd-list range-dd-list" id="rangeList" role="listbox">
+                {range_option_rows_html}
+              </div>
+              {range_default_html}
+            </div>
+          </div>
         </div>
         <div class="filter-group" id="keyEventFilterGroup" hidden>
           <span class="filter-label">Events</span>
@@ -1824,11 +1852,18 @@ def render_bigquery_dashboard_page(
     // Landing date-range preset (admin-chosen client default, else last_30) and
     // the admin-only save endpoint for the "Make default" control.
     const DEFAULT_DATE_PRESET = {default_date_preset_json};
+    // The raw stored default ('' when none) and preset→label map, used by the
+    // Range dropdown to seed the "Make default" checkbox and the toggle label.
+    let STORED_DEFAULT_PRESET = {stored_default_preset_json};
+    const DATE_PRESET_LABELS = {date_preset_labels_json};
     const DEFAULT_DATE_RANGE_API = "{_aurl(f'/api/clients/{api_client_key}/default-date-range')}";
     // Campaign Explorer allowlist (campaign names the client may see; empty = all)
     // and the admin-only endpoint that saves it from the "Campaigns" picker.
     const EXPLORER_CAMPAIGN_ALLOWLIST = {explorer_campaign_allowlist_json};
     const EXPLORER_CAMPAIGNS_API = "{_aurl(f'/api/clients/{api_client_key}/explorer/campaigns')}";
+    // Admin endpoint behind the Explorer kebab's "Budget tracker" toggle (form
+    // POST show=1/0). Uses client_slug (a /dashboard route), not api_client_key.
+    const BUDGET_VISIBILITY_API = "{_aurl(f'/dashboard/{client_slug}/budget-visibility')}";
 
     // ---- Overview edit mode: hide / show / reorder cards (admin only) ----
     // Admins toggle edit mode on the Overview pane, then hide a card (it greys
@@ -1891,6 +1926,10 @@ def render_bigquery_dashboard_page(
             item.classList.add('menu-open');
             kebab.setAttribute('aria-expanded', 'true');
             if (menu) menu.hidden = false;
+            // Reflect the live budget-tracker state on its checkable menu item
+            // (the section is only in the DOM when the tracker is showing).
+            const bt = item.querySelector('[data-action="toggle-budget"]');
+            if (bt) bt.setAttribute('aria-checked', document.getElementById('sec-budget') ? 'true' : 'false');
           }}
           return;
         }}
@@ -1904,6 +1943,22 @@ def render_bigquery_dashboard_page(
             const navBtn = document.querySelector('.dash-view-btn[data-tab="overview"]');
             if (navBtn && !navBtn.classList.contains('active')) navBtn.click();
             setEditing(true);
+          }} else if (action.getAttribute('data-action') === 'toggle-budget') {{
+            // Flip the Campaign Explorer's budget-tracker visibility for this
+            // client (admin-only, portal-wide), then reload so the section
+            // appears/disappears. #sec-budget presence is the current state.
+            const navBtn = document.querySelector('.dash-view-btn[data-tab="explorer"]');
+            if (navBtn && !navBtn.classList.contains('active')) navBtn.click();
+            const showing = !!document.getElementById('sec-budget');
+            fetch(BUDGET_VISIBILITY_API, {{
+              method: 'POST', credentials: 'same-origin',
+              headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
+              body: 'show=' + (showing ? '0' : '1'),
+            }}).then(function (r) {{ return r.json().catch(function () {{ return {{}}; }}); }})
+              .then(function (b) {{
+                if (b && b.ok) window.location.reload();
+                else alert('Could not update the budget tracker: ' + ((b && b.error) || 'unknown error'));
+              }}).catch(function () {{ alert('Could not update the budget tracker.'); }});
           }}
           return;
         }}
@@ -4522,43 +4577,70 @@ def render_bigquery_dashboard_page(
       else return;
       currentStart=fmtDate(s); currentEnd=fmtDate(e);
       compareStart=fmtDate(cs); compareEnd=fmtDate(ce);
-      const sel=document.getElementById('datePresets'); if (sel && sel.value!==name) sel.value=name;
+      syncRangeUI(name);
       loadCurrentTab();
     }}
-    document.getElementById('datePresets').addEventListener('change',ev=>{{
-      applyPreset(ev.target.value);
-    }});
-    // ---- Admin "Make default" range control ----
-    // Checking "Make default" and clicking Apply saves the currently-selected
-    // preset as this client's landing range (portal-wide); unchecking + Apply
-    // clears it back to the built-in default. Admin-only (the button/checkbox
-    // aren't rendered for clients).
+    // ---- Range dropdown (custom): preset list + admin "Make default" / Apply ----
+    // The preset list instant-applies on click (the panel stays open so an admin
+    // can then tick "Make default" and Apply). syncRangeUI is hoisted so
+    // applyPreset can refresh the toggle label + active row on every change.
+    let currentPreset = DEFAULT_DATE_PRESET || 'last_30';
+    function syncRangeUI(name) {{
+      currentPreset = name;
+      const lbl = document.getElementById('rangeToggleLabel');
+      if (lbl && DATE_PRESET_LABELS[name]) lbl.textContent = DATE_PRESET_LABELS[name];
+      document.querySelectorAll('#rangeList .range-opt').forEach(o =>
+        o.classList.toggle('active', o.dataset.preset === name));
+      const chk = document.getElementById('rangeMakeDefault');
+      if (chk) chk.checked = !!STORED_DEFAULT_PRESET && STORED_DEFAULT_PRESET === name;
+    }}
     (function(){{
+      const dd = document.getElementById('rangeDropdown'); if (!dd) return;
+      const toggle = document.getElementById('rangeToggle');
+      const panel = document.getElementById('rangePanel');
+      const list = document.getElementById('rangeList');
+      const setOpen = (o) => {{ panel.hidden=!o; dd.classList.toggle('open', o); toggle.setAttribute('aria-expanded', o?'true':'false'); }};
+      toggle.addEventListener('click', e=>{{ e.stopPropagation(); setOpen(panel.hidden); }});
+      panel.addEventListener('click', e=>e.stopPropagation());
+      document.addEventListener('click', ()=>setOpen(false));
+      document.addEventListener('keydown', e=>{{ if (e.key==='Escape') setOpen(false); }});
+      list.addEventListener('click', e=>{{
+        const opt = e.target.closest('.range-opt'); if (!opt) return;
+        applyPreset(opt.dataset.preset);
+      }});
+      // Admin footer: persist (or clear) the applied preset as the client default.
       const apply = document.getElementById('rangeApply');
       const chk = document.getElementById('rangeMakeDefault');
-      const sel = document.getElementById('datePresets');
       const status = document.getElementById('rangeDefaultStatus');
-      if (!apply || !chk || !sel) return;
-      apply.addEventListener('click', async () => {{
-        const preset = chk.checked ? (sel.value || '') : '';
-        apply.disabled = true; status.className = 'range-default-status'; status.textContent = 'Saving…';
-        try {{
-          const r = await fetch(DEFAULT_DATE_RANGE_API, {{
-            method: 'POST', credentials: 'same-origin',
-            headers: {{ 'Content-Type': 'application/json' }},
-            body: JSON.stringify({{ preset }}),
-          }});
-          const b = await r.json().catch(() => ({{}}));
-          if (!r.ok) throw new Error((b && (b.detail && (b.detail.error || b.detail) || b.detail)) || r.statusText);
-          status.className = 'range-default-status ok';
-          status.textContent = chk.checked ? 'Saved as default' : 'Default cleared';
-          setTimeout(() => {{ if (status.textContent==='Saved as default' || status.textContent==='Default cleared') {{ status.className='range-default-status'; status.textContent=''; }} }}, 2600);
-        }} catch (err) {{
-          status.className = 'range-default-status err'; status.textContent = 'Save failed';
-        }} finally {{
-          apply.disabled = false;
-        }}
-      }});
+      if (apply && chk) {{
+        apply.addEventListener('click', async () => {{
+          // Non-destructive: tick → save the applied preset; untick → clear only a
+          // stored default that matches what's applied, so viewing a non-default
+          // range and hitting Apply never wipes an unrelated default.
+          let preset;
+          if (chk.checked) preset = currentPreset;
+          else if (STORED_DEFAULT_PRESET && STORED_DEFAULT_PRESET === currentPreset) preset = '';
+          else {{ setOpen(false); return; }}
+          apply.disabled = true; status.className='range-default-status'; status.textContent='Saving…';
+          try {{
+            const r = await fetch(DEFAULT_DATE_RANGE_API, {{
+              method:'POST', credentials:'same-origin',
+              headers:{{ 'Content-Type':'application/json' }},
+              body: JSON.stringify({{ preset }}),
+            }});
+            const b = await r.json().catch(()=>({{}}));
+            if (!r.ok) throw new Error((b && (b.detail && (b.detail.error || b.detail) || b.detail)) || r.statusText);
+            STORED_DEFAULT_PRESET = preset;
+            status.className='range-default-status ok';
+            status.textContent = preset ? 'Saved as default' : 'Default cleared';
+            setTimeout(()=>setOpen(false), 700);
+          }} catch (err) {{
+            status.className='range-default-status err'; status.textContent='Save failed';
+          }} finally {{
+            apply.disabled = false;
+          }}
+        }});
+      }}
     }})();
 
     // ---- Platform chips ----
