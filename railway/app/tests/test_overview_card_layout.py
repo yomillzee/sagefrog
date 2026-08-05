@@ -108,14 +108,20 @@ class OverviewCardLayoutTests(unittest.TestCase):
         self.assertNotIn("data-ov-pin", html)
         self.assertNotIn("ov-pin", html)
 
-    def test_kebab_scoped_to_overview_nav_item(self) -> None:
+    def test_kebab_on_editable_nav_items(self) -> None:
         html = self._render(None, is_admin=True)
-        # The editable wrapper + kebab belong to the Overview nav item only.
+        # Overview and Campaign Explorer are the editable nav items, each wrapped
+        # with a kebab: Overview edits its card layout, Explorer toggles its
+        # budget tracker.
         self.assertIn('data-view-item="overview"', html)
         self.assertIn('data-edit-tab="overview"', html)
-        self.assertNotIn('data-view-item="explorer"', html)
-        # Other tabs remain plain nav buttons.
-        self.assertIn('data-tab="explorer"', html)
+        self.assertIn('data-action="edit-layout"', html)
+        self.assertIn('data-view-item="explorer"', html)
+        self.assertIn('data-edit-tab="explorer"', html)
+        self.assertIn('data-action="toggle-budget"', html)
+        # A non-editable tab (Website Analytics) stays a plain nav button.
+        self.assertNotIn('data-view-item="analytics"', html)
+        self.assertIn('data-tab="analytics"', html)
 
     def test_wrapper_keys_are_known_cards(self) -> None:
         from dashboard.renderers.bigquery_dashboard_renderer import (
