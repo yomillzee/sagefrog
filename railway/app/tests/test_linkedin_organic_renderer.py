@@ -219,6 +219,17 @@ class DateRangeFilterTests(unittest.TestCase):
         self.assertIn("addEventListener('change'", html)
         self.assertIn("searchParams.set('range'", html)
 
+    def test_picker_lives_in_sticky_filter_bar(self) -> None:
+        # The date range sits in a sticky top filter bar (Overview .date-bar
+        # look), with the page title, and the old .lo-head layout is gone.
+        html = self._html(90)
+        self.assertIn('class="lo-bar"', html)
+        self.assertIn('<h1>LinkedIn Organic</h1>', html)
+        self.assertNotIn('class="lo-head"', html)
+        # The range control is nested inside the bar.
+        bar = html.split('class="lo-bar"', 1)[1].split("</div></div></div>", 1)[0]
+        self.assertIn('id="loRange"', bar)
+
     def test_selected_option_matches_range(self) -> None:
         self.assertIn('<option value="30" selected>', self._html(30))
         self.assertIn('<option value="365" selected>', self._html(365))

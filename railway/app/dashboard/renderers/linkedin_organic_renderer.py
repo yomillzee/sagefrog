@@ -49,10 +49,18 @@ def sanitize_range_days(raw: Any) -> int:
 # shell's :root doesn't define (--line-soft, --radius-sm) are inlined here.
 _EXTRA_CSS = """
 .lo-wrap { width:100%; }
-.lo-head { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:18px; }
-.lo-title { font-size:1.5rem; font-weight:800; color:var(--navy); margin:0; letter-spacing:-.02em; }
-.lo-sub { font-size:.9rem; color:var(--muted); margin:5px 0 0; }
 .lo-note { font-size:.88rem; color:var(--muted); background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin:0 0 16px; }
+
+/* Sticky full-bleed filter bar — mirrors the Overview page's `.date-bar`.
+   Negative margins break the bar out of the shell's .dash-content padding so it
+   spans the content column edge-to-edge; its own inner padding re-aligns the
+   title/filter with the cards below. On small screens it rests just under the
+   fixed 52px mobile top bar (top:52px). */
+.lo-bar { position:sticky; top:0; z-index:40; background:#fff; border-bottom:1px solid var(--border); box-shadow:0 1px 0 rgba(16,33,67,.04), 0 6px 16px -12px rgba(16,33,67,.28); margin:-28px -32px 22px; }
+.lo-bar-inner { display:flex; align-items:center; justify-content:space-between; gap:10px 20px; flex-wrap:wrap; padding:12px 32px; }
+.lo-bar-title { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.lo-bar-title h1 { margin:0; font-size:1.15rem; font-weight:800; color:var(--navy); letter-spacing:-.02em; }
+.lo-bar-title p { margin:0; font-size:.8rem; color:var(--muted); overflow:hidden; text-overflow:ellipsis; }
 
 /* Date-range filter — native select styled to match the dashboard chrome. */
 .lo-range { display:flex; align-items:center; gap:9px; flex-shrink:0; }
@@ -60,6 +68,9 @@ _EXTRA_CSS = """
 .lo-range select { font:inherit; font-size:.82rem; font-weight:650; color:var(--navy); background-color:#fff; border:1px solid var(--border); border-radius:9px; padding:7px 30px 7px 12px; cursor:pointer; -webkit-appearance:none; appearance:none; background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6l4 4 4-4'/></svg>"); background-repeat:no-repeat; background-position:right 10px center; background-size:12px; transition:border-color .12s; }
 .lo-range select:hover { border-color:var(--accent); }
 .lo-range select:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+
+@media (max-width:900px){ .lo-bar { top:52px; } }
+@media (max-width:720px){ .lo-bar { margin:-18px -16px 18px; } .lo-bar-inner { padding:11px 16px; } }
 
 /* Section panels — matches the Overview/Explorer `section` chrome. */
 .lo-wrap section { background:#fff; border:1px solid var(--border); border-radius:var(--radius); padding:18px 20px 20px; margin-bottom:16px; box-shadow:var(--shadow-sm); }
@@ -187,6 +198,22 @@ def _range_picker(current_days: int) -> str:
         f'<select id="loRange" aria-label="Date range">'
         f'{"".join(options)}</select>'
         '</div>'
+    )
+
+
+def _filter_bar(label: str, window_days: int, *, subtitle: str | None = None) -> str:
+    """Sticky top filter bar: page identity on the left, date-range control on
+    the right — the LinkedIn Organic equivalent of the Overview `.date-bar`."""
+    sub = (
+        f'Company-page posts, followers &amp; page analytics for {_esc(label)}.'
+        if subtitle is None else _esc(subtitle)
+    )
+    sub_html = f'<p>{sub}</p>' if sub else ""
+    return (
+        '<div class="lo-bar"><div class="lo-bar-inner">'
+        f'<div class="lo-bar-title"><h1>LinkedIn Organic</h1>{sub_html}</div>'
+        f'{_range_picker(window_days)}'
+        '</div></div>'
     )
 
 
@@ -589,13 +616,11 @@ def render_linkedin_organic(
     session_is_admin: bool = False,
 ) -> str:
     window_days = sanitize_range_days(range_days)
-    range_picker = _range_picker(window_days)
     range_script = _range_script()
     if not report.configured:
         content = (
             '<div class="lo-wrap">'
-            '<div class="lo-head"><div><h1 class="lo-title">LinkedIn Organic</h1></div>'
-            f'{range_picker}</div>'
+            f'{_filter_bar(label, window_days, subtitle="")}'
             f'<div class="lo-note">{_esc(report.error or "LinkedIn Organic is not configured for this client.")} '
             'Connect the LinkedIn Organic connector and run a sync to enable these reports.</div>'
             '</div>'
@@ -724,13 +749,7 @@ def render_linkedin_organic(
     sort_script = (_sort_script() + _resize_script()) if report.top_posts else ""
     content = f"""
       <div class="lo-wrap">
-        <div class="lo-head">
-          <div>
-            <h1 class="lo-title">LinkedIn Organic</h1>
-            <p class="lo-sub">Company-page posts, followers &amp; page analytics for {_esc(label)}.</p>
-          </div>
-          {range_picker}
-        </div>
+        {_filter_bar(label, window_days)}
         {note}
         {kpi_section}
         {trends_section}
