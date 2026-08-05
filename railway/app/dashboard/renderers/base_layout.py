@@ -876,11 +876,36 @@ def platform_nav_flags(client_slug: str) -> dict[str, bool]:
     connector is connected ("show only what has data"). Onboarding a new client
     is then just connecting their sources — no code change.
     """
-    try:
-        import connector_config_store
-        configs = connector_config_store.list_configs(client_slug)
-    except Exception:
-        return {"show_connectors": False, "show_lead_tracking": False, "show_gsc": False}
+    # Read the connector state, retrying once on error. The read can throw on a
+    # transient Postgres hiccup (e.g. the DeadlockDetected the deploy notes call
+    # out under load); a heavy page like Overview fires many concurrent queries
+    # and is the most likely to hit one. Without the retry that single blip would
+    # blank Lead Tracking / Email Performance from the sidebar on that page load
+    # while a lighter page (the Email Performance page itself) still showed them —
+    # exactly the "they disappear when I click Overview" symptom.
+    configs = None
+    for _attempt in range(2):
+        try:
+            import connector_config_store
+            configs = connector_config_store.list_configs(client_slug)
+            break
+        except Exception:
+            configs = None
+    if configs is None:
+        # Still couldn't read connector state. Return a COMPLETE flag set (every
+        # key present, all False) rather than a partial dict, so a caller's
+        # ``.get()`` is consistent and no item is dropped by a missing key.
+        return {
+            "show_connectors": False,
+            "show_lead_tracking": False,
+            "show_email_performance": False,
+            "show_linkedin_organic": False,
+            "show_gsc": False,
+            "show_gtm": False,
+            "show_pagespeed": False,
+            "show_semrush": False,
+            "show_consent": False,
+        }
     status_by_type = {c.connector_type: c.status for c in configs}
 
     def _connected(ctype: str) -> bool:
@@ -1396,12 +1421,16 @@ def render_client_shell_page(
     show_files: bool | None = None,
     show_connectors: bool | None = None,
     admin_tab: str | None = None,
+    include_chartjs: bool = False,
 ) -> str:
     """Shared dashboard chrome for settings, files, and other child pages.
 
     ``admin_tab`` (one of the ``_ADMIN_TAB_ITEMS`` keys) renders the Admin page's
     top tab strip above the content for admins — used by the Connectors, Consent,
     and admin-tool pages so they read as tabs of one Admin surface.
+
+    ``include_chartjs`` vendors the same Chart.js the Overview dashboard uses, so
+    a child page (e.g. Lead Tracking) can render charts identical to Overview's.
     """
     del page_subtitle, client_meta_tip, show_business_line, show_connectors
     theme = dashboard_theme.load_client_theme(client_slug)
@@ -1449,6 +1478,7 @@ def render_client_shell_page(
   <title>{_esc(label)} — {_esc(page_title)}</title>
   {favicon_head_html()}
   <script src="/static/vendor/htmx.min.js" defer></script>
+  {'<script src="/static/vendor/chart.umd.min.js"></script>' if include_chartjs else ''}
   <style>
     {dashboard_theme.root_css_block(theme)}
     * {{ box-sizing: border-box; }}

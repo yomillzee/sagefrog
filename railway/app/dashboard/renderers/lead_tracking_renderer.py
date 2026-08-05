@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from datetime import date, datetime
 from typing import Any
 
@@ -17,12 +16,11 @@ from hubspot_reports_service import LeadTrackingReport
 _SOURCE_PALETTE_KEYS = ("sidebar_from", "google", "meta", "organic", "linkedin", "business_line")
 
 _EXTRA_CSS = """
-.lt-wrap { max-width: 1200px; }
+/* Match Overview: a centered content column instead of hugging the sidebar. */
+.lt-wrap { max-width:1320px; margin:0 auto; }
 .lt-head { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:4px; }
 .lt-title { font-size:1.6rem; font-weight:750; color:var(--navy); margin:0; letter-spacing:-.01em; }
 .lt-sub { font-size:.9rem; color:var(--muted); margin:6px 0 0; }
-.lt-hs-tag { display:inline-flex; align-items:center; gap:7px; padding:7px 13px; border-radius:999px; background:#fff3ed; border:1px solid #ffd9c7; color:#c2410c; font-size:.78rem; font-weight:650; white-space:nowrap; }
-.lt-hs-dot { width:8px; height:8px; border-radius:50%; background:#ff7a59; }
 
 /* KPI tiles */
 .lt-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:16px; margin:22px 0 24px; }
@@ -53,14 +51,8 @@ _EXTRA_CSS = """
 .lt-delta.flat { background:var(--surface); color:var(--muted); }
 .lt-delta svg { width:13px; height:13px; }
 
-/* Time-series chart */
-.lt-chart { position:relative; width:100%; }
-.lt-chart svg { display:block; width:100%; height:auto; }
-.lt-chart-guide { position:absolute; top:0; width:1px; background:var(--accent); opacity:0; pointer-events:none; transition:opacity .1s; }
-.lt-chart-dot { position:absolute; width:11px; height:11px; margin:-6px 0 0 -6px; border-radius:50%; background:var(--accent); border:2.5px solid var(--panel); box-shadow:0 1px 4px rgba(11,92,171,.4); opacity:0; pointer-events:none; transition:opacity .1s; }
-.lt-chart-tip { position:absolute; transform:translate(-50%,-115%); background:var(--navy); color:#fff; padding:7px 11px; border-radius:9px; font-size:.76rem; line-height:1.35; white-space:nowrap; pointer-events:none; opacity:0; transition:opacity .1s; box-shadow:0 6px 18px rgba(10,37,64,.28); z-index:3; }
-.lt-chart-tip b { font-weight:750; font-size:.86rem; }
-.lt-chart-tip .lt-tip-m { color:#b9c9de; font-size:.7rem; text-transform:uppercase; letter-spacing:.04em; }
+/* Time-series chart — Chart.js canvas, sized like Overview's trend charts. */
+.lt-chart-host { position:relative; width:100%; height:260px; }
 
 /* Funnel */
 .lt-funnel { display:flex; flex-direction:column; gap:2px; }
@@ -102,12 +94,6 @@ _EXTRA_CSS = """
 
 @media (max-width:820px){ .lt-cols{ grid-template-columns:1fr; } .lt-cols .lt-card{ height:auto; } }
 """
-
-# ---- geometry for the SVG trend chart ----
-_VBW, _VBH = 900, 260
-_PAD_L, _PAD_R, _PAD_T, _PAD_B = 48, 18, 18, 34
-_PLOT_W = _VBW - _PAD_L - _PAD_R
-_PLOT_H = _VBH - _PAD_T - _PAD_B
 
 _MONTHS_ABBR = ("", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -154,17 +140,6 @@ def _fmt_dt(v: Any) -> str:
 
 def _source_label(src: str) -> str:
     return (src or "Unknown").replace("_", " ").title()
-
-
-def _nice_ceiling(v: float) -> float:
-    """Round a peak value up to a clean axis maximum."""
-    if v <= 0:
-        return 4.0
-    mag = 10 ** math.floor(math.log10(v))
-    for step in (1, 2, 2.5, 5, 10):
-        if v <= step * mag:
-            return step * mag
-    return 10 * mag
 
 
 def _fill_months(rows: list[dict[str, Any]]) -> list[tuple[int, int, int]]:
@@ -229,138 +204,92 @@ def _month_label(y: int, mo: int, *, with_year: bool) -> str:
 
 def _area_chart(series: list[tuple[int, int, int]], accent: str,
                 noun: str = "MQL", noun_plural: str = "MQLs") -> str:
-    """Inline SVG area+line trend chart with a JS-driven hover tooltip."""
+    """Hero trend chart, rendered with Chart.js to match the Overview dashboard.
+
+    Emits a sized ``<canvas>`` carrying its labels/values (and styling hints) as
+    data attributes; ``_CHART_JS`` reads them and builds the chart. Overview uses
+    the same vendored Chart.js, so the two trends now read as one family.
+    """
+    del noun  # aria label reads the plural noun below
     if len(series) < 2:
         return '<div class="lt-empty">Not enough monthly history yet to plot a trend.</div>'
 
-    peak = max((v for _, _, v in series), default=0)
-    max_y = _nice_ceiling(peak)
-    n = len(series)
+    labels = [
+        _month_label(y, mo, with_year=(mo == 1 or i == 0))
+        for i, (y, mo, _v) in enumerate(series)
+    ]
+    values = [v for _, _, v in series]
 
-    def _x(i: int) -> float:
-        return _PAD_L + _PLOT_W * (i / (n - 1))
-
-    def _y(v: float) -> float:
-        return _PAD_T + _PLOT_H * (1 - (v / max_y if max_y else 0))
-
-    pts = [(_x(i), _y(v)) for i, (_, _, v) in enumerate(series)]
-
-    # Horizontal gridlines + y-axis labels (0 .. max_y in 4 steps).
-    grid, ylabels = [], []
-    for g in range(5):
-        gv = max_y * g / 4
-        gy = _y(gv)
-        grid.append(
-            f'<line x1="{_PAD_L}" y1="{gy:.1f}" x2="{_VBW - _PAD_R}" y2="{gy:.1f}" '
-            f'stroke="#eef1f6" stroke-width="1"/>'
-        )
-        ylabels.append(
-            f'<text x="{_PAD_L - 10}" y="{gy + 4:.1f}" text-anchor="end" '
-            f'font-size="12" fill="#94a3b8">{_fmt_int(gv)}</text>'
-        )
-
-    # X-axis labels — stride so at most ~8 render, avoiding overlap.
-    stride = max(1, math.ceil(n / 8))
-    xlabels = []
-    for i, (y, mo, _v) in enumerate(series):
-        if i % stride and i != n - 1:
-            continue
-        lx = _x(i)
-        show_year = (mo == 1) or (i == 0)
-        anchor = "start" if i == 0 else ("end" if i == n - 1 else "middle")
-        xlabels.append(
-            f'<text x="{lx:.1f}" y="{_VBH - 12}" text-anchor="{anchor}" '
-            f'font-size="12" fill="#94a3b8">{_month_label(y, mo, with_year=show_year)}</text>'
-        )
-
-    line_pts = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
-    base_y = _y(0)
-    area_d = (
-        f"M {pts[0][0]:.1f} {base_y:.1f} "
-        + " ".join(f"L {x:.1f} {y:.1f}" for x, y in pts)
-        + f" L {pts[-1][0]:.1f} {base_y:.1f} Z"
-    )
-    dots = "".join(
-        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="2.6" fill="{accent}" opacity="0.9"/>'
-        for x, y in pts
+    return (
+        '<div class="lt-chart-host">'
+        f'<canvas id="ltTrend" role="img" aria-label="Monthly {_esc(noun_plural)} trend" '
+        f"data-labels='{_json(labels)}' data-values='{_json(values)}' "
+        f'data-accent="{_esc(accent)}" data-noun="{_esc(noun_plural)}"></canvas>'
+        '</div>'
     )
 
-    # Data for the JS hover overlay: fractions over the full viewBox so the
-    # absolutely-positioned overlay lines up at any rendered width.
-    points_json = _json([
-        {
-            "xf": round(x / _VBW, 5),
-            "yf": round(y / _VBH, 5),
-            "label": _month_label(yr, mo, with_year=True),
-            "value": _fmt_int(v),
-        }
-        for (x, y), (yr, mo, v) in zip(pts, series)
-    ])
 
-    grad_id = "ltArea"
-    svg = f"""
-      <svg viewBox="0 0 {_VBW} {_VBH}" role="img"
-           aria-label="Monthly {_esc(noun)} trend" preserveAspectRatio="xMidYMid meet">
-        <defs>
-          <linearGradient id="{grad_id}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="{accent}" stop-opacity="0.22"/>
-            <stop offset="100%" stop-color="{accent}" stop-opacity="0.02"/>
-          </linearGradient>
-        </defs>
-        {''.join(grid)}
-        <path d="{area_d}" fill="url(#{grad_id})"/>
-        <polyline points="{line_pts}" fill="none" stroke="{accent}" stroke-width="2.5"
-                  stroke-linejoin="round" stroke-linecap="round"/>
-        {dots}
-        {''.join(ylabels)}
-        {''.join(xlabels)}
-      </svg>
-    """
-    return f"""
-      <div class="lt-chart" data-lt-points='{points_json}' data-lt-noun="{_esc(noun_plural)}">
-        {svg}
-        <div class="lt-chart-guide" data-lt-guide style="top:{_PAD_T / _VBH * 100:.2f}%;height:{_PLOT_H / _VBH * 100:.2f}%"></div>
-        <div class="lt-chart-dot" data-lt-hoverdot></div>
-        <div class="lt-chart-tip" data-lt-tip></div>
-      </div>
-    """
-
-
+# Chart.js init for the hero trend. Plain (non-f) string, so literal braces need
+# no doubling. Mirrors the Overview dashboard's line-chart styling (area fill,
+# tension, tick limits, dark tooltip) so both trends look identical.
 _CHART_JS = """
 <script>
 (function () {
-  document.querySelectorAll('.lt-chart[data-lt-points]').forEach(function (chart) {
-    var pts;
-    try { pts = JSON.parse(chart.getAttribute('data-lt-points')); }
-    catch (e) { return; }
-    if (!pts || !pts.length) return;
-    var noun  = chart.getAttribute('data-lt-noun') || 'MQLs';
-    var guide = chart.querySelector('[data-lt-guide]');
-    var dot   = chart.querySelector('[data-lt-hoverdot]');
-    var tip   = chart.querySelector('[data-lt-tip]');
+  if (!window.Chart) return;
+  var canvas = document.getElementById('ltTrend');
+  if (!canvas) return;
+  var labels, values;
+  try {
+    labels = JSON.parse(canvas.getAttribute('data-labels') || '[]');
+    values = JSON.parse(canvas.getAttribute('data-values') || '[]');
+  } catch (e) { return; }
+  if (!values.length) return;
+  var accent = canvas.getAttribute('data-accent') || '#0b5cab';
+  var noun   = canvas.getAttribute('data-noun') || 'MQLs';
 
-    function show(p) {
-      var xp = p.xf * 100, yp = p.yf * 100;
-      guide.style.left = xp + '%'; guide.style.opacity = 1;
-      dot.style.left = xp + '%'; dot.style.top = yp + '%'; dot.style.opacity = 1;
-      tip.style.left = xp + '%'; tip.style.top = yp + '%'; tip.style.opacity = 1;
-      tip.innerHTML = '<span class="lt-tip-m">' + p.label + '</span><br><b>' +
-                      p.value + '</b> ' + noun;
-    }
-    function hide() { guide.style.opacity = 0; dot.style.opacity = 0; tip.style.opacity = 0; }
+  Chart.defaults.font.family = 'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+  Chart.defaults.font.size = 11;
+  Chart.defaults.color = '#6b7a90';
+  Chart.defaults.maintainAspectRatio = false;
 
-    chart.addEventListener('mousemove', function (ev) {
-      var r = chart.getBoundingClientRect();
-      if (!r.width) return;
-      var frac = (ev.clientX - r.left) / r.width;
-      var best = pts[0], bd = Infinity;
-      for (var i = 0; i < pts.length; i++) {
-        var d = Math.abs(pts[i].xf - frac);
-        if (d < bd) { bd = d; best = pts[i]; }
-      }
-      show(best);
-    });
-    chart.addEventListener('mouseleave', hide);
+  function areaFill(ctx) {
+    var c = ctx.chart.ctx, a = ctx.chart.chartArea;
+    if (!a) return accent + '00';
+    var g = c.createLinearGradient(0, a.top, 0, a.bottom);
+    g.addColorStop(0, accent + '33'); g.addColorStop(1, accent + '00');
+    return g;
+  }
+  function fmtInt(v) {
+    try { return Number(v).toLocaleString('en-US'); } catch (e) { return v; }
+  }
+
+  new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: noun, data: values, borderColor: accent,
+        backgroundColor: areaFill, fill: true, borderWidth: 2.25, tension: 0.35,
+        pointRadius: 0, pointHoverRadius: 4, pointBackgroundColor: accent,
+      }],
+    },
+    options: {
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { grid: { display: false }, border: { display: false },
+             ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } },
+        y: { beginAtZero: true, grid: { color: '#f1f4f9' }, border: { display: false },
+             ticks: { maxTicksLimit: 4, callback: function (v) { return fmtInt(v); } } },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#0b1020', titleColor: '#e8eefc', bodyColor: '#e8eefc',
+          padding: 9, cornerRadius: 8, boxPadding: 4, usePointStyle: true,
+          callbacks: { label: function (c) { return fmtInt(c.parsed.y) + ' ' + noun; } },
+        },
+      },
+    },
   });
 })();
 </script>
@@ -596,7 +525,6 @@ def render_lead_tracking(
             <h1 class="lt-title">Lead Tracking</h1>
             <p class="lt-sub">HubSpot lead &amp; pipeline reporting for {_esc(label)}.</p>
           </div>
-          <span class="lt-hs-tag"><span class="lt-hs-dot"></span>HubSpot</span>
         </div>
         {note}
         {tiles}
@@ -623,4 +551,5 @@ def _shell(client_slug, label, content, access_key, use_session, session_email, 
         session_email=session_email,
         session_is_admin=session_is_admin,
         extra_css=_EXTRA_CSS,
+        include_chartjs=True,
     )
