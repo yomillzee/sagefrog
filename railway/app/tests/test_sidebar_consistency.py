@@ -169,6 +169,58 @@ class SidebarConsistencyTests(unittest.TestCase):
         self.assertIn("/dashboard/test/sidebar-tabs", html)
         self.assertNotIn("nixon_sidebar_pages", html)
 
+    def test_advanced_tab_lists_every_toggleable_section(self) -> None:
+        # The Advanced tab must offer a checkbox for every section the sidebar can
+        # show (core + connector-gated standalone pages), so any can be
+        # included/excluded — driven by the canonical SIDEBAR_TOGGLEABLE_TABS.
+        import client_dashboard_config as cdc
+        cdc.get_config = lambda slug: types.SimpleNamespace(
+            dashboard_mode="bigquery_nixon", label="Test Co",
+            gcp_project_id="p", bq_mart_dataset_id="marketing_marts",
+            consent_sidebar_enabled=False, sidebar_hidden_tabs=(),
+        )
+        from dashboard.renderers.base_layout import render_admin_tools_page
+        html = render_admin_tools_page(
+            client_slug="test", label="Test Co", tab="sidebar",
+            access_key="k", session_is_admin=True, session_email="admin@sf.com",
+        )
+        for key in cdc.SIDEBAR_TOGGLEABLE_TABS:
+            self.assertRegex(
+                html, r'class="dash-tab-toggle" data-tab="%s"' % re.escape(key),
+                f"Advanced tab missing a toggle for '{key}'",
+            )
+        # The newly-added standalone pages are represented.
+        for key in ("lead_tracking", "email_performance", "linkedin_organic",
+                    "event_tracking", "site_performance"):
+            self.assertIn(key, cdc.SIDEBAR_TOGGLEABLE_TABS)
+
+    def test_hidden_standalone_tab_is_hidden_in_sidebar_server_side(self) -> None:
+        # Hiding a connector-gated standalone page (e.g. Email Performance) must
+        # render it already display:none in the section nav, just like a core tab.
+        import connector_config_store as ccs
+        ccs.list_configs = lambda slug: [
+            types.SimpleNamespace(connector_type=t, status="connected")
+            for t in ("hubspot", "linkedin_organic", "gtm")
+        ]
+        import client_dashboard_config as cdc
+        cdc.get_config = lambda slug: types.SimpleNamespace(
+            dashboard_mode="bigquery_nixon", label="Test Co",
+            gcp_project_id="p", bq_mart_dataset_id="marketing_marts",
+            consent_sidebar_enabled=False,
+            sidebar_hidden_tabs=("email_performance",),
+        )
+        from dashboard.renderers.base_layout import dashboard_sidebar_view_nav_html
+        nav = dashboard_sidebar_view_nav_html(
+            client_slug="test", access_key="k", use_session=True, as_tabs=True,
+        )
+        m = re.search(r'data-tab="email_performance"[^>]*>', nav)
+        self.assertIsNotNone(m, "Email Performance nav item missing")
+        self.assertIn("display:none", m.group(0), "Email Performance not hidden")
+        # A non-hidden standalone page (Lead Tracking) stays visible.
+        m2 = re.search(r'data-tab="lead_tracking"[^>]*>', nav)
+        self.assertIsNotNone(m2, "Lead Tracking nav item missing")
+        self.assertNotIn("display:none", m2.group(0), "Lead Tracking should be visible")
+
     def test_admin_affordances_hidden_from_non_admins(self) -> None:
         # A non-admin session never renders the admin tab strip, and (with no
         # resolvable internal role) no Settings link — but still gets the profile

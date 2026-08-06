@@ -848,12 +848,19 @@ def dashboard_sidebar_view_nav_html(
                 f"{dash_url}{'&' if '?' in dash_url else '?'}view={tab}"
             )
             items.append(f'<a class="dash-view-btn" data-tab="{tab}" href="{_esc(href)}"{hide_attr}>{inner}</a>')
+    # The standalone connector pages carry a stable data-tab so an admin can
+    # hide them from Advanced too (same server-side hidden set as the core tabs);
+    # a hidden one renders already display:none. Consent Health is intentionally
+    # not in the hidden set — it has its own opt-in visibility control.
+    def _tab_hide(tab_key: str) -> str:
+        return ' style="display:none" data-hidden="1"' if tab_key in hidden_tabs else ""
+
     if pflags.get("show_lead_tracking"):
         lt = _lead_tracking_page_url(
             client_slug=client_slug, access_key=access_key, use_session=use_session
         ) or "#"
         items.append(
-            f'<a class="dash-view-btn" href="{_esc(lt)}">'
+            f'<a class="dash-view-btn" data-tab="lead_tracking" href="{_esc(lt)}"{_tab_hide("lead_tracking")}>'
             f'{_VIEW_ICONS["lead-tracking"]}<span>Lead Tracking</span></a>'
         )
     if pflags.get("show_email_performance"):
@@ -861,7 +868,7 @@ def dashboard_sidebar_view_nav_html(
             client_slug=client_slug, access_key=access_key, use_session=use_session
         ) or "#"
         items.append(
-            f'<a class="dash-view-btn" href="{_esc(ep)}">'
+            f'<a class="dash-view-btn" data-tab="email_performance" href="{_esc(ep)}"{_tab_hide("email_performance")}>'
             f'{_VIEW_ICONS["email-performance"]}<span>Email Performance</span></a>'
         )
     if pflags.get("show_linkedin_organic"):
@@ -869,7 +876,7 @@ def dashboard_sidebar_view_nav_html(
             client_slug=client_slug, access_key=access_key, use_session=use_session
         ) or "#"
         items.append(
-            f'<a class="dash-view-btn" href="{_esc(lo)}">'
+            f'<a class="dash-view-btn" data-tab="linkedin_organic" href="{_esc(lo)}"{_tab_hide("linkedin_organic")}>'
             f'{_VIEW_ICONS["linkedin-organic"]}<span>LinkedIn Organic</span></a>'
         )
     if pflags.get("show_gtm"):
@@ -877,7 +884,7 @@ def dashboard_sidebar_view_nav_html(
             client_slug=client_slug, access_key=access_key, use_session=use_session
         ) or "#"
         items.append(
-            f'<a class="dash-view-btn" href="{_esc(et)}">'
+            f'<a class="dash-view-btn" data-tab="event_tracking" href="{_esc(et)}"{_tab_hide("event_tracking")}>'
             f'{_VIEW_ICONS["event-tracking"]}<span>Event Tracking</span></a>'
         )
     if pflags.get("show_consent"):
@@ -888,12 +895,12 @@ def dashboard_sidebar_view_nav_html(
             f'<a class="dash-view-btn" href="{_esc(cu)}">'
             f'{_VIEW_ICONS["consent"]}<span>Consent Health</span></a>'
         )
-    # Core tabs an admin hid are already rendered hidden server-side (per client,
-    # for every user and browser). We publish the hidden set as a global so the
+    # Tabs an admin hid are already rendered hidden server-side (per client, for
+    # every user and browser). We publish the hidden set as a global so the
     # dashboard's deep-link init can fall back off a hidden active tab. Replaces
     # the old per-browser localStorage 'nixon_sidebar_pages:<slug>' prefs, which
-    # only hid tabs in the one browser that toggled them. Lead/Event Tracking
-    # items have no data-tab and are untouched (they gate on connector state).
+    # only hid tabs in the one browser that toggled them. Consent Health has no
+    # data-tab (its visibility is its own opt-in, not part of this hidden set).
     import json as _json
     prefs_script = (
         "<script>window.__sfHiddenTabs="
@@ -1073,13 +1080,24 @@ _ADMIN_SECTION_ICON = (
 # Client-facing tabs that admins can show/hide from the Advanced admin tab.
 # Keys mirror the data-tab attributes in dashboard_sidebar_view_nav_html and the
 # server-side client_dashboard_config.sidebar_hidden_tabs list (persisted per
-# client, so a hidden tab stays hidden for every user in every browser).
+# client, so a hidden tab stays hidden for every user in every browser). Every
+# section the sidebar can render is listed so any can be included/excluded — the
+# always-present core tabs plus the connector-gated standalone pages. A tab whose
+# connector isn't connected still lists here (checkbox = "not admin-hidden"); it
+# only appears in the sidebar once its data source is connected. Kept in step
+# with client_dashboard_config.SIDEBAR_TOGGLEABLE_TABS. (Consent Health is
+# excluded — it has its own opt-in "show on client sidebar" control.)
 _SIDEBAR_TAB_EDIT_ITEMS: tuple[tuple[str, str], ...] = (
     ("overview", "Overview"),
     ("explorer", "Campaign Explorer"),
     ("analytics", "Website Analytics"),
     ("ai_traffic", "AI Traffic"),
     ("gsc", "Search Console"),
+    ("site_performance", "Site Performance"),
+    ("lead_tracking", "Lead Tracking"),
+    ("email_performance", "Email Performance"),
+    ("linkedin_organic", "LinkedIn Organic"),
+    ("event_tracking", "Event Tracking"),
 )
 
 

@@ -185,12 +185,22 @@ DATE_RANGE_PRESETS: tuple[str, ...] = (
 # The client-facing section tabs an admin can show/hide from the Advanced admin
 # tab. Keys mirror the ``data-tab`` attributes the sidebar nav renders; anything
 # outside this set is ignored on save so a stray value can't wedge the sidebar.
+# Covers every section the sidebar can show — the always-present core tabs plus
+# the connector-gated standalone pages — so the Advanced tab can include/exclude
+# any of them. (Consent Health is deliberately absent: it has its own opt-in
+# "show on client sidebar" control, so it isn't driven by this opt-out list.)
+# The tuple order is canonical: _normalize_hidden_tabs emits keys in this order.
 SIDEBAR_TOGGLEABLE_TABS: tuple[str, ...] = (
     "overview",
     "explorer",
     "analytics",
     "ai_traffic",
     "gsc",
+    "site_performance",
+    "lead_tracking",
+    "email_performance",
+    "linkedin_organic",
+    "event_tracking",
 )
 
 
