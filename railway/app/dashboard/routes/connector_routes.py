@@ -139,10 +139,13 @@ def email_performance_page(
     label = cfg.label if cfg else slug
 
     report = hubspot_reports_service.fetch_email_performance(slug)
+    cfg_row = client_dashboard_config.get_config(slug)
+    saved_selection = list(cfg_row.email_performance_selection) if cfg_row else []
     return HTMLResponse(email_performance_renderer.render_email_performance(
         client_slug=slug,
         label=label,
         report=report,
+        saved_selection=saved_selection,
         **_session_kw(access_key, use_session, session_email, session_is_admin),
     ))
 

@@ -156,6 +156,16 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config
       ADD COLUMN IF NOT EXISTS explorer_campaign_allowlist JSONB
     """,
+    # Admin-chosen set of HubSpot marketing emails shown on the Email Performance
+    # page, stored as a JSON array of email IDs. The page's multi-select builds
+    # the table from these; an admin's Save persists the ticked set here so it
+    # holds for every user of the client's portal in every browser (instead of
+    # the client-side default of the N most-recent emails). Empty/NULL = fall
+    # back to that default. IDs no longer in the synced set are ignored on render.
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS email_performance_selection JSONB
+    """,
 ]
 
 # The date-range presets the dashboard's Range picker offers; a stored
@@ -236,6 +246,10 @@ class ClientConfigRow:
     # Campaign Explorer allowlist: campaign names the portal's client is allowed
     # to see. Empty = show every campaign. See the column comment above.
     explorer_campaign_allowlist: tuple[str, ...] = ()
+    # Email Performance selection: HubSpot marketing-email IDs an admin has
+    # picked to show on the Email Performance page. Empty = fall back to the
+    # page's default (the N most-recent emails). See the column comment above.
+    email_performance_selection: tuple[str, ...] = ()
 
 
 def _get_db_url() -> str | None:
@@ -277,7 +291,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    overview_pinned_card, consent_sidebar_enabled, primary_kpi,
                    pacing_active_weekdays, segment_filter_profile,
                    sidebar_hidden_tabs, card_layouts,
-                   default_date_preset, explorer_campaign_allowlist
+                   default_date_preset, explorer_campaign_allowlist,
+                   email_performance_selection
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -324,6 +339,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         card_layouts=_normalize_card_layouts(row[29]),
         default_date_preset=_normalize_date_preset(row[30]),
         explorer_campaign_allowlist=_normalize_campaign_allowlist(row[31]),
+        email_performance_selection=_normalize_id_list(row[32]),
     )
 
 
@@ -356,6 +372,29 @@ def _normalize_campaign_allowlist(payload: object) -> tuple[str, ...]:
         name = str(v).strip()
         if name and name not in seen:
             seen.append(name)
+    return tuple(seen)
+
+
+def _normalize_id_list(payload: object) -> tuple[str, ...]:
+    """Coerce a stored JSON array of IDs into a clean tuple of string IDs.
+
+    JSONB comes back as a list from psycopg, but tolerate a JSON string too.
+    Blanks are dropped and duplicates removed (first occurrence wins); order is
+    preserved. Used for the Email Performance email selection."""
+    if payload is None:
+        return ()
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return ()
+    if not isinstance(payload, (list, tuple)):
+        return ()
+    seen: list[str] = []
+    for v in payload:
+        ident = str(v).strip()
+        if ident and ident not in seen:
+            seen.append(ident)
     return tuple(seen)
 
 
@@ -887,6 +926,49 @@ def save_explorer_campaign_allowlist(
             ON CONFLICT (client_slug)
             DO UPDATE SET
               explorer_campaign_allowlist = EXCLUDED.explorer_campaign_allowlist,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, label, json.dumps(normalized), now, (updated_by or "").strip() or None),
+        )
+    saved = get_config(slug)
+    if not saved:
+        raise RuntimeError("Failed to load saved client config.")
+    return saved
+
+
+def save_email_performance_selection(
+    client_slug: str,
+    email_ids: list[str] | tuple[str, ...] | None,
+    *,
+    updated_by: str | None = None,
+) -> ClientConfigRow:
+    """Set (or clear, with an empty list) which HubSpot marketing emails the
+    Email Performance page shows for this client. Empty = fall back to the page's
+    default (the N most-recent emails). IDs are normalized (blanks dropped,
+    deduped, order preserved). Server-side + per client, so the choice applies to
+    every user of the client's portal in every browser. Touches only that
+    column."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save client dashboard config.")
+    normalized = list(_normalize_id_list(list(email_ids or [])))
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    existing = get_config(slug)
+    label = existing.label if existing else slug
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, email_performance_selection, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              email_performance_selection = EXCLUDED.email_performance_selection,
               updated_at = EXCLUDED.updated_at,
               updated_by = EXCLUDED.updated_by
             """,
