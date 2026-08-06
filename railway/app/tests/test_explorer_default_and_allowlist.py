@@ -119,5 +119,41 @@ class CampaignAllowlistTests(unittest.TestCase):
         self.assertEqual(json.loads(payload), [])
 
 
+class EmailPerformanceSelectionTests(unittest.TestCase):
+    def test_normalize_id_list(self):
+        self.assertEqual(
+            cdc._normalize_id_list(["1", " 2 ", "1", "", "3"]),
+            ("1", "2", "3"),
+        )
+        self.assertEqual(cdc._normalize_id_list('["7","8"]'), ("7", "8"))
+        self.assertEqual(cdc._normalize_id_list([42, 7]), ("42", "7"))
+        self.assertEqual(cdc._normalize_id_list(None), ())
+        self.assertEqual(cdc._normalize_id_list("not json"), ())
+
+    def test_save_upserts_only_that_column_as_json(self):
+        fake = _FakeConn()
+        with _patched(fake, _fake_row(email_performance_selection=("12", "34"))):
+            cdc.save_email_performance_selection(
+                "acme", ["12", " 12 ", "34"], updated_by="admin@x.com",
+            )
+        self.assertEqual(len(fake.calls), 1)
+        sql, params = fake.calls[0]
+        self.assertIn(
+            "email_performance_selection = EXCLUDED.email_performance_selection", sql
+        )
+        self.assertNotIn("explorer_campaign_allowlist =", sql)
+        # Stored as a JSON array, deduped/trimmed, order preserved.
+        payload = next(p for p in params if isinstance(p, str) and p.startswith("["))
+        self.assertEqual(json.loads(payload), ["12", "34"])
+
+    def test_save_empty_clears_selection(self):
+        fake = _FakeConn()
+        with _patched(fake, _fake_row()):
+            cdc.save_email_performance_selection("acme", [])
+        _sql, params = fake.calls[0]
+        payload = next(p for p in params if isinstance(p, str) and p.startswith("["))
+        self.assertEqual(json.loads(payload), [])
+
+
 if __name__ == "__main__":
     unittest.main()

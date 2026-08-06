@@ -1958,6 +1958,39 @@ async def save_explorer_campaign_allowlist(
     return {"ok": True, "campaigns": list(saved.explorer_campaign_allowlist)}
 
 
+@router.post(
+    "/api/clients/{client_key}/email-performance/selection",
+    summary="Set the Email Performance email selection for this client (admin only)",
+)
+async def save_email_performance_selection(
+    client_key: str,
+    request: Request,
+) -> dict:
+    """Persist which HubSpot marketing emails the Email Performance page shows for
+    this client. Body: ``{"emails": ["123", "456"]}`` (empty list clears the
+    selection, falling back to the page's default). Admin-only — the selection is
+    portal-wide config, not a per-viewer preference."""
+    normalized = (client_key or "").strip().lower()
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    if not (auth.user and auth.user.role == "admin"):
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    emails = body.get("emails")
+    if not isinstance(emails, (list, tuple)):
+        emails = []
+    try:
+        import client_dashboard_config as cdc
+        saved = cdc.save_email_performance_selection(
+            normalized, [str(e) for e in emails], updated_by="dashboard",
+        )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+    return {"ok": True, "emails": list(saved.email_performance_selection)}
+
+
 # Tabs that support admin card-layout editing, mapped to the set of card keys
 # that tab knows about. Keys outside the set are rejected so a stale/garbage key
 # can't wedge the tab's render. Overview is the first (and, for now, only) tab.

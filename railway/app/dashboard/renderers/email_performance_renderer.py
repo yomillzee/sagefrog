@@ -43,6 +43,12 @@ _EXTRA_CSS = """
 .ep-actions { display:flex; gap:8px; }
 .ep-btn { border:1px solid var(--border); background:var(--panel); color:var(--accent); font-size:.76rem; font-weight:650; padding:5px 11px; border-radius:8px; cursor:pointer; }
 .ep-btn:hover { background:var(--surface); }
+.ep-btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+.ep-btn.primary:hover { filter:brightness(1.05); }
+.ep-btn:disabled { opacity:.6; cursor:default; }
+.ep-save-status { font-size:.76rem; font-weight:600; color:var(--muted); }
+.ep-save-status.ok { color:var(--ok, #15803d); }
+.ep-save-status.err { color:var(--err); }
 .ep-list { max-height:280px; overflow-y:auto; border:1px solid var(--border); border-radius:10px; }
 .ep-opt { display:flex; align-items:center; gap:11px; padding:9px 13px; border-bottom:1px solid #f1f4f8; cursor:pointer; font-size:.85rem; }
 .ep-opt:last-child { border-bottom:0; }
@@ -88,9 +94,18 @@ _EP_JS = """
   var emptyEl  = document.getElementById('ep-empty');
   if (!listEl || !tbodyEl) return;
 
+  // An admin's saved selection (email IDs) wins over the built-in default of the
+  // N most-recent emails; IDs no longer in the synced set are dropped. Empty
+  // saved set falls back to the default so a fresh client still sees a table.
+  var savedEl = document.getElementById('ep-saved');
+  var savedIds = [];
+  if (savedEl) { try { savedIds = JSON.parse(savedEl.textContent || '[]'); } catch (e) { savedIds = []; } }
+  var validSaved = savedIds.filter(function (id) { return byId[id]; });
+
   // Preserve selection order so the table reads the way the user built it.
-  var selected = [];
-  emails.slice(0, %DEFAULT%).forEach(function (e) { selected.push(e.id); });
+  var selected = validSaved.length
+    ? validSaved.slice()
+    : emails.slice(0, %DEFAULT%).map(function (e) { return e.id; });
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -197,6 +212,29 @@ _EP_JS = """
     });
   }
 
+  // Admin-only: persist the current selection portal-wide. The Save button only
+  // exists in the DOM for admins, so its absence is the guard.
+  var saveBtn = document.getElementById('ep-save');
+  var saveStatus = document.getElementById('ep-save-status');
+  if (saveBtn) saveBtn.addEventListener('click', function () {
+    var api = saveBtn.getAttribute('data-api');
+    if (!api) return;
+    saveBtn.disabled = true;
+    if (saveStatus) { saveStatus.className = 'ep-save-status'; saveStatus.textContent = 'Saving…'; }
+    fetch(api, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emails: selected })
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (b) {
+        if (!r.ok) throw new Error((b && b.detail && (b.detail.error || b.detail)) || r.statusText);
+        if (saveStatus) { saveStatus.className = 'ep-save-status ok'; saveStatus.textContent = 'Saved.'; }
+      });
+    }).catch(function (err) {
+      if (saveStatus) { saveStatus.className = 'ep-save-status err'; saveStatus.textContent = 'Save failed: ' + (err.message || err); }
+    }).then(function () { saveBtn.disabled = false; });
+  });
+
   buildPicker();
   renderTable();
 })();
@@ -257,6 +295,7 @@ def render_email_performance(
     use_session: bool = False,
     session_email: str | None = None,
     session_is_admin: bool = False,
+    saved_selection: list[str] | tuple[str, ...] | None = None,
 ) -> str:
     head = (
         '<div class="ep-head">'
@@ -285,6 +324,19 @@ def render_email_performance(
         return _shell(client_slug, label, f'<div class="ep-wrap">{head}{body}</div>',
                       access_key, use_session, session_email, session_is_admin)
 
+    # Admins get a Save control that persists the ticked set portal-wide (via the
+    # email-performance/selection API); clients see the same picker but can only
+    # tweak their own in-session view. The Save button carries the API URL so the
+    # JS needs no extra plumbing, and its absence is the client/admin guard.
+    save_api = f'/api/clients/{_esc(client_slug)}/email-performance/selection'
+    save_html = (
+        f'<button type="button" class="ep-btn primary" id="ep-save" '
+        f'data-api="{save_api}" title="Save this selection for everyone who views '
+        f'this client\'s portal">Save selection</button>'
+        '<span class="ep-save-status" id="ep-save-status"></span>'
+        if session_is_admin else ''
+    )
+
     picker = (
         '<div class="ep-card">'
         '<div class="ep-card-head"><h2>Choose emails</h2></div>'
@@ -296,6 +348,7 @@ def render_email_performance(
         '<span class="ep-actions">'
         '<button type="button" class="ep-btn" id="ep-recent">Select 10 most recent</button>'
         '<button type="button" class="ep-btn" id="ep-clear">Clear</button>'
+        f'{save_html}'
         '</span></div>'
         '<div class="ep-list" id="ep-list"></div>'
         '<div class="ep-list-empty" id="ep-list-empty" style="display:none">No emails match your search.</div>'
@@ -317,9 +370,11 @@ def render_email_performance(
     )
 
     data_script = f'<script type="application/json" id="ep-emails">{_json(payload)}</script>'
+    saved_ids = [str(i) for i in (saved_selection or [])]
+    saved_script = f'<script type="application/json" id="ep-saved">{_json(saved_ids)}</script>'
     ep_js = _EP_JS.replace("%DEFAULT%", str(_DEFAULT_SELECTED))
 
-    content = f'<div class="ep-wrap">{head}{picker}{table}</div>{data_script}{ep_js}'
+    content = f'<div class="ep-wrap">{head}{picker}{table}</div>{data_script}{saved_script}{ep_js}'
     return _shell(client_slug, label, content, access_key, use_session, session_email, session_is_admin)
 
 
