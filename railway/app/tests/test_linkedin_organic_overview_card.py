@@ -128,6 +128,60 @@ class SectionHtmlTests(unittest.TestCase):
         self.assertNotIn("Total followers", html)
         self.assertIn("Net new followers", html)
 
+    def test_section_leaderboard_column(self) -> None:
+        from dashboard.renderers.bigquery_dashboard_renderer import (
+            linkedin_followers_section_html,
+        )
+        html = linkedin_followers_section_html(
+            _report(
+                total_page_views=1056,
+                page_sections=[
+                    {"label": "Overview", "views": 493},
+                    {"label": "Careers", "views": 113},
+                    {"label": "Jobs", "views": 113},
+                    {"label": "People", "views": 337},
+                ],
+            ),
+            "/x",
+        )
+        self.assertIn("Views by page section", html)
+        # Ranked highest-first, not in the report's fixed section order.
+        self.assertLess(html.index(">People<"), html.index(">Careers<"))
+        # Share of all section views (337 / 1056 sums to the same total).
+        self.assertIn("493<span>47%</span>", html)
+        self.assertIn("337<span>32%</span>", html)
+        # Top bar is full width; the rest scale against it.
+        self.assertIn('style="width:100.0%"', html)
+        self.assertIn("1,056 page views in 90 days", html)
+
+    def test_section_column_capped_at_four(self) -> None:
+        from dashboard.renderers.bigquery_dashboard_renderer import (
+            linkedin_followers_section_html,
+        )
+        html = linkedin_followers_section_html(
+            _report(page_sections=[
+                {"label": f"Sec{i}", "views": 100 - i} for i in range(6)
+            ]),
+            "/x",
+        )
+        self.assertIn(">Sec3<", html)
+        self.assertNotIn(">Sec4<", html)
+
+    def test_section_column_dropped_without_split(self) -> None:
+        from dashboard.renderers.bigquery_dashboard_renderer import (
+            linkedin_followers_section_html,
+        )
+        # Page table synced before the per-section columns existed → no third
+        # column, but the follower cards still render.
+        html = linkedin_followers_section_html(_report(page_sections=[]), "/x")
+        self.assertNotIn("Views by page section", html)
+        self.assertIn("Total followers", html)
+        # Zero-view sections don't earn a row either.
+        empty = linkedin_followers_section_html(
+            _report(page_sections=[{"label": "Jobs", "views": 0}]), "/x"
+        )
+        self.assertNotIn("Views by page section", empty)
+
     def test_negative_gain_shows_down_delta(self) -> None:
         from dashboard.renderers.bigquery_dashboard_renderer import (
             linkedin_followers_section_html,

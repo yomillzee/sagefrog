@@ -176,6 +176,44 @@ def _li_follower_sparkline(follower_series, accent: str = "#0A66C2") -> str:
     )
 
 
+def _li_section_bars(sections, *, top: int = 4) -> str:
+    """Ranked "views by page section" bars for the Overview LinkedIn card.
+
+    ``sections`` is the report's ``page_sections`` -- ``[{label, views}]`` in
+    fixed section order. Here they're ranked highest-first (it's a leaderboard)
+    and capped at ``top`` rows so the card stays the height of the metric cards
+    beside it. Bar widths are relative to the top section; the muted percentage
+    is share of *all* section views, including any rows past the cut. Returns ""
+    when nothing has views, so the caller can drop the column entirely.
+    """
+    from dashboard.utils.formatting import esc as _esc, fmt_int as _int
+
+    rows = [
+        (str(s.get("label") or "Other"), int(s.get("views") or 0))
+        for s in (sections or [])
+        if int(s.get("views") or 0) > 0
+    ]
+    if not rows:
+        return ""
+    total = sum(v for _, v in rows)
+    rows.sort(key=lambda r: r[1], reverse=True)
+    peak = rows[0][1] or 1
+
+    bars = []
+    for label, views in rows[:top]:
+        width = max(3.0, views / peak * 100.0)
+        share = views / total * 100.0
+        bars.append(
+            '<div class="li-bar-row">'
+            f'<span class="li-bar-label">{_esc(label)}</span>'
+            f'<span class="li-bar-val">{_int(views)}<span>{share:.0f}%</span></span>'
+            '<span class="li-bar-track">'
+            f'<span class="li-bar-fill" style="width:{width:.1f}%"></span></span>'
+            '</div>'
+        )
+    return f'<div class="li-bars">{"".join(bars)}</div>'
+
+
 def _api_url(path: str, *, access_key: str | None) -> str:
     if not access_key:
         return path
@@ -435,6 +473,24 @@ def linkedin_followers_section_html(
         f'<div class="card-value">{_int(net_gain)}</div>'
         f'<div class="card-foot">{split}</div></div>'
     )
+
+    # Third column: which tabs of the company page people actually landed on,
+    # ranked. Drops out for pages whose section split hasn't synced (the column
+    # set post-dates v1 of the page table) so the card falls back to two cards.
+    section_bars = _li_section_bars(getattr(report, "page_sections", None))
+    if section_bars:
+        page_views = int(getattr(report, "total_page_views", 0) or 0)
+        foot = (
+            f'<span class="mql-sub">{_int(page_views)} page views '
+            f'in {window_days} days</span>'
+            if page_views else ""
+        )
+        cards.append(
+            '<div class="card li-sections">'
+            '<div class="card-title">Views by page section</div>'
+            f'{section_bars}'
+            f'<div class="card-foot">{foot}</div></div>'
+        )
 
     more = (
         f'<a class="ov-more" href="{_esc(more_url)}" aria-label="Open LinkedIn Organic">'
@@ -1290,6 +1346,16 @@ def render_bigquery_dashboard_page(
     .mql-delta.down {{ color:var(--bad); }}
     .mql-delta.flat {{ color:var(--muted); font-weight:600; }}
     .mql-spark {{ width:100%; height:30px; display:block; margin:7px 0 2px; }}
+    /* LinkedIn Overview card — ranked "views by page section" column. Wants more
+       room than a number card, so it claims two grid tracks where they exist. */
+    .li-sections {{ grid-column:span 2; min-width:0; }}
+    .li-bars {{ display:flex; flex-direction:column; gap:8px; margin-top:9px; }}
+    .li-bar-row {{ display:grid; grid-template-columns:1fr auto; gap:3px 10px; align-items:center; font-size:.78rem; }}
+    .li-bar-label {{ color:var(--text); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+    .li-bar-val {{ text-align:right; color:var(--navy); font-weight:700; font-variant-numeric:tabular-nums; }}
+    .li-bar-val span {{ color:var(--muted); font-weight:600; font-size:.7rem; margin-left:5px; }}
+    .li-bar-track {{ grid-column:1 / -1; display:block; background:#e9eef5; border-radius:5px; height:6px; overflow:hidden; }}
+    .li-bar-fill {{ display:block; height:100%; border-radius:5px; min-width:3px; background:#0A66C2; }}
     .cmp-warn {{ display:inline-block; margin-left:6px; font-size:.85rem; cursor:help; color:#b78103; }}
     .cmp-warn[hidden] {{ display:none; }}
     /* ---- Tables ---- */
