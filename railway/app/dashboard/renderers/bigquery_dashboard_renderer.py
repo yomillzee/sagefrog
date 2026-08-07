@@ -1207,6 +1207,10 @@ def render_bigquery_dashboard_page(
     .apf-scope[hidden] {{ display:none; }}
     .apf-scope svg {{ opacity:.75; flex-shrink:0; }}
     .apf-scope code {{ background:rgba(29,111,208,.12); padding:1px 6px; border-radius:5px; font-size:.78rem; }}
+    /* Small clarifying line under a section heading (e.g. what the scoped
+       sessions series counts). Hidden unless the page sets its text. */
+    .sec-note {{ margin:-4px 0 12px; font-size:.78rem; line-height:1.5; color:var(--muted); }}
+    .sec-note[hidden] {{ display:none; }}
     /* Campaign explorer: admin "Campaigns" allowlist picker (checklist popover) */
     .ec-badge {{ display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:var(--accent); color:#fff; font-size:.66rem; font-weight:800; }}
     .ec-badge[hidden] {{ display:none; }}
@@ -1689,7 +1693,8 @@ def render_bigquery_dashboard_page(
       </div>
 
       <section id="sec-sessions">
-        <div class="sec-head"><h2>Sessions over time <span class="cmp-warn" id="sessionsCmpWarn" title="" hidden>&#9888;</span></h2><div class="sec-head-actions"><div class="chips seg" id="sessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><span class="status" id="sessionsTrendStatus"></span></div></div>
+        <div class="sec-head"><h2><span id="sessionsTrendTitle">Sessions over time</span> <span class="cmp-warn" id="sessionsCmpWarn" title="" hidden>&#9888;</span></h2><div class="sec-head-actions"><div class="chips seg" id="sessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><span class="status" id="sessionsTrendStatus"></span></div></div>
+        <p class="sec-note" id="sessionsScopeNote" hidden></p>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:200px"><canvas id="sessionsTrendChart"></canvas></div></div>
         <div class="cmp-legend" id="sessionsTrendLegend"></div>
       </section>
@@ -2411,8 +2416,10 @@ def render_bigquery_dashboard_page(
 
     // Modules hidden while a page-path scope is active: they aggregate whole-site
     // GA4 sessions/users and have no page_path to scope by, so showing them next
-    // to careers-only Pages/Landing would be misleading. Top pages + landing stay.
-    const PATH_FILTER_HIDDEN_MODULES = ['sessions','traffic','audience','user_acquisition','demographics'];
+    // to careers-only Pages/Landing would be misleading. Sessions-over-time is NOT
+    // in this list — its daily series is served page-scoped from vw_page_path_daily
+    // (see fetch_traffic_acquisition), as are Top pages and Landing pages.
+    const PATH_FILTER_HIDDEN_MODULES = ['traffic','audience','user_acquisition','demographics'];
     function pathFilterActive() {{ return Array.isArray(ANALYTICS_PATH_FILTER) && ANALYTICS_PATH_FILTER.length > 0; }}
     function getModules() {{
       let modules;
@@ -3003,6 +3010,18 @@ def render_bigquery_dashboard_page(
       }}
       // The bar takes space only when it has content: the admin editor or a scope.
       if (bar && (btn || active)) bar.hidden = false;
+      // The sessions trend stays visible under a scope, but it now counts
+      // sessions that viewed a matching page (GA4's per-page Sessions metric),
+      // so say that rather than letting it read as site-wide traffic.
+      if (active) {{
+        const title = document.getElementById('sessionsTrendTitle');
+        if (title) title.textContent = 'Sessions on matching pages';
+        const snote = document.getElementById('sessionsScopeNote');
+        if (snote) {{
+          snote.hidden = false;
+          snote.textContent = 'Sessions that viewed a page matching this filter. A session that viewed more than one matching page is counted once per page, the same as GA4’s per-page Sessions metric.';
+        }}
+      }}
       if (!btn) return;
       const pop = document.getElementById('pfPop');
       const save = document.getElementById('pfSave');

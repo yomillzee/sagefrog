@@ -1099,7 +1099,21 @@ def fetch_traffic_acquisition(
     *,
     start_date: date,
     end_date: date,
+    page_path_filter: list[str] | None = None,
 ) -> dict[str, Any]:
+    """GA4 traffic acquisition: a daily sessions series plus channel and
+    source/medium breakdowns.
+
+    ``page_path_filter`` scopes the **daily** series only. vw_ga4_traffic_acq_daily
+    is session-grained with no page_path, so the page-scoped series is read from
+    vw_page_path_daily instead (date x page_path, carrying sessions and
+    engaged_sessions). Note that view counts a session once per page it viewed,
+    so summing across several matching paths counts a session that viewed more
+    than one of them more than once — the same semantics as GA4's own per-page
+    Sessions metric. The channel and source/medium breakdowns stay site-wide:
+    neither is available at page grain (vw_page_path_source_daily carries no
+    default_channel_group), and the Traffic panel is hidden while a scope is set.
+    """
     params = {
         "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
         "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
@@ -1116,13 +1130,20 @@ def fetch_traffic_acquisition(
     GROUP BY channel
     ORDER BY sessions DESC
     """
+    # Daily series: page-scoped from vw_page_path_daily when a scope is set,
+    # otherwise the site-wide session-grained view. Both yield the same shape
+    # ({date, sessions, engaged_sessions}) so the trend chart is unchanged.
+    daily_params = dict(params)
+    daily_scope = _page_path_filter_clause(
+        page_path_filter, column="page_path", params=daily_params
+    )
     daily_sql = f"""
     SELECT
       CAST(date AS STRING) AS date,
       SUM(sessions) AS sessions,
       SUM(engaged_sessions) AS engaged_sessions
-    FROM {_traffic_acq_table()}
-    WHERE date BETWEEN @start_date AND @end_date
+    FROM {_page_path_daily_table() if daily_scope else _traffic_acq_table()}
+    WHERE date BETWEEN @start_date AND @end_date{daily_scope}
     GROUP BY date
     ORDER BY date ASC
     """
@@ -1144,7 +1165,7 @@ def fetch_traffic_acquisition(
         "client": _client_key(),
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "by_channel": _run_query(by_channel_sql, params=params, max_rows=50),
-        "daily": _run_query(daily_sql, params=params, max_rows=2000),
+        "daily": _run_query(daily_sql, params=daily_params, max_rows=2000),
         "by_source": _run_query(by_source_sql, params=params, max_rows=50),
     }
 

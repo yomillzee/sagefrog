@@ -306,10 +306,18 @@ def _traffic_acquisition_read(
     *,
     project_id: str | None = None,
     dataset_id: str | None = None,
+    page_path_filter: list[str] | None = None,
 ) -> dict:
-    """GA4 traffic-acquisition breakdown — the Overview 'Website analytics' card."""
-    payload = {"start": start.isoformat(), "end": end.isoformat()}
-    fetch = lambda: marketing_service.fetch_traffic_acquisition(start_date=start, end_date=end)
+    """GA4 traffic-acquisition breakdown — the Overview 'Website analytics' card.
+
+    A page-path scope narrows the daily sessions series (the analytics tab's
+    Sessions-over-time chart); the channel/source breakdowns stay site-wide.
+    """
+    path_filter = page_path_filter or []
+    payload = {"start": start.isoformat(), "end": end.isoformat(), "scope": "|".join(path_filter)}
+    fetch = lambda: marketing_service.fetch_traffic_acquisition(
+        start_date=start, end_date=end, page_path_filter=path_filter,
+    )
     if normalized == "nixon":
         return _cached_bq_read(
             "nixon.pages.traffic_acquisition", payload, ttl_seconds=900, fetch=fetch,
@@ -1678,6 +1686,7 @@ def client_traffic_acquisition(
     try:
         return _traffic_acquisition_read(
             normalized, start, end, project_id=project_id, dataset_id=dataset_id,
+            page_path_filter=_load_page_path_filter(normalized),
         )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
