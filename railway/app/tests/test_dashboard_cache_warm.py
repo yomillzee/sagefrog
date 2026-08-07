@@ -79,7 +79,7 @@ class CacheWarmDriftTests(unittest.TestCase):
             self._calls["health"] += 1
             return {"kind": "health"}
 
-        def _fetch_traffic(*, start_date, end_date):
+        def _fetch_traffic(*, start_date, end_date, page_path_filter=None):
             self._calls["traffic"] += 1
             return {"kind": "traffic"}
 

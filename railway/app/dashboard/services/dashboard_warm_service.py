@@ -98,6 +98,14 @@ def warm_client_cache(client_slug: str) -> dict[str, Any]:
     def _route(**kw: Any) -> dict[str, Any]:
         return dict(project_id=project_id, dataset_id=dataset_id, **kw)
 
+    # The client's Website Analytics page-path scope is part of the cache key for
+    # the page-scoped reads, so warm with it — warming unscoped would populate a
+    # key the endpoints never read, leaving scoped clients cold.
+    page_path_filter = _api._load_page_path_filter(slug)
+
+    def _route_scoped(**kw: Any) -> dict[str, Any]:
+        return _route(page_path_filter=page_path_filter, **kw)
+
     # Overview cards, each warmed for the exact window(s) the page requests. The
     # summary / website / AI-traffic cards render a current-vs-prior comparison,
     # so both windows are warmed; health takes no date range. The GSC keyword and
@@ -110,13 +118,13 @@ def warm_client_cache(client_slug: str) -> dict[str, Any]:
         ("summary_prev", lambda: _api._summary_read(slug, cmp_start, cmp_end, **_route())),
         ("health", lambda: _api._health_read(slug, 100, **_route())),
         ("traffic_acquisition", lambda: _api._traffic_acquisition_read(
-            slug, cur_start, cur_end, **_route())),
+            slug, cur_start, cur_end, **_route_scoped())),
         ("traffic_acquisition_prev", lambda: _api._traffic_acquisition_read(
-            slug, cmp_start, cmp_end, **_route())),
+            slug, cmp_start, cmp_end, **_route_scoped())),
         ("ai_traffic", lambda: _api._ai_traffic_daily_read(
-            slug, cur_start, cur_end, **_route())),
+            slug, cur_start, cur_end, **_route_scoped())),
         ("ai_traffic_prev", lambda: _api._ai_traffic_daily_read(
-            slug, cmp_start, cmp_end, **_route())),
+            slug, cmp_start, cmp_end, **_route_scoped())),
     ]
 
     for name, fn in tasks:

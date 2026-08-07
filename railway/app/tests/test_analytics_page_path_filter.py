@@ -83,13 +83,23 @@ class AnalyticsPagePathFilterTests(unittest.TestCase):
         self.assertIsNotNone(m, "PATH_FILTER_HIDDEN_MODULES not found")
         # The value is a JS array literal (single quotes); pull out the names.
         hidden = set(re.findall(r"'([^']+)'", m.group(1)))
-        # Session/user-scoped panels are hidden; page-path panels stay.
+        # Only the panels with no page_path to scope by are hidden.
         self.assertEqual(
-            hidden,
-            {"sessions", "traffic", "audience", "user_acquisition", "demographics"},
+            hidden, {"traffic", "audience", "user_acquisition", "demographics"}
         )
-        self.assertNotIn("top_pages", hidden)
-        self.assertNotIn("landing", hidden)
+        # These are served page-scoped, so they stay visible under a filter.
+        for kept in ("sessions", "top_pages", "landing"):
+            self.assertNotIn(kept, hidden)
+
+    def test_sessions_chart_is_relabelled_under_a_scope(self) -> None:
+        # The scoped series counts sessions per matching page, so the heading and
+        # note must say so rather than reading as site-wide traffic.
+        scoped = _render(page_path_filter="/careers", is_admin=True)
+        self.assertIn("Sessions on matching pages", scoped)
+        self.assertIn("sessionsScopeNote", scoped)
+        # Unscoped pages keep the plain heading and leave the note empty.
+        plain = _render(page_path_filter=None, is_admin=True)
+        self.assertIn("Sessions over time", plain)
 
     def test_filter_html_escaped_in_editor(self) -> None:
         # A stray "<" in a pattern must not break out of the textarea/script.
