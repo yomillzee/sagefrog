@@ -518,6 +518,7 @@ def render_bigquery_dashboard_page(
     gsc_target_exclude = ""
     ga4_key_events = ""
     explorer_filters_cfg = ""
+    analytics_page_path_filter_cfg = ""
     default_date_preset: str = ""
     explorer_campaign_allowlist: list[str] = []
     monthly_budget_val: float | None = None
@@ -534,6 +535,7 @@ def render_bigquery_dashboard_page(
             gsc_target_exclude = getattr(_kwcfg, "gsc_target_exclude", None) or ""
             ga4_key_events = _kwcfg.ga4_key_events or ""
             explorer_filters_cfg = _kwcfg.explorer_filters or ""
+            analytics_page_path_filter_cfg = getattr(_kwcfg, "analytics_page_path_filter", None) or ""
             default_date_preset = getattr(_kwcfg, "default_date_preset", None) or ""
             explorer_campaign_allowlist = list(
                 getattr(_kwcfg, "explorer_campaign_allowlist", None) or ()
@@ -703,6 +705,35 @@ def render_bigquery_dashboard_page(
               <div class="ef-pop-actions">
                 <button type="button" class="ef-pop-btn primary" id="efSave">Save filters</button>
                 <span class="ef-status" id="efStatus"></span>
+              </div>
+            </div>
+          </div>
+        </div>"""
+
+    # Website Analytics page-path scope. Parsed to a list of substring patterns
+    # (one per non-blank, non-comment line) injected for the page JS, which hides
+    # the site-wide panels when a scope is active and shows a scope indicator.
+    analytics_path_patterns = [
+        s.strip() for s in analytics_page_path_filter_cfg.splitlines()
+        if s.strip() and not s.strip().startswith("#")
+    ]
+    analytics_path_filter_json = json.dumps(analytics_path_patterns).replace("<", "\\u003c")
+    # Admin-only "Edit page filter" editor for the Website Analytics view. Same
+    # popover chrome as the campaign explorer filters editor; POSTs the scope to
+    # the analytics/page-path-filter API. Reuses the ef-* styles.
+    analytics_path_filter_edit_html = "" if not session_is_admin else f"""<div class="ef-edit">
+          <button type="button" class="ef-edit-btn" id="pfEditBtn" aria-haspopup="dialog" aria-expanded="false" title="Limit this view to certain page paths">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
+            <span>Edit page filter</span>
+          </button>
+          <div class="ef-pop" id="pfPop" role="dialog" aria-label="Edit analytics page filter" hidden>
+            <div class="ef-pop-head"><span>Website Analytics page filter</span><button type="button" class="ef-pop-x" aria-label="Close">&times;</button></div>
+            <div class="ef-pop-body">
+              <p class="ef-pop-desc">One path per line (case-insensitive substring, e.g. <code>/careers</code>). Pages / Landing Pages are limited to matching paths, and the site-wide panels (Sessions, Traffic, Audience, Demographics) are hidden while a filter is set. Leave blank to show the whole site.</p>
+              <textarea id="pfText" spellcheck="false" placeholder="/careers&#10;/jobs&#10;/apply">{_esc(analytics_page_path_filter_cfg)}</textarea>
+              <div class="ef-pop-actions">
+                <button type="button" class="ef-pop-btn primary" id="pfSave">Save filter</button>
+                <span class="ef-status" id="pfStatus"></span>
               </div>
             </div>
           </div>
@@ -1167,6 +1198,15 @@ def render_bigquery_dashboard_page(
     .ef-status {{ font-size:.78rem; color:var(--muted); }}
     .ef-status.err {{ color:var(--bad); }}
     .ef-status.ok {{ color:#178a4c; }}
+    /* Website Analytics page-path scope: top-of-pane bar (scope indicator +
+       admin "Edit page filter" editor). Editor reuses the .ef-* styles above. */
+    .apf-bar {{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:0 0 16px; }}
+    .apf-bar[hidden] {{ display:none; }}
+    .apf-bar .ef-edit {{ margin-left:auto; }}
+    .apf-scope {{ display:inline-flex; align-items:center; gap:6px; font-size:.82rem; color:var(--navy); background:#eef5fd; border:1px solid var(--line); border-radius:999px; padding:6px 13px; font-weight:600; }}
+    .apf-scope[hidden] {{ display:none; }}
+    .apf-scope svg {{ opacity:.75; flex-shrink:0; }}
+    .apf-scope code {{ background:rgba(29,111,208,.12); padding:1px 6px; border-radius:5px; font-size:.78rem; }}
     /* Campaign explorer: admin "Campaigns" allowlist picker (checklist popover) */
     .ec-badge {{ display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:var(--accent); color:#fff; font-size:.66rem; font-weight:800; }}
     .ec-badge[hidden] {{ display:none; }}
@@ -1643,6 +1683,11 @@ def render_bigquery_dashboard_page(
     <!-- ===== WEBSITE ANALYTICS TAB ===== -->
     <div id="pane-analytics" hidden>
 
+      <div class="apf-bar" id="analyticsFilterBar" hidden>
+        <div class="apf-scope" id="analyticsScopeNote" hidden></div>
+        {analytics_path_filter_edit_html}
+      </div>
+
       <section id="sec-sessions">
         <div class="sec-head"><h2>Sessions over time <span class="cmp-warn" id="sessionsCmpWarn" title="" hidden>&#9888;</span></h2><div class="sec-head-actions"><div class="chips seg" id="sessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><span class="status" id="sessionsTrendStatus"></span></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:200px"><canvas id="sessionsTrendChart"></canvas></div></div>
@@ -1849,6 +1894,11 @@ def render_bigquery_dashboard_page(
     const TRAFFIC_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-key-events')}";
     const USER_ACQ_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acq-key-events')}";
     const GA4_KEY_EVENTS_SAVED = {json.dumps([s.strip() for s in ga4_key_events.splitlines() if s.strip()])};
+    // Website Analytics page-path scope: patterns the admin set (empty = whole
+    // site). When non-empty, the page-path panels come back pre-scoped from the
+    // server; the JS hides the site-wide panels and shows a scope indicator.
+    const ANALYTICS_PATH_FILTER = {analytics_path_filter_json};
+    const ANALYTICS_PATH_FILTER_API = "{_aurl(f'/api/clients/{api_client_key}/analytics/page-path-filter')}";
     // Landing date-range preset (admin-chosen client default, else last_30) and
     // the admin-only save endpoint for the "Make default" control.
     const DEFAULT_DATE_PRESET = {default_date_preset_json};
@@ -2359,12 +2409,20 @@ def render_bigquery_dashboard_page(
       user_acquisition:'sec-useracq', demographics:'sec-demographics'
     }};
 
+    // Modules hidden while a page-path scope is active: they aggregate whole-site
+    // GA4 sessions/users and have no page_path to scope by, so showing them next
+    // to careers-only Pages/Landing would be misleading. Top pages + landing stay.
+    const PATH_FILTER_HIDDEN_MODULES = ['sessions','traffic','audience','user_acquisition','demographics'];
+    function pathFilterActive() {{ return Array.isArray(ANALYTICS_PATH_FILTER) && ANALYTICS_PATH_FILTER.length > 0; }}
     function getModules() {{
+      let modules;
       try {{
         const s = localStorage.getItem('nixon_analytics_modules');
         const saved = s ? JSON.parse(s) : {{}};
-        return ALL_MODULES.reduce((o, k) => ({{...o, [k]: k in saved ? saved[k] : true}}), {{}});
-      }} catch {{ return ALL_MODULES.reduce((o, k) => ({{...o, [k]: true}}), {{}}); }}
+        modules = ALL_MODULES.reduce((o, k) => ({{...o, [k]: k in saved ? saved[k] : true}}), {{}});
+      }} catch {{ modules = ALL_MODULES.reduce((o, k) => ({{...o, [k]: true}}), {{}}); }}
+      if (pathFilterActive()) PATH_FILTER_HIDDEN_MODULES.forEach(k => {{ modules[k] = false; }});
+      return modules;
     }}
 
     function applyModules() {{
@@ -2919,6 +2977,50 @@ def render_bigquery_dashboard_page(
             method: 'POST', credentials: 'same-origin',
             headers: {{ 'Content-Type': 'application/json' }},
             body: JSON.stringify({{ filters: ta.value }}),
+          }});
+          const b = await r.json().catch(() => ({{}}));
+          if (!r.ok) throw new Error((b && (b.detail && (b.detail.error || b.detail) || b.detail)) || r.statusText);
+          status.textContent = 'Saved. Reloading…';
+          setTimeout(() => window.location.reload(), 600);
+        }} catch (err) {{
+          status.className = 'ef-status err'; status.textContent = 'Save failed: ' + (err.message || err);
+          save.disabled = false;
+        }}
+      }});
+    }})();
+    // Website Analytics page-path scope: the scope indicator (shown to every
+    // viewer when a filter is set) plus the admin "Edit page filter" popover.
+    // Saving reloads so the server re-scopes the page-path panels and the
+    // site-wide panels re-hide via getModules().
+    (function(){{
+      const bar = document.getElementById('analyticsFilterBar');
+      const note = document.getElementById('analyticsScopeNote');
+      const btn = document.getElementById('pfEditBtn');
+      const active = pathFilterActive();
+      if (note && active) {{
+        note.hidden = false;
+        note.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg><span>Limited to pages matching ' + ANALYTICS_PATH_FILTER.map(p => '<code>' + esc(p) + '</code>').join(' ') + '</span>';
+      }}
+      // The bar takes space only when it has content: the admin editor or a scope.
+      if (bar && (btn || active)) bar.hidden = false;
+      if (!btn) return;
+      const pop = document.getElementById('pfPop');
+      const save = document.getElementById('pfSave');
+      const ta = document.getElementById('pfText');
+      const status = document.getElementById('pfStatus');
+      const setOpen = (o) => {{ pop.hidden = !o; btn.setAttribute('aria-expanded', o ? 'true' : 'false'); }};
+      btn.addEventListener('click', (e) => {{ e.stopPropagation(); setOpen(pop.hidden); }});
+      pop.addEventListener('click', (e) => e.stopPropagation());
+      pop.querySelector('.ef-pop-x').addEventListener('click', () => setOpen(false));
+      document.addEventListener('click', () => setOpen(false));
+      document.addEventListener('keydown', (e) => {{ if (e.key === 'Escape') setOpen(false); }});
+      save.addEventListener('click', async () => {{
+        save.disabled = true; status.className = 'ef-status'; status.textContent = 'Saving…';
+        try {{
+          const r = await fetch(ANALYTICS_PATH_FILTER_API, {{
+            method: 'POST', credentials: 'same-origin',
+            headers: {{ 'Content-Type': 'application/json' }},
+            body: JSON.stringify({{ filter: ta.value }}),
           }});
           const b = await r.json().catch(() => ({{}}));
           if (!r.ok) throw new Error((b && (b.detail && (b.detail.error || b.detail) || b.detail)) || r.statusText);

@@ -190,6 +190,44 @@ def _demographics_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.vw_ga4_demographics_daily`"
 
 
+def parse_page_path_filter(text: str | None) -> list[str]:
+    """Split an admin's Website Analytics page-path scope into patterns.
+
+    One pattern per line (case-insensitive substring, matched against page paths
+    by the page-path fetch functions). Blank lines and ``#`` comments are
+    dropped. Returns an empty list when nothing is configured, in which case the
+    analytics view shows the whole site.
+    """
+    out: list[str] = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        out.append(line)
+    return out
+
+
+def _page_path_filter_clause(
+    patterns: list[str] | None,
+    *,
+    column: str,
+    params: dict[str, bigquery.ScalarQueryParameter],
+) -> str:
+    """Build a `` AND (…)`` scope clause for a page-path column and register its
+    query params. Each pattern is a case-insensitive substring (CONTAINS_SUBSTR,
+    which treats the value as a literal — no wildcard/injection surface); a row
+    is kept when *any* pattern matches. Returns '' when there are no patterns."""
+    cleaned = [p.strip() for p in (patterns or []) if p and p.strip()]
+    if not cleaned:
+        return ""
+    conds = []
+    for i, pat in enumerate(cleaned):
+        key = f"pp{i}"
+        params[key] = bigquery.ScalarQueryParameter(key, "STRING", pat)
+        conds.append(f"CONTAINS_SUBSTR({column}, @{key})")
+    return " AND (" + " OR ".join(conds) + ")"
+
+
 def _job_config(**params: bigquery.ScalarQueryParameter) -> bigquery.QueryJobConfig:
     config = bigquery_service.make_job_config()
     config.query_parameters = list(params.values())
@@ -1021,8 +1059,14 @@ def fetch_pages_top(
     *,
     start_date: date,
     end_date: date,
+    page_path_filter: list[str] | None = None,
 ) -> dict[str, Any]:
     """Top pages (all traffic) from vw_page_path_daily, aggregated per page."""
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    scope = _page_path_filter_clause(page_path_filter, column="page_path", params=params)
     sql = f"""
     SELECT
       page_path,
@@ -1034,16 +1078,13 @@ def fetch_pages_top(
       ROUND(SUM(engagement_seconds), 1) AS engagement_seconds,
       SUM(key_events) AS key_events
     FROM {_page_path_daily_table()}
-    WHERE date BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date{scope}
     GROUP BY page_path
     ORDER BY page_views DESC
     """
     rows = _run_query(
         sql,
-        params={
-            "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
-            "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
-        },
+        params=params,
         max_rows=20000,
     )
     return {
@@ -1174,11 +1215,13 @@ def fetch_landing_pages(
     *,
     start_date: date,
     end_date: date,
+    page_path_filter: list[str] | None = None,
 ) -> dict[str, Any]:
     params = {
         "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
         "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
     }
+    scope = _page_path_filter_clause(page_path_filter, column="landing_page", params=params)
     sql = f"""
     SELECT
       COALESCE(landing_page, '/') AS page_path,
@@ -1189,7 +1232,7 @@ def fetch_landing_pages(
       ROUND(SAFE_DIVIDE(SUM(key_events), NULLIF(SUM(sessions), 0)) * 100, 1) AS key_event_rate,
       ROUND(AVG(average_session_duration), 1) AS avg_engagement_seconds
     FROM {_landing_page_table()}
-    WHERE date BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date{scope}
     GROUP BY page_path
     ORDER BY sessions DESC
     LIMIT 100
@@ -1211,6 +1254,7 @@ def fetch_landing_page_events(
     *,
     start_date: date,
     end_date: date,
+    page_path_filter: list[str] | None = None,
 ) -> dict[str, Any]:
     """Per landing_page × event breakdown so the dashboard can recompute the
     landing-page 'key events' column for a client-selected set of events.
@@ -1220,6 +1264,7 @@ def fetch_landing_page_events(
         "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
         "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
     }
+    scope = _page_path_filter_clause(page_path_filter, column="landing_page", params=params)
     rows_sql = f"""
     SELECT
       COALESCE(landing_page, '/') AS page_path,
@@ -1227,7 +1272,7 @@ def fetch_landing_page_events(
       SUM(event_count) AS event_count,
       SUM(key_events)  AS key_events
     FROM {_landing_page_events_table()}
-    WHERE date BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date{scope}
     GROUP BY page_path, event_name
     """
     events_sql = f"""
@@ -1236,7 +1281,7 @@ def fetch_landing_page_events(
       SUM(event_count) AS event_count,
       SUM(key_events)  AS key_events
     FROM {_landing_page_events_table()}
-    WHERE date BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date{scope}
     GROUP BY event_name
     ORDER BY event_count DESC
     """
@@ -1261,6 +1306,7 @@ def fetch_page_key_events(
     *,
     start_date: date,
     end_date: date,
+    page_path_filter: list[str] | None = None,
 ) -> dict[str, Any]:
     """Per page_path × event breakdown across ALL traffic (not just entrances)
     so the Top Pages panel can recompute 'key events' for a client-selected
@@ -1269,6 +1315,7 @@ def fetch_page_key_events(
         "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
         "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
     }
+    scope = _page_path_filter_clause(page_path_filter, column="page_path", params=params)
     rows_sql = f"""
     SELECT
       COALESCE(page_path, '/') AS page_path,
@@ -1276,13 +1323,13 @@ def fetch_page_key_events(
       SUM(event_count) AS event_count,
       SUM(key_events)  AS key_events
     FROM {_page_events_table()}
-    WHERE date BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date{scope}
     GROUP BY page_path, event_name
     """
     events_sql = f"""
     SELECT event_name, SUM(event_count) AS event_count, SUM(key_events) AS key_events
     FROM {_page_events_table()}
-    WHERE date BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date{scope}
     GROUP BY event_name
     ORDER BY event_count DESC
     """
@@ -1380,9 +1427,15 @@ def fetch_pages_sources(
     *,
     start_date: date,
     end_date: date,
+    page_path_filter: list[str] | None = None,
 ) -> dict[str, Any]:
     """Per-page traffic broken out by source / AI referral from
     vw_page_path_source_daily, for filtering the top-pages list."""
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    scope = _page_path_filter_clause(page_path_filter, column="page_path", params=params)
     sql = f"""
     SELECT
       page_path,
@@ -1398,16 +1451,13 @@ def fetch_pages_sources(
       ROUND(SUM(engagement_seconds), 1) AS engagement_seconds,
       CAST(0 AS INT64) AS key_events
     FROM {_page_path_source_daily_table()}
-    WHERE date BETWEEN @start_date AND @end_date
+    WHERE date BETWEEN @start_date AND @end_date{scope}
     GROUP BY page_path, source_platform, is_ai_referral, ai_platform, utm_campaign
     ORDER BY page_views DESC
     """
     rows = _run_query(
         sql,
-        params={
-            "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
-            "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
-        },
+        params=params,
         max_rows=50000,
     )
     return {
@@ -1422,12 +1472,18 @@ def fetch_ai_traffic_daily(
     *,
     start_date: date,
     end_date: date,
+    page_path_filter: list[str] | None = None,
 ) -> dict[str, Any]:
     """Daily AI-referral sessions by ai_platform, for the AI Traffic trend chart.
 
     One row per (date, ai_platform); the range aggregate lives in
     fetch_pages_sources. Reads vw_page_path_source_daily, which tags AI
     assistant sessions (is_ai_referral) with the referring platform."""
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    scope = _page_path_filter_clause(page_path_filter, column="page_path", params=params)
     sql = f"""
     SELECT
       date,
@@ -1435,16 +1491,13 @@ def fetch_ai_traffic_daily(
       SUM(sessions) AS sessions
     FROM {_page_path_source_daily_table()}
     WHERE date BETWEEN @start_date AND @end_date
-      AND is_ai_referral
+      AND is_ai_referral{scope}
     GROUP BY date, ai_platform
     ORDER BY date
     """
     rows = _run_query(
         sql,
-        params={
-            "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
-            "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
-        },
+        params=params,
         max_rows=20000,
     )
     return {

@@ -77,6 +77,14 @@ SCHEMA_SQL_STATEMENTS = [
     """
     ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS explorer_filters TEXT
     """,
+    # Website Analytics (GA4) page-path scope: newline-separated path patterns an
+    # admin sets from the analytics page's "Edit page filter" editor. When set,
+    # the shared renderer scopes every page-path panel (Pages, Landing Pages, …)
+    # server-side to matching paths and hides the site-wide panels that can't be
+    # page-scoped. Empty/NULL = show the whole site (default).
+    """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS analytics_page_path_filter TEXT
+    """,
     """
     ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS pagespeed_targets JSONB
     """,
@@ -226,6 +234,9 @@ class ClientConfigRow:
     gsc_target_keywords: str | None = None
     ga4_key_events: str | None = None
     explorer_filters: str | None = None
+    # Website Analytics page-path scope (newline-separated path patterns). None =
+    # show the whole site. See the analytics_page_path_filter column comment.
+    analytics_page_path_filter: str | None = None
     explorer_budget_tracker: bool = True
     gsc_branded_exclude: str | None = None
     gsc_target_exclude: str | None = None
@@ -302,7 +313,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    pacing_active_weekdays, segment_filter_profile,
                    sidebar_hidden_tabs, card_layouts,
                    default_date_preset, explorer_campaign_allowlist,
-                   email_performance_selection
+                   email_performance_selection, analytics_page_path_filter
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -350,6 +361,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         default_date_preset=_normalize_date_preset(row[30]),
         explorer_campaign_allowlist=_normalize_campaign_allowlist(row[31]),
         email_performance_selection=_normalize_id_list(row[32]),
+        analytics_page_path_filter=_s(row[33]),
     )
 
 
@@ -857,6 +869,42 @@ def update_explorer_filters(
               updated_by = EXCLUDED.updated_by
             """,
             (slug, slug, now, _clean(updated_by), _clean(filters_text)),
+        )
+
+
+def update_analytics_page_path_filter(
+    client_slug: str,
+    *,
+    filter_text: str | None,
+    updated_by: str | None = None,
+) -> None:
+    """Set the client's Website Analytics page-path scope (one path pattern per
+    line; case-insensitive substring match against page paths). Empty = no scope
+    (the analytics view shows the whole site). Touches only that column."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save the page-path filter.")
+
+    def _clean(val: str | None) -> str | None:
+        return (val or "").strip() or None
+
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, updated_at, updated_by, analytics_page_path_filter
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (client_slug) DO UPDATE SET
+              analytics_page_path_filter = EXCLUDED.analytics_page_path_filter,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, slug, now, _clean(updated_by), _clean(filter_text)),
         )
 
 

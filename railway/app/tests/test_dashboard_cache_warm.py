@@ -83,7 +83,7 @@ class CacheWarmDriftTests(unittest.TestCase):
             self._calls["traffic"] += 1
             return {"kind": "traffic"}
 
-        def _fetch_ai(*, start_date, end_date):
+        def _fetch_ai(*, start_date, end_date, page_path_filter=None):
             self._calls["ai"] += 1
             return {"kind": "ai"}
 

@@ -92,6 +92,23 @@ def _load_bq_test_config(slug: str) -> tuple[str, str]:
     return project_id, dataset_id
 
 
+def _load_page_path_filter(slug: str) -> list[str]:
+    """The client's persisted Website Analytics page-path scope as a list of
+    substring patterns (empty = whole site). Admins set it from the analytics
+    page's "Edit page filter" editor; the page-path fetch endpoints pass it into
+    marketing_service so their BigQuery reads only return matching paths."""
+    try:
+        import client_dashboard_config as cdc
+        row = cdc.get_config(slug)
+    except Exception:
+        row = None
+    if row is None:
+        return []
+    return marketing_service.parse_page_path_filter(
+        getattr(row, "analytics_page_path_filter", None)
+    )
+
+
 def _bq_endpoint_failure(exc: Exception) -> HTTPException:
     logger.exception("Nixon endpoint failed")
     logger.error("Nixon endpoint traceback:\n%s", traceback.format_exc())
@@ -312,10 +329,14 @@ def _ai_traffic_daily_read(
     *,
     project_id: str | None = None,
     dataset_id: str | None = None,
+    page_path_filter: list[str] | None = None,
 ) -> dict:
     """Daily AI-referral sessions by platform — the Overview 'AI traffic' card."""
-    payload = {"start": start.isoformat(), "end": end.isoformat()}
-    fetch = lambda: marketing_service.fetch_ai_traffic_daily(start_date=start, end_date=end)
+    path_filter = page_path_filter or []
+    payload = {"start": start.isoformat(), "end": end.isoformat(), "scope": "|".join(path_filter)}
+    fetch = lambda: marketing_service.fetch_ai_traffic_daily(
+        start_date=start, end_date=end, page_path_filter=path_filter,
+    )
     if normalized == "nixon":
         return _cached_bq_read(
             "nixon.ai_traffic.daily", payload, ttl_seconds=900, fetch=fetch,
@@ -1451,11 +1472,14 @@ def client_pages_top(
         with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
+            path_filter = _load_page_path_filter(normalized)
             return _cached_bq_read(
                 f"{normalized}.pages.top",
-                {"start": start.isoformat(), "end": end.isoformat()},
+                {"start": start.isoformat(), "end": end.isoformat(), "scope": "|".join(path_filter)},
                 ttl_seconds=900,
-                fetch=lambda: marketing_service.fetch_pages_top(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_pages_top(
+                    start_date=start, end_date=end, page_path_filter=path_filter,
+                ),
             )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
@@ -1479,11 +1503,14 @@ def client_pages_sources(
         with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
+            path_filter = _load_page_path_filter(normalized)
             return _cached_bq_read(
                 f"{normalized}.pages.sources",
-                {"start": start.isoformat(), "end": end.isoformat()},
+                {"start": start.isoformat(), "end": end.isoformat(), "scope": "|".join(path_filter)},
                 ttl_seconds=900,
-                fetch=lambda: marketing_service.fetch_pages_sources(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_pages_sources(
+                    start_date=start, end_date=end, page_path_filter=path_filter,
+                ),
             )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
@@ -1506,6 +1533,7 @@ def client_ai_traffic_daily(
     try:
         return _ai_traffic_daily_read(
             normalized, start, end, project_id=project_id, dataset_id=dataset_id,
+            page_path_filter=_load_page_path_filter(normalized),
         )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
@@ -1701,11 +1729,14 @@ def client_landing_pages(
         with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
+            path_filter = _load_page_path_filter(normalized)
             return _cached_bq_read(
                 f"{normalized}.pages.landing",
-                {"start": start.isoformat(), "end": end.isoformat()},
+                {"start": start.isoformat(), "end": end.isoformat(), "scope": "|".join(path_filter)},
                 ttl_seconds=900,
-                fetch=lambda: marketing_service.fetch_landing_pages(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_landing_pages(
+                    start_date=start, end_date=end, page_path_filter=path_filter,
+                ),
             )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
@@ -1729,11 +1760,14 @@ def client_landing_page_events(
         with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
+            path_filter = _load_page_path_filter(normalized)
             return _cached_bq_read(
                 f"{normalized}.pages.landing_events",
-                {"start": start.isoformat(), "end": end.isoformat()},
+                {"start": start.isoformat(), "end": end.isoformat(), "scope": "|".join(path_filter)},
                 ttl_seconds=900,
-                fetch=lambda: marketing_service.fetch_landing_page_events(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_landing_page_events(
+                    start_date=start, end_date=end, page_path_filter=path_filter,
+                ),
             )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
@@ -1757,11 +1791,14 @@ def client_top_pages_key_events(
         with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
+            path_filter = _load_page_path_filter(normalized)
             return _cached_bq_read(
                 f"{normalized}.pages.top_key_events",
-                {"start": start.isoformat(), "end": end.isoformat()},
+                {"start": start.isoformat(), "end": end.isoformat(), "scope": "|".join(path_filter)},
                 ttl_seconds=900,
-                fetch=lambda: marketing_service.fetch_page_key_events(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_page_key_events(
+                    start_date=start, end_date=end, page_path_filter=path_filter,
+                ),
             )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
@@ -1889,6 +1926,37 @@ async def save_explorer_filters(
         import client_dashboard_config as cdc
         cdc.update_explorer_filters(
             normalized, filters_text=str(body.get("filters") or ""), updated_by="dashboard",
+        )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+    return {"ok": True}
+
+
+@router.post(
+    "/api/clients/{client_key}/analytics/page-path-filter",
+    summary="Set the Website Analytics page-path scope for this client (admin only)",
+)
+async def save_analytics_page_path_filter(
+    client_key: str,
+    request: Request,
+) -> dict:
+    """Persist the Website Analytics page-path scope (one path pattern per line,
+    case-insensitive substring). Body: ``{"filter": "/careers\\n/jobs"}`` (empty
+    clears it → whole site). Admin-only — the scope is portal-wide config that
+    limits what page data every viewer of this client sees, not a per-viewer
+    preference."""
+    normalized = (client_key or "").strip().lower()
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    if not (auth.user and auth.user.role == "admin"):
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        import client_dashboard_config as cdc
+        cdc.update_analytics_page_path_filter(
+            normalized, filter_text=str(body.get("filter") or ""), updated_by="dashboard",
         )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
