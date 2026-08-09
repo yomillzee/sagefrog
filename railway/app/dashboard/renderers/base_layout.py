@@ -800,8 +800,14 @@ def dashboard_sidebar_view_nav_html(
         ("explorer", "Campaign Explorer", _VIEW_ICONS["campaigns"]),
         ("analytics", "Website Analytics", _VIEW_ICONS["website"]),
         ("ai_traffic", "AI Traffic", _VIEW_ICONS["ai-traffic"]),
-        ("gsc", "Search Console", _VIEW_ICONS["gsc"]),
     ]
+    # Search Console is connector-gated like Site Performance below: a client
+    # without the GSC connector has no BQ search mart, so the tab only loaded a
+    # table-not-found error (e.g. the GA4-only clients). Fail OPEN when the
+    # connector read itself failed, so a transient Postgres blip can't blank a
+    # core tab for a client that does have GSC.
+    if pflags.get("show_gsc") or not pflags.get("_connector_read_ok", True):
+        core.append(("gsc", "Search Console", _VIEW_ICONS["gsc"]))
     # Site Performance (PageSpeed Insights) is a same-page tab like Search Console,
     # gated on the pagespeed connector so it only appears once a client has it.
     if pflags.get("show_pagespeed"):
@@ -939,7 +945,12 @@ def platform_nav_flags(client_slug: str) -> dict[str, bool]:
         # Still couldn't read connector state. Return a COMPLETE flag set (every
         # key present, all False) rather than a partial dict, so a caller's
         # ``.get()`` is consistent and no item is dropped by a missing key.
+        # ``_connector_read_ok`` marks this as "couldn't tell", distinct from a
+        # successful read that found nothing connected — callers gating a CORE
+        # tab (one every client normally has) use it to fail open rather than
+        # blank the tab on a transient blip.
         return {
+            "_connector_read_ok": False,
             "show_connectors": False,
             "show_lead_tracking": False,
             "show_email_performance": False,
@@ -955,12 +966,26 @@ def platform_nav_flags(client_slug: str) -> dict[str, bool]:
     def _connected(ctype: str) -> bool:
         return status_by_type.get(ctype) in ("connected", "syncing")
 
+    # The demo client's data is synthetic (see demo_data.py, which serves the
+    # gsc.* keys), so it has no connector rows at all and would otherwise lose
+    # its Search Console tab to the gate below. Treat its synthetic sources as
+    # connected — same carve-out the dashboard renderer already applies to
+    # has_connectors/has_paid_ads. Only show_gsc is forced: the demo has no
+    # pagespeed/hubspot/gtm data, so those tabs stay off exactly as they are now.
+    _is_demo = False
+    try:
+        import demo_client
+        _is_demo = demo_client.is_demo(client_slug)
+    except Exception:
+        _is_demo = False
+
     return {
+        "_connector_read_ok": True,
         "show_connectors": bool(configs),
         "show_lead_tracking": _connected("hubspot"),
         "show_email_performance": _connected("hubspot"),
         "show_linkedin_organic": _connected("linkedin_organic"),
-        "show_gsc": _connected("gsc"),
+        "show_gsc": _connected("gsc") or _is_demo,
         "show_gtm": _connected("gtm"),
         "show_pagespeed": _connected("pagespeed"),
         "show_semrush": _connected("semrush"),

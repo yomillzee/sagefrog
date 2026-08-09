@@ -632,11 +632,16 @@ def render_bigquery_dashboard_page(
         show_semrush = bool(_pf.get("show_semrush"))
         show_lead_tracking = bool(_pf.get("show_lead_tracking"))
         show_linkedin_organic = bool(_pf.get("show_linkedin_organic"))
+        # Search Console: gates both the Overview panel and the sidebar tab (see
+        # dashboard_sidebar_view_nav_html). Fails open on a failed connector read
+        # so a transient blip doesn't drop the panel for a client that has GSC.
+        show_gsc = bool(_pf.get("show_gsc")) or not _pf.get("_connector_read_ok", True)
     except Exception:
         show_pagespeed = False
         show_semrush = False
         show_lead_tracking = False
         show_linkedin_organic = False
+        show_gsc = True
 
     # HubSpot MQL tracker for the Overview home — only fetched when HubSpot is
     # connected. Failures never break the dashboard; the helper drops any card
@@ -1044,7 +1049,8 @@ def render_bigquery_dashboard_page(
     if linkedin_organic_section_html:
         ov_units.append(("linkedin_organic", linkedin_organic_section_html))
     ov_units.append(("ai_traffic", panel_ai))
-    ov_units.append(("gsc", panel_gsc))
+    if show_gsc:
+        ov_units.append(("gsc", panel_gsc))
     if panel_pagespeed:
         ov_units.append(("site_performance", panel_pagespeed))
 
@@ -4929,9 +4935,18 @@ def render_bigquery_dashboard_page(
     // after all loaders are initialized.
     (function(){{
       const hidden = new Set(Array.isArray(window.__sfHiddenTabs) ? window.__sfHiddenTabs : []);
+      // A tab is reachable only if it's a known tab, not admin-hidden, AND the
+      // sidebar actually rendered a button for it. That last check covers the
+      // connector-gated tabs (Search Console, Site Performance): their panes are
+      // always emitted, so without it a stale ?view=gsc link would strand the
+      // user on an empty pane with no nav item to click back from.
+      function reachable(t) {{
+        return !!t && TABS.includes(t) && !hidden.has(t)
+          && !!document.querySelector('.dash-view-btn[data-tab="' + t + '"]');
+      }}
       const v = new URLSearchParams(location.search).get('view');
-      let target = (v && TABS.includes(v)) ? v : 'overview';
-      if (hidden.has(target)) target = TABS.find(t => !hidden.has(t)) || 'overview';
+      let target = reachable(v) ? v : 'overview';
+      if (!reachable(target)) target = TABS.find(reachable) || 'overview';
       if (target !== currentTab) switchTab(target);
     }})();
   </script>

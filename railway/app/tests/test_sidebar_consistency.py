@@ -82,9 +82,24 @@ class SidebarConsistencyTests(unittest.TestCase):
         }
 
     def test_section_nav_identical_on_every_page(self) -> None:
+        # setUp gives this client no connectors, so the connector-gated sections
+        # (Search Console, Site Performance, …) are absent — what matters here is
+        # that whatever the sidebar shows, it shows identically on every page.
         pages = self._render_all()
-        expected = ["Overview", "Campaign Explorer", "Website Analytics", "AI Traffic", "Search Console"]
+        expected = ["Overview", "Campaign Explorer", "Website Analytics", "AI Traffic"]
         for name, html in pages.items():
+            self.assertEqual(_section_items(html), expected, f"section nav differs on {name}")
+
+    def test_search_console_section_appears_on_every_page_once_connected(self) -> None:
+        # The same identical-everywhere guarantee, with GSC connected: the tab
+        # must show up on all four pages, not just the dashboard.
+        import connector_config_store as ccs
+        ccs.list_configs = lambda slug: [
+            types.SimpleNamespace(connector_type="gsc", status="connected")
+        ]
+        expected = ["Overview", "Campaign Explorer", "Website Analytics", "AI Traffic",
+                    "Search Console"]
+        for name, html in self._render_all().items():
             self.assertEqual(_section_items(html), expected, f"section nav differs on {name}")
 
     def test_footer_nav_identical_on_every_page(self) -> None:
