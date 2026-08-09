@@ -295,7 +295,7 @@ def _parse_email_row(result: dict[str, Any], synced_at: str) -> dict[str, Any]:
                  or result.get("updatedAt") or result.get("updated")
                  or result.get("createdAt") or result.get("created") or None)
     return {
-        "email_id":     str(result.get("id")),
+        "email_id":     str(result.get("id") or "").strip() or None,
         "name":         result.get("name") or None,
         "subject":      result.get("subject") or None,
         # v3 exposes the email kind as `subcategory` (e.g. batch, automated);
@@ -429,9 +429,11 @@ def _ensure_table(
 # client, so two runs can MERGE into one fact_hubspot_* table at once. BigQuery
 # rejects the loser with a 400 "Could not serialize access due to concurrent
 # update", which retrying clears once the other run's MERGE commits. The longest
-# step (emails, ~thousands of rows) is the most exposed, which is why it was the
-# one surfacing "emails: 400 GET https://bigquery.googleapis.com/..." while
-# contacts/deals slipped through.
+# step (emails, ~thousands of rows) is the most exposed.
+#
+# Note that a duplicated merge key ("UPDATE/MERGE must match at most one source
+# row for each target row") is NOT transient — retrying replays the same bad
+# batch — so it is deliberately absent here; see _dedupe_rows for that fix.
 _TRANSIENT_BQ_MARKERS = (
     "concurrent update",
     "could not serialize",
@@ -478,6 +480,84 @@ def _run_bq_with_retry(fn, *, what: str, attempts: int = 4):
             delay *= 2
 
 
+def _dedupe_rows(rows: list[dict[str, Any]], id_col: str) -> list[dict[str, Any]]:
+    """Collapse the batch to one row per id, keeping the last occurrence.
+
+    HubSpot's paged list endpoints can hand back the same object on two pages —
+    the cursor is a position, so anything re-ordered mid-crawl (a send whose
+    stats tick over between requests) slides across the page boundary and is
+    read twice. BigQuery rejects a MERGE whose source has two rows for one
+    target row ("UPDATE/MERGE must match at most one source row for each target
+    row"), so the batch has to be unique on the merge key before it is staged.
+
+    Rows without an id are dropped: the id column is REQUIRED in every schema
+    here, and a keyless row can't be upserted against anything.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    dropped = 0
+    for row in rows:
+        key = str(row.get(id_col) or "").strip()
+        if not key:
+            dropped += 1
+            continue
+        # Assigning an existing key keeps its original position but takes the
+        # newer values — last write wins, which is what the upsert would do.
+        out[key] = row
+    dupes = len(rows) - dropped - len(out)
+    if dupes or dropped:
+        LOGGER.warning(
+            "Deduped batch on %s: %d duplicate rows collapsed, %d keyless rows dropped "
+            "(%d → %d)", id_col, dupes, dropped, len(rows), len(out),
+        )
+    return list(out.values())
+
+
+def _wait(job):
+    """Run a query job to completion and hand back the job (for DML row counts)."""
+    job.result()
+    return job
+
+
+def _delete_duplicate_target_rows(
+    client: bigquery.Client,
+    *,
+    target: str,
+    staging: str,
+    id_col: str,
+) -> None:
+    """Drop pre-existing duplicate rows the MERGE would otherwise trip over.
+
+    A batch that carried duplicates before ``_dedupe_rows`` existed inserted
+    them both: BigQuery only rejects a duplicated source row when it MATCHES a
+    target row, so the very first sync of a new id silently wrote two copies and
+    every run after it failed. Clearing the duplicated ids that this batch is
+    about to re-insert leaves exactly one fresh row each, and double-counted
+    sends disappear from the reports.
+
+    Scoped to ids present in staging so an id outside this window is never
+    deleted without a replacement to write back.
+    """
+    sql = f"""
+DELETE FROM {target}
+WHERE {id_col} IN (
+  SELECT {id_col}
+  FROM {target}
+  WHERE {id_col} IN (SELECT {id_col} FROM {staging})
+  GROUP BY {id_col}
+  HAVING COUNT(*) > 1
+)
+"""
+    job = _run_bq_with_retry(
+        lambda: _wait(client.query(sql)), what=f"dedupe {target}"
+    )
+    removed = job.num_dml_affected_rows or 0
+    if removed:
+        LOGGER.warning(
+            "Removed %d duplicate rows from %s — the MERGE re-inserts one row per id",
+            removed, target,
+        )
+
+
 def _upsert(
     client: bigquery.Client,
     project: str,
@@ -488,6 +568,10 @@ def _upsert(
     id_col: str,
     rows: list[dict[str, Any]],
 ) -> None:
+    rows = _dedupe_rows(rows, id_col)
+    if not rows:
+        LOGGER.info("Nothing left to upsert into %s after dedupe", table_name)
+        return
     stg_id = f"{project}.{dataset}._hs_stg_{uuid4().hex[:12]}"
     try:
         def _load():
@@ -507,6 +591,13 @@ def _upsert(
 
         target  = f"`{project}.{dataset}.{table_name}`"
         staging = f"`{stg_id}`"
+
+        # Clear any duplicate target rows left behind by earlier runs, otherwise
+        # the MERGE below still fails on them even with a deduped source.
+        _delete_duplicate_target_rows(
+            client, target=target, staging=staging, id_col=id_col,
+        )
+
         upd_cols = [f.name for f in schema if f.name != id_col]
         set_clause  = ", ".join(f"{c} = S.{c}" for c in upd_cols)
         insert_cols = ", ".join(f.name for f in schema)
