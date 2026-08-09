@@ -988,31 +988,51 @@ def _render_management_view(
     if config.last_success_at:
         last_sync_html = _fmt_dt(config.last_success_at)
 
-    # HubSpot-specific pull settings: lifecycle stage + backfill window.
+    # HubSpot-specific pull settings: which objects to sync, lifecycle stage and
+    # backfill window.
     hubspot_config_html = ""
     if handler.connector_type == "hubspot":
-        import json as _json
         _hs_stage, _hs_lookback = "marketingqualifiedlead", 90
-        if config.sync_options:
-            try:
-                _o = _json.loads(config.sync_options)
-                _hs_stage = _o.get("lifecycle_stage") or _hs_stage
-                _hs_lookback = int(_o.get("lookback_days") or 90)
-            except Exception:
-                pass
+        _hs_objects = {"contacts": True, "deals": True, "emails": True}
+        _stage_opts = [{"value": "marketingqualifiedlead", "label": "Marketing Qualified Lead (MQL)"}]
+        _obj_opts = [{"value": k, "label": k.title(), "help": ""} for k in _hs_objects]
         try:
             import hubspot_sync_service as _hs
+            _saved = _hs.parse_sync_options(config.sync_options)
+            _hs_stage = _saved["lifecycle_stage"]
+            _hs_lookback = _saved["lookback_days"]
+            _hs_objects = _saved["sync_objects"]
             _stage_opts = _hs.lifecycle_options()
+            _obj_opts = _hs.object_options()
         except Exception:
-            _stage_opts = [{"value": "marketingqualifiedlead", "label": "Marketing Qualified Lead (MQL)"}]
+            pass
         _opts_html = "".join(
             f'<option value="{_esc(o["value"])}"{" selected" if o["value"] == _hs_stage else ""}>{_esc(o["label"])}</option>'
             for o in _stage_opts
+        )
+        _obj_html = "".join(
+            f'<label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">'
+            f'<input type="checkbox" class="hs-obj" data-obj="{_esc(o["value"])}"'
+            f'{" checked" if _hs_objects.get(o["value"]) else ""} onchange="hubspotObjectsChanged()"'
+            f' style="margin-top:3px;cursor:pointer">'
+            f'<span><strong style="font-weight:600">{_esc(o["label"])}</strong>'
+            f'<span style="display:block;font-size:.78rem;color:var(--muted)">{_esc(o.get("help") or "")}</span>'
+            f'</span></label>'
+            for o in _obj_opts
         )
         _fld_css = "padding:7px 10px;border:1px solid var(--border);border-radius:6px;font:inherit;font-size:.875rem;background:#fff;color:var(--navy);cursor:pointer"
         hubspot_config_html = f"""
       <div class="mgmt-section">
         <div class="mgmt-section-title">HubSpot pull settings</div>
+        <div class="mgmt-row" style="align-items:flex-start">
+          <span class="mgmt-label">Data to sync</span>
+          <div style="display:flex;flex-direction:column;gap:10px">{_obj_html}</div>
+        </div>
+        <div class="mgmt-row" style="font-size:.8rem;color:var(--muted)">
+          <span class="mgmt-label"></span>
+          <span>Only the selected data is pulled into BigQuery — leave one off to keep it
+          out of this client's storage. Existing rows are left untouched.</span>
+        </div>
         <div class="mgmt-row">
           <span class="mgmt-label">Lifecycle stage</span>
           <select id="hsStage" style="{_fld_css}">{_opts_html}</select>
@@ -1023,7 +1043,8 @@ def _render_management_view(
         </div>
         <div class="mgmt-row" style="font-size:.8rem;color:var(--muted)">
           <span class="mgmt-label"></span>
-          <span>Pulls contacts that <em>reached</em> the selected stage within the window — i.e. is or has been that stage.</span>
+          <span>Pulls contacts that <em>reached</em> the selected stage within the window — i.e. is or has been that stage.
+          The stage applies to contacts; the window applies to contacts and deals. Marketing emails always sync in full.</span>
         </div>
         <div style="margin-top:10px">
           <button class="btn-secondary" id="hsSaveBtn" onclick="saveHubspotOptions()">Save settings</button>
@@ -1197,22 +1218,55 @@ def _render_management_view(
         if (e.target === this) hideDisconnectModal();
       }});
 
+      function hubspotObjects() {{
+        var picked = {{}};
+        document.querySelectorAll('.hs-obj').forEach(function(el) {{
+          picked[el.getAttribute('data-obj')] = el.checked;
+        }});
+        return picked;
+      }}
+
+      // The lifecycle stage only shapes the contacts pull, and the backfill window
+      // shapes contacts + deals — grey them out when neither is selected so the
+      // fields never look like they're doing something they aren't.
+      function hubspotObjectsChanged() {{
+        var picked = hubspotObjects();
+        var stageEl = document.getElementById('hsStage');
+        var lookbackEl = document.getElementById('hsLookback');
+        if (stageEl) {{
+          stageEl.disabled = !picked.contacts;
+          stageEl.style.opacity = picked.contacts ? '1' : '.5';
+        }}
+        if (lookbackEl) {{
+          var windowed = picked.contacts || picked.deals;
+          lookbackEl.disabled = !windowed;
+          lookbackEl.style.opacity = windowed ? '1' : '.5';
+        }}
+      }}
+
       function saveHubspotOptions() {{
         var btn = document.getElementById('hsSaveBtn');
         var st = document.getElementById('hsSaveStatus');
         var stage = (document.getElementById('hsStage') || {{}}).value || 'marketingqualifiedlead';
         var lookback = parseInt((document.getElementById('hsLookback') || {{}}).value || '90', 10) || 90;
+        var objects = hubspotObjects();
+        if (!Object.keys(objects).some(function(k) {{ return objects[k]; }})) {{
+          st.textContent = 'Select at least one type of HubSpot data to sync.';
+          return;
+        }}
         btn.disabled = true; st.textContent = 'Saving…';
         fetch('/dashboard/{client_slug}/connectors/{handler.connector_type}/sync-options', {{
           method: 'POST',
           headers: {{'Content-Type': 'application/json'}},
-          body: JSON.stringify({{lifecycle_stage: stage, lookback_days: lookback}})
+          body: JSON.stringify({{lifecycle_stage: stage, lookback_days: lookback, sync_objects: objects}})
         }})
           .then(r => r.json()).then(data => {{
             btn.disabled = false;
             st.textContent = data.ok ? 'Saved.' : (data.error || 'Save failed.');
           }}).catch(err => {{ btn.disabled = false; st.textContent = 'Save failed: ' + err.message; }});
       }}
+
+      if (document.querySelector('.hs-obj')) hubspotObjectsChanged();
 
       function runSyncNow() {{
         var btn = document.getElementById('syncNowBtn');

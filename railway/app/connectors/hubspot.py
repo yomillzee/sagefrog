@@ -37,7 +37,6 @@ class HubSpotConnector(ConnectorHandler):
             return []
 
     def run_sync(self, *, client_slug: str, date_range: str = "LAST_30_DAYS") -> SyncResult:
-        import json
         import connector_config_store
         import hubspot_sync_service
 
@@ -45,16 +44,20 @@ class HubSpotConnector(ConnectorHandler):
         project_id = cfg.bq_project_id if cfg else None
         dataset_id = cfg.mart_dataset_id if cfg else None
 
-        # Lifecycle stage + backfill window come from the connector's saved options.
-        lifecycle_stage = None
-        lookback_days = 90
-        if cfg and cfg.sync_options:
-            try:
-                opts = json.loads(cfg.sync_options)
-                lifecycle_stage = opts.get("lifecycle_stage") or None
-                lookback_days = int(opts.get("lookback_days") or 90)
-            except Exception:
-                pass
+        # Lifecycle stage, backfill window and which objects to pull all come from
+        # the connector's saved options. An unset selection means all three, so
+        # clients configured before the selection existed are unaffected.
+        opts = hubspot_sync_service.parse_sync_options(cfg.sync_options if cfg else None)
+        lifecycle_stage = opts["lifecycle_stage"]
+        lookback_days = opts["lookback_days"]
+        wanted = opts["sync_objects"]
+
+        if not any(wanted.values()):
+            return SyncResult(
+                rows_loaded=0,
+                error="No HubSpot data is selected to sync — enable at least one of "
+                      "contacts, deals or marketing emails under HubSpot pull settings.",
+            )
 
         # Per-client HubSpot OAuth: refresh the stored token into an access token.
         # Falls back to the global HUBSPOT_ACCESS_TOKEN env when no client token
@@ -72,45 +75,56 @@ class HubSpotConnector(ConnectorHandler):
         rows = 0
         errors: list[str] = []
 
-        # Contacts (lifecycle-filtered) then deals (created/closed in window).
-        try:
-            c = hubspot_sync_service.sync_hubspot_contacts(
-                project_id=project_id or None,
-                dataset_id=dataset_id or None,
-                lifecycle_stage=lifecycle_stage,
-                lookback_days=lookback_days,
-                access_token=access_token,
-            )
-            rows += c.get("rows_synced") or 0
-        except Exception as exc:
-            _log.warning("HubSpot contacts sync failed [%s]: %s", client_slug, exc)
-            errors.append(f"contacts: {str(exc)[:500]}")
+        _log.info(
+            "HubSpot sync [%s]: objects=%s", client_slug,
+            ", ".join(k for k, on in wanted.items() if on) or "none",
+        )
 
-        try:
-            d = hubspot_sync_service.sync_hubspot_deals(
-                project_id=project_id or None,
-                dataset_id=dataset_id or None,
-                lookback_days=lookback_days,
-                access_token=access_token,
-            )
-            rows += d.get("rows_synced") or 0
-        except Exception as exc:
-            _log.warning("HubSpot deals sync failed [%s]: %s", client_slug, exc)
-            errors.append(f"deals: {str(exc)[:500]}")
+        # Contacts (lifecycle-filtered) then deals (created/closed in window).
+        # Each pipeline only runs when it's selected — a deselected object writes
+        # no rows and creates no table, which is the point: it keeps data the
+        # client doesn't report on out of their BigQuery mart.
+        if wanted["contacts"]:
+            try:
+                c = hubspot_sync_service.sync_hubspot_contacts(
+                    project_id=project_id or None,
+                    dataset_id=dataset_id or None,
+                    lifecycle_stage=lifecycle_stage,
+                    lookback_days=lookback_days,
+                    access_token=access_token,
+                )
+                rows += c.get("rows_synced") or 0
+            except Exception as exc:
+                _log.warning("HubSpot contacts sync failed [%s]: %s", client_slug, exc)
+                errors.append(f"contacts: {str(exc)[:500]}")
+
+        if wanted["deals"]:
+            try:
+                d = hubspot_sync_service.sync_hubspot_deals(
+                    project_id=project_id or None,
+                    dataset_id=dataset_id or None,
+                    lookback_days=lookback_days,
+                    access_token=access_token,
+                )
+                rows += d.get("rows_synced") or 0
+            except Exception as exc:
+                _log.warning("HubSpot deals sync failed [%s]: %s", client_slug, exc)
+                errors.append(f"deals: {str(exc)[:500]}")
 
         # Marketing-email performance. Self-gates to Marketing Hub tiers: a portal
         # without the `content` scope returns status="skipped" (not an error), so
         # this never breaks a non-Pro client's contacts/deals sync.
-        try:
-            e = hubspot_sync_service.sync_hubspot_emails(
-                project_id=project_id or None,
-                dataset_id=dataset_id or None,
-                access_token=access_token,
-            )
-            rows += e.get("rows_synced") or 0
-        except Exception as exc:
-            _log.warning("HubSpot emails sync failed [%s]: %s", client_slug, exc)
-            errors.append(f"emails: {str(exc)[:500]}")
+        if wanted["emails"]:
+            try:
+                e = hubspot_sync_service.sync_hubspot_emails(
+                    project_id=project_id or None,
+                    dataset_id=dataset_id or None,
+                    access_token=access_token,
+                )
+                rows += e.get("rows_synced") or 0
+            except Exception as exc:
+                _log.warning("HubSpot emails sync failed [%s]: %s", client_slug, exc)
+                errors.append(f"emails: {str(exc)[:500]}")
 
         return SyncResult(rows_loaded=rows, error="; ".join(errors) if errors else None)
 

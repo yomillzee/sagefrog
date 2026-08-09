@@ -540,12 +540,21 @@ async def connector_sync_options(
 
     options: dict = {}
     if ctype == "hubspot":
-        stage = str(body.get("lifecycle_stage") or "marketingqualifiedlead").strip()
+        import hubspot_sync_service
+        stage = hubspot_sync_service.normalize_stage(str(body.get("lifecycle_stage") or ""))
         try:
             lookback = max(1, min(int(body.get("lookback_days") or 90), 3650))
         except Exception:
             lookback = 90
-        options = {"lifecycle_stage": stage, "lookback_days": lookback}
+        # Which objects to pull. Saving an empty selection would silently turn the
+        # connector into a no-op, so it's rejected rather than stored.
+        objects = hubspot_sync_service.normalize_objects(body.get("sync_objects"))
+        if not any(objects.values()):
+            return JSONResponse(
+                {"ok": False, "error": "Select at least one type of HubSpot data to sync."},
+                status_code=400,
+            )
+        options = {"lifecycle_stage": stage, "lookback_days": lookback, "sync_objects": objects}
     else:
         # Generic: store whatever JSON-able options were posted.
         options = {k: v for k, v in (body or {}).items()}
