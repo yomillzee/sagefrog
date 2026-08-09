@@ -255,6 +255,12 @@ try:
         import sys as _sys
         print(f"WARNING: consent scan schema init failed: {_consent_exc}", file=_sys.stderr)
     login_rate_limit.ensure_schema()
+    try:
+        import gtm_quota
+        gtm_quota.ensure_schema()
+    except Exception as _gtm_quota_exc:
+        import sys as _sys
+        print(f"WARNING: GTM quota schema init failed: {_gtm_quota_exc}", file=_sys.stderr)
     boot = web_users.bootstrap_admin_from_env()
     if boot:
         audit_log.record(

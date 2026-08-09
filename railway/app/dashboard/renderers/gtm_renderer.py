@@ -424,6 +424,10 @@ async function loadTags(forceRefresh = false) {{
       `${{active}} active`,
       ver,
       fetched ? `updated ${{fetched}}` : '',
+      // Tag Manager's per-project quota is 0.25 req/s, so a refresh can be
+      // throttled. We serve the last audit rather than an error — say so, so
+      // "updated <time>" isn't read as "this is the container right now".
+      data.stale ? 'cached (Tag Manager rate limit — retry shortly)' : '',
     ].filter(Boolean);
     pageMeta.textContent = parts.join('  ·  ');
     applyView();

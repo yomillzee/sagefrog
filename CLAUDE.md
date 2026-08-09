@@ -46,6 +46,25 @@ deps, run `bash .claude/hooks/session-setup.sh` once.
 Tests live in `railway/app/tests` and import renderers directly — run them from
 `railway/app` with `python -m pytest tests/<file>`.
 
+## Google Tag Manager calls go through `gtm_quota`
+
+The GTM API allows **0.25 requests/second for the whole Google Cloud project**
+(25 per 100-second sliding window) — shared by every client, every code path and
+every Railway worker — and it reports exhaustion as **403 with a
+`rateLimitExceeded` reason**, not 429. Two rules follow:
+
+- Never call `tagmanager.googleapis.com` directly. Route it through
+  `gtm_service._gtm_get`, which takes a token from `gtm_quota` (a Postgres-backed
+  bucket shared across workers) and trips a breaker after a real rejection.
+- Never treat a GTM 403 as a permission error without checking the body's
+  reason — `gtm_service._is_rate_limited` does this.
+
+Reads are cached in-process *and* in `api_cache`, and a rate-limited read serves
+the last known result with `"stale": True` rather than failing. Prefer the cache:
+`force_refresh=True` spends scarce quota, so only pass it when a user explicitly
+asked for fresh data. Tunables: `GTM_QUOTA_QPS`, `GTM_QUOTA_BURST`,
+`GTM_QUOTA_COOLDOWN_SECONDS`, `GTM_QUOTA_MAX_WAIT_SECONDS`.
+
 ## Deploy
 
 Merges to `main` trigger the Railway deploy. 500s referencing

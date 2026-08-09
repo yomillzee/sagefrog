@@ -2617,6 +2617,7 @@ def gtm_live_tags(
     web_auth.authenticate_dashboard_api(request, client_slug=slug)
 
     import connector_config_store
+    import gtm_quota
     import gtm_service
     import oauth_store
 
@@ -2661,6 +2662,17 @@ def gtm_live_tags(
             refresh_token,
             force_refresh=refresh,
         )
+    except gtm_quota.GTMRateLimited as exc:
+        # Google's project-wide GTM quota, not a broken connection. Leave the
+        # connector's health alone (marking it "error" would strand the card in
+        # a failed state until someone re-tests) and answer 429 with a
+        # Retry-After so the browser knows when to come back.
+        logger.info("GTM live-tags rate-limited [%s]: %s", slug, exc)
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": str(max(1, int(exc.retry_after or 60)))},
+        ) from exc
     except PermissionError as exc:
         _record_gtm_health(slug, ok=False, err=exc, prev_status=prev_status)
         raise HTTPException(status_code=403, detail=str(exc)) from exc
