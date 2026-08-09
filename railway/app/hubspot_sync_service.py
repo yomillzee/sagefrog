@@ -119,6 +119,21 @@ _STAGE_DATE_PROP = {k: prop for k, _label, prop in _LIFECYCLE_FUNNEL}
 _STAGE_LABELS    = {k: label for k, label, _prop in _LIFECYCLE_FUNNEL}
 _DEFAULT_STAGE   = "marketingqualifiedlead"
 _DEFAULT_LOOKBACK_DAYS = 90
+_MAX_LOOKBACK_DAYS = 3650
+
+# The three pipelines a client can pull independently, each landing in its own
+# fact table. Syncing all of them is a lot of BigQuery storage for a client who
+# only cares about one — e.g. email performance without any CRM contacts — so the
+# connector page lets an admin pick the subset that client actually reports on.
+_SYNC_OBJECTS = [
+    ("contacts", "Contacts",
+     "Contacts that reached the selected lifecycle stage — powers Lead Tracking."),
+    ("deals", "Deals",
+     "Deals created or closed in the backfill window — pipeline and won revenue."),
+    ("emails", "Marketing emails",
+     "Marketing email sends and engagement — powers Email Performance."),
+]
+_SYNC_OBJECT_KEYS = tuple(k for k, _label, _help in _SYNC_OBJECTS)
 
 
 def lifecycle_options() -> list[dict[str, str]]:
@@ -126,9 +141,63 @@ def lifecycle_options() -> list[dict[str, str]]:
     return [{"value": k, "label": label} for k, label, _prop in _LIFECYCLE_FUNNEL]
 
 
+def object_options() -> list[dict[str, str]]:
+    """Syncable objects for the connector's "Data to sync" checkboxes."""
+    return [{"value": k, "label": label, "help": help_} for k, label, help_ in _SYNC_OBJECTS]
+
+
 def normalize_stage(stage: str | None) -> str:
     s = (stage or "").strip()
     return s if s in _STAGE_DATE_PROP else _DEFAULT_STAGE
+
+
+def normalize_objects(value: Any) -> dict[str, bool]:
+    """Normalise a saved/posted object selection into one bool per object.
+
+    Accepts either a ``{"contacts": true, ...}`` mapping or a ``["contacts", ...]``
+    list. A missing or unreadable selection means "everything", so a connector
+    configured before this option existed keeps syncing exactly as it did.
+    """
+    if isinstance(value, dict):
+        picked = {k: bool(value.get(k)) for k in _SYNC_OBJECT_KEYS if k in value}
+    elif isinstance(value, (list, tuple, set)) and value:
+        wanted = {str(v).strip().lower() for v in value}
+        picked = {k: k in wanted for k in _SYNC_OBJECT_KEYS}
+    else:
+        # Includes an empty list/dict: nothing named at all is "unset", not "none
+        # of them" — an all-off selection is rejected at the save route instead.
+        picked = {}
+    if not picked:
+        return {k: True for k in _SYNC_OBJECT_KEYS}
+    # A key the caller didn't mention is off: the UI always posts all three, so a
+    # partial mapping means the missing ones were deselected.
+    return {k: picked.get(k, False) for k in _SYNC_OBJECT_KEYS}
+
+
+def parse_sync_options(raw: Any) -> dict[str, Any]:
+    """Read a connector's stored ``sync_options`` JSON into usable sync settings.
+
+    Every field is defaulted independently, so a partial or corrupt blob degrades
+    to the pre-existing behaviour (MQLs, 90-day window, all three objects) rather
+    than failing the sync.
+    """
+    opts: Any = raw
+    if isinstance(raw, str):
+        try:
+            opts = json.loads(raw)
+        except Exception:
+            opts = {}
+    if not isinstance(opts, dict):
+        opts = {}
+    try:
+        lookback = int(opts.get("lookback_days") or _DEFAULT_LOOKBACK_DAYS)
+    except (TypeError, ValueError):
+        lookback = _DEFAULT_LOOKBACK_DAYS
+    return {
+        "lifecycle_stage": normalize_stage(opts.get("lifecycle_stage")),
+        "lookback_days": max(1, min(lookback, _MAX_LOOKBACK_DAYS)),
+        "sync_objects": normalize_objects(opts.get("sync_objects")),
+    }
 
 
 _CONTACT_SCHEMA = [

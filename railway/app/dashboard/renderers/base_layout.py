@@ -979,11 +979,16 @@ def platform_nav_flags(client_slug: str) -> dict[str, bool]:
     except Exception:
         _is_demo = False
 
+    # HubSpot can be connected while only pulling some of its objects (an admin
+    # can switch off contacts/deals or emails to keep them out of BigQuery), so
+    # each HubSpot tab is gated on the data that actually backs it.
+    _hs_objects = _hubspot_sync_objects(configs)
+
     return {
         "_connector_read_ok": True,
         "show_connectors": bool(configs),
-        "show_lead_tracking": _connected("hubspot"),
-        "show_email_performance": _connected("hubspot"),
+        "show_lead_tracking": _connected("hubspot") and (_hs_objects["contacts"] or _hs_objects["deals"]),
+        "show_email_performance": _connected("hubspot") and _hs_objects["emails"],
         "show_linkedin_organic": _connected("linkedin_organic"),
         "show_gsc": _connected("gsc") or _is_demo,
         "show_gtm": _connected("gtm"),
@@ -995,6 +1000,22 @@ def platform_nav_flags(client_slug: str) -> dict[str, bool]:
         # the page (to configure / run scans) via the Settings link regardless.
         "show_consent": _consent_sidebar_enabled(client_slug),
     }
+
+
+def _hubspot_sync_objects(configs) -> dict[str, bool]:
+    """Which HubSpot objects this client's connector is set to pull.
+
+    Fails open to all three: an unset selection (every connector configured
+    before the option existed) syncs everything, and an unreadable one should
+    never be the reason a tab disappears.
+    """
+    try:
+        raw = next((getattr(c, "sync_options", None) for c in configs
+                    if c.connector_type == "hubspot"), None)
+        import hubspot_sync_service
+        return hubspot_sync_service.parse_sync_options(raw)["sync_objects"]
+    except Exception:
+        return {"contacts": True, "deals": True, "emails": True}
 
 
 def _consent_sidebar_enabled(client_slug: str) -> bool:
