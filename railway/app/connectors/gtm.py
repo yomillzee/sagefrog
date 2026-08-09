@@ -9,6 +9,7 @@ import connector_config_store
 import gtm_service
 import oauth_store
 from connectors.base import ConnectorHandler, SyncResult, register
+from gtm_quota import GTMRateLimited
 
 _log = logging.getLogger(__name__)
 
@@ -29,9 +30,12 @@ class GTMConnector(ConnectorHandler):
 
     def test_connection(self, *, client_slug: str) -> str:
         # list_containers fans out over every account + container the token can
-        # see, which trips GTM's tight per-minute quota (429) for agency-wide
-        # tokens. When a container is already selected, verify with a single
-        # live-version read (one API call) instead.
+        # see — the most quota-hungry call available, against a project-wide
+        # limit of 0.25 requests/second. When a container is already selected,
+        # verify with a single live-version read instead, and let that read come
+        # from cache: "is this connection alive" is answered just as well by a
+        # successful read minutes ago as by one right now, and forcing a live
+        # fetch here is what made repeated Test-connection clicks trip the quota.
         cfg = connector_config_store.get_config(client_slug, "gtm")
         parts = (cfg.source_account_id or "").split(":") if cfg else []
         if len(parts) == 2 and all(parts):
@@ -40,9 +44,7 @@ class GTMConnector(ConnectorHandler):
             )
             if not refresh_token:
                 raise RuntimeError("No google_tag_manager token found for this client.")
-            gtm_service.get_live_tags(
-                client_slug, parts[0], parts[1], refresh_token, force_refresh=True
-            )
+            gtm_service.get_live_tags(client_slug, parts[0], parts[1], refresh_token)
             return cfg.source_account_name or ""
         # No container configured yet — fall back to the full account listing.
         return super().test_connection(client_slug=client_slug)
@@ -67,12 +69,15 @@ class GTMConnector(ConnectorHandler):
             ))
 
         try:
+            # No force_refresh: the sync runs on a daily-ish cadence, so the
+            # 15-minute cache is only ever hit when something already read this
+            # container moments ago — in which case re-reading it spends scarce
+            # project quota to learn nothing.
             result = gtm_service.get_live_tags(
                 client_slug,
                 account_id,
                 container_id,
                 refresh_token,
-                force_refresh=True,
             )
             tag_count = result.get("tag_count", 0)
             _log.info(
@@ -80,6 +85,10 @@ class GTMConnector(ConnectorHandler):
             )
             return SyncResult(rows_loaded=tag_count)
         except PermissionError as exc:
+            return SyncResult(rows_loaded=0, error=str(exc))
+        except GTMRateLimited as exc:
+            # Quota, not a broken connector — don't flip the card to "error".
+            _log.warning("GTM sync deferred for %s: %s", client_slug, exc)
             return SyncResult(rows_loaded=0, error=str(exc))
         except Exception as exc:
             _log.exception("GTM run_sync error for %s", client_slug)

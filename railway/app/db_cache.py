@@ -73,6 +73,16 @@ class CacheHit:
     created_at: datetime
     expires_at: datetime
 
+    @property
+    def is_stale(self) -> bool:
+        """True when this row is past its TTL — only reachable via
+        ``get_cached(..., allow_stale=True)``."""
+        return self.expires_at <= _utcnow()
+
+    @property
+    def age_seconds(self) -> float:
+        return max(0.0, (_utcnow() - self.created_at).total_seconds())
+
 
 def ensure_schema() -> bool:
     url = _get_db_url()
@@ -121,7 +131,16 @@ def status() -> dict[str, Any]:
         }
 
 
-def get_cached(source: str, payload: dict[str, Any]) -> CacheHit | None:
+def get_cached(
+    source: str, payload: dict[str, Any], *, allow_stale: bool = False
+) -> CacheHit | None:
+    """Return the cached response for this request, or None.
+
+    ``allow_stale=True`` also returns rows past their TTL (check ``is_stale`` on
+    the result). That's for sources behind a hard external rate limit — serving
+    a slightly old answer beats failing the page when the upstream API has
+    locked us out and a fresh fetch is impossible.
+    """
     url = _get_db_url()
     if not url:
         return None
@@ -129,14 +148,16 @@ def get_cached(source: str, payload: dict[str, Any]) -> CacheHit | None:
     key = _hash_key(source, payload)
     now = _utcnow()
 
-    sql = """
+    freshness = "" if allow_stale else " AND expires_at > %s"
+    sql = f"""
       SELECT row_count, response_json, created_at, expires_at
       FROM api_cache
-      WHERE source = %s AND request_key = %s AND expires_at > %s
+      WHERE source = %s AND request_key = %s{freshness}
       LIMIT 1
     """
+    params = (source, key) if allow_stale else (source, key, now)
     with db.connection() as conn:
-        row = conn.execute(sql, (source, key, now)).fetchone()
+        row = conn.execute(sql, params).fetchone()
         if not row:
             return None
         row_count, response_json, created_at, expires_at = row

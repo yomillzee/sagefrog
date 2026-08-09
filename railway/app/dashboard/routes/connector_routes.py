@@ -293,6 +293,18 @@ async def connector_accounts(
         accounts = handler.list_accounts(client_slug=slug)
         return JSONResponse({"ok": True, "accounts": accounts})
     except Exception as exc:
+        # GTM's account listing fans out over every account and runs against a
+        # 0.25 req/s project-wide quota, so "try again shortly" is a real and
+        # distinct outcome here — 400 would read as a broken connector and push
+        # the user to re-click, spending more of the quota that just ran out.
+        from gtm_quota import GTMRateLimited
+        if isinstance(exc, GTMRateLimited):
+            _log.info("connector accounts rate-limited [%s/%s]: %s", slug, ctype, exc)
+            return JSONResponse(
+                {"ok": False, "error": str(exc)[:300], "retry_after": int(exc.retry_after or 60)},
+                status_code=429,
+                headers={"Retry-After": str(max(1, int(exc.retry_after or 60)))},
+            )
         _log.warning("connector accounts error [%s/%s]: %s", slug, ctype, exc)
         return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
 
