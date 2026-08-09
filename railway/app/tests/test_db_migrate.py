@@ -9,7 +9,20 @@ import contextlib
 
 import db
 import db_migrate
-import web_users  # noqa: F401  (import registers web_users:0001_baseline)
+import user_invites  # noqa: F401  (registers web_users:0002_user_invites)
+import web_users  # noqa: F401  (registers web_users:0001_baseline)
+
+
+def _expected_statement_count() -> int:
+    """Total DDL statements across every registered migration.
+
+    Derived from the registry rather than hardcoded to one module's baseline:
+    these tests are about the runner's contract (everything registered runs
+    once, is recorded, and re-runs do nothing), which must hold no matter how
+    many modules have registered — and registration depends on which modules a
+    given test session happens to import.
+    """
+    return sum(len(m.statements) for m in db_migrate.registered())
 
 
 class _Result:
@@ -72,8 +85,9 @@ def test_fresh_database_applies_and_records():
         assert db_migrate.run_migrations() is True
         # Shared advisory lock taken exactly once.
         assert locks == [db_migrate.SCHEMA_ADVISORY_LOCK_KEY]
-        # Baseline DDL ran (all statements) and was recorded.
-        assert len(executed) == len(web_users.SCHEMA_SQL_STATEMENTS)
+        # Every registered migration's DDL ran, and each was recorded.
+        assert len(executed) == _expected_statement_count()
+        assert state["ledger"] == {m.id for m in db_migrate.registered()}
         assert "web_users:0001_baseline" in state["ledger"]
     finally:
         mp.undo()
@@ -84,15 +98,16 @@ def test_already_initialized_database_is_non_destructive_noop():
 
     mp = pytest.MonkeyPatch()
     try:
-        # Ledger already has the baseline (an existing, migrated DB).
-        state = {"ledger": {"web_users:0001_baseline"}}
+        # Ledger already has every migration (an existing, migrated DB).
+        already = {m.id for m in db_migrate.registered()}
+        state = {"ledger": set(already)}
         executed, locks = [], []
         _install_fake_db(mp, state, executed, locks)
 
         assert db_migrate.run_migrations() is True
         assert locks == [db_migrate.SCHEMA_ADVISORY_LOCK_KEY]  # still serializes
-        assert executed == []                                  # but runs NO DDL
-        assert state["ledger"] == {"web_users:0001_baseline"}  # unchanged
+        assert executed == []              # but runs NO DDL
+        assert state["ledger"] == already  # unchanged
     finally:
         mp.undo()
 
@@ -107,10 +122,10 @@ def test_running_twice_applies_baseline_once():
 
         db_migrate.run_migrations()
         first = list(executed)
-        db_migrate.run_migrations()  # baseline now recorded -> skipped
+        db_migrate.run_migrations()  # all now recorded -> skipped
 
         assert executed == first
-        assert len(first) == len(web_users.SCHEMA_SQL_STATEMENTS)
+        assert len(first) == _expected_statement_count()
     finally:
         mp.undo()
 

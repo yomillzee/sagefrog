@@ -47,6 +47,7 @@ import not_found_page
 import connector_config_store
 import oauth_flows
 import oauth_store
+import user_invites
 import web_auth
 import web_security
 import web_users
@@ -1695,6 +1696,107 @@ def login_submit(
     return RedirectResponse(url=target, status_code=303)
 
 
+def _invite_expires_in() -> str:
+    """Human phrasing for how long a freshly minted invite link lasts.
+
+    Read off the configured TTL rather than a timestamp: this is only ever
+    shown next to a link created moments earlier, so "3 days" is both accurate
+    and easier to act on than a wall-clock time in the admin's local zone."""
+    hours = user_invites.ttl_hours()
+    if hours >= 24 and hours % 24 == 0:
+        days = hours // 24
+        return f"{days} day" if days == 1 else f"{days} days"
+    return f"{hours} hour" if hours == 1 else f"{hours} hours"
+
+
+@app.get("/invite/{token}", include_in_schema=False, response_class=HTMLResponse)
+def invite_page(request: Request, token: str) -> HTMLResponse:
+    """Landing page for an invite link: pick a password, or a dead end.
+
+    Every invalid token renders the same "expired" page, so this can't be used
+    to probe which tokens exist. Signing the visitor out first keeps a shared
+    machine from silently redeeming the invite into somebody else's session.
+    """
+    if not web_users.enabled():
+        raise HTTPException(status_code=503, detail="User login requires Postgres.")
+    ctx = audit_log.request_context(request)
+    rl = login_rate_limit.check_login_allowed(ip=ctx.get("ip_address"))
+    if not rl.allowed:
+        return HTMLResponse(
+            web_auth.render_login_page(error=rl.message, next_path="/dashboards"),
+            status_code=429,
+        )
+    invite = user_invites.resolve_invite(token)
+    if not invite:
+        return HTMLResponse(
+            web_auth.render_invite_page(token=token, email="", expired=True), status_code=410
+        )
+    web_auth.logout_user(request)
+    return HTMLResponse(web_auth.render_invite_page(token=token, email=invite.email))
+
+
+@app.post("/invite/{token}", include_in_schema=False)
+def invite_submit(
+    request: Request,
+    token: str,
+    password: str = Form(...),
+    confirm: str = Form(""),
+):
+    """Redeem an invite: set the password, burn the token, sign the user in."""
+    if not web_users.enabled():
+        raise HTTPException(status_code=503, detail="User login requires Postgres.")
+    ctx = audit_log.request_context(request)
+    # Share the login limiter so a token guesser hits the same wall a password
+    # guesser does. The token is the credential here, so failures count.
+    rl = login_rate_limit.check_login_allowed(ip=ctx.get("ip_address"))
+    if not rl.allowed:
+        return HTMLResponse(
+            web_auth.render_login_page(error=rl.message, next_path="/dashboards"),
+            status_code=429,
+        )
+    invite = user_invites.resolve_invite(token)
+    if not invite:
+        login_rate_limit.record_login_failure(ip=ctx.get("ip_address"))
+        audit_log.record(action="user.invite_rejected", detail={"reason": "invalid token"}, **ctx)
+        return HTMLResponse(
+            web_auth.render_invite_page(token=token, email="", expired=True), status_code=410
+        )
+    if confirm and password != confirm:
+        return HTMLResponse(
+            web_auth.render_invite_page(
+                token=token, email=invite.email, error="Those passwords don't match."
+            ),
+            status_code=400,
+        )
+    try:
+        accepted = user_invites.accept_invite(token, password)
+    except ValueError as exc:
+        return HTMLResponse(
+            web_auth.render_invite_page(token=token, email=invite.email, error=str(exc)),
+            status_code=400,
+        )
+    if not accepted:
+        # Lost the race against a concurrent redemption of the same link.
+        return HTMLResponse(
+            web_auth.render_invite_page(token=token, email="", expired=True), status_code=410
+        )
+    user = web_users.get_user_by_id(accepted.user_id)
+    if not user:
+        return RedirectResponse(url="/login", status_code=303)
+    login_rate_limit.clear_login_limits(ip=ctx.get("ip_address"), email=user.email)
+    web_auth.login_user(request, user)
+    web_users.record_login(user.id)
+    audit_log.record(
+        action="user.invite_accepted",
+        actor_user_id=user.id,
+        actor_email=user.email,
+        subject_email=user.email,
+        detail={"role": user.role},
+        **ctx,
+    )
+    return RedirectResponse(url=_post_login_target(user, "/dashboards"), status_code=303)
+
+
 @app.post("/logout", include_in_schema=False)
 def logout(request: Request) -> RedirectResponse:
     # Attribute the logout to the real account, not any user being viewed-as.
@@ -2475,11 +2577,44 @@ def admin_delete_group(
     return RedirectResponse(url="/admin/users?msg=Group+deleted", status_code=303)
 
 
+def _render_users_page(
+    *,
+    admin: web_users.WebUser,
+    error: str | None = None,
+    message: str | None = None,
+    invite_link: str | None = None,
+    invite_email: str | None = None,
+    invite_expires_in: str | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    """Render the Users admin page in place.
+
+    Used instead of a redirect whenever the page must carry something that has
+    no business in a URL — an invite link above all: the raw token is shown
+    exactly once and must not land in browser history, server logs, or a
+    Referer header."""
+    return HTMLResponse(
+        web_auth.render_admin_page(
+            user=admin,
+            users=web_users.list_users(include_inactive=False),
+            audit_events=audit_log.list_recent(limit=150),
+            error=error,
+            message=message,
+            invite_link=invite_link,
+            invite_email=invite_email,
+            invite_expires_in=invite_expires_in,
+            page="users",
+        ),
+        status_code=status_code,
+    )
+
+
 @app.post("/admin/users", include_in_schema=False)
 def admin_create_user(
     request: Request,
     email: str = Form(...),
-    password: str = Form(...),
+    password: str = Form(""),
+    setup_mode: str = Form("invite"),
     role: str = Form("client"),
     client_slug: str | None = Form(None),
     allowed_client_slugs: list[str] = Form(default=[]),
@@ -2487,28 +2622,25 @@ def admin_create_user(
     user: web_users.WebUser = Depends(web_auth.require_admin),
 ):
     ctx = audit_log.request_context(request)
+    # Default to the invite flow: the admin never handles a password, and the
+    # new user picks their own. 'password' keeps the original behaviour for
+    # cases where an admin genuinely wants to hand credentials over directly.
+    invite_mode = (setup_mode or "invite").strip().lower() != "password"
+    if not invite_mode and not password:
+        return _render_users_page(
+            admin=user, error="Enter a password, or switch to an invite link.", status_code=400
+        )
     try:
         created = web_users.create_user(
             email=email,
-            password=password,
+            password=None if invite_mode else password,
             role=role,
             client_slug=client_slug,
             allowed_client_slugs=allowed_client_slugs,
             group_id=_parse_group_id(group_id),
         )
     except ValueError as e:
-        users = web_users.list_users(include_inactive=False)
-        events = audit_log.list_recent(limit=150)
-        return HTMLResponse(
-            web_auth.render_admin_page(
-                user=user,
-                users=users,
-                audit_events=events,
-                error=str(e),
-                page="users",
-            ),
-            status_code=400,
-        )
+        return _render_users_page(admin=user, error=str(e), status_code=400)
     audit_log.record(
         action="user.created",
         actor_user_id=user.id,
@@ -2519,10 +2651,85 @@ def admin_create_user(
             "client_slug": created.client_slug,
             "allowed_client_slugs": list(created.allowed_client_slugs),
             "group_id": created.group_id,
+            "setup": "invite" if invite_mode else "password",
         },
         **ctx,
     )
-    return RedirectResponse(url="/admin/users?msg=User+created", status_code=303)
+    if not invite_mode:
+        return RedirectResponse(url="/admin/users?msg=User+created", status_code=303)
+
+    try:
+        token, expires_at = user_invites.mint_invite(
+            user_id=created.id, email=created.email, created_by=user.email
+        )
+    except Exception:
+        # The account exists and is scoped correctly; only the link failed. Say
+        # so plainly rather than implying nothing happened — the admin can mint
+        # one from the row action.
+        return _render_users_page(
+            admin=user,
+            error=(
+                f"{created.email} was created, but the invite link could not be "
+                "generated. Use “Send invite link” on their row to try again."
+            ),
+            status_code=500,
+        )
+    audit_log.record(
+        action="user.invited",
+        actor_user_id=user.id,
+        actor_email=user.email,
+        subject_email=created.email,
+        detail={"role": created.role, "expires_at": expires_at.isoformat()},
+        **ctx,
+    )
+    return _render_users_page(
+        admin=user,
+        message=f"{created.email} created.",
+        invite_link=f"{oauth_flows.public_base_url()}{user_invites.invite_path(token)}",
+        invite_email=created.email,
+        invite_expires_in=_invite_expires_in(),
+    )
+
+
+@app.post("/admin/users/{user_id}/invite", include_in_schema=False)
+def admin_create_invite_link(
+    user_id: int,
+    request: Request,
+    admin: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    """Mint a fresh invite link for an existing user.
+
+    Covers three cases with one action: an invite that was never redeemed, a
+    link the admin lost (the raw token is unrecoverable by design), and a
+    password reset the admin doesn't have to pick a password for. Minting
+    revokes any outstanding link for that user, so only the newest one works.
+    """
+    ctx = audit_log.request_context(request)
+    target = web_users.get_user_record(user_id)
+    if not target or not target.is_active:
+        return _render_users_page(admin=admin, error="User not found.", status_code=404)
+    try:
+        token, expires_at = user_invites.mint_invite(
+            user_id=target.id, email=target.email, created_by=admin.email
+        )
+    except Exception:
+        return _render_users_page(
+            admin=admin, error="Could not generate an invite link.", status_code=500
+        )
+    audit_log.record(
+        action="user.invited",
+        actor_user_id=admin.id,
+        actor_email=admin.email,
+        subject_email=target.email,
+        detail={"role": target.role, "expires_at": expires_at.isoformat(), "reissued": True},
+        **ctx,
+    )
+    return _render_users_page(
+        admin=admin,
+        invite_link=f"{oauth_flows.public_base_url()}{user_invites.invite_path(token)}",
+        invite_email=target.email,
+        invite_expires_in=_invite_expires_in(),
+    )
 
 
 @app.post("/admin/users/{user_id}/deactivate", include_in_schema=False)
@@ -2538,6 +2745,13 @@ def admin_deactivate_user(
     if target and target.role == "admin" and web_users.count_admins() <= 1:
         return RedirectResponse(url="/admin/users?err=Cannot+deactivate+the+only+admin", status_code=303)
     if target and web_users.deactivate_user(user_id):
+        # resolve_invite already requires an active account, so this is belt and
+        # braces — but it also means a later reactivation can't silently revive
+        # an old link.
+        try:
+            user_invites.revoke_for_user(user_id)
+        except Exception:
+            pass
         audit_log.record(
             action="user.deactivated",
             actor_user_id=admin.id,
@@ -2565,6 +2779,12 @@ def admin_reset_password(
     except ValueError as exc:
         return RedirectResponse(url=f"/admin/users?err={quote(str(exc))}", status_code=303)
     if ok:
+        # An outstanding invite link would let its holder overwrite the password
+        # just set. Setting a password explicitly supersedes any pending invite.
+        try:
+            user_invites.revoke_for_user(user_id)
+        except Exception:
+            pass
         audit_log.record(
             action="user.password_reset",
             actor_user_id=admin.id,

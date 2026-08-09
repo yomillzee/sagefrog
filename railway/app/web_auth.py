@@ -366,6 +366,70 @@ def _esc(text: str) -> str:
     return html.escape(text, quote=True)
 
 
+# Shared visual system for the signed-out auth pages (sign-in and invite
+# redemption). Kept as a plain string — NOT an f-string — so the CSS braces
+# stay single here and are interpolated verbatim into each page's f-string.
+_AUTH_PAGE_CSS = """    :root {
+      --navy:#0a2540; --ink:#0f1c2e; --muted:#5a6578; --line:#e3e8f0;
+      --accent:#2563eb; --accent-d:#1d4ed8; --green:#34b27b; --danger:#b42318;
+    }
+    * { box-sizing:border-box; }
+    html,body { height:100%; }
+    body {
+      margin:0; padding:24px; color:var(--ink); display:grid; place-items:center;
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+      background:
+        radial-gradient(1100px 560px at 16% -12%, rgba(52,178,123,.20), transparent 60%),
+        radial-gradient(900px 520px at 100% 0%, rgba(37,99,235,.24), transparent 55%),
+        linear-gradient(160deg,#0a2540 0%,#071b30 55%,#05121f 100%);
+    }
+    .wrap { width:min(420px,100%); position:relative; z-index:1; animation:rise .5s ease both; }
+    @keyframes rise { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+    .brand { display:flex; flex-direction:column; align-items:center; gap:12px; margin-bottom:22px; }
+    .logo { width:56px; height:56px; border-radius:16px; display:grid; place-items:center; overflow:hidden;
+      background:#fff; box-shadow:0 10px 26px rgba(5,18,31,.5); }
+    .logo img { width:100%; height:100%; object-fit:cover; }
+    .brand h1 { margin:0; font-size:1.05rem; font-weight:700; color:#fff; letter-spacing:.2px; }
+    .brand p { margin:0; font-size:.84rem; color:rgba(255,255,255,.6); }
+    .card { background:#fff; border-radius:18px; padding:30px 28px;
+      box-shadow:0 24px 60px rgba(3,12,24,.42), 0 2px 6px rgba(3,12,24,.2); }
+    .card h2 { margin:0 0 4px; font-size:1.28rem; color:var(--navy); }
+    .card .lead { margin:0 0 22px; color:var(--muted); font-size:.9rem; }
+    label { display:block; font-size:.8rem; font-weight:600; color:#334155; margin:0 0 6px; }
+    .field { margin-bottom:16px; position:relative; }
+    input { width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:10px;
+      font-size:.98rem; color:var(--ink); background:#fbfcfe; transition:border-color .15s, box-shadow .15s; }
+    input::placeholder { color:#9aa5b5; }
+    input:focus { outline:none; border-color:var(--accent); background:#fff;
+      box-shadow:0 0 0 3px rgba(37,99,235,.15); }
+    .pw-wrap input { padding-right:62px; }
+    .pw-toggle { position:absolute; right:8px; top:32px; border:0; background:transparent;
+      color:var(--muted); font-size:.76rem; font-weight:600; cursor:pointer; padding:6px 8px;
+      border-radius:6px; }
+    .pw-toggle:hover { color:var(--accent); background:#eef4ff; }
+    button.submit { width:100%; padding:13px; border:0; border-radius:10px; color:#fff;
+      font-size:1rem; font-weight:700; cursor:pointer; letter-spacing:.2px; margin-top:4px;
+      background:linear-gradient(135deg,var(--accent),var(--accent-d));
+      box-shadow:0 6px 18px rgba(37,99,235,.35); transition:transform .06s, filter .15s; }
+    button.submit:hover { filter:brightness(1.06); }
+    button.submit:active { transform:translateY(1px); }
+    .error { color:var(--danger); font-size:.87rem; margin:0 0 14px; padding:10px 12px;
+      background:#fef3f2; border:1px solid #fecdc9; border-radius:9px; }
+    .forgot { margin-top:18px; border-top:1px solid var(--line); padding-top:16px; }
+    .forgot summary { list-style:none; cursor:pointer; font-size:.86rem; font-weight:600;
+      color:var(--accent); }
+    .forgot summary::-webkit-details-marker { display:none; }
+    .forgot summary:hover { text-decoration:underline; }
+    .forgot-body { margin-top:12px; font-size:.85rem; color:var(--muted); line-height:1.55; }
+    .forgot-body a.ghost { display:inline-block; margin-top:12px; padding:9px 16px; border-radius:9px;
+      border:1px solid var(--accent); color:var(--accent); text-decoration:none; font-weight:600;
+      font-size:.85rem; transition:background .15s, color .15s; }
+    .forgot-body a.ghost:hover { background:var(--accent); color:#fff; }
+    .foot { display:flex; align-items:center; justify-content:center; gap:6px; margin-top:20px;
+      font-size:.75rem; color:rgba(255,255,255,.5); }
+    .foot svg { width:13px; height:13px; }"""
+
+
 def render_login_page(*, error: str | None = None, next_path: str = "/admin") -> str:
     err = f'<p class="error" role="alert">{_esc(error)}</p>' if error else ""
     nxt = _esc(next_path or "/admin")
@@ -379,65 +443,7 @@ def render_login_page(*, error: str | None = None, next_path: str = "/admin") ->
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sign in · Sagefrog Marketing Group</title>
   <style>
-    :root {{
-      --navy:#0a2540; --ink:#0f1c2e; --muted:#5a6578; --line:#e3e8f0;
-      --accent:#2563eb; --accent-d:#1d4ed8; --green:#34b27b; --danger:#b42318;
-    }}
-    * {{ box-sizing:border-box; }}
-    html,body {{ height:100%; }}
-    body {{
-      margin:0; padding:24px; color:var(--ink); display:grid; place-items:center;
-      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
-      background:
-        radial-gradient(1100px 560px at 16% -12%, rgba(52,178,123,.20), transparent 60%),
-        radial-gradient(900px 520px at 100% 0%, rgba(37,99,235,.24), transparent 55%),
-        linear-gradient(160deg,#0a2540 0%,#071b30 55%,#05121f 100%);
-    }}
-    .wrap {{ width:min(420px,100%); position:relative; z-index:1; animation:rise .5s ease both; }}
-    @keyframes rise {{ from {{ opacity:0; transform:translateY(10px); }} to {{ opacity:1; transform:none; }} }}
-    .brand {{ display:flex; flex-direction:column; align-items:center; gap:12px; margin-bottom:22px; }}
-    .logo {{ width:56px; height:56px; border-radius:16px; display:grid; place-items:center; overflow:hidden;
-      background:#fff; box-shadow:0 10px 26px rgba(5,18,31,.5); }}
-    .logo img {{ width:100%; height:100%; object-fit:cover; }}
-    .brand h1 {{ margin:0; font-size:1.05rem; font-weight:700; color:#fff; letter-spacing:.2px; }}
-    .brand p {{ margin:0; font-size:.84rem; color:rgba(255,255,255,.6); }}
-    .card {{ background:#fff; border-radius:18px; padding:30px 28px;
-      box-shadow:0 24px 60px rgba(3,12,24,.42), 0 2px 6px rgba(3,12,24,.2); }}
-    .card h2 {{ margin:0 0 4px; font-size:1.28rem; color:var(--navy); }}
-    .card .lead {{ margin:0 0 22px; color:var(--muted); font-size:.9rem; }}
-    label {{ display:block; font-size:.8rem; font-weight:600; color:#334155; margin:0 0 6px; }}
-    .field {{ margin-bottom:16px; position:relative; }}
-    input {{ width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:10px;
-      font-size:.98rem; color:var(--ink); background:#fbfcfe; transition:border-color .15s, box-shadow .15s; }}
-    input::placeholder {{ color:#9aa5b5; }}
-    input:focus {{ outline:none; border-color:var(--accent); background:#fff;
-      box-shadow:0 0 0 3px rgba(37,99,235,.15); }}
-    .pw-wrap input {{ padding-right:62px; }}
-    .pw-toggle {{ position:absolute; right:8px; top:32px; border:0; background:transparent;
-      color:var(--muted); font-size:.76rem; font-weight:600; cursor:pointer; padding:6px 8px;
-      border-radius:6px; }}
-    .pw-toggle:hover {{ color:var(--accent); background:#eef4ff; }}
-    button.submit {{ width:100%; padding:13px; border:0; border-radius:10px; color:#fff;
-      font-size:1rem; font-weight:700; cursor:pointer; letter-spacing:.2px; margin-top:4px;
-      background:linear-gradient(135deg,var(--accent),var(--accent-d));
-      box-shadow:0 6px 18px rgba(37,99,235,.35); transition:transform .06s, filter .15s; }}
-    button.submit:hover {{ filter:brightness(1.06); }}
-    button.submit:active {{ transform:translateY(1px); }}
-    .error {{ color:var(--danger); font-size:.87rem; margin:0 0 14px; padding:10px 12px;
-      background:#fef3f2; border:1px solid #fecdc9; border-radius:9px; }}
-    .forgot {{ margin-top:18px; border-top:1px solid var(--line); padding-top:16px; }}
-    .forgot summary {{ list-style:none; cursor:pointer; font-size:.86rem; font-weight:600;
-      color:var(--accent); }}
-    .forgot summary::-webkit-details-marker {{ display:none; }}
-    .forgot summary:hover {{ text-decoration:underline; }}
-    .forgot-body {{ margin-top:12px; font-size:.85rem; color:var(--muted); line-height:1.55; }}
-    .forgot-body a.ghost {{ display:inline-block; margin-top:12px; padding:9px 16px; border-radius:9px;
-      border:1px solid var(--accent); color:var(--accent); text-decoration:none; font-weight:600;
-      font-size:.85rem; transition:background .15s, color .15s; }}
-    .forgot-body a.ghost:hover {{ background:var(--accent); color:#fff; }}
-    .foot {{ display:flex; align-items:center; justify-content:center; gap:6px; margin-top:20px;
-      font-size:.75rem; color:rgba(255,255,255,.5); }}
-    .foot svg {{ width:13px; height:13px; }}
+{_AUTH_PAGE_CSS}
   </style>
 </head>
 <body>
@@ -487,6 +493,106 @@ def render_login_page(*, error: str | None = None, next_path: str = "/admin") ->
         t.textContent=show?'Hide':'Show';
         t.setAttribute('aria-label',show?'Hide password':'Show password');
       }});
+    }})();
+  </script>
+  <script src="/static/login-bg.js" defer></script>
+</body>
+</html>"""
+
+
+def render_invite_page(
+    *, token: str, email: str, error: str | None = None, expired: bool = False
+) -> str:
+    """The page an invitee lands on from their magic link.
+
+    Two states share one renderer: ``expired`` renders a dead end pointing back
+    at sign-in (used for any invalid token — wrong, used, revoked, or genuinely
+    expired, so the page never tells a prober which), and the normal state
+    renders the choose-a-password form. The form posts back to the same
+    tokenized URL; the CSRF middleware stamps its hidden field on the way out.
+    """
+    err = f'<p class="error" role="alert">{_esc(error)}</p>' if error else ""
+    tok = _esc(token or "")
+    who = _esc(email or "")
+
+    if expired:
+        body = """
+      <h2>This link has expired</h2>
+      <p class="lead">Invite links are single-use and time-limited, so this one
+        can't be used anymore &mdash; it may have already been redeemed.</p>
+      <div class="forgot-body" style="margin:0">
+        Ask your Sagefrog administrator for a fresh invite link.
+        <a class="ghost" href="/login">Go to sign in</a>
+      </div>"""
+    else:
+        body = f"""
+      <h2>Set your password</h2>
+      <p class="lead">Welcome! Choose a password for <strong>{who}</strong> to finish
+        setting up your account.</p>
+      {err}
+      <form method="post" action="/invite/{tok}">
+        <div class="field pw-wrap">
+          <label for="password">New password</label>
+          <input id="password" name="password" type="password" autocomplete="new-password"
+            placeholder="At least 10 characters" minlength="10" required autofocus>
+          <button type="button" class="pw-toggle" id="pwToggle" aria-label="Show password">Show</button>
+        </div>
+        <div class="field">
+          <label for="confirm">Confirm password</label>
+          <input id="confirm" name="confirm" type="password" autocomplete="new-password"
+            placeholder="Type it again" minlength="10" required>
+        </div>
+        <button type="submit" class="submit">Set password &amp; sign in</button>
+      </form>"""
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <!-- Never leak the token in a Referer to anything, same-origin included. -->
+  <meta name="referrer" content="no-referrer">
+  <title>Set your password · Sagefrog Marketing Group</title>
+  <style>
+{_AUTH_PAGE_CSS}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <div class="logo">
+        <img src="/static/apple-touch-icon.png" alt="Sagefrog" width="56" height="56">
+      </div>
+      <h1>Sagefrog Marketing Group</h1>
+      <p>Client dashboards</p>
+    </div>
+    <div class="card">{body}
+    </div>
+    <div class="foot">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+      Secure sign-in · &copy; 2026 Sagefrog Marketing Group
+    </div>
+  </div>
+  <script>
+    (function(){{
+      var t=document.getElementById('pwToggle'), p=document.getElementById('password');
+      if(t&&p) t.addEventListener('click',function(){{
+        var show=p.type==='password'; p.type=show?'text':'password';
+        t.textContent=show?'Hide':'Show';
+        t.setAttribute('aria-label',show?'Hide password':'Show password');
+      }});
+      // Catch the mismatch in the browser so the user isn't bounced through a
+      // round trip; the server re-checks regardless.
+      var f=p&&p.form, c=document.getElementById('confirm');
+      if(f&&c) f.addEventListener('submit',function(e){{
+        if(p.value!==c.value){{
+          e.preventDefault();
+          c.setCustomValidity('Passwords do not match.');
+          c.reportValidity();
+        }}
+      }});
+      if(c) c.addEventListener('input',function(){{ c.setCustomValidity(''); }});
     }})();
   </script>
   <script src="/static/login-bg.js" defer></script>
@@ -699,6 +805,55 @@ _ROLE_TOGGLE_JS = """
       syncGroupPreview(g);
     });
   });
+
+  // Create-user: invite link vs admin-chosen password. The password field is
+  // only required in 'password' mode — leaving it required while hidden would
+  // make the form silently unsubmittable.
+  (function () {
+    var form = document.getElementById('createUserForm');
+    if (!form) return;
+    var mode = form.querySelector('.setup-select');
+    var pw = form.querySelector('#password');
+    var btn = document.getElementById('createUserBtn');
+    if (!mode) return;
+    function syncSetup() {
+      var invite = mode.value === 'invite';
+      form.querySelectorAll('.password-only').forEach(function (el) {
+        el.style.display = invite ? 'none' : '';
+      });
+      form.querySelectorAll('.setup-hint-invite').forEach(function (el) {
+        el.style.display = invite ? '' : 'none';
+      });
+      if (pw) {
+        pw.required = !invite;
+        if (invite) pw.value = '';
+      }
+      if (btn) btn.textContent = invite ? 'Create user & get invite link' : 'Create user';
+    }
+    mode.addEventListener('change', syncSetup);
+    syncSetup();
+  })();
+
+  // One-shot copy button for a freshly minted invite link.
+  (function () {
+    var btn = document.getElementById('inviteCopyBtn');
+    var field = document.getElementById('inviteLink');
+    if (!btn || !field) return;
+    btn.addEventListener('click', function () {
+      field.select();
+      var done = function () {
+        btn.textContent = 'Copied';
+        setTimeout(function () { btn.textContent = 'Copy'; }, 1800);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(field.value).then(done, function () {
+          try { document.execCommand('copy'); done(); } catch (e) {}
+        });
+      } else {
+        try { document.execCommand('copy'); done(); } catch (e) {}
+      }
+    });
+  })();
 })();
 """
 
@@ -888,6 +1043,9 @@ def render_admin_page(
     is_super_admin: bool = False,
     dashboard_cache_ttl: int = 0,
     page: str = "clients",
+    invite_link: str | None = None,
+    invite_email: str | None = None,
+    invite_expires_in: str | None = None,
 ) -> str:
     """Render one admin destination.
 
@@ -997,11 +1155,19 @@ def render_admin_page(
             f'fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
             f'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span></label>'
         )
-        status_badge = (
-            '<span class="pill pill-on">Active</span>'
-            if u.get("is_active")
-            else '<span class="pill pill-off">Inactive</span>'
-        )
+        invite_pending = bool(u.get("invite_pending"))
+        if not u.get("is_active"):
+            status_badge = '<span class="pill pill-off">Inactive</span>'
+        elif invite_pending:
+            # The account exists and is scoped, but has no usable password until
+            # the invite is redeemed — worth calling out so an admin doesn't
+            # wonder why the user has never signed in.
+            status_badge = (
+                '<span class="pill pill-invite" title="Waiting on the invite link to be '
+                'redeemed — this account cannot sign in yet">Invite pending</span>'
+            )
+        else:
+            status_badge = '<span class="pill pill-on">Active</span>'
         # Prefer last activity (any authenticated request) over last login: a
         # long-lived session means a week-old login can hide someone who's been
         # back every day. Fall back to the login stamp for rows recorded before
@@ -1023,6 +1189,21 @@ def render_admin_page(
             <button type="submit" class="link">Reset</button>
           </form>
         </details>"""
+        # Mint a fresh link — for an invite that was never redeemed, one the
+        # admin lost (the raw token is unrecoverable by design), or as a
+        # password reset the admin doesn't have to choose a password for.
+        invite_label = "New invite link" if invite_pending else "Send invite link"
+        invite_confirm = (
+            "Generate a new invite link? Any previous link for this user stops working."
+            if invite_pending
+            else "Generate an invite link? Any previous link stops working, and their "
+            "current password keeps working until they redeem it."
+        )
+        invite_html = (
+            f'<form method="post" action="/admin/users/{uid}/invite" class="inline-form" '
+            f"onsubmit=\"return confirm('{invite_confirm}');\">"
+            f'<button type="submit" class="link">{invite_label}</button></form>'
+        )
         role_html = ""
         deactivate_html = ""
         if uid != user.id:
@@ -1057,7 +1238,9 @@ def render_admin_page(
                 f'onsubmit="return confirm(\'Deactivate this user?\');">'
                 f'<button type="submit" class="link danger">Deactivate</button></form>'
             )
-        actions = f'<div class="row-actions">{reset_html}{role_html}{deactivate_html}</div>'
+        actions = (
+            f'<div class="row-actions">{reset_html}{invite_html}{role_html}{deactivate_html}</div>'
+        )
 
         # Resolve the human-readable dashboards this user can reach (used for
         # both the visible access cell and the search key).
@@ -1740,6 +1923,19 @@ def render_admin_page(
     .pill {{ display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: .74rem; font-weight: 700; }}
     .pill-on {{ background: #e8f5e9; color: #1b5e20; }}
     .pill-off {{ background: #f1f5f9; color: #64748b; }}
+    .pill-invite {{ background: #fff7ed; color: #b45309; }}
+    /* One-shot invite link panel: the raw token is never stored, so this is the
+       only place it is ever shown. Loud on purpose. */
+    .invite-panel {{ margin: 0 0 18px; padding: 14px 16px; border-radius: 12px;
+      border: 1px solid #bfdbfe; background: linear-gradient(180deg,#eff6ff,#f8fbff); }}
+    .invite-head {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }}
+    .invite-head strong {{ font-size: .95rem; color: #1e3a8a; }}
+    .invite-note {{ font-size: .8rem; color: #b45309; font-weight: 600; }}
+    .invite-copy {{ display: flex; gap: 8px; margin-top: 10px; }}
+    .invite-copy input {{ flex: 1 1 auto; min-width: 0; font-family: ui-monospace, SFMono-Regular,
+      Menlo, monospace; font-size: .82rem; background: #fff; max-width: none; margin: 0; }}
+    .invite-copy button {{ flex: 0 0 auto; }}
+    .invite-panel .hint {{ margin-top: 8px; }}
     .row-actions {{ display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: flex-end; }}
     .row-fold {{ margin: 0; font-size: .86rem; }}
     .row-fold summary {{ cursor: pointer; list-style: none; color: var(--accent); font-weight: 600; }}
@@ -1962,18 +2158,48 @@ def render_admin_page(
     }}
 """
     # ---- Create-user section (lives on the Users page) ----
+    # The freshly minted invite link, shown once. It is never persisted in
+    # readable form (user_invites stores only a hash), so this panel is the only
+    # chance to copy it — hence the prominent placement and the copy button.
+    invite_panel = ""
+    if invite_link:
+        invite_panel = f"""
+      <div class="invite-panel">
+        <div class="invite-head">
+          <strong>Invite link ready{f" for {_esc(invite_email)}" if invite_email else ""}</strong>
+          <span class="invite-note">Copy it now — it is shown only once, and expires
+            {"in " + _esc(invite_expires_in) if invite_expires_in else "shortly"}.</span>
+        </div>
+        <div class="invite-copy">
+          <input type="text" id="inviteLink" value="{_esc(invite_link)}" readonly
+            onfocus="this.select()" aria-label="Invite link">
+          <button type="button" class="primary" id="inviteCopyBtn">Copy</button>
+        </div>
+        <p class="hint">Send this to the new user however you like. Opening it lets
+          them set their own password and signs them in. It works once.</p>
+      </div>"""
+
     create_user_html = f"""
     <section>
-      <h2>Create user</h2>
-      <form method="post" action="/admin/users" class="role-form">
+      <h2>Create user</h2>{invite_panel}
+      <form method="post" action="/admin/users" class="role-form" id="createUserForm">
         <div class="row">
           <div>
             <label for="email">Email</label>
             <input id="email" name="email" type="email" required>
           </div>
           <div>
-            <label for="password">Password (min 10 chars)</label>
-            <input id="password" name="password" type="password" required minlength="10">
+            <label for="setup_mode">How they get in</label>
+            <select id="setup_mode" name="setup_mode" class="setup-select">
+              <option value="invite">Send an invite link (they pick their password)</option>
+              <option value="password">Set a password myself</option>
+            </select>
+            <p class="hint setup-hint-invite">You'll get a one-time link to pass along.
+              The account can't be signed into until they redeem it.</p>
+            <div class="password-only" style="margin-top:8px">
+              <label for="password">Password (min 10 chars)</label>
+              <input id="password" name="password" type="password" minlength="10">
+            </div>
           </div>
         </div>
         <div class="row">
@@ -2000,7 +2226,7 @@ def render_admin_page(
           <span class="ckbx-legend">Clients this user can access (standard role)</span>
           {_client_checkboxes(set())}
         </div>
-        <button type="submit" class="primary">Create user</button>
+        <button type="submit" class="primary" id="createUserBtn">Create user &amp; get invite link</button>
       </form>
     </section>"""
 

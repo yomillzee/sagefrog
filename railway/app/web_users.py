@@ -214,8 +214,21 @@ def ensure_schema() -> bool:
     return True
 
 
+# Sentinel stored in password_hash for an invited user who has not yet chosen a
+# password. It is deliberately not a valid bcrypt digest, so verify_password can
+# never match it: bcrypt.checkpw raises on the malformed salt and the except
+# below turns that into False. An invite-pending account therefore cannot be
+# signed into through the password form at all — the only way in is the invite
+# link, which replaces this value with a real hash.
+INVITE_PENDING_HASH = "!invite-pending"
+
+
 def hash_password(plain: str) -> str:
     return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def is_invite_pending_hash(password_hash: str | None) -> bool:
+    return (password_hash or "") == INVITE_PENDING_HASH
 
 
 def verify_password(plain: str, password_hash: str) -> bool:
@@ -307,7 +320,12 @@ def get_password_hash(email: str) -> str | None:
 
 def authenticate(email: str, password: str) -> WebUser | None:
     stored = get_password_hash(email)
-    if not stored or not verify_password(password, stored):
+    # An invited user who hasn't redeemed their link yet has no real password.
+    # verify_password would already reject the sentinel (it isn't valid bcrypt),
+    # but rejecting it by name keeps that guarantee from resting on an exception.
+    if not stored or is_invite_pending_hash(stored):
+        return None
+    if not verify_password(password, stored):
         return None
     return get_user_by_email(email)
 
@@ -360,12 +378,13 @@ def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
     cols = (
         "u.id, u.email, u.role, u.client_slug, u.is_active, u.created_at, "
         "u.avatar, u.allowed_client_slugs, u.group_id, g.name, g.client_slugs, "
-        "u.last_login_at, u.last_seen_at"
+        "u.last_login_at, u.last_seen_at, (u.password_hash = %(invite_pending)s)"
     )
     where = "" if include_inactive else "WHERE u.is_active = TRUE"
     with db.connection() as conn:
         rows = conn.execute(
-            f"SELECT {cols} {_USER_FROM} {where} ORDER BY u.role DESC, LOWER(u.email)"
+            f"SELECT {cols} {_USER_FROM} {where} ORDER BY u.role DESC, LOWER(u.email)",
+            {"invite_pending": INVITE_PENDING_HASH},
         ).fetchall()
     out: list[dict[str, Any]] = []
     for row in rows:
@@ -386,6 +405,9 @@ def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
                 "group_client_slugs": [str(s) for s in group_slugs],
                 "last_login_at": row[11].isoformat() if len(row) > 11 and row[11] else None,
                 "last_seen_at": row[12].isoformat() if len(row) > 12 and row[12] else None,
+                # True until the user redeems their invite link and picks a
+                # password; drives the "Invite pending" badge on the roster.
+                "invite_pending": bool(row[13]) if len(row) > 13 else False,
             }
         )
     return out
@@ -442,12 +464,19 @@ def _resolve_client_scope(
 def create_user(
     *,
     email: str,
-    password: str,
+    password: str | None,
     role: str,
     client_slug: str | None = None,
     allowed_client_slugs: list[str] | None = None,
     group_id: int | None = None,
 ) -> WebUser:
+    """Create (or reactivate) a user.
+
+    ``password`` may be None to create an *invite-pending* account: the row is
+    stored with a hash that can never be matched, so the account exists and can
+    be scoped, but cannot be signed into until the user redeems an invite link
+    and sets their own password (see ``user_invites``).
+    """
     if not enabled():
         raise RuntimeError("DATABASE_URL is not set — web users require Postgres.")
     normalized_email = email.strip().lower()
@@ -456,14 +485,14 @@ def create_user(
     role = role.strip().lower()
     if role not in ("admin", "client", "standard"):
         raise ValueError("role must be admin, client, or standard.")
-    if len(password) < 10:
+    if password is not None and len(password) < 10:
         raise ValueError("Password must be at least 10 characters.")
     slug, gid = _resolve_client_scope(role, client_slug, group_id)
     # Only 'standard' users carry a per-client access list; other roles store NULL.
     allowed = _normalize_slug_list(allowed_client_slugs) if role == "standard" else None
 
     now = datetime.now(tz=UTC)
-    pw_hash = hash_password(password)
+    pw_hash = INVITE_PENDING_HASH if password is None else hash_password(password)
     with db.connection() as conn:
         inactive = conn.execute(
             """

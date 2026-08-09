@@ -270,20 +270,30 @@ def _record_failure_conn(conn, bucket_key: str, now: datetime) -> None:
     )
 
 
-def record_login_failure(*, ip: str | None, email: str) -> None:
+def record_login_failure(*, ip: str | None, email: str = "") -> None:
+    """Count a failed sign-in against the IP bucket, and the email bucket too
+    when an email is known.
+
+    ``email`` is optional because not every credential failure has one: an
+    invalid invite token identifies no account, and bucketing all of those
+    together under a blank key would let one bad link lock out an unrelated
+    address. Those failures still count against the caller's IP."""
     if not enabled():
         return
+    keys = [_bucket_key_ip(ip)]
+    if (email or "").strip():
+        keys.append(_bucket_key_email(email))
     try:
         ensure_schema()
         now = datetime.now(tz=UTC)
         with db.connection() as conn:
-            _record_failure_conn(conn, _bucket_key_ip(ip), now)
-            _record_failure_conn(conn, _bucket_key_email(email), now)
+            for key in keys:
+                _record_failure_conn(conn, key, now)
     except Exception:
         log.warning("login rate limiter DB unavailable; recording failure in memory", exc_info=True)
         now = datetime.now(tz=UTC)
-        _mem_record_failure(_bucket_key_ip(ip), now)
-        _mem_record_failure(_bucket_key_email(email), now)
+        for key in keys:
+            _mem_record_failure(key, now)
 
 
 def clear_login_limits(*, ip: str | None, email: str) -> None:
