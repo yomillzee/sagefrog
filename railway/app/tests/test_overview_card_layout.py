@@ -37,7 +37,14 @@ class OverviewCardLayoutTests(unittest.TestCase):
     def setUp(self) -> None:
         import connector_config_store as ccs
         self._orig_list = ccs.list_configs
-        ccs.list_configs = lambda slug: []  # GA4/GSC-only client, no paid ads
+        # GA4/GSC-only client, no paid ads. GA4 + GSC are actually connected so
+        # the Search Console card is present to order/hide — it's connector-gated
+        # now (see dashboard_sidebar_view_nav_html), and an empty list would mean
+        # a client with no connectors at all, which doesn't get that card.
+        ccs.list_configs = lambda slug: [
+            types.SimpleNamespace(connector_type="ga4", status="connected"),
+            types.SimpleNamespace(connector_type="gsc", status="connected"),
+        ]
         import client_dashboard_config as cdc
         self._orig_cfg = cdc.get_config
 
