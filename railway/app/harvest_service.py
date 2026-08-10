@@ -114,6 +114,26 @@ CREATE TABLE IF NOT EXISTS harvest_project_tags (
 """
 VALID_PROJECT_TAGS = frozenset({"retainer", "project"})
 
+# Projects an admin has pulled out of their client's aggregate card, so they are
+# paced as their own line of work with their own monthly goal (e.g. a client with
+# a main retainer *and* a separate HR retainer). A row here means "track this
+# project on its own card"; the goal columns are optional (a project can be
+# separated without its own goal, in which case it simply has no pace line).
+PROJECT_GOALS_SCHEMA_SQL_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS harvest_project_goals (
+      harvest_project_id TEXT PRIMARY KEY,
+      project_name       TEXT,
+      client_name        TEXT,
+      goal_min           NUMERIC,
+      goal_max           NUMERIC,
+      hard_ceiling       BOOLEAN NOT NULL DEFAULT FALSE,
+      updated_by         TEXT,
+      updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+]
+
 # Admin-assigned account owner for each client — the team member who owns the
 # relationship. Purely a label/filter on the Client Hours page; a client with no
 # row is "unassigned". The canonical roster is shared with the renderer (chip +
@@ -389,8 +409,9 @@ def build_client_hours_overview(
         connected, account_id, account_name,
         month_label, year, month, days_in_month, days_elapsed, as_of,
         refreshed_at, cache_ttl_seconds,
-        clients: [ { harvest_client_id, name, goal,
-                     total_hours, series:[cumhours per elapsed day] } ],
+        clients: [ { card_id, harvest_client_id, harvest_project_id|None,
+                     name, client_name, goal_min, goal_max, goal_label,
+                     goal_hard, owner, projects:[…] } ],
         totals: { total_hours, goal },
         error?: str,
       }
@@ -444,59 +465,122 @@ def build_client_hours_overview(
     goals = get_goals()
     tags = get_project_tags()
     owners = get_client_owners()
-    clients: list[dict[str, Any]] = []
+    project_goals = get_project_goals()
+    cards: list[dict[str, Any]] = []
     grand_total = 0.0
-    goal_min_total = 0.0
-    goal_max_total = 0.0
     for c in series_clients:
         cid = str(c.get("harvest_client_id"))
+        cname = c.get("name")
+        owner = owners.get(cid)
         # Attach each project's current tag (retainer|project|None) fresh, so tag
         # edits show without waiting out the hours cache. Projects are summed
         # client-side per the selected scope.
-        projects = []
-        client_total = 0.0
+        #
+        # Projects an admin has separated out (a row in harvest_project_goals)
+        # leave the client's aggregate card and become cards of their own, so a
+        # client running two distinct retainers is paced as two lines of work
+        # instead of one merged total.
+        shared: list[dict[str, Any]] = []
+        separated: list[dict[str, Any]] = []
         for p in c.get("projects") or []:
             pid = str(p.get("project_id"))
-            client_total += float(p.get("total_hours") or 0.0)
-            projects.append(
-                {
-                    "project_id": pid,
-                    "name": p.get("name"),
-                    "tag": tags.get(pid),
-                    "series": p.get("series") or [],
-                    "series_billable": p.get("series_billable") or [],
-                    "total_hours": float(p.get("total_hours") or 0.0),
-                }
-            )
-        grand_total += client_total
-        goal = goals.get(cid) or {}
-        goal_min = goal.get("min")
-        goal_max = goal.get("max")
-        if goal_min is not None:
-            goal_min_total += goal_min
-        # For the max total, an open-ended floor ("N+") contributes its floor.
-        goal_max_total += goal_max if goal_max is not None else (goal_min or 0.0)
-        clients.append(
-            {
-                "harvest_client_id": cid,
-                "name": c.get("name"),
-                "goal_min": goal_min,
-                "goal_max": goal_max,
-                "goal_label": format_goal(goal_min, goal_max),
-                # Hard ceiling only reads true when there's a ceiling to stop at.
-                "goal_hard": bool(goal.get("hard")) and goal_max is not None,
-                "owner": owners.get(cid),
-                "projects": projects,
+            is_separate = pid in project_goals
+            total = float(p.get("total_hours") or 0.0)
+            grand_total += total
+            proj = {
+                "project_id": pid,
+                "name": p.get("name"),
+                "tag": tags.get(pid),
+                "separate": is_separate,
+                "series": p.get("series") or [],
+                "series_billable": p.get("series_billable") or [],
+                "total_hours": total,
             }
-        )
+            (separated if is_separate else shared).append(proj)
+        # The client's own card, carrying everything not separated out. Skipped
+        # entirely when every project has its own card (nothing left to show).
+        if shared:
+            cards.append(
+                _card(
+                    card_id=cid,
+                    harvest_client_id=cid,
+                    harvest_project_id=None,
+                    name=cname,
+                    client_name=cname,
+                    owner=owner,
+                    projects=shared,
+                    goal=goals.get(cid),
+                )
+            )
+        for proj in separated:
+            pid = proj["project_id"]
+            cards.append(
+                _card(
+                    card_id=f"{cid}:{pid}",
+                    harvest_client_id=cid,
+                    harvest_project_id=pid,
+                    name=proj["name"],
+                    client_name=cname,
+                    owner=owner,
+                    projects=[proj],
+                    goal=project_goals.get(pid),
+                )
+            )
 
-    base["clients"] = clients
+    # Goal totals are summed over the cards actually shown, so a client whose work
+    # is fully separated contributes its projects' goals — not a stale client goal.
+    goal_min_total = 0.0
+    goal_max_total = 0.0
+    for card in cards:
+        gmin, gmax = card["goal_min"], card["goal_max"]
+        if gmin is not None:
+            goal_min_total += gmin
+        # For the max total, an open-ended floor ("N+") contributes its floor.
+        goal_max_total += gmax if gmax is not None else (gmin or 0.0)
+
+    base["clients"] = cards
     base["totals"] = {
         "total_hours": round(grand_total, 2),
         "goal_min": round(goal_min_total, 2),
         "goal_max": round(goal_max_total, 2),
     }
     return base
+
+
+def _card(
+    *,
+    card_id: str,
+    harvest_client_id: str,
+    harvest_project_id: str | None,
+    name: str | None,
+    client_name: str | None,
+    owner: str | None,
+    projects: list[dict[str, Any]],
+    goal: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """One burn-up card: a client's aggregate work, or a single project separated
+    out of it. Both shapes are identical so the page draws them the same way —
+    ``harvest_project_id`` is the only tell, and it says where a goal edit is
+    written (the client's goal vs that project's own)."""
+    g = goal or {}
+    goal_min = g.get("min")
+    goal_max = g.get("max")
+    return {
+        "card_id": card_id,
+        "harvest_client_id": harvest_client_id,
+        "harvest_project_id": harvest_project_id,
+        "name": name,
+        # Always the Harvest client, so separated cards stay searchable and
+        # labelled by who the work is for.
+        "client_name": client_name,
+        "goal_min": goal_min,
+        "goal_max": goal_max,
+        "goal_label": format_goal(goal_min, goal_max),
+        # Hard ceiling only reads true when there's a ceiling to stop at.
+        "goal_hard": bool(g.get("hard")) and goal_max is not None,
+        "owner": owner,
+        "projects": projects,
+    }
 
 
 def _today() -> date:
@@ -735,6 +819,151 @@ def set_project_tag(
                 (project_name or "").strip() or None,
                 (client_name or "").strip() or None,
                 t,
+                (updated_by or "").strip() or None,
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Projects tracked as their own card (+ their own monthly goal)
+# ---------------------------------------------------------------------------
+
+
+def _ensure_project_goals_schema() -> bool:
+    if not _goals_enabled():
+        return False
+    with db.connection() as conn:
+        for stmt in PROJECT_GOALS_SCHEMA_SQL_STATEMENTS:
+            conn.execute(stmt)
+    return True
+
+
+def get_project_goals() -> dict[str, dict[str, float | bool | None]]:
+    """Return ``{harvest_project_id: {"min": x|None, "max": y|None, "hard": bool}}``
+    for every project tracked as its own card.
+
+    Unlike ``get_goals``, a row with no bounds is kept: presence in this mapping
+    is what separates a project from its client's aggregate card, and the goal is
+    optional on top of that.
+    """
+    if not _goals_enabled():
+        return {}
+    try:
+        _ensure_project_goals_schema()
+        with db.connection() as conn:
+            rows = conn.execute(
+                "SELECT harvest_project_id, goal_min, goal_max, hard_ceiling "
+                "FROM harvest_project_goals"
+            ).fetchall()
+    except Exception as exc:
+        _log.warning("Harvest project goals read failed: %s", exc)
+        return {}
+    out: dict[str, dict[str, float | bool | None]] = {}
+    for pid, gmin, gmax, hard in rows:
+        try:
+            lo = float(gmin) if gmin is not None else None
+            hi = float(gmax) if gmax is not None else None
+        except (TypeError, ValueError):
+            lo = hi = None
+        out[str(pid)] = {"min": lo, "max": hi, "hard": bool(hard) and hi is not None}
+    return out
+
+
+def set_project_separate(
+    *,
+    harvest_project_id: str,
+    separate: bool,
+    project_name: str = "",
+    client_name: str = "",
+    updated_by: str = "",
+) -> bool:
+    """Pull a project onto its own card (``separate=True``) or fold it back into
+    its client's aggregate card. Separating keeps any goal already stored for the
+    project; folding it back drops the row (and with it that goal).
+
+    Returns the resulting separated state.
+    """
+    pid = (harvest_project_id or "").strip()
+    if not pid:
+        raise ValueError("harvest_project_id is required.")
+    if not _goals_enabled():
+        raise RuntimeError("DATABASE_URL is required to track a project separately.")
+    _ensure_project_goals_schema()
+    if not separate:
+        with db.connection() as conn:
+            conn.execute("DELETE FROM harvest_project_goals WHERE harvest_project_id = %s", (pid,))
+        return False
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO harvest_project_goals (harvest_project_id, project_name, client_name, updated_by, updated_at)
+            VALUES (%s, %s, %s, %s, NOW())
+            ON CONFLICT (harvest_project_id) DO UPDATE SET
+              project_name = COALESCE(EXCLUDED.project_name, harvest_project_goals.project_name),
+              client_name = COALESCE(EXCLUDED.client_name, harvest_project_goals.client_name),
+              updated_by = EXCLUDED.updated_by,
+              updated_at = NOW()
+            """,
+            (
+                pid,
+                (project_name or "").strip() or None,
+                (client_name or "").strip() or None,
+                (updated_by or "").strip() or None,
+            ),
+        )
+    return True
+
+
+def set_project_goal(
+    *,
+    harvest_project_id: str,
+    goal_min: float | None,
+    goal_max: float | None,
+    hard_ceiling: bool = False,
+    project_name: str = "",
+    client_name: str = "",
+    updated_by: str = "",
+) -> None:
+    """Upsert the monthly goal of a project tracked on its own card.
+
+    Mirrors ``set_goal`` one level down. Clearing the goal (both bounds None)
+    leaves the project separated — it just loses its pace line; use
+    ``set_project_separate(separate=False)`` to fold it back into the client card.
+    """
+    pid = (harvest_project_id or "").strip()
+    if not pid:
+        raise ValueError("harvest_project_id is required.")
+    if not _goals_enabled():
+        raise RuntimeError("DATABASE_URL is required to store Harvest goals.")
+    _ensure_project_goals_schema()
+    lo = float(goal_min) if goal_min is not None else None
+    hi = float(goal_max) if goal_max is not None else None
+    if (lo is not None and lo < 0) or (hi is not None and hi < 0):
+        raise ValueError("Goal cannot be negative.")
+    if lo is not None and hi is not None and lo > hi:
+        lo, hi = hi, lo
+    hard = bool(hard_ceiling) and hi is not None
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO harvest_project_goals (harvest_project_id, project_name, client_name, goal_min, goal_max, hard_ceiling, updated_by, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (harvest_project_id) DO UPDATE SET
+              project_name = COALESCE(EXCLUDED.project_name, harvest_project_goals.project_name),
+              client_name = COALESCE(EXCLUDED.client_name, harvest_project_goals.client_name),
+              goal_min = EXCLUDED.goal_min,
+              goal_max = EXCLUDED.goal_max,
+              hard_ceiling = EXCLUDED.hard_ceiling,
+              updated_by = EXCLUDED.updated_by,
+              updated_at = NOW()
+            """,
+            (
+                pid,
+                (project_name or "").strip() or None,
+                (client_name or "").strip() or None,
+                lo,
+                hi,
+                hard,
                 (updated_by or "").strip() or None,
             ),
         )

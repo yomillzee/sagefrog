@@ -2221,10 +2221,15 @@ async def admin_client_hours_goal(
     goal: str = Form(""),
     hard_ceiling: str = Form(""),
     client_name: str = Form(""),
+    harvest_project_id: str = Form(""),
+    project_name: str = Form(""),
 ):
-    """Set one client's monthly hours goal. ``goal`` accepts a single number
+    """Set one card's monthly hours goal. ``goal`` accepts a single number
     ("80"), a range ("80-100"), or an open-ended floor ("80+"); blank clears it.
-    ``hard_ceiling`` (truthy) marks goal_max as a hard cap the team stops at."""
+    ``hard_ceiling`` (truthy) marks goal_max as a hard cap the team stops at.
+
+    Passing ``harvest_project_id`` writes the goal of a project tracked on its own
+    card instead of the client's — the client's own goal is left untouched."""
     user = await web_auth.require_admin(request)
     import harvest_service
 
@@ -2235,22 +2240,34 @@ async def admin_client_hours_goal(
         return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
     # A hard ceiling only means something when there's a ceiling to stop at.
     hard = hard and goal_max is not None
+    pid = (harvest_project_id or "").strip()
     try:
-        harvest_service.set_goal(
-            harvest_client_id=harvest_client_id,
-            goal_min=goal_min,
-            goal_max=goal_max,
-            hard_ceiling=hard,
-            client_name=client_name,
-            updated_by=user.email,
-        )
+        if pid:
+            harvest_service.set_project_goal(
+                harvest_project_id=pid,
+                goal_min=goal_min,
+                goal_max=goal_max,
+                hard_ceiling=hard,
+                project_name=project_name,
+                client_name=client_name,
+                updated_by=user.email,
+            )
+        else:
+            harvest_service.set_goal(
+                harvest_client_id=harvest_client_id,
+                goal_min=goal_min,
+                goal_max=goal_max,
+                hard_ceiling=hard,
+                client_name=client_name,
+                updated_by=user.email,
+            )
     except Exception as exc:
         return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
     audit_log.record(
         action="harvest.goal_set",
         actor_email=user.email,
-        detail={"harvest_client_id": harvest_client_id, "goal_min": goal_min,
-                "goal_max": goal_max, "hard_ceiling": hard},
+        detail={"harvest_client_id": harvest_client_id, "harvest_project_id": pid or None,
+                "goal_min": goal_min, "goal_max": goal_max, "hard_ceiling": hard},
         **audit_log.request_context(request),
     )
     return JSONResponse({
@@ -2294,6 +2311,43 @@ async def admin_client_hours_project_tag(
         **audit_log.request_context(request),
     )
     return JSONResponse({"ok": True, "tag": (tag or "").strip().lower() or None})
+
+
+@app.post("/admin/client-hours/project-split", include_in_schema=False)
+async def admin_client_hours_project_split(
+    request: Request,
+    harvest_project_id: str = Form(...),
+    separate: str = Form(""),
+    project_name: str = Form(""),
+    client_name: str = Form(""),
+):
+    """Track one Harvest project on its own card (``separate`` truthy), or fold it
+    back into its client's aggregate card. Use this when a client runs two distinct
+    lines of work — say a main retainer and a separate HR retainer — that shouldn't
+    be paced as one combined total. Folding a project back drops its own goal."""
+    user = await web_auth.require_admin(request)
+    import harvest_service
+
+    want = (separate or "").strip().lower() in ("1", "true", "on", "yes")
+    try:
+        stored = harvest_service.set_project_separate(
+            harvest_project_id=harvest_project_id,
+            separate=want,
+            project_name=project_name,
+            client_name=client_name,
+            updated_by=user.email,
+        )
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    audit_log.record(
+        action="harvest.project_split",
+        actor_email=user.email,
+        detail={"harvest_project_id": harvest_project_id, "separate": stored},
+        **audit_log.request_context(request),
+    )
+    return JSONResponse({"ok": True, "separate": stored})
 
 
 @app.post("/admin/client-hours/owner", include_in_schema=False)

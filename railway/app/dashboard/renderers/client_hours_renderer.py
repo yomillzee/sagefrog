@@ -8,6 +8,14 @@ same burn-up read the agency already uses for individual clients, now for every
 client at once. Each card's monthly goal is editable inline and saved to
 /admin/client-hours/goal.
 
+A card is usually a client, but a project can be pulled onto a card of its own
+("Own card" in the card's details popout) when a client runs two distinct lines
+of work — a main retainer plus a separate HR retainer, say — that shouldn't be
+paced as one combined total. Such a card is titled by the project, carries the
+client name as an eyebrow, and holds its own goal; the server decides the split
+and hands back one uniform card shape either way, so everything below draws them
+identically.
+
 The same view is also served read-only, without a login, via a share link
 (``render_shared_client_hours_page`` → /share/client-hours/{token}). The shared
 page reuses this file's CSS and chart JS but drops every mutation affordance
@@ -142,8 +150,18 @@ _HOURS_CSS = """
       font-variant-numeric:tabular-nums; flex:0 0 auto; }
     .cd-projects .tag-seg { display:flex; width:100%; }
     .cd-projects .tag-seg button { flex:1 1 0; padding:4px 6px; font-size:.7rem; text-align:center; }
+    /* "Own card": pulls a project out of the client's combined burn-up so it is
+       paced on its own card, with its own goal (e.g. a separate HR retainer). */
+    .split-toggle { display:inline-flex; align-items:center; gap:6px; font-size:.7rem;
+      font-weight:700; color:var(--muted); cursor:pointer; }
+    .split-toggle input { width:13px; height:13px; accent-color:var(--accent); cursor:pointer; flex:0 0 auto; }
+    .split-toggle input:checked + span { color:var(--accent); }
     .card-title { font-weight:750; color:var(--navy); font-size:.98rem; line-height:1.25;
       white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    /* Client name above the title on a card that tracks one project separately,
+       so "Nixon HR - Retainer" still reads as Nixon Medical's work. */
+    .card-eyebrow { font-size:.67rem; font-weight:750; text-transform:uppercase; letter-spacing:.05em;
+      color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:1px; }
     .card-total { font-variant-numeric:tabular-nums; color:var(--muted); font-size:.78rem; margin-top:2px; }
     .card-total b { color:var(--navy); font-weight:800; }
     .card-total .card-goal { white-space:nowrap; }
@@ -419,6 +437,10 @@ _PAGE_JS = r"""
         ? '$' + new Intl.NumberFormat('en-US',{maximumFractionDigits:1}).format(n/1000) + 'k'
         : usd(n); };
     let chData = null;
+    // Cards are keyed by card_id, not client id: a client whose work is split
+    // across separately-tracked projects contributes several cards (its own
+    // aggregate plus one per separated project), all sharing a harvest_client_id.
+    const cardById = id => (chData.clients || []).find(c => String(c.card_id) === String(id));
     // View state (client-side only — each client carries its projects with both
     // total + billable series, so scope/metric/sort toggles never re-hit
     // Harvest). scope: all|retainer|project · metric: billable|nonbillable ·
@@ -571,6 +593,15 @@ _PAGE_JS = r"""
         + grid + xlab + goalEl + capEl + actualEl + `</svg>`;
     }
 
+    // The data attributes a card's mutation controls (goal editor, ceiling toggle)
+    // need to write back to the right row: which card they belong to, its client,
+    // and — on a card that tracks one project separately — which project's own
+    // goal is being edited rather than the client's.
+    function cardAttrs(c) {
+      return `data-card="${esc(c.card_id)}" data-cid="${esc(c.harvest_client_id)}"`
+        + ` data-pid="${esc(c.harvest_project_id || '')}"`
+        + ` data-name="${esc(c.client_name || c.name)}" data-pname="${esc(c.name)}"`;
+    }
     // Goal control: an inline editor for admins, a static label in the read-only
     // shared view (no mutation affordance).
     function goalEditor(c) {
@@ -581,7 +612,7 @@ _PAGE_JS = r"""
       }
       const label = c.goal_label ? `<span class="g-set">${esc(c.goal_label)} goal</span>` : 'Set goal';
       const cur = c.goal_label ? esc(c.goal_label.replace(/h/g, '').replace('–', '-')) : '';
-      return `<div class="goal" data-cid="${esc(c.harvest_client_id)}" data-name="${esc(c.name)}">`
+      return `<div class="goal" ${cardAttrs(c)}>`
         + `<button type="button" class="goal-btn">${label}</button>`
         + `<span class="goal-edit">`
           + `<input type="text" value="${cur}" placeholder="80 or 80-100 or 80+" aria-label="Monthly hours goal" title="A number (80), a range (80-100), or an open floor (80+)">`
@@ -618,33 +649,41 @@ _PAGE_JS = r"""
       const title = hasCeil
         ? 'Draw a hard cap at the ceiling — the team stops here, no billing over'
         : 'Set a goal with a ceiling (e.g. 40 or 80-100) to enable a hard cap';
-      return `<div class="cd-row cd-cap" data-cid="${esc(c.harvest_client_id)}" data-name="${esc(c.name)}">`
+      return `<div class="cd-row cd-cap" ${cardAttrs(c)}>`
         + `<label class="cap-toggle${hasCeil ? '' : ' is-dim'}" title="${esc(title)}">`
           + `<input type="checkbox" class="cap-check"${c.goal_hard ? ' checked' : ''}${dis}>`
           + `<span>Hard ceiling${hasCeil ? ` at ${hrs(c.goal_max)}h` : ''}</span>`
         + `</label></div>`;
     }
 
-    // Project tags for this client, listed in the popout: each Harvest project
-    // with an Untagged / Retainer / Project segmented control. Admin-only (the
-    // read-only view has no tagging), and only when the client has projects.
+    // Project tags for this card, listed in the popout: each Harvest project with
+    // an Untagged / Retainer / Project segmented control, plus an "Own card"
+    // checkbox that pulls the project out of the client's combined burn-up onto a
+    // card (and goal) of its own. Admin-only (the read-only view has no editing).
     // Replaces the old slide-out "Tag projects" modal.
     function projectTagsSection(c) {
       if (CH_CONFIG.readOnly) return '';
       const ps = (c.projects || []).slice()
         .sort((a, b) => (b.total_hours || 0) - (a.total_hours || 0));
       if (!ps.length) return '';
+      const cname = c.client_name || c.name;
       const opts = [['', 'Untagged'], ['retainer', 'Retainer'], ['project', 'Project']];
       const rows = ps.map(p => {
         const cur = p.tag || '';
-        const seg = `<div class="tag-seg" data-pid="${esc(p.project_id)}" data-cid="${esc(c.harvest_client_id)}"`
-          + ` data-cname="${esc(c.name)}" data-pname="${esc(p.name)}">`
+        const attrs = `data-pid="${esc(p.project_id)}" data-cid="${esc(c.harvest_client_id)}"`
+          + ` data-cname="${esc(cname)}" data-pname="${esc(p.name)}"`;
+        const seg = `<div class="tag-seg" ${attrs}>`
           + opts.map(([v, l]) =>
               `<button type="button" data-tag="${v}" class="${cur === v ? 'on' : ''}">${l}</button>`).join('')
           + `</div>`;
+        const split = `<label class="split-toggle"`
+          + ` title="Track this project on its own card, with its own monthly goal,`
+          + ` instead of combining it with ${esc(cname)}’s other work">`
+          + `<input type="checkbox" class="split-check" ${attrs}${p.separate ? ' checked' : ''}>`
+          + `<span>Own card</span></label>`;
         return `<div class="cd-proj"><div class="cd-proj-name">`
           + `<span class="nm" title="${esc(p.name)}">${esc(p.name)}</span>`
-          + `<span class="cd-proj-hrs">${hrs(p.total_hours || 0)}h</span></div>${seg}</div>`;
+          + `<span class="cd-proj-hrs">${hrs(p.total_hours || 0)}h</span></div>${seg}${split}</div>`;
       }).join('');
       return `<div class="cd-projects"><span class="cd-label">Projects</span>${rows}</div>`;
     }
@@ -673,9 +712,13 @@ _PAGE_JS = r"""
       // it's still edited from the popout. No goal set → just the hours read.
       const goalTxt = c.goal_label
         ? ` · <span class="card-goal">goal <b>${esc(c.goal_label)}</b></span>` : '';
-      return `<div class="card" data-cid="${esc(c.harvest_client_id)}">`
+      // On a card that tracks one project separately, the title is the project and
+      // the client name sits above it as an eyebrow.
+      const eyebrow = (c.client_name && c.client_name !== c.name)
+        ? `<div class="card-eyebrow" title="${esc(c.client_name)}">${esc(c.client_name)}</div>` : '';
+      return `<div class="card" data-card="${esc(c.card_id)}" data-cid="${esc(c.harvest_client_id)}">`
         + `<div class="card-head">`
-          + `<div style="min-width:0"><div class="card-title" title="${esc(c.name)}">${esc(c.name)}</div>`
+          + `<div style="min-width:0">${eyebrow}<div class="card-title" title="${esc(c.name)}">${esc(c.name)}</div>`
           + `<div class="card-total"><b>${hrs(totalOf(c))}h</b> ${kind}${goalTxt}</div></div>`
           + `<button type="button" class="card-more" aria-label="Details for ${esc(c.name)}" aria-expanded="false" title="Details">`
             + `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">`
@@ -735,11 +778,19 @@ _PAGE_JS = r"""
       else if (view.owner) clients = clients.filter(c => c.owner === view.owner);
       // Free-text name filter (case-insensitive substring) — the search bar
       // narrows the visible cards without re-hitting Harvest.
+      // Match the client name too, so searching "Nixon" still finds the cards of
+      // its separately-tracked projects (titled by project, not by client).
       const q = view.search.trim().toLowerCase();
-      if (q) clients = clients.filter(c => String(c.name||'').toLowerCase().includes(q));
+      if (q) clients = clients.filter(c =>
+        `${c.name||''} ${c.client_name||''}`.toLowerCase().includes(q));
       if (view.sort === 'alpha') {
-        clients.sort((a, b) => String(a.name||'').localeCompare(String(b.name||''),
-          undefined, { sensitivity: 'base' }));
+        // Client first, then card title, so a client's separately-tracked
+        // projects sort next to the client's own card.
+        clients.sort((a, b) =>
+          String(a.client_name||a.name||'').localeCompare(String(b.client_name||b.name||''),
+            undefined, { sensitivity: 'base' })
+          || String(a.name||'').localeCompare(String(b.name||''),
+            undefined, { sensitivity: 'base' }));
       } else {
         clients.sort((a, b) => totalOf(b) - totalOf(a));
       }
@@ -921,8 +972,11 @@ _PAGE_JS = r"""
       const totalShown = shown.reduce((s, c) => s + totalOf(c), 0);
       const scopeLabel = view.scope === 'retainer' ? 'retainer ' : (view.scope === 'project' ? 'project ' : '');
       const kind = metricLabel();
+      // Count clients, not cards — one client can show several cards when some of
+      // its projects are tracked separately.
+      const clientCount = new Set(shown.map(c => c.harvest_client_id)).size;
       sub.textContent = `${meta.month_label} · day ${meta.days_elapsed} of ${meta.days_in_month}`
-        + ` · ${shown.length} clients · ${hrs(totalShown)}h ${scopeLabel}${kind}`
+        + ` · ${clientCount} clients · ${hrs(totalShown)}h ${scopeLabel}${kind}`
         + (meta.account_name ? ` · ${meta.account_name}` : '') + fresh;
 
       const notice = document.getElementById('chNotice');
@@ -1092,7 +1146,6 @@ _PAGE_JS_ADMIN = r"""
             editor.classList.remove('on'); btn.style.display=''; return;
           }
           if (ev.target.closest('.goal-save')) {
-            const cid = g.dataset.cid;
             const raw = editor.querySelector('input').value.trim();
             // Preserve the current hard-ceiling choice from the same popout.
             const panel = g.closest('.card-details');
@@ -1102,13 +1155,20 @@ _PAGE_JS_ADMIN = r"""
               // The server parses "80" / "80-100" / "80+" and returns the stored
               // min/max + label; apply those so the chart re-colors immediately
               // (no Harvest round-trip — the hours series is unchanged).
-              const body = new URLSearchParams({ harvest_client_id: cid, client_name: g.dataset.name,
-                goal: raw, hard_ceiling: (capChk && capChk.checked) ? '1' : '' });
+              // A separated project card carries data-pid, which writes that
+              // project's own goal instead of the client's.
+              const body = new URLSearchParams({ harvest_client_id: g.dataset.cid,
+                client_name: g.dataset.name, goal: raw,
+                hard_ceiling: (capChk && capChk.checked) ? '1' : '' });
+              if (g.dataset.pid) {
+                body.set('harvest_project_id', g.dataset.pid);
+                body.set('project_name', g.dataset.pname || '');
+              }
               const r = await fetch('/admin/client-hours/goal', { method:'POST', credentials:'same-origin',
                 headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
               const b = await r.json().catch(()=>({}));
               if (!r.ok || !b.ok) throw new Error(b.error || ('HTTP '+r.status));
-              const client = (chData.clients||[]).find(c => String(c.harvest_client_id) === String(cid));
+              const client = cardById(g.dataset.card);
               if (client) {
                 client.goal_min = (b.goal_min == null ? null : Number(b.goal_min));
                 client.goal_max = (b.goal_max == null ? null : Number(b.goal_max));
@@ -1132,14 +1192,19 @@ _PAGE_JS_ADMIN = r"""
         const grid = document.getElementById('chGrid');
         grid.addEventListener('change', async (ev) => {
           const chk = ev.target.closest('.cap-check'); if (!chk) return;
-          const row = chk.closest('.cd-cap'); const cid = row.dataset.cid;
-          const client = (chData.clients || []).find(c => String(c.harvest_client_id) === String(cid));
+          const row = chk.closest('.cd-cap');
+          const client = cardById(row.dataset.card);
           if (!client) return;
           const want = chk.checked;
           chk.disabled = true;
           try {
-            const body = new URLSearchParams({ harvest_client_id: cid, client_name: row.dataset.name,
-              goal: goalText(client), hard_ceiling: want ? '1' : '' });
+            const body = new URLSearchParams({ harvest_client_id: row.dataset.cid,
+              client_name: row.dataset.name, goal: goalText(client),
+              hard_ceiling: want ? '1' : '' });
+            if (row.dataset.pid) {
+              body.set('harvest_project_id', row.dataset.pid);
+              body.set('project_name', row.dataset.pname || '');
+            }
             const r = await fetch('/admin/client-hours/goal', { method:'POST', credentials:'same-origin',
               headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
             const b = await r.json().catch(()=>({}));
@@ -1166,8 +1231,10 @@ _PAGE_JS_ADMIN = r"""
           const sel = ev.target.closest('.owner-select'); if (!sel) return;
           const cid = sel.dataset.cid;
           const owner = sel.value;
-          const client = (chData.clients || []).find(c => String(c.harvest_client_id) === String(cid));
-          const prev = client ? (client.owner || '') : '';
+          // The owner is a property of the client, so it applies to every card
+          // that client shows (its own plus any separated project).
+          const cards = (chData.clients || []).filter(c => String(c.harvest_client_id) === String(cid));
+          const prev = cards.length ? (cards[0].owner || '') : '';
           sel.disabled = true;
           try {
             const body = new URLSearchParams({ harvest_client_id: cid, client_name: sel.dataset.name, owner });
@@ -1175,7 +1242,7 @@ _PAGE_JS_ADMIN = r"""
               headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
             const b = await r.json().catch(()=>({}));
             if (!r.ok || !b.ok) throw new Error(b.error || ('HTTP '+r.status));
-            if (client) client.owner = b.owner || null;
+            cards.forEach(c => { c.owner = b.owner || null; });
             render();
           } catch (e) {
             sel.disabled = false;
@@ -1193,10 +1260,10 @@ _PAGE_JS_ADMIN = r"""
       // immediately (no Harvest round-trip). After the re-render we reopen the
       // same card's popout, so several of a client's projects can be tagged in
       // one sitting. Delegated on the grid.
-      function openDetailsFor(cid) {
-        if (cid == null) return;
-        const sel = (window.CSS && CSS.escape) ? CSS.escape(String(cid)) : String(cid);
-        const card = document.querySelector(`.card[data-cid="${sel}"]`);
+      function openDetailsFor(cardId) {
+        if (cardId == null) return;
+        const sel = (window.CSS && CSS.escape) ? CSS.escape(String(cardId)) : String(cardId);
+        const card = document.querySelector(`.card[data-card="${sel}"]`);
         if (!card) return;
         const panel = card.querySelector('.card-details');
         const kebab = card.querySelector('.card-more');
@@ -1206,7 +1273,8 @@ _PAGE_JS_ADMIN = r"""
       document.getElementById('chGrid').addEventListener('click', async (ev) => {
         const btn = ev.target.closest('.cd-projects .tag-seg button'); if (!btn) return;
         const seg = btn.closest('.tag-seg');
-        const pid = seg.dataset.pid, cid = seg.dataset.cid, newTag = btn.dataset.tag;
+        const pid = seg.dataset.pid, newTag = btn.dataset.tag;
+        const cardId = btn.closest('.card').dataset.card;
         const prev = seg.querySelector('button.on');
         // Optimistic: reflect the choice immediately.
         seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
@@ -1222,10 +1290,34 @@ _PAGE_JS_ADMIN = r"""
             if (String(p.project_id) === String(pid)) p.tag = (b.tag || null);
           }));
           render();
-          openDetailsFor(cid);
+          openDetailsFor(cardId);
         } catch (e) {
           if (prev) seg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === prev));
           alert('Could not save tag: ' + (e.message||e));
+        }
+      });
+
+      // "Own card": pull a project out of its client's combined burn-up (or fold
+      // it back in). Which card a project belongs to is decided server-side when
+      // the overview is assembled, so this re-loads the feed — cached, so no
+      // Harvest round-trip — and lets the grid redraw with the new split.
+      document.getElementById('chGrid').addEventListener('change', async (ev) => {
+        const chk = ev.target.closest('.split-check'); if (!chk) return;
+        const want = chk.checked;
+        chk.disabled = true;
+        try {
+          const body = new URLSearchParams({ harvest_project_id: chk.dataset.pid,
+            separate: want ? '1' : '', project_name: chk.dataset.pname,
+            client_name: chk.dataset.cname });
+          const r = await fetch('/admin/client-hours/project-split', { method:'POST',
+            credentials:'same-origin',
+            headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
+          const b = await r.json().catch(()=>({}));
+          if (!r.ok || !b.ok) throw new Error(b.error || ('HTTP '+r.status));
+          await load(false);
+        } catch (e) {
+          chk.disabled = false; chk.checked = !want;
+          alert('Could not update card: ' + (e.message||e));
         }
       });
 

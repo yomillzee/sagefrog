@@ -141,6 +141,84 @@ class CacheBehaviourTest(unittest.TestCase):
         self.assertEqual(out["totals"]["goal_min"], 80.0)
         self.assertEqual(out["refreshed_at"], "2026-07-21T12:00:00+00:00")
 
+    def test_separated_project_gets_its_own_card_and_goal(self):
+        """A client running two distinct lines of work (e.g. a main retainer and a
+        separate HR retainer) must not be merged into one burn-up: the separated
+        project leaves the client's card and is paced on its own."""
+        hit = SimpleNamespace(
+            response_json=self._cached_clients(),
+            created_at=datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc),
+        )
+        with patch.object(harvest_service, "is_connected", return_value=True), \
+             patch.object(harvest_service, "_account_id", return_value="acct-1"), \
+             patch.object(harvest_service.oauth_store, "public_status",
+                          return_value=SimpleNamespace(metadata={}), create=True), \
+             patch.object(harvest_service.db_cache, "get_cached", return_value=hit, create=True), \
+             patch.object(harvest_service, "get_goals",
+                          return_value={"1": {"min": 80.0, "max": 100.0}}), \
+             patch.object(harvest_service, "get_project_tags",
+                          return_value={"11": "retainer", "12": "retainer"}), \
+             patch.object(harvest_service, "get_client_owners", return_value={"1": "Sam"}), \
+             patch.object(harvest_service, "get_project_goals",
+                          return_value={"12": {"min": 10.0, "max": 10.0, "hard": False}}):
+            out = harvest_service.build_client_hours_overview(today=date(2026, 7, 21))
+
+        by_card = {c["card_id"]: c for c in out["clients"]}
+        self.assertEqual(set(by_card), {"1", "1:12", "2"})
+        # The client's own card keeps only the projects that weren't separated.
+        parent = by_card["1"]
+        self.assertEqual([p["project_id"] for p in parent["projects"]], ["11"])
+        self.assertEqual(parent["name"], "ILC Dover")
+        self.assertIsNone(parent["harvest_project_id"])
+        self.assertEqual(parent["goal_max"], 100.0)
+        # The separated project is titled by project, labelled by client, and
+        # carries its own goal — not the client's.
+        split = by_card["1:12"]
+        self.assertEqual(split["name"], "Website")
+        self.assertEqual(split["client_name"], "ILC Dover")
+        self.assertEqual(split["harvest_client_id"], "1")
+        self.assertEqual(split["harvest_project_id"], "12")
+        self.assertEqual(split["goal_label"], "10h")
+        self.assertEqual([p["project_id"] for p in split["projects"]], ["12"])
+        self.assertTrue(split["projects"][0]["separate"])
+        self.assertFalse(parent["projects"][0]["separate"])
+        # Owner is a client property, so both of its cards carry it.
+        self.assertEqual(parent["owner"], "Sam")
+        self.assertEqual(split["owner"], "Sam")
+        # Hours are partitioned, never double-counted; goals sum over the cards.
+        self.assertEqual(out["totals"]["total_hours"], 42.0)   # 8 + 4 + 30
+        self.assertEqual(out["totals"]["goal_min"], 90.0)      # 80 client + 10 project
+        self.assertEqual(out["totals"]["goal_max"], 110.0)
+
+    def test_client_with_every_project_separated_shows_no_aggregate_card(self):
+        hit = SimpleNamespace(
+            response_json=self._cached_clients(),
+            created_at=datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc),
+        )
+        with patch.object(harvest_service, "is_connected", return_value=True), \
+             patch.object(harvest_service, "_account_id", return_value="acct-1"), \
+             patch.object(harvest_service.oauth_store, "public_status",
+                          return_value=SimpleNamespace(metadata={}), create=True), \
+             patch.object(harvest_service.db_cache, "get_cached", return_value=hit, create=True), \
+             patch.object(harvest_service, "get_goals",
+                          return_value={"1": {"min": 80.0, "max": 100.0}}), \
+             patch.object(harvest_service, "get_project_tags", return_value={}), \
+             patch.object(harvest_service, "get_client_owners", return_value={}), \
+             patch.object(harvest_service, "get_project_goals",
+                          return_value={"11": {"min": 30.0, "max": None, "hard": False},
+                                        "12": {"min": None, "max": None, "hard": False}}):
+            out = harvest_service.build_client_hours_overview(today=date(2026, 7, 21))
+
+        cards = {c["card_id"] for c in out["clients"]}
+        self.assertEqual(cards, {"1:11", "1:12", "2"})
+        # The client's own goal is not counted when it has no card of its own;
+        # a separated project can be split without a goal of its own ("12").
+        self.assertEqual(out["totals"]["goal_min"], 30.0)
+        self.assertEqual(out["totals"]["goal_max"], 30.0)
+        by_card = {c["card_id"]: c for c in out["clients"]}
+        self.assertEqual(by_card["1:12"]["goal_label"], "")
+        self.assertEqual(out["totals"]["total_hours"], 42.0)
+
     def test_owner_applied_fresh_onto_each_client(self):
         hit = SimpleNamespace(
             response_json=self._cached_clients(),
