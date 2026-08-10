@@ -2382,6 +2382,28 @@ async def admin_client_hours_owner(
     return JSONResponse({"ok": True, "owner": stored})
 
 
+@app.post("/admin/client-hours/prefs", include_in_schema=False)
+async def admin_client_hours_prefs(
+    request: Request,
+    show_billing: str | None = Form(None),
+):
+    """Save one signed-in user's Client Hours view preferences — which optional
+    sections they keep open. Only the fields present in the request are changed,
+    and the preference is scoped to this user, not the page."""
+    user = await web_auth.require_admin(request)
+    import harvest_service
+
+    truthy = ("1", "true", "on", "yes")
+    updates: dict[str, bool] = {}
+    if show_billing is not None:
+        updates["show_billing"] = (show_billing or "").strip().lower() in truthy
+    try:
+        prefs = harvest_service.set_user_prefs(user_email=user.email, updates=updates)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    return JSONResponse({"ok": True, "prefs": prefs})
+
+
 # ---------------------------------------------------------------------------
 # Client Hours share links: read-only, no-login views of the burn-up page.
 # Admins mint/list/revoke unguessable tokens (…/share*); the public routes

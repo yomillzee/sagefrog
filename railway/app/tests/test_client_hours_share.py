@@ -15,6 +15,7 @@ if str(APP_DIR) not in sys.path:
 sys.modules.setdefault("db", types.ModuleType("db"))
 
 import os  # noqa: E402
+from unittest import mock  # noqa: E402
 
 import client_hours_share  # noqa: E402
 
@@ -230,6 +231,43 @@ class SharedRendererTest(unittest.TestCase):
             self.assertNotIn(eid, html)
         # And its JS must never call an admin-only endpoint (the goal/tag/share
         # write handlers are gated out entirely, not just disabled).
+        self.assertNotIn("/admin/client-hours", html)
+
+    def test_filter_bar_keeps_only_the_primary_controls(self):
+        """Search · work-type · owner stay in the bar; the rest live behind
+        "More", and Share/Refresh are icon-only."""
+        html = self._admin()
+        for eid in ('id="chSearch"', 'id="chScope"', 'id="chOwner"', 'id="chMore"'):
+            self.assertIn(eid, html)
+        # The secondary controls kept their ids (the JS wires them by id) and
+        # simply moved inside the popover.
+        menu = html.split('id="chMoreMenu"', 1)[1].split("</main>", 1)[0]
+        for eid in ('id="chMetric"', 'id="chSort"', 'id="chStatus"', 'id="chNoGoal"'):
+            self.assertIn(eid, menu)
+        # Icon-only actions: no visible text label, but still an accessible name.
+        self.assertNotIn("<span>Share</span>", html)
+        self.assertNotIn("<span>Refresh</span>", html)
+        self.assertIn('aria-label="Share"', html)
+        self.assertIn('aria-label="Refresh"', html)
+
+    def test_admin_billing_pref_is_prerendered_and_writable(self):
+        """The agency-billing section's collapsed state comes from the signed-in
+        user's saved preference and posts back to their own record."""
+        import harvest_service
+
+        with mock.patch.object(harvest_service, "get_user_prefs",
+                               return_value={"show_billing": False}) as m:
+            html = self._admin()
+        m.assert_called_once_with("admin@sagefrog.com")
+        self.assertIn('"show_billing": false', html)
+        self.assertIn('"prefsUrl": "/admin/client-hours/prefs"', html)
+
+    def test_shared_view_has_no_server_side_prefs(self):
+        """No account behind a share link, so the section state is remembered on
+        the device — and no admin endpoint is named to do it."""
+        html = self._shared()
+        self.assertIn('"prefsUrl": null', html)
+        self.assertIn("localStorage", html)
         self.assertNotIn("/admin/client-hours", html)
 
     def test_shared_escapes_label(self):
