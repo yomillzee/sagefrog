@@ -268,6 +268,30 @@ class ClientOwnerRosterTest(unittest.TestCase):
         self.assertIsNone(harvest_service._OWNER_BY_LOWER.get("nobody"))
 
 
+class UserPrefsTest(unittest.TestCase):
+    """Per-user Client Hours view preferences: safe defaults without a DB, and a
+    closed set of storable keys."""
+
+    def test_defaults_when_no_database(self):
+        with patch.object(harvest_service, "_goals_enabled", return_value=False):
+            self.assertEqual(harvest_service.get_user_prefs("a@b.c"), {"show_billing": True})
+
+    def test_defaults_are_a_copy(self):
+        prefs = harvest_service.default_user_prefs()
+        prefs["show_billing"] = False
+        self.assertTrue(harvest_service.default_user_prefs()["show_billing"])
+
+    def test_blank_email_rejected(self):
+        with self.assertRaises(ValueError):
+            harvest_service.set_user_prefs(user_email="  ", updates={"show_billing": False})
+
+    def test_unknown_keys_are_not_stored(self):
+        # Nothing writable in the request → rejected before any DB work, so an
+        # unknown key can never create a column of junk in the prefs blob.
+        with self.assertRaises(ValueError):
+            harvest_service.set_user_prefs(user_email="a@b.c", updates={"is_admin": True})
+
+
 class ParseGoalTextTest(unittest.TestCase):
     def test_single_value(self):
         self.assertEqual(harvest_service.parse_goal_text("80"), (80.0, 80.0))

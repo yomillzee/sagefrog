@@ -47,7 +47,7 @@ _HOURS_CSS = """
       justify-content:space-between; gap:12px; flex-wrap:wrap; }
     .page-head h2 { margin:0; font-size:1.15rem; color:var(--navy); }
     .sub { color:var(--muted); font-size:.86rem; margin:3px 0 0; }
-    .head-controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .head-controls { position:relative; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
     .seg { display:inline-flex; background:#eef2f7; border:1px solid var(--border);
       border-radius:999px; padding:2px; gap:2px; }
     .seg-btn { appearance:none; border:0; background:transparent; color:var(--muted);
@@ -85,6 +85,9 @@ _HOURS_CSS = """
       color:var(--muted); border-radius:50%; width:18px; height:18px; font-size:.7rem; line-height:1;
       cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
     .ch-search-clear:hover { background:#e2e8f0; color:var(--navy); }
+    /* Sets display, so it has to beat the UA [hidden] rule to stay hidden while
+       the field is empty. */
+    .ch-search-clear[hidden] { display:none; }
     .head-select { appearance:none; border:1px solid var(--border); background:#fff
       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%230a2540' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")
       no-repeat right 12px center; border-radius:999px; color:var(--navy); font:inherit; font-size:.82rem;
@@ -98,6 +101,38 @@ _HOURS_CSS = """
     .refresh-btn svg { width:14px; height:14px; }
     .refresh-btn.spin svg { animation:rot .8s linear infinite; }
     @keyframes rot { to { transform:rotate(360deg); } }
+    /* Icon-only actions (Share, Refresh): square, label carried by title/aria. */
+    .refresh-btn.icon-btn { width:34px; height:34px; padding:0; justify-content:center; gap:0; }
+    .refresh-btn.icon-btn svg { width:15px; height:15px; }
+    /* "More" filters: the secondary controls (hours type, sort, pace) tucked into
+       a popover so the bar itself carries only search · scope · owner. */
+    .more-wrap { position:relative; display:inline-flex; flex:0 0 auto; }
+    .more-btn { appearance:none; display:inline-flex; align-items:center; gap:7px;
+      border:1px solid var(--border); background:#fff; color:var(--navy); border-radius:999px;
+      padding:8px 14px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; }
+    .more-btn:hover { border-color:#94a3b8; }
+    .more-btn[aria-expanded="true"] { border-color:var(--accent); color:var(--accent); }
+    .more-btn svg { width:14px; height:14px; }
+    .more-badge { background:var(--accent); color:#fff; border-radius:999px; font-size:.66rem;
+      font-weight:800; min-width:16px; height:16px; padding:0 5px; display:inline-flex;
+      align-items:center; justify-content:center; font-variant-numeric:tabular-nums; }
+    /* Both of these set display, so they need to beat the UA [hidden] rule. */
+    .more-badge[hidden] { display:none; }
+    .more-menu { position:absolute; top:calc(100% + 8px); right:0; z-index:40; width:268px;
+      background:#fff; border:1px solid var(--line); border-radius:12px; padding:13px;
+      box-shadow:0 14px 34px rgba(10,37,64,.20); display:flex; flex-direction:column; gap:13px; }
+    .more-menu[hidden] { display:none; }
+    .more-row { display:flex; flex-direction:column; gap:7px; }
+    .more-label { color:var(--muted); font-size:.68rem; font-weight:800; letter-spacing:.05em;
+      text-transform:uppercase; }
+    .more-menu .seg { width:100%; }
+    .more-menu .seg-btn { flex:1 1 0; text-align:center; }
+    .more-menu .pace-filters { flex-wrap:wrap; }
+    .more-foot { display:flex; align-items:center; justify-content:space-between; gap:10px;
+      border-top:1px solid #f0f3f8; padding-top:11px; }
+    .more-reset { appearance:none; border:0; background:transparent; color:var(--accent);
+      font:inherit; font-size:.78rem; font-weight:700; cursor:pointer; padding:0; margin-left:auto; }
+    .more-reset:disabled { color:var(--muted); opacity:.6; cursor:default; }
     .notice { border-radius:12px; padding:14px 16px; margin-bottom:16px; font-size:.9rem; }
     .notice.err { background:#fef2f2; border:1px solid #fecaca; color:#b42318; }
     .notice.warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; }
@@ -279,6 +314,19 @@ _HOURS_CSS = """
     .summary-head .s-note { color:var(--muted); font-size:.75rem; margin-top:3px;
       font-variant-numeric:tabular-nums; }
     .summary-head .s-note b { color:var(--ink); font-weight:700; }
+    /* Collapse control: the section folds down to its title + headline figure,
+       and the choice is remembered per user (see CH_CONFIG.prefs). */
+    .s-title { display:flex; align-items:flex-start; gap:10px; min-width:0; }
+    .s-toggle { appearance:none; border:1px solid var(--border); background:#f8fafc; color:var(--muted);
+      border-radius:8px; width:26px; height:26px; flex:0 0 auto; cursor:pointer;
+      display:inline-flex; align-items:center; justify-content:center; }
+    .s-toggle:hover { border-color:#94a3b8; color:var(--navy); background:#fff; }
+    .s-toggle svg { width:14px; height:14px; transition:transform .15s ease; }
+    .summary.is-collapsed .s-toggle svg { transform:rotate(-90deg); }
+    .summary.is-collapsed { padding-bottom:16px; }
+    .summary.is-collapsed .summary-body { display:none; }
+    .summary.is-collapsed .s-hero-value { font-size:1.15rem; }
+    .summary.is-collapsed .s-hero-sub { display:none; }
     /* Hero: estimated billable dollars for the month (the projected read). */
     .s-hero { text-align:right; min-width:0; }
     .s-hero-label { color:var(--muted); font-size:.7rem; text-transform:uppercase;
@@ -301,6 +349,10 @@ _HOURS_CSS = """
       .head-controls { width:100%; }
       .ch-search { flex:1 1 100%; }
       .ch-search input { width:100%; }
+      /* Narrow screens: drop the popover full-width under the whole bar rather
+         than hanging it off the button, where it would run past the viewport. */
+      .more-wrap { position:static; }
+      .more-menu { left:0; right:0; width:auto; }
       .summary-head { flex-direction:column; }
       .s-hero { text-align:left; }
       .s-hero-label { justify-content:flex-start; }
@@ -309,21 +361,22 @@ _HOURS_CSS = """
 
 # The head-controls that only make sense when signed in as an admin: manual
 # Harvest refresh, project tagging, and the share-link manager. Omitted from the
-# read-only shared view, which is a pure viewer.
+# read-only shared view, which is a pure viewer. Both are icon-only — the bar is
+# already dense, and the label lives in the tooltip / accessible name.
 _ADMIN_HEAD_BUTTONS = """
-        <button type="button" class="refresh-btn" id="chShare" title="Create a read-only link anyone can view">
+        <button type="button" class="refresh-btn icon-btn" id="chShare" aria-label="Share"
+          title="Share — create a read-only link anyone can view">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
             <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-          <span>Share</span>
         </button>
-        <button type="button" class="refresh-btn" id="chRefresh" title="Pull fresh hours from Harvest">
+        <button type="button" class="refresh-btn icon-btn" id="chRefresh" aria-label="Refresh"
+          title="Refresh — pull fresh hours from Harvest">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          <span>Refresh</span>
         </button>"""
 
 
@@ -385,31 +438,55 @@ def _content_html(*, read_only: bool) -> str:
             spellcheck="false" aria-label="Search clients by name">
           <button type="button" class="ch-search-clear" id="chSearchClear" aria-label="Clear search" hidden>✕</button>
         </div>
-        <select id="chScope" class="head-select" aria-label="Work type">
-          <option value="retainer" selected>Retainer</option>
-          <option value="project">Project</option>
-          <option value="all">All work</option>
-        </select>
+        <div class="seg" id="chScope" role="group" aria-label="Work type">
+          <button type="button" class="seg-btn is-active" data-scope="retainer">Retainer</button>
+          <button type="button" class="seg-btn" data-scope="project">Project</button>
+          <button type="button" class="seg-btn" data-scope="all">All</button>
+        </div>
         <select id="chOwner" class="head-select" aria-label="Filter by owner">
           {owner_options}
         </select>
-        <div class="seg" id="chMetric" role="group" aria-label="Hours type">
-          <button type="button" class="seg-btn is-active" data-metric="billable">Billable</button>
-          <button type="button" class="seg-btn" data-metric="nonbillable">Non-billable</button>
-        </div>
-        <div class="seg" id="chSort" role="group" aria-label="Sort order">
-          <button type="button" class="seg-btn is-active" data-sort="hours">Highest</button>
-          <button type="button" class="seg-btn" data-sort="alpha">A–Z</button>
-        </div>
-        <div class="pace-filters" id="chStatus" role="group" aria-label="Pace filter">
-          <button type="button" class="pace-chip risk" data-status="behind" id="chRisk"
-            aria-pressed="false" title="Clients projected to finish under their contracted minimum">
-            <span class="dot"></span>At risk <b id="chRiskCount">0</b></button>
-          <button type="button" class="pace-chip grow" data-status="over" id="chGrow"
-            aria-pressed="false" title="Clients projected to finish over their ceiling — growth opportunities">
-            <span class="dot"></span>Growth <b id="chGrowCount">0</b></button>
-        </div>
-        <span class="no-goal-note" id="chNoGoal" hidden></span>{head_buttons}
+        <div class="more-wrap">
+          <button type="button" class="more-btn" id="chMore" aria-expanded="false"
+            aria-haspopup="true" aria-controls="chMoreMenu" title="More filters">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="20" y2="12"/>
+              <line x1="10" y1="18" x2="20" y2="18"/></svg>
+            <span>More</span><b class="more-badge" id="chMoreBadge" hidden>0</b>
+          </button>
+          <div class="more-menu" id="chMoreMenu" hidden>
+            <div class="more-row">
+              <span class="more-label" id="chMetricLabel">Hours</span>
+              <div class="seg" id="chMetric" role="group" aria-labelledby="chMetricLabel">
+                <button type="button" class="seg-btn is-active" data-metric="billable">Billable</button>
+                <button type="button" class="seg-btn" data-metric="nonbillable">Non-billable</button>
+              </div>
+            </div>
+            <div class="more-row">
+              <span class="more-label" id="chSortLabel">Sort</span>
+              <div class="seg" id="chSort" role="group" aria-labelledby="chSortLabel">
+                <button type="button" class="seg-btn is-active" data-sort="hours">Highest</button>
+                <button type="button" class="seg-btn" data-sort="alpha">A–Z</button>
+              </div>
+            </div>
+            <div class="more-row">
+              <span class="more-label" id="chStatusLabel">Pace</span>
+              <div class="pace-filters" id="chStatus" role="group" aria-labelledby="chStatusLabel">
+                <button type="button" class="pace-chip risk" data-status="behind" id="chRisk"
+                  aria-pressed="false" title="Clients projected to finish under their contracted minimum">
+                  <span class="dot"></span>At risk <b id="chRiskCount">0</b></button>
+                <button type="button" class="pace-chip grow" data-status="over" id="chGrow"
+                  aria-pressed="false" title="Clients projected to finish over their ceiling — growth opportunities">
+                  <span class="dot"></span>Growth <b id="chGrowCount">0</b></button>
+              </div>
+            </div>
+            <div class="more-foot">
+              <span class="no-goal-note" id="chNoGoal" hidden></span>
+              <button type="button" class="more-reset" id="chMoreReset" disabled>Reset</button>
+            </div>
+          </div>
+        </div>{head_buttons}
       </div>
     </div>
     <div id="chNotice"></div>
@@ -449,6 +526,34 @@ _PAGE_JS = r"""
     // just the at-risk (behind their minimum) or growth (over their ceiling) book.
     // owner: '' = all · '__none__' = unassigned only · else a specific owner name.
     const view = { scope: 'retainer', metric: 'billable', sort: 'hours', search: '', status: null, owner: '' };
+    // The subset of `view` that lives behind the "More" button — used for the
+    // button's active-filter badge and its Reset.
+    const VIEW_DEFAULTS = { metric: 'billable', sort: 'hours', status: null };
+
+    // Per-user view preferences (which optional sections stay open). A signed-in
+    // admin's come from the server in CH_CONFIG.prefs and are written back on
+    // change, so the choice follows them to any browser; the public shared view
+    // has no account, so it remembers on the device instead.
+    const PREFS_KEY = 'sf:clientHours:prefs';
+    const prefs = Object.assign({ show_billing: true }, CH_CONFIG.prefs || {});
+    if (!CH_CONFIG.prefsUrl) {
+      try {
+        const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
+        if (saved && typeof saved === 'object') Object.assign(prefs, saved);
+      } catch (_) {}
+    }
+    function savePrefs() {
+      if (!CH_CONFIG.prefsUrl) {
+        try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (_) {}
+        return;
+      }
+      // Fire-and-forget: the UI has already moved, and a failed save just means
+      // the section reverts to its stored state on the next visit.
+      fetch(CH_CONFIG.prefsUrl, { method:'POST', credentials:'same-origin',
+        headers:{'Content-Type':'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({ show_billing: prefs.show_billing ? '1' : '' }) })
+        .catch(() => {});
+    }
 
     // Deterministic owner → color, so each owner's chip reads the same everywhere.
     const OWNER_COLORS = ['#2f6df0','#0a7f3f','#b7791f','#b42318','#7c3aed','#0e7490',
@@ -922,21 +1027,48 @@ _PAGE_JS = r"""
 
       box.className = 'summary';
       box.innerHTML = `<div class="summary-head">`
-        + `<div><h3>Agency billing — ${esc(meta.month_label)}</h3>`
-          + `<div class="s-note">Billable · ${scopeLbl} · day <b>${elapsed}</b> of ${days}`
-            + ` · modeled @ $${STANDARD_RATE}/hr</div></div>`
+        + `<div class="s-title">`
+          + `<button type="button" class="s-toggle" id="chBillingToggle" aria-controls="chSummaryBody">`
+            + `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"`
+            + ` stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">`
+            + `<polyline points="6 9 12 15 18 9"/></svg></button>`
+          + `<div><h3>Agency billing — ${esc(meta.month_label)}</h3>`
+            + `<div class="s-note">Billable · ${scopeLbl} · day <b>${elapsed}</b> of ${days}`
+              + ` · modeled @ $${STANDARD_RATE}/hr</div></div>`
+        + `</div>`
         + `<div class="s-hero"><div class="s-hero-label">Est. billable this month${pill}</div>`
           + `<div class="s-hero-value">${usd(projRev)}</div>`
           + `<div class="s-hero-sub"><b>${usd(actualRev)}</b> booked · ${hrs(actual)}h logged${floorNote}</div></div>`
         + `</div>`
-        + `<div class="summary-chart">`
-          + summaryChart({ floor, series, actual, projected, elapsed, days, st, showFloor })
-        + `</div>`
-        + `<div class="summary-legend">`
-          + `<span><i style="border-top-color:${st.color};border-top-style:solid"></i>Billable logged</span>`
-          + (showFloor ? `<span><i style="border-top-color:var(--goal);border-top-style:dashed"></i>Contracted minimum</span>` : '')
-          + (elapsed < days ? `<span><i style="border-top-color:${st.color};border-top-style:dotted"></i>Projected month-end</span>` : '')
+        + `<div class="summary-body" id="chSummaryBody">`
+          + `<div class="summary-chart">`
+            + summaryChart({ floor, series, actual, projected, elapsed, days, st, showFloor })
+          + `</div>`
+          + `<div class="summary-legend">`
+            + `<span><i style="border-top-color:${st.color};border-top-style:solid"></i>Billable logged</span>`
+            + (showFloor ? `<span><i style="border-top-color:var(--goal);border-top-style:dashed"></i>Contracted minimum</span>` : '')
+            + (elapsed < days ? `<span><i style="border-top-color:${st.color};border-top-style:dotted"></i>Projected month-end</span>` : '')
+          + `</div>`
         + `</div>`;
+      applyBillingPref();
+    }
+
+    // Reflect the saved "show agency billing" choice on the summary strip: the
+    // card keeps its header (title + est. billable) when collapsed, so the
+    // section is always there to re-open. Called after every summary re-render
+    // and on each toggle.
+    function applyBillingPref() {
+      const box = document.getElementById('chSummary');
+      if (!box || !box.classList.contains('summary')) return;
+      const open = !!prefs.show_billing;
+      box.classList.toggle('is-collapsed', !open);
+      const btn = document.getElementById('chBillingToggle');
+      if (btn) {
+        btn.setAttribute('aria-expanded', String(open));
+        const lbl = open ? 'Hide agency billing chart' : 'Show agency billing chart';
+        btn.setAttribute('aria-label', lbl);
+        btn.title = lbl;
+      }
     }
 
     // Refresh the At risk / Growth chip counts + the "N no goal" flag from the
@@ -968,6 +1100,7 @@ _PAGE_JS = r"""
       const sub = document.getElementById('chSub');
       const fresh = meta.refreshed_at ? ` · updated ${agoTxt(meta.refreshed_at)}` : '';
       updatePaceChips(meta);
+      updateMoreBadge();
       const shown = sortedClients(meta);
       const totalShown = shown.reduce((s, c) => s + totalOf(c), 0);
       const scopeLabel = view.scope === 'retainer' ? 'retainer ' : (view.scope === 'project' ? 'project ' : '');
@@ -1049,20 +1182,70 @@ _PAGE_JS = r"""
       seg.addEventListener('click', (ev) => {
         const b = ev.target.closest('.seg-btn'); if (!b) return;
         view[key] = b.dataset[attr];
-        seg.querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('is-active', x === b));
+        syncSeg(id, key, attr);
         if (chData) render();
       });
     }
-    document.getElementById('chScope').addEventListener('change', (ev) => {
-      view.scope = ev.target.value;
-      if (chData) render();
-    });
+    // Mark the button matching the current view state as active — used both by
+    // the click handler and by Reset, which changes state without a click.
+    function syncSeg(id, key, attr) {
+      document.getElementById(id).querySelectorAll('.seg-btn').forEach(
+        x => x.classList.toggle('is-active', x.dataset[attr] === String(view[key])));
+    }
     document.getElementById('chOwner').addEventListener('change', (ev) => {
       view.owner = ev.target.value;
       if (chData) render();
     });
+    wireSeg('chScope', 'scope', 'scope');
     wireSeg('chMetric', 'metric', 'metric');
     wireSeg('chSort', 'sort', 'sort');
+
+    // ── "More" filters popover ────────────────────────────────────────────
+    // Holds the secondary controls (hours type, sort, pace) so the bar itself
+    // shows only search · scope · owner. The button badges how many of them are
+    // off their default, since they're no longer visible at a glance.
+    const moreBtn = document.getElementById('chMore');
+    const moreMenu = document.getElementById('chMoreMenu');
+    const moreReset = document.getElementById('chMoreReset');
+    function openMore(open) {
+      moreMenu.hidden = !open;
+      moreBtn.setAttribute('aria-expanded', String(open));
+    }
+    function activeMoreCount() {
+      return Object.keys(VIEW_DEFAULTS).filter(k => view[k] !== VIEW_DEFAULTS[k]).length;
+    }
+    function updateMoreBadge() {
+      const n = activeMoreCount();
+      const badge = document.getElementById('chMoreBadge');
+      badge.hidden = n === 0;
+      badge.textContent = n;
+      moreReset.disabled = n === 0;
+    }
+    moreBtn.addEventListener('click', () => openMore(moreMenu.hidden));
+    moreReset.addEventListener('click', () => {
+      Object.keys(VIEW_DEFAULTS).forEach(k => { view[k] = VIEW_DEFAULTS[k]; });
+      syncSeg('chMetric', 'metric', 'metric');
+      syncSeg('chSort', 'sort', 'sort');
+      if (chData) render();
+    });
+    // Click outside (or Escape) closes the popover; clicks inside keep it open
+    // so several filters can be set in one go.
+    document.addEventListener('click', (ev) => {
+      if (moreMenu.hidden) return;
+      if (ev.target.closest('.more-wrap')) return;
+      openMore(false);
+    });
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && !moreMenu.hidden) openMore(false);
+    });
+
+    // Agency billing section: collapse / expand, remembered per user.
+    document.getElementById('chSummary').addEventListener('click', (ev) => {
+      if (!ev.target.closest('.s-toggle')) return;
+      prefs.show_billing = !prefs.show_billing;
+      applyBillingPref();
+      savePrefs();
+    });
     // Pace filter chips: toggle the At risk / Growth filter (re-click clears it).
     document.getElementById('chStatus').addEventListener('click', (ev) => {
       const b = ev.target.closest('.pace-chip'); if (!b || b.disabled) return;
@@ -1414,17 +1597,23 @@ _PAGE_JS_ADMIN = r"""
 """
 
 
-def _page_script(*, data_url: str, read_only: bool) -> str:
-    """Assemble the page JS: a ``CH_CONFIG`` (data feed URL + read-only flag), the
-    shared chart/view code, and — for the admin view only — the mutation wiring.
-    The read-only shared page never receives the admin block, so its source
-    contains no admin endpoints or controls."""
+def _page_script(
+    *, data_url: str, read_only: bool, prefs: dict[str, bool] | None = None
+) -> str:
+    """Assemble the page JS: a ``CH_CONFIG`` (data feed URL, read-only flag, and
+    this user's saved view preferences), the shared chart/view code, and — for the
+    admin view only — the mutation wiring. The read-only shared page never
+    receives the admin block, so its source contains no admin endpoints or
+    controls; its ``prefsUrl`` is null, which is what makes the page fall back to
+    remembering section state in localStorage instead of against an account."""
     import harvest_service
 
     config = "const CH_CONFIG = " + json.dumps({
         "dataUrl": data_url,
         "readOnly": read_only,
         "owners": list(harvest_service.CLIENT_OWNERS),
+        "prefs": prefs or harvest_service.default_user_prefs(),
+        "prefsUrl": None if read_only else "/admin/client-hours/prefs",
     }) + ";"
     admin = "" if read_only else _PAGE_JS_ADMIN
     return (
@@ -1435,14 +1624,23 @@ def _page_script(*, data_url: str, read_only: bool) -> str:
 
 
 def render_client_hours_page(*, user_email: str) -> str:
-    """Full HTML for GET /admin/client-hours. Data loads from …/data."""
+    """Full HTML for GET /admin/client-hours. Data loads from …/data.
+
+    This user's saved view preferences are baked into the page so a section they
+    collapsed is already collapsed on first paint (no expand-then-fold flicker)."""
+    import harvest_service
+
     return render_admin_shell_page(
         active_nav="hours",
         page_title="Hours",
         content_html=_content_html(read_only=False),
         session_email=user_email,
         extra_css=_HOURS_CSS,
-        body_end_html=_page_script(data_url="/admin/client-hours/data", read_only=False),
+        body_end_html=_page_script(
+            data_url="/admin/client-hours/data",
+            read_only=False,
+            prefs=harvest_service.get_user_prefs(user_email),
+        ),
     )
 
 

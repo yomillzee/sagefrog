@@ -17,6 +17,7 @@ Harvest client id, and edited inline on that page.
 from __future__ import annotations
 
 import calendar
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -1040,6 +1041,100 @@ def set_client_owner(
             (cid, (client_name or "").strip() or None, canon, (updated_by or "").strip() or None),
         )
     return canon
+
+
+# ---------------------------------------------------------------------------
+# Per-user Client Hours view preferences
+# ---------------------------------------------------------------------------
+
+# Preferences that belong to the person, not the data: which optional sections
+# of the Client Hours page they keep open. Stored per signed-in user so a
+# section they collapsed stays collapsed on their next visit, on any device,
+# without changing what anyone else sees.
+USER_PREFS_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS client_hours_user_prefs (
+  user_email TEXT PRIMARY KEY,
+  prefs      JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+"""
+
+# The only keys ever stored, with the value each user gets before they touch
+# anything. Unknown keys in a request (or in a row written by a newer version)
+# are ignored, so the shape can only ever grow deliberately.
+USER_PREF_DEFAULTS: dict[str, bool] = {
+    # The "Agency billing" summary strip above the grid.
+    "show_billing": True,
+}
+
+
+def default_user_prefs() -> dict[str, bool]:
+    return dict(USER_PREF_DEFAULTS)
+
+
+def _ensure_user_prefs_schema() -> bool:
+    if not _goals_enabled():
+        return False
+    with db.connection() as conn:
+        conn.execute(USER_PREFS_SCHEMA_SQL)
+    return True
+
+
+def get_user_prefs(user_email: str) -> dict[str, bool]:
+    """This user's Client Hours view preferences, defaults filled in. Never
+    raises: a missing DB or unreadable row just means the defaults."""
+    prefs = default_user_prefs()
+    email = (user_email or "").strip().lower()
+    if not email or not _goals_enabled():
+        return prefs
+    try:
+        _ensure_user_prefs_schema()
+        with db.connection() as conn:
+            row = conn.execute(
+                "SELECT prefs FROM client_hours_user_prefs WHERE user_email = %s", (email,)
+            ).fetchone()
+    except Exception as exc:
+        _log.warning("Client hours user prefs read failed: %s", exc)
+        return prefs
+    stored = row[0] if row else None
+    if isinstance(stored, str):  # JSONB usually decodes for us; tolerate text.
+        try:
+            stored = json.loads(stored)
+        except ValueError:
+            stored = None
+    if isinstance(stored, dict):
+        for key in prefs:
+            if key in stored:
+                prefs[key] = bool(stored[key])
+    return prefs
+
+
+def set_user_prefs(*, user_email: str, updates: dict[str, bool]) -> dict[str, bool]:
+    """Merge ``updates`` into this user's preferences and return the full set.
+    Only keys in ``USER_PREF_DEFAULTS`` are written."""
+    email = (user_email or "").strip().lower()
+    if not email:
+        raise ValueError("user_email is required.")
+    clean = {k: bool(v) for k, v in (updates or {}).items() if k in USER_PREF_DEFAULTS}
+    if not clean:
+        raise ValueError("No known preference given.")
+    if not _goals_enabled():
+        raise RuntimeError("DATABASE_URL is required to store view preferences.")
+    merged = get_user_prefs(email)
+    merged.update(clean)
+    _ensure_user_prefs_schema()
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_hours_user_prefs (user_email, prefs, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (user_email) DO UPDATE SET
+              prefs = EXCLUDED.prefs,
+              updated_at = NOW()
+            """,
+            (email, json.dumps(merged)),
+        )
+    return merged
 
 
 @dataclass(frozen=True)
