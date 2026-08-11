@@ -593,8 +593,12 @@ def _build_demographics(payload: dict) -> dict:
         by_gender.append({"gender": gender, "users": users,
                          "key_events": int(users * (0.03 + 0.05 * _u("genk", gender)))})
 
+    # The demo client has no page-path scope (no builder honors one), so the
+    # panel always gets the full site-wide shape.
     return {"client": "demo", "date_range": _date_range(start, end),
-            "by_city": by_city, "by_age": by_age, "by_gender": by_gender, "by_region": by_region}
+            "by_city": by_city, "by_age": by_age, "by_gender": by_gender, "by_region": by_region,
+            "page_path_filter": [], "scoped": False,
+            "geo_scope_available": True, "user_scoped_available": True}
 
 
 def _build_conversion_events(payload: dict) -> dict:

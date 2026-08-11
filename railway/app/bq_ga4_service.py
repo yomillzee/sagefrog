@@ -304,6 +304,19 @@ def _schema_geo():
     ]
 
 
+def _schema_geo_page():
+    bq = _bq()
+    return _common_fields(bq) + [
+        bq.SchemaField("page_path",    "STRING", mode="NULLABLE"),
+        bq.SchemaField("country",      "STRING", mode="NULLABLE"),
+        bq.SchemaField("region",       "STRING", mode="NULLABLE"),
+        bq.SchemaField("city",         "STRING", mode="NULLABLE"),
+        bq.SchemaField("active_users", "INT64",  mode="NULLABLE"),
+        bq.SchemaField("sessions",     "INT64",  mode="NULLABLE"),
+        bq.SchemaField("key_events",   "INT64",  mode="NULLABLE"),
+    ]
+
+
 def _schema_demographics():
     bq = _bq()
     return _common_fields(bq) + [
@@ -332,6 +345,7 @@ _TABLE_SCHEMAS = {
     "ga4_tech_daily":         _schema_tech,
     "ga4_user_acq_daily":     _schema_user_acq,
     "ga4_geo_daily":          _schema_geo,
+    "ga4_geo_page_daily":     _schema_geo_page,
     "ga4_demographics_daily": _schema_demographics,
 }
 
@@ -455,12 +469,15 @@ def sync_ga4_to_bq(
         ("tech",          ga4.fetch_tech_daily,           "ga4_tech_daily",          _schema_tech),
         ("user_acq",      ga4.fetch_user_acq_daily,       "ga4_user_acq_daily",      _schema_user_acq),
         ("geo",           ga4.fetch_geo_daily,            "ga4_geo_daily",           _schema_geo),
+        ("geo_page",      ga4.fetch_geo_page_daily,       "ga4_geo_page_daily",      _schema_geo_page),
         ("demographics",  ga4.fetch_demographics_daily,   "ga4_demographics_daily",  _schema_demographics),
     ]
     # Geo and demographics may return 0 rows (Google Signals not enabled, no
     # audience data) or a 400 from the API — treat as optional so they don't
-    # surface as errors in the sync run status.
-    _OPTIONAL_KEYS = {"geo", "demographics", "paid_entity", "paid_key_event", "paid_google_entity", "paid_google_key_event", "paid_linkedin_key_event"}
+    # surface as errors in the sync run status. geo_page is the same deal plus
+    # its own cross-dimension risk (page × geo), and only the page-path-scoped
+    # Demographics panel reads it, so an empty table is never fatal.
+    _OPTIONAL_KEYS = {"geo", "geo_page", "demographics", "paid_entity", "paid_key_event", "paid_google_entity", "paid_google_key_event", "paid_linkedin_key_event"}
 
     errors: dict[str, str] = {}
     counts: dict[str, int] = {}

@@ -790,7 +790,7 @@ def render_bigquery_dashboard_page(
           <div class="ef-pop" id="pfPop" role="dialog" aria-label="Edit analytics page filter" hidden>
             <div class="ef-pop-head"><span>Website Analytics page filter</span><button type="button" class="ef-pop-x" aria-label="Close">&times;</button></div>
             <div class="ef-pop-body">
-              <p class="ef-pop-desc">One path per line (case-insensitive substring, e.g. <code>/careers</code>). Pages / Landing Pages are limited to matching paths, and the site-wide panels (Sessions, Traffic, Audience, Demographics) are hidden while a filter is set. Leave blank to show the whole site.</p>
+              <p class="ef-pop-desc">One path per line (case-insensitive substring, e.g. <code>/careers</code>). Sessions, Pages, Landing Pages and Geography are limited to matching paths; the panels with no page to scope by (Traffic, Audience, User acquisition, Age &amp; gender) are hidden while a filter is set. Leave blank to show the whole site.</p>
               <textarea id="pfText" spellcheck="false" placeholder="/careers&#10;/jobs&#10;/apply">{_esc(analytics_page_path_filter_cfg)}</textarea>
               <div class="ef-pop-actions">
                 <button type="button" class="ef-pop-btn primary" id="pfSave">Save filter</button>
@@ -1814,10 +1814,11 @@ def render_bigquery_dashboard_page(
       </section>
 
       <section id="sec-demographics">
-        <div class="sec-head"><h2>Demographics</h2><span class="status" id="demoStatus"></span></div>
+        <div class="sec-head"><h2 id="demoSectionTitle">Demographics</h2><span class="status" id="demoStatus"></span></div>
+        <p class="chart-note" id="demoScopeNote" style="margin-top:0" hidden></p>
         <div class="two-col" style="align-items:start">
           <div class="col-panel">
-            <h3>Users by state</h3>
+            <h3 id="stateMapTitle">Users by state</h3>
             <div id="stateMap" class="state-map"></div>
           </div>
           <div class="col-panel">
@@ -1825,7 +1826,7 @@ def render_bigquery_dashboard_page(
             <div class="table-wrap"><table id="citiesTable" class="compact"></table></div>
           </div>
         </div>
-        <div class="two-col" style="align-items:start; margin-top:14px">
+        <div class="two-col" id="demoUserPanels" style="align-items:start; margin-top:14px">
           <div class="col-panel">
             <div class="col-panel-head"><h3>Age bracket</h3><label class="age-toggle"><input type="checkbox" id="ageUnknownToggle"> Show “unknown”</label></div>
             <div id="ageBars"></div>
@@ -2491,7 +2492,10 @@ def render_bigquery_dashboard_page(
     // to careers-only Pages/Landing would be misleading. Sessions-over-time is NOT
     // in this list — its daily series is served page-scoped from vw_page_path_daily
     // (see fetch_traffic_acquisition), as are Top pages and Landing pages.
-    const PATH_FILTER_HIDDEN_MODULES = ['traffic','audience','user_acquisition','demographics'];
+    // Demographics is likewise not hidden: its geography half reads the page-scoped
+    // vw_ga4_geo_page_daily under a scope (see fetch_demographics), and only its
+    // user-scoped age/gender panels hide — that's demoUserPanels below.
+    const PATH_FILTER_HIDDEN_MODULES = ['traffic','audience','user_acquisition'];
     function pathFilterActive() {{ return Array.isArray(ANALYTICS_PATH_FILTER) && ANALYTICS_PATH_FILTER.length > 0; }}
     function getModules() {{
       let modules;
@@ -3092,6 +3096,18 @@ def render_bigquery_dashboard_page(
         if (snote) {{
           snote.hidden = false;
           snote.textContent = 'Sessions that viewed a page matching this filter. A session that viewed more than one matching page is counted once per page, the same as GA4’s per-page Sessions metric.';
+        }}
+        // Demographics keeps its geography half (served page-scoped) and drops
+        // age/gender, which are user-scoped in GA4 with no page to scope by —
+        // so the section is geography only, and says so.
+        const dtitle = document.getElementById('demoSectionTitle');
+        if (dtitle) dtitle.textContent = 'Geography';
+        const dpanels = document.getElementById('demoUserPanels');
+        if (dpanels) dpanels.hidden = true;
+        const dnote = document.getElementById('demoScopeNote');
+        if (dnote) {{
+          dnote.hidden = false;
+          dnote.textContent = 'Where the users who viewed a matching page came from. Counts come from GA4’s per-page geography, so a user who viewed more than one matching page is counted once per page — read the map as relative concentration, not a headcount. Age and gender are user-scoped in GA4 with no page to scope them by, so they’re hidden here.';
         }}
       }}
       if (!btn) return;
@@ -4517,6 +4533,17 @@ def render_bigquery_dashboard_page(
       document.getElementById('genderBars').innerHTML = skelBars(2);
       try {{
         const payload=await getJson(withDates(DEMOGRAPHICS_API));
+        // Under a page-path scope the geography comes from the page-scoped geo
+        // table, which only exists once a GA4 sync has written it. Until then
+        // say so — falling back to the site-wide table here would present
+        // whole-site geography as if it were scoped to the filtered pages.
+        if (payload.scoped && payload.geo_scope_available === false) {{
+          const msg='Page-scoped geography isn’t available yet. It appears after the next GA4 sync writes the per-page geography report.';
+          document.getElementById('stateMap').innerHTML=`<div class="empty" style="padding:12px">${{esc(msg)}}</div>`;
+          renderTable('citiesTable',[{{key:'city',label:'City',left:true}}],[],msg);
+          setStatus('demoStatus','');
+          return;
+        }}
         // Prefer the accurate state rollup; fall back to summing the top cities.
         let regionRows=payload.by_region;
         if (!regionRows||!regionRows.length) {{

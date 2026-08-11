@@ -2207,11 +2207,14 @@ def client_demographics(
         with marketing_service.route(
             client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
         ):
+            path_filter = _load_page_path_filter(normalized)
             return _cached_bq_read(
                 f"{normalized}.analytics.demographics",
-                {"start": start.isoformat(), "end": end.isoformat()},
+                {"start": start.isoformat(), "end": end.isoformat(), "scope": "|".join(path_filter)},
                 ttl_seconds=900,
-                fetch=lambda: marketing_service.fetch_demographics(start_date=start, end_date=end),
+                fetch=lambda: marketing_service.fetch_demographics(
+                    start_date=start, end_date=end, page_path_filter=path_filter,
+                ),
             )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc

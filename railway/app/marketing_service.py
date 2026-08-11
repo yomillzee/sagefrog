@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import logging
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -9,6 +10,8 @@ from typing import Any
 from google.cloud import bigquery
 
 import bigquery_service
+
+_log = logging.getLogger(__name__)
 
 # This module started as Nixon-only (hardcoded project/dataset/client_key).
 # route() lets any other BigQuery-mode client reuse the exact same queries
@@ -190,6 +193,13 @@ def _demographics_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.vw_ga4_demographics_daily`"
 
 
+def _geo_page_table() -> str:
+    """Geography per page — the only geo source that carries a page_path, so the
+    only one a page-path scope can be applied to. Optional: it appears after the
+    first GA4 sync that includes the geo_page report."""
+    return f"`{_project_id()}.{_dataset_id()}.vw_ga4_geo_page_daily`"
+
+
 def parse_page_path_filter(text: str | None) -> list[str]:
     """Split an admin's Website Analytics page-path scope into patterns.
 
@@ -244,6 +254,20 @@ def _clean_value(value: Any) -> Any:
 
 def _clean_row(row: Any) -> dict[str, Any]:
     return {key: _clean_value(value) for key, value in dict(row.items()).items()}
+
+
+def _is_missing_table(exc: Exception) -> bool:
+    """True when a query failed because the table/view doesn't exist.
+
+    Optional mart views (geo_page, demographics, tech) only appear after a sync
+    provisions them, so a panel that reads one has to tell "not provisioned yet"
+    apart from a real query failure. BigQuery reports it as a 404 NotFound whose
+    message starts "Not found: Table ..."; match on that rather than swallowing
+    every exception.
+    """
+    if getattr(exc, "code", None) == 404:
+        return True
+    return "not found: table" in str(exc).lower()
 
 
 def _run_query(
@@ -1621,12 +1645,33 @@ def fetch_demographics(
     *,
     start_date: date,
     end_date: date,
+    page_path_filter: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Geographic and demographic breakdown from ga4_DemographicDetails."""
+    """Geographic and demographic breakdown from ga4_DemographicDetails.
+
+    ``page_path_filter`` scopes the **geography** half (map + cities) to users
+    who viewed a matching page, reading vw_ga4_geo_page_daily instead of the
+    site-wide vw_ga4_geo_daily. Age and gender are user-scoped in GA4 with no
+    page dimension to scope by, so they come back empty under a scope and the
+    panel hides them (``user_scoped_available``).
+
+    Scoped user counts are per-page: the source is aggregated by page, so a user
+    who viewed two matching pages contributes to both rows and the totals read
+    high. The panel says so; treat the scoped map as relative concentration.
+
+    The scoped source is optional — it only exists once a GA4 sync has run since
+    the geo_page report was added. When it is missing the geography rows come
+    back empty with ``geo_scope_available: False`` rather than silently falling
+    back to site-wide numbers, which would read as page-scoped and be wrong.
+    """
+    patterns = [p.strip() for p in (page_path_filter or []) if p and p.strip()]
+    scoped = bool(patterns)
     params = {
         "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
         "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
     }
+    geo_source = _geo_page_table() if scoped else _geo_table()
+    geo_scope = _page_path_filter_clause(patterns, column="page_path", params=params)
     city_sql = f"""
     SELECT
       COALESCE(city, '(not set)') AS city,
@@ -1635,9 +1680,9 @@ def fetch_demographics(
       SUM(active_users) AS users,
       SUM(sessions) AS sessions,
       SUM(key_events) AS key_events
-    FROM {_geo_table()}
+    FROM {geo_source}
     WHERE date BETWEEN @start_date AND @end_date
-      AND city IS NOT NULL AND city != '(not set)'
+      AND city IS NOT NULL AND city != '(not set)'{geo_scope}
     GROUP BY city, region, country
     ORDER BY users DESC
     LIMIT 20
@@ -1677,17 +1722,29 @@ def fetch_demographics(
       SUM(active_users) AS users,
       SUM(sessions) AS sessions,
       SUM(key_events) AS key_events
-    FROM {_geo_table()}
+    FROM {geo_source}
     WHERE date BETWEEN @start_date AND @end_date
-      AND region IS NOT NULL AND region != '' AND region != '(not set)'
+      AND region IS NOT NULL AND region != '' AND region != '(not set)'{geo_scope}
     GROUP BY region
     ORDER BY users DESC
     LIMIT 70
     """
-    by_city = _run_query(city_sql, params=params, max_rows=20)
-    by_age = _run_query(age_sql, params=params, max_rows=10)
-    by_gender = _run_query(gender_sql, params=params, max_rows=5)
-    by_region = _run_query(region_sql, params=params, max_rows=70)
+    geo_available = True
+    try:
+        by_city = _run_query(city_sql, params=params, max_rows=20)
+        by_region = _run_query(region_sql, params=params, max_rows=70)
+    except Exception as exc:
+        # Only the scoped read can hit a view that doesn't exist yet (it lands on
+        # the first GA4 sync after the geo_page report shipped). Degrade to "no
+        # scoped geography" there; anything else is a real failure.
+        if not (scoped and _is_missing_table(exc)):
+            raise
+        _log.info("scoped geo unavailable [%s]: %s", _client_key(), str(exc)[:200])
+        by_city, by_region, geo_available = [], [], False
+    # Age/gender are user-scoped: GA4 has no page dimension to pair them with, so
+    # a scope can only hide them, never narrow them.
+    by_age = [] if scoped else _run_query(age_sql, params=params, max_rows=10)
+    by_gender = [] if scoped else _run_query(gender_sql, params=params, max_rows=5)
     return {
         "client": _client_key(),
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
@@ -1695,4 +1752,8 @@ def fetch_demographics(
         "by_age": by_age,
         "by_gender": by_gender,
         "by_region": by_region,
+        "page_path_filter": patterns,
+        "scoped": scoped,
+        "geo_scope_available": geo_available,
+        "user_scoped_available": not scoped,
     }

@@ -225,7 +225,7 @@ connector sync (idempotent `CREATE OR REPLACE`). Nothing here needs Dataform.
 
 | Mart | Built by | Dashboard panel |
 |---|---|---|
-| `vw_ga4_traffic_acq_daily`, `vw_ga4_tech_daily`, `vw_ga4_landing_pages_daily`, `vw_ga4_events_daily`, `vw_ga4_user_acq_daily`, `vw_ga4_geo_daily`, `vw_ga4_demographics_daily`, `vw_page_path_daily`, `vw_page_path_source_daily` | GA4 connector → `bq_ga4_mart_service.provision_ga4_mart_views` | Website Analytics |
+| `vw_ga4_traffic_acq_daily`, `vw_ga4_tech_daily`, `vw_ga4_landing_pages_daily`, `vw_ga4_events_daily`, `vw_ga4_user_acq_daily`, `vw_ga4_geo_daily`, `vw_ga4_geo_page_daily`, `vw_ga4_demographics_daily`, `vw_page_path_daily`, `vw_page_path_source_daily` | GA4 connector → `bq_ga4_mart_service.provision_ga4_mart_views` | Website Analytics |
 | `explorer_google_ads_daily` | Google Ads connector → `bq_google_ads_service` | Google Ads Explorer |
 | Google campaign mart view | Google Ads connector → `bigquery_warehouse.create_google_campaign_mart_view` | (paid media source) |
 | `fact_linkedin_ads_creative_daily` | LinkedIn connector → `bq_linkedin_ads_service` | LinkedIn Explorer |

@@ -19,6 +19,7 @@ Layer (all CREATE OR REPLACE — stateless, safe to re-run):
   vw_ga4_landing_pages_daily              ← raw_ga4.ga4_landing_pages_daily
   vw_ga4_demographics_daily               ← raw_ga4.ga4_demographics_daily   [optional]
   vw_ga4_geo_daily                        ← raw_ga4.ga4_geo_daily            [optional]
+  vw_ga4_geo_page_daily                   ← raw_ga4.ga4_geo_page_daily       [optional]
   vw_ga4_tech_daily                       empty placeholder stub             [optional]
 
 Page taxonomy (page_group / page_topic / is_core_website_page) is the only
@@ -54,13 +55,17 @@ MART_VIEWS = [
     "vw_ga4_tech_daily",
     "vw_ga4_demographics_daily",
     "vw_ga4_geo_daily",
+    "vw_ga4_geo_page_daily",
     "vw_page_path_source_daily",          # intermediate (UDF) — must precede page_path
     "vw_page_path_daily",
 ]
 
 # Optional views — may have no underlying data (geo/demographics need extra GA4
 # scopes; tech is a deliberate placeholder). Health check treats these as non-fatal.
-OPTIONAL_VIEWS = {"vw_ga4_geo_daily", "vw_ga4_demographics_daily", "vw_ga4_tech_daily"}
+OPTIONAL_VIEWS = {
+    "vw_ga4_geo_daily", "vw_ga4_geo_page_daily", "vw_ga4_demographics_daily",
+    "vw_ga4_tech_daily",
+}
 
 
 # ── Page taxonomy (the only client-specific DDL) ──────────────────────────────
@@ -336,6 +341,25 @@ def _view_sql(view_name: str, *, raw: str, marts: str, taxonomy: dict[str, str])
           SUM(key_events) AS key_events
         FROM `{raw}.ga4_geo_daily`
         GROUP BY client_key, property_id, date, country, region, city
+        """
+
+    if view_name == "vw_ga4_geo_page_daily":
+        # Geography per page. Only the page-path-scoped Demographics panel reads
+        # this; unscoped geography still comes from vw_ga4_geo_daily, which is
+        # cheaper and counts each user once site-wide. Trailing slash normalized
+        # the same way vw_page_path_source_daily does so the page-path scope
+        # patterns match the same paths Top Pages shows.
+        return f"""
+        SELECT
+          client_key, property_id, date,
+          CASE WHEN page_path = '/' THEN '/'
+               ELSE REGEXP_REPLACE(page_path, r'/$', '') END AS page_path,
+          country, region, city,
+          SUM(active_users) AS active_users,
+          SUM(sessions) AS sessions,
+          SUM(key_events) AS key_events
+        FROM `{raw}.ga4_geo_page_daily`
+        GROUP BY client_key, property_id, date, page_path, country, region, city
         """
 
     if view_name == "vw_page_path_source_daily":

@@ -84,12 +84,25 @@ class AnalyticsPagePathFilterTests(unittest.TestCase):
         # The value is a JS array literal (single quotes); pull out the names.
         hidden = set(re.findall(r"'([^']+)'", m.group(1)))
         # Only the panels with no page_path to scope by are hidden.
-        self.assertEqual(
-            hidden, {"traffic", "audience", "user_acquisition", "demographics"}
-        )
+        self.assertEqual(hidden, {"traffic", "audience", "user_acquisition"})
         # These are served page-scoped, so they stay visible under a filter.
-        for kept in ("sessions", "top_pages", "landing"):
+        # Demographics stays for its geography half (vw_ga4_geo_page_daily);
+        # only its age/gender sub-panels hide, via demoUserPanels.
+        for kept in ("sessions", "top_pages", "landing", "demographics"):
             self.assertNotIn(kept, hidden)
+
+    def test_demographics_becomes_geography_only_under_a_scope(self) -> None:
+        # The map/cities are page-scoped server-side, so the section stays — but
+        # age/gender are user-scoped in GA4 and get hidden, and the heading and
+        # note have to say the section is now geography only.
+        scoped = _render(page_path_filter="/careers", is_admin=True)
+        self.assertIn('id="demoUserPanels"', scoped)
+        self.assertIn("dpanels.hidden = true", scoped)
+        self.assertIn("'Geography'", scoped)
+        self.assertIn("demoScopeNote", scoped)
+        # Whole-site view keeps the full Demographics section.
+        plain = _render(page_path_filter=None, is_admin=True)
+        self.assertIn('id="demoSectionTitle">Demographics<', plain)
 
     def test_sessions_chart_is_relabelled_under_a_scope(self) -> None:
         # The scoped series counts sessions per matching page, so the heading and

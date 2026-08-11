@@ -757,6 +757,56 @@ def fetch_geo_daily(
     return out
 
 
+def fetch_geo_page_daily(
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
+) -> list[dict[str, Any]]:
+    """Geography broken out by the page that was viewed (page × country/region/city).
+
+    This is what lets the Demographics panel's map and cities table stay correct
+    while the Website Analytics page-path scope is on: ga4_geo_daily has no
+    page_path, so it can only ever answer "where is the whole site's audience?".
+
+    Cross-dimension report, same caveat as fetch_page_source_daily: the GA4 Data
+    API supports the combination but cardinality is page × geo, so it can be
+    large. If the API rejects it, returns [] and logs instead of raising — the
+    scoped map falls back to "not available" and every other panel still syncs.
+
+    IMPORTANT: Do not approximate this by joining ga4_geo_daily to a page table
+    on date. That attributes every day's regions to every page.
+    """
+    try:
+        rows = _run_report(
+            property_id,
+            dimensions=["date", "pagePath", "country", "region", "city"],
+            metrics=["activeUsers", "sessions", "keyEvents"],
+            start=start, end=end, access_token=access_token,
+        )
+    except RuntimeError as exc:
+        _log.warning(
+            "GA4 geo_page_daily skipped — API rejected dimension/metric combination "
+            "or returned error. Table will be empty for this sync. Error: %s", exc,
+        )
+        return []
+    synced_at = _now()
+    out = []
+    for r in rows:
+        out.append({
+            "client_key": client_key,
+            "property_id": property_id,
+            "date": _parse_date(r.get("date", "")),
+            "page_path": r.get("pagePath") or "/",
+            "country": r.get("country") or "(not set)",
+            "region": r.get("region") or "(not set)",
+            "city": r.get("city") or "(not set)",
+            "active_users": int(r.get("activeUsers") or 0),
+            "sessions": int(r.get("sessions") or 0),
+            "key_events": int(float(r.get("keyEvents") or 0)),
+            "synced_at": synced_at,
+        })
+    return out
+
+
 def fetch_demographics_daily(
     property_id: str, start: str, end: str, access_token: str,
     *, client_key: str = "",
@@ -906,6 +956,19 @@ GA4_REPORTS = [
         "grain": ["date", "country", "region", "city"],
         "required": True,
         "notes": "Geographic breakdown. Does not require Google Signals.",
+    },
+    {
+        "report_key": "geo_page",
+        "table_name": "ga4_geo_page_daily",
+        "dimensions": ["date", "pagePath", "country", "region", "city"],
+        "metrics": ["activeUsers", "sessions", "keyEvents"],
+        "grain": ["date", "page_path", "country", "region", "city"],
+        "required": False,
+        "notes": (
+            "Geography per page — the page-scoped source for the Demographics map/cities "
+            "when the Website Analytics page-path filter is on. Cross-dimension (page × geo), "
+            "so cardinality is high; empty table is tolerated."
+        ),
     },
     {
         "report_key": "demographics",

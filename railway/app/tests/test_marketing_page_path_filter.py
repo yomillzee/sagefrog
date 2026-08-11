@@ -181,5 +181,95 @@ class TrafficAcquisitionScopeTests(unittest.TestCase):
             self.assertNotIn("pp0", params)
 
 
+class DemographicsScopeTests(unittest.TestCase):
+    """Geography is page-scopeable — vw_ga4_geo_page_daily carries a page_path,
+    so under a scope the map and cities read from it instead of the site-wide
+    vw_ga4_geo_daily. Age/gender are user-scoped in GA4 with no page dimension,
+    so a scope drops them rather than narrowing them."""
+
+    def setUp(self) -> None:
+        self._orig = ms._run_query
+        self._captured: list[tuple[str, dict]] = []
+        self._raise_missing = False
+
+        def _capture(sql, params=None, max_rows=None):
+            self._captured.append((sql, dict(params or {})))
+            if self._raise_missing and "vw_ga4_geo_page_daily" in sql:
+                raise RuntimeError(
+                    "404 Not found: Table p:d.vw_ga4_geo_page_daily was not found"
+                )
+            return []
+
+        ms._run_query = _capture
+        self._ctx = ms.route(client_key="nixon-hr", project_id="p", mart_dataset_id="d")
+        self._ctx.__enter__()
+
+    def tearDown(self) -> None:
+        self._ctx.__exit__(None, None, None)
+        ms._run_query = self._orig
+
+    def _sql(self) -> str:
+        return "\n".join(s for s, _ in self._captured)
+
+    def test_scoped_geo_reads_the_page_grained_view(self) -> None:
+        out = ms.fetch_demographics(
+            start_date=START, end_date=END, page_path_filter=["/careers"]
+        )
+        sql = self._sql()
+        self.assertIn("vw_ga4_geo_page_daily", sql)
+        self.assertNotIn("vw_ga4_geo_daily`", sql)
+        # Both geography queries (cities + the state rollup) carry the scope.
+        geo_queries = [s for s, _ in self._captured if "vw_ga4_geo_page_daily" in s]
+        self.assertEqual(len(geo_queries), 2)
+        self.assertTrue(
+            all("CONTAINS_SUBSTR(page_path, @pp0)" in s for s in geo_queries)
+        )
+        self.assertTrue(out["scoped"])
+        self.assertTrue(out["geo_scope_available"])
+
+    def test_scope_drops_age_and_gender_without_querying_them(self) -> None:
+        out = ms.fetch_demographics(
+            start_date=START, end_date=END, page_path_filter=["/careers"]
+        )
+        self.assertEqual(out["by_age"], [])
+        self.assertEqual(out["by_gender"], [])
+        self.assertFalse(out["user_scoped_available"])
+        # No point spending a query on data the panel won't show.
+        self.assertNotIn("vw_ga4_demographics_daily", self._sql())
+
+    def test_unscoped_is_unchanged(self) -> None:
+        out = ms.fetch_demographics(start_date=START, end_date=END)
+        sql = self._sql()
+        self.assertIn("vw_ga4_geo_daily", sql)
+        self.assertNotIn("vw_ga4_geo_page_daily", sql)
+        self.assertNotIn("CONTAINS_SUBSTR", sql)
+        self.assertIn("vw_ga4_demographics_daily", sql)
+        self.assertFalse(out["scoped"])
+        self.assertTrue(out["user_scoped_available"])
+
+    def test_missing_scoped_view_degrades_instead_of_falling_back(self) -> None:
+        # The page-grained view only exists after a sync writes it. Until then
+        # the panel must report "no scoped geography" — serving the site-wide
+        # table here would present whole-site geography as page-scoped.
+        self._raise_missing = True
+        out = ms.fetch_demographics(
+            start_date=START, end_date=END, page_path_filter=["/careers"]
+        )
+        self.assertFalse(out["geo_scope_available"])
+        self.assertEqual(out["by_city"], [])
+        self.assertEqual(out["by_region"], [])
+        self.assertNotIn("vw_ga4_geo_daily`", self._sql())
+
+    def test_other_query_errors_still_raise(self) -> None:
+        def _boom(sql, params=None, max_rows=None):
+            raise RuntimeError("403 Access Denied: Table p:d.vw_ga4_geo_page_daily")
+
+        ms._run_query = _boom
+        with self.assertRaises(RuntimeError):
+            ms.fetch_demographics(
+                start_date=START, end_date=END, page_path_filter=["/careers"]
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
