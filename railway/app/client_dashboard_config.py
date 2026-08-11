@@ -188,6 +188,8 @@ DATE_RANGE_PRESETS: tuple[str, ...] = (
     "last_week",
     "this_month",
     "last_month",
+    "this_quarter",
+    "last_quarter",
 )
 
 # The client-facing section tabs an admin can show/hide from the Advanced admin

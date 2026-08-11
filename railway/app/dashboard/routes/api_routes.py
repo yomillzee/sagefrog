@@ -59,6 +59,23 @@ def _resolve_marketing_dates(
     return start_date, end_date
 
 
+def _resolve_compare_dates(
+    compare_start: date | None,
+    compare_end: date | None,
+) -> tuple[date | None, date | None]:
+    """Validate an explicit comparison window from the dashboard's Compare
+    picker. Returns (None, None) when either bound is missing, which tells the
+    service layer to fall back to the preceding same-length period."""
+    if compare_start is None or compare_end is None:
+        return None, None
+    if compare_start > compare_end:
+        raise HTTPException(
+            status_code=400,
+            detail="compare_start_date must be on or before compare_end_date.",
+        )
+    return compare_start, compare_end
+
+
 def _load_bq_test_config(slug: str) -> tuple[str, str]:
     """Return (gcp_project_id, bq_mart_dataset_id) for a BigQuery-mode client.
 
@@ -717,19 +734,30 @@ def nixon_gsc_summary(
         default=None,
         description="Inclusive end date. Defaults to today.",
     ),
+    compare_start_date: date | None = Query(
+        default=None,
+        description="Comparison window start (dashboard Compare picker). Defaults to the preceding same-length period.",
+    ),
+    compare_end_date: date | None = Query(default=None, description="Comparison window end."),
 ) -> dict:
     web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     start, end = _resolve_marketing_dates(start_date, end_date)
+    cmp_start, cmp_end = _resolve_compare_dates(compare_start_date, compare_end_date)
     try:
         import bq_gsc_service
         # GSC routes by client_slug; the Nixon dashboard's BQ client is
         # "nixon-bq-test" (where the GSC connector + raw_gsc/mart views live).
         return _cached_bq_read(
             "nixon.gsc.summary",
-            {"start": start.isoformat(), "end": end.isoformat()},
+            {
+                "start": start.isoformat(), "end": end.isoformat(),
+                "compare_start": cmp_start.isoformat() if cmp_start else "",
+                "compare_end": cmp_end.isoformat() if cmp_end else "",
+            },
             ttl_seconds=900,
             fetch=lambda: bq_gsc_service.build_gsc_mart_summary(
                 start=start, end=end, client_slug="nixon-bq-test",
+                compare_start=cmp_start, compare_end=cmp_end,
             ),
         )
     except Exception as exc:
@@ -746,11 +774,17 @@ def nixon_gsc_keyword_matches(
     exclude: str = Query(default="", description="Comma-separated exclude terms."),
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
+    compare_start_date: date | None = Query(
+        default=None,
+        description="Comparison window start for each row's prior avg position. Defaults to the preceding same-length period.",
+    ),
+    compare_end_date: date | None = Query(default=None, description="Comparison window end."),
 ) -> dict:
     web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     term_list = [t.strip() for t in terms.split(",") if t.strip()]
     exclude_list = [t.strip() for t in exclude.split(",") if t.strip()]
     start, end = _resolve_marketing_dates(start_date, end_date)
+    cmp_start, cmp_end = _resolve_compare_dates(compare_start_date, compare_end_date)
     if not term_list:
         return {"rows": [], "weekly": []}
     # The weekly trend is a "movement over time" chart, so it always spans a
@@ -762,13 +796,21 @@ def nixon_gsc_keyword_matches(
         import bq_gsc_service
         # Same "nixon" marketing key -> "nixon-bq-test" BQ client_slug split as
         # nixon_gsc_summary above.
-        cache_key = {"start": start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list), "exclude": sorted(exclude_list)}
+        cache_key = {
+            "start": start.isoformat(), "end": end.isoformat(),
+            "terms": sorted(term_list), "exclude": sorted(exclude_list),
+            "compare_start": cmp_start.isoformat() if cmp_start else "",
+            "compare_end": cmp_end.isoformat() if cmp_end else "",
+        }
+        # The weekly trend has no comparison window, so it keeps the old key —
+        # switching Compare must not cold-miss a cache it can't change.
         trend_cache_key = {"start": trend_start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list), "exclude": sorted(exclude_list)}
         rows = _cached_bq_read(
             "nixon.gsc.keyword_matches", cache_key, ttl_seconds=900,
             fetch=lambda: bq_gsc_service.gsc_keyword_matches(
                 start=start, end=end, terms=term_list, exclude_terms=exclude_list,
                 client_slug="nixon-bq-test",
+                compare_start=cmp_start, compare_end=cmp_end,
             ),
         )
         weekly = _cached_bq_read(
@@ -2229,18 +2271,29 @@ def client_gsc_summary(
     request: Request,
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
+    compare_start_date: date | None = Query(
+        default=None,
+        description="Comparison window start (dashboard Compare picker). Defaults to the preceding same-length period.",
+    ),
+    compare_end_date: date | None = Query(default=None, description="Comparison window end."),
 ) -> dict:
     normalized = (client_key or "").strip().lower()
     web_auth.authenticate_dashboard_api(request, client_slug=normalized)
     start, end = _resolve_marketing_dates(start_date, end_date)
+    cmp_start, cmp_end = _resolve_compare_dates(compare_start_date, compare_end_date)
     try:
         import bq_gsc_service
         return _cached_bq_read(
             f"{normalized}.gsc.summary",
-            {"start": start.isoformat(), "end": end.isoformat()},
+            {
+                "start": start.isoformat(), "end": end.isoformat(),
+                "compare_start": cmp_start.isoformat() if cmp_start else "",
+                "compare_end": cmp_end.isoformat() if cmp_end else "",
+            },
             ttl_seconds=900,
             fetch=lambda: bq_gsc_service.build_gsc_mart_summary(
                 start=start, end=end, client_slug=normalized,
+                compare_start=cmp_start, compare_end=cmp_end,
             ),
         )
     except Exception as exc:
@@ -2258,6 +2311,11 @@ def client_gsc_keyword_matches(
     exclude: str = Query(default="", description="Comma-separated exclude terms."),
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
+    compare_start_date: date | None = Query(
+        default=None,
+        description="Comparison window start for each row's prior avg position. Defaults to the preceding same-length period.",
+    ),
+    compare_end_date: date | None = Query(default=None, description="Comparison window end."),
 ) -> dict:
     """Unlike gsc/summary's top_queries (LIMIT 25 by clicks), this scans every
     query in range for the given terms -- so a branded/target keyword that
@@ -2271,6 +2329,7 @@ def client_gsc_keyword_matches(
     term_list = [t.strip() for t in terms.split(",") if t.strip()]
     exclude_list = [t.strip() for t in exclude.split(",") if t.strip()]
     start, end = _resolve_marketing_dates(start_date, end_date)
+    cmp_start, cmp_end = _resolve_compare_dates(compare_start_date, compare_end_date)
     if not term_list:
         return {"rows": [], "weekly": []}
     # Trend spans a trailing ~13-week window (see nixon_gsc_keyword_matches);
@@ -2278,13 +2337,21 @@ def client_gsc_keyword_matches(
     trend_start = min(start, end - timedelta(days=_KEYWORD_TREND_DAYS))
     try:
         import bq_gsc_service
-        cache_key = {"start": start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list), "exclude": sorted(exclude_list)}
+        cache_key = {
+            "start": start.isoformat(), "end": end.isoformat(),
+            "terms": sorted(term_list), "exclude": sorted(exclude_list),
+            "compare_start": cmp_start.isoformat() if cmp_start else "",
+            "compare_end": cmp_end.isoformat() if cmp_end else "",
+        }
+        # The weekly trend has no comparison window, so it keeps the old key —
+        # switching Compare must not cold-miss a cache it can't change.
         trend_cache_key = {"start": trend_start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list), "exclude": sorted(exclude_list)}
         rows = _cached_bq_read(
             f"{normalized}.gsc.keyword_matches", cache_key, ttl_seconds=900,
             fetch=lambda: bq_gsc_service.gsc_keyword_matches(
                 start=start, end=end, terms=term_list, exclude_terms=exclude_list,
                 client_slug=normalized,
+                compare_start=cmp_start, compare_end=cmp_end,
             ),
         )
         weekly = _cached_bq_read(
