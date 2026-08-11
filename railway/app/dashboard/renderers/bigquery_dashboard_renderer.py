@@ -705,6 +705,7 @@ def render_bigquery_dashboard_page(
     _DATE_PRESETS = (
         "last_7", "last_30", "last_90", "last_365",
         "this_week", "last_week", "this_month", "last_month",
+        "this_quarter", "last_quarter",
     )
     effective_default_preset = (
         default_date_preset if default_date_preset in _DATE_PRESETS else "last_30"
@@ -715,8 +716,22 @@ def render_bigquery_dashboard_page(
         ("last_90", "Last 90 days"), ("last_365", "Last 365 days"),
         ("this_week", "This week"), ("last_week", "Last week"),
         ("this_month", "This month"), ("last_month", "Last month"),
+        ("this_quarter", "This quarter"), ("last_quarter", "Last quarter"),
     ]
     date_preset_labels_json = json.dumps(dict(_DATE_PRESET_LABELS))
+    # Comparison-period modes offered next to the Range picker. "Previous
+    # period" (the equivalent window immediately before the selected range) is
+    # the long-standing behaviour and stays the default; "Previous year" shifts
+    # the selected range back 12 months.
+    _COMPARE_MODES = [
+        ("prev_period", "Previous period"),
+        ("prev_year", "Previous year"),
+    ]
+    compare_mode_labels_json = json.dumps(dict(_COMPARE_MODES))
+    compare_option_rows_html = "".join(
+        f'<button type="button" class="range-opt{" active" if v == "prev_period" else ""}" role="option" data-cmp="{v}">{lbl}</button>'
+        for v, lbl in _COMPARE_MODES
+    )
     # The raw stored default ('' when the client has none) — distinct from the
     # effective preset above, which falls back to last_30. The dropdown JS uses it
     # to decide whether "Make default" starts ticked and whether Apply clears.
@@ -1157,7 +1172,9 @@ def render_bigquery_dashboard_page(
        base styling (toggle/panel/caret); these tune sizing + the option rows. */
     .range-dd-toggle {{ min-width:150px; }}
     .range-dd-panel {{ width:220px; }}
-    .range-dd-list {{ max-height:none; }}
+    /* Two classes, so this beats .ke-dd-list's 260px cap regardless of source
+       order -- the preset list is short and should never scroll internally. */
+    .range-dd-panel .range-dd-list {{ max-height:none; }}
     .range-opt {{ display:block; width:100%; text-align:left; border:0; background:none; border-radius:6px; padding:7px 9px; font:inherit; font-size:.82rem; font-weight:600; color:var(--navy); cursor:pointer; }}
     .range-opt:hover {{ background:#f4f8fd; }}
     .range-opt.active {{ background:#eaf2fd; color:var(--accent); }}
@@ -1172,6 +1189,16 @@ def render_bigquery_dashboard_page(
     .range-default-status {{ flex-basis:100%; font-size:.72rem; font-weight:600; text-transform:none; letter-spacing:0; color:var(--muted); }}
     .range-default-status.err {{ color:var(--bad); }}
     .range-default-status.ok {{ color:#178a4c; }}
+    /* Compare picker: same dropdown shell as Range, with a footer that spells
+       out the resolved comparison dates instead of the admin default controls. */
+    .cmp-range-foot {{ margin-top:6px; }}
+    .cmp-range-foot .range-default-status {{ color:var(--muted); }}
+    /* Backfill notice under the filter row: the comparison window reaches back
+       past a source's synced history, so its deltas are incomplete. */
+    .cmp-notice {{ display:flex; align-items:flex-start; gap:7px; border:1px solid #f0d9a0; background:#fdf7e8; color:#7a5806; border-radius:var(--radius-sm); padding:8px 12px; font-size:.79rem; font-weight:600; line-height:1.45; }}
+    .cmp-notice[hidden] {{ display:none; }}
+    .cmp-notice .cmp-notice-icon {{ flex:none; font-size:.9rem; line-height:1.3; }}
+    .cmp-notice strong {{ font-weight:800; }}
     .chips {{ display:flex; flex-wrap:wrap; gap:5px; }}
     .chip {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:4px 12px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s, color .12s; }}
     .chip:hover {{ border-color:#b9c8dc; background:#f4f8fd; }}
@@ -1705,6 +1732,21 @@ def render_bigquery_dashboard_page(
             </div>
           </div>
         </div>
+        <div class="filter-group" id="compareFilterGroup">
+          <span class="filter-label">Compare</span>
+          <div class="ke-dropdown range-dd" id="compareDropdown">
+            <button type="button" class="ke-dd-toggle range-dd-toggle" id="compareToggle" aria-haspopup="listbox" aria-expanded="false">
+              <span id="compareToggleLabel">Previous period</span>
+              <span class="ke-dd-caret">▾</span>
+            </button>
+            <div class="ke-dd-panel range-dd-panel" id="comparePanel" hidden>
+              <div class="ke-dd-list range-dd-list" id="compareList" role="listbox">
+                {compare_option_rows_html}
+              </div>
+              <div class="range-dd-foot cmp-range-foot"><span class="range-default-status" id="compareRangeLabel"></span></div>
+            </div>
+          </div>
+        </div>
         <div class="filter-group" id="keyEventFilterGroup" hidden>
           <span class="filter-label">Events</span>
           <div class="ke-dropdown" id="keyEventDropdown">
@@ -1721,6 +1763,11 @@ def render_bigquery_dashboard_page(
         {platform_filter_group_html}
         <div class="filter-group" id="explorerFilterBar" hidden></div>
       </div>
+      <!-- Shown by syncCompareNotice() when the selected comparison window
+           starts before a connector's synced history (most often a
+           previous-year comparison against a recently-connected source) --
+           the cue that the warehouse needs a deeper backfill. -->
+      <div class="cmp-notice" id="compareNotice" role="status" hidden></div>
       </div>
     </div>
 
@@ -1985,6 +2032,11 @@ def render_bigquery_dashboard_page(
     let STORED_DEFAULT_PRESET = {stored_default_preset_json};
     const DATE_PRESET_LABELS = {date_preset_labels_json};
     const DEFAULT_DATE_RANGE_API = "{_aurl(f'/api/clients/{api_client_key}/default-date-range')}";
+    // Comparison-period modes for the Compare picker, and the localStorage key
+    // the viewer's choice is remembered under (per client, per browser -- it's a
+    // reading preference, unlike the admin-set client default range).
+    const COMPARE_MODE_LABELS = {compare_mode_labels_json};
+    const COMPARE_MODE_STORAGE_KEY = 'sf.compareMode.{client_slug}';
     // Campaign Explorer allowlist (campaign names the client may see; empty = all)
     // and the admin-only endpoint that saves it from the "Campaigns" picker.
     const EXPLORER_CAMPAIGN_ALLOWLIST = {explorer_campaign_allowlist_json};
@@ -2328,19 +2380,28 @@ def render_bigquery_dashboard_page(
       const sep = base.includes('?') ? '&' : '?';
       return base + sep + 'start_date=' + s + '&end_date=' + e;
     }}
+    // Endpoints that compute their own vs-previous figures server-side (the
+    // Search Console ones) need the comparison window spelled out, or they fall
+    // back to the preceding period and contradict the Compare picker.
+    function withCompare(url) {{
+      if (!compareStart || !compareEnd) return url;
+      const sep = url.includes('?') ? '&' : '?';
+      return url + sep + 'compare_start_date=' + compareStart + '&compare_end_date=' + compareEnd;
+    }}
     // ---- Period-over-period comparison helpers ----
     function deltaHtml(curr, prev) {{
       curr = num(curr);
       if (prev == null) return '';
       prev = num(prev);
+      const vs = cmpNoun();
       if (!prev) {{
-        if (!curr) return `<div class="card-delta flat">No change vs prior period</div>`;
-        return `<div class="card-delta up">New vs prior period</div>`;
+        if (!curr) return `<div class="card-delta flat">No change vs ${{vs}}</div>`;
+        return `<div class="card-delta up">New vs ${{vs}}</div>`;
       }}
       const change = ((curr - prev) / Math.abs(prev)) * 100;
       const dir = change > 0.05 ? 'up' : (change < -0.05 ? 'down' : 'flat');
       const arrow = dir==='up' ? '\\u25B2' : (dir==='down' ? '\\u25BC' : '\\u2014');
-      return `<div class="card-delta ${{dir}}">${{arrow}} ${{Math.abs(change).toFixed(1)}}% vs prior period</div>`;
+      return `<div class="card-delta ${{dir}}">${{arrow}} ${{Math.abs(change).toFixed(1)}}% vs ${{vs}}</div>`;
     }}
     // True if the comparison window (compareStart/compareEnd) reaches back
     // before any of the given sources' synced history -- earliestDates is
@@ -2348,7 +2409,7 @@ def render_bigquery_dashboard_page(
     function cmpBlockedBy(sourceKeys) {{
       for (const k of sourceKeys) {{
         const earliest = earliestDates[k];
-        if (earliest && compareStart < earliest) return earliest;
+        if (earliest && compareStart && compareStart < earliest) return earliest;
       }}
       return null;
     }}
@@ -2358,11 +2419,41 @@ def render_bigquery_dashboard_page(
       const blockedSince = cmpBlockedBy(sourceKeys);
       if (blockedSince) {{
         el.hidden = false;
-        el.title = `Comparison period (${{compareStart}} to ${{compareEnd}}) starts before synced data begins (${{blockedSince}}). The "vs prior period" figures above may be incomplete.`;
+        el.title = `Comparison period (${{compareStart}} to ${{compareEnd}}) starts before synced data begins (${{blockedSince}}). The "vs ${{cmpNoun()}}" figures above may be incomplete.`;
       }} else {{
         el.hidden = true;
         el.title = '';
       }}
+    }}
+    // Human names for the /marketing/health source keys, for the notice below.
+    const CMP_SOURCE_LABELS = {{
+      google:'Google Ads', linkedin:'LinkedIn Ads', meta:'Meta Ads',
+      microsoft:'Microsoft Ads', google_analytics:'GA4', gsc:'Search Console',
+    }};
+    // Page-level version of the per-section warning icons: name every source
+    // whose synced history starts after the comparison window does. Usually
+    // silent on a previous-period comparison and loud on a previous-year one,
+    // which is the signal that the warehouse needs a deeper backfill.
+    function syncCompareNotice() {{
+      const el = document.getElementById('compareNotice');
+      if (!el) return;
+      const gaps = [];
+      if (compareStart) {{
+        for (const k of Object.keys(earliestDates)) {{
+          const earliest = earliestDates[k];
+          if (earliest && compareStart < earliest) {{
+            gaps.push(`${{CMP_SOURCE_LABELS[k] || k}} (from ${{earliest}})`);
+          }}
+        }}
+      }}
+      if (!gaps.length) {{ el.hidden = true; el.innerHTML = ''; return; }}
+      gaps.sort();
+      const mode = COMPARE_MODE_LABELS[compareMode] || 'Previous period';
+      el.hidden = false;
+      el.innerHTML = '<span class="cmp-notice-icon" aria-hidden="true">&#9888;</span>'
+        + `<span>No synced data covers all of the <strong>${{esc(mode.toLowerCase())}}</strong> comparison window `
+        + `(${{esc(compareStart)}} – ${{esc(compareEnd)}}): ${{esc(gaps.join(', '))}}. `
+        + 'Every "vs ' + esc(cmpNoun()) + '" figure below is measured against a partial window until those sources are backfilled.</span>';
     }}
     async function getJson(url, _attempt) {{
       _attempt = _attempt || 0;
@@ -2570,11 +2661,12 @@ def render_bigquery_dashboard_page(
     function summaryDeltaHtml(cur, prev, dir) {{
       if (prev==null || num(prev)===0 || cur==null) return '<span class="cmp-delta flat">—</span>';
       const ch=(num(cur)-num(prev))/num(prev)*100;
-      if (Math.abs(ch)<0.5) return '<span class="cmp-delta flat" title="vs previous period">0%</span>';
+      const tip=`vs ${{cmpNoun()}} (${{compareStart}} – ${{compareEnd}})`;
+      if (Math.abs(ch)<0.5) return `<span class="cmp-delta flat" title="${{tip}}">0%</span>`;
       const up=ch>0, arrow=up?'▲':'▼';
       let cls='flat';
       if (dir==='up') cls=up?'up':'down'; else if (dir==='down') cls=up?'down':'up';
-      return `<span class="cmp-delta ${{cls}}" title="vs previous period">${{arrow}} ${{Math.abs(ch).toFixed(0)}}%</span>`;
+      return `<span class="cmp-delta ${{cls}}" title="${{tip}}">${{arrow}} ${{Math.abs(ch).toFixed(0)}}%</span>`;
     }}
     function renderSummary() {{
       const s = selectedSummary();
@@ -2701,9 +2793,10 @@ def render_bigquery_dashboard_page(
     // ---- Search Console ----
     const gscPos = v => v==null ? '—' : num(v).toFixed(1);
     const gscPct = v => v==null ? '—' : (num(v)).toFixed(2) + '%';
-    // Position movement vs. the previous period: value is prior - current, so a
+    // Position movement vs. the comparison period (whichever the Compare picker
+    // selected -- the backend is told which): value is prior - current, so a
     // positive number means the keyword improved (moved toward rank 1). null =
-    // the query didn't rank in the prior period ("New").
+    // the query didn't rank in that period ("New").
     const gscDelta = v => {{
       if (v==null) return '<span class="gsc-mv gsc-mv-new">New</span>';
       const n=num(v);
@@ -2735,7 +2828,7 @@ def render_bigquery_dashboard_page(
       {{key:'ctr', label:'CTR', format:gscPct, defDir:'desc'}},
       {{key:'avg_position', label:'Position', format:gscPos, defDir:'asc'}},
     ];
-    // Δ Position vs. the prior period. Every query-keyed table (top queries,
+    // Δ Position vs. the comparison period. Every query-keyed table (top queries,
     // branded, target) carries prior_avg_position/delta_position from the
     // backend; only the pages table doesn't. Default asc so the first click
     // surfaces the biggest sinkers.
@@ -2817,7 +2910,7 @@ def render_bigquery_dashboard_page(
       document.getElementById('gscQueriesTable').innerHTML = skelTable(5,6);
       document.getElementById('gscPagesTable').innerHTML = skelTable(5,6);
       try {{
-        const p = await getJson(withDates(GSC_API));
+        const p = await getJson(withCompare(withDates(GSC_API)));
         renderGscKpis((p&&p.kpis)||{{}}, (p&&p.daily)||[]);
         for (const which of ['queries','pages']) {{
           const st=gscTables[which]; st.rows = (p && (which==='queries'?p.top_queries:p.top_pages)) || [];
@@ -2848,7 +2941,7 @@ def render_bigquery_dashboard_page(
     let _gscKwReqId = 0;
     async function fetchKeywordMatches(terms, excludeTerms) {{
       if (!terms.length) return {{rows:[], weekly:[]}};
-      let url = withDates(GSC_KEYWORD_MATCHES_API) + '&terms=' + encodeURIComponent(terms.join(','));
+      let url = withCompare(withDates(GSC_KEYWORD_MATCHES_API)) + '&terms=' + encodeURIComponent(terms.join(','));
       if (excludeTerms && excludeTerms.length) url += '&exclude=' + encodeURIComponent(excludeTerms.join(','));
       try {{
         const r = await getJson(url);
@@ -3003,18 +3096,28 @@ def render_bigquery_dashboard_page(
     // The mart-health TABLE now lives on the Settings page; on the dashboard we
     // still fetch it (quietly) only to populate earliestDates, which drives the
     // "comparison period predates synced data" warnings on the summary cards.
-    async function loadHealth() {{
-      try {{
-        const payload = await getJson(withDates(HEALTH_API));
-        const rows = payload.rows||[];
-        earliestDates = {{}};
-        for (const r of rows) {{
-          const k = String(r.source||'').toLowerCase();
-          if (k && r.earliest_date) earliestDates[k] = r.earliest_date;
+    // Deduped: the page kicks this off at startup for the comparison notice
+    // while the Overview loader asks for it too -- one fetch serves both.
+    let _healthInflight = null;
+    function loadHealth() {{
+      if (_healthInflight) return _healthInflight;
+      _healthInflight = (async () => {{
+        try {{
+          const payload = await getJson(withDates(HEALTH_API));
+          const rows = payload.rows||[];
+          earliestDates = {{}};
+          for (const r of rows) {{
+            const k = String(r.source||'').toLowerCase();
+            if (k && r.earliest_date) earliestDates[k] = r.earliest_date;
+          }}
+          syncCompareNotice();
+        }} catch(err) {{
+          // Non-fatal: no earliest-date info just means no comparison warnings.
+        }} finally {{
+          _healthInflight = null;
         }}
-      }} catch(err) {{
-        // Non-fatal: no earliest-date info just means no comparison warnings.
-      }}
+      }})();
+      return _healthInflight;
     }}
 
     // ---- Explorer ----
@@ -4088,7 +4191,7 @@ def render_bigquery_dashboard_page(
       const labels=daily.map(d=>String(d.date).slice(5));
       const series=[];
       // Previous first so the current line renders on top of it.
-      if (hasPrev) series.push({{ label:'Previous', data: prevVals.slice(0,n), color:'#9aa7bd', dashed:true }});
+      if (hasPrev) series.push({{ label:cmpSeriesLabel(), data: prevVals.slice(0,n), color:'#9aa7bd', dashed:true }});
       series.push({{ label:'Current', data: vals, color:'#1d6fd0', fill:true }});
       lineChart('sessionsTrendChart', labels, series, {{
         yFmt: v => count(v),
@@ -4099,7 +4202,7 @@ def render_bigquery_dashboard_page(
         const delta=(hasPrev&&prevTot)?((curTot-prevTot)/prevTot*100):null;
         const deltaTxt=delta==null?'':` <span class="cmp-delta ${{delta>=0?'up':'down'}}">${{delta>=0?'+':''}}${{delta.toFixed(0)}}%</span>`;
         legend.innerHTML=`<span class="cmp-item"><span class="cmp-swatch cur"></span>Current (${{esc(currentStart.slice(5))}} – ${{esc(currentEnd.slice(5))}}) · ${{count(curTot)}} sessions${{deltaTxt}}</span>`
-          + (hasPrev?`<span class="cmp-item"><span class="cmp-swatch prev"></span>Previous (${{esc(compareStart.slice(5))}} – ${{esc(compareEnd.slice(5))}}) · ${{count(prevTot)}}</span>`:'');
+          + (hasPrev?`<span class="cmp-item"><span class="cmp-swatch prev"></span>${{esc(cmpSeriesLabel())}} (${{esc(compareMode==='prev_year'?compareStart:compareStart.slice(5))}} – ${{esc(compareMode==='prev_year'?compareEnd:compareEnd.slice(5))}}) · ${{count(prevTot)}}</span>`:'');
       }}
     }}
     function renderBarList(containerId, rows, valueKey, labelKey) {{
@@ -4635,7 +4738,7 @@ def render_bigquery_dashboard_page(
       const hasPrev=prevVals.length>0;
       const labels=curRows.map(d=>String(d.date).slice(5));
       const series=[];
-      if (hasPrev) series.push({{label:'Previous', data:prevVals.slice(0,n), color:'#9aa7bd', dashed:true}});
+      if (hasPrev) series.push({{label:cmpSeriesLabel(), data:prevVals.slice(0,n), color:'#9aa7bd', dashed:true}});
       series.push({{label:'Current', data:vals, color, fill:true}});
       lineChart(chartId, labels, series, {{
         yFmt: v=>count(v),
@@ -4646,7 +4749,7 @@ def render_bigquery_dashboard_page(
         const delta=(hasPrev&&prevTot)?((curTot-prevTot)/prevTot*100):null;
         const deltaTxt=delta==null?'':` <span class="cmp-delta ${{delta>=0?'up':'down'}}">${{delta>=0?'+':''}}${{delta.toFixed(0)}}%</span>`;
         lg.innerHTML=`<span class="cmp-item"><span class="cmp-swatch cur"></span>Current · ${{count(curTot)}} ${{unit}}${{deltaTxt}}</span>`
-          + (hasPrev?`<span class="cmp-item"><span class="cmp-swatch prev"></span>Previous · ${{count(prevTot)}}</span>`:'');
+          + (hasPrev?`<span class="cmp-item"><span class="cmp-swatch prev"></span>${{esc(cmpSeriesLabel())}} · ${{count(prevTot)}}</span>`:'');
       }}
     }}
     function ovRenderSessions() {{
@@ -4761,14 +4864,28 @@ def render_bigquery_dashboard_page(
 
     // ---- Date presets ----
     let currentStart='{start.isoformat()}', currentEnd='{end.isoformat()}';
-    // The equivalent prior period for the currently selected preset (e.g.
-    // "This month" July 1-6 -> compareStart/compareEnd June 1-6), computed
-    // alongside currentStart/currentEnd in applyPreset() below.
+    // The window every "vs previous" figure on the page is measured against.
+    // Which window that is depends on the Compare picker: the equivalent period
+    // immediately before the selected range (the default -- e.g. "This month"
+    // July 1-6 -> June 1-6), or the same range a year earlier. applyPreset()
+    // computes the previous-period option into prevPeriodStart/End;
+    // resolveCompare() picks between that and the year-ago shift.
     let compareStart='', compareEnd='';
+    let prevPeriodStart='', prevPeriodEnd='';
     const fmtDate=d=>`${{d.getFullYear()}}-${{String(d.getMonth()+1).padStart(2,'0')}}-${{String(d.getDate()).padStart(2,'0')}}`;
     function mondayOf(d) {{
       const day=d.getDay(); const diff=(day===0?-6:1)-day;
       const m=new Date(d); m.setDate(d.getDate()+diff); return m;
+    }}
+    // First day of the calendar quarter `d` falls in (Jan/Apr/Jul/Oct 1).
+    function quarterStart(d) {{ return new Date(d.getFullYear(), Math.floor(d.getMonth()/3)*3, 1); }}
+    // Shift an ISO date back n years, clamping to the last day of the target
+    // month so Feb 29 lands on Feb 28 rather than rolling into March.
+    function shiftYears(iso, n) {{
+      const p=String(iso).split('-').map(Number);
+      const y=p[0]-n, m=p[1], day=p[2];
+      const daysInMonth=new Date(y, m, 0).getDate();
+      return fmtDate(new Date(y, m-1, Math.min(day, daysInMonth)));
     }}
     function applyPreset(name) {{
       const today=new Date(); let s, e=today, cs, ce;
@@ -4803,16 +4920,87 @@ def render_bigquery_dashboard_page(
       }} else if (name==='last_month') {{
         s=new Date(today.getFullYear(),today.getMonth()-1,1); e=new Date(today.getFullYear(),today.getMonth(),0);
         cs=new Date(today.getFullYear(),today.getMonth()-2,1); ce=new Date(today.getFullYear(),today.getMonth()-1,0);
+      }} else if (name==='this_quarter') {{
+        // Quarter-to-date, ending yesterday like the other "this_*" presets.
+        // Previous period = the same number of days into the prior quarter,
+        // clamped to that quarter's last day (quarters differ by a day or two).
+        s=quarterStart(today);
+        e=(yesterday>=s)?yesterday:s;
+        cs=new Date(s.getFullYear(), s.getMonth()-3, 1);
+        const prevQEnd=new Date(cs.getFullYear(), cs.getMonth()+3, 0);
+        const daysIn=Math.round((e-s)/86400000);
+        ce=new Date(cs); ce.setDate(cs.getDate()+daysIn);
+        if (ce>prevQEnd) ce=prevQEnd;
+      }} else if (name==='last_quarter') {{
+        const qs=quarterStart(today);
+        s=new Date(qs.getFullYear(), qs.getMonth()-3, 1);
+        e=new Date(qs.getFullYear(), qs.getMonth(), 0);
+        cs=new Date(qs.getFullYear(), qs.getMonth()-6, 1);
+        ce=new Date(qs.getFullYear(), qs.getMonth()-3, 0);
       }} else if (name==='last_7') lastN(7);
       else if (name==='last_30') lastN(30);
       else if (name==='last_90') lastN(90);
       else if (name==='last_365') lastN(365);
       else return;
       currentStart=fmtDate(s); currentEnd=fmtDate(e);
-      compareStart=fmtDate(cs); compareEnd=fmtDate(ce);
+      prevPeriodStart=fmtDate(cs); prevPeriodEnd=fmtDate(ce);
+      resolveCompare();
       syncRangeUI(name);
       loadCurrentTab();
     }}
+    // ---- Comparison period ----
+    // 'prev_period' (default) or 'prev_year'. Remembered per client in this
+    // browser -- it's a reading preference, not a client-wide setting.
+    let compareMode='prev_period';
+    try {{
+      const saved=localStorage.getItem(COMPARE_MODE_STORAGE_KEY);
+      if (saved && COMPARE_MODE_LABELS[saved]) compareMode=saved;
+    }} catch(e) {{}}
+    // Point compareStart/compareEnd at the window the current mode asks for and
+    // refresh everything that spells the comparison out in words.
+    function resolveCompare() {{
+      if (compareMode==='prev_year' && currentStart && currentEnd) {{
+        compareStart=shiftYears(currentStart,1); compareEnd=shiftYears(currentEnd,1);
+      }} else {{
+        compareStart=prevPeriodStart; compareEnd=prevPeriodEnd;
+      }}
+      syncCompareUI();
+    }}
+    // Wording for the comparison, used by every delta label and tooltip so the
+    // page never says "vs prior period" while comparing against last year.
+    function cmpNoun() {{ return compareMode==='prev_year' ? 'prior year' : 'prior period'; }}
+    function cmpSeriesLabel() {{ return compareMode==='prev_year' ? 'Previous year' : 'Previous'; }}
+    function syncCompareUI() {{
+      const lbl=document.getElementById('compareToggleLabel');
+      if (lbl && COMPARE_MODE_LABELS[compareMode]) lbl.textContent=COMPARE_MODE_LABELS[compareMode];
+      document.querySelectorAll('#compareList .range-opt').forEach(o =>
+        o.classList.toggle('active', o.dataset.cmp===compareMode));
+      const foot=document.getElementById('compareRangeLabel');
+      if (foot) foot.textContent = compareStart ? `${{compareStart}} – ${{compareEnd}}` : '';
+      syncCompareNotice();
+    }}
+    function setCompareMode(mode) {{
+      if (!COMPARE_MODE_LABELS[mode] || mode===compareMode) return;
+      compareMode=mode;
+      try {{ localStorage.setItem(COMPARE_MODE_STORAGE_KEY, mode); }} catch(e) {{}}
+      resolveCompare();
+      loadCurrentTab();
+    }}
+    (function(){{
+      const dd=document.getElementById('compareDropdown'); if (!dd) return;
+      const toggle=document.getElementById('compareToggle');
+      const panel=document.getElementById('comparePanel');
+      const list=document.getElementById('compareList');
+      const setOpen=o=>{{ panel.hidden=!o; dd.classList.toggle('open', o); toggle.setAttribute('aria-expanded', o?'true':'false'); }};
+      toggle.addEventListener('click', ()=>setOpen(panel.hidden));
+      document.addEventListener('click', e=>{{ if (!dd.contains(e.target)) setOpen(false); }});
+      document.addEventListener('keydown', e=>{{ if (e.key==='Escape') setOpen(false); }});
+      list.addEventListener('click', e=>{{
+        const opt=e.target.closest('.range-opt'); if (!opt) return;
+        setCompareMode(opt.dataset.cmp);
+        setOpen(false);
+      }});
+    }})();
     // ---- Range dropdown (custom): preset list + admin "Make default" / Apply ----
     // The preset list instant-applies on click (the panel stays open so an admin
     // can then tick "Make default" and Apply). syncRangeUI is hoisted so
@@ -4833,9 +5021,12 @@ def render_bigquery_dashboard_page(
       const panel = document.getElementById('rangePanel');
       const list = document.getElementById('rangeList');
       const setOpen = (o) => {{ panel.hidden=!o; dd.classList.toggle('open', o); toggle.setAttribute('aria-expanded', o?'true':'false'); }};
-      toggle.addEventListener('click', e=>{{ e.stopPropagation(); setOpen(panel.hidden); }});
-      panel.addEventListener('click', e=>e.stopPropagation());
-      document.addEventListener('click', ()=>setOpen(false));
+      // The toggle deliberately lets the click bubble: the document handler
+      // below ignores clicks inside this dropdown, so a click on a *sibling*
+      // picker (Compare, Events) still closes this one instead of leaving two
+      // panels stacked over each other.
+      toggle.addEventListener('click', ()=>setOpen(panel.hidden));
+      document.addEventListener('click', e=>{{ if (!dd.contains(e.target)) setOpen(false); }});
       document.addEventListener('keydown', e=>{{ if (e.key==='Escape') setOpen(false); }});
       list.addEventListener('click', e=>{{
         const opt = e.target.closest('.range-opt'); if (!opt) return;
@@ -4966,6 +5157,10 @@ def render_bigquery_dashboard_page(
     document.querySelectorAll('[data-close-preview]').forEach(el=>el.addEventListener('click', closeCreativePreview));
     document.addEventListener('keydown', ev=>{{ if (ev.key==='Escape') closeCreativePreview(); }});
     applyPreset(DEFAULT_DATE_PRESET || 'last_30');
+    // Earliest-synced-date lookup drives the comparison-window notice, which is
+    // page-level -- so fetch it even when the landing tab isn't Overview (that
+    // loader asks for it too; loadHealth dedupes the concurrent call).
+    loadHealth();
 
     // Deep-link + page-visibility prefs: land on the tab named in ?view= (set
     // by the sidebar links on Settings/Files/Connectors), unless an admin hid

@@ -274,6 +274,41 @@ def _prior_period(start: date, end: date) -> tuple[date, date]:
     return prior_start, prior_end
 
 
+def _compare_period(
+    start: date, end: date,
+    compare_start: date | None, compare_end: date | None,
+) -> tuple[date, date]:
+    """The window to compare `start`-`end` against.
+
+    Callers pass an explicit window when the dashboard's Compare picker is set
+    to something other than "Previous period" (e.g. previous year). Falls back
+    to the immediately-preceding same-length window, which is what every caller
+    used before the picker existed."""
+    if compare_start and compare_end and compare_start <= compare_end:
+        return compare_start, compare_end
+    return _prior_period(start, end)
+
+
+def _two_window_filter(
+    start: date, end: date, prior_start: date, prior_end: date, alias: str = "q",
+) -> str:
+    """Partition filter covering both the current and comparison windows.
+
+    Conditional aggregation needs rows from both, but the two are not
+    necessarily adjacent -- a previous-year comparison leaves ~11 months of
+    unwanted data between them. A disjunction of the two ranges still prunes on
+    the date partition, so the gap is never scanned. Contiguous windows (the
+    default previous-period comparison) collapse back to a single range."""
+    a = f"{alias}." if alias else ""
+    if prior_end >= start - timedelta(days=1) and prior_start <= end + timedelta(days=1):
+        lo, hi = min(prior_start, start), max(prior_end, end)
+        return f"{a}date BETWEEN '{lo.isoformat()}' AND '{hi.isoformat()}'"
+    return (
+        f"({a}date BETWEEN '{prior_start.isoformat()}' AND '{prior_end.isoformat()}'"
+        f" OR {a}date BETWEEN '{start.isoformat()}' AND '{end.isoformat()}')"
+    )
+
+
 def _pct_delta(current: float, prior: float) -> float | None:
     if not prior:
         return None
@@ -727,10 +762,16 @@ def _attach_delta_position(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
-def build_gsc_mart_summary(*, start: date, end: date, client_slug: str | None = None) -> dict[str, Any]:
+def build_gsc_mart_summary(
+    *, start: date, end: date, client_slug: str | None = None,
+    compare_start: date | None = None, compare_end: date | None = None,
+) -> dict[str, Any]:
     """Read the GSC mart views and return {kpis, daily, top_queries, top_pages}.
 
     Same shape build_gsc_snapshot returns, so the dashboard tab is unchanged.
+    `compare_start`/`compare_end` set the window the prior_* KPIs and each
+    query's prior avg position are measured over; omitted, it's the
+    immediately-preceding same-length window.
     """
     with _client_context(client_slug):
         target = _resolved_target()
@@ -764,12 +805,13 @@ def build_gsc_mart_summary(*, start: date, end: date, client_slug: str | None = 
             result["kpis"] = kpi[0] if kpi else {}
         except Exception as exc:
             errors["kpis"] = str(exc)[:300]
-        # Prior-period KPIs (same-length window immediately before) so the
+        # Comparison-period KPIs (the same-length window immediately before,
+        # unless the caller asked for another -- e.g. previous year) so the
         # dashboard can show vs-previous deltas. Additive to the kpis dict; the
         # frontend computes the % change from these prior_* values.
         if result["kpis"]:
             try:
-                ps, pe = _prior_period(start, end)
+                ps, pe = _compare_period(start, end, compare_start, compare_end)
                 pw = f"date BETWEEN '{ps.isoformat()}' AND '{pe.isoformat()}'"
                 prior = _clean(_run(f"SELECT {m} FROM {qv} WHERE {pw}", max_rows=1))
                 pr = prior[0] if prior else {}
@@ -790,17 +832,17 @@ def build_gsc_mart_summary(*, start: date, end: date, client_slug: str | None = 
         except Exception as exc:
             errors["daily"] = str(exc)[:300]
         try:
-            # Top queries with each query's prior-period avg position, so the UI
-            # can show which keywords rose or sank. Conditional aggregation over
-            # a window widened to cover the prior period; delta_position is
+            # Top queries with each query's comparison-period avg position, so
+            # the UI can show which keywords rose or sank. Conditional
+            # aggregation over a scan covering both windows; delta_position is
             # prior − current (positive = improved toward rank 1). None when the
             # query had no impressions in the prior period (newly ranking).
-            ps, pe = _prior_period(start, end)
+            ps, pe = _compare_period(start, end, compare_start, compare_end)
             ps_s, pe_s = ps.isoformat(), pe.isoformat()
             tq_sql = f"""
             SELECT q.query AS query, {_query_delta_metric_cols(s, e, ps_s, pe_s)}
             FROM {qv} AS q
-            WHERE q.date BETWEEN '{ps_s}' AND '{e}'
+            WHERE {_two_window_filter(start, end, ps, pe)}
             GROUP BY q.query
             HAVING {_query_delta_having(s, e)}
             ORDER BY clicks DESC, impressions DESC
@@ -823,6 +865,7 @@ def build_gsc_mart_summary(*, start: date, end: date, client_slug: str | None = 
 def gsc_keyword_matches(
     *, start: date, end: date, terms: list[str],
     exclude_terms: list[str] | None = None, client_slug: str | None = None,
+    compare_start: date | None = None, compare_end: date | None = None,
 ) -> list[dict[str, Any]]:
     """Queries whose text contains any of `terms` but none of `exclude_terms`,
     aggregated over the full date range -- unlike top_queries in
@@ -842,18 +885,18 @@ def gsc_keyword_matches(
         project, ds = _project_id(), _reporting_mart_ds()
         qv = f"`{project}.{ds}.{_QUERY_VIEW}`"
         s, e = start.isoformat(), end.isoformat()
-        # Same per-query current metrics + prior-period avg position as
+        # Same per-query current metrics + comparison-period avg position as
         # build_gsc_mart_summary's top_queries, so branded/target rows carry the
-        # same sortable Δ Position. Scan is widened to the prior window; the
-        # HAVING keeps only queries active in the selected range.
-        ps, pe = _prior_period(start, end)
+        # same sortable Δ Position. The scan covers both windows; the HAVING
+        # keeps only queries active in the selected range.
+        ps, pe = _compare_period(start, end, compare_start, compare_end)
         ps_s, pe_s = ps.isoformat(), pe.isoformat()
         # NOT EXISTS over an empty @exclude array is always true, so the clause
         # is a no-op when no exclude terms are configured.
         sql = f"""
         SELECT q.query AS query, {_query_delta_metric_cols(s, e, ps_s, pe_s)}
         FROM {qv} AS q
-        WHERE q.date BETWEEN '{ps_s}' AND '{e}'
+        WHERE {_two_window_filter(start, end, ps, pe)}
           AND EXISTS (
             SELECT 1 FROM UNNEST(@terms) AS t
             WHERE LOWER(q.query) LIKE CONCAT('%', t, '%')
