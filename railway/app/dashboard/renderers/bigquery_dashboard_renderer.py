@@ -4508,17 +4508,26 @@ def render_bigquery_dashboard_page(
     function renderStateMap(regionRows) {{
       const host=document.getElementById('stateMap');
       if (!host) return;
+      // Users drive the shading; sessions/new users ride along for the tooltip
+      // (absent on the city-derived fallback rows, which carry users only).
       const byState={{}};
-      for (const r of (regionRows||[])) byState[r.region]=(byState[r.region]||0)+num(r.users);
-      const max=Math.max(1,...Object.values(byState));
+      for (const r of (regionRows||[])) {{
+        const s=byState[r.region]||(byState[r.region]={{users:0,sessions:0,new_users:0,has_detail:false}});
+        s.users+=num(r.users);
+        if (r.sessions!=null||r.new_users!=null) {{
+          s.sessions+=num(r.sessions); s.new_users+=num(r.new_users); s.has_detail=true;
+        }}
+      }}
+      const max=Math.max(1,...Object.values(byState).map(s=>s.users));
       const TS=26, GAP=3, CELL=TS+GAP, COLS=11, ROWS=8;
       const W=COLS*CELL-GAP, H=ROWS*CELL-GAP;
       let tiles='';
       for (const [name,[ab,r,c]] of Object.entries(STATE_TILES)) {{
-        const v=byState[name]||0, x=c*CELL, y=r*CELL;
+        const s=byState[name], v=s?s.users:0, x=c*CELL, y=r*CELL;
         const fill=v>0?lerpColor(v/max):'#eef2f7';
         const txt=v/max>0.55?'#fff':'#5a6b82';
-        tiles+=`<g class="state-tile"><rect x="${{x}}" y="${{y}}" width="${{TS}}" height="${{TS}}" rx="4" fill="${{fill}}"><title>${{esc(name)}} — ${{count(v)}} users</title></rect>`+
+        const detail=(s&&s.has_detail&&v>0)?` · ${{count(s.sessions)}} sessions · ${{count(s.new_users)}} new`:'';
+        tiles+=`<g class="state-tile"><rect x="${{x}}" y="${{y}}" width="${{TS}}" height="${{TS}}" rx="4" fill="${{fill}}"><title>${{esc(name)}} — ${{count(v)}} users${{detail}}</title></rect>`+
           `<text class="state-tile-label" x="${{x+TS/2}}" y="${{y+TS/2+3}}" text-anchor="middle" style="fill:${{txt}}">${{ab}}</text></g>`;
       }}
       const hasData=Object.keys(byState).length>0;
@@ -4552,12 +4561,16 @@ def render_bigquery_dashboard_page(
           regionRows=Object.entries(agg).map(([region,users])=>({{region,users}}));
         }}
         renderStateMap(regionRows);
+        // Eng. rate is served derived (engaged ÷ sessions); it reads '—' only for
+        // dates synced before the geo report carried engaged_sessions.
         renderTable('citiesTable',[
           {{key:'city',label:'City',left:true}},
           {{key:'region',label:'Region',left:true}},
           {{key:'users',label:'Users',format:count}},
-          {{key:'key_events',label:'Key events',format:count}},
+          {{key:'new_users',label:'New',format:v=>v!=null?count(v):'—'}},
+          {{key:'sessions',label:'Sessions',format:count}},
           {{key:'engagement_rate',label:'Eng. rate',format:v=>v!=null?v+'%':'—'}},
+          {{key:'key_events',label:'Key events',format:count}},
         ], payload.by_city||[], 'No city data.');
         demoAgeRows=payload.by_age||[];
         renderAge();

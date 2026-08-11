@@ -260,6 +260,50 @@ class DemographicsScopeTests(unittest.TestCase):
         self.assertEqual(out["by_region"], [])
         self.assertNotIn("vw_ga4_geo_daily`", self._sql())
 
+    def test_geo_queries_carry_the_engagement_and_new_user_columns(self) -> None:
+        # The cities table's "Eng. rate" column had no source until the geo
+        # report started carrying engaged_sessions — scoped and unscoped alike.
+        for kw in ({}, {"page_path_filter": ["/careers"]}):
+            with self.subTest(scoped=bool(kw)):
+                self._captured.clear()
+                ms.fetch_demographics(start_date=START, end_date=END, **kw)
+                geo_sql = [
+                    s for s, _ in self._captured
+                    if "vw_ga4_geo_daily" in s or "vw_ga4_geo_page_daily" in s
+                ]
+                self.assertEqual(len(geo_sql), 2)  # cities + region rollup
+                for sql in geo_sql:
+                    self.assertIn("SUM(new_users) AS new_users", sql)
+                    self.assertIn("SUM(engaged_sessions) AS engaged_sessions", sql)
+                    # Derived from the summed counts, never AVG() of daily rates.
+                    self.assertIn(
+                        "SAFE_DIVIDE(SUM(engaged_sessions), NULLIF(SUM(sessions), 0))", sql
+                    )
+                    self.assertNotIn("AVG(engagement_rate)", sql)
+
+    def test_stale_view_falls_back_to_the_old_columns(self) -> None:
+        # A client's mart views are rebuilt by their GA4 sync, so between a
+        # deploy and that sync the view still has the pre-engagement columns.
+        # The panel must degrade to what the view has, not 500.
+        calls: list[str] = []
+
+        def _stale(sql, params=None, max_rows=None):
+            calls.append(sql)
+            if "engaged_sessions" in sql:
+                raise RuntimeError(
+                    "400 Unrecognized name: engaged_sessions at [4:11]"
+                )
+            return []
+
+        ms._run_query = _stale
+        out = ms.fetch_demographics(start_date=START, end_date=END)
+        retried = [s for s in calls if "vw_ga4_geo_daily" in s and "engaged_sessions" not in s]
+        self.assertEqual(len(retried), 2)  # cities + region rollup, plain columns
+        self.assertTrue(all("SUM(active_users) AS users" in s for s in retried))
+        # Still a well-formed payload — the panel just shows no eng. rate.
+        self.assertTrue(out["geo_scope_available"])
+        self.assertEqual(out["by_city"], [])
+
     def test_other_query_errors_still_raise(self) -> None:
         def _boom(sql, params=None, max_rows=None):
             raise RuntimeError("403 Access Denied: Table p:d.vw_ga4_geo_page_daily")

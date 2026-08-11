@@ -732,11 +732,16 @@ def fetch_geo_daily(
     property_id: str, start: str, end: str, access_token: str,
     *, client_key: str = "",
 ) -> list[dict[str, Any]]:
-    """Geographic breakdown by country/region/city. Does not require Google Signals."""
+    """Geographic breakdown by country/region/city. Does not require Google Signals.
+
+    engagedSessions and newUsers ride along on the same report (no extra call, no
+    extra rows) so the panel can show an engagement rate and a new-vs-returning
+    split. Key events alone are too sparse at city grain to read as a column.
+    """
     rows = _run_report(
         property_id,
         dimensions=["date", "country", "region", "city"],
-        metrics=["activeUsers", "sessions", "keyEvents"],
+        metrics=["activeUsers", "sessions", "engagedSessions", "newUsers", "keyEvents"],
         start=start, end=end, access_token=access_token,
     )
     synced_at = _now()
@@ -751,6 +756,8 @@ def fetch_geo_daily(
             "city": r.get("city") or "(not set)",
             "active_users": int(r.get("activeUsers") or 0),
             "sessions": int(r.get("sessions") or 0),
+            "engaged_sessions": int(r.get("engagedSessions") or 0),
+            "new_users": int(r.get("newUsers") or 0),
             "key_events": int(float(r.get("keyEvents") or 0)),
             "synced_at": synced_at,
         })
@@ -779,7 +786,7 @@ def fetch_geo_page_daily(
         rows = _run_report(
             property_id,
             dimensions=["date", "pagePath", "country", "region", "city"],
-            metrics=["activeUsers", "sessions", "keyEvents"],
+            metrics=["activeUsers", "sessions", "engagedSessions", "newUsers", "keyEvents"],
             start=start, end=end, access_token=access_token,
         )
     except RuntimeError as exc:
@@ -801,6 +808,8 @@ def fetch_geo_page_daily(
             "city": r.get("city") or "(not set)",
             "active_users": int(r.get("activeUsers") or 0),
             "sessions": int(r.get("sessions") or 0),
+            "engaged_sessions": int(r.get("engagedSessions") or 0),
+            "new_users": int(r.get("newUsers") or 0),
             "key_events": int(float(r.get("keyEvents") or 0)),
             "synced_at": synced_at,
         })
@@ -952,7 +961,7 @@ GA4_REPORTS = [
         "report_key": "geo",
         "table_name": "ga4_geo_daily",
         "dimensions": ["date", "country", "region", "city"],
-        "metrics": ["activeUsers", "sessions", "keyEvents"],
+        "metrics": ["activeUsers", "sessions", "engagedSessions", "newUsers", "keyEvents"],
         "grain": ["date", "country", "region", "city"],
         "required": True,
         "notes": "Geographic breakdown. Does not require Google Signals.",
@@ -961,7 +970,7 @@ GA4_REPORTS = [
         "report_key": "geo_page",
         "table_name": "ga4_geo_page_daily",
         "dimensions": ["date", "pagePath", "country", "region", "city"],
-        "metrics": ["activeUsers", "sessions", "keyEvents"],
+        "metrics": ["activeUsers", "sessions", "engagedSessions", "newUsers", "keyEvents"],
         "grain": ["date", "page_path", "country", "region", "city"],
         "required": False,
         "notes": (

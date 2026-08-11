@@ -570,13 +570,25 @@ def _build_demographics(payload: dict) -> dict:
     for city, region in cities:
         users = int((40 + 500 * _u("city", city)) * days / 12)
         sessions = int(users * (1.1 + 0.4 * _u("citys", city)))
+        engaged = int(sessions * (0.45 + 0.35 * _u("citye", city)))
+        new_users = int(users * (0.55 + 0.3 * _u("cityn", city)))
         ke = int(users * (0.03 + 0.05 * _u("cityk", city)))
         by_city.append({"city": city, "region": region, "country": "United States",
-                        "users": users, "sessions": sessions, "key_events": ke})
-        ra = region_agg.setdefault(region, {"region": region, "users": 0, "sessions": 0, "key_events": 0})
+                        "users": users, "new_users": new_users, "sessions": sessions,
+                        "engaged_sessions": engaged,
+                        "engagement_rate": _round2(engaged / sessions * 100) if sessions else 0.0,
+                        "key_events": ke})
+        ra = region_agg.setdefault(region, {"region": region, "users": 0, "new_users": 0,
+                                            "sessions": 0, "engaged_sessions": 0, "key_events": 0})
         ra["users"] += users
+        ra["new_users"] += new_users
         ra["sessions"] += sessions
+        ra["engaged_sessions"] += engaged
         ra["key_events"] += ke
+    for ra in region_agg.values():
+        ra["engagement_rate"] = (
+            _round2(ra["engaged_sessions"] / ra["sessions"] * 100) if ra["sessions"] else 0.0
+        )
     by_city.sort(key=lambda r: r["users"], reverse=True)
     by_region = sorted(region_agg.values(), key=lambda r: r["users"], reverse=True)
 

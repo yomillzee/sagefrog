@@ -295,25 +295,31 @@ def _schema_user_acq():
 def _schema_geo():
     bq = _bq()
     return _common_fields(bq) + [
-        bq.SchemaField("country",      "STRING", mode="NULLABLE"),
-        bq.SchemaField("region",       "STRING", mode="NULLABLE"),
-        bq.SchemaField("city",         "STRING", mode="NULLABLE"),
-        bq.SchemaField("active_users", "INT64",  mode="NULLABLE"),
-        bq.SchemaField("sessions",     "INT64",  mode="NULLABLE"),
-        bq.SchemaField("key_events",   "INT64",  mode="NULLABLE"),
+        bq.SchemaField("country",          "STRING", mode="NULLABLE"),
+        bq.SchemaField("region",           "STRING", mode="NULLABLE"),
+        bq.SchemaField("city",             "STRING", mode="NULLABLE"),
+        bq.SchemaField("active_users",     "INT64",  mode="NULLABLE"),
+        bq.SchemaField("sessions",         "INT64",  mode="NULLABLE"),
+        # Added after the table shipped: ensure_ga4_tables adds them in place, so
+        # rows synced before that carry NULL until those dates are re-synced.
+        bq.SchemaField("engaged_sessions", "INT64",  mode="NULLABLE"),
+        bq.SchemaField("new_users",        "INT64",  mode="NULLABLE"),
+        bq.SchemaField("key_events",       "INT64",  mode="NULLABLE"),
     ]
 
 
 def _schema_geo_page():
     bq = _bq()
     return _common_fields(bq) + [
-        bq.SchemaField("page_path",    "STRING", mode="NULLABLE"),
-        bq.SchemaField("country",      "STRING", mode="NULLABLE"),
-        bq.SchemaField("region",       "STRING", mode="NULLABLE"),
-        bq.SchemaField("city",         "STRING", mode="NULLABLE"),
-        bq.SchemaField("active_users", "INT64",  mode="NULLABLE"),
-        bq.SchemaField("sessions",     "INT64",  mode="NULLABLE"),
-        bq.SchemaField("key_events",   "INT64",  mode="NULLABLE"),
+        bq.SchemaField("page_path",        "STRING", mode="NULLABLE"),
+        bq.SchemaField("country",          "STRING", mode="NULLABLE"),
+        bq.SchemaField("region",           "STRING", mode="NULLABLE"),
+        bq.SchemaField("city",             "STRING", mode="NULLABLE"),
+        bq.SchemaField("active_users",     "INT64",  mode="NULLABLE"),
+        bq.SchemaField("sessions",         "INT64",  mode="NULLABLE"),
+        bq.SchemaField("engaged_sessions", "INT64",  mode="NULLABLE"),
+        bq.SchemaField("new_users",        "INT64",  mode="NULLABLE"),
+        bq.SchemaField("key_events",       "INT64",  mode="NULLABLE"),
     ]
 
 

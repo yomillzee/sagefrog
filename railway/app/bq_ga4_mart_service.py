@@ -338,6 +338,8 @@ def _view_sql(view_name: str, *, raw: str, marts: str, taxonomy: dict[str, str])
           country, region, city,
           SUM(active_users) AS active_users,
           SUM(sessions) AS sessions,
+          SUM(engaged_sessions) AS engaged_sessions,
+          SUM(new_users) AS new_users,
           SUM(key_events) AS key_events
         FROM `{raw}.ga4_geo_daily`
         GROUP BY client_key, property_id, date, country, region, city
@@ -357,6 +359,8 @@ def _view_sql(view_name: str, *, raw: str, marts: str, taxonomy: dict[str, str])
           country, region, city,
           SUM(active_users) AS active_users,
           SUM(sessions) AS sessions,
+          SUM(engaged_sessions) AS engaged_sessions,
+          SUM(new_users) AS new_users,
           SUM(key_events) AS key_events
         FROM `{raw}.ga4_geo_page_daily`
         GROUP BY client_key, property_id, date, page_path, country, region, city

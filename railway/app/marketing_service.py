@@ -270,6 +270,19 @@ def _is_missing_table(exc: Exception) -> bool:
     return "not found: table" in str(exc).lower()
 
 
+def _is_missing_column(exc: Exception) -> bool:
+    """True when a query failed because a column the SQL selects isn't there.
+
+    Mart views are rebuilt by each client's connector sync, so a view can lag a
+    deploy that added columns to it by up to one sync cycle. A read that wants
+    the new columns uses this to fall back to the old projection instead of
+    500-ing the panel; the client self-heals on its next sync. BigQuery reports
+    it as a 400 "Unrecognized name: x" or "Name x not found inside y".
+    """
+    msg = str(exc).lower()
+    return "unrecognized name" in msg or "not found inside" in msg
+
+
 def _run_query(
     sql: str,
     *,
@@ -1672,14 +1685,34 @@ def fetch_demographics(
     }
     geo_source = _geo_page_table() if scoped else _geo_table()
     geo_scope = _page_path_filter_clause(patterns, column="page_path", params=params)
-    city_sql = f"""
+    # engaged_sessions / new_users were added to the geo reports after they
+    # shipped, and a client's mart views are only rebuilt by their GA4 sync — so
+    # between a deploy and that sync the view still has the old column set.
+    # _geo_metrics(enriched=False) is the projection that works against it; the
+    # caller falls back to it on "unrecognized name" and the client self-heals on
+    # its next sync. Engagement rate is derived from the summed counts, never
+    # averaged out of per-day rates (a 1-session day would weigh as much as a
+    # 500-session one) — the same shape the traffic-acquisition mart uses.
+    def _geo_metrics(enriched: bool) -> str:
+        if not enriched:
+            return """
+      SUM(active_users) AS users,
+      SUM(sessions) AS sessions,
+      SUM(key_events) AS key_events"""
+        return """
+      SUM(active_users) AS users,
+      SUM(new_users) AS new_users,
+      SUM(sessions) AS sessions,
+      SUM(engaged_sessions) AS engaged_sessions,
+      ROUND(SAFE_DIVIDE(SUM(engaged_sessions), NULLIF(SUM(sessions), 0)) * 100, 1) AS engagement_rate,
+      SUM(key_events) AS key_events"""
+
+    def _city_sql(enriched: bool) -> str:
+        return f"""
     SELECT
       COALESCE(city, '(not set)') AS city,
       COALESCE(region, '') AS region,
-      COALESCE(country, '') AS country,
-      SUM(active_users) AS users,
-      SUM(sessions) AS sessions,
-      SUM(key_events) AS key_events
+      COALESCE(country, '') AS country,{_geo_metrics(enriched)}
     FROM {geo_source}
     WHERE date BETWEEN @start_date AND @end_date
       AND city IS NOT NULL AND city != '(not set)'{geo_scope}
@@ -1687,6 +1720,7 @@ def fetch_demographics(
     ORDER BY users DESC
     LIMIT 20
     """
+
     age_sql = f"""
     SELECT
       COALESCE(user_age_bracket, 'unknown') AS age_bracket,
@@ -1716,12 +1750,10 @@ def fetch_demographics(
     # State-level rollup for the demographics map. Aggregated straight from the
     # geo table (not summed from the top-20 cities above) so the map reflects
     # every user's region, not just the largest cities.
-    region_sql = f"""
+    def _region_sql(enriched: bool) -> str:
+        return f"""
     SELECT
-      region,
-      SUM(active_users) AS users,
-      SUM(sessions) AS sessions,
-      SUM(key_events) AS key_events
+      region,{_geo_metrics(enriched)}
     FROM {geo_source}
     WHERE date BETWEEN @start_date AND @end_date
       AND region IS NOT NULL AND region != '' AND region != '(not set)'{geo_scope}
@@ -1729,18 +1761,30 @@ def fetch_demographics(
     ORDER BY users DESC
     LIMIT 70
     """
+
+    def _read_geo(enriched: bool) -> tuple[list, list]:
+        return (
+            _run_query(_city_sql(enriched), params=params, max_rows=20),
+            _run_query(_region_sql(enriched), params=params, max_rows=70),
+        )
+
     geo_available = True
     try:
-        by_city = _run_query(city_sql, params=params, max_rows=20)
-        by_region = _run_query(region_sql, params=params, max_rows=70)
+        by_city, by_region = _read_geo(True)
     except Exception as exc:
-        # Only the scoped read can hit a view that doesn't exist yet (it lands on
-        # the first GA4 sync after the geo_page report shipped). Degrade to "no
-        # scoped geography" there; anything else is a real failure.
-        if not (scoped and _is_missing_table(exc)):
+        if _is_missing_column(exc):
+            # Mart view predates the engagement/new-user columns — read what it
+            # has. Rebuilt on this client's next GA4 sync.
+            _log.info("geo view missing engagement columns [%s]", _client_key())
+            by_city, by_region = _read_geo(False)
+        elif scoped and _is_missing_table(exc):
+            # Only the scoped read can hit a view that doesn't exist yet (it lands
+            # on the first GA4 sync after the geo_page report shipped). Degrade to
+            # "no scoped geography"; anything else is a real failure.
+            _log.info("scoped geo unavailable [%s]: %s", _client_key(), str(exc)[:200])
+            by_city, by_region, geo_available = [], [], False
+        else:
             raise
-        _log.info("scoped geo unavailable [%s]: %s", _client_key(), str(exc)[:200])
-        by_city, by_region, geo_available = [], [], False
     # Age/gender are user-scoped: GA4 has no page dimension to pair them with, so
     # a scope can only hide them, never narrow them.
     by_age = [] if scoped else _run_query(age_sql, params=params, max_rows=10)
