@@ -1,19 +1,45 @@
-"""SEMrush connector — domain analytics synced daily into BigQuery.
+"""SEMrush connector — domain analytics synced monthly into BigQuery.
 
 No OAuth: SEMrush is authenticated with a single shared SEMRUSH_API_KEY env
 var (agency-level, like the GSC service account). The only per-client input
 is the root domain to track, entered manually in the wizard (no "list
 accounts" API exists for SEMrush) and stored as source_account_id.
+
+That single key draws on one agency-wide monthly API-unit balance, so every
+client's sync competes for the same pool — see DEFAULT_SYNC_INTERVAL_DAYS.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from connectors.base import ConnectorHandler, SyncResult, register
 
 _log = logging.getLogger(__name__)
+
+# Days between automated (cron) SEMrush syncs. One sync spends units on four
+# separate endpoints (domain overview, organic keywords, backlinks, AI
+# overview), and organic keywords bills per returned row — so a nightly run
+# per client drained the shared agency balance in days. Domain authority,
+# backlink counts and keyword rankings move slowly, so a monthly snapshot is
+# the right granularity anyway. Manual "Run sync now" and the onboarding
+# backfill ignore this and still run on demand.
+DEFAULT_SYNC_INTERVAL_DAYS = 30
+
+
+def sync_interval_days() -> int:
+    """SEMRUSH_SYNC_INTERVAL_DAYS override, so the cadence can be retuned
+    against the remaining unit balance without a code change."""
+    raw = (os.getenv("SEMRUSH_SYNC_INTERVAL_DAYS") or "").strip()
+    if not raw:
+        return DEFAULT_SYNC_INTERVAL_DAYS
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        _log.warning("Invalid SEMRUSH_SYNC_INTERVAL_DAYS=%r; using %s", raw, DEFAULT_SYNC_INTERVAL_DAYS)
+        return DEFAULT_SYNC_INTERVAL_DAYS
 
 
 class SEMrushConnector(ConnectorHandler):
@@ -24,6 +50,7 @@ class SEMrushConnector(ConnectorHandler):
     no_oauth = True
     manual_account_entry = True
     manual_account_label = "Root domain (no www, no https://)"
+    min_sync_interval_days = sync_interval_days()
 
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
         """Used by the wizard's "Test connection" step — verifies the configured
