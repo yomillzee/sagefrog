@@ -109,9 +109,14 @@ def refresh_bq_client(
         except Exception:
             pass
 
-    # Reuse cached SEMrush data if it's under 24 hours old â€” SEMrush scores
-    # update at most daily and cost API tokens on every call.
+    # Reuse cached SEMrush data until it ages past the connector's sync
+    # interval (monthly by default). Every SEMrush call bills against one
+    # agency-wide monthly API-unit balance shared by all clients, and this
+    # snapshot fetch is a *second* live hit on top of the connector sync the
+    # orchestrator just ran above, so the two cadences have to match or this
+    # one silently sets the real spend rate.
     from datetime import datetime, timezone as _tz
+    from connectors.semrush import sync_interval_days as _smr_interval_days
     _existing = dashboard_snapshots.get_snapshot(slug) or {}
     _cached_smr = _existing.get("semrush") or {}
     _smr_age_hours: float = 999
@@ -123,7 +128,12 @@ def refresh_bq_client(
             ).total_seconds() / 3600
     except Exception:
         pass
-    _smr_fresh = _smr_age_hours < 24
+    _smr_fresh = _smr_age_hours < max(24, 24 * _smr_interval_days())
+    # Only a real ingestion cycle (cron/onboarding/explicit Full Refresh) may
+    # spend units — same gate as every other source above. A cache-miss GET
+    # serves the last snapshot however old it is, so page traffic can't burn
+    # the balance.
+    _smr_should_fetch = (not _smr_fresh) and run_ingestion
 
     def _gsc_task():
         from dates_util import resolve_date_range as _resolve
@@ -153,8 +163,8 @@ def refresh_bq_client(
     _pool = ThreadPoolExecutor(max_workers=2)
     _gsc_fut = _pool.submit(_gsc_task)
     _smr_fut = (
-        None if _smr_fresh
-        else _pool.submit(_smr_svc.build_semrush_snapshot, semrush_domain or None)
+        _pool.submit(_smr_svc.build_semrush_snapshot, semrush_domain or None)
+        if _smr_should_fetch else None
     )
 
     try:
@@ -307,7 +317,10 @@ def refresh_bq_client(
             snapshot["gsc_by_preset"] = _gsc_by_preset
         except Exception as exc:
             snapshot.setdefault("errors", {})["gsc"] = str(exc)[:400]
-        if _smr_fresh:
+        if _smr_fut is None:
+            # Still fresh, or a read-only trigger that isn't allowed to spend
+            # units — carry the last snapshot forward rather than dropping the
+            # SEMrush panel.
             if _cached_smr:
                 snapshot["semrush"] = _cached_smr
         else:
@@ -315,7 +328,13 @@ def refresh_bq_client(
                 smr = _smr_fut.result(timeout=30)
                 if smr and not smr.get("error", "").startswith("SEMRUSH_API_KEY"):
                     snapshot["semrush"] = smr
+                elif _cached_smr:
+                    snapshot["semrush"] = _cached_smr
             except Exception as exc:
+                # A failed fetch must not blank the panel for a month until the
+                # next fetch is due.
+                if _cached_smr:
+                    snapshot["semrush"] = _cached_smr
                 snapshot.setdefault("errors", {})["semrush"] = str(exc)[:400]
         _pool.shutdown(wait=False)
 

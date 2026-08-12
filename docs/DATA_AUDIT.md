@@ -68,7 +68,7 @@ handler is registered for it — it is a reserved/manual type, not an active fee
 | Search Console | `gsc` | **Agency-level** (shared Google OAuth `gsc_read_creds`) with **service-account fallback** (`no_oauth=True`, `agency_oauth=True`) | `list_accessible_properties` → site URL | `raw_gsc` | every tick | `fact_gsc_query_daily`, `fact_gsc_page_daily` + GSC mart views |
 | Google Tag Manager | `gtm` | Per-client OAuth (`google_tag_manager`) | `list_containers` → `account:container` in `source_account_id` | `raw_gtm` | every tick | Live-container tag audit (no fact table; `rows_loaded` = tag count) |
 | HubSpot | `hubspot` | Per-client OAuth (`hubspot`), falls back to global `HUBSPOT_ACCESS_TOKEN` | Portal behind the token → portal id | `raw_hubspot` (mart dataset) | every tick | Contacts + deals sync |
-| SEMrush | `semrush` | **Agency** shared `SEMRUSH_API_KEY` (`no_oauth=True`, `manual_account_entry=True`) | Manually typed root domain | `raw_semrush` | every tick | Domain analytics rows |
+| SEMrush | `semrush` | **Agency** shared `SEMRUSH_API_KEY` (`no_oauth=True`, `manual_account_entry=True`) | Manually typed root domain | `raw_semrush` | **30 days** (`min_sync_interval_days`, `SEMRUSH_SYNC_INTERVAL_DAYS`) | Domain analytics rows |
 | PageSpeed Insights | `pagespeed` | Keyless / shared `PAGESPEED_API_KEY` (`no_oauth=True`, `manual_account_entry=True`) | Manually typed homepage URL | `raw_pagespeed` | **7 days** (`min_sync_interval_days=7`) | Lighthouse scores (per synced strategy) |
 
 ### 2.2 Connector accuracy / cleanliness notes
@@ -92,6 +92,15 @@ handler is registered for it — it is a reserved/manual type, not an active fee
   access to each client's property/domain before trusting an empty result.
 - **PageSpeed cron cadence is intentionally ~monthly.** A "no recent rows" reading
   for PageSpeed is expected between the 30-day windows and is not a stall.
+- **SEMrush cron cadence is monthly, for cost not staleness.** All clients share
+  one `SEMRUSH_API_KEY` drawing on a single monthly API-unit balance, and each
+  sync bills four endpoints (overview, organic keywords — priced per row —
+  backlinks, AI overview). Nightly runs exhausted the balance, so the cron is
+  gated to 30 days (`SEMRUSH_SYNC_INTERVAL_DAYS` to retune) and the dashboard
+  snapshot's SEMrush block reuses its cached copy for the same window. Sparse
+  `raw_semrush` rows between windows are expected, not a stall. Manual
+  "Run sync now" and the onboarding backfill bypass the gate and spend units
+  immediately.
 - **Sync-run bookkeeping** (`connector_config_store.py`): manual syncs run as
   in-process FastAPI `BackgroundTasks` and do **not** survive a redeploy.
   `fail_orphaned_sync_runs()` at startup closes out `running` rows so a connector
