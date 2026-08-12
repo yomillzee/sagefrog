@@ -1112,6 +1112,13 @@ def fetch_pages_top(
       SUM(page_views) AS page_views,
       SUM(users) AS users,
       SUM(sessions) AS sessions,
+      SUM(engaged_sessions) AS engaged_sessions,
+      -- GA4 defines bounce rate as the inverse of engagement rate; there is no
+      -- separate "exits" metric in the Data API, so this is the honest measure
+      -- of "people who landed here and did nothing."
+      ROUND(
+        (1 - SAFE_DIVIDE(SUM(engaged_sessions), NULLIF(SUM(sessions), 0))) * 100, 1
+      ) AS bounce_rate,
       ROUND(SUM(engagement_seconds), 1) AS engagement_seconds,
       SUM(key_events) AS key_events
     FROM {_page_path_daily_table()}
@@ -1204,6 +1211,71 @@ def fetch_traffic_acquisition(
         "by_channel": _run_query(by_channel_sql, params=params, max_rows=50),
         "daily": _run_query(daily_sql, params=daily_params, max_rows=2000),
         "by_source": _run_query(by_source_sql, params=params, max_rows=50),
+    }
+
+
+# GA4 writes these placeholders into session_campaign_name for traffic that never
+# carried a campaign, so the Campaigns list filters them out rather than showing a
+# single giant "(not set)" row that dwarfs every real campaign.
+_NON_CAMPAIGN_LABELS = ("(not set)", "(direct)", "(none)", "")
+
+
+def fetch_acquisition_breakdown(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Sessions by channel, by source and by campaign — one list per tab of the
+    Acquisition panel.
+
+    Deliberately separate from fetch_traffic_acquisition, which groups source
+    *with* medium (google/organic and google/cpc are two rows there). That grain
+    is right for the Traffic table but wrong for a "Sources" list, and rolling
+    its LIMIT 25 result up client-side would only be correct for the head — the
+    tail would silently go missing. So each dimension gets its own GROUP BY.
+
+    Every list carries `users` alongside `sessions`, but note that `users` is a
+    daily-grained count: summing it across a range counts a visitor once per day
+    they returned. It is a visit-frequency signal, not a unique-visitor count,
+    which is why the panel leads with sessions.
+    """
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+
+    def _breakdown_sql(column: str, fallback: str, *, drop_placeholders: bool = False) -> str:
+        having = ""
+        if drop_placeholders:
+            listed = ", ".join(f"'{v}'" for v in _NON_CAMPAIGN_LABELS)
+            having = f"\n    HAVING label NOT IN ({listed})"
+        return f"""
+    SELECT
+      COALESCE(NULLIF(TRIM({column}), ''), '{fallback}') AS label,
+      SUM(sessions) AS sessions,
+      SUM(users) AS users,
+      SUM(engaged_sessions) AS engaged_sessions,
+      SUM(key_events) AS key_events
+    FROM {_traffic_acq_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY label{having}
+    ORDER BY sessions DESC
+    LIMIT 100
+    """
+
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "by_channel": _run_query(
+            _breakdown_sql("default_channel_group", "(other)"), params=params, max_rows=100,
+        ),
+        "by_source": _run_query(
+            _breakdown_sql("source", "(direct)"), params=params, max_rows=100,
+        ),
+        "by_campaign": _run_query(
+            _breakdown_sql("campaign", "(not set)", drop_placeholders=True),
+            params=params, max_rows=100,
+        ),
     }
 
 
