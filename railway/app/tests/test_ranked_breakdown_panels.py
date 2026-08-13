@@ -111,6 +111,26 @@ class AcquisitionBreakdownDemoTests(unittest.TestCase):
 class RankedPanelGatingTests(unittest.TestCase):
     """Clients must not receive the preview markup at all -- not hidden, absent."""
 
+    def setUp(self) -> None:
+        # render_sidebar loads the per-client theme from Postgres. Other tests in
+        # the suite patch web_users.enabled to True without a DATABASE_URL, which
+        # sends that lookup at a database that isn't there -- so whether this
+        # renders at all depends on test order. The gate under test is pure
+        # markup, so stub the theme out.
+        #
+        # Patched through base_layout's own reference rather than by importing
+        # dashboard_theme here: the suite ends up with two module objects for
+        # these (the app dir is importable under more than one path), and only
+        # the copy base_layout holds is the one that actually runs.
+        from dashboard.renderers import base_layout
+
+        self._theme_mod = base_layout.dashboard_theme
+        self._orig_loader = self._theme_mod.load_client_theme
+        self._theme_mod.load_client_theme = lambda slug: dict(self._theme_mod.DEFAULT_THEME)
+
+    def tearDown(self) -> None:
+        self._theme_mod.load_client_theme = self._orig_loader
+
     @staticmethod
     def _render(is_admin: bool) -> str:
         from dashboard.renderers.bigquery_dashboard_renderer import (
@@ -126,8 +146,17 @@ class RankedPanelGatingTests(unittest.TestCase):
         html = self._render(True)
         self.assertIn('id="rankedPanels"', html)
         self.assertEqual(html.count('class="rk-panel"'), 2)
-        # Three tabs per panel.
-        self.assertEqual(html.count('class="rk-tab"'), 6)
+        # Three acquisition tabs + four page tabs.
+        self.assertEqual(html.count('class="rk-tab"'), 7)
+
+    def test_converting_tab_is_present_and_reads_key_events(self) -> None:
+        html = self._render(True)
+        self.assertIn('data-key="convert"', html)
+        # It must recompute against the key-event selector rather than trusting
+        # the server's key_events column, or it would contradict the Pages table.
+        self.assertIn("applyPageEvents(pagesTopRows", html)
+        # ...and re-render whenever that selection changes.
+        self.assertIn("rkState.pg.page=1; renderRankedPages();", html)
 
     def test_client_gets_no_panel_markup(self) -> None:
         html = self._render(False)
