@@ -3,8 +3,10 @@
 Every other agency-wide view answers *per client* questions ("is Nixon pacing
 its budget"). This one answers the question a client asks on a QBR call — "is a
 2.1% search CTR good for a company like us?" — by bucketing accounts with the
-industry tag from ``client_industries`` and reporting the distribution of each
-metric inside the bucket.
+industry tags from ``client_industries`` and reporting the distribution of each
+metric inside the bucket. An account can carry several tags (a clinical-workflow
+SaaS vendor is both health and software); it then appears in each of those
+buckets, and once in the agency-wide row.
 
 Three deliberate choices, because a benchmark that lies is worse than no
 benchmark:
@@ -413,7 +415,7 @@ def _summarize(values: list[float]) -> dict[str, Any] | None:
 
 def compute_benchmarks(
     records: list[dict[str, Any]],
-    industries: dict[str, str],
+    industries: dict[str, Any],
     *,
     platform: str = "all",
 ) -> dict[str, Any]:
@@ -421,9 +423,13 @@ def compute_benchmarks(
     drive it with hand-built records.
 
     ``records`` come from :func:`collect_client_metrics`, ``industries`` is
-    ``{slug: industry_key}`` from the registry. Clients without a tag land in
-    the agency-wide row only; that gap is reported as ``coverage`` so the page
-    can nudge someone to finish tagging rather than silently under-report.
+    ``{slug: keys}`` from the registry — one key or several, since an account
+    that straddles two markets is tagged with both. A multi-tagged client
+    contributes to **every** bucket it carries (that is the point: it really is a
+    peer of both books) but only once to the agency-wide row and once to the
+    coverage count. Clients without a tag land in the agency-wide row only; that
+    gap is reported as ``coverage`` so the page can nudge someone to finish
+    tagging rather than silently under-report.
     """
     per_client: list[dict[str, Any]] = []
     buckets: dict[str, list[dict[str, float | None]]] = {}
@@ -433,16 +439,20 @@ def compute_benchmarks(
     for record in sorted(records, key=lambda r: (r["label"].lower(), r["client_slug"])):
         slug = record["client_slug"]
         values = _client_values(record, platform=platform)
-        industry = client_industries.normalize(industries.get(slug))
+        keys = client_industries.normalize_many(industries.get(slug))
         per_client.append({
             "client_slug": slug,
             "label": record["label"],
-            "industry": industry,
-            "industry_label": client_industries.label_for(industry),
+            "industries": list(keys),
+            "industry_labels": list(client_industries.labels_for(keys)),
+            # The first key and the joined labels, for anything that wants one
+            # value rather than the set (chips, one-line summaries).
+            "industry": keys[0] if keys else None,
+            "industry_label": client_industries.label_list(keys),
             "metrics": {k: (round(v, 4) if v is not None else None) for k, v in values.items()},
         })
         everything.append(values)
-        if industry:
+        for industry in keys:
             buckets.setdefault(industry, []).append(values)
             bucket_members.setdefault(industry, []).append(slug)
 
@@ -467,7 +477,7 @@ def compute_benchmarks(
         if key in buckets
     ]
 
-    tagged = sum(1 for c in per_client if c["industry"])
+    tagged = sum(1 for c in per_client if c["industries"])
     return {
         "industries": industry_rows,
         "agency": {
@@ -542,7 +552,7 @@ def build_agency_benchmarks(
             records = list(ex.map(_work, clients_cfg))
 
     try:
-        industries = dashboard_registry.industry_map()
+        industries = dashboard_registry.industries_map()
     except Exception:
         LOGGER.exception("Benchmarks: industry map read failed")
         industries = {}

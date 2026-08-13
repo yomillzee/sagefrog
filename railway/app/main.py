@@ -2551,6 +2551,19 @@ def admin_docs(request: Request):
     return HTMLResponse(render_docs_page(user_email=user.email))
 
 
+@app.get("/admin/changelog", include_in_schema=False, response_class=HTMLResponse)
+def admin_changelog(request: Request):
+    """Admin-only "What's New": every user-visible portal change, newest first."""
+    user = web_auth.get_current_user(request)
+    if not user:
+        return web_auth.redirect_to_login(request, next_path="/admin/changelog")
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    from dashboard.renderers.changelog_renderer import render_changelog_page
+
+    return HTMLResponse(render_changelog_page(user_email=user.email))
+
+
 @app.post("/admin/gcp-credentials", include_in_schema=False)
 async def admin_set_gcp_credentials(
     request: Request,
@@ -3089,22 +3102,28 @@ def admin_rename_dashboard(
 def admin_set_dashboard_industry(
     client_slug: str,
     request: Request,
+    industries: list[str] = Form(default=[]),
     industry: str = Form(""),
     user: web_users.WebUser = Depends(web_auth.require_admin),
 ):
-    """Tag an account with an industry bucket (or clear it with an empty value).
+    """Tag an account with its industry buckets (or clear them by ticking none).
+
+    An account can sit in several buckets — a clinical-workflow SaaS vendor is
+    both health and software — so the form posts one ``industries`` value per
+    ticked box. ``industry`` is still accepted for the old single-select form
+    (and for anything scripted against it); the two are merged, not ranked.
 
     Purely descriptive metadata — it changes nothing about the client's own
-    dashboard; it only decides which bucket the account contributes to on
+    dashboard; it only decides which buckets the account contributes to on
     /admin/benchmarks. Any admin can set it.
     """
     import client_industries
 
     slug = (client_slug or "").strip().lower()
     ctx = audit_log.request_context(request)
-    key = client_industries.normalize(industry)
+    keys = client_industries.normalize_many([*industries, industry])
     try:
-        dashboard_registry.set_industry(slug, key)
+        dashboard_registry.set_industries(slug, keys)
     except Exception as exc:
         return RedirectResponse(
             url=f"/admin/clients?err=Could+not+set+industry:+{quote(str(exc)[:120])}",
@@ -3113,10 +3132,10 @@ def admin_set_dashboard_industry(
     audit_log.record(
         action="dashboard.industry_set",
         actor_email=user.email,
-        detail={"client_slug": slug, "industry": key},
+        detail={"client_slug": slug, "industries": list(keys)},
         **ctx,
     )
-    label = client_industries.label_for(key) if key else "Unassigned"
+    label = client_industries.label_list(keys)
     return RedirectResponse(
         url=f"/admin/clients?msg=Industry+set+to+{quote(label)}", status_code=303
     )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -54,9 +55,11 @@ SCHEMA_SQL_STATEMENTS = [
     """
     ALTER TABLE dashboard_clients ADD COLUMN IF NOT EXISTS logo TEXT
     """,
-    # Industry bucket (a client_industries key, or NULL for untagged). Kept as a
-    # plain TEXT key rather than an enum/lookup table so the taxonomy can be
-    # reworded in code without a migration; unknown keys read as "Unassigned".
+    # Industry buckets: a comma-separated list of client_industries keys, or
+    # NULL for untagged. Kept as plain TEXT rather than an enum/lookup table so
+    # the taxonomy can be reworded in code without a migration; unknown keys read
+    # as "Unassigned". Single-key rows written before multi-select shipped are
+    # already valid one-element lists, so there is nothing to backfill.
     """
     ALTER TABLE dashboard_clients ADD COLUMN IF NOT EXISTS industry TEXT
     """,
@@ -71,7 +74,19 @@ class DashboardClientRow:
     created_at: str | None = None
     created_by: str | None = None
     logo: str | None = None
-    industry: str | None = None
+    # Every industry the account is tagged with, in taxonomy order (empty when
+    # untagged). ``industry`` below is the first of them, kept so callers that
+    # only ever wanted "a" bucket keep working.
+    industries: tuple[str, ...] = ()
+
+    @property
+    def industry(self) -> str | None:
+        return self.industries[0] if self.industries else None
+
+    @property
+    def industry_label(self) -> str:
+        """All of the account's labels as one string, or *Unassigned*."""
+        return client_industries.label_list(self.industries)
 
 
 def _get_db_url() -> str | None:
@@ -189,7 +204,9 @@ def list_clients() -> list[DashboardClientRow]:
                 created_at=created.isoformat() if created else None,
                 created_by=str(row[4]).strip() if row[4] else None,
                 logo=str(row[5]) if len(row) > 5 and row[5] is not None else None,
-                industry=client_industries.normalize(row[6] if len(row) > 6 else None),
+                industries=client_industries.normalize_many(
+                    row[6] if len(row) > 6 else None
+                ),
             )
         )
     return out
@@ -209,31 +226,40 @@ def set_logo(client_slug: str, logo: str | None) -> bool:
         return cur.rowcount > 0
 
 
-def set_industry(client_slug: str, industry: str | None) -> bool:
-    """Tag (or untag, with None/"") a client with a client_industries key.
+def set_industries(
+    client_slug: str, industries: str | Iterable[str | None] | None
+) -> bool:
+    """Tag (or untag, with None/""/[]) a client with client_industries keys.
 
-    An unrecognized key clears the tag rather than raising — the taxonomy lives
-    in code, so a key retired from the list should degrade to "Unassigned"
-    instead of wedging the account row.
+    Takes one key, a list of keys (what the admin checkboxes post), or the
+    comma-separated storage form. Unrecognized keys are dropped rather than
+    raising — the taxonomy lives in code, so a key retired from the list should
+    degrade to "Unassigned" instead of wedging the account row.
     """
     if not enabled():
         return False
     slug = normalize_slug(client_slug)
-    key = client_industries.normalize(industry)
+    value = client_industries.serialize(industries)
     ensure_schema(seed_defaults=False)
     with db.connection() as conn:
         cur = conn.execute(
             "UPDATE dashboard_clients SET industry = %s WHERE client_slug = %s",
-            (key, slug),
+            (value, slug),
         )
         return cur.rowcount > 0
 
 
-def industry_map() -> dict[str, str]:
-    """{client_slug: industry_key} for every *tagged* client — one query.
+def set_industry(client_slug: str, industry: str | None) -> bool:
+    """Single-key alias for :func:`set_industries` (one industry replaces all)."""
+    return set_industries(client_slug, industry)
+
+
+def industries_map() -> dict[str, tuple[str, ...]]:
+    """{client_slug: (industry_key, …)} for every *tagged* client — one query.
 
     The Benchmarks rollup joins this onto its per-client metrics by slug, so it
-    never needs a per-client registry read. Untagged clients are simply absent.
+    never needs a per-client registry read. Untagged clients — and clients whose
+    only stored keys have since been retired — are simply absent.
     """
     if not enabled():
         return {}
@@ -242,11 +268,11 @@ def industry_map() -> dict[str, str]:
         rows = conn.execute(
             "SELECT client_slug, industry FROM dashboard_clients WHERE industry IS NOT NULL"
         ).fetchall()
-    out: dict[str, str] = {}
+    out: dict[str, tuple[str, ...]] = {}
     for row in rows:
-        key = client_industries.normalize(row[1])
-        if key:
-            out[str(row[0])] = key
+        keys = client_industries.normalize_many(row[1])
+        if keys:
+            out[str(row[0])] = keys
     return out
 
 
@@ -277,7 +303,7 @@ def get_client(client_slug: str) -> DashboardClientRow | None:
         source=str(row[2] or "admin"),
         created_at=created.isoformat() if created else None,
         created_by=str(row[4]).strip() if row[4] else None,
-        industry=client_industries.normalize(row[5] if len(row) > 5 else None),
+        industries=client_industries.normalize_many(row[5] if len(row) > 5 else None),
     )
 
 

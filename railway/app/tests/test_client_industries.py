@@ -76,5 +76,81 @@ class NormalizeTests(unittest.TestCase):
         self.assertFalse(client_industries.is_valid("nope"))
 
 
+class MultiIndustryTests(unittest.TestCase):
+    """An account can straddle two markets, so a tag is a set of keys."""
+
+    def test_stored_string_parses_back_to_its_keys(self):
+        self.assertEqual(
+            client_industries.normalize_many(
+                "healthcare_life_sciences,technology_software"
+            ),
+            ("healthcare_life_sciences", "technology_software"),
+        )
+
+    def test_a_list_of_form_values_parses_the_same_way(self):
+        self.assertEqual(
+            client_industries.normalize_many(
+                ["technology_software", " Healthcare_Life_Sciences "]
+            ),
+            ("healthcare_life_sciences", "technology_software"),
+        )
+
+    def test_order_is_the_taxonomy_s_not_the_input_s(self):
+        # So a tag renders identically however the boxes were ticked, and the
+        # stored value does not churn between saves.
+        forward = client_industries.normalize_many(["aec", "other"])
+        backward = client_industries.normalize_many(["other", "aec"])
+        self.assertEqual(forward, backward)
+        self.assertEqual(forward, ("aec", "other"))
+
+    def test_duplicates_and_unknowns_drop_out_without_taking_siblings(self):
+        self.assertEqual(
+            client_industries.normalize_many(["aec", "aec", "widgets", ""]), ("aec",)
+        )
+
+    def test_empty_inputs_are_an_empty_tag(self):
+        for raw in (None, "", "   ", [], [""], ["widgets"], ","):
+            self.assertEqual(client_industries.normalize_many(raw), (), raw)
+
+    def test_serialize_round_trips_through_normalize_many(self):
+        keys = ("healthcare_life_sciences", "technology_software")
+        stored = client_industries.serialize(keys)
+        self.assertEqual(stored, "healthcare_life_sciences,technology_software")
+        self.assertEqual(client_industries.normalize_many(stored), keys)
+
+    def test_serialize_of_nothing_is_none_not_empty_string(self):
+        # Untagged rows must stay SQL-NULL — the coverage count and the
+        # "WHERE industry IS NOT NULL" read both depend on it.
+        for raw in (None, "", [], ["widgets"]):
+            self.assertIsNone(client_industries.serialize(raw), raw)
+
+    def test_a_single_key_written_before_multi_select_still_reads(self):
+        self.assertEqual(
+            client_industries.normalize_many("industrial_manufacturing"),
+            ("industrial_manufacturing",),
+        )
+
+    def test_label_list_joins_labels_and_falls_back_to_unassigned(self):
+        self.assertEqual(
+            client_industries.label_list(["technology_software", "healthcare_life_sciences"]),
+            "Health & Life Sciences · Technology & Software",
+        )
+        self.assertEqual(
+            client_industries.label_list([]), client_industries.UNASSIGNED_LABEL
+        )
+
+    def test_labels_for_is_empty_when_untagged(self):
+        self.assertEqual(client_industries.labels_for(None), ())
+        self.assertEqual(
+            client_industries.labels_for("other"), ("Other",)
+        )
+
+    def test_separator_is_not_usable_inside_a_key(self):
+        # The storage format is comma-joined; a key containing the separator
+        # would be unparseable on the way back out.
+        for key in client_industries.keys():
+            self.assertNotIn(client_industries.SEPARATOR, key)
+
+
 if __name__ == "__main__":
     unittest.main()

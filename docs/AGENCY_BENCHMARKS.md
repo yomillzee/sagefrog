@@ -1,16 +1,17 @@
 # Agency Benchmarks (industry averages)
 
-Every account carries one **industry tag**. The admin **Benchmarks** page
-(`/admin/benchmarks`) uses those tags to answer the question that comes up on
-every QBR call — *"is a 2.1% search CTR good for a company like us?"* — by
+Every account carries one or more **industry tags**. The admin **Benchmarks**
+page (`/admin/benchmarks`) uses those tags to answer the question that comes up
+on every QBR call — *"is a 2.1% search CTR good for a company like us?"* — by
 showing the distribution of each metric inside an industry bucket, next to the
 agency-wide baseline.
 
 ## Tagging an account
 
-Admin → **Accounts** → the ⋮ menu on any card → **Industry…** → pick a bucket →
-Save. The tag shows as a chip on the account card, and the "Filter accounts…"
-box searches it, so typing `manufacturing` shows that book.
+Admin → **Accounts** → the ⋮ menu on any card → **Industry…** → tick every
+bucket that fits → Save. Each tag shows as a chip on the account card, and the
+"Filter accounts…" box searches all of them, so typing `manufacturing` shows
+that book.
 
 The tag is descriptive metadata only. It changes nothing on the client's own
 dashboard; its sole consumer is the Benchmarks rollup.
@@ -18,6 +19,26 @@ dashboard; its sole consumer is the Benchmarks rollup.
 Accounts with no tag read as **Unassigned**. They still count toward the "All
 clients" row, but they are in no industry bucket — so the page reports how many
 are still untagged, and links back to Accounts to finish the job.
+
+### More than one industry
+
+Plenty of B2B accounts genuinely straddle two markets — a clinical-workflow SaaS
+vendor is *both* Health & Life Sciences and Technology & Software — and forcing a
+single pick made one of those benchmarks wrong. So a tag is a set:
+
+- A multi-tagged account appears in **every** bucket it carries, and its
+  expanded row is labelled *"also in …"* so the repeat reads as intentional
+  rather than as a double-count.
+- It counts **once** in the "All clients" baseline and once toward tagging
+  coverage — appearing in two buckets must not let one account vote twice in the
+  baseline it is measured against.
+- Tag what the client *is*, not everything it touches. Two buckets is the common
+  case; tagging one account into five makes five benchmarks less true.
+
+Storage is a comma-separated list of keys in the same `dashboard_clients.industry`
+column, so an account tagged before multi-select shipped is already a valid
+one-element list — there was nothing to migrate. `client_industries.normalize_many`
+/ `serialize` are the only things that know that format.
 
 ## The buckets
 
@@ -41,8 +62,10 @@ migration, no renderer change. Two rules:
 
 - **Never rename a key**, only its label. The key is what sits in Postgres
   (`dashboard_clients.industry`); renaming one orphans every row using it. (An
-  orphaned key degrades to "Unassigned" rather than erroring, but the tag is
-  lost.)
+  orphaned key drops out of the account's tag rather than erroring — and it
+  drops out on its own, without taking a valid sibling key with it — but that
+  tag is lost.)
+- **Keys can't contain a comma**, since that is what separates them in storage.
 - **Don't add a bucket that will hold one client forever.** Small buckets make
   useless benchmarks — that's what `Other` is for.
 
