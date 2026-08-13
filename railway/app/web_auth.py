@@ -1454,35 +1454,47 @@ def render_admin_page(
                 _svg_tag = ('<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
                            '<path d="M20.6 13.4 12 22l-9-9V4a1 1 0 0 1 1-1h8z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>')
 
-                # Industry tag: a chip on the row (so the roster reads as a
-                # bucketed book at a glance) plus a kebab panel to change it.
-                # The taxonomy comes from client_industries — nothing is
-                # hardcoded here, so adding a bucket needs no change to this file.
-                industry_key = getattr(row, "industry", None)
-                industry_label = client_industries.label_for(industry_key)
+                # Industry tags: a chip per bucket on the row (so the roster
+                # reads as a bucketed book at a glance) plus a kebab panel to
+                # change them. An account can sit in several buckets — plenty of
+                # B2B clients genuinely straddle two markets — so the panel is a
+                # checkbox list, not a single-choice dropdown. The taxonomy comes
+                # from client_industries; nothing is hardcoded here, so adding a
+                # bucket needs no change to this file.
+                industry_keys = tuple(getattr(row, "industries", ()) or ())
+                industry_labels = client_industries.labels_for(industry_keys)
                 industry_chip = (
-                    f'<span class="dash-industry" title="Industry — used for agency benchmarks">'
-                    f'{_esc(industry_label)}</span>'
-                    if industry_key
-                    else '<span class="dash-industry unset" title="No industry set — this account is '
-                         'left out of the per-industry benchmarks">Unassigned</span>'
+                    '<span class="dash-industries">'
+                    + (
+                        "".join(
+                            f'<span class="dash-industry" title="Industry — used for agency benchmarks">'
+                            f"{_esc(name)}</span>"
+                            for name in industry_labels
+                        )
+                        if industry_keys
+                        else '<span class="dash-industry unset" title="No industry set — this account is '
+                             'left out of the per-industry benchmarks">Unassigned</span>'
+                    )
+                    + "</span>"
                 )
                 industry_options = "".join(
-                    f'<option value="{_esc(key)}"{" selected" if key == industry_key else ""}>'
-                    f"{_esc(name)}</option>"
+                    f'<label class="dash-kebab-check">'
+                    f'<input type="checkbox" name="industries" value="{_esc(key)}"'
+                    f'{" checked" if key in industry_keys else ""}>'
+                    f"<span>{_esc(name)}</span></label>"
                     for key, name in client_industries.choices()
                 )
-                unset_selected = "" if industry_key else " selected"
                 industry_panel = f"""
                 <form method="post" action="/admin/dashboards/{_esc(slug)}/industry" class="dash-kebab-panel" data-panel="industry" hidden>
                   <button type="button" class="dash-kebab-back" data-kebab-panel="menu">{_svg_back}<span>Back</span></button>
-                  <label class="dash-kebab-label">Industry</label>
-                  <select name="industry" class="dash-kebab-select" aria-label="Industry">
-                    <option value=""{unset_selected}>— Unassigned —</option>
+                  <label class="dash-kebab-label">Industries</label>
+                  <div class="dash-kebab-checks" role="group" aria-label="Industries">
                     {industry_options}
-                  </select>
-                  <p class="hint">Groups this account on the <a href="/admin/benchmarks">Benchmarks</a> page.</p>
-                  <button type="submit" class="dash-kebab-submit primary">Save industry</button>
+                  </div>
+                  <p class="hint">Pick every bucket this account belongs in — it is benchmarked
+                    against each on the <a href="/admin/benchmarks">Benchmarks</a> page.
+                    Tick none to leave it Unassigned.</p>
+                  <button type="submit" class="dash-kebab-submit primary">Save industries</button>
                 </form>"""
 
                 # Delete is destructive → super admins only; "penn" is protected.
@@ -1508,9 +1520,11 @@ def render_admin_page(
                   <button type="submit" id="{btn_id}" class="dash-kebab-submit danger" disabled>Delete dashboard</button>
                 </form>"""
 
-                # Industry joins the filter text so "Filter accounts…" doubles as
-                # "show me the manufacturing book".
-                search_key = _esc(f"{label} {slug} {industry_label}".lower())
+                # Every industry joins the filter text so "Filter accounts…"
+                # doubles as "show me the manufacturing book" — and a
+                # multi-tagged account turns up under either of its buckets.
+                search_terms = " ".join(industry_labels) or client_industries.UNASSIGNED_LABEL
+                search_key = _esc(f"{label} {slug} {search_terms}".lower())
                 dash_rows.append(f"""
         <div class="dash-row" data-search="{search_key}">
           {logo_cell}
@@ -2096,15 +2110,27 @@ def render_admin_page(
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.25; }}
     .dash-row-main:hover .dash-row-name {{ color: var(--accent); }}
     .dash-row-slug {{ font-size: .76rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-    /* Industry tag: a third line inside the card's text column, so a long
-       bucket name ellipses instead of squeezing the account name. */
-    .dash-industry {{ align-self: flex-start; max-width: 100%; margin-top: 3px; padding: 2px 8px;
+    /* Industry tags: a third line inside the card's text column, so a long
+       bucket name ellipses instead of squeezing the account name. An account can
+       carry several, so the chips wrap onto their own lines rather than pushing
+       the card wider. */
+    .dash-industries {{ display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; max-width: 100%; }}
+    .dash-industry {{ max-width: 100%; padding: 2px 8px;
       border-radius: 999px; background: #eef4fd; color: var(--accent-d); font-size: .7rem; font-weight: 700;
       letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
     .dash-industry.unset {{ background: #f1f4f8; color: var(--muted); font-weight: 600; }}
-    .dash-kebab-select {{ width: 100%; max-width: 100%; padding: 7px 8px; border-radius: 8px;
-      border: 1px solid var(--line); background: #fff; color: var(--navy); font: inherit; font-size: .85rem;
-      cursor: pointer; }}
+    /* Industry picker: a scrollable checkbox list inside the kebab panel — the
+       whole taxonomy has to be reachable without the popover running off-card. */
+    .dash-kebab-checks {{ display: flex; flex-direction: column; gap: 1px; max-height: 208px;
+      overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 3px; margin: 0 -3px;
+      border: 1px solid var(--line); border-radius: 9px; background: #fbfcfe; }}
+    .dash-kebab-check {{ display: flex; align-items: flex-start; gap: 8px; padding: 5px 7px; border-radius: 7px;
+      font-size: .82rem; font-weight: 600; color: var(--navy); cursor: pointer; }}
+    .dash-kebab-check:hover {{ background: #eef4fd; }}
+    .dash-kebab-check input {{ flex: 0 0 auto; width: 14px; height: 14px; margin: 2px 0 0; accent-color: var(--accent); cursor: pointer; }}
+    /* Long bucket names wrap instead of ellipsing — in a 244px popover, a
+       truncated "Architecture, Engineering & Con…" is not a choosable option. */
+    .dash-kebab-check span {{ min-width: 0; line-height: 1.3; }}
     .dash-row-actions {{ display: flex; align-items: center; gap: 6px; flex-shrink: 0; position: relative; }}
     .dash-row-note {{ font-size: .74rem; color: var(--muted); font-weight: 600; }}
     .dash-icon-btn {{ display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
@@ -2200,6 +2226,9 @@ def render_admin_page(
         width: auto; max-width: none; max-height: 72vh; overflow-y: auto;
         z-index: 130; box-shadow: 0 -6px 28px rgba(16,33,67,.22);
       }}
+      /* The bottom sheet already scrolls; a second scroller inside it for the
+         industry checklist would just be a scroll trap under a thumb. */
+      .dash-kebab-checks {{ max-height: none; overflow-y: visible; }}
 
       /* Audit log stays a table but scrolls sideways rather than crushing. */
       .audit-wrap table {{ min-width: 540px; }}

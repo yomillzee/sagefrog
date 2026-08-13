@@ -1901,6 +1901,12 @@ _ADMIN_NAV_ICONS: dict[str, str] = {
         'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
         '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>'
     ),
+    # What's new: a spark/star, i.e. "here is the new thing".
+    "changelog": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<path d="M12 3l2.3 4.9 5.2.7-3.8 3.7.9 5.3-4.6-2.5-4.6 2.5.9-5.3L4.5 8.6l5.2-.7z"/></svg>'
+    ),
     # Benchmarks: bar-chart columns, i.e. one bucket compared against another.
     "benchmarks": (
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
@@ -1919,6 +1925,9 @@ _ADMIN_NAV_ITEMS: tuple[tuple[str, str, str], ...] = (
     ("clients", "Accounts", "/admin/clients"),
     ("users", "Users", "/admin/users"),
     ("docs", "Docs", "/admin/docs"),
+    # "What's new" is the portal's release notes (changelog.ENTRIES) — every
+    # user-visible change, newest first, so the team hears it here first.
+    ("changelog", "What's new", "/admin/changelog"),
     # "Health" is the DuckDB-backed agency overview (formerly "HQ" / "Agency
     # Trends"). The legacy "Budget HQ" (/admin/hq) has been phased out of the
     # nav; its route still redirects there so old links keep working.

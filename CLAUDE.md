@@ -46,6 +46,38 @@ deps, run `bash .claude/hooks/session-setup.sh` once.
 Tests live in `railway/app/tests` and import renderers directly — run them from
 `railway/app` with `python -m pytest tests/<file>`.
 
+## Ship a UX change → write a patch note
+
+The portal deploys continuously and nobody watches the deploy log, so **every
+user-visible change ships with an entry in `railway/app/changelog.py`**, in the
+same change that makes it. That list is the admin **What's new** page
+(`/admin/changelog`), which is where the team finds out a page moved before a
+client asks them about it.
+
+Add one `Entry` to the **top** of `ENTRIES`:
+
+```python
+Entry(
+    date="2026-08-13",            # the day it reaches main
+    title="An account can sit in more than one industry",
+    area="Benchmarks · Accounts", # named the way the nav does
+    kind="new",                   # new | improved | fixed
+    summary="One sentence: what changed and why it is better.",
+    details=("Short specifics, one line each.",),  # optional
+)
+```
+
+- **Only user-visible change.** A new page, a control that behaves differently, a
+  metric that now means something else, a fix someone reported. Refactors,
+  dependency bumps, and internal plumbing do **not** go in.
+- **Write it for the person using the page**, not the person reading the diff —
+  no file paths, no function names, no PR numbers.
+- **One entry per shipped change**, not one per commit, and **never edit or
+  reorder an entry that has shipped** — correct it with a new one.
+
+If a change is genuinely invisible to anyone using the portal, skip the entry;
+padding the log is what makes people stop reading it.
+
 ## Google Tag Manager calls go through `gtm_quota`
 
 The GTM API allows **0.25 requests/second for the whole Google Cloud project**

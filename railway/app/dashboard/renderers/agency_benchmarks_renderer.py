@@ -8,7 +8,9 @@ One metric is on screen at a time — picked from the registry the service ships
 in the payload — and the table is industries × distribution (clients, median,
 mean, range). Expanding an industry lists its accounts with each one's own value
 and its gap to that industry's median, which is the number anyone actually acts
-on ("Nixon's CTR is 0.6pt under its peers").
+on ("Nixon's CTR is 0.6pt under its peers"). An account tagged with more than one
+industry appears under each of them, labelled "also in …" so the repeat reads as
+intentional rather than as a double-count.
 
 Two honesty affordances are load-bearing rather than decorative: every row shows
 the ``n`` behind it and flags thin samples, and the coverage note names how many
@@ -80,6 +82,11 @@ _BENCH_CSS = """
     .mem-name { color:var(--navy); font-weight:600; text-decoration:none; font-size:.86rem;
       overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .mem-name:hover { text-decoration:underline; }
+    .mem-left { display:flex; align-items:center; gap:9px; min-width:0; }
+    /* An account tagged with several industries shows up in each of their rows;
+       this names the other buckets so that is legible rather than surprising. */
+    .also { flex:0 0 auto; font-size:.7rem; font-weight:700; color:var(--muted);
+      background:#eef2f7; border-radius:999px; padding:2px 8px; white-space:nowrap; }
     .mem-right { display:flex; align-items:center; gap:12px; flex:0 0 auto; }
     .mem-val { font-variant-numeric:tabular-nums; font-weight:700; }
     .delta { font-size:.76rem; font-weight:800; font-variant-numeric:tabular-nums; }
@@ -200,6 +207,19 @@ def render_agency_benchmarks_page(*, user_email: str) -> str:
         + `<span class="mbar"><span style="width:${w}%"></span></span></div>`;
     }
 
+    // Accounts can carry more than one industry, so the same client legitimately
+    // appears under each of them. Naming the other buckets inline keeps that from
+    // reading as a double-count, and is skipped in the "All clients" row where
+    // every account would carry one.
+    function alsoIn(client, bucketKey) {
+      const keys = client.industries || [];
+      if (bucketKey === '__all__' || keys.length < 2) return '';
+      const labels = (client.industry_labels || []).filter((_l, i) => keys[i] !== bucketKey);
+      if (!labels.length) return '';
+      return `<span class="also" title="Also benchmarked in ${esc(labels.join(', '))}">`
+        + `also in ${esc(labels.join(' · '))}</span>`;
+    }
+
     function memberRows(bucket, def) {
       const base = bucket.metrics[metricKey] ? bucket.metrics[metricKey].median : null;
       const slugs = new Set(bucket.clients || []);
@@ -217,7 +237,10 @@ def render_agency_benchmarks_page(*, user_email: str) -> str:
         const v = c.metrics[metricKey];
         const valTxt = v == null ? '<span class="muted">no data</span>' : fmt(v, def.format);
         return `<div class="mem">`
+          + `<span class="mem-left">`
           + `<a class="mem-name" href="/dashboard/${encodeURIComponent(c.client_slug)}">${esc(c.label)}</a>`
+          + alsoIn(c, bucket.key)
+          + `</span>`
           + `<span class="mem-right"><span class="mem-val">${valTxt}</span>${deltaHtml(v, base, def)}</span></div>`;
       }).join('');
     }

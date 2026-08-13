@@ -225,12 +225,78 @@ class RollupTests(unittest.TestCase):
         self.assertEqual(out["agency"]["metrics"]["ctr"]["n"], 2)
         self.assertEqual(out["coverage"], {"total": 2, "tagged": 1, "untagged": 1})
 
+    def test_multi_tagged_client_lands_in_every_bucket_it_carries(self):
+        # A clinical-workflow SaaS vendor really is a peer of both books, so it
+        # belongs in both benchmarks rather than being forced into one.
+        records = [
+            _record("a", "A", _google(100, 100_000, 2_000)),   # 2% CTR, both buckets
+            _record("b", "B", _google(100, 100_000, 4_000)),   # 4% CTR, health only
+        ]
+        industries = {
+            "a": ("healthcare_life_sciences", "technology_software"),
+            "b": "healthcare_life_sciences",
+        }
+        out = compute_benchmarks(records, industries, platform="google")
+        by_key = {b["key"]: b for b in out["industries"]}
+
+        self.assertEqual(set(by_key), {"healthcare_life_sciences", "technology_software"})
+        self.assertEqual(by_key["healthcare_life_sciences"]["clients"], ["a", "b"])
+        self.assertEqual(by_key["technology_software"]["clients"], ["a"])
+        self.assertAlmostEqual(
+            by_key["healthcare_life_sciences"]["metrics"]["ctr"]["median"], 3.0
+        )
+        self.assertAlmostEqual(
+            by_key["technology_software"]["metrics"]["ctr"]["median"], 2.0
+        )
+
+    def test_multi_tagged_client_counts_once_agency_wide_and_once_for_coverage(self):
+        # Appearing in two buckets must not let one account vote twice in the
+        # baseline it is being compared against.
+        records = [_record("a", "A", _google(100, 100_000, 2_000))]
+        out = compute_benchmarks(
+            records,
+            {"a": ["healthcare_life_sciences", "technology_software"]},
+            platform="google",
+        )
+        self.assertEqual(out["agency"]["metrics"]["ctr"]["n"], 1)
+        self.assertEqual(out["agency"]["clients"], ["a"])
+        self.assertEqual(out["coverage"], {"total": 1, "tagged": 1, "untagged": 1 - 1})
+
+    def test_per_client_row_lists_every_industry_it_carries(self):
+        records = [_record("a", "A", _google(100, 100_000, 2_000))]
+        out = compute_benchmarks(
+            records,
+            {"a": "technology_software,healthcare_life_sciences"},
+            platform="google",
+        )
+        client = out["clients"][0]
+        self.assertEqual(
+            client["industries"], ["healthcare_life_sciences", "technology_software"]
+        )
+        self.assertEqual(
+            client["industry_labels"], ["Health & Life Sciences", "Technology & Software"]
+        )
+        self.assertEqual(
+            client["industry_label"], "Health & Life Sciences · Technology & Software"
+        )
+        # The singular field stays populated for anything wanting just one.
+        self.assertEqual(client["industry"], "healthcare_life_sciences")
+
+    def test_one_retired_key_does_not_drop_its_valid_sibling(self):
+        records = [_record("a", "A", _google(100, 100_000, 2_000))]
+        out = compute_benchmarks(
+            records, {"a": ["retired_bucket", "aec"]}, platform="google"
+        )
+        self.assertEqual([b["key"] for b in out["industries"]], ["aec"])
+        self.assertEqual(out["coverage"]["tagged"], 1)
+
     def test_unknown_industry_key_reads_as_untagged(self):
         records = [_record("a", "A", _google(100, 100_000, 1_000))]
         out = compute_benchmarks(records, {"a": "retired_bucket"}, platform="google")
         self.assertEqual(out["industries"], [])
         self.assertEqual(out["coverage"]["untagged"], 1)
         self.assertIsNone(out["clients"][0]["industry"])
+        self.assertEqual(out["clients"][0]["industries"], [])
         self.assertEqual(out["clients"][0]["industry_label"], "Unassigned")
 
     def test_buckets_follow_taxonomy_order_not_insertion_order(self):

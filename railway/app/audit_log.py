@@ -54,7 +54,7 @@ _ACTION_LABELS = {
     "dashboard.created": "Created dashboard",
     "dashboard.deleted": "Deleted dashboard",
     "dashboard.sections_saved": "Saved dashboard sections",
-    "dashboard.industry_set": "Set dashboard industry",
+    "dashboard.industry_set": "Set dashboard industries",
     "dev_note.created": "Created dev note",
     "dev_note.updated": "Updated dev note",
     "dev_note.deleted": "Deleted dev note",
@@ -210,6 +210,20 @@ def format_detail(event: dict[str, Any]) -> str:
             parts.append(str(name))
         if isinstance(slugs, list):
             parts.append(f"dashboards={', '.join(slugs) if slugs else 'none'}")
+    elif action == "dashboard.industry_set":
+        # An account can carry several buckets; the log reads as a list rather
+        # than as Python's repr of one.
+        slug = detail.get("client_slug")
+        keys = detail.get("industries")
+        if keys is None and detail.get("industry"):  # pre-multi-select events
+            keys = [detail["industry"]]
+        if slug:
+            parts.append(f"client={slug}")
+        parts.append(
+            f"industries={', '.join(keys) if keys else 'none'}"
+            if isinstance(keys, list)
+            else "industries=none"
+        )
     elif action == "dashboard.config_saved":
         slug = detail.get("client_slug")
         if slug:
