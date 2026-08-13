@@ -541,6 +541,92 @@ def compute_agency_budget(
     }
 
 
+def overview_fetch_bounds(today: date) -> tuple[date, date, date, date]:
+    """(spend_start, spend_end, sessions_start, sessions_end) — the BigQuery
+    read windows every agency-wide view shares.
+
+    Exported (rather than inlined in build_agency_overview) so the Benchmarks
+    rollup can fetch over *exactly* these windows and therefore hit the very
+    same ``{slug}.trends.summary`` / ``{slug}.hq.sessions_daily`` cache entries.
+    A one-day drift here would silently double the agency's BigQuery bill, so
+    the two pages must agree on the bounds by construction, not by convention.
+
+    The spend window is the widest any view needs: month-to-date, the
+    week-over-week prior window, and the KPI filter's 30-day reach, whichever
+    starts earliest. Sessions trail 30 days ending *yesterday* (platform syncs
+    lag a day, so today would read as a false dip).
+    """
+    month_start = today.replace(day=1)
+    _, _, prior_lo, _ = _window_bounds(today)
+    spend_start = min(month_start, prior_lo, today - timedelta(days=_KPI_RANGE_DAYS))
+    sessions_end = today - timedelta(days=1)
+    sessions_start = sessions_end - timedelta(days=_SESSIONS_TRAILING_DAYS - 1)
+    return spend_start, today, sessions_start, sessions_end
+
+
+def cached_client_summary(
+    *,
+    slug: str,
+    project_id: str,
+    dataset_id: str,
+    start: date,
+    end: date,
+) -> dict[str, Any]:
+    """One client's paid-media summary payload (``marketing_service.fetch_summary``),
+    read through the shared ``{slug}.trends.summary`` cache.
+
+    The whole response is cached, not just the fields this page happens to use,
+    so a second consumer (Benchmarks needs impressions and clicks; the trends
+    rollup only needs spend) reads the richer columns for free off a warm entry.
+    """
+    payload = {"start": start.isoformat(), "end": end.isoformat()}
+    hit = db_cache.get_cached(f"{slug}.trends.summary", payload)
+    if hit is not None:
+        return hit.response_json or {}
+
+    with marketing_service.route(
+        client_key=slug, project_id=project_id, mart_dataset_id=dataset_id
+    ):
+        result = marketing_service.fetch_summary(start_date=start, end_date=end)
+    try:
+        db_cache.put_cached(
+            f"{slug}.trends.summary", payload, response_json=result,
+            row_count=0, ttl_seconds=_CLIENT_TTL_SECONDS,
+        )
+    except Exception:
+        pass
+    return result or {}
+
+
+def cached_client_sessions(
+    *,
+    slug: str,
+    project_id: str,
+    dataset_id: str,
+    start: date,
+    end: date,
+) -> dict[str, Any]:
+    """One client's daily GA4 sessions payload, read through HQ's
+    ``{slug}.hq.sessions_daily`` cache so every agency view shares one read."""
+    payload = {"start": start.isoformat(), "end": end.isoformat()}
+    hit = db_cache.get_cached(f"{slug}.hq.sessions_daily", payload)
+    if hit is not None:
+        return hit.response_json or {}
+
+    with marketing_service.route(
+        client_key=slug, project_id=project_id, mart_dataset_id=dataset_id
+    ):
+        result = marketing_service.fetch_sessions_daily(start_date=start, end_date=end)
+    try:
+        db_cache.put_cached(
+            f"{slug}.hq.sessions_daily", payload, response_json=result,
+            row_count=0, ttl_seconds=_CLIENT_TTL_SECONDS,
+        )
+    except Exception:
+        pass
+    return result or {}
+
+
 def _client_sessions_rows(
     *,
     slug: str,
@@ -551,24 +637,9 @@ def _client_sessions_rows(
 ) -> list[tuple[str, date, int]]:
     """One client's daily GA4 sessions, cached under HQ's key so the two share
     a warm read. Returns (client_slug, metric_date, sessions) for DuckDB."""
-    payload = {"start": start.isoformat(), "end": end.isoformat()}
-
-    def _fetch() -> dict[str, Any]:
-        with marketing_service.route(
-            client_key=slug, project_id=project_id, mart_dataset_id=dataset_id
-        ):
-            return marketing_service.fetch_sessions_daily(start_date=start, end_date=end)
-
-    hit = db_cache.get_cached(f"{slug}.hq.sessions_daily", payload)
-    result = hit.response_json if hit is not None else _fetch()
-    if hit is None:
-        try:
-            db_cache.put_cached(
-                f"{slug}.hq.sessions_daily", payload, response_json=result,
-                row_count=0, ttl_seconds=_CLIENT_TTL_SECONDS,
-            )
-        except Exception:
-            pass
+    result = cached_client_sessions(
+        slug=slug, project_id=project_id, dataset_id=dataset_id, start=start, end=end
+    )
 
     rows: list[tuple[str, date, int]] = []
     for r in (result or {}).get("daily") or []:
@@ -608,24 +679,9 @@ def _client_daily_rows(
                      Google Ads conversions / ROAS KPIs cost no extra BigQuery
                      reads — they ride the summary we already pull.
     """
-    payload = {"start": start.isoformat(), "end": end.isoformat()}
-
-    def _fetch() -> dict[str, Any]:
-        with marketing_service.route(
-            client_key=slug, project_id=project_id, mart_dataset_id=dataset_id
-        ):
-            return marketing_service.fetch_summary(start_date=start, end_date=end)
-
-    hit = db_cache.get_cached(f"{slug}.trends.summary", payload)
-    result = hit.response_json if hit is not None else _fetch()
-    if hit is None:
-        try:
-            db_cache.put_cached(
-                f"{slug}.trends.summary", payload, response_json=result,
-                row_count=0, ttl_seconds=_CLIENT_TTL_SECONDS,
-            )
-        except Exception:
-            pass
+    result = cached_client_summary(
+        slug=slug, project_id=project_id, dataset_id=dataset_id, start=start, end=end
+    )
 
     rows: list[tuple[str, str, date, float]] = []
     paid_kpi: dict[str, dict[str, float]] = {}
@@ -717,18 +773,13 @@ def build_agency_overview(
     if kpi_range not in KPI_RANGES:
         kpi_range = "month"
     _, _, today = mtd_calendar_bounds()
-    month_start = today.replace(day=1)
-    _, _, prior_lo, _ = _window_bounds(today)
     kpi_start, kpi_end, kpi_window_days, kpi_window_label = _kpi_window_bounds(
         today, kpi_range, include_today=include_today
     )
-    # Widest window any view needs: MTD spend from month_start, the week-over-week
-    # prior window from prior_lo, and the KPI filter's earliest reach (the last
-    # 30 days ending yesterday, i.e. today-30) — whichever is earliest. Fetching a
-    # fixed span keeps the per-client summary cache shared across KPI ranges.
-    spend_start = min(month_start, prior_lo, today - timedelta(days=_KPI_RANGE_DAYS))
-    sessions_end = today - timedelta(days=1)
-    sessions_start = sessions_end - timedelta(days=_SESSIONS_TRAILING_DAYS - 1)
+    # Fixed fetch windows shared with the Benchmarks page (see
+    # overview_fetch_bounds) — wide enough for every KPI range, so switching the
+    # range never triggers a fresh paid-media read.
+    spend_start, _spend_end, sessions_start, sessions_end = overview_fetch_bounds(today)
 
     cache_key = {
         "today": today.isoformat(),

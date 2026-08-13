@@ -2187,6 +2187,37 @@ def admin_agency_trends_data(
     return build_agency_overview(kpi_range=kpi_range, include_today=include_today)
 
 
+@app.get("/admin/benchmarks", include_in_schema=False, response_class=HTMLResponse)
+def admin_benchmarks(request: Request):
+    """Admin-only 'Benchmarks': agency averages for each metric, bucketed by the
+    industry tag on each account."""
+    user = web_auth.get_current_user(request)
+    if not user:
+        return web_auth.redirect_to_login(request, next_path="/admin/benchmarks")
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    from dashboard.renderers.agency_benchmarks_renderer import render_agency_benchmarks_page
+
+    return HTMLResponse(render_agency_benchmarks_page(user_email=user.email))
+
+
+@app.get("/admin/benchmarks/data", include_in_schema=False)
+def admin_benchmarks_data(
+    window: str = "month",
+    platform: str = "all",
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+) -> dict:
+    """JSON feed for the Benchmarks page: per-industry distributions of every
+    registered metric, plus each client's own value.
+
+    ``window`` (month | last_30d) and ``platform`` (all | google | linkedin | …)
+    scope the aggregation. Both read the Health page's warm per-client caches, so
+    a refresh normally costs no BigQuery."""
+    from dashboard.services.agency_benchmarks_service import build_agency_benchmarks
+
+    return build_agency_benchmarks(window=window, platform=platform)
+
+
 @app.get("/admin/client-hours", include_in_schema=False, response_class=HTMLResponse)
 def admin_client_hours(request: Request):
     """Admin-only 'Client Hours': a Harvest burn-up chart (hours vs monthly goal)
@@ -3051,6 +3082,43 @@ def admin_rename_dashboard(
     return RedirectResponse(
         url=f"/admin/clients?msg=Dashboard+renamed+to+{quote(renamed.label)}",
         status_code=303,
+    )
+
+
+@app.post("/admin/dashboards/{client_slug}/industry", include_in_schema=False)
+def admin_set_dashboard_industry(
+    client_slug: str,
+    request: Request,
+    industry: str = Form(""),
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    """Tag an account with an industry bucket (or clear it with an empty value).
+
+    Purely descriptive metadata — it changes nothing about the client's own
+    dashboard; it only decides which bucket the account contributes to on
+    /admin/benchmarks. Any admin can set it.
+    """
+    import client_industries
+
+    slug = (client_slug or "").strip().lower()
+    ctx = audit_log.request_context(request)
+    key = client_industries.normalize(industry)
+    try:
+        dashboard_registry.set_industry(slug, key)
+    except Exception as exc:
+        return RedirectResponse(
+            url=f"/admin/clients?err=Could+not+set+industry:+{quote(str(exc)[:120])}",
+            status_code=303,
+        )
+    audit_log.record(
+        action="dashboard.industry_set",
+        actor_email=user.email,
+        detail={"client_slug": slug, "industry": key},
+        **ctx,
+    )
+    label = client_industries.label_for(key) if key else "Unassigned"
+    return RedirectResponse(
+        url=f"/admin/clients?msg=Industry+set+to+{quote(label)}", status_code=303
     )
 
 

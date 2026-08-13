@@ -1876,6 +1876,13 @@ _ADMIN_NAV_ICONS: dict[str, str] = {
         'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
         '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>'
     ),
+    # Benchmarks: bar-chart columns, i.e. one bucket compared against another.
+    "benchmarks": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<line x1="6" y1="20" x2="6" y2="13"/><line x1="12" y1="20" x2="12" y2="5"/>'
+        '<line x1="18" y1="20" x2="18" y2="10"/><line x1="3" y1="20" x2="21" y2="20"/></svg>'
+    ),
 }
 
 _ADMIN_NAV_ITEMS: tuple[tuple[str, str, str], ...] = (
@@ -1891,6 +1898,9 @@ _ADMIN_NAV_ITEMS: tuple[tuple[str, str, str], ...] = (
     # Trends"). The legacy "Budget HQ" (/admin/hq) has been phased out of the
     # nav; its route still redirects there so old links keep working.
     ("trends", "Health", "/admin/agency-trends"),
+    # "Benchmarks" is the agency-averages view: every metric distributed across
+    # the industry tag each account carries (see client_industries).
+    ("benchmarks", "Benchmarks", "/admin/benchmarks"),
     # "Hours" is the Harvest burn-up view (hours logged vs monthly goal for
     # every client this month).
     ("hours", "Hours", "/admin/client-hours"),

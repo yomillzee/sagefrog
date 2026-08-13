@@ -124,6 +124,50 @@ def _is_table_not_found(exc: Exception) -> bool:
     return "not found" in msg and "table" in msg
 
 
+def fetch_latest_followers(client_slug: str, *, lookback_days: int = 45) -> int | None:
+    """The client's most recent lifetime LinkedIn follower count, or None.
+
+    A one-row read of ``follower_daily`` for callers that want the headline
+    number without paying for :func:`build_report`'s posts / page / demographics
+    scans — the agency Benchmarks rollup does this once per client.
+
+    Returns None (never raises) when organic isn't configured, the table hasn't
+    been synced, or no day in the lookback carries a non-zero lifetime total —
+    all of which mean "no follower benchmark for this client", not an error. The
+    lookback is generous because the lifetime total is only written on days the
+    sync ran.
+    """
+    project, dataset, creds = _resolve_routing(client_slug)
+    if not project:
+        return None
+    start = date.today() - timedelta(days=max(1, int(lookback_days)))
+    try:
+        rows = bigquery_service.run_query(
+            f"""
+            SELECT total_followers
+            FROM `{project}.{dataset}.{_FOLLOWER_TABLE}`
+            WHERE metric_date >= DATE '{start.isoformat()}'
+              AND total_followers > 0
+            ORDER BY metric_date DESC
+            LIMIT 1
+            """,
+            project_id=project,
+            credentials_env=creds,
+            max_rows=1,
+        )
+    except Exception as exc:
+        if not _is_table_not_found(exc):
+            _log.warning("organic follower total read failed [%s]: %s", client_slug, exc)
+        return None
+    if not rows:
+        return None
+    try:
+        total = int(rows[0].get("total_followers") or 0)
+    except (TypeError, ValueError):
+        return None
+    return total or None
+
+
 def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
     """Build the organic report for the last ``days`` days."""
     project, dataset, creds = _resolve_routing(client_slug)

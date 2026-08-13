@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
+import client_industries
 import db
 
 import web_users
@@ -53,6 +54,12 @@ SCHEMA_SQL_STATEMENTS = [
     """
     ALTER TABLE dashboard_clients ADD COLUMN IF NOT EXISTS logo TEXT
     """,
+    # Industry bucket (a client_industries key, or NULL for untagged). Kept as a
+    # plain TEXT key rather than an enum/lookup table so the taxonomy can be
+    # reworded in code without a migration; unknown keys read as "Unassigned".
+    """
+    ALTER TABLE dashboard_clients ADD COLUMN IF NOT EXISTS industry TEXT
+    """,
 ]
 
 
@@ -64,6 +71,7 @@ class DashboardClientRow:
     created_at: str | None = None
     created_by: str | None = None
     logo: str | None = None
+    industry: str | None = None
 
 
 def _get_db_url() -> str | None:
@@ -165,7 +173,7 @@ def list_clients() -> list[DashboardClientRow]:
     with db.connection() as conn:
         rows = conn.execute(
             """
-            SELECT client_slug, label, source, created_at, created_by, logo
+            SELECT client_slug, label, source, created_at, created_by, logo, industry
             FROM dashboard_clients
             ORDER BY label ASC, client_slug ASC
             """
@@ -181,6 +189,7 @@ def list_clients() -> list[DashboardClientRow]:
                 created_at=created.isoformat() if created else None,
                 created_by=str(row[4]).strip() if row[4] else None,
                 logo=str(row[5]) if len(row) > 5 and row[5] is not None else None,
+                industry=client_industries.normalize(row[6] if len(row) > 6 else None),
             )
         )
     return out
@@ -200,6 +209,47 @@ def set_logo(client_slug: str, logo: str | None) -> bool:
         return cur.rowcount > 0
 
 
+def set_industry(client_slug: str, industry: str | None) -> bool:
+    """Tag (or untag, with None/"") a client with a client_industries key.
+
+    An unrecognized key clears the tag rather than raising — the taxonomy lives
+    in code, so a key retired from the list should degrade to "Unassigned"
+    instead of wedging the account row.
+    """
+    if not enabled():
+        return False
+    slug = normalize_slug(client_slug)
+    key = client_industries.normalize(industry)
+    ensure_schema(seed_defaults=False)
+    with db.connection() as conn:
+        cur = conn.execute(
+            "UPDATE dashboard_clients SET industry = %s WHERE client_slug = %s",
+            (key, slug),
+        )
+        return cur.rowcount > 0
+
+
+def industry_map() -> dict[str, str]:
+    """{client_slug: industry_key} for every *tagged* client — one query.
+
+    The Benchmarks rollup joins this onto its per-client metrics by slug, so it
+    never needs a per-client registry read. Untagged clients are simply absent.
+    """
+    if not enabled():
+        return {}
+    ensure_schema(seed_defaults=False)
+    with db.connection() as conn:
+        rows = conn.execute(
+            "SELECT client_slug, industry FROM dashboard_clients WHERE industry IS NOT NULL"
+        ).fetchall()
+    out: dict[str, str] = {}
+    for row in rows:
+        key = client_industries.normalize(row[1])
+        if key:
+            out[str(row[0])] = key
+    return out
+
+
 def list_slugs() -> list[str]:
     return [row.client_slug for row in list_clients()]
 
@@ -212,7 +262,7 @@ def get_client(client_slug: str) -> DashboardClientRow | None:
     with db.connection() as conn:
         row = conn.execute(
             """
-            SELECT client_slug, label, source, created_at, created_by
+            SELECT client_slug, label, source, created_at, created_by, industry
             FROM dashboard_clients
             WHERE client_slug = %s
             """,
@@ -227,6 +277,7 @@ def get_client(client_slug: str) -> DashboardClientRow | None:
         source=str(row[2] or "admin"),
         created_at=created.isoformat() if created else None,
         created_by=str(row[4]).strip() if row[4] else None,
+        industry=client_industries.normalize(row[5] if len(row) > 5 else None),
     )
 
 
