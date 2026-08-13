@@ -108,6 +108,44 @@ class QuarterPresetsTest(unittest.TestCase):
         self.assertEqual(offered - set(cdc.DATE_RANGE_PRESETS), set())
 
 
+class CustomRangeTest(unittest.TestCase):
+    def test_picker_offers_a_custom_range_row_and_form(self):
+        html = _render()
+        self.assertIn('id="rangeCustomOpen"', html)
+        self.assertIn("Custom range", html)
+        self.assertIn('<input type="date" id="rangeCustomStart">', html)
+        self.assertIn('<input type="date" id="rangeCustomEnd">', html)
+        self.assertIn('id="rangeCustomApply"', html)
+
+    def test_custom_row_is_not_offered_as_a_savable_preset(self):
+        """It carries no data-preset, so it can't reach the default-range API
+        (which only accepts the named presets) via "Make default"."""
+        html = _render()
+        self.assertNotIn('data-preset="custom"', html)
+        self.assertNotIn("custom", cdc.DATE_RANGE_PRESETS)
+        self.assertIn("chk.disabled = name === 'custom';", html)
+
+    def test_custom_range_sets_the_window_and_its_comparison_period(self):
+        html = _render()
+        self.assertIn("function applyCustomRange(startIso, endIso)", html)
+        # Same-length window immediately before the picked one, so every
+        # "vs previous" figure keeps working on a hand-picked range.
+        self.assertIn("const days=Math.round((e-s)/86400000)+1;", html)
+        self.assertIn("resolveCompare();", html)
+        self.assertIn("syncRangeUI('custom');", html)
+
+    def test_custom_dates_are_parsed_as_local_not_utc(self):
+        """new Date('2026-08-01') is UTC midnight -- west of Greenwich that is
+        July 31 locally, which would shift the whole window by a day."""
+        html = _render()
+        self.assertIn("function parseIsoDate(iso)", html)
+        self.assertIn("new Date(p[0], p[1]-1, p[2])", html)
+
+    def test_toggle_label_spells_out_a_custom_window(self):
+        html = _render()
+        self.assertIn("if (name === 'custom') lbl.textContent =", html)
+
+
 class ComparePickerTest(unittest.TestCase):
     def test_picker_offers_both_modes_and_defaults_to_previous_period(self):
         html = _render()
