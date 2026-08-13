@@ -1008,14 +1008,14 @@ def render_bigquery_dashboard_page(
 
     panel_website = f"""
       <section class="ov-panel">
-        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><div class="chips seg" id="ovSessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="analytics"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><span class="status" id="ovSessionsStatus"></span><div class="chips seg" id="ovSessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="analytics"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovSessionsTrend"></canvas></div></div>
         <div class="cmp-legend" id="ovSessionsLegend"></div>
       </section>"""
 
     panel_ai = f"""
       <section class="ov-panel">
-        <div class="sec-head"><h2>AI traffic</h2><div class="ov-actions"><div class="chips seg" id="ovAiGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="ai_traffic"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="sec-head"><h2>AI traffic</h2><div class="ov-actions"><span class="status" id="ovAiStatus"></span><div class="chips seg" id="ovAiGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="ai_traffic"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovAiTrend"></canvas></div></div>
         <div class="cmp-legend" id="ovAiLegend"></div>
       </section>"""
@@ -4797,41 +4797,73 @@ def render_bigquery_dashboard_page(
       const body=top.map(r=>`<tr><td class="left" title="${{esc(r.query)}}"><span>${{esc(r.query)}}</span></td><td>${{count(r.clicks)}}</td><td>${{gscPos(r.avg_position)}}</td><td>${{gscDelta(r.delta_position)}}</td></tr>`).join('');
       el.innerHTML=head+`<tbody>${{body}}</tbody>`;
     }}
-    async function loadOverviewHome() {{
-      setStatus('ovSessionsStatus','Loading…'); setStatus('ovAiStatus','Loading…'); setStatus('ovGscStatus','Loading…');
-      document.getElementById('ovGscBrandedLeaders').innerHTML = skelTable(3,4);
-      document.getElementById('ovGscTargetLeaders').innerHTML = skelTable(3,4);
+    // Website analytics + AI traffic trends. Every other Overview card is
+    // optional — connector-gated in Python, or hidden by an admin — so this
+    // loader must never depend on one of them being in the DOM. It used to run
+    // in the same function as the Search Console block, which meant a client
+    // without GSC (a freshly connected GA4-only client, say) hit a TypeError on
+    // the missing #ovGscBrandedLeaders before either chart drew, leaving both
+    // panels blank.
+    async function loadOverviewTrends() {{
+      setStatus('ovSessionsStatus','Loading…'); setStatus('ovAiStatus','Loading…');
       const hasPrev=!!compareStart;
-      const [traffic, trafficPrev, aiCur, aiPrev, branded, target] = await Promise.all([
-        getJson(withDatesRange(TRAFFIC_ACQ_API, currentStart, currentEnd)).catch(()=>({{daily:[]}})),
-        hasPrev ? getJson(withDatesRange(TRAFFIC_ACQ_API, compareStart, compareEnd)).catch(()=>null) : Promise.resolve(null),
-        getJson(withDatesRange(AI_TRAFFIC_DAILY_API, currentStart, currentEnd)).then(d=>d.rows||[]).catch(()=>[]),
-        hasPrev ? getJson(withDatesRange(AI_TRAFFIC_DAILY_API, compareStart, compareEnd)).then(d=>d.rows||[]).catch(()=>[]) : Promise.resolve([]),
-        fetchKeywordMatches(gscBrandedRoots, gscBrandedExclude),
-        fetchKeywordMatches(gscTargetKeywords, gscTargetExclude),
-      ]);
-      // Website analytics — sessions, current vs previous.
-      ovSessionsCache={{ cur: ovSumByDate(traffic.daily||[],'sessions'), prev: ovSumByDate((trafficPrev&&trafficPrev.daily)||[],'sessions') }};
-      ovRenderSessions();
-      const sTot=ovSessionsCache.cur.reduce((s,d)=>s+num(d.value),0);
-      setStatus('ovSessionsStatus', sTot?count(sTot)+' sessions':'No data');
-      // AI traffic — total AI sessions, current vs previous.
-      ovAiCache={{ cur: ovSumByDate(aiCur,'sessions'), prev: ovSumByDate(aiPrev,'sessions') }};
-      ovRenderAi();
-      const aTot=ovAiCache.cur.reduce((s,d)=>s+num(d.value),0);
-      setStatus('ovAiStatus', aTot?count(aTot)+' sessions':'No AI traffic');
-      // Search Console — branded & target keyword leaderboard (top by rank) plus
-      // the weekly avg-position trend over time.
-      renderKwLeaderboard('ovGscBrandedLeaders', branded.rows, gscBrandedRoots.length);
-      renderKwLeaderboard('ovGscTargetLeaders', target.rows, gscTargetKeywords.length);
-      drawKeywordTrend('ovGscBrandedTrend', branded.weekly, 'avg_position', '#1d6fd0', true);
-      drawKeywordTrend('ovGscTargetTrend', target.weekly, 'avg_position', '#7c3aed', true);
-      const noteFor=(roots, weekly)=> !roots.length ? 'Set keywords on the Search Console tab.'
-        : (!(weekly||[]).length ? 'No matching queries in this range.' : '');
-      const bn=document.getElementById('ovGscBrandedNote'); if(bn) bn.textContent=noteFor(gscBrandedRoots, branded.weekly);
-      const tn=document.getElementById('ovGscTargetNote'); if(tn) tn.textContent=noteFor(gscTargetKeywords, target.weekly);
-      setStatus('ovGscStatus', (!gscBrandedRoots.length && !gscTargetKeywords.length) ? ''
-        : `${{gscBrandedRoots.length}} branded · ${{gscTargetKeywords.length}} target`);
+      try {{
+        const [traffic, trafficPrev, aiCur, aiPrev] = await Promise.all([
+          getJson(withDatesRange(TRAFFIC_ACQ_API, currentStart, currentEnd)).catch(()=>({{daily:[]}})),
+          hasPrev ? getJson(withDatesRange(TRAFFIC_ACQ_API, compareStart, compareEnd)).catch(()=>null) : Promise.resolve(null),
+          getJson(withDatesRange(AI_TRAFFIC_DAILY_API, currentStart, currentEnd)).then(d=>d.rows||[]).catch(()=>[]),
+          hasPrev ? getJson(withDatesRange(AI_TRAFFIC_DAILY_API, compareStart, compareEnd)).then(d=>d.rows||[]).catch(()=>[]) : Promise.resolve([]),
+        ]);
+        // Website analytics — sessions, current vs previous.
+        ovSessionsCache={{ cur: ovSumByDate(traffic.daily||[],'sessions'), prev: ovSumByDate((trafficPrev&&trafficPrev.daily)||[],'sessions') }};
+        ovRenderSessions();
+        const sTot=ovSessionsCache.cur.reduce((s,d)=>s+num(d.value),0);
+        setStatus('ovSessionsStatus', sTot?count(sTot)+' sessions':'No data for this range yet.');
+        // AI traffic — total AI sessions, current vs previous.
+        ovAiCache={{ cur: ovSumByDate(aiCur,'sessions'), prev: ovSumByDate(aiPrev,'sessions') }};
+        ovRenderAi();
+        const aTot=ovAiCache.cur.reduce((s,d)=>s+num(d.value),0);
+        setStatus('ovAiStatus', aTot?count(aTot)+' sessions':'No AI traffic in this range.');
+      }} catch(err) {{
+        const msg=err.message||String(err);
+        setStatus('ovSessionsStatus', msg, true); setStatus('ovAiStatus', msg, true);
+      }}
+    }}
+    // Search Console — branded & target keyword leaderboard (top by rank) plus
+    // the weekly avg-position trend over time. The whole card is dropped when
+    // GSC isn't connected (and can be hidden by an admin), so bail out unless
+    // it's actually on the page.
+    async function loadOverviewGsc() {{
+      const brandedEl=document.getElementById('ovGscBrandedLeaders');
+      const targetEl=document.getElementById('ovGscTargetLeaders');
+      if (!brandedEl && !targetEl) return;
+      setStatus('ovGscStatus','Loading…');
+      if (brandedEl) brandedEl.innerHTML = skelTable(3,4);
+      if (targetEl) targetEl.innerHTML = skelTable(3,4);
+      try {{
+        const [branded, target] = await Promise.all([
+          fetchKeywordMatches(gscBrandedRoots, gscBrandedExclude),
+          fetchKeywordMatches(gscTargetKeywords, gscTargetExclude),
+        ]);
+        renderKwLeaderboard('ovGscBrandedLeaders', branded.rows, gscBrandedRoots.length);
+        renderKwLeaderboard('ovGscTargetLeaders', target.rows, gscTargetKeywords.length);
+        drawKeywordTrend('ovGscBrandedTrend', branded.weekly, 'avg_position', '#1d6fd0', true);
+        drawKeywordTrend('ovGscTargetTrend', target.weekly, 'avg_position', '#7c3aed', true);
+        const noteFor=(roots, weekly)=> !roots.length ? 'Set keywords on the Search Console tab.'
+          : (!(weekly||[]).length ? 'No matching queries in this range.' : '');
+        const bn=document.getElementById('ovGscBrandedNote'); if(bn) bn.textContent=noteFor(gscBrandedRoots, branded.weekly);
+        const tn=document.getElementById('ovGscTargetNote'); if(tn) tn.textContent=noteFor(gscTargetKeywords, target.weekly);
+        setStatus('ovGscStatus', (!gscBrandedRoots.length && !gscTargetKeywords.length) ? ''
+          : `${{gscBrandedRoots.length}} branded · ${{gscTargetKeywords.length}} target`);
+      }} catch(err) {{
+        setStatus('ovGscStatus', err.message||String(err), true);
+      }}
+    }}
+    // Each card loads on its own so one card's failure (or absence) can't blank
+    // the others.
+    function loadOverviewHome() {{
+      loadOverviewTrends();
+      loadOverviewGsc();
       // Site performance scorecard (only present when the connector is on).
       loadOverviewPagespeed();
     }}
