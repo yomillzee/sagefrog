@@ -1178,6 +1178,17 @@ def render_bigquery_dashboard_page(
     .range-opt {{ display:block; width:100%; text-align:left; border:0; background:none; border-radius:6px; padding:7px 9px; font:inherit; font-size:.82rem; font-weight:600; color:var(--navy); cursor:pointer; }}
     .range-opt:hover {{ background:#f4f8fd; }}
     .range-opt.active {{ background:#eaf2fd; color:var(--accent); }}
+    /* "Custom range…" row + the start/end form it reveals inside the panel.
+       The generic label rule (grid, uppercase caption) is exactly the stacked
+       caption-over-input layout wanted here, so only the input is retuned. */
+    .range-custom-open {{ border-top:1px solid var(--line-soft); border-radius:0 0 6px 6px; margin-top:2px; padding-top:8px; }}
+    .range-custom {{ display:grid; gap:7px; margin-top:8px; padding-top:8px; border-top:1px solid var(--line-soft); }}
+    .range-custom[hidden] {{ display:none; }}
+    .range-custom .range-custom-field {{ gap:3px; font-size:.66rem; }}
+    .range-custom input[type=date] {{ width:100%; padding:5px 7px; font-size:.78rem; }}
+    .range-custom-apply {{ justify-self:start; }}
+    .range-custom-err {{ font-size:.72rem; font-weight:600; color:var(--bad); }}
+    .range-custom-err:empty {{ display:none; }}
     /* Admin footer inside the Range dropdown (checkbox + Apply). The generic
        label rule above forces grid/uppercase, so reset to an inline checkbox. */
     .range-dd-foot {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px; padding-top:8px; border-top:1px solid var(--line-soft); }}
@@ -1727,6 +1738,13 @@ def render_bigquery_dashboard_page(
             <div class="ke-dd-panel range-dd-panel" id="rangePanel" hidden>
               <div class="ke-dd-list range-dd-list" id="rangeList" role="listbox">
                 {range_option_rows_html}
+                <button type="button" class="range-opt range-custom-open" id="rangeCustomOpen" data-custom="1" aria-expanded="false" aria-controls="rangeCustom">Custom range…</button>
+              </div>
+              <div class="range-custom" id="rangeCustom" hidden>
+                <label class="range-custom-field"><span>Start</span><input type="date" id="rangeCustomStart"></label>
+                <label class="range-custom-field"><span>End</span><input type="date" id="rangeCustomEnd"></label>
+                <button type="button" class="range-apply range-custom-apply" id="rangeCustomApply">Apply range</button>
+                <span class="range-custom-err" id="rangeCustomErr" role="alert"></span>
               </div>
               {range_default_html}
             </div>
@@ -4980,6 +4998,35 @@ def render_bigquery_dashboard_page(
       syncRangeUI(name);
       loadCurrentTab();
     }}
+    // ---- Custom range ----
+    // Parse a YYYY-MM-DD value as a *local* date. `new Date(iso)` would read it
+    // as UTC and land on the previous day west of Greenwich, which would shift
+    // every window the user picked by a day.
+    function parseIsoDate(iso) {{
+      const p=String(iso||'').split('-').map(Number);
+      if (p.length!==3 || p.some(n=>!Number.isFinite(n))) return null;
+      const d=new Date(p[0], p[1]-1, p[2]);
+      return isNaN(d.getTime()) ? null : d;
+    }}
+    // A hand-picked window. Once applied it behaves exactly like a preset: the
+    // comparison period is the same number of days immediately before it, so
+    // every "vs previous" figure on the page keeps working (and the Compare
+    // picker's "Previous year" still shifts the chosen window back 12 months).
+    // Returns an error string to show in the panel, or '' on success.
+    function applyCustomRange(startIso, endIso) {{
+      const s=parseIsoDate(startIso), e=parseIsoDate(endIso);
+      if (!s || !e) return 'Pick a start and end date.';
+      if (e<s) return 'The end date must be on or after the start date.';
+      const days=Math.round((e-s)/86400000)+1;
+      const ce=new Date(s); ce.setDate(s.getDate()-1);
+      const cs=new Date(ce); cs.setDate(ce.getDate()-(days-1));
+      currentStart=fmtDate(s); currentEnd=fmtDate(e);
+      prevPeriodStart=fmtDate(cs); prevPeriodEnd=fmtDate(ce);
+      resolveCompare();
+      syncRangeUI('custom');
+      loadCurrentTab();
+      return '';
+    }}
     // ---- Comparison period ----
     // 'prev_period' (default) or 'prev_year'. Remembered per client in this
     // browser -- it's a reading preference, not a client-wide setting.
@@ -5041,11 +5088,22 @@ def render_bigquery_dashboard_page(
     function syncRangeUI(name) {{
       currentPreset = name;
       const lbl = document.getElementById('rangeToggleLabel');
-      if (lbl && DATE_PRESET_LABELS[name]) lbl.textContent = DATE_PRESET_LABELS[name];
+      // A custom window has no preset label, so the toggle spells out the dates.
+      if (lbl) {{
+        if (name === 'custom') lbl.textContent = `${{currentStart}} – ${{currentEnd}}`;
+        else if (DATE_PRESET_LABELS[name]) lbl.textContent = DATE_PRESET_LABELS[name];
+      }}
       document.querySelectorAll('#rangeList .range-opt').forEach(o =>
-        o.classList.toggle('active', o.dataset.preset === name));
+        o.classList.toggle('active', !!o.dataset.preset && o.dataset.preset === name));
+      const customRow = document.getElementById('rangeCustomOpen');
+      if (customRow) customRow.classList.toggle('active', name === 'custom');
       const chk = document.getElementById('rangeMakeDefault');
-      if (chk) chk.checked = !!STORED_DEFAULT_PRESET && STORED_DEFAULT_PRESET === name;
+      if (chk) {{
+        chk.checked = !!STORED_DEFAULT_PRESET && STORED_DEFAULT_PRESET === name;
+        // Only presets can be a client's landing range -- a one-off window is
+        // not something the API stores, so "Make default" is off the table.
+        chk.disabled = name === 'custom';
+      }}
     }}
     (function(){{
       const dd = document.getElementById('rangeDropdown'); if (!dd) return;
@@ -5060,10 +5118,46 @@ def render_bigquery_dashboard_page(
       toggle.addEventListener('click', ()=>setOpen(panel.hidden));
       document.addEventListener('click', e=>{{ if (!dd.contains(e.target)) setOpen(false); }});
       document.addEventListener('keydown', e=>{{ if (e.key==='Escape') setOpen(false); }});
+      // Custom range: the last row in the list toggles a start/end form inside
+      // the panel instead of applying anything, so picking dates never costs a
+      // round of loaders until the user hits Apply.
+      const customRow = document.getElementById('rangeCustomOpen');
+      const customBox = document.getElementById('rangeCustom');
+      const customStart = document.getElementById('rangeCustomStart');
+      const customEnd = document.getElementById('rangeCustomEnd');
+      const customApply = document.getElementById('rangeCustomApply');
+      const customErr = document.getElementById('rangeCustomErr');
+      const setCustomOpen = (o) => {{
+        if (!customBox || !customRow) return;
+        customBox.hidden = !o;
+        customRow.setAttribute('aria-expanded', o ? 'true' : 'false');
+        if (o) {{
+          // Seed from whatever is on screen, so the form opens on the range the
+          // user is already looking at rather than empty fields.
+          if (customStart && !customStart.value) customStart.value = currentStart;
+          if (customEnd && !customEnd.value) customEnd.value = currentEnd;
+          if (customStart) customStart.focus();
+        }} else if (customErr) {{
+          customErr.textContent = '';
+        }}
+      }};
       list.addEventListener('click', e=>{{
         const opt = e.target.closest('.range-opt'); if (!opt) return;
+        if (opt.dataset.custom) {{ setCustomOpen(customBox && customBox.hidden); return; }}
+        setCustomOpen(false);
         applyPreset(opt.dataset.preset);
       }});
+      if (customApply) {{
+        const submit = () => {{
+          const err = applyCustomRange(customStart.value, customEnd.value);
+          customErr.textContent = err;
+          if (!err) {{ setCustomOpen(false); setOpen(false); }}
+        }};
+        customApply.addEventListener('click', submit);
+        [customStart, customEnd].forEach(inp => inp.addEventListener('keydown', ev=>{{
+          if (ev.key === 'Enter') {{ ev.preventDefault(); submit(); }}
+        }}));
+      }}
       // Admin footer: persist (or clear) the applied preset as the client default.
       const apply = document.getElementById('rangeApply');
       const chk = document.getElementById('rangeMakeDefault');
