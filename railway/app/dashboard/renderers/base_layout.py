@@ -480,9 +480,9 @@ def dashboard_topbar_js() -> str:
     })();
 
     // ── Desktop sidebar collapse/expand ──────────────────────────────────
-    // A discreet chevron in the sidebar head tucks the rail away; a small
-    // floating button brings it back. The state is remembered per browser, and
-    // an inline script in the sidebar markup applies it before paint (no flash).
+    // A discreet chevron at the bottom of the sidebar tucks the rail away; a
+    // small floating button brings it back. The state is remembered per browser,
+    // and an inline script in the sidebar markup applies it before paint (no flash).
     (function() {
       const shell = document.querySelector('.app-shell');
       const collapseBtn = document.getElementById('sidebarCollapse');
@@ -634,7 +634,7 @@ def dashboard_topbar_js() -> str:
     })();
 
     // ── Account profile dropdown (sidebar footer) ─────────────────────────
-    // Toggles the Settings / Sign out popover; closes on outside click or Esc.
+    // Toggles the Sign out popover; closes on outside click or Esc.
     (function() {
       const wrap = document.querySelector('.dash-profile');
       const trigger = document.getElementById('dashProfileTrigger');
@@ -1299,7 +1299,7 @@ def _person_avatar_html(*, email: str, avatar: str | None) -> str:
     )
 
 
-def _sidebar_footer_tools_html(
+def _sidebar_admin_nav_html(
     *,
     email: str | None,
     session_is_admin: bool,
@@ -1307,58 +1307,71 @@ def _sidebar_footer_tools_html(
     connectors_url: str,
     admin_context: bool = False,
 ) -> str:
-    """Sidebar footer: a profile dropdown (avatar + name) holding Settings and
-    Sign out.
+    """The "Admin" bucket at the bottom of the sidebar's section nav.
+
+    A labelled group (divider + eyebrow, matching the section nav's own rows)
+    holding **Settings** — the Admin page with Connectors, Insights, Consent
+    Health, Advanced, View As and BQ Connection across the top. It used to live
+    inside the footer's profile popover, which buried an entry point admins reach
+    constantly; here it sits in the nav where it reads as a section of the portal.
+
+    Visibility is unchanged by the move: internal users only (admins + agency-wide
+    "standard" accounts), never client-role logins, and dropped inside the admin
+    environment where the workspace switcher already carries "Admin panel". The
+    role lookup is self-sufficient (like the other sidebar helpers) so callers
+    don't thread it through, and fails closed — an unknown role only sees the
+    bucket if the session's admin flag says so. Under "view as" the email is the
+    impersonated user's, so this renders as they'd see it.
+    """
+    if admin_context:
+        return ""
+
+    role = "admin" if session_is_admin else ""
+    try:
+        import web_users
+        u = web_users.get_user_by_email(email) if (email and web_users.enabled()) else None
+        if u:
+            role = u.role
+    except Exception:
+        pass
+    if not ((session_is_admin or role in ("admin", "standard")) and role != "client"):
+        return ""
+
+    active = " active" if active_nav in _ADMIN_NAV_TO_TAB else ""
+    aria = ' aria-current="page"' if active else ""
+    return (
+        '<nav class="dash-sidebar-nav dash-sidebar-nav--admin" aria-label="Admin">'
+        '<div class="dash-sidebar-group">Admin</div>'
+        f'<a class="dash-view-btn{active}"{aria} data-nav="settings" '
+        f'href="{_esc(connectors_url)}">{_NAV_ICON_SETTINGS}<span>Settings</span></a>'
+        '</nav>'
+    )
+
+
+def _sidebar_footer_tools_html(*, email: str | None) -> str:
+    """Sidebar footer: a profile dropdown (avatar + name) holding Sign out.
 
     The trigger shows the signed-in person's avatar and name; clicking it opens a
-    small popover. **Settings** (the renamed old "Admin" button) links to the
-    Admin page — Connectors, Insights, Consent Health, Advanced, View As, BQ
-    Connection across the top — and is shown only to internal users (admin +
-    standard), never to client logins. Inside the admin environment it's dropped
-    because the workspace switcher already carries "Admin panel". **Sign out** is
-    available to every signed-in user.
+    small popover. Settings used to live in here too — it now sits in the
+    sidebar's own "Admin" bucket (see ``_sidebar_admin_nav_html``), so the popover
+    is purely account actions. **Sign out** is available to every signed-in user.
     """
     if not email:
         return ""
 
-    # Resolve the signed-in person's avatar + role so the trigger can show a real
-    # headshot and the menu can gate "Settings" by role. Self-sufficient lookup
-    # (like the other footer helpers) so callers don't have to thread it through;
-    # falls back to initials + the admin flag if the lookup is unavailable. Under
-    # "view as" the email is the impersonated user's, so this renders as they'd see
-    # it — matching the rest of the platform.
+    # Resolve the signed-in person's avatar so the trigger can show a real
+    # headshot; falls back to initials when the lookup is unavailable.
     avatar: str | None = None
-    role = "admin" if session_is_admin else ""
     try:
         import web_users
         u = web_users.get_user_by_email(email) if web_users.enabled() else None
         if u:
             avatar = u.avatar
-            role = u.role
     except Exception:
         pass
 
-    # Settings is for internal users (admins + agency-wide "standard" accounts),
-    # never client-role logins. It's also redundant inside the admin environment,
-    # so drop it there. Fail closed: an unknown role only sees Settings if the
-    # admin flag says so.
-    show_settings = (
-        (session_is_admin or role in ("admin", "standard"))
-        and role != "client"
-        and not admin_context
-    )
-
     name = _display_name_from_email(email)
     avatar_html = _person_avatar_html(email=email, avatar=avatar)
-
-    settings_item = ""
-    if show_settings:
-        settings_active = " is-active" if active_nav in _ADMIN_NAV_TO_TAB else ""
-        aria = ' aria-current="page"' if settings_active else ""
-        settings_item = (
-            f'<a class="dash-profile-item{settings_active}"{aria} role="menuitem" '
-            f'href="{_esc(connectors_url)}">{_NAV_ICON_SETTINGS}<span>Settings</span></a>'
-        )
 
     signout_item = (
         '<form method="post" action="/logout" class="dash-profile-signout">'
@@ -1384,7 +1397,6 @@ def _sidebar_footer_tools_html(
             {caret}
           </button>
           <div class="dash-profile-menu" id="dashProfileMenu" role="menu" hidden>
-            {settings_item}
             {signout_item}
           </div>
         </div>"""
@@ -1407,10 +1419,15 @@ def render_sidebar(
 ) -> str:
     """Navy drawer sidebar shared by the dashboard, settings, files, and connectors pages.
 
+    Top to bottom: the Sagefrog logo, the client (workspace) switcher directly
+    under it, the scrolling section nav with the internal-only "Admin" bucket at
+    its foot, then the footer — Files, the account dropdown, and the collapse
+    control pinned at the very bottom.
+
     ``admin_context=True`` renders the same chrome for the Admin environment: the
-    top nav is the admin menu (passed in ``view_nav_html``), the footer drops the
-    per-client Files/Connectors/Settings links, and the switcher shows "Admin
-    panel" as the current workspace.
+    top nav is the admin menu (passed in ``view_nav_html``), the per-client
+    Files/Admin entries drop out, and the switcher shows "Admin panel" as the
+    current workspace.
     """
     overview_url = _dashboard_page_url(
         client_slug=client_slug, access_key=access_key, use_session=use_session
@@ -1444,9 +1461,10 @@ def render_sidebar(
         )
 
     # Connectors + Insights (Settings) are agency-only, so they no longer live in
-    # the always-visible footer nav — they're reached via the single "Admin"
-    # button rendered by _sidebar_footer_tools_html (admin only). ``show_connectors``
-    # is kept in the signature for callers but no longer changes the footer.
+    # the always-visible footer nav — they're reached via the "Admin" bucket in
+    # the section nav, rendered by _sidebar_admin_nav_html (internal users only).
+    # ``show_connectors`` is kept in the signature for callers but no longer
+    # changes the footer.
     del show_connectors
 
     # Apply the client's saved sidebar gradient inline (as custom properties on the
@@ -1458,17 +1476,19 @@ def render_sidebar(
     _sb_to = _theme.get("sidebar_to", "#123456")
     sidebar_style = f"--sidebar-from:{_sb_from};--sidebar-to:{_sb_to}"
 
-    # Footer: a profile dropdown (avatar + name) holding Settings + Sign out.
-    # Settings (the renamed old "Admin" link) is shown to internal users only; in
-    # the admin environment it's dropped because the switcher already carries
-    # "Admin panel". Role gating lives in the helper.
-    account_html = _sidebar_footer_tools_html(
+    # "Admin" bucket under the section nav, holding Settings. Shown to internal
+    # users only; in the admin environment it's dropped because the switcher
+    # already carries "Admin panel". Role gating lives in the helper.
+    admin_nav_html = _sidebar_admin_nav_html(
         email=session_email,
         session_is_admin=session_is_admin,
         active_nav=active_nav,
         connectors_url=connectors_url,
         admin_context=admin_context,
     )
+
+    # Footer: a profile dropdown (avatar + name) holding Sign out.
+    account_html = _sidebar_footer_tools_html(email=session_email)
 
     return f"""
     <div class="dash-mobile-bar">
@@ -1487,16 +1507,21 @@ def render_sidebar(
           <span class="dash-sidebar-wordmark">Sagefrog</span>
         </a>
         <span class="dash-sidebar-beta">Beta</span>
-        <button type="button" class="dash-sidebar-collapse" id="sidebarCollapse"
-          aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">{_NAV_ICON_COLLAPSE}</button>
       </div>
-      {view_nav_html}
+      <div class="dash-sidebar-client">{client_selector}</div>
+      <div class="dash-sidebar-scroll">
+        {view_nav_html}
+        {admin_nav_html}
+      </div>
       <div class="dash-sidebar-footer">
-        <div class="dash-sidebar-client">{client_selector}</div>
         <nav class="dash-sidebar-links" aria-label="Account navigation">
           {files_btn}
         </nav>
         {account_html}
+        <div class="dash-sidebar-collapse-row">
+          <button type="button" class="dash-sidebar-collapse" id="sidebarCollapse"
+            aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">{_NAV_ICON_COLLAPSE}</button>
+        </div>
       </div>
     </aside>
     <button type="button" class="dash-sidebar-reopen" id="sidebarReopen"
@@ -2239,8 +2264,9 @@ SIDEBAR_CSS = """
       gap: 10px;
       /* Left padding pins the logo icon to the same 25px rail as the section-nav
          and footer icons below it, so the Sagefrog mark lines up with the nav
-         instead of sitting a few px to its left. */
-      padding: 20px 20px 16px 25px;
+         instead of sitting a few px to its left. The client switcher sits
+         directly beneath, so the bottom padding is tighter than the top. */
+      padding: 20px 20px 12px 25px;
       flex-shrink: 0;
     }
     .dash-sidebar-logo {
@@ -2278,15 +2304,56 @@ SIDEBAR_CSS = """
       line-height: 1;
     }
 
+    /* Client (workspace) switcher — pinned directly under the logo, above the
+       section nav. Its 12px side padding matches the nav rows' so the trigger
+       and the nav items share one left edge. */
+    .dash-sidebar-client {
+      flex-shrink: 0;
+      padding: 0 12px 10px;
+    }
+
+    /* Scroll region holding the section nav + the "Admin" bucket, so a long nav
+       scrolls as one and the footer stays pinned to the bottom of the rail. */
+    .dash-sidebar-scroll {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+    }
+
     /* Primary view nav */
     .dash-sidebar-nav {
       display: flex;
       flex-direction: column;
       gap: 3px;
       padding: 8px 12px;
-      flex: 1 1 auto;
-      overflow-y: auto;
-      min-height: 0;
+      flex: 0 0 auto;
+    }
+
+    /* The "Admin" bucket: a hairline-separated group at the foot of the nav
+       (internal users only). The divider is inset to the nav rows' left edge. */
+    .dash-sidebar-nav--admin {
+      position: relative;
+      margin-top: 6px;
+      padding-top: 12px;
+    }
+    .dash-sidebar-nav--admin::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 13px;
+      right: 13px;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.12);
+    }
+    .dash-sidebar-group {
+      padding: 0 13px 7px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: rgba(226, 236, 248, 0.52);
     }
     .dash-sidebar-nav .dash-view-btn {
       display: flex;
@@ -2413,17 +2480,16 @@ SIDEBAR_CSS = """
     .app-shell.sidebar-collapsed .dash-view-menu { display: none !important; }
     .app-shell.sidebar-collapsed .dash-sidebar-nav .dash-view-item:hover .dash-view-btn { padding-right: 13px; }
 
-    /* Footer: client selector + Files / Settings + account */
+    /* Footer: Files + account + the collapse control */
     .dash-sidebar-footer {
       margin-top: auto;
       flex-shrink: 0;
       /* 13px left so the footer items' icons land on the same 25px rail as the
          section nav (13 + the link's 12px inner padding = 25). */
-      padding: 14px 13px 16px;
+      padding: 14px 13px 12px;
       border-top: 1px solid rgba(255, 255, 255, 0.12);
       background: rgba(0, 0, 0, 0.12);
     }
-    .dash-sidebar-client { margin-bottom: 10px; }
     .dash-sidebar-client .topbar-client-switcher,
     .dash-sidebar-client .topbar-client-label {
       display: block;
@@ -2794,14 +2860,15 @@ SIDEBAR_CSS = """
     .dash-sidebar-link svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.85; }
     .dash-sidebar-link:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
     .dash-sidebar-link.active { background: rgba(255, 255, 255, 0.15); color: #fff; }
-    /* Footer: single "Admin" button (admin only) + Sign out */
+    /* Shield glyph shared by the client switcher's "Admin panel" row and the
+       Admin page's tab-strip title. */
     .dash-admin-shield { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.85; }
-    /* Footer: profile dropdown (avatar + name) holding Settings + Sign out. */
+    /* Footer: profile dropdown (avatar + name) holding Sign out. No divider of
+       its own — the footer's border-top already fences this region off, and the
+       Files link above it may be absent for some clients. */
     .dash-profile {
       position: relative;
-      margin-top: 12px;
-      padding-top: 8px;
-      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      margin-top: 10px;
     }
     .dash-profile-trigger {
       display: flex;
@@ -3082,17 +3149,22 @@ SIDEBAR_CSS = """
     .dash-bq-pill[data-state="err"] { color: #b42318; border-color: #f3c0bb; background: #fdecea; }
     .dash-bq-pill[data-state="err"]::before { background: #b42318; }
 
-    /* Desktop collapse: a discreet chevron in the sidebar head tucks the whole
-       rail away; a small floating button brings it back. The choice is persisted
-       per browser (localStorage 'sf_sidebar_collapsed'). Mobile has its own
-       hamburger drawer, so both controls are hidden there. */
+    /* Desktop collapse: a discreet chevron at the very bottom of the sidebar
+       tucks the whole rail away; a small floating button brings it back. The
+       choice is persisted per browser (localStorage 'sf_sidebar_collapsed').
+       Mobile has its own hamburger drawer, so both controls are hidden there
+       (see the max-width:900px block). */
+    .dash-sidebar-collapse-row {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 10px;
+    }
     .dash-sidebar-collapse {
       display: inline-flex;
       align-items: center;
       justify-content: center;
       width: 28px;
       height: 28px;
-      margin-left: auto;
       flex-shrink: 0;
       border: 0;
       border-radius: 8px;
@@ -3193,8 +3265,13 @@ SIDEBAR_CSS = """
         transform: translateX(-100%);
         transition: transform 0.25s ease;
       }
-      /* The brand lives in the top bar now, so drop the drawer's own logo head. */
+      /* The brand lives in the top bar now, so drop the drawer's own logo head.
+         The collapse control is desktop-only (mobile uses the hamburger), and it
+         now sits in the footer rather than the head, so hide it explicitly. */
       .dash-sidebar-head { display: none; }
+      .dash-sidebar-collapse-row { display: none; }
+      /* Give the switcher a little breathing room from the mobile top bar. */
+      .dash-sidebar-client { padding-top: 12px; }
       /* Only cast the shadow while open — docked off-canvas it bleeds onto the
          visible edge and reads as a distracting line. */
       .app-shell.sidebar-open .dash-sidebar {
