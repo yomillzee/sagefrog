@@ -55,8 +55,8 @@ _HOURS_CSS = """
       cursor:pointer; white-space:nowrap; }
     .seg-btn:hover { color:var(--navy); }
     .seg-btn.is-active { background:#fff; color:var(--navy); box-shadow:0 1px 3px rgba(10,37,64,.12); }
-    /* Pace filters: toggle chips that narrow the grid to at-risk / growth clients.
-       Colors mirror the per-card status (red=behind, amber=over pace). */
+    /* Pace filter: the toggle chip that narrows the grid to the at-risk book.
+       Color mirrors the per-card status (red = at risk). */
     .pace-filters { display:inline-flex; gap:6px; }
     .pace-chip { appearance:none; display:inline-flex; align-items:center; gap:6px;
       border:1px solid var(--border); background:#fff; color:var(--muted); border-radius:999px;
@@ -66,9 +66,7 @@ _HOURS_CSS = """
     .pace-chip:hover:not(:disabled) { border-color:#94a3b8; }
     .pace-chip:disabled { opacity:.5; cursor:default; }
     .pace-chip.risk .dot { background:#b42318; }
-    .pace-chip.grow .dot { background:#b7791f; }
     .pace-chip.risk.on { border-color:#b42318; color:#b42318; background:#fef2f2; }
-    .pace-chip.grow.on { border-color:#b7791f; color:#b7791f; background:#fffbeb; }
     .no-goal-note { align-self:center; color:var(--muted); font-size:.75rem; font-weight:600;
       font-variant-numeric:tabular-nums; cursor:default; }
     .ch-search { position:relative; display:inline-flex; align-items:center; flex:0 0 auto; }
@@ -214,6 +212,15 @@ _HOURS_CSS = """
        pill-shaped <select> (owner color when set, muted "+ Owner" affordance when
        not). Read-only: a static colored pill. --oc carries the owner's
        deterministic color. */
+    /* The at-risk explainer under the burn-up: the catch-up rate in bold, then
+       the reasons behind it. Only rendered on at-risk cards, so it doubles as
+       the card's status band — no badge needed. */
+    .risk-note { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;
+      margin-top:6px; padding:6px 9px; border-radius:8px;
+      background:rgba(180,35,24,.07); border:1px solid rgba(180,35,24,.18);
+      font-size:.76rem; line-height:1.35; }
+    .risk-note b { color:#b42318; font-weight:800; white-space:nowrap; }
+    .risk-note span { color:var(--muted); min-width:0; }
     /* Card footer: just the burn-up legend now (owner moved into the popout). */
     .card-foot { display:flex; align-items:center; justify-content:space-between;
       gap:10px; margin-top:6px; }
@@ -473,12 +480,9 @@ def _content_html(*, read_only: bool) -> str:
             <div class="more-row">
               <span class="more-label" id="chStatusLabel">Pace</span>
               <div class="pace-filters" id="chStatus" role="group" aria-labelledby="chStatusLabel">
-                <button type="button" class="pace-chip risk" data-status="behind" id="chRisk"
-                  aria-pressed="false" title="Clients projected to finish under their contracted minimum">
+                <button type="button" class="pace-chip risk" data-status="risk" id="chRisk"
+                  aria-pressed="false" title="Clients that need a real change of pace to make their retainer this month — ranked worst first">
                   <span class="dot"></span>At risk <b id="chRiskCount">0</b></button>
-                <button type="button" class="pace-chip grow" data-status="over" id="chGrow"
-                  aria-pressed="false" title="Clients projected to finish over their ceiling — growth opportunities">
-                  <span class="dot"></span>Growth <b id="chGrowCount">0</b></button>
               </div>
             </div>
             <div class="more-foot">
@@ -495,10 +499,176 @@ def _content_html(*, read_only: bool) -> str:
   </main>{modals}"""
 
 
+# ── Retainer-risk model ──────────────────────────────────────────────────────
+# Deliberately a standalone block of *pure* functions: no DOM, no CH_CONFIG, no
+# page globals. Everything it needs arrives as arguments, which is what lets
+# tests/test_client_hours_risk.py pull this exact source out of the module and
+# exercise it under node — the shipped scoring code is the tested code.
+#
+# It lives client-side (rather than being computed once on the server) because
+# the scope toggle re-selects which of a client's projects count, and the page's
+# whole design is that scope changes never re-hit Harvest.
+#
+# The model and the reasoning behind it are documented in
+# dashboard/utils/hours_risk.py, which owns the working-day calendar and the
+# thresholds this reads from ``meta.risk``. In short: a client is at risk when
+# the *extra hours per remaining working day* it needs to reach its retainer
+# floor — not its percentage shortfall — clears the burden threshold.
+_RISK_JS = r"""
+    // Fallbacks matching dashboard/utils/hours_risk.py, used only if an older
+    // cached payload arrives without a `risk` block.
+    const RISK_DEFAULTS = { burden_threshold:2.0, gap_floor:5.0, quiet_working_days:7,
+      quiet_multiplier:0.5, decel_window:5, decel_ratio:0.5,
+      min_elapsed_working_days:3, min_elapsed_fraction:0.15, ceiling_tolerance:1.03 };
+    // One-decimal hours for the reason sentences. Local to this block so it stays
+    // free-standing (the page's own `hrs` formats the same way).
+    const rHrs = v => new Intl.NumberFormat('en-US',{maximumFractionDigits:1}).format(Number(v||0));
+
+    // Working days in the month, through today, and still to come. `remaining`
+    // counts today (hours can still be logged against it), so on a working day
+    // elapsed + remaining is one more than total — the two feed different
+    // denominators and neither wants today dropped.
+    function riskCalendar(meta) {
+      const flags = (meta && meta.working_days) || [];
+      const n = (meta && meta.days_in_month) || flags.length;
+      const today = Math.max(0, Math.min(n, (meta && meta.days_elapsed) || 0));
+      let total = 0, elapsed = 0, remaining = 0;
+      for (let d = 1; d <= n; d++) {
+        const w = flags[d - 1] ? 1 : 0;
+        total += w;
+        if (d <= today) elapsed += w;
+        if (d >= today) remaining += w;
+      }
+      return { total, elapsed, remaining };
+    }
+
+    // Consecutive working days with nothing logged — the leading indicator that
+    // a client has stalled (not approving work, nobody pushing it) well before
+    // the pace math moves. Measured through *yesterday*, because today's entries
+    // are usually not in yet; any activity today clears the streak outright.
+    function quietWorkingDays(series, meta) {
+      const flags = (meta && meta.working_days) || [];
+      const today = Math.min((meta && meta.days_elapsed) || 0, series.length);
+      const loggedOn = d => (series[d - 1] || 0) - (d >= 2 ? (series[d - 2] || 0) : 0);
+      if (today >= 1 && loggedOn(today) > 0) return 0;
+      let quiet = 0;
+      for (let d = today - 1; d >= 1; d--) {
+        if (!flags[d - 1]) continue;   // weekends neither break nor extend a streak
+        if (loggedOn(d) > 0) break;
+        quiet++;
+      }
+      return quiet;
+    }
+
+    // Is the trailing window's run rate collapsing against the month so far?
+    // Context for the card, never a trigger on its own — it needs at least two
+    // full windows of history before it says anything.
+    function isDecelerating(series, meta, cfg) {
+      const flags = (meta && meta.working_days) || [];
+      const today = Math.min((meta && meta.days_elapsed) || 0, series.length);
+      const wd = [];
+      for (let d = 1; d <= today; d++) if (flags[d - 1]) wd.push(d);
+      const win = cfg.decel_window || 5;
+      if (wd.length < win * 2) return false;
+      const firstRecent = wd[wd.length - win];          // day the trailing window opens
+      const atCut = firstRecent >= 2 ? (series[firstRecent - 2] || 0) : 0;
+      const total = today >= 1 ? (series[today - 1] || 0) : 0;
+      const recent = (total - atCut) / win;
+      const earlier = atCut / (wd.length - win);
+      return earlier > 0 && recent < earlier * (cfg.decel_ratio || 0.5);
+    }
+
+    // Score one card. `series` is its cumulative *billable* hours by day-of-month
+    // for the projects the current scope selects — billable because a retainer is
+    // fulfilled with billable hours by definition, the same reasoning that keeps
+    // the agency billing summary independent of the metric toggle.
+    //
+    // Returns { level, burden, required, plan, gap, projected, quietDays, quiet,
+    //           decelerating, reasons:[{kind,text}], severity }, where level is
+    //   'risk' — won't make the retainer without a real change, or (hard ceiling)
+    //            is about to burn unbillable hours
+    //   'on'   — has a goal and no risk against it
+    //   'none' — no goal set, so it can't be paced at all
+    // `severity` is the triage sort key: hours/day of unplanned work implied.
+    function assessRisk(opts) {
+      const meta = (opts && opts.meta) || {};
+      const cfg = Object.assign({}, RISK_DEFAULTS, meta.risk || {});
+      const cal = riskCalendar(meta);
+      const series = (opts && opts.series) || [];
+      const logged = series.length ? series[series.length - 1] : 0;
+      const goalMin = (opts.goalMin != null && opts.goalMin > 0) ? Number(opts.goalMin) : null;
+      const goalMax = (opts.goalMax != null && opts.goalMax > 0) ? Number(opts.goalMax) : null;
+
+      const out = { level:'none', logged, burden:0, required:0, plan:0, gap:0,
+        projected:null, quietDays:0, quiet:false, decelerating:false,
+        reasons:[], severity:0 };
+      if (goalMin == null && goalMax == null) return out;   // unpaceable — stays uncounted
+      out.level = 'on';
+
+      out.quietDays = quietWorkingDays(series, meta);
+      out.quiet = cfg.quiet_working_days > 0 && out.quietDays >= cfg.quiet_working_days;
+      out.decelerating = isDecelerating(series, meta, cfg);
+
+      // Weekday-aware run-rate projection. Only the hard-ceiling call uses it,
+      // and only once enough of the month has elapsed to trust it.
+      const elapsedFrac = cal.total > 0 ? cal.elapsed / cal.total : 0;
+      const confident = cal.elapsed >= cfg.min_elapsed_working_days
+        && elapsedFrac >= cfg.min_elapsed_fraction;
+      if (elapsedFrac > 0) out.projected = logged / elapsedFrac;
+
+      // ── Shortfall: the extra hours/day needed to reach the retainer floor ──
+      if (goalMin != null) {
+        out.plan = goalMin / (cal.total || 1);
+        out.gap = Math.max(0, goalMin - logged);
+        if (out.gap > 0) {
+          // No working days left at all (a weekend at month end): the whole gap
+          // is owed with nowhere to put it, so it reads as a single day's load.
+          out.required = cal.remaining > 0 ? out.gap / cal.remaining : out.gap;
+          out.burden = out.required - out.plan;
+        }
+        // A client nobody has touched in over a week won't close its gap by
+        // accident, so quiet holds it to half the usual bar. Quiet corroborates
+        // rather than triggers — on its own it can't flag a small retainer that
+        // still has plenty of runway.
+        const threshold = cfg.burden_threshold * (out.quiet ? cfg.quiet_multiplier : 1);
+        if (out.gap >= cfg.gap_floor && out.burden >= threshold) {
+          out.level = 'risk';
+          out.severity = out.burden;
+          out.reasons.push({ kind:'shortfall',
+            text: `needs ${rHrs(out.required)}h/day vs ${rHrs(out.plan)}h planned` });
+        }
+      }
+
+      // ── Hard ceiling: at risk of working hours that can't be billed ────────
+      if (opts.goalHard && goalMax != null) {
+        const overNow = logged >= goalMax;
+        const overSoon = confident && out.projected != null
+          && out.projected > goalMax * cfg.ceiling_tolerance;
+        if (overNow || overSoon) {
+          const overrun = Math.max(0, (overNow ? logged : out.projected) - goalMax);
+          out.level = 'risk';
+          out.severity = Math.max(out.severity,
+            cal.remaining > 0 ? overrun / cal.remaining : overrun);
+          out.reasons.push({ kind:'ceiling', text: overNow
+            ? `past its ${rHrs(goalMax)}h cap — further hours are unbillable`
+            : `tracking ${rHrs(overrun)}h past its ${rHrs(goalMax)}h cap` });
+        }
+      }
+
+      // Corroborating context, shown only on cards that already read as at risk.
+      if (out.level === 'risk') {
+        if (out.quiet) out.reasons.push({ kind:'quiet',
+          text: `no hours in ${out.quietDays} working days` });
+        if (out.decelerating) out.reasons.push({ kind:'decel', text: 'pace falling off' });
+      }
+      return out;
+    }
+"""
+
 # The page's client-side logic. Kept identical between the admin and shared
 # views; behaviour that only applies to one is gated on ``CH_CONFIG.readOnly``.
-# ``CH_CONFIG`` (data URL + read-only flag) is injected ahead of this block by
-# ``_page_script``.
+# ``CH_CONFIG`` (data URL + read-only flag) and ``_RISK_JS`` are both injected
+# ahead of this block by ``_page_script``.
 _PAGE_JS = r"""
     const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const hrs = v => new Intl.NumberFormat('en-US',{maximumFractionDigits:1}).format(Number(v||0));
@@ -522,8 +692,8 @@ _PAGE_JS = r"""
     // total + billable series, so scope/metric/sort toggles never re-hit
     // Harvest). scope: all|retainer|project · metric: billable|nonbillable ·
     // sort: hours|alpha. Defaults: retainer work, billable hours.
-    // status: null | 'behind' | 'over' — the pace filter chips narrow the grid to
-    // just the at-risk (behind their minimum) or growth (over their ceiling) book.
+    // status: null | 'risk' — the At risk chip narrows the grid to the clients
+    // that need a real change of pace to make their retainer.
     // owner: '' = all · '__none__' = unassigned only · else a specific owner name.
     const view = { scope: 'retainer', metric: 'billable', sort: 'hours', search: '', status: null, owner: '' };
     // The subset of `view` that lives behind the "More" button — used for the
@@ -607,26 +777,32 @@ _PAGE_JS = r"""
     const totalOf  = c => { const s = seriesOf(c); return s.length ? s[s.length - 1] : 0; };
     const metricLabel = () => (view.metric === 'nonbillable' ? 'non-billable' : 'billable');
 
-    // On/off-track status by projecting the current run-rate to month end and
-    // comparing it to the goal (range, floor, or single value):
-    //   behind = projected under the floor · over = projected past the ceiling ·
-    //   on = landing inside the goal · none = no goal set (neutral blue).
+    // Card colors by risk level. There is no "over pace" state: landing above a
+    // soft goal is not a problem worth a color, and the one overrun that *does*
+    // cost money — a hard ceiling — is folded into `risk` by assessRisk.
     const STATUS = {
-      on:     { color:'#0a7f3f', fill:'rgba(10,127,63,.10)',  label:'On track' },
-      over:   { color:'#b7791f', fill:'rgba(183,121,31,.11)', label:'Over pace' },
-      behind: { color:'#b42318', fill:'rgba(180,35,24,.09)',  label:'Behind' },
-      none:   { color:'#2f6df0', fill:'rgba(47,109,240,.10)', label:'' },
+      on:   { color:'#0a7f3f', fill:'rgba(10,127,63,.10)',  label:'On track' },
+      risk: { color:'#b42318', fill:'rgba(180,35,24,.09)',  label:'At risk' },
+      none: { color:'#2f6df0', fill:'rgba(47,109,240,.10)', label:'' },
     };
-    function trackStatus(c, meta) {
-      const lo = c.goal_min, hi = c.goal_max;
-      if (lo == null && hi == null) return 'none';
-      const total = totalOf(c);
-      const frac = meta.days_in_month ? meta.days_elapsed / meta.days_in_month : 0;
-      const projected = frac > 0 ? total / frac : total;
-      if (lo != null && projected < lo * 0.95) return 'behind';
-      if (hi != null && projected > hi * 1.03) return 'over';
-      return 'on';
+    // Risk is scored on *billable* hours (a retainer is fulfilled with billable
+    // hours by definition, so the metric toggle must not move the at-risk book)
+    // for the projects the current scope selects. Memoised per render pass: every
+    // card asks for its own risk two or three times, and the chip counts sweep
+    // the whole book again.
+    let riskCache = new Map();
+    function resetRisk() { riskCache = new Map(); }
+    function riskOf(c, meta) {
+      const key = c.card_id + '|' + view.scope;
+      let r = riskCache.get(key);
+      if (!r) {
+        r = assessRisk({ series: sumSeries(projectsInScope(c), 'series_billable'),
+          goalMin: c.goal_min, goalMax: c.goal_max, goalHard: c.goal_hard, meta });
+        riskCache.set(key, r);
+      }
+      return r;
     }
+    const trackStatus = (c, meta) => riskOf(c, meta).level;
 
     // Burn-up SVG: cumulative actual hours (solid, colored by track status) vs the
     // goal pace — a straight line for a single goal, a dashed floor for an open
@@ -806,8 +982,21 @@ _PAGE_JS = r"""
       + `</div>`;
     }
 
+    // The one line that makes an at-risk card actionable: the catch-up rate, in
+    // the unit an AM can act on ("+3h/day"), plus whatever corroborates it. Only
+    // rendered on cards that read as at risk — an on-track card stays quiet.
+    function riskNote(r) {
+      if (r.level !== 'risk' || !r.reasons.length) return '';
+      const head = r.burden > 0
+        ? `+${hrs(r.burden)}h/day to recover` : 'At risk';
+      const why = r.reasons.map(x => esc(x.text)).join(' · ');
+      return `<div class="risk-note" title="${why}">`
+        + `<b>${esc(head)}</b><span>${why}</span></div>`;
+    }
+
     function card(c, meta) {
-      const stKey = trackStatus(c, meta);
+      const r = riskOf(c, meta);
+      const stKey = r.level;
       const st = STATUS[stKey] || STATUS.none;
       const kind = metricLabel();
       const goalSwatch = c.goal_hard && c.goal_max != null
@@ -831,6 +1020,7 @@ _PAGE_JS = r"""
           + `</button>`
         + `</div>`
         + `<div class="chart-wrap">${chart(c, meta)}</div>`
+        + riskNote(r)
         + `<div class="card-foot">`
           + `<div class="legend"><span><i class="actual" style="border-top-color:${st.color}"></i>Hours logged</span>`
             + goalSwatch + `</div>`
@@ -860,23 +1050,22 @@ _PAGE_JS = r"""
       if (view.scope !== 'all') clients = clients.filter(c => totalOf(c) > 0);
       return clients;
     }
-    // Tally the scoped book by pace: behind (won't hit minimum) / over (past
-    // ceiling) / no goal set. Drives the At risk · Growth chip counts + the
-    // "N no goal" flag, so blind spots (clients that can't be paced) stay visible.
+    // Tally the scoped book: at risk, and no-goal (which can't be paced at all).
+    // Drives the At risk chip count + the "N no goal" flag, so the blind spot
+    // stays visible next to the number it would change.
     function paceCounts(meta) {
-      let risk = 0, grow = 0, noGoal = 0;
+      let risk = 0, noGoal = 0;
       clientsInScope(meta).forEach(c => {
         const s = trackStatus(c, meta);
-        if (s === 'behind') risk++;
-        else if (s === 'over') grow++;
+        if (s === 'risk') risk++;
         else if (s === 'none') noGoal++;
       });
-      return { risk, grow, noGoal };
+      return { risk, noGoal };
     }
 
     function sortedClients(meta) {
       let clients = clientsInScope(meta);
-      // Pace filter (At risk / Growth chips): keep only clients at that status.
+      // At risk chip: narrow to the clients that won't make their retainer.
       if (view.status) clients = clients.filter(c => trackStatus(c, meta) === view.status);
       // Owner filter: a specific owner, or unassigned-only.
       if (view.owner === '__none__') clients = clients.filter(c => !c.owner);
@@ -888,6 +1077,12 @@ _PAGE_JS = r"""
       const q = view.search.trim().toLowerCase();
       if (q) clients = clients.filter(c =>
         `${c.name||''} ${c.client_name||''}`.toLowerCase().includes(q));
+      // With the At risk filter on, the grid is a call list: worst mountain
+      // first, measured in the unplanned hours/day each client now implies.
+      if (view.status === 'risk' && view.sort !== 'alpha') {
+        clients.sort((a, b) => riskOf(b, meta).severity - riskOf(a, meta).severity);
+        return clients;
+      }
       if (view.sort === 'alpha') {
         // Client first, then card title, so a client's separately-tracked
         // projects sort next to the client's own card.
@@ -918,13 +1113,13 @@ _PAGE_JS = r"""
       });
       return out;
     }
-    // Agency on/off-track from the pace projection vs the contracted floor/ceiling
-    // — the same run-rate method the per-client cards use, one level up.
-    function agencyStatus(projected, floor, ceil) {
-      if (!floor && !ceil) return 'none';
-      if (floor && projected < floor * 0.98) return 'behind';
-      if (ceil && projected > ceil * 1.03) return 'over';
-      return 'on';
+    // Agency on/off-track: the working-day run-rate against the summed contracted
+    // minimums. Only the floor is coloured — the book landing above its summed
+    // ceilings is good news, not a status, which is the same reason the per-card
+    // model dropped "over pace".
+    function agencyStatus(projected, floor) {
+      if (!floor) return 'none';
+      return projected < floor * 0.98 ? 'risk' : 'on';
     }
     // One full-width burn-up: cumulative billable hours (solid, status-colored) vs
     // the total contracted-minimum pace (dashed grey), with a dotted projection
@@ -1004,7 +1199,10 @@ _PAGE_JS = r"""
       const series = scopeBillableSeries(meta);
       const actual = series.length ? series[series.length - 1] : 0;
       const elapsed = meta.days_elapsed, days = meta.days_in_month;
-      const frac = days ? elapsed / days : 0;
+      // Project on working days, not calendar days: the agency logs Mon–Fri, so a
+      // calendar-day divisor reads the whole book as collapsing after a weekend.
+      const wcal = riskCalendar(meta);
+      const frac = wcal.total > 0 ? wcal.elapsed / wcal.total : 0;
       const projected = frac > 0 ? actual / frac : actual;
       const scopeLbl = view.scope === 'retainer' ? 'Retainer'
         : (view.scope === 'project' ? 'Project' : 'All work');
@@ -1015,7 +1213,7 @@ _PAGE_JS = r"""
       // still show the line but stay neutral.
       const showFloor = floor > 0 && view.scope !== 'project';
       const stKey = (showFloor && view.scope === 'retainer')
-        ? agencyStatus(projected, floor, ceil) : 'none';
+        ? agencyStatus(projected, floor) : 'none';
       const st = STATUS[stKey] || STATUS.none;
 
       const projRev = projected * STANDARD_RATE, actualRev = actual * STANDARD_RATE;
@@ -1071,21 +1269,16 @@ _PAGE_JS = r"""
       }
     }
 
-    // Refresh the At risk / Growth chip counts + the "N no goal" flag from the
-    // current scope, and reflect which chip (if any) is the active filter.
+    // Refresh the At risk chip count + the "N no goal" flag from the current
+    // scope, and reflect whether the chip is the active filter.
     function updatePaceChips(meta) {
-      const { risk, grow, noGoal } = paceCounts(meta);
+      const { risk, noGoal } = paceCounts(meta);
       const riskBtn = document.getElementById('chRisk');
-      const growBtn = document.getElementById('chGrow');
       document.getElementById('chRiskCount').textContent = risk;
-      document.getElementById('chGrowCount').textContent = grow;
-      // Keep an active chip clickable (so it can toggle off) even if its count is 0.
-      riskBtn.disabled = risk === 0 && view.status !== 'behind';
-      growBtn.disabled = grow === 0 && view.status !== 'over';
-      riskBtn.classList.toggle('on', view.status === 'behind');
-      growBtn.classList.toggle('on', view.status === 'over');
-      riskBtn.setAttribute('aria-pressed', String(view.status === 'behind'));
-      growBtn.setAttribute('aria-pressed', String(view.status === 'over'));
+      // Keep an active chip clickable (so it can toggle off) even at count 0.
+      riskBtn.disabled = risk === 0 && view.status !== 'risk';
+      riskBtn.classList.toggle('on', view.status === 'risk');
+      riskBtn.setAttribute('aria-pressed', String(view.status === 'risk'));
       const note = document.getElementById('chNoGoal');
       if (noGoal > 0) {
         note.hidden = false;
@@ -1097,6 +1290,10 @@ _PAGE_JS = r"""
 
     function render() {
       const meta = chData;
+      // Risk is memoised only within a render pass — goal edits and tag changes
+      // mutate chData in place and re-render, so anything cached across passes
+      // would be scored against the old goal.
+      resetRisk();
       const sub = document.getElementById('chSub');
       const fresh = meta.refreshed_at ? ` · updated ${agoTxt(meta.refreshed_at)}` : '';
       updatePaceChips(meta);
@@ -1131,11 +1328,10 @@ _PAGE_JS = r"""
         let msg;
         if (meta.error) msg = '';
         else if (view.status) {
-          // Pace filter active but nothing matches (possibly narrowed further by search).
-          const lbl = view.status === 'behind' ? 'at-risk' : 'growth-opportunity';
+          // At risk filter active but nothing matches (possibly narrowed further by search).
           msg = q
-            ? `<div class="empty">No ${lbl} clients match “${esc(q)}”.</div>`
-            : `<div class="empty">No ${lbl} clients in this view.</div>`;
+            ? `<div class="empty">No at-risk clients match “${esc(q)}”.</div>`
+            : `<div class="empty">No at-risk clients in this view.</div>`;
         } else if (view.owner) {
           const who = view.owner === '__none__'
             ? 'unassigned clients' : `clients owned by ${esc(view.owner)}`;
@@ -1246,7 +1442,7 @@ _PAGE_JS = r"""
       applyBillingPref();
       savePrefs();
     });
-    // Pace filter chips: toggle the At risk / Growth filter (re-click clears it).
+    // Pace filter chip: toggle the At risk filter (re-click clears it).
     document.getElementById('chStatus').addEventListener('click', (ev) => {
       const b = ev.target.closest('.pace-chip'); if (!b || b.disabled) return;
       const s = b.dataset.status;
@@ -1618,7 +1814,7 @@ def _page_script(
     admin = "" if read_only else _PAGE_JS_ADMIN
     return (
         "<script>\n    " + config + "\n"
-        + _PAGE_JS + admin
+        + _RISK_JS + _PAGE_JS + admin
         + "\n    load(false);\n  </script>"
     )
 
