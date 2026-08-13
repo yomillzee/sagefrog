@@ -30,6 +30,7 @@ import db
 import db_cache
 import oauth_flows
 import oauth_store
+from dashboard.utils import hours_risk
 
 _log = logging.getLogger(__name__)
 
@@ -408,7 +409,8 @@ def build_client_hours_overview(
     Shape (JSON-serialisable):
       {
         connected, account_id, account_name,
-        month_label, year, month, days_in_month, days_elapsed, as_of,
+        month_label, year, month, days_in_month, days_elapsed,
+        working_days, risk, as_of,
         refreshed_at, cache_ttl_seconds,
         clients: [ { card_id, harvest_client_id, harvest_project_id|None,
                      name, client_name, goal_min, goal_max, goal_label,
@@ -429,6 +431,12 @@ def build_client_hours_overview(
         "month": today.month,
         "days_in_month": days_in_month,
         "days_elapsed": days_elapsed,
+        # Mon–Fri mask for the month + the retainer-risk thresholds. The page
+        # paces every client against working days rather than calendar days (a
+        # long weekend is not a client going dark) and scores at-risk clients
+        # against these; see dashboard.utils.hours_risk.
+        "working_days": hours_risk.working_day_flags(today.year, today.month),
+        "risk": hours_risk.risk_config(),
         "as_of": today.isoformat(),
         "refreshed_at": None,
         "cache_ttl_seconds": _cache_ttl_seconds(),
