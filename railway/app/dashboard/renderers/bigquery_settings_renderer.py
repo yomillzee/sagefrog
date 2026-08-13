@@ -1,10 +1,11 @@
 """Focused settings page for a BigQuery-mart client.
 
 Only the controls needed to set up the account and push/pull data from
-BigQuery: the BigQuery connection (routing + service-account credential),
-account mapping (account IDs), and data controls (refresh / backfill / mart
-freshness). Reuses the test page's sidebar + helpers so it stays import-light
-and previewable offline via .preview/gen.py.
+BigQuery: account mapping (account IDs) and data controls (refresh / backfill /
+mart freshness). The BigQuery destination itself is owned by the Connectors
+page, which sets the project + datasets and can verify access. Reuses the test
+page's sidebar + helpers so it stays import-light and previewable offline via
+.preview/gen.py.
 """
 
 from __future__ import annotations
@@ -36,7 +37,6 @@ def render_bigquery_settings_page(
     use_session: bool = False,
     session_email: str | None = None,
     session_is_admin: bool = False,
-    routing: dict | None = None,
     account_ids: dict | None = None,
     flash: str | None = None,
     flash_error: str | None = None,
@@ -60,7 +60,6 @@ def render_bigquery_settings_page(
     onboarding button for generic clients, whose full refresh already syncs
     every connected platform.
     """
-    routing = routing or {}
     account_ids = account_ids or {}
 
     admin_class = "is-admin" if session_is_admin else ""

@@ -81,7 +81,7 @@ class SidebarConsistencyTests(unittest.TestCase):
                 client_slug="test", api_client_key="test", label="Test Co", **kw),
             "settings": render_bigquery_settings_page(
                 client_slug="test", api_client_key="test", label="Test Co",
-                routing={"project": "p"}, show_linkedin_backfill=False, **kw),
+                show_linkedin_backfill=False, **kw),
             "connectors": render_client_shell_page(
                 client_slug="test", label="Test Co", active_nav="connectors",
                 page_title="C", page_subtitle="", content_html="x",
@@ -166,7 +166,7 @@ class SidebarConsistencyTests(unittest.TestCase):
         pages = self._render_all()
         expected = [
             "Connectors", "Insights", "Consent Health",
-            "Advanced", "View As", "BQ Connection",
+            "Advanced", "View As",
         ]
         for name in ("connectors", "settings"):
             self.assertEqual(

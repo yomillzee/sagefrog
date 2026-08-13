@@ -17,14 +17,6 @@ from dashboard.services import kpi_registry
 router = APIRouter(include_in_schema=False)
 
 
-def _bq_nixon_routing(db_cfg) -> dict:
-    """BigQuery routing context for the Nixon-style settings page: which GCP
-    project + marts dataset this client's dashboard reads from."""
-    project = (getattr(db_cfg, "gcp_project_id", None) or "").strip() or "—"
-    marts = (getattr(db_cfg, "bq_mart_dataset_id", None) or "").strip() or "marketing_marts"
-    return {"project": project, "ga4_dataset": "—", "marts_dataset": marts}
-
-
 def _render_bq_nixon_settings(slug: str, db_cfg, *, flash, flash_err, html_kw) -> HTMLResponse:
     from dashboard.renderers.bigquery_settings_renderer import render_bigquery_settings_page
 
@@ -34,7 +26,6 @@ def _render_bq_nixon_settings(slug: str, db_cfg, *, flash, flash_err, html_kw) -
             client_slug=slug,
             api_client_key=slug,
             label=label,
-            routing=_bq_nixon_routing(db_cfg),
             flash=flash,
             flash_error=flash_err,
             show_linkedin_backfill=False,
@@ -513,12 +504,12 @@ def dashboard_client_sidebar_tabs(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Admin surface: tool tabs (Advanced / View As / BQ Connection)
+# Admin surface: tool tabs (Advanced / View As)
 # ──────────────────────────────────────────────────────────────────────────────
 # The per-client Admin page is a strip of tabs across the top. Connectors,
-# Insights, and Consent Health are their own existing pages; these three are
+# Insights, and Consent Health are their own existing pages; these two are
 # lightweight tool pages that share the same shell + tab strip.
-_ADMIN_TOOL_TABS = ("sidebar", "view-as", "bq")
+_ADMIN_TOOL_TABS = ("sidebar", "view-as")
 
 
 @router.get(
@@ -540,6 +531,11 @@ def admin_tools_home(client_slug: str, request: Request):
 def admin_tools_tab(client_slug: str, request: Request, tab: str):
     """One of the Admin tool tabs (admin only)."""
     slug = validate_client_slug(client_slug)
+    if tab == "bq":
+        # The BQ Connection tab was retired: it only mirrored the destination the
+        # Connectors page already owns (project + datasets are set there, and its
+        # destination strip carries the same Verify access check).
+        return RedirectResponse(url=f"/dashboard/{slug}/connectors", status_code=308)
     if tab not in _ADMIN_TOOL_TABS:
         raise HTTPException(status_code=404, detail=f"Unknown admin tab '{tab}'.")
     auth = web_auth.authenticate_dashboard(request, client_slug=slug)

@@ -444,18 +444,10 @@ def client_gtm_dashboard(client_slug: str, request: Request):
     )
 
 
-def _nixon_settings_context() -> tuple[dict, dict]:
-    """Routing + account-id config for the settings page."""
+def _nixon_settings_context() -> dict:
+    """Account-id config for the settings page."""
     import client_config
-    import ga4_clients
 
-    routing: dict = {"marts_dataset": "marketing_marts"}
-    try:
-        target = ga4_clients.resolve_target(client_key="nixon")
-        routing["project"] = target.bq_project_id
-        routing["ga4_dataset"] = target.bq_dataset_id
-    except Exception:
-        pass
     account_ids: dict = {}
     try:
         cfg = client_config.load_client_config("nixon")
@@ -467,7 +459,7 @@ def _nixon_settings_context() -> tuple[dict, dict]:
         }
     except Exception:
         pass
-    return routing, account_ids
+    return account_ids
 
 
 @router.get(
@@ -485,7 +477,7 @@ def nixon_bq_settings_page(
         return auth
     html_kw = penn_html_session_kwargs(auth)
 
-    routing, account_ids = _nixon_settings_context()
+    account_ids = _nixon_settings_context()
     flash = None
     flash_error = None
     if saved:
@@ -504,7 +496,6 @@ def nixon_bq_settings_page(
 
     return HTMLResponse(
         render_bigquery_settings_page(
-            routing=routing,
             account_ids=account_ids,
             flash=flash,
             flash_error=flash_error,

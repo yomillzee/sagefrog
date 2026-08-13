@@ -1100,12 +1100,6 @@ _TOOL_ICON_VIEWAS = (
     'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     '<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
 )
-_TOOL_ICON_BQ = (
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-    '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"/>'
-    '<path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"/></svg>'
-)
 _TOOL_ICON_SIGNOUT = (
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
     'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -1147,23 +1141,6 @@ _SIDEBAR_TAB_EDIT_ITEMS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _sidebar_bq_routing(client_slug: str) -> tuple[str | None, str | None]:
-    """(project, marts_dataset) for the BigQuery-connection tool, or (None, None).
-
-    Resolved from client_dashboard_config so the shared sidebar stays self-
-    sufficient (no new plumbing through every page renderer)."""
-    try:
-        import client_dashboard_config as cdc
-        if not cdc.enabled():
-            return (None, None)
-        cfg = cdc.get_config(client_slug)
-        if not cfg:
-            return (None, None)
-        return (cfg.gcp_project_id, cfg.bq_mart_dataset_id)
-    except Exception:
-        return (None, None)
-
-
 def _sidebar_view_as_options(*, current_email: str | None) -> str:
     """<option> markup for the "View as user" tool (every other user)."""
     try:
@@ -1190,7 +1167,7 @@ def _sidebar_view_as_options(*, current_email: str | None) -> str:
 # The per-client agency options used to live in a collapsible sidebar section.
 # They now live on a single "Admin" page whose tabs (rendered by
 # ``admin_top_tabs_html``) span the top of the content area. The first three tabs
-# reuse the existing per-client pages; the last three are lightweight tool pages
+# reuse the existing per-client pages; the last two are lightweight tool pages
 # served from ``/dashboard/<slug>/admin/<tab>`` (see settings_routes).
 _ADMIN_TAB_ITEMS: tuple[tuple[str, str], ...] = (
     ("connectors", "Connectors"),
@@ -1198,7 +1175,6 @@ _ADMIN_TAB_ITEMS: tuple[tuple[str, str], ...] = (
     ("consent", "Consent Health"),
     ("sidebar", "Advanced"),
     ("view-as", "View As"),
-    ("bq", "BQ Connection"),
 )
 
 # active_nav → the admin tab it belongs to (so the sidebar "Admin" button and the
@@ -1210,7 +1186,6 @@ _ADMIN_NAV_TO_TAB: dict[str, str] = {
     "consent": "consent",
     "admin-sidebar": "sidebar",
     "admin-view-as": "view-as",
-    "admin-bq": "bq",
 }
 
 
@@ -1311,7 +1286,7 @@ def _sidebar_admin_nav_html(
 
     A labelled group (divider + eyebrow, matching the section nav's own rows)
     holding **Settings** — the Admin page with Connectors, Insights, Consent
-    Health, Advanced, View As and BQ Connection across the top. It used to live
+    Health, Advanced and View As across the top. It used to live
     inside the footer's profile popover, which buried an entry point admins reach
     constantly; here it sits in the nav where it reads as a section of the portal.
 
@@ -1636,8 +1611,8 @@ def render_client_shell_page(
 
 
 # Page-specific CSS for the admin tool tabs. The inner controls reuse the
-# .dash-pop-* / .dash-bq-pill classes already in SIDEBAR_CSS; this only styles the
-# card wrapper the panels sit in.
+# .dash-pop-* classes already in SIDEBAR_CSS; this only styles the card wrapper
+# the panels sit in.
 _ADMIN_TOOLS_CSS = """
     .admin-tool-card {
       max-width: 560px;
@@ -1653,9 +1628,9 @@ _ADMIN_TOOLS_CSS = """
 
 
 def _admin_tools_js() -> str:
-    """Behaviour for the Advanced (sidebar) and BQ Connection tool tabs: live
-    gradient preview + save, tab-visibility toggles, and the BigQuery verify
-    button. Each block guards on its card so it's a no-op on the other tabs."""
+    """Behaviour for the Advanced (sidebar) tool tab: live gradient preview +
+    save and tab-visibility toggles. Guards on its card so it's a no-op on the
+    other tabs."""
     return """
     (function(){
       // Advanced — sidebar gradient (live preview + save) and tab toggles.
@@ -1701,23 +1676,6 @@ def _admin_tools_js() -> str:
           } catch(err){ setStat(tabsStat,'Save failed: '+(err.message||err),true); }
         }); });
       }
-      // BigQuery connection — verify button drives the status pill.
-      var bq = document.getElementById('adminBqCard');
-      if (bq) {
-        var vb=bq.querySelector('.dash-bq-verify'), pill=bq.querySelector('.dash-bq-pill');
-        if(vb&&pill){
-          var setPill=function(s,t){ pill.dataset.state=s; pill.textContent=t; };
-          vb.addEventListener('click', async function(){
-            vb.disabled=true; setPill('checking','Checking…');
-            try {
-              var r=await fetch(vb.dataset.url,{method:'POST',credentials:'same-origin'});
-              var b=await r.json().catch(function(){return {};});
-              if(b.ok) setPill('ok', b.message||'Connected & readable'); else setPill('err', b.error||'Verification failed');
-            } catch(err){ setPill('err','Failed: '+(err.message||err)); }
-            finally{ vb.disabled=false; }
-          });
-        }
-      }
     })();
     """
 
@@ -1732,9 +1690,9 @@ def render_admin_tools_page(
     session_email: str | None = None,
     session_is_admin: bool = True,
 ) -> str:
-    """One of the Admin page's tool tabs — Advanced (sidebar), View As, or BQ
-    Connection — rendered as a card inside the shared client shell (so the top
-    tab strip and sidebar are identical to the Connectors/Insights/Consent tabs).
+    """One of the Admin page's tool tabs — Advanced (sidebar) or View As —
+    rendered as a card inside the shared client shell (so the top tab strip and
+    sidebar are identical to the Connectors/Insights/Consent tabs).
     """
     def _key(path: str) -> str:
         if not access_key:
@@ -1803,23 +1761,6 @@ def render_admin_tools_page(
           <p class="admin-tool-desc">See the platform exactly as another user does. A banner keeps you one click from exiting.</p>
           {body}
         </div>"""
-    elif tab == "bq":
-        active_nav = "admin-bq"
-        page_title = "Admin — BQ Connection"
-        project, marts = _sidebar_bq_routing(client_slug)
-        verify_url = _key(f"/api/clients/{client_slug}/bq-verify")
-        content = f"""
-        <div class="admin-tool-card" id="adminBqCard">
-          <h1 class="admin-tool-title">BQ Connection</h1>
-          <p class="admin-tool-desc">Where this client's dashboard reads from, and a quick check that it's connected and readable.</p>
-          <div class="dash-pop-kv">
-            <div><span class="k">Project</span><span class="v">{_esc(project or '—')}</span></div>
-            <div><span class="k">Marts dataset</span><span class="v">{_esc(marts or 'marketing_marts')}</span></div>
-          </div>
-          <button type="button" class="dash-pop-btn primary dash-bq-verify" data-url="{_esc(verify_url)}">Verify connection</button>
-          <span class="dash-bq-pill" data-state="idle">Not verified yet</span>
-        </div>
-        <script>{_admin_tools_js()}</script>"""
     else:
         active_nav = "admin-sidebar"
         page_title = "Admin"
@@ -3128,26 +3069,6 @@ SIDEBAR_CSS = """
       background: #fff;
       color: #172337;
     }
-    .dash-bq-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      margin-top: 10px;
-      font-size: 0.8rem;
-      font-weight: 600;
-      padding: 4px 11px;
-      border-radius: 999px;
-      border: 1px solid #e2e8f0;
-      background: #f7f9fc;
-      color: #6b7a90;
-    }
-    .dash-bq-pill::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #c5cdd9; flex-shrink: 0; }
-    .dash-bq-pill[data-state="checking"] { color: #1d6fd0; border-color: #bcd4f0; background: #eef5fd; }
-    .dash-bq-pill[data-state="checking"]::before { background: #1d6fd0; }
-    .dash-bq-pill[data-state="ok"] { color: #0a7f3f; border-color: #b8dfc8; background: #e9f7ef; }
-    .dash-bq-pill[data-state="ok"]::before { background: #0a7f3f; }
-    .dash-bq-pill[data-state="err"] { color: #b42318; border-color: #f3c0bb; background: #fdecea; }
-    .dash-bq-pill[data-state="err"]::before { background: #b42318; }
 
     /* Desktop collapse: a discreet chevron at the very bottom of the sidebar
        tucks the whole rail away; a small floating button brings it back. The

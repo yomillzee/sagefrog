@@ -265,6 +265,28 @@ _CONNECTOR_CSS = """
   .mgmt-label { font-size: 0.85rem; color: var(--muted); min-width: 160px; flex-shrink: 0; }
   .mgmt-value { font-size: 0.92rem; color: var(--navy); font-weight: 500; }
   .mgmt-actions { display: flex; flex-wrap: wrap; gap: 10px; max-width: 680px; margin-top: 8px; }
+
+  /* BigQuery destination strip (directory page, admins only) */
+  .bq-dest {
+    background: #fff; border: 1px solid var(--border); border-radius: 14px;
+    padding: 20px 24px; margin-top: 28px; max-width: 680px;
+  }
+  .bq-dest-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+  .bq-dest-title { font-size: 0.92rem; font-weight: 700; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+  .bq-dest-sub { font-size: 0.85rem; color: var(--muted); margin-top: 5px; line-height: 1.5; max-width: 400px; }
+  .bq-dest .btn-secondary { flex-shrink: 0; }
+  .bq-pill {
+    display: inline-flex; align-items: center; gap: 7px; margin-top: 14px;
+    font-size: 0.8rem; font-weight: 600; padding: 4px 11px; border-radius: 999px;
+    border: 1px solid #e2e8f0; background: #f7f9fc; color: #6b7a90;
+  }
+  .bq-pill::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #c5cdd9; flex-shrink: 0; }
+  .bq-pill[data-state="checking"] { color: #1d6fd0; border-color: #bcd4f0; background: #eef5fd; }
+  .bq-pill[data-state="checking"]::before { background: #1d6fd0; }
+  .bq-pill[data-state="ok"] { color: #0a7f3f; border-color: #b8dfc8; background: #e9f7ef; }
+  .bq-pill[data-state="ok"]::before { background: #0a7f3f; }
+  .bq-pill[data-state="err"] { color: #b42318; border-color: #f3c0bb; background: #fdecea; }
+  .bq-pill[data-state="err"]::before { background: #b42318; }
   .btn-danger {
     padding: 9px 18px; border-radius: 8px; background: #fff; color: #dc2626;
     font: inherit; font-size: 0.88rem; font-weight: 650;
@@ -316,6 +338,73 @@ _CONNECTOR_CSS = """
 # Directory page
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _bq_destination_html(
+    *,
+    client_slug: str,
+    access_key: str | None,
+    session_is_admin: bool,
+    bq_project: str | None,
+    bq_marts_dataset: str | None,
+) -> str:
+    """Admin-only strip under the connector grid: where this client's dashboard
+    reads from, plus an on-demand access check.
+
+    The destination is *set* per connector (the wizard's step 3, which syncs the
+    project onto the client and provisions the datasets on save). This is the
+    read-back of the client-level result, with the same provision + access check
+    on a button — so "data stopped showing" can be diagnosed as revoked IAM
+    without re-saving a connector just to re-trigger the check.
+    """
+    if not session_is_admin:
+        return ""
+    verify_url = f"/api/clients/{client_slug}/bq-verify"
+    if access_key:
+        verify_url = f"{verify_url}?key={_url_quote(access_key, safe='')}"
+    return f"""
+      <div class="bq-dest" id="bqDestCard">
+        <div class="bq-dest-head">
+          <div>
+            <div class="bq-dest-title">BigQuery destination</div>
+            <div class="bq-dest-sub">Where this client's dashboard reads from. Set per connector in each connector's Destination step.</div>
+          </div>
+          <button type="button" class="btn-secondary bq-verify" data-url="{_esc(verify_url)}">Verify access</button>
+        </div>
+        <div class="mgmt-row">
+          <span class="mgmt-label">GCP project</span>
+          <span class="mgmt-value">{_esc(bq_project or '— not set yet')}</span>
+        </div>
+        <div class="mgmt-row">
+          <span class="mgmt-label">Mart dataset</span>
+          <span class="mgmt-value">{_esc(bq_marts_dataset or 'marketing_marts')}</span>
+        </div>
+        <span class="bq-pill" data-state="idle">Not verified yet</span>
+      </div>
+      <script>{_bq_verify_js()}</script>"""
+
+
+def _bq_verify_js() -> str:
+    """Verify button → POST /api/clients/<slug>/bq-verify, result in the pill."""
+    return """
+    (function(){
+      var card = document.getElementById('bqDestCard');
+      if (!card) return;
+      var btn = card.querySelector('.bq-verify'), pill = card.querySelector('.bq-pill');
+      if (!btn || !pill) return;
+      function setPill(state, text){ pill.dataset.state = state; pill.textContent = text; }
+      btn.addEventListener('click', async function(){
+        btn.disabled = true; setPill('checking', 'Checking\\u2026');
+        try {
+          var r = await fetch(btn.dataset.url, {method:'POST', credentials:'same-origin'});
+          var b = await r.json().catch(function(){ return {}; });
+          if (b.ok) setPill('ok', b.message || 'Connected & readable');
+          else setPill('err', b.error || 'Verification failed');
+        } catch (err) { setPill('err', 'Failed: ' + (err.message || err)); }
+        finally { btn.disabled = false; }
+      });
+    })();
+    """
+
+
 def render_connectors_directory(
     *,
     client_slug: str,
@@ -327,6 +416,8 @@ def render_connectors_directory(
     session_is_admin: bool = False,
     flash_message: str | None = None,
     flash_error: str | None = None,
+    bq_project: str | None = None,
+    bq_marts_dataset: str | None = None,
 ) -> str:
     by_type = {c.connector_type: c for c in configs}
     handlers = all_handlers()
@@ -372,11 +463,19 @@ def render_connectors_directory(
         """)
 
     flash_html = _flash_html(flash_message, flash_error)
+    bq_html = _bq_destination_html(
+        client_slug=client_slug,
+        access_key=access_key,
+        session_is_admin=session_is_admin,
+        bq_project=bq_project,
+        bq_marts_dataset=bq_marts_dataset,
+    )
     content = f"""
       {flash_html}
       <h1 class="connectors-page-title">Data Connectors</h1>
       <p class="connectors-page-sub">Connect your marketing platforms to enable reporting and daily data sync.</p>
       <div class="connector-grid">{"".join(cards)}</div>
+      {bq_html}
     """
     return render_client_shell_page(
         client_slug=client_slug,

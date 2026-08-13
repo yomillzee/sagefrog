@@ -51,6 +51,22 @@ def _session_kw(access_key, use_session, session_email, session_is_admin) -> dic
     }
 
 
+def _client_bq_destination(client_slug: str) -> tuple[str | None, str | None]:
+    """(gcp_project, marts_dataset) this client's dashboard reads from, for the
+    directory page's destination strip. Fails soft — the strip degrades to
+    "not set yet" rather than 500-ing the connectors page."""
+    try:
+        import client_dashboard_config as cdc
+        if not cdc.enabled():
+            return (None, None)
+        cfg = cdc.get_config(client_slug)
+        if not cfg:
+            return (None, None)
+        return (cfg.gcp_project_id, cfg.bq_mart_dataset_id)
+    except Exception:
+        return (None, None)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Directory page
 # ──────────────────────────────────────────────────────────────────────────────
@@ -78,11 +94,15 @@ def connectors_directory(
     if disconnected:
         flash = f"{disconnected} disconnected."
 
+    bq_project, bq_marts = _client_bq_destination(slug)
+
     return HTMLResponse(connectors_renderer.render_connectors_directory(
         client_slug=slug,
         label=label,
         configs=configs,
         flash_message=flash,
+        bq_project=bq_project,
+        bq_marts_dataset=bq_marts,
         **_session_kw(access_key, use_session, session_email, session_is_admin),
     ))
 
