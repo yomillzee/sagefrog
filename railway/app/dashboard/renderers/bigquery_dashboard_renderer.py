@@ -839,6 +839,7 @@ def render_bigquery_dashboard_page(
             <div class="rk-tabs" role="tablist" aria-label="Page breakdown">
               <button type="button" class="rk-tab" role="tab" aria-selected="true" data-grp="pg" data-key="top" data-dim="Page" data-metric="Pageviews">Top pages</button>
               <button type="button" class="rk-tab" role="tab" aria-selected="false" data-grp="pg" data-key="entry" data-dim="Entry page" data-metric="Entrances">Entry pages</button>
+              <button type="button" class="rk-tab" role="tab" aria-selected="false" data-grp="pg" data-key="convert" data-dim="Page" data-metric="Key events">Converting</button>
               <button type="button" class="rk-tab" role="tab" aria-selected="false" data-grp="pg" data-key="bounce" data-dim="Page" data-metric="Bounce rate">Bounce rate</button>
             </div>
             <span class="status" id="rkPgStatus"></span>
@@ -4476,6 +4477,8 @@ def render_bigquery_dashboard_page(
       if (landingBaseRows.length) {{ applyLanding(); landingPageNum=1; renderLanding(); }}
       if (trafficBaseSources.length) {{ applyTrafficSources(); renderTrafficSources(); }}
       if (userAcqBaseSources.length) {{ applyUserAcqSources(); renderUserAcqSources(); }}
+      // The Converting tab reads the same selection, so it has to follow along.
+      rkState.pg.page=1; renderRankedPages();
     }}
     function keyEventToggleLabel() {{
       const n=selectedKeyEvents.size;
@@ -4788,6 +4791,16 @@ def render_bigquery_dashboard_page(
           .map(r=>({{label:r.page_path, value:num(r.sessions)}}))
           .sort((a,b)=>b.value-a.value)}};
       }}
+      if (st.key==='convert') {{
+        // applyPageEvents recomputes key_events against the key-event selector
+        // at the top of the tab, so this list always agrees with the Pages
+        // table below it. Pages with no key event are dropped -- a ranked list
+        // whose tail is all zeroes is just noise.
+        return {{mode:'count', rows:applyPageEvents(pagesTopRows||[])
+          .map(r=>({{label:r.page_path, value:num(r.key_events)}}))
+          .filter(r=>r.value>0)
+          .sort((a,b)=>b.value-a.value)}};
+      }}
       // Bounce rate: GA4 has no exits metric, so this is 1 - engagement rate,
       // which is GA4's own definition of a bounce.
       return {{mode:'rate', rows:(pagesTopRows||[])
@@ -4799,6 +4812,7 @@ def render_bigquery_dashboard_page(
     function rkEmptyMessage(grp) {{
       const st=rkState[grp];
       if (grp==='acq' && st.key==='by_campaign') return 'No campaign-tagged traffic in this range.';
+      if (st.key==='convert') return 'No page recorded a key event in this range.';
       if (st.key==='bounce') return `No page reached ${{RK_BOUNCE_MIN_SESSIONS}} sessions in this range.`;
       return 'No data for this range.';
     }}
