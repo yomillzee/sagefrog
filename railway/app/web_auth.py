@@ -14,6 +14,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 import audit_log
 import client_config
+import client_industries
 import web_users
 from security import is_production, session_signing_secret
 from web_users import WebUser
@@ -1450,6 +1451,39 @@ def render_admin_page(
                              '<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>')
                 _svg_back = ('<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
                             '<path d="M15 18l-6-6 6-6"/></svg>')
+                _svg_tag = ('<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+                           '<path d="M20.6 13.4 12 22l-9-9V4a1 1 0 0 1 1-1h8z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>')
+
+                # Industry tag: a chip on the row (so the roster reads as a
+                # bucketed book at a glance) plus a kebab panel to change it.
+                # The taxonomy comes from client_industries — nothing is
+                # hardcoded here, so adding a bucket needs no change to this file.
+                industry_key = getattr(row, "industry", None)
+                industry_label = client_industries.label_for(industry_key)
+                industry_chip = (
+                    f'<span class="dash-industry" title="Industry — used for agency benchmarks">'
+                    f'{_esc(industry_label)}</span>'
+                    if industry_key
+                    else '<span class="dash-industry unset" title="No industry set — this account is '
+                         'left out of the per-industry benchmarks">Unassigned</span>'
+                )
+                industry_options = "".join(
+                    f'<option value="{_esc(key)}"{" selected" if key == industry_key else ""}>'
+                    f"{_esc(name)}</option>"
+                    for key, name in client_industries.choices()
+                )
+                unset_selected = "" if industry_key else " selected"
+                industry_panel = f"""
+                <form method="post" action="/admin/dashboards/{_esc(slug)}/industry" class="dash-kebab-panel" data-panel="industry" hidden>
+                  <button type="button" class="dash-kebab-back" data-kebab-panel="menu">{_svg_back}<span>Back</span></button>
+                  <label class="dash-kebab-label">Industry</label>
+                  <select name="industry" class="dash-kebab-select" aria-label="Industry">
+                    <option value=""{unset_selected}>— Unassigned —</option>
+                    {industry_options}
+                  </select>
+                  <p class="hint">Groups this account on the <a href="/admin/benchmarks">Benchmarks</a> page.</p>
+                  <button type="submit" class="dash-kebab-submit primary">Save industry</button>
+                </form>"""
 
                 # Delete is destructive → super admins only; "penn" is protected.
                 if slug == "penn":
@@ -1474,13 +1508,16 @@ def render_admin_page(
                   <button type="submit" id="{btn_id}" class="dash-kebab-submit danger" disabled>Delete dashboard</button>
                 </form>"""
 
-                search_key = _esc(f"{label} {slug}".lower())
+                # Industry joins the filter text so "Filter accounts…" doubles as
+                # "show me the manufacturing book".
+                search_key = _esc(f"{label} {slug} {industry_label}".lower())
                 dash_rows.append(f"""
         <div class="dash-row" data-search="{search_key}">
           {logo_cell}
           <a class="dash-row-main" href="/dashboard/{_esc(slug)}">
             <span class="dash-row-name">{_esc(label)}</span>
             <span class="dash-row-slug mono">/dashboard/{_esc(slug)}</span>
+            {industry_chip}
           </a>
           <div class="dash-row-actions">
             <details class="dash-kebab">
@@ -1489,6 +1526,7 @@ def render_admin_page(
                 <div class="dash-kebab-list" data-panel="menu" role="menu">
                   <a class="dash-kebab-item" role="menuitem" href="/dashboard/{_esc(slug)}">{_svg_open}<span>Open dashboard</span></a>
                   <button type="button" class="dash-kebab-item" role="menuitem" data-kebab-panel="rename">{_svg_pencil}<span>Rename…</span></button>
+                  <button type="button" class="dash-kebab-item" role="menuitem" data-kebab-panel="industry">{_svg_tag}<span>Industry…</span></button>
                   {delete_item}
                 </div>
                 <form method="post" action="/admin/dashboards/{_esc(slug)}/rename" class="dash-kebab-panel" data-panel="rename" hidden>
@@ -1498,6 +1536,7 @@ def render_admin_page(
                   <p class="hint">The URL <code>/dashboard/{_esc(slug)}</code> stays the same.</p>
                   <button type="submit" class="dash-kebab-submit primary">Save name</button>
                 </form>
+                {industry_panel}
                 {delete_panel}
               </div>
             </details>
@@ -2057,6 +2096,15 @@ def render_admin_page(
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.25; }}
     .dash-row-main:hover .dash-row-name {{ color: var(--accent); }}
     .dash-row-slug {{ font-size: .76rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    /* Industry tag: a third line inside the card's text column, so a long
+       bucket name ellipses instead of squeezing the account name. */
+    .dash-industry {{ align-self: flex-start; max-width: 100%; margin-top: 3px; padding: 2px 8px;
+      border-radius: 999px; background: #eef4fd; color: var(--accent-d); font-size: .7rem; font-weight: 700;
+      letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .dash-industry.unset {{ background: #f1f4f8; color: var(--muted); font-weight: 600; }}
+    .dash-kebab-select {{ width: 100%; max-width: 100%; padding: 7px 8px; border-radius: 8px;
+      border: 1px solid var(--line); background: #fff; color: var(--navy); font: inherit; font-size: .85rem;
+      cursor: pointer; }}
     .dash-row-actions {{ display: flex; align-items: center; gap: 6px; flex-shrink: 0; position: relative; }}
     .dash-row-note {{ font-size: .74rem; color: var(--muted); font-weight: 600; }}
     .dash-icon-btn {{ display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
