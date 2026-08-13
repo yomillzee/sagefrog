@@ -947,11 +947,23 @@ def render_bigquery_dashboard_page(
     # cards have no BQ mart to read and would otherwise render a zeroed-out
     # panel with a table-not-found error (see e.g. Andesa: GA4 + GSC only).
     # Show a lightweight traffic/search snapshot in their place instead.
-    platform_filter_group_html = "" if not has_paid_ads else """
-        <div class="filter-group" id="platformFilterGroup">
-          <span class="filter-label">Platform</span>
-          <div class="chips" id="platformChips"></div>
-        </div>"""
+    # The Platform chips only ever filtered the two paid views (Paid summary and
+    # Campaign explorer), so they sit in those card heads rather than in the
+    # sticky bar next to Range/Compare, which apply page-wide. Both rows drive
+    # the one platformFilter Set -- see buildPlatformChips() below.
+    def _platform_chip_row(dom_id: str) -> str:
+        if not has_paid_ads:
+            return ""
+        return (
+            '<div class="card-filter">'
+            '<span class="filter-label">Platform</span>'
+            f'<div class="chips platform-chips" id="{dom_id}" role="group" '
+            'aria-label="Filter by platform"></div>'
+            "</div>"
+        )
+
+    platform_chips_summary_html = _platform_chip_row("platformChips")
+    platform_chips_explorer_html = _platform_chip_row("explorerPlatformChips")
 
     # Budget tracking (Campaign Explorer, bottom): shared module, also on the
     # settings page. Only when the client runs paid ads (no spend mart otherwise)
@@ -1049,7 +1061,7 @@ def render_bigquery_dashboard_page(
 
     paid_panel = f"""
       <section id="sec-overview">
-        <div class="sec-head"><h2>Paid summary</h2><div class="ov-actions"><span class="status" id="summaryStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="explorer"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="sec-head"><h2>Paid summary</h2><div class="ov-actions">{platform_chips_summary_html}<span class="status" id="summaryStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="explorer"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="cards" id="summaryCards"></div>
       </section>""" if has_paid_ads else ""
 
@@ -1163,8 +1175,8 @@ def render_bigquery_dashboard_page(
     button.primary:hover {{ background:#1a62b8; }}
     button.primary:disabled {{ opacity:.55; cursor:default; }}
     .filter-group {{ display:flex; align-items:center; gap:8px; }}
-    /* `hidden` attr must win over the display:flex above — used to scope the
-       Platform filter to Overview/Explorer via switchTab()'s pf.hidden toggle. */
+    /* `hidden` attr must win over the display:flex above — used to scope groups
+       to the tabs they apply to (Events, the Explorer filter bar). */
     .filter-group[hidden] {{ display:none; }}
     .filter-label {{ color:var(--muted); font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }}
     /* Range picker: a custom dropdown so the admin "Make default" + Apply
@@ -1204,12 +1216,17 @@ def render_bigquery_dashboard_page(
        out the resolved comparison dates instead of the admin default controls. */
     .cmp-range-foot {{ margin-top:6px; }}
     .cmp-range-foot .range-default-status {{ color:var(--muted); }}
-    /* Backfill notice under the filter row: the comparison window reaches back
-       past a source's synced history, so its deltas are incomplete. */
-    .cmp-notice {{ display:flex; align-items:flex-start; gap:7px; border:1px solid #f0d9a0; background:#fdf7e8; color:#7a5806; border-radius:var(--radius-sm); padding:8px 12px; font-size:.79rem; font-weight:600; line-height:1.45; }}
+    /* Backfill warning: the comparison window reaches back past a source's
+       synced history, so its deltas are incomplete. A badge beside the Compare
+       picker — the control it qualifies — with the detail in a hover/focus
+       tooltip, so the filter bar keeps its one-line height. */
+    .cmp-notice {{ position:relative; display:inline-flex; align-items:center; justify-content:center; flex:none; width:22px; height:22px; padding:0; border:1px solid #f0d9a0; border-radius:50%; background:#fdf7e8; color:#a9760a; cursor:help; transition:background .12s, border-color .12s; }}
     .cmp-notice[hidden] {{ display:none; }}
-    .cmp-notice .cmp-notice-icon {{ flex:none; font-size:.9rem; line-height:1.3; }}
-    .cmp-notice strong {{ font-weight:800; }}
+    .cmp-notice:hover, .cmp-notice:focus-visible {{ background:#fbeeca; border-color:#e0bf6d; }}
+    .cmp-notice-icon {{ font-size:.82rem; line-height:1; }}
+    .cmp-notice-tip {{ position:absolute; z-index:60; top:calc(100% + 8px); left:50%; transform:translateX(-50%); width:min(340px, 72vw); border:1px solid #f0d9a0; background:#fdf7e8; color:#7a5806; border-radius:var(--radius-sm); box-shadow:var(--shadow); padding:9px 11px; font-size:.78rem; font-weight:600; line-height:1.45; text-align:left; text-transform:none; letter-spacing:0; white-space:normal; visibility:hidden; opacity:0; transition:opacity .12s; pointer-events:none; }}
+    .cmp-notice:hover .cmp-notice-tip, .cmp-notice:focus-visible .cmp-notice-tip {{ visibility:visible; opacity:1; }}
+    .cmp-notice-tip strong {{ font-weight:800; }}
     .chips {{ display:flex; flex-wrap:wrap; gap:5px; }}
     .chip {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:4px 12px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s, color .12s; }}
     .chip:hover {{ border-color:#b9c8dc; background:#f4f8fd; }}
@@ -1221,6 +1238,12 @@ def render_bigquery_dashboard_page(
     .chips.seg .chip:hover {{ background:#fff; color:var(--navy); }}
     .chips.seg .chip.active {{ background:#fff; color:var(--navy); border-color:transparent; box-shadow:0 1px 2px rgba(16,33,67,.14); }}
     .chips.seg .chip.active:hover {{ background:#fff; }}
+    /* A filter that belongs to one card rather than the page sits in that
+       card's head (Platform on Paid summary / Campaign explorer), sized down a
+       notch so it reads as part of the heading row. */
+    .card-filter {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }}
+    .card-filter .filter-label {{ font-size:.64rem; }}
+    .chips.platform-chips .chip {{ padding:3px 10px; font-size:.75rem; }}
     /* ---- Key-event searchable dropdown ---- */
     .ke-dropdown {{ position:relative; display:inline-block; }}
     .ke-dd-toggle {{ display:inline-flex; align-items:center; gap:8px; min-width:190px; justify-content:space-between; border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:var(--radius-sm); padding:6px 12px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; transition:border-color .12s; }}
@@ -1271,7 +1294,9 @@ def render_bigquery_dashboard_page(
     .ob-copy-btn {{ border:1px solid var(--line); background:var(--card); color:var(--accent); font-weight:600; font-size:.78rem; padding:5px 11px; border-radius:6px; cursor:pointer; white-space:nowrap; transition:background .15s; }}
     .ob-copy-btn:hover {{ background:#eaf2fd; }}
     .ob-copy-btn.ok {{ color:#178a4c; border-color:#178a4c; }}
-    .sec-head {{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }}
+    /* Wraps so a card head carrying its own filter (e.g. Platform chips on Paid
+       summary) drops the controls to a second line instead of squeezing them. */
+    .sec-head {{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; flex-wrap:wrap; }}
     .sec-head h2 {{ margin:0; }}
     .sec-head .status {{ margin:0; font-size:.76rem; text-align:right; flex-shrink:0; }}
     .sec-head-actions {{ display:flex; align-items:center; gap:12px; flex-shrink:0; }}
@@ -1764,6 +1789,16 @@ def render_bigquery_dashboard_page(
               <div class="range-dd-foot cmp-range-foot"><span class="range-default-status" id="compareRangeLabel"></span></div>
             </div>
           </div>
+          <!-- Filled + unhidden by syncCompareNotice() when the selected
+               comparison window starts before a connector's synced history
+               (most often a previous-year comparison against a recently
+               connected source) -- the cue that the warehouse needs a deeper
+               backfill. It qualifies this one picker, so it rides next to it as
+               a hover/focus tooltip rather than a page-wide banner. -->
+          <button type="button" class="cmp-notice" id="compareNotice" aria-label="Comparison window warning" aria-describedby="compareNoticeTip" hidden>
+            <span class="cmp-notice-icon" aria-hidden="true">&#9888;</span>
+            <span class="cmp-notice-tip" id="compareNoticeTip" role="tooltip"></span>
+          </button>
         </div>
         <div class="filter-group" id="keyEventFilterGroup" hidden>
           <span class="filter-label">Events</span>
@@ -1778,14 +1813,8 @@ def render_bigquery_dashboard_page(
             </div>
           </div>
         </div>
-        {platform_filter_group_html}
         <div class="filter-group" id="explorerFilterBar" hidden></div>
       </div>
-      <!-- Shown by syncCompareNotice() when the selected comparison window
-           starts before a connector's synced history (most often a
-           previous-year comparison against a recently-connected source) --
-           the cue that the warehouse needs a deeper backfill. -->
-      <div class="cmp-notice" id="compareNotice" role="status" hidden></div>
       </div>
     </div>
 
@@ -1801,7 +1830,7 @@ def render_bigquery_dashboard_page(
     <!-- ===== EXPLORER TAB ===== -->
     <div id="pane-explorer" hidden>
       <section id="sec-explorer">
-        <div class="sec-head"><h2>Campaign explorer</h2><div class="sec-head-actions">{explorer_campaigns_edit_html}{explorer_filters_edit_html}<span class="status" id="explorerStatus"></span></div></div>
+        <div class="sec-head"><h2>Campaign explorer</h2><div class="sec-head-actions">{platform_chips_explorer_html}{explorer_campaigns_edit_html}{explorer_filters_edit_html}<span class="status" id="explorerStatus"></span></div></div>
         <div class="cards" id="explorerSummaryCards" style="margin-bottom:14px"></div>
         <!-- Filter groups (Product / Region / Business line …) live in the sticky
              top bar (#explorerFilterBar) as dropdowns; built by buildExplorerFilters()
@@ -2454,7 +2483,8 @@ def render_bigquery_dashboard_page(
     // which is the signal that the warehouse needs a deeper backfill.
     function syncCompareNotice() {{
       const el = document.getElementById('compareNotice');
-      if (!el) return;
+      const tip = document.getElementById('compareNoticeTip');
+      if (!el || !tip) return;
       const gaps = [];
       if (compareStart) {{
         for (const k of Object.keys(earliestDates)) {{
@@ -2464,14 +2494,13 @@ def render_bigquery_dashboard_page(
           }}
         }}
       }}
-      if (!gaps.length) {{ el.hidden = true; el.innerHTML = ''; return; }}
+      if (!gaps.length) {{ el.hidden = true; tip.innerHTML = ''; return; }}
       gaps.sort();
       const mode = COMPARE_MODE_LABELS[compareMode] || 'Previous period';
       el.hidden = false;
-      el.innerHTML = '<span class="cmp-notice-icon" aria-hidden="true">&#9888;</span>'
-        + `<span>No synced data covers all of the <strong>${{esc(mode.toLowerCase())}}</strong> comparison window `
+      tip.innerHTML = `No synced data covers all of the <strong>${{esc(mode.toLowerCase())}}</strong> comparison window `
         + `(${{esc(compareStart)}} – ${{esc(compareEnd)}}): ${{esc(gaps.join(', '))}}. `
-        + 'Every "vs ' + esc(cmpNoun()) + '" figure below is measured against a partial window until those sources are backfilled.</span>';
+        + 'Every "vs ' + esc(cmpNoun()) + '" figure below is measured against a partial window until those sources are backfilled.';
     }}
     async function getJson(url, _attempt) {{
       _attempt = _attempt || 0;
@@ -2533,12 +2562,10 @@ def render_bigquery_dashboard_page(
     function switchTab(tab) {{
       TABS.forEach(t => {{ document.getElementById('pane-' + t).hidden = t !== tab; }});
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-      const pf = document.getElementById('platformFilterGroup');
-      if (pf) pf.hidden = tab === 'analytics' || tab === 'gsc' || tab === 'ai_traffic';
       const efb = document.getElementById('explorerFilterBar');
       if (efb) efb.hidden = !(tab === 'explorer' && EXPLORER_FILTER_GROUPS.length);
       // Site Performance shows one latest PageSpeed snapshot plus its own trend,
-      // so the sticky Range/Platform filters have nothing to act on — hide the
+      // so the sticky Range/Compare filters have nothing to act on — hide the
       // whole filter bar on that tab rather than leaving dead controls.
       const dateBar = document.querySelector('.date-bar');
       if (dateBar) dateBar.hidden = tab === 'site_performance';
@@ -5194,8 +5221,17 @@ def render_bigquery_dashboard_page(
     }})();
 
     // ---- Platform chips ----
+    // One row per card the filter acts on (Paid summary, Campaign explorer),
+    // both driving the same platformFilter Set — so a click in either has to
+    // repaint the other's active states as well as the two views.
     if (HAS_PAID_ADS) {{
-      buildChips('platformChips',['Google','LinkedIn','Meta','Microsoft'],platformFilter,()=>{{renderSummary();renderExplorer();}});
+      const platformRows = [...document.querySelectorAll('.platform-chips')];
+      const syncPlatformRows = () => platformRows.forEach(el =>
+        el.querySelectorAll('.chip').forEach(b => b.classList.toggle(
+          'active', b.dataset.key==='All' ? platformFilter.size===0 : platformFilter.has(b.dataset.key))));
+      platformRows.forEach(el => buildChips(el,['Google','LinkedIn','Meta','Microsoft'],platformFilter,()=>{{
+        syncPlatformRows(); renderSummary(); renderExplorer();
+      }}));
     }}
 
     // ---- Explorer chips ----
