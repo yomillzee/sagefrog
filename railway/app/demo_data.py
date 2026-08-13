@@ -466,18 +466,12 @@ def _page_rows(seed_ns: str, start: date, end: date) -> list[dict]:
         views = int((80 + 1400 * _u(seed_ns, path)) * days / 10)
         users = int(views * (0.55 + 0.3 * _u(seed_ns, "u", path)))
         sessions = int(views * (0.7 + 0.25 * _u(seed_ns, "s", path)))
-        engaged = int(sessions * (0.42 + 0.45 * _u(seed_ns, "en", path)))
         rows.append({
-            # page_path was missing here, so every demo Pages row rendered with a
-            # blank path cell; the Top Pages tab keys off it too.
-            "page_path": path,
             "page_group": group,
             "page_topic": topic,
             "page_views": views,
             "users": users,
             "sessions": sessions,
-            "engaged_sessions": engaged,
-            "bounce_rate": _round2((1 - engaged / sessions) * 100) if sessions else 0.0,
             "engagement_seconds": int(sessions * (25 + 90 * _u(seed_ns, "e", path))),
             "key_events": int(sessions * (0.02 + 0.06 * _u(seed_ns, "k", path))),
         })
@@ -495,44 +489,6 @@ def _build_pages_sources(payload: dict) -> dict:
     start, end = _dates(payload)
     rows = _page_rows("src", start, end)
     return {"client": "demo", "date_range": _date_range(start, end), "row_count": len(rows), "rows": rows}
-
-
-_DEMO_SOURCES = [
-    "google", "(direct)", "bing", "linkedin.com", "chatgpt.com",
-    "facebook.com", "duckduckgo.com", "newsletter", "youtube.com", "reddit.com",
-]
-_DEMO_CAMPAIGNS = [
-    "spring-promo", "brand-always-on", "retargeting-q2", "careers-hiring",
-    "webinar-june", "competitor-terms",
-]
-
-
-def _build_acquisition_breakdown(payload: dict) -> dict:
-    start, end = _dates(payload)
-    days = max(1, (end - start).days + 1)
-
-    def _rows(seed_ns: str, labels: list[str], divisor: int) -> list[dict]:
-        out = []
-        for label in labels:
-            sessions = int(_sessions_base((seed_ns, label)) * days / divisor)
-            engaged = int(sessions * (0.45 + 0.4 * _u(seed_ns, "e", label)))
-            out.append({
-                "label": label,
-                "sessions": sessions,
-                "users": int(sessions * (0.7 + 0.25 * _u(seed_ns, "u", label))),
-                "engaged_sessions": engaged,
-                "key_events": int(sessions * (0.02 + 0.05 * _u(seed_ns, "k", label))),
-            })
-        out.sort(key=lambda r: r["sessions"], reverse=True)
-        return out
-
-    return {
-        "client": "demo",
-        "date_range": _date_range(start, end),
-        "by_channel": _rows("abch", _CHANNELS, 10),
-        "by_source": _rows("absrc", _DEMO_SOURCES, 12),
-        "by_campaign": _rows("abcmp", _DEMO_CAMPAIGNS, 26),
-    }
 
 
 def _build_device_split(payload: dict) -> dict:
@@ -1124,7 +1080,6 @@ _BUILDERS = {
     "marketing.health": _build_health,
     "pages.traffic_acquisition": _build_traffic_acquisition,
     "ai_traffic.daily": _build_ai_traffic_daily,
-    "pages.acquisition_breakdown": _build_acquisition_breakdown,
     "pages.top": _build_pages_top,
     "pages.sources": _build_pages_sources,
     "pages.device_split": _build_device_split,

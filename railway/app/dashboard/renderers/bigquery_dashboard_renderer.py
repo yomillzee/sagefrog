@@ -815,41 +815,6 @@ def render_bigquery_dashboard_page(
           </div>
         </div>"""
 
-    # Admin-only preview: the two tabbed ranked-list panels (Acquisition + Pages).
-    # Emitted only for admins — a client never receives this markup at all, so
-    # there is nothing to inspect and no gap where it would sit. Drop the
-    # `if not session_is_admin` guard to release it to every client.
-    ranked_panels_html = "" if not session_is_admin else """
-      <div class="two-col" id="rankedPanels" style="align-items:stretch">
-        <section class="rk-panel">
-          <div class="rk-head">
-            <div class="rk-tabs" role="tablist" aria-label="Acquisition breakdown">
-              <button type="button" class="rk-tab" role="tab" aria-selected="true" data-grp="acq" data-key="by_channel" data-dim="Channel">Channels</button>
-              <button type="button" class="rk-tab" role="tab" aria-selected="false" data-grp="acq" data-key="by_source" data-dim="Source">Sources</button>
-              <button type="button" class="rk-tab" role="tab" aria-selected="false" data-grp="acq" data-key="by_campaign" data-dim="Campaign">Campaigns</button>
-            </div>
-            <span class="status" id="rkAcqStatus"></span>
-          </div>
-          <div class="rk-colhead"><span id="rkAcqDim">Channel</span><span>Sessions</span></div>
-          <div class="rk-list" id="rkAcqList"></div>
-          <div class="rk-foot"><span class="rk-note" id="rkAcqNote"></span><div class="pager" id="rkAcqPager"></div></div>
-        </section>
-        <section class="rk-panel">
-          <div class="rk-head">
-            <div class="rk-tabs" role="tablist" aria-label="Page breakdown">
-              <button type="button" class="rk-tab" role="tab" aria-selected="true" data-grp="pg" data-key="top" data-dim="Page" data-metric="Pageviews">Top pages</button>
-              <button type="button" class="rk-tab" role="tab" aria-selected="false" data-grp="pg" data-key="entry" data-dim="Entry page" data-metric="Entrances">Entry pages</button>
-              <button type="button" class="rk-tab" role="tab" aria-selected="false" data-grp="pg" data-key="convert" data-dim="Page" data-metric="Key events">Converting</button>
-              <button type="button" class="rk-tab" role="tab" aria-selected="false" data-grp="pg" data-key="bounce" data-dim="Page" data-metric="Bounce rate">Bounce rate</button>
-            </div>
-            <span class="status" id="rkPgStatus"></span>
-          </div>
-          <div class="rk-colhead"><span id="rkPgDim">Page</span><span id="rkPgMetric">Pageviews</span></div>
-          <div class="rk-list" id="rkPgList"></div>
-          <div class="rk-foot"><span class="rk-note" id="rkPgNote"></span><div class="pager" id="rkPgPager"></div></div>
-        </section>
-      </div>"""
-
     # Admin-only "Campaigns" picker in the Campaign explorer header. Restricts the
     # Explorer to a chosen subset of campaigns — for portals whose account pulls
     # more campaigns than the client should see. The checklist is filled by JS
@@ -1545,34 +1510,6 @@ def render_bigquery_dashboard_page(
     .bar-fill {{ height:100%; background:var(--accent); border-radius:4px; transition:width .3s; }}
     .bar-count {{ flex:0 0 100px; font-size:.82rem; color:var(--navy); text-align:right; font-variant-numeric:tabular-nums; }}
     .bar-pct {{ color:var(--muted); font-size:.74rem; margin-left:4px; }}
-    /* ---- Ranked-list panels (admin preview) ----
-       Plausible-style tabbed breakdown lists: each row is a label + value, with a
-       10% wash of the accent hue behind the label sized to that row's share of the
-       leader. One hue for every row on purpose — ramping the fill by value would
-       double-encode bar length as color and burn the only free channel (and the
-       rows are already sorted, so rank is legible without it). Square at the
-       baseline, 4px rounded at the data end. */
-    .rk-panel {{ display:flex; flex-direction:column; min-width:0; }}
-    .rk-head {{ display:flex; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); margin-bottom:2px; }}
-    .rk-tabs {{ display:flex; gap:20px; }}
-    .rk-tab {{ position:relative; border:0; background:none; padding:2px 0 10px; font:inherit; font-size:.72rem; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); cursor:pointer; white-space:nowrap; }}
-    .rk-tab:hover {{ color:var(--navy); }}
-    .rk-tab[aria-selected="true"] {{ color:var(--navy); }}
-    /* The active underline sits on top of .rk-head's border, not below it. */
-    .rk-tab[aria-selected="true"]::after {{ content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:var(--navy); border-radius:2px 2px 0 0; }}
-    .rk-tab:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:2px; border-radius:4px; }}
-    .rk-colhead {{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 0 6px; font-size:.7rem; font-weight:800; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }}
-    .rk-list {{ display:flex; flex-direction:column; }}
-    .rk-row {{ position:relative; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:7px 0; min-height:31px; }}
-    /* The wash is a sibling layer, not a background on .rk-row, so the label can
-       sit above it at full text contrast while the fill stays at 10%. */
-    .rk-fill {{ position:absolute; left:0; top:2px; bottom:2px; background:rgba(29,111,208,.10); border-radius:0 4px 4px 0; pointer-events:none; transition:width .3s; }}
-    .rk-row:hover .rk-fill {{ background:rgba(29,111,208,.17); }}
-    .rk-name {{ position:relative; z-index:1; min-width:0; padding:0 10px 0 9px; font-size:.83rem; font-weight:500; color:var(--navy); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
-    .rk-val {{ position:relative; z-index:1; flex:0 0 auto; padding-right:2px; font-size:.83rem; color:var(--navy); font-variant-numeric:tabular-nums; }}
-    .rk-empty {{ padding:22px 2px; color:var(--muted); font-size:.83rem; }}
-    .rk-foot {{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:auto; padding-top:9px; }}
-    .rk-note {{ color:var(--muted); font-size:.72rem; }}
     /* Keyword Performance: insight banner, toolbar, match badges and in-cell bars. */
     .kw-insight {{ display:flex; flex-wrap:wrap; align-items:center; gap:8px 22px; padding:11px 15px; margin-bottom:14px; border:1px solid var(--line-soft); border-radius:var(--radius-sm); background:#f6f9fd; font-size:.82rem; color:var(--navy); }}
     .kw-insight[hidden] {{ display:none; }}
@@ -1880,7 +1817,6 @@ def render_bigquery_dashboard_page(
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:200px"><canvas id="sessionsTrendChart"></canvas></div></div>
         <div class="cmp-legend" id="sessionsTrendLegend"></div>
       </section>
-{ranked_panels_html}
 
       <div class="two-col" style="align-items:start">
       <section id="sec-pages">
@@ -2062,7 +1998,6 @@ def render_bigquery_dashboard_page(
     const TOP_PAGES_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/top-key-events')}";
     const TRAFFIC_ACQ_API      = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-acquisition')}";
     const DEVICE_SPLIT_API     = "{_aurl(f'/api/clients/{api_client_key}/pages/device-split')}";
-    const ACQ_BREAKDOWN_API    = "{_aurl(f'/api/clients/{api_client_key}/pages/acquisition-breakdown')}";
     const LANDING_PAGES_API    = "{_aurl(f'/api/clients/{api_client_key}/pages/landing')}";
     const USER_ACQ_API         = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acquisition')}";
     const DEMOGRAPHICS_API     = "{_aurl(f'/api/clients/{api_client_key}/analytics/demographics')}";
@@ -4065,7 +4000,6 @@ def render_bigquery_dashboard_page(
       }}
       mergeEvents(ev.events);
       renderPages();
-      renderRankedPages();
     }}
     (function(){{
       const inp=document.getElementById('pagesSearch');
@@ -4477,8 +4411,6 @@ def render_bigquery_dashboard_page(
       if (landingBaseRows.length) {{ applyLanding(); landingPageNum=1; renderLanding(); }}
       if (trafficBaseSources.length) {{ applyTrafficSources(); renderTrafficSources(); }}
       if (userAcqBaseSources.length) {{ applyUserAcqSources(); renderUserAcqSources(); }}
-      // The Converting tab reads the same selection, so it has to follow along.
-      rkState.pg.page=1; renderRankedPages();
     }}
     function keyEventToggleLabel() {{
       const n=selectedKeyEvents.size;
@@ -4554,7 +4486,6 @@ def render_bigquery_dashboard_page(
         }}
         mergeEvents(ev.events);
         applyLanding(); landingPageNum=1; renderLanding();
-        renderRankedPages();
       }} catch(err) {{ setStatus('landingStatus',err.message||String(err),true); }}
     }}
     (function(){{
@@ -4751,156 +4682,6 @@ def render_bigquery_dashboard_page(
       }} catch(err) {{ setStatus('demoStatus',err.message||String(err),true); }}
     }}
 
-    // ---- Ranked-list panels (admin preview) ----
-    // Two tabbed breakdown panels. The Acquisition panel has its own endpoint
-    // (channel / source / campaign each need their own GROUP BY — the Traffic
-    // table's source rows are source x medium, a different grain). The Pages
-    // panel is pure presentation: it re-reads pagesTopRows and landingBaseRows,
-    // already fetched by loadPages/loadLandingPages, so it costs no extra query.
-    const RK_PER_PAGE=8;
-    // A bounce rate over a handful of sessions is noise — one visitor who left
-    // makes a page "100% bounce". Rank only pages with enough traffic to mean
-    // something, and say so in the footer.
-    const RK_BOUNCE_MIN_SESSIONS=25;
-    const rkCompact=new Intl.NumberFormat('en-US',{{notation:'compact', maximumFractionDigits:1}});
-    // Compact in the cell (the column is narrow); the exact figure rides along in
-    // the row tooltip so nothing is actually lost to rounding.
-    const rkNum = v => num(v)>=10000 ? rkCompact.format(num(v)) : count(v);
-    let rkAcqData=null;                                  // {{by_channel,by_source,by_campaign}}
-    const rkState={{
-      acq:{{key:'by_channel', dim:'Channel', metric:'Sessions', page:1}},
-      pg: {{key:'top',        dim:'Page',    metric:'Pageviews', page:1}},
-    }};
-
-    // Rows for the currently selected tab, as {{label, value}} plus the display
-    // mode. 'rate' fills the bar against a fixed 0-100 scale; 'count' against the
-    // leader, so the top row is always a full bar.
-    function rkRows(grp) {{
-      const st=rkState[grp];
-      if (grp==='acq') {{
-        const rows=(rkAcqData&&rkAcqData[st.key])||[];
-        return {{mode:'count', rows:rows.map(r=>({{label:r.label, value:num(r.sessions)}}))}};
-      }}
-      if (st.key==='top') {{
-        return {{mode:'count', rows:(pagesTopRows||[])
-          .map(r=>({{label:r.page_path, value:num(r.page_views)}}))
-          .sort((a,b)=>b.value-a.value)}};
-      }}
-      if (st.key==='entry') {{
-        return {{mode:'count', rows:(landingBaseRows||[])
-          .map(r=>({{label:r.page_path, value:num(r.sessions)}}))
-          .sort((a,b)=>b.value-a.value)}};
-      }}
-      if (st.key==='convert') {{
-        // applyPageEvents recomputes key_events against the key-event selector
-        // at the top of the tab, so this list always agrees with the Pages
-        // table below it. Pages with no key event are dropped -- a ranked list
-        // whose tail is all zeroes is just noise.
-        return {{mode:'count', rows:applyPageEvents(pagesTopRows||[])
-          .map(r=>({{label:r.page_path, value:num(r.key_events)}}))
-          .filter(r=>r.value>0)
-          .sort((a,b)=>b.value-a.value)}};
-      }}
-      // Bounce rate: GA4 has no exits metric, so this is 1 - engagement rate,
-      // which is GA4's own definition of a bounce.
-      return {{mode:'rate', rows:(pagesTopRows||[])
-        .filter(r=>num(r.sessions)>=RK_BOUNCE_MIN_SESSIONS && r.bounce_rate!=null)
-        .map(r=>({{label:r.page_path, value:num(r.bounce_rate)}}))
-        .sort((a,b)=>b.value-a.value)}};
-    }}
-
-    function rkEmptyMessage(grp) {{
-      const st=rkState[grp];
-      if (grp==='acq' && st.key==='by_campaign') return 'No campaign-tagged traffic in this range.';
-      if (st.key==='convert') return 'No page recorded a key event in this range.';
-      if (st.key==='bounce') return `No page reached ${{RK_BOUNCE_MIN_SESSIONS}} sessions in this range.`;
-      return 'No data for this range.';
-    }}
-
-    function renderRanked(grp) {{
-      const list=document.getElementById(grp==='acq'?'rkAcqList':'rkPgList');
-      if (!list) return;                                  // non-admin: panel not rendered
-      const st=rkState[grp];
-      const pager=document.getElementById(grp==='acq'?'rkAcqPager':'rkPgPager');
-      const note=document.getElementById(grp==='acq'?'rkAcqNote':'rkPgNote');
-      const dimEl=document.getElementById(grp==='acq'?'rkAcqDim':'rkPgDim');
-      const metricEl=document.getElementById(grp==='acq'?'rkAcqMetric':'rkPgMetric');
-      if (dimEl) dimEl.textContent=st.dim;
-      if (metricEl) metricEl.textContent=st.metric;
-
-      const {{mode, rows}}=rkRows(grp);
-      if (!rows.length) {{
-        list.innerHTML=`<div class="rk-empty">${{esc(rkEmptyMessage(grp))}}</div>`;
-        if (pager) pager.innerHTML='';
-        if (note) note.textContent='';
-        return;
-      }}
-      // Scale against the full list, not the visible page, so paging back and
-      // forth doesn't rescale the bars under the reader.
-      const scale=mode==='rate'?100:Math.max(...rows.map(r=>r.value),1);
-      const totalPages=Math.max(1,Math.ceil(rows.length/RK_PER_PAGE));
-      if (st.page>totalPages) st.page=totalPages;
-      if (st.page<1) st.page=1;
-      const startIdx=(st.page-1)*RK_PER_PAGE;
-      const pageRows=rows.slice(startIdx,startIdx+RK_PER_PAGE);
-      const fmt=v=>mode==='rate'?`${{v.toFixed(1)}}%`:rkNum(v);
-      const exact=v=>mode==='rate'?`${{v.toFixed(1)}}%`:count(v);
-      list.innerHTML=pageRows.map(r=>{{
-        const w=Math.max(scale?(r.value/scale*100):0, 1.5);
-        const label=String(r.label??'');
-        return `<div class="rk-row" title="${{esc(label)}} — ${{esc(exact(r.value))}}">`
-          + `<div class="rk-fill" style="width:${{w.toFixed(2)}}%"></div>`
-          + `<span class="rk-name">${{esc(label.startsWith('/')?truncPath(label,32):label)}}</span>`
-          + `<span class="rk-val">${{esc(fmt(r.value))}}</span>`
-          + `</div>`;
-      }}).join('');
-      if (note) note.textContent=st.key==='bounce'
-        ? `Pages with ${{RK_BOUNCE_MIN_SESSIONS}}+ sessions`
-        : `${{count(rows.length)}} ${{rows.length===1?'row':'rows'}}`;
-      if (!pager) return;
-      if (totalPages<=1) {{ pager.innerHTML=''; return; }}
-      pager.innerHTML=`<button type="button" class="pager-btn" data-dir="prev"${{st.page<=1?' disabled':''}}>&lsaquo; Prev</button>`
-        + `<span class="pager-info">Page ${{st.page}} of ${{totalPages}}</span>`
-        + `<button type="button" class="pager-btn" data-dir="next"${{st.page>=totalPages?' disabled':''}}>Next &rsaquo;</button>`;
-      pager.querySelectorAll('.pager-btn').forEach(b=>b.onclick=()=>{{
-        st.page+=b.dataset.dir==='next'?1:-1; renderRanked(grp);
-      }});
-    }}
-    // Re-render the Pages panel from whatever loadPages/loadLandingPages have
-    // put in state. Safe to call before either has returned.
-    function renderRankedPages() {{ renderRanked('pg'); }}
-
-    (function initRankedTabs(){{
-      document.querySelectorAll('.rk-tab').forEach(tab=>{{
-        tab.addEventListener('click', ()=>{{
-          const grp=tab.dataset.grp, st=rkState[grp];
-          if (st.key===tab.dataset.key) return;
-          st.key=tab.dataset.key;
-          st.dim=tab.dataset.dim||st.dim;
-          st.metric=tab.dataset.metric||st.metric;
-          st.page=1;
-          document.querySelectorAll(`.rk-tab[data-grp="${{grp}}"]`)
-            .forEach(t=>t.setAttribute('aria-selected', String(t===tab)));
-          renderRanked(grp);
-        }});
-      }});
-    }})();
-
-    async function loadRankedAcq() {{
-      if (!document.getElementById('rkAcqList')) return;   // non-admin
-      setStatus('rkAcqStatus','Loading…');
-      try {{
-        rkAcqData=await getJson(withDates(ACQ_BREAKDOWN_API));
-        rkState.acq.page=1;
-        renderRanked('acq');
-        setStatus('rkAcqStatus','');
-      }} catch(err) {{
-        rkAcqData=null;
-        renderRanked('acq');
-        setStatus('rkAcqStatus',err.message||String(err),true);
-      }}
-    }}
-
     // ---- Loaders ----
     function loadAllAnalytics() {{
       // Staggered, not simultaneous: 7 modules x 1-3 sub-fetches each means
@@ -4916,8 +4697,6 @@ def render_bigquery_dashboard_page(
       if (modules.landing)          loaders.push(loadLandingPages);
       if (modules.user_acquisition) loaders.push(loadUserAcquisition);
       if (modules.demographics)     loaders.push(loadDemographics);
-      // Admin-only ranked panels; loadRankedAcq no-ops when they aren't rendered.
-      loaders.push(loadRankedAcq);
       loaders.forEach((fn,i)=>setTimeout(fn, i*250));
     }}
     // ---- Overview home: a widget per section, each with a "See more" jump ----
