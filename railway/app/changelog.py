@@ -63,6 +63,26 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-14",
+        title="Search the connector list, and LinkedIn Organic has its logo",
+        area="Settings · Connectors",
+        kind="improved",
+        summary=(
+            "A search box above the connector cards narrows the list as you type, "
+            "and LinkedIn Organic is no longer the one card sitting next to an "
+            "empty square."
+        ),
+        details=(
+            "Typing filters on the connector's name, so \"linkedi\" leaves just "
+            "LinkedIn Ads and LinkedIn Organic on screen.",
+            "Short names work too — \"gsc\" finds Search Console, \"ga4\" finds "
+            "Google Analytics 4.",
+            "Clearing the box brings every connector back.",
+            "LinkedIn Organic now shows an outlined LinkedIn mark, so it reads "
+            "apart from LinkedIn Ads at a glance.",
+        ),
+    ),
+    Entry(
+        date="2026-08-14",
         title="Campaign Explorer panels rearrange like the Overview ones",
         area="Client dashboards · Campaign Explorer",
         kind="new",
