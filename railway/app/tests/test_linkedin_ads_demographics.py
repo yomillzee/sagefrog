@@ -41,12 +41,15 @@ class FakeApi:
     """Stand-in for _linkedin_get: records paths, replays canned payloads.
 
     ``reject`` names fields whose presence in the projection makes the call fail
-    the way LinkedIn does — a 400 naming the projected field.
+    the way LinkedIn does — a 400 naming the projected field. ``org_lookup_fails``
+    reproduces the 403 a token without admin rights gets from organization reads.
     """
 
-    def __init__(self, analytics: dict[str, list[dict]], reject: tuple[str, ...] = ()):
+    def __init__(self, analytics: dict[str, list[dict]], reject: tuple[str, ...] = (),
+                 org_lookup_fails: bool = False):
         self.analytics = analytics
         self.reject = reject
+        self.org_lookup_fails = org_lookup_fails
         self.paths: list[str] = []
 
     def __call__(self, path: str, *, access_token: str, env=None, **kwargs) -> dict:
@@ -60,19 +63,29 @@ class FakeApi:
                     )
             pivot = path.split("pivot=", 1)[1].split("&", 1)[0]
             return {"elements": self.analytics.get(pivot, [])}
-        # Reference-data lookups: /titles/123, /organizations/456, /industries/7
+        if path.startswith("/organizationsLookup"):
+            if self.org_lookup_fails:
+                raise RuntimeError("LinkedIn API error 403: ACCESS_DENIED")
+            ids = path.split("List(", 1)[1].rstrip(")").split(",")
+            return {"results": {i: {"localizedName": f"Acme {i}"} for i in ids if i}}
+        # Reference-data lookups: /titles/123, /industries/7
         return {"localizedName": f"Resolved {path.rsplit('/', 1)[-1]}"}
 
 
 class DemographicFetchTests(unittest.TestCase):
     def setUp(self) -> None:
         self._orig_get = linkedin_service._linkedin_get
+        self._orig_versioned = linkedin_service._linkedin_get_with_versions
 
     def tearDown(self) -> None:
         linkedin_service._linkedin_get = self._orig_get
+        linkedin_service._linkedin_get_with_versions = self._orig_versioned
 
     def _fetch(self, api: FakeApi, **kwargs):
+        # Analytics goes through _linkedin_get; reference lookups go through the
+        # version-tolerant wrapper. One fake serves both.
         linkedin_service._linkedin_get = api
+        linkedin_service._linkedin_get_with_versions = api
         return linkedin_service.fetch_ads_demographics(
             "512345678",
             start=date(2026, 7, 16),
@@ -126,6 +139,34 @@ class DemographicFetchTests(unittest.TestCase):
         self.assertIsNone(rows[0]["conversions"])
         analytics = [p for p in api.paths if p.startswith("/adAnalytics")]
         self.assertEqual(len(analytics), 2)  # first attempt + degraded retry
+
+    def test_companies_resolve_in_one_batched_lookup(self) -> None:
+        # /organizations/{id} requires the ADMINISTRATOR role on that org, which
+        # nobody holds for the third-party companies in ad demographics — so
+        # companies go through organizationsLookup, batched, never one per row.
+        api = FakeApi({"MEMBER_COMPANY": [
+            _element(f"urn:li:organization:{i}", 500 - i, 5) for i in range(1, 6)
+        ]})
+        rows = self._fetch(api, dimensions=["company"])
+        self.assertEqual(rows[0]["category"], "Acme 1")
+        lookups = [p for p in api.paths if p.startswith("/organizationsLookup")]
+        self.assertEqual(len(lookups), 1)
+        self.assertIn("List(1,2,3,4,5)", lookups[0])
+        # The per-entity endpoint is never touched.
+        self.assertFalse([p for p in api.paths if p.startswith("/organizations/")])
+
+    def test_company_lookup_failure_degrades_to_ids_without_retrying(self) -> None:
+        api = FakeApi(
+            {"MEMBER_COMPANY": [
+                _element("urn:li:organization:77", 900, 9),
+                _element("urn:li:organization:88", 400, 4),
+            ]},
+            org_lookup_fails=True,
+        )
+        rows = self._fetch(api, dimensions=["company"])
+        self.assertEqual([r["category"] for r in rows], ["Company 77", "Company 88"])
+        # One failed batch, not one failed call per company.
+        self.assertEqual(len([p for p in api.paths if "organizationsLookup" in p]), 1)
 
     def test_projection_degrades_all_the_way_to_impressions_and_clicks(self) -> None:
         api = FakeApi(

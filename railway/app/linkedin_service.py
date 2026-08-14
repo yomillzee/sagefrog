@@ -2723,19 +2723,89 @@ def _demographic_category_label(
         return linkedin_taxonomy.FUNCTION_LABELS.get(ref_id, f"Function {ref_id}")
     if dimension == "company_size":
         return linkedin_taxonomy.humanize_staff_range(raw_value)
-    kind = {
-        "company": "organization",
-        "job_title": "title",
-        "industry": "industry",
-    }.get(dimension)
+    if dimension == "company":
+        # Companies are resolved in one batch before this runs (see
+        # _resolve_organization_labels) — never one call per row.
+        return cache.get(
+            f"organization:{ref_id}",
+            linkedin_taxonomy.reference_fallback_label("organization", ref_id),
+        )
+    kind = {"job_title": "title", "industry": "industry"}.get(dimension)
     if kind:
         return linkedin_taxonomy.resolve_reference_label(
             kind,
             ref_id,
-            get=lambda path: _linkedin_get(path, access_token=access_token, env=env),
+            # Version-tolerant, like the organic follower demographics: these
+            # reference endpoints move between API versions, and a plain call
+            # pinned to one version 404s into the fallback label instead of
+            # resolving.
+            get=lambda path: _linkedin_get_with_versions(
+                path, access_token=access_token, env=env
+            ),
             cache=cache,
         )
     return linkedin_taxonomy.humanize_enum(raw_value)
+
+
+# Batch size for organizationsLookup. LinkedIn caps batch gets well above this;
+# staying conservative keeps the URL clear of length limits.
+_ORG_LOOKUP_CHUNK = 50
+
+
+def _resolve_organization_labels(
+    ref_ids: list[str],
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+    cache: dict[str, str],
+) -> None:
+    """Resolve organization ids to names in batches, filling ``cache`` in place.
+
+    Uses ``/organizationsLookup?ids=List(...)`` rather than ``/organizations/{id}``
+    on purpose: the single-entity endpoint requires the caller to hold the
+    ADMINISTRATOR role on that organization, which nobody does for the
+    third-party companies that show up in ad demographics — every such call 403s
+    and the label degrades to the bare id. organizationsLookup is the endpoint
+    for organizations you do not administer: no admin role, a smaller field set
+    (a name is all we need), and one call per chunk instead of one per company.
+
+    Failures are absorbed: unresolved ids simply keep their fallback label.
+    """
+    pending: list[str] = []
+    for ref_id in ref_ids:
+        key = f"organization:{ref_id}"
+        if ref_id and key not in cache and ref_id not in pending:
+            pending.append(ref_id)
+    if not pending:
+        return
+
+    for i in range(0, len(pending), _ORG_LOOKUP_CHUNK):
+        chunk = pending[i:i + _ORG_LOOKUP_CHUNK]
+        path = f"/organizationsLookup?ids=List({','.join(chunk)})"
+        try:
+            payload = _linkedin_get_with_versions(
+                path, access_token=access_token, env=env
+            )
+        except Exception as exc:  # pragma: no cover - network dependent
+            _log.warning("organizationsLookup failed for %d ids: %s", len(chunk), exc)
+            # Cache the fallback so a later dimension in the same sync doesn't
+            # retry an endpoint that is evidently unavailable to this token.
+            for ref_id in chunk:
+                cache[f"organization:{ref_id}"] = (
+                    linkedin_taxonomy.reference_fallback_label("organization", ref_id)
+                )
+            continue
+        # Rest.li batch get: {"results": {"<id>": {...}}, "errors": {...}}
+        results = payload.get("results")
+        if not isinstance(results, dict):
+            results = {}
+        for ref_id in chunk:
+            entity = results.get(ref_id) or results.get(str(ref_id)) or {}
+            fallback = linkedin_taxonomy.reference_fallback_label("organization", ref_id)
+            cache[f"organization:{ref_id}"] = (
+                linkedin_taxonomy.label_from_payload(entity, fallback=fallback)
+                if entity else fallback
+            )
 
 
 def fetch_ads_demographics(
@@ -2818,7 +2888,16 @@ def fetch_ads_demographics(
         dim_rows.sort(key=lambda r: r["impressions"], reverse=True)
         # Resolve labels only for the rows that survive the cap — a reference
         # lookup is an API call, and the tail is discarded anyway.
-        for row in dim_rows[:top_n]:
+        selected = dim_rows[:top_n]
+        if dimension == "company":
+            # One batched call for the whole page of companies, not one per row.
+            _resolve_organization_labels(
+                [_demographic_urn_id(r["category_urn"]) for r in selected],
+                access_token=access_token,
+                env=env,
+                cache=label_cache,
+            )
+        for row in selected:
             row["category"] = _demographic_category_label(
                 dimension,
                 row["category_urn"],
@@ -2826,5 +2905,5 @@ def fetch_ads_demographics(
                 env=env,
                 cache=label_cache,
             )
-        rows.extend(dim_rows[:top_n])
+        rows.extend(selected)
     return rows
