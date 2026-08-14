@@ -22,6 +22,16 @@ _PLATFORM_ICONS: dict[str, str] = {
         '<svg viewBox="0 0 24 24" fill="#0A66C2" aria-hidden="true">'
         '<path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.14.923-2.064 2.063-2.064 1.14 0 2.064.925 2.064 2.064 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>'
     ),
+    # LinkedIn Organic — same glyph as Ads, outlined so the two are distinguishable
+    "linkedin_organic": (
+        '<svg viewBox="0 0 24 24" aria-hidden="true">'
+        '<rect x="1.6" y="1.6" width="20.8" height="20.8" rx="5" fill="none" stroke="#0A66C2" stroke-width="1.9"/>'
+        '<g fill="#0A66C2" transform="translate(12 12) scale(.75) translate(-12 -12)">'
+        '<path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286z"/>'
+        '<path d="M5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.14.923-2.064 2.063-2.064 1.14 0 2.064.925 2.064 2.064 0 1.139-.925 2.065-2.064 2.065z"/>'
+        '<path d="M7.119 20.452H3.555V9h3.564v11.452z"/>'
+        '</g></svg>'
+    ),
     # Meta
     "meta_ads": (
         '<svg viewBox="0 0 24 24" fill="#0467DF" aria-hidden="true">'
@@ -91,7 +101,20 @@ _STATUS_CLASSES = {
 
 _CONNECTOR_CSS = """
   .connectors-page-title { font-size: 1.45rem; font-weight: 700; color: var(--navy); margin: 0 0 6px; }
-  .connectors-page-sub { font-size: 0.95rem; color: var(--muted); margin: 0 0 28px; }
+  .connectors-page-sub { font-size: 0.95rem; color: var(--muted); margin: 0 0 20px; }
+
+  /* Connector name filter */
+  .connector-search-wrap { max-width: 340px; margin: 0 0 20px; }
+  .connector-search {
+    width: 100%; box-sizing: border-box;
+    padding: 10px 12px 10px 36px; font: inherit; font-size: 0.9rem; color: var(--navy);
+    border: 1px solid var(--border); border-radius: 9px; background: #fff;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='M21 21l-4.35-4.35'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: 12px center;
+  }
+  .connector-search::placeholder { color: #94a3b8; }
+  .connector-search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+  .connector-nomatch { font-size: 0.92rem; color: var(--muted); margin: 4px 0 0; }
   .connector-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -109,6 +132,7 @@ _CONNECTOR_CSS = """
     transition: box-shadow .15s, border-color .15s;
   }
   .connector-card:hover { box-shadow: 0 4px 16px rgba(10,37,64,.08); border-color: #b8c4d4; }
+  .connector-card[hidden] { display: none; }
   .connector-card-header { display: flex; align-items: center; gap: 14px; }
   .connector-icon {
     width: 44px; height: 44px; border-radius: 10px;
@@ -405,6 +429,37 @@ def _bq_verify_js() -> str:
     """
 
 
+def _connector_search_js() -> str:
+    """Filter the connector cards as the user types in the search box."""
+    return """
+    (function(){
+      var input = document.getElementById('connectorSearch');
+      var grid = document.getElementById('connectorGrid');
+      if (!input || !grid) return;
+      var cards = Array.prototype.slice.call(grid.querySelectorAll('.connector-card'));
+      var nomatch = document.getElementById('connectorNoMatch');
+      var nomatchTerm = nomatch ? nomatch.querySelector('strong') : null;
+      function apply(){
+        var raw = input.value.trim();
+        var q = raw.toLowerCase().replace(/\\s+/g, ' ');
+        var shown = 0;
+        cards.forEach(function(card){
+          var hit = !q || (card.getAttribute('data-search') || '').indexOf(q) !== -1;
+          card.hidden = !hit;
+          if (hit) shown++;
+        });
+        if (nomatch) {
+          if (nomatchTerm) nomatchTerm.textContent = '\\u201c' + raw + '\\u201d';
+          nomatch.hidden = shown > 0;
+        }
+      }
+      input.addEventListener('input', apply);
+      input.addEventListener('search', apply);
+      apply();
+    })();
+    """
+
+
 def render_connectors_directory(
     *,
     client_slug: str,
@@ -447,8 +502,16 @@ def render_connectors_directory(
         else:
             action_btn = f'<a href="{_esc(detail_url)}" class="btn-connect">Connect</a>'
 
+        # Matched against the search box: display name plus the connector key, so
+        # "gsc" finds Search Console and "linkedi" finds both LinkedIn cards.
+        search_key = " ".join(
+            dict.fromkeys(
+                (handler.display_name.lower(), ctype, ctype.replace("_", " "))
+            )
+        )
+
         cards.append(f"""
-          <div class="connector-card">
+          <div class="connector-card" data-search="{_esc(search_key)}">
             <div class="connector-card-header">
               <div class="connector-icon">{icon}</div>
               <div class="connector-card-name">{_esc(handler.display_name)}</div>
@@ -474,7 +537,14 @@ def render_connectors_directory(
       {flash_html}
       <h1 class="connectors-page-title">Data Connectors</h1>
       <p class="connectors-page-sub">Connect your marketing platforms to enable reporting and daily data sync.</p>
-      <div class="connector-grid">{"".join(cards)}</div>
+      <div class="connector-search-wrap">
+        <input type="search" id="connectorSearch" class="connector-search"
+               placeholder="Search connectors&hellip;" autocomplete="off" spellcheck="false"
+               aria-label="Filter connectors by name" aria-controls="connectorGrid">
+      </div>
+      <div class="connector-grid" id="connectorGrid">{"".join(cards)}</div>
+      <p class="connector-nomatch" id="connectorNoMatch" role="status" hidden>No connectors match <strong></strong>.</p>
+      <script>{_connector_search_js()}</script>
       {bq_html}
     """
     return render_client_shell_page(
