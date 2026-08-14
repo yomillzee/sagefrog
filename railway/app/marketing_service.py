@@ -120,6 +120,10 @@ def _linkedin_campaign_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.fact_linkedin_ads_campaign_daily`"
 
 
+def _linkedin_demographics_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.fact_linkedin_ads_demographics`"
+
+
 def _meta_ad_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.fact_meta_ads_ad_daily`"
 
@@ -743,6 +747,108 @@ def fetch_linkedin_explorer(
         "level": level,
         "row_count": len(rows),
         "rows": rows,
+    }
+
+
+def pick_demographics_window(
+    rows: list[dict[str, Any]],
+    *,
+    start_date: date,
+    end_date: date,
+    window: str | None = None,
+) -> str:
+    """Choose which synced window to serve for a requested date range.
+
+    Demographic rows are per-window totals that cannot be re-cut to an arbitrary
+    range (see linkedin_service.fetch_ads_demographics), so the panel shows a
+    whole synced window and says which one. An explicit ``window`` wins when it
+    was actually synced; otherwise pick the window whose span is closest to the
+    range the user has selected, so a 7-day view lands on the 30-day window
+    rather than the 90.
+    """
+    spans: dict[str, int] = {}
+    for row in rows:
+        key = str(row.get("window_key") or "").strip()
+        if not key or key in spans:
+            continue
+        w_start, w_end = row.get("window_start"), row.get("window_end")
+        try:
+            spans[key] = (date.fromisoformat(str(w_end)) - date.fromisoformat(str(w_start))).days + 1
+        except (TypeError, ValueError):
+            spans[key] = 0
+    if not spans:
+        return ""
+    requested = (window or "").strip().upper()
+    if requested in spans:
+        return requested
+    target = (end_date - start_date).days + 1
+    return min(spans, key=lambda k: (abs(spans[k] - target), k))
+
+
+def fetch_linkedin_demographics(
+    *,
+    start_date: date,
+    end_date: date,
+    window: str | None = None,
+    top_limit: int = 25,
+) -> dict[str, Any]:
+    """LinkedIn member demographics — who saw and clicked the ads.
+
+    Reads fact_linkedin_ads_demographics, which stores per-window totals rather
+    than a daily series: LinkedIn's MEMBER_* pivots have no date dimension and
+    suppress small categories, so these numbers cannot be summed across days or
+    sliced to an arbitrary range. The endpoint therefore serves one whole synced
+    window — the one closest to the caller's range — and reports which window
+    that was so the panel can label itself honestly instead of implying it
+    follows the date picker.
+
+    Returns rows grouped by dimension (company / job title / function /
+    seniority / industry / company size), each capped to ``top_limit``
+    categories by impressions. A client that has never synced demographics (or
+    whose LinkedIn permissions don't cover the pivots) gets an empty result, not
+    a 500 — the panel hides itself.
+    """
+    sql = f"""
+    SELECT
+      window_key, window_start, window_end, dimension,
+      category, category_urn, impressions, clicks, spend, conversions, ctr
+    FROM {_linkedin_demographics_table()}
+    ORDER BY window_key, dimension, impressions DESC
+    """
+    try:
+        rows = _run_query(sql, params={}, max_rows=20000)
+    except Exception:
+        rows = []
+
+    chosen = pick_demographics_window(
+        rows, start_date=start_date, end_date=end_date, window=window
+    )
+    live = [r for r in rows if str(r.get("window_key") or "") == chosen] if chosen else []
+
+    by_dimension: dict[str, list[dict[str, Any]]] = {}
+    for row in live:
+        dim = str(row.get("dimension") or "").strip()
+        if not dim:
+            continue
+        bucket = by_dimension.setdefault(dim, [])
+        if len(bucket) >= top_limit:
+            continue
+        bucket.append(row)
+
+    window_start = live[0].get("window_start") if live else None
+    window_end = live[0].get("window_end") if live else None
+    return {
+        "client": _client_key(),
+        "date_range": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+        "window": chosen,
+        "window_start": str(window_start) if window_start else None,
+        "window_end": str(window_end) if window_end else None,
+        "windows_available": sorted({str(r.get("window_key") or "") for r in rows if r.get("window_key")}),
+        "row_count": len(live),
+        "by_dimension": by_dimension,
     }
 
 

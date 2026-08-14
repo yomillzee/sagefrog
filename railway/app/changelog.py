@@ -63,6 +63,29 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-14",
+        title="See which companies and job titles LinkedIn ads reached",
+        area="Campaign explorer",
+        kind="new",
+        summary=(
+            "A LinkedIn audience panel on the Campaign explorer shows who actually "
+            "saw and clicked the ads — by company, job title, job function, "
+            "seniority, industry and company size."
+        ),
+        details=(
+            "Tabs across the top switch between the six breakdowns; each lists the "
+            "top categories with impressions, share of reach, clicks, CTR and spend.",
+            "LinkedIn only reports these figures over a fixed window, so the panel "
+            "shows a badge naming the window it is displaying (last 30 or last 90 "
+            "days) rather than following the date range at the top of the page.",
+            "The numbers are approximate by design and will not add up to campaign "
+            "totals: LinkedIn withholds categories with very few events to protect "
+            "member privacy.",
+            "The panel only appears for clients with LinkedIn Ads connected, and can "
+            "be reordered or hidden like any other explorer panel.",
+        ),
+    ),
+    Entry(
+        date="2026-08-14",
         title="Search the connector list, and LinkedIn Organic has its logo",
         area="Settings · Connectors",
         kind="improved",

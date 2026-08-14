@@ -64,6 +64,18 @@ class LinkedInAdsConnector(ConnectorHandler):
                     account_id=account_id, start=start, end=end, access_token=access_token
                 )
                 rows_written += meta.get("rows_upserted") or 0
+                # Member demographics run on their own fixed windows, not the
+                # caller's date_range — they have no date dimension to slice
+                # (see bq_linkedin_ads_service.DEMOGRAPHIC_WINDOWS). Best-effort:
+                # an account whose LinkedIn permissions don't cover demographic
+                # pivots still gets a complete campaign/creative sync.
+                try:
+                    demo = bq_linkedin_ads_service.sync_linkedin_demographics(
+                        account_id=account_id, access_token=access_token
+                    )
+                    rows_written += demo.get("rows_upserted") or 0
+                except Exception as exc:
+                    _log.warning("LinkedIn demographics sync failed [%s]: %s", client_slug, exc)
             # Rebuild the unified paid-media view + data-health mart (app's own
             # replacement for the Dataform marts) so the dashboard Overview
             # populates from this sync. Idempotent; includes whichever of

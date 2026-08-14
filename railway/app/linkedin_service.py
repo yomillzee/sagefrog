@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 import httpx
 
+import linkedin_taxonomy
 from dates_util import resolve_date_range
 from linkedin_auth import LinkedInEnv, load_linkedin_env
 
@@ -2536,3 +2537,294 @@ def fetch_campaign_metadata_rows(
             }
         )
     return out
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Member demographics (adAnalytics MEMBER_* pivots)
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# Which companies, job titles, functions, seniorities, industries and company
+# sizes actually saw and clicked the ads. Same /adAnalytics endpoint as every
+# other report here, just a different pivot — and the r_ads_reporting scope the
+# app already holds covers it.
+#
+# Three properties of these pivots drive the whole design, and none of them match
+# how the rest of this codebase treats ad data:
+#
+#   1. **No date breakdown.** LinkedIn returns no dateRange for MEMBER_* pivots
+#      (Campaign Manager likewise disables the time breakdown on its Demographics
+#      report). A demographic row is a total for the whole requested window, full
+#      stop.
+#   2. **Suppression below a minimum event threshold.** Categories with too few
+#      events are dropped for member privacy, so fetching 30 single days and
+#      summing them does NOT reproduce the 30-day figure — it systematically
+#      undercounts, worst on the smallest campaigns. Per-day fetching is not a
+#      workaround; it is a wrong answer.
+#   3. **Approximate by design**, and only retained by LinkedIn for two years.
+#
+# Together those mean demographics cannot be a day-grain fact re-aggregated over
+# an arbitrary picker range like every other mart here. They are synced for a few
+# fixed windows and read back for exactly those windows — see
+# bq_linkedin_ads_service.sync_linkedin_demographics.
+
+# dimension key -> adAnalytics pivot name. The keys are what we store and what
+# the dashboard tabs are built from, so they stay stable even if LinkedIn
+# renames a pivot behind a version bump.
+DEMOGRAPHIC_PIVOTS: dict[str, str] = {
+    "company": "MEMBER_COMPANY",
+    "job_title": "MEMBER_JOB_TITLE",
+    "job_function": "MEMBER_JOB_FUNCTION",
+    "seniority": "MEMBER_SENIORITY",
+    "industry": "MEMBER_INDUSTRY",
+    "company_size": "MEMBER_COMPANY_SIZE",
+}
+
+# Human labels for the dimensions, used for the dashboard tab strip and any
+# admin-facing sync reporting.
+DEMOGRAPHIC_LABELS: dict[str, str] = {
+    "company": "Company",
+    "job_title": "Job title",
+    "job_function": "Job function",
+    "seniority": "Seniority",
+    "industry": "Industry",
+    "company_size": "Company size",
+}
+
+# Field sets tried in order, most complete first. LinkedIn rejects a projection
+# outright (400) when a metric isn't available for the pivot rather than
+# returning it empty, and exactly which metrics are unavailable varies by pivot
+# and API version — conversionValueInUsd is documented as unavailable for
+# demographic pivots, and conversions is inconsistent across accounts. Rather
+# than hardcode a guess, degrade: ask for everything, and on a projection
+# rejection drop the most expendable field and retry. Impressions + clicks are
+# the floor; if that fails the error is real and propagates.
+_DEMOGRAPHIC_FIELD_SETS: tuple[str, ...] = (
+    "impressions,clicks,costInUsd,conversions,pivotValues",
+    "impressions,clicks,costInUsd,pivotValues",
+    "impressions,clicks,pivotValues",
+)
+
+# LinkedIn signals "you asked for a metric this pivot doesn't support" with a
+# message naming the projected field. Matching on that (rather than on any 400)
+# keeps a genuine auth/permission failure from being silently retried away.
+_PROJECTION_REJECTED = "projected field"
+
+
+def _is_projection_rejection(error: Exception) -> bool:
+    return _PROJECTION_REJECTED in str(error).lower()
+
+
+def _demographic_urn_id(urn: str) -> str:
+    """Trailing id of a pivot URN. Non-URN pivot values pass through unchanged.
+
+    MEMBER_COMPANY_SIZE returns a bare enum (``SIZE_51_TO_200``), not a URN, so
+    splitting on ':' has to be a no-op for it rather than mangling the value.
+    """
+    return str(urn or "").strip().split(":")[-1]
+
+
+def _first_pivot_value(row: dict[str, Any]) -> str:
+    """The pivot value of one analytics element.
+
+    With a single pivot LinkedIn returns a one-element pivotValues list; some
+    versions also echo a scalar ``pivotValue``. Accept either.
+    """
+    values = row.get("pivotValues")
+    if isinstance(values, list) and values:
+        return str(values[0] or "").strip()
+    return str(row.get("pivotValue") or "").strip()
+
+
+def _demographics_url(
+    *,
+    pivot: str,
+    account_id: str,
+    start: date,
+    end: date,
+    fields: str,
+) -> str:
+    """adAnalytics URL for one demographic pivot over one window.
+
+    timeGranularity is ALL — a demographic pivot has no daily series to ask for
+    (see the module note above), and requesting DAILY just returns the same
+    totals with a wasted round trip.
+    """
+    account_urn = quote(_account_urn(account_id), safe="")
+    date_range = _format_date_range(start, end)
+    return (
+        f"/adAnalytics?q=analytics"
+        f"&pivot={pivot}"
+        f"&timeGranularity=ALL"
+        f"&dateRange={date_range}"
+        f"&accounts=List({account_urn})"
+        f"&fields={fields}"
+    )
+
+
+def _fetch_demographic_pivot(
+    account_id: str,
+    *,
+    pivot: str,
+    start: date,
+    end: date,
+    access_token: str,
+    env: LinkedInEnv,
+) -> tuple[list[dict[str, Any]], str]:
+    """Return (elements, fields_used) for one pivot, degrading the projection.
+
+    fields_used tells the caller which metrics are actually present, so a row
+    can record a missing metric as NULL rather than a misleading zero.
+    """
+    last_error: Exception | None = None
+    for fields in _DEMOGRAPHIC_FIELD_SETS:
+        url = _demographics_url(
+            pivot=pivot,
+            account_id=account_id,
+            start=start,
+            end=end,
+            fields=fields,
+        )
+        try:
+            payload = _linkedin_get(url, access_token=access_token, env=env)
+            return payload.get("elements") or [], fields
+        except Exception as exc:
+            last_error = exc
+            if _is_projection_rejection(exc):
+                _log.info(
+                    "LinkedIn demographics: %s rejected projection [%s], degrading",
+                    pivot, fields,
+                )
+                continue
+            raise
+    if last_error:
+        raise last_error
+    return [], ""
+
+
+def _demographic_category_label(
+    dimension: str,
+    raw_value: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv,
+    cache: dict[str, str],
+) -> str:
+    """Human label for one demographic pivot value.
+
+    Seniority and function come from the static local taxonomies (no API call);
+    company size is a bare enum; company, job title and industry need a
+    reference-data lookup, memoized in ``cache`` across the whole sync because
+    the ids are immutable.
+    """
+    ref_id = _demographic_urn_id(raw_value)
+    if dimension == "seniority":
+        return linkedin_taxonomy.SENIORITY_LABELS.get(ref_id, f"Seniority {ref_id}")
+    if dimension == "job_function":
+        return linkedin_taxonomy.FUNCTION_LABELS.get(ref_id, f"Function {ref_id}")
+    if dimension == "company_size":
+        return linkedin_taxonomy.humanize_staff_range(raw_value)
+    kind = {
+        "company": "organization",
+        "job_title": "title",
+        "industry": "industry",
+    }.get(dimension)
+    if kind:
+        return linkedin_taxonomy.resolve_reference_label(
+            kind,
+            ref_id,
+            get=lambda path: _linkedin_get(path, access_token=access_token, env=env),
+            cache=cache,
+        )
+    return linkedin_taxonomy.humanize_enum(raw_value)
+
+
+def fetch_ads_demographics(
+    account_id: str,
+    *,
+    start: date,
+    end: date,
+    dimensions: list[str] | None = None,
+    access_token: str | None = None,
+    env: LinkedInEnv | None = None,
+    top_n: int = 50,
+) -> list[dict[str, Any]]:
+    """Member demographics for one ad account over one window.
+
+    One adAnalytics call per dimension (six by default), plus one cached
+    reference lookup per distinct company / job title / industry id seen. Each
+    row:
+
+      {dimension, category, category_urn, impressions, clicks, spend,
+       conversions}
+
+    ``spend`` / ``conversions`` are None when LinkedIn refused that projection
+    for the pivot — None, not 0, so the dashboard can show "—" instead of
+    claiming a company drove no spend. Capped to the ``top_n`` categories per
+    dimension by impressions; the tail below the cap is dominated by
+    single-impression noise.
+
+    A dimension that fails outright is logged and skipped rather than failing
+    the sync — five useful breakdowns beat none.
+    """
+    env = env or load_linkedin_env(require_token=access_token is None)
+    access_token = access_token or refresh_access_token(env)["access_token"]
+    account_id_clean = _normalize_account_id(account_id)
+    keys = [d for d in (dimensions or list(DEMOGRAPHIC_PIVOTS)) if d in DEMOGRAPHIC_PIVOTS]
+
+    label_cache: dict[str, str] = {}
+    rows: list[dict[str, Any]] = []
+    for dimension in keys:
+        pivot = DEMOGRAPHIC_PIVOTS[dimension]
+        try:
+            elements, fields_used = _fetch_demographic_pivot(
+                account_id_clean,
+                pivot=pivot,
+                start=start,
+                end=end,
+                access_token=access_token,
+                env=env,
+            )
+        except Exception as exc:  # pragma: no cover - network dependent
+            _log.warning(
+                "LinkedIn demographics: %s failed for %s: %s",
+                pivot, account_id_clean, exc,
+            )
+            continue
+
+        has_spend = "costInUsd" in fields_used
+        has_conversions = "conversions" in fields_used
+        dim_rows: list[dict[str, Any]] = []
+        for element in elements:
+            raw_value = _first_pivot_value(element)
+            if not raw_value:
+                continue
+            impressions = int(float(element.get("impressions") or 0))
+            clicks = int(float(element.get("clicks") or 0))
+            # costInUsd comes back as a string, not a number.
+            spend = float(element.get("costInUsd") or 0) if has_spend else None
+            conversions = (
+                float(element.get("conversions") or 0) if has_conversions else None
+            )
+            if impressions <= 0 and clicks <= 0:
+                continue
+            dim_rows.append({
+                "dimension": dimension,
+                "category_urn": raw_value,
+                "impressions": impressions,
+                "clicks": clicks,
+                "spend": spend,
+                "conversions": conversions,
+            })
+        dim_rows.sort(key=lambda r: r["impressions"], reverse=True)
+        # Resolve labels only for the rows that survive the cap — a reference
+        # lookup is an API call, and the tail is discarded anyway.
+        for row in dim_rows[:top_n]:
+            row["category"] = _demographic_category_label(
+                dimension,
+                row["category_urn"],
+                access_token=access_token,
+                env=env,
+                cache=label_cache,
+            )
+        rows.extend(dim_rows[:top_n])
+    return rows

@@ -805,6 +805,95 @@ def _build_linkedin_explorer(payload: dict) -> dict:
             "row_count": len(rows), "rows": rows}
 
 
+# Synthetic member demographics for the demo portal, shaped like a plausible
+# B2B healthcare audience. Ordered most-reached first within each dimension —
+# the real endpoint sorts by impressions, and the panel renders in the order it
+# receives.
+_LINKEDIN_DEMOGRAPHICS: dict[str, list[str]] = {
+    "company": [
+        "Contoso Manufacturing", "Fabrikam Logistics", "Northwind Traders",
+        "Adventure Works", "Tailspin Toys", "Litware Industries",
+        "Proseware Health", "Wide World Importers", "Fourth Coffee",
+        "Graphic Design Institute",
+    ],
+    "job_title": [
+        "Human Resources Director", "Benefits Manager", "Chief People Officer",
+        "Head of Total Rewards", "Occupational Health Manager",
+        "VP of Human Resources", "Safety Director", "Operations Manager",
+    ],
+    "job_function": [
+        "Human Resources", "Operations", "Business Development",
+        "Healthcare Services", "Administrative", "Finance",
+    ],
+    "seniority": ["Manager", "Director", "Senior", "VP", "CXO", "Entry"],
+    "industry": [
+        "Manufacturing", "Transportation & Logistics", "Construction",
+        "Hospitals & Health Care", "Food & Beverage Services", "Retail",
+    ],
+    "company_size": ["201-500", "51-200", "501-1,000", "1,001-5,000", "11-50", "5,001-10,000"],
+}
+
+
+def _build_linkedin_demographics(payload: dict) -> dict:
+    """Demo member demographics.
+
+    Mirrors the real endpoint's contract, including the part that matters most:
+    the response describes a whole synced *window*, not the caller's date range,
+    because LinkedIn's demographic pivots have no date dimension. The demo picks
+    the window the same way the live service does — closest span to the
+    requested range — so the panel's "these are 30-day figures" labelling is
+    exercised here too.
+    """
+    start, end = _dates(payload)
+    windows = {"LAST_30_DAYS": 30, "LAST_90_DAYS": 90}
+    requested = str((payload or {}).get("window") or "").strip().upper()
+    target = (end - start).days + 1
+    chosen = requested if requested in windows else min(
+        windows, key=lambda k: (abs(windows[k] - target), k)
+    )
+    span = windows[chosen]
+    window_end = end
+    window_start = window_end - timedelta(days=span - 1)
+
+    by_dimension: dict[str, list[dict]] = {}
+    for dimension, categories in _LINKEDIN_DEMOGRAPHICS.items():
+        rows = []
+        for rank, category in enumerate(categories):
+            # Decaying impressions down the list, jittered per category so the
+            # bars aren't a perfect geometric staircase.
+            impressions = int(
+                span * (900 / (rank + 1.6)) * _jit((dimension, category, "imp"))
+            )
+            ctr = 0.004 + 0.006 * _u(dimension, category, "ctr")
+            clicks = max(1, int(impressions * ctr))
+            spend = _round2(clicks * (9.0 + 6.0 * _u(dimension, category, "cpc")))
+            rows.append({
+                "window_key": chosen,
+                "window_start": window_start.isoformat(),
+                "window_end": window_end.isoformat(),
+                "dimension": dimension,
+                "category": category,
+                "category_urn": f"urn:li:{dimension}:{1000 + rank}",
+                "impressions": impressions,
+                "clicks": clicks,
+                "spend": spend,
+                "conversions": float(int(clicks * (0.02 + 0.03 * _u(dimension, category, "cv")))),
+                "ctr": clicks / impressions if impressions else 0.0,
+            })
+        rows.sort(key=lambda r: r["impressions"], reverse=True)
+        by_dimension[dimension] = rows
+    return {
+        "client": "demo",
+        "date_range": _date_range(start, end),
+        "window": chosen,
+        "window_start": window_start.isoformat(),
+        "window_end": window_end.isoformat(),
+        "windows_available": sorted(windows),
+        "row_count": sum(len(v) for v in by_dimension.values()),
+        "by_dimension": by_dimension,
+    }
+
+
 def _build_meta_explorer(payload: dict) -> dict:
     start, end = _dates(payload)
     days = max(1, (end - start).days + 1)
@@ -1096,6 +1185,7 @@ _BUILDERS = {
     "explorer.microsoft_ads": _build_microsoft_explorer,
     "explorer.google_ads_keywords": _build_google_ads_keywords,
     "explorer.linkedin": _build_linkedin_explorer,
+    "explorer.linkedin_demographics": _build_linkedin_demographics,
     "explorer.meta": _build_meta_explorer,
     "explorer.meta_verified": _build_meta_verified,
     "explorer.google_verified": _build_google_verified,

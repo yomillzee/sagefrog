@@ -26,6 +26,7 @@ _PAID_MEDIA_VIEW = "vw_paid_media_daily"
 _HEALTH_TABLE = "mart_health"
 _GOOGLE_ADS_EXPLORER_TABLE = "explorer_google_ads_daily"
 _LINKEDIN_CREATIVE_TABLE = "fact_linkedin_ads_creative_daily"
+_LINKEDIN_DEMOGRAPHICS_TABLE = "fact_linkedin_ads_demographics"
 _PAGE_PATH_DAILY_TABLE = "vw_page_path_daily"
 _PAGE_PATH_SOURCE_DAILY_TABLE = "vw_page_path_source_daily"
 
@@ -311,6 +312,79 @@ def fetch_linkedin_explorer(
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "row_count": len(rows),
         "rows": rows,
+    }
+
+
+def fetch_linkedin_demographics(
+    *,
+    client_key: str,
+    start_date: date,
+    end_date: date,
+    project_id: str,
+    dataset_id: str = _DEFAULT_DATASET,
+    credentials_env: str | None = None,
+    window: str | None = None,
+    top_limit: int = 25,
+) -> dict[str, Any]:
+    """LinkedIn member demographics — the parameterized twin of
+    marketing_service.fetch_linkedin_demographics.
+
+    Rows are per-window totals, not a daily series: LinkedIn's MEMBER_* pivots
+    carry no date dimension and suppress small categories, so they can neither be
+    summed across days nor sliced to an arbitrary range. One whole synced window
+    is served — the one closest to the caller's range — and named in the
+    response so the panel can label itself rather than pretend to follow the
+    date picker.
+    """
+    from marketing_service import pick_demographics_window
+
+    tbl = _t(_LINKEDIN_DEMOGRAPHICS_TABLE, project_id, dataset_id)
+    sql = f"""
+    SELECT
+      window_key, window_start, window_end, dimension,
+      category, category_urn, impressions, clicks, spend, conversions, ctr
+    FROM {tbl}
+    ORDER BY window_key, dimension, impressions DESC
+    """
+    try:
+        rows = _run(
+            sql,
+            params={},
+            project_id=project_id,
+            credentials_env=credentials_env,
+            max_rows=20000,
+        )
+    except Exception:
+        # Never synced (or no demographics permission) -> empty, not a 500. The
+        # panel hides itself when there are no rows.
+        rows = []
+
+    chosen = pick_demographics_window(
+        rows, start_date=start_date, end_date=end_date, window=window
+    )
+    live = [r for r in rows if str(r.get("window_key") or "") == chosen] if chosen else []
+
+    by_dimension: dict[str, list[dict[str, Any]]] = {}
+    for row in live:
+        dim = str(row.get("dimension") or "").strip()
+        if not dim:
+            continue
+        bucket = by_dimension.setdefault(dim, [])
+        if len(bucket) >= top_limit:
+            continue
+        bucket.append(row)
+
+    window_start = live[0].get("window_start") if live else None
+    window_end = live[0].get("window_end") if live else None
+    return {
+        "client": client_key,
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "window": chosen,
+        "window_start": str(window_start) if window_start else None,
+        "window_end": str(window_end) if window_end else None,
+        "windows_available": sorted({str(r.get("window_key") or "") for r in rows if r.get("window_key")}),
+        "row_count": len(live),
+        "by_dimension": by_dimension,
     }
 
 

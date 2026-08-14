@@ -974,6 +974,34 @@ def nixon_meta_debug_insights(
 
 
 @router.get(
+    "/api/clients/nixon/linkedin/demographics",
+    summary="Nixon LinkedIn member demographics from BigQuery marketing mart",
+)
+def nixon_linkedin_demographics(
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+    window: str | None = Query(
+        default=None,
+        description="Synced window to serve (e.g. LAST_30_DAYS). Defaults to the one closest to the requested range.",
+    ),
+) -> dict:
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        return _cached_bq_read(
+            "nixon.explorer.linkedin_demographics",
+            {"start": start.isoformat(), "end": end.isoformat(), "window": window or ""},
+            ttl_seconds=900,
+            fetch=lambda: marketing_service.fetch_linkedin_demographics(
+                start_date=start, end_date=end, window=window,
+            ),
+        )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
     "/api/clients/nixon/meta/explorer",
     summary="Nixon Meta Ads ad-level explorer from BigQuery marketing mart",
 )
@@ -1489,6 +1517,40 @@ def client_linkedin_explorer(
                 ttl_seconds=900,
                 fetch=lambda: marketing_service.fetch_linkedin_explorer(
                     start_date=start, end_date=end,
+                ),
+            )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/linkedin/demographics",
+    summary="Client LinkedIn member demographics from BigQuery marketing mart (generic BQ-test clients)",
+)
+def client_linkedin_demographics(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+    window: str | None = Query(
+        default=None,
+        description="Synced window to serve (e.g. LAST_30_DAYS). Defaults to the one closest to the requested range.",
+    ),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        with marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer.linkedin_demographics",
+                {"start": start.isoformat(), "end": end.isoformat(), "window": window or ""},
+                ttl_seconds=900,
+                fetch=lambda: marketing_service.fetch_linkedin_demographics(
+                    start_date=start, end_date=end, window=window,
                 ),
             )
     except Exception as exc:

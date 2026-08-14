@@ -27,6 +27,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 from urllib.parse import quote
 
+import linkedin_taxonomy
 from dates_util import resolve_date_range
 from linkedin_auth import LinkedInEnv, load_linkedin_env
 from linkedin_service import (
@@ -498,23 +499,10 @@ def _lifetime_followers_from_stats(
 # Stable LinkedIn taxonomies — resolved locally so the common demographic
 # dimensions need no extra reference-data calls. (Industry and geo are far larger
 # and version-dependent, so those resolve against the API with a raw-id fallback.)
-_SENIORITY_LABELS = {
-    "1": "Unpaid", "2": "In training", "3": "Entry", "4": "Senior",
-    "5": "Manager", "6": "Director", "7": "VP", "8": "CXO",
-    "9": "Partner", "10": "Owner",
-}
-_FUNCTION_LABELS = {
-    "1": "Accounting", "2": "Administrative", "3": "Arts & Design",
-    "4": "Business Development", "5": "Community & Social Services",
-    "6": "Consulting", "7": "Education", "8": "Engineering",
-    "9": "Entrepreneurship", "10": "Finance", "11": "Healthcare Services",
-    "12": "Human Resources", "13": "Information Technology", "14": "Legal",
-    "15": "Marketing", "16": "Media & Communications",
-    "17": "Military & Protective Services", "18": "Operations",
-    "19": "Product Management", "20": "Program & Project Management",
-    "21": "Purchasing", "22": "Quality Assurance", "23": "Real Estate",
-    "24": "Research", "25": "Sales", "26": "Support",
-}
+# Shared with the *ads* member demographics, so the tables themselves live in
+# linkedin_taxonomy; these aliases keep this module's long-standing names.
+_SENIORITY_LABELS = linkedin_taxonomy.SENIORITY_LABELS
+_FUNCTION_LABELS = linkedin_taxonomy.FUNCTION_LABELS
 
 # followerCountsBy<X> array key -> (dimension id, entry field holding the value).
 _FOLLOWER_DIMENSIONS = {
@@ -529,44 +517,15 @@ _FOLLOWER_DIMENSIONS = {
 }
 
 
-def _humanize_staff_range(value: str) -> str:
-    """``SIZE_1_TO_10`` -> ``1-10``; ``SIZE_10001_OR_MORE`` -> ``10,001+``."""
-    text = str(value or "").replace("SIZE_", "").strip()
-    if not text:
-        return "Unknown"
-    if text.endswith("OR_MORE"):
-        num = text.replace("_OR_MORE", "")
-        try:
-            return f"{int(num):,}+"
-        except ValueError:
-            return f"{num}+"
-    parts = text.split("_TO_")
-    try:
-        if len(parts) == 2:
-            return f"{int(parts[0]):,}-{int(parts[1]):,}"
-        return f"{int(parts[0]):,}"
-    except ValueError:
-        return text.replace("_", " ").title()
-
-
-def _humanize_enum(value: str) -> str:
-    return str(value or "").replace("_", " ").title() or "Unknown"
-
+_humanize_staff_range = linkedin_taxonomy.humanize_staff_range
+_humanize_enum = linkedin_taxonomy.humanize_enum
 
 # Reference-data endpoint paths (NOT a naive plural of the kind — "industry" ->
 # "industries", "geo" has no trailing 's'). A wrong path 404s and every label
 # silently falls back to the raw id, so keep this mapping explicit.
-_REFERENCE_ENDPOINTS = {
-    "industry": "industries",
-    "geo": "geo",
-    "country": "countries",
-}
+_REFERENCE_ENDPOINTS = linkedin_taxonomy.REFERENCE_ENDPOINTS
 # Friendlier placeholder when a lookup can't resolve, per kind.
-_REFERENCE_FALLBACK = {
-    "industry": "Industry",
-    "geo": "Region",
-    "country": "Country",
-}
+_REFERENCE_FALLBACK = linkedin_taxonomy.REFERENCE_FALLBACK
 
 
 def _resolve_reference_label(
@@ -577,28 +536,14 @@ def _resolve_reference_label(
 
     Falls back to a readable placeholder when the reference endpoint is
     unavailable or shaped differently across API versions."""
-    key = f"{kind}:{ref_id}"
-    if key in cache:
-        return cache[key]
-    fallback = f"{_REFERENCE_FALLBACK.get(kind, kind.title())} {ref_id}"
-    endpoint = _REFERENCE_ENDPOINTS.get(kind, kind)
-    try:
-        payload = _linkedin_get_with_versions(
-            f"/{endpoint}/{ref_id}", access_token=access_token, env=env
-        )
-        name = payload.get("name")
-        label = (
-            payload.get("localizedName")
-            or (payload.get("defaultLocalizedName") or {}).get("value")
-            # ``name`` is sometimes a localized object, sometimes a plain string.
-            or (name.get("localized", {}).get("en_US") if isinstance(name, dict) else name)
-            or fallback
-        )
-    except Exception as exc:  # pragma: no cover - network dependent
-        _log.warning("%s label lookup failed for %s: %s", kind, ref_id, exc)
-        label = fallback
-    cache[key] = str(label)
-    return cache[key]
+    return linkedin_taxonomy.resolve_reference_label(
+        kind,
+        ref_id,
+        get=lambda path: _linkedin_get_with_versions(
+            path, access_token=access_token, env=env
+        ),
+        cache=cache,
+    )
 
 
 def fetch_follower_demographics(

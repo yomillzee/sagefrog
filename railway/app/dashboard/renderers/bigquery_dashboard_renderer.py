@@ -247,6 +247,7 @@ OVERVIEW_PINNABLE_CARDS: dict[str, str] = {
 EXPLORER_LAYOUT_CARDS: dict[str, str] = {
     "explorer": "Campaign explorer",
     "keywords": "Keyword Performance",
+    "lidemo": "LinkedIn audience",
     "budget": "Budget tracking",
 }
 
@@ -1222,9 +1223,32 @@ def render_bigquery_dashboard_page(
         <div class="pager" id="keywordPager"></div>
       </section>"""
 
+    # LinkedIn member demographics — who actually saw and clicked the ads.
+    # A sibling of the campaign tree rather than a tier inside it: LinkedIn
+    # reports demographics per window with no date dimension and no per-creative
+    # grain, so these rows can neither hang off a creative nor be re-cut to the
+    # page's date range. The panel says which window it is showing (see
+    # marketing_service.fetch_linkedin_demographics) instead of silently
+    # implying it follows the date picker. Hidden until the client actually has
+    # demographics data, same inline-display trick as the keyword panel.
+    panel_lidemo = """
+      <section id="sec-lidemo" style="display:none">
+        <div class="sec-head">
+          <h2>LinkedIn audience</h2>
+          <div class="sec-head-actions">
+            <span class="lid-window" id="lidemoWindow"></span>
+            <span class="status" id="lidemoStatus"></span>
+          </div>
+        </div>
+        <div class="pnl-tabs lid-tabs" role="tablist" aria-label="Demographic breakdown" id="lidemoTabs"></div>
+        <div class="table-wrap"><table id="lidemoTable" class="compact"></table></div>
+        <p class="lid-note" id="lidemoNote"></p>
+      </section>"""
+
     ex_units: list[tuple[str, str]] = [
         ("explorer", panel_explorer_main),
         ("keywords", panel_keywords),
+        ("lidemo", panel_lidemo),
     ]
     if budget_section_html:
         ex_units.append(("budget", budget_section_html))
@@ -1789,6 +1813,14 @@ def render_bigquery_dashboard_page(
     .pill {{ display:inline-block; padding:1px 7px; border-radius:999px; font-size:.64rem; font-weight:800; letter-spacing:.03em; text-transform:uppercase; vertical-align:middle; margin-right:7px; }}
     .pill-google {{ background:#e8f0fe; color:#1a73e8; }}
     .pill-linkedin {{ background:#e6f0f8; color:#0a66c2; }}
+    /* LinkedIn audience panel: tab strip, window badge, share-of-reach bars. */
+    .lid-tabs {{ margin:2px 0 14px; border-bottom:1px solid var(--line); }}
+    .lid-window {{ display:inline-flex; align-items:center; gap:6px; font-size:.72rem; font-weight:700; color:#0a66c2; background:#e6f0f8; border-radius:999px; padding:4px 11px; white-space:nowrap; }}
+    .lid-note {{ margin:12px 2px 0; font-size:.72rem; line-height:1.5; color:var(--muted); }}
+    #lidemoTable td.lid-cat {{ max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+    .lid-bar {{ position:relative; display:block; height:6px; min-width:120px; border-radius:3px; background:rgba(10,102,194,.13); }}
+    .lid-bar span {{ position:absolute; inset:0 auto 0 0; border-radius:3px; background:#0a66c2; }}
+    #lidemoTable td.lid-share {{ width:150px; }}
     .pill-meta {{ background:#f0e8fe; color:#7b2ff7; }}
     /* Platform brand icons (campaign rows) */
     .plat-ico {{ display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; margin-right:9px; vertical-align:middle; flex:0 0 auto; }}
@@ -2175,6 +2207,7 @@ def render_bigquery_dashboard_page(
     const EXPLORER_API         = "{_aurl(f'/api/clients/{api_client_key}/google-ads/explorer')}";
     const GOOGLE_ADS_KEYWORDS_API = "{_aurl(f'/api/clients/{api_client_key}/google-ads/keywords')}";
     const LINKEDIN_EXPLORER_API= "{_aurl(f'/api/clients/{api_client_key}/linkedin/explorer')}";
+    const LINKEDIN_DEMOGRAPHICS_API = "{_aurl(f'/api/clients/{api_client_key}/linkedin/demographics')}";
     const META_EXPLORER_API    = "{_aurl(f'/api/clients/{api_client_key}/meta/explorer')}";
     const MICROSOFT_EXPLORER_API= "{_aurl(f'/api/clients/{api_client_key}/microsoft-ads/explorer')}";
     const META_VERIFIED_API    = "{_aurl(f'/api/clients/{api_client_key}/meta/verified-conversions')}";
@@ -4142,8 +4175,100 @@ def render_bigquery_dashboard_page(
       renderKeywordInsight();
       renderKeywordTable();
     }}
+    // ---- LinkedIn audience (member demographics) ----
+    // These rows are per-window totals, NOT a daily series: LinkedIn's MEMBER_*
+    // pivots carry no date dimension and withhold categories below a minimum
+    // event count, so they can be neither summed across days nor re-cut to the
+    // date range selected above. The endpoint serves one whole synced window and
+    // names it; the panel shows that name and spells out the caveat rather than
+    // letting the numbers pass for range-scoped ones.
+    const LIDEMO_TABS=[
+      ['company','Company'],['job_title','Job title'],['job_function','Job function'],
+      ['seniority','Seniority'],['industry','Industry'],['company_size','Company size'],
+    ];
+    const LIDEMO_WINDOW_LABELS={{'LAST_30_DAYS':'Last 30 days','LAST_90_DAYS':'Last 90 days'}};
+    let lidemoData=null, lidemoDim='';
+    function lidemoWindowLabel(w) {{
+      return LIDEMO_WINDOW_LABELS[w]||String(w||'').replace(/_/g,' ').toLowerCase();
+    }}
+    function lidemoRows(dim) {{
+      return ((lidemoData&&lidemoData.by_dimension)||{{}})[dim]||[];
+    }}
+    function lidemoLiveDims() {{
+      return LIDEMO_TABS.filter(([k])=>lidemoRows(k).length);
+    }}
+    function renderLidemoTabs() {{
+      const host=document.getElementById('lidemoTabs');
+      if (!host) return;
+      const dims=lidemoLiveDims();
+      host.innerHTML=dims.map(([k,label])=>
+        `<button type="button" class="pnl-tab" role="tab" data-lidim="${{k}}" aria-selected="${{k===lidemoDim?'true':'false'}}">${{esc(label)}}</button>`
+      ).join('');
+      host.classList.toggle('one-tab',dims.length===1);
+    }}
+    function renderLidemo() {{
+      const rows=lidemoRows(lidemoDim);
+      const el=document.getElementById('lidemoTable');
+      if (!el) return;
+      if (!rows.length) {{ el.innerHTML=''; return; }}
+      // Share of reach is relative to the top category in this dimension, so the
+      // bars compare like with like even though the dimensions don't partition
+      // the same total (a member with no listed job title lands in no bucket).
+      const top=rows.reduce((mx,r)=>Math.max(mx,num(r.impressions)),0);
+      // spend/conversions come back null when LinkedIn refused that projection
+      // for the pivot — show "—", never a measured-looking 0.
+      const moneyCell=v=>(v===null||v===undefined)?'—':money(v);
+      const head='<thead><tr><th class="left">Category</th><th>Impressions</th>'
+        +'<th>Share of reach</th><th>Clicks</th><th>CTR</th><th>Spend</th></tr></thead>';
+      const body=rows.map(r=>{{
+        const imp=num(r.impressions);
+        const share=top?(imp/top*100):0;
+        const ctrVal=(r.ctr===null||r.ctr===undefined)?(imp?num(r.clicks)/imp:0):num(r.ctr);
+        const label=r.category||r.category_urn||'—';
+        return `<tr><td class="left lid-cat" title="${{esc(label)}}">${{esc(label)}}</td>`
+          +`<td>${{count(imp)}}</td>`
+          +`<td class="lid-share"><span class="lid-bar"><span style="width:${{share.toFixed(1)}}%"></span></span></td>`
+          +`<td>${{count(r.clicks)}}</td><td>${{pct(ctrVal*100)}}</td><td>${{moneyCell(r.spend)}}</td></tr>`;
+      }}).join('');
+      el.innerHTML=head+`<tbody>${{body}}</tbody>`;
+    }}
+    async function loadLinkedinDemographics() {{
+      const sec=document.getElementById('sec-lidemo');
+      if (!sec) return;
+      // Toggle the editable-panel wrapper too, so a client with no demographics
+      // doesn't get an empty panel (and admins no edit bar for one).
+      const unit=sec.closest('.ov-unit')||sec;
+      setStatus('lidemoStatus','Loading…');
+      const d=await getJson(withDates(LINKEDIN_DEMOGRAPHICS_API)).catch(()=>null);
+      lidemoData=d;
+      const dims=lidemoLiveDims();
+      if (!dims.length) {{
+        sec.style.display='none'; unit.style.display='none';
+        setStatus('lidemoStatus','');
+        return;
+      }}
+      sec.style.display=''; unit.style.display='';
+      if (!dims.some(([k])=>k===lidemoDim)) lidemoDim=dims[0][0];
+      const wLabel=lidemoWindowLabel(d.window);
+      const span=(d.window_start&&d.window_end)?`${{d.window_start}} to ${{d.window_end}}`:'';
+      const badge=document.getElementById('lidemoWindow');
+      badge.textContent=wLabel;
+      badge.title=span;
+      document.getElementById('lidemoNote').textContent=
+        `LinkedIn reports audience demographics over a fixed window${{span?` (${{span}})`:''}}, `
+        +'not the date range selected above. Categories with very few events are '
+        +'withheld to protect member privacy, so these figures are approximate and '
+        +'do not add up to campaign totals.';
+      setStatus('lidemoStatus','');
+      renderLidemoTabs();
+      renderLidemo();
+    }}
+
     async function loadExplorer() {{
       setStatus('explorerStatus','Loading…');
+      // Demographics are independent of the explorer tree (different grain,
+      // different window), so they load alongside it rather than blocking it.
+      const lidemoDone=loadLinkedinDemographics();
       document.getElementById('explorerSummaryCards').innerHTML = skelCards(5);
       document.getElementById('explorerTable').innerHTML = skelTable(6,8);
       const [g,l,m,ms,kw,ver,gver,lver]=await Promise.all([
@@ -4187,6 +4312,7 @@ def render_bigquery_dashboard_page(
         kwSec.style.display='none';
         kwUnit.style.display='none';
       }}
+      await lidemoDone;
     }}
 
     // ---- GA4: Top pages ----
@@ -5541,6 +5667,20 @@ def render_bigquery_dashboard_page(
       applyVerifiedSelection();
       renderExplorer();
     }});
+    // ---- LinkedIn audience: dimension tabs ----
+    // Delegated: the tab strip is rebuilt from whichever dimensions came back
+    // with rows, so there are no buttons to bind at startup. Null-guarded — an
+    // admin can hide this panel from the layout editor, and a hidden panel is
+    // not emitted at all for clients.
+    const lidemoTabHost=document.getElementById('lidemoTabs');
+    if (lidemoTabHost) lidemoTabHost.addEventListener('click',ev=>{{
+      const btn=ev.target.closest('.pnl-tab[data-lidim]');
+      if (!btn) return;
+      lidemoDim=btn.dataset.lidim;
+      renderLidemoTabs();
+      renderLidemo();
+    }});
+
     // ---- Keyword Performance: search, match filter and column sorting ----
     document.getElementById('keywordSearch').addEventListener('input',ev=>{{
       kwSearch=ev.target.value; kwPageNum=1; renderKeywordTable();

@@ -566,6 +566,86 @@ def sync_linkedin_creative_daily(
     }
 
 
+# Fixed windows the demographics sync covers. Demographic pivots return a total
+# for the requested window and cannot be broken down by day, and LinkedIn
+# suppresses categories below a minimum event threshold — so a 30-day figure is
+# NOT the sum of 30 one-day figures, and no stored day-grain fact could be
+# re-aggregated into the dashboard's arbitrary date range. The honest options are
+# "fetch live per range" (an uncached third-party call on every page view, which
+# this codebase avoids on principle) or "sync a few fixed windows and label them
+# as such". This is the second.
+#
+# Two windows, six dimensions => 12 adAnalytics calls per client per sync, plus
+# the cached reference lookups. Cheap and bounded.
+DEMOGRAPHIC_WINDOWS: tuple[str, ...] = ("LAST_30_DAYS", "LAST_90_DAYS")
+
+
+def sync_linkedin_demographics(
+    *,
+    account_id: str,
+    windows: tuple[str, ...] | list[str] = DEMOGRAPHIC_WINDOWS,
+    access_token: str | None = None,
+) -> dict[str, Any]:
+    """Sync member demographics for each fixed window and rebuild the mart view.
+
+    Writes raw_linkedin_ads.demographics (replace-per-account-per-window), then
+    creates/replaces marketing_marts.fact_linkedin_ads_demographics.
+
+    ``access_token`` must be threaded through for connector-onboarded clients for
+    the same reason the creative sync needs it: their LinkedIn OAuth token is
+    client-scoped, and without it linkedin_service falls back to the global
+    load_linkedin_env() that has no token for these clients.
+    """
+    import bigquery_warehouse
+    import linkedin_service
+    from dates_util import resolve_date_range
+
+    account_id_clean = str(account_id).strip().split(":")[-1]
+    if not account_id_clean:
+        return {"enabled": False, "reason": "missing_account_id"}
+
+    per_window: dict[str, Any] = {}
+    total_rows = 0
+    for window_key in windows:
+        start, end, resolved = resolve_date_range(window_key)
+        try:
+            rows = linkedin_service.fetch_ads_demographics(
+                account_id_clean, start=start, end=end, access_token=access_token
+            )
+        except Exception as exc:
+            # One window failing (or the account having no demographics access)
+            # must not lose the other window or fail the surrounding sync.
+            per_window[resolved] = {"error": str(exc)[:300]}
+            continue
+        for row in rows:
+            row["window_start"] = start.isoformat()
+            row["window_end"] = end.isoformat()
+        mirror = bigquery_warehouse.mirror_linkedin_ads_demographics(
+            account_id_clean, resolved, rows
+        )
+        total_rows += mirror.get("rows_upserted") or 0
+        per_window[resolved] = {
+            "rows": len(rows),
+            "rows_upserted": mirror.get("rows_upserted") or 0,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+        }
+
+    view: dict[str, Any] = {}
+    if total_rows:
+        try:
+            view = bigquery_warehouse.create_linkedin_demographics_mart_view()
+        except Exception as exc:
+            view = {"error": str(exc)[:300]}
+
+    return {
+        "enabled": True,
+        "rows_upserted": total_rows,
+        "windows": per_window,
+        "mart_view": view,
+    }
+
+
 def fetch_linkedin_ads(*, start: date, end: date, account_id: str | None = None) -> dict[str, Any]:
     LOGGER.info("LinkedIn source: BigQuery.")
     project = _project_id()

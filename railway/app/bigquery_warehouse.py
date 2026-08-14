@@ -26,6 +26,8 @@ _DEFAULT_CREATIVE_METADATA_TABLE = "creative_metadata"
 _DEFAULT_MART_DATASET = "marketing_marts"
 _DEFAULT_LINKEDIN_CAMPAIGN_FACT_TABLE = "fact_linkedin_ads_campaign_daily"
 _DEFAULT_LINKEDIN_CREATIVE_FACT_TABLE = "fact_linkedin_ads_creative_daily"
+_DEFAULT_LINKEDIN_DEMOGRAPHICS_TABLE = "demographics"
+_DEFAULT_LINKEDIN_DEMOGRAPHICS_FACT_TABLE = "fact_linkedin_ads_demographics"
 
 
 _route_ctx: contextvars.ContextVar[dict[str, str | None] | None] = contextvars.ContextVar(
@@ -1659,6 +1661,169 @@ def create_linkedin_creative_mart_view() -> dict[str, Any]:
       creative_id, creative_name, campaign_id, campaign_name,
       campaign_group_id, campaign_group_name, status, media_type,
       thumbnail_url, image_url, video_url
+    """
+    client.query(sql).result()
+    return {"enabled": True, "table": table_id}
+
+
+def _linkedin_demographics_schema() -> list[Any]:
+    bigquery = _bigquery()
+    return [
+        bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("account_id", "STRING", mode="REQUIRED"),
+        # The window this row totals over. Demographics have no date dimension
+        # (see linkedin_service.fetch_ads_demographics), so the window replaces
+        # the `date` column every other ads table here carries: a row is a total
+        # for exactly this window, and windows are never summed together.
+        bigquery.SchemaField("window_key", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("window_start", "DATE", mode="REQUIRED"),
+        bigquery.SchemaField("window_end", "DATE", mode="REQUIRED"),
+        bigquery.SchemaField("dimension", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("category", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("category_urn", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("impressions", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("clicks", "INT64", mode="REQUIRED"),
+        # NULLABLE on purpose: LinkedIn refuses these projections for some
+        # pivots/versions, and NULL renders as "—" where 0 would read as a real
+        # measured zero.
+        bigquery.SchemaField("spend", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("conversions", "FLOAT64", mode="NULLABLE"),
+        bigquery.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"),
+    ]
+
+
+def _linkedin_demographics_table_id() -> tuple[Any, str]:
+    client, base_table = _target("linkedin")
+    return client, base_table.rsplit(".", 1)[0] + "." + _DEFAULT_LINKEDIN_DEMOGRAPHICS_TABLE
+
+
+def mirror_linkedin_ads_demographics(
+    account_id: str, window_key: str, rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Replace one account's member demographics for one window.
+
+    Grain is (source, account_id, window_key, dimension, category_urn). Each sync
+    carries a complete snapshot for that window, so categories that dropped out
+    of the window are deleted rather than left behind as stale rows — the same
+    replace-per-scope shape as mirror_linkedin_follower_demographics.
+
+    The delete is scoped to this account *and* this window: syncing LAST_30_DAYS
+    must not touch the LAST_90_DAYS rows sitting in the same table.
+    """
+    if not rows or not enabled("linkedin"):
+        return {"enabled": False, "rows_upserted": 0, "table": None}
+
+    account_id_clean = str(account_id).strip().split(":")[-1]
+    window_clean = str(window_key or "").strip()
+    if not window_clean:
+        return {"enabled": False, "rows_upserted": 0, "table": None, "reason": "missing_window"}
+
+    client, table_id = _linkedin_demographics_table_id()
+    bigquery = _bigquery()
+    client.create_dataset(bigquery.Dataset(".".join(table_id.split(".")[:2])), exists_ok=True)
+    schema = _linkedin_demographics_schema()
+    t = bigquery.Table(table_id, schema=schema)
+    t.clustering_fields = ["source", "account_id", "window_key", "dimension"]
+    client.create_table(t, exists_ok=True)
+    _sync_table_columns(client, table_id, schema)
+
+    synced_at = datetime.now(timezone.utc).isoformat()
+    payload = []
+    for row in rows:
+        category_urn = str(row.get("category_urn") or "").strip()
+        dimension = str(row.get("dimension") or "").strip()
+        window_start = row.get("window_start")
+        window_end = row.get("window_end")
+        if not category_urn or not dimension or not window_start or not window_end:
+            continue
+        spend = row.get("spend")
+        conversions = row.get("conversions")
+        payload.append({
+            "source": "linkedin",
+            "account_id": account_id_clean,
+            "window_key": window_clean,
+            "window_start": str(window_start),
+            "window_end": str(window_end),
+            "dimension": dimension,
+            "category": str(row.get("category") or "").strip() or None,
+            "category_urn": category_urn,
+            "impressions": int(row.get("impressions") or 0),
+            "clicks": int(row.get("clicks") or 0),
+            "spend": None if spend is None else float(spend),
+            "conversions": None if conversions is None else float(conversions),
+            "synced_at": synced_at,
+        })
+    if not payload:
+        return {"enabled": True, "rows_upserted": 0, "table": table_id}
+
+    temp_id = f"{table_id}_staging_{uuid4().hex}"
+    job_config = bigquery.LoadJobConfig(schema=schema, write_disposition="WRITE_TRUNCATE")
+    client.load_table_from_json(payload, temp_id, job_config=job_config).result()
+    merge_sql = f"""
+    MERGE `{table_id}` T
+    USING `{temp_id}` S
+    ON T.source = S.source AND T.account_id = S.account_id
+       AND T.window_key = S.window_key
+       AND T.dimension = S.dimension AND T.category_urn = S.category_urn
+    WHEN MATCHED THEN UPDATE SET
+      window_start = S.window_start, window_end = S.window_end,
+      category = S.category, impressions = S.impressions, clicks = S.clicks,
+      spend = S.spend, conversions = S.conversions, synced_at = S.synced_at
+    WHEN NOT MATCHED THEN INSERT (
+      source, account_id, window_key, window_start, window_end,
+      dimension, category, category_urn, impressions, clicks,
+      spend, conversions, synced_at
+    ) VALUES (
+      S.source, S.account_id, S.window_key, S.window_start, S.window_end,
+      S.dimension, S.category, S.category_urn, S.impressions, S.clicks,
+      S.spend, S.conversions, S.synced_at
+    )
+    WHEN NOT MATCHED BY SOURCE AND T.source = 'linkedin'
+      AND T.account_id = '{account_id_clean}' AND T.window_key = '{window_clean}'
+      THEN DELETE
+    """
+    try:
+        client.query(merge_sql).result()
+    finally:
+        client.delete_table(temp_id, not_found_ok=True)
+    return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
+
+
+def create_linkedin_demographics_mart_view() -> dict[str, Any]:
+    """Create or replace marketing_marts.fact_linkedin_ads_demographics.
+
+    A thin pass-through over the raw table (there is nothing to join — a
+    demographic row carries its own label), so the dashboard read path resolves
+    the same marts dataset as every other panel instead of reaching into
+    raw_linkedin_ads.
+    """
+    if not enabled("linkedin"):
+        return {"enabled": False, "table": None}
+    project_id = _linkedin_project_id()
+    raw_dataset = _dataset_id("linkedin")
+    mart_dataset = _mart_dataset_id()
+    client = _client(project_id)
+    bigquery = _bigquery()
+    client.create_dataset(bigquery.Dataset(f"{project_id}.{mart_dataset}"), exists_ok=True)
+    table_id = f"{project_id}.{mart_dataset}.{_DEFAULT_LINKEDIN_DEMOGRAPHICS_FACT_TABLE}"
+    sql = f"""
+    CREATE OR REPLACE VIEW `{table_id}` AS
+    SELECT
+      source AS source_platform,
+      CAST(account_id AS STRING) AS source_account_id,
+      window_key,
+      window_start,
+      window_end,
+      dimension,
+      category,
+      category_urn,
+      impressions,
+      clicks,
+      spend,
+      conversions,
+      SAFE_DIVIDE(clicks, impressions) AS ctr,
+      synced_at
+    FROM `{project_id}.{raw_dataset}.{_DEFAULT_LINKEDIN_DEMOGRAPHICS_TABLE}`
     """
     client.query(sql).result()
     return {"enabled": True, "table": table_id}
