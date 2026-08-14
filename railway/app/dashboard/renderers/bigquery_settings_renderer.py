@@ -17,6 +17,7 @@ from dashboard.renderers.base_layout import (
     favicon_head_html,
     dashboard_sidebar_view_nav_html,
     render_sidebar,
+    site_footer_html,
 )
 from dashboard.renderers.bigquery_dashboard_renderer import _api_url
 from dashboard.renderers import budget_tracker
@@ -365,6 +366,7 @@ def render_bigquery_settings_page(
     {segment_section_html}
     {budget_module_html}
   </main>
+  {site_footer_html()}
     </div>
   </div>
   <script>

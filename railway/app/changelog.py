@@ -62,6 +62,23 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-08-14",
+        title="A Sagefrog copyright line closes out every page",
+        area="Client dashboards · Admin",
+        kind="improved",
+        summary=(
+            "Every page in the portal now ends with a quiet Sagefrog copyright "
+            "line, so a dashboard shared with a client reads as ours all the way "
+            "to the bottom."
+        ),
+        details=(
+            "Small, grey, below the content — it stays out of the way of the page.",
+            "On a short page it settles at the bottom of the window rather than "
+            "floating under the last card.",
+            "The year keeps itself current.",
+        ),
+    ),
+    Entry(
         date="2026-08-13",
         title="An account can sit in more than one industry",
         area="Benchmarks · Accounts",

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import dashboard_theme
 
 from dashboard.utils.formatting import esc as _esc
@@ -27,6 +29,23 @@ def favicon_head_html() -> str:
   <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
   <link rel="manifest" href="/static/site.webmanifest">
   <meta name="theme-color" content="#0a2540">"""
+
+
+def site_footer_html() -> str:
+    """Low-profile copyright line closing out every in-app page.
+
+    Sits at the foot of the main column (after the page content, inside
+    ``.dash-main``) on the dashboard and every child page. Styling lives in
+    ``SITE_FOOTER_CSS``, which rides along with ``SIDEBAR_CSS`` so any page that
+    already pulls in the shared chrome gets it for free. The year is the current
+    one so the line never goes stale.
+    """
+    return (
+        '<footer class="site-footer">'
+        f"<span>&copy; {date.today().year} Sagefrog Marketing Group. "
+        "All rights reserved.</span>"
+        "</footer>"
+    )
 
 
 def session_account_html(*, email: str | None, is_admin: bool) -> str:
@@ -1603,6 +1622,7 @@ def render_client_shell_page(
           {content_html}
         </div>
       </div>
+      {site_footer_html()}
     </div>
   </div>
   <script>{dashboard_topbar_js()}</script>
@@ -1965,6 +1985,7 @@ def render_admin_shell_page(
     {sidebar}
     <div class="dash-main">
       {content_html}
+      {site_footer_html()}
     </div>
   </div>
   <script>{dashboard_topbar_js()}</script>
@@ -3223,3 +3244,31 @@ SIDEBAR_CSS = """
 """
 
 
+
+# Low-profile copyright rule closing out the main column (see site_footer_html).
+# The colour/hairline tokens are written with fallbacks because two token sets are
+# in play: the standalone dashboard pages define --line/--muted, the shared shell
+# defines --border/--text-muted, and a page that defines neither still gets the
+# literal greys.
+SITE_FOOTER_CSS = """
+    .site-footer {
+      padding: 16px 32px 22px;
+      border-top: 1px solid var(--line, var(--border, #e5eaf1));
+      color: var(--muted, #6b7a90);
+      font-size: 0.72rem;
+      line-height: 1.4;
+      letter-spacing: 0.01em;
+      text-align: center;
+      opacity: 0.85;
+    }
+    @media (max-width: 720px) {
+      .site-footer { padding: 14px 16px 18px; }
+    }
+    @media print {
+      .site-footer { border-top: 0; opacity: 1; }
+    }
+"""
+
+# Ships with the shared chrome, so every page that already pulls in SIDEBAR_CSS
+# styles the footer without a second import.
+SIDEBAR_CSS += SITE_FOOTER_CSS
