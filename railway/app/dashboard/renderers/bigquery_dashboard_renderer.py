@@ -238,7 +238,20 @@ OVERVIEW_PINNABLE_CARDS: dict[str, str] = {
 }
 
 
-# Drag-handle and hide/show glyphs for the Overview edit-mode controls.
+# Campaign Explorer panels, same deal: stable keys stored under the "explorer"
+# entry of ``client_dashboard_config.card_layouts``, titles shown on each panel's
+# edit bar. The budget tracker is listed here so it can be ordered and hidden
+# with the rest, but its visibility has its own long-standing store (the
+# per-client "Show on Explorer" setting, also on the settings page) — see
+# ``show_budget`` below and the Hide/Show handling in the edit JS.
+EXPLORER_LAYOUT_CARDS: dict[str, str] = {
+    "explorer": "Campaign explorer",
+    "keywords": "Keyword Performance",
+    "budget": "Budget tracking",
+}
+
+
+# Drag-handle and hide/show glyphs for the panel edit-mode controls.
 _OV_DRAG_ICON = (
     '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" '
     'aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/>'
@@ -248,14 +261,15 @@ _OV_DRAG_ICON = (
 
 
 def _ov_unit_wrapper(card_key: str, title: str, panel_html: str, *, hidden: bool) -> str:
-    """Wrap one Overview panel with its admin-only edit-mode controls.
+    """Wrap one editable panel (Overview or Campaign Explorer) with its
+    admin-only edit-mode controls.
 
     The wrapper carries the stable ``data-ov-card`` key used for reorder/hide
     persistence. The edit bar (drag handle, card name, Hide/Show toggle) is
     display:none until the pane enters edit mode under ``.is-admin``; a hidden
     card is greyed rather than removed while editing so an admin can show it back
     (clients never receive hidden cards in their HTML at all — see the render
-    loop). The panel HTML itself is untouched."""
+    loops). The panel HTML itself is untouched."""
     from dashboard.utils.formatting import esc as _esc
 
     cls = "ov-unit ov-unit--hidden" if hidden else "ov-unit"
@@ -268,6 +282,63 @@ def _ov_unit_wrapper(card_key: str, title: str, panel_html: str, *, hidden: bool
         f'<button type="button" class="ov-hide-toggle" data-ov-card="{_esc(card_key)}" '
         f'aria-pressed="{"true" if hidden else "false"}">{toggle_label}</button>'
         f'</div>{panel_html}</div>'
+    )
+
+
+def _render_editable_panels(
+    units: list[tuple[str, str]],
+    layout: dict[str, list[str]],
+    *,
+    titles: dict[str, str],
+    is_admin: bool,
+    forced_hidden: frozenset[str] = frozenset(),
+) -> str:
+    """Order, hide and wrap one tab's panels per its admin-authored layout.
+
+    A stored ``order`` wins: panels are sorted by it, and any panel not named in
+    it keeps its natural position after the ordered ones. Keys that aren't real
+    panels this render are ignored — the layout persists and re-applies once that
+    panel comes back. Panels named in ``hidden`` (plus any in ``forced_hidden``,
+    which is how the Explorer's budget tracker keeps its own separate visibility
+    setting) are not emitted for clients at all — nothing to inspect, no gap they
+    could notice — while admins keep them in the DOM, greyed and only visible in
+    edit mode, so they can be shown back."""
+    present = {k for k, _ in units}
+    stored_order = [k for k in layout.get("order", []) if k in present]
+    if stored_order:
+        rank = {k: i for i, k in enumerate(stored_order)}
+        units = sorted(units, key=lambda kv: rank.get(kv[0], len(rank)))
+    hidden = {k for k in layout.get("hidden", []) if k in present}
+    hidden |= {k for k in forced_hidden if k in present}
+    out: list[str] = []
+    for key, panel_html in units:
+        is_hidden = key in hidden
+        if is_hidden and not is_admin:
+            continue
+        out.append(
+            _ov_unit_wrapper(key, titles.get(key, key), panel_html, hidden=is_hidden)
+        )
+    return "".join(out)
+
+
+def _edit_banner_html(*, prefix: str, layout_api: str) -> str:
+    """The slim in-edit banner for one editable tab.
+
+    Edit mode is entered from the sidebar kebab (⋮ on the tab's nav item), so
+    there's no always-on toolbar cluttering the page. This banner shows only
+    while editing: it explains the mode, reflects save state, and offers a Done
+    button. It stays in the DOM (hidden via CSS until its pane is .is-editing)
+    so the edit JS can read the layout endpoint off it any time."""
+    from dashboard.utils.formatting import esc as _esc
+
+    return (
+        f'<div class="ov-editing-banner" data-ov-layout-api="{_esc(layout_api)}">'
+        f'<span class="ov-editing-badge">Editing layout</span>'
+        f'<span class="ov-edit-hint">Drag panels to reorder, or use Hide / Show. '
+        f"Changes save automatically — only admins see this.</span>"
+        f'<span class="ov-edit-status" id="{prefix}EditStatus" role="status"></span>'
+        f'<button type="button" id="{prefix}EditDone" class="ov-edit-done">Done</button>'
+        f"</div>"
     )
 
 
@@ -582,6 +653,7 @@ def render_bigquery_dashboard_page(
     pagespeed_targets_stored: dict | None = None
     overview_pinned_card: str | None = None
     overview_layout: dict[str, list[str]] = {"order": [], "hidden": []}
+    explorer_layout: dict[str, list[str]] = {"order": [], "hidden": []}
     try:
         import client_dashboard_config as _cdc
         _kwcfg = _cdc.get_config(api_client_key) or _cdc.get_config(client_slug)
@@ -600,12 +672,20 @@ def render_bigquery_dashboard_page(
             monthly_budget_val = getattr(_kwcfg, "monthly_budget_usd", None)
             overview_pinned_card = getattr(_kwcfg, "overview_pinned_card", None)
             _layouts = getattr(_kwcfg, "card_layouts", None) or {}
-            _ov = _layouts.get("overview") if isinstance(_layouts, dict) else None
-            if isinstance(_ov, dict):
-                overview_layout = {
-                    "order": [str(k) for k in (_ov.get("order") or [])],
-                    "hidden": [str(k) for k in (_ov.get("hidden") or [])],
+            if not isinstance(_layouts, dict):
+                _layouts = {}
+
+            def _stored_layout(tab: str) -> dict[str, list[str]]:
+                entry = _layouts.get(tab)
+                if not isinstance(entry, dict):
+                    return {"order": [], "hidden": []}
+                return {
+                    "order": [str(k) for k in (entry.get("order") or [])],
+                    "hidden": [str(k) for k in (entry.get("hidden") or [])],
                 }
+
+            overview_layout = _stored_layout("overview")
+            explorer_layout = _stored_layout("explorer")
         pagespeed_targets_stored = (
             _cdc.get_pagespeed_targets(api_client_key)
             or _cdc.get_pagespeed_targets(client_slug)
@@ -966,13 +1046,18 @@ def render_bigquery_dashboard_page(
     platform_chips_summary_html = _platform_chip_row("platformChips")
     platform_chips_explorer_html = _platform_chip_row("explorerPlatformChips")
 
-    # Budget tracking (Campaign Explorer, bottom): shared module, also on the
-    # settings page. Only when the client runs paid ads (no spend mart otherwise)
-    # AND the per-client "show on explorer" toggle is on. The inline goal editor
-    # is admin-only (session_is_admin is the effective user, so a view-as client
-    # correctly hides it). Lazy import avoids a circular dependency.
+    # Budget tracking (Campaign Explorer): shared module, also on the settings
+    # page. Only when the client runs paid ads (no spend mart otherwise) AND the
+    # per-client "show on explorer" toggle is on. An admin keeps the section in
+    # the DOM even when that toggle is off, greyed and only visible in Explorer
+    # edit mode, so it can be shown back from there (same rule as a hidden
+    # Overview card — see budget_hidden below). Its scripts lazy-load behind an
+    # IntersectionObserver, so a hidden section costs no queries. The inline goal
+    # editor is admin-only (session_is_admin is the effective user, so a view-as
+    # client correctly hides it). Lazy import avoids a circular dependency.
     from dashboard.renderers import budget_tracker as _budget_tracker
-    show_budget = bool(has_paid_ads and show_budget_tracker)
+    budget_hidden = not show_budget_tracker
+    show_budget = bool(has_paid_ads and (show_budget_tracker or session_is_admin))
     budget_section_html = (
         _budget_tracker.section_html(can_edit=session_is_admin) if show_budget else ""
     )
@@ -1082,18 +1167,12 @@ def render_bigquery_dashboard_page(
     if panel_pagespeed:
         ov_units.append(("site_performance", panel_pagespeed))
 
-    # Apply the admin-authored layout (see client_dashboard_config.card_layouts).
-    # A stored ``order`` wins: cards are sorted by it, and any card not named in
-    # it keeps its natural position after the ordered ones. When no order is
-    # stored we fall back to the legacy single-card pin. Only keys that are real
-    # cards this render matter — a stale key is ignored.
-    _present = {k for k, _ in ov_units}
-    _stored_order = [k for k in overview_layout.get("order", []) if k in _present]
-    if _stored_order:
-        _rank = {k: i for i, k in enumerate(_stored_order)}
-        ov_units.sort(key=lambda kv: _rank.get(kv[0], len(_rank)))
-    elif overview_pinned_card:
-        # Legacy pin: move the pinned card to the top if it's present this render.
+    # Legacy single-card pin, only when this client has no stored order: move the
+    # pinned card to the top if it's present this render. The stored layout (which
+    # _render_editable_panels applies next) supersedes it.
+    if overview_pinned_card and not [
+        k for k in overview_layout.get("order", []) if k in {k for k, _ in ov_units}
+    ]:
         _pin_idx = next(
             (i for i, (k, _) in enumerate(ov_units) if k == overview_pinned_card),
             None,
@@ -1101,38 +1180,77 @@ def render_bigquery_dashboard_page(
         if _pin_idx is not None:
             ov_units.insert(0, ov_units.pop(_pin_idx))
 
-    # Cards an admin has hidden. Clients never receive hidden cards in their HTML
-    # (nothing to inspect, no gap they could notice); admins keep them in the DOM
-    # so they can show one back from edit mode (greyed via CSS, and only visible
-    # while editing). Each card is wrapped with its edit-mode controls.
-    _hidden = {k for k in overview_layout.get("hidden", []) if k in _present}
-    _rendered_units: list[str] = []
-    for _key, _html in ov_units:
-        _is_hidden = _key in _hidden
-        if _is_hidden and not session_is_admin:
-            continue
-        _title = OVERVIEW_PINNABLE_CARDS.get(_key, _key)
-        _rendered_units.append(
-            _ov_unit_wrapper(_key, _title, _html, hidden=_is_hidden)
-        )
-    overview_summary_html = "".join(_rendered_units)
-
-    # Edit mode is entered from the sidebar kebab (⋮ on the Overview nav item),
-    # so there's no always-on toolbar cluttering the page. This slim banner shows
-    # only while editing: it explains the mode, reflects save state, and offers a
-    # Done button. It stays in the DOM (hidden via CSS until #pane-overview is
-    # .is-editing) so the edit JS can read the layout endpoint off it any time.
-    _ov_layout_api = _api_url(
-        f"/api/clients/{api_client_key}/tabs/overview/card-layout", access_key=access_key
+    overview_summary_html = _render_editable_panels(
+        ov_units,
+        overview_layout,
+        titles=OVERVIEW_PINNABLE_CARDS,
+        is_admin=session_is_admin,
     )
-    overview_edit_banner_html = (
-        f'<div class="ov-editing-banner" data-ov-layout-api="{_esc(_ov_layout_api)}">'
-        f'<span class="ov-editing-badge">Editing layout</span>'
-        f'<span class="ov-edit-hint">Drag cards to reorder, or use Hide / Show. '
-        f"Changes save automatically — only admins see this.</span>"
-        f'<span class="ov-edit-status" id="ovEditStatus" role="status"></span>'
-        f'<button type="button" id="ovEditDone" class="ov-edit-done">Done</button>'
-        f"</div>"
+    overview_edit_banner_html = _edit_banner_html(
+        prefix="ov",
+        layout_api=_api_url(
+            f"/api/clients/{api_client_key}/tabs/overview/card-layout",
+            access_key=access_key,
+        ),
+    )
+
+    # ---- Campaign Explorer panels ----
+    # Same editable-panel treatment as Overview, stored under the "explorer" entry
+    # of card_layouts: an admin can drag these to reorder or hide any of them. The
+    # keyword table hides itself (inline display) until the client actually has
+    # Google Ads search-keyword data — the page JS toggles the wrapper, so an
+    # empty panel never shows an edit bar either.
+    panel_explorer_main = f"""
+      <section id="sec-explorer">
+        <div class="sec-head"><h2>Campaign explorer</h2><div class="sec-head-actions">{platform_chips_explorer_html}{explorer_campaigns_edit_html}{explorer_filters_edit_html}<span class="status" id="explorerStatus"></span></div></div>
+        <div class="cards" id="explorerSummaryCards" style="margin-bottom:14px"></div>
+        <!-- Filter groups (Product / Region / Business line …) live in the sticky
+             top bar (#explorerFilterBar) as dropdowns; built by buildExplorerFilters()
+             from the client-configured chip rules; see EXPLORER_FILTER_GROUPS. -->
+        <div class="table-wrap"><table id="explorerTable"></table></div>
+      </section>"""
+
+    panel_keywords = """
+      <section id="sec-keywords" style="display:none">
+        <div class="sec-head"><h2>Keyword Performance</h2><span class="status" id="keywordStatus"></span></div>
+        <div class="kw-insight" id="keywordInsight" hidden></div>
+        <div class="kw-toolbar">
+          <input type="search" id="keywordSearch" class="kw-search" placeholder="Search keywords…" autocomplete="off">
+          <div class="chips" id="keywordMatchChips"></div>
+        </div>
+        <div class="table-wrap"><table id="keywordTable" class="compact"></table></div>
+        <div class="pager" id="keywordPager"></div>
+      </section>"""
+
+    ex_units: list[tuple[str, str]] = [
+        ("explorer", panel_explorer_main),
+        ("keywords", panel_keywords),
+    ]
+    if budget_section_html:
+        ex_units.append(("budget", budget_section_html))
+
+    explorer_sections_html = _render_editable_panels(
+        ex_units,
+        # The budget tracker orders with the rest but never takes its visibility
+        # from the layout's hidden set (see forced_hidden below), so drop any
+        # stale entry for it rather than letting the two stores disagree.
+        {
+            "order": explorer_layout.get("order", []),
+            "hidden": [k for k in explorer_layout.get("hidden", []) if k != "budget"],
+        },
+        titles=EXPLORER_LAYOUT_CARDS,
+        is_admin=session_is_admin,
+        # The budget tracker's own "Show on Explorer" setting is its visibility,
+        # so the layout's hidden set never speaks for it (the edit JS posts that
+        # panel's Hide/Show to the budget-visibility endpoint instead).
+        forced_hidden=frozenset({"budget"}) if budget_hidden else frozenset(),
+    )
+    explorer_edit_banner_html = _edit_banner_html(
+        prefix="ex",
+        layout_api=_api_url(
+            f"/api/clients/{api_client_key}/tabs/explorer/card-layout",
+            access_key=access_key,
+        ),
     )
 
     return f"""<!DOCTYPE html>
@@ -1387,11 +1505,11 @@ def render_bigquery_dashboard_page(
     .ov-more:hover {{ color:var(--accent); border-color:var(--accent); background:var(--card); box-shadow:0 1px 4px rgba(29,111,208,.18); }}
     .ov-more-arrow {{ width:16px; height:16px; display:block; transition:transform .14s; }}
     .ov-more:hover .ov-more-arrow {{ transform:translateX(2px); }}
-    /* ---- Overview edit mode (admin-only) ---- */
+    /* ---- Panel edit mode (admin-only; Overview + Campaign Explorer) ---- */
     /* Entered from the sidebar kebab; no always-on chrome. This banner and the
-       per-card edit bars appear only while #pane-overview is .is-editing. */
+       per-panel edit bars appear only while an .ov-editable pane is .is-editing. */
     .ov-editing-banner {{ display:none; }}
-    #pane-overview.is-editing .ov-editing-banner {{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0 0 14px; padding:9px 13px; border:1px solid var(--accent); border-radius:var(--radius-sm); background:rgba(29,111,208,.06); position:sticky; top:8px; z-index:20; }}
+    .ov-editable.is-editing .ov-editing-banner {{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0 0 14px; padding:9px 13px; border:1px solid var(--accent); border-radius:var(--radius-sm); background:rgba(29,111,208,.06); position:sticky; top:8px; z-index:20; }}
     .ov-editing-badge {{ display:inline-flex; align-items:center; gap:6px; font-size:.76rem; font-weight:800; letter-spacing:.03em; text-transform:uppercase; color:var(--accent); }}
     .ov-editing-badge::before {{ content:""; width:8px; height:8px; border-radius:999px; background:var(--accent); box-shadow:0 0 0 3px rgba(29,111,208,.18); }}
     .ov-edit-hint {{ color:var(--muted); font-size:.78rem; }}
@@ -1400,9 +1518,9 @@ def render_bigquery_dashboard_page(
     .ov-edit-done {{ border:1px solid var(--accent); border-radius:999px; background:var(--accent); color:#fff; padding:6px 16px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; transition:background .14s, border-color .14s; }}
     .ov-edit-done:hover {{ background:var(--blue); border-color:var(--blue); }}
 
-    /* Per-card edit bar: revealed only while the admin is editing. */
+    /* Per-panel edit bar: revealed only while the admin is editing. */
     .ov-edit-bar {{ display:none; }}
-    .is-admin #pane-overview.is-editing .ov-edit-bar {{ display:flex; align-items:center; gap:9px; margin:0 0 8px; padding:6px 10px; border:1px dashed var(--line); border-radius:var(--radius-sm); background:rgba(29,111,208,.05); }}
+    .is-admin .ov-editable.is-editing .ov-edit-bar {{ display:flex; align-items:center; gap:9px; margin:0 0 8px; padding:6px 10px; border:1px dashed var(--line); border-radius:var(--radius-sm); background:rgba(29,111,208,.05); }}
     .ov-drag {{ display:inline-flex; align-items:center; justify-content:center; color:var(--muted); cursor:grab; }}
     .ov-drag:active {{ cursor:grabbing; }}
     .ov-drag svg {{ display:block; }}
@@ -1410,13 +1528,13 @@ def render_bigquery_dashboard_page(
     .ov-hide-toggle {{ margin-left:auto; border:1px solid var(--line); border-radius:999px; background:#fff; color:var(--muted); padding:4px 12px; font:inherit; font-size:.76rem; font-weight:600; cursor:pointer; transition:color .14s, border-color .14s, background .14s; }}
     .ov-hide-toggle:hover {{ color:var(--accent); border-color:var(--accent); }}
     .ov-unit.ov-unit--hidden .ov-hide-toggle {{ color:#fff; background:var(--accent); border-color:var(--accent); }}
-    /* A hidden card is gone for clients (never emitted) and, for an admin, only
+    /* A hidden panel is gone for clients (never emitted) and, for an admin, only
        reappears — greyed — while editing so it can be shown back. */
     .ov-unit.ov-unit--hidden {{ display:none; }}
-    .is-admin #pane-overview.is-editing .ov-unit.ov-unit--hidden {{ display:block; opacity:.5; }}
-    #pane-overview.is-editing .ov-unit {{ border:1px solid transparent; border-radius:var(--radius-sm); padding:4px; transition:border-color .12s, background .12s; }}
-    #pane-overview.is-editing .ov-unit.is-drag-over {{ border-color:var(--accent); background:rgba(29,111,208,.04); }}
-    #pane-overview.is-editing .ov-unit.is-dragging {{ opacity:.4; }}
+    .is-admin .ov-editable.is-editing .ov-unit.ov-unit--hidden {{ display:block; opacity:.5; }}
+    .ov-editable.is-editing .ov-unit {{ border:1px solid transparent; border-radius:var(--radius-sm); padding:4px; transition:border-color .12s, background .12s; }}
+    .ov-editable.is-editing .ov-unit.is-drag-over {{ border-color:var(--accent); background:rgba(29,111,208,.04); }}
+    .ov-editable.is-editing .ov-unit.is-dragging {{ opacity:.4; }}
 
     .status {{ color:var(--muted); font-size:.82rem; margin:0 0 12px; }}
     .status.error {{ color:var(--bad); }}
@@ -1849,33 +1967,16 @@ def render_bigquery_dashboard_page(
   <main>
 
     <!-- ===== OVERVIEW TAB ===== -->
-    <div id="pane-overview">
+    <div id="pane-overview" class="ov-editable" data-edit-pane="overview">
       {overview_edit_banner_html}
       {onboarding_html}
       {overview_summary_html}
     </div>
 
     <!-- ===== EXPLORER TAB ===== -->
-    <div id="pane-explorer" hidden>
-      <section id="sec-explorer">
-        <div class="sec-head"><h2>Campaign explorer</h2><div class="sec-head-actions">{platform_chips_explorer_html}{explorer_campaigns_edit_html}{explorer_filters_edit_html}<span class="status" id="explorerStatus"></span></div></div>
-        <div class="cards" id="explorerSummaryCards" style="margin-bottom:14px"></div>
-        <!-- Filter groups (Product / Region / Business line …) live in the sticky
-             top bar (#explorerFilterBar) as dropdowns; built by buildExplorerFilters()
-             from the client-configured chip rules; see EXPLORER_FILTER_GROUPS. -->
-        <div class="table-wrap"><table id="explorerTable"></table></div>
-      </section>
-      <section id="sec-keywords" style="display:none">
-        <div class="sec-head"><h2>Keyword Performance</h2><span class="status" id="keywordStatus"></span></div>
-        <div class="kw-insight" id="keywordInsight" hidden></div>
-        <div class="kw-toolbar">
-          <input type="search" id="keywordSearch" class="kw-search" placeholder="Search keywords…" autocomplete="off">
-          <div class="chips" id="keywordMatchChips"></div>
-        </div>
-        <div class="table-wrap"><table id="keywordTable" class="compact"></table></div>
-        <div class="pager" id="keywordPager"></div>
-      </section>
-      {budget_section_html}
+    <div id="pane-explorer" class="ov-editable" data-edit-pane="explorer" hidden>
+      {explorer_edit_banner_html}
+      {explorer_sections_html}
     </div>
 
     <!-- ===== WEBSITE ANALYTICS TAB ===== -->
@@ -2129,47 +2230,189 @@ def render_bigquery_dashboard_page(
     // and the admin-only endpoint that saves it from the "Campaigns" picker.
     const EXPLORER_CAMPAIGN_ALLOWLIST = {explorer_campaign_allowlist_json};
     const EXPLORER_CAMPAIGNS_API = "{_aurl(f'/api/clients/{api_client_key}/explorer/campaigns')}";
-    // Admin endpoint behind the Explorer kebab's "Budget tracker" toggle (form
+    // Admin endpoint behind the Explorer's Budget tracking panel Hide/Show (form
     // POST show=1/0). Uses client_slug (a /dashboard route), not api_client_key.
     const BUDGET_VISIBILITY_API = "{_aurl(f'/dashboard/{client_slug}/budget-visibility')}";
 
-    // ---- Overview edit mode: hide / show / reorder cards (admin only) ----
-    // Admins toggle edit mode on the Overview pane, then hide a card (it greys
-    // out but stays, so it can be shown back), show a hidden one, or drag cards
-    // to reorder. Every change persists the full {{order, hidden}} for the tab
-    // to the card-layout endpoint; the server applies it on the next render (and
-    // omits hidden cards from clients' HTML entirely). Optimistic: the DOM is
+    // ---- Panel edit mode: hide / show / reorder (admin only) ----
+    // Same editor on Overview and Campaign Explorer. Admins enter edit mode for
+    // a pane from that tab's sidebar kebab, then hide a panel (it greys out but
+    // stays, so it can be shown back), show a hidden one, or drag panels to
+    // reorder. Every change persists the full {{order, hidden}} for that tab to
+    // its card-layout endpoint; the server applies it on the next render (and
+    // omits hidden panels from clients' HTML entirely). Optimistic: the DOM is
     // already correct after the edit, so we don't reload on success.
+    //
+    // The one exception is the Explorer's Budget tracking panel: its visibility
+    // has its own per-client setting (the same one the settings page's "Show on
+    // Explorer" toggle writes), so its Hide/Show posts there instead and the
+    // layout's hidden set stays quiet about it.
     (function () {{
       const shell = document.getElementById('appShell');
-      const pane = document.getElementById('pane-overview');
-      if (!pane || !shell || !shell.classList.contains('is-admin')) return;
-      const banner = pane.querySelector('.ov-editing-banner');
-      if (!banner) return;
-      const LAYOUT_API = banner.getAttribute('data-ov-layout-api') || '';
-      const statusEl = document.getElementById('ovEditStatus');
+      if (!shell || !shell.classList.contains('is-admin')) return;
 
-      function setStatus(msg, isError) {{
-        if (!statusEl) return;
-        statusEl.textContent = msg || '';
-        statusEl.classList.toggle('is-error', !!isError);
-      }}
+      // One editor per editable pane, keyed by its tab so the sidebar kebab can
+      // find it. A pane with no banner isn't editable (nothing to persist to).
+      const editors = {{}};
 
-      function setEditing(on) {{
-        pane.classList.toggle('is-editing', !!on);
-        if (!on) setStatus('');
-        else {{
-          // Bring the pane into view when entering from the sidebar.
-          try {{ pane.scrollIntoView({{ behavior: 'smooth', block: 'start' }}); }} catch (e) {{}}
+      function makeEditor(pane) {{
+        const tab = pane.getAttribute('data-edit-pane') || '';
+        const banner = pane.querySelector('.ov-editing-banner');
+        if (!tab || !banner) return null;
+        const LAYOUT_API = banner.getAttribute('data-ov-layout-api') || '';
+        const statusEl = banner.querySelector('.ov-edit-status');
+        const doneBtn = banner.querySelector('.ov-edit-done');
+
+        function setStatus(msg, isError) {{
+          if (!statusEl) return;
+          statusEl.textContent = msg || '';
+          statusEl.classList.toggle('is-error', !!isError);
         }}
+
+        function setEditing(on) {{
+          pane.classList.toggle('is-editing', !!on);
+          if (!on) setStatus('');
+          else {{
+            // Bring the pane into view when entering from the sidebar.
+            try {{ pane.scrollIntoView({{ behavior: 'smooth', block: 'start' }}); }} catch (e) {{}}
+          }}
+        }}
+
+        // Exit via the banner's Done button.
+        if (doneBtn) doneBtn.addEventListener('click', function () {{ setEditing(false); }});
+
+        // Collect the current layout from the live DOM: order = every panel in
+        // document order; hidden = the ones flagged with the hidden class. The
+        // budget panel is left out of `hidden` on purpose — see the note above.
+        function currentLayout() {{
+          const units = Array.prototype.slice.call(pane.querySelectorAll('.ov-unit'));
+          const order = [], hidden = [];
+          units.forEach(function (u) {{
+            const key = u.getAttribute('data-ov-card');
+            if (!key) return;
+            order.push(key);
+            if (key !== 'budget' && u.classList.contains('ov-unit--hidden')) hidden.push(key);
+          }});
+          return {{ order: order, hidden: hidden }};
+        }}
+
+        let saveSeq = 0;
+        function persist() {{
+          const payload = currentLayout();
+          const seq = ++saveSeq;
+          setStatus('Saving…', false);
+          fetch(LAYOUT_API, {{
+            method: 'POST',
+            headers: {{ 'Content-Type': 'application/json' }},
+            credentials: 'same-origin',
+            body: JSON.stringify(payload),
+          }}).then(function (r) {{
+            return r.json().catch(function () {{ return {{}}; }}).then(function (b) {{
+              if (!r.ok || !b.ok) throw new Error((b && b.detail && (b.detail.error || b.detail)) || r.statusText);
+              if (seq === saveSeq) setStatus('Saved', false);
+            }});
+          }}).catch(function (err) {{
+            if (seq === saveSeq) setStatus('Could not save: ' + (err.message || err), true);
+          }});
+        }}
+
+        // The budget panel's visibility is a portal-wide client setting, not part
+        // of the layout: post it to its own endpoint and reflect the result in
+        // the same status line.
+        function persistBudget(nowHidden, unit, btn) {{
+          setStatus('Saving…', false);
+          fetch(BUDGET_VISIBILITY_API, {{
+            method: 'POST', credentials: 'same-origin',
+            headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
+            body: 'show=' + (nowHidden ? '0' : '1'),
+          }}).then(function (r) {{ return r.json().catch(function () {{ return {{}}; }}); }})
+            .then(function (b) {{
+              if (b && b.ok) {{ setStatus('Saved', false); return; }}
+              throw new Error((b && b.error) || 'unknown error');
+            }}).catch(function (err) {{
+              // Put the panel back the way it was so the page keeps telling the truth.
+              unit.classList.toggle('ov-unit--hidden', !nowHidden);
+              btn.setAttribute('aria-pressed', nowHidden ? 'false' : 'true');
+              btn.textContent = nowHidden ? 'Hide' : 'Show';
+              setStatus('Could not save: ' + (err.message || err), true);
+            }});
+        }}
+
+        // Hide / show a panel.
+        pane.addEventListener('click', function (ev) {{
+          const btn = ev.target.closest && ev.target.closest('.ov-hide-toggle');
+          if (!btn || !pane.contains(btn)) return;
+          ev.preventDefault();
+          const unit = btn.closest('.ov-unit');
+          if (!unit) return;
+          const nowHidden = unit.classList.toggle('ov-unit--hidden');
+          btn.setAttribute('aria-pressed', nowHidden ? 'true' : 'false');
+          btn.textContent = nowHidden ? 'Show' : 'Hide';
+          if (unit.getAttribute('data-ov-card') === 'budget') persistBudget(nowHidden, unit, btn);
+          else persist();
+        }});
+
+        // Drag to reorder. The handle is the drag source; we move its parent unit.
+        let dragUnit = null;
+        pane.addEventListener('dragstart', function (ev) {{
+          const handle = ev.target.closest && ev.target.closest('.ov-drag');
+          if (!handle || !pane.classList.contains('is-editing')) return;
+          dragUnit = handle.closest('.ov-unit');
+          if (!dragUnit) return;
+          dragUnit.classList.add('is-dragging');
+          if (ev.dataTransfer) {{
+            ev.dataTransfer.effectAllowed = 'move';
+            try {{ ev.dataTransfer.setData('text/plain', dragUnit.getAttribute('data-ov-card') || ''); }} catch (e) {{}}
+          }}
+        }});
+        pane.addEventListener('dragover', function (ev) {{
+          if (!dragUnit) return;
+          const over = ev.target.closest && ev.target.closest('.ov-unit');
+          if (!over || over === dragUnit || !pane.contains(over)) return;
+          ev.preventDefault();
+          if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+          const rect = over.getBoundingClientRect();
+          const after = (ev.clientY - rect.top) > rect.height / 2;
+          pane.querySelectorAll('.ov-unit.is-drag-over').forEach(function (u) {{ u.classList.remove('is-drag-over'); }});
+          over.classList.add('is-drag-over');
+          if (after) over.parentNode.insertBefore(dragUnit, over.nextSibling);
+          else over.parentNode.insertBefore(dragUnit, over);
+        }});
+        function endDrag(persistIt) {{
+          pane.querySelectorAll('.ov-unit.is-drag-over').forEach(function (u) {{ u.classList.remove('is-drag-over'); }});
+          if (dragUnit) {{
+            dragUnit.classList.remove('is-dragging');
+            dragUnit = null;
+            if (persistIt) persist();
+          }}
+        }}
+        pane.addEventListener('drop', function (ev) {{ if (dragUnit) {{ ev.preventDefault(); endDrag(true); }} }});
+        pane.addEventListener('dragend', function () {{ endDrag(true); }});
+
+        return {{ tab: tab, pane: pane, setEditing: setEditing }};
       }}
 
-      // Exit via the banner's Done button.
-      const doneBtn = document.getElementById('ovEditDone');
-      if (doneBtn) doneBtn.addEventListener('click', function () {{ setEditing(false); }});
+      document.querySelectorAll('.ov-editable').forEach(function (pane) {{
+        const ed = makeEditor(pane);
+        if (ed) editors[ed.tab] = ed;
+      }});
+      if (!Object.keys(editors).length) return;
 
-      // ---- Entry point: the sidebar kebab (⋮) on the Overview nav item ----
-      // A small popover menu whose "Edit layout" item switches to Overview and
+      // Only one pane edits at a time — entering edit mode on one leaves the other.
+      function editOnly(tab) {{
+        Object.keys(editors).forEach(function (k) {{ editors[k].setEditing(k === tab); }});
+      }}
+      function exitAll() {{
+        Object.keys(editors).forEach(function (k) {{ editors[k].setEditing(false); }});
+      }}
+      function anyEditing() {{
+        return Object.keys(editors).some(function (k) {{
+          return editors[k].pane.classList.contains('is-editing');
+        }});
+      }}
+
+      // ---- Entry point: the sidebar kebab (⋮) on an editable nav item ----
+      // A small popover menu whose "Edit layout" item switches to that tab and
       // drops into edit mode. Menu open/close is handled here so the sidebar
       // renderer stays presentational.
       function closeMenus() {{
@@ -2194,10 +2437,6 @@ def render_bigquery_dashboard_page(
             item.classList.add('menu-open');
             kebab.setAttribute('aria-expanded', 'true');
             if (menu) menu.hidden = false;
-            // Reflect the live budget-tracker state on its checkable menu item
-            // (the section is only in the DOM when the tracker is showing).
-            const bt = item.querySelector('[data-action="toggle-budget"]');
-            if (bt) bt.setAttribute('aria-checked', document.getElementById('sec-budget') ? 'true' : 'false');
           }}
           return;
         }}
@@ -2207,26 +2446,13 @@ def render_bigquery_dashboard_page(
           ev.stopPropagation();
           closeMenus();
           if (action.getAttribute('data-action') === 'edit-layout') {{
-            // Make sure Overview is the active tab, then enter edit mode.
-            const navBtn = document.querySelector('.dash-view-btn[data-tab="overview"]');
+            const item = action.closest('.dash-view-item');
+            const tab = item && item.getAttribute('data-view-item');
+            if (!tab || !editors[tab]) return;
+            // Make sure that tab is the active one, then enter edit mode.
+            const navBtn = document.querySelector('.dash-view-btn[data-tab="' + tab + '"]');
             if (navBtn && !navBtn.classList.contains('active')) navBtn.click();
-            setEditing(true);
-          }} else if (action.getAttribute('data-action') === 'toggle-budget') {{
-            // Flip the Campaign Explorer's budget-tracker visibility for this
-            // client (admin-only, portal-wide), then reload so the section
-            // appears/disappears. #sec-budget presence is the current state.
-            const navBtn = document.querySelector('.dash-view-btn[data-tab="explorer"]');
-            if (navBtn && !navBtn.classList.contains('active')) navBtn.click();
-            const showing = !!document.getElementById('sec-budget');
-            fetch(BUDGET_VISIBILITY_API, {{
-              method: 'POST', credentials: 'same-origin',
-              headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
-              body: 'show=' + (showing ? '0' : '1'),
-            }}).then(function (r) {{ return r.json().catch(function () {{ return {{}}; }}); }})
-              .then(function (b) {{
-                if (b && b.ok) window.location.reload();
-                else alert('Could not update the budget tracker: ' + ((b && b.error) || 'unknown error'));
-              }}).catch(function () {{ alert('Could not update the budget tracker.'); }});
+            editOnly(tab);
           }}
           return;
         }}
@@ -2235,94 +2461,10 @@ def render_bigquery_dashboard_page(
       }});
       document.addEventListener('keydown', function (ev) {{
         if (ev.key === 'Escape') {{
-          if (pane.classList.contains('is-editing')) setEditing(false);
+          if (anyEditing()) exitAll();
           closeMenus();
         }}
       }});
-
-      // Collect the current layout from the live DOM: order = every card in
-      // document order; hidden = the ones flagged with the hidden class.
-      function currentLayout() {{
-        const units = Array.prototype.slice.call(pane.querySelectorAll('.ov-unit'));
-        const order = [], hidden = [];
-        units.forEach(function (u) {{
-          const key = u.getAttribute('data-ov-card');
-          if (!key) return;
-          order.push(key);
-          if (u.classList.contains('ov-unit--hidden')) hidden.push(key);
-        }});
-        return {{ order: order, hidden: hidden }};
-      }}
-
-      let saveSeq = 0;
-      function persist() {{
-        const payload = currentLayout();
-        const seq = ++saveSeq;
-        setStatus('Saving…', false);
-        fetch(LAYOUT_API, {{
-          method: 'POST',
-          headers: {{ 'Content-Type': 'application/json' }},
-          credentials: 'same-origin',
-          body: JSON.stringify(payload),
-        }}).then(function (r) {{
-          return r.json().catch(function () {{ return {{}}; }}).then(function (b) {{
-            if (!r.ok || !b.ok) throw new Error((b && b.detail && (b.detail.error || b.detail)) || r.statusText);
-            if (seq === saveSeq) setStatus('Saved', false);
-          }});
-        }}).catch(function (err) {{
-          if (seq === saveSeq) setStatus('Could not save: ' + (err.message || err), true);
-        }});
-      }}
-
-      // Hide / show a card.
-      pane.addEventListener('click', function (ev) {{
-        const btn = ev.target.closest && ev.target.closest('.ov-hide-toggle');
-        if (!btn || !pane.contains(btn)) return;
-        ev.preventDefault();
-        const unit = btn.closest('.ov-unit');
-        if (!unit) return;
-        const nowHidden = unit.classList.toggle('ov-unit--hidden');
-        btn.setAttribute('aria-pressed', nowHidden ? 'true' : 'false');
-        btn.textContent = nowHidden ? 'Show' : 'Hide';
-        persist();
-      }});
-
-      // Drag to reorder. The handle is the drag source; we move its parent unit.
-      let dragUnit = null;
-      pane.addEventListener('dragstart', function (ev) {{
-        const handle = ev.target.closest && ev.target.closest('.ov-drag');
-        if (!handle || !pane.classList.contains('is-editing')) return;
-        dragUnit = handle.closest('.ov-unit');
-        if (!dragUnit) return;
-        dragUnit.classList.add('is-dragging');
-        if (ev.dataTransfer) {{
-          ev.dataTransfer.effectAllowed = 'move';
-          try {{ ev.dataTransfer.setData('text/plain', dragUnit.getAttribute('data-ov-card') || ''); }} catch (e) {{}}
-        }}
-      }});
-      pane.addEventListener('dragover', function (ev) {{
-        if (!dragUnit) return;
-        const over = ev.target.closest && ev.target.closest('.ov-unit');
-        if (!over || over === dragUnit || !pane.contains(over)) return;
-        ev.preventDefault();
-        if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
-        const rect = over.getBoundingClientRect();
-        const after = (ev.clientY - rect.top) > rect.height / 2;
-        pane.querySelectorAll('.ov-unit.is-drag-over').forEach(function (u) {{ u.classList.remove('is-drag-over'); }});
-        over.classList.add('is-drag-over');
-        if (after) over.parentNode.insertBefore(dragUnit, over.nextSibling);
-        else over.parentNode.insertBefore(dragUnit, over);
-      }});
-      function endDrag(persistIt) {{
-        pane.querySelectorAll('.ov-unit.is-drag-over').forEach(function (u) {{ u.classList.remove('is-drag-over'); }});
-        if (dragUnit) {{
-          dragUnit.classList.remove('is-dragging');
-          dragUnit = null;
-          if (persistIt) persist();
-        }}
-      }}
-      pane.addEventListener('drop', function (ev) {{ if (dragUnit) {{ ev.preventDefault(); endDrag(true); }} }});
-      pane.addEventListener('dragend', function () {{ endDrag(true); }});
     }})();
 
     // ---- Formatters ----
@@ -4032,13 +4174,18 @@ def render_bigquery_dashboard_page(
       // Google Ads search-keyword data (empty for LinkedIn/Meta-only clients).
       kwAllRows=(kw&&kw.rows)||[];
       const kwSec=document.getElementById('sec-keywords');
+      // Toggle the editable-panel wrapper when there is one, so a client with no
+      // keyword data doesn't get an empty panel (and no edit bar for admins).
+      const kwUnit=kwSec.closest('.ov-unit')||kwSec;
       if (kwAllRows.length) {{
         kwSec.style.display='';
+        kwUnit.style.display='';
         kwPageNum=1;
         buildKeywordControls();
         renderKeywords();
       }} else {{
         kwSec.style.display='none';
+        kwUnit.style.display='none';
       }}
     }}
 

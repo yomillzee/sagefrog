@@ -733,8 +733,8 @@ _VIEW_ICONS: dict[str, str] = {
 }
 
 # Sidebar section tabs that expose an admin "⋮" kebab menu for editing that
-# tab in place. Overview edits its card layout; Campaign Explorer toggles its
-# budget-tracker module. The menu content per tab is built by
+# tab in place. Both Overview and Campaign Explorer edit their panel layout the
+# same way (hide / show / drag to reorder). The menu content per tab is built by
 # ``_edit_menu_items_html``; adding a tab here plus a menu-items branch (and its
 # page JS action) lights up the same kebab on that tab.
 _EDIT_MENU_TABS: frozenset[str] = frozenset({"overview", "explorer"})
@@ -751,41 +751,20 @@ _NAV_ICON_EDIT_LAYOUT = (
     'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>'
 )
-# Wallet/budget icon for the Explorer kebab's "Budget tracker" toggle, and the
-# check shown when that toggle is on (visibility driven by aria-checked in CSS).
-_NAV_ICON_BUDGET = (
-    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" '
-    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-    '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/>'
-    '<path d="M16 14h2"/></svg>'
-)
-_NAV_ICON_CHECK = (
-    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" '
-    'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-    '<path d="M5 12l5 5L20 7"/></svg>'
-)
 
 
 def _edit_menu_items_html(tab: str) -> str:
     """The kebab menu's item(s) for an editable sidebar tab.
 
-    Overview → "Edit layout" (enters card edit mode). Campaign Explorer →
-    "Budget tracker", a checkable toggle whose on/off state + save are wired by
-    the dashboard page JS (it reads whether #sec-budget is present and POSTs the
-    budget-visibility setting). Returns '' for tabs with no menu."""
-    if tab == "overview":
+    Both editable tabs get the same "Edit layout" entry, which drops the admin
+    into that tab's panel edit mode (hide / show / drag to reorder). The action
+    is wired by the dashboard page JS, which reads the tab off the nav item.
+    Returns '' for tabs with no menu."""
+    if tab in _EDIT_MENU_TABS:
         return (
             '<button type="button" class="dash-view-menu-item" role="menuitem" '
             f'data-action="edit-layout">{_NAV_ICON_EDIT_LAYOUT}'
             '<span>Edit layout</span></button>'
-        )
-    if tab == "explorer":
-        return (
-            '<button type="button" class="dash-view-menu-item" role="menuitemcheckbox" '
-            f'data-action="toggle-budget" aria-checked="true">{_NAV_ICON_BUDGET}'
-            '<span>Budget tracker</span>'
-            f'<span class="dash-view-menu-check" aria-hidden="true">{_NAV_ICON_CHECK}</span>'
-            '</button>'
         )
     return ""
 
@@ -2441,10 +2420,6 @@ SIDEBAR_CSS = """
     }
     .dash-view-menu-item:hover { background: rgba(255,255,255,.10); }
     .dash-view-menu-item svg { flex-shrink: 0; opacity: .85; }
-    /* Checkable menu item (e.g. Explorer's "Budget tracker"): the trailing check
-       pushes right and only shows when the item is on (aria-checked=true). */
-    .dash-view-menu-item[role="menuitemcheckbox"] .dash-view-menu-check { margin-left: auto; color: #7fd1a6; visibility: hidden; }
-    .dash-view-menu-item[role="menuitemcheckbox"][aria-checked="true"] .dash-view-menu-check { visibility: visible; }
     /* Collapsed (icon-only) sidebar: drop the kebab so it never overlaps the
        centered icon; edit mode is still reachable once the sidebar is expanded. */
     .app-shell.sidebar-collapsed .dash-view-kebab,
