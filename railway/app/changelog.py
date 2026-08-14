@@ -63,6 +63,26 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-14",
+        title="Website Analytics tables run the full width, with a tab for the pair",
+        area="Client dashboards · Website Analytics",
+        kind="improved",
+        summary=(
+            "Pages and Landing Pages no longer sit squeezed side by side — each "
+            "pair of panels now shares one full-width card you switch with a tab, "
+            "so a page path is readable instead of cut off after a few characters."
+        ),
+        details=(
+            "Pages is the tab you land on; Landing Pages is one click away.",
+            "Traffic acquisition and New user acquisition pair up the same way, "
+            "with Traffic acquisition open by default.",
+            "With the extra room, page paths show far more of the URL before "
+            "they truncate; the full path is still in the hover tooltip.",
+            "Sorting, the path filter, the events selector and drag-to-resize "
+            "columns all work exactly as before on whichever tab is open.",
+        ),
+    ),
+    Entry(
+        date="2026-08-14",
         title="A Sagefrog copyright line closes out every page",
         area="Client dashboards · Admin",
         kind="improved",

@@ -806,7 +806,7 @@ def render_bigquery_dashboard_page(
           <div class="ef-pop" id="pfPop" role="dialog" aria-label="Edit analytics page filter" hidden>
             <div class="ef-pop-head"><span>Website Analytics page filter</span><button type="button" class="ef-pop-x" aria-label="Close">&times;</button></div>
             <div class="ef-pop-body">
-              <p class="ef-pop-desc">One path per line (case-insensitive substring, e.g. <code>/careers</code>). Sessions, Pages, Landing Pages and Geography are limited to matching paths; the panels with no page to scope by (Traffic, Audience, User acquisition, Age &amp; gender) are hidden while a filter is set. Leave blank to show the whole site.</p>
+              <p class="ef-pop-desc">One path per line (case-insensitive substring, e.g. <code>/careers</code>). Sessions, Pages, Landing Pages and Geography are limited to matching paths; the panels with no page to scope by (Acquisition — both tabs — plus Audience and Age &amp; gender) are hidden while a filter is set. Leave blank to show the whole site.</p>
               <textarea id="pfText" spellcheck="false" placeholder="/careers&#10;/jobs&#10;/apply">{_esc(analytics_page_path_filter_cfg)}</textarea>
               <div class="ef-pop-actions">
                 <button type="button" class="ef-pop-btn primary" id="pfSave">Save filter</button>
@@ -1301,6 +1301,33 @@ def render_bigquery_dashboard_page(
     .sec-head h2 {{ margin:0; }}
     .sec-head .status {{ margin:0; font-size:.76rem; text-align:right; flex-shrink:0; }}
     .sec-head-actions {{ display:flex; align-items:center; gap:12px; flex-shrink:0; }}
+    /* ---- Tabbed panel card ----
+       Two related panels share one full-width card and swap on a tab, instead of
+       sitting side by side at half width where the tables were too narrow to read
+       (Pages / Landing Pages, Traffic / New user acquisition). The tabs *are* the
+       card's heading — same size and weight as an h2 — with the active one
+       underlined on the head's rule. Only the active pane's status shows, so the
+       right of the head stays a single line. */
+    .pnl-head {{ display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap; border-bottom:1px solid var(--line); margin-bottom:16px; }}
+    /* On a phone the two tab labels are wider than the card: let the tablist
+       scroll sideways rather than push the whole page wide. The 1px of padding
+       (cancelled by the negative margin) keeps the active underline from being
+       clipped by the scroller. */
+    .pnl-tabs {{ display:flex; gap:24px; min-width:0; max-width:100%; overflow-x:auto; padding-bottom:1px; margin-bottom:-1px; scrollbar-width:none; }}
+    .pnl-tabs::-webkit-scrollbar {{ display:none; }}
+    .pnl-tab {{ position:relative; border:0; background:none; padding:0 0 10px; font:inherit; font-size:1.05rem; font-weight:750; letter-spacing:-.005em; color:var(--muted); cursor:pointer; white-space:nowrap; }}
+    .pnl-tab[hidden] {{ display:none; }}
+    .pnl-tab:hover {{ color:var(--navy); }}
+    .pnl-tab[aria-selected="true"] {{ color:var(--navy); }}
+    /* The active underline sits on top of .pnl-head's border, not below it. */
+    .pnl-tab[aria-selected="true"]::after {{ content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:var(--accent); border-radius:2px 2px 0 0; }}
+    .pnl-tab:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:3px; border-radius:4px; }}
+    /* One tab left (the other panel is switched off) — nothing to choose, so it
+       reads as a plain heading. */
+    .pnl-tabs.one-tab .pnl-tab[aria-selected="true"]::after {{ display:none; }}
+    .pnl-head .status {{ margin:0 0 10px; font-size:.76rem; text-align:right; flex-shrink:0; }}
+    .pnl-head .status[hidden] {{ display:none; }}
+    .pnl-pane[hidden] {{ display:none; }}
     /* Campaign explorer: admin "Edit filters" button + popover */
     .ef-edit {{ position:relative; }}
     .ef-edit-btn {{ display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--navy); font:inherit; font-size:.8rem; font-weight:700; padding:6px 11px; cursor:pointer; transition:background .15s,border-color .15s; }}
@@ -1866,46 +1893,58 @@ def render_bigquery_dashboard_page(
         <div class="cmp-legend" id="sessionsTrendLegend"></div>
       </section>
 
-      <div class="two-col" style="align-items:start">
-      <section id="sec-pages">
-        <div class="sec-head"><h2>Pages</h2><span class="status" id="pagesStatus"></span></div>
-        <input class="page-search" id="pagesSearch" type="search" placeholder="Filter by path…" autocomplete="off">
-        <div class="table-wrap"><table id="pagesTable" class="compact resizable"></table></div>
-        <div class="pager" id="pagesPager"></div>
+      <section id="card-pages">
+        <div class="pnl-head">
+          <div class="pnl-tabs" role="tablist" aria-label="Page breakdown">
+            <button type="button" class="pnl-tab" role="tab" id="tab-sec-pages" aria-selected="true" aria-controls="sec-pages" data-pnl="pages" data-pane="sec-pages">Pages</button>
+            <button type="button" class="pnl-tab" role="tab" id="tab-sec-landing" aria-selected="false" aria-controls="sec-landing" data-pnl="pages" data-pane="sec-landing">Landing Pages</button>
+          </div>
+          <span class="status" id="pagesStatus"></span>
+          <span class="status" id="landingStatus" hidden></span>
+        </div>
+        <div class="pnl-pane" id="sec-pages" role="tabpanel" aria-labelledby="tab-sec-pages">
+          <input class="page-search" id="pagesSearch" type="search" placeholder="Filter by path…" autocomplete="off">
+          <div class="table-wrap"><table id="pagesTable" class="compact resizable"></table></div>
+          <div class="pager" id="pagesPager"></div>
+        </div>
+        <div class="pnl-pane" id="sec-landing" role="tabpanel" aria-labelledby="tab-sec-landing" hidden>
+          <input class="page-search" id="landingSearch" type="search" placeholder="Filter by path…" autocomplete="off">
+          <div class="table-wrap"><table id="landingTable" class="compact resizable"></table></div>
+          <div class="pager" id="landingPager"></div>
+        </div>
       </section>
 
-      <section id="sec-landing">
-        <div class="sec-head"><h2>Landing Pages</h2><span class="status" id="landingStatus"></span></div>
-        <input class="page-search" id="landingSearch" type="search" placeholder="Filter by path…" autocomplete="off">
-        <div class="table-wrap"><table id="landingTable" class="compact resizable"></table></div>
-        <div class="pager" id="landingPager"></div>
-      </section>
-      </div>
-
-      <section id="sec-traffic">
-        <div class="sec-head"><h2>Traffic</h2><span class="status" id="trafficAcqStatus"></span></div>
-        <div class="col-panel"><h3>By channel</h3><div id="channelBars"></div></div>
-        <h3 class="subsec-h3">Top sources / medium</h3>
-        <div class="table-wrap"><table id="sourcesTable" class="compact"></table></div>
-        <div class="pager" id="sourcesPager"></div>
+      <section id="card-acq">
+        <div class="pnl-head">
+          <div class="pnl-tabs" role="tablist" aria-label="Acquisition breakdown">
+            <button type="button" class="pnl-tab" role="tab" id="tab-sec-traffic" aria-selected="true" aria-controls="sec-traffic" data-pnl="acq" data-pane="sec-traffic">Traffic acquisition</button>
+            <button type="button" class="pnl-tab" role="tab" id="tab-sec-useracq" aria-selected="false" aria-controls="sec-useracq" data-pnl="acq" data-pane="sec-useracq">New user acquisition</button>
+          </div>
+          <span class="status" id="trafficAcqStatus"></span>
+          <span class="status" id="userAcqStatus" hidden></span>
+        </div>
+        <div class="pnl-pane" id="sec-traffic" role="tabpanel" aria-labelledby="tab-sec-traffic">
+          <div class="col-panel"><h3>By channel</h3><div id="channelBars"></div></div>
+          <h3 class="subsec-h3">Top sources / medium</h3>
+          <div class="table-wrap"><table id="sourcesTable" class="compact"></table></div>
+          <div class="pager" id="sourcesPager"></div>
+        </div>
+        <div class="pnl-pane" id="sec-useracq" role="tabpanel" aria-labelledby="tab-sec-useracq" hidden>
+          <div id="newVsReturning"></div>
+          <div class="two-col" style="align-items:start">
+            <div class="col-panel"><h3>By first channel</h3><div id="userAcqChannelBars"></div><div class="pager" id="userAcqChannelPager"></div></div>
+            <div class="col-panel">
+              <h3>By first source / medium</h3>
+              <div class="table-wrap"><table id="userAcqSourceTable" class="compact"></table></div>
+              <div class="pager" id="userAcqSourcePager"></div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section id="sec-audience">
         <div class="sec-head"><h2>Audience</h2><span class="status" id="deviceStatus"></span></div>
         <div class="col-panel" style="max-width:420px"><h3>Device type</h3><div id="deviceBars"></div></div>
-      </section>
-
-      <section id="sec-useracq">
-        <div class="sec-head"><h2>New user acquisition</h2><span class="status" id="userAcqStatus"></span></div>
-        <div id="newVsReturning"></div>
-        <div class="two-col" style="align-items:start">
-          <div class="col-panel"><h3>By first channel</h3><div id="userAcqChannelBars"></div><div class="pager" id="userAcqChannelPager"></div></div>
-          <div class="col-panel">
-            <h3>By first source / medium</h3>
-            <div class="table-wrap"><table id="userAcqSourceTable" class="compact"></table></div>
-            <div class="pager" id="userAcqSourcePager"></div>
-          </div>
-        </div>
       </section>
 
       <section id="sec-demographics">
@@ -2314,7 +2353,14 @@ def render_bigquery_dashboard_page(
       const ths = [...table.querySelectorAll('thead th')];
       if (!ths.length) return;
       const store = colWidths[tableId] || (colWidths[tableId] = {{}});
+      // Safe to call again on the same thead (a tab switch re-runs it) — drop any
+      // grips from a previous pass instead of stacking a second set.
+      ths.forEach(th => th.querySelectorAll(':scope > .col-resizer').forEach(g => g.remove()));
       table.style.tableLayout = 'auto';
+      // A table rendered inside a hidden tab has no layout to freeze — every
+      // column would measure 0 and collapse. Leave it auto; showPanelTab calls
+      // back once the pane is on screen.
+      if (!table.getBoundingClientRect().width) return;
       ths.forEach((th, idx) => {{ if (store[idx] == null) store[idx] = Math.round(th.getBoundingClientRect().width); }});
       ths.forEach((th, idx) => {{ th.style.width = store[idx] + 'px'; }});
       table.style.tableLayout = 'fixed';
@@ -2619,6 +2665,9 @@ def render_bigquery_dashboard_page(
 
     // ---- Module system (localStorage) ----
     const ALL_MODULES = ['sessions','top_pages','traffic','audience','landing','user_acquisition','demographics'];
+    // Element a module owns. For the four modules that share a tabbed card
+    // (top_pages/landing, traffic/user_acquisition) this is the tab's pane, and
+    // applyPanelCards — not applyModules — decides when it shows.
     const MODULE_SECTIONS = {{
       sessions:'sec-sessions', top_pages:'sec-pages', traffic:'sec-traffic', audience:'sec-audience',
       landing:'sec-landing',
@@ -2646,12 +2695,74 @@ def render_bigquery_dashboard_page(
       return modules;
     }}
 
+    // ---- Tabbed panel cards ----
+    // Two modules share one full-width card and swap on a tab. The module system
+    // still owns whether each half exists at all, so a card follows its tabs:
+    // one module off hides that tab (and falls back to the other if it was the
+    // one on screen), both off hides the card.
+    const PANEL_CARDS = {{
+      pages: {{ card:'card-pages', tabs:[
+        {{module:'top_pages', pane:'sec-pages',    status:'pagesStatus'}},
+        {{module:'landing',   pane:'sec-landing',  status:'landingStatus'}},
+      ]}},
+      acq: {{ card:'card-acq', tabs:[
+        {{module:'traffic',          pane:'sec-traffic', status:'trafficAcqStatus'}},
+        {{module:'user_acquisition', pane:'sec-useracq', status:'userAcqStatus'}},
+      ]}},
+    }};
+    // Pane on screen per card. Defaults match the markup: Pages, Traffic acquisition.
+    const panelOpen = {{ pages:'sec-pages', acq:'sec-traffic' }};
+
+    function showPanelTab(grp, pane) {{
+      const cfg = PANEL_CARDS[grp];
+      if (!cfg || !cfg.tabs.some(t => t.pane === pane)) return;
+      panelOpen[grp] = pane;
+      cfg.tabs.forEach(t => {{
+        const on = t.pane === pane;
+        const el = document.getElementById(t.pane);
+        const btn = document.getElementById('tab-' + t.pane);
+        const st = document.getElementById(t.status);
+        if (el) el.hidden = !on;
+        if (btn) btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        if (st) st.hidden = !on;
+      }});
+      // Column widths are frozen from a laid-out table, and a table first
+      // rendered inside a hidden pane measures nothing — so re-run the freeze
+      // now that the pane is on screen (enableColResize is idempotent).
+      const shown = document.getElementById(pane);
+      if (shown) shown.querySelectorAll('table.resizable').forEach(t => enableColResize(t.id));
+    }}
+
+    document.querySelectorAll('.pnl-tab').forEach(btn =>
+      btn.addEventListener('click', () => showPanelTab(btn.dataset.pnl, btn.dataset.pane))
+    );
+
+    function applyPanelCards(modules) {{
+      Object.entries(PANEL_CARDS).forEach(([grp, cfg]) => {{
+        const card = document.getElementById(cfg.card);
+        const live = cfg.tabs.filter(t => modules[t.module]);
+        cfg.tabs.forEach(t => {{
+          const btn = document.getElementById('tab-' + t.pane);
+          if (btn) btn.hidden = !modules[t.module];
+        }});
+        if (card) card.hidden = !live.length;
+        if (!live.length) return;
+        const tablist = card && card.querySelector('.pnl-tabs');
+        if (tablist) tablist.classList.toggle('one-tab', live.length === 1);
+        // If the pane on screen just lost its module, fall back to what's left.
+        showPanelTab(grp, live.some(t => t.pane === panelOpen[grp]) ? panelOpen[grp] : live[0].pane);
+      }});
+    }}
+
     function applyModules() {{
       const modules = getModules();
+      const tabbed = new Set(Object.values(PANEL_CARDS).flatMap(c => c.tabs.map(t => t.module)));
       ALL_MODULES.forEach(key => {{
+        if (tabbed.has(key)) return;              // handled by applyPanelCards
         const sec = document.getElementById(MODULE_SECTIONS[key]);
         if (sec) sec.hidden = !modules[key];
       }});
+      applyPanelCards(modules);
       updateKeyEventBar();
     }}
     // The Events dropdown now lives in the shared sticky bar, so it must only
@@ -3966,6 +4077,10 @@ def render_bigquery_dashboard_page(
       {{key:'key_events',label:'Key events',num:true}},
       {{key:'avg_engt',label:'Avg engt',num:true,get:p=>p.users?p.engagement_seconds/p.users:0}},
     ];
+    // Both page tables now run the full width of the card, so the path column has
+    // room for a real path instead of the 24-char default. Anything past this
+    // still ellipsizes in the cell, and the full path stays in the tooltip.
+    const PAGE_TABLE_PATH_MAX=48;
     let pagesSort={{key:'key_events',dir:'desc'}};
     const LANDING_SORT_COLS=[
       {{key:'page_path',label:'Landing page',left:true}},
@@ -4019,7 +4134,7 @@ def render_bigquery_dashboard_page(
       const startIdx=(pagesPageNum-1)*PAGES_PER_PAGE;
       const pageRows=base.slice(startIdx,startIdx+PAGES_PER_PAGE);
       el.innerHTML=analyticsSortHead(PAGES_SORT_COLS,pagesSort,'pages')+
-        `<tbody>${{pageRows.map(p=>{{const engt=p.users?p.engagement_seconds/p.users:0;return`<tr><td class="left"><span class="page-path" title="${{esc(p.page_path)}}">${{esc(truncPath(p.page_path))}}</span></td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;}}). join('')}}</tbody>`;
+        `<tbody>${{pageRows.map(p=>{{const engt=p.users?p.engagement_seconds/p.users:0;return`<tr><td class="left"><span class="page-path" title="${{esc(p.page_path)}}">${{esc(truncPath(p.page_path,PAGE_TABLE_PATH_MAX))}}</span></td><td>${{count(p.page_views)}}</td><td>${{count(p.users)}}</td><td>${{count(p.key_events)}}</td><td>${{fmtDuration(engt)}}</td></tr>`;}}). join('')}}</tbody>`;
       enableColResize('pagesTable');
       const tag=pagesSearchQuery?' (filtered)':'';
       setStatus('pagesStatus', `${{startIdx+1}}–${{startIdx+pageRows.length}} of ${{base.length}}${{tag}}`);
@@ -4507,7 +4622,7 @@ def render_bigquery_dashboard_page(
       if (landingPageNum>totalPages) landingPageNum=totalPages;
       const startIdx=(landingPageNum-1)*LANDING_PER_PAGE, rows=base.slice(startIdx,startIdx+LANDING_PER_PAGE);
       el.innerHTML=analyticsSortHead(LANDING_SORT_COLS,landingSort,'landing')+
-        `<tbody>${{rows.map(r=>`<tr><td class="left"><span class="page-path" title="${{esc(r.page_path)}}">${{esc(truncPath(r.page_path))}}</span></td><td>${{count(r.sessions)}}</td><td>${{count(r.users)}}</td><td>${{count(r.new_users)}}</td><td>${{count(r.key_events)}}</td><td>${{r.key_event_rate!=null?r.key_event_rate+'%':'—'}}</td><td>${{fmtDuration(r.avg_engagement_seconds)}}</td></tr>`).join('')}}</tbody>`;
+        `<tbody>${{rows.map(r=>`<tr><td class="left"><span class="page-path" title="${{esc(r.page_path)}}">${{esc(truncPath(r.page_path,PAGE_TABLE_PATH_MAX))}}</span></td><td>${{count(r.sessions)}}</td><td>${{count(r.users)}}</td><td>${{count(r.new_users)}}</td><td>${{count(r.key_events)}}</td><td>${{r.key_event_rate!=null?r.key_event_rate+'%':'—'}}</td><td>${{fmtDuration(r.avg_engagement_seconds)}}</td></tr>`).join('')}}</tbody>`;
       enableColResize('landingTable');
       setStatus('landingStatus',`${{startIdx+1}}–${{startIdx+rows.length}} of ${{base.length}}`+(landingSearchQuery?' (filtered)':''));
       const pager=document.getElementById('landingPager');
