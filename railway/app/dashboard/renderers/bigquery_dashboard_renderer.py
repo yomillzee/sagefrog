@@ -21,6 +21,7 @@ from dashboard.renderers.base_layout import (
     dashboard_sidebar_view_nav_html,
     render_sidebar,
     platform_nav_flags,
+    site_footer_html,
 )
 from dashboard.renderers import pagespeed_renderer
 
@@ -2006,6 +2007,7 @@ def render_bigquery_dashboard_page(
     </div><!-- /pane-gsc -->
     {pagespeed_pane_html}
   </main>
+  {site_footer_html()}
     </div>
   </div>
   <div id="creativePreview" class="creative-preview" hidden>
