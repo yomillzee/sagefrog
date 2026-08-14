@@ -63,6 +63,28 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-14",
+        title="Campaign Explorer panels rearrange like the Overview ones",
+        area="Client dashboards · Campaign Explorer",
+        kind="new",
+        summary=(
+            "Campaign Explorer now has the same Edit layout mode as the Overview "
+            "home, so you can hide a panel a client doesn't need or drag the "
+            "panels into the order that suits them."
+        ),
+        details=(
+            "Hover the Campaign Explorer item in the sidebar, click the ⋮, "
+            "then Edit layout — the same way you already edit Overview.",
+            "Campaign explorer, Keyword Performance and Budget tracking each get "
+            "a Hide / Show button and a drag handle while you're editing.",
+            "A hidden panel is greyed out for you and simply isn't there for the "
+            "client; changes save on their own and Done leaves edit mode.",
+            "The budget tracker's old on/off entry in that ⋮ menu is gone — it is "
+            "now the Budget tracking panel's Hide / Show, and it still matches "
+            "the Show on Explorer switch on the settings page.",
+        ),
+    ),
+    Entry(
+        date="2026-08-14",
         title="Website Analytics tables run the full width, with a tab for the pair",
         area="Client dashboards · Website Analytics",
         kind="improved",

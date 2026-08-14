@@ -2103,16 +2103,20 @@ async def save_email_performance_selection(
 
 # Tabs that support admin card-layout editing, mapped to the set of card keys
 # that tab knows about. Keys outside the set are rejected so a stale/garbage key
-# can't wedge the tab's render. Overview is the first (and, for now, only) tab.
+# can't wedge the tab's render. Overview and Campaign Explorer are both editable.
 _CARD_LAYOUT_TABS: dict[str, set[str]] = {}
 
 
 def _card_layout_tab_keys(tab_key: str) -> set[str] | None:
     """Known card keys for a layout-editable tab, or None if the tab isn't one."""
-    from dashboard.renderers.bigquery_dashboard_renderer import OVERVIEW_PINNABLE_CARDS
+    from dashboard.renderers.bigquery_dashboard_renderer import (
+        EXPLORER_LAYOUT_CARDS,
+        OVERVIEW_PINNABLE_CARDS,
+    )
 
     if not _CARD_LAYOUT_TABS:
         _CARD_LAYOUT_TABS["overview"] = set(OVERVIEW_PINNABLE_CARDS)
+        _CARD_LAYOUT_TABS["explorer"] = set(EXPLORER_LAYOUT_CARDS)
     return _CARD_LAYOUT_TABS.get(tab_key)
 
 

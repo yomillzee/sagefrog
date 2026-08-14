@@ -118,14 +118,15 @@ class OverviewCardLayoutTests(unittest.TestCase):
     def test_kebab_on_editable_nav_items(self) -> None:
         html = self._render(None, is_admin=True)
         # Overview and Campaign Explorer are the editable nav items, each wrapped
-        # with a kebab: Overview edits its card layout, Explorer toggles its
-        # budget tracker.
+        # with a kebab; both offer the same "Edit layout" entry.
         self.assertIn('data-view-item="overview"', html)
         self.assertIn('data-edit-tab="overview"', html)
-        self.assertIn('data-action="edit-layout"', html)
         self.assertIn('data-view-item="explorer"', html)
         self.assertIn('data-edit-tab="explorer"', html)
-        self.assertIn('data-action="toggle-budget"', html)
+        self.assertEqual(html.count('data-action="edit-layout"'), 2)
+        # The Explorer's old budget-tracker toggle is gone from the menu — the
+        # budget panel is hidden/shown from Explorer edit mode instead.
+        self.assertNotIn('data-action="toggle-budget"', html)
         # A non-editable tab (Website Analytics) stays a plain nav button.
         self.assertNotIn('data-view-item="analytics"', html)
         self.assertIn('data-tab="analytics"', html)
