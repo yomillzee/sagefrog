@@ -1791,6 +1791,12 @@ def render_bigquery_dashboard_page(
     .tree-count .tc-dot.tc-more {{ background:none; width:auto; height:auto; font-size:.62rem; font-weight:800; line-height:1; color:rgba(29,111,208,.65); letter-spacing:-.02em; }}
     .lvl-group .tree-count .tc-dot {{ background:rgba(107,122,144,.5); }}
     .lvl-group .tree-count .tc-dot.tc-more {{ color:rgba(107,122,144,.7); }}
+    /* Grand-total footer row — reads as a summary rail under the tree, not as
+       another campaign: heavier type, a rule above it and no hover state. */
+    #explorerTable tfoot td {{ background:#eef3fa; border-top:2px solid var(--line); border-bottom:0; font-weight:800; color:var(--navy); font-variant-numeric:tabular-nums; }}
+    #explorerTable tfoot td.ga4-col {{ background:rgba(184,146,46,0.13); }}
+    #explorerTable tfoot .tree-name {{ font-weight:800; text-transform:uppercase; font-size:.7rem; letter-spacing:.06em; color:#5a6b82; }}
+    #explorerTable tfoot .tot-sub {{ margin-left:9px; font-weight:600; font-size:.72rem; color:var(--muted); }}
     /* GA4-verified conversions column — set off from the platform-reported metrics with a subtle gold accent. */
     #explorerTable th.ga4-col, #explorerTable td.ga4-col {{ background:rgba(184,146,46,0.06); border-left:1px solid rgba(184,146,46,0.3); }}
     #explorerTable td.ga4-col {{ font-variant-numeric:tabular-nums; }}
@@ -3811,6 +3817,22 @@ def render_bigquery_dashboard_page(
       return new Map([...campaigns.entries()].sort(cmpNode));
     }}
     function metricCells(m) {{ const wc=withCtr(m); return METRIC_COLS.map(c=>{{ const cell=(c.key==='verified_sel'&&m._verifiedNa)?'—':c.format(wc[c.key]); return `<td${{c.cls?` class="${{c.cls}}"`:''}}>${{cell}}</td>`; }}).join(''); }}
+    // Grand total for the tree footer. Summed from the campaign nodes rather than
+    // the raw rows so the footer is always exactly the sum of the campaign rows
+    // above it — including verified conversions, which are resolved per campaign
+    // (Google by campaign id, LinkedIn by group name) and would otherwise be
+    // double counted or missed. CTR is recomputed from total clicks/impressions,
+    // never averaged. Verified stays "—" only when no campaign in view has data.
+    function explorerTotals(tree) {{
+      const t=zeroMetrics();
+      let anyVerified=false;
+      for (const camp of tree.values()) {{
+        addMetrics(t, camp.metrics);
+        if (!camp.metrics._verifiedNa) anyVerified=true;
+      }}
+      if (!anyVerified) t._verifiedNa=true;
+      return t;
+    }}
     // Brand marks for the platform column — inline SVG so the tree reads as a
     // sleek icon rail instead of text pills. Google = 4-colour G, LinkedIn +
     // Meta = their single-path glyphs in brand colours.
@@ -3977,7 +3999,13 @@ def render_bigquery_dashboard_page(
             for (const ad of grp.ads) {{ body+=`<tr class="tree-row lvl-ad" data-parent="${{gId}}" hidden><td class="left"><span class="indent2"></span>${{adCell(ad)}}</td>${{metricCells(ad)}}</tr>`; }}
           }}
         }}
-        el.innerHTML=head+`<tbody>${{body}}</tbody>`;
+        // Grand total pinned under the tree. It sums whatever is currently in
+        // view, so a platform chip, a filter dropdown, the campaign allowlist or
+        // a new date range all re-total it on the next render.
+        const totals=explorerTotals(tree);
+        const nCamp=tree.size;
+        const foot=`<tfoot><tr class="expl-total"><td class="left"><span class="tree-name">Total</span><span class="tot-sub">${{nCamp}} campaign${{nCamp===1?'':'s'}}</span></td>${{metricCells(totals)}}</tr></tfoot>`;
+        el.innerHTML=head+`<tbody>${{body}}</tbody>`+foot;
       }}
       const filterActive=[...explorerFilterState.values()].some(s=>s.size);
       const totalCampaigns=new Set(base.map(r=>r.campaign_name||'—')).size;

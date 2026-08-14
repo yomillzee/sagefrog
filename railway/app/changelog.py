@@ -63,6 +63,26 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-14",
+        title="The campaign explorer table now ends in a totals row",
+        area="Campaign explorer",
+        kind="new",
+        summary=(
+            "A Total row sits at the bottom of the campaign table, adding up spend, "
+            "impressions, clicks, CTR and conversions for whatever is on screen — so "
+            "the account-level number is right there instead of being added up by hand."
+        ),
+        details=(
+            "It totals what you are looking at: narrow to one platform, pick a filter, "
+            "or change the date range and the row re-totals to match.",
+            "CTR is the blended rate — total clicks over total impressions — not an "
+            "average of the campaigns' CTRs, so a tiny campaign cannot skew it.",
+            "The row also shows how many campaigns it is covering.",
+            "Verified conversions total the same way, and stay as a dash when none of "
+            "the campaigns in view are matched to GA4.",
+        ),
+    ),
+    Entry(
+        date="2026-08-14",
         title="See which companies and job titles LinkedIn ads reached",
         area="Campaign explorer",
         kind="new",
