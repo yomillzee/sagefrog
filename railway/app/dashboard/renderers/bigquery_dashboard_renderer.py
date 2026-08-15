@@ -1036,9 +1036,11 @@ def render_bigquery_dashboard_page(
     def _platform_chip_row(dom_id: str) -> str:
         if not has_paid_ads:
             return ""
+        # No visible "Platform" caption: the chips (All / Google / LinkedIn /
+        # …) say what they filter, and on a phone the caption was what pushed
+        # the last chip off the card. The group keeps its aria-label.
         return (
             '<div class="card-filter">'
-            '<span class="filter-label">Platform</span>'
             f'<div class="chips platform-chips" id="{dom_id}" role="group" '
             'aria-label="Filter by platform"></div>'
             "</div>"
@@ -1322,6 +1324,16 @@ def render_bigquery_dashboard_page(
        to the tabs they apply to (Events, the Explorer filter bar). */
     .filter-group[hidden] {{ display:none; }}
     .filter-label {{ color:var(--muted); font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }}
+    .sr-only {{ position:absolute; width:1px; height:1px; margin:-1px; padding:0; border:0; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; }}
+    /* The Range and Compare pickers carry their own caption inside the field —
+       a calendar glyph on Range, a "vs" on Compare — instead of an uppercase
+       label beside it. That halves the width each control needs, which is what
+       keeps both on one line on a phone. Screen readers get the caption from
+       the .sr-only spans. */
+    .dd-lead {{ display:inline-flex; align-items:center; gap:7px; min-width:0; overflow:hidden; }}
+    .dd-lead > span:not(.sr-only) {{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+    .dd-icon {{ width:15px; height:15px; flex:none; color:var(--muted); }}
+    .dd-vs {{ flex:none; color:var(--muted); font-weight:700; }}
     /* Range picker: a custom dropdown so the admin "Make default" + Apply
        controls live inside the panel, under the preset list. Reuses the .ke-dd-*
        base styling (toggle/panel/caret); these tune sizing + the option rows. */
@@ -1576,6 +1588,17 @@ def render_bigquery_dashboard_page(
     .card-delta.up {{ color:var(--ok); }}
     .card-delta.down {{ color:var(--bad); }}
     .card-delta.flat {{ color:var(--muted); font-weight:600; }}
+    /* The bar across the top of a metric card takes the colour of that card's
+       vs-previous delta, so a wall of cards reads as good/bad at arm's length
+       before any number is. It follows the delta's *meaning*, not its arrow:
+       the delta classes are already assigned by whether the move is good for
+       that metric (CPA falling is green), so a rising CPA colours the bar red.
+       Cards with no comparison, a flat move, or a direction-less metric
+       (Spend) keep the default blue. :has() is the whole mechanism — every
+       card is built by a different JS branch, and none of them needs to know
+       about this. Browsers without :has() just keep blue bars. */
+    .card:has(.cmp-delta.up), .card:has(.card-delta.up) {{ border-top-color:var(--ok); }}
+    .card:has(.cmp-delta.down), .card:has(.card-delta.down) {{ border-top-color:var(--bad); }}
     /* HubSpot MQL tracker (Overview home) */
     .mql-panel .card {{ border-top-color:#ff7a59; }}
     .mql-dot {{ display:inline-block; width:9px; height:9px; border-radius:50%; background:#ff7a59; margin-right:8px; vertical-align:middle; }}
@@ -1922,6 +1945,33 @@ def render_bigquery_dashboard_page(
     @media (max-width:900px) {{ .cards {{ grid-template-columns:repeat(2,minmax(120px,1fr)); }} .two-col,.three-col {{ grid-template-columns:1fr; }} .date-bar {{ top:52px; }} }}
     /* On phones give the metric columns more room: tighten the path label cap. */
     @media (max-width:640px) {{ .page-path {{ max-width:44vw; }} }}
+    /* ---- Phone layout for the filters ----
+       Range and Compare share one line: each picker gives up its desktop
+       min-width, splits the row evenly and ellipsises its own label rather
+       than pushing the row wide. A third picker (Events on Website analytics,
+       the Explorer bar) wraps to a second line instead of squeezing these two.
+       The Compare panel is right-anchored so it can't hang off the screen. */
+    @media (max-width:640px) {{
+      /* Bar and content share one padding so the pickers line up with the
+         cards below them. */
+      .date-bar-inner {{ padding:11px 16px; }}
+      main {{ padding:16px 16px 44px; }}
+      /* A long money value ($17,428.47) overflowed a half-width card at this
+         size; scale the figure with the viewport instead of clipping it. */
+      .card-value {{ font-size:clamp(1.05rem, 4.6vw, 1.5rem); }}
+      .date-bar-bottom {{ gap:8px; }}
+      .date-bar-bottom > .filter-group {{ flex:1 1 auto; min-width:0; }}
+      .date-bar-bottom > #explorerFilterBar {{ flex:1 1 100%; }}
+      .date-bar-bottom .range-dd {{ display:block; min-width:0; }}
+      .date-bar-bottom .range-dd-toggle {{ width:100%; min-width:0; padding:6px 10px; font-size:.79rem; }}
+      .range-dd-panel {{ width:min(220px, calc(100vw - 32px)); }}
+      #compareDropdown .ke-dd-panel {{ left:auto; right:0; }}
+      /* Card-head filters (the Platform chips) are the widest thing in a
+         section head on a phone. The head already drops its actions to their
+         own line; they just couldn't shrink or wrap once there, so the last
+         chip ran off the card. Let them do both. */
+      .ov-actions, .sec-head-actions {{ flex-shrink:1; flex-wrap:wrap; min-width:0; }}
+    }}
     /* ---- Skeleton loaders ---- */
     @keyframes shimmer {{ 0%{{background-position:-200% 0}} 100%{{background-position:200% 0}} }}
     .skel {{ display:block; background:linear-gradient(90deg,#eef2f7 25%,#e4eaf2 50%,#eef2f7 75%); background-size:200% 100%; animation:shimmer 1.4s ease-in-out infinite; border-radius:5px; }}
@@ -1938,10 +1988,13 @@ def render_bigquery_dashboard_page(
       <div class="date-bar-inner">
       <div class="date-bar-bottom">
         <div class="filter-group">
-          <span class="filter-label">Range</span>
           <div class="ke-dropdown range-dd" id="rangeDropdown">
             <button type="button" class="ke-dd-toggle range-dd-toggle" id="rangeToggle" aria-haspopup="listbox" aria-expanded="false">
-              <span id="rangeToggleLabel">{effective_default_label}</span>
+              <span class="dd-lead">
+                <svg class="dd-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4"/><path d="M16 3v4"/><path d="M3 10h18"/></svg>
+                <span class="sr-only">Date range:</span>
+                <span id="rangeToggleLabel">{effective_default_label}</span>
+              </span>
               <span class="ke-dd-caret">▾</span>
             </button>
             <div class="ke-dd-panel range-dd-panel" id="rangePanel" hidden>
@@ -1960,10 +2013,13 @@ def render_bigquery_dashboard_page(
           </div>
         </div>
         <div class="filter-group" id="compareFilterGroup">
-          <span class="filter-label">Compare</span>
           <div class="ke-dropdown range-dd" id="compareDropdown">
             <button type="button" class="ke-dd-toggle range-dd-toggle" id="compareToggle" aria-haspopup="listbox" aria-expanded="false">
-              <span id="compareToggleLabel">Previous period</span>
+              <span class="dd-lead">
+                <span class="dd-vs" aria-hidden="true">vs</span>
+                <span class="sr-only">Compare to:</span>
+                <span id="compareToggleLabel">Previous period</span>
+              </span>
               <span class="ke-dd-caret">▾</span>
             </button>
             <div class="ke-dd-panel range-dd-panel" id="comparePanel" hidden>

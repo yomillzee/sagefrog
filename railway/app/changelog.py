@@ -62,6 +62,43 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-08-15",
+        title="A metric card's top bar turns green or red with its change",
+        area="Client dashboards",
+        kind="improved",
+        summary=(
+            "The colour bar across the top of each metric card now matches that "
+            "card's change against the comparison period, so a screen of cards "
+            "reads as good or bad at a glance before you read a single number."
+        ),
+        details=(
+            "It follows what the change means, not which way the arrow points: a "
+            "falling CPA or CPC is green, a rising one is red.",
+            "Cards with nothing to compare against, a flat change, or no better "
+            "direction — Spend, for one — keep the usual blue bar.",
+        ),
+    ),
+    Entry(
+        date="2026-08-15",
+        title="The dashboard filters fit on one line on a phone",
+        area="Client dashboards",
+        kind="improved",
+        summary=(
+            "The Range and Compare pickers dropped their captions for a calendar "
+            "icon and a \"vs\", which puts both on a single row on a phone instead "
+            "of stacking, and the platform chips no longer run off the card."
+        ),
+        details=(
+            "Range reads \"Last 30 days\" behind a calendar icon; Compare reads "
+            "\"vs Previous period\".",
+            "The Platform row lost its caption too — the chips already say what "
+            "they do — and now wraps onto a second line rather than pushing "
+            "Microsoft off the edge of the screen.",
+            "Long money values no longer spill outside their card on a narrow "
+            "phone.",
+        ),
+    ),
+    Entry(
         date="2026-08-14",
         title="The campaign explorer table now ends in a totals row",
         area="Campaign explorer",
