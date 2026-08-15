@@ -53,6 +53,7 @@ def render_bigquery_settings_page(
     primary_kpi: dict | None = None,
     segment_filter_profile: str | None = None,
     metric_goals: dict | None = None,
+    benchmarks_enabled: bool = False,
 ) -> str:
     """Settings page for any BigQuery-mart (Nixon-style) client.
 
@@ -250,6 +251,26 @@ def render_bigquery_settings_page(
       </form>
     </section>"""
 
+    # Peer benchmarks (admin only): does this client's Overview carry the "how
+    # does this compare with similar accounts" line? Off by default and per
+    # client — the comparison is only meaningful once the account's industry
+    # tags are right, so it is something an admin opts into after a look at the
+    # peer set rather than something that appears on its own.
+    benchmarks_toggle_url = _api_url(
+        f"/dashboard/{client_slug}/benchmarks-visibility", access_key=access_key
+    )
+    benchmarks_checked = " checked" if benchmarks_enabled else ""
+    benchmarks_section_html = "" if not session_is_admin else f"""
+    <section id="sec-benchmarks">
+      <h2>Peer benchmarks <span class="sc-pill">Admin preview</span></h2>
+      <p class="hint">Adds a line to the Overview metric cards comparing this account with others in its industry — "ahead of health care · 1.6% median (n=9)". Peers come from the industry tags on the Accounts page, so <strong>check those are right before turning this on</strong>; an account with no tags is compared against all clients instead. The account is always left out of its own peer group, and a peer group of three or fewer is labelled thin. While this is in preview only admins see the line.</p>
+      <label class="hdr-toggle" title="Show the peer comparison on this client's Overview cards">
+        <span class="hdr-toggle-label">Show peer benchmarks</span>
+        <span class="toggle-switch"><input type="checkbox" id="benchmarksToggle"{benchmarks_checked}><span class="toggle-track"></span></span>
+        <span class="status" id="benchmarksStatus"></span>
+      </label>
+    </section>"""
+
     # Segment filters — how this client's campaigns/pages are grouped in the
     # Campaign Explorer and Website Analytics filters. Config-driven (no client
     # name in code): 'business_lines' = keyword business-line rules, 'regions' =
@@ -401,6 +422,7 @@ def render_bigquery_settings_page(
     {accessibility_card_html}
     {kpi_section_html}
     {goals_section_html}
+    {benchmarks_section_html}
     {segment_section_html}
     {budget_module_html}
   </main>
@@ -558,6 +580,30 @@ def render_bigquery_settings_page(
         }} catch (err) {{
           setStatus('goalsStatus', 'Save failed: ' + (err.message || err), true);
         }} finally {{ btn.disabled = false; }}
+      }});
+    }})();
+    // ---- Peer benchmarks: show-on-Overview toggle ----
+    (function(){{
+      const t = document.getElementById('benchmarksToggle');
+      if (!t) return;
+      t.addEventListener('change', async () => {{
+        t.disabled = true;
+        setStatus('benchmarksStatus', 'Saving…');
+        try {{
+          const r = await fetch("{benchmarks_toggle_url}", {{
+            method:'POST', credentials:'same-origin',
+            headers:{{'Content-Type':'application/x-www-form-urlencoded'}},
+            body: new URLSearchParams({{ show: t.checked ? '1' : '0' }}),
+          }});
+          const body = await r.json().catch(() => ({{}}));
+          if (!r.ok || !body.ok) throw new Error(body.error || ('HTTP ' + r.status));
+          setStatus('benchmarksStatus', t.checked
+            ? 'On. Reload the dashboard to see the comparison.'
+            : 'Off. The cards drop the comparison line.');
+        }} catch (err) {{
+          t.checked = !t.checked;  // revert on failure
+          setStatus('benchmarksStatus', 'Save failed: ' + (err.message || err), true);
+        }} finally {{ t.disabled = false; }}
       }});
     }})();
     // ---- Segment filters: save the client's filter profile ----
