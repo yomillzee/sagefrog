@@ -63,6 +63,27 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-15",
+        title="Peer benchmarks are now off until you switch them on per client",
+        area="Client dashboards · Insights settings",
+        kind="improved",
+        summary=(
+            "The industry comparison on the Overview cards no longer appears on "
+            "its own. It is off for every client, with a new switch in Insights "
+            "settings to turn it on once you have checked that account's "
+            "industry tags are right."
+        ),
+        details=(
+            "A benchmark is a claim about how an account is doing against "
+            "others, so it should be a decision rather than a default — the "
+            "peer set is only as good as the tags behind it.",
+            "With the switch off the cards look exactly as they did before, and "
+            "the dashboard does no benchmark work at all.",
+            "Still an admin-only preview either way: clients do not see the "
+            "comparison yet, however the switch is set.",
+        ),
+    ),
+    Entry(
+        date="2026-08-15",
         title="Mark what happened on a date, and see it on every trend chart",
         area="Client dashboards · Timeline",
         kind="new",

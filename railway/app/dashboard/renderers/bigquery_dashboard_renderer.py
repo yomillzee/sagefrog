@@ -593,6 +593,7 @@ def render_bigquery_dashboard_page(
     session_can_switch_clients: bool = False,
     view_as_users: list[dict] | None = None,
     show_budget_tracker: bool = True,
+    show_benchmarks: bool = False,
 ) -> str:
     """Render this BigQuery-mart dashboard for any client.
 
@@ -2433,6 +2434,11 @@ def render_bigquery_dashboard_page(
     // benchmarks, and the data-freshness chip. The matching API routes enforce
     // this server-side too; this flag only avoids requests that would 403.
     const IS_ADMIN = {'true' if session_is_admin else 'false'};
+    // Peer benchmarks are opt-in per client (Settings → Peer benchmarks) and off
+    // by default, because the comparison only means something once the account's
+    // industry tags are right. Off means the cards never ask for it; the API
+    // enforces the same setting, so this only avoids a request that would 404.
+    const SHOW_BENCHMARKS = {'true' if show_benchmarks else 'false'};
 
     // ---- API constants ----
     const SUMMARY_API          = "{_aurl(f'/api/clients/{api_client_key}/summary')}";
@@ -3606,7 +3612,7 @@ def render_bigquery_dashboard_page(
     // changing the date range does not re-request it.
     let benchLoaded = false;
     async function loadBenchmarks() {{
-      if (!IS_ADMIN || benchLoaded) return;
+      if (!IS_ADMIN || !SHOW_BENCHMARKS || benchLoaded) return;
       try {{
         benchPayload = await getJson(BENCHMARKS_API);
         benchLoaded = true;

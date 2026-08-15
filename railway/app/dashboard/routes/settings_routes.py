@@ -38,6 +38,7 @@ def _render_bq_nixon_settings(slug: str, db_cfg, *, flash, flash_err, html_kw) -
             primary_kpi=getattr(db_cfg, "primary_kpi", None),
             segment_filter_profile=getattr(db_cfg, "segment_filter_profile", None),
             metric_goals=getattr(db_cfg, "metric_goals", None),
+            benchmarks_enabled=bool(getattr(db_cfg, "benchmarks_enabled", False)),
             **html_kw,
         )
     )
@@ -415,6 +416,51 @@ def dashboard_client_consent_visibility(
         **audit_log.request_context(request),
     )
     return JSONResponse({"ok": True, "consent_sidebar_enabled": saved.consent_sidebar_enabled})
+
+
+@router.post(
+    "/dashboard/{client_slug}/benchmarks-visibility",
+    summary="Toggle the Overview peer-comparison line for a client (JSON)",
+    include_in_schema=False,
+)
+def dashboard_client_benchmarks_visibility(
+    client_slug: str,
+    request: Request,
+    show: str = Form(""),
+):
+    """Admin-only toggle: do this client's Overview cards carry the peer
+    comparison? Off by default — the comparison only means something once the
+    account's industry tags are right, so it is opted into per client."""
+    slug = validate_client_slug(client_slug)
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
+    user = auth.user
+    session_is_admin = bool(user and user.role == "admin")
+    session_email = user.email if user else None
+
+    if web_users.enabled() and not session_is_admin:
+        return JSONResponse(
+            {"ok": False, "error": "Only admins can change this setting."},
+            status_code=403,
+        )
+    if not client_dashboard_config.enabled():
+        return JSONResponse(
+            {"ok": False, "error": "DATABASE_URL is required to save this setting."},
+            status_code=503,
+        )
+    show_benchmarks = str(show).strip().lower() in ("1", "true", "yes", "on")
+    try:
+        saved = client_dashboard_config.save_benchmarks_enabled(
+            slug, show_benchmarks, updated_by=session_email or "dashboard_key",
+        )
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    audit_log.record(
+        action="dashboard.benchmarks_visibility_saved",
+        actor_email=session_email,
+        detail={"client_slug": slug, "benchmarks_enabled": saved.benchmarks_enabled},
+        **audit_log.request_context(request),
+    )
+    return JSONResponse({"ok": True, "benchmarks_enabled": saved.benchmarks_enabled})
 
 
 @router.post(

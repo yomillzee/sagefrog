@@ -383,8 +383,15 @@ def nixon_bigquery_test_dashboard(request: Request):
     auth = web_auth.authenticate_dashboard_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
     if isinstance(auth, RedirectResponse):
         return auth
+    # Nixon's config lives under "nixon-bq-test" (the slug the settings page and
+    # every per-client toggle write to), so read the benchmark opt-in from there
+    # rather than defaulting it off for the one client whose route is bespoke.
+    import client_dashboard_config
+
+    nixon_cfg = client_dashboard_config.get_config("nixon-bq-test")
     return HTMLResponse(render_bigquery_dashboard_page(
         session_can_switch_clients=session_can_switch_clients(auth),
+        show_benchmarks=bool(getattr(nixon_cfg, "benchmarks_enabled", False)),
         **penn_html_session_kwargs(auth),
     ))
 
@@ -506,6 +513,7 @@ def nixon_bq_settings_page(
             primary_kpi=getattr(db_cfg, "primary_kpi", None),
             segment_filter_profile=getattr(db_cfg, "segment_filter_profile", None),
             metric_goals=getattr(db_cfg, "metric_goals", None),
+            benchmarks_enabled=bool(getattr(db_cfg, "benchmarks_enabled", False)),
             **html_kw,
         )
     )
@@ -3004,6 +3012,11 @@ def client_peer_benchmarks(
 ) -> dict:
     """Peer distribution per card metric, from the agency benchmark cache.
 
+    Off unless an admin has switched it on for this client (see
+    ``benchmarks_enabled``), and 404s when off rather than returning an empty
+    payload — a disabled feature has no resource here, and the check runs before
+    the benchmark pass so a client with it off costs nothing.
+
     Deliberately not date-range aware: the benchmark reads the same two windows
     the agency page warms (month-to-date and last 30 days), because widening it
     to an arbitrary dashboard range would mean an uncached BigQuery pass over
@@ -3012,7 +3025,14 @@ def client_peer_benchmarks(
     slug = validate_client_slug(client_key)
     _require_admin(request, slug)
 
+    import client_dashboard_config
     from dashboard.services import agency_benchmarks_service
+
+    if not client_dashboard_config.benchmarks_enabled(slug):
+        raise HTTPException(
+            status_code=404,
+            detail="Peer benchmarks are turned off for this client.",
+        )
 
     try:
         return agency_benchmarks_service.client_benchmarks(

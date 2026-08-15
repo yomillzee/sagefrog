@@ -185,6 +185,15 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config
       ADD COLUMN IF NOT EXISTS metric_goals JSONB
     """,
+    # Whether the Overview cards carry the "how does this compare with peers"
+    # line. Off by default and per client, because a benchmark is a claim about
+    # an account's performance relative to others: it needs the account's
+    # industry tags to be right and someone to have looked at the peer set
+    # before it appears on a card. Admins turn it on per client from Settings.
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS benchmarks_enabled BOOLEAN NOT NULL DEFAULT FALSE
+    """,
 ]
 
 # The date-range presets the dashboard's Range picker offers; a stored
@@ -288,6 +297,9 @@ class ClientConfigRow:
     # float}. Cumulative metrics are monthly totals; rate metrics are the rate.
     # Empty = no targets. See dashboard/services/metric_goals.py.
     metric_goals: dict[str, float] = field(default_factory=dict)
+    # Whether the Overview cards show the industry-peer comparison line. Off by
+    # default: it only means anything once the account's industry tags are right.
+    benchmarks_enabled: bool = False
 
 
 def _get_db_url() -> str | None:
@@ -331,7 +343,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    sidebar_hidden_tabs, card_layouts,
                    default_date_preset, explorer_campaign_allowlist,
                    email_performance_selection, analytics_page_path_filter,
-                   metric_goals
+                   metric_goals, benchmarks_enabled
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -381,6 +393,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         email_performance_selection=_normalize_id_list(row[32]),
         analytics_page_path_filter=_s(row[33]),
         metric_goals=metric_goals_service.normalize_goals(row[34]),
+        benchmarks_enabled=bool(row[35]) if row[35] is not None else False,
     )
 
 
@@ -1483,6 +1496,52 @@ def save_metric_goals(
               updated_by = EXCLUDED.updated_by
             """,
             (slug, label, payload, now, (updated_by or "").strip() or None),
+        )
+    saved = get_config(slug)
+    if not saved:
+        raise RuntimeError("Failed to load saved client config.")
+    return saved
+
+
+def benchmarks_enabled(client_slug: str) -> bool:
+    """Whether this client's Overview cards carry the peer-comparison line.
+
+    Defaults to False for a client with no config row at all, so a brand-new
+    dashboard never shows a benchmark before anyone has looked at its peers."""
+    row = get_config(client_slug)
+    return bool(row.benchmarks_enabled) if row else False
+
+
+def save_benchmarks_enabled(
+    client_slug: str,
+    show: bool,
+    *,
+    updated_by: str | None = None,
+) -> ClientConfigRow:
+    """Toggle the Overview peer-comparison line for one client."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save client dashboard config.")
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    existing = get_config(slug)
+    label = existing.label if existing else slug
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, benchmarks_enabled, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              benchmarks_enabled = EXCLUDED.benchmarks_enabled,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, label, bool(show), now, (updated_by or "").strip() or None),
         )
     saved = get_config(slug)
     if not saved:

@@ -229,6 +229,7 @@ def dashboard_client(
         session_can_switch_clients=session_can_switch_clients(auth),
         view_as_users=_view_as_user_options(auth.user),
         show_budget_tracker=bool(getattr(db_cfg, "explorer_budget_tracker", True)),
+        show_benchmarks=bool(getattr(db_cfg, "benchmarks_enabled", False)),
         **penn_html_session_kwargs(auth),
     ))
 @router.get(
