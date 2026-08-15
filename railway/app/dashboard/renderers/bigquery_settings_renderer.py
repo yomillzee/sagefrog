@@ -22,6 +22,7 @@ from dashboard.renderers.base_layout import (
 from dashboard.renderers.bigquery_dashboard_renderer import _api_url
 from dashboard.renderers import budget_tracker
 from dashboard.services import kpi_registry
+from dashboard.services import metric_goals as metric_goals_service
 from dashboard.utils.formatting import esc as _esc
 from dashboard.utils.urls import accessibility_page_url as _accessibility_page_url
 from dashboard.utils.urls import consent_page_url as _consent_page_url
@@ -51,6 +52,7 @@ def render_bigquery_settings_page(
     consent_sidebar_enabled: bool = False,
     primary_kpi: dict | None = None,
     segment_filter_profile: str | None = None,
+    metric_goals: dict | None = None,
 ) -> str:
     """Settings page for any BigQuery-mart (Nixon-style) client.
 
@@ -219,6 +221,35 @@ def render_bigquery_settings_page(
       </form>
     </section>"""
 
+    # Metric goals (admin only): a target per paid summary card, so the dashboard
+    # can say whether a number landed where it was meant to instead of only which
+    # way it moved. Cumulative metrics are entered as monthly totals and the
+    # dashboard prorates them to whatever range is selected; rate metrics are the
+    # rate itself. Blank clears that metric's target.
+    stored_goals = metric_goals or {}
+    goals_save_url = _api_url(f"/dashboard/{client_slug}/metric-goals", access_key=access_key)
+    goal_field_rows = "".join(
+        f"""<label for="goal-{_esc(m["key"])}">{_esc(m["label"])}
+          <input type="number" id="goal-{_esc(m["key"])}" data-goal-key="{_esc(m["key"])}"
+                 min="0" step="any" placeholder="{'Monthly total' if m["cumulative"] else 'Target rate'}"
+                 value="{'' if stored_goals.get(m["key"]) in (None, "") else _esc(stored_goals.get(m["key"]))}">
+          <span class="hint">{_esc(m["hint"])}</span>
+        </label>"""
+        for m in metric_goals_service.catalog()
+    )
+    goals_section_html = "" if not session_is_admin else f"""
+    <section id="sec-metric-goals">
+      <h2>Metric goals <span class="sc-pill">Admin preview</span></h2>
+      <p class="hint">Targets for the Overview summary cards. Spend, impressions, clicks and conversions are <strong>monthly totals</strong> — the dashboard scales them to whatever date range is selected. CTR, CPC and CPA are the rate itself and are compared directly. Leave a field blank for no target. While this is in preview only admins see the result on the dashboard.</p>
+      <form class="form-grid" id="goalsForm" autocomplete="off">
+        {goal_field_rows}
+        <div class="form-actions btn-row">
+          <button type="submit" class="primary">Save goals</button>
+          <span class="status" id="goalsStatus"></span>
+        </div>
+      </form>
+    </section>"""
+
     # Segment filters — how this client's campaigns/pages are grouped in the
     # Campaign Explorer and Website Analytics filters. Config-driven (no client
     # name in code): 'business_lines' = keyword business-line rules, 'regions' =
@@ -277,6 +308,12 @@ def render_bigquery_settings_page(
     .hint {{ font-size:.82rem; color:var(--muted); margin:4px 0 12px; }}
     .hint code {{ background:#eef4fb; padding:1px 5px; border-radius:4px; }}
     .err-hint {{ color:var(--bad); }}
+    /* Marks a section whose effect is still admin-only on the client dashboard,
+       so nobody configures it expecting the client to see it yet. */
+    .sc-pill {{ display:inline-block; vertical-align:middle; margin-left:8px; padding:2px 8px; border-radius:999px; background:#eef4fb; border:1px solid #cfe0f3; color:var(--accent); font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }}
+    /* Per-field helper text inside a label in the goals grid — the label's own
+       uppercase/bold treatment would otherwise shout it. */
+    label > .hint {{ margin:0; font-size:.7rem; font-weight:500; text-transform:none; letter-spacing:0; }}
     section {{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:20px 22px; margin-bottom:20px; box-shadow:var(--shadow); }}
     .flash {{ padding:11px 14px; border-radius:var(--radius-sm); margin-bottom:18px; font-size:.9rem; background:#e9f7ef; border:1px solid #b8dfc8; color:var(--ok); }}
     .flash.err {{ background:#fdecea; border-color:#f3c0bb; color:var(--bad); }}
@@ -363,6 +400,7 @@ def render_bigquery_settings_page(
     {consent_visibility_html}
     {accessibility_card_html}
     {kpi_section_html}
+    {goals_section_html}
     {segment_section_html}
     {budget_module_html}
   </main>
@@ -487,6 +525,38 @@ def render_bigquery_settings_page(
           setStatus('kpiStatus', type ? 'Saved ✓' : 'KPI cleared ✓');
         }} catch (err) {{
           setStatus('kpiStatus', 'Save failed: ' + (err.message || err), true);
+        }} finally {{ btn.disabled = false; }}
+      }});
+    }})();
+    // ---- Metric goals: save every card target in one post ----
+    // Saving is a replace, not a merge: the form always submits the full set, so
+    // clearing a field clears that metric's target rather than leaving a stale
+    // one behind. Blank inputs are simply omitted and the server drops them.
+    (function(){{
+      const GOALS_SAVE_URL = "{goals_save_url}";
+      const form = document.getElementById('goalsForm'); if (!form) return;
+      form.addEventListener('submit', async (e) => {{
+        e.preventDefault();
+        const btn = form.querySelector('button[type=submit]');
+        const goals = {{}};
+        for (const input of form.querySelectorAll('[data-goal-key]')) {{
+          const v = input.value.trim();
+          if (v !== '') goals[input.dataset.goalKey] = v;
+        }}
+        btn.disabled = true;
+        setStatus('goalsStatus', 'Saving…');
+        try {{
+          const r = await fetch(GOALS_SAVE_URL, {{
+            method:'POST', credentials:'same-origin',
+            headers:{{'Content-Type':'application/x-www-form-urlencoded'}},
+            body: new URLSearchParams({{ goals: JSON.stringify(goals) }}),
+          }});
+          const body = await r.json().catch(() => ({{}}));
+          if (!r.ok || !body.ok) throw new Error(body.error || ('HTTP ' + r.status));
+          const n = Object.keys(body.goals || {{}}).length;
+          setStatus('goalsStatus', n ? `Saved ✓ ${{n}} target${{n === 1 ? '' : 's'}} active` : 'Cleared ✓ no targets set');
+        }} catch (err) {{
+          setStatus('goalsStatus', 'Save failed: ' + (err.message || err), true);
         }} finally {{ btn.disabled = false; }}
       }});
     }})();
