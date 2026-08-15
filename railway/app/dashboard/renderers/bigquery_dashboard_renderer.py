@@ -1417,6 +1417,73 @@ def render_bigquery_dashboard_page(
     .ke-dd-name {{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
     .ke-dd-count {{ color:var(--muted); font-size:.74rem; font-weight:600; }}
     .ke-dd-empty {{ color:var(--muted); font-size:.8rem; padding:14px 8px; text-align:center; }}
+    /* ---- Timeline annotation markers ----
+       The pin sits on the plot's top edge, small enough to read as a tick rather
+       than as data. An internal-only marker is hollow so an agency user can tell
+       at a glance which of these the client is also seeing. */
+    .anno-host {{ position:relative; }}
+    .anno-layer {{ position:absolute; inset:0; pointer-events:none; }}
+    .anno-pin {{ position:absolute; top:0; width:11px; height:11px; margin-left:-5.5px; padding:0; border:1.5px solid var(--anno-color,#64748b); border-radius:50%; background:var(--anno-color,#64748b); box-shadow:0 0 0 2px var(--card); cursor:default; pointer-events:auto; }}
+    .anno-pin.internal {{ background:var(--card); }}
+    .anno-pin.editable {{ cursor:pointer; }}
+    .anno-pin:hover, .anno-pin:focus-visible {{ transform:scale(1.28); outline:none; }}
+    .anno-pin:focus-visible {{ box-shadow:0 0 0 2px var(--card), 0 0 0 4px #bcd4f0; }}
+
+    /* Timeline manager (agency users only) — the list behind the markers. */
+    .anno-panel {{ margin-top:14px; }}
+    .anno-empty {{ color:var(--muted); font-size:.82rem; margin:6px 0 0; }}
+    .anno-list {{ list-style:none; margin:10px 0 0; padding:0; display:flex; flex-direction:column; gap:1px; }}
+    .anno-item {{ display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:11px; padding:9px 2px; border-bottom:1px solid var(--line-soft); }}
+    .anno-swatch {{ width:9px; height:9px; border-radius:50%; flex:0 0 auto; }}
+    .anno-main {{ min-width:0; }}
+    .anno-title {{ color:var(--navy); font-weight:700; font-size:.86rem; }}
+    .anno-meta {{ color:var(--muted); font-size:.72rem; margin-top:2px; display:flex; align-items:center; gap:7px; flex-wrap:wrap; }}
+    .anno-vis {{ padding:0 6px; border-radius:999px; font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; border:1px solid var(--line); }}
+    .anno-vis.internal {{ background:#f4f7fb; color:var(--muted); }}
+    .anno-vis.shared {{ background:#e9f7ef; border-color:#b8dfc8; color:var(--ok); }}
+    .anno-row-actions {{ display:flex; gap:6px; }}
+    .anno-btn {{ border:1px solid var(--line); background:var(--card); color:var(--muted); border-radius:var(--radius-sm); padding:5px 10px; font:inherit; font-size:.74rem; font-weight:700; cursor:pointer; }}
+    .anno-btn:hover {{ border-color:#c9d6e6; color:var(--navy); }}
+    .anno-btn.danger:hover {{ border-color:#f3c0bb; color:var(--bad); }}
+    .anno-btn.primary {{ background:var(--accent); border-color:var(--accent); color:#fff; }}
+    .anno-btn.primary:hover {{ background:#1a62b8; }}
+    .anno-dialog {{ border:0; border-radius:var(--radius); padding:0; width:min(520px, calc(100vw - 32px)); box-shadow:0 24px 60px -20px rgba(11,16,32,.5); }}
+    .anno-dialog::backdrop {{ background:rgba(10,37,64,.42); }}
+    .anno-form {{ padding:20px 22px; display:grid; gap:13px; }}
+    .anno-form h3 {{ margin:0; color:var(--navy); font-size:1rem; font-weight:750; }}
+    .anno-form label {{ display:grid; gap:5px; color:var(--muted); font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }}
+    .anno-form input, .anno-form select, .anno-form textarea {{ border:1px solid var(--line); border-radius:var(--radius-sm); padding:9px 11px; font:inherit; font-weight:500; text-transform:none; letter-spacing:0; background:#fff; color:#102033; }}
+    .anno-form textarea {{ min-height:76px; resize:vertical; }}
+    .anno-form-row {{ display:grid; grid-template-columns:1fr 1fr; gap:13px; }}
+    .anno-form-actions {{ display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-top:3px; }}
+    .anno-form-actions .spacer {{ flex:1; }}
+    .anno-err {{ color:var(--bad); font-size:.76rem; font-weight:600; }}
+    .anno-hint {{ color:var(--muted); font-size:.74rem; font-weight:500; text-transform:none; letter-spacing:0; margin:0; }}
+    @media (max-width: 560px) {{ .anno-form-row {{ grid-template-columns:1fr; }} }}
+
+    /* ---- Data freshness chip (admin preview) ----
+       Every connector lags differently and by a different amount; a soft last
+       week reads very differently once you know one platform stopped syncing on
+       Tuesday. The chip states the oldest source's through-date (the honest
+       floor for a combined number) and the tooltip breaks it down per source. */
+    .data-fresh-group {{ margin-left:auto; }}
+    .data-fresh {{ position:relative; display:inline-flex; align-items:center; gap:7px; padding:5px 11px; border:1px solid var(--line); border-radius:999px; background:var(--card); color:var(--muted); font-size:.74rem; font-weight:700; white-space:nowrap; cursor:default; }}
+    .data-fresh:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; }}
+    .df-dot {{ width:7px; height:7px; border-radius:50%; background:var(--ok); flex:0 0 auto; }}
+    .data-fresh.stale .df-dot {{ background:#b7791f; }}
+    .data-fresh.stale {{ border-color:#f0e0b6; background:#fdf9ef; color:#8a6d1f; }}
+    .data-fresh.very-stale .df-dot {{ background:var(--bad); }}
+    .data-fresh.very-stale {{ border-color:#f3c0bb; background:#fdf2f1; color:var(--bad); }}
+    .df-tip {{ position:absolute; top:calc(100% + 8px); right:0; z-index:60; min-width:230px; max-width:320px; padding:10px 12px; border-radius:var(--radius-sm); background:#0b1020; color:#e8eefc; font-size:.72rem; font-weight:500; line-height:1.5; text-align:left; white-space:normal; box-shadow:0 10px 30px -10px rgba(11,16,32,.55); opacity:0; visibility:hidden; transition:opacity .12s ease; }}
+    .data-fresh:hover .df-tip, .data-fresh:focus-visible .df-tip {{ opacity:1; visibility:visible; }}
+    .df-row {{ display:flex; justify-content:space-between; gap:14px; }}
+    .df-row + .df-row {{ margin-top:3px; }}
+    .df-row .df-lag {{ color:#9aa7bd; }}
+    @media (max-width: 860px) {{
+      .data-fresh-group {{ margin-left:0; }}
+      .df-tip {{ right:auto; left:0; }}
+    }}
+
     /* ---- Explorer filter dropdowns (sticky bar) ---- */
     #explorerFilterBar {{ gap:8px; flex-wrap:wrap; }}
     .expl-dd .ke-dd-toggle {{ min-width:0; }}
@@ -1599,6 +1666,36 @@ def render_bigquery_dashboard_page(
        about this. Browsers without :has() just keep blue bars. */
     .card:has(.cmp-delta.up), .card:has(.card-delta.up) {{ border-top-color:var(--ok); }}
     .card:has(.cmp-delta.down), .card:has(.card-delta.down) {{ border-top-color:var(--bad); }}
+    /* ---- Goal + peer benchmark rows (admin preview) ----
+       Both sit under the delta and answer the question the delta cannot: not
+       "which way did this move" but "is this where it should be". They are
+       deliberately quiet — small type, a hairline rule above — because on a card
+       the value is still the headline and these are the footnote that qualifies
+       it. Neither row renders at all when there is nothing to say, so a card
+       without a target or without peers looks exactly as it did before. */
+    .card-goal {{ margin-top:8px; padding-top:8px; border-top:1px solid var(--line-soft); }}
+    .cg-bar {{ height:4px; border-radius:999px; background:#eef2f7; overflow:hidden; }}
+    .cg-bar > span {{ display:block; height:100%; border-radius:999px; background:var(--muted); transition:width .3s ease; }}
+    .cg-text {{ margin-top:5px; font-size:.7rem; font-weight:700; color:var(--muted); line-height:1.3; }}
+    .card-goal.good .cg-bar > span {{ background:var(--ok); }}
+    .card-goal.good .cg-text {{ color:var(--ok); }}
+    .card-goal.warn .cg-bar > span {{ background:#b7791f; }}
+    .card-goal.warn .cg-text {{ color:#b7791f; }}
+    .card-goal.bad .cg-bar > span {{ background:var(--bad); }}
+    .card-goal.bad .cg-text {{ color:var(--bad); }}
+    .card-bench {{ margin-top:7px; font-size:.7rem; color:var(--muted); font-weight:600; line-height:1.35; display:flex; align-items:center; gap:5px; flex-wrap:wrap; }}
+    .card-goal + .card-bench {{ margin-top:6px; }}
+    .card-bench b {{ color:var(--navy); font-weight:800; }}
+    .cb-verdict {{ font-weight:800; }}
+    .cb-verdict.ahead {{ color:var(--ok); }}
+    .cb-verdict.behind {{ color:var(--bad); }}
+    .cb-verdict.level {{ color:var(--muted); }}
+    /* A bucket at or below the thin-sample cutoff is directional, not a
+       benchmark — say so on the row rather than in a tooltip nobody opens. */
+    .cb-thin {{ padding:0 5px; border-radius:999px; background:#fdf6e3; border:1px solid #f0e0b6; color:#8a6d1f; font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }}
+    /* Preview marker: these two rows are admin-only until the framing is agreed,
+       and an admin needs to see at a glance that a client would not see this. */
+    .adm-preview {{ display:inline-block; padding:0 5px; border-radius:999px; background:#eef4fb; border:1px solid #cfe0f3; color:var(--accent); font-size:.6rem; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }}
     /* HubSpot MQL tracker (Overview home) */
     .mql-panel .card {{ border-top-color:#ff7a59; }}
     .mql-dot {{ display:inline-block; width:9px; height:9px; border-radius:50%; background:#ff7a59; margin-right:8px; vertical-align:middle; }}
@@ -2054,6 +2151,18 @@ def render_bigquery_dashboard_page(
           </div>
         </div>
         <div class="filter-group" id="explorerFilterBar" hidden></div>
+        <!-- How current the numbers are. Filled by loadHealth() from the
+             latest_date each connector reports, and hidden until then (and for
+             non-admins, while this is in preview). It sits at the end of the
+             filter row because it qualifies every number on the page, not one
+             picker. -->
+        <div class="filter-group data-fresh-group" id="dataFreshGroup" hidden>
+          <span class="data-fresh" id="dataFresh" tabindex="0">
+            <span class="df-dot" id="dataFreshDot" aria-hidden="true"></span>
+            <span id="dataFreshLabel"></span>
+            <span class="df-tip" id="dataFreshTip" role="tooltip"></span>
+          </span>
+        </div>
       </div>
       </div>
     </div>
@@ -2065,6 +2174,22 @@ def render_bigquery_dashboard_page(
       {overview_edit_banner_html}
       {onboarding_html}
       {overview_summary_html}
+      <!-- Timeline manager. Deliberately not an .ov-unit: it is agency tooling,
+           not one of the client's reorderable panels, so the layout editor
+           leaves it alone. Stays hidden until the annotations API confirms the
+           caller may edit — a client-role user never receives it unhidden, and
+           sees only the shared markers on the charts themselves. -->
+      <section class="ov-panel anno-panel" id="annoPanel" hidden>
+        <div class="sec-head">
+          <h2>Timeline</h2>
+          <div class="sec-head-actions">
+            <button type="button" class="anno-btn primary" id="annoAddBtn">Add event</button>
+            <span class="status" id="annoStatus"></span>
+          </div>
+        </div>
+        <p class="anno-hint">Dated events — launches, site changes, budget shifts — drawn onto the trend charts so a movement has its cause next to it. New events are internal until you share them.</p>
+        <div id="annoListHost"></div>
+      </section>
     </div>
 
     <!-- ===== EXPLORER TAB ===== -->
@@ -2244,6 +2369,46 @@ def render_bigquery_dashboard_page(
   {site_footer_html()}
     </div>
   </div>
+  <!-- Timeline event editor. A native <dialog> so focus trapping, Escape, and
+       the backdrop come from the platform rather than from more JS. Only ever
+       opened for a caller the annotations API reported as able to edit. -->
+  <dialog class="anno-dialog" id="annoDialog" aria-label="Timeline event">
+    <form class="anno-form" id="annoForm" method="dialog">
+      <h3 id="annoFormTitle">Add a timeline event</h3>
+      <div class="anno-form-row">
+        <label for="annoDate">Date
+          <input type="date" id="annoDate" required>
+        </label>
+        <label for="annoEnd">End date (optional)
+          <input type="date" id="annoEnd">
+        </label>
+      </div>
+      <label for="annoTitle">Title
+        <input type="text" id="annoTitle" maxlength="120" required placeholder="e.g. Site migration to new CMS">
+      </label>
+      <label for="annoBody">Detail (optional)
+        <textarea id="annoBody" maxlength="4000" placeholder="What happened, and what it should explain in the numbers."></textarea>
+      </label>
+      <div class="anno-form-row">
+        <label for="annoCategory">Category
+          <select id="annoCategory"></select>
+        </label>
+        <label for="annoVisibility">Visibility
+          <select id="annoVisibility">
+            <option value="internal">Internal — agency only</option>
+            <option value="shared">Shared — the client sees this</option>
+          </select>
+        </label>
+      </div>
+      <p class="anno-err" id="annoErr" role="alert"></p>
+      <div class="anno-form-actions">
+        <button type="button" class="anno-btn primary" id="annoSave">Save event</button>
+        <button type="button" class="anno-btn" id="annoCancel">Cancel</button>
+        <span class="spacer"></span>
+        <button type="button" class="anno-btn danger" id="annoDelete" hidden>Delete</button>
+      </div>
+    </form>
+  </dialog>
   <div id="creativePreview" class="creative-preview" hidden>
     <div class="creative-preview-backdrop" data-close-preview></div>
     <div class="creative-preview-dialog" role="dialog" aria-modal="true" aria-label="Creative preview">
@@ -2262,10 +2427,19 @@ def render_bigquery_dashboard_page(
     function clearSkelChart(svgId){{const s=document.getElementById('sk_'+svgId);if(s)s.remove();const svg=document.getElementById(svgId);if(svg)svg.style.visibility='';}}
 
     const HAS_PAID_ADS = {'true' if has_paid_ads else 'false'};
+    // The effective user is an admin (an admin using "view as" is NOT — the
+    // whole point is that they see what the target user sees). Gates the three
+    // interpretation features that are still in preview: metric goals, peer
+    // benchmarks, and the data-freshness chip. The matching API routes enforce
+    // this server-side too; this flag only avoids requests that would 403.
+    const IS_ADMIN = {'true' if session_is_admin else 'false'};
 
     // ---- API constants ----
     const SUMMARY_API          = "{_aurl(f'/api/clients/{api_client_key}/summary')}";
     const HEALTH_API           = "{_aurl(f'/api/clients/{api_client_key}/marketing/health')}";
+    const GOALS_API            = "{_aurl(f'/api/clients/{api_client_key}/goals')}";
+    const BENCHMARKS_API       = "{_aurl(f'/api/clients/{api_client_key}/benchmarks')}";
+    const ANNOTATIONS_API      = "{_aurl(f'/dashboard/{client_slug}/annotations')}";
     const EXPLORER_API         = "{_aurl(f'/api/clients/{api_client_key}/google-ads/explorer')}";
     const GOOGLE_ADS_KEYWORDS_API = "{_aurl(f'/api/clients/{api_client_key}/google-ads/keywords')}";
     const LINKEDIN_EXPLORER_API= "{_aurl(f'/api/clients/{api_client_key}/linkedin/explorer')}";
@@ -2684,7 +2858,7 @@ def render_bigquery_dashboard_page(
         pointRadius: opts.points ? 2.5 : 0, pointHoverRadius: 4, pointBackgroundColor: s.color,
         _raw: s.raw || s.data, _fmt: s.fmt || count,
       }}));
-      return __chart(id, {{
+      const chart = __chart(id, {{
         type: 'line',
         data: {{ labels, datasets }},
         options: {{
@@ -2702,8 +2876,280 @@ def render_bigquery_dashboard_page(
             }} }},
           }},
         }},
+        // `dates` is the ISO date behind each label. Charts that pass it get
+        // timeline annotations drawn over them; charts that don't are untouched.
+        plugins: opts.dates ? [annoLinePlugin(opts.dates)] : [],
       }});
+      if (opts.dates) syncAnnoPins(id, opts.dates);
+      return chart;
     }}
+
+    // ---- Timeline annotations ----
+    // A chart can show that traffic fell; only an annotation can say the site was
+    // migrated that week. Markers are drawn in two halves for a reason: the
+    // vertical rule belongs on the canvas (it has to sit inside the plot area and
+    // survive resizes), while the flag at the top is a real DOM element so it
+    // gets native hover text, keyboard focus, and — for agency users — a click
+    // target that opens the editor. Nothing here runs for a client-role user
+    // beyond drawing the shared markers they are allowed to see.
+    let annoCache = [];
+    let annoCanEdit = false;
+    let annoCategories = [];
+    let annoLoaded = false;
+
+    // The index of the plotted point an annotation belongs to: the last date at
+    // or before it. Weekly-aggregated charts label each bucket with its Monday,
+    // so a Thursday event correctly lands on that week's point.
+    function annoIndexFor(dates, iso) {{
+      let found = -1;
+      for (let i = 0; i < dates.length; i++) {{
+        if (String(dates[i]) <= iso) found = i; else break;
+      }}
+      // An annotation before the first plotted day still marks the chart's start
+      // when its range overlaps the window; one after the last is off-chart.
+      if (found < 0) return (annoOverlapsStart(iso, dates)) ? 0 : -1;
+      return found;
+    }}
+    function annoOverlapsStart(iso, dates) {{ return dates.length > 0 && iso < String(dates[0]); }}
+
+    // Annotations that fall inside (or overlap) the dates a chart is showing.
+    function annoVisibleFor(dates) {{
+      if (!annoCache.length || !dates || !dates.length) return [];
+      const first = String(dates[0]), last = String(dates[dates.length - 1]);
+      return annoCache
+        .filter(a => {{
+          const start = String(a.event_date || '');
+          const end = String(a.end_date || a.event_date || '');
+          return start <= last && end >= first;   // any overlap with the window
+        }})
+        .map(a => ({{ anno: a, idx: annoIndexFor(dates, String(a.event_date)) }}))
+        .filter(m => m.idx >= 0);
+    }}
+
+    function annoLinePlugin(dates) {{
+      return {{
+        id: 'sfAnnotations',
+        afterDatasetsDraw(chart) {{
+          const markers = annoVisibleFor(dates);
+          if (!markers.length) return;
+          const area = chart.chartArea, xs = chart.scales.x;
+          if (!area || !xs) return;
+          const ctx = chart.ctx;
+          ctx.save();
+          for (const m of markers) {{
+            const x = xs.getPixelForValue(m.idx);
+            if (x < area.left - 1 || x > area.right + 1) continue;
+            ctx.beginPath();
+            ctx.setLineDash([4, 4]);
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = m.anno.color || '#64748b';
+            ctx.globalAlpha = 0.75;
+            ctx.moveTo(x, area.top);
+            ctx.lineTo(x, area.bottom);
+            ctx.stroke();
+          }}
+          ctx.restore();
+        }},
+      }};
+    }}
+
+    // The DOM half: one focusable pin per marker, positioned over the canvas.
+    function syncAnnoPins(chartId, dates) {{
+      const canvas = document.getElementById(chartId);
+      if (!canvas) return;
+      const host = canvas.parentElement;
+      if (!host) return;
+      host.classList.add('anno-host');
+      let layer = host.querySelector('.anno-layer');
+      if (!layer) {{
+        layer = document.createElement('div');
+        layer.className = 'anno-layer';
+        host.appendChild(layer);
+      }}
+      const chart = __charts[chartId];
+      const markers = annoVisibleFor(dates);
+      // chartArea is only populated once the chart has laid out; bail quietly
+      // rather than positioning pins against undefined geometry.
+      if (!chart || !chart.scales || !chart.scales.x || !chart.chartArea || !markers.length) {{
+        layer.innerHTML = ''; return;
+      }}
+      const xs = chart.scales.x, area = chart.chartArea;
+      layer.innerHTML = markers.map(m => {{
+        const x = xs.getPixelForValue(m.idx);
+        if (x < area.left - 1 || x > area.right + 1) return '';
+        const a = m.anno;
+        const when = a.end_date ? `${{a.event_date}} → ${{a.end_date}}` : a.event_date;
+        const shared = a.visibility === 'shared' ? 'Shared with the client' : 'Internal — the client does not see this';
+        const tip = `${{when}} · ${{a.category_label}}\\n${{a.title}}`
+          + (a.body ? `\\n\\n${{a.body}}` : '')
+          + `\\n\\n${{shared}}${{annoCanEdit ? ' · click to edit' : ''}}`;
+        return `<button type="button" class="anno-pin${{annoCanEdit ? ' editable' : ''}}${{a.visibility === 'internal' ? ' internal' : ''}}"`
+          + ` style="left:${{x.toFixed(1)}}px;--anno-color:${{esc(a.color)}}" data-anno-id="${{a.id}}"`
+          + ` title="${{esc(tip)}}" aria-label="${{esc(when + ': ' + a.title)}}"></button>`;
+      }}).join('');
+    }}
+
+    // Redraw every chart that carries annotations — used after an edit so the
+    // markers update without a page reload.
+    const ANNOTATED_CHARTS = [];
+    function registerAnnotatedChart(fn) {{ if (ANNOTATED_CHARTS.indexOf(fn) < 0) ANNOTATED_CHARTS.push(fn); }}
+    function refreshAnnotatedCharts() {{ for (const fn of ANNOTATED_CHARTS) {{ try {{ fn(); }} catch (e) {{}} }} }}
+
+    async function loadAnnotations(force) {{
+      if (annoLoaded && !force) return;
+      try {{
+        const payload = await getJson(ANNOTATIONS_API);
+        annoCache = payload.annotations || [];
+        annoCanEdit = !!payload.can_edit;
+        annoCategories = payload.categories || [];
+        annoLoaded = true;
+        refreshAnnotatedCharts();
+        renderAnnoList();
+      }} catch (err) {{
+        // Markers are additive context; a chart without them is still correct.
+        annoCache = []; annoCanEdit = false;
+      }}
+    }}
+
+    // ---- Timeline manager (agency only) ----
+    // Visibility of the whole panel follows the server's `can_edit`, not a
+    // client-side role guess, so the one authority on who may edit the timeline
+    // is the same code that authorises the writes.
+    function annoPrettyDate(iso) {{
+      if (!iso) return '';
+      try {{
+        return new Date(String(iso) + 'T00:00:00')
+          .toLocaleDateString(undefined, {{ year:'numeric', month:'short', day:'numeric' }});
+      }} catch (e) {{ return String(iso); }}
+    }}
+    function renderAnnoList() {{
+      const panel = document.getElementById('annoPanel');
+      if (!panel) return;
+      panel.hidden = !annoCanEdit;
+      if (!annoCanEdit) return;
+      const host = document.getElementById('annoListHost');
+      if (!annoCache.length) {{
+        host.innerHTML = '<p class="anno-empty">No events yet. Add the launches, site changes and budget shifts worth remembering — they show up on every trend chart.</p>';
+        return;
+      }}
+      host.innerHTML = '<ul class="anno-list">' + annoCache.map(a => {{
+        const when = a.end_date
+          ? `${{annoPrettyDate(a.event_date)}} → ${{annoPrettyDate(a.end_date)}}`
+          : annoPrettyDate(a.event_date);
+        return `<li class="anno-item">`
+          + `<span class="anno-swatch" style="background:${{esc(a.color)}}"></span>`
+          + `<span class="anno-main"><span class="anno-title">${{esc(a.title)}}</span>`
+          + `<span class="anno-meta"><span>${{esc(when)}}</span><span>·</span><span>${{esc(a.category_label)}}</span>`
+          + `<span class="anno-vis ${{esc(a.visibility)}}">${{a.visibility === 'shared' ? 'Client sees this' : 'Internal'}}</span></span></span>`
+          + `<span class="anno-row-actions"><button type="button" class="anno-btn" data-anno-edit="${{a.id}}">Edit</button></span></li>`;
+      }}).join('') + '</ul>';
+    }}
+
+    (function initAnnotations() {{
+      const dlg = document.getElementById('annoDialog');
+      if (!dlg) return;
+      const fTitle = document.getElementById('annoFormTitle');
+      const fDate = document.getElementById('annoDate');
+      const fEnd = document.getElementById('annoEnd');
+      const fName = document.getElementById('annoTitle');
+      const fBody = document.getElementById('annoBody');
+      const fCat = document.getElementById('annoCategory');
+      const fVis = document.getElementById('annoVisibility');
+      const fErr = document.getElementById('annoErr');
+      const delBtn = document.getElementById('annoDelete');
+      let editingId = null;
+
+      function setErr(msg) {{ fErr.textContent = msg || ''; }}
+      function fillCategories(selected) {{
+        fCat.innerHTML = (annoCategories.length ? annoCategories : [{{key:'other',label:'Other'}}])
+          .map(c => `<option value="${{esc(c.key)}}"${{c.key === selected ? ' selected' : ''}}>${{esc(c.label)}}</option>`)
+          .join('');
+      }}
+      function openEditor(anno) {{
+        editingId = anno ? anno.id : null;
+        fTitle.textContent = anno ? 'Edit timeline event' : 'Add a timeline event';
+        // A new event defaults to the end of the range on screen — that is
+        // almost always the period being discussed when someone reaches for this.
+        fDate.value = anno ? anno.event_date : currentEnd;
+        fEnd.value = anno && anno.end_date ? anno.end_date : '';
+        fName.value = anno ? anno.title : '';
+        fBody.value = anno ? anno.body : '';
+        fillCategories(anno ? anno.category : 'other');
+        fVis.value = anno ? anno.visibility : 'internal';
+        delBtn.hidden = !anno;
+        setErr('');
+        if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+        fName.focus();
+      }}
+      function closeEditor() {{
+        if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open');
+      }}
+
+      async function post(url, params) {{
+        const r = await fetch(url, {{
+          method: 'POST', credentials: 'same-origin',
+          headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
+          body: new URLSearchParams(params),
+        }});
+        const body = await r.json().catch(() => ({{}}));
+        if (!r.ok || !body.ok) throw new Error(body.detail || body.error || ('HTTP ' + r.status));
+        return body;
+      }}
+
+      document.getElementById('annoSave').addEventListener('click', async () => {{
+        if (!fName.value.trim()) {{ setErr('A title is required.'); return; }}
+        if (!fDate.value) {{ setErr('A date is required.'); return; }}
+        setErr('');
+        setStatus('annoStatus', 'Saving…');
+        try {{
+          await post(editingId ? `${{ANNOTATIONS_API}}/${{editingId}}` : ANNOTATIONS_API, {{
+            event_date: fDate.value, end_date: fEnd.value, title: fName.value.trim(),
+            body: fBody.value, category: fCat.value, visibility: fVis.value,
+          }});
+          closeEditor();
+          setStatus('annoStatus', '');
+          await loadAnnotations(true);
+        }} catch (err) {{
+          setErr(String(err.message || err));
+          setStatus('annoStatus', '');
+        }}
+      }});
+
+      delBtn.addEventListener('click', async () => {{
+        if (!editingId) return;
+        if (!window.confirm('Delete this timeline event? It will disappear from every chart.')) return;
+        setStatus('annoStatus', 'Deleting…');
+        try {{
+          await post(`${{ANNOTATIONS_API}}/${{editingId}}/delete`, {{}});
+          closeEditor();
+          setStatus('annoStatus', '');
+          await loadAnnotations(true);
+        }} catch (err) {{
+          setErr(String(err.message || err));
+          setStatus('annoStatus', '');
+        }}
+      }});
+
+      document.getElementById('annoCancel').addEventListener('click', closeEditor);
+      const addBtn = document.getElementById('annoAddBtn');
+      if (addBtn) addBtn.addEventListener('click', () => openEditor(null));
+
+      // Both entry points into the editor — the list's Edit buttons and the pins
+      // drawn on the charts — are delegated, because both are re-rendered often.
+      document.addEventListener('click', (e) => {{
+        const row = e.target.closest && e.target.closest('[data-anno-edit]');
+        if (row) {{
+          const anno = annoCache.find(a => String(a.id) === row.getAttribute('data-anno-edit'));
+          if (anno) openEditor(anno);
+          return;
+        }}
+        const pin = e.target.closest && e.target.closest('.anno-pin');
+        if (pin && annoCanEdit) {{
+          const anno = annoCache.find(a => String(a.id) === pin.getAttribute('data-anno-id'));
+          if (anno) openEditor(anno);
+        }}
+      }});
+    }})();
     function withDates(base) {{
       const sep = base.includes('?') ? '&' : '?';
       return base + sep + 'start_date=' + currentStart + '&end_date=' + currentEnd;
@@ -3063,6 +3509,76 @@ def render_bigquery_dashboard_page(
       if (dir==='up') cls=up?'up':'down'; else if (dir==='down') cls=up?'down':'up';
       return `<span class="cmp-delta ${{cls}}" title="${{tip}}">${{arrow}} ${{Math.abs(ch).toFixed(0)}}%</span>`;
     }}
+    // ---- Goals + peer benchmarks (admin preview) ----
+    // Both hang off the summary cards and both are additive: if either payload
+    // is missing, failed, or has nothing for a metric, the card renders exactly
+    // as it always did. Neither is ever fetched for a non-admin.
+    let goalsPayload = null;
+    let benchPayload = null;
+
+    // Format a number the way its card does, so a target reads like the value it
+    // sits under (a $ target under a $ value) rather than as a bare number.
+    const GOAL_FORMATTERS = {{ currency:money, currency2:v=>'$'+num(v).toFixed(2), percent:pct, number:count }};
+    function goalFmt(fmt, v) {{ return (GOAL_FORMATTERS[fmt] || count)(v); }}
+
+    // Percent-of-target → good|warn|bad, using the thresholds the server sent.
+    // Mirrors metric_goals.grade() in Python; the server owns the numbers so the
+    // two cannot drift apart without the payload changing.
+    function goalStatus(pct, direction, thresholds) {{
+      const t = (thresholds||{{}})[direction];
+      if (!t || pct==null || !isFinite(pct)) return '';
+      if (direction === 'up')   return pct >= t.good ? 'good' : (pct >= t.warn ? 'warn' : 'bad');
+      if (direction === 'down') return pct <= t.good ? 'good' : (pct <= t.warn ? 'warn' : 'bad');
+      if (pct >= t.good_low && pct <= t.good_high) return 'good';
+      if (pct >= t.warn_low && pct <= t.warn_high) return 'warn';
+      return 'bad';
+    }}
+
+    function goalRowHtml(key, value) {{
+      if (!goalsPayload) return '';
+      const g = (goalsPayload.goals||{{}})[key];
+      if (!g || !g.target || value==null) return '';
+      const pct = num(value) / num(g.target) * 100;
+      if (!isFinite(pct)) return '';
+      const status = goalStatus(pct, g.direction, goalsPayload.thresholds);
+      // The bar caps at 100% so an overshoot doesn't render off the card; the
+      // caption still states the true percentage.
+      const width = Math.max(0, Math.min(100, pct));
+      const verb = g.direction === 'down' ? 'of' : 'of';
+      const tip = `Target ${{goalFmt(g.format, g.target)}} for this range · stored goal ${{goalFmt(g.format, g.goal)}}${{g.cumulative ? '/mo' : ''}}. ${{g.note}}`;
+      return `<div class="card-goal ${{status}}" title="${{esc(tip)}}">`
+        + `<div class="cg-bar"><span style="width:${{width.toFixed(1)}}%"></span></div>`
+        + `<div class="cg-text">${{pct.toFixed(0)}}% ${{verb}} ${{goalFmt(g.format, g.target)}} target</div></div>`;
+    }}
+
+    function benchRowHtml(key, value) {{
+      if (!benchPayload || !benchPayload.available) return '';
+      const b = (benchPayload.metrics||{{}})[key];
+      if (!b || !b.peer || !b.peer.n) return '';
+      const median = num(b.peer.median);
+      // "Ahead"/"behind" follows the metric's meaning, not its arithmetic: a CPA
+      // below the peer median is ahead, a CTR below it is behind.
+      let verdict = 'level', word = 'in line with';
+      if (value != null && median) {{
+        const higher = num(value) > median * 1.05;
+        const lower  = num(value) < median * 0.95;
+        if (b.direction === 'up' && higher)   {{ verdict='ahead';  word='ahead of'; }}
+        else if (b.direction === 'up' && lower) {{ verdict='behind'; word='behind'; }}
+        else if (b.direction === 'down' && lower) {{ verdict='ahead';  word='better than'; }}
+        else if (b.direction === 'down' && higher) {{ verdict='behind'; word='worse than'; }}
+        else if (b.direction === 'none' && (higher||lower)) {{ word = higher ? 'above' : 'below'; }}
+      }}
+      const thin = b.peer.thin ? ` <span class="cb-thin" title="Only ${{b.peer.n}} comparable client${{b.peer.n===1?'':'s'}} — directional, not a benchmark.">thin</span>` : '';
+      const scope = b.scope === 'industry' ? b.peer_label : 'all clients';
+      const tip = `${{b.label}} across ${{b.peer.n}} other ${{esc(String(scope))}} account${{b.peer.n===1?'':'s'}}: `
+        + `median ${{goalFmt(b.format, b.peer.median)}}, mean ${{goalFmt(b.format, b.peer.mean)}}, `
+        + `range ${{goalFmt(b.format, b.peer.min)}}–${{goalFmt(b.format, b.peer.max)}}. `
+        + `The client's own value is excluded from its peer group.`;
+      return `<div class="card-bench" title="${{esc(tip)}}">`
+        + `<span class="cb-verdict ${{verdict}}">${{esc(word)}}</span>`
+        + `<span>${{esc(String(scope))}} · <b>${{goalFmt(b.format, b.peer.median)}}</b> median (n=${{b.peer.n}})</span>${{thin}}</div>`;
+    }}
+
     function renderSummary() {{
       const s = selectedSummary();
       const prev = selectedSummaryFrom(compareSummaryPayload);
@@ -3070,8 +3586,32 @@ def render_bigquery_dashboard_page(
       summaryCards.innerHTML = SUMMARY_CARDS.map(([key,label,format,dir]) => {{
         const delta = summaryDeltaHtml(s[key], (prev && prev[key]!=null) ? prev[key] : null, dir);
         const spark = sparkSvg(daily.map(d=>num(d[key])), SPARK_COLORS[key]||'#1769aa');
-        return `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{format(s[key])}}</div><div class="card-foot">${{delta}}${{spark}}</div></div>`;
+        const extra = goalRowHtml(key, s[key]) + benchRowHtml(key, s[key]);
+        return `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{format(s[key])}}</div><div class="card-foot">${{delta}}${{spark}}</div>${{extra}}</div>`;
       }}).join('');
+    }}
+
+    // Both loaders are fire-and-forget: they re-render the cards when they land
+    // and stay silent when they don't, so a slow benchmark pass (it walks every
+    // client's cached marts) never holds up the numbers the page exists to show.
+    async function loadGoals() {{
+      if (!IS_ADMIN) return;
+      try {{
+        goalsPayload = await getJson(withDates(GOALS_API));
+        if (summaryPayload) renderSummary();
+      }} catch (err) {{ goalsPayload = null; }}
+    }}
+    // Not window-scoped — the benchmark always describes the agency's own two
+    // warm windows — so one successful fetch serves the whole page session and
+    // changing the date range does not re-request it.
+    let benchLoaded = false;
+    async function loadBenchmarks() {{
+      if (!IS_ADMIN || benchLoaded) return;
+      try {{
+        benchPayload = await getJson(BENCHMARKS_API);
+        benchLoaded = true;
+        if (summaryPayload) renderSummary();
+      }} catch (err) {{ benchPayload = null; }}
     }}
 
     // ---- Summary sparkline data (feeds the Paid summary cards) ----
@@ -3494,6 +4034,44 @@ def render_bigquery_dashboard_page(
     // Deduped: the page kicks this off at startup for the comparison notice
     // while the Overview loader asks for it too -- one fetch serves both.
     let _healthInflight = null;
+    // ---- "Data through" chip ----
+    // The chip reports the *oldest* source's through-date, because any number
+    // that combines sources is only as current as its laggard; per-source dates
+    // are in the tooltip. Lag is measured against yesterday, not today: every
+    // platform here reports a day behind by design, so a source current through
+    // yesterday is healthy, not a day stale.
+    function _daysBetween(aIso, bIso) {{
+      const a = new Date(aIso + 'T00:00:00'), b = new Date(bIso + 'T00:00:00');
+      return Math.round((b - a) / 86400000);
+    }}
+    function renderFreshness(rows) {{
+      const group = document.getElementById('dataFreshGroup');
+      if (!group || !IS_ADMIN) return;
+      const dated = (rows||[])
+        .filter(r => r && r.latest_date)
+        .map(r => ({{ name: CMP_SOURCE_LABELS[String(r.source||'').toLowerCase()] || String(r.source||''), date: String(r.latest_date) }}))
+        .sort((a,b) => a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
+      if (!dated.length) {{ group.hidden = true; return; }}
+
+      const yesterday = fmtDate(new Date(Date.now() - 86400000));
+      const oldest = dated[0];
+      const lag = Math.max(0, _daysBetween(oldest.date, yesterday));
+      const chip = document.getElementById('dataFresh');
+      chip.className = 'data-fresh' + (lag >= 3 ? ' very-stale' : (lag >= 1 ? ' stale' : ''));
+      const pretty = new Date(oldest.date + 'T00:00:00')
+        .toLocaleDateString(undefined, {{ month:'short', day:'numeric' }});
+      document.getElementById('dataFreshLabel').textContent = 'Data through ' + pretty;
+      document.getElementById('dataFreshTip').innerHTML =
+        `<div class="df-row"><strong>Latest day per source</strong></div>`
+        + dated.map(d => {{
+            const dl = Math.max(0, _daysBetween(d.date, yesterday));
+            const note = dl === 0 ? 'current' : (dl === 1 ? '1 day behind' : dl + ' days behind');
+            return `<div class="df-row"><span>${{esc(d.name)}}</span><span class="df-lag">${{esc(d.date)}} · ${{note}}</span></div>`;
+          }}).join('')
+        + `<div class="df-row" style="margin-top:7px"><span class="df-lag">Combined figures are only as current as the oldest source. Platforms normally report one day behind.</span></div>`;
+      group.hidden = false;
+    }}
+
     function loadHealth() {{
       if (_healthInflight) return _healthInflight;
       _healthInflight = (async () => {{
@@ -3506,6 +4084,7 @@ def render_bigquery_dashboard_page(
             if (k && r.earliest_date) earliestDates[k] = r.earliest_date;
           }}
           syncCompareNotice();
+          renderFreshness(rows);
         }} catch(err) {{
           // Non-fatal: no earliest-date info just means no comparison warnings.
         }} finally {{
@@ -4699,6 +5278,9 @@ def render_bigquery_dashboard_page(
       if (sessionsGran === 'weekly') drawSessionsTrend(aggregateWeekly(c.cur), aggregateWeekly(c.prev));
       else drawSessionsTrend(c.cur, c.prev);
     }}
+    // Re-drawn (not just re-pinned) when the timeline changes, so the canvas
+    // rules and the DOM pins are rebuilt from one pass.
+    registerAnnotatedChart(() => {{ if (sessionsTrendCache && sessionsTrendCache.cur) renderSessionsTrend(); }});
     function drawSessionsTrend(daily, prevDaily) {{
       clearSkelChart('sessionsTrendChart');
       const legend=document.getElementById('sessionsTrendLegend');
@@ -4715,6 +5297,9 @@ def render_bigquery_dashboard_page(
       lineChart('sessionsTrendChart', labels, series, {{
         yFmt: v => count(v),
         tooltip: {{ label: c => `${{c.dataset.label}}: ${{count(c.raw)}} sessions` }},
+        // Full ISO dates behind the MM-DD labels, so timeline markers can be
+        // placed on the right point (and on the right week when aggregated).
+        dates: daily.map(d => String(d.date)),
       }});
       if (legend) {{
         const curTot=vals.reduce((a,b)=>a+b,0), prevTot=prevVals.reduce((a,b)=>a+b,0);
@@ -5262,6 +5847,7 @@ def render_bigquery_dashboard_page(
       lineChart(chartId, labels, series, {{
         yFmt: v=>count(v),
         tooltip: {{ label: c=>`${{c.dataset.label}}: ${{count(c.raw)}} ${{unit}}` }},
+        dates: curRows.map(d=>String(d.date)),
       }});
       if (lg) {{
         const curTot=vals.reduce((a,b)=>a+b,0), prevTot=prevVals.reduce((a,b)=>a+b,0);
@@ -5276,6 +5862,7 @@ def render_bigquery_dashboard_page(
       ovDrawCompareTrend('ovSessionsTrend','ovSessionsLegend',
         wk?ovAggregateWeekly(c.cur):c.cur, wk?ovAggregateWeekly(c.prev):c.prev, '#1769aa', 'sessions');
     }}
+    registerAnnotatedChart(() => {{ if (ovSessionsCache && ovSessionsCache.cur && ovSessionsCache.cur.length) ovRenderSessions(); }});
     function ovRenderAi() {{
       const c=ovAiCache, wk=ovAiGran==='weekly';
       ovDrawCompareTrend('ovAiTrend','ovAiLegend',
@@ -5407,6 +5994,14 @@ def render_bigquery_dashboard_page(
       btn.addEventListener('click', ()=>switchTab(btn.dataset.goto))
     );
     function loadCurrentTab() {{
+      // Goals are window-scoped (the stored monthly target is prorated to the
+      // selected range), so they reload with the tab; benchmarks are not, and
+      // loadBenchmarks() no-ops after its first success.
+      if (currentTab==='overview' && HAS_PAID_ADS) {{ loadGoals(); loadBenchmarks(); }}
+      // Annotations are window-independent (the API returns the client's whole
+      // timeline and each chart filters to what it is showing), so one load
+      // serves every tab and every range change.
+      loadAnnotations();
       if (currentTab==='overview')   {{ loadHealth().then(()=>{{ if (HAS_PAID_ADS) loadSummary(); loadOverviewHome(); }}); }}
       else if (currentTab==='explorer') {{ explorerLoaded=false; loadExplorer(); explorerLoaded=true; }}
       else if (currentTab==='analytics') {{ analyticsLoaded=false; applyModules(); loadAllAnalytics(); analyticsLoaded=true; }}

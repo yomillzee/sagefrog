@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
@@ -35,6 +37,7 @@ def _render_bq_nixon_settings(slug: str, db_cfg, *, flash, flash_err, html_kw) -
             consent_sidebar_enabled=bool(getattr(db_cfg, "consent_sidebar_enabled", False)),
             primary_kpi=getattr(db_cfg, "primary_kpi", None),
             segment_filter_profile=getattr(db_cfg, "segment_filter_profile", None),
+            metric_goals=getattr(db_cfg, "metric_goals", None),
             **html_kw,
         )
     )
@@ -304,6 +307,70 @@ def dashboard_client_primary_kpi_save(
         **audit_log.request_context(request),
     )
     return JSONResponse({"ok": True, "primary_kpi": saved.primary_kpi})
+
+
+@router.post(
+    "/dashboard/{client_slug}/metric-goals",
+    summary="Set a client's per-metric targets for the summary cards (JSON)",
+    include_in_schema=False,
+)
+def dashboard_client_metric_goals_save(
+    client_slug: str,
+    request: Request,
+    goals: str = Form(""),
+):
+    """Admin-only: replace the client's per-metric targets.
+
+    ``goals`` is a JSON object of ``{metric_key: number}``. The submitted map
+    replaces the stored one wholesale — a metric the editor left blank is absent
+    here and so its target is cleared. Unknown keys and non-positive numbers are
+    dropped by ``metric_goals.normalize_goals`` rather than rejected, so one
+    stray field cannot block a save; the response echoes what was actually kept
+    so the editor can report the real count."""
+    slug = validate_client_slug(client_slug)
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
+    user = auth.user
+    session_is_admin = bool(user and user.role == "admin")
+    session_email = user.email if user else None
+
+    if web_users.enabled() and not session_is_admin:
+        return JSONResponse(
+            {"ok": False, "error": "Only admins can set metric goals."},
+            status_code=403,
+        )
+    if not client_dashboard_config.enabled():
+        return JSONResponse(
+            {"ok": False, "error": "DATABASE_URL is required to save goals."},
+            status_code=503,
+        )
+
+    raw = str(goals or "").strip()
+    payload: object = {}
+    if raw:
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return JSONResponse(
+                {"ok": False, "error": "Goals must be a JSON object."}, status_code=400
+            )
+    if not isinstance(payload, dict):
+        return JSONResponse(
+            {"ok": False, "error": "Goals must be a JSON object."}, status_code=400
+        )
+
+    try:
+        saved = client_dashboard_config.save_metric_goals(
+            slug, payload, updated_by=session_email or "dashboard_key",
+        )
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
+    audit_log.record(
+        action="dashboard.metric_goals_saved",
+        actor_email=session_email,
+        detail={"client_slug": slug, "metric_goals": saved.metric_goals},
+        **audit_log.request_context(request),
+    )
+    return JSONResponse({"ok": True, "goals": saved.metric_goals})
 
 
 @router.post(

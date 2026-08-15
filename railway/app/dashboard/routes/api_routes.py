@@ -503,6 +503,9 @@ def nixon_bq_settings_page(
             monthly_budget=getattr(db_cfg, "monthly_budget_usd", None),
             budget_tracker_enabled=bool(getattr(db_cfg, "explorer_budget_tracker", True)),
             consent_sidebar_enabled=bool(getattr(db_cfg, "consent_sidebar_enabled", False)),
+            primary_kpi=getattr(db_cfg, "primary_kpi", None),
+            segment_filter_profile=getattr(db_cfg, "segment_filter_profile", None),
+            metric_goals=getattr(db_cfg, "metric_goals", None),
             **html_kw,
         )
     )
@@ -2935,3 +2938,88 @@ def ga4_provision_views(
         return result
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc
+
+
+# ── Interpretation layer: goals and peer benchmarks ──────────────────────────
+# Both of these answer "is this number good?" rather than "what is this number",
+# and both are **admin-only while the framing is still being tested** — a client
+# reading "you are behind a target" or "your peers do better" before the agency
+# has agreed the target and vetted the peer set is a conversation nobody wants to
+# have by accident. `web_auth.get_current_user` returns the *effective* user, so
+# an admin using "view as" correctly sees what that user would see: 403 here, and
+# no goal or benchmark line on the cards.
+
+
+def _require_admin(request: Request, slug: str) -> None:
+    """Authenticate for the client, then require an effective admin session."""
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
+    user = auth.user
+    if not (user and getattr(user, "role", None) == "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Goals and benchmarks are in admin-only preview.",
+        )
+
+
+@router.get(
+    "/api/clients/{client_key}/goals",
+    summary="Per-metric targets for the paid summary cards (admin preview)",
+)
+def client_metric_goals(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+) -> dict:
+    """The client's stored targets, prorated to the dashboard's selected window.
+
+    The page divides its live value by ``target`` and colours the result with the
+    returned thresholds; all of the pacing arithmetic happens here so there is
+    one tested implementation of it.
+    """
+    slug = validate_client_slug(client_key)
+    _require_admin(request, slug)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+
+    import client_dashboard_config
+    from dashboard.services import metric_goals
+
+    try:
+        stored = client_dashboard_config.get_metric_goals(slug)
+    except Exception:
+        logger.exception("Metric goals read failed for %s", slug)
+        stored = {}
+    return metric_goals.resolve_goals(stored, start=start, end=end)
+
+
+@router.get(
+    "/api/clients/{client_key}/benchmarks",
+    summary="This client's metrics against its industry peers (admin preview)",
+)
+def client_peer_benchmarks(
+    client_key: str,
+    request: Request,
+    window: str = Query(default="last_30d"),
+    platform: str = Query(default="all"),
+) -> dict:
+    """Peer distribution per card metric, from the agency benchmark cache.
+
+    Deliberately not date-range aware: the benchmark reads the same two windows
+    the agency page warms (month-to-date and last 30 days), because widening it
+    to an arbitrary dashboard range would mean an uncached BigQuery pass over
+    every client on every dashboard load.
+    """
+    slug = validate_client_slug(client_key)
+    _require_admin(request, slug)
+
+    from dashboard.services import agency_benchmarks_service
+
+    try:
+        return agency_benchmarks_service.client_benchmarks(
+            client_slug=slug, window=window, platform=platform,
+        )
+    except Exception as exc:
+        logger.exception("Client benchmarks failed for %s", slug)
+        raise HTTPException(
+            status_code=503, detail="Benchmarks are unavailable right now."
+        ) from exc

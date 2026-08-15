@@ -12,6 +12,7 @@ import psycopg
 import db
 
 import web_users
+from dashboard.services import metric_goals as metric_goals_service
 
 SCHEMA_SQL_STATEMENTS = [
     """
@@ -174,6 +175,16 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config
       ADD COLUMN IF NOT EXISTS email_performance_selection JSONB
     """,
+    # Per-metric targets for the paid summary cards, as {metric_key: number}
+    # (e.g. {"spend": 50000, "cpa": 120}). Cumulative metrics are monthly totals,
+    # rate metrics are the rate itself — see dashboard/services/metric_goals.py,
+    # which owns the key set and the pacing math. Empty/NULL = no targets, and a
+    # card with no target renders exactly as it did before. Admin-set from
+    # Settings; currently surfaced to admins only.
+    """
+    ALTER TABLE client_dashboard_config
+      ADD COLUMN IF NOT EXISTS metric_goals JSONB
+    """,
 ]
 
 # The date-range presets the dashboard's Range picker offers; a stored
@@ -273,6 +284,10 @@ class ClientConfigRow:
     # picked to show on the Email Performance page. Empty = fall back to the
     # page's default (the N most-recent emails). See the column comment above.
     email_performance_selection: tuple[str, ...] = ()
+    # Per-metric targets for the paid summary cards, {metric_key: positive
+    # float}. Cumulative metrics are monthly totals; rate metrics are the rate.
+    # Empty = no targets. See dashboard/services/metric_goals.py.
+    metric_goals: dict[str, float] = field(default_factory=dict)
 
 
 def _get_db_url() -> str | None:
@@ -315,7 +330,8 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    pacing_active_weekdays, segment_filter_profile,
                    sidebar_hidden_tabs, card_layouts,
                    default_date_preset, explorer_campaign_allowlist,
-                   email_performance_selection, analytics_page_path_filter
+                   email_performance_selection, analytics_page_path_filter,
+                   metric_goals
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -364,6 +380,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         explorer_campaign_allowlist=_normalize_campaign_allowlist(row[31]),
         email_performance_selection=_normalize_id_list(row[32]),
         analytics_page_path_filter=_s(row[33]),
+        metric_goals=metric_goals_service.normalize_goals(row[34]),
     )
 
 
@@ -1411,6 +1428,57 @@ def save_primary_kpi(
             ON CONFLICT (client_slug)
             DO UPDATE SET
               primary_kpi = EXCLUDED.primary_kpi,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, label, payload, now, (updated_by or "").strip() or None),
+        )
+    saved = get_config(slug)
+    if not saved:
+        raise RuntimeError("Failed to load saved client config.")
+    return saved
+
+
+def get_metric_goals(client_slug: str) -> dict[str, float]:
+    """The client's per-metric targets, or an empty map when none are set."""
+    row = get_config(client_slug)
+    return dict(row.metric_goals) if row else {}
+
+
+def save_metric_goals(
+    client_slug: str,
+    goals: dict[str, Any] | None,
+    *,
+    updated_by: str | None = None,
+) -> ClientConfigRow:
+    """Replace the client's per-metric targets. Touches only that column.
+
+    ``goals`` is the full map an admin submitted — saving is a replace, not a
+    merge, so clearing a field in the editor clears the target. Values are
+    normalized first (unknown keys and non-positive numbers dropped), and an
+    empty result stores NULL so the cards fall back to no-target rendering."""
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save client dashboard config.")
+
+    normalized = metric_goals_service.normalize_goals(goals or {})
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    existing = get_config(slug)
+    label = existing.label if existing else slug
+    payload = json.dumps(normalized) if normalized else None
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, metric_goals, updated_at, updated_by
+            )
+            VALUES (%s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (client_slug)
+            DO UPDATE SET
+              metric_goals = EXCLUDED.metric_goals,
               updated_at = EXCLUDED.updated_at,
               updated_by = EXCLUDED.updated_by
             """,

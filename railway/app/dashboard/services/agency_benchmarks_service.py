@@ -582,3 +582,127 @@ def build_agency_benchmarks(
     except Exception:
         pass
     return result
+
+
+# ── One client's view of the benchmark ───────────────────────────────────────
+# The agency page answers "what does each bucket look like"; a client dashboard
+# asks the narrower question "how does *this* account compare to its peers". Both
+# read the same cached payload, so putting a benchmark on a client's cards costs
+# one dict walk rather than another pass over every client's marts.
+
+
+# Benchmark metric key → the paid summary card it belongs under. Only these five
+# have a card to sit on; the rest (sessions, CVR, followers) are benchmarked on
+# the agency page but have no equivalent card here.
+CARD_METRIC_KEYS: tuple[str, ...] = ("spend", "impressions", "ctr", "cpc", "cpa")
+
+
+def _peer_values(
+    payload: dict[str, Any], *, metric: str, slugs: list[str], exclude: str
+) -> list[float]:
+    """Every peer's own value for one metric, with the subject client removed.
+
+    A benchmark that includes the account being measured is partly a comparison
+    with itself — harmless across fifty clients, misleading across five. The
+    per-client values are already in the payload, so dropping one and
+    re-summarizing is pure dict work.
+    """
+    wanted = set(slugs) - {exclude}
+    out: list[float] = []
+    for entry in payload.get("clients", []):
+        if entry.get("client_slug") not in wanted:
+            continue
+        value = (entry.get("metrics") or {}).get(metric)
+        if value is not None:
+            out.append(float(value))
+    return out
+
+
+def client_benchmarks(
+    *, client_slug: str, window: str = "month", platform: str = "all"
+) -> dict[str, Any]:
+    """How one client's metrics sit against its industry peers.
+
+    Returns an entry per card metric with the client's own ``value`` and a
+    ``peer`` distribution drawn from the client's first industry tag, falling
+    back to the agency-wide book when that bucket has nobody else in it for the
+    metric. ``scope`` says which of the two a row actually used, and ``thin``
+    rides along so the page can present a bucket of two as directional rather
+    than as a benchmark.
+
+    ``untagged`` (no industry on the account) and ``unknown`` (the client isn't
+    in the benchmark set at all — usually no mart configured) are reported
+    rather than raising, so the dashboard just omits the line.
+    """
+    slug = (client_slug or "").strip().lower()
+    payload = build_agency_benchmarks(window=window, platform=platform)
+
+    me = next(
+        (c for c in payload.get("clients", []) if c.get("client_slug") == slug), None
+    )
+    if me is None:
+        return {
+            "client_slug": slug,
+            "available": False,
+            "reason": "unknown",
+            "metrics": {},
+            "window": payload.get("window", {}),
+            "platform": payload.get("platform", {}),
+        }
+
+    industries = list(me.get("industries") or [])
+    industry_rows = {row["key"]: row for row in payload.get("industries", [])}
+    primary = industries[0] if industries else None
+    agency_row = payload.get("agency") or {}
+
+    metrics: dict[str, Any] = {}
+    for meta in METRICS:
+        key = meta["key"]
+        if key not in CARD_METRIC_KEYS:
+            continue
+
+        peer_stats = None
+        scope = None
+        peer_label = None
+        if primary and primary in industry_rows:
+            row = industry_rows[primary]
+            values = _peer_values(
+                payload, metric=key, slugs=list(row.get("clients") or []), exclude=slug
+            )
+            peer_stats = _summarize(values)
+            if peer_stats:
+                scope, peer_label = "industry", row["label"]
+        if peer_stats is None:
+            values = _peer_values(
+                payload, metric=key, slugs=list(agency_row.get("clients") or []),
+                exclude=slug,
+            )
+            peer_stats = _summarize(values)
+            if peer_stats:
+                scope, peer_label = "agency", "all clients"
+        if peer_stats is None:
+            continue
+
+        metrics[key] = {
+            "label": meta["label"],
+            "format": meta["format"],
+            "direction": meta["direction"],
+            "hint": meta["hint"],
+            "value": (me.get("metrics") or {}).get(key),
+            "peer": peer_stats,
+            "peer_label": peer_label,
+            "scope": scope,
+        }
+
+    return {
+        "client_slug": slug,
+        "available": True,
+        "reason": None if industries else "untagged",
+        "industries": industries,
+        "industry_label": me.get("industry_label"),
+        "metrics": metrics,
+        "thin_sample_max": THIN_SAMPLE_MAX,
+        "window": payload.get("window", {}),
+        "platform": payload.get("platform", {}),
+        "generated_at": payload.get("generated_at"),
+    }

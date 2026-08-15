@@ -63,6 +63,89 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-15",
+        title="Mark what happened on a date, and see it on every trend chart",
+        area="Client dashboards · Timeline",
+        kind="new",
+        summary=(
+            "A new Timeline panel on Overview lets you record dated events — a "
+            "site migration, a campaign launch, a budget cut — and they appear "
+            "as markers on the trend charts, so a dip has its cause sitting "
+            "next to it instead of being reconstructed from memory on a call."
+        ),
+        details=(
+            "Add an event with a date (or a date range), a title, a category, "
+            "and optional detail. Hover a marker on any trend chart to read it.",
+            "New events are internal to the agency until you switch them to "
+            "Shared — a client only ever sees the ones you shared, and only the "
+            "agency can add, edit or delete them.",
+            "Events with a date range mark every chart their range touches, so a "
+            "campaign that started last month still shows on this month's view.",
+        ),
+    ),
+    Entry(
+        date="2026-08-15",
+        title="Set a target per metric and see whether the number is hitting it",
+        area="Client dashboards · Insights settings",
+        kind="new",
+        summary=(
+            "Insights settings now takes a goal for Spend, Impressions, Clicks, "
+            "Conversions, CTR, CPC and CPA, and the matching Overview card shows "
+            "progress against it — the first thing on the dashboard that says "
+            "whether a number is where it should be, not just which way it moved."
+        ),
+        details=(
+            "Spend, impressions, clicks and conversions are entered as monthly "
+            "totals and scaled to whichever date range is on screen, so one goal "
+            "works for a week, a month to date, or a custom range.",
+            "CTR, CPC and CPA are entered as the rate itself and compared "
+            "directly. CPC and CPA are read as ceilings — under target is good.",
+            "Spend is graded as a band: well under plan reads as a miss too, not "
+            "as a win.",
+            "While this is in preview only admins see the result on the "
+            "dashboard, so you can set targets before clients ever see them.",
+        ),
+    ),
+    Entry(
+        date="2026-08-15",
+        title="See how an account compares with others in its industry",
+        area="Client dashboards",
+        kind="new",
+        summary=(
+            "Overview metric cards can now carry a peer line — \"ahead of health "
+            "care · 1.6% median (n=9)\" — answering the question clients actually "
+            "ask on a call: is this good for a company like us?"
+        ),
+        details=(
+            "Peers come from the industry tags on the Accounts page, falling back "
+            "to all clients when an account is the only one in its industry.",
+            "The account is left out of its own peer group, so the comparison is "
+            "with everyone else rather than partly with itself.",
+            "A peer group of three or fewer is labelled \"thin\" — directional, "
+            "not a benchmark.",
+            "Admin-only preview for now.",
+        ),
+    ),
+    Entry(
+        date="2026-08-15",
+        title="A \"Data through\" chip says how current the numbers are",
+        area="Client dashboards",
+        kind="new",
+        summary=(
+            "The filter bar now shows the date the data actually runs to, so a "
+            "soft-looking week can be read correctly when one platform stopped "
+            "syncing partway through it."
+        ),
+        details=(
+            "The chip reports the oldest connector's latest day, because a "
+            "combined figure is only as current as its slowest source; hover it "
+            "for a per-source breakdown.",
+            "It turns amber, then red, as that lag grows. Platforms normally "
+            "report one day behind, which counts as current.",
+            "Admin-only preview for now.",
+        ),
+    ),
+    Entry(
+        date="2026-08-15",
         title="A metric card's top bar turns green or red with its change",
         area="Client dashboards",
         kind="improved",
