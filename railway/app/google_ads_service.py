@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 from google.ads.googleads.client import GoogleAdsClient
 from google.auth.transport.requests import Request
@@ -736,54 +736,134 @@ def demographic_label(dimension: str, value: str) -> str:
     return stripped.title()
 
 
+class DemographicFetch(NamedTuple):
+    """Rows plus why anything is missing.
+
+    ``errors`` is keyed by report resource. It exists because the first version
+    of this fetch swallowed per-view failures into a log line and returned an
+    empty list, which the sync could not tell apart from "this account has no
+    demographic data" — so a rejected query looked like a clean sync writing
+    zero rows. Anything that stops a view returning rows has to travel back to
+    the caller and onto the connector card.
+    """
+
+    rows: list[dict[str, Any]]
+    errors: dict[str, str]
+
+
+# The projection the demographic views are *known* to accept, mirroring the
+# shape already proven by fetch_keyword_daily_metrics. Criterion-level extras
+# (negative / status) are asked for separately, because a single unsupported
+# field in a SELECT fails the whole query rather than returning the rest.
+_DEMOGRAPHIC_CORE_FIELDS = (
+    "ad_group_criterion.criterion_id",
+    "ad_group.id",
+    "ad_group.name",
+    "campaign.id",
+    "campaign.name",
+    "campaign.advertising_channel_type",
+    "segments.date",
+    "metrics.impressions",
+    "metrics.clicks",
+    "metrics.conversions",
+    "metrics.conversions_value",
+    "metrics.cost_micros",
+)
+
+
+def fetch_demographic_exclusions(
+    customer_id: str,
+    *,
+    client: GoogleAdsClient | None = None,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Exclusion state for every age/gender criterion, keyed (ad_group_id, criterion_id).
+
+    Asked for against the ``ad_group_criterion`` resource rather than bundled
+    into the demographic views' SELECT: this is a plain resource query with no
+    metrics and no date segmentation, so it cannot be rejected for mixing
+    criterion attributes with a report view. Returns {} on any failure — the
+    metrics are the point, and an unknown exclusion state only costs the panel
+    its "already excluded" badge.
+    """
+    customer_id = str(customer_id).replace("-", "").strip()
+    query = """
+        SELECT
+          ad_group_criterion.criterion_id,
+          ad_group_criterion.negative,
+          ad_group_criterion.status,
+          ad_group_criterion.type,
+          ad_group.id
+        FROM ad_group_criterion
+        WHERE ad_group_criterion.type IN ('AGE_RANGE', 'GENDER')
+    """
+    try:
+        rows = search(customer_id, query, client=client)
+    except Exception as exc:
+        _log.warning(
+            "Google Ads demographic exclusion lookup failed [account=%s]: %s",
+            customer_id, exc,
+        )
+        return {}
+
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        agid = str(_dig(row, "ad_group", "id") or "").strip()
+        crit = str(_dig(row, "ad_group_criterion", "criterion_id") or "").strip()
+        if not agid or not crit:
+            continue
+        out[(agid, crit)] = {
+            # MessageToDict drops false booleans, so an absent 'negative' means
+            # the criterion is targeted, not that the field is unknown.
+            "is_excluded": bool(_dig(row, "ad_group_criterion", "negative") or False),
+            "criterion_status": str(_dig(row, "ad_group_criterion", "status") or ""),
+        }
+    return out
+
+
 def fetch_demographic_daily_metrics(
     customer_id: str,
     *,
     start: date,
     end: date,
     client: GoogleAdsClient | None = None,
-) -> list[dict[str, Any]]:
+) -> DemographicFetch:
     """Per-demographic-segment daily metrics for warehouse storage.
 
     One row per (ad group, dimension, segment, day) across age_range_view and
-    gender_view. Returns {dimension, segment_value, segment_label, criterion_id,
-    ad_group_id, ad_group_name, campaign_id, campaign_name, channel_type,
-    is_excluded, criterion_status, metric_date, spend, clicks, impressions,
-    conversions, conversion_value}.
+    gender_view, carrying {dimension, segment_value, segment_label,
+    criterion_id, ad_group_id, ad_group_name, campaign_id, campaign_name,
+    channel_type, is_excluded, criterion_status, metric_date, spend, clicks,
+    impressions, conversions, conversion_value}.
 
-    A dimension that fails is skipped rather than failing the batch: an account
-    with no Display/Video campaigns can legitimately return nothing for one view
-    while the other has data.
+    A view that fails is skipped rather than failing the batch — an account with
+    no Display/Video campaigns can legitimately return nothing for one view
+    while the other has data — but the failure is reported in the result's
+    ``errors`` rather than only logged, so an empty sync is never mistaken for
+    an account that simply has no demographics.
     """
     customer_id = str(customer_id).replace("-", "").strip()
     start_key = start.isoformat()
     end_key = end.isoformat()
 
+    errors: dict[str, str] = {}
     by_key: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    saw_any_row = False
+
     for dimension, resource, segment_field in _DEMOGRAPHIC_REPORTS:
+        projection = ",\n              ".join((segment_field, *_DEMOGRAPHIC_CORE_FIELDS))
         query = f"""
             SELECT
-              {segment_field},
-              ad_group_criterion.criterion_id,
-              ad_group_criterion.negative,
-              ad_group_criterion.status,
-              ad_group.id,
-              ad_group.name,
-              campaign.id,
-              campaign.name,
-              campaign.advertising_channel_type,
-              segments.date,
-              metrics.impressions,
-              metrics.clicks,
-              metrics.conversions,
-              metrics.conversions_value,
-              metrics.cost_micros
+              {projection}
             FROM {resource}
             WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
         """
         try:
             rows = search(customer_id, query, client=client)
         except Exception as exc:
+            # Keep the API's own message: a rejected projection names the
+            # offending field, which is the only way to tell a bad SELECT from
+            # a permissions problem without live access to the account.
+            errors[resource] = str(exc)[:300]
             _log.warning(
                 "Google Ads %s report failed [account=%s]: %s", resource, customer_id, exc
             )
@@ -792,6 +872,7 @@ def fetch_demographic_daily_metrics(
         # 'age_range' → ad_group_criterion.age_range.type in the response dict.
         segment_path = tuple(segment_field.split(".")[1:])
         for row in rows:
+            saw_any_row = True
             agid = str(_dig(row, "ad_group", "id") or "").strip()
             day = str(_dig(row, "segments", "date") or "").strip()
             value = str(_dig(row, "ad_group_criterion", *segment_path) or "").strip()
@@ -813,10 +894,8 @@ def fetch_demographic_daily_metrics(
                     "channel_type": str(
                         _dig(row, "campaign", "advertising_channel_type") or ""
                     ),
-                    # MessageToDict drops false booleans, so an absent 'negative'
-                    # means the segment is targeted, not that the field is unknown.
-                    "is_excluded": bool(_dig(row, "ad_group_criterion", "negative") or False),
-                    "criterion_status": str(_dig(row, "ad_group_criterion", "status") or ""),
+                    "is_excluded": False,
+                    "criterion_status": "",
                     "metric_date": day,
                     "spend": 0.0,
                     "clicks": 0,
@@ -830,7 +909,17 @@ def fetch_demographic_daily_metrics(
             rec["impressions"] += int(_dig(row, "metrics", "impressions") or 0)
             rec["conversions"] += float(_dig(row, "metrics", "conversions") or 0)
             rec["conversion_value"] += float(_dig(row, "metrics", "conversions_value") or 0)
-    return list(by_key.values())
+
+    # Only worth a second call once there is something to annotate.
+    if saw_any_row:
+        exclusions = fetch_demographic_exclusions(customer_id, client=client)
+        if exclusions:
+            for rec in by_key.values():
+                state = exclusions.get((rec["ad_group_id"], rec["criterion_id"]))
+                if state:
+                    rec.update(state)
+
+    return DemographicFetch(rows=list(by_key.values()), errors=errors)
 
 
 def campaign_performance(

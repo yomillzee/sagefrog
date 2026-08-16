@@ -750,9 +750,18 @@ def sync_google_ads_to_bq(
     # a PMax-only account legitimately returns nothing here.
     n_demo = 0
     try:
-        demo_raw = google_ads_service.fetch_demographic_daily_metrics(
+        demo_result = google_ads_service.fetch_demographic_daily_metrics(
             customer_id_clean, start=start_date, end=end_date, client=ads_client
         )
+        demo_raw = demo_result.rows
+        # A view the API rejected is reported, not swallowed. Without this a bad
+        # projection and an account with genuinely no demographic targeting both
+        # look like "synced fine, wrote 0 rows" — which is exactly how the first
+        # version of this shipped silently broken.
+        if demo_result.errors:
+            errors["demographic_daily"] = "; ".join(
+                f"{resource}: {msg}" for resource, msg in sorted(demo_result.errors.items())
+            )[:300]
         demo_rows = [
             {
                 "client_key": client_key,
