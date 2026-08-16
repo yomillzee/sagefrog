@@ -116,19 +116,14 @@ def _row(
     dimension: str,
     value: str,
     ad_group: str = "77",
+    criterion: str = "9001",
     day: str = "2026-08-01",
     cost_micros: int = 10_000_000,
     conversions: float = 0.0,
-    negative: bool | None = None,
 ) -> dict:
-    criterion: dict = {"criterion_id": "9001", "status": "ENABLED"}
-    criterion[dimension] = {"type": value}
-    if negative is not None:
-        # MessageToDict omits false booleans entirely — only a true 'negative'
-        # actually appears on the wire.
-        criterion["negative"] = negative
+    criterion_obj: dict = {"criterion_id": criterion, dimension: {"type": value}}
     return {
-        "ad_group_criterion": criterion,
+        "ad_group_criterion": criterion_obj,
         "ad_group": {"id": ad_group, "name": f"Ad group {ad_group}"},
         "campaign": {
             "id": "55",
@@ -146,6 +141,29 @@ def _row(
     }
 
 
+def _search_over(by_resource: dict, *, exclusions: list | None = None, fail: tuple = ()):
+    """Fake `search` dispatching on the queried resource.
+
+    ``ad_group_criterion`` is the separate exclusion-state lookup; everything
+    else is a demographic report view. Resources named in ``fail`` raise the way
+    a rejected projection does.
+    """
+    def fake_search(customer_id, query, client=None):
+        if "FROM ad_group_criterion" in query:
+            if "ad_group_criterion" in fail:
+                raise RuntimeError("PROHIBITED_FIELD_IN_SELECT_CLAUSE")
+            return exclusions or []
+        for resource, rows in by_resource.items():
+            if f"FROM {resource}" in query:
+                if resource in fail:
+                    raise RuntimeError(
+                        f"QueryError.PROHIBITED_FIELD_IN_SELECT_CLAUSE: {resource}"
+                    )
+                return rows
+        raise AssertionError(f"unexpected query: {query}")
+    return fake_search
+
+
 class DemographicFetchTests(unittest.TestCase):
     def test_reads_both_views_and_labels_segments(self) -> None:
         by_resource = {
@@ -153,18 +171,15 @@ class DemographicFetchTests(unittest.TestCase):
             "gender_view": [_row(dimension="gender", value="MALE")],
         }
 
-        def fake_search(customer_id, query, client=None):
-            for resource, rows in by_resource.items():
-                if f"FROM {resource}" in query:
-                    return rows
-            raise AssertionError(f"unexpected query: {query}")
-
-        with patch.object(google_ads_service, "search", side_effect=fake_search):
-            rows = google_ads_service.fetch_demographic_daily_metrics(
+        with patch.object(
+            google_ads_service, "search", side_effect=_search_over(by_resource)
+        ):
+            result = google_ads_service.fetch_demographic_daily_metrics(
                 "123-456-7890", start=date(2026, 8, 1), end=date(2026, 8, 1)
             )
 
-        got = {(r["dimension"], r["segment_value"]): r for r in rows}
+        self.assertEqual(result.errors, {})
+        got = {(r["dimension"], r["segment_value"]): r for r in result.rows}
         self.assertEqual(set(got), {("age_range", "AGE_RANGE_18_24"), ("gender", "MALE")})
         self.assertEqual(got[("age_range", "AGE_RANGE_18_24")]["segment_label"], "18–24")
         self.assertEqual(got[("gender", "MALE")]["segment_label"], "Male")
@@ -172,45 +187,126 @@ class DemographicFetchTests(unittest.TestCase):
         self.assertEqual(got[("gender", "MALE")]["channel_type"], "SEARCH")
         self.assertEqual(got[("gender", "MALE")]["spend"], 10.0)
 
-    def test_absent_negative_flag_means_targeted_not_excluded(self) -> None:
-        rows_in = {
+    def test_exclusion_state_comes_from_the_separate_criterion_lookup(self) -> None:
+        # The demographic views are asked only for metrics; negative/status are
+        # joined in from the ad_group_criterion resource, keyed by ad group +
+        # criterion so two ad groups can disagree about the same segment.
+        by_resource = {
             "age_range_view": [
-                _row(dimension="age_range", value="AGE_RANGE_18_24"),
-                _row(dimension="age_range", value="AGE_RANGE_25_34", ad_group="78", negative=True),
+                _row(dimension="age_range", value="AGE_RANGE_18_24", criterion="1"),
+                _row(
+                    dimension="age_range", value="AGE_RANGE_25_34",
+                    ad_group="78", criterion="2",
+                ),
             ],
             "gender_view": [],
         }
+        exclusions = [
+            {
+                "ad_group": {"id": "78"},
+                "ad_group_criterion": {
+                    "criterion_id": "2", "negative": True, "status": "ENABLED",
+                },
+            },
+        ]
 
-        def fake_search(customer_id, query, client=None):
-            return next(r for k, r in rows_in.items() if f"FROM {k}" in query)
-
-        with patch.object(google_ads_service, "search", side_effect=fake_search):
-            rows = google_ads_service.fetch_demographic_daily_metrics(
+        with patch.object(
+            google_ads_service, "search",
+            side_effect=_search_over(by_resource, exclusions=exclusions),
+        ):
+            result = google_ads_service.fetch_demographic_daily_metrics(
                 "1234567890", start=date(2026, 8, 1), end=date(2026, 8, 1)
             )
 
-        by_value = {r["segment_value"]: r for r in rows}
+        by_value = {r["segment_value"]: r for r in result.rows}
         self.assertIs(by_value["AGE_RANGE_18_24"]["is_excluded"], False)
         self.assertIs(by_value["AGE_RANGE_25_34"]["is_excluded"], True)
+        self.assertEqual(by_value["AGE_RANGE_25_34"]["criterion_status"], "ENABLED")
 
-    def test_one_failing_view_does_not_lose_the_other(self) -> None:
-        def fake_search(customer_id, query, client=None):
-            if "FROM gender_view" in query:
-                raise RuntimeError("REQUESTED_METRICS_FOR_MANAGER")
-            return [_row(dimension="age_range", value="AGE_RANGE_35_44")]
-
-        with patch.object(google_ads_service, "search", side_effect=fake_search):
-            rows = google_ads_service.fetch_demographic_daily_metrics(
+    def test_metrics_survive_a_failing_exclusion_lookup(self) -> None:
+        # Exclusion state is a nice-to-have; losing it must not lose the spend.
+        by_resource = {
+            "age_range_view": [_row(dimension="age_range", value="AGE_RANGE_35_44")],
+            "gender_view": [],
+        }
+        with patch.object(
+            google_ads_service, "search",
+            side_effect=_search_over(by_resource, fail=("ad_group_criterion",)),
+        ):
+            result = google_ads_service.fetch_demographic_daily_metrics(
                 "1234567890", start=date(2026, 8, 1), end=date(2026, 8, 1)
             )
 
-        self.assertEqual([r["segment_value"] for r in rows], ["AGE_RANGE_35_44"])
+        self.assertEqual([r["segment_value"] for r in result.rows], ["AGE_RANGE_35_44"])
+        self.assertIs(result.rows[0]["is_excluded"], False)
+
+    def test_one_failing_view_does_not_lose_the_other_but_is_reported(self) -> None:
+        by_resource = {
+            "age_range_view": [_row(dimension="age_range", value="AGE_RANGE_35_44")],
+            "gender_view": [],
+        }
+        with patch.object(
+            google_ads_service, "search",
+            side_effect=_search_over(by_resource, fail=("gender_view",)),
+        ):
+            result = google_ads_service.fetch_demographic_daily_metrics(
+                "1234567890", start=date(2026, 8, 1), end=date(2026, 8, 1)
+            )
+
+        self.assertEqual([r["segment_value"] for r in result.rows], ["AGE_RANGE_35_44"])
+        self.assertIn("gender_view", result.errors)
+
+    def test_a_rejected_query_is_never_silently_an_empty_account(self) -> None:
+        # The regression that shipped: both views rejected, zero rows written,
+        # and nothing anywhere said why. An empty result with no errors must
+        # only ever mean "this account has no demographic data".
+        by_resource = {"age_range_view": [], "gender_view": []}
+        with patch.object(
+            google_ads_service, "search",
+            side_effect=_search_over(by_resource, fail=("age_range_view", "gender_view")),
+        ):
+            result = google_ads_service.fetch_demographic_daily_metrics(
+                "1234567890", start=date(2026, 8, 1), end=date(2026, 8, 1)
+            )
+
+        self.assertEqual(result.rows, [])
+        self.assertEqual(set(result.errors), {"age_range_view", "gender_view"})
+
+    def test_an_account_with_no_demographics_reports_no_error(self) -> None:
+        by_resource = {"age_range_view": [], "gender_view": []}
+        with patch.object(
+            google_ads_service, "search", side_effect=_search_over(by_resource)
+        ):
+            result = google_ads_service.fetch_demographic_daily_metrics(
+                "1234567890", start=date(2026, 8, 1), end=date(2026, 8, 1)
+            )
+
+        self.assertEqual(result.rows, [])
+        self.assertEqual(result.errors, {})
+
+    def test_criterion_extras_are_not_asked_of_the_report_views(self) -> None:
+        # The whole point of the split: one unsupported field in a SELECT fails
+        # the entire query, so the views are asked only for the proven shape.
+        seen: list[str] = []
+
+        def recording_search(customer_id, query, client=None):
+            seen.append(query)
+            return []
+
+        with patch.object(google_ads_service, "search", side_effect=recording_search):
+            google_ads_service.fetch_demographic_daily_metrics(
+                "1234567890", start=date(2026, 8, 1), end=date(2026, 8, 1)
+            )
+
+        view_queries = [q for q in seen if "_view" in q]
+        self.assertEqual(len(view_queries), 2)
+        for q in view_queries:
+            self.assertNotIn("ad_group_criterion.negative", q)
+            self.assertNotIn("ad_group_criterion.status", q)
 
     def test_same_segment_across_days_stays_separate_and_sums_within_a_day(self) -> None:
-        def fake_search(customer_id, query, client=None):
-            if "FROM gender_view" in query:
-                return []
-            return [
+        by_resource = {
+            "age_range_view": [
                 # Two rows for the same (ad group, segment, day) — Google splits
                 # by fields we don't select; they must add up, not overwrite.
                 _row(dimension="age_range", value="AGE_RANGE_45_54", cost_micros=6_000_000),
@@ -219,14 +315,18 @@ class DemographicFetchTests(unittest.TestCase):
                     dimension="age_range", value="AGE_RANGE_45_54",
                     day="2026-08-02", cost_micros=5_000_000,
                 ),
-            ]
+            ],
+            "gender_view": [],
+        }
 
-        with patch.object(google_ads_service, "search", side_effect=fake_search):
-            rows = google_ads_service.fetch_demographic_daily_metrics(
+        with patch.object(
+            google_ads_service, "search", side_effect=_search_over(by_resource)
+        ):
+            result = google_ads_service.fetch_demographic_daily_metrics(
                 "1234567890", start=date(2026, 8, 1), end=date(2026, 8, 2)
             )
 
-        by_day = {r["metric_date"]: r["spend"] for r in rows}
+        by_day = {r["metric_date"]: r["spend"] for r in result.rows}
         self.assertEqual(by_day, {"2026-08-01": 10.0, "2026-08-02": 5.0})
 
     def test_labels_fall_back_to_readable_text_for_unknown_enums(self) -> None:
