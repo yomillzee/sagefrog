@@ -63,6 +63,34 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-15",
+        title="Insights opens with what's actually worth talking about",
+        area="Client dashboards · Insights",
+        kind="new",
+        summary=(
+            "A new \"What's notable\" panel at the top of the Insights page "
+            "ranks the movements, missed targets and peer gaps for a client and "
+            "explains them in a sentence each — the first place in the portal "
+            "that says which numbers deserve attention rather than listing all "
+            "of them."
+        ),
+        details=(
+            "Each line names the change and, where one platform is responsible "
+            "for most of it, says which: \"Conversions up 38% — Google Ads "
+            "accounts for 61% of the change.\"",
+            "A change that lines up with something on the Timeline says so, so "
+            "the cause travels with the number.",
+            "Nothing is estimated and nothing is invented — every line is built "
+            "from the same figures as the dashboard, and small numbers are left "
+            "out rather than reported as huge percentages.",
+            "A source that stopped syncing is called out above everything else, "
+            "because it changes how the rest of the list should be read.",
+            "Pick Last 7, 30 or 90 days. Set metric goals and switch on peer "
+            "benchmarks further down the page to have those checked here too.",
+            "Admin-only for now while the wording settles.",
+        ),
+    ),
+    Entry(
+        date="2026-08-15",
         title="Peer benchmarks are now off until you switch them on per client",
         area="Client dashboards · Insights settings",
         kind="improved",
