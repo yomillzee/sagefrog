@@ -3043,3 +3043,116 @@ def client_peer_benchmarks(
         raise HTTPException(
             status_code=503, detail="Benchmarks are unavailable right now."
         ) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/findings",
+    summary="Ranked, explained observations about this window (admin preview)",
+)
+def client_findings(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    compare_start_date: date | None = Query(default=None),
+    compare_end_date: date | None = Query(default=None),
+    limit: int = Query(default=8),
+) -> dict:
+    """Gather the inputs the findings engine needs, then rank them.
+
+    Every read here is one the dashboard already makes and caches — two /summary
+    windows, the health rows, the stored goals, the timeline, and (only when the
+    client has it switched on) the benchmark payload. So a findings request
+    normally costs Postgres cache reads rather than a BigQuery pass, and it stays
+    honest by construction: the engine can only report numbers these reads
+    actually returned.
+
+    Each optional input degrades on its own. A failed benchmark or timeline read
+    drops those findings and leaves the rest standing, because a partial answer
+    here is worth much more than an error page.
+    """
+    slug = validate_client_slug(client_key)
+    _require_admin(request, slug)
+
+    import client_annotations
+    import client_dashboard_config
+    from dashboard.services import agency_benchmarks_service, findings_service, metric_goals
+
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    # The dashboard's Compare picker sends an explicit window; when it doesn't
+    # (or only sends half a one), fall back to the same-length period ending the
+    # day before this one starts — the same "previous period" the cards default
+    # to, so a finding and a card never disagree about what they compared with.
+    compare_start, compare_end = _resolve_compare_dates(compare_start_date, compare_end_date)
+    if compare_start is None or compare_end is None:
+        span = (end - start).days
+        compare_end = start - timedelta(days=1)
+        compare_start = compare_end - timedelta(days=span)
+    project_id, dataset_id = _load_bq_test_config(slug)
+    read_key = "nixon" if slug in _NIXON_ACCESS_SLUGS else slug
+    read_kwargs = {} if read_key == "nixon" else {
+        "project_id": project_id, "dataset_id": dataset_id,
+    }
+
+    try:
+        current = _summary_read(read_key, start, end, **read_kwargs)
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+    # The comparison window is what turns a number into a movement, but a client
+    # whose history does not reach back that far still gets goal, benchmark and
+    # freshness findings — so a failure here is degraded, not fatal.
+    previous = None
+    try:
+        previous = _summary_read(read_key, compare_start, compare_end, **read_kwargs)
+    except Exception:
+        logger.exception("Findings: comparison read failed for %s", slug)
+
+    freshness = []
+    try:
+        freshness = (_health_read(read_key, 100, **read_kwargs) or {}).get("rows") or []
+    except Exception:
+        logger.exception("Findings: health read failed for %s", slug)
+
+    goals = None
+    try:
+        goals = metric_goals.resolve_goals(
+            client_dashboard_config.get_metric_goals(slug), start=start, end=end,
+        )
+    except Exception:
+        logger.exception("Findings: goals read failed for %s", slug)
+
+    # Benchmarks honour the same per-client opt-in the dashboard cards do, so
+    # turning them off removes them from the narrative too.
+    benchmarks = None
+    try:
+        if client_dashboard_config.benchmarks_enabled(slug):
+            benchmarks = agency_benchmarks_service.client_benchmarks(client_slug=slug)
+    except Exception:
+        logger.exception("Findings: benchmark read failed for %s", slug)
+
+    annotations = []
+    try:
+        annotations = [
+            a.to_dict() for a in client_annotations.list_annotations(
+                slug, audience="agency", start=start, end=end,
+            )
+        ]
+    except Exception:
+        logger.exception("Findings: annotation read failed for %s", slug)
+
+    result = findings_service.build_findings(
+        current=current,
+        previous=previous,
+        goals=goals,
+        benchmarks=benchmarks,
+        annotations=annotations,
+        freshness=freshness,
+        window=(start, end),
+        compare_label=f"{compare_start.isoformat()} – {compare_end.isoformat()}",
+        limit=limit,
+    )
+    result["compare_window"] = {
+        "start": compare_start.isoformat(), "end": compare_end.isoformat(),
+    }
+    return result

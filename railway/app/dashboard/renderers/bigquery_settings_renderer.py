@@ -251,6 +251,31 @@ def render_bigquery_settings_page(
       </form>
     </section>"""
 
+    # What's notable (admin only): the ranked findings for this client — the one
+    # place on the portal that says which numbers are worth talking about rather
+    # than listing all of them. It lives here, above the settings that feed it
+    # (goals, benchmarks) so the effect of changing one is a reload away, and
+    # deliberately not on the client dashboard yet: the wording is still being
+    # shaken out and a wrong "conversions are down" sentence is worse than none.
+    findings_api = _api_url(f"/api/clients/{api_client_key}/findings", access_key=access_key)
+    findings_section_html = "" if not session_is_admin else """
+    <section id="sec-findings">
+      <div class="fnd-head">
+        <h2>What&#39;s notable <span class="sc-pill">Admin preview</span></h2>
+        <div class="fnd-range">
+          <label for="findingsRange" class="sr-only">Range</label>
+          <select id="findingsRange">
+            <option value="30">Last 30 days</option>
+            <option value="7">Last 7 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+          <span class="status" id="findingsStatus"></span>
+        </div>
+      </div>
+      <p class="hint">The movements, targets and comparisons worth raising, ranked. Built from the same numbers as the dashboard — nothing here is estimated. Data-quality notes sort to the top, because a source that stopped syncing changes how everything below it should be read.</p>
+      <div id="findingsHost"></div>
+    </section>"""
+
     # Peer benchmarks (admin only): does this client's Overview carry the "how
     # does this compare with similar accounts" line? Off by default and per
     # client — the comparison is only meaningful once the account's industry
@@ -329,6 +354,34 @@ def render_bigquery_settings_page(
     .hint {{ font-size:.82rem; color:var(--muted); margin:4px 0 12px; }}
     .hint code {{ background:#eef4fb; padding:1px 5px; border-radius:4px; }}
     .err-hint {{ color:var(--bad); }}
+    /* ---- What's notable (findings) ----
+       A ranked list, not a dashboard: each row is one sentence with its evidence
+       underneath, and the colour bar on the left encodes whether the finding is
+       good, worth watching, or bad. Data-quality rows get a distinct neutral
+       treatment so they read as a caveat about the others rather than as another
+       result competing with them. */
+    .fnd-head {{ display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap; }}
+    .fnd-range {{ display:flex; align-items:center; gap:9px; }}
+    .fnd-range select {{ padding:6px 10px; font-size:.82rem; }}
+    .fnd-list {{ list-style:none; margin:16px 0 0; padding:0; display:flex; flex-direction:column; gap:9px; }}
+    .fnd-item {{ display:grid; grid-template-columns:3px 1fr; gap:0 13px; border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; background:#fff; }}
+    .fnd-bar {{ background:var(--muted); }}
+    .fnd-body {{ padding:11px 13px 12px 0; min-width:0; }}
+    .fnd-headline {{ color:var(--navy); font-weight:700; font-size:.9rem; line-height:1.35; }}
+    .fnd-detail {{ color:var(--muted); font-size:.79rem; margin-top:4px; line-height:1.45; }}
+    .fnd-tag {{ display:inline-block; margin-right:8px; padding:1px 7px; border-radius:999px; font-size:.6rem; font-weight:800; text-transform:uppercase; letter-spacing:.05em; border:1px solid var(--line); background:#f4f7fb; color:var(--muted); vertical-align:1px; }}
+    .fnd-item.good .fnd-bar {{ background:var(--ok); }}
+    .fnd-item.good .fnd-tag {{ background:#e9f7ef; border-color:#b8dfc8; color:var(--ok); }}
+    .fnd-item.warn .fnd-bar {{ background:#b7791f; }}
+    .fnd-item.warn .fnd-tag {{ background:#fdf6e3; border-color:#f0e0b6; color:#8a6d1f; }}
+    .fnd-item.bad .fnd-bar {{ background:var(--bad); }}
+    .fnd-item.bad .fnd-tag {{ background:#fdecea; border-color:#f3c0bb; color:var(--bad); }}
+    .fnd-empty {{ color:var(--muted); font-size:.84rem; margin:16px 0 0; padding:14px; border:1px dashed var(--line); border-radius:var(--radius-sm); }}
+    .fnd-foot {{ color:var(--muted); font-size:.74rem; margin:11px 0 0; }}
+    .fnd-skel {{ height:58px; border-radius:var(--radius-sm); background:linear-gradient(90deg,#eef2f7 25%,#f6f9fc 37%,#eef2f7 63%); background-size:400% 100%; animation:fndShimmer 1.3s ease infinite; margin-top:9px; }}
+    @keyframes fndShimmer {{ 0% {{ background-position:100% 50%; }} 100% {{ background-position:0 50%; }} }}
+    .sr-only {{ position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }}
+
     /* Marks a section whose effect is still admin-only on the client dashboard,
        so nobody configures it expecting the client to see it yet. */
     .sc-pill {{ display:inline-block; vertical-align:middle; margin-left:8px; padding:2px 8px; border-radius:999px; background:#eef4fb; border:1px solid #cfe0f3; color:var(--accent); font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }}
@@ -418,6 +471,7 @@ def render_bigquery_settings_page(
     </div>
     {flash_html}
 
+    {findings_section_html}
     {consent_visibility_html}
     {accessibility_card_html}
     {kpi_section_html}
@@ -581,6 +635,89 @@ def render_bigquery_settings_page(
           setStatus('goalsStatus', 'Save failed: ' + (err.message || err), true);
         }} finally {{ btn.disabled = false; }}
       }});
+    }})();
+    // ---- What's notable: fetch and render the ranked findings ----
+    (function(){{
+      const HOST = document.getElementById('findingsHost');
+      if (!HOST) return;
+      const FINDINGS_API = "{findings_api}";
+      const rangeSel = document.getElementById('findingsRange');
+      const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
+      const KIND_LABELS = {{
+        data_quality:'Data', movement:'Change', goal:'Target', benchmark:'Peers',
+      }};
+
+      function iso(d) {{
+        return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0')
+             + '-' + String(d.getDate()).padStart(2,'0');
+      }}
+      // Ends yesterday, matching every other paid-media read on the portal —
+      // today is always partial and would read as a collapse in every metric.
+      function windowFor(days) {{
+        const end = new Date(Date.now() - 86400000);
+        const start = new Date(end);
+        start.setDate(end.getDate() - (days - 1));
+        return {{ start: iso(start), end: iso(end) }};
+      }}
+
+      function render(payload) {{
+        const rows = (payload && payload.findings) || [];
+        if (!rows.length) {{
+          HOST.innerHTML = '<p class="fnd-empty">Nothing stands out in this range — '
+            + 'no movement past the reporting threshold, and nothing off target. '
+            + 'Set metric goals below to have targets checked here too.</p>';
+          return;
+        }}
+        HOST.innerHTML = '<ul class="fnd-list">' + rows.map(f => (
+          `<li class="fnd-item ${{esc(f.severity)}}">`
+          + `<span class="fnd-bar" aria-hidden="true"></span>`
+          + `<div class="fnd-body">`
+          + `<div class="fnd-headline"><span class="fnd-tag">${{esc(KIND_LABELS[f.kind] || f.kind)}}</span>${{esc(f.headline)}}</div>`
+          + (f.detail ? `<div class="fnd-detail">${{esc(f.detail)}}</div>` : '')
+          + `</div></li>`
+        )).join('') + '</ul>';
+
+        const bits = [];
+        if (payload.total_found > rows.length) {{
+          bits.push(`Showing the top ${{rows.length}} of ${{payload.total_found}}.`);
+        }}
+        if (payload.compare_window) {{
+          bits.push(`Compared with ${{esc(payload.compare_window.start)}} – ${{esc(payload.compare_window.end)}}.`);
+        }}
+        const inputs = payload.inputs || {{}};
+        const missing = [];
+        if (!inputs.has_goals) missing.push('no metric goals set');
+        if (!inputs.has_benchmarks) missing.push('peer benchmarks off');
+        if (missing.length) bits.push(`Not checked: ${{missing.join(', ')}}.`);
+        if (bits.length) {{
+          HOST.insertAdjacentHTML('beforeend', `<p class="fnd-foot">${{bits.join(' ')}}</p>`);
+        }}
+      }}
+
+      async function load() {{
+        const w = windowFor(parseInt(rangeSel.value, 10) || 30);
+        HOST.innerHTML = '<div class="fnd-skel"></div><div class="fnd-skel"></div><div class="fnd-skel"></div>';
+        setStatus('findingsStatus', 'Loading…');
+        try {{
+          const r = await fetch(
+            `${{FINDINGS_API}}${{FINDINGS_API.includes('?') ? '&' : '?'}}start_date=${{w.start}}&end_date=${{w.end}}`,
+            {{ credentials:'same-origin' }},
+          );
+          const body = await r.json().catch(() => ({{}}));
+          if (!r.ok) {{
+            const d = body && body.detail;
+            throw new Error((d && typeof d === 'object' ? (d.error || JSON.stringify(d)) : d) || ('HTTP ' + r.status));
+          }}
+          render(body);
+          setStatus('findingsStatus', '');
+        }} catch (err) {{
+          HOST.innerHTML = '';
+          setStatus('findingsStatus', 'Could not load: ' + (err.message || err), true);
+        }}
+      }}
+
+      rangeSel.addEventListener('change', load);
+      load();
     }})();
     // ---- Peer benchmarks: show-on-Overview toggle ----
     (function(){{
