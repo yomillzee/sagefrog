@@ -108,6 +108,10 @@ def _google_ads_keyword_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.explorer_google_ads_keyword_daily`"
 
 
+def _google_ads_demographic_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.explorer_google_ads_demographic_daily`"
+
+
 def _microsoft_ads_explorer_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.explorer_microsoft_ads_daily`"
 
@@ -902,6 +906,203 @@ def fetch_google_ads_keywords(
         },
         "row_count": len(rows),
         "rows": rows,
+    }
+
+
+# ---- Google Ads demographic segments --------------------------------------
+#
+# Thresholds for the "consider excluding this segment" call. They exist to stop
+# the panel making a recommendation off noise: a segment has to have both spent
+# real money in absolute terms *and* had a fair shot at converting relative to
+# what the rest of the account pays per conversion.
+GOOGLE_DEMOGRAPHIC_MIN_SPEND = 50.0
+# Zero conversions only becomes evidence once the segment has burned this
+# multiple of the dimension's own cost per conversion.
+GOOGLE_DEMOGRAPHIC_WASTE_CPA_MULTIPLE = 2.0
+# A segment that does convert, but this much worse than the dimension average.
+GOOGLE_DEMOGRAPHIC_HIGH_CPA_MULTIPLE = 1.5
+
+
+_UNDETERMINED_SEGMENTS = frozenset({"AGE_RANGE_UNDETERMINED", "UNDETERMINED", "UNKNOWN"})
+
+
+def _segment_is_undetermined(segment_value: Any) -> bool:
+    return str(segment_value or "").strip().upper() in _UNDETERMINED_SEGMENTS
+
+
+def assess_demographic_segments(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Group aggregated demographic rows by dimension and flag wasted spend.
+
+    Pure function over already-aggregated rows so the judgement calls are
+    testable without BigQuery. For each dimension it derives a benchmark cost
+    per conversion from the segments Google *could* classify, then flags:
+
+      * ``no_conversions`` — spent past the threshold with nothing to show. This
+        is the "consider excluding males / under-25s" call.
+      * ``high_cpa`` — converts, but materially worse than the dimension average.
+
+    Three things are deliberately never flagged: the Unknown bucket (excluding
+    it is not something Google lets you do, and it is often the biggest bucket),
+    segments already excluded in every ad group they appear in, and anything at
+    all when the dimension has no conversions to benchmark against — with no
+    benchmark, "no conversions here" says nothing about this segment.
+    """
+    by_dimension: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        dim = str(row.get("dimension") or "").strip()
+        if dim:
+            by_dimension.setdefault(dim, []).append(dict(row))
+
+    out: dict[str, Any] = {}
+    for dim, segments in by_dimension.items():
+        total_spend = sum(float(s.get("spend") or 0.0) for s in segments)
+        total_conversions = sum(float(s.get("conversions") or 0.0) for s in segments)
+
+        known = [s for s in segments if not _segment_is_undetermined(s.get("segment_value"))]
+        known_spend = sum(float(s.get("spend") or 0.0) for s in known)
+        known_conversions = sum(float(s.get("conversions") or 0.0) for s in known)
+        benchmark_cpa = (known_spend / known_conversions) if known_conversions > 0 else None
+
+        undetermined_spend = total_spend - known_spend
+
+        for seg in segments:
+            spend = float(seg.get("spend") or 0.0)
+            conversions = float(seg.get("conversions") or 0.0)
+            clicks = int(seg.get("clicks") or 0)
+            impressions = int(seg.get("impressions") or 0)
+
+            seg["cpa"] = round(spend / conversions, 2) if conversions > 0 else None
+            seg["ctr"] = round(clicks / impressions * 100, 2) if impressions > 0 else None
+            seg["avg_cpc"] = round(spend / clicks, 2) if clicks > 0 else None
+            seg["conv_rate"] = round(conversions / clicks * 100, 2) if clicks > 0 else None
+            seg["spend_share"] = round(spend / total_spend * 100, 1) if total_spend > 0 else None
+            seg["conversion_share"] = (
+                round(conversions / total_conversions * 100, 1) if total_conversions > 0 else None
+            )
+
+            seg["recommendation"] = _demographic_recommendation(
+                seg, benchmark_cpa=benchmark_cpa, dimension=dim
+            )
+
+        segments.sort(key=lambda s: float(s.get("spend") or 0.0), reverse=True)
+        out[dim] = {
+            "segments": segments,
+            "spend": round(total_spend, 2),
+            "conversions": round(total_conversions, 2),
+            "benchmark_cpa": round(benchmark_cpa, 2) if benchmark_cpa else None,
+            # How much of this dimension's spend Google could not attribute to a
+            # segment. High values (Search commonly runs past 50%) mean the
+            # panel is reasoning about a minority of the money, and it says so.
+            "undetermined_spend_share": (
+                round(undetermined_spend / total_spend * 100, 1) if total_spend > 0 else None
+            ),
+            "recommendation_count": sum(1 for s in segments if s.get("recommendation")),
+        }
+    return out
+
+
+def _demographic_recommendation(
+    seg: dict[str, Any], *, benchmark_cpa: float | None, dimension: str
+) -> dict[str, Any] | None:
+    if benchmark_cpa is None or benchmark_cpa <= 0:
+        return None
+    if _segment_is_undetermined(seg.get("segment_value")):
+        return None
+    # Excluded in every ad group it runs in — the action has already been taken.
+    if seg.get("excluded_everywhere"):
+        return None
+
+    spend = float(seg.get("spend") or 0.0)
+    conversions = float(seg.get("conversions") or 0.0)
+    label = str(seg.get("segment_label") or seg.get("segment_value") or "").strip()
+    noun = "age group" if dimension == "age_range" else "gender"
+
+    if spend < GOOGLE_DEMOGRAPHIC_MIN_SPEND:
+        return None
+
+    if conversions <= 0:
+        if spend < benchmark_cpa * GOOGLE_DEMOGRAPHIC_WASTE_CPA_MULTIPLE:
+            return None
+        return {
+            "kind": "no_conversions",
+            "severity": "high",
+            "headline": f"Consider excluding {label}",
+            "detail": (
+                f"{label} has spent {spend:,.2f} with no conversions — over "
+                f"{GOOGLE_DEMOGRAPHIC_WASTE_CPA_MULTIPLE:g}× the "
+                f"{benchmark_cpa:,.2f} this account normally pays for one."
+            ),
+        }
+
+    cpa = spend / conversions
+    if cpa > benchmark_cpa * GOOGLE_DEMOGRAPHIC_HIGH_CPA_MULTIPLE:
+        return {
+            "kind": "high_cpa",
+            "severity": "medium",
+            "headline": f"{label} converts expensively",
+            "detail": (
+                f"{cpa:,.2f} per conversion against a {noun} average of "
+                f"{benchmark_cpa:,.2f}. Worth a bid adjustment before an exclusion."
+            ),
+        }
+    return None
+
+
+def fetch_google_ads_demographics(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Google Ads age / gender segments — spend and conversions per segment.
+
+    Reads explorer_google_ads_demographic_daily, which only exists once a client
+    has synced with the demographic reports; a missing table is treated as "no
+    demographic data" (empty result) so the panel hides rather than 500s.
+
+    Note the coverage caveat this data carries: Performance Max contributes
+    nothing (it has no ad-group criteria) and Search only reports what Google
+    can infer, so these totals are a subset of account spend — never reconcile
+    them against the campaign numbers.
+    """
+    sql = f"""
+    SELECT
+      dimension,
+      segment_value,
+      ANY_VALUE(segment_label) AS segment_label,
+      ROUND(SUM(spend), 2) AS spend,
+      SUM(impressions) AS impressions,
+      SUM(clicks) AS clicks,
+      SUM(conversions) AS conversions,
+      ROUND(SUM(conversion_value), 2) AS conversion_value,
+      COUNT(DISTINCT ad_group_id) AS ad_groups,
+      COUNT(DISTINCT IF(is_excluded, ad_group_id, NULL)) AS excluded_ad_groups,
+      LOGICAL_AND(IFNULL(is_excluded, FALSE)) AS excluded_everywhere
+    FROM {_google_ads_demographic_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY dimension, segment_value
+    ORDER BY dimension, spend DESC
+    """
+    try:
+        rows = _run_query(
+            sql,
+            params={
+                "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            },
+            max_rows=2000,
+        )
+    except Exception:
+        rows = []
+
+    by_dimension = assess_demographic_segments(rows)
+    return {
+        "client": _client_key(),
+        "date_range": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+        "row_count": len(rows),
+        "by_dimension": by_dimension,
     }
 
 

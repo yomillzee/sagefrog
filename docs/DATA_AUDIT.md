@@ -63,7 +63,7 @@ handler is registered for it — it is a reserved/manual type, not an active fee
 |---|---|---|---|---|---|---|
 | LinkedIn Ads | `linkedin_ads` | Per-client OAuth (`linkedin`) refresh→access token | `list_ad_accounts` picker → `source_account_id` | `raw_linkedin_ads` | every tick | `campaign_daily`, `campaigns`, `ad_daily`, `creative_metadata`; rebuilds `fact_linkedin_ads_campaign_daily` + `vw_paid_media_daily` |
 | Meta Ads | `meta_ads` | Per-client OAuth (`meta`), falls back to global token | `list_ad_accounts` (falls back to `/me/adaccounts` if no business_management) | `raw_meta_ads` | every tick | `campaign_daily`, `adset_daily`, `ad_daily`, `ad_creative` + mart views |
-| Google Ads | `google_ads` | Per-client OAuth (`google_ads`) refresh token + developer token | `list_accessible_customer_accounts` → `source_account_id` | `raw_google_ads` | every tick | `campaign_daily` → `fact_google_ads_campaign_daily` view + `vw_paid_media_daily` |
+| Google Ads | `google_ads` | Per-client OAuth (`google_ads`) refresh token + developer token | `list_accessible_customer_accounts` → `source_account_id` | `raw_google_ads` | every tick | `campaign_daily`, `ad_daily`, `keyword_daily`, `demographic_daily` → `fact_google_ads_campaign_daily` + explorer views + `vw_paid_media_daily` |
 | Google Analytics 4 | `ga4` | Per-client OAuth (`google_analytics`, analytics.readonly) | `list_properties` → property id | `raw_ga4` | every tick | GA4 raw tables + `provision_ga4_mart_views` |
 | Search Console | `gsc` | **Agency-level** (shared Google OAuth `gsc_read_creds`) with **service-account fallback** (`no_oauth=True`, `agency_oauth=True`) | `list_accessible_properties` → site URL | `raw_gsc` | every tick | `fact_gsc_query_daily`, `fact_gsc_page_daily` + GSC mart views |
 | Google Tag Manager | `gtm` | Per-client OAuth (`google_tag_manager`) | `list_containers` → `account:container` in `source_account_id` | `raw_gtm` | every tick | Live-container tag audit (no fact table; `rows_loaded` = tag count) |
@@ -115,7 +115,7 @@ handler is registered for it — it is a reserved/manual type, not an active fee
 
 | Dataset | Owner | Contents |
 |---|---|---|
-| `raw_google_ads` | Google Ads → BQ Data Transfer **or** app sync | `campaign_daily` |
+| `raw_google_ads` | Google Ads → BQ Data Transfer **or** app sync | `campaign_daily`, `ad_daily`, `keyword_daily`, `demographic_daily` |
 | `raw_linkedin_ads` | App sync | `campaign_daily`, `campaigns`, `ad_daily`, `creative_metadata`, `metrics_daily` |
 | `raw_meta_ads` | App sync | `campaign_daily`, `adset_daily`, `ad_daily`, `ad_creative` |
 | `raw_ga4` / GA4 export | Google native export (app can't write) | `events_*` (sharded by date suffix) |
@@ -148,6 +148,7 @@ URL columns (see `_meta_ad_daily_schema`, `_creative_metadata_schema`).
 | View | Source | Notes |
 |---|---|---|
 | `fact_google_ads_campaign_daily` | `raw_google_ads.campaign_daily` | Passthrough view; `metric_date → date`. Missing raw table → `pending_data` (never fabricates rows). |
+| `explorer_google_ads_demographic_daily` | `raw_google_ads.demographic_daily` | Age/gender segments per ad group per day, carrying each criterion's exclusion state. Only created once the raw table exists (a client synced before this report was added has neither until it re-syncs). Covers ad-group criteria only, so Performance Max contributes nothing and the totals are a **subset** of account spend — never reconcile against `campaign_daily`. |
 | `fact_linkedin_ads_campaign_daily` | `raw_linkedin_ads.campaign_daily LEFT JOIN campaigns` | Adds campaign status/group + `reach` (0 if column absent). Built as **view** so it's always live. |
 | `fact_linkedin_ads_creative_daily` | ad_daily + creative_metadata + campaigns | Creative-level, `SUM` grouped. |
 | `fact_meta_ads_campaign_daily` / `_adset_daily` / `_ad_daily` | Meta raw tables | Ad view LEFT JOINs `ad_creative` for thumbnails. |
@@ -214,8 +215,8 @@ routes and the generic `{client_key}` equivalents. Every handler calls
 `web_auth.authenticate_dashboard_api[_any]` before touching data. Families:
 
 - **Marketing / health**: `/api/clients/{k}/summary`, `/marketing/health`, `/refresh`, `/bq-verify`
-- **Paid explorers**: `/google-ads/{explorer,keywords,verified-conversions}`,
-  `/linkedin/explorer`, `/meta/{explorer,verified-conversions}`
+- **Paid explorers**: `/google-ads/{explorer,keywords,demographics,verified-conversions}`,
+  `/linkedin/{explorer,demographics}`, `/meta/{explorer,verified-conversions}`
 - **GA4 analytics**: `/pages/*` (top, sources, landing, device-split, key-events),
   `/analytics/{conversions,user-acquisition,demographics}`, `/ga4/{key-events,provision-views,health/*}`
 - **SEO/site**: `/gsc/{summary,keyword-matches,keyword-config}`, `/semrush/summary`,

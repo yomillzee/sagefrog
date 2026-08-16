@@ -669,6 +669,170 @@ def fetch_keyword_daily_metrics(
     return list(by_key.values())
 
 
+# ---- Demographic segments (age / gender) ----------------------------------
+#
+# Google reports demographics as ordinary ad-group criteria, one report resource
+# per dimension. Each row is (ad group × segment × day) — the criterion IS the
+# segment, so there is no finer grain hiding underneath.
+#
+# Two things about this data decide how the rest of the pipeline reads:
+#
+#   * **Undetermined is a real bucket, not a null.** Google emits
+#     AGE_RANGE_UNDETERMINED / UNDETERMINED for traffic it could not classify,
+#     and on Search campaigns it is routinely the largest single bucket. It is
+#     kept as a row (dropping it would make the remaining shares add up to
+#     something that looks like the whole account but isn't), and the read path
+#     excludes it from recommendations rather than from the totals.
+#   * **The exclusion state travels with the metrics.** `negative` says the
+#     segment is already excluded at ad-group level and `status` says whether
+#     that exclusion is live, so "consider excluding X" can be suppressed for
+#     segments somebody already dealt with. Without this the panel would keep
+#     recommending an exclusion that is already in place.
+#
+# Performance Max reports nothing here (no ad-group criteria), and Search
+# campaigns only populate what Google can infer — a thin or absent result is
+# normal, not a sync failure.
+_DEMOGRAPHIC_REPORTS: tuple[tuple[str, str, str], ...] = (
+    ("age_range", "age_range_view", "ad_group_criterion.age_range.type"),
+    ("gender", "gender_view", "ad_group_criterion.gender.type"),
+)
+
+_AGE_RANGE_LABELS: dict[str, str] = {
+    "AGE_RANGE_18_24": "18–24",
+    "AGE_RANGE_25_34": "25–34",
+    "AGE_RANGE_35_44": "35–44",
+    "AGE_RANGE_45_54": "45–54",
+    "AGE_RANGE_55_64": "55–64",
+    "AGE_RANGE_65_UP": "65+",
+    "AGE_RANGE_UNDETERMINED": "Unknown",
+}
+
+_GENDER_LABELS: dict[str, str] = {
+    "MALE": "Male",
+    "FEMALE": "Female",
+    "UNDETERMINED": "Unknown",
+}
+
+# The enum values Google uses for "we could not classify this traffic". Kept in
+# one place because both the label maps above and the read path need it.
+UNDETERMINED_VALUES: frozenset[str] = frozenset(
+    {"AGE_RANGE_UNDETERMINED", "UNDETERMINED", "UNKNOWN"}
+)
+
+
+def demographic_label(dimension: str, value: str) -> str:
+    """Human label for a demographic enum ('AGE_RANGE_25_34' → '25–34').
+
+    Falls back to title-casing the enum so a bucket Google adds later still
+    renders as something readable instead of a raw constant.
+    """
+    raw = str(value or "").strip().upper()
+    if not raw:
+        return "Unknown"
+    table = _AGE_RANGE_LABELS if dimension == "age_range" else _GENDER_LABELS
+    if raw in table:
+        return table[raw]
+    stripped = raw.removeprefix("AGE_RANGE_").replace("_", " ")
+    return stripped.title()
+
+
+def fetch_demographic_daily_metrics(
+    customer_id: str,
+    *,
+    start: date,
+    end: date,
+    client: GoogleAdsClient | None = None,
+) -> list[dict[str, Any]]:
+    """Per-demographic-segment daily metrics for warehouse storage.
+
+    One row per (ad group, dimension, segment, day) across age_range_view and
+    gender_view. Returns {dimension, segment_value, segment_label, criterion_id,
+    ad_group_id, ad_group_name, campaign_id, campaign_name, channel_type,
+    is_excluded, criterion_status, metric_date, spend, clicks, impressions,
+    conversions, conversion_value}.
+
+    A dimension that fails is skipped rather than failing the batch: an account
+    with no Display/Video campaigns can legitimately return nothing for one view
+    while the other has data.
+    """
+    customer_id = str(customer_id).replace("-", "").strip()
+    start_key = start.isoformat()
+    end_key = end.isoformat()
+
+    by_key: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for dimension, resource, segment_field in _DEMOGRAPHIC_REPORTS:
+        query = f"""
+            SELECT
+              {segment_field},
+              ad_group_criterion.criterion_id,
+              ad_group_criterion.negative,
+              ad_group_criterion.status,
+              ad_group.id,
+              ad_group.name,
+              campaign.id,
+              campaign.name,
+              campaign.advertising_channel_type,
+              segments.date,
+              metrics.impressions,
+              metrics.clicks,
+              metrics.conversions,
+              metrics.conversions_value,
+              metrics.cost_micros
+            FROM {resource}
+            WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
+        """
+        try:
+            rows = search(customer_id, query, client=client)
+        except Exception as exc:
+            _log.warning(
+                "Google Ads %s report failed [account=%s]: %s", resource, customer_id, exc
+            )
+            continue
+
+        # 'age_range' → ad_group_criterion.age_range.type in the response dict.
+        segment_path = tuple(segment_field.split(".")[1:])
+        for row in rows:
+            agid = str(_dig(row, "ad_group", "id") or "").strip()
+            day = str(_dig(row, "segments", "date") or "").strip()
+            value = str(_dig(row, "ad_group_criterion", *segment_path) or "").strip()
+            if not agid or not day or not value:
+                continue
+            key = (dimension, agid, value, day)
+            if key not in by_key:
+                by_key[key] = {
+                    "dimension": dimension,
+                    "segment_value": value,
+                    "segment_label": demographic_label(dimension, value),
+                    "criterion_id": str(
+                        _dig(row, "ad_group_criterion", "criterion_id") or ""
+                    ),
+                    "ad_group_id": agid,
+                    "ad_group_name": _dig(row, "ad_group", "name") or "",
+                    "campaign_id": str(_dig(row, "campaign", "id") or ""),
+                    "campaign_name": _dig(row, "campaign", "name") or "",
+                    "channel_type": str(
+                        _dig(row, "campaign", "advertising_channel_type") or ""
+                    ),
+                    # MessageToDict drops false booleans, so an absent 'negative'
+                    # means the segment is targeted, not that the field is unknown.
+                    "is_excluded": bool(_dig(row, "ad_group_criterion", "negative") or False),
+                    "criterion_status": str(_dig(row, "ad_group_criterion", "status") or ""),
+                    "metric_date": day,
+                    "spend": 0.0,
+                    "clicks": 0,
+                    "impressions": 0,
+                    "conversions": 0.0,
+                    "conversion_value": 0.0,
+                }
+            rec = by_key[key]
+            rec["spend"] += int(_dig(row, "metrics", "cost_micros") or 0) / 1_000_000
+            rec["clicks"] += int(_dig(row, "metrics", "clicks") or 0)
+            rec["impressions"] += int(_dig(row, "metrics", "impressions") or 0)
+            rec["conversions"] += float(_dig(row, "metrics", "conversions") or 0)
+            rec["conversion_value"] += float(_dig(row, "metrics", "conversions_value") or 0)
+    return list(by_key.values())
+
+
 def campaign_performance(
     customer_id: str,
     *,

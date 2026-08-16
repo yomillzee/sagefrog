@@ -62,6 +62,34 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-08-16",
+        title="Google Ads now shows who the money is going to",
+        area="Client dashboards · Campaign explorer",
+        kind="new",
+        summary=(
+            "A new Google Ads demographics panel breaks spend and conversions "
+            "down by age and gender, and calls out segments that are taking "
+            "budget without returning anything — the \"consider excluding "
+            "under-25s\" conversation, with the numbers already lined up."
+        ),
+        details=(
+            "Two tabs, Age and Gender. Each row pairs the segment's share of "
+            "spend with its share of conversions, so a segment costing more "
+            "than it returns reads as a top-heavy pair of bars.",
+            "A segment is only flagged once it has spent past twice what the "
+            "account normally pays for a conversion — a quiet week never turns "
+            "into a recommendation.",
+            "Segments you have already excluded are marked as such and never "
+            "recommended again.",
+            "The panel reports how much spend Google could not attribute to a "
+            "segment, because on Search that is often most of it. Performance "
+            "Max reports no demographics at all, so these totals are a subset "
+            "of account spend and will not match the campaign figures above.",
+            "Appears once a client's next Google Ads sync has run; clients with "
+            "no demographic data don't get an empty panel.",
+        ),
+    ),
+    Entry(
         date="2026-08-15",
         title="Insights opens with what's actually worth talking about",
         area="Client dashboards · Insights",

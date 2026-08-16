@@ -247,6 +247,7 @@ OVERVIEW_PINNABLE_CARDS: dict[str, str] = {
 EXPLORER_LAYOUT_CARDS: dict[str, str] = {
     "explorer": "Campaign explorer",
     "keywords": "Keyword Performance",
+    "gdemo": "Google Ads demographics",
     "lidemo": "LinkedIn audience",
     "budget": "Budget tracking",
 }
@@ -1248,9 +1249,32 @@ def render_bigquery_dashboard_page(
         <p class="lid-note" id="lidemoNote"></p>
       </section>"""
 
+    # Google Ads age / gender segments — where the money goes by demographic and
+    # which segments are burning it. Unlike the LinkedIn panel this one does
+    # follow the date picker (Google reports demographics per day), and it makes
+    # explicit recommendations, so it also has to be explicit about coverage:
+    # Performance Max reports no demographics at all and Search only reports
+    # what Google can infer, so the note carries the share of spend Google could
+    # not classify. Hidden until the client has data, same as the keyword panel.
+    panel_gdemo = """
+      <section id="sec-gdemo" style="display:none">
+        <div class="sec-head">
+          <h2>Google Ads demographics</h2>
+          <div class="sec-head-actions">
+            <span class="gd-coverage" id="gdemoCoverage" hidden></span>
+            <span class="status" id="gdemoStatus"></span>
+          </div>
+        </div>
+        <div class="pnl-tabs gd-tabs" role="tablist" aria-label="Demographic dimension" id="gdemoTabs"></div>
+        <div class="gd-recs" id="gdemoRecs" hidden></div>
+        <div class="table-wrap"><table id="gdemoTable" class="compact"></table></div>
+        <p class="gd-note" id="gdemoNote"></p>
+      </section>"""
+
     ex_units: list[tuple[str, str]] = [
         ("explorer", panel_explorer_main),
         ("keywords", panel_keywords),
+        ("gdemo", panel_gdemo),
         ("lidemo", panel_lidemo),
     ]
     if budget_section_html:
@@ -1948,6 +1972,33 @@ def render_bigquery_dashboard_page(
     .lid-bar {{ position:relative; display:block; height:6px; min-width:120px; border-radius:3px; background:rgba(10,102,194,.13); }}
     .lid-bar span {{ position:absolute; inset:0 auto 0 0; border-radius:3px; background:#0a66c2; }}
     #lidemoTable td.lid-share {{ width:150px; }}
+    /* Google Ads demographics: dimension tabs, recommendation cards, the
+       spend-vs-conversion share bars and the already-excluded badge. */
+    .gd-tabs {{ margin:2px 0 14px; border-bottom:1px solid var(--line); }}
+    .gd-coverage {{ display:inline-flex; align-items:center; gap:6px; font-size:.72rem; font-weight:700; color:#8a5a00; background:#fdf3e2; border-radius:999px; padding:4px 11px; white-space:nowrap; }}
+    .gd-coverage[hidden] {{ display:none; }}
+    .gd-note {{ margin:12px 2px 0; font-size:.72rem; line-height:1.5; color:var(--muted); }}
+    .gd-recs {{ display:grid; gap:8px; margin:0 0 14px; }}
+    .gd-recs[hidden] {{ display:none; }}
+    .gd-rec {{ display:flex; gap:10px; align-items:flex-start; border:1px solid var(--line); border-left-width:3px; border-radius:8px; padding:10px 13px; background:var(--card); }}
+    .gd-rec-high {{ border-left-color:#c0392b; }}
+    .gd-rec-medium {{ border-left-color:#b8922e; }}
+    .gd-rec-body {{ min-width:0; }}
+    .gd-rec-head {{ font-size:.82rem; font-weight:750; color:var(--navy); }}
+    .gd-rec-detail {{ margin-top:2px; font-size:.74rem; line-height:1.5; color:var(--muted); }}
+    #gdemoTable td.gd-seg {{ max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+    /* Two bars on one baseline: spend share above, conversion share below. A
+       segment taking more spend than it returns reads as a top-heavy pair. */
+    .gd-split {{ display:block; min-width:120px; }}
+    .gd-split-row {{ position:relative; display:block; height:5px; border-radius:3px; background:rgba(26,115,232,.12); }}
+    .gd-split-row + .gd-split-row {{ margin-top:3px; background:rgba(31,138,86,.12); }}
+    .gd-split-row span {{ position:absolute; inset:0 auto 0 0; border-radius:3px; background:#1a73e8; }}
+    .gd-split-row + .gd-split-row span {{ background:#1f8a56; }}
+    #gdemoTable td.gd-shares {{ width:150px; }}
+    .gd-flag {{ display:inline-block; margin-left:7px; padding:1px 7px; border-radius:999px; font-size:.62rem; font-weight:800; letter-spacing:.03em; text-transform:uppercase; vertical-align:middle; }}
+    .gd-flag-excluded {{ background:var(--line-soft); color:var(--muted); }}
+    .gd-flag-waste {{ background:#fdecea; color:#c0392b; }}
+    .gd-flag-cpa {{ background:#fdf3e2; color:#8a5a00; }}
     .pill-meta {{ background:#f0e8fe; color:#7b2ff7; }}
     /* Platform brand icons (campaign rows) */
     .plat-ico {{ display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; margin-right:9px; vertical-align:middle; flex:0 0 auto; }}
@@ -2448,6 +2499,7 @@ def render_bigquery_dashboard_page(
     const ANNOTATIONS_API      = "{_aurl(f'/dashboard/{client_slug}/annotations')}";
     const EXPLORER_API         = "{_aurl(f'/api/clients/{api_client_key}/google-ads/explorer')}";
     const GOOGLE_ADS_KEYWORDS_API = "{_aurl(f'/api/clients/{api_client_key}/google-ads/keywords')}";
+    const GOOGLE_ADS_DEMOGRAPHICS_API = "{_aurl(f'/api/clients/{api_client_key}/google-ads/demographics')}";
     const LINKEDIN_EXPLORER_API= "{_aurl(f'/api/clients/{api_client_key}/linkedin/explorer')}";
     const LINKEDIN_DEMOGRAPHICS_API = "{_aurl(f'/api/clients/{api_client_key}/linkedin/demographics')}";
     const META_EXPLORER_API    = "{_aurl(f'/api/clients/{api_client_key}/meta/explorer')}";
@@ -4933,11 +4985,131 @@ def render_bigquery_dashboard_page(
       renderLidemo();
     }}
 
+    // ---- Google Ads demographics (age / gender segments) ----
+    // Unlike the LinkedIn panel this one honours the date picker: Google reports
+    // demographics per day, so the rows are re-cut to whatever range is selected.
+    const GDEMO_TABS=[['age_range','Age'],['gender','Gender']];
+    let gdemoData=null, gdemoDim='';
+    function gdemoDimData(dim) {{
+      return ((gdemoData&&gdemoData.by_dimension)||{{}})[dim]||null;
+    }}
+    function gdemoRows(dim) {{
+      const d=gdemoDimData(dim);
+      return (d&&d.segments)||[];
+    }}
+    function gdemoLiveDims() {{
+      return GDEMO_TABS.filter(([k])=>gdemoRows(k).length);
+    }}
+    function renderGdemoTabs() {{
+      const host=document.getElementById('gdemoTabs');
+      if (!host) return;
+      const dims=gdemoLiveDims();
+      host.innerHTML=dims.map(([k,label])=>
+        `<button type="button" class="pnl-tab" role="tab" data-gdim="${{k}}" aria-selected="${{k===gdemoDim?'true':'false'}}">${{esc(label)}}</button>`
+      ).join('');
+      host.classList.toggle('one-tab',dims.length===1);
+    }}
+    function renderGdemoRecs() {{
+      const host=document.getElementById('gdemoRecs');
+      if (!host) return;
+      const recs=gdemoRows(gdemoDim).map(r=>r.recommendation).filter(Boolean);
+      if (!recs.length) {{ host.hidden=true; host.innerHTML=''; return; }}
+      host.hidden=false;
+      host.innerHTML=recs.map(r=>
+        `<div class="gd-rec gd-rec-${{esc(r.severity||'medium')}}"><div class="gd-rec-body">`
+        +`<div class="gd-rec-head">${{esc(r.headline||'')}}</div>`
+        +`<div class="gd-rec-detail">${{esc(r.detail||'')}}</div>`
+        +`</div></div>`
+      ).join('');
+    }}
+    function renderGdemo() {{
+      const el=document.getElementById('gdemoTable');
+      if (!el) return;
+      const rows=gdemoRows(gdemoDim);
+      if (!rows.length) {{ el.innerHTML=''; return; }}
+      // Spend share and conversion share are both percentages of this
+      // dimension's total, so they share one scale — that is the whole point of
+      // stacking them, and rescaling either one separately would invent a
+      // difference. The common max only decides how much width the pair uses.
+      const scale=rows.reduce((mx,r)=>Math.max(mx,num(r.spend_share),num(r.conversion_share)),0)||100;
+      const head='<thead><tr><th class="left">Segment</th><th>Spend</th>'
+        +'<th title="Top bar: share of this dimension\\'s spend. Bottom bar: share of its conversions.">Spend vs conversions</th>'
+        +'<th>Clicks</th><th>Conversions</th><th>Cost / conv.</th></tr></thead>';
+      const body=rows.map(r=>{{
+        const spendW=Math.min(100,num(r.spend_share)/scale*100);
+        const convW=Math.min(100,num(r.conversion_share)/scale*100);
+        const label=r.segment_label||r.segment_value||'—';
+        const rec=r.recommendation;
+        let flags='';
+        if (r.excluded_everywhere) {{
+          flags+=`<span class="gd-flag gd-flag-excluded" title="Already excluded in every ad group it appears in">Excluded</span>`;
+        }} else if (r.excluded_ad_groups) {{
+          flags+=`<span class="gd-flag gd-flag-excluded" title="Excluded in ${{count(r.excluded_ad_groups)}} of ${{count(r.ad_groups)}} ad groups">Partly excluded</span>`;
+        }}
+        if (rec&&rec.kind==='no_conversions') flags+=`<span class="gd-flag gd-flag-waste">No conv.</span>`;
+        else if (rec&&rec.kind==='high_cpa') flags+=`<span class="gd-flag gd-flag-cpa">High CPA</span>`;
+        const cpa=(r.cpa===null||r.cpa===undefined)?'—':money(r.cpa);
+        const sharesTitle=`${{pct(num(r.spend_share))}} of spend, ${{pct(num(r.conversion_share))}} of conversions`;
+        return `<tr><td class="left gd-seg" title="${{esc(label)}}">${{esc(label)}}${{flags}}</td>`
+          +`<td>${{money(r.spend)}}</td>`
+          +`<td class="gd-shares" title="${{esc(sharesTitle)}}"><span class="gd-split">`
+          +`<span class="gd-split-row"><span style="width:${{spendW.toFixed(1)}}%"></span></span>`
+          +`<span class="gd-split-row"><span style="width:${{convW.toFixed(1)}}%"></span></span>`
+          +`</span></td>`
+          +`<td>${{count(r.clicks)}}</td><td>${{count(r.conversions)}}</td><td>${{cpa}}</td></tr>`;
+      }}).join('');
+      el.innerHTML=head+`<tbody>${{body}}</tbody>`;
+
+      const dim=gdemoDimData(gdemoDim)||{{}};
+      const badge=document.getElementById('gdemoCoverage');
+      const unknown=dim.undetermined_spend_share;
+      if (badge) {{
+        if (unknown===null||unknown===undefined) {{ badge.hidden=true; }}
+        else {{
+          badge.hidden=false;
+          badge.textContent=`${{pct(unknown)}} unattributed`;
+          badge.title='Share of this dimension\\'s spend Google could not assign to a segment.';
+        }}
+      }}
+      const note=document.getElementById('gdemoNote');
+      if (note) {{
+        note.textContent=
+          'Google only reports demographics for traffic it can classify, and '
+          +'Performance Max campaigns report none at all — so these totals are a '
+          +'subset of account spend and will not reconcile with the campaign '
+          +'numbers above. Unknown is kept in the table because leaving it out '
+          +'would make the other shares look like the whole account.';
+      }}
+      renderGdemoRecs();
+    }}
+    async function loadGoogleDemographics() {{
+      const sec=document.getElementById('sec-gdemo');
+      if (!sec) return;
+      // Toggle the editable-panel wrapper too, so a client with no demographic
+      // data doesn't get an empty panel (and admins no edit bar for one).
+      const unit=sec.closest('.ov-unit')||sec;
+      setStatus('gdemoStatus','Loading…');
+      const d=await getJson(withDates(GOOGLE_ADS_DEMOGRAPHICS_API)).catch(()=>null);
+      gdemoData=d;
+      const dims=gdemoLiveDims();
+      if (!dims.length) {{
+        sec.style.display='none'; unit.style.display='none';
+        setStatus('gdemoStatus','');
+        return;
+      }}
+      sec.style.display=''; unit.style.display='';
+      if (!dims.some(([k])=>k===gdemoDim)) gdemoDim=dims[0][0];
+      setStatus('gdemoStatus','');
+      renderGdemoTabs();
+      renderGdemo();
+    }}
+
     async function loadExplorer() {{
       setStatus('explorerStatus','Loading…');
       // Demographics are independent of the explorer tree (different grain,
       // different window), so they load alongside it rather than blocking it.
       const lidemoDone=loadLinkedinDemographics();
+      const gdemoDone=loadGoogleDemographics();
       document.getElementById('explorerSummaryCards').innerHTML = skelCards(5);
       document.getElementById('explorerTable').innerHTML = skelTable(6,8);
       const [g,l,m,ms,kw,ver,gver,lver]=await Promise.all([
@@ -4982,6 +5154,7 @@ def render_bigquery_dashboard_page(
         kwUnit.style.display='none';
       }}
       await lidemoDone;
+      await gdemoDone;
     }}
 
     // ---- GA4: Top pages ----
@@ -6364,6 +6537,17 @@ def render_bigquery_dashboard_page(
       lidemoDim=btn.dataset.lidim;
       renderLidemoTabs();
       renderLidemo();
+    }});
+
+    // ---- Google Ads demographics: dimension tabs ----
+    // Delegated and null-guarded for the same reasons as the LinkedIn strip.
+    const gdemoTabHost=document.getElementById('gdemoTabs');
+    if (gdemoTabHost) gdemoTabHost.addEventListener('click',ev=>{{
+      const btn=ev.target.closest('.pnl-tab[data-gdim]');
+      if (!btn) return;
+      gdemoDim=btn.dataset.gdim;
+      renderGdemoTabs();
+      renderGdemo();
     }});
 
     // ---- Keyword Performance: search, match filter and column sorting ----

@@ -161,6 +161,34 @@ def _schema_keyword_daily(bq):
     ]
 
 
+def _schema_demographic_daily(bq):
+    return [
+        bq.SchemaField("client_key",       "STRING",    mode="REQUIRED"),
+        bq.SchemaField("account_id",       "STRING",    mode="REQUIRED"),
+        bq.SchemaField("campaign_id",      "STRING",    mode="NULLABLE"),
+        bq.SchemaField("campaign_name",    "STRING",    mode="NULLABLE"),
+        bq.SchemaField("channel_type",     "STRING",    mode="NULLABLE"),
+        bq.SchemaField("ad_group_id",      "STRING",    mode="REQUIRED"),
+        bq.SchemaField("ad_group_name",    "STRING",    mode="NULLABLE"),
+        bq.SchemaField("criterion_id",     "STRING",    mode="NULLABLE"),
+        # dimension is 'age_range' or 'gender'; segment_value holds the raw
+        # Google enum and segment_label the display string, so a relabel never
+        # needs a backfill and the enum stays available for matching.
+        bq.SchemaField("dimension",        "STRING",    mode="REQUIRED"),
+        bq.SchemaField("segment_value",    "STRING",    mode="REQUIRED"),
+        bq.SchemaField("segment_label",    "STRING",    mode="NULLABLE"),
+        bq.SchemaField("is_excluded",      "BOOL",      mode="NULLABLE"),
+        bq.SchemaField("criterion_status", "STRING",    mode="NULLABLE"),
+        bq.SchemaField("metric_date",      "DATE",      mode="REQUIRED"),
+        bq.SchemaField("spend",            "FLOAT64",   mode="NULLABLE"),
+        bq.SchemaField("impressions",      "INT64",     mode="NULLABLE"),
+        bq.SchemaField("clicks",           "INT64",     mode="NULLABLE"),
+        bq.SchemaField("conversions",      "FLOAT64",   mode="NULLABLE"),
+        bq.SchemaField("conversion_value", "FLOAT64",   mode="NULLABLE"),
+        bq.SchemaField("synced_at",        "TIMESTAMP", mode="NULLABLE"),
+    ]
+
+
 def ensure_google_ads_tables() -> None:
     bq = _bq()
     client = _client()
@@ -173,6 +201,7 @@ def ensure_google_ads_tables() -> None:
         ("campaign_daily", _schema_campaign_daily),
         ("ad_daily", _schema_ad_daily),
         ("keyword_daily", _schema_keyword_daily),
+        ("demographic_daily", _schema_demographic_daily),
     ]:
         table_id = f"{dataset_ref}.{table_name}"
         schema = schema_fn(bq)
@@ -209,6 +238,11 @@ def create_google_ads_mart_views() -> dict[str, Any]:
       - fact_google_ads_ad_daily       — ad-level metrics with creative fields
       - fact_google_ads_ad_group_daily — ad-group aggregation (derived from ad_daily)
       - explorer_google_ads_daily      — denormalized explorer table the UI queries
+
+    Plus two views that only appear once their raw table exists (a client synced
+    before those reports were added has neither until it re-syncs):
+      - explorer_google_ads_keyword_daily
+      - explorer_google_ads_demographic_daily
     """
     bq = _bq()
     client = _client()
@@ -252,6 +286,41 @@ def create_google_ads_mart_views() -> dict[str, Any]:
         }
     except Exception:
         _kw_view = {}
+
+    # Same gating for demographics: clients synced before this feature have no
+    # raw demographic_daily until they re-sync, and CREATE VIEW over a missing
+    # table fails the whole mart rebuild.
+    _demo_view: dict[str, str] = {}
+    try:
+        client.get_table(f"{project}.{raw_dataset}.demographic_daily", timeout=15)
+        _demo_view = {
+            "explorer_google_ads_demographic_daily": f"""
+                SELECT
+                  'google_ads' AS source,
+                  client_key,
+                  account_id,
+                  campaign_id,
+                  campaign_name,
+                  channel_type,
+                  ad_group_id,
+                  ad_group_name,
+                  criterion_id,
+                  dimension,
+                  segment_value,
+                  segment_label,
+                  is_excluded,
+                  criterion_status,
+                  metric_date AS date,
+                  spend,
+                  impressions,
+                  clicks,
+                  conversions,
+                  conversion_value
+                FROM `{project}.{raw_dataset}.demographic_daily`
+            """,
+        }
+    except Exception:
+        _demo_view = {}
 
     views = {
         "fact_google_ads_ad_daily": f"""
@@ -375,6 +444,7 @@ def create_google_ads_mart_views() -> dict[str, Any]:
         """,
     }
     views.update(_kw_view)
+    views.update(_demo_view)
 
     results: dict[str, Any] = {}
     for view_name, select_sql in views.items():
@@ -481,6 +551,38 @@ def _write_keyword_daily(
     client.load_table_from_json(rows, table_id, job_config=job_config).result(timeout=180)
     _log.info(
         "Google Ads wrote %d rows → keyword_daily [client=%s account=%s]",
+        len(rows), client_key, account_id,
+    )
+    return len(rows)
+
+
+def _write_demographic_daily(
+    rows: list[dict[str, Any]],
+    *,
+    client_key: str,
+    account_id: str,
+    start: str,
+    end: str,
+) -> int:
+    if not rows:
+        _log.info("Google Ads demographic_daily — 0 rows from API, skipping write")
+        return 0
+    bq = _bq()
+    client = _client()
+    table_id = _table_ref("demographic_daily")
+    client.query(
+        f"DELETE FROM `{table_id}` "
+        f"WHERE client_key = '{client_key}' "
+        f"  AND account_id = '{account_id}' "
+        f"  AND metric_date BETWEEN '{start}' AND '{end}'"
+    ).result(timeout=120)
+    job_config = bq.LoadJobConfig(
+        schema=_schema_demographic_daily(bq),
+        write_disposition="WRITE_APPEND",
+    )
+    client.load_table_from_json(rows, table_id, job_config=job_config).result(timeout=180)
+    _log.info(
+        "Google Ads wrote %d rows → demographic_daily [client=%s account=%s]",
         len(rows), client_key, account_id,
     )
     return len(rows)
@@ -643,6 +745,48 @@ def sync_google_ads_to_bq(
         _log.warning("Google Ads keyword_daily sync failed [%s]: %s", client_key, exc)
         errors["keyword_daily"] = str(exc)[:300]
 
+    # Age / gender segment metrics (age_range_view + gender_view). Non-fatal:
+    # Performance Max and Smart campaigns expose no ad-group criteria at all, so
+    # a PMax-only account legitimately returns nothing here.
+    n_demo = 0
+    try:
+        demo_raw = google_ads_service.fetch_demographic_daily_metrics(
+            customer_id_clean, start=start_date, end=end_date, client=ads_client
+        )
+        demo_rows = [
+            {
+                "client_key": client_key,
+                "account_id": customer_id_clean,
+                "campaign_id": str(r.get("campaign_id") or "") or None,
+                "campaign_name": r.get("campaign_name"),
+                "channel_type": r.get("channel_type"),
+                "ad_group_id": str(r.get("ad_group_id") or ""),
+                "ad_group_name": r.get("ad_group_name"),
+                "criterion_id": str(r.get("criterion_id") or "") or None,
+                "dimension": r.get("dimension") or "",
+                "segment_value": r.get("segment_value") or "",
+                "segment_label": r.get("segment_label"),
+                "is_excluded": bool(r.get("is_excluded")),
+                "criterion_status": r.get("criterion_status"),
+                "metric_date": r.get("metric_date") or "",
+                "spend": float(r.get("spend") or 0.0),
+                "impressions": int(r.get("impressions") or 0),
+                "clicks": int(r.get("clicks") or 0),
+                "conversions": float(r.get("conversions") or 0.0),
+                "conversion_value": float(r.get("conversion_value") or 0.0),
+                "synced_at": now,
+            }
+            for r in demo_raw
+            if r.get("dimension") and r.get("segment_value")
+            and r.get("ad_group_id") and r.get("metric_date")
+        ]
+        n_demo = _write_demographic_daily(
+            demo_rows, client_key=client_key, account_id=customer_id_clean, start=start, end=end
+        )
+    except Exception as exc:
+        _log.warning("Google Ads demographic_daily sync failed [%s]: %s", client_key, exc)
+        errors["demographic_daily"] = str(exc)[:300]
+
     # Rebuild mart views (explorer_google_ads_daily + fact_ views)
     mart_errors: dict[str, str] = {}
     try:
@@ -653,12 +797,13 @@ def sync_google_ads_to_bq(
         mart_errors["mart_views"] = str(exc)[:300]
     errors.update(mart_errors)
 
-    total = n_campaign + n_ad + n_kw
+    total = n_campaign + n_ad + n_kw + n_demo
     _log.info(
-        "Google Ads sync complete [%s]: campaign_daily=%d ad_daily=%d keyword_daily=%d",
-        client_key, n_campaign, n_ad, n_kw,
+        "Google Ads sync complete [%s]: campaign_daily=%d ad_daily=%d keyword_daily=%d "
+        "demographic_daily=%d",
+        client_key, n_campaign, n_ad, n_kw, n_demo,
     )
     return {
         "total_rows": total, "campaign_rows": n_campaign, "ad_rows": n_ad,
-        "keyword_rows": n_kw, "errors": errors,
+        "keyword_rows": n_kw, "demographic_rows": n_demo, "errors": errors,
     }

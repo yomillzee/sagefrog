@@ -79,7 +79,9 @@ class ExplorerCardLayoutTests(unittest.TestCase):
 
     def test_panels_are_wrapped_in_natural_order(self) -> None:
         order = _panel_order(self._render(None, is_admin=True))
-        self.assertEqual(order, ["explorer", "keywords", "lidemo", "budget"])
+        self.assertEqual(
+            order, ["explorer", "keywords", "gdemo", "lidemo", "budget"]
+        )
 
     def test_wrapper_keys_are_known_panels(self) -> None:
         from dashboard.renderers.bigquery_dashboard_renderer import (
@@ -89,16 +91,23 @@ class ExplorerCardLayoutTests(unittest.TestCase):
             self.assertIn(key, EXPLORER_LAYOUT_CARDS)
 
     def test_stored_order_reorders_panels(self) -> None:
-        layout = {"order": ["budget", "keywords", "lidemo", "explorer"], "hidden": []}
+        layout = {
+            "order": ["budget", "keywords", "gdemo", "lidemo", "explorer"],
+            "hidden": [],
+        }
         order = _panel_order(self._render(layout, is_admin=True))
-        self.assertEqual(order, ["budget", "keywords", "lidemo", "explorer"])
+        self.assertEqual(
+            order, ["budget", "keywords", "gdemo", "lidemo", "explorer"]
+        )
 
     def test_panel_not_named_in_stored_order_keeps_its_natural_place(self) -> None:
-        # A layout saved before the LinkedIn audience panel existed must not drop
-        # it: unnamed panels follow the ordered ones rather than disappearing.
+        # A layout saved before the demographics panels existed must not drop
+        # them: unnamed panels follow the ordered ones rather than disappearing.
         layout = {"order": ["budget", "explorer"], "hidden": []}
         order = _panel_order(self._render(layout, is_admin=True))
-        self.assertEqual(order, ["budget", "explorer", "keywords", "lidemo"])
+        self.assertEqual(
+            order, ["budget", "explorer", "keywords", "gdemo", "lidemo"]
+        )
 
     def test_hidden_panel_absent_for_client(self) -> None:
         html = self._render({"order": [], "hidden": ["keywords"]}, is_admin=False)
@@ -117,7 +126,7 @@ class ExplorerCardLayoutTests(unittest.TestCase):
     def test_unknown_keys_ignored(self) -> None:
         html = self._render({"order": ["nope"], "hidden": ["nope"]}, is_admin=True)
         self.assertEqual(
-            _panel_order(html), ["explorer", "keywords", "lidemo", "budget"]
+            _panel_order(html), ["explorer", "keywords", "gdemo", "lidemo", "budget"]
         )
         self.assertNotIn('class="ov-unit ov-unit--hidden"', _explorer_pane(html))
 
