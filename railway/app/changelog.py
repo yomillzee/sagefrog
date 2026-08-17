@@ -62,6 +62,16 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-08-17",
+        title="Removed the \"Data through\" chip",
+        area="Client dashboards",
+        kind="fixed",
+        summary=(
+            "The admin-preview chip showing how current the numbers are has been "
+            "taken back off the filter bar."
+        ),
+    ),
+    Entry(
         date="2026-08-16",
         title="Google Ads now shows who the money is going to",
         area="Client dashboards · Campaign explorer",

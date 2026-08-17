@@ -1486,29 +1486,6 @@ def render_bigquery_dashboard_page(
     .anno-hint {{ color:var(--muted); font-size:.74rem; font-weight:500; text-transform:none; letter-spacing:0; margin:0; }}
     @media (max-width: 560px) {{ .anno-form-row {{ grid-template-columns:1fr; }} }}
 
-    /* ---- Data freshness chip (admin preview) ----
-       Every connector lags differently and by a different amount; a soft last
-       week reads very differently once you know one platform stopped syncing on
-       Tuesday. The chip states the oldest source's through-date (the honest
-       floor for a combined number) and the tooltip breaks it down per source. */
-    .data-fresh-group {{ margin-left:auto; }}
-    .data-fresh {{ position:relative; display:inline-flex; align-items:center; gap:7px; padding:5px 11px; border:1px solid var(--line); border-radius:999px; background:var(--card); color:var(--muted); font-size:.74rem; font-weight:700; white-space:nowrap; cursor:default; }}
-    .data-fresh:focus-visible {{ outline:2px solid #bcd4f0; outline-offset:1px; }}
-    .df-dot {{ width:7px; height:7px; border-radius:50%; background:var(--ok); flex:0 0 auto; }}
-    .data-fresh.stale .df-dot {{ background:#b7791f; }}
-    .data-fresh.stale {{ border-color:#f0e0b6; background:#fdf9ef; color:#8a6d1f; }}
-    .data-fresh.very-stale .df-dot {{ background:var(--bad); }}
-    .data-fresh.very-stale {{ border-color:#f3c0bb; background:#fdf2f1; color:var(--bad); }}
-    .df-tip {{ position:absolute; top:calc(100% + 8px); right:0; z-index:60; min-width:230px; max-width:320px; padding:10px 12px; border-radius:var(--radius-sm); background:#0b1020; color:#e8eefc; font-size:.72rem; font-weight:500; line-height:1.5; text-align:left; white-space:normal; box-shadow:0 10px 30px -10px rgba(11,16,32,.55); opacity:0; visibility:hidden; transition:opacity .12s ease; }}
-    .data-fresh:hover .df-tip, .data-fresh:focus-visible .df-tip {{ opacity:1; visibility:visible; }}
-    .df-row {{ display:flex; justify-content:space-between; gap:14px; }}
-    .df-row + .df-row {{ margin-top:3px; }}
-    .df-row .df-lag {{ color:#9aa7bd; }}
-    @media (max-width: 860px) {{
-      .data-fresh-group {{ margin-left:0; }}
-      .df-tip {{ right:auto; left:0; }}
-    }}
-
     /* ---- Explorer filter dropdowns (sticky bar) ---- */
     #explorerFilterBar {{ gap:8px; flex-wrap:wrap; }}
     .expl-dd .ke-dd-toggle {{ min-width:0; }}
@@ -2203,18 +2180,6 @@ def render_bigquery_dashboard_page(
           </div>
         </div>
         <div class="filter-group" id="explorerFilterBar" hidden></div>
-        <!-- How current the numbers are. Filled by loadHealth() from the
-             latest_date each connector reports, and hidden until then (and for
-             non-admins, while this is in preview). It sits at the end of the
-             filter row because it qualifies every number on the page, not one
-             picker. -->
-        <div class="filter-group data-fresh-group" id="dataFreshGroup" hidden>
-          <span class="data-fresh" id="dataFresh" tabindex="0">
-            <span class="df-dot" id="dataFreshDot" aria-hidden="true"></span>
-            <span id="dataFreshLabel"></span>
-            <span class="df-tip" id="dataFreshTip" role="tooltip"></span>
-          </span>
-        </div>
       </div>
       </div>
     </div>
@@ -4092,44 +4057,6 @@ def render_bigquery_dashboard_page(
     // Deduped: the page kicks this off at startup for the comparison notice
     // while the Overview loader asks for it too -- one fetch serves both.
     let _healthInflight = null;
-    // ---- "Data through" chip ----
-    // The chip reports the *oldest* source's through-date, because any number
-    // that combines sources is only as current as its laggard; per-source dates
-    // are in the tooltip. Lag is measured against yesterday, not today: every
-    // platform here reports a day behind by design, so a source current through
-    // yesterday is healthy, not a day stale.
-    function _daysBetween(aIso, bIso) {{
-      const a = new Date(aIso + 'T00:00:00'), b = new Date(bIso + 'T00:00:00');
-      return Math.round((b - a) / 86400000);
-    }}
-    function renderFreshness(rows) {{
-      const group = document.getElementById('dataFreshGroup');
-      if (!group || !IS_ADMIN) return;
-      const dated = (rows||[])
-        .filter(r => r && r.latest_date)
-        .map(r => ({{ name: CMP_SOURCE_LABELS[String(r.source||'').toLowerCase()] || String(r.source||''), date: String(r.latest_date) }}))
-        .sort((a,b) => a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
-      if (!dated.length) {{ group.hidden = true; return; }}
-
-      const yesterday = fmtDate(new Date(Date.now() - 86400000));
-      const oldest = dated[0];
-      const lag = Math.max(0, _daysBetween(oldest.date, yesterday));
-      const chip = document.getElementById('dataFresh');
-      chip.className = 'data-fresh' + (lag >= 3 ? ' very-stale' : (lag >= 1 ? ' stale' : ''));
-      const pretty = new Date(oldest.date + 'T00:00:00')
-        .toLocaleDateString(undefined, {{ month:'short', day:'numeric' }});
-      document.getElementById('dataFreshLabel').textContent = 'Data through ' + pretty;
-      document.getElementById('dataFreshTip').innerHTML =
-        `<div class="df-row"><strong>Latest day per source</strong></div>`
-        + dated.map(d => {{
-            const dl = Math.max(0, _daysBetween(d.date, yesterday));
-            const note = dl === 0 ? 'current' : (dl === 1 ? '1 day behind' : dl + ' days behind');
-            return `<div class="df-row"><span>${{esc(d.name)}}</span><span class="df-lag">${{esc(d.date)}} · ${{note}}</span></div>`;
-          }}).join('')
-        + `<div class="df-row" style="margin-top:7px"><span class="df-lag">Combined figures are only as current as the oldest source. Platforms normally report one day behind.</span></div>`;
-      group.hidden = false;
-    }}
-
     function loadHealth() {{
       if (_healthInflight) return _healthInflight;
       _healthInflight = (async () => {{
@@ -4142,7 +4069,6 @@ def render_bigquery_dashboard_page(
             if (k && r.earliest_date) earliestDates[k] = r.earliest_date;
           }}
           syncCompareNotice();
-          renderFreshness(rows);
         }} catch(err) {{
           // Non-fatal: no earliest-date info just means no comparison warnings.
         }} finally {{
