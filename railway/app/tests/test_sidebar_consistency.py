@@ -75,8 +75,15 @@ class SidebarConsistencyTests(unittest.TestCase):
         from dashboard.renderers.bigquery_dashboard_renderer import render_bigquery_dashboard_page
         from dashboard.renderers.bigquery_settings_renderer import render_bigquery_settings_page
         from dashboard.renderers.base_layout import render_client_shell_page
+        from dashboard.renderers.gtm_renderer import render_gtm_page
         kw = dict(access_key="k", session_is_admin=True, session_email="admin@sf.com")
         return {
+            # Event Tracking is a standalone page and used to hand-roll its own
+            # section nav, which is how it drifted out of step with every other
+            # page. It goes through the shared shell now — assert it here so it
+            # can't drift again.
+            "event_tracking": render_gtm_page(
+                client_slug="test", label="Test Co", **kw),
             "dashboard": render_bigquery_dashboard_page(
                 client_slug="test", api_client_key="test", label="Test Co", **kw),
             "settings": render_bigquery_settings_page(

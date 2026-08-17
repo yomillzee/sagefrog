@@ -63,6 +63,24 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-17",
+        title="Event Tracking has the same sidebar as every other page",
+        area="Client dashboards · Event Tracking",
+        kind="fixed",
+        summary=(
+            "Event Tracking was still drawing a sidebar of its own, so opening it "
+            "changed the menu: sections that exist for the client went missing, "
+            "ones they don't have appeared, and Files and Settings dropped out. "
+            "It now uses the same menu as the rest of the client's pages."
+        ),
+        details=(
+            "AI Traffic, Email Performance, LinkedIn Organic and Consent Health "
+            "are reachable from Event Tracking now, and Search Console no longer "
+            "shows for clients without it.",
+            "Sections an admin hid under Settings → Advanced stay hidden here too.",
+        ),
+    ),
+    Entry(
+        date="2026-08-17",
         title="Removed the \"Data through\" chip",
         area="Client dashboards",
         kind="fixed",
