@@ -63,6 +63,21 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-17",
+        title="Timeline moved to Insights",
+        area="Client dashboards · Insights",
+        kind="improved",
+        summary=(
+            "The Timeline manager — adding the launches, site changes and "
+            "budget shifts that get drawn onto the trend charts — moved from "
+            "the bottom of the Overview tab to the Insights page in Settings."
+        ),
+        details=(
+            "The dated markers still show up on every trend chart exactly as "
+            "before; only the tool for adding and editing them moved.",
+        ),
+    ),
+    Entry(
+        date="2026-08-17",
         title="Scrollbars look like part of the portal now",
         area="Everywhere",
         kind="improved",
