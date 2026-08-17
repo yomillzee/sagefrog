@@ -63,6 +63,23 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-17",
+        title="Scrollbars look like part of the portal now",
+        area="Everywhere",
+        kind="improved",
+        summary=(
+            "When the left menu or a wide table needed to scroll, you got the "
+            "browser's default grey scrollbar bolted on top of the design. "
+            "It's now a slim rounded bar in the portal's own colours."
+        ),
+        details=(
+            "In the navy menu it's a faint light bar; on white cards and tables "
+            "it's a soft grey one.",
+            "It stays quiet until you move the pointer over that area, then "
+            "darkens so it's easy to grab.",
+        ),
+    ),
+    Entry(
+        date="2026-08-17",
         title="Event Tracking has the same sidebar as every other page",
         area="Client dashboards · Event Tracking",
         kind="fixed",

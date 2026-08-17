@@ -2270,6 +2270,39 @@ SIDEBAR_CSS = """
       flex: 1 1 auto;
       min-height: 0;
       overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      /* A slim, translucent pill instead of the chunky light-grey OS bar, which
+         read as a foreign element bolted onto the navy rail. Translucent white
+         means it tints with whatever the gradient is doing behind it. */
+      scrollbar-width: thin;
+      scrollbar-color: rgba(226, 236, 248, 0.28) transparent;
+    }
+    .dash-sidebar-scroll::-webkit-scrollbar {
+      width: 10px;
+    }
+    .dash-sidebar-scroll::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .dash-sidebar-scroll::-webkit-scrollbar-thumb {
+      background: rgba(226, 236, 248, 0.28);
+      border-radius: 999px;
+      /* Transparent border painted over the thumb via background-clip insets it
+         from the rail's edge, so it floats rather than butting the wall. */
+      border: 3px solid transparent;
+      background-clip: padding-box;
+    }
+    /* Idle, the thumb is a faint hint; it firms up once the pointer is in the
+       rail, so it's findable when wanted and quiet when not. */
+    .dash-sidebar-scroll:hover {
+      scrollbar-color: rgba(226, 236, 248, 0.45) transparent;
+    }
+    .dash-sidebar-scroll:hover::-webkit-scrollbar-thumb {
+      background: rgba(226, 236, 248, 0.45);
+      background-clip: padding-box;
+    }
+    .dash-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+      background: rgba(226, 236, 248, 0.62);
+      background-clip: padding-box;
     }
 
     /* Primary view nav */
@@ -3246,6 +3279,68 @@ SITE_FOOTER_CSS = """
     }
 """
 
+# Scrollers on the light content surfaces (the navy rail is handled inside
+# SIDEBAR_CSS, where the thumb has to be light-on-dark instead).
+#
+# The OS default bar is a chunky grey slab that reads as browser chrome parked on
+# top of the card rather than part of it. These get a slim rounded thumb in the
+# card palette, faint until the pointer is over the scroller.
+#
+# ``.table-wrap`` is the shared table scroller used by ~15 renderers. The rest
+# are named scrollers on individual pages, opted in here so there is one place to
+# change the treatment; ``.scroll-slim`` is the utility to reach for on anything
+# new rather than adding another selector to this list.
+LIGHT_SCROLLBAR_CSS = """
+    .table-wrap, .ke-dd-list, .ec-list, .scroll-slim {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(90, 107, 130, 0.24) transparent;
+    }
+    .table-wrap:hover, .ke-dd-list:hover, .ec-list:hover, .scroll-slim:hover {
+      scrollbar-color: rgba(90, 107, 130, 0.42) transparent;
+    }
+    .table-wrap::-webkit-scrollbar,
+    .ke-dd-list::-webkit-scrollbar,
+    .ec-list::-webkit-scrollbar,
+    .scroll-slim::-webkit-scrollbar { width: 10px; height: 10px; }
+    .table-wrap::-webkit-scrollbar-track,
+    .ke-dd-list::-webkit-scrollbar-track,
+    .ec-list::-webkit-scrollbar-track,
+    .scroll-slim::-webkit-scrollbar-track { background: transparent; }
+    /* The transparent border plus background-clip insets the thumb from the
+       track edge, so it floats inside the card's rounded border rather than
+       butting up against it. */
+    .table-wrap::-webkit-scrollbar-thumb,
+    .ke-dd-list::-webkit-scrollbar-thumb,
+    .ec-list::-webkit-scrollbar-thumb,
+    .scroll-slim::-webkit-scrollbar-thumb {
+      background: rgba(90, 107, 130, 0.24);
+      border-radius: 999px;
+      border: 3px solid transparent;
+      background-clip: padding-box;
+    }
+    .table-wrap:hover::-webkit-scrollbar-thumb,
+    .ke-dd-list:hover::-webkit-scrollbar-thumb,
+    .ec-list:hover::-webkit-scrollbar-thumb,
+    .scroll-slim:hover::-webkit-scrollbar-thumb {
+      background: rgba(90, 107, 130, 0.42);
+      background-clip: padding-box;
+    }
+    .table-wrap::-webkit-scrollbar-thumb:hover,
+    .ke-dd-list::-webkit-scrollbar-thumb:hover,
+    .ec-list::-webkit-scrollbar-thumb:hover,
+    .scroll-slim::-webkit-scrollbar-thumb:hover {
+      background: rgba(90, 107, 130, 0.6);
+      background-clip: padding-box;
+    }
+    /* A table can scroll on both axes, so without this the corner shows as a
+       grey square notched out of the card. */
+    .table-wrap::-webkit-scrollbar-corner,
+    .scroll-slim::-webkit-scrollbar-corner { background: transparent; }
+    @media print {
+      .table-wrap, .scroll-slim { scrollbar-width: none; }
+    }
+"""
+
 # Ships with the shared chrome, so every page that already pulls in SIDEBAR_CSS
-# styles the footer without a second import.
-SIDEBAR_CSS += SITE_FOOTER_CSS
+# styles the footer and its scrollers without a second import.
+SIDEBAR_CSS += SITE_FOOTER_CSS + LIGHT_SCROLLBAR_CSS

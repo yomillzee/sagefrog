@@ -1719,7 +1719,10 @@ def render_bigquery_dashboard_page(
     .li-bar-fill {{ display:block; height:100%; border-radius:5px; min-width:3px; background:#0A66C2; }}
     .cmp-warn {{ display:inline-block; margin-left:6px; font-size:.85rem; cursor:help; color:#b78103; }}
     .cmp-warn[hidden] {{ display:none; }}
-    /* ---- Tables ---- */
+    /* ---- Tables ----
+       The slim scrollbar treatment for .table-wrap (and the dropdown lists
+       above) lives in base_layout's LIGHT_SCROLLBAR_CSS, shared with every
+       other page. */
     .table-wrap {{ overflow:auto; border:1px solid var(--line-soft); border-radius:var(--radius-sm); }}
     table {{ border-collapse:collapse; width:100%; min-width:600px; font-size:.86rem; }}
     th,td {{ padding:10px 13px; border-bottom:1px solid var(--line-soft); text-align:right; white-space:nowrap; }}
