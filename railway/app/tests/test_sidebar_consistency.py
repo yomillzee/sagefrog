@@ -140,15 +140,16 @@ class SidebarConsistencyTests(unittest.TestCase):
 
     def test_sidebar_layout_order(self) -> None:
         # Logo → client switcher → section nav (with the Admin bucket at its
-        # foot) → footer, with the collapse control last of all.
+        # foot) → collapse control → footer. The collapse control sits above the
+        # footer's Files divider, not below it.
         for name, html in self._render_all().items():
             order = [
                 html.index('class="dash-sidebar-head"'),
                 html.index('<div class="dash-sidebar-client">'),
                 html.index('<div class="dash-sidebar-scroll">'),
                 html.index('<nav class="dash-sidebar-nav dash-sidebar-nav--admin"'),
-                html.index('<div class="dash-sidebar-footer">'),
                 html.index('class="dash-sidebar-collapse-row"'),
+                html.index('<div class="dash-sidebar-footer">'),
             ]
             self.assertEqual(order, sorted(order), f"sidebar order wrong on {name}")
 
