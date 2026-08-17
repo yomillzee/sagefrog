@@ -1486,15 +1486,15 @@ def render_sidebar(
         {view_nav_html}
         {admin_nav_html}
       </div>
+      <div class="dash-sidebar-collapse-row">
+        <button type="button" class="dash-sidebar-collapse" id="sidebarCollapse"
+          aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">{_NAV_ICON_COLLAPSE}</button>
+      </div>
       <div class="dash-sidebar-footer">
         <nav class="dash-sidebar-links" aria-label="Account navigation">
           {files_btn}
         </nav>
         {account_html}
-        <div class="dash-sidebar-collapse-row">
-          <button type="button" class="dash-sidebar-collapse" id="sidebarCollapse"
-            aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">{_NAV_ICON_COLLAPSE}</button>
-        </div>
       </div>
     </aside>
     <button type="button" class="dash-sidebar-reopen" id="sidebarReopen"
@@ -3083,7 +3083,9 @@ SIDEBAR_CSS = """
     .dash-sidebar-collapse-row {
       display: flex;
       justify-content: flex-end;
-      margin-top: 10px;
+      flex-shrink: 0;
+      padding: 0 13px;
+      margin: 10px 0;
     }
     .dash-sidebar-collapse {
       display: inline-flex;
