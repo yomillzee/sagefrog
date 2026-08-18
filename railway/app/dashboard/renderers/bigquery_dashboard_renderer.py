@@ -1395,8 +1395,6 @@ def render_bigquery_dashboard_page(
               <button type="button" class="watch-btn" id="gscWatchBulkCancel">Cancel</button>
             </div>
           </div></span></div></div>
-        <p class="muted watch-intro">The keywords we are deliberately writing for. Position is the impression-weighted average rank over the selected range; the spark line covers the last 13 weeks and rises as the rank improves.</p>
-        <p class="muted watch-intro debug-only watch-admin-hint">Click a keyword to change it. Drag the handle to reorder — or focus it and use the arrow keys. Sorting by a column is a view; <span class="watch-order-mark">⇅</span> puts the list back in your order.</p>
         <div class="table-wrap"><table id="gscWatchTable" class="compact watch-table"></table></div>
       </section>"""
 
@@ -1880,7 +1878,6 @@ def render_bigquery_dashboard_page(
     .gsc-ctr-above .gsc-ctr-dot {{ background:#0a7f3f; }}
     .gsc-ctr-below .gsc-ctr-dot {{ background:#d97706; }}
     /* Keyword watchlist: one row per watched keyword, with a rank spark line. */
-    .watch-intro {{ font-size:.76rem; margin:-2px 0 11px; max-width:74ch; }}
     #gscWatchTable td.left {{ max-width:0; }}
     #gscWatchTable td.left > * {{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
     .watch-kw {{ font-weight:700; }}
@@ -1896,10 +1893,6 @@ def render_bigquery_dashboard_page(
     .watch-btn-primary {{ border-color:var(--accent); color:#fff; background:var(--accent); }}
     .watch-btn-primary:hover {{ color:#fff; filter:brightness(1.06); }}
     .watch-hint {{ font-size:.7rem; color:#7d8ba0; margin:7px 0 0; }}
-    /* Admin-only "how to work this table" line -- .debug-only is inline-block by
-       default, which would drop it beside the intro paragraph. */
-    .is-admin p.watch-admin-hint {{ display:block !important; margin-top:-6px; font-size:.72rem; }}
-    .watch-order-mark {{ font-weight:800; color:#5a6b80; }}
     /* Bulk add popover, anchored under its button. Deliberately sets no display
        property: the `hidden` attribute is what opens and closes it, and an
        author `display` rule would beat it (which is exactly how the first
@@ -4041,14 +4034,15 @@ def render_bigquery_dashboard_page(
         return gscWatch.sortDir==='asc' ? num(va)-num(vb) : num(vb)-num(va);
       }});
       const arrow=k=>gscWatch.sortKey===k?(gscWatch.sortDir==='asc'?' ▴':' ▾'):'';
-      const th=(k,label,cls)=>`<th class="watch-sort${{cls?' '+cls:''}}${{gscWatch.sortKey===k?' active':''}}" data-watch-key="${{k}}">${{label}}${{arrow(k)}}</th>`;
+      const th=(k,label,cls,tip)=>`<th class="watch-sort${{cls?' '+cls:''}}${{gscWatch.sortKey===k?' active':''}}" data-watch-key="${{k}}"${{tip?` title="${{esc(tip)}}"`:''}}>${{label}}${{arrow(k)}}</th>`;
       // The handle column's header is the way back to list order, so a metric
       // sort is never a dead end for someone who wants to rearrange.
       const gripHead = IS_ADMIN
         ? `<th class="watch-sort watch-grip-cell${{manual?' active':''}}" data-watch-key="manual" title="List order — drag rows to reorder">⇅</th>`
         : '';
       const head=`<thead><tr>${{gripHead}}<th class="left">Keyword</th>`
-        + th('avg_position','Position · 13 wks') + th('delta_position','Δ Pos')
+        + th('avg_position','Position · 13 wks', '', 'Impression-weighted average rank over the selected range. The spark line covers the last 13 weeks and rises as the rank improves.')
+        + th('delta_position','Δ Pos', '', 'Change in average rank against the comparison period. Positive means the keyword moved toward rank 1.')
         + WATCH_COLS.map(c=>th(c.key,c.label)).join('')
         + (IS_ADMIN ? `<th></th>` : '') + `</tr></thead>`;
       const body=`<tbody>`+sorted.map(r=>{{
