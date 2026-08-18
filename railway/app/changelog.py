@@ -63,6 +63,24 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-18",
+        title="Put the keyword watchlist in the order you want to read it",
+        area="Search Console",
+        kind="improved",
+        summary=(
+            "Watchlist rows can be dragged into any order, and the list now opens "
+            "in that order instead of by impressions — so the keywords this "
+            "quarter is about can sit at the top."
+        ),
+        details=(
+            "Drag the handle at the left of a row, or focus it and use the arrow "
+            "keys (Home and End send a row to the top or bottom).",
+            "Sorting by a column is still just a view: the ⇅ header puts the "
+            "list back in your order.",
+            "A new row is added at the top, where you can see it.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
         title="Edit the keyword watchlist in the list itself, and paste in a batch",
         area="Search Console",
         kind="improved",

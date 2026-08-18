@@ -1388,6 +1388,7 @@ def render_bigquery_dashboard_page(
       <section id="sec-gsc-watchlist">
         <div class="sec-head"><h2>Keyword watchlist</h2><div class="sec-head-actions"><span class="status" id="gscWatchStatus"></span><button type="button" class="watch-btn debug-only" id="gscWatchAdd">+ Add keyword</button><button type="button" class="watch-btn debug-only" id="gscWatchBulkBtn" aria-expanded="false">Bulk add</button></div></div>
         <p class="muted watch-intro">The keywords we are deliberately writing for, and the page each one is aimed at. Position is the impression-weighted average rank over the selected range; the spark line covers the last 13 weeks and rises as the rank improves.</p>
+        <p class="muted watch-intro debug-only watch-admin-hint">Click a keyword or page to change it. Drag the handle to reorder — or focus it and use the arrow keys. Sorting by a column is a view; <span class="watch-order-mark">⇅</span> puts the list back in your order.</p>
         <div class="watch-bulk" id="gscWatchBulk" hidden>
           <textarea id="gscWatchBulkText" rows="4" spellcheck="false" placeholder="hvac software, /blog/hvac-software&#10;manufacturing seo, industrial marketing, plant maintenance seo"></textarea>
           <div class="watch-bulk-foot">
@@ -1898,6 +1899,10 @@ def render_bigquery_dashboard_page(
     .watch-btn-primary {{ border-color:var(--accent); color:#fff; background:var(--accent); }}
     .watch-btn-primary:hover {{ color:#fff; filter:brightness(1.06); }}
     .watch-hint {{ font-size:.7rem; color:#7d8ba0; flex:1 1 16ch; min-width:0; }}
+    /* Admin-only "how to work this table" line -- .debug-only is inline-block by
+       default, which would drop it beside the intro paragraph. */
+    .is-admin p.watch-admin-hint {{ display:block !important; margin-top:-6px; font-size:.72rem; }}
+    .watch-order-mark {{ font-weight:800; color:#5a6b80; }}
     .watch-bulk {{ display:none; }}
     .is-admin .watch-bulk {{ display:block; padding:10px; margin-bottom:11px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; }}
     .watch-bulk textarea {{ width:100%; box-sizing:border-box; font:inherit; font-size:.8rem; line-height:1.5; padding:7px 9px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; color:inherit; resize:vertical; }}
@@ -1913,6 +1918,19 @@ def render_bigquery_dashboard_page(
     /* A row added but not yet named -- tinted so it is obvious the list is
        waiting on you, and it stays at the top until it has a keyword. */
     .watch-draft td {{ background:#fbfdff; }}
+    /* Drag handle. Only meaningful in list order, where the row's position is
+       the thing being stored -- under a metric sort the cell is a button back to
+       list order instead, since dragging could not mean anything there. */
+    .watch-grip {{ display:inline-block; color:#c9d3e0; cursor:grab; line-height:1; padding:2px 3px; border-radius:3px; font-size:.9rem; letter-spacing:-1px; }}
+    tr:hover .watch-grip {{ color:#8a97a8; }}
+    .watch-grip:hover, .watch-grip:focus-visible {{ color:var(--accent); background:#eef4fb; outline:none; }}
+    .watch-grip:active {{ cursor:grabbing; }}
+    td.watch-grip-cell {{ width:22px; padding-left:6px; padding-right:0; text-align:center; }}
+    th.watch-grip-cell {{ width:22px; padding-left:6px; padding-right:0; text-align:center; }}
+    tr.watch-dragging td {{ opacity:.45; }}
+    /* Where the row will land, drawn on the row you are hovering over. */
+    tr.watch-drop-above td {{ box-shadow:inset 0 2px 0 var(--accent); }}
+    tr.watch-drop-below td {{ box-shadow:inset 0 -2px 0 var(--accent); }}
     .watch-rm {{ border:1px solid transparent; background:transparent; color:#c9d3e0; border-radius:var(--radius-sm); width:22px; height:22px; line-height:1; cursor:pointer; }}
     tr:hover .watch-rm {{ color:#8a97a8; border-color:var(--line); }}
     .watch-rm:hover {{ border-color:#e6a6a6; color:#8a2020; }}
@@ -3953,7 +3971,10 @@ def render_bigquery_dashboard_page(
     // page was written for this keyword" -- with its own rank spark line, so a
     // commitment made when the blog was briefed has somewhere to be checked.
     let gscWatchItems = (GSC_WATCH_ITEMS || []).map(it => ({{kw:String(it.kw||''), page:String(it.page||'')}}));
-    const gscWatch = {{rows:{{}}, weekly:{{}}, pages:{{}}, sortKey:'impressions', sortDir:'desc'}};
+    // Default sort is 'manual' -- the order the admin arranged, which is the
+    // order the list is stored in. A curated list should open the way it was
+    // curated; the metric columns are still one click away.
+    const gscWatch = {{rows:{{}}, weekly:{{}}, pages:{{}}, sortKey:'manual', sortDir:'asc', dragFrom:null}};
     const watchKey = kw => String(kw||'').trim().toLowerCase();
     const watchTerms = () => gscWatchItems.map(i=>i.kw.trim()).filter(Boolean);
     const watchPages = () => gscWatchItems.map(i=>i.page.trim()).filter(Boolean);
@@ -4020,7 +4041,11 @@ def render_bigquery_dashboard_page(
       // Missing metrics always sort last, in both directions: an unranked
       // keyword reads as 0 impressions but as no position at all, and sorting it
       // to the top of "best position" would be a lie.
+      const manual = gscWatch.sortKey==='manual';
       const sorted=[...rows].sort((a,b)=>{{
+        // List order is the stored order, and a dragged row means nothing if the
+        // table then re-sorts it away.
+        if (manual) return a.idx-b.idx;
         // A just-added row has no keyword yet and no metrics to sort on, so it
         // pins to the top rather than falling in with the unranked rows.
         if (a.draft!==b.draft) return a.draft ? -1 : 1;
@@ -4032,8 +4057,13 @@ def render_bigquery_dashboard_page(
         return gscWatch.sortDir==='asc' ? num(va)-num(vb) : num(vb)-num(va);
       }});
       const arrow=k=>gscWatch.sortKey===k?(gscWatch.sortDir==='asc'?' ▴':' ▾'):'';
-      const th=(k,label)=>`<th class="watch-sort${{gscWatch.sortKey===k?' active':''}}" data-watch-key="${{k}}">${{label}}${{arrow(k)}}</th>`;
-      const head=`<thead><tr><th class="left">Keyword</th><th class="left">Page</th>`
+      const th=(k,label,cls)=>`<th class="watch-sort${{cls?' '+cls:''}}${{gscWatch.sortKey===k?' active':''}}" data-watch-key="${{k}}">${{label}}${{arrow(k)}}</th>`;
+      // The handle column's header is the way back to list order, so a metric
+      // sort is never a dead end for someone who wants to rearrange.
+      const gripHead = IS_ADMIN
+        ? `<th class="watch-sort watch-grip-cell${{manual?' active':''}}" data-watch-key="manual" title="List order — drag rows to reorder">⇅</th>`
+        : '';
+      const head=`<thead><tr>${{gripHead}}<th class="left">Keyword</th><th class="left">Page</th>`
         + th('avg_position','Position · 13 wks') + th('delta_position','Δ Pos')
         + WATCH_COLS.map(c=>th(c.key,c.label)).join('')
         + (IS_ADMIN ? `<th></th>` : '') + `</tr></thead>`;
@@ -4055,7 +4085,13 @@ def render_bigquery_dashboard_page(
         const kwCell = (IS_ADMIN && r.draft)
           ? watchCellInput('kw', r.idx, '')
           : editable('kw', `<span class="watch-kw" title="${{esc(kw)}}">${{esc(kwTxt)}}${{vTag}}</span>`);
-        return `<tr${{r.draft ? ' class="watch-draft"' : ''}}>`
+        // The grip is focusable so the order can be changed from the keyboard
+        // (Arrow keys) as well as dragged.
+        const grip = !IS_ADMIN ? '' : (manual
+          ? `<td class="watch-grip-cell"><span class="watch-grip" draggable="true" data-watch-grip="${{r.idx}}" tabindex="0" role="button" aria-label="Reorder ${{esc(kwTxt||'this row')}} — drag, or use the arrow keys">⠿</span></td>`
+          : `<td class="watch-grip-cell"></td>`);
+        return `<tr${{r.draft ? ' class="watch-draft"' : ''}} data-watch-row="${{r.idx}}">`
+          + grip
           + `<td class="left">${{kwCell}}</td>`
           + `<td class="left">${{editable('page', watchPageCell(r))}}</td>`
           + `<td><span class="watch-spark">${{watchSpark(r.series)}}${{posTxt}}</span></td>`
@@ -4087,7 +4123,7 @@ def render_bigquery_dashboard_page(
       }}
       const reqId=++_gscWatchReqId;
       const el=document.getElementById('gscWatchTable');
-      if (el) el.innerHTML=skelTable(IS_ADMIN ? 8 : 7, Math.min(6, terms.length));
+      if (el) el.innerHTML=skelTable(IS_ADMIN ? 9 : 7, Math.min(6, terms.length));
       setStatus('gscWatchStatus','Loading…');
       let url=withCompare(withDates(GSC_WATCHLIST_API))+'&terms='+encodeURIComponent(terms.join(','));
       const pgs=watchPages();
@@ -4112,6 +4148,9 @@ def render_bigquery_dashboard_page(
       el.addEventListener('click', ev => {{
         const th=ev.target.closest('th.watch-sort'); if(!th) return;
         const key=th.dataset.watchKey;
+        // List order has one direction -- the stored one -- so clicking it is a
+        // switch, not a toggle.
+        if (key==='manual') {{ gscWatch.sortKey='manual'; gscWatch.sortDir='asc'; renderGscWatchTable(); return; }}
         if (gscWatch.sortKey===key) gscWatch.sortDir = gscWatch.sortDir==='asc' ? 'desc' : 'asc';
         else {{
           gscWatch.sortKey=key;
@@ -4161,10 +4200,29 @@ def render_bigquery_dashboard_page(
       if (changed) {{ saveWatchConfig(); loadGscWatchlist(); }}
       else renderGscWatchTable();
     }}
+    // New rows go to the TOP of the list: it is the keyword you are working on
+    // now, and on a long list an appended row would land below the fold. In list
+    // order that is also where it stays until it is dragged.
     function addWatchRow() {{
-      gscWatchItems.push({{kw:'', page:''}});
+      gscWatchItems.unshift({{kw:'', page:''}});
       renderGscWatchTable();
-      focusWatchInput(gscWatchItems.length-1, 'kw');
+      focusWatchInput(0, 'kw');
+    }}
+    // Move one row and persist -- no refetch, because the set of watched terms
+    // is unchanged and the data behind each row is already in hand.
+    function moveWatchItem(from, to) {{
+      if (from===to || from==null || to==null) return;
+      if (from<0 || from>=gscWatchItems.length) return;
+      to=Math.max(0, Math.min(gscWatchItems.length-1, to));
+      const [item]=gscWatchItems.splice(from,1);
+      gscWatchItems.splice(to,0,item);
+      // Reordering only means something in list order, so a drag under a metric
+      // sort switches the view to where the change is visible.
+      gscWatch.sortKey='manual'; gscWatch.sortDir='asc';
+      saveWatchConfig();
+      renderGscWatchTable();
+      const grip=document.querySelector(`[data-watch-grip="${{to}}"]`);
+      if (grip) grip.focus();
     }}
     // Bulk add. Two shapes people actually paste, told apart by whether the
     // second field looks like a page: "keyword, /page" is one row, and a line of
@@ -4243,6 +4301,59 @@ def render_bigquery_dashboard_page(
           const inp=ev.target.closest('input[data-watch-in]'); if(!inp) return;
           if (inp.dataset.cancelled) return;
           commitWatchCell(+inp.dataset.watchI, inp.dataset.watchIn, inp.value);
+        }});
+      }}
+      if (IS_ADMIN) {{
+        // Drag to reorder. The row under the pointer shows where the dragged row
+        // will land -- above it or below it, by which half you are over.
+        const clearMarks=()=>table.querySelectorAll('tr.watch-drop-above,tr.watch-drop-below')
+          .forEach(tr=>tr.classList.remove('watch-drop-above','watch-drop-below'));
+        table.addEventListener('dragstart', ev => {{
+          const grip=ev.target.closest('[data-watch-grip]'); if(!grip) return;
+          gscWatch.dragFrom=+grip.dataset.watchGrip;
+          const tr=grip.closest('tr'); if (tr) tr.classList.add('watch-dragging');
+          if (ev.dataTransfer) {{ ev.dataTransfer.effectAllowed='move'; ev.dataTransfer.setData('text/plain', String(gscWatch.dragFrom)); }}
+        }});
+        table.addEventListener('dragover', ev => {{
+          if (gscWatch.dragFrom==null) return;
+          const tr=ev.target.closest('tr[data-watch-row]'); if(!tr) return;
+          ev.preventDefault();
+          if (ev.dataTransfer) ev.dataTransfer.dropEffect='move';
+          const box=tr.getBoundingClientRect();
+          const above=(ev.clientY-box.top) < box.height/2;
+          clearMarks();
+          tr.classList.add(above ? 'watch-drop-above' : 'watch-drop-below');
+        }});
+        table.addEventListener('drop', ev => {{
+          if (gscWatch.dragFrom==null) return;
+          const tr=ev.target.closest('tr[data-watch-row]');
+          ev.preventDefault();
+          const from=gscWatch.dragFrom;
+          gscWatch.dragFrom=null;
+          clearMarks();
+          if (!tr) {{ renderGscWatchTable(); return; }}
+          const over=+tr.dataset.watchRow;
+          const box=tr.getBoundingClientRect();
+          const above=(ev.clientY-box.top) < box.height/2;
+          // Dropping below a row that sits above the dragged one lands ON that
+          // row's index; the splice removing the source first shifts the rest.
+          let to=above ? over : over+1;
+          if (from<to) to--;
+          moveWatchItem(from, to);
+        }});
+        table.addEventListener('dragend', () => {{
+          gscWatch.dragFrom=null;
+          clearMarks();
+          table.querySelectorAll('tr.watch-dragging').forEach(tr=>tr.classList.remove('watch-dragging'));
+        }});
+        // Same move from the keyboard, for anyone not dragging with a mouse.
+        table.addEventListener('keydown', ev => {{
+          const grip=ev.target.closest('[data-watch-grip]'); if(!grip) return;
+          const from=+grip.dataset.watchGrip;
+          if (ev.key==='ArrowUp') {{ ev.preventDefault(); moveWatchItem(from, from-1); }}
+          else if (ev.key==='ArrowDown') {{ ev.preventDefault(); moveWatchItem(from, from+1); }}
+          else if (ev.key==='Home') {{ ev.preventDefault(); moveWatchItem(from, 0); }}
+          else if (ev.key==='End') {{ ev.preventDefault(); moveWatchItem(from, gscWatchItems.length-1); }}
         }});
       }}
       const addBtn=document.getElementById('gscWatchAdd');
