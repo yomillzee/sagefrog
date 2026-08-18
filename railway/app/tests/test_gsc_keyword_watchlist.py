@@ -180,6 +180,16 @@ class WatchlistRenderTests(unittest.TestCase):
         self.assertIn("data-watch-rm=", self.html)     # per-row remove
         self.assertNotIn("gscWatchEditor", self.html)  # the old side panel
 
+    def test_rows_can_be_reordered_and_list_order_is_the_default(self):
+        """The stored order is the list's own order, so it is what the table
+        opens in and what a drag rewrites."""
+        self.assertIn("data-watch-grip=", self.html)          # per-row drag handle
+        self.assertIn('data-watch-key="manual"', self.html)   # header back to list order
+        self.assertIn("sortKey:'manual'", self.html)          # ...and the default
+        self.assertIn("function moveWatchItem", self.html)
+        # Keyboard reordering, for anyone not dragging with a mouse.
+        self.assertIn("ArrowUp", self.html)
+
     def test_bulk_add_box_is_present_and_explains_both_shapes(self):
         self.assertIn('id="gscWatchBulk"', self.html)
         self.assertIn('id="gscWatchBulkText"', self.html)
