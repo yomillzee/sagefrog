@@ -63,6 +63,25 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-18",
+        title="Email Performance sorts, and looks like the rest of the dashboard",
+        area="Email Performance",
+        kind="improved",
+        summary=(
+            "The page now uses the same cards and tables as Overview and "
+            "Campaign Explorer, every column sorts, and the “Choose emails” "
+            "list is big enough to read full email names."
+        ),
+        details=(
+            "Click any column heading to sort — including a new Send date "
+            "column; click again to reverse it. The table starts newest first.",
+            "Rates sort by their real value, so an email with no deliveries "
+            "never outranks one that performed.",
+            "The “Choose emails” popover is roughly twice as wide and tall, "
+            "and email names wrap instead of being cut off.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
         title="Engagement over time shows the days posts went out",
         area="LinkedIn Organic",
         kind="new",

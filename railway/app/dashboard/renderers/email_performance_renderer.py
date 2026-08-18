@@ -1,15 +1,19 @@
 """HTML renderer for the standalone Email Performance page (HubSpot).
 
-Laid out like the rest of the dashboard (Overview / Lead Tracking): a row of
-hero KPI tiles summarising the current selection, then a single Performance
-card whose table lists delivery / open-rate / click-rate / unsub-rate per email.
-Choosing which emails to show is a low-profile control — a compact "Choose
-emails" button in the card header opens a popover checklist (search + list),
-echoing the Campaign Explorer's picker — so the table stays the hero.
+Styled to match Overview / Campaign Explorer rather than inventing its own
+look: the same metric cards, section card, and table chrome (sticky uppercase
+header, right-aligned numbers, click-a-heading-to-sort), so the page reads as
+part of one dashboard. A row of metric cards summarises the current selection,
+then a single Performance card lists send date / delivery / open-rate /
+click-rate / unsub-rate per email, sorted by send date (newest first) until a
+column heading says otherwise. Choosing which emails to show is a low-profile
+control — a compact "Choose emails" button in the card header opens a popover
+checklist (search + list), echoing the Campaign Explorer's picker — so the
+table stays the hero.
 
 All interaction is client-side: the full email set is embedded once as JSON and
-the tiles, picker, and table are built from it, so selecting, searching, and
-removing never hit the server. An admin's chosen set can be saved portal-wide
+the tiles, picker, and table are built from it, so selecting, searching,
+sorting, and removing never hit the server. An admin's chosen set can be saved portal-wide
 from the popover (see save_email_performance_selection); it then seeds the view
 for every viewer.
 """
@@ -28,30 +32,28 @@ from hubspot_reports_service import EmailPerformanceReport
 _DEFAULT_SELECTED = 5
 
 _EXTRA_CSS = """
-/* Match Overview: a centered content column instead of hugging the sidebar. */
-.ep-wrap { max-width:1320px; margin:0 auto; }
+/* This page borrows Overview / Campaign Explorer's visual language wholesale --
+   the same section card, metric cards, and table chrome (sticky uppercase
+   header, right-aligned numbers, clickable sort headers) -- so it reads as one
+   dashboard rather than a page of its own. The few tones the shared dashboard
+   hardcodes (and the shell theme has no variable for) are declared once here. */
+.ep-wrap { max-width:1320px; margin:0 auto; --line-soft:#eff3f8; --th-bg:#f4f7fb; --th-hover:#e9eef5; --row-hover:#f7faff; }
 .ep-head { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:4px; }
 .ep-title { font-size:1.6rem; font-weight:750; color:var(--navy); margin:0; letter-spacing:-.01em; }
 .ep-sub { font-size:.9rem; color:var(--muted); margin:6px 0 0; }
 
-/* Hero KPI tiles — mirror Lead Tracking / Overview so the page reads as one family. */
-.ep-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; margin:22px 0 20px; }
-.ep-tile { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:18px 20px; box-shadow:var(--shadow-sm); position:relative; overflow:hidden; }
-.ep-tile::before { content:""; position:absolute; inset:0 auto 0 0; width:4px; background:var(--accent); opacity:.85; }
-.ep-tile.t-count::before { background:var(--navy); }
-.ep-tile.t-delivered::before { background:var(--accent); }
-.ep-tile.t-open::before { background:#0ea5e9; }
-.ep-tile.t-click::before { background:var(--ok); }
-.ep-tile.t-unsub::before { background:var(--err); }
-.ep-tile-label { font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:700; margin-bottom:8px; }
-.ep-tile-value { font-size:1.9rem; font-weight:750; color:var(--navy); line-height:1.05; letter-spacing:-.01em; font-variant-numeric:tabular-nums; }
-.ep-tile-sub { font-size:.78rem; color:var(--muted); margin-top:6px; }
+/* Metric cards -- Overview's .cards / .card, down to the 3px accent top rule. */
+.ep-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); gap:10px; margin:20px 0 16px; }
+.ep-tile { background:var(--panel); border:1px solid var(--line-soft); border-top:3px solid var(--accent); border-radius:9px; padding:13px 14px 14px; }
+.ep-tile-label { color:var(--muted); font-size:.65rem; text-transform:uppercase; font-weight:800; letter-spacing:.06em; }
+.ep-tile-value { margin-top:7px; font-size:1.5rem; line-height:1.1; color:var(--navy); font-weight:800; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
+.ep-tile-sub { margin-top:6px; font-size:.72rem; color:var(--muted); font-weight:600; }
 
-/* Card */
-.ep-card { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:20px 22px; margin-bottom:20px; box-shadow:var(--shadow-sm); }
-.ep-card-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 14px; flex-wrap:wrap; }
+/* Section card -- the dashboard's <section>: same radius, padding and shadow. */
+.ep-card { background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:18px 20px 20px; margin-bottom:16px; box-shadow:0 1px 2px rgba(16,33,67,.04), 0 4px 16px rgba(16,33,67,.05); }
+.ep-card-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 16px; flex-wrap:wrap; }
 .ep-card-head-titles { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
-.ep-card h2 { font-size:1rem; font-weight:700; color:var(--navy); margin:0; }
+.ep-card h2 { font-size:1.05rem; font-weight:750; color:var(--navy); margin:0; letter-spacing:-.005em; }
 .ep-card-note { font-size:.78rem; color:var(--muted); }
 .ep-note { background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; border-radius:12px; padding:13px 16px; font-size:.85rem; margin-bottom:20px; }
 
@@ -62,7 +64,9 @@ _EXTRA_CSS = """
 .ep-pick-btn:hover { background:var(--surface); border-color:#cbd5e1; }
 .ep-pick-btn svg { width:15px; height:15px; opacity:.7; }
 .ep-pick-badge { background:var(--accent); color:#fff; font-size:.7rem; font-weight:700; border-radius:999px; padding:1px 7px; line-height:1.5; }
-.ep-pop { position:absolute; z-index:40; top:calc(100% + 6px); right:0; width:340px; max-width:88vw; background:var(--panel); border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow); padding:12px; }
+/* Wide enough to read a full email name without hovering, and tall enough to
+   tick a run of emails without scrolling on a normal laptop screen. */
+.ep-pop { position:absolute; z-index:40; top:calc(100% + 6px); right:0; width:620px; max-width:92vw; background:var(--panel); border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow); padding:14px; }
 .ep-pop[hidden] { display:none; }
 .ep-pop-head { display:flex; align-items:center; justify-content:space-between; margin:0 0 9px; }
 .ep-pop-head span { font-size:.82rem; font-weight:700; color:var(--navy); }
@@ -77,14 +81,16 @@ _EXTRA_CSS = """
 .ep-actions { display:flex; gap:6px; }
 .ep-btn { border:1px solid var(--border); background:var(--panel); color:var(--accent); font-size:.72rem; font-weight:650; padding:4px 9px; border-radius:7px; cursor:pointer; }
 .ep-btn:hover { background:var(--surface); }
-.ep-list { max-height:260px; overflow-y:auto; border:1px solid var(--border); border-radius:10px; }
-.ep-opt { display:flex; align-items:center; gap:10px; padding:8px 12px; border-bottom:1px solid #f1f4f8; cursor:pointer; font-size:.83rem; }
+.ep-list { max-height:min(58vh,520px); overflow-y:auto; border:1px solid var(--border); border-radius:10px; }
+.ep-opt { display:flex; align-items:flex-start; gap:10px; padding:9px 12px; border-bottom:1px solid #f1f4f8; cursor:pointer; font-size:.83rem; }
 .ep-opt:last-child { border-bottom:0; }
 .ep-opt:hover { background:var(--surface); }
-.ep-opt input { width:15px; height:15px; accent-color:var(--accent); flex-shrink:0; cursor:pointer; }
+.ep-opt input { width:15px; height:15px; margin-top:2px; accent-color:var(--accent); flex-shrink:0; cursor:pointer; }
 .ep-opt-main { min-width:0; flex:1; }
-.ep-opt-name { color:var(--text); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.ep-opt-sub { color:var(--muted); font-size:.72rem; margin-top:1px; }
+/* Names wrap instead of truncating -- the popover is wide enough that a long
+   name costs at most a second line, and nothing has to be hovered to be read. */
+.ep-opt-name { color:var(--text); font-weight:600; line-height:1.35; overflow-wrap:anywhere; }
+.ep-opt-sub { color:var(--muted); font-size:.72rem; margin-top:2px; }
 .ep-list-empty { padding:16px; text-align:center; color:var(--muted); font-size:.8rem; }
 .ep-pop-foot { display:flex; align-items:center; gap:10px; margin-top:10px; }
 .ep-save-btn { border:1px solid var(--accent); background:var(--accent); color:#fff; font-size:.76rem; font-weight:650; padding:6px 12px; border-radius:8px; cursor:pointer; }
@@ -94,16 +100,22 @@ _EXTRA_CSS = """
 .ep-save-status.ok { color:var(--ok); }
 .ep-save-status.err { color:var(--err); }
 
-/* Table */
-.ep-table-wrap { overflow-x:auto; }
-.ep-table { width:100%; border-collapse:collapse; font-size:.86rem; }
-.ep-table th { text-align:left; color:var(--muted); font-weight:700; font-size:.68rem; text-transform:uppercase; letter-spacing:.05em; padding:10px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
-.ep-table th.num, .ep-table td.num { text-align:right; font-variant-numeric:tabular-nums; }
-.ep-table td { padding:12px 12px; border-bottom:1px solid #f1f4f8; color:var(--text); vertical-align:top; }
+/* Table -- the dashboard's table chrome: bordered scroller, sticky uppercase
+   header, numbers right-aligned by default, .left for the label column. */
+.ep-table-wrap { overflow:auto; border:1px solid var(--line-soft); border-radius:9px; }
+.ep-table { border-collapse:collapse; width:100%; min-width:760px; font-size:.86rem; }
+.ep-table th, .ep-table td { padding:10px 13px; border-bottom:1px solid var(--line-soft); text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.ep-table th { background:var(--th-bg); color:#5a6b82; text-transform:uppercase; font-size:.67rem; letter-spacing:.05em; font-weight:800; position:sticky; top:0; z-index:1; }
+.ep-table th.left, .ep-table td.left { text-align:left; font-variant-numeric:normal; }
+.ep-table td.left { white-space:normal; max-width:460px; }
 .ep-table tbody tr:last-child td { border-bottom:0; }
-.ep-table tbody tr:hover td { background:var(--surface); }
-.ep-email-name { font-weight:650; color:var(--navy); }
-.ep-email-meta { color:var(--muted); font-size:.74rem; margin-top:2px; }
+.ep-table tbody tr:hover td { background:var(--row-hover); }
+/* Sortable headers, styled like the Explorer's th.expl-sort. */
+.ep-table th.ep-sort { cursor:pointer; user-select:none; transition:background .12s,color .12s; }
+.ep-table th.ep-sort:hover { background:var(--th-hover); color:#33455e; }
+.ep-table th.ep-sort.active { color:var(--accent); }
+.ep-email-name { font-weight:700; color:var(--navy); }
+.ep-email-meta { color:var(--muted); font-size:.74rem; margin-top:2px; font-weight:600; }
 .ep-remove { border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:1.1rem; line-height:1; padding:0 2px; }
 .ep-remove:hover { color:var(--err); }
 .ep-empty { color:var(--muted); font-size:.86rem; padding:26px 4px; text-align:center; }
@@ -138,10 +150,50 @@ _EP_JS = """
   if (savedEl) { try { savedIds = JSON.parse(savedEl.textContent || '[]'); } catch (e) { savedIds = []; } }
   var validSaved = savedIds.filter(function (id) { return byId[id]; });
 
-  // Preserve selection order so the table reads the way the user built it.
+  // `selected` is the *set* of emails in the table; the order they appear in
+  // is the sort below, so ticking an email drops it into the sorted position
+  // rather than at the bottom.
   var selected = validSaved.length
     ? validSaved.slice()
     : emails.slice(0, %DEFAULT%).map(function (e) { return e.id; });
+
+  // Click a column header to sort the table. Send date descending is the
+  // default, which is the order the emails arrive in and the order the default
+  // selection (the N most recent) implies.
+  var sort = { key: 'date', dir: 'desc' };
+  var SORT_DIRS = { name: 'asc', date: 'desc', sent: 'desc', deliveries: 'desc',
+                    open: 'desc', click: 'desc', unsub: 'desc' };
+
+  // Sort value per column: strings for the two text columns, numbers for the
+  // rest. Rates are recomputed from the raw counts so they sort by their true
+  // value rather than by the rounded string in the cell.
+  function sortVal(e, key) {
+    switch (key) {
+      case 'name':       return String(e.name || '').toLowerCase();
+      case 'date':       return String(e._ts || '');
+      case 'sent':       return Number(e._sent || 0);
+      case 'deliveries': return Number(e._delivered || 0);
+      case 'open':       return rate(e._opens, e._delivered);
+      case 'click':      return rate(e._clicks, e._delivered);
+      case 'unsub':      return rate(e._unsub, e._delivered);
+      default:           return 0;
+    }
+  }
+  function rate(num, den) {
+    var d = Number(den || 0);
+    return d > 0 ? Number(num || 0) / d : -1;   // no deliveries sorts below 0%
+  }
+  function sortedSelection() {
+    var ids = selected.filter(function (id) { return byId[id]; });
+    var sign = sort.dir === 'asc' ? 1 : -1;
+    return ids.sort(function (a, b) {
+      var va = sortVal(byId[a], sort.key), vb = sortVal(byId[b], sort.key);
+      if (va < vb) return -sign;
+      if (va > vb) return sign;
+      // Stable tie-break so equal values never shuffle between renders.
+      return String(byId[a].name || '').localeCompare(String(byId[b].name || ''));
+    });
+  }
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -193,27 +245,52 @@ _EP_JS = """
       if (emptyEl) emptyEl.style.display = '';
     } else {
       if (emptyEl) emptyEl.style.display = 'none';
-      selected.forEach(function (id) {
+      sortedSelection().forEach(function (id) {
         var e = byId[id];
-        if (!e) return;
         var tr = document.createElement('tr');
         tr.innerHTML =
-          '<td><div class="ep-email-name">' + esc(e.name) + '</div>' +
-            '<div class="ep-email-meta">' + esc(e.date) +
-            (e.subject ? ' &middot; ' + esc(e.subject) : '') + '</div></td>' +
-          '<td class="num">' + esc(e.sent) + '</td>' +
-          '<td class="num">' + esc(e.deliveries) + '</td>' +
-          '<td class="num">' + esc(e.open) + '</td>' +
-          '<td class="num">' + esc(e.click) + '</td>' +
-          '<td class="num">' + esc(e.unsub) + '</td>' +
-          '<td class="num"><button type="button" class="ep-remove" data-remove="' + esc(e.id) +
+          '<td class="left"><div class="ep-email-name">' + esc(e.name) + '</div>' +
+            (e.subject ? '<div class="ep-email-meta">' + esc(e.subject) + '</div>' : '') +
+          '</td>' +
+          '<td>' + esc(e.date) + '</td>' +
+          '<td>' + esc(e.sent) + '</td>' +
+          '<td>' + esc(e.deliveries) + '</td>' +
+          '<td>' + esc(e.open) + '</td>' +
+          '<td>' + esc(e.click) + '</td>' +
+          '<td>' + esc(e.unsub) + '</td>' +
+          '<td><button type="button" class="ep-remove" data-remove="' + esc(e.id) +
             '" title="Remove" aria-label="Remove">&times;</button></td>';
         tbodyEl.appendChild(tr);
       });
     }
     renderTiles();
     updateCount();
+    renderSortHeaders();
   }
+
+  // The header cells are server-rendered; this only paints the active column
+  // and its direction arrow.
+  var theadEl = document.getElementById('ep-thead');
+  function renderSortHeaders() {
+    if (!theadEl) return;
+    theadEl.querySelectorAll('th.ep-sort').forEach(function (th) {
+      var active = th.getAttribute('data-key') === sort.key;
+      th.classList.toggle('active', active);
+      th.setAttribute('aria-sort', active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none');
+      var arrow = th.querySelector('.ep-arrow');
+      if (arrow) arrow.textContent = active ? (sort.dir === 'asc' ? ' \u25B4' : ' \u25BE') : '';
+    });
+  }
+  if (theadEl) theadEl.addEventListener('click', function (ev) {
+    var th = ev.target.closest('th.ep-sort');
+    if (!th) return;
+    var key = th.getAttribute('data-key');
+    // Re-clicking the active column flips it; a new column starts in the
+    // direction that reads as "best first" for that kind of value.
+    if (sort.key === key) sort.dir = sort.dir === 'asc' ? 'desc' : 'asc';
+    else { sort.key = key; sort.dir = SORT_DIRS[key] || 'desc'; }
+    renderTable();
+  });
 
   function updateCount() {
     if (popCountEl) popCountEl.textContent = selected.length + ' selected';
@@ -347,6 +424,24 @@ def _fmt_dt(v: Any) -> str:
     return _esc(str(v)) if v else "—"
 
 
+def _iso(v: Any) -> str:
+    """Send date as a sortable string; unknown dates sort last under a desc
+    sort (the default) because the empty string compares lowest."""
+    if isinstance(v, (datetime, date)):
+        return v.isoformat()
+    return str(v) if v else ""
+
+
+def _sort_th(key: str, label: str, *, left: bool = False) -> str:
+    """A clickable column heading. The arrow span is filled in by the JS, which
+    owns which column is active."""
+    cls = "ep-sort left" if left else "ep-sort"
+    return (
+        f'<th class="{cls}" data-key="{key}" scope="col" aria-sort="none">'
+        f'{_esc(label)}<span class="ep-arrow"></span></th>'
+    )
+
+
 def _num(v: Any) -> float:
     """Raw numeric coercion for client-side tile aggregation (0.0 on junk)."""
     try:
@@ -367,12 +462,16 @@ def _email_payload(emails: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "name":       e.get("name") or e.get("subject") or "Untitled email",
             "subject":    e.get("subject") or "",
             "date":       _fmt_dt(e.get("publish_date")),
+            # Sortable form of the send date (ISO, so string order = date order).
+            "_ts":        _iso(e.get("publish_date")),
             "sent":       _fmt_int(e.get("sent") or 0),
             "deliveries": _fmt_int(delivered),
             "open":       _rate_str(e.get("opens"), delivered),
             "click":      _rate_str(e.get("clicks"), delivered),
             "unsub":      _rate_str(e.get("unsubscribed"), delivered, decimals=2),
-            # Raw counts for the KPI tiles (weighted rates = Σnum / Σdeliveries).
+            # Raw counts for the KPI tiles (weighted rates = Σnum / Σdeliveries)
+            # and for column sorting, which must not sort the rounded strings.
+            "_sent":      _num(e.get("sent")),
             "_delivered": _num(delivered),
             "_opens":     _num(e.get("opens")),
             "_clicks":    _num(e.get("clicks")),
@@ -491,14 +590,16 @@ def render_email_performance(
         '<div class="ep-card">'
         '<div class="ep-card-head">'
         '<div class="ep-card-head-titles"><h2>Performance</h2>'
-        '<span class="ep-card-note">Rates are calculated over deliveries.</span></div>'
+        '<span class="ep-card-note">Rates are calculated over deliveries. '
+        'Click a column heading to sort.</span></div>'
         f'<div class="ep-tools">{picker_control}</div>'
         '</div>'
-        '<div class="ep-table-wrap"><table class="ep-table"><thead><tr>'
-        '<th>Email</th><th class="num">Sent</th><th class="num">Deliveries</th>'
-        '<th class="num">Open rate</th><th class="num">Click rate</th>'
-        '<th class="num">Unsub rate</th><th class="num"></th>'
-        '</tr></thead><tbody id="ep-tbody"></tbody></table></div>'
+        '<div class="ep-table-wrap"><table class="ep-table">'
+        f'<thead id="ep-thead"><tr>{_sort_th("name", "Email", left=True)}'
+        f'{_sort_th("date", "Send date")}{_sort_th("sent", "Sent")}'
+        f'{_sort_th("deliveries", "Deliveries")}{_sort_th("open", "Open rate")}'
+        f'{_sort_th("click", "Click rate")}{_sort_th("unsub", "Unsub rate")}'
+        '<th></th></tr></thead><tbody id="ep-tbody"></tbody></table></div>'
         '<div class="ep-empty" id="ep-empty" style="display:none">'
         'No emails selected — use “Choose emails” to build your table.</div>'
         '</div>'
