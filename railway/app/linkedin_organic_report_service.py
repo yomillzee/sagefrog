@@ -68,7 +68,7 @@ class LinkedInOrganicReport:
     page_series: list[dict[str, Any]] = field(default_factory=list)
     engagement_series: list[dict[str, Any]] = field(default_factory=list)
     # Every post published in the window, thinned to what the engagement chart
-    # needs to annotate publish days: [{published_at, title, post_type}].
+    # needs: [{published_at, title, post_type, impressions}].
     post_markers: list[dict[str, Any]] = field(default_factory=list)
     # Lifetime follower demographics keyed by dimension
     # (seniority/function/industry/company_size/region) -> ranked category rows.
@@ -233,12 +233,16 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
             "reactions": {},
         })
     # ── Publish markers (every post in the window, not just the top 50) ───────
-    # The engagement chart pins these to the day they were published so post
-    # cadence can be read against the impression/reach lines.
+    # The engagement chart reads these two ways: as a posts-per-day count it
+    # plots against the impression/reach lines, and — for the handful of posts
+    # that actually moved — as labelled points on the day they went out. Both
+    # need every post in the window, so this can't reuse the Top-posts listing.
+    # Impressions come along because they are what picks out the standouts.
     try:
         marker_rows = bigquery_service.run_query(
             f"""
-            SELECT CAST(published_at AS STRING) AS published_at, title, post_type
+            SELECT CAST(published_at AS STRING) AS published_at, title, post_type,
+                   impressions
             FROM {_tbl(_POST_TABLE)}
             WHERE published_at BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
             ORDER BY published_at ASC
@@ -260,6 +264,7 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
             "published_at": day,
             "title": str(r.get("title") or "") or "Untitled post",
             "post_type": str(r.get("post_type") or ""),
+            "impressions": int(r.get("impressions") or 0),
         })
 
     # ── Post totals over the whole window (not just the top 50 listed above) ──

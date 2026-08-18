@@ -18,10 +18,20 @@ from linkedin_organic_report_service import LinkedInOrganicReport
 
 _LI_BLUE = "#0a66c2"
 _PAGE_GREEN = "#16a34a"
+# Standout pins sit on top of both lines, so they take a colour neither
+# series uses rather than a third shade of blue.
+_MARK_INK = "#f97316"
 _WINDOW_DAYS = 90
 # Titles listed in an engagement-chart tooltip for one publish day; the rest
 # collapse into a "+ N more" line so a heavy posting day stays readable.
 _MARKER_TITLE_CAP = 6
+# Posts the engagement chart names on the plot itself. Small on purpose: the
+# point is the handful worth explaining a spike with, and a daily poster would
+# otherwise bury the lines under its own cadence.
+_STANDOUT_CAP = 5
+# Below this many posts there is no distribution to speak of, so every post is
+# named rather than measured against a median of one or two.
+_STANDOUT_MIN_POSTS = 6
 
 # Date-range presets for the page filter: (query value, days, label). The query
 # value is what lands in ``?range=`` and is validated by ``sanitize_range_days``
@@ -107,12 +117,17 @@ _EXTRA_CSS = """
 .lo-chart canvas { display:block; width:100% !important; }
 .lo-empty { font-size:.85rem; color:var(--muted); padding:26px 0; text-align:center; }
 
-/* Publish-marker legend / toggle above the engagement chart. */
-.lo-mk-toggle { display:inline-flex; align-items:center; gap:7px; font-size:.76rem; color:var(--muted); font-weight:650; cursor:pointer; margin:-6px 0 10px; user-select:none; }
-.lo-mk-toggle input { accent-color:#0a66c2; margin:0; cursor:pointer; }
-.lo-mk-key { display:inline-block; width:9px; height:9px; border-radius:50%; background:#0a66c2; }
-.lo-mk-count { color:var(--muted); font-weight:600; opacity:.8; }
-.lo-mk-count::before { content:'·'; margin:0 5px 0 3px; }
+/* Standout-post key above the engagement chart: the numbers here are the
+   numbers pinned on the plot, so the list doubles as the chart's legend. */
+.lo-mk-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:-6px 0 8px; }
+.lo-mk-toggle { display:inline-flex; align-items:center; gap:7px; font-size:.76rem; color:var(--muted); font-weight:650; cursor:pointer; user-select:none; }
+.lo-mk-toggle input { accent-color:#f97316; margin:0; cursor:pointer; }
+.lo-mk-count { color:var(--muted); font-size:.74rem; font-weight:600; opacity:.85; }
+.lo-mk-list { list-style:none; display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:2px 18px; margin:0 0 12px; padding:0; }
+.lo-mk-list li { display:flex; align-items:center; gap:8px; min-width:0; font-size:.78rem; color:var(--text); padding:2px 0; }
+.lo-mk-num { flex-shrink:0; width:16px; height:16px; border-radius:50%; background:#f97316; color:#fff; font-size:.62rem; font-weight:800; display:inline-flex; align-items:center; justify-content:center; }
+.lo-mk-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.lo-mk-imp { margin-left:auto; flex-shrink:0; color:var(--muted); font-size:.72rem; font-variant-numeric:tabular-nums; }
 
 /* Top posts table — shared modern table styling. The Post column width is a
    CSS var so a drag-resizer can widen/narrow it (and its text truncation). */
@@ -452,28 +467,77 @@ def _post_markers(
     markers: list[dict[str, Any]] | None,
     engagement_series: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
-    """Publish days as chart-x indexes, with the titles behind each one.
+    """Shape the window's posts into what the engagement chart plots.
+
+    Two things, because a publish flag alone stops meaning anything for a client
+    who posts every day — on a daily poster it is a constant, and the chart just
+    fills up with identical marks:
+
+    * ``volume`` — posts per chart column, drawn as bars behind the lines. This
+      is the part that varies for a daily poster (three posts vs seven), so it
+      is what a reader can actually correlate against impressions.
+    * ``standouts`` — the few best-performing posts by impressions, pinned to
+      their publish day and named. A spike worth explaining is nearly always one
+      of these, and capping the count keeps them legible at any cadence.
 
     Posts published on a day the engagement series doesn't cover are dropped —
     there is no column to pin them to.
     """
     labels = [str(r.get("metric_date") or "") for r in (engagement_series or [])]
     index = {day: i for i, day in enumerate(labels)}
-    by_day: dict[str, list[str]] = {}
-    for m in markers or []:
-        day = str(m.get("published_at") or "")
-        if day not in index:
-            continue
+    in_window = [
+        m for m in (markers or [])
+        if str(m.get("published_at") or "") in index
+    ]
+
+    by_day: dict[str, list[dict[str, Any]]] = {}
+    for m in in_window:
+        by_day.setdefault(str(m["published_at"]), []).append(m)
+
+    def _label(m: dict[str, Any]) -> str:
         kind = str(m.get("post_type") or "")
         title = str(m.get("title") or "Untitled post")
-        by_day.setdefault(day, []).append(f"{title} ({kind})" if kind else title)
-    days = [
-        {"i": index[day], "n": len(titles), "titles": titles[:_MARKER_TITLE_CAP]}
-        for day, titles in sorted(by_day.items())
+        return f"{title} ({kind})" if kind else title
+
+    # One bar per chart column; days without a post stay null so Chart.js draws
+    # nothing rather than a zero-height stub.
+    volume = [len(by_day.get(day, [])) or None for day in labels]
+
+    # Standouts are the best posts in the window, not merely good ones: a client
+    # who posts twice a month shouldn't get both of them flagged as remarkable.
+    ranked = sorted(in_window, key=lambda m: int(m.get("impressions") or 0), reverse=True)
+    floor = _standout_floor(ranked)
+    standouts = [
+        {"i": index[str(m["published_at"])],
+         "label": _label(m),
+         "impressions": int(m.get("impressions") or 0)}
+        for m in ranked[:_STANDOUT_CAP]
+        if int(m.get("impressions") or 0) >= floor
     ]
-    return {"on": True, "days": days,
-            "byLabel": {day: titles[:_MARKER_TITLE_CAP] for day, titles in by_day.items()},
-            "counts": {day: len(titles) for day, titles in by_day.items()}}
+
+    by_label = {
+        day: [_label(m) for m in sorted(
+            posts, key=lambda m: int(m.get("impressions") or 0), reverse=True)][:_MARKER_TITLE_CAP]
+        for day, posts in by_day.items()
+    }
+    return {"on": True, "volume": volume, "standouts": standouts,
+            "byLabel": by_label,
+            "counts": {day: len(posts) for day, posts in by_day.items()},
+            "postDays": len(by_day), "posts": len(in_window)}
+
+
+def _standout_floor(ranked: list[dict[str, Any]]) -> int:
+    """Impression floor a post must clear to be called out by name.
+
+    Twice the median post in the window: enough to mean "this one did something
+    the others didn't," and it lets a quiet window flag nothing at all rather
+    than dressing up its least-bad post as a hit.
+    """
+    values = [int(m.get("impressions") or 0) for m in ranked]
+    if len(values) < _STANDOUT_MIN_POSTS or not any(values):
+        return 0 if len(values) < _STANDOUT_MIN_POSTS else 1
+    mid = sorted(values)[len(values) // 2]
+    return max(2 * mid, 1)
 
 
 def _charts_script(
@@ -524,25 +588,28 @@ def _charts_script(
         "  }\n"
         # Publish-day annotations: a dashed rule plus a dot at the top of the
         # plot for each day a post went out, so cadence reads against the lines.
+        # Standout pins: a rule down to the plot floor and a numbered dot for
+        # the few posts big enough to explain a spike with. Deliberately not one
+        # per publish day — a daily poster turns that into a picket fence.
         "  var MARKERS={id:'loPostMarkers', afterDatasetsDraw:function(chart){\n"
         "    var m=chart.$loMarkers;\n"
-        "    if(!m || !m.on || !m.days.length) return;\n"
+        "    if(!m || !m.on || !m.standouts.length) return;\n"
         "    var xs=chart.scales.x, area=chart.chartArea, ctx=chart.ctx;\n"
         "    if(!xs || !area) return;\n"
         "    ctx.save();\n"
-        "    m.days.forEach(function(d){\n"
+        "    m.standouts.forEach(function(d, n){\n"
         "      var px = xs.getPixelForValue(d.i);\n"
         "      if(!isFinite(px) || px < area.left-1 || px > area.right+1) return;\n"
         "      ctx.beginPath(); ctx.setLineDash([3,3]); ctx.lineWidth=1;\n"
-        "      ctx.strokeStyle='rgba(10,102,194,.30)';\n"
-        "      ctx.moveTo(px, area.top); ctx.lineTo(px, area.bottom); ctx.stroke();\n"
+        "      ctx.strokeStyle='rgba(15,23,42,.30)';\n"
+        "      ctx.moveTo(px, area.top+12); ctx.lineTo(px, area.bottom); ctx.stroke();\n"
         "      ctx.setLineDash([]);\n"
-        "      ctx.beginPath(); ctx.arc(px, area.top+4, d.n>1?5:3.5, 0, Math.PI*2);\n"
-        "      ctx.fillStyle='"+_LI_BLUE+"'; ctx.fill();\n"
-        "      if(d.n>1){ ctx.fillStyle='#fff';\n"
-        "        ctx.font='700 8px system-ui, sans-serif';\n"
-        "        ctx.textAlign='center'; ctx.textBaseline='middle';\n"
-        "        ctx.fillText(String(d.n), px, area.top+4); }\n"
+        "      ctx.beginPath(); ctx.arc(px, area.top+5, 7.5, 0, Math.PI*2);\n"
+        "      ctx.fillStyle='" + _MARK_INK + "'; ctx.fill();\n"
+        "      ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.stroke();\n"
+        "      ctx.fillStyle='#fff'; ctx.font='700 9px system-ui, sans-serif';\n"
+        "      ctx.textAlign='center'; ctx.textBaseline='middle';\n"
+        "      ctx.fillText(String(n+1), px, area.top+5);\n"
         "    });\n"
         "    ctx.restore();\n"
         "  }};\n"
@@ -551,21 +618,31 @@ def _charts_script(
         "    if(!el || !window.Chart || !spec.labels.length) return;\n"
         "    function ds(label,data,color){return {label:label, data:data, borderColor:color,\n"
         "      backgroundColor:color, fill:false, tension:.3, borderWidth:2, pointRadius:0,\n"
-        "      pointHoverRadius:4};}\n"
+        "      pointHoverRadius:4, order:0};}\n"
+        "    var mk = spec.markers || {on:false, volume:[], standouts:[], byLabel:{}, counts:{}};\n"
+        "    var sets = [ds('Impressions', spec.impressions, '" + _LI_BLUE + "'),\n"
+        "                ds('Reach', spec.reach, '#38bdf8')];\n"
+        # Posts/day rides a hidden right-hand axis padded well above the busiest
+        # day, so the bars read as a band along the floor rather than a second
+        # chart competing with the lines.
+        "    var vol = mk.volume || [];\n"
+        "    var peak = vol.reduce(function(a,b){return Math.max(a, b||0);}, 1);\n"
+        "    if(vol.length){ sets.push({type:'bar', label:'Posts / day', data:vol,\n"
+        "      yAxisID:'y1', backgroundColor:'rgba(100,116,139,.28)',\n"
+        "      hoverBackgroundColor:'rgba(100,116,139,.55)', borderRadius:2,\n"
+        "      borderSkipped:false, maxBarThickness:14, order:9}); }\n"
         "    var chart = new Chart(el, {\n"
         "      type:'line',\n"
         "      plugins:[MARKERS],\n"
-        "      data:{labels:spec.labels, datasets:[\n"
-        "        ds('Impressions', spec.impressions, '"+_LI_BLUE+"'),\n"
-        "        ds('Reach', spec.reach, '#38bdf8')]},\n"
+        "      data:{labels:spec.labels, datasets:sets},\n"
         "      options:{responsive:true, maintainAspectRatio:false, animation:false,\n"
         "        interaction:{mode:'index', intersect:false},\n"
-        "        layout:{padding:{top:6}},\n"
+        "        layout:{padding:{top:8}},\n"
         "        plugins:{legend:{display:true, position:'bottom',\n"
         "            labels:{boxWidth:10, boxHeight:10, font:{size:11}, color:'#64748b'}},\n"
         "          tooltip:{padding:8, callbacks:{afterBody:function(items){\n"
         "            var m = chart && chart.$loMarkers;\n"
-        "            if(!m || !m.on) return '';\n"
+        "            if(!m) return '';\n"
         "            var day = (items && items.length) ? items[0].label : '';\n"
         "            var titles = m.byLabel[day];\n"
         "            if(!titles || !titles.length) return '';\n"
@@ -577,9 +654,11 @@ def _charts_script(
         "            return out;\n"
         "          }}}},\n"
         "        scales:{x:{grid:{display:false}, ticks:XT},\n"
-        "          y:{beginAtZero:true, grid:GRID, ticks:YT, border:{display:false}}}}\n"
+        "          y:{beginAtZero:true, grid:GRID, ticks:YT, border:{display:false}},\n"
+        "          y1:{display:false, position:'right', beginAtZero:true,\n"
+        "            suggestedMax: peak*3.2, grid:{display:false}}}}\n"
         "    });\n"
-        "    chart.$loMarkers = spec.markers || {on:false, days:[], byLabel:{}, counts:{}};\n"
+        "    chart.$loMarkers = mk;\n"
         "    var tgl = document.getElementById('loMarkerToggle');\n"
         "    if(tgl){ tgl.addEventListener('change', function(){\n"
         "      chart.$loMarkers.on = !!tgl.checked; chart.update('none'); }); }\n"
@@ -771,21 +850,31 @@ def render_linkedin_organic(
     # Organization-wide engagement over time (only once the series has synced).
     engagement_section = ""
     if report.engagement_series:
-        marker_days = len({
-            m.get("published_at") for m in report.post_markers
-        } & {str(r.get("metric_date") or "") for r in report.engagement_series})
-        marker_control = (
-            '<label class="lo-mk-toggle">'
-            '<input type="checkbox" id="loMarkerToggle" checked> '
-            '<span class="lo-mk-key"></span> Post published'
-            f'<span class="lo-mk-count">{marker_days} day{"" if marker_days == 1 else "s"}</span>'
-            '</label>'
-        ) if marker_days else ""
+        marks = _post_markers(report.post_markers, report.engagement_series)
+        # The named posts are listed under the chart as well as pinned on it:
+        # the pin says *when*, and at three posts a day the reader still needs to
+        # be told *which one* without hunting for the right hover target.
+        standout_html = ""
+        if marks["standouts"]:
+            items = "".join(
+                f'<li><span class="lo-mk-num">{n}</span>'
+                f'<span class="lo-mk-name" title="{_esc(p["label"])}">{_esc(p["label"])}</span>'
+                f'<span class="lo-mk-imp">{_fmt_int(p["impressions"])} impressions</span></li>'
+                for n, p in enumerate(marks["standouts"], start=1)
+            )
+            standout_html = (
+                '<div class="lo-mk-head">'
+                '<label class="lo-mk-toggle"><input type="checkbox" id="loMarkerToggle" checked> '
+                'Show top posts on the chart</label>'
+                f'<span class="lo-mk-count">{marks["posts"]} posts over '
+                f'{marks["postDays"]} days</span></div>'
+                f'<ol class="lo-mk-list">{items}</ol>'
+            )
         engagement_section = (
             '<section><div class="sec-head"><h2>Engagement over time</h2>'
             f'<span class="status">impressions &amp; reach / day, last {window_days} days</span></div>'
-            f'{marker_control}'
-            '<div class="lo-chart" style="height:220px"><canvas id="loEngagementChart"></canvas></div>'
+            f'{standout_html}'
+            '<div class="lo-chart" style="height:240px"><canvas id="loEngagementChart"></canvas></div>'
             '</section>'
         )
 

@@ -63,6 +63,26 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-18",
+        title="Engagement over time reads posting volume, not just publish days",
+        area="LinkedIn Organic",
+        kind="improved",
+        summary=(
+            "Marking every publish day told you nothing for a client who posts "
+            "daily \u2014 the chart filled with identical marks. It now shows how "
+            "many posts went out each day as bars behind the lines, and names "
+            "only the handful of posts that clearly outperformed."
+        ),
+        details=(
+            "Posts / day sits along the bottom of the chart, so a heavy week is "
+            "visible against the impressions it did or didn't earn.",
+            "Up to five standout posts are numbered on the chart and listed "
+            "above it with their impressions; a window where nothing stood out "
+            "names nothing.",
+            "Hovering any day still lists that day's posts, best first.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
         title="The Users page leads with the roster",
         area="Users",
         kind="improved",
