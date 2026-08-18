@@ -63,6 +63,24 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-18",
+        title="Engagement over time shows the days posts went out",
+        area="LinkedIn Organic",
+        kind="new",
+        summary=(
+            "The engagement chart now marks every day a post was published, so "
+            "you can see at a glance whether a spike in impressions follows a "
+            "post — and what that post was."
+        ),
+        details=(
+            "A dashed line and a dot sit on each publish day; a day with several "
+            "posts shows the count inside the dot.",
+            "Hovering a day lists the posts published on it, above the "
+            "impressions and reach numbers.",
+            "Use the checkbox above the chart to hide the markers.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
         title="LinkedIn Organic syncs more than the 50 most recent posts",
         area="LinkedIn Organic",
         kind="fixed",

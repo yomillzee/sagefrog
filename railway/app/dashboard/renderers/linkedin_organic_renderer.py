@@ -19,6 +19,9 @@ from linkedin_organic_report_service import LinkedInOrganicReport
 _LI_BLUE = "#0a66c2"
 _PAGE_GREEN = "#16a34a"
 _WINDOW_DAYS = 90
+# Titles listed in an engagement-chart tooltip for one publish day; the rest
+# collapse into a "+ N more" line so a heavy posting day stays readable.
+_MARKER_TITLE_CAP = 6
 
 # Date-range presets for the page filter: (query value, days, label). The query
 # value is what lands in ``?range=`` and is validated by ``sanitize_range_days``
@@ -103,6 +106,13 @@ _EXTRA_CSS = """
 .lo-chart { position:relative; height:180px; }
 .lo-chart canvas { display:block; width:100% !important; }
 .lo-empty { font-size:.85rem; color:var(--muted); padding:26px 0; text-align:center; }
+
+/* Publish-marker legend / toggle above the engagement chart. */
+.lo-mk-toggle { display:inline-flex; align-items:center; gap:7px; font-size:.76rem; color:var(--muted); font-weight:650; cursor:pointer; margin:-6px 0 10px; user-select:none; }
+.lo-mk-toggle input { accent-color:#0a66c2; margin:0; cursor:pointer; }
+.lo-mk-key { display:inline-block; width:9px; height:9px; border-radius:50%; background:#0a66c2; }
+.lo-mk-count { color:var(--muted); font-weight:600; opacity:.8; }
+.lo-mk-count::before { content:'·'; margin:0 5px 0 3px; }
 
 /* Top posts table — shared modern table styling. The Post column width is a
    CSS var so a drag-resizer can widen/narrow it (and its text truncation). */
@@ -438,6 +448,34 @@ def _engagement_chart_series(series: list[dict[str, Any]]) -> dict[str, list]:
     }
 
 
+def _post_markers(
+    markers: list[dict[str, Any]] | None,
+    engagement_series: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Publish days as chart-x indexes, with the titles behind each one.
+
+    Posts published on a day the engagement series doesn't cover are dropped —
+    there is no column to pin them to.
+    """
+    labels = [str(r.get("metric_date") or "") for r in (engagement_series or [])]
+    index = {day: i for i, day in enumerate(labels)}
+    by_day: dict[str, list[str]] = {}
+    for m in markers or []:
+        day = str(m.get("published_at") or "")
+        if day not in index:
+            continue
+        kind = str(m.get("post_type") or "")
+        title = str(m.get("title") or "Untitled post")
+        by_day.setdefault(day, []).append(f"{title} ({kind})" if kind else title)
+    days = [
+        {"i": index[day], "n": len(titles), "titles": titles[:_MARKER_TITLE_CAP]}
+        for day, titles in sorted(by_day.items())
+    ]
+    return {"on": True, "days": days,
+            "byLabel": {day: titles[:_MARKER_TITLE_CAP] for day, titles in by_day.items()},
+            "counts": {day: len(titles) for day, titles in by_day.items()}}
+
+
 def _charts_script(
     follower_series: list[dict[str, Any]],
     page_series: list[dict[str, Any]],
@@ -445,6 +483,7 @@ def _charts_script(
     *,
     desktop_views: int = 0,
     mobile_views: int = 0,
+    post_markers: list[dict[str, Any]] | None = None,
 ) -> str:
     """Chart.js loader + init for the follower/page bar charts, the
     organization-wide engagement line chart, and the device-split pie."""
@@ -454,7 +493,8 @@ def _charts_script(
         "page": {**_chart_series(page_series, "page_views"),
                  "color": _PAGE_GREEN, "canvas": "loPageChart"},
         "engagement": {**_engagement_chart_series(engagement_series or []),
-                       "canvas": "loEngagementChart"},
+                       "canvas": "loEngagementChart",
+                       "markers": _post_markers(post_markers, engagement_series)},
         "device": {"labels": ["Desktop", "Mobile"],
                    "values": [int(desktop_views or 0), int(mobile_views or 0)],
                    "colors": [_LI_BLUE, "#38bdf8"], "canvas": "loDeviceChart"},
@@ -482,25 +522,67 @@ def _charts_script(
         "          y:{beginAtZero:true, grid:GRID, ticks:YT, border:{display:false}}}}\n"
         "    });\n"
         "  }\n"
+        # Publish-day annotations: a dashed rule plus a dot at the top of the
+        # plot for each day a post went out, so cadence reads against the lines.
+        "  var MARKERS={id:'loPostMarkers', afterDatasetsDraw:function(chart){\n"
+        "    var m=chart.$loMarkers;\n"
+        "    if(!m || !m.on || !m.days.length) return;\n"
+        "    var xs=chart.scales.x, area=chart.chartArea, ctx=chart.ctx;\n"
+        "    if(!xs || !area) return;\n"
+        "    ctx.save();\n"
+        "    m.days.forEach(function(d){\n"
+        "      var px = xs.getPixelForValue(d.i);\n"
+        "      if(!isFinite(px) || px < area.left-1 || px > area.right+1) return;\n"
+        "      ctx.beginPath(); ctx.setLineDash([3,3]); ctx.lineWidth=1;\n"
+        "      ctx.strokeStyle='rgba(10,102,194,.30)';\n"
+        "      ctx.moveTo(px, area.top); ctx.lineTo(px, area.bottom); ctx.stroke();\n"
+        "      ctx.setLineDash([]);\n"
+        "      ctx.beginPath(); ctx.arc(px, area.top+4, d.n>1?5:3.5, 0, Math.PI*2);\n"
+        "      ctx.fillStyle='"+_LI_BLUE+"'; ctx.fill();\n"
+        "      if(d.n>1){ ctx.fillStyle='#fff';\n"
+        "        ctx.font='700 8px system-ui, sans-serif';\n"
+        "        ctx.textAlign='center'; ctx.textBaseline='middle';\n"
+        "        ctx.fillText(String(d.n), px, area.top+4); }\n"
+        "    });\n"
+        "    ctx.restore();\n"
+        "  }};\n"
         "  function drawLine(spec){\n"
         "    var el = document.getElementById(spec.canvas);\n"
         "    if(!el || !window.Chart || !spec.labels.length) return;\n"
         "    function ds(label,data,color){return {label:label, data:data, borderColor:color,\n"
         "      backgroundColor:color, fill:false, tension:.3, borderWidth:2, pointRadius:0,\n"
         "      pointHoverRadius:4};}\n"
-        "    new Chart(el, {\n"
+        "    var chart = new Chart(el, {\n"
         "      type:'line',\n"
+        "      plugins:[MARKERS],\n"
         "      data:{labels:spec.labels, datasets:[\n"
         "        ds('Impressions', spec.impressions, '"+_LI_BLUE+"'),\n"
         "        ds('Reach', spec.reach, '#38bdf8')]},\n"
         "      options:{responsive:true, maintainAspectRatio:false, animation:false,\n"
         "        interaction:{mode:'index', intersect:false},\n"
+        "        layout:{padding:{top:6}},\n"
         "        plugins:{legend:{display:true, position:'bottom',\n"
         "            labels:{boxWidth:10, boxHeight:10, font:{size:11}, color:'#64748b'}},\n"
-        "          tooltip:{padding:8}},\n"
+        "          tooltip:{padding:8, callbacks:{afterBody:function(items){\n"
+        "            var m = chart && chart.$loMarkers;\n"
+        "            if(!m || !m.on) return '';\n"
+        "            var day = (items && items.length) ? items[0].label : '';\n"
+        "            var titles = m.byLabel[day];\n"
+        "            if(!titles || !titles.length) return '';\n"
+        "            var total = m.counts[day] || titles.length;\n"
+        "            var out = ['', total + (total===1?' post published:':' posts published:')];\n"
+        "            titles.forEach(function(t){\n"
+        "              out.push('\\u2022 ' + (t.length>64 ? t.slice(0,63)+'\\u2026' : t)); });\n"
+        "            if(total > titles.length) out.push('+ '+(total-titles.length)+' more');\n"
+        "            return out;\n"
+        "          }}}},\n"
         "        scales:{x:{grid:{display:false}, ticks:XT},\n"
         "          y:{beginAtZero:true, grid:GRID, ticks:YT, border:{display:false}}}}\n"
         "    });\n"
+        "    chart.$loMarkers = spec.markers || {on:false, days:[], byLabel:{}, counts:{}};\n"
+        "    var tgl = document.getElementById('loMarkerToggle');\n"
+        "    if(tgl){ tgl.addEventListener('change', function(){\n"
+        "      chart.$loMarkers.on = !!tgl.checked; chart.update('none'); }); }\n"
         "  }\n"
         "  function drawPie(spec){\n"
         "    var el = document.getElementById(spec.canvas);\n"
@@ -689,9 +771,20 @@ def render_linkedin_organic(
     # Organization-wide engagement over time (only once the series has synced).
     engagement_section = ""
     if report.engagement_series:
+        marker_days = len({
+            m.get("published_at") for m in report.post_markers
+        } & {str(r.get("metric_date") or "") for r in report.engagement_series})
+        marker_control = (
+            '<label class="lo-mk-toggle">'
+            '<input type="checkbox" id="loMarkerToggle" checked> '
+            '<span class="lo-mk-key"></span> Post published'
+            f'<span class="lo-mk-count">{marker_days} day{"" if marker_days == 1 else "s"}</span>'
+            '</label>'
+        ) if marker_days else ""
         engagement_section = (
             '<section><div class="sec-head"><h2>Engagement over time</h2>'
             f'<span class="status">impressions &amp; reach / day, last {window_days} days</span></div>'
+            f'{marker_control}'
             '<div class="lo-chart" style="height:220px"><canvas id="loEngagementChart"></canvas></div>'
             '</section>'
         )
@@ -744,6 +837,7 @@ def render_linkedin_organic(
     charts_script = _charts_script(
         report.follower_series, report.page_series, report.engagement_series,
         desktop_views=report.page_desktop_views, mobile_views=report.page_mobile_views,
+        post_markers=report.post_markers,
     )
     sort_script = (_sort_script() + _resize_script()) if report.top_posts else ""
     content = f"""
