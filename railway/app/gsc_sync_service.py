@@ -1,8 +1,10 @@
 """Automatic GSC → BigQuery sync, called from the dashboard refresh pipeline.
 
 Behaviour:
-  - Checks max_date in both GSC tables
-  - If tables are up to date (max_date >= today − 3): does nothing
+  - Enumerates which dates in the retention window are missing from either GSC
+    table (not just max_date — a hole *below* the newest row has to be visible,
+    or an interrupted backfill never gets repaired)
+  - If nothing is missing: does nothing
   - If a small gap (<= 30 days): syncs synchronously inside the refresh thread
   - If a large gap / empty tables: spawns a background daemon thread so the
     refresh is not blocked; the data will be present on the next refresh
@@ -47,6 +49,11 @@ _GSC_LAG_DAYS    = 3
 _MAX_HISTORY     = 180      # 6 months is sufficient
 _ROW_LIMIT       = 25_000   # GSC API page size
 _RETRY_SLEEP     = 60
+_MAX_RETRIES     = 3        # per request, for quota/transient failures
+_MAX_PAGES_PER_DAY = 40     # 40 x 25k rows is far past any real day; loop guard
+# A page this small cannot be a server-imposed cap (GSC's is 5,000), so it means
+# the day is done and there is no point asking for the next page.
+_PAGE_PROBE_MIN  = 1_000
 # If more than this many days are missing, run in background to avoid blocking refresh
 _BACKGROUND_THRESHOLD = 30
 
@@ -255,9 +262,34 @@ def _gsc_post(token: str, site_url: str, body: dict) -> dict:
         raise GscApiError(exc.code, detail, site_url) from exc
 
 
+# Google reports Search Console quota exhaustion as 403 with a rate-limit reason
+# in the body, not as 429 -- the same trap gtm_service._is_rate_limited exists for
+# (see CLAUDE.md). Treating those as fatal turns a transient quota blip into a
+# permanently missing day, so they retry like a 429 and only a genuine permission
+# 403 gives up.
+_RATE_LIMIT_REASONS = (
+    "ratelimitexceeded",
+    "userratelimitexceeded",
+    "quotaexceeded",
+    "dailylimitexceeded",
+    "backenderror",
+)
+
+
+def _is_retryable(exc: "GscApiError") -> bool:
+    if exc.code in (429, 500, 503):
+        return True
+    if exc.code != 403:
+        return False
+    blob = (exc.body or "").replace(" ", "").replace("'", "").lower()
+    return any(reason in blob for reason in _RATE_LIMIT_REASONS)
+
+
 def _fetch_day(creds, site_url: str, day: date, dimension: str) -> list[dict]:
     rows: list[dict] = []
     start_row = 0
+    attempts = 0
+    pages = 0
     while True:
         try:
             data = _gsc_post(_token(creds), site_url, {
@@ -266,10 +298,12 @@ def _fetch_day(creds, site_url: str, day: date, dimension: str) -> list[dict]:
                 "rowLimit": _ROW_LIMIT, "startRow": start_row, "dataState": "final",
             })
         except GscApiError as exc:
-            if exc.code == 429:
+            attempts += 1
+            if _is_retryable(exc) and attempts <= _MAX_RETRIES:
                 time.sleep(_RETRY_SLEEP)
                 continue
             raise
+        attempts = 0
         batch = data.get("rows") or []
         if not batch:
             break
@@ -295,9 +329,26 @@ def _fetch_day(creds, site_url: str, day: date, dimension: str) -> list[dict]:
                     "organic_impressions": impressions,
                     "organic_sum_position": (position - 1.0) * impressions,
                 })
-        if len(batch) < _ROW_LIMIT:
+        # Advance by what the server actually returned, and keep going until a
+        # page comes back empty. Comparing len(batch) against the *requested*
+        # _ROW_LIMIT and stopping early silently truncated every high-volume day:
+        # GSC caps a page at 5,000 rows regardless of asking for 25,000, so page
+        # one always looked like the last one and pagination never advanced --
+        # every day of one client's history held exactly 5,000 query rows.
+        start_row += len(batch)
+        pages += 1
+        if len(batch) < _PAGE_PROBE_MIN:
+            # Far below any server-side page cap, so the day is exhausted. Without
+            # this floor every day would cost one extra empty request just to
+            # confirm the end -- 360 wasted calls on a 180-day backfill, against a
+            # quota that already reports exhaustion as a 403.
             break
-        start_row += _ROW_LIMIT
+        if pages >= _MAX_PAGES_PER_DAY:
+            log.warning(
+                "GSC %s %s: stopped at %d pages (%d rows) -- page cap reached",
+                dimension, day, pages, len(rows),
+            )
+            break
     return rows
 
 
@@ -346,20 +397,52 @@ def _ensure_tables(client, target=None) -> tuple[str, str]:
         )
         t.clustering_fields = [cluster]
         client.create_table(t, exists_ok=True)
+    _reap_stale_staging(client, proj, ds)
     return query_id, page_id
 
 
-def _upsert(client, table_id: str, rows: list[dict], schema, merge_key_sql: str) -> int:
+def _reap_stale_staging(client, project: str, dataset: str, *, older_than_hours: int = 6) -> int:
+    """Delete leftover *_stg_* load tables from killed syncs.
+
+    _upsert removes its staging table in a finally, so a survivor means the
+    process was killed between the load and the MERGE -- exactly what a redeploy
+    mid-sync does. They are invisible in the dashboard but sit in the dataset
+    costing storage, and they make it impossible to read __TABLES__ and tell
+    what the sync actually wrote.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+    removed = 0
+    try:
+        for tbl in client.list_tables(f"{project}.{dataset}"):
+            name = tbl.table_id
+            if "_stg_" not in name:
+                continue
+            modified = getattr(tbl, "modified", None) or getattr(tbl, "created", None)
+            if modified is not None and modified > cutoff:
+                continue  # possibly an in-flight sync on another worker
+            client.delete_table(f"{project}.{dataset}.{name}", not_found_ok=True)
+            removed += 1
+    except Exception as exc:
+        log.warning("GSC staging reap skipped: %s", exc)
+    if removed:
+        log.info("GSC reaped %d stale staging table(s) in %s.%s", removed, project, dataset)
+    return removed
+
+
+def _upsert(
+    client, table_id: str, rows: list[dict], schema, merge_key_sql: str,
+    *, stamp_column: str = "synced_at",
+) -> int:
     if not rows:
         return 0
     from google.cloud import bigquery as bq
-    synced_at = datetime.now(timezone.utc).isoformat()
-    payload   = [{**r, "synced_at": synced_at} for r in rows]
+    stamp     = datetime.now(timezone.utc).isoformat()
+    payload   = [{**r, stamp_column: stamp} for r in rows]
     temp_id   = f"{table_id}_stg_{uuid4().hex}"
     job_config = bq.LoadJobConfig(schema=schema, write_disposition="WRITE_TRUNCATE")
     client.load_table_from_json(payload, temp_id, job_config=job_config).result()
-    set_cols = [f.name for f in schema if f.name not in {"synced_at"}]
-    set_clause = ",\n      ".join(f"{c} = S.{c}" for c in set_cols) + ",\n      synced_at = S.synced_at"
+    set_cols = [f.name for f in schema if f.name != stamp_column]
+    set_clause = ",\n      ".join(f"{c} = S.{c}" for c in set_cols) + f",\n      {stamp_column} = S.{stamp_column}"
     ins_cols = ", ".join(f.name for f in schema)
     ins_vals = ", ".join(f"S.{f.name}" for f in schema)
     sql = f"""
@@ -378,46 +461,104 @@ def _upsert(client, table_id: str, rows: list[dict], schema, merge_key_sql: str)
 # Gap detection
 # ---------------------------------------------------------------------------
 
-def _table_max_date(client, table_id: str) -> date | None:
-    """Return the most recent date in the table, or None if empty / missing."""
+def _dates_present(client, table_id: str, start: date, end: date) -> set[date]:
+    """Dates that already hold at least one row in this table."""
+    sql = (
+        f"SELECT DISTINCT date FROM `{table_id}` "
+        f"WHERE date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
+    )
+    out: set[date] = set()
     try:
-        rows = list(client.query(
-            f"SELECT MAX(date) AS max_date FROM `{table_id}` LIMIT 1",
-            job_config=bigquery_service.make_job_config(),
-        ).result(max_results=1))
-        if rows:
-            val = dict(rows[0].items()).get("max_date")
+        for row in client.query(sql, job_config=bigquery_service.make_job_config()).result():
+            val = dict(row.items()).get("date")
             if val:
-                return val if isinstance(val, date) else date.fromisoformat(str(val)[:10])
+                out.add(val if isinstance(val, date) else date.fromisoformat(str(val)[:10]))
+    except Exception:
+        pass  # missing table / permission -> treat as nothing present
+    return out
+
+
+def _empty_days(client, target, dimension: str, start: date, end: date) -> set[date]:
+    """Days Search Console has already told us hold no data for this dimension.
+
+    Without this, a day with genuinely zero impressions -- or any day before the
+    property existed -- is absent from the fact table forever, so hole detection
+    would re-fetch it on every single run and burn quota permanently.
+    """
+    tid = f"{_project_id(target)}.{_dataset_id(target)}.{_EMPTY_DAYS_TABLE}"
+    sql = (
+        f"SELECT date FROM `{tid}` WHERE dimension = '{dimension}' "
+        f"AND date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
+    )
+    out: set[date] = set()
+    try:
+        for row in client.query(sql, job_config=bigquery_service.make_job_config()).result():
+            val = dict(row.items()).get("date")
+            if val:
+                out.add(val if isinstance(val, date) else date.fromisoformat(str(val)[:10]))
     except Exception:
         pass
-    return None
+    return out
 
 
-def get_missing_range(client=None, target=None) -> tuple[date | None, date | None]:
-    """Return (start, end) for dates that need syncing, or (None, None) if current."""
-    lag_cutoff = date.today() - timedelta(days=_GSC_LAG_DAYS)
-    max_history = date.today() - timedelta(days=_MAX_HISTORY)
-
+def _record_empty_days(client, target, rows: list[dict]) -> None:
+    """Remember (date, dimension) pairs that Search Console returned nothing for."""
+    if not rows:
+        return
+    from google.cloud import bigquery as bq
+    tid = f"{_project_id(target)}.{_dataset_id(target)}.{_EMPTY_DAYS_TABLE}"
+    schema = [
+        bq.SchemaField("date",      "DATE",      mode="REQUIRED"),
+        bq.SchemaField("dimension", "STRING",    mode="REQUIRED"),
+        bq.SchemaField("checked_at", "TIMESTAMP", mode="REQUIRED"),
+    ]
     try:
-        c = client or _bq_client(target)
-        proj, ds = _project_id(target), _dataset_id(target)
-        q_max = _table_max_date(c, f"{proj}.{ds}.{_QUERY_TABLE}")
-        p_max = _table_max_date(c, f"{proj}.{ds}.{_PAGE_TABLE}")
-        # Sync from the earlier of the two max dates (keep tables in step)
-        earliest_max = min(d for d in [q_max, p_max] if d) if (q_max or p_max) else None
-    except Exception:
-        earliest_max = None
+        t = bq.Table(tid, schema=schema)
+        t.time_partitioning = bq.TimePartitioning(type_=bq.TimePartitioningType.DAY, field="date")
+        client.create_table(t, exists_ok=True)
+        _upsert(
+            client, tid, rows, schema,
+            "T.date = S.date AND T.dimension = S.dimension",
+            stamp_column="checked_at",
+        )
+    except Exception as exc:
+        # Losing these markers only costs a re-fetch next run; never fail a sync.
+        log.warning("GSC empty-day markers not recorded: %s", exc)
 
-    if earliest_max is None:
-        # Tables empty — full historical backfill
-        return max_history, lag_cutoff
 
-    next_day = earliest_max + timedelta(days=1)
-    if next_day > lag_cutoff:
-        return None, None  # already up to date
+def get_missing_dates(
+    client=None, target=None, *, which: str = "both"
+) -> dict[str, list[date]]:
+    """Which dates in the retention window each dimension is still missing.
 
-    return next_day, lag_cutoff
+    Replaces MAX(date) gap detection, which could not see a hole *below* the
+    newest row. sync_range walks newest -> oldest, so any interrupted backfill
+    (a redeploy mid-sync hard-kills the worker) left MAX(date) at the newest day
+    it managed to write while every older day stayed missing -- and the next run
+    read that as "up to date" and did nothing, forever. One client lost 38 days
+    in the middle of its history that way, invisibly.
+    """
+    lag_cutoff  = date.today() - timedelta(days=_GSC_LAG_DAYS)
+    window_start = date.today() - timedelta(days=_MAX_HISTORY)
+    c = client or _bq_client(target)
+    proj, ds = _project_id(target), _dataset_id(target)
+    all_days = {
+        window_start + timedelta(days=i)
+        for i in range((lag_cutoff - window_start).days + 1)
+    }
+
+    out: dict[str, list[date]] = {}
+    for dim, table, which_name in (
+        ("query", _QUERY_TABLE, "queries"),
+        ("page", _PAGE_TABLE, "pages"),
+    ):
+        if which not in ("both", which_name):
+            out[dim] = []
+            continue
+        have = _dates_present(c, f"{proj}.{ds}.{table}", window_start, lag_cutoff)
+        have |= _empty_days(c, target, dim, window_start, lag_cutoff)
+        out[dim] = sorted(all_days - have, reverse=True)  # newest first
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -433,8 +574,15 @@ def sync_range(
     site_url: str | None = None,
     client_slug: str | None = None,
     target=None,
+    dates: list[date] | None = None,
 ) -> dict[str, Any]:
-    """Fetch and write GSC data for start..end. Returns summary dict."""
+    """Fetch and write GSC data for start..end. Returns summary dict.
+
+    dates: sync exactly these days instead of the whole start..end span. Used by
+    sync_for_refresh to fill scattered holes without re-fetching days that are
+    already complete. start/end stay in the signature (and in the summary) so the
+    CLI's "force this whole range" behaviour is unchanged.
+    """
     target = target if target is not None else _resolve(client_slug=client_slug)
     site_url = (site_url or "").strip() or (target.site_url or "") or _site_url()
     if not site_url:
@@ -442,7 +590,6 @@ def sync_range(
 
     do_q = which in ("both", "queries")
     do_p = which in ("both", "pages")
-    total_days = (end - start).days + 1
 
     try:
         creds  = _gsc_read_creds(target)
@@ -458,10 +605,21 @@ def sync_range(
     grand_q = grand_p = 0
     errors: list[str] = []
     failed_days: set[date] = set()
+    empty_markers: list[dict] = []
     day_num = 0
 
     # Process newest → oldest so the dashboard's "Last 30 days" view fills in first.
-    dates = [end - timedelta(days=i) for i in range(total_days)]
+    if dates is None:
+        dates = [end - timedelta(days=i) for i in range((end - start).days + 1)]
+    else:
+        dates = sorted(dates, reverse=True)
+    total_days = len(dates)
+    if not total_days:
+        return {
+            "ok": True, "status": "up_to_date", "start": start.isoformat(),
+            "end": end.isoformat(), "days_synced": 0, "query_rows": 0,
+            "page_rows": 0, "errors": [], "error_count": 0, "failed_days": 0,
+        }
 
     for d in dates:
         day_num += 1
@@ -471,6 +629,8 @@ def sync_range(
             try:
                 rows   = _fetch_day(creds, site_url, d, "query")
                 grand_q += _upsert(client, query_id, rows, q_schema, q_merge)
+                if not rows:
+                    empty_markers.append({"date": d.isoformat(), "dimension": "query"})
             except Exception as exc:
                 errors.append(f"{d} query: {exc}")
                 failed_days.add(d)
@@ -478,15 +638,25 @@ def sync_range(
             try:
                 rows   = _fetch_day(creds, site_url, d, "page")
                 grand_p += _upsert(client, page_id, rows, p_schema, p_merge)
+                if not rows:
+                    empty_markers.append({"date": d.isoformat(), "dimension": "page"})
             except Exception as exc:
                 errors.append(f"{d} page: {exc}")
                 failed_days.add(d)
+        # Flush empty-day markers as we go: a redeploy mid-backfill kills the
+        # worker outright, and progress that only lands at the end is progress
+        # that gets redone.
+        if len(empty_markers) >= 25:
+            _record_empty_days(client, target, empty_markers)
+            empty_markers = []
         if day_num % 30 == 0 or day_num == total_days:
             log.info(
                 "GSC backfill progress: %d/%d days (latest=%s), "
                 "query_rows=%d, page_rows=%d, errors=%d",
                 day_num, total_days, dates[0], grand_q, grand_p, len(errors),
             )
+
+    _record_empty_days(client, target, empty_markers)
 
     return {
         "ok":            len(errors) == 0,
@@ -551,14 +721,20 @@ def sync_for_refresh(
         return {"ok": False, "error": f"BQ setup failed (check service account permissions): {exc}"}
 
     try:
-        start, end = get_missing_range(client=client, target=target)
+        missing = get_missing_dates(client=client, target=target)
     except Exception as exc:
-        return {"ok": False, "error": f"get_missing_range failed: {exc}"}
+        return {"ok": False, "error": f"get_missing_dates failed: {exc}"}
 
-    if start is None:
+    # A day missing from either dimension is a day to sync. Fetching both
+    # dimensions for it re-fetches at most a handful of already-complete
+    # dimension-days (holes almost always line up), and keeps one date list
+    # rather than two divergent ones.
+    todo = sorted(set(missing.get("query") or []) | set(missing.get("page") or []), reverse=True)
+    if not todo:
         return {"ok": True, "status": "up_to_date"}
 
-    days_missing = (end - start).days + 1
+    start, end = todo[-1], todo[0]
+    days_missing = len(todo)
 
     if days_missing > _BACKGROUND_THRESHOLD and not wait_for_backfill:
         # Full backfill — don't block the refresh
@@ -566,9 +742,13 @@ def sync_for_refresh(
         _slug = client_slug
         _tgt = target
 
+        _dates = todo
+
         def _bg():
             try:
-                result = sync_range(start, end, site_url=_url, client_slug=_slug, target=_tgt)
+                result = sync_range(
+                    start, end, site_url=_url, client_slug=_slug, target=_tgt, dates=_dates,
+                )
                 log.info("GSC background backfill complete: %s", result)
             except Exception as exc:
                 log.error("GSC background backfill failed: %s", exc)
@@ -584,6 +764,8 @@ def sync_for_refresh(
         }
     else:
         # Small gap — sync now so this snapshot has fresh data
-        result = sync_range(start, end, site_url=site_url, client_slug=client_slug, target=target)
+        result = sync_range(
+            start, end, site_url=site_url, client_slug=client_slug, target=target, dates=todo,
+        )
         result["status"] = "synced"
         return result
