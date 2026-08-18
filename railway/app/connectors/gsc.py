@@ -10,6 +10,16 @@ from connectors.base import ConnectorHandler, SyncResult, register
 _log = logging.getLogger(__name__)
 
 
+def _describe_errors(errors: Any) -> str | None:
+    """Flatten sync_range()'s per-day error list into one sync-history message."""
+    items = [str(e) for e in (errors or []) if str(e).strip()]
+    if not items:
+        return None
+    head = "; ".join(items[:3])
+    more = f" (+{len(items) - 3} more)" if len(items) > 3 else ""
+    return f"{len(items)} day(s) failed: {head}{more}"[:500]
+
+
 class GSCConnector(ConnectorHandler):
     connector_type = "gsc"
     display_name = "Search Console"
@@ -75,6 +85,12 @@ class GSCConnector(ConnectorHandler):
                 result.get("query_rows", 0) + result.get("page_rows", 0)
                 or result.get("rows_synced") or result.get("rows_written") or 0
             )
+            # sync_range() reports per-day failures in "errors" (a list) and only
+            # sync_for_refresh's own setup failures in "error" (a string). Reading
+            # just "error" meant a sync where every single day's GSC fetch failed
+            # -- wrong property, revoked OAuth, 403 -- was recorded as
+            # "completed, 0 rows" with a blank error column, every day, forever.
+            error = result.get("error") or _describe_errors(result.get("errors"))
             # Refresh the GSC mart views over raw_gsc so the reporting tab has a
             # clean surface. Idempotent CREATE OR REPLACE; non-fatal.
             try:
@@ -84,7 +100,7 @@ class GSCConnector(ConnectorHandler):
                 _log.warning("GSC mart view provision failed [%s]: %s", client_slug, exc)
             return SyncResult(
                 rows_loaded=rows,
-                error=result.get("error") if not ok else None,
+                error=error if not ok else None,
             )
         except Exception as exc:
             _log.warning("GSC sync failed [%s]: %s", client_slug, exc)
