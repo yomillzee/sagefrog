@@ -63,6 +63,25 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-18",
+        title="Edit the keyword watchlist in the list itself, and paste in a batch",
+        area="Search Console",
+        kind="improved",
+        summary=(
+            "The watchlist no longer has a separate edit panel: click a keyword "
+            "or page in the table to change it, and a Bulk add box takes a "
+            "pasted batch of keywords at once."
+        ),
+        details=(
+            "“+ Add keyword” puts a new row straight into the list, "
+            "waiting for its keyword.",
+            "Clearing a keyword removes that row; each row has an × on hover.",
+            "Bulk add takes one row per line as “keyword, page”, and a "
+            "line of comma-separated keywords with no page adds one row each. It "
+            "says how many it added and how many were already there.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
         title="Search Console fills in gaps in its own history",
         area="Search Console",
         kind="fixed",

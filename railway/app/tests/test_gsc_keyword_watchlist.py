@@ -157,18 +157,34 @@ class WatchlistDemoDataTests(unittest.TestCase):
 
 
 class WatchlistRenderTests(unittest.TestCase):
-    def test_section_renders_with_its_table_and_editor(self):
-        html = render_bigquery_dashboard_page(
+    def setUp(self):
+        self.html = render_bigquery_dashboard_page(
             client_slug="demo", api_client_key="demo", label="Demo",
             use_session=True, session_email="t@e.com",
         )
-        self.assertIn('id="sec-gsc-watchlist"', html)
-        self.assertIn('id="gscWatchTable"', html)
-        self.assertIn('id="gscWatchEditor"', html)
-        self.assertIn("/api/clients/demo/gsc/watchlist", html)
-        self.assertIn("/api/clients/demo/gsc/watchlist-config", html)
+
+    def test_section_renders_with_its_table(self):
+        self.assertIn('id="sec-gsc-watchlist"', self.html)
+        self.assertIn('id="gscWatchTable"', self.html)
+        self.assertIn("/api/clients/demo/gsc/watchlist", self.html)
+        self.assertIn("/api/clients/demo/gsc/watchlist-config", self.html)
         # Sits above the broad branded/target card it complements.
-        self.assertLess(html.index('id="sec-gsc-watchlist"'), html.index('id="card-gsc-kw"'))
+        self.assertLess(self.html.index('id="sec-gsc-watchlist"'),
+                        self.html.index('id="card-gsc-kw"'))
+
+    def test_editing_lives_in_the_list_not_a_separate_form(self):
+        """The list IS the editor: an add button on the panel and click-to-edit
+        cells, with no second copy of the watchlist to keep in sync."""
+        self.assertIn('id="gscWatchAdd"', self.html)
+        self.assertIn("data-watch-edit=", self.html)   # click-to-edit cells
+        self.assertIn("data-watch-rm=", self.html)     # per-row remove
+        self.assertNotIn("gscWatchEditor", self.html)  # the old side panel
+
+    def test_bulk_add_box_is_present_and_explains_both_shapes(self):
+        self.assertIn('id="gscWatchBulk"', self.html)
+        self.assertIn('id="gscWatchBulkText"', self.html)
+        self.assertIn('id="gscWatchBulkAdd"', self.html)
+        self.assertIn("comma-separated keywords", self.html)
 
 
 if __name__ == "__main__":
