@@ -1386,9 +1386,16 @@ def render_bigquery_dashboard_page(
 
     panel_gsc_watchlist = """
       <section id="sec-gsc-watchlist">
-        <div class="sec-head"><h2>Keyword watchlist</h2><div class="sec-head-actions"><span class="status" id="gscWatchStatus"></span><button type="button" class="kw-edit-btn debug-only" data-kw-edit="gscWatchEditor" aria-expanded="false">Edit</button></div></div>
+        <div class="sec-head"><h2>Keyword watchlist</h2><div class="sec-head-actions"><span class="status" id="gscWatchStatus"></span><button type="button" class="watch-btn debug-only" id="gscWatchAdd">+ Add keyword</button><button type="button" class="watch-btn debug-only" id="gscWatchBulkBtn" aria-expanded="false">Bulk add</button></div></div>
         <p class="muted watch-intro">The keywords we are deliberately writing for, and the page each one is aimed at. Position is the impression-weighted average rank over the selected range; the spark line covers the last 13 weeks and rises as the rank improves.</p>
-        <div class="watch-editor" id="gscWatchEditor" hidden></div>
+        <div class="watch-bulk" id="gscWatchBulk" hidden>
+          <textarea id="gscWatchBulkText" rows="4" spellcheck="false" placeholder="hvac software, /blog/hvac-software&#10;manufacturing seo, industrial marketing, plant maintenance seo"></textarea>
+          <div class="watch-bulk-foot">
+            <button type="button" class="watch-btn watch-btn-primary" id="gscWatchBulkAdd">Add rows</button>
+            <button type="button" class="watch-btn" id="gscWatchBulkCancel">Cancel</button>
+            <span class="watch-hint">One row per line, as <code>keyword, page</code> — the page is optional. A line of several comma-separated keywords with no page adds one row each. End a keyword with * to count its variants too.</span>
+          </div>
+        </div>
         <div class="table-wrap"><table id="gscWatchTable" class="compact watch-table"></table></div>
       </section>"""
 
@@ -1883,20 +1890,33 @@ def render_bigquery_dashboard_page(
     .watch-spark {{ display:inline-flex; align-items:center; gap:8px; justify-content:flex-end; }}
     .watch-pos {{ font-variant-numeric:tabular-nums; font-weight:800; min-width:2.4em; text-align:right; }}
     .watch-pos-none {{ color:#9aa7b8; font-weight:600; }}
-    /* Row editor (admin only, same gating as the branded/target tag editors). */
-    .watch-editor {{ display:none; }}
-    .is-admin .watch-editor {{ display:block; padding:9px 10px 11px; margin-bottom:11px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; }}
-    .watch-row {{ display:flex; align-items:center; gap:7px; margin-bottom:6px; }}
-    .watch-row input {{ font:inherit; font-size:.8rem; padding:5px 8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; color:inherit; }}
-    .watch-row input.watch-in-kw {{ flex:1 1 40%; min-width:0; }}
-    .watch-row input.watch-in-page {{ flex:1 1 60%; min-width:0; }}
-    .watch-row input:focus {{ outline:none; border-color:#9bbfe6; box-shadow:0 0 0 2px #e2eefb; }}
-    .watch-row button {{ flex:none; border:1px solid var(--line); background:#fff; color:#8a97a8; border-radius:var(--radius-sm); width:26px; height:26px; line-height:1; cursor:pointer; }}
-    .watch-row button:hover {{ border-color:#e6a6a6; color:#8a2020; }}
-    .watch-editor-foot {{ display:flex; align-items:center; gap:10px; margin-top:9px; }}
-    .watch-add {{ border:1px solid var(--line); background:#fff; color:var(--muted); border-radius:var(--radius-sm); padding:4px 11px; font-size:.72rem; font-weight:700; cursor:pointer; }}
-    .watch-add:hover {{ border-color:#9bbfe6; color:var(--accent); }}
-    .watch-editor-hint {{ font-size:.7rem; color:#7d8ba0; }}
+    /* Editing happens in the list itself (admin only): the keyword and page
+       cells are click-to-edit, so the table stays the one place the watchlist
+       lives instead of a form that shadows it. */
+    .watch-btn {{ border:1px solid var(--line); background:#fff; color:var(--muted); border-radius:var(--radius-sm); padding:4px 11px; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; cursor:pointer; transition:border-color .12s, color .12s; }}
+    .watch-btn:hover {{ border-color:#9bbfe6; color:var(--accent); }}
+    .watch-btn-primary {{ border-color:var(--accent); color:#fff; background:var(--accent); }}
+    .watch-btn-primary:hover {{ color:#fff; filter:brightness(1.06); }}
+    .watch-hint {{ font-size:.7rem; color:#7d8ba0; flex:1 1 16ch; min-width:0; }}
+    .watch-bulk {{ display:none; }}
+    .is-admin .watch-bulk {{ display:block; padding:10px; margin-bottom:11px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; }}
+    .watch-bulk textarea {{ width:100%; box-sizing:border-box; font:inherit; font-size:.8rem; line-height:1.5; padding:7px 9px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; color:inherit; resize:vertical; }}
+    .watch-bulk textarea:focus {{ outline:none; border-color:#9bbfe6; box-shadow:0 0 0 2px #e2eefb; }}
+    .watch-bulk-foot {{ display:flex; align-items:center; gap:9px; margin-top:9px; flex-wrap:wrap; }}
+    .watch-bulk code {{ font-size:.68rem; background:#f1f4f8; border-radius:3px; padding:1px 4px; }}
+    /* Click-to-edit affordance: only an admin gets the cursor and the hover
+       underline, so a client's table reads as plain text. */
+    .is-admin .watch-editable {{ cursor:text; }}
+    .is-admin .watch-editable:hover {{ box-shadow:inset 0 -1px 0 #c9d3e0; }}
+    .watch-cell-in {{ width:100%; box-sizing:border-box; font:inherit; font-size:.82rem; padding:3px 6px; border:1px solid #9bbfe6; border-radius:var(--radius-sm); background:#fff; color:inherit; }}
+    .watch-cell-in:focus {{ outline:none; box-shadow:0 0 0 2px #e2eefb; }}
+    /* A row added but not yet named -- tinted so it is obvious the list is
+       waiting on you, and it stays at the top until it has a keyword. */
+    .watch-draft td {{ background:#fbfdff; }}
+    .watch-rm {{ border:1px solid transparent; background:transparent; color:#c9d3e0; border-radius:var(--radius-sm); width:22px; height:22px; line-height:1; cursor:pointer; }}
+    tr:hover .watch-rm {{ color:#8a97a8; border-color:var(--line); }}
+    .watch-rm:hover {{ border-color:#e6a6a6; color:#8a2020; }}
+    td.watch-rm-cell {{ width:28px; padding-left:0; padding-right:6px; text-align:right; }}
     th.watch-sort {{ cursor:pointer; user-select:none; white-space:nowrap; transition:background .12s,color .12s; }}
     th.watch-sort:hover {{ background:#e9eef5; color:#33455e; }}
     th.watch-sort.active {{ color:var(--accent); }}
@@ -3976,11 +3996,14 @@ def render_bigquery_dashboard_page(
     // no impressions yet is the most interesting row on a watchlist, so it stays
     // visible with empty metrics instead of dropping out.
     function watchRows() {{
-      return gscWatchItems.filter(i=>i.kw.trim()).map(i=>{{
+      // Every configured item becomes a row, including one just added and not
+      // yet named (`draft`) -- adding a row and having nothing appear is the
+      // one thing an editable list must not do.
+      return gscWatchItems.map((i,idx)=>{{
         const k=watchKey(i.kw);
         const d=gscWatch.rows[k]||{{}};
         return Object.assign({{}}, d, {{
-          kw:i.kw, page:i.page,
+          kw:i.kw, page:i.page, idx, draft:!i.kw.trim(),
           series:gscWatch.weekly[k]||[],
           pageData:gscWatch.pages[i.page.trim()]||null,
         }});
@@ -3990,7 +4013,7 @@ def render_bigquery_dashboard_page(
       const el=document.getElementById('gscWatchTable'); if(!el) return;
       const rows=watchRows();
       if (!rows.length) {{
-        const hint=IS_ADMIN ? ' Use Edit to add the keywords you are writing for.' : '';
+        const hint=IS_ADMIN ? ' Use “+ Add keyword” or “Bulk add” to start the list.' : '';
         el.innerHTML=`<tbody><tr><td class="empty">No keywords on the watchlist yet.${{hint}}</td></tr></tbody>`;
         return;
       }}
@@ -3998,6 +4021,9 @@ def render_bigquery_dashboard_page(
       // keyword reads as 0 impressions but as no position at all, and sorting it
       // to the top of "best position" would be a lie.
       const sorted=[...rows].sort((a,b)=>{{
+        // A just-added row has no keyword yet and no metrics to sort on, so it
+        // pins to the top rather than falling in with the unranked rows.
+        if (a.draft!==b.draft) return a.draft ? -1 : 1;
         const va=a[gscWatch.sortKey], vb=b[gscWatch.sortKey];
         const ma=(va==null||!isFinite(num(va))), mb=(vb==null||!isFinite(num(vb)));
         if (ma&&mb) return 0;
@@ -4009,7 +4035,8 @@ def render_bigquery_dashboard_page(
       const th=(k,label)=>`<th class="watch-sort${{gscWatch.sortKey===k?' active':''}}" data-watch-key="${{k}}">${{label}}${{arrow(k)}}</th>`;
       const head=`<thead><tr><th class="left">Keyword</th><th class="left">Page</th>`
         + th('avg_position','Position · 13 wks') + th('delta_position','Δ Pos')
-        + WATCH_COLS.map(c=>th(c.key,c.label)).join('') + `</tr></thead>`;
+        + WATCH_COLS.map(c=>th(c.key,c.label)).join('')
+        + (IS_ADMIN ? `<th></th>` : '') + `</tr></thead>`;
       const body=`<tbody>`+sorted.map(r=>{{
         const kw=r.kw.trim(), variants=kw.endsWith('*');
         const kwTxt=kw.replace(/[*]$/,'').trim();
@@ -4020,14 +4047,23 @@ def render_bigquery_dashboard_page(
         const posTxt=(r.avg_position==null)
           ? '<span class="watch-pos watch-pos-none">—</span>'
           : `<span class="watch-pos">${{num(r.avg_position).toFixed(1)}}</span>`;
-        return `<tr>`
-          + `<td class="left"><span class="watch-kw" title="${{esc(kw)}}">${{esc(kwTxt)}}${{vTag}}</span></td>`
-          + `<td class="left">${{watchPageCell(r)}}</td>`
+        // Admin cells are the same read-only cells plus a click target, so the
+        // list looks identical to what a client sees until you click into it.
+        const editable=(field, inner) => IS_ADMIN
+          ? `<span class="watch-editable" data-watch-edit="${{field}}" data-watch-i="${{r.idx}}" title="Click to edit">${{inner}}</span>`
+          : inner;
+        const kwCell = (IS_ADMIN && r.draft)
+          ? watchCellInput('kw', r.idx, '')
+          : editable('kw', `<span class="watch-kw" title="${{esc(kw)}}">${{esc(kwTxt)}}${{vTag}}</span>`);
+        return `<tr${{r.draft ? ' class="watch-draft"' : ''}}>`
+          + `<td class="left">${{kwCell}}</td>`
+          + `<td class="left">${{editable('page', watchPageCell(r))}}</td>`
           + `<td><span class="watch-spark">${{watchSpark(r.series)}}${{posTxt}}</span></td>`
           // "New" (what a null delta means elsewhere) would be wrong for a
           // keyword that has no rank at all yet -- that row gets a plain dash.
           + `<td>${{r.avg_position==null ? '—' : gscDelta(r.delta_position, r)}}</td>`
           + WATCH_COLS.map(c=>`<td>${{r[c.key]==null ? '—' : c.format(r[c.key], r)}}</td>`).join('')
+          + (IS_ADMIN ? `<td class="watch-rm-cell"><button type="button" class="watch-rm" data-watch-rm="${{r.idx}}" aria-label="Remove ${{esc(kwTxt||'this row')}}">×</button></td>` : '')
           + `</tr>`;
       }}).join('')+`</tbody>`;
       el.innerHTML=head+body;
@@ -4051,7 +4087,7 @@ def render_bigquery_dashboard_page(
       }}
       const reqId=++_gscWatchReqId;
       const el=document.getElementById('gscWatchTable');
-      if (el) el.innerHTML=skelTable(7, Math.min(6, terms.length));
+      if (el) el.innerHTML=skelTable(IS_ADMIN ? 8 : 7, Math.min(6, terms.length));
       setStatus('gscWatchStatus','Loading…');
       let url=withCompare(withDates(GSC_WATCHLIST_API))+'&terms='+encodeURIComponent(terms.join(','));
       const pgs=watchPages();
@@ -4087,9 +4123,9 @@ def render_bigquery_dashboard_page(
         renderGscWatchTable();
       }});
     }})();
-    // Row editor (admin only, like the branded/target tag editors). Values save
-    // on blur rather than per keystroke -- each save also refetches, and a
-    // half-typed keyword is not worth a BigQuery scan.
+    // Editing is the list. An admin clicks a keyword or page cell, it becomes an
+    // input in place, and blur/Enter commits -- there is no second copy of the
+    // watchlist to keep in sync with what the table shows.
     let _watchSaveTimer=null;
     function saveWatchConfig() {{
       clearTimeout(_watchSaveTimer);
@@ -4103,39 +4139,134 @@ def render_bigquery_dashboard_page(
         }} catch(err) {{ setStatus('gscWatchStatus','Save failed: '+(err.message||err), true); }}
       }}, 700);
     }}
-    function renderWatchEditor() {{
-      const box=document.getElementById('gscWatchEditor'); if(!box) return;
-      const rows=gscWatchItems.map((it,i)=>`<div class="watch-row">`
-        + `<input class="watch-in-kw" type="text" data-i="${{i}}" data-f="kw" value="${{esc(it.kw)}}" placeholder="keyword">`
-        + `<input class="watch-in-page" type="text" data-i="${{i}}" data-f="page" value="${{esc(it.page)}}" placeholder="page this keyword is for (optional)">`
-        + `<button type="button" data-rm="${{i}}" aria-label="Remove ${{esc(it.kw||'row')}}">×</button></div>`).join('');
-      box.innerHTML=rows
-        + `<div class="watch-editor-foot"><button type="button" class="watch-add">+ Add keyword</button>`
-        + `<span class="watch-editor-hint">End a keyword with * to count its variants too. The page is the URL or path the keyword is written for.</span></div>`;
+    // The input a cell turns into. Rendered by the table for a draft row, and
+    // swapped in on click for an existing one.
+    function watchCellInput(field, idx, value) {{
+      const ph = field==='kw' ? 'keyword' : 'page this keyword is for (optional)';
+      return `<input class="watch-cell-in" type="text" data-watch-in="${{field}}" data-watch-i="${{idx}}" value="${{esc(value||'')}}" placeholder="${{ph}}" spellcheck="false">`;
     }}
-    (function initWatchEditor(){{
-      const box=document.getElementById('gscWatchEditor'); if(!box) return;
-      renderWatchEditor();
-      box.addEventListener('change', ev => {{
-        const inp=ev.target.closest('input[data-f]'); if(!inp) return;
-        const item=gscWatchItems[+inp.dataset.i]; if(!item) return;
-        const val=inp.value.trim();
-        if (item[inp.dataset.f]===val) return;
-        item[inp.dataset.f]=val;
-        saveWatchConfig(); loadGscWatchlist();
+    function focusWatchInput(idx, field) {{
+      const el=document.getElementById('gscWatchTable'); if(!el) return;
+      const inp=el.querySelector(`input[data-watch-in="${{field}}"][data-watch-i="${{idx}}"]`);
+      if (inp) {{ inp.focus(); inp.select(); }}
+    }}
+    // Commit one cell. An existing row whose keyword is cleared is a removal --
+    // a nameless row would just sit there unrankable.
+    function commitWatchCell(idx, field, raw) {{
+      const item=gscWatchItems[idx]; if(!item) return;
+      const val=String(raw||'').trim();
+      const changed = item[field]!==val;
+      item[field]=val;
+      if (field==='kw' && !val) gscWatchItems.splice(idx,1);
+      if (changed) {{ saveWatchConfig(); loadGscWatchlist(); }}
+      else renderGscWatchTable();
+    }}
+    function addWatchRow() {{
+      gscWatchItems.push({{kw:'', page:''}});
+      renderGscWatchTable();
+      focusWatchInput(gscWatchItems.length-1, 'kw');
+    }}
+    // Bulk add. Two shapes people actually paste, told apart by whether the
+    // second field looks like a page: "keyword, /page" is one row, and a line of
+    // plain comma-separated keywords is one row each. "keyword|page" (the stored
+    // format) always means one row, so a saved list can be pasted straight back.
+    function parseWatchBulk(text) {{
+      const looksPage=v=>/^(https?:[/][/]|[/])/i.test(v);
+      const out=[];
+      String(text||'').split(/[\\r\\n]+/).forEach(line=>{{
+        const t=line.trim(); if(!t) return;
+        if (t.includes('|')) {{
+          const bar=t.indexOf('|');
+          const kw=t.slice(0,bar).trim();
+          if (kw) out.push({{kw, page:t.slice(bar+1).trim()}});
+          return;
+        }}
+        const parts=t.split(',').map(v=>v.trim()).filter(Boolean);
+        if (parts.length===2 && looksPage(parts[1])) {{ out.push({{kw:parts[0], page:parts[1]}}); return; }}
+        parts.forEach(v=>{{ if (!looksPage(v)) out.push({{kw:v, page:''}}); }});
       }});
-      box.addEventListener('click', ev => {{
-        const rm=ev.target.closest('button[data-rm]');
-        if (rm) {{
-          gscWatchItems.splice(+rm.dataset.rm,1);
-          renderWatchEditor(); saveWatchConfig(); loadGscWatchlist(); return;
-        }}
-        if (ev.target.closest('.watch-add')) {{
-          gscWatchItems.push({{kw:'', page:''}});
-          renderWatchEditor();
-          const inputs=box.querySelectorAll('input.watch-in-kw');
-          if (inputs.length) inputs[inputs.length-1].focus();
-        }}
+      return out;
+    }}
+    // Adds what is new and says what it skipped -- pasting a list that overlaps
+    // the current one is normal, and silently dropping half of it is not.
+    function applyWatchBulk(text) {{
+      const parsed=parseWatchBulk(text);
+      if (!parsed.length) {{ setStatus('gscWatchStatus','Nothing to add — paste one keyword per line, or comma-separated.', true); return false; }}
+      const seen=new Set(gscWatchItems.map(i=>watchKey(i.kw)).filter(Boolean));
+      let added=0, skipped=0;
+      parsed.forEach(it=>{{
+        const k=watchKey(it.kw);
+        if (!k || seen.has(k)) {{ skipped++; return; }}
+        seen.add(k); gscWatchItems.push(it); added++;
+      }});
+      if (!added) {{ setStatus('gscWatchStatus','Already on the watchlist — nothing added.'); return false; }}
+      saveWatchConfig(); loadGscWatchlist();
+      const tail = skipped ? ` ${{skipped}} already on the list.` : '';
+      setStatus('gscWatchStatus', `Added ${{added}} keyword${{added===1?'':'s'}}.${{tail}}`);
+      return true;
+    }}
+    (function initWatchEditing(){{
+      const table=document.getElementById('gscWatchTable'); if(!table) return;
+      if (IS_ADMIN) {{
+        // Swap a cell for an input on click. Ignore clicks on the page link so
+        // an admin can still follow it.
+        table.addEventListener('click', ev => {{
+          if (ev.target.closest('a')) return;
+          const rm=ev.target.closest('button[data-watch-rm]');
+          if (rm) {{
+            gscWatchItems.splice(+rm.dataset.watchRm,1);
+            saveWatchConfig(); loadGscWatchlist(); return;
+          }}
+          const cell=ev.target.closest('[data-watch-edit]'); if(!cell) return;
+          const field=cell.dataset.watchEdit, idx=+cell.dataset.watchI;
+          const item=gscWatchItems[idx]; if(!item) return;
+          const td=cell.closest('td'); if(!td) return;
+          td.innerHTML=watchCellInput(field, idx, item[field]);
+          focusWatchInput(idx, field);
+        }});
+        table.addEventListener('keydown', ev => {{
+          const inp=ev.target.closest('input[data-watch-in]'); if(!inp) return;
+          if (ev.key==='Enter') {{ ev.preventDefault(); inp.blur(); }}
+          else if (ev.key==='Escape') {{ ev.preventDefault(); inp.dataset.cancelled='1'; renderGscWatchTable(); }}
+          else if (ev.key==='Tab' && inp.dataset.watchIn==='kw') {{
+            // Tab from keyword to page is the natural way to fill a new row.
+            ev.preventDefault();
+            const idx=+inp.dataset.watchI;
+            commitWatchCell(idx,'kw',inp.value);
+            if (gscWatchItems[idx]) {{
+              const td=table.querySelector(`[data-watch-edit="page"][data-watch-i="${{idx}}"]`);
+              if (td && td.closest('td')) {{ td.closest('td').innerHTML=watchCellInput('page', idx, gscWatchItems[idx].page); focusWatchInput(idx,'page'); }}
+            }}
+          }}
+        }});
+        table.addEventListener('focusout', ev => {{
+          const inp=ev.target.closest('input[data-watch-in]'); if(!inp) return;
+          if (inp.dataset.cancelled) return;
+          commitWatchCell(+inp.dataset.watchI, inp.dataset.watchIn, inp.value);
+        }});
+      }}
+      const addBtn=document.getElementById('gscWatchAdd');
+      if (addBtn) addBtn.addEventListener('click', addWatchRow);
+      const bulkBtn=document.getElementById('gscWatchBulkBtn');
+      const bulk=document.getElementById('gscWatchBulk');
+      const bulkText=document.getElementById('gscWatchBulkText');
+      const closeBulk=()=>{{ if(!bulk) return; bulk.hidden=true; if(bulkBtn) bulkBtn.setAttribute('aria-expanded','false'); }};
+      if (bulkBtn && bulk) bulkBtn.addEventListener('click', () => {{
+        const open=bulk.hidden;
+        bulk.hidden=!open;
+        bulkBtn.setAttribute('aria-expanded', open?'true':'false');
+        if (open && bulkText) bulkText.focus();
+      }});
+      const bulkAdd=document.getElementById('gscWatchBulkAdd');
+      if (bulkAdd && bulkText) bulkAdd.addEventListener('click', () => {{
+        if (applyWatchBulk(bulkText.value)) {{ bulkText.value=''; closeBulk(); }}
+      }});
+      const bulkCancel=document.getElementById('gscWatchBulkCancel');
+      if (bulkCancel) bulkCancel.addEventListener('click', () => {{ if (bulkText) bulkText.value=''; closeBulk(); }});
+      // Ctrl/Cmd+Enter submits, so a long paste doesn't need a trip to the mouse.
+      if (bulkText) bulkText.addEventListener('keydown', ev => {{
+        if (ev.key==='Enter' && (ev.metaKey||ev.ctrlKey)) {{ ev.preventDefault(); if (applyWatchBulk(bulkText.value)) {{ bulkText.value=''; closeBulk(); }} }}
+        else if (ev.key==='Escape') {{ ev.preventDefault(); closeBulk(); }}
       }});
     }})();
     // Inline tag editors for branded roots + target keywords. Add with Enter or
