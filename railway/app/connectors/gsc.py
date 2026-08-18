@@ -61,20 +61,33 @@ class GSCConnector(ConnectorHandler):
     agency_oauth = True   # prefers one shared agency Google OAuth (gsc_read_creds)
 
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
+        """Every property the agency GSC login can see.
+
+        Raises rather than returning [] on failure. Swallowing the error made a
+        broken Google connection and a login with genuinely no properties render
+        the same "No accounts found for this connection." — which is the one
+        screen you go to in order to tell those two apart when a client's sync
+        is 403ing. The wizard already renders the API's error text, and
+        test_connection needs the raise to fail the step.
+        """
+        import gsc_sync_service
         try:
-            import gsc_sync_service
             props = gsc_sync_service.list_accessible_properties()
-            # list_accessible_properties returns dicts keyed "site_url" (not "siteUrl");
-            # using the wrong key collapsed every property to an empty id → the wizard
-            # showed "No accounts found" even when the service account had access.
-            return [
-                {"id": p.get("site_url", ""), "name": p.get("site_url", "")}
-                for p in props
-                if p.get("site_url")
-            ]
         except Exception as exc:
-            _log.warning("GSC list_accounts failed: %s", exc)
-            return []
+            _log.warning("GSC list_accounts failed [%s]: %s", client_slug, exc)
+            raise RuntimeError(
+                "Could not list Search Console properties. The agency Google "
+                "connection (Admin → Connect Google Search Console) may need to be "
+                f"reconnected: {exc}"[:400]
+            ) from exc
+        # list_accessible_properties returns dicts keyed "site_url" (not "siteUrl");
+        # using the wrong key collapsed every property to an empty id → the wizard
+        # showed "No accounts found" even when the service account had access.
+        return [
+            {"id": p.get("site_url", ""), "name": p.get("site_url", "")}
+            for p in props
+            if p.get("site_url")
+        ]
 
     def run_sync(self, *, client_slug: str, date_range: str = "LAST_30_DAYS") -> SyncResult:
         import client_dashboard_config

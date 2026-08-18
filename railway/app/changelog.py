@@ -63,6 +63,24 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-18",
+        title="The Search Console property picker says why it came up empty",
+        area="Connectors · Search Console",
+        kind="fixed",
+        summary=(
+            "When the wizard could not list a client's Search Console properties "
+            "— usually the agency Google connection needing to be reconnected "
+            "— step 2 said “No accounts found for this connection,” the same "
+            "thing it says when the login genuinely has none. It now shows the "
+            "reason Google gave, which is the screen you go to when a client's "
+            "keyword data has stopped updating."
+        ),
+        details=(
+            "Names the fix: reconnect under Admin → Connect Google Search Console.",
+            "A login with no properties still reads as an empty list, not an error.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
         title="A Search Console sync that fetched nothing no longer says “completed”",
         area="Connectors · Search Console",
         kind="fixed",

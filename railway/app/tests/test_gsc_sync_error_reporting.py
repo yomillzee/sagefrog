@@ -164,6 +164,53 @@ class GscSyncErrorReportingTests(unittest.TestCase):
         self.assertIsNone(_describe_errors(None))
 
 
+class GscListAccountsTests(unittest.TestCase):
+    """An empty property list must mean "no properties", not "lookup broke"."""
+
+    def _connector_with(self, side_effect=None, props=None):
+        mod = types.SimpleNamespace(
+            list_accessible_properties=(
+                (lambda: (_ for _ in ()).throw(side_effect)) if side_effect
+                else (lambda: props or [])
+            )
+        )
+        saved = sys.modules.get("gsc_sync_service")
+        sys.modules["gsc_sync_service"] = mod
+        self.addCleanup(
+            lambda: sys.modules.__setitem__("gsc_sync_service", saved)
+            if saved is not None else sys.modules.pop("gsc_sync_service", None)
+        )
+        return GSCConnector()
+
+    def test_a_broken_connection_raises_instead_of_looking_empty(self):
+        conn = self._connector_with(side_effect=RuntimeError("webmasters API 403: denied"))
+        with self.assertRaises(RuntimeError) as caught:
+            conn.list_accounts(client_slug="acme")
+        msg = str(caught.exception)
+        self.assertIn("403", msg)
+        # Points at the fix, not just the symptom.
+        self.assertIn("Connect Google Search Console", msg)
+
+    def test_test_connection_fails_when_the_lookup_is_broken(self):
+        conn = self._connector_with(side_effect=RuntimeError("Token refresh failed"))
+        with self.assertRaises(RuntimeError):
+            conn.test_connection(client_slug="acme")
+
+    def test_genuinely_empty_list_is_still_an_empty_list(self):
+        conn = self._connector_with(props=[])
+        self.assertEqual(conn.list_accounts(client_slug="acme"), [])
+
+    def test_properties_map_to_id_and_name(self):
+        conn = self._connector_with(props=[
+            {"site_url": "sc-domain:example.com", "permission_level": "siteOwner"},
+            {"site_url": ""},  # skipped — an empty id is not selectable
+        ])
+        self.assertEqual(
+            conn.list_accounts(client_slug="acme"),
+            [{"id": "sc-domain:example.com", "name": "sc-domain:example.com"}],
+        )
+
+
 class GscApiErrorBodyTests(unittest.TestCase):
     """A 403's reason lives in the response body, not in urllib's str()."""
 
