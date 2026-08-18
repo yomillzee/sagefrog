@@ -1739,6 +1739,14 @@ def render_bigquery_dashboard_page(
     .gsc-mv-down {{ color:#c02626; background:#fdecec; }}
     .gsc-mv-flat {{ color:#8a97a8; background:transparent; font-weight:600; }}
     .gsc-mv-new {{ color:#1769aa; background:#e9f1fb; }}
+    /* CTR read-out: a dot saying whether the click-through rate is ahead of,
+       in line with, or behind what a query's average rank normally earns. */
+    .gsc-ctr {{ display:inline-flex; align-items:center; justify-content:flex-end; gap:5px; }}
+    .gsc-ctr-dot {{ width:6px; height:6px; border-radius:50%; flex:none; background:#c9d3e0; }}
+    .gsc-ctr-above .gsc-ctr-dot {{ background:#0a7f3f; }}
+    .gsc-ctr-below .gsc-ctr-dot {{ background:#d97706; }}
+    .gsc-ctr-legend {{ margin-top:7px; font-size:.7rem; color:#7d8ba0; display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; }}
+    .gsc-ctr-legend .gsc-ctr {{ gap:4px; color:#7d8ba0; }}
     th.expl-sort {{ cursor:pointer; user-select:none; white-space:nowrap; transition:background .12s,color .12s; }}
     th.expl-sort:hover {{ background:#e9eef5; color:#33455e; }}
     th.expl-sort.active {{ color:var(--accent); }}
@@ -2343,6 +2351,12 @@ def render_bigquery_dashboard_page(
             <h3>Top queries</h3>
             <div class="table-wrap"><table id="gscQueriesTable" class="compact"></table></div>
             <div class="pager" id="gscQueriesPager"></div>
+            <div class="gsc-ctr-legend">
+              <span>CTR vs. typical for its position:</span>
+              <span class="gsc-ctr gsc-ctr-above"><span class="gsc-ctr-dot"></span>ahead</span>
+              <span class="gsc-ctr"><span class="gsc-ctr-dot"></span>in line</span>
+              <span class="gsc-ctr gsc-ctr-below"><span class="gsc-ctr-dot"></span>behind</span>
+            </div>
           </div>
           <div class="col-panel">
             <h3>Top pages</h3>
@@ -3754,6 +3768,29 @@ def render_bigquery_dashboard_page(
     // ---- Search Console ----
     const gscPos = v => v==null ? '—' : num(v).toFixed(1);
     const gscPct = v => v==null ? '—' : (num(v)).toFixed(2) + '%';
+    // How a query's CTR compares with what its average rank normally earns.
+    // The bands are the standard organic click-curve ranges (position 1 pulls
+    // 20-40%, position 11+ almost nothing), so the dot answers "is this CTR
+    // good?" in the only way that means anything -- good *for that rank*.
+    const GSC_CTR_BANDS = [
+      {{max:1.5,  lo:20, hi:40, label:'20–40%'}},
+      {{max:2.5,  lo:10, hi:20, label:'10–20%'}},
+      {{max:3.5,  lo:6,  hi:12, label:'6–12%'}},
+      {{max:5.5,  lo:3,  hi:8,  label:'3–8%'}},
+      {{max:10.5, lo:1,  hi:5,  label:'1–5%'}},
+      {{max:Infinity, lo:0, hi:2, label:'under 2%'}},
+    ];
+    const gscCtrBand = pos => GSC_CTR_BANDS.find(b => pos < b.max) || GSC_CTR_BANDS[GSC_CTR_BANDS.length-1];
+    function gscCtrCell(v, row) {{
+      const txt = gscPct(v);
+      const pos = row ? row.avg_position : null;
+      if (v==null || pos==null) return txt;
+      const b = gscCtrBand(num(pos)), c = num(v);
+      const state = c > b.hi ? 'above' : (c < b.lo ? 'below' : 'typical');
+      const word = state==='above' ? 'Ahead of' : state==='below' ? 'Behind' : 'In line with';
+      const title = `${{word}} the ${{b.label}} a query at position ${{num(pos).toFixed(1)}} typically earns`;
+      return `<span class="gsc-ctr gsc-ctr-${{state}}" title="${{esc(title)}}"><span class="gsc-ctr-dot"></span>${{txt}}</span>`;
+    }}
     // Position movement vs. the comparison period (whichever the Compare picker
     // selected -- the backend is told which): value is prior - current, so a
     // positive number means the keyword improved (moved toward rank 1). null =
@@ -3786,7 +3823,7 @@ def render_bigquery_dashboard_page(
     const GSC_SORT_COLS = [
       {{key:'clicks', label:'Clicks', format:count, defDir:'desc'}},
       {{key:'impressions', label:'Impr.', format:count, defDir:'desc'}},
-      {{key:'ctr', label:'CTR', format:gscPct, defDir:'desc'}},
+      {{key:'ctr', label:'CTR', format:gscCtrCell, defDir:'desc'}},
       {{key:'avg_position', label:'Position', format:gscPos, defDir:'asc'}},
     ];
     // Δ Position vs. the comparison period. Every query-keyed table (top queries,
@@ -3828,7 +3865,7 @@ def render_bigquery_dashboard_page(
       const start=(st.page-1)*GSC_PER_PAGE, pageRows=sorted.slice(start,start+GSC_PER_PAGE);
       const arrow=k=>st.sortKey===k?(st.sortDir==='asc'?' \\u25B4':' \\u25BE'):'';
       const head=`<thead><tr><th class="left col-resizable">${{esc(st.labelText)}}<span class="col-resizer" data-which="${{which}}"></span></th>`+cols.map(c=>`<th class="gsc-sort${{st.sortKey===c.key?' active':''}}" data-which="${{which}}" data-key="${{c.key}}">${{c.label}}${{arrow(c.key)}}</th>`).join('')+`</tr></thead>`;
-      const body=`<tbody>`+pageRows.map(r=>{{const raw=r[st.labelKey];const label=st.labelFormat?st.labelFormat(raw):raw;return`<tr><td class="left"><span class="page-path" title="${{esc(raw)}}">${{esc(label)}}</span></td>`+cols.map(c=>`<td>${{c.format(r[c.key])}}</td>`).join('')+`</tr>`;}}).join('')+`</tbody>`;
+      const body=`<tbody>`+pageRows.map(r=>{{const raw=r[st.labelKey];const label=st.labelFormat?st.labelFormat(raw):raw;return`<tr><td class="left"><span class="page-path" title="${{esc(raw)}}">${{esc(label)}}</span></td>`+cols.map(c=>`<td>${{c.format(r[c.key], r)}}</td>`).join('')+`</tr>`;}}).join('')+`</tbody>`;
       el.innerHTML=head+body;
       applyGscColWidth(el, st);
       if (totalPages<=1) {{ pager.innerHTML=''; }}

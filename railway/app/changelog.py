@@ -63,6 +63,27 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-17",
+        title="Search Console CTR now says whether it is good for that rank",
+        area="Search Console",
+        kind="improved",
+        summary=(
+            "Every CTR in the Search Console tables carries a small dot showing "
+            "whether the click-through rate is ahead of, in line with, or behind "
+            "what a query at that average position normally earns."
+        ),
+        details=(
+            "Green means ahead of the typical range for that position, grey means "
+            "in line, amber means behind — a 4% CTR is strong at position 8 and "
+            "weak at position 1, and the dot makes that difference readable at a "
+            "glance.",
+            "Hovering a CTR spells out the comparison, e.g. “Behind the 6–12% a "
+            "query at position 3.2 typically earns”.",
+            "Applies to top queries, top pages, and the branded and target "
+            "keyword tables.",
+        ),
+    ),
+    Entry(
+        date="2026-08-17",
         title="Feature requests post to Slack again",
         area="Feature requests",
         kind="new",
