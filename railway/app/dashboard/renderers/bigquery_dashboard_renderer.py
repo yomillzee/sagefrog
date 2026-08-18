@@ -253,6 +253,20 @@ EXPLORER_LAYOUT_CARDS: dict[str, str] = {
 }
 
 
+# Search Console panels, stored under the "gsc" entry of
+# ``client_dashboard_config.card_layouts``. Same rules as the two tabs above:
+# stable keys, titles shown on each panel's edit bar, and a key that isn't
+# rendered this time (the SEMrush panel without that connector) is simply
+# ignored until it comes back.
+GSC_LAYOUT_CARDS: dict[str, str] = {
+    "semrush": "Organic Search Intelligence",
+    "kpis": "Search Console summary",
+    "tables": "Top queries & pages",
+    "watchlist": "Keyword watchlist",
+    "keywords": "Branded & Target Keywords",
+}
+
+
 # Drag-handle and hide/show glyphs for the panel edit-mode controls.
 _OV_DRAG_ICON = (
     '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" '
@@ -687,6 +701,7 @@ def render_bigquery_dashboard_page(
     overview_pinned_card: str | None = None
     overview_layout: dict[str, list[str]] = {"order": [], "hidden": []}
     explorer_layout: dict[str, list[str]] = {"order": [], "hidden": []}
+    gsc_layout: dict[str, list[str]] = {"order": [], "hidden": []}
     try:
         import client_dashboard_config as _cdc
         _kwcfg = _cdc.get_config(api_client_key) or _cdc.get_config(client_slug)
@@ -720,6 +735,7 @@ def render_bigquery_dashboard_page(
 
             overview_layout = _stored_layout("overview")
             explorer_layout = _stored_layout("explorer")
+            gsc_layout = _stored_layout("gsc")
         pagespeed_targets_stored = (
             _cdc.get_pagespeed_targets(api_client_key)
             or _cdc.get_pagespeed_targets(client_slug)
@@ -1335,6 +1351,116 @@ def render_bigquery_dashboard_page(
         ),
     )
 
+    # ---- Search Console panels ----
+    # Same editable-panel treatment as Overview and the Explorer, stored under
+    # the "gsc" entry of card_layouts. The SEMrush panel is only in the list when
+    # that connector is on; the watchlist hides its own wrapper when there is
+    # nothing on the list and nobody who could add one (see loadGscWatchlist).
+    panel_gsc_kpis = """
+      <section id="sec-gsc-overview">
+        <div class="sec-head"><h2>Search Console</h2><span class="status" id="gscStatus"></span></div>
+        <div class="cards" id="gscKpis"></div>
+      </section>"""
+
+    panel_gsc_tables = """
+      <section id="sec-gsc-tables">
+        <div class="two-col">
+          <div class="col-panel">
+            <h3>Top queries</h3>
+            <div class="table-wrap"><table id="gscQueriesTable" class="compact"></table></div>
+            <div class="pager" id="gscQueriesPager"></div>
+            <div class="gsc-ctr-legend">
+              <span>CTR vs. typical for its position:</span>
+              <span class="gsc-ctr gsc-ctr-above"><span class="gsc-ctr-dot"></span>ahead</span>
+              <span class="gsc-ctr"><span class="gsc-ctr-dot"></span>in line</span>
+              <span class="gsc-ctr gsc-ctr-below"><span class="gsc-ctr-dot"></span>behind</span>
+            </div>
+          </div>
+          <div class="col-panel">
+            <h3>Top pages</h3>
+            <div class="table-wrap"><table id="gscPagesTable" class="compact"></table></div>
+            <div class="pager" id="gscPagesPager"></div>
+          </div>
+        </div>
+      </section>"""
+
+    panel_gsc_watchlist = """
+      <section id="sec-gsc-watchlist">
+        <div class="sec-head"><h2>Keyword watchlist</h2><div class="sec-head-actions"><span class="status" id="gscWatchStatus"></span><button type="button" class="kw-edit-btn debug-only" data-kw-edit="gscWatchEditor" aria-expanded="false">Edit</button></div></div>
+        <p class="muted watch-intro">The keywords we are deliberately writing for, and the page each one is aimed at. Position is the impression-weighted average rank over the selected range; the spark line covers the last 13 weeks and rises as the rank improves.</p>
+        <div class="watch-editor" id="gscWatchEditor" hidden></div>
+        <div class="table-wrap"><table id="gscWatchTable" class="compact watch-table"></table></div>
+      </section>"""
+
+    # Branded and Target queries used to sit side by side, which left each one
+    # half a page wide and its trend chart unreadable. They are one tabbed card
+    # now — the same .pnl-head/.pnl-tabs card the Website Analytics tab uses for
+    # Pages / Landing Pages — so whichever group you are reading gets the full
+    # width. The per-group Edit button (admin) rides in the card head and swaps
+    # with the tab via data-pnl-for.
+    panel_gsc_keywords = f"""
+      <section id="card-gsc-kw">
+        <div class="pnl-head">
+          <div class="pnl-tabs" role="tablist" aria-label="Keyword group">
+            <button type="button" class="pnl-tab" role="tab" id="tab-sec-gsc-branded" aria-selected="true" aria-controls="sec-gsc-branded" data-pnl="gsckw" data-pane="sec-gsc-branded">Branded queries <span class="muted" id="gscBrandedCount"></span></button>
+            <button type="button" class="pnl-tab" role="tab" id="tab-sec-gsc-target" aria-selected="false" aria-controls="sec-gsc-target" data-pnl="gsckw" data-pane="sec-gsc-target">Target queries <span class="muted" id="gscTargetCount"></span></button>
+          </div>
+          <div class="pnl-head-actions">
+            <span class="status" id="gscKwStatus"></span>
+            <button type="button" class="kw-edit-btn debug-only" data-pnl-for="sec-gsc-branded" data-kw-edit="gscBrandedEditors" aria-expanded="false">Edit</button>
+            <button type="button" class="kw-edit-btn debug-only" data-pnl-for="sec-gsc-target" data-kw-edit="gscTargetEditors" aria-expanded="false" hidden>Edit</button>
+          </div>
+        </div>
+        <div class="pnl-pane" id="sec-gsc-branded" role="tabpanel" aria-labelledby="tab-sec-gsc-branded">
+          <div class="kw-editors" id="gscBrandedEditors" hidden>
+            <div class="tag-editor" id="gscBrandedTags"></div>
+            <div class="tag-editor tag-editor-exclude" id="gscBrandedExcludeTags"></div>
+          </div>
+          <div class="table-wrap"><table id="gscBrandedTable" class="compact"></table></div>
+          <div class="pager" id="gscBrandedPager"></div>
+          <div class="chart-wrap" style="margin-top:12px">
+            {_kw_trend_cap}
+            <div class="chart-canvas-host" style="height:190px"><canvas id="gscBrandedTrendChart"></canvas></div>
+          </div>
+        </div>
+        <div class="pnl-pane" id="sec-gsc-target" role="tabpanel" aria-labelledby="tab-sec-gsc-target" hidden>
+          <div class="kw-editors" id="gscTargetEditors" hidden>
+            <div class="tag-editor" id="gscTargetTags"></div>
+            <div class="tag-editor tag-editor-exclude" id="gscTargetExcludeTags"></div>
+          </div>
+          <div class="table-wrap"><table id="gscTargetTable" class="compact"></table></div>
+          <div class="pager" id="gscTargetPager"></div>
+          <div class="chart-wrap" style="margin-top:12px">
+            {_kw_trend_cap}
+            <div class="chart-canvas-host" style="height:190px"><canvas id="gscTargetTrendChart"></canvas></div>
+          </div>
+        </div>
+      </section>"""
+
+    gsc_units: list[tuple[str, str]] = []
+    if semrush_section_html:
+        gsc_units.append(("semrush", semrush_section_html))
+    gsc_units += [
+        ("kpis", panel_gsc_kpis),
+        ("tables", panel_gsc_tables),
+        ("watchlist", panel_gsc_watchlist),
+        ("keywords", panel_gsc_keywords),
+    ]
+    gsc_sections_html = _render_editable_panels(
+        gsc_units,
+        gsc_layout,
+        titles=GSC_LAYOUT_CARDS,
+        is_admin=session_is_admin,
+    )
+    gsc_edit_banner_html = _edit_banner_html(
+        prefix="gsc",
+        layout_api=_api_url(
+            f"/api/clients/{api_client_key}/tabs/gsc/card-layout",
+            access_key=access_key,
+        ),
+    )
+
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1547,6 +1673,8 @@ def render_bigquery_dashboard_page(
        reads as a plain heading. */
     .pnl-tabs.one-tab .pnl-tab[aria-selected="true"]::after {{ display:none; }}
     .pnl-head .status {{ margin:0 0 10px; font-size:.76rem; text-align:right; flex-shrink:0; }}
+    .pnl-head-actions {{ display:flex; align-items:center; gap:10px; margin:0 0 8px; flex-shrink:0; }}
+    .pnl-head-actions .status {{ margin:0; }}
     .pnl-head .status[hidden] {{ display:none; }}
     .pnl-pane[hidden] {{ display:none; }}
     /* Campaign explorer: admin "Edit filters" button + popover */
@@ -1812,6 +1940,9 @@ def render_bigquery_dashboard_page(
     /* Admin-only controls (shown when the app-shell has .is-admin) */
     .debug-only {{ display:none !important; }}
     .is-admin .debug-only {{ display:inline-block !important; }}
+    /* …but an admin-only control that is also tab-scoped (the Branded / Target
+       Edit buttons) still obeys [hidden] when its tab isn't the open one. */
+    .is-admin .debug-only[hidden] {{ display:none !important; }}
     /* Inline branded/target keyword tag editor (admin only) */
     .tag-editor {{ display:none; }}
     .is-admin .tag-editor {{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:7px 9px; margin-bottom:10px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; }}
@@ -2350,71 +2481,9 @@ def render_bigquery_dashboard_page(
       </section>
     </div>
 
-    <div id="pane-gsc" hidden>
-      {semrush_section_html}
-      <section id="sec-gsc-overview">
-        <div class="sec-head"><h2>Search Console</h2><span class="status" id="gscStatus"></span></div>
-        <div class="cards" id="gscKpis"></div>
-      </section>
-      <section id="sec-gsc-tables">
-        <div class="two-col">
-          <div class="col-panel">
-            <h3>Top queries</h3>
-            <div class="table-wrap"><table id="gscQueriesTable" class="compact"></table></div>
-            <div class="pager" id="gscQueriesPager"></div>
-            <div class="gsc-ctr-legend">
-              <span>CTR vs. typical for its position:</span>
-              <span class="gsc-ctr gsc-ctr-above"><span class="gsc-ctr-dot"></span>ahead</span>
-              <span class="gsc-ctr"><span class="gsc-ctr-dot"></span>in line</span>
-              <span class="gsc-ctr gsc-ctr-below"><span class="gsc-ctr-dot"></span>behind</span>
-            </div>
-          </div>
-          <div class="col-panel">
-            <h3>Top pages</h3>
-            <div class="table-wrap"><table id="gscPagesTable" class="compact"></table></div>
-            <div class="pager" id="gscPagesPager"></div>
-          </div>
-        </div>
-      </section>
-
-      <section id="sec-gsc-watchlist">
-        <div class="sec-head"><h2>Keyword watchlist</h2><div class="sec-head-actions"><span class="status" id="gscWatchStatus"></span><button type="button" class="kw-edit-btn debug-only" data-kw-edit="gscWatchEditor" aria-expanded="false">Edit</button></div></div>
-        <p class="muted watch-intro">The keywords we are deliberately writing for, and the page each one is aimed at. Position is the impression-weighted average rank over the selected range; the spark line covers the last 13 weeks and rises as the rank improves.</p>
-        <div class="watch-editor" id="gscWatchEditor" hidden></div>
-        <div class="table-wrap"><table id="gscWatchTable" class="compact watch-table"></table></div>
-      </section>
-
-      <section id="sec-gsc-keywords">
-        <div class="sec-head"><h2>Branded &amp; Target Keywords</h2><span class="status" id="gscKwStatus"></span></div>
-        <div class="two-col">
-          <div class="col-panel">
-            <div class="col-panel-head"><h3>Branded queries <span class="muted" id="gscBrandedCount"></span></h3><button type="button" class="kw-edit-btn debug-only" data-kw-edit="gscBrandedEditors" aria-expanded="false">Edit</button></div>
-            <div class="kw-editors" id="gscBrandedEditors" hidden>
-              <div class="tag-editor" id="gscBrandedTags"></div>
-              <div class="tag-editor tag-editor-exclude" id="gscBrandedExcludeTags"></div>
-            </div>
-            <div class="table-wrap"><table id="gscBrandedTable" class="compact"></table></div>
-            <div class="pager" id="gscBrandedPager"></div>
-            <div class="chart-wrap" style="margin-top:12px">
-              {_kw_trend_cap}
-              <div class="chart-canvas-host" style="height:150px"><canvas id="gscBrandedTrendChart"></canvas></div>
-            </div>
-          </div>
-          <div class="col-panel">
-            <div class="col-panel-head"><h3>Target queries <span class="muted" id="gscTargetCount"></span></h3><button type="button" class="kw-edit-btn debug-only" data-kw-edit="gscTargetEditors" aria-expanded="false">Edit</button></div>
-            <div class="kw-editors" id="gscTargetEditors" hidden>
-              <div class="tag-editor" id="gscTargetTags"></div>
-              <div class="tag-editor tag-editor-exclude" id="gscTargetExcludeTags"></div>
-            </div>
-            <div class="table-wrap"><table id="gscTargetTable" class="compact"></table></div>
-            <div class="pager" id="gscTargetPager"></div>
-            <div class="chart-wrap" style="margin-top:12px">
-              {_kw_trend_cap}
-              <div class="chart-canvas-host" style="height:150px"><canvas id="gscTargetTrendChart"></canvas></div>
-            </div>
-          </div>
-        </div>
-      </section>
+    <div id="pane-gsc" class="ov-editable" data-edit-pane="gsc" hidden>
+      {gsc_edit_banner_html}
+      {gsc_sections_html}
     </div><!-- /pane-gsc -->
     {pagespeed_pane_html}
   </main>
@@ -3274,9 +3343,16 @@ def render_bigquery_dashboard_page(
         {{module:'traffic',          pane:'sec-traffic', status:'trafficAcqStatus'}},
         {{module:'user_acquisition', pane:'sec-useracq', status:'userAcqStatus'}},
       ]}},
+      // Search Console's Branded / Target queries. No module gates these two —
+      // they are the same Search Console data cut two ways — so they carry no
+      // `module` and are always live.
+      gsckw: {{ card:'card-gsc-kw', tabs:[
+        {{pane:'sec-gsc-branded', status:null}},
+        {{pane:'sec-gsc-target',  status:null}},
+      ]}},
     }};
-    // Pane on screen per card. Defaults match the markup: Pages, Traffic acquisition.
-    const panelOpen = {{ pages:'sec-pages', acq:'sec-traffic' }};
+    // Pane on screen per card. Defaults match the markup.
+    const panelOpen = {{ pages:'sec-pages', acq:'sec-traffic', gsckw:'sec-gsc-branded' }};
 
     function showPanelTab(grp, pane) {{
       const cfg = PANEL_CARDS[grp];
@@ -3291,11 +3367,24 @@ def render_bigquery_dashboard_page(
         if (btn) btn.setAttribute('aria-selected', on ? 'true' : 'false');
         if (st) st.hidden = !on;
       }});
+      // Controls that live in the card head but belong to one pane (the
+      // Branded / Target keyword editors' Edit button) follow the tab too.
+      const cardEl = document.getElementById(cfg.card);
+      if (cardEl) cardEl.querySelectorAll('[data-pnl-for]').forEach(el => {{
+        el.hidden = el.getAttribute('data-pnl-for') !== pane;
+      }});
       // Column widths are frozen from a laid-out table, and a table first
       // rendered inside a hidden pane measures nothing — so re-run the freeze
       // now that the pane is on screen (enableColResize is idempotent).
       const shown = document.getElementById(pane);
       if (shown) shown.querySelectorAll('table.resizable').forEach(t => enableColResize(t.id));
+      // Same story for a chart drawn behind a closed tab: it measured a 0-high
+      // host. Chart.js re-measures on its own resize observer, but nudge it so
+      // the chart is right on the first frame rather than the second.
+      if (shown) shown.querySelectorAll('canvas[id]').forEach(c => {{
+        const ch = __charts[c.id];
+        if (ch) {{ try {{ ch.resize(); }} catch (e) {{}} }}
+      }});
     }}
 
     document.querySelectorAll('.pnl-tab').forEach(btn =>
@@ -3305,10 +3394,10 @@ def render_bigquery_dashboard_page(
     function applyPanelCards(modules) {{
       Object.entries(PANEL_CARDS).forEach(([grp, cfg]) => {{
         const card = document.getElementById(cfg.card);
-        const live = cfg.tabs.filter(t => modules[t.module]);
+        const live = cfg.tabs.filter(t => !t.module || modules[t.module]);
         cfg.tabs.forEach(t => {{
           const btn = document.getElementById('tab-' + t.pane);
-          if (btn) btn.hidden = !modules[t.module];
+          if (btn) btn.hidden = !!t.module && !modules[t.module];
         }});
         if (card) card.hidden = !live.length;
         if (!live.length) return;
@@ -3321,7 +3410,7 @@ def render_bigquery_dashboard_page(
 
     function applyModules() {{
       const modules = getModules();
-      const tabbed = new Set(Object.values(PANEL_CARDS).flatMap(c => c.tabs.map(t => t.module)));
+      const tabbed = new Set(Object.values(PANEL_CARDS).flatMap(c => c.tabs.map(t => t.module)).filter(Boolean));
       ALL_MODULES.forEach(key => {{
         if (tabbed.has(key)) return;              // handled by applyPanelCards
         const sec = document.getElementById(MODULE_SECTIONS[key]);
@@ -3951,7 +4040,10 @@ def render_bigquery_dashboard_page(
       // noise on a client's tab, so it stays out of the page rather than
       // explaining an empty table to them.
       const sec=document.getElementById('sec-gsc-watchlist');
-      if (sec) sec.hidden = !terms.length && !IS_ADMIN;
+      // Hide the editable wrapper, not just the section, so an empty watchlist
+      // doesn't leave a stray edit bar behind on an admin's tab.
+      const secUnit=sec&&(sec.closest('.ov-unit')||sec);
+      if (secUnit) secUnit.hidden = !terms.length && !IS_ADMIN;
       if (!terms.length) {{
         renderGscWatchTable();
         setStatus('gscWatchStatus', IS_ADMIN ? 'Add the keywords this site is being written for.' : '');

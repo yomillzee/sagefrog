@@ -167,8 +167,8 @@ class WatchlistRenderTests(unittest.TestCase):
         self.assertIn('id="gscWatchEditor"', html)
         self.assertIn("/api/clients/demo/gsc/watchlist", html)
         self.assertIn("/api/clients/demo/gsc/watchlist-config", html)
-        # Sits above the broad branded/target section it complements.
-        self.assertLess(html.index('id="sec-gsc-watchlist"'), html.index('id="sec-gsc-keywords"'))
+        # Sits above the broad branded/target card it complements.
+        self.assertLess(html.index('id="sec-gsc-watchlist"'), html.index('id="card-gsc-kw"'))
 
 
 if __name__ == "__main__":

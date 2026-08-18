@@ -737,7 +737,7 @@ _VIEW_ICONS: dict[str, str] = {
 # same way (hide / show / drag to reorder). The menu content per tab is built by
 # ``_edit_menu_items_html``; adding a tab here plus a menu-items branch (and its
 # page JS action) lights up the same kebab on that tab.
-_EDIT_MENU_TABS: frozenset[str] = frozenset({"overview", "explorer"})
+_EDIT_MENU_TABS: frozenset[str] = frozenset({"overview", "explorer", "gsc"})
 
 # Kebab (vertical dots) shown on hover of an editable nav item, and the pencil
 # used by its "Edit layout" menu entry.
