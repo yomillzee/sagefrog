@@ -45,6 +45,8 @@ _DEFAULT_PROJECT     = "penn-community-b-1699391543298"
 _DEFAULT_MART_DATASET = "marketing_marts"
 _QUERY_TABLE         = "fact_gsc_query_daily"
 _PAGE_TABLE          = "fact_gsc_page_daily"
+# Days Search Console confirmed hold no data, so hole detection stops re-asking.
+_EMPTY_DAYS_TABLE    = "gsc_empty_days"
 _GSC_LAG_DAYS    = 3
 _MAX_HISTORY     = 180      # 6 months is sufficient
 _ROW_LIMIT       = 25_000   # GSC API page size
