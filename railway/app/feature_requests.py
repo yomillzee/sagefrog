@@ -12,13 +12,19 @@ via ``db`` v3, idempotent ``ensure_schema()``, no ORM. A request starts life as
 ``status = 'new'`` (an unread notification) and a super admin marks it
 ``'done'`` once handled. A super admin can also ``'archived'`` a request to
 dismiss it from the inbox without losing the row, or hard-delete it outright.
+
+Both ends of that life cycle ping the agency's Slack channel — the ask when it's
+raised, and the close-out when it's marked done — so whoever asked hears it
+shipped without watching ``/admin``. The close-out is a reply in the ask's own
+Slack thread, which is why the row keeps ``slack_channel`` / ``slack_thread_ts``:
+they're the address of the message the ask created.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -41,13 +47,26 @@ SCHEMA_SQL_STATEMENTS = [
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       created_by TEXT,
       resolved_at TIMESTAMPTZ,
-      resolved_by TEXT
+      resolved_by TEXT,
+      slack_channel TEXT,
+      slack_thread_ts TEXT
     )
     """,
     # Backfill the scope column on databases created before it existed.
     """
     ALTER TABLE feature_requests
       ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'global'
+    """,
+    # Where the ask was announced in Slack, so the close-out can reply to it.
+    # Rows created before this existed keep NULLs and fall back to a standalone
+    # close-out message.
+    """
+    ALTER TABLE feature_requests
+      ADD COLUMN IF NOT EXISTS slack_channel TEXT
+    """,
+    """
+    ALTER TABLE feature_requests
+      ADD COLUMN IF NOT EXISTS slack_thread_ts TEXT
     """,
     """
     CREATE INDEX IF NOT EXISTS feature_requests_status_created_idx
@@ -81,6 +100,11 @@ class FeatureRequest:
     created_by: str | None
     resolved_at: str | None
     resolved_by: str | None
+    # Address of the Slack message announcing this ask, when there is one. Plumbing
+    # for threading the close-out — deliberately absent from ``to_dict``, which is
+    # what the admin UI and API render.
+    slack_channel: str | None = None
+    slack_thread_ts: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -149,7 +173,8 @@ def _clean_slug(client_slug: str | None) -> str | None:
 
 _SELECT_COLS = (
     "id, client_slug, page_path, page_label, body, scope, status, "
-    "created_at, created_by, resolved_at, resolved_by"
+    "created_at, created_by, resolved_at, resolved_by, "
+    "slack_channel, slack_thread_ts"
 )
 
 
@@ -168,6 +193,8 @@ def _row_to_request(row: tuple[Any, ...]) -> FeatureRequest:
         created_by=str(row[8]) if row[8] else None,
         resolved_at=resolved.isoformat() if resolved else None,
         resolved_by=str(row[10]) if row[10] else None,
+        slack_channel=str(row[11]) if len(row) > 11 and row[11] else None,
+        slack_thread_ts=str(row[12]) if len(row) > 12 and row[12] else None,
     )
 
 
@@ -208,18 +235,67 @@ def create_request(
         ).fetchone()
     assert row
     request = _row_to_request(row)
-    _notify_slack(request)
-    return request
+    return _notify_slack(request)
 
 
-def _notify_slack(request: FeatureRequest) -> None:
-    """Fan the new request out to Slack, best-effort — never break the write."""
-    if not slack_service.enabled():
-        return
+def _notify_slack(request: FeatureRequest) -> FeatureRequest:
+    """Announce the new request in Slack and remember the message it created.
+
+    Best-effort on both counts — never break the write. Returns the request with
+    ``slack_channel`` / ``slack_thread_ts`` filled in when Slack accepted the post,
+    otherwise unchanged; without them the close-out just can't be threaded.
+    """
+    posted = _send_slack(request, slack_service.notify_feature_request, "new")
+    if not posted:
+        return request
+    if not _remember_slack_message(request.id, posted):
+        return request
+    return replace(request, slack_channel=posted.channel, slack_thread_ts=posted.ts)
+
+
+def _remember_slack_message(request_id: int, posted) -> bool:
+    """Store the ask's Slack address on the row. Best-effort: the row is saved."""
     try:
-        slack_service.notify_feature_request(request)
+        with db.connection() as conn:
+            conn.execute(
+                """
+                UPDATE feature_requests
+                SET slack_channel = %s, slack_thread_ts = %s
+                WHERE id = %s
+                """,
+                (posted.channel, posted.ts, int(request_id)),
+            )
+        return True
+    except Exception:  # noqa: BLE001 — worst case the close-out isn't threaded.
+        _log.exception("Failed to record Slack thread for feature request %s", request_id)
+        return False
+
+
+def _notify_slack_done(request: FeatureRequest) -> None:
+    """Reply in the ask's Slack thread that it's handled. Best-effort.
+
+    Falls back to a standalone message in the configured channel for requests
+    raised before we started recording the thread.
+    """
+    _send_slack(
+        request,
+        lambda req: slack_service.notify_feature_request_done(
+            req, channel=req.slack_channel, thread_ts=req.slack_thread_ts
+        ),
+        "done",
+    )
+
+
+def _send_slack(request: FeatureRequest, send, kind: str):
+    if not slack_service.enabled():
+        return None
+    try:
+        return send(request)
     except Exception:  # noqa: BLE001 — logging is enough; the row is already saved.
-        _log.exception("Failed to send Slack notification for feature request %s", request.id)
+        _log.exception(
+            "Failed to send Slack %s notification for feature request %s", kind, request.id
+        )
+        return None
 
 
 def list_requests(
@@ -269,21 +345,30 @@ def new_count() -> int:
 
 
 def mark_done(request_id: int, *, resolved_by: str | None = None) -> bool:
+    """Mark a request handled and ping Slack that it shipped.
+
+    The ``status <> 'done'`` guard makes this idempotent, so a double-click on the
+    admin button updates nothing the second time — and posts nothing either.
+    """
     if not enabled():
         return False
     ensure_schema()
     now = datetime.now(tz=UTC)
     resolver = (resolved_by or "").strip() or None
     with db.connection() as conn:
-        cur = conn.execute(
-            """
+        row = conn.execute(
+            f"""
             UPDATE feature_requests
             SET status = 'done', resolved_at = %s, resolved_by = %s
             WHERE id = %s AND status <> 'done'
+            RETURNING {_SELECT_COLS}
             """,
             (now, resolver, int(request_id)),
-        )
-    return bool(cur.rowcount)
+        ).fetchone()
+    if not row:
+        return False
+    _notify_slack_done(_row_to_request(row))
+    return True
 
 
 def reopen(request_id: int) -> bool:

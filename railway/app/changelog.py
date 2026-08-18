@@ -63,6 +63,24 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-18",
+        title="Slack hears back when a feature request is done",
+        area="Admin · Feature requests",
+        kind="new",
+        summary=(
+            "Marking a feature request done now replies in that request’s own Slack "
+            "thread, so everyone who followed the ask finds out it shipped without "
+            "checking the admin inbox."
+        ),
+        details=(
+            "The reply names who marked it done and links back to the inbox.",
+            "Requests raised before this shipped have no thread to reply to, so "
+            "their close-out posts to the channel and quotes the original ask.",
+            "Only the first click posts — marking an already-done request changes "
+            "nothing and sends nothing.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
         title="The Search Console property picker says why it came up empty",
         area="Connectors · Search Console",
         kind="fixed",
