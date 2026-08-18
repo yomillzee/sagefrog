@@ -63,6 +63,65 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-18",
+        title="A Search Console sync that fetched nothing no longer says “completed”",
+        area="Connectors · Search Console",
+        kind="fixed",
+        summary=(
+            "When Search Console refused every day of a sync — usually because the "
+            "connected property is wrong or the Google connection lost access — "
+            "Sync history still logged it green, as “completed, 0 rows,” with an "
+            "empty Error column. Those runs now show as failed with the reason "
+            "Google gave, so a client stuck on stale keyword data is visible on "
+            "the Connectors page instead of only in the numbers."
+        ),
+        details=(
+            "The Error column names the failing days and Google’s message, e.g. a "
+            "403 on the property.",
+            "A genuine no-op — Search Console already up to date — still reports "
+            "completed with 0 rows.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
+        title="Branded and Target queries now share one full-width card",
+        area="Search Console",
+        kind="improved",
+        summary=(
+            "Branded and Target queries used to sit side by side, each squeezed "
+            "into half the page. They are one card with two tabs now — the same "
+            "tabs Website Analytics uses for Pages / Landing Pages — so the "
+            "group you are reading gets the whole width and a readable "
+            "avg-position chart."
+        ),
+        details=(
+            "Click Branded queries or Target queries to switch; the match count "
+            "sits on each tab.",
+            "Admins: the Edit control for the branded/target term lists follows "
+            "whichever tab is open.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
+        title="Search Console panels can be reordered and hidden",
+        area="Search Console",
+        kind="new",
+        summary=(
+            "Search Console now has the same layout editor as Overview and "
+            "Campaign Explorer, so a client's tab can lead with whatever matters "
+            "most to them instead of a fixed running order."
+        ),
+        details=(
+            "Admins: hover Search Console in the sidebar, open the ⋮ menu and "
+            "choose Edit layout.",
+            "Drag to reorder, or Hide / Show the summary, Top queries & pages, "
+            "the Keyword watchlist, Branded & Target Keywords and Organic Search "
+            "Intelligence.",
+            "Changes save per client and apply for everyone on that portal; "
+            "hidden panels are not sent to clients at all.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
         title="A keyword watchlist to benchmark the keywords we write for",
         area="Search Console",
         kind="new",
