@@ -995,6 +995,163 @@ def gsc_keyword_weekly_trend(
         return out
 
 
+# ---------------------------------------------------------------------------
+# Keyword watchlist
+#
+# The branded/target sections above pour every query containing a root into one
+# bucket. The watchlist is the opposite shape: a short, admin-curated list where
+# each row IS one keyword -- "we wrote this page for this keyword, here is where
+# it sits" -- so every row needs its own metrics and its own rank series.
+#
+# A watched term matches the exact query by default. A trailing "*" widens it to
+# the keyword and its variants (substring), for a keyword that mostly earns
+# impressions through longer phrasings.
+# ---------------------------------------------------------------------------
+
+def _watch_terms(terms: list[str]) -> list[str]:
+    return [t.strip().lower() for t in (terms or []) if t and t.strip().strip("*")]
+
+
+def _watch_match_sql(alias: str = "q", term: str = "t") -> str:
+    """Per-term match predicate: exact query match, or substring when the term
+    carries a trailing "*". RTRIM (not TRIM) so only the trailing marker goes."""
+    return (
+        f"IF(ENDS_WITH({term}, '*'), "
+        f"LOWER({alias}.query) LIKE CONCAT('%', RTRIM(LOWER({term}), '*'), '%'), "
+        f"LOWER({alias}.query) = LOWER({term}))"
+    )
+
+
+def _floatify(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out = []
+    for r in rows:
+        out.append({k: (float(v) if isinstance(v, Decimal) else v) for k, v in r.items()})
+    return out
+
+
+def gsc_watchlist_rows(
+    *, start: date, end: date, terms: list[str], client_slug: str | None = None,
+    compare_start: date | None = None, compare_end: date | None = None,
+) -> list[dict[str, Any]]:
+    """One row per watched term: clicks/impressions/CTR/avg position for the
+    selected range, plus the comparison window's avg position (so the row can
+    show a rank delta) and how many distinct queries fed the row.
+
+    Unlike gsc_keyword_matches, the grouping key is the watched TERM, not the
+    query -- an exact term collapses to its one query, a "*" term rolls its
+    variants together. A term with no impressions in either window simply
+    returns no row; the caller fills it in as "not ranking yet".
+    """
+    terms = _watch_terms(terms)
+    if not terms:
+        return []
+    with _client_context(client_slug):
+        target = _resolved_target()
+        if target.is_default_fallback and not _is_penn_slug(client_slug):
+            return []
+        project, ds = _project_id(), _reporting_mart_ds()
+        qv = f"`{project}.{ds}.{_QUERY_VIEW}`"
+        s, e = start.isoformat(), end.isoformat()
+        ps, pe = _compare_period(start, end, compare_start, compare_end)
+        sql = f"""
+        SELECT
+          t AS term,
+          {_query_delta_metric_cols(s, e, ps.isoformat(), pe.isoformat())},
+          COUNT(DISTINCT IF(q.date BETWEEN '{s}' AND '{e}', q.query, NULL)) AS query_count
+        FROM {qv} AS q, UNNEST(@terms) AS t
+        WHERE {_two_window_filter(start, end, ps, pe)}
+          AND {_watch_match_sql()}
+        GROUP BY term
+        """
+        from google.cloud import bigquery as _bq
+        rows = _run(
+            sql, max_rows=500,
+            query_parameters=[_bq.ArrayQueryParameter("terms", "STRING", terms)],
+        )
+        return _attach_delta_position(_floatify(rows))
+
+
+def gsc_watchlist_series(
+    *, start: date, end: date, terms: list[str], client_slug: str | None = None,
+) -> list[dict[str, Any]]:
+    """Weekly (Monday-start) avg position + clicks/impressions per watched term,
+    for the per-row rank sparkline. Rows are (term, week_start, metrics); weeks
+    where a term earned no impressions are absent rather than zero, because a
+    position of 0 would read as rank 1 -- the caller leaves those gaps blank."""
+    terms = _watch_terms(terms)
+    if not terms:
+        return []
+    with _client_context(client_slug):
+        target = _resolved_target()
+        if target.is_default_fallback and not _is_penn_slug(client_slug):
+            return []
+        project, ds = _project_id(), _reporting_mart_ds()
+        qv = f"`{project}.{ds}.{_QUERY_VIEW}`"
+        s, e = start.isoformat(), end.isoformat()
+        sql = f"""
+        SELECT
+          t AS term,
+          CAST(DATE_TRUNC(q.date, WEEK(MONDAY)) AS STRING) AS week_start,
+          SUM(q.clicks) AS clicks,
+          SUM(q.impressions) AS impressions,
+          ROUND(SAFE_DIVIDE(SUM(q.clicks), NULLIF(SUM(q.impressions), 0)) * 100, 2) AS ctr,
+          ROUND(SAFE_DIVIDE(SUM(q.pos_sum), NULLIF(SUM(q.impressions), 0)) + 1, 1) AS avg_position
+        FROM {qv} AS q, UNNEST(@terms) AS t
+        WHERE q.date BETWEEN '{s}' AND '{e}'
+          AND {_watch_match_sql()}
+        GROUP BY term, week_start
+        ORDER BY term, week_start
+        """
+        from google.cloud import bigquery as _bq
+        rows = _run(
+            sql, max_rows=2000,
+            query_parameters=[_bq.ArrayQueryParameter("terms", "STRING", terms)],
+        )
+        return _floatify(rows)
+
+
+def gsc_page_metrics(
+    *, start: date, end: date, pages: list[str], client_slug: str | None = None,
+) -> list[dict[str, Any]]:
+    """Clicks/impressions/CTR/avg position for specific pages, keyed by the value
+    the caller asked for (`page_key`) so a watchlist row can find its own page.
+
+    An admin pastes either a full URL or just a path, so a key beginning with "/"
+    matches any page URL ending in it. GSC reports queries and pages as separate
+    dimensions here, so this is the page's OWN search performance across all
+    queries -- not the watched keyword's share of it.
+    """
+    keys = [p.strip() for p in (pages or []) if p and p.strip()]
+    if not keys:
+        return []
+    with _client_context(client_slug):
+        target = _resolved_target()
+        if target.is_default_fallback and not _is_penn_slug(client_slug):
+            return []
+        project, ds = _project_id(), _reporting_mart_ds()
+        pv = f"`{project}.{ds}.{_PAGE_VIEW}`"
+        s, e = start.isoformat(), end.isoformat()
+        sql = f"""
+        SELECT
+          p AS page_key,
+          ANY_VALUE(g.page_url) AS page_url,
+          SUM(g.clicks) AS clicks,
+          SUM(g.impressions) AS impressions,
+          ROUND(SAFE_DIVIDE(SUM(g.clicks), NULLIF(SUM(g.impressions), 0)) * 100, 2) AS ctr,
+          ROUND(SAFE_DIVIDE(SUM(g.pos_sum), NULLIF(SUM(g.impressions), 0)) + 1, 1) AS avg_position
+        FROM {pv} AS g, UNNEST(@pages) AS p
+        WHERE g.date BETWEEN '{s}' AND '{e}'
+          AND (g.page_url = p OR (STARTS_WITH(p, '/') AND ENDS_WITH(g.page_url, p)))
+        GROUP BY page_key
+        """
+        from google.cloud import bigquery as _bq
+        rows = _run(
+            sql, max_rows=500,
+            query_parameters=[_bq.ArrayQueryParameter("pages", "STRING", keys)],
+        )
+        return _floatify(rows)
+
+
 def gsc_health_row(client_slug: str | None = None) -> dict[str, Any]:
     """MIN/MAX(date) + row count over the GSC mart, for the marketing/health
     endpoint's data-availability check (mirrors the GA4 row it already adds).

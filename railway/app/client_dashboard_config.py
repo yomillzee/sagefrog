@@ -72,6 +72,14 @@ SCHEMA_SQL_STATEMENTS = [
     """
     ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS gsc_target_exclude TEXT
     """,
+    # Keyword watchlist for Search Console: one watched keyword per line, as
+    # "keyword|page" (page optional). A trailing "*" on the keyword means "this
+    # keyword and its variants" (substring match) instead of the exact query.
+    # This is the benchmark list -- the keyword a page was written for, tracked
+    # over time -- distinct from the broader branded/target roots above.
+    """
+    ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS gsc_watch_keywords TEXT
+    """,
     """
     ALTER TABLE client_dashboard_config ADD COLUMN IF NOT EXISTS ga4_key_events TEXT
     """,
@@ -300,6 +308,9 @@ class ClientConfigRow:
     # Whether the Overview cards show the industry-peer comparison line. Off by
     # default: it only means anything once the account's industry tags are right.
     benchmarks_enabled: bool = False
+    # Search Console keyword watchlist, one "keyword|page" per line. See the
+    # gsc_watch_keywords column comment.
+    gsc_watch_keywords: str | None = None
 
 
 def _get_db_url() -> str | None:
@@ -343,7 +354,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    sidebar_hidden_tabs, card_layouts,
                    default_date_preset, explorer_campaign_allowlist,
                    email_performance_selection, analytics_page_path_filter,
-                   metric_goals, benchmarks_enabled
+                   metric_goals, benchmarks_enabled, gsc_watch_keywords
             FROM client_dashboard_config
             WHERE client_slug = %s
             """,
@@ -394,6 +405,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         analytics_page_path_filter=_s(row[33]),
         metric_goals=metric_goals_service.normalize_goals(row[34]),
         benchmarks_enabled=bool(row[35]) if row[35] is not None else False,
+        gsc_watch_keywords=_s(row[36]),
     )
 
 
@@ -829,6 +841,48 @@ def update_gsc_keywords(
             (slug, slug, now, _clean(updated_by),
              _clean(branded_roots), _clean(target_keywords),
              _clean(branded_exclude), _clean(target_exclude)),
+        )
+
+
+def update_gsc_watchlist(
+    client_slug: str,
+    *,
+    watch_keywords: str | None,
+    updated_by: str | None = None,
+) -> None:
+    """Set the Search Console keyword watchlist for a client, touching only that
+    column.
+
+    One watched keyword per line, as "keyword|page" -- the page is the URL the
+    keyword is being written for and is optional. A trailing "*" on the keyword
+    widens it from the exact query to the keyword and its variants. Unlike the
+    branded/target roots (broad buckets), this is the short list a team commits
+    to and watches move.
+    """
+    slug = (client_slug or "").strip().lower()
+    if not slug:
+        raise ValueError("client_slug is required.")
+    if not enabled():
+        raise RuntimeError("DATABASE_URL is required to save keyword config.")
+
+    def _clean(val: str | None) -> str | None:
+        return (val or "").strip() or None
+
+    ensure_schema()
+    now = datetime.now(tz=UTC)
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO client_dashboard_config (
+              client_slug, label, updated_at, updated_by, gsc_watch_keywords
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (client_slug) DO UPDATE SET
+              gsc_watch_keywords = EXCLUDED.gsc_watch_keywords,
+              updated_at = EXCLUDED.updated_at,
+              updated_by = EXCLUDED.updated_by
+            """,
+            (slug, slug, now, _clean(updated_by), _clean(watch_keywords)),
         )
 
 

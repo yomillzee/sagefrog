@@ -582,6 +582,33 @@ def linkedin_followers_section_html(
     )
 
 
+def parse_gsc_watchlist(text: str | None) -> list[dict]:
+    """Parse the stored keyword watchlist into [{"kw", "page"}] rows.
+
+    One watched keyword per line, as ``keyword|page`` -- the page is optional and
+    is the URL (or path) the keyword is being written for. A trailing ``*`` on the
+    keyword is kept as-is: it is the marker the backend reads as "this keyword and
+    its variants". Blank lines and duplicate keywords are dropped so a hand-edited
+    value can't produce two rows for the same keyword.
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+    for line in (text or "").splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        kw, _, page = raw.partition("|")
+        kw = kw.strip()
+        if not kw or not kw.strip("*"):
+            continue
+        key = kw.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"kw": kw, "page": page.strip()})
+    return out
+
+
 def render_bigquery_dashboard_page(
     *,
     access_key: str | None = None,
@@ -647,6 +674,9 @@ def render_bigquery_dashboard_page(
     gsc_target_keywords = ""
     gsc_branded_exclude = ""
     gsc_target_exclude = ""
+    # Keyword watchlist ("keyword|page" per line) -- the curated benchmark list
+    # in the Search Console tab, separate from the broad branded/target roots.
+    gsc_watch_keywords = ""
     ga4_key_events = ""
     explorer_filters_cfg = ""
     analytics_page_path_filter_cfg = ""
@@ -665,6 +695,7 @@ def render_bigquery_dashboard_page(
             gsc_target_keywords = _kwcfg.gsc_target_keywords or ""
             gsc_branded_exclude = getattr(_kwcfg, "gsc_branded_exclude", None) or ""
             gsc_target_exclude = getattr(_kwcfg, "gsc_target_exclude", None) or ""
+            gsc_watch_keywords = getattr(_kwcfg, "gsc_watch_keywords", None) or ""
             ga4_key_events = _kwcfg.ga4_key_events or ""
             explorer_filters_cfg = _kwcfg.explorer_filters or ""
             analytics_page_path_filter_cfg = getattr(_kwcfg, "analytics_page_path_filter", None) or ""
@@ -1712,6 +1743,35 @@ def render_bigquery_dashboard_page(
     .gsc-ctr-dot {{ width:6px; height:6px; border-radius:50%; flex:none; background:#c9d3e0; }}
     .gsc-ctr-above .gsc-ctr-dot {{ background:#0a7f3f; }}
     .gsc-ctr-below .gsc-ctr-dot {{ background:#d97706; }}
+    /* Keyword watchlist: one row per watched keyword, with a rank spark line. */
+    .watch-intro {{ font-size:.76rem; margin:-2px 0 11px; max-width:74ch; }}
+    #gscWatchTable td.left {{ max-width:0; }}
+    #gscWatchTable td.left > * {{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+    .watch-kw {{ font-weight:700; }}
+    .watch-variants {{ font-size:.64rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:#7d8ba0; margin-left:5px; }}
+    .watch-page a {{ color:var(--accent); text-decoration:none; font-size:.8rem; }}
+    .watch-page a:hover {{ text-decoration:underline; }}
+    .watch-page-none {{ color:#9aa7b8; font-size:.8rem; }}
+    .watch-spark {{ display:inline-flex; align-items:center; gap:8px; justify-content:flex-end; }}
+    .watch-pos {{ font-variant-numeric:tabular-nums; font-weight:800; min-width:2.4em; text-align:right; }}
+    .watch-pos-none {{ color:#9aa7b8; font-weight:600; }}
+    /* Row editor (admin only, same gating as the branded/target tag editors). */
+    .watch-editor {{ display:none; }}
+    .is-admin .watch-editor {{ display:block; padding:9px 10px 11px; margin-bottom:11px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; }}
+    .watch-row {{ display:flex; align-items:center; gap:7px; margin-bottom:6px; }}
+    .watch-row input {{ font:inherit; font-size:.8rem; padding:5px 8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; color:inherit; }}
+    .watch-row input.watch-in-kw {{ flex:1 1 40%; min-width:0; }}
+    .watch-row input.watch-in-page {{ flex:1 1 60%; min-width:0; }}
+    .watch-row input:focus {{ outline:none; border-color:#9bbfe6; box-shadow:0 0 0 2px #e2eefb; }}
+    .watch-row button {{ flex:none; border:1px solid var(--line); background:#fff; color:#8a97a8; border-radius:var(--radius-sm); width:26px; height:26px; line-height:1; cursor:pointer; }}
+    .watch-row button:hover {{ border-color:#e6a6a6; color:#8a2020; }}
+    .watch-editor-foot {{ display:flex; align-items:center; gap:10px; margin-top:9px; }}
+    .watch-add {{ border:1px solid var(--line); background:#fff; color:var(--muted); border-radius:var(--radius-sm); padding:4px 11px; font-size:.72rem; font-weight:700; cursor:pointer; }}
+    .watch-add:hover {{ border-color:#9bbfe6; color:var(--accent); }}
+    .watch-editor-hint {{ font-size:.7rem; color:#7d8ba0; }}
+    th.watch-sort {{ cursor:pointer; user-select:none; white-space:nowrap; transition:background .12s,color .12s; }}
+    th.watch-sort:hover {{ background:#e9eef5; color:#33455e; }}
+    th.watch-sort.active {{ color:var(--accent); }}
     .gsc-ctr-legend {{ margin-top:7px; font-size:.7rem; color:#7d8ba0; display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; }}
     .gsc-ctr-legend .gsc-ctr {{ gap:4px; color:#7d8ba0; }}
     th.expl-sort {{ cursor:pointer; user-select:none; white-space:nowrap; transition:background .12s,color .12s; }}
@@ -2317,6 +2377,13 @@ def render_bigquery_dashboard_page(
         </div>
       </section>
 
+      <section id="sec-gsc-watchlist">
+        <div class="sec-head"><h2>Keyword watchlist</h2><div class="sec-head-actions"><span class="status" id="gscWatchStatus"></span><button type="button" class="kw-edit-btn debug-only" data-kw-edit="gscWatchEditor" aria-expanded="false">Edit</button></div></div>
+        <p class="muted watch-intro">The keywords we are deliberately writing for, and the page each one is aimed at. Position is the impression-weighted average rank over the selected range; the spark line covers the last 13 weeks and rises as the rank improves.</p>
+        <div class="watch-editor" id="gscWatchEditor" hidden></div>
+        <div class="table-wrap"><table id="gscWatchTable" class="compact watch-table"></table></div>
+      </section>
+
       <section id="sec-gsc-keywords">
         <div class="sec-head"><h2>Branded &amp; Target Keywords</h2><span class="status" id="gscKwStatus"></span></div>
         <div class="two-col">
@@ -2422,6 +2489,10 @@ def render_bigquery_dashboard_page(
     const GSC_TARGET_KEYWORDS = {json.dumps([s.strip() for s in gsc_target_keywords.splitlines() if s.strip()])};
     const GSC_BRANDED_EXCLUDE = {json.dumps([s.strip() for s in gsc_branded_exclude.splitlines() if s.strip()])};
     const GSC_TARGET_EXCLUDE = {json.dumps([s.strip() for s in gsc_target_exclude.splitlines() if s.strip()])};
+    const GSC_WATCHLIST_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/watchlist')}";
+    const GSC_WATCHLIST_CONFIG_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/watchlist-config')}";
+    // [{{kw, page}}] -- the watched keyword and the page it was written for.
+    const GSC_WATCH_ITEMS = {json.dumps(parse_gsc_watchlist(gsc_watch_keywords))};
     const GSC_BRANDED_RAW = {json.dumps(gsc_branded_roots)};
     const GSC_TARGET_RAW = {json.dumps(gsc_target_keywords)};
     const LANDING_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/landing-events')}";
@@ -3686,6 +3757,7 @@ def render_bigquery_dashboard_page(
           st.page=1; st.sortKey='clicks'; st.sortDir='desc'; renderGscTable(which);
         }}
         renderGscKeywordTables();
+        loadGscWatchlist();
         const k=(p&&p.kpis)||{{}};
         const empty = !p || (!p.kpis && !(p.top_queries||[]).length && !(p.top_pages||[]).length);
         setStatus('gscStatus', empty ? 'No data for this range yet.' : `${{count(k.clicks)}} clicks · ${{count(k.impressions)}} impressions`);
@@ -3766,6 +3838,214 @@ def render_bigquery_dashboard_page(
       if (!gscBrandedRoots.length) document.getElementById('gscBrandedTable').innerHTML=`<tbody><tr><td class="empty">No branded roots set.</td></tr></tbody>`;
       if (!gscTargetKeywords.length) document.getElementById('gscTargetTable').innerHTML=`<tbody><tr><td class="empty">No target keywords set.</td></tr></tbody>`;
     }}
+    // ---- Keyword watchlist -------------------------------------------------
+    // The branded/target panels above pour every query containing a root into
+    // one bucket. Here each ROW is one watched keyword an admin entered -- "this
+    // page was written for this keyword" -- with its own rank spark line, so a
+    // commitment made when the blog was briefed has somewhere to be checked.
+    let gscWatchItems = (GSC_WATCH_ITEMS || []).map(it => ({{kw:String(it.kw||''), page:String(it.page||'')}}));
+    const gscWatch = {{rows:{{}}, weekly:{{}}, pages:{{}}, sortKey:'impressions', sortDir:'desc'}};
+    const watchKey = kw => String(kw||'').trim().toLowerCase();
+    const watchTerms = () => gscWatchItems.map(i=>i.kw.trim()).filter(Boolean);
+    const watchPages = () => gscWatchItems.map(i=>i.page.trim()).filter(Boolean);
+    // Position: lower is better, so the spark plots the NEGATED series -- the
+    // line then rises exactly when the rank improves, which is how a trend line
+    // reads. Weeks with no impressions are absent from the series rather than
+    // zero (a zero would draw as rank 1), so the line spans the weeks that
+    // actually ranked. Green when the last week beats the first.
+    function watchSpark(series) {{
+      const vals=(series||[]).map(r=>num(r.avg_position)).filter(v=>isFinite(v)&&v>0);
+      if (vals.length<2) return '<span class="spark-empty"></span>';
+      const improving=vals[vals.length-1]<=vals[0];
+      return sparkSvg(vals.map(v=>-v), improving ? '#0a7f3f' : '#c02626');
+    }}
+    const WATCH_COLS = [
+      {{key:'impressions', label:'Impr.', format:count, defDir:'desc'}},
+      {{key:'clicks', label:'Clicks', format:count, defDir:'desc'}},
+      {{key:'ctr', label:'CTR', format:gscCtrCell, defDir:'desc'}},
+    ];
+    // Search Console reports queries and pages as separate dimensions here, so
+    // the page is the one an admin tied to the keyword and its numbers are the
+    // page's own totals across every query -- said so in the tooltip rather
+    // than implying the keyword earned them.
+    function watchPageCell(r) {{
+      const p=(r.page||'').trim();
+      if (!p) return '<span class="watch-page-none">—</span>';
+      const d=r.pageData;
+      const url=p.startsWith('http') ? p : ((d&&d.page_url)||p);
+      const abs=url.startsWith('http') ? url : '';
+      const tip=d
+        ? `${{p}} — ${{count(d.clicks)}} clicks / ${{count(d.impressions)}} impressions from all queries in this range`
+        : `${{p}} — no Search Console data for this page in this range`;
+      const label=pathOnly(url);
+      const inner=abs
+        ? `<a href="${{esc(abs)}}" target="_blank" rel="noopener" title="${{esc(tip)}}">${{esc(label)}}</a>`
+        : `<span title="${{esc(tip)}}">${{esc(label)}}</span>`;
+      return `<span class="watch-page">${{inner}}</span>`;
+    }}
+    // One row per configured keyword, whether or not it ranked -- a keyword with
+    // no impressions yet is the most interesting row on a watchlist, so it stays
+    // visible with empty metrics instead of dropping out.
+    function watchRows() {{
+      return gscWatchItems.filter(i=>i.kw.trim()).map(i=>{{
+        const k=watchKey(i.kw);
+        const d=gscWatch.rows[k]||{{}};
+        return Object.assign({{}}, d, {{
+          kw:i.kw, page:i.page,
+          series:gscWatch.weekly[k]||[],
+          pageData:gscWatch.pages[i.page.trim()]||null,
+        }});
+      }});
+    }}
+    function renderGscWatchTable() {{
+      const el=document.getElementById('gscWatchTable'); if(!el) return;
+      const rows=watchRows();
+      if (!rows.length) {{
+        const hint=IS_ADMIN ? ' Use Edit to add the keywords you are writing for.' : '';
+        el.innerHTML=`<tbody><tr><td class="empty">No keywords on the watchlist yet.${{hint}}</td></tr></tbody>`;
+        return;
+      }}
+      // Missing metrics always sort last, in both directions: an unranked
+      // keyword reads as 0 impressions but as no position at all, and sorting it
+      // to the top of "best position" would be a lie.
+      const sorted=[...rows].sort((a,b)=>{{
+        const va=a[gscWatch.sortKey], vb=b[gscWatch.sortKey];
+        const ma=(va==null||!isFinite(num(va))), mb=(vb==null||!isFinite(num(vb)));
+        if (ma&&mb) return 0;
+        if (ma) return 1;
+        if (mb) return -1;
+        return gscWatch.sortDir==='asc' ? num(va)-num(vb) : num(vb)-num(va);
+      }});
+      const arrow=k=>gscWatch.sortKey===k?(gscWatch.sortDir==='asc'?' ▴':' ▾'):'';
+      const th=(k,label)=>`<th class="watch-sort${{gscWatch.sortKey===k?' active':''}}" data-watch-key="${{k}}">${{label}}${{arrow(k)}}</th>`;
+      const head=`<thead><tr><th class="left">Keyword</th><th class="left">Page</th>`
+        + th('avg_position','Position · 13 wks') + th('delta_position','Δ Pos')
+        + WATCH_COLS.map(c=>th(c.key,c.label)).join('') + `</tr></thead>`;
+      const body=`<tbody>`+sorted.map(r=>{{
+        const kw=r.kw.trim(), variants=kw.endsWith('*');
+        const kwTxt=kw.replace(/[*]$/,'').trim();
+        const vTip=variants
+          ? `Counts this keyword and its variants${{r.query_count?' (' + count(r.query_count) + ' queries in this range)':''}}`
+          : '';
+        const vTag=variants ? `<span class="watch-variants" title="${{esc(vTip)}}">+ variants</span>` : '';
+        const posTxt=(r.avg_position==null)
+          ? '<span class="watch-pos watch-pos-none">—</span>'
+          : `<span class="watch-pos">${{num(r.avg_position).toFixed(1)}}</span>`;
+        return `<tr>`
+          + `<td class="left"><span class="watch-kw" title="${{esc(kw)}}">${{esc(kwTxt)}}${{vTag}}</span></td>`
+          + `<td class="left">${{watchPageCell(r)}}</td>`
+          + `<td><span class="watch-spark">${{watchSpark(r.series)}}${{posTxt}}</span></td>`
+          // "New" (what a null delta means elsewhere) would be wrong for a
+          // keyword that has no rank at all yet -- that row gets a plain dash.
+          + `<td>${{r.avg_position==null ? '—' : gscDelta(r.delta_position, r)}}</td>`
+          + WATCH_COLS.map(c=>`<td>${{r[c.key]==null ? '—' : c.format(r[c.key], r)}}</td>`).join('')
+          + `</tr>`;
+      }}).join('')+`</tbody>`;
+      el.innerHTML=head+body;
+    }}
+    let _gscWatchReqId=0;
+    async function loadGscWatchlist() {{
+      const terms=watchTerms();
+      gscWatch.rows={{}}; gscWatch.weekly={{}}; gscWatch.pages={{}};
+      // Nothing on the list and nobody who could add one: the whole section is
+      // noise on a client's tab, so it stays out of the page rather than
+      // explaining an empty table to them.
+      const sec=document.getElementById('sec-gsc-watchlist');
+      if (sec) sec.hidden = !terms.length && !IS_ADMIN;
+      if (!terms.length) {{
+        renderGscWatchTable();
+        setStatus('gscWatchStatus', IS_ADMIN ? 'Add the keywords this site is being written for.' : '');
+        return;
+      }}
+      const reqId=++_gscWatchReqId;
+      const el=document.getElementById('gscWatchTable');
+      if (el) el.innerHTML=skelTable(7, Math.min(6, terms.length));
+      setStatus('gscWatchStatus','Loading…');
+      let url=withCompare(withDates(GSC_WATCHLIST_API))+'&terms='+encodeURIComponent(terms.join(','));
+      const pgs=watchPages();
+      if (pgs.length) url+='&pages='+encodeURIComponent(pgs.join(','));
+      try {{
+        const p=await getJson(url);
+        if (reqId!==_gscWatchReqId) return; // superseded by a newer range/keyword change
+        (p.rows||[]).forEach(r=>{{ gscWatch.rows[watchKey(r.term)]=r; }});
+        (p.weekly||[]).forEach(r=>{{ const k=watchKey(r.term); (gscWatch.weekly[k]=gscWatch.weekly[k]||[]).push(r); }});
+        (p.pages||[]).forEach(r=>{{ gscWatch.pages[String(r.page_key||'').trim()]=r; }});
+        renderGscWatchTable();
+        const ranked=Object.keys(gscWatch.rows).length;
+        setStatus('gscWatchStatus', `${{ranked}} of ${{terms.length}} watched keyword${{terms.length===1?'':'s'}} earned impressions in this range.`);
+      }} catch(err) {{
+        if (reqId!==_gscWatchReqId) return;
+        renderGscWatchTable();
+        setStatus('gscWatchStatus', err.message||String(err), true);
+      }}
+    }}
+    (function initWatchSort(){{
+      const el=document.getElementById('gscWatchTable'); if(!el) return;
+      el.addEventListener('click', ev => {{
+        const th=ev.target.closest('th.watch-sort'); if(!th) return;
+        const key=th.dataset.watchKey;
+        if (gscWatch.sortKey===key) gscWatch.sortDir = gscWatch.sortDir==='asc' ? 'desc' : 'asc';
+        else {{
+          gscWatch.sortKey=key;
+          const col=WATCH_COLS.find(c=>c.key===key);
+          // Position and Δ Pos default ascending, so the first click surfaces
+          // the best rank / the biggest sinker rather than the largest number.
+          gscWatch.sortDir = col ? col.defDir : 'asc';
+        }}
+        renderGscWatchTable();
+      }});
+    }})();
+    // Row editor (admin only, like the branded/target tag editors). Values save
+    // on blur rather than per keystroke -- each save also refetches, and a
+    // half-typed keyword is not worth a BigQuery scan.
+    let _watchSaveTimer=null;
+    function saveWatchConfig() {{
+      clearTimeout(_watchSaveTimer);
+      _watchSaveTimer=setTimeout(async () => {{
+        const text=gscWatchItems.filter(i=>i.kw.trim())
+          .map(i=>i.page.trim() ? `${{i.kw.trim()}}|${{i.page.trim()}}` : i.kw.trim()).join('\\n');
+        try {{
+          const r=await fetch(GSC_WATCHLIST_CONFIG_API, {{method:'POST', headers:{{'Content-Type':'application/json'}}, credentials:'same-origin', body:JSON.stringify({{watch_keywords:text}})}});
+          const body=await r.json().catch(()=>({{}}));
+          if (!r.ok||!body.ok) throw new Error((body&&body.detail&&(body.detail.error||body.detail))||r.statusText);
+        }} catch(err) {{ setStatus('gscWatchStatus','Save failed: '+(err.message||err), true); }}
+      }}, 700);
+    }}
+    function renderWatchEditor() {{
+      const box=document.getElementById('gscWatchEditor'); if(!box) return;
+      const rows=gscWatchItems.map((it,i)=>`<div class="watch-row">`
+        + `<input class="watch-in-kw" type="text" data-i="${{i}}" data-f="kw" value="${{esc(it.kw)}}" placeholder="keyword">`
+        + `<input class="watch-in-page" type="text" data-i="${{i}}" data-f="page" value="${{esc(it.page)}}" placeholder="page this keyword is for (optional)">`
+        + `<button type="button" data-rm="${{i}}" aria-label="Remove ${{esc(it.kw||'row')}}">×</button></div>`).join('');
+      box.innerHTML=rows
+        + `<div class="watch-editor-foot"><button type="button" class="watch-add">+ Add keyword</button>`
+        + `<span class="watch-editor-hint">End a keyword with * to count its variants too. The page is the URL or path the keyword is written for.</span></div>`;
+    }}
+    (function initWatchEditor(){{
+      const box=document.getElementById('gscWatchEditor'); if(!box) return;
+      renderWatchEditor();
+      box.addEventListener('change', ev => {{
+        const inp=ev.target.closest('input[data-f]'); if(!inp) return;
+        const item=gscWatchItems[+inp.dataset.i]; if(!item) return;
+        const val=inp.value.trim();
+        if (item[inp.dataset.f]===val) return;
+        item[inp.dataset.f]=val;
+        saveWatchConfig(); loadGscWatchlist();
+      }});
+      box.addEventListener('click', ev => {{
+        const rm=ev.target.closest('button[data-rm]');
+        if (rm) {{
+          gscWatchItems.splice(+rm.dataset.rm,1);
+          renderWatchEditor(); saveWatchConfig(); loadGscWatchlist(); return;
+        }}
+        if (ev.target.closest('.watch-add')) {{
+          gscWatchItems.push({{kw:'', page:''}});
+          renderWatchEditor();
+          const inputs=box.querySelectorAll('input.watch-in-kw');
+          if (inputs.length) inputs[inputs.length-1].focus();
+        }}
+      }});
+    }})();
     // Inline tag editors for branded roots + target keywords. Add with Enter or
     // comma, remove with the chip ×; changes re-filter live and auto-save.
     let _kwSaveTimer=null;

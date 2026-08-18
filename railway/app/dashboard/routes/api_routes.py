@@ -2496,6 +2496,106 @@ async def save_gsc_keyword_config(
     return {"ok": True}
 
 
+@router.get(
+    "/api/clients/{client_key}/gsc/watchlist",
+    summary="Per-keyword metrics + weekly rank series for the Search Console keyword watchlist",
+)
+def client_gsc_watchlist(
+    client_key: str,
+    request: Request,
+    terms: str = Query(default="", description="Comma-separated watched keywords. A trailing '*' widens a keyword to its variants."),
+    pages: str = Query(default="", description="Comma-separated page URLs or paths tied to those keywords."),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    compare_start_date: date | None = Query(default=None, description="Comparison window start for each row's prior avg position."),
+    compare_end_date: date | None = Query(default=None, description="Comparison window end."),
+) -> dict:
+    """One row per watched keyword -- the curated benchmark list, where each row
+    is a keyword a page was written for. Returns `rows` (metrics for the selected
+    range, plus the comparison window's avg position), `weekly` (a trailing
+    ~13-week per-keyword rank series for the sparklines) and `pages` (the tied
+    pages' own search performance).
+
+    Search Console reports queries and pages as separate dimensions in this
+    pipeline, so a row's page is the page an admin tied to the keyword and its
+    metrics are that page's own totals across every query -- not the keyword's
+    share of them."""
+    normalized = (client_key or "").strip().lower()
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    term_list = [t.strip() for t in terms.split(",") if t.strip()]
+    page_list = [p.strip() for p in pages.split(",") if p.strip()]
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    cmp_start, cmp_end = _resolve_compare_dates(compare_start_date, compare_end_date)
+    if not term_list:
+        return {"rows": [], "weekly": [], "pages": []}
+    # Sparklines want enough history to read as a trend, so the series spans a
+    # trailing ~13 weeks regardless of the selected range (same as the
+    # branded/target trend); the row metrics stay scoped to the selection.
+    trend_start = min(start, end - timedelta(days=_KEYWORD_TREND_DAYS))
+    try:
+        import bq_gsc_service
+        rows_key = {
+            "start": start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list),
+            "compare_start": cmp_start.isoformat() if cmp_start else "",
+            "compare_end": cmp_end.isoformat() if cmp_end else "",
+        }
+        series_key = {"start": trend_start.isoformat(), "end": end.isoformat(), "terms": sorted(term_list)}
+        rows = _cached_bq_read(
+            f"{normalized}.gsc.watchlist", rows_key, ttl_seconds=900,
+            fetch=lambda: bq_gsc_service.gsc_watchlist_rows(
+                start=start, end=end, terms=term_list, client_slug=normalized,
+                compare_start=cmp_start, compare_end=cmp_end,
+            ),
+        )
+        weekly = _cached_bq_read(
+            f"{normalized}.gsc.watchlist_weekly", series_key, ttl_seconds=900,
+            fetch=lambda: bq_gsc_service.gsc_watchlist_series(
+                start=trend_start, end=end, terms=term_list, client_slug=normalized,
+            ),
+        )
+        page_rows = []
+        if page_list:
+            page_rows = _cached_bq_read(
+                f"{normalized}.gsc.watchlist_pages",
+                {"start": start.isoformat(), "end": end.isoformat(), "pages": sorted(page_list)},
+                ttl_seconds=900,
+                fetch=lambda: bq_gsc_service.gsc_page_metrics(
+                    start=start, end=end, pages=page_list, client_slug=normalized,
+                ),
+            )
+        return {"rows": rows, "weekly": weekly, "pages": page_rows}
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.post(
+    "/api/clients/{client_key}/gsc/watchlist-config",
+    summary="Save the Search Console keyword watchlist for a client",
+)
+async def save_gsc_watchlist_config(
+    client_key: str,
+    request: Request,
+) -> dict:
+    """Persist the watchlist as one "keyword|page" per line (page optional) in
+    client_dashboard_config."""
+    normalized = (client_key or "").strip().lower()
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        import client_dashboard_config as cdc
+        cdc.update_gsc_watchlist(
+            normalized,
+            watch_keywords=str(body.get("watch_keywords") or ""),
+            updated_by="dashboard",
+        )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+    return {"ok": True}
+
+
 @router.post(
     "/api/clients/{client_key}/pagespeed/targets",
     summary="Save per-KPI PageSpeed target bands for a client",
