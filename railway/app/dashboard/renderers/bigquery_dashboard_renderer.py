@@ -5922,6 +5922,11 @@ def render_bigquery_dashboard_page(
       else if (currentTab==='explorer') {{ explorerLoaded=false; loadExplorer(); explorerLoaded=true; }}
       else if (currentTab==='analytics') {{ analyticsLoaded=false; applyModules(); loadAllAnalytics(); analyticsLoaded=true; }}
       else if (currentTab==='ai_traffic') {{ aiTrafficLoaded=false; loadAiTraffic(); aiTrafficLoaded=true; }}
+      // Search Console reads the selected window (loadGsc builds its URL from
+      // currentStart/currentEnd), so it has to reload here or the tab stays
+      // pinned to whatever range was active when it first opened. loadSemrush()
+      // is deliberately not called: its endpoint takes no dates.
+      else if (currentTab==='gsc') {{ gscLoaded=false; loadGsc(); gscLoaded=true; }}
     }}
 
     // ---- Date presets ----
