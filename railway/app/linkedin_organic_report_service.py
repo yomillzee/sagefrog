@@ -67,6 +67,9 @@ class LinkedInOrganicReport:
     follower_series: list[dict[str, Any]] = field(default_factory=list)
     page_series: list[dict[str, Any]] = field(default_factory=list)
     engagement_series: list[dict[str, Any]] = field(default_factory=list)
+    # Every post published in the window, thinned to what the engagement chart
+    # needs to annotate publish days: [{published_at, title, post_type}].
+    post_markers: list[dict[str, Any]] = field(default_factory=list)
     # Lifetime follower demographics keyed by dimension
     # (seniority/function/industry/company_size/region) -> ranked category rows.
     follower_demographics: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
@@ -229,6 +232,36 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
             "engagement_rate": float(r.get("engagement_rate") or 0.0),
             "reactions": {},
         })
+    # ── Publish markers (every post in the window, not just the top 50) ───────
+    # The engagement chart pins these to the day they were published so post
+    # cadence can be read against the impression/reach lines.
+    try:
+        marker_rows = bigquery_service.run_query(
+            f"""
+            SELECT CAST(published_at AS STRING) AS published_at, title, post_type
+            FROM {_tbl(_POST_TABLE)}
+            WHERE published_at BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+            ORDER BY published_at ASC
+            LIMIT 1000
+            """,
+            project_id=project,
+            credentials_env=creds,
+            max_rows=1000,
+        )
+    except Exception as exc:
+        if not _is_table_not_found(exc):
+            _log.warning("organic post markers read failed [%s]: %s", client_slug, exc)
+        marker_rows = []
+    for r in marker_rows:
+        day = str(r.get("published_at") or "")
+        if not day:
+            continue
+        report.post_markers.append({
+            "published_at": day,
+            "title": str(r.get("title") or "") or "Untitled post",
+            "post_type": str(r.get("post_type") or ""),
+        })
+
     # ── Post totals over the whole window (not just the top 50 listed above) ──
     try:
         total_rows = bigquery_service.run_query(

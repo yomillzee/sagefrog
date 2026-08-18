@@ -294,5 +294,66 @@ class FollowerTotalFallbackTests(unittest.TestCase):
         )
 
 
+class PublishMarkersTest(unittest.TestCase):
+    """The engagement chart pins a marker on each day a post went out."""
+
+    ENGAGEMENT = [
+        {"metric_date": "2026-06-01", "impressions": 10, "unique_impressions": 6},
+        {"metric_date": "2026-06-02", "impressions": 20, "unique_impressions": 9},
+        {"metric_date": "2026-06-03", "impressions": 30, "unique_impressions": 12},
+    ]
+
+    def test_markers_group_by_day_and_carry_titles(self) -> None:
+        markers = R._post_markers(
+            [
+                {"published_at": "2026-06-02", "title": "First", "post_type": "IMAGE"},
+                {"published_at": "2026-06-02", "title": "Second", "post_type": ""},
+            ],
+            self.ENGAGEMENT,
+        )
+        self.assertEqual(markers["days"], [{"i": 1, "n": 2,
+                                            "titles": ["First (IMAGE)", "Second"]}])
+        self.assertEqual(markers["counts"]["2026-06-02"], 2)
+
+    def test_posts_outside_the_chart_window_are_dropped(self) -> None:
+        markers = R._post_markers(
+            [{"published_at": "2020-01-01", "title": "Ancient", "post_type": ""}],
+            self.ENGAGEMENT,
+        )
+        self.assertEqual(markers["days"], [])
+
+    def test_titles_are_capped_but_the_count_is_not(self) -> None:
+        posts = [{"published_at": "2026-06-03", "title": f"Post {i}", "post_type": ""}
+                 for i in range(R._MARKER_TITLE_CAP + 4)]
+        markers = R._post_markers(posts, self.ENGAGEMENT)
+        day = markers["days"][0]
+        self.assertEqual(len(day["titles"]), R._MARKER_TITLE_CAP)
+        self.assertEqual(day["n"], R._MARKER_TITLE_CAP + 4)
+
+    def test_page_renders_the_markers_and_the_toggle(self) -> None:
+        r = _report()
+        r.engagement_series = list(self.ENGAGEMENT)
+        r.post_markers = [
+            {"published_at": "2026-06-02", "title": "Launch day", "post_type": "VIDEO"},
+        ]
+        html = R.render_linkedin_organic(
+            client_slug="demo", label="Demo", report=r,
+            use_session=True, session_email="t@e.com",
+        )
+        self.assertIn('id="loMarkerToggle"', html)
+        self.assertIn("Launch day (VIDEO)", html)
+        self.assertIn("1 day", html)
+
+    def test_no_toggle_when_no_post_lands_in_the_window(self) -> None:
+        r = _report()
+        r.engagement_series = list(self.ENGAGEMENT)
+        r.post_markers = []
+        html = R.render_linkedin_organic(
+            client_slug="demo", label="Demo", report=r,
+            use_session=True, session_email="t@e.com",
+        )
+        self.assertNotIn('id="loMarkerToggle"', html)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
