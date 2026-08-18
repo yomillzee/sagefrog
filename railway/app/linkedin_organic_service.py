@@ -38,6 +38,11 @@ from linkedin_service import (
 
 _log = logging.getLogger(__name__)
 
+# How many posts get a per-post reaction-type breakdown in one sync. The Top
+# posts table lists at most 50, so this covers it with room to spare while
+# keeping a long backfill's call count bounded.
+_REACTION_POST_LIMIT = 100
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # URN / date helpers
@@ -201,6 +206,21 @@ def list_organizations(
 # Posts + per-post engagement
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _next_page_token(payload: dict[str, Any]) -> str:
+    """Cursor for the next page, or "" when the payload doesn't carry one.
+
+    LinkedIn moved cursor pagination between ``metadata`` and ``paging`` across
+    API versions, so check both rather than assuming one shape and silently
+    stopping after page 1.
+    """
+    for holder in (payload.get("metadata"), payload.get("paging")):
+        if isinstance(holder, dict):
+            token = holder.get("nextPageToken") or ""
+            if token:
+                return str(token)
+    return ""
+
+
 def _list_org_posts(
     org_id: str,
     *,
@@ -209,21 +229,66 @@ def _list_org_posts(
     count: int = 50,
     max_pages: int = 40,
 ) -> list[dict[str, Any]]:
-    """Follow ``/posts?q=author`` cursor pagination for one organization."""
-    org_urn = quote(_org_urn(org_id), safe="")
-    base = f"/posts?q=author&author={org_urn}&count={count}"
+    """Return every ``/posts?q=author`` post for one organization.
+
+    Pagination is deliberately belt-and-braces, because getting it wrong is
+    invisible: the first page still returns 50 good posts, so a sync "succeeds"
+    while quietly capping the client's whole post history at one page.
+
+    * Finder params go through ``params`` rather than being baked into the path.
+      httpx *replaces* a URL's existing query string when ``params`` is passed,
+      so a hand-built ``/posts?q=author&...`` path would lose ``q``/``author``
+      the moment a page-2 cursor was added.
+    * Cursor pagination is used when the response carries a token; otherwise we
+      fall back to index-based ``start`` paging, which is what the versions that
+      omit ``nextPageToken`` expect.
+    * We stop as soon as a page returns nothing new, so an API that ignores the
+      cursor can't spin us through ``max_pages`` of duplicates.
+    """
+    org_urn = _org_urn(org_id)
     out: list[dict[str, Any]] = []
+    seen: set[str] = set()
     page_token = ""
+    start = 0
+
     for _ in range(max_pages):
-        query = {"pageToken": page_token} if page_token else None
+        params: list[tuple[str, Any]] = [
+            ("q", "author"),
+            ("author", org_urn),
+            ("count", count),
+        ]
+        if page_token:
+            params.append(("pageToken", page_token))
+        elif start:
+            params.append(("start", start))
+
         payload = _linkedin_get_with_versions(
-            base, params=query, access_token=access_token, env=env
+            "/posts", params=params, access_token=access_token, env=env
         )
         batch = payload.get("elements") or []
-        out.extend(batch)
-        page_token = (payload.get("metadata") or {}).get("nextPageToken") or ""
-        if not page_token:
+
+        fresh = 0
+        for post in batch:
+            key = str(post.get("id") or "")
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            out.append(post)
+            fresh += 1
+
+        # Nothing new on this page: either the source is exhausted or it ignored
+        # our cursor and replayed a page we already have. Either way, stop.
+        if not fresh:
             break
+
+        page_token = _next_page_token(payload)
+        if not page_token:
+            # Index-based fallback. A short page means we reached the end.
+            if len(batch) < count:
+                break
+            start += len(batch)
+
     return out
 
 
@@ -424,10 +489,18 @@ def fetch_posts_with_stats(
         access_token=token,
         env=env,
     )
+    # Reaction breakdowns are one HTTP call *per post* (LinkedIn exposes no batch
+    # form), so they are capped at the most-viewed posts rather than run over the
+    # whole window. A year-long backfill is ~1k posts; calling for all of them
+    # would spend minutes and risk timing the sync out, and the breakdown is only
+    # ever surfaced next to the Top-posts table, which shows at most 50 rows.
+    reaction_targets = sorted(
+        (p["urn"] for p in in_window),
+        key=lambda u: int((stats_by_urn.get(u) or {}).get("impressionCount") or 0),
+        reverse=True,
+    )[:_REACTION_POST_LIMIT]
     reactions_by_urn = (
-        _reactions_by_urn(
-            [p["urn"] for p in in_window], access_token=token, env=env
-        )
+        _reactions_by_urn(reaction_targets, access_token=token, env=env)
         if with_reactions else {}
     )
 

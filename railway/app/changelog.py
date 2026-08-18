@@ -63,6 +63,22 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-18",
+        title="LinkedIn Organic syncs more than the 50 most recent posts",
+        area="LinkedIn Organic",
+        kind="fixed",
+        summary=(
+            "Every sync was quietly stopping after the first page of results, so "
+            "a client's post history never went back further than their most "
+            "recent 50 posts — which is why the longer date ranges kept showing "
+            "the same numbers as the short ones. Syncs now read the whole history."
+        ),
+        details=(
+            "Run a sync over a longer range to backfill a client's older posts.",
+            "Nothing was lost — the older posts had simply never been collected.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
         title="LinkedIn Organic's Performance card follows the date range",
         area="LinkedIn Organic",
         kind="fixed",
