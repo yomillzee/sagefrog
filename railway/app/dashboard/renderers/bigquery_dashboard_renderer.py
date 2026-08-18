@@ -1386,17 +1386,17 @@ def render_bigquery_dashboard_page(
 
     panel_gsc_watchlist = """
       <section id="sec-gsc-watchlist">
-        <div class="sec-head"><h2>Keyword watchlist</h2><div class="sec-head-actions"><span class="status" id="gscWatchStatus"></span><button type="button" class="watch-btn debug-only" id="gscWatchAdd">+ Add keyword</button><button type="button" class="watch-btn debug-only" id="gscWatchBulkBtn" aria-expanded="false">Bulk add</button></div></div>
-        <p class="muted watch-intro">The keywords we are deliberately writing for, and the page each one is aimed at. Position is the impression-weighted average rank over the selected range; the spark line covers the last 13 weeks and rises as the rank improves.</p>
-        <p class="muted watch-intro debug-only watch-admin-hint">Click a keyword or page to change it. Drag the handle to reorder — or focus it and use the arrow keys. Sorting by a column is a view; <span class="watch-order-mark">⇅</span> puts the list back in your order.</p>
-        <div class="watch-bulk" id="gscWatchBulk" hidden>
-          <textarea id="gscWatchBulkText" rows="4" spellcheck="false" placeholder="hvac software, /blog/hvac-software&#10;manufacturing seo, industrial marketing, plant maintenance seo"></textarea>
-          <div class="watch-bulk-foot">
-            <button type="button" class="watch-btn watch-btn-primary" id="gscWatchBulkAdd">Add rows</button>
-            <button type="button" class="watch-btn" id="gscWatchBulkCancel">Cancel</button>
-            <span class="watch-hint">One row per line, as <code>keyword, page</code> — the page is optional. A line of several comma-separated keywords with no page adds one row each. End a keyword with * to count its variants too.</span>
-          </div>
-        </div>
+        <div class="sec-head"><h2>Keyword watchlist</h2><div class="sec-head-actions"><span class="status" id="gscWatchStatus"></span><button type="button" class="watch-btn watch-btn-primary debug-only" id="gscWatchAdd">+ Add keyword</button><span class="watch-bulk-wrap debug-only"><button type="button" class="watch-btn" id="gscWatchBulkBtn" aria-expanded="false" aria-controls="gscWatchBulk">Bulk add</button>
+          <div class="watch-pop" id="gscWatchBulk" role="dialog" aria-label="Bulk add keywords" hidden>
+            <textarea id="gscWatchBulkText" rows="4" spellcheck="false" placeholder="hvac software&#10;manufacturing seo, industrial marketing, plant maintenance seo"></textarea>
+            <p class="watch-hint">One keyword per line, or several separated by commas. End a keyword with * to count its variants too.</p>
+            <div class="watch-pop-foot">
+              <button type="button" class="watch-btn watch-btn-primary" id="gscWatchBulkAdd">Add rows</button>
+              <button type="button" class="watch-btn" id="gscWatchBulkCancel">Cancel</button>
+            </div>
+          </div></span></div></div>
+        <p class="muted watch-intro">The keywords we are deliberately writing for. Position is the impression-weighted average rank over the selected range; the spark line covers the last 13 weeks and rises as the rank improves.</p>
+        <p class="muted watch-intro debug-only watch-admin-hint">Click a keyword to change it. Drag the handle to reorder — or focus it and use the arrow keys. Sorting by a column is a view; <span class="watch-order-mark">⇅</span> puts the list back in your order.</p>
         <div class="table-wrap"><table id="gscWatchTable" class="compact watch-table"></table></div>
       </section>"""
 
@@ -1885,9 +1885,6 @@ def render_bigquery_dashboard_page(
     #gscWatchTable td.left > * {{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
     .watch-kw {{ font-weight:700; }}
     .watch-variants {{ font-size:.64rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:#7d8ba0; margin-left:5px; }}
-    .watch-page a {{ color:var(--accent); text-decoration:none; font-size:.8rem; }}
-    .watch-page a:hover {{ text-decoration:underline; }}
-    .watch-page-none {{ color:#9aa7b8; font-size:.8rem; }}
     .watch-spark {{ display:inline-flex; align-items:center; gap:8px; justify-content:flex-end; }}
     .watch-pos {{ font-variant-numeric:tabular-nums; font-weight:800; min-width:2.4em; text-align:right; }}
     .watch-pos-none {{ color:#9aa7b8; font-weight:600; }}
@@ -1898,17 +1895,25 @@ def render_bigquery_dashboard_page(
     .watch-btn:hover {{ border-color:#9bbfe6; color:var(--accent); }}
     .watch-btn-primary {{ border-color:var(--accent); color:#fff; background:var(--accent); }}
     .watch-btn-primary:hover {{ color:#fff; filter:brightness(1.06); }}
-    .watch-hint {{ font-size:.7rem; color:#7d8ba0; flex:1 1 16ch; min-width:0; }}
+    .watch-hint {{ font-size:.7rem; color:#7d8ba0; margin:7px 0 0; }}
     /* Admin-only "how to work this table" line -- .debug-only is inline-block by
        default, which would drop it beside the intro paragraph. */
     .is-admin p.watch-admin-hint {{ display:block !important; margin-top:-6px; font-size:.72rem; }}
     .watch-order-mark {{ font-weight:800; color:#5a6b80; }}
-    .watch-bulk {{ display:none; }}
-    .is-admin .watch-bulk {{ display:block; padding:10px; margin-bottom:11px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; }}
-    .watch-bulk textarea {{ width:100%; box-sizing:border-box; font:inherit; font-size:.8rem; line-height:1.5; padding:7px 9px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; color:inherit; resize:vertical; }}
-    .watch-bulk textarea:focus {{ outline:none; border-color:#9bbfe6; box-shadow:0 0 0 2px #e2eefb; }}
-    .watch-bulk-foot {{ display:flex; align-items:center; gap:9px; margin-top:9px; flex-wrap:wrap; }}
-    .watch-bulk code {{ font-size:.68rem; background:#f1f4f8; border-radius:3px; padding:1px 4px; }}
+    /* Bulk add popover, anchored under its button. Deliberately sets no display
+       property: the `hidden` attribute is what opens and closes it, and an
+       author `display` rule would beat it (which is exactly how the first
+       version ended up permanently open). */
+    .watch-bulk-wrap {{ position:relative; }}
+    .watch-pop {{ position:absolute; right:0; top:calc(100% + 7px); z-index:60; width:min(420px, 78vw); padding:11px; text-align:left; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; box-shadow:0 10px 26px rgba(24,39,58,.16); }}
+    .watch-pop textarea {{ width:100%; box-sizing:border-box; font:inherit; font-size:.8rem; line-height:1.5; padding:7px 9px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; color:inherit; resize:vertical; }}
+    .watch-pop textarea:focus {{ outline:none; border-color:#9bbfe6; box-shadow:0 0 0 2px #e2eefb; }}
+    .watch-pop-foot {{ display:flex; align-items:center; gap:8px; margin-top:9px; }}
+    /* On a narrow screen the anchored box would hang off the edge, so it drops
+       to the full width of the panel instead. */
+    @media (max-width: 560px) {{
+      .watch-pop {{ position:fixed; left:12px; right:12px; top:auto; width:auto; }}
+    }}
     /* Click-to-edit affordance: only an admin gets the cursor and the hover
        underline, so a client's table reads as plain text. */
     .is-admin .watch-editable {{ cursor:text; }}
@@ -3974,10 +3979,9 @@ def render_bigquery_dashboard_page(
     // Default sort is 'manual' -- the order the admin arranged, which is the
     // order the list is stored in. A curated list should open the way it was
     // curated; the metric columns are still one click away.
-    const gscWatch = {{rows:{{}}, weekly:{{}}, pages:{{}}, sortKey:'manual', sortDir:'asc', dragFrom:null}};
+    const gscWatch = {{rows:{{}}, weekly:{{}}, sortKey:'manual', sortDir:'asc', dragFrom:null}};
     const watchKey = kw => String(kw||'').trim().toLowerCase();
     const watchTerms = () => gscWatchItems.map(i=>i.kw.trim()).filter(Boolean);
-    const watchPages = () => gscWatchItems.map(i=>i.page.trim()).filter(Boolean);
     // Position: lower is better, so the spark plots the NEGATED series -- the
     // line then rises exactly when the rank improves, which is how a trend line
     // reads. Weeks with no impressions are absent from the series rather than
@@ -3994,25 +3998,6 @@ def render_bigquery_dashboard_page(
       {{key:'clicks', label:'Clicks', format:count, defDir:'desc'}},
       {{key:'ctr', label:'CTR', format:gscCtrCell, defDir:'desc'}},
     ];
-    // Search Console reports queries and pages as separate dimensions here, so
-    // the page is the one an admin tied to the keyword and its numbers are the
-    // page's own totals across every query -- said so in the tooltip rather
-    // than implying the keyword earned them.
-    function watchPageCell(r) {{
-      const p=(r.page||'').trim();
-      if (!p) return '<span class="watch-page-none">—</span>';
-      const d=r.pageData;
-      const url=p.startsWith('http') ? p : ((d&&d.page_url)||p);
-      const abs=url.startsWith('http') ? url : '';
-      const tip=d
-        ? `${{p}} — ${{count(d.clicks)}} clicks / ${{count(d.impressions)}} impressions from all queries in this range`
-        : `${{p}} — no Search Console data for this page in this range`;
-      const label=pathOnly(url);
-      const inner=abs
-        ? `<a href="${{esc(abs)}}" target="_blank" rel="noopener" title="${{esc(tip)}}">${{esc(label)}}</a>`
-        : `<span title="${{esc(tip)}}">${{esc(label)}}</span>`;
-      return `<span class="watch-page">${{inner}}</span>`;
-    }}
     // One row per configured keyword, whether or not it ranked -- a keyword with
     // no impressions yet is the most interesting row on a watchlist, so it stays
     // visible with empty metrics instead of dropping out.
@@ -4026,7 +4011,6 @@ def render_bigquery_dashboard_page(
         return Object.assign({{}}, d, {{
           kw:i.kw, page:i.page, idx, draft:!i.kw.trim(),
           series:gscWatch.weekly[k]||[],
-          pageData:gscWatch.pages[i.page.trim()]||null,
         }});
       }});
     }}
@@ -4063,7 +4047,7 @@ def render_bigquery_dashboard_page(
       const gripHead = IS_ADMIN
         ? `<th class="watch-sort watch-grip-cell${{manual?' active':''}}" data-watch-key="manual" title="List order — drag rows to reorder">⇅</th>`
         : '';
-      const head=`<thead><tr>${{gripHead}}<th class="left">Keyword</th><th class="left">Page</th>`
+      const head=`<thead><tr>${{gripHead}}<th class="left">Keyword</th>`
         + th('avg_position','Position · 13 wks') + th('delta_position','Δ Pos')
         + WATCH_COLS.map(c=>th(c.key,c.label)).join('')
         + (IS_ADMIN ? `<th></th>` : '') + `</tr></thead>`;
@@ -4093,7 +4077,6 @@ def render_bigquery_dashboard_page(
         return `<tr${{r.draft ? ' class="watch-draft"' : ''}} data-watch-row="${{r.idx}}">`
           + grip
           + `<td class="left">${{kwCell}}</td>`
-          + `<td class="left">${{editable('page', watchPageCell(r))}}</td>`
           + `<td><span class="watch-spark">${{watchSpark(r.series)}}${{posTxt}}</span></td>`
           // "New" (what a null delta means elsewhere) would be wrong for a
           // keyword that has no rank at all yet -- that row gets a plain dash.
@@ -4107,7 +4090,7 @@ def render_bigquery_dashboard_page(
     let _gscWatchReqId=0;
     async function loadGscWatchlist() {{
       const terms=watchTerms();
-      gscWatch.rows={{}}; gscWatch.weekly={{}}; gscWatch.pages={{}};
+      gscWatch.rows={{}}; gscWatch.weekly={{}};
       // Nothing on the list and nobody who could add one: the whole section is
       // noise on a client's tab, so it stays out of the page rather than
       // explaining an empty table to them.
@@ -4123,17 +4106,14 @@ def render_bigquery_dashboard_page(
       }}
       const reqId=++_gscWatchReqId;
       const el=document.getElementById('gscWatchTable');
-      if (el) el.innerHTML=skelTable(IS_ADMIN ? 9 : 7, Math.min(6, terms.length));
+      if (el) el.innerHTML=skelTable(IS_ADMIN ? 8 : 6, Math.min(6, terms.length));
       setStatus('gscWatchStatus','Loading…');
-      let url=withCompare(withDates(GSC_WATCHLIST_API))+'&terms='+encodeURIComponent(terms.join(','));
-      const pgs=watchPages();
-      if (pgs.length) url+='&pages='+encodeURIComponent(pgs.join(','));
+      const url=withCompare(withDates(GSC_WATCHLIST_API))+'&terms='+encodeURIComponent(terms.join(','));
       try {{
         const p=await getJson(url);
         if (reqId!==_gscWatchReqId) return; // superseded by a newer range/keyword change
         (p.rows||[]).forEach(r=>{{ gscWatch.rows[watchKey(r.term)]=r; }});
         (p.weekly||[]).forEach(r=>{{ const k=watchKey(r.term); (gscWatch.weekly[k]=gscWatch.weekly[k]||[]).push(r); }});
-        (p.pages||[]).forEach(r=>{{ gscWatch.pages[String(r.page_key||'').trim()]=r; }});
         renderGscWatchTable();
         const ranked=Object.keys(gscWatch.rows).length;
         setStatus('gscWatchStatus', `${{ranked}} of ${{terms.length}} watched keyword${{terms.length===1?'':'s'}} earned impressions in this range.`);
@@ -4286,16 +4266,7 @@ def render_bigquery_dashboard_page(
           const inp=ev.target.closest('input[data-watch-in]'); if(!inp) return;
           if (ev.key==='Enter') {{ ev.preventDefault(); inp.blur(); }}
           else if (ev.key==='Escape') {{ ev.preventDefault(); inp.dataset.cancelled='1'; renderGscWatchTable(); }}
-          else if (ev.key==='Tab' && inp.dataset.watchIn==='kw') {{
-            // Tab from keyword to page is the natural way to fill a new row.
-            ev.preventDefault();
-            const idx=+inp.dataset.watchI;
-            commitWatchCell(idx,'kw',inp.value);
-            if (gscWatchItems[idx]) {{
-              const td=table.querySelector(`[data-watch-edit="page"][data-watch-i="${{idx}}"]`);
-              if (td && td.closest('td')) {{ td.closest('td').innerHTML=watchCellInput('page', idx, gscWatchItems[idx].page); focusWatchInput(idx,'page'); }}
-            }}
-          }}
+
         }});
         table.addEventListener('focusout', ev => {{
           const inp=ev.target.closest('input[data-watch-in]'); if(!inp) return;
@@ -4361,23 +4332,34 @@ def render_bigquery_dashboard_page(
       const bulkBtn=document.getElementById('gscWatchBulkBtn');
       const bulk=document.getElementById('gscWatchBulk');
       const bulkText=document.getElementById('gscWatchBulkText');
-      const closeBulk=()=>{{ if(!bulk) return; bulk.hidden=true; if(bulkBtn) bulkBtn.setAttribute('aria-expanded','false'); }};
+      const closeBulk=(refocus)=>{{
+        if (!bulk || bulk.hidden) return;
+        bulk.hidden=true;
+        if (bulkBtn) {{ bulkBtn.setAttribute('aria-expanded','false'); if (refocus) bulkBtn.focus(); }}
+      }};
       if (bulkBtn && bulk) bulkBtn.addEventListener('click', () => {{
         const open=bulk.hidden;
         bulk.hidden=!open;
         bulkBtn.setAttribute('aria-expanded', open?'true':'false');
         if (open && bulkText) bulkText.focus();
       }});
+      // Click anywhere else closes it, the way a popover should. mousedown, not
+      // click, so it closes as soon as you press outside it.
+      document.addEventListener('mousedown', ev => {{
+        if (!bulk || bulk.hidden) return;
+        if (ev.target.closest('#gscWatchBulk') || ev.target.closest('#gscWatchBulkBtn')) return;
+        closeBulk();
+      }});
       const bulkAdd=document.getElementById('gscWatchBulkAdd');
       if (bulkAdd && bulkText) bulkAdd.addEventListener('click', () => {{
-        if (applyWatchBulk(bulkText.value)) {{ bulkText.value=''; closeBulk(); }}
+        if (applyWatchBulk(bulkText.value)) {{ bulkText.value=''; closeBulk(true); }}
       }});
       const bulkCancel=document.getElementById('gscWatchBulkCancel');
-      if (bulkCancel) bulkCancel.addEventListener('click', () => {{ if (bulkText) bulkText.value=''; closeBulk(); }});
+      if (bulkCancel) bulkCancel.addEventListener('click', () => {{ if (bulkText) bulkText.value=''; closeBulk(true); }});
       // Ctrl/Cmd+Enter submits, so a long paste doesn't need a trip to the mouse.
       if (bulkText) bulkText.addEventListener('keydown', ev => {{
-        if (ev.key==='Enter' && (ev.metaKey||ev.ctrlKey)) {{ ev.preventDefault(); if (applyWatchBulk(bulkText.value)) {{ bulkText.value=''; closeBulk(); }} }}
-        else if (ev.key==='Escape') {{ ev.preventDefault(); closeBulk(); }}
+        if (ev.key==='Enter' && (ev.metaKey||ev.ctrlKey)) {{ ev.preventDefault(); if (applyWatchBulk(bulkText.value)) {{ bulkText.value=''; closeBulk(true); }} }}
+        else if (ev.key==='Escape') {{ ev.preventDefault(); closeBulk(true); }}
       }});
     }})();
     // Inline tag editors for branded roots + target keywords. Add with Enter or

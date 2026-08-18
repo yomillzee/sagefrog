@@ -190,11 +190,37 @@ class WatchlistRenderTests(unittest.TestCase):
         # Keyboard reordering, for anyone not dragging with a mouse.
         self.assertIn("ArrowUp", self.html)
 
-    def test_bulk_add_box_is_present_and_explains_both_shapes(self):
-        self.assertIn('id="gscWatchBulk"', self.html)
+    def test_bulk_add_is_a_popover_that_starts_closed(self):
         self.assertIn('id="gscWatchBulkText"', self.html)
         self.assertIn('id="gscWatchBulkAdd"', self.html)
-        self.assertIn("comma-separated keywords", self.html)
+        # The box is a popover on its button, and it is closed until clicked.
+        self.assertIn('class="watch-pop" id="gscWatchBulk"', self.html)
+        self.assertRegex(self.html, r'id="gscWatchBulk"[^>]*\shidden')
+        self.assertIn("One keyword per line, or several separated by commas", self.html)
+
+    def test_the_popover_never_sets_display(self):
+        """`hidden` is what opens and closes the popover. An author `display`
+        rule outranks the attribute, which is how the first version of this box
+        ended up permanently open for admins."""
+        rule = self.html.split(".watch-pop {", 1)[1].split("}", 1)[0]
+        self.assertNotIn("display", rule)
+        self.assertNotIn(".is-admin .watch-bulk {", self.html)
+
+    def test_adding_a_keyword_is_the_primary_action(self):
+        self.assertRegex(
+            self.html,
+            r'class="watch-btn watch-btn-primary[^"]*" id="gscWatchAdd"',
+        )
+        # Bulk add stays secondary beside it.
+        self.assertNotRegex(self.html, r'watch-btn-primary[^"]*" id="gscWatchBulkBtn"')
+
+    def test_page_column_is_not_rendered(self):
+        """Pulled for now: the stored page per keyword is untouched (it still
+        saves and still round-trips through bulk add), but nothing shows it, so
+        the request stops paying for page metrics too."""
+        self.assertNotIn('<th class="left">Page</th>', self.html)
+        self.assertNotIn("watchPageCell", self.html)
+        self.assertNotIn("'&pages='", self.html)
 
 
 if __name__ == "__main__":
