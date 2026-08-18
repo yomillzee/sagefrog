@@ -72,14 +72,17 @@ class ExplorerTotalRowMarkupTests(unittest.TestCase):
         # Not from explorerRows / filtered — the tree is what the campaign rows
         # were built from, so footer and rows can never disagree.
         self.assertIn("const totals=explorerTotals(tree);", self.html)
-        self.assertIn("metricCells(totals)", self.html)
+        self.assertIn("explorerTotalCells(totals,aggPrev)", self.html)
 
     def test_footer_reuses_the_metric_columns(self):
-        # metricCells() walks METRIC_COLS, so the footer keeps the same column
-        # count, order and formatting as every other row — including ga4-col.
+        # explorerTotalCells() walks METRIC_COLS, same as metricCells() does for
+        # every other row, so the footer keeps the same column count, order and
+        # formatting — including ga4-col — while adding a vs-previous delta.
         totals = _js_block(self.html, "function explorerTotals(")
         self.assertNotIn("METRIC_COLS", totals)
         self.assertIn("function metricCells(m)", self.html)
+        total_cells = _js_block(self.html, "function explorerTotalCells(")
+        self.assertIn("METRIC_COLS", total_cells)
 
     def test_footer_labels_the_campaign_count(self):
         self.assertIn("${nCamp} campaign${nCamp===1?'':'s'}", self.html)
