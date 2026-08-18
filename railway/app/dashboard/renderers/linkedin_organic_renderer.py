@@ -634,10 +634,9 @@ def render_linkedin_organic(
         note = ('<div class="lo-note">No organic data has synced yet. Run a sync from the '
                 'LinkedIn Organic connector, then refresh this page.</div>')
 
-    avg_engagement = (
-        sum(p["engagement_rate"] for p in report.top_posts) / report.post_count
-        if report.post_count else 0.0
-    )
+    # Averaged over every post in the window by the report service — summing the
+    # Top-posts listing here would divide a 50-post sum by the full post count.
+    avg_engagement = report.avg_engagement_rate
 
     follower_foot = (
         _period_delta(report.follower_gain, window_days)

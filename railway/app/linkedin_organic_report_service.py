@@ -53,6 +53,7 @@ class LinkedInOrganicReport:
     total_comments: int = 0
     total_shares: int = 0
     total_unique_impressions: int = 0
+    avg_engagement_rate: float = 0.0
     total_followers: int = 0
     follower_gain: int = 0
     total_page_views: int = 0
@@ -187,6 +188,11 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
     report = LinkedInOrganicReport(configured=True, org_id=None)
 
     # ── Posts (top by impressions within window) ──────────────────────────────
+    # This read is the Top-posts *table* only — it is capped at 50 rows, so the
+    # KPI totals must not be summed from it (see the aggregate read below) or
+    # they would stop moving with the date range once a window holds 50+ posts.
+    # Undated posts are excluded: a NULL published_at can't be attributed to a
+    # window, and including it made every range return the same rows.
     try:
         post_rows = bigquery_service.run_query(
             f"""
@@ -194,8 +200,7 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
                    CAST(published_at AS STRING) AS published_at,
                    impressions, clicks, likes, comments, shares, engagement_rate
             FROM {_tbl(_POST_TABLE)}
-            WHERE published_at IS NULL
-               OR published_at BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+            WHERE published_at BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
             ORDER BY impressions DESC
             LIMIT 50
             """,
@@ -224,11 +229,45 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
             "engagement_rate": float(r.get("engagement_rate") or 0.0),
             "reactions": {},
         })
-    report.post_count = len(report.top_posts)
-    report.total_impressions = sum(p["impressions"] for p in report.top_posts)
-    report.total_likes = sum(p["likes"] for p in report.top_posts)
-    report.total_comments = sum(p["comments"] for p in report.top_posts)
-    report.total_shares = sum(p["shares"] for p in report.top_posts)
+    # ── Post totals over the whole window (not just the top 50 listed above) ──
+    try:
+        total_rows = bigquery_service.run_query(
+            f"""
+            SELECT COUNT(*) AS post_count,
+                   SUM(impressions) AS impressions, SUM(clicks) AS clicks,
+                   SUM(likes) AS likes, SUM(comments) AS comments,
+                   SUM(shares) AS shares, AVG(engagement_rate) AS avg_engagement_rate
+            FROM {_tbl(_POST_TABLE)}
+            WHERE published_at BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+            """,
+            project_id=project,
+            credentials_env=creds,
+            max_rows=1,
+        )
+    except Exception as exc:
+        if not _is_table_not_found(exc):
+            _log.warning("organic post totals read failed [%s]: %s", client_slug, exc)
+        total_rows = []
+    if total_rows:
+        row = total_rows[0]
+        report.post_count = int(row.get("post_count") or 0)
+        report.total_impressions = int(row.get("impressions") or 0)
+        report.total_likes = int(row.get("likes") or 0)
+        report.total_comments = int(row.get("comments") or 0)
+        report.total_shares = int(row.get("shares") or 0)
+        report.avg_engagement_rate = float(row.get("avg_engagement_rate") or 0.0)
+    else:
+        # Aggregate unavailable (e.g. table missing): fall back to the listing,
+        # which is exact whenever the window holds 50 posts or fewer.
+        report.post_count = len(report.top_posts)
+        report.total_impressions = sum(p["impressions"] for p in report.top_posts)
+        report.total_likes = sum(p["likes"] for p in report.top_posts)
+        report.total_comments = sum(p["comments"] for p in report.top_posts)
+        report.total_shares = sum(p["shares"] for p in report.top_posts)
+        report.avg_engagement_rate = (
+            sum(p["engagement_rate"] for p in report.top_posts) / len(report.top_posts)
+            if report.top_posts else 0.0
+        )
 
     # Reach (unique_impressions) + per-reaction breakdown live in columns added
     # after the table's first version, so they're read in a separate, tolerant
@@ -241,8 +280,7 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
                 f"""
                 SELECT post_id, unique_impressions, reactions_by_type
                 FROM {_tbl(_POST_TABLE)}
-                WHERE published_at IS NULL
-                   OR published_at BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+                WHERE published_at BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
                 ORDER BY impressions DESC
                 LIMIT 50
                 """,
@@ -260,7 +298,27 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
                 continue
             post["unique_impressions"] = int(r.get("unique_impressions") or 0)
             post["reactions"] = _parse_reactions(r.get("reactions_by_type"))
-    report.total_unique_impressions = sum(p["unique_impressions"] for p in report.top_posts)
+        # Window-wide reach, for the same reason the other totals are aggregated
+        # server-side rather than summed over the 50 listed posts.
+        try:
+            reach_rows = bigquery_service.run_query(
+                f"""
+                SELECT SUM(unique_impressions) AS reach
+                FROM {_tbl(_POST_TABLE)}
+                WHERE published_at BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+                """,
+                project_id=project,
+                credentials_env=creds,
+                max_rows=1,
+            )
+        except Exception as exc:
+            if not _is_table_not_found(exc):
+                _log.info("organic reach total read skipped [%s]: %s", client_slug, exc)
+            reach_rows = []
+        report.total_unique_impressions = (
+            int(reach_rows[0].get("reach") or 0) if reach_rows
+            else sum(p["unique_impressions"] for p in report.top_posts)
+        )
 
     # ── Followers (daily series + latest lifetime total) ──────────────────────
     try:
