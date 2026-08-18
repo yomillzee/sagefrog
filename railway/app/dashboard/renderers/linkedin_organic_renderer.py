@@ -117,18 +117,6 @@ _EXTRA_CSS = """
 .lo-chart canvas { display:block; width:100% !important; }
 .lo-empty { font-size:.85rem; color:var(--muted); padding:26px 0; text-align:center; }
 
-/* Standout-post key above the engagement chart: the numbers here are the
-   numbers pinned on the plot, so the list doubles as the chart's legend. */
-.lo-mk-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:-6px 0 8px; }
-.lo-mk-toggle { display:inline-flex; align-items:center; gap:7px; font-size:.76rem; color:var(--muted); font-weight:650; cursor:pointer; user-select:none; }
-.lo-mk-toggle input { accent-color:#f97316; margin:0; cursor:pointer; }
-.lo-mk-count { color:var(--muted); font-size:.74rem; font-weight:600; opacity:.85; }
-.lo-mk-list { list-style:none; display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:2px 18px; margin:0 0 12px; padding:0; }
-.lo-mk-list li { display:flex; align-items:center; gap:8px; min-width:0; font-size:.78rem; color:var(--text); padding:2px 0; }
-.lo-mk-num { flex-shrink:0; width:16px; height:16px; border-radius:50%; background:#f97316; color:#fff; font-size:.62rem; font-weight:800; display:inline-flex; align-items:center; justify-content:center; }
-.lo-mk-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
-.lo-mk-imp { margin-left:auto; flex-shrink:0; color:var(--muted); font-size:.72rem; font-variant-numeric:tabular-nums; }
-
 /* Top posts table — shared modern table styling. The Post column width is a
    CSS var so a drag-resizer can widen/narrow it (and its text truncation). */
 .lo-table-wrap { overflow:auto; border:1px solid var(--line-soft,#eff3f8); border-radius:var(--radius-sm,9px); }
@@ -477,8 +465,10 @@ def _post_markers(
       is the part that varies for a daily poster (three posts vs seven), so it
       is what a reader can actually correlate against impressions.
     * ``standouts`` — the few best-performing posts by impressions, pinned to
-      their publish day and named. A spike worth explaining is nearly always one
-      of these, and capping the count keeps them legible at any cadence.
+      their publish day and carrying their own copy and numbers, because the
+      pin is the thing a reader hovers to ask "what was that spike?". A spike
+      worth explaining is nearly always one of these, and capping the count
+      keeps them legible at any cadence.
 
     Posts published on a day the engagement series doesn't cover are dropped —
     there is no column to pin them to.
@@ -509,8 +499,15 @@ def _post_markers(
     floor = _standout_floor(ranked)
     standouts = [
         {"i": index[str(m["published_at"])],
-         "label": _label(m),
-         "impressions": int(m.get("impressions") or 0)}
+         "day": str(m["published_at"]),
+         "copy": str(m.get("title") or "Untitled post"),
+         "kind": str(m.get("post_type") or ""),
+         "impressions": int(m.get("impressions") or 0),
+         "likes": int(m.get("likes") or 0),
+         "comments": int(m.get("comments") or 0),
+         "shares": int(m.get("shares") or 0),
+         "clicks": int(m.get("clicks") or 0),
+         "rate": round(float(m.get("engagement_rate") or 0.0) * 100, 2)}
         for m in ranked[:_STANDOUT_CAP]
         if int(m.get("impressions") or 0) >= floor
     ]
@@ -520,7 +517,7 @@ def _post_markers(
             posts, key=lambda m: int(m.get("impressions") or 0), reverse=True)][:_MARKER_TITLE_CAP]
         for day, posts in by_day.items()
     }
-    return {"on": True, "volume": volume, "standouts": standouts,
+    return {"volume": volume, "standouts": standouts,
             "byLabel": by_label,
             "counts": {day: len(posts) for day, posts in by_day.items()},
             "postDays": len(by_day), "posts": len(in_window)}
@@ -591,35 +588,55 @@ def _charts_script(
         # Standout pins: a rule down to the plot floor and a numbered dot for
         # the few posts big enough to explain a spike with. Deliberately not one
         # per publish day — a daily poster turns that into a picket fence.
+        # Named-post pins: a rule down to the plot floor and a numbered dot for
+        # the few posts big enough to explain a spike with. Deliberately not one
+        # per publish day — a daily poster turns that into a picket fence.
+        "  var PIN_Y=5, PIN_R=7.5, PIN_HIT=11;\n"
         "  var MARKERS={id:'loPostMarkers', afterDatasetsDraw:function(chart){\n"
         "    var m=chart.$loMarkers;\n"
-        "    if(!m || !m.on || !m.standouts.length) return;\n"
+        "    if(!m || !m.standouts.length) return;\n"
         "    var xs=chart.scales.x, area=chart.chartArea, ctx=chart.ctx;\n"
         "    if(!xs || !area) return;\n"
         "    ctx.save();\n"
         "    m.standouts.forEach(function(d, n){\n"
         "      var px = xs.getPixelForValue(d.i);\n"
         "      if(!isFinite(px) || px < area.left-1 || px > area.right+1) return;\n"
-        "      ctx.beginPath(); ctx.setLineDash([3,3]); ctx.lineWidth=1;\n"
-        "      ctx.strokeStyle='rgba(15,23,42,.30)';\n"
+        "      var hot = (chart.$loPin === n);\n"
+        "      ctx.beginPath(); ctx.setLineDash([3,3]); ctx.lineWidth = hot?1.5:1;\n"
+        "      ctx.strokeStyle = hot ? 'rgba(249,115,22,.75)' : 'rgba(15,23,42,.30)';\n"
         "      ctx.moveTo(px, area.top+12); ctx.lineTo(px, area.bottom); ctx.stroke();\n"
         "      ctx.setLineDash([]);\n"
-        "      ctx.beginPath(); ctx.arc(px, area.top+5, 7.5, 0, Math.PI*2);\n"
+        "      ctx.beginPath(); ctx.arc(px, area.top+PIN_Y, hot?PIN_R+1.5:PIN_R, 0, Math.PI*2);\n"
         "      ctx.fillStyle='" + _MARK_INK + "'; ctx.fill();\n"
         "      ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.stroke();\n"
         "      ctx.fillStyle='#fff'; ctx.font='700 9px system-ui, sans-serif';\n"
         "      ctx.textAlign='center'; ctx.textBaseline='middle';\n"
-        "      ctx.fillText(String(n+1), px, area.top+5);\n"
+        "      ctx.fillText(String(n+1), px, area.top+PIN_Y);\n"
         "    });\n"
         "    ctx.restore();\n"
         "  }};\n"
+        # The post copy is free text, so it is wrapped here rather than left to
+        # run off the side of the tooltip.
+        "  function wrap(text, width){\n"
+        "    var words=String(text).split(/\\s+/), lines=[], line='';\n"
+        "    for(var i=0;i<words.length;i++){\n"
+        "      var next = line ? line+' '+words[i] : words[i];\n"
+        "      if(next.length>width && line){ lines.push(line); line=words[i]; }\n"
+        "      else { line=next; }\n"
+        "      if(lines.length>=6){ break; }\n"
+        "    }\n"
+        "    if(line && lines.length<6) lines.push(line);\n"
+        "    if(lines.length>=6) lines[5]=lines[5].slice(0,width-1)+'\\u2026';\n"
+        "    return lines;\n"
+        "  }\n"
+        "  function nf(n){ return (n||0).toLocaleString(); }\n"
         "  function drawLine(spec){\n"
         "    var el = document.getElementById(spec.canvas);\n"
         "    if(!el || !window.Chart || !spec.labels.length) return;\n"
         "    function ds(label,data,color){return {label:label, data:data, borderColor:color,\n"
         "      backgroundColor:color, fill:false, tension:.3, borderWidth:2, pointRadius:0,\n"
         "      pointHoverRadius:4, order:0};}\n"
-        "    var mk = spec.markers || {on:false, volume:[], standouts:[], byLabel:{}, counts:{}};\n"
+        "    var mk = spec.markers || {volume:[], standouts:[], byLabel:{}, counts:{}};\n"
         "    var sets = [ds('Impressions', spec.impressions, '" + _LI_BLUE + "'),\n"
         "                ds('Reach', spec.reach, '#38bdf8')];\n"
         # Posts/day rides a hidden right-hand axis padded well above the busiest
@@ -640,28 +657,96 @@ def _charts_script(
         "        layout:{padding:{top:8}},\n"
         "        plugins:{legend:{display:true, position:'bottom',\n"
         "            labels:{boxWidth:10, boxHeight:10, font:{size:11}, color:'#64748b'}},\n"
-        "          tooltip:{padding:8, callbacks:{afterBody:function(items){\n"
-        "            var m = chart && chart.$loMarkers;\n"
-        "            if(!m) return '';\n"
-        "            var day = (items && items.length) ? items[0].label : '';\n"
-        "            var titles = m.byLabel[day];\n"
-        "            if(!titles || !titles.length) return '';\n"
-        "            var total = m.counts[day] || titles.length;\n"
-        "            var out = ['', total + (total===1?' post published:':' posts published:')];\n"
-        "            titles.forEach(function(t){\n"
-        "              out.push('\\u2022 ' + (t.length>64 ? t.slice(0,63)+'\\u2026' : t)); });\n"
-        "            if(total > titles.length) out.push('+ '+(total-titles.length)+' more');\n"
-        "            return out;\n"
-        "          }}}},\n"
+        # One tooltip, two things to say. Over a pin it is about that post — its
+        # copy and its own numbers — and the day's series are filtered out so the
+        # two readings never blur together.
+        "          tooltip:{padding:9,\n"
+        "            filter:function(){ return chart.$loPin==null; },\n"
+        "            callbacks:{\n"
+        "              title:function(items){\n"
+        "                var p = pinned(); if(!p) return items.length?items[0].label:'';\n"
+        "                return p.day + (p.kind ? '  \\u00b7  '+p.kind : '');\n"
+        "              },\n"
+        "              beforeBody:function(){\n"
+        "                var p = pinned(); if(!p) return '';\n"
+        "                return wrap(p.copy, 46);\n"
+        "              },\n"
+        "              afterBody:function(items){\n"
+        "                var p = pinned();\n"
+        "                if(p){ return ['',\n"
+        "                  nf(p.impressions)+' impressions',\n"
+        "                  nf(p.likes)+' reactions  \\u00b7  '+nf(p.comments)+' comments  \\u00b7  '\n"
+        "                    +nf(p.shares)+' shares',\n"
+        "                  nf(p.clicks)+' clicks  \\u00b7  '+p.rate+'% engagement']; }\n"
+        "                var m = chart && chart.$loMarkers;\n"
+        "                if(!m) return '';\n"
+        "                var day = (items && items.length) ? items[0].label : '';\n"
+        "                var titles = m.byLabel[day];\n"
+        "                if(!titles || !titles.length) return '';\n"
+        "                var total = m.counts[day] || titles.length;\n"
+        "                var out = ['', total + (total===1?' post published:':' posts published:')];\n"
+        "                titles.forEach(function(t){\n"
+        "                  out.push('\\u2022 ' + (t.length>64 ? t.slice(0,63)+'\\u2026' : t)); });\n"
+        "                if(total > titles.length) out.push('+ '+(total-titles.length)+' more');\n"
+        "                return out;\n"
+        "              }}}},\n"
         "        scales:{x:{grid:{display:false}, ticks:XT},\n"
         "          y:{beginAtZero:true, grid:GRID, ticks:YT, border:{display:false}},\n"
         "          y1:{display:false, position:'right', beginAtZero:true,\n"
         "            suggestedMax: peak*3.2, grid:{display:false}}}}\n"
         "    });\n"
-        "    chart.$loMarkers = mk;\n"
-        "    var tgl = document.getElementById('loMarkerToggle');\n"
-        "    if(tgl){ tgl.addEventListener('change', function(){\n"
-        "      chart.$loMarkers.on = !!tgl.checked; chart.update('none'); }); }\n"
+        "    chart.$loMarkers = mk; chart.$loPin = null;\n"
+        "    function pinned(){\n"
+        "      return chart.$loPin==null ? null : mk.standouts[chart.$loPin];\n"
+        "    }\n"
+        # Pins are drawn, not plotted, so they need their own hit test. Chart.js
+        # keeps its own hover for everywhere else; this only takes over inside a
+        # pin's radius, which is why the reader gets the day back the moment
+        # they move off it.
+        "    function pinAt(x, y){\n"
+        "      var xs=chart.scales.x, area=chart.chartArea;\n"
+        "      if(!xs || !area || Math.abs(y-(area.top+PIN_Y))>PIN_HIT) return null;\n"
+        "      var hit=null, best=PIN_HIT;\n"
+        "      mk.standouts.forEach(function(d, n){\n"
+        "        var dx = Math.abs(x - xs.getPixelForValue(d.i));\n"
+        "        if(dx<=best){ best=dx; hit=n; }\n"
+        "      });\n"
+        "      return hit;\n"
+        "    }\n"
+        "    el.addEventListener('mousemove', function(ev){\n"
+        "      var r = el.getBoundingClientRect();\n"
+        "      var hit = pinAt(ev.clientX-r.left, ev.clientY-r.top);\n"
+        "      if(hit === chart.$loPin) return;\n"
+        "      chart.$loPin = hit;\n"
+        "      el.style.cursor = hit==null ? '' : 'pointer';\n"
+        # Both directions have to move the tooltip's active element, not just the
+        # flag: Chart.js keeps the built tooltip until that changes, so flipping
+        # the flag alone would leave a post's numbers sitting over a day the
+        # reader has already moved on to. Entering pins the tooltip to the pin's
+        # own column; leaving hands it back to the day under the pointer.
+        "      var idx, at, act;\n"
+        "      if(hit==null){\n"
+        "        idx = Math.round(chart.scales.x.getValueForPixel(ev.clientX-r.left));\n"
+        "        idx = Math.max(0, Math.min(spec.labels.length-1, idx||0));\n"
+        "        at = {x:ev.clientX-r.left, y:ev.clientY-r.top};\n"
+        # Every series that has a value on that day, so handing the day back
+        # doesn't hand back a tooltip showing impressions alone.
+        "        act = [];\n"
+        "        chart.data.datasets.forEach(function(d, di){\n"
+        "          if(d.data[idx]!=null) act.push({datasetIndex:di, index:idx}); });\n"
+        "      } else {\n"
+        "        idx = mk.standouts[hit].i;\n"
+        "        at = {x:chart.scales.x.getPixelForValue(idx), y:chart.chartArea.top+PIN_Y};\n"
+        "      }\n"
+        "      if(!act) act = [{datasetIndex:0, index:idx}];\n"
+        "      chart.setActiveElements(act);\n"
+        "      chart.tooltip.setActiveElements(act, at);\n"
+        "      chart.update('none');\n"
+        "    });\n"
+        "    el.addEventListener('mouseleave', function(){\n"
+        "      if(chart.$loPin==null) return;\n"
+        "      chart.$loPin=null; el.style.cursor=''; chart.update('none');\n"
+        "    });\n"
         "  }\n"
         "  function drawPie(spec){\n"
         "    var el = document.getElementById(spec.canvas);\n"
@@ -851,29 +936,12 @@ def render_linkedin_organic(
     engagement_section = ""
     if report.engagement_series:
         marks = _post_markers(report.post_markers, report.engagement_series)
-        # The named posts are listed under the chart as well as pinned on it:
-        # the pin says *when*, and at three posts a day the reader still needs to
-        # be told *which one* without hunting for the right hover target.
-        standout_html = ""
-        if marks["standouts"]:
-            items = "".join(
-                f'<li><span class="lo-mk-num">{n}</span>'
-                f'<span class="lo-mk-name" title="{_esc(p["label"])}">{_esc(p["label"])}</span>'
-                f'<span class="lo-mk-imp">{_fmt_int(p["impressions"])} impressions</span></li>'
-                for n, p in enumerate(marks["standouts"], start=1)
-            )
-            standout_html = (
-                '<div class="lo-mk-head">'
-                '<label class="lo-mk-toggle"><input type="checkbox" id="loMarkerToggle" checked> '
-                'Show top posts on the chart</label>'
-                f'<span class="lo-mk-count">{marks["posts"]} posts over '
-                f'{marks["postDays"]} days</span></div>'
-                f'<ol class="lo-mk-list">{items}</ol>'
-            )
+        posted = (f' &middot; {_fmt_int(marks["posts"])} posts'
+                  if marks["posts"] else "")
         engagement_section = (
             '<section><div class="sec-head"><h2>Engagement over time</h2>'
-            f'<span class="status">impressions &amp; reach / day, last {window_days} days</span></div>'
-            f'{standout_html}'
+            f'<span class="status">impressions &amp; reach / day{posted}, '
+            f'last {window_days} days</span></div>'
             '<div class="lo-chart" style="height:240px"><canvas id="loEngagementChart"></canvas></div>'
             '</section>'
         )

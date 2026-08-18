@@ -80,6 +80,24 @@ ENTRIES: tuple[Entry, ...] = (
     ),
     Entry(
         date="2026-08-18",
+        title="Hover a marked post to read it without leaving the chart",
+        area="LinkedIn Organic",
+        kind="improved",
+        summary=(
+            "The numbered posts on the engagement chart now hold their own "
+            "detail: hover one and you get that post's copy and its numbers, "
+            "so the list that sat above the chart \u2014 and the checkbox with "
+            "it \u2014 are gone."
+        ),
+        details=(
+            "Hovering anywhere else still gives the day: impressions, reach, "
+            "posts published and their titles.",
+            "A marked post shows its copy, reactions, comments, shares, clicks "
+            "and engagement rate.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
         title="Engagement over time reads posting volume, not just publish days",
         area="LinkedIn Organic",
         kind="improved",
