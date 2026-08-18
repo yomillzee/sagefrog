@@ -63,6 +63,23 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-18",
+        title="Campaign explorer now shows a vs-previous comparison",
+        area="Campaign Explorer",
+        kind="fixed",
+        summary=(
+            "The Previous period / Previous year picker at the top of the page "
+            "had no effect on Campaign explorer — it now does."
+        ),
+        details=(
+            "The summary cards (Spend, Impressions, Clicks, CTR, Conversions) "
+            "show a colored vs-previous delta, matching the rest of the dashboard.",
+            "The campaign table's Total row shows the same deltas under each "
+            "column.",
+            "Verified conv. (GA4) doesn't have a comparison yet — coming next.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
         title="Engagement over time reads posting volume, not just publish days",
         area="LinkedIn Organic",
         kind="improved",

@@ -2124,6 +2124,10 @@ def render_bigquery_dashboard_page(
     #explorerTable tfoot td.ga4-col {{ background:rgba(184,146,46,0.13); }}
     #explorerTable tfoot .tree-name {{ font-weight:800; text-transform:uppercase; font-size:.7rem; letter-spacing:.06em; color:#5a6b82; }}
     #explorerTable tfoot .tot-sub {{ margin-left:9px; font-weight:600; font-size:.72rem; color:var(--muted); }}
+    /* "vs previous" delta under each total, shown once the Compare picker has
+       a window selected. Kept out-of-flow of the bold total figure above it. */
+    #explorerTable tfoot .expl-total-delta {{ margin-top:2px; font-weight:600; }}
+    #explorerTable tfoot .expl-total-delta .cmp-delta {{ font-size:.68rem; }}
     /* GA4-verified conversions column — set off from the platform-reported metrics with a subtle gold accent. */
     #explorerTable th.ga4-col, #explorerTable td.ga4-col {{ background:rgba(184,146,46,0.06); border-left:1px solid rgba(184,146,46,0.3); }}
     #explorerTable td.ga4-col {{ font-variant-numeric:tabular-nums; }}
@@ -4669,6 +4673,10 @@ def render_bigquery_dashboard_page(
     }})();
     const explorerFilterState = new Map(); // groupId -> Set of active chip labels
     let explorerRows = [];
+    // Same-shape rows for the Compare picker's window (previous period/year),
+    // fetched alongside the current period so the summary cards and table
+    // total can show a "vs previous" delta like every other panel does.
+    let explorerPrevRows = [];
     let verifiedByAdId = {{}};
     let verifiedByAdIdEvent = {{}};
     let verifiedByGoogleCampaignId = {{}};
@@ -4837,6 +4845,18 @@ def render_bigquery_dashboard_page(
       return new Map([...campaigns.entries()].sort(cmpNode));
     }}
     function metricCells(m) {{ const wc=withCtr(m); return METRIC_COLS.map(c=>{{ const cell=(c.key==='verified_sel'&&m._verifiedNa)?'—':c.format(wc[c.key]); return `<td${{c.cls?` class="${{c.cls}}"`:''}}>${{cell}}</td>`; }}).join(''); }}
+    // Same as metricCells, but for the tree footer's grand total: when a
+    // comparison period is set (prevAgg), each metric gets a "vs previous"
+    // delta chip underneath, same convention as the summary cards above.
+    function explorerTotalCells(m, prevAgg) {{
+      const wc=withCtr(m);
+      return METRIC_COLS.map(c=>{{
+        if (c.key==='verified_sel') {{ const cell=m._verifiedNa?'—':c.format(wc[c.key]); return `<td${{c.cls?` class="${{c.cls}}"`:''}}>${{cell}}</td>`; }}
+        const cell=c.format(wc[c.key]);
+        const delta=prevAgg?summaryDeltaHtml(wc[c.key],prevAgg[c.key],EXPLORER_METRIC_DIR[c.key]):'';
+        return `<td${{c.cls?` class="${{c.cls}}"`:''}}>${{cell}}${{delta?`<div class="expl-total-delta">${{delta}}</div>`:''}}</td>`;
+      }}).join('');
+    }}
     // Grand total for the tree footer. Summed from the campaign nodes rather than
     // the raw rows so the footer is always exactly the sum of the campaign rows
     // above it — including verified conversions, which are resolved per campaign
@@ -4982,12 +5002,27 @@ def render_bigquery_dashboard_page(
       if (!_campaignAllowSet.size) return explorerRows;
       return explorerRows.filter(r => _campaignAllowSet.has(String(r.campaign_name||'')));
     }}
+    function explorerPrevAllowedRows() {{
+      if (!_campaignAllowSet.size) return explorerPrevRows;
+      return explorerPrevRows.filter(r => _campaignAllowSet.has(String(r.campaign_name||'')));
+    }}
+    // Direction each explorer metric moves in that counts as "good," for the
+    // vs-previous delta coloring — same convention as SUMMARY_CARDS above.
+    // Verified conv. isn't included: it's stitched together from separate
+    // per-platform verified-conversions calls that aren't fetched for the
+    // comparison window (yet), so it has nothing to diff against.
+    const EXPLORER_METRIC_DIR = {{ spend:'neutral', impressions:'up', clicks:'up', ctr:'up', conversions:'up' }};
     function renderExplorer() {{
       const base=explorerAllowedRows();
       const filtered=base.filter(explorerRowMatches);
       // Aggregate summary cards — slice with the same filters as the table
       // (date range, Platform chips, and the explorer filter chips).
       const agg=withCtr(filtered.reduce((a,r)=>{{addMetrics(a,r);return a;}}, zeroMetrics()));
+      // Same aggregation over the Compare picker's window (previous period/year),
+      // sliced with the same filters, so cards and the table total can show a
+      // "vs previous" delta consistent with the rest of the dashboard.
+      const prevFiltered = compareStart ? explorerPrevAllowedRows().filter(explorerRowMatches) : null;
+      const aggPrev = prevFiltered ? withCtr(prevFiltered.reduce((a,r)=>{{addMetrics(a,r);return a;}}, zeroMetrics())) : null;
       // Google verified is campaign-level (not on rows), so add it once per distinct
       // Google campaign in the filtered set for the summary total.
       const gcSeen=new Set(); let googleVerifiedTotal=0;
@@ -4997,9 +5032,12 @@ def render_bigquery_dashboard_page(
       for (const r of filtered) {{ if (r.platform==='linkedin') {{ const gn=normalizeLiName(r.campaign_name||''); if (gn && !liSeen.has(gn)) {{ liSeen.add(gn); linkedinVerifiedTotal+=num(verifiedByLinkedinGroup[gn]); }} }} }}
       const scards=document.getElementById('explorerSummaryCards');
       if (scards) scards.innerHTML=[
-        ['Spend',money(agg.spend)],['Impressions',count(agg.impressions)],['Clicks',count(agg.clicks)],['CTR',num(agg.ctr).toFixed(2)+'%'],
-        ['Conversions',count(agg.conversions)],['Verified conv. (GA4)',count(num(agg.verified)+googleVerifiedTotal+linkedinVerifiedTotal)],
-      ].map(([l,v])=>`<div class="card"><div class="card-title">${{l}}</div><div class="card-value">${{v}}</div></div>`).join('');
+        ['spend','Spend',v=>money(v)],['impressions','Impressions',v=>count(v)],['clicks','Clicks',v=>count(v)],['ctr','CTR',v=>num(v).toFixed(2)+'%'],
+        ['conversions','Conversions',v=>count(v)],
+      ].map(([k,l,fmt])=>{{
+        const delta=aggPrev?summaryDeltaHtml(agg[k],aggPrev[k],EXPLORER_METRIC_DIR[k]):'';
+        return `<div class="card"><div class="card-title">${{l}}</div><div class="card-value">${{fmt(agg[k])}}</div>${{delta?`<div class="card-foot">${{delta}}</div>`:''}}</div>`;
+      }}).join('') + `<div class="card"><div class="card-title">Verified conv. (GA4)</div><div class="card-value">${{count(num(agg.verified)+googleVerifiedTotal+linkedinVerifiedTotal)}}</div></div>`;
       const el=document.getElementById('explorerTable');
       const tree=buildExplorerTree(filtered);
       if (!tree.size) {{ el.innerHTML=`<tbody><tr><td class="empty">No campaigns match these filters.</td></tr></tbody>`; }} else {{
@@ -5024,7 +5062,7 @@ def render_bigquery_dashboard_page(
         // a new date range all re-total it on the next render.
         const totals=explorerTotals(tree);
         const nCamp=tree.size;
-        const foot=`<tfoot><tr class="expl-total"><td class="left"><span class="tree-name">Total</span><span class="tot-sub">${{nCamp}} campaign${{nCamp===1?'':'s'}}</span></td>${{metricCells(totals)}}</tr></tfoot>`;
+        const foot=`<tfoot><tr class="expl-total"><td class="left"><span class="tree-name">Total</span><span class="tot-sub">${{nCamp}} campaign${{nCamp===1?'':'s'}}</span></td>${{explorerTotalCells(totals,aggPrev)}}</tr></tfoot>`;
         el.innerHTML=head+`<tbody>${{body}}</tbody>`+foot;
       }}
       const filterActive=[...explorerFilterState.values()].some(s=>s.size);
@@ -5439,7 +5477,10 @@ def render_bigquery_dashboard_page(
       const gdemoDone=loadGoogleDemographics();
       document.getElementById('explorerSummaryCards').innerHTML = skelCards(5);
       document.getElementById('explorerTable').innerHTML = skelTable(6,8);
-      const [g,l,m,ms,kw,ver,gver,lver]=await Promise.all([
+      // The Compare picker's window (previous period/year) — fetched only when
+      // set, so a page load with no comparison configured yet skips these.
+      const cmpOn = !!compareStart;
+      const [g,l,m,ms,kw,ver,gver,lver,gPrev,lPrev,mPrev,msPrev]=await Promise.all([
         getJson(withDates(EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(LINKEDIN_EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(META_EXPLORER_API)).catch(()=>({{rows:[]}})),
@@ -5448,6 +5489,10 @@ def render_bigquery_dashboard_page(
         getJson(withDates(META_VERIFIED_API)).catch(()=>({{by_ad_id:{{}}}})),
         getJson(withDates(GOOGLE_VERIFIED_API)).catch(()=>({{by_campaign_id:{{}}}})),
         getJson(withDates(LINKEDIN_VERIFIED_API)).catch(()=>({{by_group_name:{{}}}})),
+        cmpOn ? getJson(withDatesRange(EXPLORER_API, compareStart, compareEnd)).catch(()=>({{rows:[]}})) : Promise.resolve({{rows:[]}}),
+        cmpOn ? getJson(withDatesRange(LINKEDIN_EXPLORER_API, compareStart, compareEnd)).catch(()=>({{rows:[]}})) : Promise.resolve({{rows:[]}}),
+        cmpOn ? getJson(withDatesRange(META_EXPLORER_API, compareStart, compareEnd)).catch(()=>({{rows:[]}})) : Promise.resolve({{rows:[]}}),
+        cmpOn ? getJson(withDatesRange(MICROSOFT_EXPLORER_API, compareStart, compareEnd)).catch(()=>({{rows:[]}})) : Promise.resolve({{rows:[]}}),
       ]);
       verifiedByAdId=(ver&&ver.by_ad_id)?ver.by_ad_id:{{}};
       verifiedByAdIdEvent=(ver&&ver.by_ad_id_event)?ver.by_ad_id_event:{{}};
@@ -5461,6 +5506,7 @@ def render_bigquery_dashboard_page(
       keyEventList=[...new Set([...metaEvents,...googleEvents,...linkedinEvents])];
       if (selectedKeyEvent!=='__all__' && keyEventList.indexOf(selectedKeyEvent)<0) selectedKeyEvent='__all__';
       explorerRows=normalizeExplorerRows(g,l,m,ms);
+      explorerPrevRows=cmpOn ? normalizeExplorerRows(gPrev,lPrev,mPrev,msPrev) : [];
       applyVerifiedSelection();
       renderExplorer();
       // Keyword table: only show the section when this client actually has
