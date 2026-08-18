@@ -304,8 +304,9 @@ class PostVolumeAndStandoutsTest(unittest.TestCase):
 
     @staticmethod
     def _posts(spec):
-        return [{"published_at": day, "title": title, "post_type": "",
-                 "impressions": impressions}
+        return [{"published_at": day, "title": title, "post_type": "TEXT",
+                 "impressions": impressions, "likes": 3, "comments": 1,
+                 "shares": 2, "clicks": 4, "engagement_rate": 0.0125}
                 for day, title, impressions in spec]
 
     def test_volume_counts_posts_per_column(self) -> None:
@@ -337,7 +338,7 @@ class PostVolumeAndStandoutsTest(unittest.TestCase):
         posts = [("2026-06-%02d" % d, "ordinary %d" % d, 500) for d in range(1, 13)]
         posts.append(("2026-06-04", "the hit", 9000))
         marks = R._post_markers(self._posts(posts), self.ENGAGEMENT)
-        self.assertEqual([s["label"] for s in marks["standouts"]], ["the hit"])
+        self.assertEqual([s["copy"] for s in marks["standouts"]], ["the hit"])
         self.assertEqual(marks["standouts"][0]["i"], 3)
 
     def test_standouts_are_capped_and_ranked(self) -> None:
@@ -370,7 +371,21 @@ class PostVolumeAndStandoutsTest(unittest.TestCase):
         self.assertEqual(len(marks["byLabel"]["2026-06-03"]), R._MARKER_TITLE_CAP)
         self.assertEqual(marks["counts"]["2026-06-03"], R._MARKER_TITLE_CAP + 4)
 
-    def test_page_lists_the_named_posts_under_the_chart(self) -> None:
+    def test_a_named_post_carries_its_own_copy_and_numbers(self) -> None:
+        """The pin is what a reader hovers, so it has to hold the whole answer."""
+        posts = [("2026-06-%02d" % d, "ordinary %d" % d, 500) for d in range(1, 13)]
+        posts.append(("2026-06-04", "the hit", 9000))
+        pin = R._post_markers(self._posts(posts), self.ENGAGEMENT)["standouts"][0]
+        self.assertEqual(pin["copy"], "the hit")
+        self.assertEqual(pin["day"], "2026-06-04")
+        self.assertEqual(pin["kind"], "TEXT")
+        self.assertEqual(pin["likes"], 3)
+        self.assertEqual(pin["comments"], 1)
+        self.assertEqual(pin["clicks"], 4)
+        # Stored as a fraction, shown as a percentage.
+        self.assertEqual(pin["rate"], 1.25)
+
+    def test_page_ships_the_pins_without_a_toggle_or_a_list(self) -> None:
         r = _report()
         r.engagement_series = list(self.ENGAGEMENT)
         r.post_markers = self._posts(
@@ -380,12 +395,14 @@ class PostVolumeAndStandoutsTest(unittest.TestCase):
             client_slug="demo", label="Demo", report=r,
             use_session=True, session_email="t@e.com",
         )
-        self.assertIn('id="loMarkerToggle"', html)
         self.assertIn("Launch day", html)
-        self.assertIn("13 posts over 12 days", html)
+        self.assertIn("13 posts", html)
         self.assertIn("Posts / day", html)
+        # The pins speak for themselves now — no checkbox, no key above the chart.
+        self.assertNotIn("loMarkerToggle", html)
+        self.assertNotIn("lo-mk-list", html)
 
-    def test_no_standout_list_when_nothing_stands_out(self) -> None:
+    def test_nothing_is_pinned_when_nothing_stands_out(self) -> None:
         r = _report()
         r.engagement_series = list(self.ENGAGEMENT)
         r.post_markers = self._posts(
@@ -394,7 +411,8 @@ class PostVolumeAndStandoutsTest(unittest.TestCase):
             client_slug="demo", label="Demo", report=r,
             use_session=True, session_email="t@e.com",
         )
-        self.assertNotIn('id="loMarkerToggle"', html)
+        self.assertEqual(
+            R._post_markers(r.post_markers, r.engagement_series)["standouts"], [])
         # The volume bars are still there — cadence is worth seeing regardless.
         self.assertIn("Posts / day", html)
 
