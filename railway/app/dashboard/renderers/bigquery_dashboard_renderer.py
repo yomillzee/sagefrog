@@ -1450,41 +1450,8 @@ def render_bigquery_dashboard_page(
     .anno-layer {{ position:absolute; inset:0; pointer-events:none; }}
     .anno-pin {{ position:absolute; top:0; width:11px; height:11px; margin-left:-5.5px; padding:0; border:1.5px solid var(--anno-color,#64748b); border-radius:50%; background:var(--anno-color,#64748b); box-shadow:0 0 0 2px var(--card); cursor:default; pointer-events:auto; }}
     .anno-pin.internal {{ background:var(--card); }}
-    .anno-pin.editable {{ cursor:pointer; }}
     .anno-pin:hover, .anno-pin:focus-visible {{ transform:scale(1.28); outline:none; }}
     .anno-pin:focus-visible {{ box-shadow:0 0 0 2px var(--card), 0 0 0 4px #bcd4f0; }}
-
-    /* Timeline manager (agency users only) — the list behind the markers. */
-    .anno-panel {{ margin-top:14px; }}
-    .anno-empty {{ color:var(--muted); font-size:.82rem; margin:6px 0 0; }}
-    .anno-list {{ list-style:none; margin:10px 0 0; padding:0; display:flex; flex-direction:column; gap:1px; }}
-    .anno-item {{ display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:11px; padding:9px 2px; border-bottom:1px solid var(--line-soft); }}
-    .anno-swatch {{ width:9px; height:9px; border-radius:50%; flex:0 0 auto; }}
-    .anno-main {{ min-width:0; }}
-    .anno-title {{ color:var(--navy); font-weight:700; font-size:.86rem; }}
-    .anno-meta {{ color:var(--muted); font-size:.72rem; margin-top:2px; display:flex; align-items:center; gap:7px; flex-wrap:wrap; }}
-    .anno-vis {{ padding:0 6px; border-radius:999px; font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; border:1px solid var(--line); }}
-    .anno-vis.internal {{ background:#f4f7fb; color:var(--muted); }}
-    .anno-vis.shared {{ background:#e9f7ef; border-color:#b8dfc8; color:var(--ok); }}
-    .anno-row-actions {{ display:flex; gap:6px; }}
-    .anno-btn {{ border:1px solid var(--line); background:var(--card); color:var(--muted); border-radius:var(--radius-sm); padding:5px 10px; font:inherit; font-size:.74rem; font-weight:700; cursor:pointer; }}
-    .anno-btn:hover {{ border-color:#c9d6e6; color:var(--navy); }}
-    .anno-btn.danger:hover {{ border-color:#f3c0bb; color:var(--bad); }}
-    .anno-btn.primary {{ background:var(--accent); border-color:var(--accent); color:#fff; }}
-    .anno-btn.primary:hover {{ background:#1a62b8; }}
-    .anno-dialog {{ border:0; border-radius:var(--radius); padding:0; width:min(520px, calc(100vw - 32px)); box-shadow:0 24px 60px -20px rgba(11,16,32,.5); }}
-    .anno-dialog::backdrop {{ background:rgba(10,37,64,.42); }}
-    .anno-form {{ padding:20px 22px; display:grid; gap:13px; }}
-    .anno-form h3 {{ margin:0; color:var(--navy); font-size:1rem; font-weight:750; }}
-    .anno-form label {{ display:grid; gap:5px; color:var(--muted); font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }}
-    .anno-form input, .anno-form select, .anno-form textarea {{ border:1px solid var(--line); border-radius:var(--radius-sm); padding:9px 11px; font:inherit; font-weight:500; text-transform:none; letter-spacing:0; background:#fff; color:#102033; }}
-    .anno-form textarea {{ min-height:76px; resize:vertical; }}
-    .anno-form-row {{ display:grid; grid-template-columns:1fr 1fr; gap:13px; }}
-    .anno-form-actions {{ display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-top:3px; }}
-    .anno-form-actions .spacer {{ flex:1; }}
-    .anno-err {{ color:var(--bad); font-size:.76rem; font-weight:600; }}
-    .anno-hint {{ color:var(--muted); font-size:.74rem; font-weight:500; text-transform:none; letter-spacing:0; margin:0; }}
-    @media (max-width: 560px) {{ .anno-form-row {{ grid-template-columns:1fr; }} }}
 
     /* ---- Explorer filter dropdowns (sticky bar) ---- */
     #explorerFilterBar {{ gap:8px; flex-wrap:wrap; }}
@@ -2202,22 +2169,6 @@ def render_bigquery_dashboard_page(
       {overview_edit_banner_html}
       {onboarding_html}
       {overview_summary_html}
-      <!-- Timeline manager. Deliberately not an .ov-unit: it is agency tooling,
-           not one of the client's reorderable panels, so the layout editor
-           leaves it alone. Stays hidden until the annotations API confirms the
-           caller may edit — a client-role user never receives it unhidden, and
-           sees only the shared markers on the charts themselves. -->
-      <section class="ov-panel anno-panel" id="annoPanel" hidden>
-        <div class="sec-head">
-          <h2>Timeline</h2>
-          <div class="sec-head-actions">
-            <button type="button" class="anno-btn primary" id="annoAddBtn">Add event</button>
-            <span class="status" id="annoStatus"></span>
-          </div>
-        </div>
-        <p class="anno-hint">Dated events — launches, site changes, budget shifts — drawn onto the trend charts so a movement has its cause next to it. New events are internal until you share them.</p>
-        <div id="annoListHost"></div>
-      </section>
     </div>
 
     <!-- ===== EXPLORER TAB ===== -->
@@ -2403,46 +2354,6 @@ def render_bigquery_dashboard_page(
   {site_footer_html()}
     </div>
   </div>
-  <!-- Timeline event editor. A native <dialog> so focus trapping, Escape, and
-       the backdrop come from the platform rather than from more JS. Only ever
-       opened for a caller the annotations API reported as able to edit. -->
-  <dialog class="anno-dialog" id="annoDialog" aria-label="Timeline event">
-    <form class="anno-form" id="annoForm" method="dialog">
-      <h3 id="annoFormTitle">Add a timeline event</h3>
-      <div class="anno-form-row">
-        <label for="annoDate">Date
-          <input type="date" id="annoDate" required>
-        </label>
-        <label for="annoEnd">End date (optional)
-          <input type="date" id="annoEnd">
-        </label>
-      </div>
-      <label for="annoTitle">Title
-        <input type="text" id="annoTitle" maxlength="120" required placeholder="e.g. Site migration to new CMS">
-      </label>
-      <label for="annoBody">Detail (optional)
-        <textarea id="annoBody" maxlength="4000" placeholder="What happened, and what it should explain in the numbers."></textarea>
-      </label>
-      <div class="anno-form-row">
-        <label for="annoCategory">Category
-          <select id="annoCategory"></select>
-        </label>
-        <label for="annoVisibility">Visibility
-          <select id="annoVisibility">
-            <option value="internal">Internal — agency only</option>
-            <option value="shared">Shared — the client sees this</option>
-          </select>
-        </label>
-      </div>
-      <p class="anno-err" id="annoErr" role="alert"></p>
-      <div class="anno-form-actions">
-        <button type="button" class="anno-btn primary" id="annoSave">Save event</button>
-        <button type="button" class="anno-btn" id="annoCancel">Cancel</button>
-        <span class="spacer"></span>
-        <button type="button" class="anno-btn danger" id="annoDelete" hidden>Delete</button>
-      </div>
-    </form>
-  </dialog>
   <div id="creativePreview" class="creative-preview" hidden>
     <div class="creative-preview-backdrop" data-close-preview></div>
     <div class="creative-preview-dialog" role="dialog" aria-modal="true" aria-label="Creative preview">
@@ -2929,9 +2840,9 @@ def render_bigquery_dashboard_page(
     // migrated that week. Markers are drawn in two halves for a reason: the
     // vertical rule belongs on the canvas (it has to sit inside the plot area and
     // survive resizes), while the flag at the top is a real DOM element so it
-    // gets native hover text, keyboard focus, and — for agency users — a click
-    // target that opens the editor. Nothing here runs for a client-role user
-    // beyond drawing the shared markers they are allowed to see.
+    // gets native hover text and keyboard focus. Nothing here runs for a
+    // client-role user beyond drawing the shared markers they are allowed to see.
+    // Adding/editing events happens on the Settings → Insights page, not here.
     let annoCache = [];
     let annoCanEdit = false;
     let annoCategories = [];
@@ -3022,8 +2933,8 @@ def render_bigquery_dashboard_page(
         const shared = a.visibility === 'shared' ? 'Shared with the client' : 'Internal — the client does not see this';
         const tip = `${{when}} · ${{a.category_label}}\\n${{a.title}}`
           + (a.body ? `\\n\\n${{a.body}}` : '')
-          + `\\n\\n${{shared}}${{annoCanEdit ? ' · click to edit' : ''}}`;
-        return `<button type="button" class="anno-pin${{annoCanEdit ? ' editable' : ''}}${{a.visibility === 'internal' ? ' internal' : ''}}"`
+          + `\\n\\n${{shared}}${{annoCanEdit ? ' · edit under Settings → Insights' : ''}}`;
+        return `<button type="button" class="anno-pin${{a.visibility === 'internal' ? ' internal' : ''}}"`
           + ` style="left:${{x.toFixed(1)}}px;--anno-color:${{esc(a.color)}}" data-anno-id="${{a.id}}"`
           + ` title="${{esc(tip)}}" aria-label="${{esc(when + ': ' + a.title)}}"></button>`;
       }}).join('');
@@ -3044,152 +2955,12 @@ def render_bigquery_dashboard_page(
         annoCategories = payload.categories || [];
         annoLoaded = true;
         refreshAnnotatedCharts();
-        renderAnnoList();
       }} catch (err) {{
         // Markers are additive context; a chart without them is still correct.
         annoCache = []; annoCanEdit = false;
       }}
     }}
 
-    // ---- Timeline manager (agency only) ----
-    // Visibility of the whole panel follows the server's `can_edit`, not a
-    // client-side role guess, so the one authority on who may edit the timeline
-    // is the same code that authorises the writes.
-    function annoPrettyDate(iso) {{
-      if (!iso) return '';
-      try {{
-        return new Date(String(iso) + 'T00:00:00')
-          .toLocaleDateString(undefined, {{ year:'numeric', month:'short', day:'numeric' }});
-      }} catch (e) {{ return String(iso); }}
-    }}
-    function renderAnnoList() {{
-      const panel = document.getElementById('annoPanel');
-      if (!panel) return;
-      panel.hidden = !annoCanEdit;
-      if (!annoCanEdit) return;
-      const host = document.getElementById('annoListHost');
-      if (!annoCache.length) {{
-        host.innerHTML = '<p class="anno-empty">No events yet. Add the launches, site changes and budget shifts worth remembering — they show up on every trend chart.</p>';
-        return;
-      }}
-      host.innerHTML = '<ul class="anno-list">' + annoCache.map(a => {{
-        const when = a.end_date
-          ? `${{annoPrettyDate(a.event_date)}} → ${{annoPrettyDate(a.end_date)}}`
-          : annoPrettyDate(a.event_date);
-        return `<li class="anno-item">`
-          + `<span class="anno-swatch" style="background:${{esc(a.color)}}"></span>`
-          + `<span class="anno-main"><span class="anno-title">${{esc(a.title)}}</span>`
-          + `<span class="anno-meta"><span>${{esc(when)}}</span><span>·</span><span>${{esc(a.category_label)}}</span>`
-          + `<span class="anno-vis ${{esc(a.visibility)}}">${{a.visibility === 'shared' ? 'Client sees this' : 'Internal'}}</span></span></span>`
-          + `<span class="anno-row-actions"><button type="button" class="anno-btn" data-anno-edit="${{a.id}}">Edit</button></span></li>`;
-      }}).join('') + '</ul>';
-    }}
-
-    (function initAnnotations() {{
-      const dlg = document.getElementById('annoDialog');
-      if (!dlg) return;
-      const fTitle = document.getElementById('annoFormTitle');
-      const fDate = document.getElementById('annoDate');
-      const fEnd = document.getElementById('annoEnd');
-      const fName = document.getElementById('annoTitle');
-      const fBody = document.getElementById('annoBody');
-      const fCat = document.getElementById('annoCategory');
-      const fVis = document.getElementById('annoVisibility');
-      const fErr = document.getElementById('annoErr');
-      const delBtn = document.getElementById('annoDelete');
-      let editingId = null;
-
-      function setErr(msg) {{ fErr.textContent = msg || ''; }}
-      function fillCategories(selected) {{
-        fCat.innerHTML = (annoCategories.length ? annoCategories : [{{key:'other',label:'Other'}}])
-          .map(c => `<option value="${{esc(c.key)}}"${{c.key === selected ? ' selected' : ''}}>${{esc(c.label)}}</option>`)
-          .join('');
-      }}
-      function openEditor(anno) {{
-        editingId = anno ? anno.id : null;
-        fTitle.textContent = anno ? 'Edit timeline event' : 'Add a timeline event';
-        // A new event defaults to the end of the range on screen — that is
-        // almost always the period being discussed when someone reaches for this.
-        fDate.value = anno ? anno.event_date : currentEnd;
-        fEnd.value = anno && anno.end_date ? anno.end_date : '';
-        fName.value = anno ? anno.title : '';
-        fBody.value = anno ? anno.body : '';
-        fillCategories(anno ? anno.category : 'other');
-        fVis.value = anno ? anno.visibility : 'internal';
-        delBtn.hidden = !anno;
-        setErr('');
-        if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
-        fName.focus();
-      }}
-      function closeEditor() {{
-        if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open');
-      }}
-
-      async function post(url, params) {{
-        const r = await fetch(url, {{
-          method: 'POST', credentials: 'same-origin',
-          headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
-          body: new URLSearchParams(params),
-        }});
-        const body = await r.json().catch(() => ({{}}));
-        if (!r.ok || !body.ok) throw new Error(body.detail || body.error || ('HTTP ' + r.status));
-        return body;
-      }}
-
-      document.getElementById('annoSave').addEventListener('click', async () => {{
-        if (!fName.value.trim()) {{ setErr('A title is required.'); return; }}
-        if (!fDate.value) {{ setErr('A date is required.'); return; }}
-        setErr('');
-        setStatus('annoStatus', 'Saving…');
-        try {{
-          await post(editingId ? `${{ANNOTATIONS_API}}/${{editingId}}` : ANNOTATIONS_API, {{
-            event_date: fDate.value, end_date: fEnd.value, title: fName.value.trim(),
-            body: fBody.value, category: fCat.value, visibility: fVis.value,
-          }});
-          closeEditor();
-          setStatus('annoStatus', '');
-          await loadAnnotations(true);
-        }} catch (err) {{
-          setErr(String(err.message || err));
-          setStatus('annoStatus', '');
-        }}
-      }});
-
-      delBtn.addEventListener('click', async () => {{
-        if (!editingId) return;
-        if (!window.confirm('Delete this timeline event? It will disappear from every chart.')) return;
-        setStatus('annoStatus', 'Deleting…');
-        try {{
-          await post(`${{ANNOTATIONS_API}}/${{editingId}}/delete`, {{}});
-          closeEditor();
-          setStatus('annoStatus', '');
-          await loadAnnotations(true);
-        }} catch (err) {{
-          setErr(String(err.message || err));
-          setStatus('annoStatus', '');
-        }}
-      }});
-
-      document.getElementById('annoCancel').addEventListener('click', closeEditor);
-      const addBtn = document.getElementById('annoAddBtn');
-      if (addBtn) addBtn.addEventListener('click', () => openEditor(null));
-
-      // Both entry points into the editor — the list's Edit buttons and the pins
-      // drawn on the charts — are delegated, because both are re-rendered often.
-      document.addEventListener('click', (e) => {{
-        const row = e.target.closest && e.target.closest('[data-anno-edit]');
-        if (row) {{
-          const anno = annoCache.find(a => String(a.id) === row.getAttribute('data-anno-edit'));
-          if (anno) openEditor(anno);
-          return;
-        }}
-        const pin = e.target.closest && e.target.closest('.anno-pin');
-        if (pin && annoCanEdit) {{
-          const anno = annoCache.find(a => String(a.id) === pin.getAttribute('data-anno-id'));
-          if (anno) openEditor(anno);
-        }}
-      }});
-    }})();
     function withDates(base) {{
       const sep = base.includes('?') ? '&' : '?';
       return base + sep + 'start_date=' + currentStart + '&end_date=' + currentEnd;

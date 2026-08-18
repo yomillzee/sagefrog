@@ -324,6 +324,62 @@ def render_bigquery_settings_page(
       </form>
     </section>"""
 
+    # Timeline (admin only): dated events — launches, site changes, budget shifts
+    # — drawn onto the dashboard's trend charts. Lives here rather than on the
+    # dashboard's Overview tab because it's agency tooling, not one of the
+    # client's reorderable cards; the write itself stays agency-gated server-side
+    # (see annotations_routes.py) regardless of which page holds the control.
+    annotations_api = _api_url(f"/dashboard/{client_slug}/annotations", access_key=access_key)
+    timeline_section_html = "" if not session_is_admin else f"""
+    <section id="sec-timeline">
+      <div class="sec-head">
+        <h2>Timeline</h2>
+        <div class="sec-head-actions">
+          <button type="button" class="anno-btn primary" id="annoAddBtn">Add event</button>
+          <span class="status" id="annoStatus"></span>
+        </div>
+      </div>
+      <p class="hint">Dated events — launches, site changes, budget shifts — drawn onto the dashboard's trend charts so a movement has its cause next to it. New events are internal until you share them.</p>
+      <div id="annoListHost"></div>
+    </section>
+    <dialog class="anno-dialog" id="annoDialog" aria-label="Timeline event">
+      <form class="anno-form" id="annoForm" method="dialog">
+        <h3 id="annoFormTitle">Add a timeline event</h3>
+        <div class="anno-form-row">
+          <label for="annoDate">Date
+            <input type="date" id="annoDate" required>
+          </label>
+          <label for="annoEnd">End date (optional)
+            <input type="date" id="annoEnd">
+          </label>
+        </div>
+        <label for="annoTitle">Title
+          <input type="text" id="annoTitle" maxlength="120" required placeholder="e.g. Site migration to new CMS">
+        </label>
+        <label for="annoBody">Detail (optional)
+          <textarea id="annoBody" maxlength="4000" placeholder="What happened, and what it should explain in the numbers."></textarea>
+        </label>
+        <div class="anno-form-row">
+          <label for="annoCategory">Category
+            <select id="annoCategory"></select>
+          </label>
+          <label for="annoVisibility">Visibility
+            <select id="annoVisibility">
+              <option value="internal">Internal — agency only</option>
+              <option value="shared">Shared — the client sees this</option>
+            </select>
+          </label>
+        </div>
+        <p class="anno-err" id="annoErr" role="alert"></p>
+        <div class="anno-form-actions">
+          <button type="button" class="anno-btn primary" id="annoSave">Save event</button>
+          <button type="button" class="anno-btn" id="annoCancel">Cancel</button>
+          <span class="spacer"></span>
+          <button type="button" class="anno-btn danger" id="annoDelete" hidden>Delete</button>
+        </div>
+      </form>
+    </dialog>"""
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -456,6 +512,40 @@ def render_bigquery_settings_page(
       .summary-card {{ gap:12px; }}
       .sc-actions {{ width:100%; justify-content:space-between; }}
     }}
+
+    /* ---- Timeline (agency events drawn onto the dashboard's trend charts) ---- */
+    .sec-head {{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; flex-wrap:wrap; }}
+    .sec-head h2 {{ margin:0; }}
+    .sec-head .status {{ margin:0; font-size:.76rem; text-align:right; flex-shrink:0; }}
+    .sec-head-actions {{ display:flex; align-items:center; gap:12px; flex-shrink:0; }}
+    .anno-empty {{ color:var(--muted); font-size:.82rem; margin:6px 0 0; }}
+    .anno-list {{ list-style:none; margin:10px 0 0; padding:0; display:flex; flex-direction:column; gap:1px; }}
+    .anno-item {{ display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:11px; padding:9px 2px; border-bottom:1px solid var(--line-soft); }}
+    .anno-swatch {{ width:9px; height:9px; border-radius:50%; flex:0 0 auto; }}
+    .anno-main {{ min-width:0; }}
+    .anno-title {{ color:var(--navy); font-weight:700; font-size:.86rem; }}
+    .anno-meta {{ color:var(--muted); font-size:.72rem; margin-top:2px; display:flex; align-items:center; gap:7px; flex-wrap:wrap; }}
+    .anno-vis {{ padding:0 6px; border-radius:999px; font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; border:1px solid var(--line); }}
+    .anno-vis.internal {{ background:#f4f7fb; color:var(--muted); }}
+    .anno-vis.shared {{ background:#e9f7ef; border-color:#b8dfc8; color:var(--ok); }}
+    .anno-row-actions {{ display:flex; gap:6px; }}
+    .anno-btn {{ border:1px solid var(--line); background:var(--card); color:var(--muted); border-radius:var(--radius-sm); padding:5px 10px; font:inherit; font-size:.74rem; font-weight:700; cursor:pointer; }}
+    .anno-btn:hover {{ border-color:#c9d6e6; color:var(--navy); }}
+    .anno-btn.danger:hover {{ border-color:#f3c0bb; color:var(--bad); }}
+    .anno-btn.primary {{ background:var(--accent); border-color:var(--accent); color:#fff; }}
+    .anno-btn.primary:hover {{ background:#1a62b8; }}
+    .anno-dialog {{ border:0; border-radius:var(--radius); padding:0; width:min(520px, calc(100vw - 32px)); box-shadow:0 24px 60px -20px rgba(11,16,32,.5); }}
+    .anno-dialog::backdrop {{ background:rgba(10,37,64,.42); }}
+    .anno-form {{ padding:20px 22px; display:grid; gap:13px; }}
+    .anno-form h3 {{ margin:0; color:var(--navy); font-size:1rem; font-weight:750; }}
+    .anno-form label {{ display:grid; gap:5px; color:var(--muted); font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }}
+    .anno-form input, .anno-form select, .anno-form textarea {{ border:1px solid var(--line); border-radius:var(--radius-sm); padding:9px 11px; font:inherit; font-weight:500; text-transform:none; letter-spacing:0; background:#fff; color:#102033; }}
+    .anno-form textarea {{ min-height:76px; resize:vertical; }}
+    .anno-form-row {{ display:grid; grid-template-columns:1fr 1fr; gap:13px; }}
+    .anno-form-actions {{ display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-top:3px; }}
+    .anno-form-actions .spacer {{ flex:1; }}
+    .anno-err {{ color:var(--bad); font-size:.76rem; font-weight:600; }}
+    @media (max-width: 560px) {{ .anno-form-row {{ grid-template-columns:1fr; }} }}
     {budget_css}
   </style>
 </head>
@@ -472,6 +562,7 @@ def render_bigquery_settings_page(
     {flash_html}
 
     {findings_section_html}
+    {timeline_section_html}
     {consent_visibility_html}
     {accessibility_card_html}
     {kpi_section_html}
@@ -766,6 +857,152 @@ def render_bigquery_settings_page(
           setStatus('segmentStatus', 'Save failed: ' + (err.message || err), true);
         }} finally {{ btn.disabled = false; }}
       }});
+    }})();
+
+    function esc(s) {{
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }}
+
+    // ---- Timeline: agency events drawn onto the dashboard's trend charts ----
+    (function initTimeline() {{
+      const panel = document.getElementById('sec-timeline');
+      const dlg = document.getElementById('annoDialog');
+      if (!panel || !dlg) return;
+
+      const ANNOTATIONS_API = "{annotations_api}";
+      const host = document.getElementById('annoListHost');
+      const fTitle = document.getElementById('annoFormTitle');
+      const fDate = document.getElementById('annoDate');
+      const fEnd = document.getElementById('annoEnd');
+      const fName = document.getElementById('annoTitle');
+      const fBody = document.getElementById('annoBody');
+      const fCat = document.getElementById('annoCategory');
+      const fVis = document.getElementById('annoVisibility');
+      const fErr = document.getElementById('annoErr');
+      const delBtn = document.getElementById('annoDelete');
+      let annoCache = [];
+      let annoCategories = [];
+      let editingId = null;
+
+      function prettyDate(iso) {{
+        if (!iso) return '';
+        try {{
+          return new Date(String(iso) + 'T00:00:00')
+            .toLocaleDateString(undefined, {{ year:'numeric', month:'short', day:'numeric' }});
+        }} catch (e) {{ return String(iso); }}
+      }}
+
+      function renderList() {{
+        if (!annoCache.length) {{
+          host.innerHTML = '<p class="anno-empty">No events yet. Add the launches, site changes and budget shifts worth remembering — they show up on every trend chart.</p>';
+          return;
+        }}
+        host.innerHTML = '<ul class="anno-list">' + annoCache.map(a => {{
+          const when = a.end_date
+            ? `${{prettyDate(a.event_date)}} → ${{prettyDate(a.end_date)}}`
+            : prettyDate(a.event_date);
+          return `<li class="anno-item">`
+            + `<span class="anno-swatch" style="background:${{esc(a.color)}}"></span>`
+            + `<span class="anno-main"><span class="anno-title">${{esc(a.title)}}</span>`
+            + `<span class="anno-meta"><span>${{esc(when)}}</span><span>·</span><span>${{esc(a.category_label)}}</span>`
+            + `<span class="anno-vis ${{esc(a.visibility)}}">${{a.visibility === 'shared' ? 'Client sees this' : 'Internal'}}</span></span></span>`
+            + `<span class="anno-row-actions"><button type="button" class="anno-btn" data-anno-edit="${{a.id}}">Edit</button></span></li>`;
+        }}).join('') + '</ul>';
+      }}
+
+      async function loadAnnotations() {{
+        try {{
+          const r = await fetch(ANNOTATIONS_API, {{ credentials:'same-origin' }});
+          const payload = await r.json().catch(() => ({{}}));
+          annoCache = payload.annotations || [];
+          annoCategories = payload.categories || [];
+          renderList();
+        }} catch (err) {{
+          host.innerHTML = '<p class="anno-empty">Could not load the timeline.</p>';
+        }}
+      }}
+
+      function setErr(msg) {{ fErr.textContent = msg || ''; }}
+      function fillCategories(selected) {{
+        fCat.innerHTML = (annoCategories.length ? annoCategories : [{{key:'other',label:'Other'}}])
+          .map(c => `<option value="${{esc(c.key)}}"${{c.key === selected ? ' selected' : ''}}>${{esc(c.label)}}</option>`)
+          .join('');
+      }}
+      function openEditor(anno) {{
+        editingId = anno ? anno.id : null;
+        fTitle.textContent = anno ? 'Edit timeline event' : 'Add a timeline event';
+        // A new event defaults to today — there's no dashboard date range on this
+        // page to anchor it to instead.
+        fDate.value = anno ? anno.event_date : new Date().toISOString().slice(0, 10);
+        fEnd.value = anno && anno.end_date ? anno.end_date : '';
+        fName.value = anno ? anno.title : '';
+        fBody.value = anno ? anno.body : '';
+        fillCategories(anno ? anno.category : 'other');
+        fVis.value = anno ? anno.visibility : 'internal';
+        delBtn.hidden = !anno;
+        setErr('');
+        if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+        fName.focus();
+      }}
+      function closeEditor() {{
+        if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open');
+      }}
+
+      async function post(url, params) {{
+        const r = await fetch(url, {{
+          method: 'POST', credentials: 'same-origin',
+          headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
+          body: new URLSearchParams(params),
+        }});
+        const body = await r.json().catch(() => ({{}}));
+        if (!r.ok || !body.ok) throw new Error(body.detail || body.error || ('HTTP ' + r.status));
+        return body;
+      }}
+
+      document.getElementById('annoSave').addEventListener('click', async () => {{
+        if (!fName.value.trim()) {{ setErr('A title is required.'); return; }}
+        if (!fDate.value) {{ setErr('A date is required.'); return; }}
+        setErr('');
+        setStatus('annoStatus', 'Saving…');
+        try {{
+          await post(editingId ? `${{ANNOTATIONS_API}}/${{editingId}}` : ANNOTATIONS_API, {{
+            event_date: fDate.value, end_date: fEnd.value, title: fName.value.trim(),
+            body: fBody.value, category: fCat.value, visibility: fVis.value,
+          }});
+          closeEditor();
+          setStatus('annoStatus', '');
+          await loadAnnotations();
+        }} catch (err) {{
+          setErr(String(err.message || err));
+          setStatus('annoStatus', '');
+        }}
+      }});
+
+      delBtn.addEventListener('click', async () => {{
+        if (!editingId) return;
+        if (!window.confirm('Delete this timeline event? It will disappear from every chart.')) return;
+        setStatus('annoStatus', 'Deleting…');
+        try {{
+          await post(`${{ANNOTATIONS_API}}/${{editingId}}/delete`, {{}});
+          closeEditor();
+          setStatus('annoStatus', '');
+          await loadAnnotations();
+        }} catch (err) {{
+          setErr(String(err.message || err));
+          setStatus('annoStatus', '');
+        }}
+      }});
+
+      document.getElementById('annoCancel').addEventListener('click', closeEditor);
+      document.getElementById('annoAddBtn').addEventListener('click', () => openEditor(null));
+      host.addEventListener('click', (e) => {{
+        const row = e.target.closest && e.target.closest('[data-anno-edit]');
+        if (!row) return;
+        const anno = annoCache.find(a => String(a.id) === row.getAttribute('data-anno-edit'));
+        if (anno) openEditor(anno);
+      }});
+
+      loadAnnotations();
     }})();
   </script>
   {budget_scripts}

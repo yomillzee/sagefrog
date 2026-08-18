@@ -73,13 +73,28 @@ ENTRIES: tuple[Entry, ...] = (
         ),
         details=(
             "Green means ahead of the typical range for that position, grey means "
-            "in line, amber means behind — a 4% CTR is strong at position 8 and "
+            "in line, amber means behind â a 4% CTR is strong at position 8 and "
             "weak at position 1, and the dot makes that difference readable at a "
             "glance.",
-            "Hovering a CTR spells out the comparison, e.g. “Behind the 6–12% a "
-            "query at position 3.2 typically earns”.",
+            "Hovering a CTR spells out the comparison, e.g. âBehind the 6â12% a "
+            "query at position 3.2 typically earnsâ.",
             "Applies to top queries, top pages, and the branded and target "
             "keyword tables.",
+        ),
+    ),
+    Entry(
+        date="2026-08-17",
+        title="Timeline moved to Insights",
+        area="Client dashboards Â· Insights",
+        kind="improved",
+        summary=(
+            "The Timeline manager â adding the launches, site changes and "
+            "budget shifts that get drawn onto the trend charts â moved from "
+            "the bottom of the Overview tab to the Insights page in Settings."
+        ),
+        details=(
+            "The dated markers still show up on every trend chart exactly as "
+            "before; only the tool for adding and editing them moved.",
         ),
     ),
     Entry(
@@ -95,7 +110,7 @@ ENTRIES: tuple[Entry, ...] = (
         details=(
             "The message says who asked, which client and page they were on, "
             "and links straight to the request in the admin inbox.",
-            "The inbox and its unread badge work exactly as before — Slack is "
+            "The inbox and its unread badge work exactly as before â Slack is "
             "an extra heads-up, not a replacement.",
         ),
     ),
