@@ -63,6 +63,23 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-17",
+        title="Feature requests post to Slack again",
+        area="Feature requests",
+        kind="new",
+        summary=(
+            "New feature requests raised from a client dashboard show up in the "
+            "Slack channel again, so nobody has to remember to check the admin "
+            "inbox to see one come in."
+        ),
+        details=(
+            "The message says who asked, which client and page they were on, "
+            "and links straight to the request in the admin inbox.",
+            "The inbox and its unread badge work exactly as before — Slack is "
+            "an extra heads-up, not a replacement.",
+        ),
+    ),
+    Entry(
+        date="2026-08-17",
         title="Scrollbars look like part of the portal now",
         area="Everywhere",
         kind="improved",
