@@ -394,5 +394,120 @@ class SyncForRefreshTests(unittest.TestCase):
         self.assertEqual(len(passed["dates"]), 90)
 
 
+# ---------------------------------------------------------------------------
+# 7. The BigQuery-facing bodies actually run
+# ---------------------------------------------------------------------------
+
+class _FakeRow:
+    def __init__(self, mapping):
+        self._m = mapping
+
+    def items(self):
+        return self._m.items()
+
+
+class _FakeJob:
+    def __init__(self, rows=()):
+        self._rows = list(rows)
+
+    def result(self, **kw):
+        return list(self._rows)
+
+
+class _FakeBqClient:
+    """Just enough BigQuery to run the real query/load/merge paths."""
+
+    def __init__(self, rows=()):
+        self._rows = list(rows)
+        self.queries: list[str] = []
+        self.loaded: list[tuple] = []
+        self.created: list[str] = []
+        self.deleted: list[str] = []
+
+    def query(self, sql, job_config=None):
+        self.queries.append(sql)
+        if sql.strip().upper().startswith("MERGE"):
+            return _FakeJob()
+        return _FakeJob(self._rows)
+
+    def load_table_from_json(self, payload, table_id, job_config=None):
+        self.loaded.append((table_id, list(payload)))
+        return _FakeJob()
+
+    def create_table(self, table, exists_ok=False):
+        self.created.append(getattr(table, "table_id", str(table)))
+        return table
+
+    def delete_table(self, table_id, not_found_ok=False):
+        self.deleted.append(table_id)
+
+
+class BigQueryPathTests(unittest.TestCase):
+    """These bodies were shipped with an undefined module constant because every
+    test patched them out. Exercise them for real against a fake client."""
+
+    WINDOW = (date(2026, 7, 1), date(2026, 7, 31))
+
+    def test_dates_present_parses_what_bigquery_returns(self):
+        client = _FakeBqClient([
+            _FakeRow({"date": date(2026, 7, 4)}),
+            _FakeRow({"date": "2026-07-05"}),   # string dates parse too
+            _FakeRow({"date": None}),           # and nulls are skipped
+        ])
+        got = g._dates_present(client, "proj.raw_gsc.fact_gsc_query_daily", *self.WINDOW)
+        self.assertEqual(got, {date(2026, 7, 4), date(2026, 7, 5)})
+        self.assertIn("fact_gsc_query_daily", client.queries[0])
+        self.assertIn("2026-07-01", client.queries[0])
+
+    def test_dates_present_treats_a_missing_table_as_nothing_present(self):
+        class Boom(_FakeBqClient):
+            def query(self, sql, job_config=None):
+                raise RuntimeError("404 table not found")
+        self.assertEqual(g._dates_present(Boom(), "p.d.t", *self.WINDOW), set())
+
+    def test_empty_days_reads_the_marker_table(self):
+        client = _FakeBqClient([_FakeRow({"date": date(2026, 7, 9)})])
+        got = g._empty_days(client, _Target(), "query", *self.WINDOW)
+        self.assertEqual(got, {date(2026, 7, 9)})
+        sql = client.queries[0]
+        self.assertIn(g._EMPTY_DAYS_TABLE, sql)
+        self.assertIn("dimension = 'query'", sql)
+
+    def test_record_empty_days_creates_the_table_and_merges(self):
+        client = _FakeBqClient()
+        g._record_empty_days(client, _Target(), [
+            {"date": "2026-07-09", "dimension": "query"},
+        ])
+        self.assertTrue(client.created)
+        self.assertTrue(any(q.strip().upper().startswith("MERGE") for q in client.queries))
+        # The stamp column is checked_at here, not synced_at.
+        _tid, payload = client.loaded[0]
+        self.assertIn("checked_at", payload[0])
+        self.assertNotIn("synced_at", payload[0])
+        self.assertTrue(client.deleted)  # staging table cleaned up
+
+    def test_record_empty_days_never_raises_into_the_sync(self):
+        class Boom(_FakeBqClient):
+            def create_table(self, table, exists_ok=False):
+                raise RuntimeError("no permission")
+        g._record_empty_days(Boom(), _Target(), [{"date": "2026-07-09", "dimension": "query"}])
+
+    def test_record_empty_days_with_nothing_to_record_is_a_no_op(self):
+        client = _FakeBqClient()
+        g._record_empty_days(client, _Target(), [])
+        self.assertEqual(client.queries, [])
+        self.assertEqual(client.created, [])
+
+    def test_get_missing_dates_end_to_end_against_a_fake_client(self):
+        """No patching of the helpers -- the whole path runs."""
+        newest = date.today() - timedelta(days=g._GSC_LAG_DAYS)
+        client = _FakeBqClient([_FakeRow({"date": newest})])
+        missing = g.get_missing_dates(client=client, target=_Target())
+        # The one day the fake reports present is not chased; the rest are.
+        self.assertNotIn(newest, missing["query"])
+        self.assertIn(newest - timedelta(days=1), missing["query"])
+        self.assertTrue(client.queries)
+
+
 if __name__ == "__main__":
     unittest.main()
