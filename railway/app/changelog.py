@@ -63,6 +63,24 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-17",
+        title="Search Console follows the date range again",
+        area="Search Console",
+        kind="fixed",
+        summary=(
+            "Changing the date range or the comparison period now reloads the "
+            "Search Console tab, which used to keep showing the window it was "
+            "first opened with."
+        ),
+        details=(
+            "The clicks, impressions and position figures, the query and page "
+            "tables, and the branded/target keyword lists all refresh with the "
+            "range.",
+            "SEMrush figures on the same tab are unchanged — they are a "
+            "current snapshot and never depended on the range.",
+        ),
+    ),
+    Entry(
+        date="2026-08-17",
         title="Search Console CTR now says whether it is good for that rank",
         area="Search Console",
         kind="improved",
