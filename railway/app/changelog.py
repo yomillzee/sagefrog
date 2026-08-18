@@ -63,6 +63,24 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-18",
+        title="Bulk add is a popover, and the watchlist drops its Page column",
+        area="Search Console",
+        kind="fixed",
+        summary=(
+            "The keyword watchlist's bulk-add box was sitting open above the "
+            "table for admins instead of waiting to be asked for. It is now a "
+            "popover on the Bulk add button, and the Page column is pulled for "
+            "now while it earns its width."
+        ),
+        details=(
+            "“+ Add keyword” now reads as the primary action it is.",
+            "The popover closes on Escape, on Cancel, or on a click outside it.",
+            "The page saved against each keyword is kept — nothing was "
+            "discarded, and the column can come back.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
         title="Put the keyword watchlist in the order you want to read it",
         area="Search Console",
         kind="improved",
