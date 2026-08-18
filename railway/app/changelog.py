@@ -63,6 +63,26 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-18",
+        title="LinkedIn Organic's Performance card follows the date range",
+        area="LinkedIn Organic",
+        kind="fixed",
+        summary=(
+            "Posts, impressions, reach, reactions, comments and average "
+            "engagement were being counted from the Top posts table, which only "
+            "ever holds 50 rows — so on busy pages the tiles froze at the same "
+            "numbers no matter which date range you picked. They are now counted "
+            "over the whole selected period."
+        ),
+        details=(
+            "Posts now shows every post in the period, not a count that stopped at 50.",
+            "Average engagement is the average across all of those posts.",
+            "Posts with no publish date no longer appear in every date range.",
+            "Followers is still the current lifetime total; the green figure "
+            "beneath it is the gain over the selected period.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
         title="Bulk add is a popover, and the watchlist drops its Page column",
         area="Search Console",
         kind="fixed",

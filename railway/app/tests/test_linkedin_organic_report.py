@@ -103,9 +103,15 @@ class BuildReportTests(unittest.TestCase):
 
         calls = {"n": 0}
 
+        post_totals = [{"post_count": 2, "impressions": 600, "clicks": 11,
+                        "likes": 25, "comments": 4, "shares": 2,
+                        "avg_engagement_rate": 0.07}]
+
         def fake_run_query(sql, **kw):
             calls["n"] += 1
             low = sql.lower()
+            if "count(*) as post_count" in low:
+                return post_totals
             if "post_stats" in low:
                 return posts
             if "follower_daily" in low:
@@ -162,6 +168,12 @@ class BuildReportTests(unittest.TestCase):
             low = sql.lower()
             if "reactions_by_type" in low:
                 return reach
+            if "sum(unique_impressions) as reach" in low:
+                return [{"reach": 510}]
+            if "count(*) as post_count" in low:
+                return [{"post_count": 2, "impressions": 600, "clicks": 11,
+                         "likes": 25, "comments": 4, "shares": 2,
+                         "avg_engagement_rate": 0.07}]
             if "post_stats" in low:
                 return posts
             if "follower_demographics" in low:
@@ -189,6 +201,69 @@ class BuildReportTests(unittest.TestCase):
         self.assertEqual(report.page_desktop_views, 30)
         self.assertEqual(report.page_mobile_views, 20)
         self.assertIn({"label": "Careers", "views": 12}, report.page_sections)
+
+    def test_totals_come_from_window_aggregate_not_capped_listing(self):
+        """The Top-posts read is capped at 50 rows; the KPI totals must not be
+        summed from it, or the Performance card stops responding to ?range=."""
+        _install_routing()
+
+        listing = [
+            {"org_id": "777", "post_id": str(i), "title": f"Post {i}", "post_type": "text",
+             "published_at": "2026-06-10", "impressions": 100, "clicks": 1,
+             "likes": 2, "comments": 1, "shares": 0, "engagement_rate": 0.05}
+            for i in range(50)
+        ]
+        # 180 days really holds 130 posts; 90 days holds 60. Both saturate the
+        # 50-row listing, so only the aggregate can tell them apart.
+        aggregates = {
+            90: {"post_count": 60, "impressions": 6_000, "clicks": 60, "likes": 120,
+                 "comments": 60, "shares": 0, "avg_engagement_rate": 0.05},
+            180: {"post_count": 130, "impressions": 13_000, "clicks": 130, "likes": 260,
+                  "comments": 130, "shares": 0, "avg_engagement_rate": 0.04},
+        }
+        window = {"days": 90}
+
+        def fake_run_query(sql, **kw):
+            low = sql.lower()
+            if "count(*) as post_count" in low:
+                return [aggregates[window["days"]]]
+            if "reactions_by_type" in low or "sum(unique_impressions) as reach" in low:
+                return []
+            if "post_stats" in low:
+                return listing
+            return []
+
+        svc.bigquery_service.run_query = fake_run_query  # type: ignore
+
+        window["days"] = 90
+        narrow = svc.build_report("acme", days=90)
+        window["days"] = 180
+        wide = svc.build_report("acme", days=180)
+
+        self.assertEqual(narrow.post_count, 60)
+        self.assertEqual(wide.post_count, 130)
+        self.assertEqual(narrow.total_impressions, 6_000)
+        self.assertEqual(wide.total_impressions, 13_000)
+        self.assertAlmostEqual(wide.avg_engagement_rate, 0.04)
+        # The listing itself stays capped at 50 rows.
+        self.assertEqual(len(wide.top_posts), 50)
+
+    def test_undated_posts_excluded_from_window(self):
+        """A NULL published_at can't be attributed to a window, so it must not
+        leak into every range's query."""
+        _install_routing()
+        seen = []
+
+        def fake_run_query(sql, **kw):
+            seen.append(sql)
+            return []
+
+        svc.bigquery_service.run_query = fake_run_query  # type: ignore
+        svc.build_report("acme", days=30)
+        post_sql = [q for q in seen if "post_stats" in q.lower()]
+        self.assertTrue(post_sql)
+        for q in post_sql:
+            self.assertNotIn("published_at IS NULL", q)
 
     def test_missing_table_is_not_fatal(self):
         _install_routing()
