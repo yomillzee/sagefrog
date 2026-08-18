@@ -739,7 +739,9 @@ def _format_last_seen(iso: str | None) -> tuple[str, str]:
     elif secs < 86400 * 30:
         rel = f"{secs // (86400 * 7)}w ago"
     else:
-        rel = dt.strftime("%b %-d, %Y") if hasattr(dt, "strftime") else "—"
+        # Built by hand rather than with %-d: that padding flag is glibc-only
+        # and raises on Windows.
+        rel = f"{dt:%b} {dt.day}, {dt.year}"
     return rel, dt.strftime("%Y-%m-%d %H:%M UTC")
 
 
@@ -931,6 +933,50 @@ _DASH_SEARCH_JS = """
 })();
 """
 
+# Row kebab (⋮) menus, shared by the Accounts rows and the Users rows: swap
+# between the action list and an inline panel, gate a delete on a matching
+# confirmation, and close on outside click or Escape (a native <details>
+# won't do that on its own).
+_KEBAB_JS = """
+    // Kebab row menus: swap between the action list and the rename/delete panels,
+    // gate the delete button on a matching confirmation, and close on outside
+    // click or Escape (a native <details> won't do that on its own).
+    document.querySelectorAll('.dash-kebab').forEach((kebab) => {
+      const panels = kebab.querySelectorAll('.dash-kebab-menu [data-panel]');
+      const show = (name) => {
+        panels.forEach((p) => { p.hidden = p.dataset.panel !== name; });
+        if (name !== 'menu') {
+          const inp = kebab.querySelector('[data-panel="' + name + '"] input');
+          if (inp) requestAnimationFrame(() => inp.focus());
+        }
+      };
+      kebab.querySelectorAll('[data-kebab-panel]').forEach((b) => {
+        b.addEventListener('click', () => show(b.dataset.kebabPanel));
+      });
+      // Always (re)open on the action list, and reset to it on close.
+      kebab.addEventListener('toggle', () => show('menu'));
+    });
+    document.querySelectorAll('.dash-kebab input[name="confirm_label"]').forEach((input) => {
+      const expected = input.dataset.expected || '';
+      const btn = document.getElementById(input.dataset.btnId || '');
+      const sync = () => {
+        if (btn) btn.disabled = input.value.trim() !== expected;
+      };
+      input.addEventListener('input', sync);
+      sync();
+    });
+    document.addEventListener('click', (e) => {
+      document.querySelectorAll('.dash-kebab[open]').forEach((k) => {
+        if (!k.contains(e.target)) k.open = false;
+      });
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        document.querySelectorAll('.dash-kebab[open]').forEach((k) => { k.open = false; });
+      }
+    });"""
+
+
 _ADMIN_AVATAR_JS = """
 function _avatarResize(file, size) {
   return new Promise((resolve, reject) => {
@@ -1010,6 +1056,61 @@ document.querySelectorAll('.dash-logo-file').forEach(inp => {
   });
 });
 """
+
+
+# Inline icons for the row kebab menus and the avatar hover affordance. Kept as
+# module constants so a 200-row roster doesn't rebuild the same markup per row.
+_SVG_KEBAB = (
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">'
+    '<circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>'
+)
+_SVG_STROKE = (
+    'viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'
+)
+_SVG_BACK = (
+    f'<svg {_SVG_STROKE} aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>'
+)
+_SVG_KEY = (
+    f'<svg {_SVG_STROKE} aria-hidden="true"><circle cx="7.5" cy="15.5" r="4.5"/>'
+    '<path d="m10.7 12.3 8.6-8.6"/><path d="m17 6 3 3"/><path d="m14 9 3 3"/></svg>'
+)
+_SVG_MAIL = (
+    f'<svg {_SVG_STROKE} aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/>'
+    '<path d="m3.5 6.5 8.5 6 8.5-6"/></svg>'
+)
+_SVG_SHIELD = (
+    f'<svg {_SVG_STROKE} aria-hidden="true">'
+    '<path d="M12 3l7.5 3v5.5c0 4.4-3.1 8.2-7.5 9.5-4.4-1.3-7.5-5.1-7.5-9.5V6z"/>'
+    '<path d="m9.2 12.2 2 2 3.6-3.9"/></svg>'
+)
+_SVG_BAN = (
+    f'<svg {_SVG_STROKE} aria-hidden="true"><circle cx="12" cy="12" r="9"/>'
+    '<path d="m5.6 5.6 12.8 12.8"/></svg>'
+)
+_SVG_PENCIL = (
+    f'<svg {_SVG_STROKE} aria-hidden="true"><path d="M12 20h9"/>'
+    '<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>'
+)
+_SVG_TRASH = (
+    f'<svg {_SVG_STROKE} aria-hidden="true"><path d="M3 6h18"/>'
+    '<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'
+    '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>'
+)
+_SVG_PLUS = (
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" '
+    'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M12 5v14"/><path d="M5 12h14"/></svg>'
+)
+_SVG_SEARCH = (
+    f'<svg {_SVG_STROKE} aria-hidden="true"><circle cx="11" cy="11" r="7"/>'
+    '<path d="m21 21-4.3-4.3"/></svg>'
+)
+_SVG_PENCIL_SM = (
+    '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" '
+    'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>'
+)
 
 
 def _label_initials(label: str) -> str:
@@ -1152,9 +1253,7 @@ def render_admin_page(
             f'<label class="avatar" title="Upload headshot">'
             f'<input type="file" accept="image/*" class="avatar-file" data-user-id="{uid}" hidden>'
             f'{av_inner}'
-            f'<span class="avatar-edit" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11" '
-            f'fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
-            f'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span></label>'
+            f'<span class="avatar-edit" aria-hidden="true">{_SVG_PENCIL_SM}</span></label>'
         )
         invite_pending = bool(u.get("invite_pending"))
         if not u.get("is_active"):
@@ -1180,33 +1279,51 @@ def render_admin_page(
         last_login_cell = (
             f'<span class="{ll_cls}" title="{_esc(ll_abs)}">{_esc(ll_rel)}</span>'
         )
-        reset_html = f"""
-        <details class="row-fold">
-          <summary class="link">Reset password…</summary>
-          <form method="post" action="/admin/users/{uid}/reset-password" class="row-fold-form"
-            onsubmit="return confirm('Reset this user\'s password?');">
-            <input type="password" name="new_password" placeholder="New password (min 10 chars)"
-              minlength="10" required autocomplete="new-password">
-            <button type="submit" class="link">Reset</button>
-          </form>
-        </details>"""
+
+        # ---- Row actions: one kebab (vertical dots) menu, not four loose links ----
+        # Every action opens a panel inside that menu, so a row never grows a
+        # stack of half-open forms in the middle of the table. Same component as
+        # the Accounts rows, so both registers are operated the same way.
+        items: list[str] = []
+        panels: list[str] = []
+
+        items.append(
+            '<button type="button" class="dash-kebab-item" role="menuitem" '
+            f'data-kebab-panel="pw-{uid}">{_SVG_KEY}<span>Reset password…</span></button>'
+        )
+        panels.append(f"""
+                <form method="post" action="/admin/users/{uid}/reset-password" class="dash-kebab-panel" data-panel="pw-{uid}" hidden>
+                  <button type="button" class="dash-kebab-back" data-kebab-panel="menu">{_SVG_BACK}<span>Back</span></button>
+                  <label class="dash-kebab-label">New password</label>
+                  <input type="password" name="new_password" placeholder="At least 10 characters"
+                    minlength="10" required autocomplete="new-password" aria-label="New password">
+                  <p class="hint">Takes effect immediately — tell them the new password yourself,
+                    or send an invite link instead and let them pick one.</p>
+                  <button type="submit" class="dash-kebab-submit primary">Reset password</button>
+                </form>""")
+
         # Mint a fresh link — for an invite that was never redeemed, one the
         # admin lost (the raw token is unrecoverable by design), or as a
         # password reset the admin doesn't have to choose a password for.
         invite_label = "New invite link" if invite_pending else "Send invite link"
-        invite_confirm = (
-            "Generate a new invite link? Any previous link for this user stops working."
+        invite_note = (
+            "Generates a fresh one-time link. Any previous link for this user stops working."
             if invite_pending
-            else "Generate an invite link? Any previous link stops working, and their "
-            "current password keeps working until they redeem it."
+            else "Generates a one-time link they use to set their own password. Any previous "
+            "link stops working; their current password keeps working until they redeem it."
         )
-        invite_html = (
-            f'<form method="post" action="/admin/users/{uid}/invite" class="inline-form" '
-            f"onsubmit=\"return confirm('{invite_confirm}');\">"
-            f'<button type="submit" class="link">{invite_label}</button></form>'
+        items.append(
+            '<button type="button" class="dash-kebab-item" role="menuitem" '
+            f'data-kebab-panel="invite-{uid}">{_SVG_MAIL}<span>{invite_label}…</span></button>'
         )
-        role_html = ""
-        deactivate_html = ""
+        panels.append(f"""
+                <form method="post" action="/admin/users/{uid}/invite" class="dash-kebab-panel" data-panel="invite-{uid}" hidden>
+                  <button type="button" class="dash-kebab-back" data-kebab-panel="menu">{_SVG_BACK}<span>Back</span></button>
+                  <label class="dash-kebab-label">{_esc(invite_label)}</label>
+                  <p class="hint">{_esc(invite_note)}</p>
+                  <button type="submit" class="dash-kebab-submit primary">{_esc(invite_label)}</button>
+                </form>""")
+
         if uid != user.id:
             raw_slug = _esc(u.get("client_slug") or "")
             role_opts = "".join(
@@ -1215,33 +1332,55 @@ def render_admin_page(
             )
             row_checks = _client_checkboxes(set(u.get("allowed_client_slugs") or []))
             row_group_select = _group_select(u.get("group_id"))
-            role_html = f"""
-        <details class="row-fold">
-          <summary class="link">Change role…</summary>
-          <form method="post" action="/admin/users/{uid}/role" class="row-fold-form role-form">
-            <select name="role" aria-label="Role" class="role-select">{role_opts}</select>
-            <div class="client-only">
-              <span class="ckbx-legend">Client group</span>
-              {row_group_select}
-              <input type="text" name="client_slug" class="slug-fallback"
-                placeholder="or a single client slug"
-                value="{raw_slug}" autocomplete="off">
-            </div>
-            <div class="standard-only">
-              <span class="ckbx-legend">Clients this user can access</span>
-              {row_checks}
-            </div>
-            <button type="submit" class="link">Update role</button>
-          </form>
-        </details>"""
-            deactivate_html = (
-                f'<form method="post" action="/admin/users/{uid}/deactivate" class="inline-form" '
-                f'onsubmit="return confirm(\'Deactivate this user?\');">'
-                f'<button type="submit" class="link danger">Deactivate</button></form>'
+            items.append(
+                '<button type="button" class="dash-kebab-item" role="menuitem" '
+                f'data-kebab-panel="role-{uid}">{_SVG_SHIELD}<span>Role &amp; access…</span></button>'
             )
-        actions = (
-            f'<div class="row-actions">{reset_html}{invite_html}{role_html}{deactivate_html}</div>'
-        )
+            panels.append(f"""
+                <form method="post" action="/admin/users/{uid}/role" class="dash-kebab-panel role-form" data-panel="role-{uid}" hidden>
+                  <button type="button" class="dash-kebab-back" data-kebab-panel="menu">{_SVG_BACK}<span>Back</span></button>
+                  <label class="dash-kebab-label">Role</label>
+                  <select name="role" aria-label="Role" class="role-select">{role_opts}</select>
+                  <div class="client-only">
+                    <span class="dash-kebab-label">Client group</span>
+                    {row_group_select}
+                    <input type="text" name="client_slug" class="slug-fallback"
+                      placeholder="or a single client slug"
+                      value="{raw_slug}" autocomplete="off">
+                  </div>
+                  <div class="standard-only">
+                    <span class="dash-kebab-label">Clients this user can access</span>
+                    {row_checks}
+                  </div>
+                  <button type="submit" class="dash-kebab-submit primary">Save role &amp; access</button>
+                </form>""")
+            items.append(
+                '<button type="button" class="dash-kebab-item danger" role="menuitem" '
+                f'data-kebab-panel="off-{uid}">{_SVG_BAN}<span>Deactivate…</span></button>'
+            )
+            panels.append(f"""
+                <form method="post" action="/admin/users/{uid}/deactivate" class="dash-kebab-panel" data-panel="off-{uid}" hidden>
+                  <button type="button" class="dash-kebab-back" data-kebab-panel="menu">{_SVG_BACK}<span>Back</span></button>
+                  <p class="hint">Deactivate <strong>{_esc(email)}</strong>? They are signed out and
+                    can no longer sign in. The account and its access settings are kept.</p>
+                  <button type="submit" class="dash-kebab-submit danger">Deactivate user</button>
+                </form>""")
+        else:
+            # An admin can reset their own password but not re-role or disable
+            # themselves — say so in the menu rather than leaving it half-empty.
+            items.append(
+                '<div class="dash-kebab-note">Your own role can only be changed '
+                "by another admin</div>"
+            )
+
+        actions = f"""
+            <details class="dash-kebab user-kebab">
+              <summary class="dash-icon-btn" title="Actions" aria-label="Actions for {_esc(email)}" aria-haspopup="menu">{_SVG_KEBAB}</summary>
+              <div class="dash-kebab-menu">
+                <div class="dash-kebab-list" data-panel="menu" role="menu">{"".join(items)}</div>
+                {"".join(panels)}
+              </div>
+            </details>"""
 
         # Resolve the human-readable dashboards this user can reach (used for
         # both the visible access cell and the search key).
@@ -1263,6 +1402,15 @@ def render_admin_page(
             ).lower()
         )
 
+        # Avatar and email ride in one identity cell, so the row opens with a
+        # person rather than with a picture in a column of its own.
+        you_chip = '<span class="you-chip">You</span>' if uid == user.id else ""
+        identity_cell = (
+            f'<td class="col-user" data-label="User"><div class="user-cell">{avatar_cell}'
+            f'<span class="user-ident"><span class="user-email">{_esc(email)}</span>'
+            f'{you_chip}</span></div></td>'
+        )
+
         if kind == "team":
             role_badge = f'<span class="role-badge role-{_esc(role)}">{_esc(role)}</span>'
             access_cell = (
@@ -1271,8 +1419,7 @@ def render_admin_page(
                 else _access_chips(access_labels, empty="No access")
             )
             cells = (
-                f'<td class="col-av">{avatar_cell}</td>'
-                f'<td class="col-user" data-label="User">{_esc(email)}</td>'
+                f"{identity_cell}"
                 f'<td data-label="Role">{role_badge}</td>'
                 f'<td class="col-access" data-label="Client access">{access_cell}</td>'
                 f'<td data-label="Last session">{last_login_cell}</td>'
@@ -1287,8 +1434,7 @@ def render_admin_page(
             )
             access_cell = _access_chips(access_labels, empty="No dashboards")
             cells = (
-                f'<td class="col-av">{avatar_cell}</td>'
-                f'<td class="col-user" data-label="User">{_esc(email)}</td>'
+                f"{identity_cell}"
                 f'<td data-label="Group">{group_cell}</td>'
                 f'<td class="col-access" data-label="Dashboards">{access_cell}</td>'
                 f'<td data-label="Last session">{last_login_cell}</td>'
@@ -1306,10 +1452,10 @@ def render_admin_page(
     client_count = len(client_rows)
     user_count = len(users)
     team_body = "\n".join(team_rows) or (
-        '<tr class="empty-row"><td colspan="7" class="muted">No Sagefrog team members yet.</td></tr>'
+        '<tr class="empty-row"><td colspan="6" class="muted">No Sagefrog team members yet.</td></tr>'
     )
     client_body = "\n".join(client_rows) or (
-        '<tr class="empty-row"><td colspan="7" class="muted">No client portal users yet.</td></tr>'
+        '<tr class="empty-row"><td colspan="6" class="muted">No client portal users yet.</td></tr>'
     )
 
     # NOTE: the "View as user" card that used to live here has been removed —
@@ -1326,41 +1472,63 @@ def render_admin_page(
         members = int(g.get("member_count") or 0)
         chips = "".join(
             f'<span class="grp-chip">{_esc(client_labels.get(s, s))}</span>' for s in gslugs
-        ) or '<span class="muted" style="font-size:.82rem">No dashboards yet</span>'
-        member_note = f'{members} member' + ("" if members == 1 else "s")
+        ) or '<span class="chip-none">No dashboards yet</span>'
+        member_note = f"{members} member" + ("" if members == 1 else "s")
+        # A group with members still grants access, so deleting it would silently
+        # strip those logins — offer the delete only once it's empty, and say why.
         if members == 0:
-            delete_ctl = (
-                f'<form method="post" action="/admin/groups/{gid}/delete" class="inline-form" '
-                f'onsubmit="return confirm(\'Delete this group?\');">'
-                f'<button type="submit" class="link danger">Delete</button></form>'
+            delete_item = (
+                '<button type="button" class="dash-kebab-item danger" role="menuitem" '
+                f'data-kebab-panel="gdel-{gid}">{_SVG_TRASH}<span>Delete group…</span></button>'
             )
+            delete_panel = f"""
+                <form method="post" action="/admin/groups/{gid}/delete" class="dash-kebab-panel" data-panel="gdel-{gid}" hidden>
+                  <button type="button" class="dash-kebab-back" data-kebab-panel="menu">{_SVG_BACK}<span>Back</span></button>
+                  <p class="hint">Delete <strong>{gname}</strong>? It has no members, so no
+                    login loses access.</p>
+                  <button type="submit" class="dash-kebab-submit danger">Delete group</button>
+                </form>"""
         else:
-            delete_ctl = '<span class="dash-row-note">Reassign members to delete</span>'
+            delete_item = (
+                '<div class="dash-kebab-note">Reassign its members before '
+                "deleting this group</div>"
+            )
+            delete_panel = ""
         edit_checks = _client_checkboxes(set(gslugs), field="client_slugs")
         desc_val = _esc(g.get("description") or "")
+        desc_line = (
+            f'<span class="group-row-desc">{desc_val}</span>' if desc_val else ""
+        )
         group_rows_html.append(f"""
         <div class="group-row">
           <div class="group-row-head">
             <div class="group-row-main">
               <span class="group-row-name">{gname}</span>
-              <span class="group-row-meta">{member_note}</span>
+              <span class="group-row-meta">{member_note}{desc_line}</span>
             </div>
             <div class="group-chips">{chips}</div>
             <div class="group-row-actions">
-              <details class="row-fold">
-                <summary class="link">Edit…</summary>
-                <form method="post" action="/admin/groups/{gid}" class="row-fold-form group-edit-form">
-                  <label>Group name</label>
-                  <input type="text" name="name" value="{gname}" required maxlength="120">
-                  <label>Description</label>
-                  <input type="text" name="description" value="{desc_val}" maxlength="200"
-                    placeholder="optional">
-                  <span class="ckbx-legend">Dashboards in this group</span>
-                  {edit_checks}
-                  <button type="submit" class="link">Save group</button>
-                </form>
+              <details class="dash-kebab group-kebab">
+                <summary class="dash-icon-btn" title="Actions" aria-label="Actions for {gname}" aria-haspopup="menu">{_SVG_KEBAB}</summary>
+                <div class="dash-kebab-menu">
+                  <div class="dash-kebab-list" data-panel="menu" role="menu">
+                    <button type="button" class="dash-kebab-item" role="menuitem" data-kebab-panel="gedit-{gid}">{_SVG_PENCIL}<span>Edit group…</span></button>
+                    {delete_item}
+                  </div>
+                  <form method="post" action="/admin/groups/{gid}" class="dash-kebab-panel" data-panel="gedit-{gid}" hidden>
+                    <button type="button" class="dash-kebab-back" data-kebab-panel="menu">{_SVG_BACK}<span>Back</span></button>
+                    <label class="dash-kebab-label">Group name</label>
+                    <input type="text" name="name" value="{gname}" required maxlength="120">
+                    <label class="dash-kebab-label">Description</label>
+                    <input type="text" name="description" value="{desc_val}" maxlength="200"
+                      placeholder="optional">
+                    <span class="dash-kebab-label">Dashboards in this group</span>
+                    {edit_checks}
+                    <button type="submit" class="dash-kebab-submit primary">Save group</button>
+                  </form>
+                  {delete_panel}
+                </div>
               </details>
-              {delete_ctl}
             </div>
           </div>
         </div>""")
@@ -1412,7 +1580,6 @@ def render_admin_page(
     dashboard_manage_html = ""
     client_slug_options = ""
     client_slug_datalist = ""
-    dash_delete_js = ""
     try:
         import dashboard_registry
 
@@ -1599,44 +1766,6 @@ def render_admin_page(
       <div class="dash-list">{dash_list}</div>
       <p class="dash-empty muted" id="dashEmpty" hidden>No accounts match your filter.</p>
     </section>"""
-            dash_delete_js = """
-    // Kebab row menus: swap between the action list and the rename/delete panels,
-    // gate the delete button on a matching confirmation, and close on outside
-    // click or Escape (a native <details> won't do that on its own).
-    document.querySelectorAll('.dash-kebab').forEach((kebab) => {
-      const panels = kebab.querySelectorAll('.dash-kebab-menu [data-panel]');
-      const show = (name) => {
-        panels.forEach((p) => { p.hidden = p.dataset.panel !== name; });
-        if (name !== 'menu') {
-          const inp = kebab.querySelector('[data-panel="' + name + '"] input');
-          if (inp) requestAnimationFrame(() => inp.focus());
-        }
-      };
-      kebab.querySelectorAll('[data-kebab-panel]').forEach((b) => {
-        b.addEventListener('click', () => show(b.dataset.kebabPanel));
-      });
-      // Always (re)open on the action list, and reset to it on close.
-      kebab.addEventListener('toggle', () => show('menu'));
-    });
-    document.querySelectorAll('.dash-kebab input[name="confirm_label"]').forEach((input) => {
-      const expected = input.dataset.expected || '';
-      const btn = document.getElementById(input.dataset.btnId || '');
-      const sync = () => {
-        if (btn) btn.disabled = input.value.trim() !== expected;
-      };
-      input.addEventListener('input', sync);
-      sync();
-    });
-    document.addEventListener('click', (e) => {
-      document.querySelectorAll('.dash-kebab[open]').forEach((k) => {
-        if (!k.contains(e.target)) k.open = false;
-      });
-    });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        document.querySelectorAll('.dash-kebab[open]').forEach((k) => { k.open = false; });
-      }
-    });"""
         else:
             dashboard_links = "\n".join(
                 f'        <li><a href="/dashboard/{_esc(slug)}">{_esc(label)}</a></li>'
@@ -1953,12 +2082,31 @@ def render_admin_page(
     .dash-kebab-submit.danger {{ background: var(--danger); color: #fff; }}
     .dash-kebab-submit.danger:disabled {{ opacity: .5; cursor: not-allowed; }}
     .dash-kebab-submit.danger:not(:disabled):hover {{ filter: brightness(1.06); }}
-    /* ---- Users table (modern) ---- */
-    .user-table-wrap {{ overflow-x: auto; }}
+    /* ---- Users table ---- */
+    /* overflow stays visible so a row's kebab menu can hang outside the table;
+       the cells wrap instead of forcing a sideways scroller, and below 640px the
+       rows become cards anyway. */
+    .user-table-wrap {{ overflow: visible; }}
     .user-table {{ font-size: .92rem; }}
-    .user-table td {{ vertical-align: middle; }}
-    .user-table td.col-user {{ font-weight: 600; color: var(--navy); }}
-    .col-av {{ width: 52px; }}
+    .user-table th {{ padding-top: 0; white-space: nowrap; }}
+    .user-table td {{ vertical-align: middle; padding-top: 9px; padding-bottom: 9px; }}
+    .user-table tbody tr.user-row {{ transition: background .12s; }}
+    .user-table tbody tr.user-row:hover {{ background: #f7fafd; }}
+    .user-table tbody tr.user-row:last-child td {{ border-bottom: 0; }}
+    /* Identity cell: avatar + email as one unit, so the eye lands on the person. */
+    .user-cell {{ display: flex; align-items: center; gap: 11px; min-width: 0; }}
+    .user-ident {{ display: flex; align-items: center; gap: 7px; min-width: 0; flex-wrap: wrap; }}
+    .user-email {{ font-weight: 650; color: var(--navy); overflow-wrap: anywhere; }}
+    .you-chip {{ padding: 1px 7px; border-radius: 999px; background: #eef2f7; color: var(--muted);
+      font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }}
+    /* The users kebab carries a role picker and a dashboard checklist, so it
+       needs a little more room than the account rows' rename/delete panels. */
+    .user-kebab .dash-kebab-menu {{ width: 296px; }}
+    .user-kebab .dash-kebab-panel select,
+    .user-kebab .dash-kebab-panel input {{ width: 100%; max-width: 100%; margin: 0; }}
+    .user-kebab .dash-kebab-panel .client-checks {{ max-height: 190px; overflow-y: auto; }}
+    .sr-only {{ position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip: rect(0 0 0 0); white-space: nowrap; }}
     .avatar {{ position: relative; display: inline-flex; width: 40px; height: 40px; cursor: pointer; flex-shrink: 0; }}
     .avatar-img, .avatar-initials {{ width: 40px; height: 40px; border-radius: 50%; object-fit: cover; display: grid; place-items: center; }}
     .avatar-initials {{ background: linear-gradient(135deg, #dbe7f7, #eef4fb); color: #35507a; font-weight: 800; font-size: .82rem; letter-spacing: .02em; border: 1px solid var(--border); }}
@@ -1989,13 +2137,6 @@ def render_admin_page(
       Menlo, monospace; font-size: .82rem; background: #fff; max-width: none; margin: 0; }}
     .invite-copy button {{ flex: 0 0 auto; }}
     .invite-panel .hint {{ margin-top: 8px; }}
-    .row-actions {{ display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: flex-end; }}
-    .row-fold {{ margin: 0; font-size: .86rem; }}
-    .row-fold summary {{ cursor: pointer; list-style: none; color: var(--accent); font-weight: 600; }}
-    .row-fold summary::-webkit-details-marker {{ display: none; }}
-    .row-fold-form {{ margin-top: 8px; padding: 10px; background: #fafbfc; border-radius: 8px; border: 1px solid var(--border);
-      position: absolute; z-index: 6; width: 260px; max-width: 80vw; box-shadow: 0 6px 22px rgba(16,33,67,.14); }}
-    .row-fold-form input {{ max-width: 100%; margin-bottom: 8px; }}
     .ckbx-legend {{ display: block; font-size: .7rem; font-weight: 700; color: var(--muted);
       text-transform: uppercase; letter-spacing: .04em; margin: 2px 0 6px; }}
     .client-checks {{ display: flex; flex-direction: column; gap: 5px; max-height: 190px; overflow-y: auto;
@@ -2009,26 +2150,31 @@ def render_admin_page(
     .group-select, .slug-fallback {{ width: 100%; max-width: 100%; margin-bottom: 8px; }}
     .slug-fallback {{ font-size: .86rem; }}
     /* ---- Users: header, count chip, search, segmented control ---- */
-    .users-head {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
-      flex-wrap: wrap; margin-bottom: 18px; }}
-    .users-head-left {{ min-width: 200px; }}
-    .users-head-right {{ display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }}
-    .section-sub {{ margin: 4px 0 0; font-size: .84rem; color: var(--muted); }}
+    .users-head {{ display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      margin-bottom: 14px; flex-wrap: wrap; }}
+    .users-head-right {{ display: flex; align-items: center; gap: 10px; flex-shrink: 0; }}
+    .users-showing {{ font-size: .8rem; color: var(--muted); white-space: nowrap; }}
+    .users-showing b {{ color: var(--navy); }}
     .count-chip {{ display: inline-block; min-width: 22px; padding: 1px 9px; border-radius: 999px;
-      background: #eef2f7; color: var(--muted); font-size: .78rem; font-weight: 700; vertical-align: middle;
-      margin-left: 6px; }}
+      background: #eaf0f9; color: var(--accent); font-size: .78rem; font-weight: 700;
+      vertical-align: 2px; }}
     .seg {{ display: inline-flex; padding: 3px; background: #eef2f7; border-radius: 11px; gap: 2px; }}
     .seg-btn {{ display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent;
-      padding: 6px 13px; border-radius: 8px; font-size: .83rem; font-weight: 650; color: var(--muted);
+      padding: 7px 13px; border-radius: 9px; font-size: .84rem; font-weight: 650; color: var(--muted);
       cursor: pointer; transition: background .14s, color .14s, box-shadow .14s; }}
     .seg-btn:hover {{ color: var(--navy); }}
     .seg-btn.is-active {{ background: #fff; color: var(--navy); box-shadow: 0 1px 3px rgba(10,37,64,.12); }}
     .seg-count {{ display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 999px; font-size: .72rem;
-      font-weight: 700; background: rgba(10,37,64,.08); color: inherit; }}
+      font-weight: 700; background: #dfe6f0; color: #64748b; }}
     .seg-btn.is-active .seg-count {{ background: #e6edf7; color: var(--accent); }}
-    .users-search {{ position: relative; display: flex; align-items: center; }}
-    .users-search svg {{ position: absolute; left: 11px; color: var(--muted); pointer-events: none; }}
-    .users-search input {{ margin: 0; padding: 9px 12px 9px 34px; width: 280px; max-width: 60vw; font-size: .88rem; }}
+    /* The add-user form carries more fields than "Add account", so it opens a
+       little wider and keeps one field per line. */
+    .user-add-form {{ width: 420px; display: flex; flex-direction: column; gap: 12px; }}
+    .user-add-form > div {{ min-width: 0; }}
+    .user-add-form label {{ display: block; }}
+    .user-add-form input, .user-add-form select {{ width: 100%; max-width: 100%; margin: 0; }}
+    .user-add-form .hint {{ margin: 6px 0 0; }}
+    .user-add-form button.primary {{ width: 100%; margin: 0; }}
     .users-empty {{ padding: 18px 8px; text-align: center; font-size: .9rem; }}
     /* ---- Audience panels (team vs clients) ---- */
     .user-group {{ margin-top: 8px; }}
@@ -2076,9 +2222,10 @@ def render_admin_page(
     .group-chips {{ display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }}
     .grp-chip {{ display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: .74rem; font-weight: 600;
       background: #f1f5f9; color: #334155; border: 1px solid var(--border); }}
-    .group-row-actions {{ display: flex; align-items: center; gap: 6px 14px; flex-shrink: 0; position: relative; }}
-    .group-edit-form {{ width: 300px; }}
-    .group-edit-form input {{ max-width: 100%; }}
+    .group-row-actions {{ display: flex; align-items: center; flex-shrink: 0; position: relative; }}
+    .group-row-desc {{ margin-left: 8px; padding-left: 8px; border-left: 1px solid var(--border); }}
+    .group-kebab .dash-kebab-menu {{ width: 296px; }}
+    .group-kebab .dash-kebab-panel input {{ width: 100%; }}
     /* ---- Accounts: filterable head + responsive card grid ---- */
     .dash-head-right {{ display: flex; align-items: center; gap: 10px; flex-shrink: 0; }}
     .dash-search {{ display: flex; align-items: center; gap: 7px; padding: 7px 12px; border: 1px solid var(--line);
@@ -2132,7 +2279,6 @@ def render_admin_page(
        truncated "Architecture, Engineering & Con…" is not a choosable option. */
     .dash-kebab-check span {{ min-width: 0; line-height: 1.3; }}
     .dash-row-actions {{ display: flex; align-items: center; gap: 6px; flex-shrink: 0; position: relative; }}
-    .dash-row-note {{ font-size: .74rem; color: var(--muted); font-weight: 600; }}
     .dash-icon-btn {{ display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
       border-radius: 9px; border: 1px solid var(--line); background: #fff; color: var(--navy); cursor: pointer;
       text-decoration: none; list-style: none; transition: background .12s, border-color .12s, color .12s; }}
@@ -2169,14 +2315,15 @@ def render_admin_page(
       .row > div {{ min-width: 0; flex-basis: 100%; }}
       button.primary {{ width: 100%; }}
 
-      /* Users section header: stack the title, filter pills, and
-         search so nothing is squeezed off the right edge. */
+      /* Users section header: stack the title, search, Add button, and the
+         audience filter so nothing is squeezed off the right edge. */
       .users-head {{ flex-direction: column; gap: 14px; }}
-      .users-head-right {{ align-items: stretch; width: 100%; }}
+      .users-head-right {{ flex-direction: column; align-items: stretch; width: 100%; }}
+      .users-head-right .dash-search {{ width: 100%; }}
+      .users-showing {{ display: none; }}
       .seg {{ width: 100%; justify-content: space-between; }}
-      .seg-btn {{ flex: 1; justify-content: center; }}
-      .users-search {{ width: 100%; }}
-      .users-search input {{ width: 100%; max-width: none; }}
+      .seg-btn {{ flex: 1; justify-content: center; padding: 8px 6px; font-size: .8rem; }}
+      .seg-btn .seg-count {{ display: none; }}
 
       /* User tables → cards. Drop the header row and let each user
          become a bordered card: avatar + email on top, then one
@@ -2190,25 +2337,32 @@ def render_admin_page(
         padding: 12px 14px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(10,37,64,.05);
       }}
       .user-table td {{ display: block; border: none; padding: 0; }}
-      .user-table td.col-av {{ padding-right: 12px; }}
-      .user-table td.col-user {{ flex: 1; min-width: 0; font-size: .95rem;
-        font-weight: 700; color: var(--navy); overflow-wrap: anywhere; }}
+      /* The identity cell and the kebab share the card's top line; every other
+         field gets a full-width line of its own. Two details matter: `order`
+         pulls the actions cell up next to the identity cell (flex lines pack in
+         order, and the full-width fields sit between them in the markup), and
+         the identity cell needs a real basis — `flex: 1` resolves to a 0 basis,
+         which lets the next field crowd onto the line and squash it to nothing. */
+      .user-table td.col-user {{ order: 1; flex: 1 1 50%; min-width: 0; font-size: .95rem;
+        overflow-wrap: anywhere; }}
       .user-table td.col-user::before {{ display: none; }}
-      .user-table td:not(.col-av):not(.col-user) {{
-        width: 100%; display: flex; align-items: center; justify-content: space-between;
+      .user-table td:not(.col-user):not(.col-actions) {{
+        order: 3; flex: 0 0 100%; display: flex; align-items: center; justify-content: space-between;
         gap: 14px; padding: 9px 0 0; margin-top: 9px; border-top: 1px solid var(--line);
         text-align: right; font-size: .86rem;
       }}
-      .user-table td:not(.col-av):not(.col-user)::before {{
+      .user-table td:not(.col-user):not(.col-actions)::before {{
         content: attr(data-label); flex-shrink: 0; text-align: left;
         font-size: .7rem; font-weight: 700; text-transform: uppercase;
         letter-spacing: .3px; color: var(--muted);
       }}
       .user-table td.col-access {{ align-items: flex-start; }}
       .user-table td.col-access .chip-row {{ justify-content: flex-end; }}
-      .user-table td.col-actions {{ padding-top: 10px; }}
+      /* Actions sit beside the email on a card, not on a labelled line of
+         their own — the kebab is a 34px button, it needs no row. */
+      .user-table td.col-actions {{ order: 2; flex: 0 0 auto; padding: 0 0 0 10px; margin: 0; border-top: 0; }}
       .user-table td.col-actions::before {{ content: none; }}
-      .user-table td.col-actions .row-actions {{ width: 100%; justify-content: flex-end; }}
+      .user-add-form {{ width: auto; }}
       .user-table tr.empty-row {{ display: block; padding: 14px 4px; }}
       .user-table tr.empty-row td {{ display: block; width: 100%; }}
 
@@ -2218,7 +2372,6 @@ def render_admin_page(
       /* Absolutely-positioned popovers (reset password, change role,
          add/delete dashboard, edit group) can't fit beside their
          trigger on a phone — float them as a full-width bottom sheet. */
-      .row-fold-form,
       .dash-add-fold .dash-add-form,
       .dash-kebab .dash-kebab-menu,
       .dash-add-form {{
@@ -2256,76 +2409,75 @@ def render_admin_page(
           them set their own password and signs them in. It works once.</p>
       </div>"""
 
-    create_user_html = f"""
-    <section>
-      <h2>Create user</h2>{invite_panel}
-      <form method="post" action="/admin/users" class="role-form" id="createUserForm">
-        <div class="row">
-          <div>
-            <label for="email">Email</label>
-            <input id="email" name="email" type="email" required>
-          </div>
-          <div>
-            <label for="setup_mode">How they get in</label>
-            <select id="setup_mode" name="setup_mode" class="setup-select">
-              <option value="invite">Send an invite link (they pick their password)</option>
-              <option value="password">Set a password myself</option>
-            </select>
-            <p class="hint setup-hint-invite">You'll get a one-time link to pass along.
-              The account can't be signed into until they redeem it.</p>
-            <div class="password-only" style="margin-top:8px">
-              <label for="password">Password (min 10 chars)</label>
-              <input id="password" name="password" type="password" minlength="10">
-            </div>
-          </div>
-        </div>
-        <div class="row">
-          <div>
-            <label for="role">Role</label>
-            <select id="role" name="role" class="role-select">
-              <option value="client">client</option>
-              <option value="standard">standard (Sagefrog staff, view-only)</option>
-              <option value="admin">admin</option>
-            </select>
-          </div>
-          <div class="client-only">
-            <label for="group_id">Client group (recommended)</label>
-            {_group_select(None)}
-            <p class="hint">Pick a group to grant its dashboards — no slug to mistype.
-              Leave <em>Ungrouped</em> to bind a single dashboard by slug below.</p>
-            <label for="client_slug" style="margin-top:8px">Client slug (ungrouped only)</label>
-            <input id="client_slug" name="client_slug" type="text" placeholder="penn"
-              list="clientSlugOptions">
-            {client_slug_datalist}
-          </div>
-        </div>
-        <div class="standard-only">
-          <span class="ckbx-legend">Clients this user can access (standard role)</span>
-          {_client_checkboxes(set())}
-        </div>
-        <button type="submit" class="primary" id="createUserBtn">Create user &amp; get invite link</button>
-      </form>
-    </section>"""
+    # ---- Add-user form (folds out of the roster header) ----
+    # Adding a user is occasional; reading the roster is constant. So the form
+    # lives behind the header's "Add user" button rather than pushing the roster
+    # down the page, exactly as "Add account" does on Accounts.
+    add_user_html = f"""
+          <details class="dash-add-fold">
+            <summary class="add-dash-btn">{_SVG_PLUS}Add user</summary>
+            <form method="post" action="/admin/users" class="dash-add-form user-add-form role-form" id="createUserForm">
+              <div>
+                <label for="email">Email</label>
+                <input id="email" name="email" type="email" required placeholder="name@company.com">
+              </div>
+              <div>
+                <label for="role">Role</label>
+                <select id="role" name="role" class="role-select">
+                  <option value="client">client — external portal login</option>
+                  <option value="standard">standard — Sagefrog staff, view-only</option>
+                  <option value="admin">admin — full access</option>
+                </select>
+              </div>
+              <div class="client-only">
+                <label for="group_id">Client group (recommended)</label>
+                {_group_select(None)}
+                <p class="hint">Pick a group to grant its dashboards — no slug to mistype.
+                  Leave <em>Ungrouped</em> to bind a single dashboard by slug below.</p>
+                <label for="client_slug" style="margin-top:8px">Client slug (ungrouped only)</label>
+                <input id="client_slug" name="client_slug" type="text" placeholder="penn"
+                  list="clientSlugOptions">
+                {client_slug_datalist}
+              </div>
+              <div class="standard-only">
+                <span class="ckbx-legend">Clients this user can access</span>
+                {_client_checkboxes(set())}
+              </div>
+              <div>
+                <label for="setup_mode">How they get in</label>
+                <select id="setup_mode" name="setup_mode" class="setup-select">
+                  <option value="invite">Send an invite link (they pick their password)</option>
+                  <option value="password">Set a password myself</option>
+                </select>
+                <p class="hint setup-hint-invite">You'll get a one-time link to pass along.
+                  The account can't be signed into until they redeem it.</p>
+                <div class="password-only" style="margin-top:8px">
+                  <label for="password">Password (min 10 chars)</label>
+                  <input id="password" name="password" type="password" minlength="10">
+                </div>
+              </div>
+              <button type="submit" class="primary" id="createUserBtn">Create user &amp; get invite link</button>
+            </form>
+          </details>"""
 
     # ---- Users roster section (lives on the Users page) ----
     users_html = f"""
-    <section class="users-section">
+    <section class="dash-section users-section">
+      {invite_panel}
       <div class="users-head">
-        <div class="users-head-left">
-          <h2 style="margin:0">Users <span class="count-chip" id="userCount">{user_count}</span></h2>
-          <p class="section-sub">Sagefrog staff and client portal logins, kept separate so access is never confused.</p>
+        <div class="seg" role="tablist" aria-label="Filter by audience">
+          <button type="button" class="seg-btn is-active" data-scope="all" role="tab" aria-selected="true">All <span class="seg-count">{user_count}</span></button>
+          <button type="button" class="seg-btn" data-scope="team" role="tab" aria-selected="false">Sagefrog team <span class="seg-count">{team_count}</span></button>
+          <button type="button" class="seg-btn" data-scope="client" role="tab" aria-selected="false">Clients <span class="seg-count">{client_count}</span></button>
         </div>
         <div class="users-head-right">
-          <div class="seg" role="tablist" aria-label="Filter by audience">
-            <button type="button" class="seg-btn is-active" data-scope="all" role="tab" aria-selected="true">All</button>
-            <button type="button" class="seg-btn" data-scope="team" role="tab" aria-selected="false">Sagefrog team <span class="seg-count">{team_count}</span></button>
-            <button type="button" class="seg-btn" data-scope="client" role="tab" aria-selected="false">Clients <span class="seg-count">{client_count}</span></button>
-          </div>
-          <div class="users-search">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-            <input type="search" id="userSearch" placeholder="Filter by name, group, or dashboard…"
+          <span class="users-showing" aria-live="polite"><b id="userCount">{user_count}</b> shown</span>
+          <div class="dash-search">
+            {_SVG_SEARCH}
+            <input type="search" id="userSearch" placeholder="Filter by email, group, or dashboard…"
               autocomplete="off" aria-label="Filter users">
           </div>
+          {add_user_html}
         </div>
       </div>
 
@@ -2340,7 +2492,7 @@ def render_admin_page(
         </div>
         <div class="user-table-wrap">
           <table class="user-table">
-            <thead><tr><th class="col-av"></th><th>User</th><th>Role</th><th>Client access</th><th>Last session</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>User</th><th>Role</th><th>Client access</th><th>Last session</th><th>Status</th><th class="col-actions"><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>{team_body}</tbody>
           </table>
           <p class="users-empty muted" hidden>No Sagefrog team members match your filter.</p>
@@ -2358,7 +2510,7 @@ def render_admin_page(
         </div>
         <div class="user-table-wrap">
           <table class="user-table">
-            <thead><tr><th class="col-av"></th><th>User</th><th>Group</th><th>Dashboards</th><th>Last session</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>User</th><th>Group</th><th>Dashboards</th><th>Last session</th><th>Status</th><th class="col-actions"><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>{client_body}</tbody>
           </table>
           <p class="users-empty muted" hidden>No client portal users match your filter.</p>
@@ -2415,7 +2567,7 @@ def render_admin_page(
     )
 
     if page == "users":
-        body = f"{create_user_html}{users_html}{groups_section_html}"
+        body = f"{users_html}{groups_section_html}"
     elif page == "feature-requests":
         body = feature_requests_html or (
             '<section><p class="muted" style="margin:0">Feature requests are only '
@@ -2436,7 +2588,7 @@ def render_admin_page(
     {body}
   </main>"""
     scripts = (
-        f"<script>{dash_delete_js}</script>"
+        f"<script>{_KEBAB_JS}</script>"
         f"<script>{_ADMIN_AVATAR_JS}</script>"
         f"<script>{_ROLE_TOGGLE_JS}</script>"
         f"<script>{_USER_SEARCH_JS}</script>"
