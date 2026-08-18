@@ -134,7 +134,7 @@ class UserTableTests(unittest.TestCase):
     def test_user_count_chip(self) -> None:
         html = _render()
         self.assertIn('id="userCount"', html)
-        self.assertIn('id="userCount">3</span>', html)  # three users total
+        self.assertIn('id="userCount">3</b>', html)  # three users total
 
 
 class AudienceSeparationTests(unittest.TestCase):
@@ -190,6 +190,83 @@ class GroupPreviewTests(unittest.TestCase):
         self.assertIn("syncGroupPreview", html)
         self.assertIn("Grants access to", html)
 
+
+class RowActionMenuTests(unittest.TestCase):
+    """Every row action lives in one kebab menu, not a stack of loose links."""
+
+    def test_each_row_has_exactly_one_kebab(self) -> None:
+        html = _render()
+        rows = re.findall(r'<tr class="user-row".*?</tr>', html, re.S)
+        self.assertEqual(len(rows), 3)
+        for row in rows:
+            self.assertEqual(row.count('class="dash-kebab user-kebab"'), 1)
+
+    def test_actions_are_panels_inside_the_menu(self) -> None:
+        html = _render()
+        row = next(
+            r for r in re.findall(r'<tr class="user-row".*?</tr>', html, re.S)
+            if "staff@sf.com" in r
+        )
+        for panel in ("pw-3", "invite-3", "role-3", "off-3"):
+            self.assertIn(f'data-kebab-panel="{panel}"', row)
+            self.assertIn(f'data-panel="{panel}"', row)
+        # The old inline text links are gone.
+        self.assertNotIn('class="row-fold"', row)
+        self.assertNotIn('class="link danger"', row)
+
+    def test_own_row_cannot_be_re_roled_or_deactivated(self) -> None:
+        html = _render()
+        own = next(
+            r for r in re.findall(r'<tr class="user-row".*?</tr>', html, re.S)
+            if "admin@sf.com" in r
+        )
+        self.assertIn(">You</span>", own)
+        self.assertNotIn('data-panel="role-1"', own)
+        self.assertNotIn('data-panel="off-1"', own)
+        # …but a self password reset is still offered.
+        self.assertIn('data-panel="pw-1"', own)
+
+    def test_kebab_js_is_always_emitted(self) -> None:
+        # The menus used to depend on script that only shipped with the
+        # dashboard registry section; the Users page ships without it.
+        self.assertIn("data-kebab-panel", _render())
+        self.assertIn(".dash-kebab[open]", _render())
+
+
+class RosterFirstLayoutTests(unittest.TestCase):
+    """The roster leads the page; creating a user folds out of its header."""
+
+    def test_create_form_is_inside_the_roster_header(self) -> None:
+        html = _render()
+        head = re.search(r'<div class="users-head">.*?</div>\s*<div class="user-group"', html, re.S)
+        self.assertIsNotNone(head)
+        self.assertIn('id="createUserForm"', head.group(0))
+        self.assertIn(">Add user</summary>", head.group(0))
+
+    def test_roster_precedes_the_groups_section(self) -> None:
+        html = _render()
+        self.assertLess(
+            html.index('class="user-group"'),
+            html.index('<section class="dash-section groups-section">'),
+        )
+
+    def test_no_duplicated_page_title(self) -> None:
+        # The page header already says "Users"; the card used to repeat it.
+        self.assertEqual(_render().count(">Users <span"), 0)
+
+
+class GroupRowActionTests(unittest.TestCase):
+    def test_group_rows_use_the_same_kebab(self) -> None:
+        html = _render()
+        self.assertIn('class="dash-kebab group-kebab"', html)
+        self.assertIn('data-panel="gedit-7"', html)
+
+    def test_delete_only_offered_for_an_empty_group(self) -> None:
+        html = _render()
+        # Group 7 has a member; group 8 does not.
+        self.assertNotIn('data-panel="gdel-7"', html)
+        self.assertIn('data-panel="gdel-8"', html)
+        self.assertIn("Reassign its members", html)
 
 if __name__ == "__main__":
     unittest.main()

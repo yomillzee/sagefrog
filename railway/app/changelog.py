@@ -63,6 +63,28 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-18",
+        title="The Users page leads with the roster",
+        area="Users",
+        kind="improved",
+        summary=(
+            "The user list is now the first thing on the page, each row's "
+            "controls sit behind one “⋮” menu instead of four blue links, and "
+            "creating a user folds out of the header — so the page reads as a "
+            "roster you scan rather than a form you scroll past."
+        ),
+        details=(
+            "Add user is a button in the roster header. The one-time invite "
+            "link still appears at the top of the page when you create one.",
+            "Reset password, invite link, role & access, and Deactivate all "
+            "live in the row's ⋮ menu, each with a short note on what it does.",
+            "The avatar and email sit together as one column, rows highlight "
+            "on hover, and a live “N shown” count follows the filter box.",
+            "Client groups rows got the same ⋮ menu, and a group that still "
+            "has members says so instead of offering a delete that can't run.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
         title="Email Performance sorts, and looks like the rest of the dashboard",
         area="Email Performance",
         kind="improved",
