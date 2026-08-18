@@ -62,6 +62,32 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-08-18",
+        title="A keyword watchlist to benchmark the keywords we write for",
+        area="Search Console",
+        kind="new",
+        summary=(
+            "Search Console has a new Keyword watchlist where each row is one "
+            "keyword you entered — with the page it was written for, a 13-week "
+            "rank spark line, and its impressions, clicks and CTR — so a "
+            "\"this blog is for that keyword\" commitment has somewhere to be "
+            "watched."
+        ),
+        details=(
+            "Admins add rows from Edit on the panel: the keyword, plus "
+            "optionally the URL or path it is aimed at.",
+            "The spark line rises when the rank improves and is green when the "
+            "keyword ends the 13 weeks better than it started.",
+            "End a keyword with * to count its variants too, instead of only "
+            "the exact search.",
+            "A keyword that has not earned an impression yet still shows as a "
+            "row, so it stays on the list rather than disappearing.",
+            "The page's figures are that page's own totals across every search "
+            "it appears for — Search Console does not report clicks per "
+            "keyword-and-page pair.",
+        ),
+    ),
+    Entry(
         date="2026-08-17",
         title="Search Console follows the date range again",
         area="Search Console",

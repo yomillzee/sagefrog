@@ -1052,6 +1052,65 @@ def _build_gsc_keyword_weekly(payload: dict) -> list[dict]:
     return out
 
 
+def _watch_terms_from(payload: dict) -> list[str]:
+    terms = payload.get("terms") or []
+    return [str(t) for t in terms if str(t).strip()] if isinstance(terms, list) else []
+
+
+def _build_gsc_watchlist(payload: dict) -> list[dict]:
+    """One row per watched keyword (a LIST) for the keyword watchlist."""
+    rows = []
+    for term in _watch_terms_from(payload):
+        impressions = int(120 + 3200 * _u("wl", term))
+        ctr = 0.02 + 0.07 * _u("wlc", term)
+        pos = _round2(2 + 14 * _u("wlp", term))
+        prior = _round2(pos + 3 - 6 * _u("wlpp", term))
+        rows.append({"term": term, "clicks": int(impressions * ctr),
+                     "impressions": impressions, "ctr": _round2(ctr * 100),
+                     "avg_position": pos, "prior_avg_position": prior,
+                     "delta_position": _round2(prior - pos),
+                     "query_count": 1 + int(11 * _u("wlqc", term)) if term.endswith("*") else 1})
+    rows.sort(key=lambda r: r["clicks"], reverse=True)
+    return rows
+
+
+def _build_gsc_watchlist_weekly(payload: dict) -> list[dict]:
+    """Per-keyword weekly rank series (a LIST), ~13 weeks, for the sparklines."""
+    _start, end = _dates(payload)
+    first_week = end - timedelta(days=7 * 13)
+    out = []
+    for term in _watch_terms_from(payload):
+        # Drift toward a better rank over the window so the spark reads as a
+        # trend rather than noise, with a per-term wobble on top.
+        base = 4 + 12 * _u("wlp", term)
+        for w in range(13):
+            wk = first_week + timedelta(days=7 * w)
+            pos = base - (w / 12) * (1.5 + 5 * _u("wldrift", term)) + 1.2 * (_u("wlw", term, w) - 0.5)
+            impressions = int(30 + 700 * _u("wlwi", term, w))
+            clicks = int(impressions * (0.02 + 0.07 * _u("wlwc", term, w)))
+            out.append({"term": term, "week_start": wk.isoformat(),
+                        "clicks": clicks, "impressions": impressions,
+                        "ctr": _round2(clicks / impressions * 100) if impressions else 0.0,
+                        "avg_position": _round2(max(1.0, pos))})
+    return out
+
+
+def _build_gsc_watchlist_pages(payload: dict) -> list[dict]:
+    """Tied pages' own search performance (a LIST), keyed by the requested key."""
+    pages = payload.get("pages") or []
+    out = []
+    for key in ([str(p) for p in pages] if isinstance(pages, list) else []):
+        impressions = int(400 + 6000 * _u("wlpg", key))
+        ctr = 0.02 + 0.06 * _u("wlpgc", key)
+        path = key if key.startswith("/") else key
+        out.append({"page_key": key,
+                    "page_url": key if key.startswith("http") else f"{_SITE_URL.rstrip('/')}{path}",
+                    "clicks": int(impressions * ctr), "impressions": impressions,
+                    "ctr": _round2(ctr * 100),
+                    "avg_position": _round2(1 + 18 * _u("wlpgp", key))})
+    return out
+
+
 def _build_semrush_summary(payload: dict) -> dict:
     organic_keywords = 1240 + int(600 * _u("sem_ok"))
     organic_traffic = 8600 + int(5000 * _u("sem_ot"))
@@ -1193,11 +1252,15 @@ _BUILDERS = {
     "gsc.summary": _build_gsc_summary,
     "gsc.keyword_matches": _build_gsc_keyword_matches,
     "gsc.keyword_weekly_trend": _build_gsc_keyword_weekly,
+    "gsc.watchlist": _build_gsc_watchlist,
+    "gsc.watchlist_weekly": _build_gsc_watchlist_weekly,
+    "gsc.watchlist_pages": _build_gsc_watchlist_pages,
     "semrush.summary": _build_semrush_summary,
 }
 
 # Suffixes that return a LIST rather than a dict (so the empty fallback matches).
-_LIST_KEYS = {"gsc.keyword_matches", "gsc.keyword_weekly_trend"}
+_LIST_KEYS = {"gsc.keyword_matches", "gsc.keyword_weekly_trend",
+              "gsc.watchlist", "gsc.watchlist_weekly", "gsc.watchlist_pages"}
 
 
 def generate(key: str, payload: dict | None = None) -> Any:
