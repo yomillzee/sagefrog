@@ -84,6 +84,86 @@ class OrganicFetchTests(unittest.TestCase):
         for name, fn in self._orig.items():
             setattr(organic, name, fn)
 
+    # ── Post pagination ───────────────────────────────────────────────────────
+    # Getting this wrong is invisible in production: page 1 returns 50 real
+    # posts, the sync reports success, and the client's history silently stops
+    # at one page. These pin both the cursor and the index-based paths.
+
+    def _capture_pages(self, pages):
+        """Patch the transport to serve ``pages`` in order, recording params."""
+        calls = []
+
+        def fake_get(path, *, params=None, **kw):
+            calls.append({"path": path, "params": list(params or [])})
+            return pages[min(len(calls) - 1, len(pages) - 1)]
+
+        organic._linkedin_get_with_versions = fake_get  # type: ignore
+        return calls
+
+    def test_posts_follow_metadata_cursor(self) -> None:
+        pages = [
+            {"elements": [{"id": "a"}, {"id": "b"}], "metadata": {"nextPageToken": "T2"}},
+            {"elements": [{"id": "c"}], "metadata": {}},
+        ]
+        calls = self._capture_pages(pages)
+        out = organic._list_org_posts("777", access_token="t", env=None, count=2)
+        self.assertEqual([p["id"] for p in out], ["a", "b", "c"])
+        self.assertEqual(len(calls), 2)
+        self.assertIn(("pageToken", "T2"), calls[1]["params"])
+
+    def test_posts_follow_paging_cursor(self) -> None:
+        """Some API versions carry the cursor under ``paging`` instead."""
+        pages = [
+            {"elements": [{"id": "a"}], "paging": {"nextPageToken": "T2"}},
+            {"elements": [{"id": "b"}], "paging": {}},
+        ]
+        self._capture_pages(pages)
+        out = organic._list_org_posts("777", access_token="t", env=None, count=1)
+        self.assertEqual([p["id"] for p in out], ["a", "b"])
+
+    def test_finder_params_survive_page_two(self) -> None:
+        """The regression that capped every client at 50 posts: the finder was
+        baked into the path, and httpx drops a URL's query when params are
+        passed — so page 2 would have lost q/author."""
+        pages = [
+            {"elements": [{"id": "a"}], "metadata": {"nextPageToken": "T2"}},
+            {"elements": [{"id": "b"}], "metadata": {}},
+        ]
+        calls = self._capture_pages(pages)
+        organic._list_org_posts("777", access_token="t", env=None, count=1)
+        for call in calls:
+            self.assertNotIn("?", call["path"])
+            self.assertIn(("q", "author"), call["params"])
+            self.assertIn(("author", "urn:li:organization:777"), call["params"])
+
+    def test_posts_fall_back_to_index_paging(self) -> None:
+        """No cursor anywhere: page with ``start`` until a short page lands."""
+        pages = [
+            {"elements": [{"id": "a"}, {"id": "b"}]},
+            {"elements": [{"id": "c"}, {"id": "d"}]},
+            {"elements": [{"id": "e"}]},
+        ]
+        calls = self._capture_pages(pages)
+        out = organic._list_org_posts("777", access_token="t", env=None, count=2)
+        self.assertEqual([p["id"] for p in out], ["a", "b", "c", "d", "e"])
+        self.assertEqual(len(calls), 3)
+        self.assertIn(("start", 2), calls[1]["params"])
+        self.assertIn(("start", 4), calls[2]["params"])
+
+    def test_posts_stop_when_page_repeats(self) -> None:
+        """An API that ignores paging must not spin us through max_pages."""
+        page = {"elements": [{"id": "a"}, {"id": "b"}]}
+        calls = self._capture_pages([page])
+        out = organic._list_org_posts("777", access_token="t", env=None, count=2)
+        self.assertEqual([p["id"] for p in out], ["a", "b"])
+        self.assertEqual(len(calls), 2)  # second page was all duplicates -> stop
+
+    def test_posts_single_short_page_makes_one_call(self) -> None:
+        calls = self._capture_pages([{"elements": [{"id": "a"}]}])
+        out = organic._list_org_posts("777", access_token="t", env=None, count=50)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(len(calls), 1)
+
     def test_list_organizations(self) -> None:
         acls = {
             "elements": [
@@ -162,6 +242,34 @@ class OrganicFetchTests(unittest.TestCase):
         self.assertEqual(row["likes"], 12)
         self.assertEqual(row["published_at"], in_window.isoformat())
         self.assertEqual(row["org_id"], "777")
+
+    def test_reaction_calls_are_capped_at_the_most_viewed_posts(self) -> None:
+        """Reactions are one call per post, so a long backfill must not fan out
+        over every post in the window."""
+        posts = [
+            {"id": f"urn:li:share:{i}", "createdAt": organic._epoch_ms(date(2026, 3, 15))}
+            for i in range(organic._REACTION_POST_LIMIT + 25)
+        ]
+        organic._list_org_posts = lambda org_id, **kw: posts  # type: ignore
+        # Impressions ascend with i, so the most-viewed posts are the last ones.
+        organic._share_stats_by_urn = lambda org_id, urns, **kw: {  # type: ignore
+            u: {"impressionCount": int(u.split(":")[-1])} for u in urns
+        }
+        asked: list[list[str]] = []
+
+        def fake_reactions(urns, **kw):
+            asked.append(list(urns))
+            return {}
+
+        organic._reactions_by_urn = fake_reactions  # type: ignore
+        organic.fetch_posts_with_stats(
+            "777", start=date(2026, 1, 1), end=date(2026, 12, 31), access_token="t"
+        )
+        self.assertEqual(len(asked), 1)
+        self.assertEqual(len(asked[0]), organic._REACTION_POST_LIMIT)
+        # The highest-impression post is included; the lowest is not.
+        self.assertIn(f"urn:li:share:{len(posts) - 1}", asked[0])
+        self.assertNotIn("urn:li:share:0", asked[0])
 
     def test_fetch_follower_daily_parses_gains_and_total(self) -> None:
         day = date(2026, 6, 5)
