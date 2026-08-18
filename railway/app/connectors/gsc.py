@@ -10,14 +10,46 @@ from connectors.base import ConnectorHandler, SyncResult, register
 _log = logging.getLogger(__name__)
 
 
-def _describe_errors(errors: Any) -> str | None:
-    """Flatten sync_range()'s per-day error list into one sync-history message."""
-    items = [str(e) for e in (errors or []) if str(e).strip()]
+def _describe_errors(
+    errors: Any,
+    *,
+    failed_days: int | None = None,
+    error_count: int | None = None,
+    days_synced: int | None = None,
+) -> str | None:
+    """Turn sync_range()'s per-day failures into one sync-history message.
+
+    sync_range caps the "errors" list it returns, and each failed day
+    contributes up to two entries (query + page), so len(errors) is neither the
+    number of failures nor the number of days. It reports both totals
+    separately; prefer them, and fall back to the list only for older callers.
+
+    Every failing day usually carries the *same* reason, so the reason is
+    deduplicated rather than repeated until the 500-char column truncates it --
+    "175 of 180 days failed: <one 403>" is the useful shape.
+    """
+    items = [str(e).strip() for e in (errors or []) if str(e).strip()]
     if not items:
         return None
-    head = "; ".join(items[:3])
-    more = f" (+{len(items) - 3} more)" if len(items) > 3 else ""
-    return f"{len(items)} day(s) failed: {head}{more}"[:500]
+
+    # Strip the "YYYY-MM-DD query: " / " page: " prefix so identical reasons collapse.
+    reasons: list[str] = []
+    for it in items:
+        reason = it.split(": ", 1)[1].strip() if ": " in it else it
+        if reason and reason not in reasons:
+            reasons.append(reason)
+
+    n_days = failed_days if failed_days else None
+    if n_days and days_synced:
+        scope = f"{n_days} of {days_synced} days failed"
+    elif n_days:
+        scope = f"{n_days} day(s) failed"
+    else:
+        scope = f"{error_count or len(items)} fetch(es) failed"
+
+    head = " | ".join(reasons[:2])
+    more = f" (+{len(reasons) - 2} other reasons)" if len(reasons) > 2 else ""
+    return f"{scope}: {head}{more}"[:500]
 
 
 class GSCConnector(ConnectorHandler):
@@ -90,7 +122,12 @@ class GSCConnector(ConnectorHandler):
             # just "error" meant a sync where every single day's GSC fetch failed
             # -- wrong property, revoked OAuth, 403 -- was recorded as
             # "completed, 0 rows" with a blank error column, every day, forever.
-            error = result.get("error") or _describe_errors(result.get("errors"))
+            error = result.get("error") or _describe_errors(
+                result.get("errors"),
+                failed_days=result.get("failed_days"),
+                error_count=result.get("error_count"),
+                days_synced=result.get("days_synced"),
+            )
             # Refresh the GSC mart views over raw_gsc so the reporting tab has a
             # clean surface. Idempotent CREATE OR REPLACE; non-fatal.
             try:

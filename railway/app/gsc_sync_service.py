@@ -214,6 +214,22 @@ def list_accessible_properties() -> list[dict[str, str]]:
     return sorted(out, key=lambda e: e["site_url"])
 
 
+class GscApiError(RuntimeError):
+    """A Search Console API failure that carries the response body.
+
+    urllib's HTTPError stringifies to just "HTTP Error 403: Forbidden", which
+    is the same text whether the property is misspelled, the login lost access,
+    or the scope is wrong -- Google puts the distinguishing reason in the body
+    ("User does not have sufficient permission for site '...'"). Keep .code so
+    the 429 retry in _fetch_day still works.
+    """
+
+    def __init__(self, code: int, body: str, site_url: str) -> None:
+        self.code = code
+        self.body = body
+        super().__init__(f"HTTP {code} for {site_url}: {body}" if body else f"HTTP {code} for {site_url}")
+
+
 def _gsc_post(token: str, site_url: str, body: dict) -> dict:
     encoded = urllib.parse.quote(site_url, safe="")
     url = (
@@ -226,8 +242,17 @@ def _gsc_post(token: str, site_url: str, body: dict) -> dict:
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            raw = json.loads(exc.read().decode("utf-8", errors="replace"))
+            detail = str((raw.get("error") or {}).get("message") or "")[:200]
+        except Exception:
+            detail = ""
+        raise GscApiError(exc.code, detail, site_url) from exc
 
 
 def _fetch_day(creds, site_url: str, day: date, dimension: str) -> list[dict]:
@@ -240,7 +265,7 @@ def _fetch_day(creds, site_url: str, day: date, dimension: str) -> list[dict]:
                 "dimensions": ["date", dimension],
                 "rowLimit": _ROW_LIMIT, "startRow": start_row, "dataState": "final",
             })
-        except urllib.error.HTTPError as exc:
+        except GscApiError as exc:
             if exc.code == 429:
                 time.sleep(_RETRY_SLEEP)
                 continue
@@ -432,6 +457,7 @@ def sync_range(
 
     grand_q = grand_p = 0
     errors: list[str] = []
+    failed_days: set[date] = set()
     day_num = 0
 
     # Process newest → oldest so the dashboard's "Last 30 days" view fills in first.
@@ -447,12 +473,14 @@ def sync_range(
                 grand_q += _upsert(client, query_id, rows, q_schema, q_merge)
             except Exception as exc:
                 errors.append(f"{d} query: {exc}")
+                failed_days.add(d)
         if do_p:
             try:
                 rows   = _fetch_day(creds, site_url, d, "page")
                 grand_p += _upsert(client, page_id, rows, p_schema, p_merge)
             except Exception as exc:
                 errors.append(f"{d} page: {exc}")
+                failed_days.add(d)
         if day_num % 30 == 0 or day_num == total_days:
             log.info(
                 "GSC backfill progress: %d/%d days (latest=%s), "
@@ -467,7 +495,13 @@ def sync_range(
         "days_synced":   total_days,
         "query_rows":    grand_q,
         "page_rows":     grand_p,
+        # "errors" is capped so a 180-day backfill that fails on every day does
+        # not return 360 near-identical strings. The caps make len(errors) a
+        # floor, not a count, so report the real totals alongside: a sync stalled
+        # for 5 days and one that never worked at all look identical otherwise.
         "errors":        errors[:10],
+        "error_count":   len(errors),
+        "failed_days":   len(failed_days),
     }
 
 
