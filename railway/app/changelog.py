@@ -63,6 +63,30 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-18",
+        title="Search Console fills in gaps in its own history",
+        area="Search Console",
+        kind="fixed",
+        summary=(
+            "A sync interrupted partway — a deploy landing mid-backfill is the "
+            "usual way — used to leave a block of missing days that nothing ever "
+            "went back for: the next sync looked only at the newest date it "
+            "found, decided the client was current, and reported success while "
+            "weeks of the middle stayed blank. Search Console now checks every "
+            "day in the window and refills whatever is missing, so a broken "
+            "sync repairs itself on the next run."
+        ),
+        details=(
+            "Two clients were missing several weeks each — those days refill "
+            "automatically now.",
+            "High-traffic days were also cut off at 5,000 keywords each, so "
+            "clicks and impressions on the Queries table were undercounted; full "
+            "days are collected from here on.",
+            "A day Search Console genuinely has no data for is remembered as "
+            "empty instead of being re-checked every day.",
+        ),
+    ),
+    Entry(
+        date="2026-08-18",
         title="Slack hears back when a feature request is done",
         area="Admin · Feature requests",
         kind="new",
