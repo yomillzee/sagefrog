@@ -16,13 +16,17 @@ dismiss it from the inbox without losing the row, or hard-delete it outright.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 import db
+import slack_service
 import web_users
+
+_log = logging.getLogger(__name__)
 
 SCHEMA_SQL_STATEMENTS = [
     """
@@ -203,7 +207,19 @@ def create_request(
             ),
         ).fetchone()
     assert row
-    return _row_to_request(row)
+    request = _row_to_request(row)
+    _notify_slack(request)
+    return request
+
+
+def _notify_slack(request: FeatureRequest) -> None:
+    """Fan the new request out to Slack, best-effort — never break the write."""
+    if not slack_service.enabled():
+        return
+    try:
+        slack_service.notify_feature_request(request)
+    except Exception:  # noqa: BLE001 — logging is enough; the row is already saved.
+        _log.exception("Failed to send Slack notification for feature request %s", request.id)
 
 
 def list_requests(
