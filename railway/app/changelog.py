@@ -63,6 +63,26 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-19",
+        title="Average session duration now has an over-time chart",
+        area="Website Analytics",
+        kind="improved",
+        summary=(
+            "The card that shipped this morning sits above a bar per day, so a "
+            "run of short visits is visible as a trend instead of hiding inside "
+            "one range-wide number."
+        ),
+        details=(
+            "Daily / Weekly chips switch the bars; a week's figure is weighted "
+            "by its days' sessions, so a dead Sunday doesn't count for as much "
+            "as a busy Tuesday.",
+            "The comparison period rides over the bars as a dashed line, and "
+            "the legend gives each period's average.",
+            "Hovering a bar shows that day's average and how many sessions it "
+            "averages — a one-visit day reads as exactly that.",
+        ),
+    ),
+    Entry(
+        date="2026-08-19",
         title="Website Analytics shows average session duration",
         area="Website Analytics",
         kind="new",

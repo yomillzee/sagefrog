@@ -1582,7 +1582,7 @@ def fetch_session_duration(
     end_date: date,
     page_path_filter: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Site-wide average session duration for a date range — one lean query.
+    """Average session duration per day, plus the range's own average.
 
     GA4 only reports averageSessionDuration alongside a dimension, and the
     landing-page report is the one that carries it at session grain: every
@@ -1590,6 +1590,11 @@ def fetch_session_duration(
     averages by their session counts rebuilds the site-wide average rather than
     averaging averages (which would let a 1-session page weigh as much as a
     500-session one).
+
+    One query returns the daily series and the range figure is re-weighted from
+    it the same way — a quiet Sunday must not pull the average around as hard as
+    a busy Tuesday, which is exactly what a flat mean of the daily averages
+    would do.
 
     ``page_path_filter`` scopes it the same way the landing-page table is
     scoped — sessions that *started* on a matching page.
@@ -1601,6 +1606,7 @@ def fetch_session_duration(
     scope = _page_path_filter_clause(page_path_filter, column="landing_page", params=params)
     sql = f"""
     SELECT
+      CAST(date AS STRING) AS date,
       SUM(sessions) AS sessions,
       ROUND(SAFE_DIVIDE(
         SUM(average_session_duration * sessions),
@@ -1608,14 +1614,21 @@ def fetch_session_duration(
       ), 1) AS avg_session_duration_seconds
     FROM {_landing_page_table()}
     WHERE date BETWEEN @start_date AND @end_date{scope}
+    GROUP BY date
+    ORDER BY date ASC
     """
-    rows = _run_query(sql, params=params, max_rows=1)
-    row = rows[0] if rows else {}
+    daily = _run_query(sql, params=params, max_rows=2000)
+    sessions = sum(int(r.get("sessions") or 0) for r in daily)
+    seconds = sum(
+        float(r.get("avg_session_duration_seconds") or 0) * int(r.get("sessions") or 0)
+        for r in daily
+    )
     return {
         "client": _client_key(),
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
-        "sessions": row.get("sessions"),
-        "avg_session_duration_seconds": row.get("avg_session_duration_seconds"),
+        "sessions": sessions or None,
+        "avg_session_duration_seconds": round(seconds / sessions, 1) if sessions else None,
+        "daily": daily,
     }
 
 
