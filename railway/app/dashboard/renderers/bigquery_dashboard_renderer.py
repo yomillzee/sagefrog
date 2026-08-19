@@ -363,34 +363,6 @@ def _docs_enabled() -> bool:
     return docs.enabled()
 
 
-# Campaign Explorer filter chips, shown when a client hasn't configured their
-# own. These reproduce Nixon's long-standing chips; every other client should
-# override them from Settings → Campaign explorer filters. Match semantics are
-# case-insensitive substring (see explorerRowMatches in the page JS), so the
-# region phrases here are slightly broader than the old \bTX\b word-boundary
-# regex — acceptable for an opt-in fallback.
-DEFAULT_EXPLORER_FILTERS: list[dict] = [
-    {
-        "id": "g0",
-        "label": "Product",
-        "chips": [
-            {"label": "Apparel", "phrases": ["apparel"]},
-            {"label": "Scrubs", "phrases": ["scrub"]},
-            {"label": "Linens", "phrases": ["linen"]},
-        ],
-    },
-    {
-        "id": "g1",
-        "label": "Region",
-        "chips": [
-            {"label": "TX", "phrases": ["tx"]},
-            {"label": "FL", "phrases": ["fl"]},
-            {"label": "MA", "phrases": ["ma"]},
-        ],
-    },
-]
-
-
 def parse_explorer_filters(text: str | None) -> list[dict]:
     """Parse a client's Campaign Explorer filter config into chip groups.
 
@@ -403,7 +375,9 @@ def parse_explorer_filters(text: str | None) -> list[dict]:
     Lines before the first ``[Group]`` fall into an unnamed leading group.
     Blank lines and lines starting with ``#`` are ignored. Returns a list of
     ``{"id", "label", "chips": [{"label", "phrases": [...]}]}`` groups, empty
-    if nothing valid was defined (caller falls back to DEFAULT_EXPLORER_FILTERS).
+    if nothing valid was defined -- an unconfigured client gets no filter chips
+    at all (the textarea's placeholder still shows Product/Region as an
+    example of what to type, but that text is never treated as real config).
     """
     groups: list[dict] = []
     current: dict | None = None
@@ -427,12 +401,6 @@ def parse_explorer_filters(text: str | None) -> list[dict]:
             groups.append(current)
         current["chips"].append({"label": label, "phrases": phrases})
     return [g for g in groups if g["chips"]]
-
-
-def resolve_explorer_filters(text: str | None) -> list[dict]:
-    """Client config if present, otherwise the built-in default chips."""
-    parsed = parse_explorer_filters(text)
-    return parsed or DEFAULT_EXPLORER_FILTERS
 
 
 def hubspot_mql_section_html(report, lead_tracking_url: str | None) -> str:
@@ -824,11 +792,14 @@ def render_bigquery_dashboard_page(
         <div class="sec-head"><h2>Organic Search Intelligence</h2><span class="status" id="semrushStatus"></span></div>
         <div class="cards" id="semrushKpis"></div>
       </section>""" if show_semrush else ""
-    # Campaign Explorer filter chips: client config if set, else Nixon defaults.
+    # Campaign Explorer filter chips: parsed from the client's own config only.
     # Injected as JSON for the page JS to build the chip rows + match campaigns.
+    # An unconfigured client gets no chips -- the "Product"/"Region" example in
+    # the Edit filters textarea's placeholder is just an example, not a default
+    # that quietly populates the dropdowns until someone configures their own.
     # Escape "<" so a chip label can't break out of the <script> block.
     explorer_filter_groups_json = json.dumps(
-        resolve_explorer_filters(explorer_filters_cfg)
+        parse_explorer_filters(explorer_filters_cfg)
     ).replace("<", "\\u003c")
 
     # Landing date-range preset: the admin-chosen client default, else last_30.
@@ -853,10 +824,12 @@ def render_bigquery_dashboard_page(
     # Comparison-period modes offered next to the Range picker. "Previous
     # period" (the equivalent window immediately before the selected range) is
     # the long-standing behaviour and stays the default; "Previous year" shifts
-    # the selected range back 12 months.
+    # the selected range back 12 months; "No comparison" turns every "vs
+    # previous" figure on the page off.
     _COMPARE_MODES = [
         ("prev_period", "Previous period"),
         ("prev_year", "Previous year"),
+        ("none", "No comparison"),
     ]
     compare_mode_labels_json = json.dumps(dict(_COMPARE_MODES))
     compare_option_rows_html = "".join(
@@ -2124,10 +2097,11 @@ def render_bigquery_dashboard_page(
     #explorerTable tfoot td.ga4-col {{ background:rgba(184,146,46,0.13); }}
     #explorerTable tfoot .tree-name {{ font-weight:800; text-transform:uppercase; font-size:.7rem; letter-spacing:.06em; color:#5a6b82; }}
     #explorerTable tfoot .tot-sub {{ margin-left:9px; font-weight:600; font-size:.72rem; color:var(--muted); }}
-    /* "vs previous" delta under each total, shown once the Compare picker has
-       a window selected. Kept out-of-flow of the bold total figure above it. */
-    #explorerTable tfoot .expl-total-delta {{ margin-top:2px; font-weight:600; }}
-    #explorerTable tfoot .expl-total-delta .cmp-delta {{ font-size:.68rem; }}
+    /* "vs previous" delta under a metric figure, shown once the Compare picker
+       has a window selected -- on campaign rows and the grand total alike.
+       Kept out-of-flow of the bold total figure above it. */
+    #explorerTable .expl-row-delta {{ margin-top:2px; font-weight:600; }}
+    #explorerTable .expl-row-delta .cmp-delta {{ font-size:.68rem; }}
     /* GA4-verified conversions column — set off from the platform-reported metrics with a subtle gold accent. */
     #explorerTable th.ga4-col, #explorerTable td.ga4-col {{ background:rgba(184,146,46,0.06); border-left:1px solid rgba(184,146,46,0.3); }}
     #explorerTable td.ga4-col {{ font-variant-numeric:tabular-nums; }}
@@ -3701,7 +3675,7 @@ def render_bigquery_dashboard_page(
       try {{
         const [curr, prev] = await Promise.all([
           getJson(withDates(SUMMARY_API)),
-          getJson(withDatesRange(SUMMARY_API, compareStart, compareEnd)).catch(()=>null),
+          compareStart ? getJson(withDatesRange(SUMMARY_API, compareStart, compareEnd)).catch(()=>null) : Promise.resolve(null),
         ]);
         summaryPayload = curr;
         compareSummaryPayload = prev;
@@ -3750,7 +3724,7 @@ def render_bigquery_dashboard_page(
       try {{
         const [curr, prev] = await Promise.all([
           ga4TrafficTotals(currentStart, currentEnd),
-          ga4TrafficTotals(compareStart, compareEnd).catch(()=>null),
+          compareStart ? ga4TrafficTotals(compareStart, compareEnd).catch(()=>null) : Promise.resolve(null),
         ]);
         renderSnapshotCards('ga4SnapshotCards', [
           ['Sessions', curr.sessions, prev&&prev.sessions, count, curr.trafficOk],
@@ -3773,7 +3747,7 @@ def render_bigquery_dashboard_page(
       try {{
         const [p, prevP] = await Promise.all([
           getJson(withDatesRange(GSC_API, currentStart, currentEnd)),
-          getJson(withDatesRange(GSC_API, compareStart, compareEnd)).catch(()=>null),
+          compareStart ? getJson(withDatesRange(GSC_API, compareStart, compareEnd)).catch(()=>null) : Promise.resolve(null),
         ]);
         const k = (p&&p.kpis)||{{}};
         const pk = (prevP&&prevP.kpis)||null;
@@ -4903,17 +4877,17 @@ def render_bigquery_dashboard_page(
       }}
       return new Map([...campaigns.entries()].sort(cmpNode));
     }}
-    function metricCells(m) {{ const wc=withCtr(m); return METRIC_COLS.map(c=>{{ const cell=(c.key==='verified_sel'&&m._verifiedNa)?'—':c.format(wc[c.key]); return `<td${{c.cls?` class="${{c.cls}}"`:''}}>${{cell}}</td>`; }}).join(''); }}
-    // Same as metricCells, but for the tree footer's grand total: when a
-    // comparison period is set (prevAgg), each metric gets a "vs previous"
-    // delta chip underneath, same convention as the summary cards above.
-    function explorerTotalCells(m, prevAgg) {{
-      const wc=withCtr(m);
+    // Each metric cell, with an optional "vs previous" delta chip underneath
+    // when a matching comparison-period aggregate (prevM) is passed -- used
+    // for campaign rows and the tree footer's grand total alike; ad-group and
+    // ad rows call this with prevM omitted and get plain cells.
+    function metricCells(m, prevM) {{
+      const wc=withCtr(m), prevWc=prevM?withCtr(prevM):null;
       return METRIC_COLS.map(c=>{{
         if (c.key==='verified_sel') {{ const cell=m._verifiedNa?'—':c.format(wc[c.key]); return `<td${{c.cls?` class="${{c.cls}}"`:''}}>${{cell}}</td>`; }}
         const cell=c.format(wc[c.key]);
-        const delta=prevAgg?summaryDeltaHtml(wc[c.key],prevAgg[c.key],EXPLORER_METRIC_DIR[c.key]):'';
-        return `<td${{c.cls?` class="${{c.cls}}"`:''}}>${{cell}}${{delta?`<div class="expl-total-delta">${{delta}}</div>`:''}}</td>`;
+        const delta=prevWc?summaryDeltaHtml(wc[c.key],prevWc[c.key],EXPLORER_METRIC_DIR[c.key]):'';
+        return `<td${{c.cls?` class="${{c.cls}}"`:''}}>${{cell}}${{delta?`<div class="expl-row-delta">${{delta}}</div>`:''}}</td>`;
       }}).join('');
     }}
     // Grand total for the tree footer. Summed from the campaign nodes rather than
@@ -5082,6 +5056,9 @@ def render_bigquery_dashboard_page(
       // "vs previous" delta consistent with the rest of the dashboard.
       const prevFiltered = compareStart ? explorerPrevAllowedRows().filter(explorerRowMatches) : null;
       const aggPrev = prevFiltered ? withCtr(prevFiltered.reduce((a,r)=>{{addMetrics(a,r);return a;}}, zeroMetrics())) : null;
+      // Same tree, built from the comparison window, so each campaign row can
+      // show a "vs previous" delta alongside the grand total's.
+      const prevTree = prevFiltered ? buildExplorerTree(prevFiltered) : null;
       // Google verified is campaign-level (not on rows), so add it once per distinct
       // Google campaign in the filtered set for the summary total.
       const gcSeen=new Set(); let googleVerifiedTotal=0;
@@ -5108,7 +5085,12 @@ def render_bigquery_dashboard_page(
         let body='', cIdx=0;
         for (const camp of tree.values()) {{
           const cId='c'+(cIdx++), gCount=camp.groups.size;
-          body+=`<tr class="tree-row lvl-campaign" data-id="${{cId}}" data-expandable="1"><td class="left"><span class="caret"></span>${{platformIcon(camp.platform)}}<span class="tree-name">${{esc(camp.name)}}</span>${{treeCount(gCount,'ad group')}}</td>${{metricCells(camp.metrics)}}</tr>`;
+          // Match this campaign into the comparison-window tree by the same
+          // platform+name key buildExplorerTree groups on. A campaign with no
+          // matching prior-period rows still gets zeroed metrics (rather than
+          // no comparison at all) so its delta reads as "—", same as the total.
+          const prevCamp = prevTree ? (prevTree.get(camp.platform+'|'+camp.name) || {{metrics: zeroMetrics()}}) : null;
+          body+=`<tr class="tree-row lvl-campaign" data-id="${{cId}}" data-expandable="1"><td class="left"><span class="caret"></span>${{platformIcon(camp.platform)}}<span class="tree-name">${{esc(camp.name)}}</span>${{treeCount(gCount,'ad group')}}</td>${{metricCells(camp.metrics, prevCamp?prevCamp.metrics:null)}}</tr>`;
           let gIdx=0;
           for (const grp of camp.groups.values()) {{
             const gId=cId+'g'+(gIdx++), aCount=grp.ads.length;
@@ -5121,7 +5103,7 @@ def render_bigquery_dashboard_page(
         // a new date range all re-total it on the next render.
         const totals=explorerTotals(tree);
         const nCamp=tree.size;
-        const foot=`<tfoot><tr class="expl-total"><td class="left"><span class="tree-name">Total</span><span class="tot-sub">${{nCamp}} campaign${{nCamp===1?'':'s'}}</span></td>${{explorerTotalCells(totals,aggPrev)}}</tr></tfoot>`;
+        const foot=`<tfoot><tr class="expl-total"><td class="left"><span class="tree-name">Total</span><span class="tot-sub">${{nCamp}} campaign${{nCamp===1?'':'s'}}</span></td>${{metricCells(totals,aggPrev)}}</tr></tfoot>`;
         el.innerHTML=head+`<tbody>${{body}}</tbody>`+foot;
       }}
       const filterActive=[...explorerFilterState.values()].some(s=>s.size);
@@ -6854,17 +6836,21 @@ def render_bigquery_dashboard_page(
       return '';
     }}
     // ---- Comparison period ----
-    // 'prev_period' (default) or 'prev_year'. Remembered per client in this
-    // browser -- it's a reading preference, not a client-wide setting.
+    // 'prev_period' (default), 'prev_year', or 'none'. Remembered per client in
+    // this browser -- it's a reading preference, not a client-wide setting.
     let compareMode='prev_period';
     try {{
       const saved=localStorage.getItem(COMPARE_MODE_STORAGE_KEY);
       if (saved && COMPARE_MODE_LABELS[saved]) compareMode=saved;
     }} catch(e) {{}}
     // Point compareStart/compareEnd at the window the current mode asks for and
-    // refresh everything that spells the comparison out in words.
+    // refresh everything that spells the comparison out in words. 'none' leaves
+    // both blank -- every "vs previous" figure on the page is gated on
+    // compareStart being truthy, so this alone turns them all off.
     function resolveCompare() {{
-      if (compareMode==='prev_year' && currentStart && currentEnd) {{
+      if (compareMode==='none') {{
+        compareStart=''; compareEnd='';
+      }} else if (compareMode==='prev_year' && currentStart && currentEnd) {{
         compareStart=shiftYears(currentStart,1); compareEnd=shiftYears(currentEnd,1);
       }} else {{
         compareStart=prevPeriodStart; compareEnd=prevPeriodEnd;
