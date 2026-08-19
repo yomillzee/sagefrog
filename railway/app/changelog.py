@@ -63,6 +63,39 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-19",
+        title="Campaign explorer rows carry their own vs-previous comparison",
+        area="Campaign explorer",
+        kind="improved",
+        summary=(
+            "Spend, impressions, clicks, CTR and conversions on each campaign "
+            "row now show the same vs-previous figure the total row already "
+            "did, instead of making you scroll to the bottom to see a trend."
+        ),
+    ),
+    Entry(
+        date="2026-08-19",
+        title="Comparison period picker can turn comparisons off",
+        area="Campaign explorer",
+        kind="new",
+        summary=(
+            "The Previous period / Previous year picker has a third option, "
+            "No comparison, which drops every vs-previous figure on the page "
+            "for a cleaner read when comparing periods isn't useful."
+        ),
+    ),
+    Entry(
+        date="2026-08-19",
+        title="Edit filters no longer seeds Product and Region for you",
+        area="Campaign explorer",
+        kind="fixed",
+        summary=(
+            "The Product/Region text in the Edit filters box was only ever "
+            "meant as an example of the format — it was showing up as live "
+            "filter chips for anyone who hadn't configured their own."
+        ),
+    ),
+    Entry(
+        date="2026-08-19",
         title="Average session duration is charted by week, not by day",
         area="Website Analytics",
         kind="improved",
