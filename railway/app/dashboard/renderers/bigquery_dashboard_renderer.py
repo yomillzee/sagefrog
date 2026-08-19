@@ -2477,6 +2477,12 @@ def render_bigquery_dashboard_page(
         <div class="col-panel" style="max-width:420px"><h3>Device type</h3><div id="deviceBars"></div></div>
       </section>
 
+      <section id="sec-avgduration">
+        <div class="sec-head"><h2>Average session duration <span class="cmp-warn" id="avgDurCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="avgDurStatus"></span></div>
+        <p class="sec-note" id="avgDurNote">How long a session lasted on average over this range, weighted by how many sessions each landing page brought in.</p>
+        <div class="cards" id="avgDurCards" style="max-width:220px"></div>
+      </section>
+
       <section id="sec-demographics">
         <div class="sec-head"><h2 id="demoSectionTitle">Demographics</h2><span class="status" id="demoStatus"></span></div>
         <p class="chart-note" id="demoScopeNote" style="margin-top:0" hidden></p>
@@ -2586,6 +2592,7 @@ def render_bigquery_dashboard_page(
     const LANDING_PAGES_API    = "{_aurl(f'/api/clients/{api_client_key}/pages/landing')}";
     const USER_ACQ_API         = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acquisition')}";
     const DEMOGRAPHICS_API     = "{_aurl(f'/api/clients/{api_client_key}/analytics/demographics')}";
+    const SESSION_DURATION_API = "{_aurl(f'/api/clients/{api_client_key}/analytics/session-duration')}";
     const GSC_API              = "{_aurl(f'/api/clients/{api_client_key}/gsc/summary')}";
     const SEMRUSH_API          = "{_aurl(f'/api/clients/{api_client_key}/semrush/summary')}";
     const PAGESPEED_API        = "{_aurl(f'/api/clients/{api_client_key}/pagespeed/summary')}";
@@ -3338,14 +3345,14 @@ def render_bigquery_dashboard_page(
     );
 
     // ---- Module system (localStorage) ----
-    const ALL_MODULES = ['sessions','top_pages','traffic','audience','landing','user_acquisition','demographics'];
+    const ALL_MODULES = ['sessions','top_pages','traffic','audience','landing','user_acquisition','avg_duration','demographics'];
     // Element a module owns. For the four modules that share a tabbed card
     // (top_pages/landing, traffic/user_acquisition) this is the tab's pane, and
     // applyPanelCards — not applyModules — decides when it shows.
     const MODULE_SECTIONS = {{
       sessions:'sec-sessions', top_pages:'sec-pages', traffic:'sec-traffic', audience:'sec-audience',
       landing:'sec-landing',
-      user_acquisition:'sec-useracq', demographics:'sec-demographics'
+      user_acquisition:'sec-useracq', avg_duration:'sec-avgduration', demographics:'sec-demographics'
     }};
 
     // Modules hidden while a page-path scope is active: they aggregate whole-site
@@ -4563,6 +4570,10 @@ def render_bigquery_dashboard_page(
           snote.hidden = false;
           snote.textContent = 'Sessions that viewed a page matching this filter. A session that viewed more than one matching page is counted once per page, the same as GA4’s per-page Sessions metric.';
         }}
+        // Average session duration comes from the landing-page report, so under
+        // a scope it covers the sessions that *started* on a matching page.
+        const adnote = document.getElementById('avgDurNote');
+        if (adnote) adnote.textContent = 'How long a session that started on a matching page lasted on average over this range, weighted by how many sessions each of those pages brought in.';
         // Demographics keeps its geography half (served page-scoped) and drops
         // age/gender, which are user-scoped in GA4 with no page to scope by —
         // so the section is geography only, and says so.
@@ -6338,9 +6349,35 @@ def render_bigquery_dashboard_page(
       }} catch(err) {{ setStatus('demoStatus',err.message||String(err),true); }}
     }}
 
+    // ---- GA4: Average session duration ----
+    // GA4 only reports averageSessionDuration next to a dimension, so the
+    // endpoint re-weights the per-landing-page averages by their sessions to
+    // rebuild the site-wide figure. One card, one number, plus its vs-previous
+    // delta -- fetched for both windows the way the Overview snapshot cards are.
+    async function loadSessionDuration() {{
+      setStatus('avgDurStatus','Loading…');
+      document.getElementById('avgDurCards').innerHTML = skelCards(1);
+      try {{
+        const [cur, prev] = await Promise.all([
+          getJson(withDatesRange(SESSION_DURATION_API, currentStart, currentEnd)),
+          getJson(withDatesRange(SESSION_DURATION_API, compareStart, compareEnd)).catch(()=>null),
+        ]);
+        const v  = cur ? cur.avg_session_duration_seconds : null;
+        const pv = prev ? prev.avg_session_duration_seconds : null;
+        renderSnapshotCards('avgDurCards', [
+          ['Avg session duration', v, pv, x => x==null ? '—' : fmtDuration(x)],
+        ]);
+        setCmpWarn('avgDurCmpWarn', ['google_analytics']);
+        setStatus('avgDurStatus', v==null ? 'No data for this range yet.' : '');
+      }} catch(err) {{
+        document.getElementById('avgDurCards').innerHTML = '';
+        setStatus('avgDurStatus', err.message||String(err), true);
+      }}
+    }}
+
     // ---- Loaders ----
     function loadAllAnalytics() {{
-      // Staggered, not simultaneous: 7 modules x 1-3 sub-fetches each means
+      // Staggered, not simultaneous: 8 modules x 1-3 sub-fetches each means
       // ~12-14 concurrent BigQuery queries if fired all at once, which was
       // intermittently tripping transient 500s under load. Spreading module
       // starts out keeps peak concurrency down without a noticeable delay.
@@ -6352,6 +6389,7 @@ def render_bigquery_dashboard_page(
       if (modules.audience)         loaders.push(loadDeviceSplit);
       if (modules.landing)          loaders.push(loadLandingPages);
       if (modules.user_acquisition) loaders.push(loadUserAcquisition);
+      if (modules.avg_duration)     loaders.push(loadSessionDuration);
       if (modules.demographics)     loaders.push(loadDemographics);
       loaders.forEach((fn,i)=>setTimeout(fn, i*250));
     }}

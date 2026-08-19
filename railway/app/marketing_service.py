@@ -1576,6 +1576,49 @@ def fetch_device_split(
     }
 
 
+def fetch_session_duration(
+    *,
+    start_date: date,
+    end_date: date,
+    page_path_filter: list[str] | None = None,
+) -> dict[str, Any]:
+    """Site-wide average session duration for a date range — one lean query.
+
+    GA4 only reports averageSessionDuration alongside a dimension, and the
+    landing-page report is the one that carries it at session grain: every
+    session has exactly one landing page, so re-weighting the per-landing-page
+    averages by their session counts rebuilds the site-wide average rather than
+    averaging averages (which would let a 1-session page weigh as much as a
+    500-session one).
+
+    ``page_path_filter`` scopes it the same way the landing-page table is
+    scoped — sessions that *started* on a matching page.
+    """
+    params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    scope = _page_path_filter_clause(page_path_filter, column="landing_page", params=params)
+    sql = f"""
+    SELECT
+      SUM(sessions) AS sessions,
+      ROUND(SAFE_DIVIDE(
+        SUM(average_session_duration * sessions),
+        NULLIF(SUM(sessions), 0)
+      ), 1) AS avg_session_duration_seconds
+    FROM {_landing_page_table()}
+    WHERE date BETWEEN @start_date AND @end_date{scope}
+    """
+    rows = _run_query(sql, params=params, max_rows=1)
+    row = rows[0] if rows else {}
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "sessions": row.get("sessions"),
+        "avg_session_duration_seconds": row.get("avg_session_duration_seconds"),
+    }
+
+
 def fetch_landing_pages(
     *,
     start_date: date,
