@@ -821,27 +821,26 @@ def render_bigquery_dashboard_page(
         ("this_quarter", "This quarter"), ("last_quarter", "Last quarter"),
     ]
     date_preset_labels_json = json.dumps(dict(_DATE_PRESET_LABELS))
-    # Comparison is off by default and turned on by one switch next to the Range
-    # picker. A delta under every number is only worth the ink when someone came
-    # to the page asking "versus what?", so nobody pays for it until they ask.
+    # One picker next to the Range control, listing every comparison the page
+    # can draw. "No comparison" leads the list and is the default: a delta under
+    # every number is only worth the ink when someone came to the page asking
+    # "versus what?", so nobody pays for it until they ask. The other two are the
+    # windows -- the equivalent range immediately before the selected one, and
+    # the same range 12 months back.
     #
-    # Which window that switch compares against is a secondary choice, offered
-    # only once it is on: "Previous period" (the equivalent window immediately
-    # before the selected range) is the default, and "Previous year" shifts the
-    # selected range back 12 months. These labels are what the switch, the
-    # backfill notice and every delta tooltip say, so they cannot drift apart.
+    # These labels are what the picker, the backfill notice and every delta
+    # tooltip say, so they cannot drift apart.
+    _COMPARE_DEFAULT_MODE = "none"
     _COMPARE_MODES = [
+        ("none", "No comparison"),
         ("prev_period", "Previous period"),
         ("prev_year", "Previous year"),
     ]
     compare_mode_labels_json = json.dumps(dict(_COMPARE_MODES))
-    # Short forms for the window dropdown. The switch says "Compare to
-    # previous" and the dropdown finishes the sentence, so these are one word
-    # each rather than a repeat of the label beside them.
-    _COMPARE_MODE_SHORT = {"prev_period": "period", "prev_year": "year"}
-    compare_window_options_html = "".join(
-        f'<option value="{v}">{_COMPARE_MODE_SHORT[v]}</option>'
-        for v, _lbl in _COMPARE_MODES
+    compare_default_mode_json = json.dumps(_COMPARE_DEFAULT_MODE)
+    compare_option_rows_html = "".join(
+        f'<button type="button" class="range-opt{" active" if v == _COMPARE_DEFAULT_MODE else ""}" role="option" data-cmp="{v}">{lbl}</button>'
+        for v, lbl in _COMPARE_MODES
     )
     # The raw stored default ('' when the client has none) — distinct from the
     # effective preset above, which falls back to last_30. The dropdown JS uses it
@@ -1493,42 +1492,17 @@ def render_bigquery_dashboard_page(
     .filter-group[hidden] {{ display:none; }}
     .filter-label {{ color:var(--muted); font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }}
     .sr-only {{ position:absolute; width:1px; height:1px; margin:-1px; padding:0; border:0; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; }}
-    /* The Range picker carries its own caption inside the field — a calendar
-       glyph rather than an uppercase label beside it. That halves the width the
-       control needs, which is what keeps it on one line on a phone alongside
-       the Compare switch. Screen readers get the caption from the .sr-only
-       spans. */
+    /* The Range and Compare pickers carry their own caption inside the field —
+       a calendar glyph on Range, a "vs" on Compare — instead of an uppercase
+       label beside it. That halves the width each control needs, which is what
+       keeps both on one line on a phone. Screen readers get the caption from
+       the .sr-only spans. */
     .dd-lead {{ display:inline-flex; align-items:center; gap:7px; min-width:0; overflow:hidden; }}
     .dd-lead > span:not(.sr-only) {{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
     .dd-icon {{ width:15px; height:15px; flex:none; color:var(--muted); }}
-    /* ---- Compare switch ----
-       Comparison is one switch rather than a dropdown, because it is a yes/no
-       question ("show me deltas") and the old picker made it look like a
-       three-way choice. Off is the resting state and reads as plain label
-       text; on tints the track and reveals the two controls that only mean
-       something once comparison is running -- which window, and its dates. */
-    .cmp-switch {{ display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-size:.78rem; font-weight:700; color:var(--muted); white-space:nowrap; user-select:none; }}
-    .cmp-switch input {{ position:absolute; opacity:0; width:0; height:0; }}
-    .cmp-switch-track {{ position:relative; flex:none; width:30px; height:17px; border-radius:999px; background:#dbe3ec; transition:background .14s; }}
-    .cmp-switch-knob {{ position:absolute; top:2px; left:2px; width:13px; height:13px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(16,32,54,.28); transition:transform .14s; }}
-    .cmp-switch:hover .cmp-switch-track {{ background:#cfd9e5; }}
-    .cmp-switch input:checked + .cmp-switch-track {{ background:var(--accent); }}
-    .cmp-switch input:checked + .cmp-switch-track .cmp-switch-knob {{ transform:translateX(13px); }}
-    .cmp-switch input:checked ~ .cmp-switch-text {{ color:var(--navy); }}
-    .cmp-switch input:focus-visible + .cmp-switch-track {{ outline:2px solid var(--accent); outline-offset:2px; }}
-    /* Secondary window choice: the switch says "Compare to previous" and this
-       finishes the sentence with one word, so the pair reads as a phrase rather
-       than as a label plus a second control. A native <select> keeps keyboard
-       and touch behaviour for free -- it only has to lose the platform chrome,
-       which is what appearance:none and the caret span are for. */
-    .cmp-window-wrap {{ position:relative; display:inline-flex; align-items:center; flex:none; }}
-    .cmp-window-wrap[hidden] {{ display:none; }}
-    .cmp-window {{ -webkit-appearance:none; appearance:none; padding:2px 19px 2px 8px; border:1px solid rgba(29,111,208,.28); border-radius:999px; background:rgba(29,111,208,.06); color:var(--accent); font:inherit; font-size:.72rem; font-weight:800; text-transform:inherit; letter-spacing:inherit; cursor:pointer; transition:background .12s, border-color .12s; }}
-    .cmp-window:hover {{ background:rgba(29,111,208,.12); border-color:rgba(29,111,208,.45); }}
-    .cmp-window:focus-visible {{ outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(29,111,208,.22); }}
-    .cmp-window-caret {{ position:absolute; right:7px; font-size:.58rem; color:var(--accent); pointer-events:none; }}
-    .cmp-range-label {{ flex:none; color:var(--muted); font-size:.7rem; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }}
-    .cmp-range-label[hidden] {{ display:none; }}
+    /* The "vs" lead on the Compare picker, hidden while no window is chosen. */
+    .dd-vs {{ flex:none; color:var(--muted); font-weight:700; }}
+    .dd-vs[hidden] {{ display:none; }}
     /* Range picker: a custom dropdown so the admin "Make default" + Apply
        controls live inside the panel, under the preset list. Reuses the .ke-dd-*
        base styling (toggle/panel/caret); these tune sizing + the option rows. */
@@ -1562,9 +1536,14 @@ def render_bigquery_dashboard_page(
     .range-default-status {{ flex-basis:100%; font-size:.72rem; font-weight:600; text-transform:none; letter-spacing:0; color:var(--muted); }}
     .range-default-status.err {{ color:var(--bad); }}
     .range-default-status.ok {{ color:#178a4c; }}
+    /* Compare picker: same dropdown shell as Range, with a footer that spells
+       out the resolved comparison dates instead of the admin default controls.
+       On No comparison there are no dates, so the footer empties itself. */
+    .cmp-range-foot {{ margin-top:6px; }}
+    .cmp-range-foot .range-default-status {{ color:var(--muted); }}
     /* Backfill warning: the comparison window reaches back past a source's
        synced history, so its deltas are incomplete. A badge beside the Compare
-       switch — the control it qualifies — with the detail in a hover/focus
+       picker — the control it qualifies — with the detail in a hover/focus
        tooltip, so the filter bar keeps its one-line height. */
     .cmp-notice {{ position:relative; display:inline-flex; align-items:center; justify-content:center; flex:none; width:22px; height:22px; padding:0; border:1px solid #f0d9a0; border-radius:50%; background:#fdf7e8; color:#a9760a; cursor:help; transition:background .12s, border-color .12s; }}
     .cmp-notice[hidden] {{ display:none; }}
@@ -2331,6 +2310,7 @@ def render_bigquery_dashboard_page(
       .date-bar-bottom .range-dd {{ display:block; min-width:0; }}
       .date-bar-bottom .range-dd-toggle {{ width:100%; min-width:0; padding:6px 10px; font-size:.79rem; }}
       .range-dd-panel {{ width:min(220px, calc(100vw - 32px)); }}
+      #compareDropdown .ke-dd-panel {{ left:auto; right:0; }}
       /* Card-head filters (the Platform chips) are the widest thing in a
          section head on a phone. The head already drops its actions to their
          own line; they just couldn't shrink or wrap once there, so the last
@@ -2378,25 +2358,31 @@ def render_bigquery_dashboard_page(
           </div>
         </div>
         <div class="filter-group" id="compareFilterGroup">
-          <!-- One switch, off by default: the page shows plain numbers until
-               someone asks what they should be measured against. The window
-               picker and the date read-out only exist once it is on, so the
-               off state is a single control and nothing else. -->
-          <label class="cmp-switch" for="compareSwitch">
-            <input type="checkbox" id="compareSwitch" role="switch" aria-describedby="compareRangeLabel">
-            <span class="cmp-switch-track" aria-hidden="true"><span class="cmp-switch-knob"></span></span>
-            <span class="cmp-switch-text" id="compareSwitchLabel">Compare to previous period</span>
-          </label>
-          <span class="cmp-window-wrap" id="compareWindowWrap" hidden>
-            <select class="cmp-window" id="compareWindowSelect" aria-label="Comparison window">{compare_window_options_html}</select>
-            <span class="cmp-window-caret" aria-hidden="true">▾</span>
-          </span>
-          <span class="cmp-range-label" id="compareRangeLabel" hidden></span>
+          <!-- Comparison picker: one control listing No comparison (the
+               default) plus the two windows. The "vs" lead only makes sense
+               once a window is chosen, so it hides itself on No comparison
+               rather than reading "vs No comparison". -->
+          <div class="ke-dropdown range-dd" id="compareDropdown">
+            <button type="button" class="ke-dd-toggle range-dd-toggle" id="compareToggle" aria-haspopup="listbox" aria-expanded="false">
+              <span class="dd-lead">
+                <span class="dd-vs" id="compareVs" aria-hidden="true" hidden>vs</span>
+                <span class="sr-only">Compare to:</span>
+                <span id="compareToggleLabel">No comparison</span>
+              </span>
+              <span class="ke-dd-caret">▾</span>
+            </button>
+            <div class="ke-dd-panel range-dd-panel" id="comparePanel" hidden>
+              <div class="ke-dd-list range-dd-list" id="compareList" role="listbox">
+                {compare_option_rows_html}
+              </div>
+              <div class="range-dd-foot cmp-range-foot"><span class="range-default-status" id="compareRangeLabel"></span></div>
+            </div>
+          </div>
           <!-- Filled + unhidden by syncCompareNotice() when the selected
                comparison window starts before a connector's synced history
                (most often a previous-year comparison against a recently
                connected source) -- the cue that the warehouse needs a deeper
-               backfill. It qualifies this one switch, so it rides next to it
+               backfill. It qualifies this one picker, so it rides next to it
                as a hover/focus tooltip rather than a page-wide banner. -->
           <button type="button" class="cmp-notice" id="compareNotice" aria-label="Comparison window warning" aria-describedby="compareNoticeTip" hidden>
             <span class="cmp-notice-icon" aria-hidden="true">&#9888;</span>
@@ -2658,14 +2644,15 @@ def render_bigquery_dashboard_page(
     let STORED_DEFAULT_PRESET = {stored_default_preset_json};
     const DATE_PRESET_LABELS = {date_preset_labels_json};
     const DEFAULT_DATE_RANGE_API = "{_aurl(f'/api/clients/{api_client_key}/default-date-range')}";
-    // Comparison windows offered once the Compare switch is on, and the
-    // localStorage keys the viewer's choices are remembered under (per client,
-    // per browser -- reading preferences, unlike the admin-set default range).
-    // COMPARE_ON is separate from the window so turning comparison off and on
-    // again comes back to the window you were last reading.
+    // Comparisons the picker offers, its default, and the localStorage key the
+    // viewer's choice is remembered under (per client, per browser -- a reading
+    // preference, unlike the admin-set client default range).
     const COMPARE_MODE_LABELS = {compare_mode_labels_json};
+    const COMPARE_DEFAULT_MODE = {compare_default_mode_json};
     const COMPARE_MODE_STORAGE_KEY = 'sf.compareMode.{client_slug}';
-    const COMPARE_ON_STORAGE_KEY = 'sf.compareOn.{client_slug}';
+    // Written by the switch this picker replaced. Read once, so someone who had
+    // comparison switched on comes back to the window they were reading.
+    const COMPARE_ON_LEGACY_KEY = 'sf.compareOn.{client_slug}';
     // A move smaller than this reads as steady: it still shows its arrow and
     // percentage, but in muted grey rather than red or green. Colour is the
     // page's loudest signal, so it is spent only on movement worth acting on.
@@ -6920,31 +6907,26 @@ def render_bigquery_dashboard_page(
       return '';
     }}
     // ---- Comparison period ----
-    // Two pieces of state, both remembered per client in this browser because
-    // both are reading preferences, not client-wide settings:
-    //   compareOn   -- whether the page shows "vs previous" figures at all.
-    //                  OFF by default: a delta under every number is noise
-    //                  until someone asks for it.
-    //   compareMode -- which window to compare against once it is on,
-    //                  'prev_period' (default) or 'prev_year'.
-    let compareOn=false;
-    let compareMode='prev_period';
+    // 'none' (the default), 'prev_period' or 'prev_year'. Remembered per client
+    // in this browser -- it's a reading preference, not a client-wide setting.
+    let compareMode=COMPARE_DEFAULT_MODE;
     try {{
-      const savedMode=localStorage.getItem(COMPARE_MODE_STORAGE_KEY);
-      // 'none' is the retired third option of the old picker. Someone who chose
-      // it wanted comparisons off, which is now the switch's default anyway --
-      // read it as off + the default window rather than as a window.
-      if (savedMode==='none') compareOn=false;
-      else if (savedMode && COMPARE_MODE_LABELS[savedMode]) compareMode=savedMode;
-      if (localStorage.getItem(COMPARE_ON_STORAGE_KEY)==='1') compareOn=true;
+      const saved=localStorage.getItem(COMPARE_MODE_STORAGE_KEY);
+      if (saved && COMPARE_MODE_LABELS[saved]) compareMode=saved;
+      // Migration from the switch: it stored on/off separately, so an explicit
+      // "off" means No comparison no matter which window is remembered, and its
+      // "on" means the remembered window rather than the new default.
+      const legacyOn=localStorage.getItem(COMPARE_ON_LEGACY_KEY);
+      if (legacyOn==='0') compareMode='none';
+      else if (legacyOn==='1' && compareMode==='none') compareMode='prev_period';
     }} catch(e) {{}}
-    // Point compareStart/compareEnd at the window the switch asks for and
-    // refresh everything that spells the comparison out in words. Switched off
-    // leaves both blank -- every "vs previous" figure and every comparison-window
-    // fetch on the page is gated on compareStart being truthy, so this alone
-    // turns them all off.
+    // Point compareStart/compareEnd at the window the current mode asks for and
+    // refresh everything that spells the comparison out in words. 'none' leaves
+    // both blank -- every "vs previous" figure and every comparison-window fetch
+    // on the page is gated on compareStart being truthy, so this alone turns
+    // them all off.
     function resolveCompare() {{
-      if (!compareOn) {{
+      if (compareMode==='none') {{
         compareStart=''; compareEnd='';
       }} else if (compareMode==='prev_year' && currentStart && currentEnd) {{
         compareStart=shiftYears(currentStart,1); compareEnd=shiftYears(currentEnd,1);
@@ -6958,42 +6940,17 @@ def render_bigquery_dashboard_page(
     function cmpNoun() {{ return compareMode==='prev_year' ? 'prior year' : 'prior period'; }}
     function cmpSeriesLabel() {{ return compareMode==='prev_year' ? 'Previous year' : 'Previous'; }}
     function syncCompareUI() {{
-      const box=document.getElementById('compareSwitch');
-      if (box) box.checked=compareOn;
-      // Switched on, the dropdown beside the switch carries the window and the
-      // label stops short so the two read as one phrase ("Compare to previous"
-      // + "year"). Switched off there is no dropdown to finish the sentence, so
-      // the label spells out the window it would use -- it never claims to be
-      // comparing against a window it isn't.
-      const lbl=document.getElementById('compareSwitchLabel');
-      if (lbl) {{
-        lbl.textContent = compareOn
-          ? 'Compare to previous'
-          : (compareMode==='prev_year' ? 'Compare to previous year' : 'Compare to previous period');
-      }}
-      const wrap=document.getElementById('compareWindowWrap');
-      if (wrap) wrap.hidden=!compareOn;
-      const win=document.getElementById('compareWindowSelect');
-      if (win) {{
-        win.value=compareMode;
-        win.title = compareMode==='prev_year'
-          ? 'Comparing against the same range 12 months ago'
-          : 'Comparing against the equivalent window immediately before this one';
-      }}
+      const lbl=document.getElementById('compareToggleLabel');
+      if (lbl && COMPARE_MODE_LABELS[compareMode]) lbl.textContent=COMPARE_MODE_LABELS[compareMode];
+      // "vs No comparison" would be nonsense, so the lead only shows once the
+      // label after it names a window.
+      const vs=document.getElementById('compareVs');
+      if (vs) vs.hidden = compareMode==='none';
+      document.querySelectorAll('#compareList .range-opt').forEach(o =>
+        o.classList.toggle('active', o.dataset.cmp===compareMode));
       const foot=document.getElementById('compareRangeLabel');
-      if (foot) {{
-        foot.textContent = compareStart ? `${{compareStart}} – ${{compareEnd}}` : '';
-        foot.hidden = !compareStart;
-      }}
+      if (foot) foot.textContent = compareStart ? `${{compareStart}} – ${{compareEnd}}` : '';
       syncCompareNotice();
-    }}
-    function setCompareOn(on) {{
-      on=!!on;
-      if (on===compareOn) return;
-      compareOn=on;
-      try {{ localStorage.setItem(COMPARE_ON_STORAGE_KEY, on?'1':'0'); }} catch(e) {{}}
-      resolveCompare();
-      loadCurrentTab();
     }}
     function setCompareMode(mode) {{
       if (!COMPARE_MODE_LABELS[mode] || mode===compareMode) return;
@@ -7003,10 +6960,19 @@ def render_bigquery_dashboard_page(
       loadCurrentTab();
     }}
     (function(){{
-      const box=document.getElementById('compareSwitch');
-      if (box) box.addEventListener('change', ()=>setCompareOn(box.checked));
-      const win=document.getElementById('compareWindowSelect');
-      if (win) win.addEventListener('change', ()=>setCompareMode(win.value));
+      const dd=document.getElementById('compareDropdown'); if (!dd) return;
+      const toggle=document.getElementById('compareToggle');
+      const panel=document.getElementById('comparePanel');
+      const list=document.getElementById('compareList');
+      const setOpen=o=>{{ panel.hidden=!o; dd.classList.toggle('open', o); toggle.setAttribute('aria-expanded', o?'true':'false'); }};
+      toggle.addEventListener('click', ()=>setOpen(panel.hidden));
+      document.addEventListener('click', e=>{{ if (!dd.contains(e.target)) setOpen(false); }});
+      document.addEventListener('keydown', e=>{{ if (e.key==='Escape') setOpen(false); }});
+      list.addEventListener('click', e=>{{
+        const opt=e.target.closest('.range-opt'); if (!opt) return;
+        setCompareMode(opt.dataset.cmp);
+        setOpen(false);
+      }});
     }})();
     // ---- Range dropdown (custom): preset list + admin "Make default" / Apply ----
     // The preset list instant-applies on click (the panel stays open so an admin
