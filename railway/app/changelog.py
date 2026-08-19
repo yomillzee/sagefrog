@@ -62,6 +62,24 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-08-19",
+        title="Website Analytics shows average session duration",
+        area="Website Analytics",
+        kind="new",
+        summary=(
+            "A card above Demographics reports how long the average session "
+            "lasted over the selected range, with the change against the "
+            "comparison period."
+        ),
+        details=(
+            "The average is weighted by how many sessions each landing page "
+            "brought in, so a one-session page no longer counts as much as a "
+            "busy one.",
+            "Under a page-path scope it covers the sessions that started on a "
+            "matching page.",
+        ),
+    ),
+    Entry(
         date="2026-08-18",
         title="Hover a marked post to read it without leaving the chart",
         area="LinkedIn Organic",
