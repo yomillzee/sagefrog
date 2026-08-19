@@ -164,19 +164,29 @@ class CompareSwitchTest(unittest.TestCase):
         self.assertNotIn('id="compareDropdown"', html)
         self.assertNotIn('id="compareToggleLabel"', html)
 
-    def test_window_choice_is_secondary_and_hidden_until_comparing(self):
-        """Previous year stays available, as a quiet action next to the switch
-        that names the window it moves to rather than the one in use."""
+    def test_window_is_a_dropdown_hidden_until_comparing(self):
+        """Previous year stays available, as a one-word dropdown beside the
+        switch that only exists once there is a comparison to point it at."""
         html = _render()
-        self.assertIn(
-            '<button type="button" class="cmp-window" id="compareWindowBtn" hidden>Use previous year</button>',
-            html,
-        )
-        self.assertIn("win.hidden=!compareOn;", html)
-        self.assertIn("setCompareMode(compareMode==='prev_year'?'prev_period':'prev_year')", html)
-        # The switch's own label follows the window, so it can never claim to be
-        # comparing against the period while comparing against last year.
-        self.assertIn("'Compare to previous year' : 'Compare to previous period'", html)
+        self.assertIn('<select class="cmp-window" id="compareWindowSelect"', html)
+        self.assertIn('<option value="prev_period">period</option>', html)
+        self.assertIn('<option value="prev_year">year</option>', html)
+        self.assertIn('id="compareWindowWrap" hidden', html)
+        self.assertIn("if (wrap) wrap.hidden=!compareOn;", html)
+        # A native select, so the change event is the whole interaction.
+        self.assertIn("win.addEventListener('change', ()=>setCompareMode(win.value));", html)
+        # The retired text action is gone.
+        self.assertNotIn('id="compareWindowBtn"', html)
+
+    def test_label_and_dropdown_read_as_one_phrase(self):
+        """On, the label stops at "Compare to previous" and the dropdown
+        finishes it. Off, there is no dropdown, so the label spells the window
+        out rather than trailing off or claiming the wrong one."""
+        html = _render()
+        self.assertIn("? 'Compare to previous'", html)
+        self.assertIn(": (compareMode==='prev_year' ? 'Compare to previous year' : 'Compare to previous period')", html)
+        # The dropdown always shows the window actually in use.
+        self.assertIn("win.value=compareMode;", html)
 
     def test_both_choices_are_remembered_per_client(self):
         for slug in ("demo", "acme"):
