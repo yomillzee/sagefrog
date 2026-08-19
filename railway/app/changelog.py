@@ -63,6 +63,21 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-19",
+        title="Switch between previous period and previous year in one dropdown",
+        area="Client dashboards",
+        kind="improved",
+        summary=(
+            "The Use previous year link beside the Compare switch is now a "
+            "dropdown reading period or year, so the window in use is visible "
+            "rather than something you infer from the link's wording."
+        ),
+        details=(
+            "The switch reads \"Compare to previous\" and the dropdown finishes "
+            "it, so the pair reads as one phrase.",
+        ),
+    ),
+    Entry(
+        date="2026-08-19",
         title="Comparisons are one switch, and they start off",
         area="Client dashboards",
         kind="improved",

@@ -835,6 +835,14 @@ def render_bigquery_dashboard_page(
         ("prev_year", "Previous year"),
     ]
     compare_mode_labels_json = json.dumps(dict(_COMPARE_MODES))
+    # Short forms for the window dropdown. The switch says "Compare to
+    # previous" and the dropdown finishes the sentence, so these are one word
+    # each rather than a repeat of the label beside them.
+    _COMPARE_MODE_SHORT = {"prev_period": "period", "prev_year": "year"}
+    compare_window_options_html = "".join(
+        f'<option value="{v}">{_COMPARE_MODE_SHORT[v]}</option>'
+        for v, _lbl in _COMPARE_MODES
+    )
     # The raw stored default ('' when the client has none) — distinct from the
     # effective preset above, which falls back to last_30. The dropdown JS uses it
     # to decide whether "Make default" starts ticked and whether Apply clears.
@@ -1508,12 +1516,17 @@ def render_bigquery_dashboard_page(
     .cmp-switch input:checked + .cmp-switch-track .cmp-switch-knob {{ transform:translateX(13px); }}
     .cmp-switch input:checked ~ .cmp-switch-text {{ color:var(--navy); }}
     .cmp-switch input:focus-visible + .cmp-switch-track {{ outline:2px solid var(--accent); outline-offset:2px; }}
-    /* Secondary window choice: a quiet text action, not a second picker. It
-       names the window it switches *to* ("Use previous year"), so it can never
-       be misread as a label for the window already in use. */
-    .cmp-window {{ flex:none; padding:2px 7px; border:1px solid transparent; border-radius:999px; background:none; color:var(--accent); font-size:.72rem; font-weight:700; cursor:pointer; white-space:nowrap; transition:background .12s, border-color .12s; }}
-    .cmp-window:hover {{ background:rgba(29,111,208,.09); border-color:rgba(29,111,208,.22); }}
-    .cmp-window[hidden] {{ display:none; }}
+    /* Secondary window choice: the switch says "Compare to previous" and this
+       finishes the sentence with one word, so the pair reads as a phrase rather
+       than as a label plus a second control. A native <select> keeps keyboard
+       and touch behaviour for free -- it only has to lose the platform chrome,
+       which is what appearance:none and the caret span are for. */
+    .cmp-window-wrap {{ position:relative; display:inline-flex; align-items:center; flex:none; }}
+    .cmp-window-wrap[hidden] {{ display:none; }}
+    .cmp-window {{ -webkit-appearance:none; appearance:none; padding:2px 19px 2px 8px; border:1px solid rgba(29,111,208,.28); border-radius:999px; background:rgba(29,111,208,.06); color:var(--accent); font:inherit; font-size:.72rem; font-weight:800; text-transform:inherit; letter-spacing:inherit; cursor:pointer; transition:background .12s, border-color .12s; }}
+    .cmp-window:hover {{ background:rgba(29,111,208,.12); border-color:rgba(29,111,208,.45); }}
+    .cmp-window:focus-visible {{ outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(29,111,208,.22); }}
+    .cmp-window-caret {{ position:absolute; right:7px; font-size:.58rem; color:var(--accent); pointer-events:none; }}
     .cmp-range-label {{ flex:none; color:var(--muted); font-size:.7rem; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }}
     .cmp-range-label[hidden] {{ display:none; }}
     /* Range picker: a custom dropdown so the admin "Make default" + Apply
@@ -2374,7 +2387,10 @@ def render_bigquery_dashboard_page(
             <span class="cmp-switch-track" aria-hidden="true"><span class="cmp-switch-knob"></span></span>
             <span class="cmp-switch-text" id="compareSwitchLabel">Compare to previous period</span>
           </label>
-          <button type="button" class="cmp-window" id="compareWindowBtn" hidden>Use previous year</button>
+          <span class="cmp-window-wrap" id="compareWindowWrap" hidden>
+            <select class="cmp-window" id="compareWindowSelect" aria-label="Comparison window">{compare_window_options_html}</select>
+            <span class="cmp-window-caret" aria-hidden="true">▾</span>
+          </span>
           <span class="cmp-range-label" id="compareRangeLabel" hidden></span>
           <!-- Filled + unhidden by syncCompareNotice() when the selected
                comparison window starts before a connector's synced history
@@ -6944,19 +6960,25 @@ def render_bigquery_dashboard_page(
     function syncCompareUI() {{
       const box=document.getElementById('compareSwitch');
       if (box) box.checked=compareOn;
-      // The switch always names the window actually in use, so turning it on
-      // and then switching to last year can't leave it claiming otherwise.
+      // Switched on, the dropdown beside the switch carries the window and the
+      // label stops short so the two read as one phrase ("Compare to previous"
+      // + "year"). Switched off there is no dropdown to finish the sentence, so
+      // the label spells out the window it would use -- it never claims to be
+      // comparing against a window it isn't.
       const lbl=document.getElementById('compareSwitchLabel');
-      if (lbl) lbl.textContent = compareMode==='prev_year' ? 'Compare to previous year' : 'Compare to previous period';
-      // The window action names where it goes, not where you are, and only
-      // exists while comparison is on.
-      const win=document.getElementById('compareWindowBtn');
+      if (lbl) {{
+        lbl.textContent = compareOn
+          ? 'Compare to previous'
+          : (compareMode==='prev_year' ? 'Compare to previous year' : 'Compare to previous period');
+      }}
+      const wrap=document.getElementById('compareWindowWrap');
+      if (wrap) wrap.hidden=!compareOn;
+      const win=document.getElementById('compareWindowSelect');
       if (win) {{
-        win.hidden=!compareOn;
-        win.textContent = compareMode==='prev_year' ? 'Use previous period' : 'Use previous year';
+        win.value=compareMode;
         win.title = compareMode==='prev_year'
-          ? 'Compare against the equivalent window immediately before this one'
-          : 'Compare against the same range 12 months ago';
+          ? 'Comparing against the same range 12 months ago'
+          : 'Comparing against the equivalent window immediately before this one';
       }}
       const foot=document.getElementById('compareRangeLabel');
       if (foot) {{
@@ -6983,8 +7005,8 @@ def render_bigquery_dashboard_page(
     (function(){{
       const box=document.getElementById('compareSwitch');
       if (box) box.addEventListener('change', ()=>setCompareOn(box.checked));
-      const win=document.getElementById('compareWindowBtn');
-      if (win) win.addEventListener('click', ()=>setCompareMode(compareMode==='prev_year'?'prev_period':'prev_year'));
+      const win=document.getElementById('compareWindowSelect');
+      if (win) win.addEventListener('change', ()=>setCompareMode(win.value));
     }})();
     // ---- Range dropdown (custom): preset list + admin "Make default" / Apply ----
     // The preset list instant-applies on click (the panel stays open so an admin
