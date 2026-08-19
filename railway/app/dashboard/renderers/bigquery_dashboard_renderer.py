@@ -821,21 +821,20 @@ def render_bigquery_dashboard_page(
         ("this_quarter", "This quarter"), ("last_quarter", "Last quarter"),
     ]
     date_preset_labels_json = json.dumps(dict(_DATE_PRESET_LABELS))
-    # Comparison-period modes offered next to the Range picker. "Previous
-    # period" (the equivalent window immediately before the selected range) is
-    # the long-standing behaviour and stays the default; "Previous year" shifts
-    # the selected range back 12 months; "No comparison" turns every "vs
-    # previous" figure on the page off.
+    # Comparison is off by default and turned on by one switch next to the Range
+    # picker. A delta under every number is only worth the ink when someone came
+    # to the page asking "versus what?", so nobody pays for it until they ask.
+    #
+    # Which window that switch compares against is a secondary choice, offered
+    # only once it is on: "Previous period" (the equivalent window immediately
+    # before the selected range) is the default, and "Previous year" shifts the
+    # selected range back 12 months. These labels are what the switch, the
+    # backfill notice and every delta tooltip say, so they cannot drift apart.
     _COMPARE_MODES = [
         ("prev_period", "Previous period"),
         ("prev_year", "Previous year"),
-        ("none", "No comparison"),
     ]
     compare_mode_labels_json = json.dumps(dict(_COMPARE_MODES))
-    compare_option_rows_html = "".join(
-        f'<button type="button" class="range-opt{" active" if v == "prev_period" else ""}" role="option" data-cmp="{v}">{lbl}</button>'
-        for v, lbl in _COMPARE_MODES
-    )
     # The raw stored default ('' when the client has none) — distinct from the
     # effective preset above, which falls back to last_30. The dropdown JS uses it
     # to decide whether "Make default" starts ticked and whether Apply clears.
@@ -1486,15 +1485,37 @@ def render_bigquery_dashboard_page(
     .filter-group[hidden] {{ display:none; }}
     .filter-label {{ color:var(--muted); font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }}
     .sr-only {{ position:absolute; width:1px; height:1px; margin:-1px; padding:0; border:0; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; }}
-    /* The Range and Compare pickers carry their own caption inside the field —
-       a calendar glyph on Range, a "vs" on Compare — instead of an uppercase
-       label beside it. That halves the width each control needs, which is what
-       keeps both on one line on a phone. Screen readers get the caption from
-       the .sr-only spans. */
+    /* The Range picker carries its own caption inside the field — a calendar
+       glyph rather than an uppercase label beside it. That halves the width the
+       control needs, which is what keeps it on one line on a phone alongside
+       the Compare switch. Screen readers get the caption from the .sr-only
+       spans. */
     .dd-lead {{ display:inline-flex; align-items:center; gap:7px; min-width:0; overflow:hidden; }}
     .dd-lead > span:not(.sr-only) {{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
     .dd-icon {{ width:15px; height:15px; flex:none; color:var(--muted); }}
-    .dd-vs {{ flex:none; color:var(--muted); font-weight:700; }}
+    /* ---- Compare switch ----
+       Comparison is one switch rather than a dropdown, because it is a yes/no
+       question ("show me deltas") and the old picker made it look like a
+       three-way choice. Off is the resting state and reads as plain label
+       text; on tints the track and reveals the two controls that only mean
+       something once comparison is running -- which window, and its dates. */
+    .cmp-switch {{ display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-size:.78rem; font-weight:700; color:var(--muted); white-space:nowrap; user-select:none; }}
+    .cmp-switch input {{ position:absolute; opacity:0; width:0; height:0; }}
+    .cmp-switch-track {{ position:relative; flex:none; width:30px; height:17px; border-radius:999px; background:#dbe3ec; transition:background .14s; }}
+    .cmp-switch-knob {{ position:absolute; top:2px; left:2px; width:13px; height:13px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(16,32,54,.28); transition:transform .14s; }}
+    .cmp-switch:hover .cmp-switch-track {{ background:#cfd9e5; }}
+    .cmp-switch input:checked + .cmp-switch-track {{ background:var(--accent); }}
+    .cmp-switch input:checked + .cmp-switch-track .cmp-switch-knob {{ transform:translateX(13px); }}
+    .cmp-switch input:checked ~ .cmp-switch-text {{ color:var(--navy); }}
+    .cmp-switch input:focus-visible + .cmp-switch-track {{ outline:2px solid var(--accent); outline-offset:2px; }}
+    /* Secondary window choice: a quiet text action, not a second picker. It
+       names the window it switches *to* ("Use previous year"), so it can never
+       be misread as a label for the window already in use. */
+    .cmp-window {{ flex:none; padding:2px 7px; border:1px solid transparent; border-radius:999px; background:none; color:var(--accent); font-size:.72rem; font-weight:700; cursor:pointer; white-space:nowrap; transition:background .12s, border-color .12s; }}
+    .cmp-window:hover {{ background:rgba(29,111,208,.09); border-color:rgba(29,111,208,.22); }}
+    .cmp-window[hidden] {{ display:none; }}
+    .cmp-range-label {{ flex:none; color:var(--muted); font-size:.7rem; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }}
+    .cmp-range-label[hidden] {{ display:none; }}
     /* Range picker: a custom dropdown so the admin "Make default" + Apply
        controls live inside the panel, under the preset list. Reuses the .ke-dd-*
        base styling (toggle/panel/caret); these tune sizing + the option rows. */
@@ -1528,13 +1549,9 @@ def render_bigquery_dashboard_page(
     .range-default-status {{ flex-basis:100%; font-size:.72rem; font-weight:600; text-transform:none; letter-spacing:0; color:var(--muted); }}
     .range-default-status.err {{ color:var(--bad); }}
     .range-default-status.ok {{ color:#178a4c; }}
-    /* Compare picker: same dropdown shell as Range, with a footer that spells
-       out the resolved comparison dates instead of the admin default controls. */
-    .cmp-range-foot {{ margin-top:6px; }}
-    .cmp-range-foot .range-default-status {{ color:var(--muted); }}
     /* Backfill warning: the comparison window reaches back past a source's
        synced history, so its deltas are incomplete. A badge beside the Compare
-       picker — the control it qualifies — with the detail in a hover/focus
+       switch — the control it qualifies — with the detail in a hover/focus
        tooltip, so the filter bar keeps its one-line height. */
     .cmp-notice {{ position:relative; display:inline-flex; align-items:center; justify-content:center; flex:none; width:22px; height:22px; padding:0; border:1px solid #f0d9a0; border-radius:50%; background:#fdf7e8; color:#a9760a; cursor:help; transition:background .12s, border-color .12s; }}
     .cmp-notice[hidden] {{ display:none; }}
@@ -2071,9 +2088,15 @@ def render_bigquery_dashboard_page(
     .funnel-step-track {{ flex:1 1 auto; height:22px; background:var(--line-soft); border-radius:6px; overflow:hidden; }}
     .funnel-step-fill {{ height:100%; background:var(--accent); border-radius:6px; display:flex; align-items:center; padding-left:10px; font-size:.76rem; color:#fff; font-weight:700; min-width:2px; }}
     .funnel-step-count {{ flex:0 0 56px; font-size:.82rem; color:var(--navy); text-align:right; font-weight:700; }}
-    /* ---- Explorer tree ---- */
-    .indent1 {{ display:inline-block; width:18px; }}
-    .indent2 {{ display:inline-block; width:36px; }}
+    /* ---- Explorer tree ----
+       Three levels deep, so depth has to survive both a collapsed campaign and
+       a screenful of expanded ad groups. Four cues stack, and no single one
+       carries the whole job: a wider indent per level, a type scale that gets
+       smaller and quieter going down, a coloured rail down the left of every
+       nested row, and a hairline above each campaign to separate one block from
+       the next. */
+    .indent1 {{ display:inline-block; width:24px; }}
+    .indent2 {{ display:inline-block; width:48px; }}
     .tree-row[data-expandable] {{ cursor:pointer; }}
     .tree-row[data-expandable]:hover {{ background:#f3f8ff; }}
     /* Modern chevron caret: a rounded hover target whose chevron rotates on open. */
@@ -2081,9 +2104,22 @@ def render_bigquery_dashboard_page(
     .tree-row[data-expandable] .caret::before {{ content:''; width:5px; height:5px; border-top:1.7px solid currentColor; border-right:1.7px solid currentColor; transform:translateX(-1px) rotate(45deg); }}
     .tree-row[data-expandable].open .caret {{ transform:rotate(90deg); }}
     .tree-row[data-expandable]:hover .caret {{ background:rgba(29,111,208,.12); color:var(--accent); }}
-    .lvl-campaign .tree-name {{ font-weight:800; color:var(--navy); }}
-    .lvl-group .tree-name {{ font-weight:600; }}
-    .lvl-ad td.left {{ color:var(--muted); }}
+    /* Level 1 -- campaign: the block heading. Largest, darkest, and opened by a
+       rule above it so a long tree reads as campaigns rather than as one list. */
+    /* Only a campaign that follows a nested row needs the separator -- in the
+       default all-collapsed view every row is a campaign, and a rule between
+       each of them would just be a heavier grid. border-collapse means this
+       replaces the previous row's hairline rather than adding to it, so it has
+       to be wider than 1px to read as a break at all. */
+    .tree-row:not(.lvl-campaign) + .lvl-campaign > td {{ border-top:2px solid var(--line); }}
+    .lvl-campaign .tree-name {{ font-weight:800; font-size:.85rem; color:var(--navy); letter-spacing:-.01em; }}
+    /* Level 2 -- ad group: a step down in size and weight, with an accent rail
+       marking it as one level in. */
+    .lvl-group .tree-name {{ font-weight:700; font-size:.78rem; color:#42536b; }}
+    .lvl-group > td.left {{ box-shadow:inset 3px 0 0 rgba(29,111,208,.28); }}
+    /* Level 3 -- ad: the quietest row on the page, on a grey rail. */
+    .lvl-ad > td {{ font-size:.74rem; }}
+    .lvl-ad > td.left {{ color:var(--muted); box-shadow:inset 3px 0 0 rgba(107,122,144,.22); }}
     /* Sleek count indicator: dots representing the child count + a numeric badge. */
     .tree-count {{ display:inline-flex; align-items:center; gap:6px; margin-left:11px; vertical-align:middle; }}
     .tree-count .tc-dots {{ display:inline-flex; align-items:center; gap:3px; }}
@@ -2100,8 +2136,16 @@ def render_bigquery_dashboard_page(
     /* "vs previous" delta under a metric figure, shown once the Compare picker
        has a window selected -- on campaign rows and the grand total alike.
        Kept out-of-flow of the bold total figure above it. */
-    #explorerTable .expl-row-delta {{ margin-top:2px; font-weight:600; }}
-    #explorerTable .expl-row-delta .cmp-delta {{ font-size:.68rem; }}
+    /* A row delta is a footnote to the figure above it, never a competitor:
+       small, light, and grey unless the movement earned a colour (see
+       MEANINGFUL_DELTA_PCT). With one under every metric on every row, this
+       type scale is what keeps an expanded tree readable. */
+    #explorerTable .expl-row-delta {{ margin-top:1px; font-weight:600; line-height:1.2; }}
+    #explorerTable .expl-row-delta .cmp-delta {{ font-size:.62rem; font-weight:600; letter-spacing:-.01em; }}
+    #explorerTable .expl-row-delta .cmp-delta.flat {{ color:#9aa7bd; }}
+    /* The grand total is the one place a delta may speak up -- it is a single
+       figure, not one of fifty. */
+    #explorerTable tfoot .expl-row-delta .cmp-delta {{ font-size:.66rem; font-weight:700; }}
     /* GA4-verified conversions column — set off from the platform-reported metrics with a subtle gold accent. */
     #explorerTable th.ga4-col, #explorerTable td.ga4-col {{ background:rgba(184,146,46,0.06); border-left:1px solid rgba(184,146,46,0.3); }}
     #explorerTable td.ga4-col {{ font-variant-numeric:tabular-nums; }}
@@ -2274,7 +2318,6 @@ def render_bigquery_dashboard_page(
       .date-bar-bottom .range-dd {{ display:block; min-width:0; }}
       .date-bar-bottom .range-dd-toggle {{ width:100%; min-width:0; padding:6px 10px; font-size:.79rem; }}
       .range-dd-panel {{ width:min(220px, calc(100vw - 32px)); }}
-      #compareDropdown .ke-dd-panel {{ left:auto; right:0; }}
       /* Card-head filters (the Platform chips) are the widest thing in a
          section head on a phone. The head already drops its actions to their
          own line; they just couldn't shrink or wrap once there, so the last
@@ -2322,28 +2365,23 @@ def render_bigquery_dashboard_page(
           </div>
         </div>
         <div class="filter-group" id="compareFilterGroup">
-          <div class="ke-dropdown range-dd" id="compareDropdown">
-            <button type="button" class="ke-dd-toggle range-dd-toggle" id="compareToggle" aria-haspopup="listbox" aria-expanded="false">
-              <span class="dd-lead">
-                <span class="dd-vs" aria-hidden="true">vs</span>
-                <span class="sr-only">Compare to:</span>
-                <span id="compareToggleLabel">Previous period</span>
-              </span>
-              <span class="ke-dd-caret">▾</span>
-            </button>
-            <div class="ke-dd-panel range-dd-panel" id="comparePanel" hidden>
-              <div class="ke-dd-list range-dd-list" id="compareList" role="listbox">
-                {compare_option_rows_html}
-              </div>
-              <div class="range-dd-foot cmp-range-foot"><span class="range-default-status" id="compareRangeLabel"></span></div>
-            </div>
-          </div>
+          <!-- One switch, off by default: the page shows plain numbers until
+               someone asks what they should be measured against. The window
+               picker and the date read-out only exist once it is on, so the
+               off state is a single control and nothing else. -->
+          <label class="cmp-switch" for="compareSwitch">
+            <input type="checkbox" id="compareSwitch" role="switch" aria-describedby="compareRangeLabel">
+            <span class="cmp-switch-track" aria-hidden="true"><span class="cmp-switch-knob"></span></span>
+            <span class="cmp-switch-text" id="compareSwitchLabel">Compare to previous period</span>
+          </label>
+          <button type="button" class="cmp-window" id="compareWindowBtn" hidden>Use previous year</button>
+          <span class="cmp-range-label" id="compareRangeLabel" hidden></span>
           <!-- Filled + unhidden by syncCompareNotice() when the selected
                comparison window starts before a connector's synced history
                (most often a previous-year comparison against a recently
                connected source) -- the cue that the warehouse needs a deeper
-               backfill. It qualifies this one picker, so it rides next to it as
-               a hover/focus tooltip rather than a page-wide banner. -->
+               backfill. It qualifies this one switch, so it rides next to it
+               as a hover/focus tooltip rather than a page-wide banner. -->
           <button type="button" class="cmp-notice" id="compareNotice" aria-label="Comparison window warning" aria-describedby="compareNoticeTip" hidden>
             <span class="cmp-notice-icon" aria-hidden="true">&#9888;</span>
             <span class="cmp-notice-tip" id="compareNoticeTip" role="tooltip"></span>
@@ -2604,11 +2642,18 @@ def render_bigquery_dashboard_page(
     let STORED_DEFAULT_PRESET = {stored_default_preset_json};
     const DATE_PRESET_LABELS = {date_preset_labels_json};
     const DEFAULT_DATE_RANGE_API = "{_aurl(f'/api/clients/{api_client_key}/default-date-range')}";
-    // Comparison-period modes for the Compare picker, and the localStorage key
-    // the viewer's choice is remembered under (per client, per browser -- it's a
-    // reading preference, unlike the admin-set client default range).
+    // Comparison windows offered once the Compare switch is on, and the
+    // localStorage keys the viewer's choices are remembered under (per client,
+    // per browser -- reading preferences, unlike the admin-set default range).
+    // COMPARE_ON is separate from the window so turning comparison off and on
+    // again comes back to the window you were last reading.
     const COMPARE_MODE_LABELS = {compare_mode_labels_json};
     const COMPARE_MODE_STORAGE_KEY = 'sf.compareMode.{client_slug}';
+    const COMPARE_ON_STORAGE_KEY = 'sf.compareOn.{client_slug}';
+    // A move smaller than this reads as steady: it still shows its arrow and
+    // percentage, but in muted grey rather than red or green. Colour is the
+    // page's loudest signal, so it is spent only on movement worth acting on.
+    const MEANINGFUL_DELTA_PCT = 10;
     // Campaign Explorer allowlist (campaign names the client may see; empty = all)
     // and the admin-only endpoint that saves it from the "Campaigns" picker.
     const EXPLORER_CAMPAIGN_ALLOWLIST = {explorer_campaign_allowlist_json};
@@ -3502,9 +3547,14 @@ def render_bigquery_dashboard_page(
     // ---- Paid media: Summary ----
     // 4th field = which direction is "good" for coloring the vs-previous delta:
     // 'up' (more is better), 'down' (less is better), 'neutral' (just report it).
+    // CTR is deliberately 'neutral': it is a ratio, and it falls whenever
+    // impressions grow faster than clicks -- which is what broadening reach
+    // looks like, and is good news if conversions came with it. Colouring a CTR
+    // dip red tells people to fix something that may not be broken, so the
+    // number and its arrow are reported and the judgement is left to the reader.
     const SUMMARY_CARDS = [
       ['spend','Spend',money,'neutral'],['impressions','Impressions',count,'up'],['clicks','Clicks',count,'up'],
-      ['conversions','Conversions',count,'up'],['cpc','CPC',money,'down'],['cpa','CPA',money,'down'],['ctr','CTR',pct,'up'],
+      ['conversions','Conversions',count,'up'],['cpc','CPC',money,'down'],['cpa','CPA',money,'down'],['ctr','CTR',pct,'neutral'],
     ];
     const SPARK_COLORS = {{ spend:'#1769aa', impressions:'#7c3aed', clicks:'#0a7f3f', conversions:'#0891b2', cpc:'#d97706', cpa:'#dc2626', ctr:'#0891b2' }};
     const platformFilter = new Set();
@@ -3545,9 +3595,20 @@ def render_bigquery_dashboard_page(
       const tip=`vs ${{cmpNoun()}} (${{compareStart}} – ${{compareEnd}})`;
       if (Math.abs(ch)<0.5) return `<span class="cmp-delta flat" title="${{tip}}">0%</span>`;
       const up=ch>0, arrow=up?'▲':'▼';
+      // Two separate questions, and only the second one earns colour:
+      //   1. Which way did it move? -- the arrow, always shown.
+      //   2. Is that worth reacting to? -- red or green, and only for a move of
+      //      at least MEANINGFUL_DELTA_PCT on a metric that has a good
+      //      direction. Everything smaller keeps its arrow in muted grey, so a
+      //      table of ordinary week-to-week wobble reads as calm instead of as
+      //      a wall of alarms.
+      const meaningful=Math.abs(ch)>=MEANINGFUL_DELTA_PCT;
       let cls='flat';
-      if (dir==='up') cls=up?'up':'down'; else if (dir==='down') cls=up?'down':'up';
-      return `<span class="cmp-delta ${{cls}}" title="${{tip}}">${{arrow}} ${{Math.abs(ch).toFixed(0)}}%</span>`;
+      if (meaningful) {{
+        if (dir==='up') cls=up?'up':'down'; else if (dir==='down') cls=up?'down':'up';
+      }}
+      const note=meaningful ? '' : ` · under ${{MEANINGFUL_DELTA_PCT}}%, reads as steady`;
+      return `<span class="cmp-delta ${{cls}}" title="${{tip}}${{note}}">${{arrow}} ${{Math.abs(ch).toFixed(0)}}%</span>`;
     }}
     // ---- Goals + peer benchmarks (admin preview) ----
     // Both hang off the summary cards and both are additive: if either payload
@@ -3831,7 +3892,10 @@ def render_bigquery_dashboard_page(
     // backend; only the pages table doesn't. Default asc so the first click
     // surfaces the biggest sinkers.
     const GSC_DELTA_COL = {{key:'delta_position', label:'\\u0394 Pos', format:gscDelta, defDir:'asc'}};
-    const gscColsFor = which => which==='pages' ? GSC_SORT_COLS : GSC_SORT_COLS.concat([GSC_DELTA_COL]);
+    // With comparison switched off there is nothing to measure movement against,
+    // and a column of dashes is worse than no column -- so it only appears while
+    // the Compare switch is on.
+    const gscColsFor = which => (which==='pages' || !compareStart) ? GSC_SORT_COLS : GSC_SORT_COLS.concat([GSC_DELTA_COL]);
     // page_url rows come back as full URLs (https://host/path) -- show just the
     // path in the table (full URL stays in the title tooltip on hover).
     function pathOnly(url) {{
@@ -3856,6 +3920,7 @@ def render_bigquery_dashboard_page(
     function renderGscTable(which) {{
       const st = gscTables[which];
       const cols = gscColsFor(which);
+      if (!cols.some(c => c.key === st.sortKey)) {{ st.sortKey='clicks'; st.sortDir='desc'; }}
       const el = document.getElementById(st.tableId);
       const pager = document.getElementById(st.pagerId);
       if (!st.rows.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No data for this range.</td></tr></tbody>`; pager.innerHTML=''; return; }}
@@ -4075,7 +4140,7 @@ def render_bigquery_dashboard_page(
         : '';
       const head=`<thead><tr>${{gripHead}}<th class="left">Keyword</th>`
         + th('avg_position','Position · 13 wks', '', 'Impression-weighted average rank over the selected range. The spark line covers the last 13 weeks and rises as the rank improves.')
-        + th('delta_position','Δ Pos', '', 'Change in average rank against the comparison period. Positive means the keyword moved toward rank 1.')
+        + (compareStart ? th('delta_position','Δ Pos', '', 'Change in average rank against the comparison period. Positive means the keyword moved toward rank 1.') : '')
         + WATCH_COLS.map(c=>th(c.key,c.label)).join('')
         + (IS_ADMIN ? `<th></th>` : '') + `</tr></thead>`;
       const body=`<tbody>`+sorted.map(r=>{{
@@ -4107,7 +4172,7 @@ def render_bigquery_dashboard_page(
           + `<td><span class="watch-spark">${{watchSpark(r.series)}}${{posTxt}}</span></td>`
           // "New" (what a null delta means elsewhere) would be wrong for a
           // keyword that has no rank at all yet -- that row gets a plain dash.
-          + `<td>${{r.avg_position==null ? '—' : gscDelta(r.delta_position, r)}}</td>`
+          + (compareStart ? `<td>${{r.avg_position==null ? '—' : gscDelta(r.delta_position, r)}}</td>` : '')
           + WATCH_COLS.map(c=>`<td>${{r[c.key]==null ? '—' : c.format(r[c.key], r)}}</td>`).join('')
           + (IS_ADMIN ? `<td class="watch-rm-cell"><button type="button" class="watch-rm" data-watch-rm="${{r.idx}}" aria-label="Remove ${{esc(kwTxt||'this row')}}">×</button></td>` : '')
           + `</tr>`;
@@ -5044,7 +5109,10 @@ def render_bigquery_dashboard_page(
     // Verified conv. isn't included: it's stitched together from separate
     // per-platform verified-conversions calls that aren't fetched for the
     // comparison window (yet), so it has nothing to diff against.
-    const EXPLORER_METRIC_DIR = {{ spend:'neutral', impressions:'up', clicks:'up', ctr:'up', conversions:'up' }};
+    // Which direction is "good" per metric, for colouring row deltas. Spend and
+    // CTR are both 'neutral' -- see SUMMARY_CARDS for why a CTR dip is not
+    // automatically bad -- so neither ever colours red or green on its own.
+    const EXPLORER_METRIC_DIR = {{ spend:'neutral', impressions:'up', clicks:'up', ctr:'neutral', conversions:'up' }};
     function renderExplorer() {{
       const base=explorerAllowedRows();
       const filtered=base.filter(explorerRowMatches);
@@ -6606,8 +6674,8 @@ def render_bigquery_dashboard_page(
         .sort((a,b)=>num(a.avg_position)-num(b.avg_position))
         .slice(0,OV_KW_LEADERS);
       if (!top.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No matching queries in this range.</td></tr></tbody>`; return; }}
-      const head=`<thead><tr><th class="left">Keyword</th><th>Clicks</th><th>Position</th><th>Movement</th></tr></thead>`;
-      const body=top.map(r=>`<tr><td class="left" title="${{esc(r.query)}}"><span>${{esc(r.query)}}</span></td><td>${{count(r.clicks)}}</td><td>${{gscPos(r.avg_position)}}</td><td>${{gscDelta(r.delta_position)}}</td></tr>`).join('');
+      const head=`<thead><tr><th class="left">Keyword</th><th>Clicks</th><th>Position</th>${{compareStart?'<th>Movement</th>':''}}</tr></thead>`;
+      const body=top.map(r=>`<tr><td class="left" title="${{esc(r.query)}}"><span>${{esc(r.query)}}</span></td><td>${{count(r.clicks)}}</td><td>${{gscPos(r.avg_position)}}</td>${{compareStart?`<td>${{gscDelta(r.delta_position)}}</td>`:''}}</tr>`).join('');
       el.innerHTML=head+`<tbody>${{body}}</tbody>`;
     }}
     // Website analytics + AI traffic trends. Every other Overview card is
@@ -6836,19 +6904,31 @@ def render_bigquery_dashboard_page(
       return '';
     }}
     // ---- Comparison period ----
-    // 'prev_period' (default), 'prev_year', or 'none'. Remembered per client in
-    // this browser -- it's a reading preference, not a client-wide setting.
+    // Two pieces of state, both remembered per client in this browser because
+    // both are reading preferences, not client-wide settings:
+    //   compareOn   -- whether the page shows "vs previous" figures at all.
+    //                  OFF by default: a delta under every number is noise
+    //                  until someone asks for it.
+    //   compareMode -- which window to compare against once it is on,
+    //                  'prev_period' (default) or 'prev_year'.
+    let compareOn=false;
     let compareMode='prev_period';
     try {{
-      const saved=localStorage.getItem(COMPARE_MODE_STORAGE_KEY);
-      if (saved && COMPARE_MODE_LABELS[saved]) compareMode=saved;
+      const savedMode=localStorage.getItem(COMPARE_MODE_STORAGE_KEY);
+      // 'none' is the retired third option of the old picker. Someone who chose
+      // it wanted comparisons off, which is now the switch's default anyway --
+      // read it as off + the default window rather than as a window.
+      if (savedMode==='none') compareOn=false;
+      else if (savedMode && COMPARE_MODE_LABELS[savedMode]) compareMode=savedMode;
+      if (localStorage.getItem(COMPARE_ON_STORAGE_KEY)==='1') compareOn=true;
     }} catch(e) {{}}
-    // Point compareStart/compareEnd at the window the current mode asks for and
-    // refresh everything that spells the comparison out in words. 'none' leaves
-    // both blank -- every "vs previous" figure on the page is gated on
-    // compareStart being truthy, so this alone turns them all off.
+    // Point compareStart/compareEnd at the window the switch asks for and
+    // refresh everything that spells the comparison out in words. Switched off
+    // leaves both blank -- every "vs previous" figure and every comparison-window
+    // fetch on the page is gated on compareStart being truthy, so this alone
+    // turns them all off.
     function resolveCompare() {{
-      if (compareMode==='none') {{
+      if (!compareOn) {{
         compareStart=''; compareEnd='';
       }} else if (compareMode==='prev_year' && currentStart && currentEnd) {{
         compareStart=shiftYears(currentStart,1); compareEnd=shiftYears(currentEnd,1);
@@ -6862,13 +6942,36 @@ def render_bigquery_dashboard_page(
     function cmpNoun() {{ return compareMode==='prev_year' ? 'prior year' : 'prior period'; }}
     function cmpSeriesLabel() {{ return compareMode==='prev_year' ? 'Previous year' : 'Previous'; }}
     function syncCompareUI() {{
-      const lbl=document.getElementById('compareToggleLabel');
-      if (lbl && COMPARE_MODE_LABELS[compareMode]) lbl.textContent=COMPARE_MODE_LABELS[compareMode];
-      document.querySelectorAll('#compareList .range-opt').forEach(o =>
-        o.classList.toggle('active', o.dataset.cmp===compareMode));
+      const box=document.getElementById('compareSwitch');
+      if (box) box.checked=compareOn;
+      // The switch always names the window actually in use, so turning it on
+      // and then switching to last year can't leave it claiming otherwise.
+      const lbl=document.getElementById('compareSwitchLabel');
+      if (lbl) lbl.textContent = compareMode==='prev_year' ? 'Compare to previous year' : 'Compare to previous period';
+      // The window action names where it goes, not where you are, and only
+      // exists while comparison is on.
+      const win=document.getElementById('compareWindowBtn');
+      if (win) {{
+        win.hidden=!compareOn;
+        win.textContent = compareMode==='prev_year' ? 'Use previous period' : 'Use previous year';
+        win.title = compareMode==='prev_year'
+          ? 'Compare against the equivalent window immediately before this one'
+          : 'Compare against the same range 12 months ago';
+      }}
       const foot=document.getElementById('compareRangeLabel');
-      if (foot) foot.textContent = compareStart ? `${{compareStart}} – ${{compareEnd}}` : '';
+      if (foot) {{
+        foot.textContent = compareStart ? `${{compareStart}} – ${{compareEnd}}` : '';
+        foot.hidden = !compareStart;
+      }}
       syncCompareNotice();
+    }}
+    function setCompareOn(on) {{
+      on=!!on;
+      if (on===compareOn) return;
+      compareOn=on;
+      try {{ localStorage.setItem(COMPARE_ON_STORAGE_KEY, on?'1':'0'); }} catch(e) {{}}
+      resolveCompare();
+      loadCurrentTab();
     }}
     function setCompareMode(mode) {{
       if (!COMPARE_MODE_LABELS[mode] || mode===compareMode) return;
@@ -6878,19 +6981,10 @@ def render_bigquery_dashboard_page(
       loadCurrentTab();
     }}
     (function(){{
-      const dd=document.getElementById('compareDropdown'); if (!dd) return;
-      const toggle=document.getElementById('compareToggle');
-      const panel=document.getElementById('comparePanel');
-      const list=document.getElementById('compareList');
-      const setOpen=o=>{{ panel.hidden=!o; dd.classList.toggle('open', o); toggle.setAttribute('aria-expanded', o?'true':'false'); }};
-      toggle.addEventListener('click', ()=>setOpen(panel.hidden));
-      document.addEventListener('click', e=>{{ if (!dd.contains(e.target)) setOpen(false); }});
-      document.addEventListener('keydown', e=>{{ if (e.key==='Escape') setOpen(false); }});
-      list.addEventListener('click', e=>{{
-        const opt=e.target.closest('.range-opt'); if (!opt) return;
-        setCompareMode(opt.dataset.cmp);
-        setOpen(false);
-      }});
+      const box=document.getElementById('compareSwitch');
+      if (box) box.addEventListener('change', ()=>setCompareOn(box.checked));
+      const win=document.getElementById('compareWindowBtn');
+      if (win) win.addEventListener('click', ()=>setCompareMode(compareMode==='prev_year'?'prev_period':'prev_year'));
     }})();
     // ---- Range dropdown (custom): preset list + admin "Make default" / Apply ----
     // The preset list instant-applies on click (the panel stays open so an admin
