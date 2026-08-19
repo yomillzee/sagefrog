@@ -11,7 +11,7 @@ if str(APP_DIR) not in sys.path:
 
 import marketing_service as ms
 
-# Website Analytics carries an "Average session duration" card and a bar per day
+# Website Analytics carries an "Average session duration" card and a bar per week
 # between Audience and Demographics. GA4 only reports averageSessionDuration next
 # to a dimension, so the figure is rebuilt from the landing-page report: each
 # page's average is weighted by its sessions, never averaged flat — and the range
@@ -105,12 +105,15 @@ class RendererCardTests(unittest.TestCase):
         self.assertIn('id="sec-avgduration"', html)
         self.assertIn("/analytics/session-duration", html)
         self.assertIn("loadSessionDuration", html)
-        # The over-time half: a bar chart, its Daily/Weekly chips, and the
-        # session-weighted weekly re-bucketing behind them.
+        # The over-time half: one bar per week, session-weighted. Weekly only --
+        # no granularity chips on this card, unlike Sessions over time, because a
+        # single day's average swings on a handful of visits.
         self.assertIn('id="avgDurTrendChart"', html)
-        self.assertIn('id="avgDurGranChips"', html)
         self.assertIn("function barChart", html)
         self.assertIn("function avgDurWeekly", html)
+        self.assertNotIn("avgDurGranChips", html)
+        # Sessions over time keeps its own Daily/Weekly chips.
+        self.assertIn('id="sessionsGranChips"', html)
         # Ordering is the point of the request: the card sits above Demographics.
         self.assertLess(
             html.index('id="sec-avgduration"'), html.index('id="sec-demographics"')
