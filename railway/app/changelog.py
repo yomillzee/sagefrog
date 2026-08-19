@@ -63,6 +63,58 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-19",
+        title="Comparisons are one switch, and they start off",
+        area="Client dashboards",
+        kind="improved",
+        summary=(
+            "The Previous period / Previous year / No comparison picker is now a "
+            "single Compare to previous period switch that starts off, so a page "
+            "opens as plain numbers instead of an arrow under every figure."
+        ),
+        details=(
+            "Turn it on and the vs-previous figures come back everywhere they were.",
+            "Previous year is still there — a Use previous year action appears "
+            "beside the switch once it is on.",
+            "Both the on/off state and the window you picked are remembered per "
+            "client in your own browser.",
+            "Search Console's Δ Pos and Movement columns only appear while the "
+            "switch is on, rather than sitting there full of dashes.",
+        ),
+    ),
+    Entry(
+        date="2026-08-19",
+        title="Red and green now mean the movement is worth a look",
+        area="Client dashboards",
+        kind="improved",
+        summary=(
+            "A vs-previous figure is only coloured once the move reaches 10% — "
+            "smaller ones keep their arrow and percentage in grey, so a colour on "
+            "the page means something moved rather than something wobbled."
+        ),
+        details=(
+            "CTR is no longer coloured by direction at all: it falls whenever "
+            "impressions grow faster than clicks, which is good news if "
+            "conversions came too.",
+            "Comparison figures on campaign rows are smaller and lighter than the "
+            "numbers they qualify.",
+        ),
+    ),
+    Entry(
+        date="2026-08-19",
+        title="Campaign, ad group and ad rows look like three different levels",
+        area="Campaign explorer",
+        kind="improved",
+        summary=(
+            "An expanded campaign used to read as one flat list — the levels now "
+            "step further in, get smaller and quieter as they nest, and carry a "
+            "coloured rail down their left edge."
+        ),
+        details=(
+            "A rule separates one campaign's block from the next once it is open.",
+        ),
+    ),
+    Entry(
+        date="2026-08-19",
         title="Campaign explorer rows carry their own vs-previous comparison",
         area="Campaign explorer",
         kind="improved",

@@ -146,19 +146,50 @@ class CustomRangeTest(unittest.TestCase):
         self.assertIn("if (name === 'custom') lbl.textContent =", html)
 
 
-class ComparePickerTest(unittest.TestCase):
-    def test_picker_offers_both_modes_and_defaults_to_previous_period(self):
+class CompareSwitchTest(unittest.TestCase):
+    def test_comparison_is_one_switch_and_starts_off(self):
+        """A delta under every number is noise until someone asks for it, so the
+        page ships comparisons off and offers one control to turn them on."""
         html = _render()
-        self.assertIn('data-cmp="prev_period"', html)
-        self.assertIn('data-cmp="prev_year"', html)
-        self.assertIn('<span id="compareToggleLabel">Previous period</span>', html)
-        # Previous period is the pre-existing behaviour, so it starts selected.
-        self.assertIn('class="range-opt active" role="option" data-cmp="prev_period"', html)
-        self.assertIn("let compareMode='prev_period';", html)
+        self.assertIn('<input type="checkbox" id="compareSwitch" role="switch"', html)
+        self.assertIn(
+            '<span class="cmp-switch-text" id="compareSwitchLabel">Compare to previous period</span>',
+            html,
+        )
+        self.assertIn("let compareOn=false;", html)
+        # Off blanks the window, which is what every delta and every
+        # comparison-period fetch on the page is gated on.
+        self.assertIn("if (!compareOn) {", html)
+        # The retired dropdown is gone, not just hidden.
+        self.assertNotIn('id="compareDropdown"', html)
+        self.assertNotIn('id="compareToggleLabel"', html)
 
-    def test_mode_is_remembered_per_client(self):
-        self.assertIn("'sf.compareMode.demo'", _render())
-        self.assertIn("'sf.compareMode.acme'", _render(client_slug="acme"))
+    def test_window_choice_is_secondary_and_hidden_until_comparing(self):
+        """Previous year stays available, as a quiet action next to the switch
+        that names the window it moves to rather than the one in use."""
+        html = _render()
+        self.assertIn(
+            '<button type="button" class="cmp-window" id="compareWindowBtn" hidden>Use previous year</button>',
+            html,
+        )
+        self.assertIn("win.hidden=!compareOn;", html)
+        self.assertIn("setCompareMode(compareMode==='prev_year'?'prev_period':'prev_year')", html)
+        # The switch's own label follows the window, so it can never claim to be
+        # comparing against the period while comparing against last year.
+        self.assertIn("'Compare to previous year' : 'Compare to previous period'", html)
+
+    def test_both_choices_are_remembered_per_client(self):
+        for slug in ("demo", "acme"):
+            html = _render(client_slug=slug)
+            self.assertIn("'sf.compareMode.%s'" % slug, html)
+            self.assertIn("'sf.compareOn.%s'" % slug, html)
+
+    def test_the_retired_no_comparison_mode_reads_as_off(self):
+        """Whoever picked "No comparison" on the old picker gets what they asked
+        for, not a window built out of the string 'none'."""
+        html = _render()
+        self.assertIn("if (savedMode==='none') compareOn=false;", html)
+        self.assertNotIn('data-cmp="none"', html)
 
     def test_previous_year_shifts_the_selected_range_back_a_year(self):
         html = _render()
@@ -184,6 +215,78 @@ class ComparePickerTest(unittest.TestCase):
         self.assertIn('id="compareNotice"', html)
         self.assertIn("function syncCompareNotice()", html)
         self.assertIn("backfilled", html)
+
+
+class MeaningfulMovementTest(unittest.TestCase):
+    def test_colour_is_reserved_for_movement_worth_reacting_to(self):
+        """Every delta keeps its arrow; only a big enough move on a metric with a
+        good direction earns red or green."""
+        html = _render()
+        self.assertIn("const MEANINGFUL_DELTA_PCT = 10;", html)
+        self.assertIn("const meaningful=Math.abs(ch)>=MEANINGFUL_DELTA_PCT;", html)
+        self.assertIn("if (meaningful) {", html)
+
+    def test_ctr_is_never_coloured_by_direction(self):
+        """A CTR dip is what broadening reach looks like -- fine if conversions
+        came with it -- so CTR is reported, not judged."""
+        html = _render()
+        self.assertIn("['ctr','CTR',pct,'neutral']", html)
+        self.assertIn("ctr:'neutral'", html)
+        self.assertNotIn("ctr:'up'", html)
+
+    def test_row_deltas_are_smaller_than_the_figures_they_qualify(self):
+        html = _render()
+        self.assertIn("#explorerTable .expl-row-delta .cmp-delta { font-size:.62rem;", html)
+
+
+class ExplorerHierarchyTest(unittest.TestCase):
+    """Three levels have to stay legible whether the tree is collapsed or fully
+    expanded, so depth is carried by four cues rather than font weight alone."""
+
+    def test_each_level_indents_further(self):
+        html = _render()
+        self.assertIn(".indent1 { display:inline-block; width:24px; }", html)
+        self.assertIn(".indent2 { display:inline-block; width:48px; }", html)
+
+    def test_type_gets_smaller_and_quieter_going_down(self):
+        html = _render()
+        self.assertIn(".lvl-campaign .tree-name { font-weight:800; font-size:.85rem;", html)
+        self.assertIn(".lvl-group .tree-name { font-weight:700; font-size:.78rem;", html)
+        self.assertIn(".lvl-ad > td { font-size:.74rem; }", html)
+
+    def test_nested_rows_carry_a_depth_rail(self):
+        html = _render()
+        self.assertIn(".lvl-group > td.left { box-shadow:inset 3px 0 0", html)
+        self.assertIn(".lvl-ad > td.left { color:var(--muted); box-shadow:inset 3px 0 0", html)
+
+    def test_only_a_campaign_after_a_nested_row_gets_a_separator(self):
+        """In the default all-collapsed view every row is a campaign; a rule
+        between each of them would just be a heavier grid."""
+        html = _render()
+        self.assertIn(
+            ".tree-row:not(.lvl-campaign) + .lvl-campaign > td { border-top:2px solid var(--line); }",
+            html,
+        )
+
+
+class MovementColumnsFollowTheSwitchTest(unittest.TestCase):
+    """Search Console measures movement server-side, so with comparison off
+    those columns have nothing to show -- and a column of dashes is worse than
+    no column."""
+
+    def test_gsc_delta_column_only_exists_while_comparing(self):
+        html = _render()
+        self.assertIn("(which==='pages' || !compareStart) ? GSC_SORT_COLS", html)
+        # Sorting by a column that just disappeared falls back to the default.
+        self.assertIn(
+            "if (!cols.some(c => c.key === st.sortKey)) { st.sortKey='clicks'; st.sortDir='desc'; }",
+            html,
+        )
+
+    def test_watchlist_and_keyword_leaders_hide_theirs_too(self):
+        html = _render()
+        self.assertIn("+ (compareStart ? th('delta_position','\u0394 Pos'", html)
+        self.assertIn("${compareStart?'<th>Movement</th>':''}", html)
 
 
 class GscComparePeriodTest(unittest.TestCase):
