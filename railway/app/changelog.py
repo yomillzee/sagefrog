@@ -63,6 +63,25 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-19",
+        title="One comparison picker again, starting on No comparison",
+        area="Client dashboards",
+        kind="improved",
+        summary=(
+            "The Compare switch and its window dropdown are back to being a "
+            "single picker listing No comparison, Previous period and Previous "
+            "year — it just lands on No comparison instead of comparing by "
+            "default."
+        ),
+        details=(
+            "No comparison is the default, so a page still opens as plain "
+            "numbers rather than an arrow under every figure.",
+            "Whatever you had the switch set to carries over: switched off "
+            "lands on No comparison, switched on keeps the window you were "
+            "reading.",
+        ),
+    ),
+    Entry(
+        date="2026-08-19",
         title="Switch between previous period and previous year in one dropdown",
         area="Client dashboards",
         kind="improved",

@@ -146,60 +146,45 @@ class CustomRangeTest(unittest.TestCase):
         self.assertIn("if (name === 'custom') lbl.textContent =", html)
 
 
-class CompareSwitchTest(unittest.TestCase):
-    def test_comparison_is_one_switch_and_starts_off(self):
+class ComparePickerTest(unittest.TestCase):
+    def test_picker_lists_no_comparison_first_and_defaults_to_it(self):
         """A delta under every number is noise until someone asks for it, so the
-        page ships comparisons off and offers one control to turn them on."""
+        picker offers all three choices and lands on No comparison."""
         html = _render()
-        self.assertIn('<input type="checkbox" id="compareSwitch" role="switch"', html)
         self.assertIn(
-            '<span class="cmp-switch-text" id="compareSwitchLabel">Compare to previous period</span>',
+            'class="range-opt active" role="option" data-cmp="none">No comparison</button>',
             html,
         )
-        self.assertIn("let compareOn=false;", html)
-        # Off blanks the window, which is what every delta and every
+        self.assertIn('data-cmp="prev_period">Previous period</button>', html)
+        self.assertIn('data-cmp="prev_year">Previous year</button>', html)
+        self.assertIn('<span id="compareToggleLabel">No comparison</span>', html)
+        self.assertIn("let compareMode=COMPARE_DEFAULT_MODE;", html)
+        self.assertIn('const COMPARE_DEFAULT_MODE = "none";', html)
+        # No comparison blanks the window, which is what every delta and every
         # comparison-period fetch on the page is gated on.
-        self.assertIn("if (!compareOn) {", html)
-        # The retired dropdown is gone, not just hidden.
-        self.assertNotIn('id="compareDropdown"', html)
-        self.assertNotIn('id="compareToggleLabel"', html)
+        self.assertIn("if (compareMode==='none') {", html)
 
-    def test_window_is_a_dropdown_hidden_until_comparing(self):
-        """Previous year stays available, as a one-word dropdown beside the
-        switch that only exists once there is a comparison to point it at."""
+    def test_no_comparison_reads_as_a_choice_not_a_window(self):
+        """"vs No comparison" would be nonsense, so the lead hides itself."""
         html = _render()
-        self.assertIn('<select class="cmp-window" id="compareWindowSelect"', html)
-        self.assertIn('<option value="prev_period">period</option>', html)
-        self.assertIn('<option value="prev_year">year</option>', html)
-        self.assertIn('id="compareWindowWrap" hidden', html)
-        self.assertIn("if (wrap) wrap.hidden=!compareOn;", html)
-        # A native select, so the change event is the whole interaction.
-        self.assertIn("win.addEventListener('change', ()=>setCompareMode(win.value));", html)
-        # The retired text action is gone.
-        self.assertNotIn('id="compareWindowBtn"', html)
+        self.assertIn('<span class="dd-vs" id="compareVs" aria-hidden="true" hidden>vs</span>', html)
+        self.assertIn("if (vs) vs.hidden = compareMode==='none';", html)
 
-    def test_label_and_dropdown_read_as_one_phrase(self):
-        """On, the label stops at "Compare to previous" and the dropdown
-        finishes it. Off, there is no dropdown, so the label spells the window
-        out rather than trailing off or claiming the wrong one."""
+    def test_mode_is_remembered_per_client(self):
+        self.assertIn("'sf.compareMode.demo'", _render())
+        self.assertIn("'sf.compareMode.acme'", _render(client_slug="acme"))
+
+    def test_the_switch_it_replaced_is_migrated_not_ignored(self):
+        """The switch stored on/off separately. An explicit off means No
+        comparison whatever window is remembered; an on means that window
+        rather than the new default."""
         html = _render()
-        self.assertIn("? 'Compare to previous'", html)
-        self.assertIn(": (compareMode==='prev_year' ? 'Compare to previous year' : 'Compare to previous period')", html)
-        # The dropdown always shows the window actually in use.
-        self.assertIn("win.value=compareMode;", html)
-
-    def test_both_choices_are_remembered_per_client(self):
-        for slug in ("demo", "acme"):
-            html = _render(client_slug=slug)
-            self.assertIn("'sf.compareMode.%s'" % slug, html)
-            self.assertIn("'sf.compareOn.%s'" % slug, html)
-
-    def test_the_retired_no_comparison_mode_reads_as_off(self):
-        """Whoever picked "No comparison" on the old picker gets what they asked
-        for, not a window built out of the string 'none'."""
-        html = _render()
-        self.assertIn("if (savedMode==='none') compareOn=false;", html)
-        self.assertNotIn('data-cmp="none"', html)
+        self.assertIn("const COMPARE_ON_LEGACY_KEY = 'sf.compareOn.demo';", html)
+        self.assertIn("if (legacyOn==='0') compareMode='none';", html)
+        self.assertIn("else if (legacyOn==='1' && compareMode==='none') compareMode='prev_period';", html)
+        # The switch itself is gone, not hidden.
+        self.assertNotIn('id="compareSwitch"', html)
+        self.assertNotIn('id="compareWindowSelect"', html)
 
     def test_previous_year_shifts_the_selected_range_back_a_year(self):
         html = _render()
