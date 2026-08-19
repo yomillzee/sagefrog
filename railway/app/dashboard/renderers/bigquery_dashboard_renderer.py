@@ -2478,8 +2478,8 @@ def render_bigquery_dashboard_page(
       </section>
 
       <section id="sec-avgduration">
-        <div class="sec-head"><h2>Average session duration <span class="cmp-warn" id="avgDurCmpWarn" title="" hidden>&#9888;</span></h2><div class="sec-head-actions"><div class="chips seg" id="avgDurGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><span class="status" id="avgDurStatus"></span></div></div>
-        <p class="sec-note" id="avgDurNote">How long a session lasted on average, weighted by how many sessions each landing page brought in. Each bar is that day’s own average, so a quiet day with one long visit reads high.</p>
+        <div class="sec-head"><h2>Average session duration <span class="cmp-warn" id="avgDurCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="avgDurStatus"></span></div>
+        <p class="sec-note" id="avgDurNote">How long a session lasted on average, weighted by how many sessions each landing page brought in. One bar per week (starting Monday) — a single day’s average swings too hard on a handful of visits to be worth reading.</p>
         <div class="cards" id="avgDurCards" style="max-width:220px; margin-bottom:12px"></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:200px"><canvas id="avgDurTrendChart"></canvas></div></div>
         <div class="cmp-legend" id="avgDurTrendLegend"></div>
@@ -4621,7 +4621,7 @@ def render_bigquery_dashboard_page(
         // Average session duration comes from the landing-page report, so under
         // a scope it covers the sessions that *started* on a matching page.
         const adnote = document.getElementById('avgDurNote');
-        if (adnote) adnote.textContent = 'How long a session that started on a matching page lasted on average over this range, weighted by how many sessions each of those pages brought in.';
+        if (adnote) adnote.textContent = 'How long a session that started on a matching page lasted on average, weighted by how many sessions each of those pages brought in. One bar per week, starting Monday.';
         // Demographics keeps its geography half (served page-scoped) and drops
         // age/gender, which are user-scoped in GA4 with no page to scope by —
         // so the section is geography only, and says so.
@@ -6401,10 +6401,14 @@ def render_bigquery_dashboard_page(
     // GA4 only reports averageSessionDuration next to a dimension, so the
     // endpoint re-weights the per-landing-page averages by their sessions to
     // rebuild the site-wide figure: one card for the range, and the same figure
-    // per day beneath it. Bars rather than a line -- each day is its own
+    // per week beneath it. Bars rather than a line -- each week is its own
     // average, not a running total -- with the comparison period riding over
     // them as a dashed line.
-    let avgDurGran = 'daily';
+    //
+    // Weekly only, unlike Sessions over time: a single day's average is a mean
+    // over a handful of visits, so one long session moves it several minutes and
+    // the daily bars read as noise. The endpoint still returns days; the week is
+    // the smallest bucket worth plotting.
     let avgDurCache = {{ cur: [], prev: [] }};
     // Weeks start Monday, and a week's average is re-weighted by its days'
     // sessions: averaging the daily averages would let a dead Sunday count for
@@ -6437,9 +6441,8 @@ def render_bigquery_dashboard_page(
       }}
       return sess ? secs / sess : null;
     }}
-    function avgDurRows(rows) {{ return avgDurGran === 'weekly' ? avgDurWeekly(rows) : (rows || []); }}
     function renderAvgDurTrend() {{
-      drawAvgDurTrend(avgDurRows(avgDurCache.cur), avgDurRows(avgDurCache.prev));
+      drawAvgDurTrend(avgDurWeekly(avgDurCache.cur), avgDurWeekly(avgDurCache.prev));
     }}
     registerAnnotatedChart(() => {{ if (avgDurCache && avgDurCache.cur) renderAvgDurTrend(); }});
     function drawAvgDurTrend(rows, prevRows) {{
@@ -6460,6 +6463,10 @@ def render_bigquery_dashboard_page(
         yFmt: v => fmtDuration(v),
         maxBarThickness: 26,
         tooltip: {{
+          title: items => {{
+            const i = (items && items.length) ? items[0].dataIndex : -1;
+            return i < 0 ? '' : `Week of ${{String(rows[i].date)}}`;
+          }},
           label: c => `${{c.dataset.label}}: ${{fmtDuration(c.raw)}}`,
           // How many sessions the bar averages, so a freak one-visit day reads
           // as exactly that rather than as a great day.
@@ -6503,16 +6510,6 @@ def render_bigquery_dashboard_page(
         setStatus('avgDurStatus', err.message||String(err), true);
       }}
     }}
-    // Daily/Weekly chips -- re-bucketed from cache, no refetch.
-    document.querySelectorAll('#avgDurGranChips .chip').forEach(btn =>
-      btn.addEventListener('click', () => {{
-        if (btn.dataset.gran === avgDurGran) return;
-        avgDurGran = btn.dataset.gran;
-        document.querySelectorAll('#avgDurGranChips .chip').forEach(b => b.classList.toggle('active', b === btn));
-        renderAvgDurTrend();
-      }})
-    );
-
     // ---- Loaders ----
     function loadAllAnalytics() {{
       // Staggered, not simultaneous: 8 modules x 1-3 sub-fetches each means

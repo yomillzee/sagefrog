@@ -63,6 +63,24 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-19",
+        title="Average session duration is charted by week, not by day",
+        area="Website Analytics",
+        kind="improved",
+        summary=(
+            "The Daily view is gone from this card: a single day’s average "
+            "moves several minutes on one long visit, so the daily bars read as "
+            "noise rather than a trend."
+        ),
+        details=(
+            "One bar per week, starting Monday, weighted by each day’s "
+            "sessions.",
+            "Hovering a bar names the week it covers and how many sessions it "
+            "averages.",
+            "Sessions over time keeps its Daily / Weekly toggle.",
+        ),
+    ),
+    Entry(
+        date="2026-08-19",
         title="Average session duration now has an over-time chart",
         area="Website Analytics",
         kind="improved",
