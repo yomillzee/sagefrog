@@ -19,8 +19,8 @@ import marketing_service as ms
 # page's average is weighted by its sessions, never averaged flat — and the
 # range figure is re-weighted from the daily series the same way, so a quiet
 # Sunday doesn't pull it around as hard as a busy Tuesday. Engagement rate
-# isn't in that report either, so it's merged in from a second, session-grained
-# query.
+# isn't in that report either, so it's merged in from a second query, along with
+# that query's own session count -- which is what the rate divides by.
 
 START = dt.date(2024, 1, 1)
 END = dt.date(2024, 1, 31)
@@ -95,40 +95,53 @@ class FetchSessionDurationTests(unittest.TestCase):
         self.assertEqual(payload["avg_session_duration_seconds"], 60.0)
         self.assertEqual(payload["sessions"], 100)
 
+    def _split_reports(self, landing, engagement):
+        """Answer the landing-page query and the engagement query separately."""
+        def _capture(sql, params=None, max_rows=None):
+            self._sql.append(sql)
+            return landing if "vw_ga4_landing_pages_daily" in sql else engagement
+
+        ms._run_query = _capture
+
     def test_merges_engagement_rate_from_a_second_session_grained_query(self) -> None:
         # Engagement rate isn't in the landing-page report (no engagedSessions
         # next to landingPage), so it comes from a second query against the
         # same table Traffic acquisition uses, and gets merged in by date.
-        def _capture(sql, params=None, max_rows=None):
-            self._sql.append(sql)
-            if "vw_ga4_landing_pages_daily" in sql:
-                return [
-                    {"date": "2024-01-01", "sessions": 900, "new_users": 100, "avg_session_duration_seconds": 90.0},
-                    {"date": "2024-01-02", "sessions": 300, "new_users": 50, "avg_session_duration_seconds": 150.0},
-                ]
-            return [
-                {"date": "2024-01-01", "engaged_sessions": 450},
-                {"date": "2024-01-02", "engaged_sessions": 300},
-            ]
-
-        ms._run_query = _capture
+        self._split_reports(
+            [
+                {"date": "2024-01-01", "sessions": 900, "new_users": 100, "avg_session_duration_seconds": 90.0},
+                {"date": "2024-01-02", "sessions": 300, "new_users": 50, "avg_session_duration_seconds": 150.0},
+            ],
+            [
+                {"date": "2024-01-01", "engagement_base_sessions": 1000, "engaged_sessions": 450},
+                {"date": "2024-01-02", "engagement_base_sessions": 400, "engaged_sessions": 300},
+            ],
+        )
         payload = ms.fetch_session_duration(start_date=START, end_date=END)
         self.assertEqual(payload["new_users"], 150)
-        self.assertEqual(payload["engagement_rate"], round((450 + 300) / 1200 * 100, 1))
         self.assertEqual(payload["daily"][0]["engaged_sessions"], 450)
         self.assertEqual(payload["daily"][1]["engaged_sessions"], 300)
+        # 750 engaged over the 1,400 sessions that query counted -- NOT over the
+        # 1,200 the landing-page report counted. The two reports count a scoped
+        # session differently (started on a matching page vs viewed one), so
+        # dividing across them can put the rate over 100%.
+        self.assertEqual(payload["engagement_rate"], round(750 / 1400 * 100, 1))
+        self.assertNotEqual(payload["engagement_rate"], round(750 / 1200 * 100, 1))
 
-    def test_a_date_missing_from_the_engagement_query_defaults_to_zero(self) -> None:
-        def _capture(sql, params=None, max_rows=None):
-            self._sql.append(sql)
-            if "vw_ga4_landing_pages_daily" in sql:
-                return [{"date": "2024-01-01", "sessions": 900, "new_users": 100, "avg_session_duration_seconds": 90.0}]
-            return []
-
-        ms._run_query = _capture
+    def test_a_date_missing_from_the_engagement_query_reads_as_no_rate(self) -> None:
+        # Nothing came back for the date, so there is no rate to quote for it --
+        # the card shows a dash rather than claiming 0% engagement.
+        self._split_reports(
+            [{"date": "2024-01-01", "sessions": 900, "new_users": 100, "avg_session_duration_seconds": 90.0}],
+            [],
+        )
         payload = ms.fetch_session_duration(start_date=START, end_date=END)
         self.assertEqual(payload["daily"][0]["engaged_sessions"], 0)
-        self.assertEqual(payload["engagement_rate"], 0.0)
+        self.assertEqual(payload["daily"][0]["engagement_base_sessions"], 0)
+        self.assertIsNone(payload["engagement_rate"])
+        # The metrics that do come from the landing-page report are unaffected.
+        self.assertEqual(payload["sessions"], 900)
+        self.assertEqual(payload["avg_session_duration_seconds"], 90.0)
 
 
 class RendererCardTests(unittest.TestCase):
@@ -162,6 +175,13 @@ class RendererCardTests(unittest.TestCase):
         self.assertIn("New users", html)
         self.assertIn("Engagement rate", html)
         self.assertIn("Avg session duration", html)
+        # Under a page-path scope each metric says which scope it is reading,
+        # and the note is not overwritten with site-wide copy when a card is
+        # clicked -- the scope branch used to write avgDurNote itself, which the
+        # per-metric note then clobbered as soon as the data landed.
+        self.assertIn("scopedNote", html)
+        self.assertIn("pathFilterActive() ? (m.scopedNote || m.note) : m.note", html)
+        self.assertNotIn("adnote", html)
         # Ordering is the point of the request: the card sits above Demographics.
         self.assertLess(
             html.index('id="sec-avgduration"'), html.index('id="sec-demographics"')

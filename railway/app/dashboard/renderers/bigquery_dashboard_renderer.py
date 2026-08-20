@@ -4744,10 +4744,9 @@ def render_bigquery_dashboard_page(
           snote.hidden = false;
           snote.textContent = 'Sessions that viewed a page matching this filter. A session that viewed more than one matching page is counted once per page, the same as GA4’s per-page Sessions metric.';
         }}
-        // Average session duration comes from the landing-page report, so under
-        // a scope it covers the sessions that *started* on a matching page.
-        const adnote = document.getElementById('avgDurNote');
-        if (adnote) adnote.textContent = 'How long a session that started on a matching page lasted on average, weighted by how many sessions each of those pages brought in. One bar per week, starting Monday.';
+        // Sessions & engagement names its own scope in each metric's note
+        // (AVG_DUR_METRICS[].scopedNote), so there is nothing to overwrite
+        // here -- avgDurUpdateNote() picks the scoped sentence.
         // Demographics keeps its geography half (served page-scoped) and drops
         // age/gender, which are user-scoped in GA4 with no page to scope by —
         // so the section is geography only, and says so.
@@ -6836,22 +6835,26 @@ def render_bigquery_dashboard_page(
       {{
         key:'sessions', label:'Total sessions', color:'#1d6fd0',
         fmt: v => v==null ? '\u2014' : count(v),
-        note:'Sessions on the site in this range, by week (starting Monday) -- smooths out ordinary day-to-day swings so a trend is easier to read.',
+        note:'Sessions on the site in this range, by week (starting Monday) — smooths out ordinary day-to-day swings so a trend is easier to read.',
+        scopedNote:'Sessions that started on a page matching this filter, by week (starting Monday).',
       }},
       {{
         key:'new_users', label:'New users', color:'#0a7f3f',
         fmt: v => v==null ? '\u2014' : count(v),
         note:'Visitors GA4 had not seen before, by week (starting Monday).',
+        scopedNote:'Visitors GA4 had not seen before whose session started on a page matching this filter, by week (starting Monday).',
       }},
       {{
         key:'engagement_rate', label:'Engagement rate', color:'#7c3aed',
         fmt: v => v==null ? '\u2014' : num(v).toFixed(1)+'%',
-        note:'Share of sessions GA4 counts as engaged -- lasted 10+ seconds, fired a key event, or viewed 2+ pages -- re-derived from each week\u2019s totals rather than averaging daily rates.',
+        note:'Share of sessions GA4 counts as engaged — lasted 10+ seconds, fired a key event, or viewed 2+ pages — re-derived from each week\u2019s totals rather than averaging daily rates.',
+        scopedNote:'Share of the sessions that viewed a page matching this filter that GA4 counts as engaged — lasted 10+ seconds, fired a key event, or viewed 2+ pages.',
       }},
       {{
         key:'avg_session_duration_seconds', label:'Avg session duration', color:'#b8600a',
         fmt: v => v==null ? '\u2014' : fmtDuration(v),
-        note:'How long a session lasted on average, weighted by how many sessions each landing page brought in. One point per week (starting Monday) -- a single day\u2019s average swings too hard on a handful of visits to be worth reading.',
+        note:'How long a session lasted on average, weighted by how many sessions each landing page brought in. One point per week (starting Monday) — a single day\u2019s average swings too hard on a handful of visits to be worth reading.',
+        scopedNote:'How long a session that started on a page matching this filter lasted on average, weighted by how many sessions each of those pages brought in. One point per week (starting Monday).',
       }},
     ];
     let avgDurMetric = 'avg_session_duration_seconds';
@@ -6868,11 +6871,12 @@ def render_bigquery_dashboard_page(
         const dow = (dt.getDay() + 6) % 7;            // 0 = Monday
         const mon = new Date(dt); mon.setDate(dt.getDate() - dow);
         const key = `${{mon.getFullYear()}}-${{String(mon.getMonth()+1).padStart(2,'0')}}-${{String(mon.getDate()).padStart(2,'0')}}`;
-        if (!cur || cur.date !== key) {{ cur = {{ date:key, sessions:0, new_users:0, engaged_sessions:0, secs:0 }}; out.push(cur); }}
+        if (!cur || cur.date !== key) {{ cur = {{ date:key, sessions:0, new_users:0, engaged_sessions:0, engagement_base:0, secs:0 }}; out.push(cur); }}
         const sess = num(d.sessions);
         cur.sessions += sess;
         cur.new_users += num(d.new_users);
         cur.engaged_sessions += num(d.engaged_sessions);
+        cur.engagement_base += num(d.engagement_base_sessions);
         cur.secs += num(d.avg_session_duration_seconds) * sess;
       }}
       return out.map(w => ({{
@@ -6880,7 +6884,7 @@ def render_bigquery_dashboard_page(
         sessions: w.sessions,
         new_users: w.new_users,
         avg_session_duration_seconds: w.sessions ? w.secs / w.sessions : 0,
-        engagement_rate: w.sessions ? w.engaged_sessions / w.sessions * 100 : 0,
+        engagement_rate: w.engagement_base ? w.engaged_sessions / w.engagement_base * 100 : 0,
       }}));
     }}
     // A metric's session-weighted figure over a whole set of daily rows --
@@ -6888,22 +6892,31 @@ def render_bigquery_dashboard_page(
     // delta and the chart legend.
     function avgDurMetricValue(daily, key) {{
       if (!daily || !daily.length) return null;
-      let sess = 0, secs = 0, engaged = 0, newUsers = 0;
+      let sess = 0, secs = 0, engaged = 0, engBase = 0, newUsers = 0;
       for (const d of daily) {{
         const s = num(d.sessions);
         sess += s; secs += num(d.avg_session_duration_seconds) * s;
-        engaged += num(d.engaged_sessions); newUsers += num(d.new_users);
+        engaged += num(d.engaged_sessions); engBase += num(d.engagement_base_sessions);
+        newUsers += num(d.new_users);
       }}
       if (key === 'sessions') return sess || null;
       if (key === 'new_users') return newUsers || null;
+      // Engagement rate divides the session count that came back with
+      // engaged_sessions, not the landing-page one -- see fetch_session_duration.
+      if (key === 'engagement_rate') return engBase ? engaged / engBase * 100 : null;
       if (!sess) return null;
       if (key === 'avg_session_duration_seconds') return secs / sess;
-      if (key === 'engagement_rate') return engaged / sess * 100;
       return null;
     }}
+    // Under a page-path scope every one of these metrics reads only the
+    // matching pages, so the note keeps saying so whichever card is selected --
+    // the scoped sentence replaces the site-wide one rather than being
+    // overwritten by it once data lands.
     function avgDurUpdateNote() {{
       const note = document.getElementById('avgDurNote');
-      if (note) note.textContent = avgDurMetricDef().note;
+      if (!note) return;
+      const m = avgDurMetricDef();
+      note.textContent = pathFilterActive() ? (m.scopedNote || m.note) : m.note;
     }}
     function renderAvgDurCards() {{
       const host = document.getElementById('avgDurCards');
@@ -6955,8 +6968,10 @@ def render_bigquery_dashboard_page(
           }},
           label: c => `${{c.dataset.label}}: ${{m.fmt(c.raw)}}`,
           // How many sessions the point is built from, so a freak one-visit
-          // week reads as exactly that rather than as a great week.
+          // week reads as exactly that rather than as a great week. Skipped for
+          // Total sessions, where it would just repeat the value above it.
           afterBody: items => {{
+            if (m.key === 'sessions') return '';
             const i = (items && items.length) ? items[0].dataIndex : -1;
             return i < 0 ? '' : `${{count(sess[i])}} session${{sess[i] === 1 ? '' : 's'}}`;
           }},
