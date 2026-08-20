@@ -80,7 +80,7 @@ class ExplorerCardLayoutTests(unittest.TestCase):
     def test_panels_are_wrapped_in_natural_order(self) -> None:
         order = _panel_order(self._render(None, is_admin=True))
         self.assertEqual(
-            order, ["explorer", "keywords", "gdemo", "lidemo", "budget"]
+            order, ["explorer", "paid_trends", "keywords", "gdemo", "lidemo", "budget"]
         )
 
     def test_wrapper_keys_are_known_panels(self) -> None:
@@ -97,7 +97,7 @@ class ExplorerCardLayoutTests(unittest.TestCase):
         }
         order = _panel_order(self._render(layout, is_admin=True))
         self.assertEqual(
-            order, ["budget", "keywords", "gdemo", "lidemo", "explorer"]
+            order, ["budget", "keywords", "gdemo", "lidemo", "explorer", "paid_trends"]
         )
 
     def test_panel_not_named_in_stored_order_keeps_its_natural_place(self) -> None:
@@ -106,7 +106,7 @@ class ExplorerCardLayoutTests(unittest.TestCase):
         layout = {"order": ["budget", "explorer"], "hidden": []}
         order = _panel_order(self._render(layout, is_admin=True))
         self.assertEqual(
-            order, ["budget", "explorer", "keywords", "gdemo", "lidemo"]
+            order, ["budget", "explorer", "paid_trends", "keywords", "gdemo", "lidemo"]
         )
 
     def test_hidden_panel_absent_for_client(self) -> None:
@@ -126,7 +126,7 @@ class ExplorerCardLayoutTests(unittest.TestCase):
     def test_unknown_keys_ignored(self) -> None:
         html = self._render({"order": ["nope"], "hidden": ["nope"]}, is_admin=True)
         self.assertEqual(
-            _panel_order(html), ["explorer", "keywords", "gdemo", "lidemo", "budget"]
+            _panel_order(html), ["explorer", "paid_trends", "keywords", "gdemo", "lidemo", "budget"]
         )
         self.assertNotIn('class="ov-unit ov-unit--hidden"', _explorer_pane(html))
 

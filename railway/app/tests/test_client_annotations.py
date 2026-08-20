@@ -168,7 +168,8 @@ class AnnotationShapeTests(unittest.TestCase):
         base = dict(
             id=3, client_slug="penn", event_date="2026-03-12", end_date=None,
             title="Site migration", body="New CMS went live.", category="website",
-            visibility="internal", created_at="2026-03-12T00:00:00+00:00",
+            visibility="internal", charts="both",
+            created_at="2026-03-12T00:00:00+00:00",
             updated_at="2026-03-12T00:00:00+00:00",
             created_by="a@x.com", updated_by="a@x.com",
         )
@@ -189,6 +190,24 @@ class AnnotationShapeTests(unittest.TestCase):
     def test_an_unknown_stored_category_renders_as_other(self):
         d = self._anno(category="obsolete").to_dict()
         self.assertEqual(d["category_label"], "Other")
+
+    def test_to_dict_carries_the_chart_scope_the_dashboard_filters_on(self):
+        d = self._anno().to_dict()
+        self.assertEqual(d["charts"], "both")
+        self.assertEqual(d["charts_label"], client_annotations.CHART_SCOPES["both"])
+
+    def test_an_unknown_stored_chart_scope_reads_as_both(self):
+        # A row written before the field existed (or by a future version) has to
+        # keep drawing on every chart rather than vanishing from all of them.
+        self.assertEqual(client_annotations.clean_charts("everywhere"), "both")
+        self.assertEqual(client_annotations.clean_charts(None), "both")
+        self.assertEqual(client_annotations.clean_charts(" Ads "), "ads")
+
+    def test_chart_scope_choices_covers_every_scope(self):
+        keys = [c["key"] for c in client_annotations.chart_scope_choices()]
+        self.assertEqual(set(keys), set(client_annotations.CHART_SCOPES))
+        for choice in client_annotations.chart_scope_choices():
+            self.assertTrue(choice["label"])
 
     def test_category_choices_covers_every_category(self):
         keys = [c["key"] for c in client_annotations.category_choices()]
