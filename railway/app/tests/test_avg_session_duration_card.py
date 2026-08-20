@@ -11,12 +11,16 @@ if str(APP_DIR) not in sys.path:
 
 import marketing_service as ms
 
-# Website Analytics carries an "Average session duration" card and a bar per week
-# between Audience and Demographics. GA4 only reports averageSessionDuration next
-# to a dimension, so the figure is rebuilt from the landing-page report: each
-# page's average is weighted by its sessions, never averaged flat — and the range
-# figure is re-weighted from the daily series the same way, so a quiet Sunday
-# doesn't pull it around as hard as a busy Tuesday.
+# Website Analytics carries a "Sessions & engagement" module between Audience
+# and Demographics: four clickable cards (Total sessions, New users,
+# Engagement rate, Avg session duration) and a weekly line chart for whichever
+# one is selected. GA4 only reports averageSessionDuration next to a
+# dimension, so that figure is rebuilt from the landing-page report: each
+# page's average is weighted by its sessions, never averaged flat — and the
+# range figure is re-weighted from the daily series the same way, so a quiet
+# Sunday doesn't pull it around as hard as a busy Tuesday. Engagement rate
+# isn't in that report either, so it's merged in from a second, session-grained
+# query.
 
 START = dt.date(2024, 1, 1)
 END = dt.date(2024, 1, 31)
@@ -91,6 +95,41 @@ class FetchSessionDurationTests(unittest.TestCase):
         self.assertEqual(payload["avg_session_duration_seconds"], 60.0)
         self.assertEqual(payload["sessions"], 100)
 
+    def test_merges_engagement_rate_from_a_second_session_grained_query(self) -> None:
+        # Engagement rate isn't in the landing-page report (no engagedSessions
+        # next to landingPage), so it comes from a second query against the
+        # same table Traffic acquisition uses, and gets merged in by date.
+        def _capture(sql, params=None, max_rows=None):
+            self._sql.append(sql)
+            if "vw_ga4_landing_pages_daily" in sql:
+                return [
+                    {"date": "2024-01-01", "sessions": 900, "new_users": 100, "avg_session_duration_seconds": 90.0},
+                    {"date": "2024-01-02", "sessions": 300, "new_users": 50, "avg_session_duration_seconds": 150.0},
+                ]
+            return [
+                {"date": "2024-01-01", "engaged_sessions": 450},
+                {"date": "2024-01-02", "engaged_sessions": 300},
+            ]
+
+        ms._run_query = _capture
+        payload = ms.fetch_session_duration(start_date=START, end_date=END)
+        self.assertEqual(payload["new_users"], 150)
+        self.assertEqual(payload["engagement_rate"], round((450 + 300) / 1200 * 100, 1))
+        self.assertEqual(payload["daily"][0]["engaged_sessions"], 450)
+        self.assertEqual(payload["daily"][1]["engaged_sessions"], 300)
+
+    def test_a_date_missing_from_the_engagement_query_defaults_to_zero(self) -> None:
+        def _capture(sql, params=None, max_rows=None):
+            self._sql.append(sql)
+            if "vw_ga4_landing_pages_daily" in sql:
+                return [{"date": "2024-01-01", "sessions": 900, "new_users": 100, "avg_session_duration_seconds": 90.0}]
+            return []
+
+        ms._run_query = _capture
+        payload = ms.fetch_session_duration(start_date=START, end_date=END)
+        self.assertEqual(payload["daily"][0]["engaged_sessions"], 0)
+        self.assertEqual(payload["engagement_rate"], 0.0)
+
 
 class RendererCardTests(unittest.TestCase):
     def test_card_renders_above_demographics(self) -> None:
@@ -105,15 +144,24 @@ class RendererCardTests(unittest.TestCase):
         self.assertIn('id="sec-avgduration"', html)
         self.assertIn("/analytics/session-duration", html)
         self.assertIn("loadSessionDuration", html)
-        # The over-time half: one bar per week, session-weighted. Weekly only --
-        # no granularity chips on this card, unlike Sessions over time, because a
-        # single day's average swings on a handful of visits.
+        # The over-time half: one line per metric, session-weighted, weekly.
+        # No granularity chips on this card, unlike Sessions over time,
+        # because a single day's average swings on a handful of visits.
         self.assertIn('id="avgDurTrendChart"', html)
-        self.assertIn("function barChart", html)
+        self.assertIn("lineChart('avgDurTrendChart'", html)
+        self.assertNotIn("barChart('avgDurTrendChart'", html)
         self.assertIn("function avgDurWeekly", html)
         self.assertNotIn("avgDurGranChips", html)
         # Sessions over time keeps its own Daily/Weekly chips.
         self.assertIn('id="sessionsGranChips"', html)
+        # The card row is clickable: Total sessions, New users and Engagement
+        # rate now sit alongside Average session duration, all one module.
+        self.assertIn("AVG_DUR_METRICS", html)
+        self.assertIn("metric-card", html)
+        self.assertIn("Total sessions", html)
+        self.assertIn("New users", html)
+        self.assertIn("Engagement rate", html)
+        self.assertIn("Avg session duration", html)
         # Ordering is the point of the request: the card sits above Demographics.
         self.assertLess(
             html.index('id="sec-avgduration"'), html.index('id="sec-demographics"')
