@@ -82,6 +82,7 @@ def list_client_annotations(
         "can_edit": audience == "agency",
         "categories": client_annotations.category_choices(),
         "visibilities": list(client_annotations.VISIBILITIES),
+        "chart_scopes": client_annotations.chart_scope_choices(),
     })
 
 
@@ -98,6 +99,7 @@ def create_client_annotation(
     body: str = Form(""),
     category: str = Form(""),
     visibility: str = Form(""),
+    charts: str = Form(""),
 ) -> JSONResponse:
     slug = validate_client_slug(client_slug)
     auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
@@ -111,6 +113,7 @@ def create_client_annotation(
             body=body,
             category=category,
             visibility=visibility,
+            charts=charts,
             created_by=_author(user),
         )
     except RuntimeError as exc:
@@ -134,6 +137,7 @@ def update_client_annotation(
     body: str = Form(""),
     category: str = Form(""),
     visibility: str = Form(""),
+    charts: str = Form(""),
 ) -> JSONResponse:
     slug = validate_client_slug(client_slug)
     auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
@@ -148,6 +152,7 @@ def update_client_annotation(
             body=body,
             category=category,
             visibility=visibility,
+            charts=charts,
             updated_by=_author(user),
         )
     except RuntimeError as exc:
