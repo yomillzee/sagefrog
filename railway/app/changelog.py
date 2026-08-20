@@ -62,6 +62,22 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-08-20",
+        title="Site Performance explains itself",
+        area="Client dashboards · Site Performance",
+        kind="improved",
+        summary=(
+            "Every score and Core Web Vitals box now has a hover explanation in "
+            "plain English, and each sparkline draws its goal as a dotted line "
+            "so you can see at a glance whether the site is inside it."
+        ),
+        details=(
+            "The “?” on a card says what the metric means to a visitor — no Lighthouse jargon.",
+            "The trend line is green when the page is inside the goal, amber or red when it is not.",
+            "The separate “goal ≤ …” caption is gone; hover the sparkline for the full Good / Needs improvement / Poor ranges.",
+        ),
+    ),
+    Entry(
         date="2026-08-19",
         title="One comparison picker again, starting on No comparison",
         area="Client dashboards",

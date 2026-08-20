@@ -139,9 +139,15 @@ def pane_css() -> str:
     .ps-spark svg { display:block; width:100%; height:100%; }
     .ps-spark--empty { position:relative; }
     .ps-spark--empty::after { content:""; position:absolute; left:0; right:0; top:50%; border-top:1.5px dashed var(--line); }
-    /* Health caption: colored band dot + the "good" goal. The full
-       Good/Needs improvement/Poor ranges live in its native title tooltip. */
-    .ps-cwv-target { margin-top:8px; font-size:.72rem; color:var(--muted); display:flex; align-items:center; gap:6px; cursor:help; }
+    /* The goal now lives inside the sparkline as a dashed benchmark line, so
+       the card's hover tooltip carries the numbers (goal + full bands). */
+    .ps-spark { cursor:help; }
+    /* ---- Per-card "what does this mean?" tooltips ---- */
+    #psScores .card-title, #psCwv .card-title, #ovPsScores .card-title { display:flex; align-items:center; gap:5px; }
+    .ps-info { appearance:none; flex-shrink:0; width:14px; height:14px; padding:0; display:inline-flex; align-items:center;
+      justify-content:center; border:1px solid var(--line); border-radius:50%; background:#fff; color:var(--muted);
+      font:inherit; font-size:.6rem; font-weight:800; line-height:1; cursor:help; transition:color .12s, border-color .12s; }
+    .ps-info:hover, .ps-info:focus-visible { color:var(--accent, #1d6fd0); border-color:#b9c8dc; outline:none; }
     /* ---- Audited-URL chip on the first score card + modern tooltip ---- */
     #psScores .card:first-child { position:relative; }
     /* #psScores prefix beats the generic .ps-tip{position:relative} below so the
@@ -161,6 +167,16 @@ def pane_css() -> str:
       border:5px solid transparent; border-bottom-color:#0b1020; opacity:0; transform:translateX(-50%); transition:opacity .16s ease; }
     .ps-tip:hover::after, .ps-tip:focus-visible::after { opacity:1; transform:translate(-50%, 0); }
     .ps-tip:hover::before, .ps-tip:focus-visible::before { opacity:1; }
+    /* Plain-language card tooltips run longer than the URL chip's and read
+       better left-aligned than centered. */
+    .ps-tip.ps-tip--wide::after { max-width:270px; text-align:left; font-weight:500; }
+    /* Edge cards: a 270px bubble centered on a card in the first or last column
+       would hang off the page, so psAnchorTips() flips it to hug the trigger.
+       The arrow stays centered on the "?" either way. */
+    .ps-tip.ps-tip--start::after { left:-8px; transform:translate(0, -4px); }
+    .ps-tip.ps-tip--start:hover::after, .ps-tip.ps-tip--start:focus-visible::after { transform:translate(0, 0); }
+    .ps-tip.ps-tip--end::after { left:auto; right:-8px; transform:translate(0, -4px); }
+    .ps-tip.ps-tip--end:hover::after, .ps-tip.ps-tip--end:focus-visible::after { transform:translate(0, 0); }
     """
 
 
@@ -193,13 +209,34 @@ def pane_js() -> str:
       if (v == null) return '—';
       return v >= 1000 ? (v / 1000).toFixed(1) + ' s' : Math.round(v) + ' ms';
     }
-    function psScoreCard(label, v, band) {
+    // Plain-language explanations, shown from the little "?" on each card. Written
+    // for a client reading the page, not for whoever tuned the Lighthouse config.
+    const PS_SCORE_TIPS = {
+      performance: 'How fast the page feels to a real visitor — how quickly it loads and starts responding. 100 is the fastest.',
+      accessibility: 'How usable the page is for people on a screen reader, keyboard, or with low vision — readable text, labeled buttons, enough contrast.',
+      best_practices: 'Whether the site follows modern web standards — secure connections, no broken images, nothing outdated or unsafe.',
+      seo: 'Whether search engines can read and index this page properly — page title, description, headings, links they can follow.',
+    };
+    const PS_CWV_TIPS = {
+      lcp_ms: 'How long until the biggest thing on screen — usually the main image or headline — has finished loading. This is what "the page loaded" feels like to a visitor.',
+      cls: 'How much the page jumps around while it loads. High numbers mean buttons move under someone as they go to tap them.',
+      tbt_ms: 'How long the page is busy running code and cannot respond to clicks or taps. Lower means it reacts right away.',
+      fcp_ms: 'How long before a visitor sees anything at all instead of a blank screen.',
+      speed_index_ms: 'How quickly the page fills in visually, from blank to finished. Rewards showing something useful early.',
+      tti_ms: 'How long before a visitor can actually use everything on the page — click, type, scroll — without it feeling stuck.',
+    };
+    function psInfo(tip) {
+      if (!tip) return '';
+      const safe = esc(tip);
+      return `<button type="button" class="ps-info ps-tip ps-tip--wide" data-tip="${safe}" aria-label="${safe}">?</button>`;
+    }
+    function psScoreCard(label, v, band, tip) {
       const shown = v == null ? '—' : v;
       const suffix = v == null ? '' : '<span style="font-size:.55em;color:var(--muted);font-weight:600"> /100</span>';
       const tc = psTrafficColor(v, band);
       const dot = tc.light ? `<span class="ps-light ps-light--${tc.light}"></span>` : '';
       const target = band ? `<div class="ps-target">${dot}Target ${band.min}–${band.max}</div>` : '';
-      return `<div class="card"><div class="card-title">${esc(label)}</div>` +
+      return `<div class="card"><div class="card-title">${esc(label)}${psInfo(tip)}</div>` +
              `<div class="card-value" style="color:${tc.color}">${shown}${suffix}</div>${target}</div>`;
     }
     // Core Web Vitals lab thresholds (Lighthouse buckets, ms unless noted).
@@ -220,7 +257,8 @@ def pane_js() -> str:
       const t = CWV_THRESHOLDS[key];
       if (!t) return {};
       const g = psCwvFmt(t.good, t.ms), n = psCwvFmt(t.ni, t.ms);
-      const rangeTitle = `Good ≤ ${g}   ·   Needs improvement ≤ ${n}   ·   Poor > ${n}`;
+      const rangeTitle = `Goal: ${g} or less  ·  Needs improvement: up to ${n}  ·  Poor: over ${n}`
+        + `\nThe dotted line on the chart is the ${g} goal; the trend line is green when this page is inside it.`;
       if (v == null || !isFinite(Number(v))) {
         return { targetText: g, statusLabel: 'Target', color: null, lightClass: null, rangeTitle };
       }
@@ -233,12 +271,17 @@ def pane_js() -> str:
     // metric's history oldest→newest (nulls tolerated); `color` (from the card's
     // current health band) tints the line so it reads good/bad at a glance,
     // falling back to trend direction. Faint baseline placeholder until ≥2 reads.
-    function psSparkline(values, color) {
+    function psSparkline(values, color, goal, title) {
       const pts = (values || []).map(v => (v == null ? null : Number(v)));
       const nums = pts.filter(v => v != null && isFinite(v));
-      if (nums.length < 2) return '<div class="ps-spark ps-spark--empty"></div>';
+      const tip = title ? ` title="${esc(title)}"` : '';
+      if (nums.length < 2) return `<div class="ps-spark ps-spark--empty"${tip}></div>`;
       const W = 120, H = 26, pad = 3, n = pts.length;
-      const min = Math.min(...nums), max = Math.max(...nums), span = (max - min) || 1;
+      // The goal joins the y-domain so its dotted line always lands on-chart,
+      // even when every reading sits well above or below it.
+      const g = (goal == null || !isFinite(Number(goal))) ? null : Number(goal);
+      const domain = g == null ? nums : nums.concat([g]);
+      const min = Math.min(...domain), max = Math.max(...domain), span = (max - min) || 1;
       const x = i => pad + (n === 1 ? (W - pad * 2) / 2 : (i / (n - 1)) * (W - pad * 2));
       const y = v => H - pad - ((v - min) / span) * (H - pad * 2);
       let d = '', firstX = null, lastX = 0, lastY = 0, started = false;
@@ -252,7 +295,12 @@ def pane_js() -> str:
       const first = nums[0], last = nums[nums.length - 1];
       color = color || (last < first ? '#0c9d61' : (last > first ? '#e5484d' : '#8595ab'));
       const area = `${d}L${lastX.toFixed(1)} ${H} L${firstX.toFixed(1)} ${H} Z`;
-      return `<div class="ps-spark"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">` +
+      // Dotted benchmark, drawn under the trend so the colored line stays legible.
+      const goalLine = g == null ? '' :
+        `<line x1="0" y1="${y(g).toFixed(1)}" x2="${W}" y2="${y(g).toFixed(1)}" stroke="#8595ab" stroke-width="1" ` +
+        `stroke-dasharray="2 3" stroke-linecap="round" vector-effect="non-scaling-stroke" opacity="0.75"/>`;
+      return `<div class="ps-spark"${tip}><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">` +
+        goalLine +
         `<path d="${area}" fill="${color}" opacity="0.09"/>` +
         `<path d="${d.trim()}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` +
         `<circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="1.9" fill="${color}"/></svg></div>`;
@@ -275,7 +323,7 @@ def pane_js() -> str:
         ['SEO', 'seo', p.seo],
       ];
       const psScoresEl = document.getElementById('psScores');
-      psScoresEl.innerHTML = scores.map(([l, k, v]) => psScoreCard(l, v, PAGESPEED_TARGETS[k])).join('');
+      psScoresEl.innerHTML = scores.map(([l, k, v]) => psScoreCard(l, v, PAGESPEED_TARGETS[k], PS_SCORE_TIPS[k])).join('');
       const firstScoreCard = psScoresEl.querySelector('.card');
       if (firstScoreCard && p.url) firstScoreCard.insertAdjacentHTML('beforeend', psUrlChip(p.url));
       const hist = p.history || [];
@@ -293,13 +341,10 @@ def pane_js() -> str:
       document.getElementById('psCwv').innerHTML = cwv.map(([l, key, v]) => {
         const h = psCwvHealth(key, p[key]);
         const valStyle = h.color ? ` style="color:${h.color}"` : '';
-        const dot = h.lightClass ? `<span class="ps-light ps-light--${h.lightClass}"></span>` : '';
-        const caption = h.targetText
-          ? `<div class="ps-cwv-target" title="${esc(h.rangeTitle)}">${dot}goal ≤ ${esc(h.targetText)}</div>`
-          : '';
-        return `<div class="card"><div class="card-title">${esc(l)}</div>` +
+        const goal = (CWV_THRESHOLDS[key] || {}).good;
+        return `<div class="card"><div class="card-title">${esc(l)}${psInfo(PS_CWV_TIPS[key])}</div>` +
           `<div class="card-value"${valStyle}>${v}</div>` +
-          psSparkline(hist.map(r => r[key]), h.color) + caption + `</div>`;
+          psSparkline(hist.map(r => r[key]), h.color, goal, h.rangeTitle) + `</div>`;
       }).join('');
       const hasCurrent = ['performance', 'accessibility', 'best_practices', 'seo'].some(k => p[k] != null);
       if (hist.length > 1) {
@@ -459,6 +504,20 @@ def pane_js() -> str:
         })
       );
     })();
+    // Keep the wide card tooltips on-screen: before one shows, pick left/center/
+    // right anchoring from where its "?" sits. Delegated, so it survives the
+    // re-renders that rebuild the cards.
+    const PS_TIP_HALF = 143;   // half the 270px bubble + a little breathing room
+    function psAnchorTip(btn) {
+      const r = btn.getBoundingClientRect(), mid = r.left + r.width / 2;
+      btn.classList.toggle('ps-tip--start', mid - PS_TIP_HALF < 8);
+      btn.classList.toggle('ps-tip--end', mid + PS_TIP_HALF > window.innerWidth - 8);
+    }
+    ['pointerover', 'focusin'].forEach(evt => document.addEventListener(evt, e => {
+      const btn = e.target.closest && e.target.closest('.ps-tip--wide');
+      if (btn) psAnchorTip(btn);
+    }, true));
+
     // Per-KPI target editor.
     const PS_KPI_LABELS = { performance: 'Performance', accessibility: 'Accessibility', best_practices: 'Best Practices', seo: 'SEO' };
     function psRenderEditorFields() {
