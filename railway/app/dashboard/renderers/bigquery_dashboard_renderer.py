@@ -7108,7 +7108,7 @@ def render_bigquery_dashboard_page(
         if (!p||!p.url) {{ host.innerHTML=''; setStatus('ovPsStatus','No PageSpeed data yet'); return; }}
         const scores=[['Performance','performance',p.performance],['Accessibility','accessibility',p.accessibility],
           ['Best Practices','best_practices',p.best_practices],['SEO','seo',p.seo]];
-        host.innerHTML=scores.map(([l,k,v])=>psScoreCard(l,v,PAGESPEED_TARGETS[k])).join('');
+        host.innerHTML=scores.map(([l,k,v])=>psScoreCard(l,v,PAGESPEED_TARGETS[k],PS_SCORE_TIPS[k])).join('');
         setStatus('ovPsStatus', p.metric_date?('measured '+p.metric_date):'');
       }} catch(err) {{ host.innerHTML=''; setStatus('ovPsStatus', err.message||String(err), true); }}
     }}
