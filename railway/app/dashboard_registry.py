@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -12,6 +13,7 @@ from typing import Any
 import psycopg
 import client_industries
 import db
+import db_migrate
 
 import web_users
 
@@ -124,15 +126,60 @@ def validate_label(label: str) -> str:
     return text
 
 
+# Every read below opens with ensure_schema(), and the page chrome reads this
+# registry several times per request (the client switcher needs labels, logos and
+# the suppression list). Re-running the DDL each time is not free: every
+# ALTER TABLE takes an ACCESS EXCLUSIVE lock, and with DB_POOL_ENABLED off each
+# run also costs a fresh Postgres connection — one dashboard page render was
+# spending 5 of these before a single number reached the page. Same disease, and
+# the same cure, as web_users #297: a process-level flag (with a lock, since sync
+# FastAPI handlers run in a threadpool) so the DDL runs at most once per process,
+# plus the shared transaction-scoped advisory lock so this path can never run
+# table-locking DDL concurrently with the migration runner. The statements are
+# all IF NOT EXISTS and the seeding is ON CONFLICT DO NOTHING, so once per
+# process is as correct as once per call.
+#
+# Seeding is tracked separately because callers ask for it separately: a
+# seed_defaults=False caller must not mark the seeding done.
+_schema_ready = False
+_seed_ready = False
+_schema_lock = threading.Lock()
+_SCHEMA_ADVISORY_LOCK_KEY = db_migrate.SCHEMA_ADVISORY_LOCK_KEY
+
+
+def reset_schema_cache() -> None:
+    """Forget that the schema/seed ran (for tests, and after a DB switch)."""
+    global _schema_ready, _seed_ready
+    with _schema_lock:
+        _schema_ready = False
+        _seed_ready = False
+
+
 def ensure_schema(*, seed_defaults: bool = True) -> bool:
+    global _schema_ready, _seed_ready
     url = _get_db_url()
     if not url:
         return False
-    with db.connection() as conn:
-        for stmt in SCHEMA_SQL_STATEMENTS:
-            conn.execute(stmt)
-        if seed_defaults:
-            _seed_defaults(conn)
+    if _schema_ready and (_seed_ready or not seed_defaults):
+        return True
+    with _schema_lock:
+        need_ddl = not _schema_ready
+        need_seed = seed_defaults and not _seed_ready
+        if not (need_ddl or need_seed):
+            return True
+        with db.connection() as conn:
+            conn.execute("SELECT pg_advisory_xact_lock(%s)", (_SCHEMA_ADVISORY_LOCK_KEY,))
+            if need_ddl:
+                for stmt in SCHEMA_SQL_STATEMENTS:
+                    conn.execute(stmt)
+            if need_seed:
+                _seed_defaults(conn)
+        # Only recorded once the statements actually ran — a failure raises out of
+        # here with the flags untouched, so the next caller retries as before.
+        if need_ddl:
+            _schema_ready = True
+        if need_seed:
+            _seed_ready = True
     return True
 
 
@@ -181,14 +228,24 @@ def _seed_defaults(conn) -> None:
         )
 
 
-def list_clients() -> list[DashboardClientRow]:
+def list_clients(*, with_logos: bool = True) -> list[DashboardClientRow]:
+    """Every registered dashboard client, ordered by label.
+
+    ``with_logos=False`` leaves the ``logo`` column out of the SELECT. Logos are
+    admin-uploaded data URIs, so they are by far the largest thing in this table
+    — and most callers only want slugs and labels (see ``list_slugs`` and
+    ``client_config._labels_for_slugs``). Reading them there meant a page render
+    pulled every client's base64 logo over the wire several times to render one
+    switcher that needs them exactly once.
+    """
     if not enabled():
         return []
     ensure_schema(seed_defaults=True)
+    logo_col = "logo" if with_logos else "NULL AS logo"
     with db.connection() as conn:
         rows = conn.execute(
-            """
-            SELECT client_slug, label, source, created_at, created_by, logo, industry
+            f"""
+            SELECT client_slug, label, source, created_at, created_by, {logo_col}, industry
             FROM dashboard_clients
             ORDER BY label ASC, client_slug ASC
             """
@@ -277,7 +334,7 @@ def industries_map() -> dict[str, tuple[str, ...]]:
 
 
 def list_slugs() -> list[str]:
-    return [row.client_slug for row in list_clients()]
+    return [row.client_slug for row in list_clients(with_logos=False)]
 
 
 def get_client(client_slug: str) -> DashboardClientRow | None:

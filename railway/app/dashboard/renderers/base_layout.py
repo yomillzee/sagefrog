@@ -211,6 +211,10 @@ def sidebar_client_switcher_html(
     # Pull admin-uploaded client logos (data URIs on the dashboard registry) so
     # the switcher shows real brand marks, falling back to a colour-coded initial
     # for clients without one. Registry may be disabled → plain initials.
+    #
+    # This is the one place on a page render that actually needs the logo column,
+    # which is why every other registry read now asks for it to be left out (see
+    # dashboard_registry.list_clients).
     logos: dict[str, str] = {}
     try:
         import dashboard_registry

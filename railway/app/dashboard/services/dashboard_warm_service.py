@@ -15,11 +15,16 @@ proportional to the one page people actually land on; the read-cache TTL floor
 warm for the rest of the day.
 
 The warmed windows mirror exactly what the Overview page requests on load: the
-default ``Last 30 days`` preset (see ``applyPreset('last_30')`` in
-``bigquery_dashboard_renderer``) — the current period **and** its prior-period
-comparison, since the summary / website / AI-traffic cards each fetch both. A
-warmed entry keyed to a different window than the endpoint later reads would
-silently not help, which is exactly the drift the cache-warm test guards against.
+preset the page lands on — the client's admin-pinned ``default_date_preset``, or
+``Last 30 days`` when it has none (see
+``applyPreset(DEFAULT_DATE_PRESET || 'last_30')`` in
+``bigquery_dashboard_renderer``) — for the current period **and** its
+prior-period comparison, since the summary / website / AI-traffic cards each
+fetch both. A warmed entry keyed to a different window than the endpoint later
+reads would silently not help, which is exactly the drift the cache-warm test
+guards against — and is what a client with a pinned default other than Last 30
+days used to hit on every single first load, since the warmer assumed that one
+window for everybody.
 
 Fail-safe by construction:
 
@@ -34,28 +39,151 @@ Fail-safe by construction:
 
 from __future__ import annotations
 
+import calendar
 import logging
 from datetime import date, timedelta
 from typing import Any
 
 LOGGER = logging.getLogger(__name__)
 
+# Fallback when a client has no stored default (mirrors the renderer's own
+# fallback in ``applyPreset(DEFAULT_DATE_PRESET || 'last_30')``).
+DEFAULT_PRESET = "last_30"
 
-def _overview_windows(today: date | None = None) -> tuple[tuple[date, date], tuple[date, date]]:
-    """The current + prior-period windows the Overview's ``Last 30 days`` preset uses.
+_TRAILING_DAYS = {"last_7": 7, "last_30": 30, "last_90": 90, "last_365": 365}
 
-    Mirrors ``lastN(30)`` in the page JS exactly: the current window ends
-    *yesterday* (today's data is usually unsynced) and spans 30 days; the
-    comparison window is the equal-length period immediately before it. Keeping
-    this in lockstep with the frontend is what makes the warmed cache entry land
-    on the same key the first viewer looks up.
+
+def _monday_of(d: date) -> date:
+    """Monday of ``d``'s ISO week — the page's ``mondayOf``."""
+    return d - timedelta(days=d.weekday())
+
+
+def _quarter_start(d: date) -> date:
+    """Jan/Apr/Jul/Oct 1 of ``d``'s quarter — the page's ``quarterStart``."""
+    return date(d.year, ((d.month - 1) // 3) * 3 + 1, 1)
+
+
+def _shift_month(d: date, months: int) -> date:
+    """First day of the month ``months`` away from ``d``'s month."""
+    total = (d.year * 12 + d.month - 1) + months
+    return date(total // 12, total % 12 + 1, 1)
+
+
+def _month_end(d: date) -> date:
+    """Last day of ``d``'s month."""
+    return date(d.year, d.month, calendar.monthrange(d.year, d.month)[1])
+
+
+def _overview_windows(
+    today: date | None = None, preset: str = DEFAULT_PRESET,
+) -> tuple[tuple[date, date], tuple[date, date]]:
+    """The current + prior-period windows the Overview lands on for ``preset``.
+
+    Mirrors ``applyPreset`` in the page JS branch for branch. The trailing
+    presets end *yesterday* (today's data is usually unsynced) and the ``this_*``
+    presets clamp to their period start when yesterday falls before it — both
+    exactly as the page does, because a window off by a single day is a different
+    cache key and warms nothing.
+
+    An unknown preset falls back to ``last_30``, matching the renderer, which
+    validates the stored value against the same list before using it.
     """
     today = today or date.today()
-    cur_end = today - timedelta(days=1)
-    cur_start = today - timedelta(days=30)
-    cmp_end = cur_start - timedelta(days=1)
-    cmp_start = cmp_end - timedelta(days=29)
-    return (cur_start, cur_end), (cmp_start, cmp_end)
+    yesterday = today - timedelta(days=1)
+
+    days = _TRAILING_DAYS.get(preset)
+    if days is None and preset not in (
+        "this_week", "last_week", "this_month",
+        "last_month", "this_quarter", "last_quarter",
+    ):
+        days = _TRAILING_DAYS[DEFAULT_PRESET]
+
+    if days is not None:
+        # lastN(n): ends yesterday, spans n days; comparison is the equal-length
+        # period immediately before it.
+        cur_end = yesterday
+        cur_start = today - timedelta(days=days)
+        cmp_end = cur_start - timedelta(days=1)
+        cmp_start = cmp_end - timedelta(days=days - 1)
+        return (cur_start, cur_end), (cmp_start, cmp_end)
+
+    if preset == "this_week":
+        cur_start = _monday_of(today)
+        cur_end = max(yesterday, cur_start)
+        return (
+            (cur_start, cur_end),
+            (cur_start - timedelta(days=7), cur_end - timedelta(days=7)),
+        )
+
+    if preset == "last_week":
+        cur_start = _monday_of(today - timedelta(days=7))
+        cur_end = cur_start + timedelta(days=6)
+        return (
+            (cur_start, cur_end),
+            (cur_start - timedelta(days=7), cur_end - timedelta(days=7)),
+        )
+
+    if preset == "this_month":
+        cur_start = today.replace(day=1)
+        cur_end = max(yesterday, cur_start)
+        cmp_start = _shift_month(cur_start, -1)
+        # Same day-of-month a month back, clamped: a 31st has no counterpart in
+        # a 30-day month.
+        cmp_end = cmp_start.replace(
+            day=min(cur_end.day, calendar.monthrange(cmp_start.year, cmp_start.month)[1])
+        )
+        return (cur_start, cur_end), (cmp_start, cmp_end)
+
+    if preset == "last_month":
+        cur_start = _shift_month(today.replace(day=1), -1)
+        cur_end = _month_end(cur_start)
+        cmp_start = _shift_month(cur_start, -1)
+        return (cur_start, cur_end), (cmp_start, _month_end(cmp_start))
+
+    if preset == "this_quarter":
+        cur_start = _quarter_start(today)
+        cur_end = max(yesterday, cur_start)
+        cmp_start = _shift_month(cur_start, -3)
+        prev_q_end = cur_start - timedelta(days=1)
+        cmp_end = min(cmp_start + (cur_end - cur_start), prev_q_end)
+        return (cur_start, cur_end), (cmp_start, cmp_end)
+
+    # last_quarter
+    qs = _quarter_start(today)
+    cur_start = _shift_month(qs, -3)
+    cur_end = qs - timedelta(days=1)
+    cmp_start = _shift_month(qs, -6)
+    return (cur_start, cur_end), (cmp_start, cur_start - timedelta(days=1))
+
+
+def _client_default_preset(client_slug: str) -> str:
+    """The preset this client's dashboard lands on, or ``last_30``.
+
+    An admin can pin any preset as a client's default (Range → Make default),
+    and the page then opens on *that* window. Warming the ``last_30`` window for
+    such a client populates a key nothing ever reads, so the first viewer after
+    every sync pays a cold BigQuery query for every card — the exact cost this
+    module exists to remove.
+
+    Read against the slug the caches are keyed under, which for Nixon is the
+    literal ``"nixon"`` rather than the ``nixon-bq-test`` slug its dashboard is
+    served at (see the caller in ``bigquery_refresh_orchestrator``). If no config
+    row answers to that slug there is nothing pinned to find and we fall back —
+    i.e. the previous behaviour, never something worse.
+    """
+    try:
+        import client_dashboard_config
+
+        stored = getattr(
+            client_dashboard_config.get_config(client_slug), "default_date_preset", None
+        )
+        if stored in client_dashboard_config.DATE_RANGE_PRESETS:
+            return stored
+    except Exception:
+        LOGGER.warning(
+            "cache warm: default-preset read failed for %s", client_slug, exc_info=True
+        )
+    return DEFAULT_PRESET
 
 
 def warm_client_cache(client_slug: str) -> dict[str, Any]:
@@ -80,7 +208,9 @@ def warm_client_cache(client_slug: str) -> dict[str, Any]:
         report["errors"]["import"] = "api_routes import failed"
         return report
 
-    (cur_start, cur_end), (cmp_start, cmp_end) = _overview_windows()
+    preset = _client_default_preset(slug)
+    (cur_start, cur_end), (cmp_start, cmp_end) = _overview_windows(preset=preset)
+    report["preset"] = preset
 
     project_id: str | None = None
     dataset_id: str | None = None

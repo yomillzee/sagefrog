@@ -1183,7 +1183,8 @@ def render_admin_page(
 
         if _dreg.enabled():
             client_choices = [
-                (r.client_slug, r.label or r.client_slug) for r in _dreg.list_clients()
+                (r.client_slug, r.label or r.client_slug)
+                for r in _dreg.list_clients(with_logos=False)
             ]
     except Exception:
         client_choices = []

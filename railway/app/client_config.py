@@ -59,16 +59,36 @@ def _load_registry_from_env() -> dict[str, dict[str, Any]]:
     return out
 
 
-def list_client_slugs() -> list[str]:
-    """Known dashboard client slugs (Postgres registry, env, built-in)."""
-    slugs: set[str] = set()
-    suppressed: set[str] = set()
+def _registry_rows() -> list:
+    """Registry rows for slug/label use, or [] when there is no registry.
+
+    Logos are deliberately excluded: nothing that reads slugs or labels wants
+    them, and they are the largest column in the table.
+    """
     try:
         import dashboard_registry
 
         if dashboard_registry.enabled():
-            dashboard_registry.ensure_schema(seed_defaults=True)
-            slugs.update(dashboard_registry.list_slugs())
+            return dashboard_registry.list_clients(with_logos=False)
+    except Exception:
+        pass
+    return []
+
+
+def list_client_slugs() -> list[str]:
+    """Known dashboard client slugs (Postgres registry, env, built-in)."""
+    return _slugs_from_rows(_registry_rows())
+
+
+def _slugs_from_rows(rows: list) -> list[str]:
+    slugs: set[str] = set()
+    suppressed: set[str] = set()
+    if rows:
+        slugs.update(row.client_slug for row in rows)
+    try:
+        import dashboard_registry
+
+        if dashboard_registry.enabled():
             suppressed = dashboard_registry.suppressed_slugs()
     except Exception:
         pass
@@ -87,22 +107,30 @@ def is_builtin_slug(slug: str) -> bool:
 
 
 def list_dashboard_clients() -> list[tuple[str, str]]:
-    """(slug, label) pairs for admin dashboard links."""
-    slugs = list_client_slugs()
-    labels = _labels_for_slugs(slugs)
+    """(slug, label) pairs for admin dashboard links.
+
+    Reads the registry **once** and uses those rows for both the slug list and
+    the labels. It used to call two helpers that each did their own full read of
+    the same table, which is a query the client switcher pays on every page
+    render.
+    """
+    rows = _registry_rows()
+    slugs = _slugs_from_rows(rows)
+    labels = _labels_for_slugs(slugs, rows=rows)
     return [(slug, labels.get(slug) or _default_label(slug)) for slug in slugs]
 
 
-def _labels_for_slugs(slugs: list[str]) -> dict[str, str]:
-    """Batch-load display labels from Postgres when available."""
+def _labels_for_slugs(slugs: list[str], *, rows: list | None = None) -> dict[str, str]:
+    """Batch-load display labels from Postgres when available.
+
+    ``rows`` lets a caller that has already read the registry hand those rows in
+    rather than paying for a second read of the same table.
+    """
     labels: dict[str, str] = {}
     try:
-        import dashboard_registry
-
-        if dashboard_registry.enabled():
-            for row in dashboard_registry.list_clients():
-                if row.label:
-                    labels[row.client_slug] = row.label
+        for row in (_registry_rows() if rows is None else rows):
+            if row.label:
+                labels[row.client_slug] = row.label
     except Exception:
         pass
     try:

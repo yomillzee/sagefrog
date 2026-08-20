@@ -43,11 +43,16 @@ SCHEMA_SQL_STATEMENTS = [
       body TEXT NOT NULL DEFAULT '',
       category TEXT NOT NULL DEFAULT 'other',
       visibility TEXT NOT NULL DEFAULT 'internal',
+      charts TEXT NOT NULL DEFAULT 'both',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       created_by TEXT,
       updated_by TEXT
     )
+    """,
+    """
+    ALTER TABLE client_annotations
+      ADD COLUMN IF NOT EXISTS charts TEXT NOT NULL DEFAULT 'both'
     """,
     """
     CREATE INDEX IF NOT EXISTS client_annotations_slug_date_idx
@@ -81,6 +86,17 @@ DEFAULT_VISIBILITY = "internal"
 # Audiences a caller can read as. "agency" sees everything; "client" sees shared.
 AUDIENCES: tuple[str, ...] = ("agency", "client")
 
+# Which family of trend charts an event belongs on. A Google Ads budget change
+# explains a spend line, not a sessions line; a site migration explains the
+# sessions line and usually both. Defaulting to "both" keeps the old behaviour
+# for every event stored before this field existed.
+CHART_SCOPES: dict[str, str] = {
+    "both": "Ads and analytics trends",
+    "ads": "Ads trends only",
+    "analytics": "Analytics trends only",
+}
+DEFAULT_CHARTS = "both"
+
 
 @dataclass(frozen=True)
 class Annotation:
@@ -92,6 +108,7 @@ class Annotation:
     body: str
     category: str
     visibility: str
+    charts: str
     created_at: str | None
     updated_at: str | None
     created_by: str | None
@@ -109,6 +126,8 @@ class Annotation:
             "category_label": label,
             "color": color,
             "visibility": self.visibility,
+            "charts": self.charts,
+            "charts_label": CHART_SCOPES.get(self.charts, CHART_SCOPES[DEFAULT_CHARTS]),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "created_by": self.created_by,
@@ -171,6 +190,16 @@ def clean_visibility(visibility: str | None) -> str:
     return key if key in VISIBILITIES else DEFAULT_VISIBILITY
 
 
+def clean_charts(charts: str | None) -> str:
+    key = (charts or "").strip().lower()
+    return key if key in CHART_SCOPES else DEFAULT_CHARTS
+
+
+def chart_scope_choices() -> list[dict[str, str]]:
+    """The chart-scope list for the editor, in a stable order."""
+    return [{"key": key, "label": label} for key, label in CHART_SCOPES.items()]
+
+
 def parse_date(value: str | date | None, *, field: str = "date") -> date:
     """Coerce an ISO date string (or date) into a date, or raise ValueError."""
     if isinstance(value, date) and not isinstance(value, datetime):
@@ -206,12 +235,12 @@ def _clean_range(
 
 _SELECT_COLS = (
     "id, client_slug, event_date, end_date, title, body, category, visibility, "
-    "created_at, updated_at, created_by, updated_by"
+    "charts, created_at, updated_at, created_by, updated_by"
 )
 
 
 def _row_to_annotation(row: tuple[Any, ...]) -> Annotation:
-    created, updated = row[8], row[9]
+    created, updated = row[9], row[10]
     return Annotation(
         id=int(row[0]),
         client_slug=str(row[1] or ""),
@@ -221,10 +250,11 @@ def _row_to_annotation(row: tuple[Any, ...]) -> Annotation:
         body=str(row[5] or ""),
         category=clean_category(row[6]),
         visibility=clean_visibility(row[7]),
+        charts=clean_charts(row[8]),
         created_at=created.isoformat() if created else None,
         updated_at=updated.isoformat() if updated else None,
-        created_by=str(row[10]) if row[10] else None,
-        updated_by=str(row[11]) if row[11] else None,
+        created_by=str(row[11]) if row[11] else None,
+        updated_by=str(row[12]) if row[12] else None,
     )
 
 
@@ -303,6 +333,7 @@ def create_annotation(
     body: str | None = None,
     category: str | None = None,
     visibility: str | None = None,
+    charts: str | None = None,
     created_by: str | None = None,
 ) -> Annotation:
     if not enabled():
@@ -317,14 +348,14 @@ def create_annotation(
             f"""
             INSERT INTO client_annotations
               (client_slug, event_date, end_date, title, body, category, visibility,
-               created_at, updated_at, created_by, updated_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               charts, created_at, updated_at, created_by, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING {_SELECT_COLS}
             """,
             (
                 slug, start, end, _clean_title(title), _clean_body(body),
                 clean_category(category), clean_visibility(visibility),
-                now, now, author, author,
+                clean_charts(charts), now, now, author, author,
             ),
         ).fetchone()
     assert row
@@ -341,6 +372,7 @@ def update_annotation(
     body: str | None = None,
     category: str | None = None,
     visibility: str | None = None,
+    charts: str | None = None,
     updated_by: str | None = None,
 ) -> Annotation:
     if not enabled():
@@ -355,14 +387,15 @@ def update_annotation(
             f"""
             UPDATE client_annotations
             SET event_date = %s, end_date = %s, title = %s, body = %s,
-                category = %s, visibility = %s, updated_at = %s, updated_by = %s
+                category = %s, visibility = %s, charts = %s,
+                updated_at = %s, updated_by = %s
             WHERE client_slug = %s AND id = %s
             RETURNING {_SELECT_COLS}
             """,
             (
                 start, end, _clean_title(title), _clean_body(body),
                 clean_category(category), clean_visibility(visibility),
-                now, editor, slug, int(annotation_id),
+                clean_charts(charts), now, editor, slug, int(annotation_id),
             ),
         ).fetchone()
     if not row:

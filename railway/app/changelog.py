@@ -78,6 +78,110 @@ ENTRIES: tuple[Entry, ...] = (
         ),
     ),
     Entry(
+        date="2026-08-20",
+        title="Switching to a client opens much faster",
+        area="Client dashboards",
+        kind="fixed",
+        summary=(
+            "Picking a client from the workspace switcher was slow the first "
+            "time you opened them — sometimes several seconds before a single "
+            "number appeared. Three separate delays were stacked on that first "
+            "load; all three are gone."
+        ),
+        details=(
+            "The Overview's cards no longer queue behind a background data-"
+            "freshness check. They start loading the moment the page does.",
+            "Every page was re-checking the shape of several database tables "
+            "before it could draw the client list in the sidebar. That now "
+            "happens once when the app starts.",
+            "A client with a pinned default date range (Range → Make default) "
+            "was never getting its numbers pre-loaded after a sync, so the "
+            "first person in each day waited for every card. It is now pre-"
+            "loaded for the range that client actually opens on.",
+        ),
+    ),
+    Entry(
+        date="2026-08-19",
+        title="A Paid trends chart on the Campaign explorer",
+        area="Campaign explorer",
+        kind="new",
+        summary=(
+            "The explorer says which campaign; it could never say when. A new "
+            "Paid trends panel plots one metric a day (or a week) across the "
+            "selected range, with the comparison window behind it."
+        ),
+        details=(
+            "Chips switch between Spend, Impressions, Clicks, Conversions, CTR "
+            "and CPC — one metric at a time, because impressions and clicks on "
+            "one axis flattens whichever is smaller.",
+            "Daily / Weekly toggle, same as the website trend charts.",
+            "It follows the Platform chips, so filtering to LinkedIn re-cuts "
+            "the line as well as the table.",
+            "Timeline events land on it, and each event now says which charts "
+            "it belongs on — see the Timeline entry below.",
+        ),
+    ),
+    Entry(
+        date="2026-08-19",
+        title="A timeline event can be pinned to ads charts, analytics charts, or both",
+        area="Settings · Timeline",
+        kind="new",
+        summary=(
+            "A budget change explains a spend line, not a sessions line. Each "
+            "timeline event now carries the charts it belongs on, so its marker "
+            "stops turning up where it explains nothing."
+        ),
+        details=(
+            "Two tick boxes in the event editor: Ads trends and Analytics "
+            "trends. Both ticked is the default and the common case.",
+            "Every event that already exists stays ticked for both, so nothing "
+            "moves until you change it.",
+            "The event list shows the scope on any event that is not on both.",
+        ),
+    ),
+    Entry(
+        date="2026-08-19",
+        title="Keyword Performance follows the explorer's filters, and names its window",
+        area="Campaign explorer",
+        kind="fixed",
+        summary=(
+            "The keyword table sat under the campaign tree ignoring the "
+            "Platform chips, the filter dropdowns and the campaign list it was "
+            "filed under. It now shows the same slice, and says which date "
+            "range it is showing."
+        ),
+        details=(
+            "Filtering to LinkedIn empties the keyword table rather than "
+            "leaving Google keywords contradicting the tree above it.",
+            "The insight banner and the match-type chips count the same rows "
+            "the table is showing.",
+            "A badge in the panel header names the window. The keywords have "
+            "always followed the date range; when two ranges show the same "
+            "rows, the account has no synced keyword history for the extra "
+            "days, which the badge now makes visible.",
+        ),
+    ),
+    Entry(
+        date="2026-08-19",
+        title="LinkedIn audience: summary cards and a CSV export",
+        area="Campaign explorer",
+        kind="new",
+        summary=(
+            "The LinkedIn audience panel now opens with the headline of "
+            "whichever breakdown you are on, and the whole window downloads as "
+            "a spreadsheet."
+        ),
+        details=(
+            "Four cards per breakdown: the top category by impressions, the "
+            "one with the most clicks, the best CTR among categories with real "
+            "reach, and the total reported reach.",
+            "The cards follow the tab — top company on Company, top industry "
+            "on Industry.",
+            "Export CSV downloads every breakdown in the synced window as one "
+            "file, labelled with the window it came from.",
+        ),
+    ),
+    Entry(
         date="2026-08-19",
         title="One comparison picker again, starting on No comparison",
         area="Client dashboards",

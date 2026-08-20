@@ -246,6 +246,7 @@ OVERVIEW_PINNABLE_CARDS: dict[str, str] = {
 # ``show_budget`` below and the Hide/Show handling in the edit JS.
 EXPLORER_LAYOUT_CARDS: dict[str, str] = {
     "explorer": "Campaign explorer",
+    "paid_trends": "Paid trends",
     "keywords": "Keyword Performance",
     "gdemo": "Google Ads demographics",
     "lidemo": "LinkedIn audience",
@@ -1243,7 +1244,7 @@ def render_bigquery_dashboard_page(
 
     panel_keywords = """
       <section id="sec-keywords" style="display:none">
-        <div class="sec-head"><h2>Keyword Performance</h2><span class="status" id="keywordStatus"></span></div>
+        <div class="sec-head"><h2>Keyword Performance</h2><div class="sec-head-actions"><span class="kw-window" id="keywordWindow"></span><span class="status" id="keywordStatus"></span></div></div>
         <div class="kw-insight" id="keywordInsight" hidden></div>
         <div class="kw-toolbar">
           <input type="search" id="keywordSearch" class="kw-search" placeholder="Search keywords…" autocomplete="off">
@@ -1267,9 +1268,11 @@ def render_bigquery_dashboard_page(
           <h2>LinkedIn audience</h2>
           <div class="sec-head-actions">
             <span class="lid-window" id="lidemoWindow"></span>
+            <button type="button" class="lid-export" id="lidemoExport" title="Download every breakdown in this window as a CSV">Export CSV</button>
             <span class="status" id="lidemoStatus"></span>
           </div>
         </div>
+        <div class="cards lid-cards" id="lidemoCards"></div>
         <div class="pnl-tabs lid-tabs" role="tablist" aria-label="Demographic breakdown" id="lidemoTabs"></div>
         <div class="table-wrap"><table id="lidemoTable" class="compact"></table></div>
         <p class="lid-note" id="lidemoNote"></p>
@@ -1297,8 +1300,28 @@ def render_bigquery_dashboard_page(
         <p class="gd-note" id="gdemoNote"></p>
       </section>"""
 
+    # Paid trends — one metric at a time over the selected range, with the
+    # comparison window overlaid and the timeline's ads-scoped annotations drawn
+    # on top. It reads the same paid-media summary the Overview cards do, so a
+    # spike here and a card up there can never disagree; the metric chips just
+    # re-cut rows already in memory. Hidden for a client with no paid data.
+    panel_paid_trends = """
+      <section id="sec-paid_trends" style="display:none">
+        <div class="sec-head">
+          <h2>Paid trends</h2>
+          <div class="sec-head-actions">
+            <div class="chips seg" id="paidTrendMetricChips"></div>
+            <div class="chips seg" id="paidTrendGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div>
+            <span class="status" id="paidTrendStatus"></span>
+          </div>
+        </div>
+        <div class="chart-wrap"><div class="chart-canvas-host" style="height:210px"><canvas id="paidTrendChart"></canvas></div></div>
+        <div class="cmp-legend" id="paidTrendLegend"></div>
+      </section>"""
+
     ex_units: list[tuple[str, str]] = [
         ("explorer", panel_explorer_main),
+        ("paid_trends", panel_paid_trends),
         ("keywords", panel_keywords),
         ("gdemo", panel_gdemo),
         ("lidemo", panel_lidemo),
@@ -2160,10 +2183,22 @@ def render_bigquery_dashboard_page(
     .pill {{ display:inline-block; padding:1px 7px; border-radius:999px; font-size:.64rem; font-weight:800; letter-spacing:.03em; text-transform:uppercase; vertical-align:middle; margin-right:7px; }}
     .pill-google {{ background:#e8f0fe; color:#1a73e8; }}
     .pill-linkedin {{ background:#e6f0f8; color:#0a66c2; }}
+    /* Keyword Performance: the window badge that spells out which date range
+       (and which explorer filters) produced the rows below, so a table that
+       looks unchanged between two ranges is visibly a data fact, not a bug. */
+    .kw-window {{ display:inline-flex; align-items:center; gap:6px; font-size:.72rem; font-weight:700; color:#1d6fd0; background:#eaf1fb; border-radius:999px; padding:4px 11px; white-space:nowrap; }}
+    .kw-window[hidden] {{ display:none; }}
     /* LinkedIn audience panel: tab strip, window badge, share-of-reach bars. */
     .lid-tabs {{ margin:2px 0 14px; border-bottom:1px solid var(--line); }}
     .lid-window {{ display:inline-flex; align-items:center; gap:6px; font-size:.72rem; font-weight:700; color:#0a66c2; background:#e6f0f8; border-radius:999px; padding:4px 11px; white-space:nowrap; }}
     .lid-note {{ margin:12px 2px 0; font-size:.72rem; line-height:1.5; color:var(--muted); }}
+    .lid-export {{ border:1px solid var(--line); background:var(--card); color:var(--muted); border-radius:var(--radius-sm); padding:4px 10px; font:inherit; font-size:.72rem; font-weight:700; cursor:pointer; white-space:nowrap; }}
+    .lid-export:hover {{ border-color:#c9d6e6; color:var(--navy); }}
+    .lid-cards {{ margin:2px 0 14px; }}
+    /* A category name is the *value* of these cards, and LinkedIn names run
+       long ("Information Technology & Services"), so it gets a readable size
+       and wraps to two lines instead of the numeric card's display type. */
+    .lid-card-name {{ font-size:.95rem; line-height:1.3; font-weight:750; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }}
     #lidemoTable td.lid-cat {{ max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
     .lid-bar {{ position:relative; display:block; height:6px; min-width:120px; border-radius:3px; background:rgba(10,102,194,.13); }}
     .lid-bar span {{ position:absolute; inset:0 auto 0 0; border-radius:3px; background:#0a66c2; }}
@@ -3040,9 +3075,11 @@ def render_bigquery_dashboard_page(
         }},
         // `dates` is the ISO date behind each label. Charts that pass it get
         // timeline annotations drawn over them; charts that don't are untouched.
-        plugins: opts.dates ? [annoLinePlugin(opts.dates)] : [],
+        // `annoScope` says which family of events belongs here ('ads' for the
+        // paid trend chart, 'analytics' — the default — for the GA4 ones).
+        plugins: opts.dates ? [annoLinePlugin(opts.dates, opts.annoScope)] : [],
       }});
-      if (opts.dates) syncAnnoPins(id, opts.dates);
+      if (opts.dates) syncAnnoPins(id, opts.dates, opts.annoScope);
       return chart;
     }}
 
@@ -3086,9 +3123,9 @@ def render_bigquery_dashboard_page(
             }} }},
           }},
         }},
-        plugins: opts.dates ? [annoLinePlugin(opts.dates)] : [],
+        plugins: opts.dates ? [annoLinePlugin(opts.dates, opts.annoScope)] : [],
       }});
-      if (opts.dates) syncAnnoPins(id, opts.dates);
+      if (opts.dates) syncAnnoPins(id, opts.dates, opts.annoScope);
       return chart;
     }}
 
@@ -3120,11 +3157,22 @@ def render_bigquery_dashboard_page(
     }}
     function annoOverlapsStart(iso, dates) {{ return dates.length > 0 && iso < String(dates[0]); }}
 
-    // Annotations that fall inside (or overlap) the dates a chart is showing.
-    function annoVisibleFor(dates) {{
+    // Whether an event belongs on this chart. Each event carries the family of
+    // charts it explains ("ads", "analytics", or "both" — set per event under
+    // Settings → Insights); anything stored before that field existed reads as
+    // "both", which is how it used to behave.
+    function annoInScope(a, scope) {{
+      const on = String(a.charts || 'both');
+      return on === 'both' || on === scope;
+    }}
+    // Annotations that fall inside (or overlap) the dates a chart is showing,
+    // and that belong on this family of charts.
+    function annoVisibleFor(dates, scope) {{
       if (!annoCache.length || !dates || !dates.length) return [];
       const first = String(dates[0]), last = String(dates[dates.length - 1]);
+      scope = scope || 'analytics';
       return annoCache
+        .filter(a => annoInScope(a, scope))
         .filter(a => {{
           const start = String(a.event_date || '');
           const end = String(a.end_date || a.event_date || '');
@@ -3134,11 +3182,11 @@ def render_bigquery_dashboard_page(
         .filter(m => m.idx >= 0);
     }}
 
-    function annoLinePlugin(dates) {{
+    function annoLinePlugin(dates, scope) {{
       return {{
         id: 'sfAnnotations',
         afterDatasetsDraw(chart) {{
-          const markers = annoVisibleFor(dates);
+          const markers = annoVisibleFor(dates, scope);
           if (!markers.length) return;
           const area = chart.chartArea, xs = chart.scales.x;
           if (!area || !xs) return;
@@ -3162,7 +3210,7 @@ def render_bigquery_dashboard_page(
     }}
 
     // The DOM half: one focusable pin per marker, positioned over the canvas.
-    function syncAnnoPins(chartId, dates) {{
+    function syncAnnoPins(chartId, dates, scope) {{
       const canvas = document.getElementById(chartId);
       if (!canvas) return;
       const host = canvas.parentElement;
@@ -3175,7 +3223,7 @@ def render_bigquery_dashboard_page(
         host.appendChild(layer);
       }}
       const chart = __charts[chartId];
-      const markers = annoVisibleFor(dates);
+      const markers = annoVisibleFor(dates, scope);
       // chartArea is only populated once the chart has laid out; bail quietly
       // rather than positioning pins against undefined geometry.
       if (!chart || !chart.scales || !chart.scales.x || !chart.chartArea || !markers.length) {{
@@ -3221,6 +3269,17 @@ def render_bigquery_dashboard_page(
     function withDates(base) {{
       const sep = base.includes('?') ? '&' : '?';
       return base + sep + 'start_date=' + currentStart + '&end_date=' + currentEnd;
+    }}
+    // "Jul 1 – Jul 31, 2026" for a pair of ISO dates — used by panel badges that
+    // have to name the window they are showing.
+    const _MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    function shortRangeLabel(s, e) {{
+      const a=String(s||'').split('-'), b=String(e||'').split('-');
+      if (a.length!==3 || b.length!==3) return `${{s}} – ${{e}}`;
+      const mon=p=>_MONTHS_SHORT[Number(p[1])-1]||p[1];
+      const day=p=>String(Number(p[2]));
+      const left=`${{mon(a)}} ${{day(a)}}`+(a[0]===b[0]?'':`, ${{a[0]}}`);
+      return `${{left}} – ${{mon(b)}} ${{day(b)}}, ${{b[0]}}`;
     }}
     function withDatesRange(base, s, e) {{
       const sep = base.includes('?') ? '&' : '?';
@@ -3270,6 +3329,20 @@ def render_bigquery_dashboard_page(
         el.hidden = true;
         el.title = '';
       }}
+    }}
+    // Every per-card warning icon and the source(s) whose synced history it
+    // speaks for. Each card sets its own icon as it renders, but the health
+    // payload that decides them arrives independently -- so whichever lands
+    // second has to repaint the other's. setCmpWarn is null-guarded, so listing
+    // a card that isn't on this page (or hasn't rendered yet) is a no-op.
+    const CMP_WARN_TARGETS = [
+      ['ga4SnapshotCmpWarn', ['google_analytics']],
+      ['gscSnapshotCmpWarn', ['gsc']],
+      ['sessionsCmpWarn', ['google_analytics']],
+      ['avgDurCmpWarn', ['google_analytics']],
+    ];
+    function refreshCmpWarns() {{
+      for (const [elId, sources] of CMP_WARN_TARGETS) setCmpWarn(elId, sources);
     }}
     // Human names for the /marketing/health source keys, for the notice below.
     const CMP_SOURCE_LABELS = {{
@@ -3719,8 +3792,12 @@ def render_bigquery_dashboard_page(
     }}
 
     // ---- Summary sparkline data (feeds the Paid summary cards) ----
-    function buildChartDaily() {{
-      const daily = (summaryPayload && summaryPayload.daily) ? summaryPayload.daily : [];
+    function buildChartDaily() {{ return buildPaidDaily(summaryPayload); }}
+    // One row per date for whatever the Platform chips allow, with cpc/cpa/ctr
+    // derived from the summed parts (never averaged from per-source ratios,
+    // which is a different and wrong number).
+    function buildPaidDaily(payload) {{
+      const daily = (payload && payload.daily) ? payload.daily : [];
       const needles = platformFilter.size ? [...platformFilter].map(p => p.toLowerCase()) : null;
       const byDate = new Map();
       for (const r of daily) {{
@@ -4571,6 +4648,9 @@ def render_bigquery_dashboard_page(
             if (k && r.earliest_date) earliestDates[k] = r.earliest_date;
           }}
           syncCompareNotice();
+          // Cards no longer wait for this fetch, so any that already rendered
+          // drew their warning icon against an empty earliestDates. Repaint.
+          refreshCmpWarns();
         }} catch(err) {{
           // Non-fatal: no earliest-date info just means no comparison warnings.
         }} finally {{
@@ -5182,6 +5262,12 @@ def render_bigquery_dashboard_page(
       setStatus('explorerStatus', base.length
         ? (filterActive ? `${{tree.size}} of ${{totalCampaigns}} campaign(s)` : `${{tree.size}} campaign(s) · ${{base.length}} ads`)
         : 'No campaigns found');
+      // The keyword table and the paid trend chart are slices of the same
+      // window and the same Platform / campaign filters, so every path that
+      // re-renders the tree (a chip, a dropdown, a new range) re-renders them
+      // too — otherwise they sit there contradicting the table above them.
+      if (kwAllRows.length) renderKeywords();
+      renderPaidTrends();
     }}
     function toggleExplorerRow(row) {{
       const id=row.dataset.id, table=row.closest('table'), expanded=row.classList.toggle('open');
@@ -5253,8 +5339,30 @@ def render_bigquery_dashboard_page(
       if (key==='cpa')  return num(r.conversions) ? num(r.spend)/num(r.conversions) : null;
       return num(r[key]);
     }}
+    // Keyword rows are Google Ads only, so a Platform chip that excludes Google
+    // empties this table rather than leaving it contradicting the tree above.
+    function kwPlatformIncluded() {{
+      return !platformFilter.size || [...platformFilter].some(k=>k.toLowerCase()==='google');
+    }}
+    // The campaign allowlist and the filter-group dropdowns both key off the
+    // campaign name, which keyword rows carry — so the same predicate the
+    // explorer tree uses applies here unchanged.
+    function kwCampaignAllowed(r) {{
+      if (_campaignAllowSet.size && !_campaignAllowSet.has(String(r.campaign_name||''))) return false;
+      const name=String(r.campaign_name||'').toLowerCase();
+      for (const g of EXPLORER_FILTER_GROUPS) {{
+        const set=explorerFilterState.get(g.id);
+        if (!set||!set.size) continue;
+        if (!g.chips.some(c=>set.has(c.label)&&c.phrases.some(p=>p&&name.includes(p)))) return false;
+      }}
+      return true;
+    }}
+    function kwScoped() {{
+      if (!kwPlatformIncluded()) return [];
+      return kwAllRows.filter(kwCampaignAllowed);
+    }}
     function kwFiltered() {{
-      let rows=kwAllRows.slice();
+      let rows=kwScoped();
       if (kwMatchFilter.size) rows=rows.filter(r=>kwMatchFilter.has((r.match_type||'').toUpperCase()));
       const q=kwSearch.trim().toLowerCase();
       if (q) rows=rows.filter(r=>((r.keyword_text||'')+' '+(r.ad_group_name||'')+' '+(r.campaign_name||'')).toLowerCase().includes(q));
@@ -5272,7 +5380,7 @@ def render_bigquery_dashboard_page(
       const el=document.getElementById('keywordInsight');
       if (!el) return;
       const items=[];
-      const bySpend=kwAllRows.slice().sort((a,b)=>num(b.spend)-num(a.spend));
+      const bySpend=kwScoped().sort((a,b)=>num(b.spend)-num(a.spend));
       const total=bySpend.reduce((s,r)=>s+num(r.spend),0);
       const topN=Math.min(3, bySpend.length);
       if (total>0 && topN) {{
@@ -5281,7 +5389,7 @@ def render_bigquery_dashboard_page(
         const info='<svg class="kw-ins-icon" viewBox="0 0 24 24" fill="none" stroke="#1d6fd0" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.1" fill="#1d6fd0" stroke="none"/></svg>';
         items.push(`<span class="kw-ins">${{info}}<span><strong>${{pct}}% of spend</strong> came from the top ${{topN}} keyword${{topN===1?'':'s'}}.</span></span>`);
       }}
-      const wasteful=kwAllRows.filter(r=>num(r.spend)>100 && !num(r.conversions)).length;
+      const wasteful=kwScoped().filter(r=>num(r.spend)>100 && !num(r.conversions)).length;
       if (wasteful) {{
         const warn='<svg class="kw-ins-icon" viewBox="0 0 24 24" fill="none" stroke="#c98a00" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 1.8 20.5h20.4z"/><path d="M12 10v4"/><circle cx="12" cy="17.4" r="0.6" fill="#c98a00" stroke="none"/></svg>';
         items.push(`<span class="kw-ins kw-ins-warn">${{warn}}<span><strong>${{wasteful}} keyword${{wasteful===1?'':'s'}}</strong> spent over $100 without a conversion.</span></span>`);
@@ -5293,7 +5401,7 @@ def render_bigquery_dashboard_page(
       const host=document.getElementById('keywordMatchChips');
       if (!host) return;
       const order=['EXACT','PHRASE','BROAD'];
-      const types=[...new Set(kwAllRows.map(r=>(r.match_type||'').toUpperCase()).filter(Boolean))]
+      const types=[...new Set(kwScoped().map(r=>(r.match_type||'').toUpperCase()).filter(Boolean))]
         .sort((a,b)=>(order.indexOf(a)<0?9:order.indexOf(a))-(order.indexOf(b)<0?9:order.indexOf(b)));
       // A single match type isn't worth a filter row.
       host.innerHTML = types.length<2 ? '' : ['All',...types].map(t=>
@@ -5308,13 +5416,18 @@ def render_bigquery_dashboard_page(
     }}
     function renderKeywordTable() {{
       const rows=kwFiltered();
-      const total=kwAllRows.length;
+      const total=kwScoped().length;
       const el=document.getElementById('keywordTable');
       const arrow=k=>kwSort.key===k?(kwSort.dir==='asc'?' ▲':' ▼'):'';
       const head=`<thead><tr>${{KW_COLS.map(c=>`<th class="expl-sort${{c.left?' left':''}}${{kwSort.key===c.key?' active':''}}" data-key="${{c.key}}">${{esc(c.label)}}${{arrow(c.key)}}</th>`).join('')}}</tr></thead>`;
       if (!rows.length) {{
         el.innerHTML=head+`<tbody><tr><td class="empty" colspan="${{KW_COLS.length}}">No keywords match these filters.</td></tr></tbody>`;
-        setStatus('keywordStatus', total?`0 of ${{total}} keyword(s)`:'No keyword data');
+        // "no keywords" and "no Google in this platform filter" are different
+        // facts, and reading the second as the first sends someone looking for
+        // a broken keyword sync.
+        setStatus('keywordStatus', !kwPlatformIncluded()
+          ? 'Google is filtered out'
+          : (total?`0 of ${{total}} keyword(s)`:'No keyword data'));
         document.getElementById('keywordPager').innerHTML='';
         return;
       }}
@@ -5369,10 +5482,44 @@ def render_bigquery_dashboard_page(
       if (prev) prev.onclick=()=>{{ if(kwPageNum>1){{ kwPageNum--; renderKeywordTable(); }} }};
       if (next) next.onclick=()=>{{ if(kwPageNum<totalPages){{ kwPageNum++; renderKeywordTable(); }} }};
     }}
+    function renderKeywordWindow() {{
+      const badge=document.getElementById('keywordWindow');
+      if (!badge) return;
+      const parts=[shortRangeLabel(currentStart, currentEnd)];
+      if (!kwPlatformIncluded()) parts.push('Google excluded by the Platform filter');
+      badge.textContent=parts.join(' · ');
+      badge.title='Google Ads search keywords for the selected date range, sliced by '
+        +'the same Platform and campaign filters as the explorer above. Two ranges '
+        +'can show the same keywords when the account has no synced keyword history '
+        +'for the extra days.';
+      badge.hidden=false;
+    }}
     function renderKeywords() {{
+      renderKeywordWindow();
       renderKeywordInsight();
       renderKeywordTable();
     }}
+    // ---- CSV download ----
+    // Client-side because every table on this page is already in memory: what
+    // the file contains is exactly what the panel is showing, with no second
+    // query and no server round-trip to drift out of sync with it.
+    function csvCell(v) {{
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      return /[",\\n]/.test(s) ? `"${{s.replace(/"/g, '""')}}"` : s;
+    }}
+    function downloadCsv(filename, rows) {{
+      if (!rows || !rows.length) return;
+      // The BOM is what makes Excel read UTF-8 rather than the local codepage,
+      // which is the difference between "Zürich" and "ZÃ¼rich" in a client deck.
+      const body = '\\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\\r\\n');
+      const url = URL.createObjectURL(new Blob([body], {{ type: 'text/csv;charset=utf-8' }}));
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }}
+
     // ---- LinkedIn audience (member demographics) ----
     // These rows are per-window totals, NOT a daily series: LinkedIn's MEMBER_*
     // pivots carry no date dimension and withhold categories below a minimum
@@ -5404,7 +5551,90 @@ def render_bigquery_dashboard_page(
       ).join('');
       host.classList.toggle('one-tab',dims.length===1);
     }}
+    // Summary cards for the breakdown on screen. Which categories LinkedIn will
+    // report differs by dimension, so the cards are dimension-aware rather than
+    // hard-coded to companies: "top company by impressions" on the Company tab,
+    // "top industry" on Industry, and so on.
+    const LIDEMO_SINGULAR={{company:'company',job_title:'job title',job_function:'job function',
+      seniority:'seniority',industry:'industry',company_size:'company size'}};
+    // The floor a category has to clear before its CTR is worth calling out —
+    // one click on nine impressions is not an 11% CTR, it is noise.
+    const LIDEMO_CTR_MIN_IMPRESSIONS=250;
+    function lidemoCtr(r) {{
+      const imp=num(r.impressions);
+      if (r.ctr===null||r.ctr===undefined) return imp?num(r.clicks)/imp:0;
+      return num(r.ctr);
+    }}
+    function lidemoLabel(r) {{ return r.category||r.category_urn||'—'; }}
+    function renderLidemoCards() {{
+      const host=document.getElementById('lidemoCards');
+      if (!host) return;
+      const rows=lidemoRows(lidemoDim);
+      if (!rows.length) {{ host.innerHTML=''; return; }}
+      const noun=LIDEMO_SINGULAR[lidemoDim]||'category';
+      const totalImp=rows.reduce((a,r)=>a+num(r.impressions),0);
+      const totalClicks=rows.reduce((a,r)=>a+num(r.clicks),0);
+      const topImp=rows.reduce((b,r)=>num(r.impressions)>num(b.impressions)?r:b, rows[0]);
+      const topClick=rows.reduce((b,r)=>num(r.clicks)>num(b.clicks)?r:b, rows[0]);
+      // Only categories with enough reach get to hold the CTR card; with none
+      // above the floor the card says so rather than crowning a rounding error.
+      const ctrPool=rows.filter(r=>num(r.impressions)>=LIDEMO_CTR_MIN_IMPRESSIONS);
+      const topCtr=ctrPool.length
+        ? ctrPool.reduce((b,r)=>lidemoCtr(r)>lidemoCtr(b)?r:b, ctrPool[0])
+        : null;
+      const nameCard=(title,label,foot)=>`<div class="card"><div class="card-title">${{esc(title)}}</div>`
+        +`<div class="card-value lid-card-name" title="${{esc(label)}}">${{esc(label)}}</div>`
+        +`<div class="card-foot">${{foot}}</div></div>`;
+      const cards=[
+        nameCard(`Top ${{noun}} by impressions`, lidemoLabel(topImp),
+          `${{count(topImp.impressions)}} impressions · ${{pct(totalImp?num(topImp.impressions)/totalImp*100:0)}} of those reported`),
+        nameCard('Most clicks', lidemoLabel(topClick),
+          `${{count(topClick.clicks)}} clicks · ${{pct(lidemoCtr(topClick)*100)}} CTR`),
+        topCtr
+          ? nameCard('Best CTR', lidemoLabel(topCtr),
+              `${{pct(lidemoCtr(topCtr)*100)}} on ${{count(topCtr.impressions)}} impressions`)
+          : `<div class="card"><div class="card-title">Best CTR</div><div class="card-value">—</div>`
+            +`<div class="card-foot">No ${{esc(noun)}} reached ${{count(LIDEMO_CTR_MIN_IMPRESSIONS)}} impressions</div></div>`,
+        `<div class="card"><div class="card-title">Reported reach</div>`
+          +`<div class="card-value">${{count(totalImp)}}</div>`
+          +`<div class="card-foot">across ${{count(rows.length)}} ${{esc(noun)}}${{rows.length===1?'':'s'}} · ${{count(totalClicks)}} clicks</div></div>`,
+      ];
+      host.innerHTML=cards.join('');
+    }}
+    // One file for the whole window, every breakdown stacked under a Breakdown
+    // column — the panel only shows one tab at a time, but the thing someone
+    // wants in a spreadsheet is all of them.
+    const LIDEMO_CSV_HEAD=['Window','Window start','Window end','Breakdown','Category',
+      'Impressions','Clicks','CTR %','Spend','Conversions'];
+    function lidemoCsvRows() {{
+      if (!lidemoData) return [];
+      const out=[LIDEMO_CSV_HEAD];
+      const w=lidemoWindowLabel(lidemoData.window);
+      const ws=lidemoData.window_start||'', we=lidemoData.window_end||'';
+      for (const [dim,label] of LIDEMO_TABS) {{
+        for (const r of lidemoRows(dim)) {{
+          out.push([w, ws, we, label, lidemoLabel(r),
+            num(r.impressions), num(r.clicks), (lidemoCtr(r)*100).toFixed(2),
+            // spend/conversions come back null when LinkedIn refused that
+            // projection; a blank cell is honest, a 0 would not be.
+            (r.spend===null||r.spend===undefined)?'':num(r.spend),
+            (r.conversions===null||r.conversions===undefined)?'':num(r.conversions)]);
+        }}
+      }}
+      return out.length>1 ? out : [];
+    }}
+    (function wireLidemoExport() {{
+      const btn=document.getElementById('lidemoExport');
+      if (!btn) return;
+      btn.addEventListener('click', ()=>{{
+        const rows=lidemoCsvRows();
+        if (!rows.length) {{ setStatus('lidemoStatus','Nothing to export yet.'); return; }}
+        const w=String((lidemoData&&lidemoData.window)||'window').toLowerCase();
+        downloadCsv(`linkedin-audience-${{w}}.csv`, rows);
+      }});
+    }})();
     function renderLidemo() {{
+      renderLidemoCards();
       const rows=lidemoRows(lidemoDim);
       const el=document.getElementById('lidemoTable');
       if (!el) return;
@@ -5581,6 +5811,137 @@ def render_bigquery_dashboard_page(
       renderGdemo();
     }}
 
+    // ---- Campaign Explorer: paid trends ----
+    // The explorer answers "which campaign", the tree cannot answer "when". One
+    // metric at a time, because two metrics on one axis (impressions and clicks
+    // differ by two orders of magnitude) either flattens one line or needs a
+    // second axis nobody reads correctly. Chips switch the metric; the rows are
+    // already in memory, so switching costs nothing.
+    const PAID_TREND_METRICS = [
+      {{key:'spend',        label:'Spend',       fmt:money, fill:true,  color:'#1769aa', additive:true,  dir:'neutral'}},
+      {{key:'impressions',  label:'Impressions', fmt:count, fill:true,  color:'#7c3aed', additive:true,  dir:'up'}},
+      {{key:'clicks',       label:'Clicks',      fmt:count, fill:true,  color:'#0a7f3f', additive:true,  dir:'up'}},
+      {{key:'conversions',  label:'Conversions', fmt:count, fill:true,  color:'#0891b2', additive:true,  dir:'up'}},
+      {{key:'ctr',          label:'CTR',         fmt:pct,   fill:false, color:'#b8600a', additive:false, dir:'neutral'}},
+      {{key:'cpc',          label:'CPC',         fmt:money, fill:false, color:'#d6336c', additive:false, dir:'down'}},
+    ];
+    let paidTrendMetric = 'spend';
+    let paidTrendGran = 'daily';
+    let paidTrendCur = null, paidTrendPrev = null;
+    function paidTrendDef() {{
+      return PAID_TREND_METRICS.find(m=>m.key===paidTrendMetric) || PAID_TREND_METRICS[0];
+    }}
+    // Weeks start Monday and are labelled by their start date, matching the
+    // Daily/Weekly toggle on the GA4 trends. Ratios are re-derived from the
+    // week's summed parts rather than averaged across its days.
+    function paidTrendWeekly(rows) {{
+      if (!rows || !rows.length) return [];
+      const out=[]; let cur=null;
+      for (const r of rows) {{
+        const dt=new Date(String(r.date)+'T00:00:00');
+        const dow=(dt.getDay()+6)%7;
+        const mon=new Date(dt); mon.setDate(dt.getDate()-dow);
+        const key=`${{mon.getFullYear()}}-${{String(mon.getMonth()+1).padStart(2,'0')}}-${{String(mon.getDate()).padStart(2,'0')}}`;
+        if (!cur || cur.date!==key) {{ cur={{date:key,spend:0,impressions:0,clicks:0,conversions:0}}; out.push(cur); }}
+        cur.spend+=num(r.spend); cur.impressions+=num(r.impressions);
+        cur.clicks+=num(r.clicks); cur.conversions+=num(r.conversions);
+      }}
+      for (const d of out) {{
+        d.cpc=d.clicks?d.spend/d.clicks:0;
+        d.cpa=d.conversions?d.spend/d.conversions:0;
+        d.ctr=d.impressions?d.clicks/d.impressions*100:0;
+      }}
+      return out;
+    }}
+    function paidTrendRows(payload) {{
+      const daily=buildPaidDaily(payload);
+      return paidTrendGran==='weekly' ? paidTrendWeekly(daily) : daily;
+    }}
+    function buildPaidTrendChips() {{
+      const host=document.getElementById('paidTrendMetricChips');
+      if (!host) return;
+      host.innerHTML=PAID_TREND_METRICS.map(m=>
+        `<button type="button" class="chip${{m.key===paidTrendMetric?' active':''}}" data-metric="${{esc(m.key)}}">${{esc(m.label)}}</button>`
+      ).join('');
+      host.querySelectorAll('.chip').forEach(b=>b.addEventListener('click',()=>{{
+        if (b.dataset.metric===paidTrendMetric) return;
+        paidTrendMetric=b.dataset.metric;
+        host.querySelectorAll('.chip').forEach(x=>x.classList.toggle('active', x===b));
+        renderPaidTrends();
+      }}));
+    }}
+    (function wirePaidTrendGran() {{
+      document.querySelectorAll('#paidTrendGranChips .chip').forEach(btn=>
+        btn.addEventListener('click',()=>{{
+          if (btn.dataset.gran===paidTrendGran) return;
+          paidTrendGran=btn.dataset.gran;
+          document.querySelectorAll('#paidTrendGranChips .chip').forEach(b=>b.classList.toggle('active', b===btn));
+          renderPaidTrends();
+        }})
+      );
+    }})();
+    // An annotation edit has to redraw this the same way it redraws the GA4
+    // trends, or a new marker only appears after the next range change.
+    registerAnnotatedChart(()=>{{ if (paidTrendCur) renderPaidTrends(); }});
+    function renderPaidTrends() {{
+      const sec=document.getElementById('sec-paid_trends');
+      if (!sec) return;
+      const unit=sec.closest('.ov-unit')||sec;
+      const rows=paidTrendRows(paidTrendCur);
+      const legend=document.getElementById('paidTrendLegend');
+      // No paid data for this client at all — hide the panel rather than leave
+      // an empty axis, the same rule the keyword table follows. A client that
+      // does have paid data but nothing in this slice keeps the panel and says
+      // so, because that is a finding rather than a missing connector.
+      if (!rows.length) {{
+        __destroyChart('paidTrendChart');
+        if (legend) legend.innerHTML='';
+        const everHadData=!!(paidTrendCur && paidTrendCur.daily && paidTrendCur.daily.length);
+        sec.style.display=everHadData?'':'none';
+        unit.style.display=everHadData?'':'none';
+        setStatus('paidTrendStatus', everHadData?'No spend in this range for the selected platforms.':'');
+        return;
+      }}
+      sec.style.display=''; unit.style.display='';
+      const m=paidTrendDef();
+      const prevRows=paidTrendPrev?paidTrendRows(paidTrendPrev):[];
+      const vals=rows.map(r=>num(r[m.key]));
+      const prevVals=prevRows.map(r=>num(r[m.key]));
+      const hasPrev=prevVals.length>0;
+      const labels=rows.map(r=>String(r.date).slice(5));
+      const series=[];
+      // Previous first so the current line draws over it.
+      if (hasPrev) series.push({{label:cmpSeriesLabel(), data:prevVals.slice(0,vals.length), color:'#9aa7bd', dashed:true, fmt:m.fmt}});
+      series.push({{label:'Current', data:vals, color:m.color, fill:m.fill, fmt:m.fmt}});
+      lineChart('paidTrendChart', labels, series, {{
+        yFmt: v => m.fmt(v),
+        tooltip: {{ label: c => `${{c.dataset.label}}: ${{m.fmt(c.raw)}}` }},
+        dates: rows.map(r=>String(r.date)),
+        // Ads events only: a site migration marked "analytics trends" has no
+        // business explaining a spend line.
+        annoScope: 'ads',
+      }});
+      // Additive metrics total over the window; a ratio is re-derived from the
+      // window's parts, because the mean of daily CTRs is not the window's CTR.
+      const roll=(rs)=>{{
+        if (!rs.length) return null;
+        if (m.additive) return rs.reduce((a,r)=>a+num(r[m.key]),0);
+        const t=rs.reduce((a,r)=>{{a.spend+=num(r.spend);a.impressions+=num(r.impressions);a.clicks+=num(r.clicks);a.conversions+=num(r.conversions);return a;}},
+          {{spend:0,impressions:0,clicks:0,conversions:0}});
+        if (m.key==='ctr') return t.impressions?t.clicks/t.impressions*100:0;
+        if (m.key==='cpc') return t.clicks?t.spend/t.clicks:0;
+        return t.conversions?t.spend/t.conversions:0;
+      }};
+      const curTot=roll(rows), prevTot=hasPrev?roll(prevRows):null;
+      if (legend) {{
+        legend.innerHTML=`<span class="cmp-item"><span class="cmp-swatch cur"></span>`
+          +`${{esc(m.label)}} ${{m.additive?'total':'over the window'}} · ${{m.fmt(curTot)}} ${{summaryDeltaHtml(curTot, prevTot, m.dir)}}</span>`
+          +(hasPrev?`<span class="cmp-item"><span class="cmp-swatch prev"></span>${{esc(cmpSeriesLabel())}} · ${{m.fmt(prevTot)}}</span>`:'');
+      }}
+      const platTag=platformFilter.size?` · ${{[...platformFilter].join(', ')}}`:'';
+      setStatus('paidTrendStatus', `${{rows.length}} ${{paidTrendGran==='weekly'?'week':'day'}}${{rows.length===1?'':'s'}}${{platTag}}`);
+    }}
+
     async function loadExplorer() {{
       setStatus('explorerStatus','Loading…');
       // Demographics are independent of the explorer tree (different grain,
@@ -5592,7 +5953,7 @@ def render_bigquery_dashboard_page(
       // The Compare picker's window (previous period/year) — fetched only when
       // set, so a page load with no comparison configured yet skips these.
       const cmpOn = !!compareStart;
-      const [g,l,m,ms,kw,ver,gver,lver,gPrev,lPrev,mPrev,msPrev]=await Promise.all([
+      const [g,l,m,ms,kw,ver,gver,lver,gPrev,lPrev,mPrev,msPrev,paid,paidPrev]=await Promise.all([
         getJson(withDates(EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(LINKEDIN_EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(META_EXPLORER_API)).catch(()=>({{rows:[]}})),
@@ -5605,7 +5966,12 @@ def render_bigquery_dashboard_page(
         cmpOn ? getJson(withDatesRange(LINKEDIN_EXPLORER_API, compareStart, compareEnd)).catch(()=>({{rows:[]}})) : Promise.resolve({{rows:[]}}),
         cmpOn ? getJson(withDatesRange(META_EXPLORER_API, compareStart, compareEnd)).catch(()=>({{rows:[]}})) : Promise.resolve({{rows:[]}}),
         cmpOn ? getJson(withDatesRange(MICROSOFT_EXPLORER_API, compareStart, compareEnd)).catch(()=>({{rows:[]}})) : Promise.resolve({{rows:[]}}),
+        // The paid trend chart's series. Same endpoint the Overview's paid cards
+        // read, so the chart and those cards can never disagree about a day.
+        HAS_PAID_ADS ? getJson(withDates(SUMMARY_API)).catch(()=>null) : Promise.resolve(null),
+        (HAS_PAID_ADS && cmpOn) ? getJson(withDatesRange(SUMMARY_API, compareStart, compareEnd)).catch(()=>null) : Promise.resolve(null),
       ]);
+      paidTrendCur=paid; paidTrendPrev=paidPrev;
       verifiedByAdId=(ver&&ver.by_ad_id)?ver.by_ad_id:{{}};
       verifiedByAdIdEvent=(ver&&ver.by_ad_id_event)?ver.by_ad_id_event:{{}};
       verifiedByGoogleCampaignId=(gver&&gver.by_campaign_id)?gver.by_campaign_id:{{}};
@@ -6780,7 +7146,19 @@ def render_bigquery_dashboard_page(
       // timeline and each chart filters to what it is showing), so one load
       // serves every tab and every range change.
       loadAnnotations();
-      if (currentTab==='overview')   {{ loadHealth().then(()=>{{ if (HAS_PAID_ADS) loadSummary(); loadOverviewHome(); }}); }}
+      // The Overview's cards start immediately and health rides alongside them.
+      // It used to gate them (`loadHealth().then(...)`), which put a whole
+      // BigQuery round-trip in front of the first number on the page -- and on a
+      // client nobody had opened since its last sync, that read is cold, so the
+      // first visit after switching clients paid it in full before anything
+      // started loading. Nothing here needs it: /marketing/health only supplies
+      // the earliest-synced-date warnings, and loadHealth() repaints those
+      // itself whenever it lands (see refreshCmpWarns).
+      if (currentTab==='overview') {{
+        loadHealth();
+        if (HAS_PAID_ADS) loadSummary();
+        loadOverviewHome();
+      }}
       else if (currentTab==='explorer') {{ explorerLoaded=false; loadExplorer(); explorerLoaded=true; }}
       else if (currentTab==='analytics') {{ analyticsLoaded=false; applyModules(); loadAllAnalytics(); analyticsLoaded=true; }}
       else if (currentTab==='ai_traffic') {{ aiTrafficLoaded=false; loadAiTraffic(); aiTrafficLoaded=true; }}
@@ -7103,6 +7481,7 @@ def render_bigquery_dashboard_page(
 
     // ---- Explorer chips ----
     buildExplorerFilters();
+    buildPaidTrendChips();
 
     document.getElementById('explorerTable').addEventListener('click',ev=>{{
       const shuf=ev.target.closest('.gads-shuffle');

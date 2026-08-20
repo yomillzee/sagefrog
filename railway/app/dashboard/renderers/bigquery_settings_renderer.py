@@ -370,6 +370,12 @@ def render_bigquery_settings_page(
             </select>
           </label>
         </div>
+        <fieldset class="anno-charts">
+          <legend>Show on</legend>
+          <label class="anno-check"><input type="checkbox" id="annoChartsAds" checked><span>Ads trends</span></label>
+          <label class="anno-check"><input type="checkbox" id="annoChartsAnalytics" checked><span>Analytics trends</span></label>
+          <p class="anno-check-hint">Leave both ticked for an event that explains movement in either. A budget change belongs on ads trends only; a site migration usually belongs on both.</p>
+        </fieldset>
         <p class="anno-err" id="annoErr" role="alert"></p>
         <div class="anno-form-actions">
           <button type="button" class="anno-btn primary" id="annoSave">Save event</button>
@@ -545,6 +551,14 @@ def render_bigquery_settings_page(
     .anno-form-actions {{ display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-top:3px; }}
     .anno-form-actions .spacer {{ flex:1; }}
     .anno-err {{ color:var(--bad); font-size:.76rem; font-weight:600; }}
+    /* Chart scope: which family of trend charts this event is drawn on. Two
+       checkboxes rather than a three-way select, because "both" is the common
+       case and reads more naturally as both boxes ticked. */
+    .anno-charts {{ border:1px solid var(--line); border-radius:var(--radius-sm); padding:10px 12px 11px; margin:0; display:grid; gap:7px; }}
+    .anno-charts legend {{ padding:0 5px; color:var(--muted); font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }}
+    .anno-check {{ display:flex; align-items:center; gap:8px; color:var(--navy); font-size:.82rem; font-weight:600; text-transform:none; letter-spacing:0; }}
+    .anno-check input {{ width:15px; height:15px; margin:0; padding:0; accent-color:var(--accent); }}
+    .anno-check-hint {{ margin:1px 0 0; color:var(--muted); font-size:.72rem; font-weight:500; line-height:1.45; }}
     @media (max-width: 560px) {{ .anno-form-row {{ grid-template-columns:1fr; }} }}
     {budget_css}
   </style>
@@ -878,6 +892,8 @@ def render_bigquery_settings_page(
       const fBody = document.getElementById('annoBody');
       const fCat = document.getElementById('annoCategory');
       const fVis = document.getElementById('annoVisibility');
+      const fAds = document.getElementById('annoChartsAds');
+      const fAna = document.getElementById('annoChartsAnalytics');
       const fErr = document.getElementById('annoErr');
       const delBtn = document.getElementById('annoDelete');
       let annoCache = [];
@@ -905,7 +921,9 @@ def render_bigquery_settings_page(
             + `<span class="anno-swatch" style="background:${{esc(a.color)}}"></span>`
             + `<span class="anno-main"><span class="anno-title">${{esc(a.title)}}</span>`
             + `<span class="anno-meta"><span>${{esc(when)}}</span><span>·</span><span>${{esc(a.category_label)}}</span>`
-            + `<span class="anno-vis ${{esc(a.visibility)}}">${{a.visibility === 'shared' ? 'Client sees this' : 'Internal'}}</span></span></span>`
+            + `<span class="anno-vis ${{esc(a.visibility)}}">${{a.visibility === 'shared' ? 'Client sees this' : 'Internal'}}</span>`
+            + (a.charts && a.charts !== 'both' ? `<span>·</span><span>${{esc(a.charts === 'ads' ? 'Ads trends only' : 'Analytics trends only')}}</span>` : '')
+            + `</span></span>`
             + `<span class="anno-row-actions"><button type="button" class="anno-btn" data-anno-edit="${{a.id}}">Edit</button></span></li>`;
         }}).join('') + '</ul>';
       }}
@@ -939,6 +957,11 @@ def render_bigquery_settings_page(
         fBody.value = anno ? anno.body : '';
         fillCategories(anno ? anno.category : 'other');
         fVis.value = anno ? anno.visibility : 'internal';
+        // A stored scope of "both" (also the default for events saved before
+        // this field existed) ticks both boxes.
+        const scope = (anno && anno.charts) || 'both';
+        fAds.checked = scope !== 'analytics';
+        fAna.checked = scope !== 'ads';
         delBtn.hidden = !anno;
         setErr('');
         if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
@@ -962,12 +985,14 @@ def render_bigquery_settings_page(
       document.getElementById('annoSave').addEventListener('click', async () => {{
         if (!fName.value.trim()) {{ setErr('A title is required.'); return; }}
         if (!fDate.value) {{ setErr('A date is required.'); return; }}
+        if (!fAds.checked && !fAna.checked) {{ setErr('Pick at least one set of charts to show this on.'); return; }}
         setErr('');
         setStatus('annoStatus', 'Saving…');
         try {{
           await post(editingId ? `${{ANNOTATIONS_API}}/${{editingId}}` : ANNOTATIONS_API, {{
             event_date: fDate.value, end_date: fEnd.value, title: fName.value.trim(),
             body: fBody.value, category: fCat.value, visibility: fVis.value,
+            charts: (fAds.checked && fAna.checked) ? 'both' : (fAds.checked ? 'ads' : 'analytics'),
           }});
           closeEditor();
           setStatus('annoStatus', '');
