@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
 import db
+import db_migrate
 
 import web_users
 from dashboard.services import metric_goals as metric_goals_service
@@ -322,13 +324,40 @@ def enabled() -> bool:
     return web_users.enabled()
 
 
+# Guarded the same way as web_users (#297) and dashboard_registry. This is the
+# worst of the three: SCHEMA_SQL_STATEMENTS here is one CREATE TABLE plus ~30
+# ALTER TABLE ... ADD COLUMN IF NOT EXISTS statements (the table has grown a
+# column per dashboard feature), every one taking an ACCESS EXCLUSIVE lock, and
+# it ran ahead of every single config read — get_config() alone is called on
+# every dashboard page render. Once per process, under the shared schema
+# advisory lock.
+_schema_ready = False
+_schema_lock = threading.Lock()
+_SCHEMA_ADVISORY_LOCK_KEY = db_migrate.SCHEMA_ADVISORY_LOCK_KEY
+
+
+def reset_schema_cache() -> None:
+    """Forget that the schema ran (for tests, and after a DB switch)."""
+    global _schema_ready
+    with _schema_lock:
+        _schema_ready = False
+
+
 def ensure_schema() -> bool:
+    global _schema_ready
     url = _get_db_url()
     if not url:
         return False
-    with db.connection() as conn:
-        for stmt in SCHEMA_SQL_STATEMENTS:
-            conn.execute(stmt)
+    if _schema_ready:
+        return True
+    with _schema_lock:
+        if _schema_ready:
+            return True
+        with db.connection() as conn:
+            conn.execute("SELECT pg_advisory_xact_lock(%s)", (_SCHEMA_ADVISORY_LOCK_KEY,))
+            for stmt in SCHEMA_SQL_STATEMENTS:
+                conn.execute(stmt)
+        _schema_ready = True
     return True
 
 

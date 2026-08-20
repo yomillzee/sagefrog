@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import db
+import db_migrate
 import web_users
 
 VALID_CONNECTOR_TYPES = frozenset(
@@ -110,12 +112,38 @@ def enabled() -> bool:
     return web_users.enabled()
 
 
+# Guarded the same way as web_users (#297) and dashboard_registry: the DDL is
+# idempotent but not free — each ALTER TABLE takes an ACCESS EXCLUSIVE lock, and
+# with DB_POOL_ENABLED off each run costs its own Postgres connection. Every read
+# here opens with ensure_schema(), and the client switcher calls
+# client_slugs_with_configs() on every page render, so this ran on every
+# navigation. Once per process, under the shared schema advisory lock.
+_schema_ready = False
+_schema_lock = threading.Lock()
+_SCHEMA_ADVISORY_LOCK_KEY = db_migrate.SCHEMA_ADVISORY_LOCK_KEY
+
+
+def reset_schema_cache() -> None:
+    """Forget that the schema ran (for tests, and after a DB switch)."""
+    global _schema_ready
+    with _schema_lock:
+        _schema_ready = False
+
+
 def ensure_schema() -> bool:
+    global _schema_ready
     if not (os.getenv("DATABASE_URL") or "").strip():
         return False
-    with db.connection() as conn:
-        for stmt in SCHEMA_SQL_STATEMENTS:
-            conn.execute(stmt)
+    if _schema_ready:
+        return True
+    with _schema_lock:
+        if _schema_ready:
+            return True
+        with db.connection() as conn:
+            conn.execute("SELECT pg_advisory_xact_lock(%s)", (_SCHEMA_ADVISORY_LOCK_KEY,))
+            for stmt in SCHEMA_SQL_STATEMENTS:
+                conn.execute(stmt)
+        _schema_ready = True
     return True
 
 

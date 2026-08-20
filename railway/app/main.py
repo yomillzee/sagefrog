@@ -1935,7 +1935,9 @@ def dashboards_home(request: Request):
 
     items = [
         (row.client_slug, row.label or row.client_slug)
-        for row in dashboard_registry.list_clients()
+        # Slugs and labels only — no need to drag every client's logo data URI
+        # out of Postgres to render a list of links.
+        for row in dashboard_registry.list_clients(with_logos=False)
         if user.can_access_client(row.client_slug)
     ]
     # A client user tied to a single dashboard: skip the picker, go straight in.
