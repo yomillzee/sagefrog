@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import sys
 import unittest
+from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
 APP_DIR = Path(__file__).resolve().parents[1]
 if str(APP_DIR) not in sys.path:
@@ -201,6 +203,159 @@ class CacheWarmDriftTests(unittest.TestCase):
             self.assertEqual(self._calls, {"summary": 0, "health": 0, "traffic": 0, "ai": 0})
         finally:
             api_routes._load_bq_test_config = original
+
+    def test_warm_follows_the_clients_pinned_default_preset(self) -> None:
+        """A client whose dashboard lands on a pinned preset is warmed for *that*
+        window, not Last 30 days.
+
+        An admin can pin any Range preset as a client's default, and the page then
+        opens on it. The warmer used to assume Last 30 days for everybody, so those
+        clients were warmed on a window nothing ever requested — every first load
+        after a sync ran cold. This asserts the endpoint the page actually calls
+        (the pinned window) is served from cache.
+        """
+        original_cfg = api_routes._load_bq_test_config
+        api_routes._load_bq_test_config = lambda slug: ("proj", "ds")
+
+        import client_dashboard_config as cdc
+        original_get = cdc.get_config
+        cdc.get_config = lambda slug: SimpleNamespace(default_date_preset="last_month")
+        try:
+            report = dashboard_warm_service.warm_client_cache("pinned")
+            self.assertEqual(report["preset"], "last_month")
+            self.assertEqual(sorted(report["warmed"]), _EXPECTED_WARMED)
+
+            (cur_s, cur_e), (cmp_s, cmp_e) = dashboard_warm_service._overview_windows(
+                preset="last_month"
+            )
+            # Sanity: the pinned window is genuinely a different cache key than
+            # the last_30 one the warmer used to assume — otherwise this test
+            # would pass even with the bug present.
+            self.assertNotEqual((cur_s, cur_e), (_CUR_START, _CUR_END))
+
+            req = _DummyRequest()
+            before = dict(self._calls)
+            self.assertEqual(
+                api_routes.client_summary("pinned", req, start_date=cur_s, end_date=cur_e)["kind"],
+                "summary",
+            )
+            self.assertEqual(
+                api_routes.client_traffic_acquisition(
+                    "pinned", req, start_date=cur_s, end_date=cur_e)["kind"],
+                "traffic",
+            )
+            self.assertEqual(
+                api_routes.client_ai_traffic_daily(
+                    "pinned", req, start_date=cmp_s, end_date=cmp_e)["kind"],
+                "ai",
+            )
+            self.assertEqual(
+                self._calls, before,
+                "endpoint re-fetched — the warmer did not follow the pinned preset",
+            )
+        finally:
+            cdc.get_config = original_get
+            api_routes._load_bq_test_config = original_cfg
+
+    def test_unknown_stored_preset_falls_back_to_last_30(self) -> None:
+        # A stale/garbage stored value must not warm a nonsense window; the
+        # renderer falls back to last_30 for these, so the warmer has to as well.
+        import client_dashboard_config as cdc
+        original_cfg = api_routes._load_bq_test_config
+        original_get = cdc.get_config
+        api_routes._load_bq_test_config = lambda slug: ("proj", "ds")
+        cdc.get_config = lambda slug: SimpleNamespace(default_date_preset="since_forever")
+        try:
+            report = dashboard_warm_service.warm_client_cache("stale")
+            self.assertEqual(report["preset"], "last_30")
+            req = _DummyRequest()
+            before = dict(self._calls)
+            self.assertEqual(
+                api_routes.client_summary(
+                    "stale", req, start_date=_CUR_START, end_date=_CUR_END)["kind"],
+                "summary",
+            )
+            self.assertEqual(self._calls, before)
+        finally:
+            cdc.get_config = original_get
+            api_routes._load_bq_test_config = original_cfg
+
+
+class OverviewWindowTests(unittest.TestCase):
+    """``_overview_windows`` mirrors the page's ``applyPreset`` branch for branch.
+
+    A window off by one day is a different cache key, so these pin the exact
+    dates for a fixed "today" — Fri 2026-08-14, mid-month and mid-quarter.
+    """
+
+    TODAY = date(2026, 8, 14)
+
+    def _win(self, preset: str):
+        (cs, ce), (ps, pe) = dashboard_warm_service._overview_windows(
+            today=self.TODAY, preset=preset
+        )
+        return (cs.isoformat(), ce.isoformat(), ps.isoformat(), pe.isoformat())
+
+    def test_trailing_presets_end_yesterday(self) -> None:
+        # lastN(n): current ends yesterday and spans n days; comparison is the
+        # equal-length period immediately before it.
+        self.assertEqual(
+            self._win("last_7"), ("2026-08-07", "2026-08-13", "2026-07-31", "2026-08-06")
+        )
+        self.assertEqual(
+            self._win("last_30"), ("2026-07-15", "2026-08-13", "2026-06-15", "2026-07-14")
+        )
+        self.assertEqual(
+            self._win("last_90"), ("2026-05-16", "2026-08-13", "2026-02-15", "2026-05-15")
+        )
+
+    def test_calendar_presets(self) -> None:
+        # this_week: Monday-to-yesterday, compared with the same span a week back.
+        self.assertEqual(
+            self._win("this_week"), ("2026-08-10", "2026-08-13", "2026-08-03", "2026-08-06")
+        )
+        self.assertEqual(
+            self._win("last_week"), ("2026-08-03", "2026-08-09", "2026-07-27", "2026-08-02")
+        )
+        # this_month: month-to-yesterday vs the same day-of-month a month back.
+        self.assertEqual(
+            self._win("this_month"), ("2026-08-01", "2026-08-13", "2026-07-01", "2026-07-13")
+        )
+        self.assertEqual(
+            self._win("last_month"), ("2026-07-01", "2026-07-31", "2026-06-01", "2026-06-30")
+        )
+        # this_quarter: quarter-to-yesterday vs the same span into the prior one.
+        self.assertEqual(
+            self._win("this_quarter"), ("2026-07-01", "2026-08-13", "2026-04-01", "2026-05-14")
+        )
+        self.assertEqual(
+            self._win("last_quarter"), ("2026-04-01", "2026-06-30", "2026-01-01", "2026-03-31")
+        )
+
+    def test_this_month_comparison_clamps_to_a_shorter_month(self) -> None:
+        # March 30th has no counterpart in February, so the comparison end clamps
+        # to the month's last day rather than rolling into March.
+        def cmp_window(today: date):
+            (_, _), (cmp_start, cmp_end) = dashboard_warm_service._overview_windows(
+                today=today, preset="this_month"
+            )
+            return cmp_start.isoformat(), cmp_end.isoformat()
+
+        self.assertEqual(cmp_window(date(2026, 3, 31)), ("2026-02-01", "2026-02-28"))
+        # ...and to the 29th in a leap year.
+        self.assertEqual(cmp_window(date(2024, 3, 31)), ("2024-02-01", "2024-02-29"))
+
+    def test_this_presets_clamp_to_their_period_start(self) -> None:
+        # On the 1st, "yesterday" is in the previous month — the page clamps the
+        # window to the period start rather than letting it run backwards.
+        (cur_start, cur_end), _ = dashboard_warm_service._overview_windows(
+            today=date(2026, 7, 1), preset="this_month"
+        )
+        self.assertEqual((cur_start.isoformat(), cur_end.isoformat()),
+                         ("2026-07-01", "2026-07-01"))
+
+    def test_unknown_preset_falls_back_to_last_30(self) -> None:
+        self.assertEqual(self._win("nonsense"), self._win("last_30"))
 
 
 if __name__ == "__main__":

@@ -3330,6 +3330,20 @@ def render_bigquery_dashboard_page(
         el.title = '';
       }}
     }}
+    // Every per-card warning icon and the source(s) whose synced history it
+    // speaks for. Each card sets its own icon as it renders, but the health
+    // payload that decides them arrives independently -- so whichever lands
+    // second has to repaint the other's. setCmpWarn is null-guarded, so listing
+    // a card that isn't on this page (or hasn't rendered yet) is a no-op.
+    const CMP_WARN_TARGETS = [
+      ['ga4SnapshotCmpWarn', ['google_analytics']],
+      ['gscSnapshotCmpWarn', ['gsc']],
+      ['sessionsCmpWarn', ['google_analytics']],
+      ['avgDurCmpWarn', ['google_analytics']],
+    ];
+    function refreshCmpWarns() {{
+      for (const [elId, sources] of CMP_WARN_TARGETS) setCmpWarn(elId, sources);
+    }}
     // Human names for the /marketing/health source keys, for the notice below.
     const CMP_SOURCE_LABELS = {{
       google:'Google Ads', linkedin:'LinkedIn Ads', meta:'Meta Ads',
@@ -4634,6 +4648,9 @@ def render_bigquery_dashboard_page(
             if (k && r.earliest_date) earliestDates[k] = r.earliest_date;
           }}
           syncCompareNotice();
+          // Cards no longer wait for this fetch, so any that already rendered
+          // drew their warning icon against an empty earliestDates. Repaint.
+          refreshCmpWarns();
         }} catch(err) {{
           // Non-fatal: no earliest-date info just means no comparison warnings.
         }} finally {{
@@ -7129,7 +7146,19 @@ def render_bigquery_dashboard_page(
       // timeline and each chart filters to what it is showing), so one load
       // serves every tab and every range change.
       loadAnnotations();
-      if (currentTab==='overview')   {{ loadHealth().then(()=>{{ if (HAS_PAID_ADS) loadSummary(); loadOverviewHome(); }}); }}
+      // The Overview's cards start immediately and health rides alongside them.
+      // It used to gate them (`loadHealth().then(...)`), which put a whole
+      // BigQuery round-trip in front of the first number on the page -- and on a
+      // client nobody had opened since its last sync, that read is cold, so the
+      // first visit after switching clients paid it in full before anything
+      // started loading. Nothing here needs it: /marketing/health only supplies
+      // the earliest-synced-date warnings, and loadHealth() repaints those
+      // itself whenever it lands (see refreshCmpWarns).
+      if (currentTab==='overview') {{
+        loadHealth();
+        if (HAS_PAID_ADS) loadSummary();
+        loadOverviewHome();
+      }}
       else if (currentTab==='explorer') {{ explorerLoaded=false; loadExplorer(); explorerLoaded=true; }}
       else if (currentTab==='analytics') {{ analyticsLoaded=false; applyModules(); loadAllAnalytics(); analyticsLoaded=true; }}
       else if (currentTab==='ai_traffic') {{ aiTrafficLoaded=false; loadAiTraffic(); aiTrafficLoaded=true; }}

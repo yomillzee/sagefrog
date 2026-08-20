@@ -62,6 +62,29 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-08-20",
+        title="Switching to a client opens much faster",
+        area="Client dashboards",
+        kind="fixed",
+        summary=(
+            "Picking a client from the workspace switcher was slow the first "
+            "time you opened them — sometimes several seconds before a single "
+            "number appeared. Three separate delays were stacked on that first "
+            "load; all three are gone."
+        ),
+        details=(
+            "The Overview's cards no longer queue behind a background data-"
+            "freshness check. They start loading the moment the page does.",
+            "Every page was re-checking the shape of several database tables "
+            "before it could draw the client list in the sidebar. That now "
+            "happens once when the app starts.",
+            "A client with a pinned default date range (Range → Make default) "
+            "was never getting its numbers pre-loaded after a sync, so the "
+            "first person in each day waited for every card. It is now pre-"
+            "loaded for the range that client actually opens on.",
+        ),
+    ),
+    Entry(
         date="2026-08-19",
         title="A Paid trends chart on the Campaign explorer",
         area="Campaign explorer",
