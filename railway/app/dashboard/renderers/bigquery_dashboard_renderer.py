@@ -1783,6 +1783,10 @@ def render_bigquery_dashboard_page(
     /* ---- Metric cards ---- */
     .cards {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); gap:10px; }}
     .card {{ border:1px solid var(--line-soft); border-top:3px solid var(--accent); border-radius:var(--radius-sm); padding:13px 14px 14px; background:#fff; }}
+    .metric-card {{ appearance:none; -webkit-appearance:none; font:inherit; text-align:left; width:100%; cursor:pointer; transition:box-shadow .15s,border-color .15s; }}
+    .metric-card:hover {{ border-color:var(--accent); }}
+    .metric-card:focus-visible {{ outline:2px solid var(--accent); outline-offset:2px; }}
+    .metric-card.active {{ border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; background:#f3f8ff; }}
     .card-title {{ color:var(--muted); font-size:.65rem; text-transform:uppercase; font-weight:800; letter-spacing:.06em; }}
     .card-value {{ margin-top:7px; font-size:1.5rem; line-height:1.1; color:var(--navy); font-weight:800; letter-spacing:-.02em; }}
     .card-foot {{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:9px; min-height:22px; }}
@@ -2527,9 +2531,9 @@ def render_bigquery_dashboard_page(
       </section>
 
       <section id="sec-avgduration">
-        <div class="sec-head"><h2>Average session duration <span class="cmp-warn" id="avgDurCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="avgDurStatus"></span></div>
-        <p class="sec-note" id="avgDurNote">How long a session lasted on average, weighted by how many sessions each landing page brought in. One bar per week (starting Monday) — a single day’s average swings too hard on a handful of visits to be worth reading.</p>
-        <div class="cards" id="avgDurCards" style="max-width:220px; margin-bottom:12px"></div>
+        <div class="sec-head"><h2>Sessions &amp; engagement <span class="cmp-warn" id="avgDurCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="avgDurStatus"></span></div>
+        <p class="sec-note" id="avgDurNote"></p>
+        <div class="cards metric-cards" id="avgDurCards" style="margin-bottom:12px"></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:200px"><canvas id="avgDurTrendChart"></canvas></div></div>
         <div class="cmp-legend" id="avgDurTrendLegend"></div>
       </section>
@@ -4740,10 +4744,9 @@ def render_bigquery_dashboard_page(
           snote.hidden = false;
           snote.textContent = 'Sessions that viewed a page matching this filter. A session that viewed more than one matching page is counted once per page, the same as GA4’s per-page Sessions metric.';
         }}
-        // Average session duration comes from the landing-page report, so under
-        // a scope it covers the sessions that *started* on a matching page.
-        const adnote = document.getElementById('avgDurNote');
-        if (adnote) adnote.textContent = 'How long a session that started on a matching page lasted on average, weighted by how many sessions each of those pages brought in. One bar per week, starting Monday.';
+        // Sessions & engagement names its own scope in each metric's note
+        // (AVG_DUR_METRICS[].scopedNote), so there is nothing to overwrite
+        // here -- avgDurUpdateNote() picks the scoped sentence.
         // Demographics keeps its geography half (served page-scoped) and drops
         // age/gender, which are user-scoped in GA4 with no page to scope by —
         // so the section is geography only, and says so.
@@ -6816,22 +6819,50 @@ def render_bigquery_dashboard_page(
       }} catch(err) {{ setStatus('demoStatus',err.message||String(err),true); }}
     }}
 
-    // ---- GA4: Average session duration ----
-    // GA4 only reports averageSessionDuration next to a dimension, so the
-    // endpoint re-weights the per-landing-page averages by their sessions to
-    // rebuild the site-wide figure: one card for the range, and the same figure
-    // per week beneath it. Bars rather than a line -- each week is its own
-    // average, not a running total -- with the comparison period riding over
-    // them as a dashed line.
+    // ---- GA4: Sessions & engagement ----
+    // One card each for Total sessions, New users, Engagement rate and Avg
+    // session duration, all read off the same session-duration endpoint's
+    // daily rows -- clicking a card swaps which one the note above and the
+    // chart below explain, but every card always shows its own figure so the
+    // row reads as four live stats, not a menu.
     //
-    // Weekly only, unlike Sessions over time: a single day's average is a mean
-    // over a handful of visits, so one long session moves it several minutes and
-    // the daily bars read as noise. The endpoint still returns days; the week is
-    // the smallest bucket worth plotting.
+    // Weekly only, unlike Sessions over time: a single day's average session
+    // duration is a mean over a handful of visits, so one long session moves
+    // it several minutes and the daily points read as noise. The endpoint
+    // still returns days; the week is the smallest bucket worth plotting, and
+    // the other three metrics are bucketed the same way for a consistent x-axis.
+    const AVG_DUR_METRICS = [
+      {{
+        key:'sessions', label:'Total sessions', color:'#1d6fd0',
+        fmt: v => v==null ? '\u2014' : count(v),
+        note:'Sessions on the site in this range, by week (starting Monday) — smooths out ordinary day-to-day swings so a trend is easier to read.',
+        scopedNote:'Sessions that started on a page matching this filter, by week (starting Monday).',
+      }},
+      {{
+        key:'new_users', label:'New users', color:'#0a7f3f',
+        fmt: v => v==null ? '\u2014' : count(v),
+        note:'Visitors GA4 had not seen before, by week (starting Monday).',
+        scopedNote:'Visitors GA4 had not seen before whose session started on a page matching this filter, by week (starting Monday).',
+      }},
+      {{
+        key:'engagement_rate', label:'Engagement rate', color:'#7c3aed',
+        fmt: v => v==null ? '\u2014' : num(v).toFixed(1)+'%',
+        note:'Share of sessions GA4 counts as engaged — lasted 10+ seconds, fired a key event, or viewed 2+ pages — re-derived from each week\u2019s totals rather than averaging daily rates.',
+        scopedNote:'Share of the sessions that viewed a page matching this filter that GA4 counts as engaged — lasted 10+ seconds, fired a key event, or viewed 2+ pages.',
+      }},
+      {{
+        key:'avg_session_duration_seconds', label:'Avg session duration', color:'#b8600a',
+        fmt: v => v==null ? '\u2014' : fmtDuration(v),
+        note:'How long a session lasted on average, weighted by how many sessions each landing page brought in. One point per week (starting Monday) — a single day\u2019s average swings too hard on a handful of visits to be worth reading.',
+        scopedNote:'How long a session that started on a page matching this filter lasted on average, weighted by how many sessions each of those pages brought in. One point per week (starting Monday).',
+      }},
+    ];
+    let avgDurMetric = 'avg_session_duration_seconds';
+    function avgDurMetricDef() {{ return AVG_DUR_METRICS.find(m => m.key===avgDurMetric) || AVG_DUR_METRICS[0]; }}
     let avgDurCache = {{ cur: [], prev: [] }};
-    // Weeks start Monday, and a week's average is re-weighted by its days'
-    // sessions: averaging the daily averages would let a dead Sunday count for
-    // as much as a busy Tuesday.
+    // Weeks start Monday, and each figure is re-weighted (or summed) from its
+    // days' sessions: averaging the daily averages would let a dead Sunday
+    // count for as much as a busy Tuesday.
     function avgDurWeekly(daily) {{
       if (!daily || !daily.length) return [];
       const out = []; let cur = null;
@@ -6840,25 +6871,74 @@ def render_bigquery_dashboard_page(
         const dow = (dt.getDay() + 6) % 7;            // 0 = Monday
         const mon = new Date(dt); mon.setDate(dt.getDate() - dow);
         const key = `${{mon.getFullYear()}}-${{String(mon.getMonth()+1).padStart(2,'0')}}-${{String(mon.getDate()).padStart(2,'0')}}`;
-        if (!cur || cur.date !== key) {{ cur = {{ date:key, sessions:0, secs:0 }}; out.push(cur); }}
+        if (!cur || cur.date !== key) {{ cur = {{ date:key, sessions:0, new_users:0, engaged_sessions:0, engagement_base:0, secs:0 }}; out.push(cur); }}
         const sess = num(d.sessions);
         cur.sessions += sess;
+        cur.new_users += num(d.new_users);
+        cur.engaged_sessions += num(d.engaged_sessions);
+        cur.engagement_base += num(d.engagement_base_sessions);
         cur.secs += num(d.avg_session_duration_seconds) * sess;
       }}
       return out.map(w => ({{
-        date: w.date, sessions: w.sessions,
+        date: w.date,
+        sessions: w.sessions,
+        new_users: w.new_users,
         avg_session_duration_seconds: w.sessions ? w.secs / w.sessions : 0,
+        engagement_rate: w.engagement_base ? w.engaged_sessions / w.engagement_base * 100 : 0,
       }}));
     }}
-    // Session-weighted average of a bucketed series -- what the legend quotes
-    // for a whole window, and the basis of its "vs previous" figure.
-    function avgDurWeighted(rows) {{
-      let secs = 0, sess = 0;
-      for (const r of (rows||[])) {{
-        const s = num(r.sessions);
-        sess += s; secs += num(r.avg_session_duration_seconds) * s;
+    // A metric's session-weighted figure over a whole set of daily rows --
+    // what each card quotes for the range, and the basis of its "vs previous"
+    // delta and the chart legend.
+    function avgDurMetricValue(daily, key) {{
+      if (!daily || !daily.length) return null;
+      let sess = 0, secs = 0, engaged = 0, engBase = 0, newUsers = 0;
+      for (const d of daily) {{
+        const s = num(d.sessions);
+        sess += s; secs += num(d.avg_session_duration_seconds) * s;
+        engaged += num(d.engaged_sessions); engBase += num(d.engagement_base_sessions);
+        newUsers += num(d.new_users);
       }}
-      return sess ? secs / sess : null;
+      if (key === 'sessions') return sess || null;
+      if (key === 'new_users') return newUsers || null;
+      // Engagement rate divides the session count that came back with
+      // engaged_sessions, not the landing-page one -- see fetch_session_duration.
+      if (key === 'engagement_rate') return engBase ? engaged / engBase * 100 : null;
+      if (!sess) return null;
+      if (key === 'avg_session_duration_seconds') return secs / sess;
+      return null;
+    }}
+    // Under a page-path scope every one of these metrics reads only the
+    // matching pages, so the note keeps saying so whichever card is selected --
+    // the scoped sentence replaces the site-wide one rather than being
+    // overwritten by it once data lands.
+    function avgDurUpdateNote() {{
+      const note = document.getElementById('avgDurNote');
+      if (!note) return;
+      const m = avgDurMetricDef();
+      note.textContent = pathFilterActive() ? (m.scopedNote || m.note) : m.note;
+    }}
+    function renderAvgDurCards() {{
+      const host = document.getElementById('avgDurCards');
+      if (!host) return;
+      host.innerHTML = AVG_DUR_METRICS.map(m => {{
+        const v = avgDurMetricValue(avgDurCache.cur, m.key);
+        const pv = avgDurMetricValue(avgDurCache.prev, m.key);
+        return `<button type="button" class="card metric-card${{m.key===avgDurMetric?' active':''}}" `
+          + `data-metric="${{esc(m.key)}}" aria-pressed="${{m.key===avgDurMetric?'true':'false'}}">`
+          + `<div class="card-title">${{esc(m.label)}}</div><div class="card-value">${{m.fmt(v)}}</div>${{deltaHtml(v,pv)}}</button>`;
+      }}).join('');
+      host.querySelectorAll('.metric-card').forEach(btn => btn.addEventListener('click', () => {{
+        if (btn.dataset.metric === avgDurMetric) return;
+        avgDurMetric = btn.dataset.metric;
+        host.querySelectorAll('.metric-card').forEach(b => {{
+          const active = b === btn;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-pressed', active ? 'true' : 'false');
+        }});
+        avgDurUpdateNote();
+        renderAvgDurTrend();
+      }}));
     }}
     function renderAvgDurTrend() {{
       drawAvgDurTrend(avgDurWeekly(avgDurCache.cur), avgDurWeekly(avgDurCache.prev));
@@ -6867,29 +6947,31 @@ def render_bigquery_dashboard_page(
     function drawAvgDurTrend(rows, prevRows) {{
       clearSkelChart('avgDurTrendChart');
       const legend = document.getElementById('avgDurTrendLegend');
+      const m = avgDurMetricDef();
       const n = rows.length;
       if (!n) {{ __destroyChart('avgDurTrendChart'); if (legend) legend.innerHTML = ''; return; }}
-      const vals = rows.map(r => num(r.avg_session_duration_seconds));
+      const vals = rows.map(r => num(r[m.key]));
       const sess = rows.map(r => num(r.sessions));
-      const prevVals = (prevRows || []).map(r => num(r.avg_session_duration_seconds));
+      const prevVals = (prevRows || []).map(r => num(r[m.key]));
       const hasPrev = prevVals.length > 0;
       const labels = rows.map(r => String(r.date).slice(5));
       const series = [];
-      // Previous first so the dashed line draws over the current bars.
-      if (hasPrev) series.push({{ kind:'line', label:cmpSeriesLabel(), data:prevVals.slice(0,n), color:'#9aa7bd', dashed:true }});
-      series.push({{ label:'Current', data:vals, color:'rgba(29,111,208,.72)', hoverColor:'#1d6fd0' }});
-      barChart('avgDurTrendChart', labels, series, {{
-        yFmt: v => fmtDuration(v),
-        maxBarThickness: 26,
+      // Previous first so the current line draws over it.
+      if (hasPrev) series.push({{ label:cmpSeriesLabel(), data:prevVals.slice(0,n), color:'#9aa7bd', dashed:true }});
+      series.push({{ label:'Current', data:vals, color:m.color, fill:true }});
+      lineChart('avgDurTrendChart', labels, series, {{
+        yFmt: v => m.fmt(v),
         tooltip: {{
           title: items => {{
             const i = (items && items.length) ? items[0].dataIndex : -1;
             return i < 0 ? '' : `Week of ${{String(rows[i].date)}}`;
           }},
-          label: c => `${{c.dataset.label}}: ${{fmtDuration(c.raw)}}`,
-          // How many sessions the bar averages, so a freak one-visit day reads
-          // as exactly that rather than as a great day.
+          label: c => `${{c.dataset.label}}: ${{m.fmt(c.raw)}}`,
+          // How many sessions the point is built from, so a freak one-visit
+          // week reads as exactly that rather than as a great week. Skipped for
+          // Total sessions, where it would just repeat the value above it.
           afterBody: items => {{
+            if (m.key === 'sessions') return '';
             const i = (items && items.length) ? items[0].dataIndex : -1;
             return i < 0 ? '' : `${{count(sess[i])}} session${{sess[i] === 1 ? '' : 's'}}`;
           }},
@@ -6897,31 +6979,30 @@ def render_bigquery_dashboard_page(
         dates: rows.map(r => String(r.date)),
       }});
       if (legend) {{
-        const curAvg = avgDurWeighted(rows), prevAvg = hasPrev ? avgDurWeighted(prevRows) : null;
-        const delta = prevAvg ? ((curAvg - prevAvg) / prevAvg * 100) : null;
+        const curAgg = avgDurMetricValue(avgDurCache.cur, m.key);
+        const prevAgg = hasPrev ? avgDurMetricValue(avgDurCache.prev, m.key) : null;
+        const delta = (prevAgg != null && prevAgg !== 0) ? ((curAgg - prevAgg) / prevAgg * 100) : null;
         const deltaTxt = delta == null ? '' : ` <span class="cmp-delta ${{delta>=0?'up':'down'}}">${{delta>=0?'+':''}}${{delta.toFixed(0)}}%</span>`;
-        legend.innerHTML = `<span class="cmp-item"><span class="cmp-swatch cur"></span>Current (${{esc(currentStart.slice(5))}} \u2013 ${{esc(currentEnd.slice(5))}}) \u00b7 ${{fmtDuration(curAvg)}} avg${{deltaTxt}}</span>`
-          + (hasPrev ? `<span class="cmp-item"><span class="cmp-swatch prev"></span>${{esc(cmpSeriesLabel())}} (${{esc(compareMode==='prev_year'?compareStart:compareStart.slice(5))}} \u2013 ${{esc(compareMode==='prev_year'?compareEnd:compareEnd.slice(5))}}) \u00b7 ${{fmtDuration(prevAvg)}}</span>` : '');
+        legend.innerHTML = `<span class="cmp-item"><span class="cmp-swatch cur"></span>Current (${{esc(currentStart.slice(5))}} \u2013 ${{esc(currentEnd.slice(5))}}) \u00b7 ${{m.fmt(curAgg)}}${{deltaTxt}}</span>`
+          + (hasPrev ? `<span class="cmp-item"><span class="cmp-swatch prev"></span>${{esc(cmpSeriesLabel())}} (${{esc(compareMode==='prev_year'?compareStart:compareStart.slice(5))}} \u2013 ${{esc(compareMode==='prev_year'?compareEnd:compareEnd.slice(5))}}) \u00b7 ${{m.fmt(prevAgg)}}</span>` : '');
       }}
     }}
     async function loadSessionDuration() {{
       setStatus('avgDurStatus','Loading\u2026');
-      document.getElementById('avgDurCards').innerHTML = skelCards(1);
+      document.getElementById('avgDurCards').innerHTML = skelCards(4);
+      avgDurUpdateNote();
       skelChart('avgDurTrendChart','trend-md-svg');
       try {{
         const [cur, prev] = await Promise.all([
           getJson(withDatesRange(SESSION_DURATION_API, currentStart, currentEnd)),
           compareStart ? getJson(withDatesRange(SESSION_DURATION_API, compareStart, compareEnd)).catch(()=>null) : Promise.resolve(null),
         ]);
-        const v  = cur ? cur.avg_session_duration_seconds : null;
-        const pv = prev ? prev.avg_session_duration_seconds : null;
-        renderSnapshotCards('avgDurCards', [
-          ['Avg session duration', v, pv, x => x==null ? '\u2014' : fmtDuration(x)],
-        ]);
         avgDurCache = {{ cur: (cur && cur.daily) || [], prev: (prev && prev.daily) || [] }};
+        renderAvgDurCards();
         renderAvgDurTrend();
         setCmpWarn('avgDurCmpWarn', ['google_analytics']);
-        setStatus('avgDurStatus', v==null ? 'No data for this range yet.' : '');
+        const hasData = avgDurCache.cur.some(d => num(d.sessions) > 0);
+        setStatus('avgDurStatus', hasData ? '' : 'No data for this range yet.');
       }} catch(err) {{
         document.getElementById('avgDurCards').innerHTML = '';
         clearSkelChart('avgDurTrendChart');

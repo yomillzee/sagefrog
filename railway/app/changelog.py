@@ -63,6 +63,17 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-20",
+        title="Three more metrics on Website Analytics' session card",
+        area="Client dashboards · Website Analytics",
+        kind="improved",
+        summary=(
+            "The Average session duration module now shows Total sessions, "
+            "New users, and Engagement rate too — click any of the four cards "
+            "to see its trend, and the chart is now a line instead of bars."
+        ),
+    ),
+    Entry(
+        date="2026-08-20",
         title="Site Performance explains itself",
         area="Client dashboards · Site Performance",
         kind="improved",

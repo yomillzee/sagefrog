@@ -1582,19 +1582,28 @@ def fetch_session_duration(
     end_date: date,
     page_path_filter: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Average session duration per day, plus the range's own average.
+    """Sessions, new users, engagement rate and average session duration per
+    day, plus each one's range-wide figure. Backs the Website Analytics
+    "Sessions & engagement" module, whose card row lets a client flip between
+    these four readings of the same window.
 
     GA4 only reports averageSessionDuration alongside a dimension, and the
     landing-page report is the one that carries it at session grain: every
     session has exactly one landing page, so re-weighting the per-landing-page
-    averages by their session counts rebuilds the site-wide average rather than
-    averaging averages (which would let a 1-session page weigh as much as a
-    500-session one).
+    averages (and new-user counts) by their session counts rebuilds the
+    site-wide figures rather than averaging averages (which would let a
+    1-session page weigh as much as a 500-session one).
 
-    One query returns the daily series and the range figure is re-weighted from
-    it the same way — a quiet Sunday must not pull the average around as hard as
-    a busy Tuesday, which is exactly what a flat mean of the daily averages
-    would do.
+    Engagement rate isn't in that report — GA4 doesn't expose engagedSessions
+    next to landingPage — so it's read from the same table Traffic acquisition
+    uses and merged in by date, together with *that* table's session count,
+    which is what the rate divides by. The two reports count a scoped session
+    differently (started on a matching page vs viewed one), so a rate mixed
+    across them can exceed 100%.
+
+    The range figures are re-weighted from the daily series the same way — a
+    quiet Sunday must not pull the average around as hard as a busy Tuesday,
+    which is exactly what a flat mean of the daily figures would do.
 
     ``page_path_filter`` scopes it the same way the landing-page table is
     scoped — sessions that *started* on a matching page.
@@ -1608,6 +1617,7 @@ def fetch_session_duration(
     SELECT
       CAST(date AS STRING) AS date,
       SUM(sessions) AS sessions,
+      SUM(new_users) AS new_users,
       ROUND(SAFE_DIVIDE(
         SUM(average_session_duration * sessions),
         NULLIF(SUM(sessions), 0)
@@ -1618,7 +1628,42 @@ def fetch_session_duration(
     ORDER BY date ASC
     """
     daily = _run_query(sql, params=params, max_rows=2000)
+
+    eng_params = {
+        "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+        "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+    }
+    eng_scope = _page_path_filter_clause(page_path_filter, column="page_path", params=eng_params)
+    # Its own session count comes back with it and is what the rate divides by:
+    # the landing-page report counts sessions that *started* on a matching page,
+    # this one counts sessions that viewed one (once per matching page), so
+    # dividing across the two would put a rate over 100% the moment a session
+    # entered elsewhere and then walked into the scope.
+    eng_sql = f"""
+    SELECT
+      CAST(date AS STRING) AS date,
+      SUM(sessions) AS engagement_base_sessions,
+      SUM(engaged_sessions) AS engaged_sessions
+    FROM {_page_path_daily_table() if eng_scope else _traffic_acq_table()}
+    WHERE date BETWEEN @start_date AND @end_date{eng_scope}
+    GROUP BY date
+    """
+    engaged_by_date = {
+        r["date"]: (
+            int(r.get("engaged_sessions") or 0),
+            int(r.get("engagement_base_sessions") or 0),
+        )
+        for r in _run_query(eng_sql, params=eng_params, max_rows=2000)
+    }
+    for row in daily:
+        engaged, base = engaged_by_date.get(row["date"], (0, 0))
+        row["engaged_sessions"] = engaged
+        row["engagement_base_sessions"] = base
+
     sessions = sum(int(r.get("sessions") or 0) for r in daily)
+    new_users = sum(int(r.get("new_users") or 0) for r in daily)
+    engaged_sessions = sum(int(r.get("engaged_sessions") or 0) for r in daily)
+    engagement_base = sum(int(r.get("engagement_base_sessions") or 0) for r in daily)
     seconds = sum(
         float(r.get("avg_session_duration_seconds") or 0) * int(r.get("sessions") or 0)
         for r in daily
@@ -1627,7 +1672,11 @@ def fetch_session_duration(
         "client": _client_key(),
         "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "sessions": sessions or None,
+        "new_users": new_users or None,
         "avg_session_duration_seconds": round(seconds / sessions, 1) if sessions else None,
+        "engagement_rate": (
+            round(engaged_sessions / engagement_base * 100, 1) if engagement_base else None
+        ),
         "daily": daily,
     }
 
