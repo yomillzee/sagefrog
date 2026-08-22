@@ -63,6 +63,23 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-22",
+        title="LinkedIn Ads figures count only the connected ad account",
+        area="Client dashboards · LinkedIn Ads",
+        kind="fixed",
+        summary=(
+            "Spend, clicks, impressions, conversions and the campaign table were "
+            "totalling every LinkedIn ad account stored for the client, not the one "
+            "the dashboard is set up against. Any client running a second ad account "
+            "was seeing the two blended into one set of numbers."
+        ),
+        details=(
+            "No figures change for a client with a single ad account, which is every client today.",
+            "Creative performance was already scoped correctly and is unaffected.",
+            "A client with no ad account configured still sees everything held for them, as before.",
+        ),
+    ),
+    Entry(
+        date="2026-08-22",
         title="Every LinkedIn Organic metric now shows period-over-period change",
         area="Client dashboards · LinkedIn Organic",
         kind="improved",
