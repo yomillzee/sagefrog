@@ -114,6 +114,17 @@ ENTRIES: tuple[Entry, ...] = (
     ),
     Entry(
         date="2026-08-20",
+        title="Each Sessions & engagement metric explains itself",
+        area="Client dashboards · Website Analytics",
+        kind="improved",
+        summary=(
+            "The paragraph under the heading only ever described the card you "
+            "had selected. Hover any of the four cards and it explains that "
+            "metric — what it counts, and how the weekly points are built."
+        ),
+    ),
+    Entry(
+        date="2026-08-20",
         title="Three more metrics on Website Analytics' session card",
         area="Client dashboards · Website Analytics",
         kind="improved",
