@@ -122,11 +122,31 @@ def _safe_ratio(numerator: float, denominator: float, multiplier: float = 1.0) -
     return (numerator / denominator * multiplier) if denominator else 0.0
 
 
+def _account_scope(account_id: str | None, *, column: str = "account_id") -> str:
+    """``AND <column> = '<id>'`` for one LinkedIn ad account, or '' for no scope.
+
+    Every read below is already routed to one client's BigQuery project, but a
+    client can own more than one LinkedIn ad account in that project — so
+    without this the mart's totals blend accounts that the dashboard presents as
+    one account's numbers. Returns '' when no account is configured, which keeps
+    the pre-scoping behaviour (whole mart) for a client that never set one.
+
+    The id compared here is the bare numeric account id: build_snapshot strips
+    any ``urn:li:sponsoredAccount:`` prefix before these builders see it, and
+    both the raw mirror and the mart store it bare.
+    """
+    if not account_id:
+        return ""
+    safe = str(account_id).replace("'", "\\'")
+    return f"AND CAST({column} AS STRING) = '{safe}'"
+
+
 def account_summary_sql(*, start: date, end: date, account_id: str | None = None) -> str:
     # Derived from the campaign mart, not raw_linkedin_ads.metrics_daily: the
     # BigQuery-first ingestion only writes campaign_daily (+ the mart over it),
     # never an account-level metrics_daily table. Summing the mart across
     # campaigns yields the same account totals without a phantom dependency.
+    account_filter = _account_scope(account_id)
     return f"""
     SELECT
       SUM(spend) AS spend,
@@ -141,12 +161,14 @@ def account_summary_sql(*, start: date, end: date, account_id: str | None = None
       SAFE_DIVIDE(SUM(spend), SUM(conversions)) AS cost_per_conversion
     FROM {_mart_table()}
     WHERE date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+    {account_filter}
     """
 
 
 def daily_metrics_sql(*, start: date, end: date, account_id: str | None = None) -> str:
     # Daily account-level series aggregated from the campaign mart (see
     # account_summary_sql for why metrics_daily is not used).
+    account_filter = _account_scope(account_id)
     return f"""
     SELECT
       CAST(date AS STRING) AS metric_date,
@@ -162,16 +184,14 @@ def daily_metrics_sql(*, start: date, end: date, account_id: str | None = None) 
       SAFE_DIVIDE(SUM(spend), SUM(conversions)) AS cost_per_conversion
     FROM {_mart_table()}
     WHERE date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+    {account_filter}
     GROUP BY 1
     ORDER BY 1 ASC
     """
 
 
 def campaign_daily_sql(*, start: date, end: date, account_id: str | None = None) -> str:
-    account_filter = ""
-    if account_id:
-        safe_account = str(account_id).replace("'", "\\'")
-        account_filter = f"AND CAST(account_id AS STRING) = '{safe_account}'"
+    account_filter = _account_scope(account_id)
     return f"""
     SELECT
       CAST(date AS STRING) AS metric_date,
@@ -188,16 +208,14 @@ def campaign_daily_sql(*, start: date, end: date, account_id: str | None = None)
       SAFE_DIVIDE(SUM(spend), SUM(conversions)) AS cost_per_conversion
     FROM {_mart_table()}
     WHERE date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+    {account_filter}
     GROUP BY 1, 2
     ORDER BY 1 DESC, spend DESC
     """
 
 
 def _creative_daily_sql(*, start: date, end: date, account_id: str | None = None) -> str:
-    account_filter = ""
-    if account_id:
-        safe_account = str(account_id).replace("'", "\\'")
-        account_filter = f"AND CAST(source_account_id AS STRING) = '{safe_account}'"
+    account_filter = _account_scope(account_id, column="source_account_id")
     creative_table = _mart_table(_DEFAULT_CREATIVE_FACT_TABLE)
     return f"""
     SELECT
