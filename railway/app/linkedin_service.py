@@ -15,6 +15,9 @@ from linkedin_auth import LinkedInEnv, load_linkedin_env
 
 LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 LINKEDIN_API_BASE = "https://api.linkedin.com/rest"
+# LinkedIn's standardized-data taxonomies (/industries, /geo, /countries,
+# /titles) are only served from the legacy v2 base — see _reference_data_get.
+LINKEDIN_API_V2_BASE = "https://api.linkedin.com/v2"
 
 _log = logging.getLogger(__name__)
 
@@ -117,8 +120,9 @@ def _linkedin_get(
     api_version: str | None = None,
     restli_method: str | None = None,
     timeout: float = 120.0,
+    base: str | None = None,
 ) -> dict[str, Any]:
-    url = f"{LINKEDIN_API_BASE}{path}"
+    url = f"{base or LINKEDIN_API_BASE}{path}"
     with httpx.Client(timeout=timeout) as client:
         response = client.get(
             url,
@@ -168,6 +172,37 @@ def _linkedin_get_with_versions(
     if last_error:
         raise last_error
     raise RuntimeError(f"LinkedIn request failed for {path}")
+
+
+def _reference_data_get(
+    path: str,
+    *,
+    access_token: str,
+    env: LinkedInEnv | None = None,
+) -> dict[str, Any]:
+    """GET one of the standardized-data reference endpoints (/industries/{id},
+    /geo/{id}, /countries/{id}, /titles/{id}).
+
+    Those taxonomies are served from the **v2** base, not the versioned /rest one
+    every other call in this module uses. Asked for through /rest they answer
+    "No virtual resource found for: geo" — indistinguishable from an unlucky API
+    version, so the lookup burned one retry per version and then fell back to a
+    placeholder, which is how a demographic panel ends up reading "Industry 11"
+    and "Region 90000070" instead of naming an industry or a metro area.
+
+    Tries /v2 first, then the versioned base — an app provisioned the other way
+    around still gets its labels. A plain 404 is the one answer not retried: /v2
+    served the resource and simply has no such id, so the versioned base won't
+    either and the caller falls back to a placeholder after one call.
+    """
+    try:
+        return _linkedin_get(
+            path, access_token=access_token, env=env, base=LINKEDIN_API_V2_BASE
+        )
+    except Exception as exc:
+        if "404" in str(exc) and not _is_version_resource_not_found(exc):
+            raise
+        return _linkedin_get_with_versions(path, access_token=access_token, env=env)
 
 
 def refresh_access_token(env: LinkedInEnv | None = None) -> dict[str, Any]:
@@ -2735,11 +2770,9 @@ def _demographic_category_label(
         return linkedin_taxonomy.resolve_reference_label(
             kind,
             ref_id,
-            # Version-tolerant, like the organic follower demographics: these
-            # reference endpoints move between API versions, and a plain call
-            # pinned to one version 404s into the fallback label instead of
-            # resolving.
-            get=lambda path: _linkedin_get_with_versions(
+            # Titles and industries are standardized data: they live on the v2
+            # base, not the versioned one the analytics calls use.
+            get=lambda path: _reference_data_get(
                 path, access_token=access_token, env=env
             ),
             cache=cache,

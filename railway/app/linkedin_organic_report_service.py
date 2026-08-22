@@ -20,6 +20,7 @@ from datetime import date, timedelta
 from typing import Any
 
 import bigquery_service
+import linkedin_taxonomy
 
 _log = logging.getLogger(__name__)
 
@@ -457,7 +458,8 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
     try:
         demo_rows = bigquery_service.run_query(
             f"""
-            SELECT dimension, category, organic_followers, paid_followers, total_followers
+            SELECT dimension, category, category_urn,
+                   organic_followers, paid_followers, total_followers
             FROM {_tbl(_DEMOGRAPHICS_TABLE)}
             ORDER BY dimension ASC, total_followers DESC
             """,
@@ -469,16 +471,34 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
         if not _is_table_not_found(exc):
             _log.info("organic demographics read skipped [%s]: %s", client_slug, exc)
         demo_rows = []
+    unlabelled = 0
     for r in demo_rows:
         dim = str(r.get("dimension") or "")
         if not dim:
             continue
+        # Labels are resolved at sync time; re-label here so a category that fell
+        # back to a raw id ("Industry 105") picks up what the static taxonomies
+        # know now, without waiting for the next sync. One that still can't be
+        # named is dropped: "Region 90000070" is an id, not a demographic, and a
+        # dimension where nothing resolves loses its card rather than showing a
+        # client a column of LinkedIn internals.
+        label = linkedin_taxonomy.relabel_demographic(
+            dim, r.get("category"), r.get("category_urn")
+        )
+        if not label or linkedin_taxonomy.is_unresolved_label(label):
+            unlabelled += 1
+            continue
         report.follower_demographics.setdefault(dim, []).append({
-            "category": str(r.get("category") or "Unknown"),
+            "category": label,
             "organic_followers": int(r.get("organic_followers") or 0),
             "paid_followers": int(r.get("paid_followers") or 0),
             "total_followers": int(r.get("total_followers") or 0),
         })
+    if unlabelled:
+        _log.info(
+            "organic demographics: %s unlabelled categories hidden [%s]",
+            unlabelled, client_slug,
+        )
 
     # ── Organization-level engagement over time ────────────────────────────────
     try:
