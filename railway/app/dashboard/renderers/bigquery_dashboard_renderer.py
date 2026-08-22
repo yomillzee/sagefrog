@@ -24,6 +24,10 @@ from dashboard.renderers.base_layout import (
     site_footer_html,
 )
 from dashboard.renderers import pagespeed_renderer
+# Script-safe JSON for values embedded in the page's inline <script>: escapes
+# < > & so a stored config value (keyword lists, watchlist, event names) can't
+# close the script tag and run as markup.
+from dashboard.utils.formatting import json_for_html_script as _json_script
 
 
 # ── HubSpot MQL tracker formatting helpers ──────────────────────────────────
@@ -2656,20 +2660,20 @@ def render_bigquery_dashboard_page(
     const PAGESPEED_STRATEGIES = {pagespeed_strategies_json};
     const GSC_KEYWORD_CONFIG_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/keyword-config')}";
     const GSC_KEYWORD_MATCHES_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/keyword-matches')}";
-    const GSC_BRANDED_ROOTS = {json.dumps([s.strip() for s in gsc_branded_roots.splitlines() if s.strip()])};
-    const GSC_TARGET_KEYWORDS = {json.dumps([s.strip() for s in gsc_target_keywords.splitlines() if s.strip()])};
-    const GSC_BRANDED_EXCLUDE = {json.dumps([s.strip() for s in gsc_branded_exclude.splitlines() if s.strip()])};
-    const GSC_TARGET_EXCLUDE = {json.dumps([s.strip() for s in gsc_target_exclude.splitlines() if s.strip()])};
+    const GSC_BRANDED_ROOTS = {_json_script([s.strip() for s in gsc_branded_roots.splitlines() if s.strip()])};
+    const GSC_TARGET_KEYWORDS = {_json_script([s.strip() for s in gsc_target_keywords.splitlines() if s.strip()])};
+    const GSC_BRANDED_EXCLUDE = {_json_script([s.strip() for s in gsc_branded_exclude.splitlines() if s.strip()])};
+    const GSC_TARGET_EXCLUDE = {_json_script([s.strip() for s in gsc_target_exclude.splitlines() if s.strip()])};
     const GSC_WATCHLIST_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/watchlist')}";
     const GSC_WATCHLIST_CONFIG_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/watchlist-config')}";
     // [{{kw, page}}] -- the watched keyword and the page it was written for.
-    const GSC_WATCH_ITEMS = {json.dumps(parse_gsc_watchlist(gsc_watch_keywords))};
-    const GSC_BRANDED_RAW = {json.dumps(gsc_branded_roots)};
-    const GSC_TARGET_RAW = {json.dumps(gsc_target_keywords)};
+    const GSC_WATCH_ITEMS = {_json_script(parse_gsc_watchlist(gsc_watch_keywords))};
+    const GSC_BRANDED_RAW = {_json_script(gsc_branded_roots)};
+    const GSC_TARGET_RAW = {_json_script(gsc_target_keywords)};
     const LANDING_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/landing-events')}";
     const TRAFFIC_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-key-events')}";
     const USER_ACQ_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acq-key-events')}";
-    const GA4_KEY_EVENTS_SAVED = {json.dumps([s.strip() for s in ga4_key_events.splitlines() if s.strip()])};
+    const GA4_KEY_EVENTS_SAVED = {_json_script([s.strip() for s in ga4_key_events.splitlines() if s.strip()])};
     // Website Analytics page-path scope: patterns the admin set (empty = whole
     // site). When non-empty, the page-path panels come back pre-scoped from the
     // server; the JS hides the site-wide panels and shows a scope indicator.
