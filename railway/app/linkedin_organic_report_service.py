@@ -59,6 +59,20 @@ class LinkedInOrganicReport:
     follower_gain: int = 0
     total_page_views: int = 0
     total_unique_visitors: int = 0
+    # Same-length window ending the day before the reporting window, so the KPI
+    # cards can show period-over-period change. These stay 0 when nothing synced
+    # that far back, and the renderer then simply omits the delta rather than
+    # calling a client's first-ever window an infinite improvement.
+    prev_post_count: int = 0
+    prev_total_impressions: int = 0
+    prev_total_likes: int = 0
+    prev_total_comments: int = 0
+    prev_total_shares: int = 0
+    prev_total_unique_impressions: int = 0
+    prev_avg_engagement_rate: float = 0.0
+    prev_follower_gain: int = 0
+    prev_total_page_views: int = 0
+    prev_total_unique_visitors: int = 0
     # Page-view splits over the window
     page_desktop_views: int = 0
     page_mobile_views: int = 0
@@ -184,9 +198,22 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
 
     end = date.today()
     start = end - timedelta(days=days)
+    # The comparison window is the same span of days ending the day before the
+    # reporting window. The aggregate reads below cover both windows in one
+    # query and split them with a CASE on the date, rather than paying for a
+    # second round trip per table (BigQuery bills a 10MB minimum per query).
+    prev_start = start - timedelta(days=days + 1)
 
     def _tbl(name: str) -> str:
         return f"`{project}.{dataset}.{name}`"
+
+    def _cur(expr: str, column: str = "published_at") -> str:
+        """``expr`` summed over the reporting window only."""
+        return f"IF({column} >= DATE '{start.isoformat()}', {expr}, 0)"
+
+    def _prev(expr: str, column: str = "published_at") -> str:
+        """``expr`` summed over the preceding comparison window only."""
+        return f"IF({column} < DATE '{start.isoformat()}', {expr}, 0)"
 
     org_id: str | None = None
     report = LinkedInOrganicReport(configured=True, org_id=None)
@@ -274,15 +301,28 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
         })
 
     # ── Post totals over the whole window (not just the top 50 listed above) ──
+    # Scanned across the reporting *and* comparison windows at once so the KPI
+    # cards get a prior-period figure to show change against.
     try:
         total_rows = bigquery_service.run_query(
             f"""
-            SELECT COUNT(*) AS post_count,
-                   SUM(impressions) AS impressions, SUM(clicks) AS clicks,
-                   SUM(likes) AS likes, SUM(comments) AS comments,
-                   SUM(shares) AS shares, AVG(engagement_rate) AS avg_engagement_rate
+            SELECT COUNTIF(published_at >= DATE '{start.isoformat()}') AS post_count,
+                   SUM({_cur('impressions')}) AS impressions,
+                   SUM({_cur('clicks')}) AS clicks,
+                   SUM({_cur('likes')}) AS likes,
+                   SUM({_cur('comments')}) AS comments,
+                   SUM({_cur('shares')}) AS shares,
+                   AVG(IF(published_at >= DATE '{start.isoformat()}', engagement_rate, NULL))
+                       AS avg_engagement_rate,
+                   COUNTIF(published_at < DATE '{start.isoformat()}') AS prev_post_count,
+                   SUM({_prev('impressions')}) AS prev_impressions,
+                   SUM({_prev('likes')}) AS prev_likes,
+                   SUM({_prev('comments')}) AS prev_comments,
+                   SUM({_prev('shares')}) AS prev_shares,
+                   AVG(IF(published_at < DATE '{start.isoformat()}', engagement_rate, NULL))
+                       AS prev_avg_engagement_rate
             FROM {_tbl(_POST_TABLE)}
-            WHERE published_at BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+            WHERE published_at BETWEEN DATE '{prev_start.isoformat()}' AND DATE '{end.isoformat()}'
             """,
             project_id=project,
             credentials_env=creds,
@@ -295,11 +335,17 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
     if total_rows:
         row = total_rows[0]
         report.post_count = int(row.get("post_count") or 0)
+        report.prev_post_count = int(row.get("prev_post_count") or 0)
         report.total_impressions = int(row.get("impressions") or 0)
         report.total_likes = int(row.get("likes") or 0)
         report.total_comments = int(row.get("comments") or 0)
         report.total_shares = int(row.get("shares") or 0)
         report.avg_engagement_rate = float(row.get("avg_engagement_rate") or 0.0)
+        report.prev_total_impressions = int(row.get("prev_impressions") or 0)
+        report.prev_total_likes = int(row.get("prev_likes") or 0)
+        report.prev_total_comments = int(row.get("prev_comments") or 0)
+        report.prev_total_shares = int(row.get("prev_shares") or 0)
+        report.prev_avg_engagement_rate = float(row.get("prev_avg_engagement_rate") or 0.0)
     else:
         # Aggregate unavailable (e.g. table missing): fall back to the listing,
         # which is exact whenever the window holds 50 posts or fewer.
@@ -347,9 +393,10 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
         try:
             reach_rows = bigquery_service.run_query(
                 f"""
-                SELECT SUM(unique_impressions) AS reach
+                SELECT SUM({_cur('unique_impressions')}) AS reach,
+                       SUM({_prev('unique_impressions')}) AS prev_reach
                 FROM {_tbl(_POST_TABLE)}
-                WHERE published_at BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+                WHERE published_at BETWEEN DATE '{prev_start.isoformat()}' AND DATE '{end.isoformat()}'
                 """,
                 project_id=project,
                 credentials_env=creds,
@@ -363,8 +410,14 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
             int(reach_rows[0].get("reach") or 0) if reach_rows
             else sum(p["unique_impressions"] for p in report.top_posts)
         )
+        if reach_rows:
+            report.prev_total_unique_impressions = int(reach_rows[0].get("prev_reach") or 0)
 
     # ── Followers (daily series + latest lifetime total) ──────────────────────
+    # Read across both windows; days before the reporting window are kept out of
+    # ``follower_series`` (which is what the chart and sparkline plot) and only
+    # contribute the prior-period follower gain.
+    cutoff = start.isoformat()
     try:
         foll_rows = bigquery_service.run_query(
             f"""
@@ -372,12 +425,12 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
                    organic_follower_gain, paid_follower_gain,
                    total_follower_gain, total_followers
             FROM {_tbl(_FOLLOWER_TABLE)}
-            WHERE metric_date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+            WHERE metric_date BETWEEN DATE '{prev_start.isoformat()}' AND DATE '{end.isoformat()}'
             ORDER BY metric_date ASC
             """,
             project_id=project,
             credentials_env=creds,
-            max_rows=1000,
+            max_rows=2000,
         )
     except Exception as exc:
         if not _is_table_not_found(exc):
@@ -385,8 +438,12 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
         foll_rows = []
 
     for r in foll_rows:
+        day = str(r.get("metric_date") or "")
+        if day and day < cutoff:
+            report.prev_follower_gain += int(r.get("total_follower_gain") or 0)
+            continue
         report.follower_series.append({
-            "metric_date": str(r.get("metric_date") or ""),
+            "metric_date": day,
             "organic_follower_gain": int(r.get("organic_follower_gain") or 0),
             "paid_follower_gain": int(r.get("paid_follower_gain") or 0),
             "total_follower_gain": int(r.get("total_follower_gain") or 0),
@@ -405,21 +462,28 @@ def build_report(client_slug: str, *, days: int = 90) -> LinkedInOrganicReport:
             f"""
             SELECT CAST(metric_date AS STRING) AS metric_date, page_views, unique_visitors
             FROM {_tbl(_PAGE_TABLE)}
-            WHERE metric_date BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'
+            WHERE metric_date BETWEEN DATE '{prev_start.isoformat()}' AND DATE '{end.isoformat()}'
             ORDER BY metric_date ASC
             """,
             project_id=project,
             credentials_env=creds,
-            max_rows=1000,
+            max_rows=2000,
         )
     except Exception as exc:
         if not _is_table_not_found(exc):
             _log.warning("organic page_daily read failed [%s]: %s", client_slug, exc)
         page_rows = []
 
+    # Same split as the follower read: pre-window days feed the comparison
+    # totals only, so the page-views chart still plots the selected range.
     for r in page_rows:
+        day = str(r.get("metric_date") or "")
+        if day and day < cutoff:
+            report.prev_total_page_views += int(r.get("page_views") or 0)
+            report.prev_total_unique_visitors += int(r.get("unique_visitors") or 0)
+            continue
         report.page_series.append({
-            "metric_date": str(r.get("metric_date") or ""),
+            "metric_date": day,
             "page_views": int(r.get("page_views") or 0),
             "unique_visitors": int(r.get("unique_visitors") or 0),
         })

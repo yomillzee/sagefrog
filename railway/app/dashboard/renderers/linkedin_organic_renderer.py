@@ -97,7 +97,7 @@ _EXTRA_CSS = """
 .lo-wrap .card { border:1px solid var(--line-soft,#eff3f8); border-top:3px solid var(--accent); border-radius:var(--radius-sm,9px); padding:14px 15px 15px; background:#fff; }
 .lo-wrap .card-title { color:var(--muted); font-size:.66rem; text-transform:uppercase; font-weight:800; letter-spacing:.06em; }
 .lo-wrap .card-value { margin-top:7px; font-size:1.55rem; line-height:1.1; color:var(--navy); font-weight:800; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
-.lo-wrap .card-foot { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:9px; min-height:20px; }
+.lo-wrap .card-foot { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:2px 8px; margin-top:9px; min-height:20px; }
 .lo-wrap .card-sub { color:var(--muted); font-size:.74rem; }
 .lo-wrap .card-sub strong { color:var(--text); font-weight:700; }
 .lo-spark { width:100%; height:30px; display:block; margin:8px 0 2px; }
@@ -267,6 +267,48 @@ def _reactions_note(reactions: dict[str, int] | None) -> str:
         f"{_REACTION_LABELS.get(t, t.title())} {_fmt_int(v)}" for t, v in items
     )
     return f' <span class="lo-react" title="{_esc(title)}">▾</span>'
+
+
+def _delta(current: float, prior: float, *, window_days: int) -> str:
+    """Period-over-period change badge for a KPI card, as a percentage of the
+    comparison window's value.
+
+    Returns "" when the prior window has nothing to compare against: a
+    percentage off zero is either meaningless or infinite, and a client whose
+    organic sync only reaches back one window would otherwise see every metric
+    flagged as a record. The prior figure itself rides along as a hover title so
+    the percentage can be checked without leaving the card.
+    """
+    if not prior:
+        return ""
+    pct = (current - prior) / abs(prior) * 100
+    title = _esc(f"{_fmt_int(prior)} in the previous {window_days} days")
+    if round(pct, 1) == 0:
+        return f'<span class="lo-delta flat" title="{title}">No change</span>'
+    arrow, cls = ("\u25b2", "up") if pct > 0 else ("\u25bc", "down")
+    shown = f"{abs(pct):,.0f}%" if abs(pct) >= 100 else f"{abs(pct):.1f}%"
+    return f'<span class="lo-delta {cls}" title="{title}">{arrow} {shown}</span>'
+
+
+def _rate_delta(current: float, prior: float, *, window_days: int) -> str:
+    """Like :func:`_delta` but for a rate: engagement moving from 2.0% to 2.4%
+    is +0.4 points, not +20%, which is what a reader expects to see next to a
+    percentage headline."""
+    if not prior:
+        return ""
+    points = (current - prior) * 100
+    title = _esc(f"{_fmt_pct(prior)} in the previous {window_days} days")
+    if round(points, 2) == 0:
+        return f'<span class="lo-delta flat" title="{title}">No change</span>'
+    arrow, cls = ("\u25b2", "up") if points > 0 else ("\u25bc", "down")
+    return (f'<span class="lo-delta {cls}" title="{title}">'
+            f'{arrow} {abs(points):.2f} pts</span>')
+
+
+def _foot(delta: str = "", sub_html: str = "") -> str:
+    """Card foot: change badge on the left, descriptive sub on the right. The
+    `.card-foot` flex row spaces them apart, and either half may be empty."""
+    return f'{delta}{_sub(sub_html) if sub_html else ""}'
 
 
 def _period_delta(gain: int, window_days: int = _WINDOW_DAYS) -> str:
@@ -889,30 +931,59 @@ def render_linkedin_organic(
         if report.follower_series
         else _sub("lifetime total")
     )
+    # Every card but Followers compares its window total against the same span
+    # of days immediately before it. A metric whose comparison window is empty
+    # gets no badge (see ``_delta``), so a freshly-synced client sees the same
+    # cards it always did rather than a row of meaningless arrows.
+    def _d(current: float, prior: float) -> str:
+        return _delta(current, prior, window_days=window_days)
+
     card_list = [
         _card("Followers", _fmt_int(report.total_followers),
               spark=_follower_sparkline(report.follower_series), foot=follower_foot),
-        _card("Posts", _fmt_int(report.post_count), foot=_sub("in selected period")),
-        _card("Impressions", _fmt_int(report.total_impressions), foot=_sub("across posts")),
+        _card("Posts", _fmt_int(report.post_count),
+              foot=_foot(_d(report.post_count, report.prev_post_count),
+                         "in selected period")),
+        _card("Impressions", _fmt_int(report.total_impressions),
+              foot=_foot(_d(report.total_impressions, report.prev_total_impressions),
+                         "across posts")),
     ]
     # Reach only renders once a sync has captured unique-impression data.
     if report.total_unique_impressions:
         card_list.append(
             _card("Reach", _fmt_int(report.total_unique_impressions),
-                  foot=_sub("unique impressions"))
+                  foot=_foot(_d(report.total_unique_impressions,
+                                report.prev_total_unique_impressions),
+                             "unique impressions"))
         )
     card_list += [
-        _card("Reactions", _fmt_int(report.total_likes), foot=_sub("likes on posts")),
-        _card("Comments", _fmt_int(report.total_comments)),
-        _card("Avg. engagement", _fmt_pct(avg_engagement), foot=_sub("per post")),
+        _card("Reactions", _fmt_int(report.total_likes),
+              foot=_foot(_d(report.total_likes, report.prev_total_likes),
+                         "likes on posts")),
+        _card("Comments", _fmt_int(report.total_comments),
+              foot=_foot(_d(report.total_comments, report.prev_total_comments))),
+        _card("Avg. engagement", _fmt_pct(avg_engagement),
+              foot=_foot(_rate_delta(avg_engagement, report.prev_avg_engagement_rate,
+                                     window_days=window_days),
+                         "per post")),
         _card("Page views", _fmt_int(report.total_page_views),
-              foot=_sub(f'<strong>{_fmt_int(report.total_unique_visitors)}</strong> unique visitors')),
+              foot=_foot(_d(report.total_page_views, report.prev_total_page_views),
+                         f'<strong>{_fmt_int(report.total_unique_visitors)}</strong> unique visitors')),
     ]
     cards = '<div class="cards">' + "".join(card_list) + '</div>'
+    # Only claim a comparison in the section head when one is actually drawn.
+    compared = any((
+        report.prev_post_count, report.prev_total_impressions,
+        report.prev_total_unique_impressions, report.prev_total_likes,
+        report.prev_total_comments, report.prev_avg_engagement_rate,
+        report.prev_total_page_views,
+    ))
+    kpi_status = (f"last {window_days} days &middot; vs previous {window_days} days"
+                  if compared else f"last {window_days} days")
     kpi_section = (
         '<section>'
         '<div class="sec-head"><h2><span class="lo-dot"></span>Performance</h2>'
-        f'<span class="status">last {window_days} days</span></div>'
+        f'<span class="status">{kpi_status}</span></div>'
         f'{cards}</section>'
     )
 
