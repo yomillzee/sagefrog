@@ -63,6 +63,24 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-22",
+        title="Every LinkedIn Organic metric now shows period-over-period change",
+        area="Client dashboards · LinkedIn Organic",
+        kind="improved",
+        summary=(
+            "Only Followers told you whether the number was going the right way. "
+            "Posts, Impressions, Reach, Reactions, Comments, Avg. engagement and "
+            "Page views now each carry an up/down badge against the same length "
+            "of time immediately before the selected range."
+        ),
+        details=(
+            "Change the date range and the comparison moves with it — last 30 days is measured against the 30 days before that.",
+            "Hover a badge to see the previous period's figure.",
+            "Avg. engagement is shown in percentage points, so 4.0% \u2192 5.0% reads as +1.00 pts rather than +25%.",
+            "A metric with no history that far back shows no badge instead of a meaningless jump from zero.",
+        ),
+    ),
+    Entry(
+        date="2026-08-22",
         title="Follower demographics name industries instead of numbering them",
         area="Client dashboards · LinkedIn Organic",
         kind="fixed",
