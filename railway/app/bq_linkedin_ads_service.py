@@ -228,7 +228,7 @@ def _creative_daily_sql(*, start: date, end: date, account_id: str | None = None
 def _table_has_column(*, table_name: str, column_name: str, project_id: str) -> bool:
     dataset = _dataset_id().replace("`", "")
     table = table_name.replace("`", "")
-    column = column_name.replace("'", "\'")
+    column = column_name.replace("'", "\\'")
     sql = f"""
     SELECT 1 AS found
     FROM `{_project_id()}.{dataset}.INFORMATION_SCHEMA.COLUMNS`
@@ -250,7 +250,7 @@ def _table_has_column(*, table_name: str, column_name: str, project_id: str) -> 
 
 
 def _campaign_ids_sql(*, start: date, end: date, account_id: str) -> str:
-    safe_account = str(account_id).replace("'", "\'")
+    safe_account = str(account_id).replace("'", "\\'")
     return f"""
     SELECT DISTINCT CAST(campaign_id AS STRING) AS campaign_id
     FROM {_table(_CAMPAIGN_TABLE)}
@@ -268,7 +268,7 @@ def _creative_campaign_ids_sql(*, account_id: str) -> str:
     campaign_daily leaves the new campaigns without a name/group and the creative
     mart renders them as a nameless "—" campaign. creative_metadata is not date-
     scoped (it's metadata), so this surfaces every campaign that has creatives."""
-    safe_account = str(account_id).replace("'", "\'")
+    safe_account = str(account_id).replace("'", "\\'")
     return f"""
     SELECT DISTINCT CAST(campaign_id AS STRING) AS campaign_id
     FROM {_table('creative_metadata')}

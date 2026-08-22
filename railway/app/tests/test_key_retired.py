@@ -70,8 +70,18 @@ class SignatureTests(unittest.TestCase):
 
 
 class AuthBehaviorTests(unittest.TestCase):
-    def tearDown(self) -> None:
+    def setUp(self) -> None:
+        # web_auth gates on web_users.enabled(); force it on so these tests
+        # exercise the access logic, not the 503 short-circuit. Restore the real
+        # attribute afterwards -- web_auth.web_users is the *real* module when an
+        # earlier test already imported it, and leaving a lambda behind there
+        # makes every later test that renders a page believe Postgres is
+        # configured (they then fail on "DATABASE_URL is not set").
+        self._orig_enabled = web_auth.web_users.enabled
         web_auth.web_users.enabled = lambda: True
+        self.addCleanup(
+            lambda: setattr(web_auth.web_users, "enabled", self._orig_enabled)
+        )
 
     def _patch_user(self, user):
         self._orig = web_auth.get_current_user
