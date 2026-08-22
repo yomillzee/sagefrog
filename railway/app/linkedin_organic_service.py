@@ -33,6 +33,7 @@ from linkedin_auth import LinkedInEnv, load_linkedin_env
 from linkedin_service import (
     _linkedin_get,
     _linkedin_get_with_versions,
+    _reference_data_get,
     refresh_access_token,
 )
 
@@ -594,8 +595,9 @@ _humanize_staff_range = linkedin_taxonomy.humanize_staff_range
 _humanize_enum = linkedin_taxonomy.humanize_enum
 
 # Reference-data endpoint paths (NOT a naive plural of the kind — "industry" ->
-# "industries", "geo" has no trailing 's'). A wrong path 404s and every label
-# silently falls back to the raw id, so keep this mapping explicit.
+# "industries", "geo" has no trailing 's'). A wrong path — or the wrong API base,
+# see _reference_data_get — 404s and every label silently falls back to the raw
+# id, so keep this mapping explicit.
 _REFERENCE_ENDPOINTS = linkedin_taxonomy.REFERENCE_ENDPOINTS
 # Friendlier placeholder when a lookup can't resolve, per kind.
 _REFERENCE_FALLBACK = linkedin_taxonomy.REFERENCE_FALLBACK
@@ -607,14 +609,14 @@ def _resolve_reference_label(
 ) -> str:
     """Best-effort localized name for an ``industry``/``geo`` id, cached per sync.
 
-    Falls back to a readable placeholder when the reference endpoint is
-    unavailable or shaped differently across API versions."""
+    Every kind resolved here is standardized data, so the lookup goes to the v2
+    base rather than the versioned one the statistics calls use. Falls back to a
+    readable placeholder when the reference endpoint is unavailable or shaped
+    differently across API versions."""
     return linkedin_taxonomy.resolve_reference_label(
         kind,
         ref_id,
-        get=lambda path: _linkedin_get_with_versions(
-            path, access_token=access_token, env=env
-        ),
+        get=lambda path: _reference_data_get(path, access_token=access_token, env=env),
         cache=cache,
     )
 

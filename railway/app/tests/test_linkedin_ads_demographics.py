@@ -19,6 +19,7 @@ import sys
 import unittest
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 APP_DIR = Path(__file__).resolve().parents[1]
 if str(APP_DIR) not in sys.path:
@@ -305,6 +306,108 @@ class TaxonomyTests(unittest.TestCase):
         self.assertEqual(linkedin_taxonomy.REFERENCE_ENDPOINTS["industry"], "industries")
         self.assertEqual(linkedin_taxonomy.REFERENCE_ENDPOINTS["geo"], "geo")
         self.assertEqual(linkedin_taxonomy.REFERENCE_ENDPOINTS["organization"], "organizations")
+
+    def test_original_industry_codes_resolve_locally(self) -> None:
+        def _boom(path: str) -> dict:
+            raise AssertionError(f"no lookup expected, got {path}")
+
+        cache: dict[str, str] = {}
+        label = linkedin_taxonomy.resolve_reference_label(
+            "industry", "11", get=_boom, cache=cache
+        )
+        self.assertEqual(label, "Management Consulting")
+        self.assertEqual(cache["industry:11"], "Management Consulting")
+
+    def test_four_digit_industry_ids_still_ask_the_api(self) -> None:
+        calls: list[str] = []
+
+        def _get(path: str) -> dict:
+            calls.append(path)
+            return {"localizedName": "Business Consulting and Services"}
+
+        label = linkedin_taxonomy.resolve_reference_label(
+            "industry", "1862", get=_get, cache={}
+        )
+        # The newer taxonomy ids are not in the local table.
+        self.assertEqual(calls, ["/industries/1862"])
+        self.assertEqual(label, "Business Consulting and Services")
+
+    def test_placeholder_labels_are_recognised_as_unresolved(self) -> None:
+        for label in ("Region 90000070", "Industry 1862", "Job title 77", "Company 5"):
+            self.assertTrue(linkedin_taxonomy.is_unresolved_label(label), label)
+        for label in ("Management Consulting", "51-200", "CXO", "Region One"):
+            self.assertFalse(linkedin_taxonomy.is_unresolved_label(label), label)
+
+    def test_relabel_upgrades_a_stored_placeholder(self) -> None:
+        # A label stored by an older sync, re-labelled from the URN kept next to
+        # it — no re-sync needed.
+        self.assertEqual(
+            linkedin_taxonomy.relabel_demographic(
+                "industry", "Industry 105", "urn:li:industry:105"
+            ),
+            "Professional Training & Coaching",
+        )
+        # A resolved label is never second-guessed...
+        self.assertEqual(
+            linkedin_taxonomy.relabel_demographic(
+                "industry", "Hospitals & Health Care", "urn:li:industry:2063"
+            ),
+            "Hospitals & Health Care",
+        )
+        # ...and a geo id no local table knows stays a placeholder.
+        self.assertEqual(
+            linkedin_taxonomy.relabel_demographic(
+                "region", "Region 90000070", "urn:li:geo:90000070"
+            ),
+            "Region 90000070",
+        )
+
+    def test_standardized_data_lookups_use_the_v2_base(self) -> None:
+        seen: dict[str, Any] = {}
+
+        def _get(path, *, access_token, env=None, **kw):
+            seen["path"] = path
+            seen["base"] = kw.get("base")
+            return {"localizedName": "Marketing Manager"}
+
+        orig = linkedin_service._linkedin_get
+        linkedin_service._linkedin_get = _get
+        try:
+            payload = linkedin_service._reference_data_get(
+                "/titles/77", access_token="tok", env=_ENV
+            )
+        finally:
+            linkedin_service._linkedin_get = orig
+        self.assertEqual(payload["localizedName"], "Marketing Manager")
+        self.assertEqual(seen["base"], linkedin_service.LINKEDIN_API_V2_BASE)
+
+    def test_v2_miss_retries_the_versioned_base(self) -> None:
+        # Belt and braces: if an app is provisioned the other way around, a
+        # "no virtual resource" answer from /v2 shouldn't cost us the label.
+        def _no_resource(path, *, access_token, env=None, **kw):
+            raise RuntimeError(
+                f"LinkedIn API error 404 on {path}: No virtual resource found for: titles"
+            )
+
+        calls: list[str] = []
+
+        def _versioned(path, *, access_token, env=None, **kw):
+            calls.append(path)
+            return {"localizedName": "Marketing Manager"}
+
+        orig_get = linkedin_service._linkedin_get
+        orig_versioned = linkedin_service._linkedin_get_with_versions
+        linkedin_service._linkedin_get = _no_resource
+        linkedin_service._linkedin_get_with_versions = _versioned
+        try:
+            payload = linkedin_service._reference_data_get(
+                "/titles/77", access_token="tok", env=_ENV
+            )
+        finally:
+            linkedin_service._linkedin_get = orig_get
+            linkedin_service._linkedin_get_with_versions = orig_versioned
+        self.assertEqual(calls, ["/titles/77"])
+        self.assertEqual(payload["localizedName"], "Marketing Manager")
 
 
 class SyncWindowTests(unittest.TestCase):

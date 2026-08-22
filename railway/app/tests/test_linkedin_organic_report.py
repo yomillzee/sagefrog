@@ -202,6 +202,39 @@ class BuildReportTests(unittest.TestCase):
         self.assertEqual(report.page_mobile_views, 20)
         self.assertIn({"label": "Careers", "views": 12}, report.page_sections)
 
+    def test_unresolved_categories_are_relabelled_or_hidden(self):
+        _install_routing()
+        demographics = [
+            # Stored by a sync whose reference lookups failed: the label is the
+            # raw id dressed up, but the URN next to it still says what it is.
+            {"dimension": "industry", "category": "Industry 105",
+             "category_urn": "urn:li:industry:105",
+             "organic_followers": 9, "paid_followers": 0, "total_followers": 9},
+            {"dimension": "industry", "category": "Industry 1862",
+             "category_urn": "urn:li:industry:1862",
+             "organic_followers": 4, "paid_followers": 0, "total_followers": 4},
+            {"dimension": "region", "category": "Region 90000070",
+             "category_urn": "urn:li:geo:90000070",
+             "organic_followers": 7, "paid_followers": 0, "total_followers": 7},
+        ]
+
+        def fake_run_query(sql, **kw):
+            return demographics if "follower_demographics" in sql.lower() else []
+
+        svc.bigquery_service.run_query = fake_run_query  # type: ignore
+        report = svc.build_report("acme")
+
+        # The original industry codes are known locally, so the label is fixed on
+        # read — no waiting for the next sync.
+        self.assertEqual(
+            [r["category"] for r in report.follower_demographics["industry"]],
+            ["Professional Training & Coaching"],
+        )
+        # Nothing names geo id 90000070 or industry 1862 yet, and a client
+        # shouldn't be shown a LinkedIn id as if it were a demographic — so the
+        # region card disappears instead.
+        self.assertNotIn("region", report.follower_demographics)
+
     def test_totals_come_from_window_aggregate_not_capped_listing(self):
         """The Top-posts read is capped at 50 rows; the KPI totals must not be
         summed from it, or the Performance card stops responding to ?range=."""

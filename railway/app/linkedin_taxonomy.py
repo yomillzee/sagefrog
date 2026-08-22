@@ -4,13 +4,14 @@ LinkedIn returns demographic breakdowns as bare ids / URNs — ``urn:li:title:56
 ``urn:li:seniority:9``, ``SIZE_51_TO_200`` — and a report full of those is
 unreadable. Two kinds of lookup turn them into labels:
 
-* **Static taxonomies.** Seniority and function are small, stable, closed sets, so
-  they resolve locally with no API call at all.
-* **Reference-data endpoints.** Industry, geo, title and organization are large and
-  version-dependent, so they resolve against the API and fall back to a readable
-  placeholder when the endpoint is unavailable or shaped differently across
-  versions. Every id here is immutable, so a resolved label is cached and never
-  re-fetched.
+* **Static taxonomies.** Seniority, function and LinkedIn's original industry
+  codes are closed, stable sets, so they resolve locally with no API call at all.
+* **Reference-data endpoints.** Geo, title, organization and the newer four-digit
+  industry ids are large and version-dependent, so they resolve against the API
+  (on the base :data:`STANDARDIZED_DATA_KINDS` documents) and fall back to a
+  readable placeholder when the endpoint is unavailable or shaped differently
+  across versions. Every id here is immutable, so a resolved label is cached and
+  never re-fetched.
 
 Both the *organic* follower demographics (``linkedin_organic_service``) and the
 *ads* member demographics (``linkedin_service.fetch_ads_demographics``) draw on the
@@ -20,15 +21,16 @@ same taxonomies, which is why they live here rather than in either caller.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Callable
 
 _log = logging.getLogger(__name__)
 
 
 # Stable LinkedIn taxonomies — resolved locally so the common demographic
-# dimensions need no extra reference-data calls. (Industry, geo, title and
-# organization are far larger and version-dependent, so those resolve against the
-# API with a raw-id fallback.)
+# dimensions need no extra reference-data calls. (Geo, title and organization are
+# far larger and version-dependent, so those resolve against the API with a
+# raw-id fallback.)
 SENIORITY_LABELS: dict[str, str] = {
     "1": "Unpaid", "2": "In training", "3": "Entry", "4": "Senior",
     "5": "Manager", "6": "Director", "7": "VP", "8": "CXO",
@@ -46,6 +48,90 @@ FUNCTION_LABELS: dict[str, str] = {
     "21": "Purchasing", "22": "Quality Assurance", "23": "Real Estate",
     "24": "Research", "25": "Sales", "26": "Support",
 }
+
+# LinkedIn's original industry codes. They are a closed, stable set — every id
+# here still resolves to the same industry — so they are answered locally rather
+# than costing one reference call per category on every sync. The newer industry
+# taxonomy adds four-digit ids (``urn:li:industry:1862``) that are NOT listed
+# here and still resolve against the API.
+INDUSTRY_LABELS: dict[str, str] = {
+    "1": "Defense & Space", "3": "Computer Hardware", "4": "Computer Software",
+    "5": "Computer Networking", "6": "Internet", "7": "Semiconductors",
+    "8": "Telecommunications", "9": "Law Practice", "10": "Legal Services",
+    "11": "Management Consulting", "12": "Biotechnology",
+    "13": "Medical Practice", "14": "Hospital & Health Care",
+    "15": "Pharmaceuticals", "16": "Veterinary", "17": "Medical Devices",
+    "18": "Cosmetics", "19": "Apparel & Fashion", "20": "Sporting Goods",
+    "21": "Tobacco", "22": "Supermarkets", "23": "Food Production",
+    "24": "Consumer Electronics", "25": "Consumer Goods", "26": "Furniture",
+    "27": "Retail", "28": "Entertainment", "29": "Gambling & Casinos",
+    "30": "Leisure, Travel & Tourism", "31": "Hospitality",
+    "32": "Restaurants", "33": "Sports", "34": "Food & Beverages",
+    "35": "Motion Pictures & Film", "36": "Broadcast Media",
+    "37": "Museums & Institutions", "38": "Fine Art",
+    "39": "Performing Arts", "40": "Recreational Facilities & Services",
+    "41": "Banking", "42": "Insurance", "43": "Financial Services",
+    "44": "Real Estate", "45": "Investment Banking",
+    "46": "Investment Management", "47": "Accounting", "48": "Construction",
+    "49": "Building Materials", "50": "Architecture & Planning",
+    "51": "Civil Engineering", "52": "Aviation & Aerospace",
+    "53": "Automotive", "54": "Chemicals", "55": "Machinery",
+    "56": "Mining & Metals", "57": "Oil & Energy", "58": "Shipbuilding",
+    "59": "Utilities", "60": "Textiles", "61": "Paper & Forest Products",
+    "62": "Railroad Manufacture", "63": "Farming", "64": "Ranching",
+    "65": "Dairy", "66": "Fishery", "67": "Primary/Secondary Education",
+    "68": "Higher Education", "69": "Education Management", "70": "Research",
+    "71": "Military", "72": "Legislative Office", "73": "Judiciary",
+    "74": "International Affairs", "75": "Government Administration",
+    "76": "Executive Office", "77": "Law Enforcement", "78": "Public Safety",
+    "79": "Public Policy", "80": "Marketing & Advertising",
+    "81": "Newspapers", "82": "Publishing", "83": "Printing",
+    "84": "Information Services", "85": "Libraries",
+    "86": "Environmental Services", "87": "Package/Freight Delivery",
+    "88": "Individual & Family Services", "89": "Religious Institutions",
+    "90": "Civic & Social Organization", "91": "Consumer Services",
+    "92": "Transportation/Trucking/Railroad", "93": "Warehousing",
+    "94": "Airlines/Aviation", "95": "Maritime",
+    "96": "Information Technology & Services", "97": "Market Research",
+    "98": "Public Relations & Communications", "99": "Design",
+    "100": "Nonprofit Organization Management", "101": "Fund-Raising",
+    "102": "Program Development", "103": "Writing & Editing",
+    "104": "Staffing & Recruiting", "105": "Professional Training & Coaching",
+    "106": "Venture Capital & Private Equity",
+    "107": "Political Organization", "108": "Translation & Localization",
+    "109": "Computer Games", "110": "Events Services", "111": "Arts & Crafts",
+    "112": "Electrical/Electronic Manufacturing", "113": "Online Media",
+    "114": "Nanotechnology", "115": "Music",
+    "116": "Logistics & Supply Chain", "117": "Plastics",
+    "118": "Computer & Network Security", "119": "Wireless",
+    "120": "Alternative Dispute Resolution",
+    "121": "Security & Investigations", "122": "Facilities Services",
+    "123": "Outsourcing/Offshoring", "124": "Health, Wellness & Fitness",
+    "125": "Alternative Medicine", "126": "Media Production",
+    "127": "Animation", "128": "Commercial Real Estate",
+    "129": "Capital Markets", "130": "Think Tanks", "131": "Philanthropy",
+    "132": "E-Learning", "133": "Wholesale", "134": "Import & Export",
+    "135": "Mechanical or Industrial Engineering", "136": "Photography",
+    "137": "Human Resources", "138": "Business Supplies & Equipment",
+    "139": "Mental Health Care", "140": "Graphic Design",
+    "141": "International Trade & Development", "142": "Wine & Spirits",
+    "143": "Luxury Goods & Jewelry", "144": "Renewables & Environment",
+    "145": "Glass, Ceramics & Concrete", "146": "Packaging & Containers",
+    "147": "Industrial Automation", "148": "Government Relations",
+}
+
+# Which static table answers a reference ``kind``, before any API call.
+_STATIC_REFERENCE_TABLES: dict[str, dict[str, str]] = {"industry": INDUSTRY_LABELS}
+
+
+def urn_id(urn: str) -> str:
+    """Trailing id of a URN. Non-URN values (``SIZE_51_TO_200``) pass through."""
+    return str(urn or "").strip().split(":")[-1]
+
+
+def static_reference_label(kind: str, ref_id: str) -> str | None:
+    """A locally known label for a reference id, or None if we have to ask the API."""
+    return _STATIC_REFERENCE_TABLES.get(kind, {}).get(str(ref_id).strip())
 
 
 def humanize_staff_range(value: str) -> str:
@@ -91,6 +177,29 @@ REFERENCE_FALLBACK: dict[str, str] = {
     "title": "Job title",
     "organization": "Company",
 }
+# The standardized-data taxonomies below live on LinkedIn's **/v2** base, not the
+# versioned **/rest** one: asked for through /rest they answer "No virtual
+# resource found for: geo" and every label degrades to a raw id. Organizations
+# are the exception — organizationsLookup *is* a versioned resource. Callers own
+# the transport, so this set is what tells them which base a kind needs.
+STANDARDIZED_DATA_KINDS = frozenset({"industry", "geo", "country", "title"})
+
+# An unresolved label is the fallback placeholder plus a bare id — "Region
+# 90000070", "Industry 1862", "Job title 5678". Recognising one lets a reader
+# re-label it (a static taxonomy may know it now) or drop it, rather than showing
+# a client an id dressed up as a category.
+_UNRESOLVED_LABEL_RE = re.compile(
+    r"^(?:%s)\s+\d+$"
+    % "|".join(
+        re.escape(word)
+        for word in sorted(set(REFERENCE_FALLBACK.values()) | {"Seniority", "Function"})
+    )
+)
+
+
+def is_unresolved_label(label: str) -> bool:
+    """True when ``label`` is still a placeholder standing in for a raw id."""
+    return bool(_UNRESOLVED_LABEL_RE.match(str(label or "").strip()))
 
 
 def reference_fallback_label(kind: str, ref_id: str) -> str:
@@ -135,6 +244,10 @@ def resolve_reference_label(
     key = f"{kind}:{ref_id}"
     if key in cache:
         return cache[key]
+    static = static_reference_label(kind, ref_id)
+    if static:
+        cache[key] = static
+        return static
     fallback = reference_fallback_label(kind, ref_id)
     endpoint = REFERENCE_ENDPOINTS.get(kind, kind)
     try:
@@ -144,4 +257,39 @@ def resolve_reference_label(
         label = fallback
     label = str(label or fallback)
     cache[key] = label
+    return label
+
+
+# Demographic dimension -> the static table that labels it. Both spellings of the
+# function dimension appear: organic follower demographics call it "function",
+# ads member demographics "job_function".
+_DIMENSION_TABLES: dict[str, dict[str, str]] = {
+    "seniority": SENIORITY_LABELS,
+    "function": FUNCTION_LABELS,
+    "job_function": FUNCTION_LABELS,
+    "industry": INDUSTRY_LABELS,
+}
+
+
+def relabel_demographic(dimension: str, category: str, category_urn: str) -> str:
+    """Re-label a stored demographic category that never resolved.
+
+    Labels are resolved once, at sync time, and stored alongside the raw URN — so
+    a category that fell back to a placeholder keeps that placeholder until the
+    next sync. A reader calls this to apply what the static taxonomies know
+    *now*, which turns "Industry 105" back into "Professional Training &
+    Coaching" on the next page load instead of the next sync. A label that
+    already resolved is returned untouched.
+    """
+    label = str(category or "").strip()
+    if label and not is_unresolved_label(label):
+        return label
+    ref_id = urn_id(category_urn)
+    if not ref_id:
+        return label
+    table = _DIMENSION_TABLES.get(str(dimension or "").strip())
+    if table is not None:
+        return table.get(ref_id) or label
+    if dimension == "company_size":
+        return humanize_staff_range(category_urn)
     return label

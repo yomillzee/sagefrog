@@ -62,6 +62,22 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-08-22",
+        title="Follower demographics name industries instead of numbering them",
+        area="Client dashboards · LinkedIn Organic",
+        kind="fixed",
+        summary=(
+            "The By industry panel read “Industry 11”, “Industry 105” — LinkedIn "
+            "ids, not industries. It now names them (“Management Consulting”, "
+            "“Professional Training & Coaching”), and any category that still "
+            "can't be named is left out rather than shown as an id."
+        ),
+        details=(
+            "Existing dashboards fix themselves on the next page load — no re-sync needed.",
+            "By region and the paid Job title / Industry breakdowns were looking names up the wrong way and get the same fix; regions fill in on the next overnight sync.",
+        ),
+    ),
+    Entry(
         date="2026-08-20",
         title="Three more metrics on Website Analytics' session card",
         area="Client dashboards · Website Analytics",
