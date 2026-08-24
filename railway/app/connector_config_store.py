@@ -13,7 +13,7 @@ import db_migrate
 import web_users
 
 VALID_CONNECTOR_TYPES = frozenset(
-    {"linkedin_ads", "meta_ads", "google_ads", "microsoft_ads", "ga4", "gsc", "hubspot", "circle", "gtm", "semrush", "pagespeed"}
+    {"linkedin_ads", "meta_ads", "google_ads", "microsoft_ads", "ga4", "gsc", "hubspot", "circle", "gtm", "semrush", "pagespeed", "bluesky"}
 )
 
 SCHEMA_SQL_STATEMENTS = [
