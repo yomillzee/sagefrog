@@ -63,6 +63,26 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-24",
+        title="Campaign explorer: see one conversion action at a time",
+        area="Client dashboards · Campaign explorer",
+        kind="new",
+        summary=(
+            "The Conv. column now has a selector next to it. Pick a single "
+            "conversion action — Contact form, Phone call, a Microsoft goal, "
+            "Meta leads — and the whole table, the total row and the "
+            "Conversions card narrow to just that action."
+        ),
+        details=(
+            "One list across every platform, ordered by how much each action actually converted.",
+            "Google and Meta answer at every level of the tree; Microsoft answers per ad group, so its individual ads show a dash rather than a made-up split.",
+            "LinkedIn shows a dash throughout — its reporting can’t say which campaign a conversion belongs to.",
+            "A dash always means “this platform doesn’t report that far down”, never zero.",
+            "The choice sticks between visits, and the vs-previous arrow steps aside while an action is selected.",
+            "Nothing changes until somebody picks an action, and the actions appear after each platform’s next sync.",
+        ),
+    ),
+    Entry(
+        date="2026-08-24",
         title="Bluesky has a dashboard page",
         area="Client dashboards · Bluesky",
         kind="new",

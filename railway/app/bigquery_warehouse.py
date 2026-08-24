@@ -572,6 +572,132 @@ def mirror_microsoft_ad_daily_batch(account_id: str, rows: list[dict[str, Any]])
     return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
 
 
+def _microsoft_goal_daily_schema() -> list[Any]:
+    """Per-conversion-goal daily rows from the Goals and Funnels report.
+
+    Ad-group grain — Microsoft's report has no AdId column — and conversion
+    metrics only: a row scoped to one goal has no share of the ad group's cost.
+    """
+    bigquery = _bigquery()
+    S = bigquery.SchemaField
+    return [
+        S("source", "STRING", mode="REQUIRED"),
+        S("account_id", "STRING", mode="REQUIRED"),
+        S("campaign_id", "STRING", mode="REQUIRED"),
+        S("campaign_name", "STRING", mode="NULLABLE"),
+        S("ad_group_id", "STRING", mode="REQUIRED"),
+        S("ad_group_name", "STRING", mode="NULLABLE"),
+        S("goal_id", "STRING", mode="NULLABLE"),
+        S("goal_name", "STRING", mode="REQUIRED"),
+        S("metric_date", "DATE", mode="REQUIRED"),
+        S("conversions", "FLOAT64", mode="NULLABLE"),
+        S("conversion_value", "FLOAT64", mode="NULLABLE"),
+        S("synced_at", "TIMESTAMP", mode="NULLABLE"),
+    ]
+
+
+def mirror_microsoft_goal_daily_batch(
+    account_id: str, rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Replace the per-goal breakdown for the days this batch covers.
+
+    DELETE-then-INSERT for the same reason the Meta one is: a goal that stops
+    converting stops appearing in the report entirely rather than arriving as a
+    zero, so a MERGE would leave the last non-zero row standing forever.
+    """
+    if not rows or not enabled("microsoft"):
+        return {"enabled": False, "rows_upserted": 0, "table": None}
+    account_id_clean = str(account_id).strip().split(":")[-1]
+    client, base_table = _target("microsoft")
+    table_id = base_table.rsplit(".", 1)[0] + ".goal_daily"
+    bigquery = _bigquery()
+    schema = _microsoft_goal_daily_schema()
+    dataset_ref = ".".join(table_id.split(".")[:2])
+    client.create_dataset(bigquery.Dataset(dataset_ref), exists_ok=True)
+    table = bigquery.Table(table_id, schema=schema)
+    table.time_partitioning = bigquery.TimePartitioning(field="metric_date")
+    table.clustering_fields = ["source", "account_id", "campaign_id", "ad_group_id"]
+    client.create_table(table, exists_ok=True)
+
+    synced_at = datetime.now(timezone.utc).isoformat()
+    payload = []
+    days: set[str] = set()
+    for row in rows:
+        metric_date = str(row.get("metric_date") or "")[:10]
+        campaign_id = str(row.get("campaign_id") or "").strip()
+        goal_name = str(row.get("goal_name") or "").strip()
+        if not metric_date or not campaign_id or not goal_name:
+            continue
+        days.add(metric_date)
+        payload.append({
+            "source": str(row.get("source") or "microsoft"),
+            "account_id": account_id_clean,
+            "campaign_id": campaign_id,
+            "campaign_name": row.get("campaign_name"),
+            "ad_group_id": str(row.get("ad_group_id") or "").strip() or "0",
+            "ad_group_name": row.get("ad_group_name"),
+            "goal_id": str(row.get("goal_id") or "").strip() or None,
+            "goal_name": goal_name,
+            "metric_date": metric_date,
+            "conversions": float(row.get("conversions") or 0),
+            "conversion_value": float(row.get("conversion_value") or 0),
+            "synced_at": synced_at,
+        })
+    if not payload:
+        return {"enabled": True, "rows_upserted": 0, "table": table_id}
+
+    client.query(
+        f"DELETE FROM `{table_id}` "
+        f"WHERE account_id = '{account_id_clean}' "
+        f"  AND metric_date BETWEEN '{min(days)}' AND '{max(days)}'"
+    ).result()
+    job_config = bigquery.LoadJobConfig(schema=schema, write_disposition="WRITE_APPEND")
+    client.load_table_from_json(payload, table_id, job_config=job_config).result()
+    return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
+
+
+def create_microsoft_conversion_action_mart_view() -> dict[str, Any]:
+    """Expose raw_microsoft_ads.goal_daily as the explorer's per-goal view.
+
+    Returns pending_data when the raw table doesn't exist yet — a client synced
+    before the Goals and Funnels report was added has none until it re-syncs,
+    and CREATE VIEW over a missing table would fail the whole rebuild.
+    """
+    project_id = _route_value("project") or (
+        os.getenv("BQ_WAREHOUSE_PROJECT_ID") or os.getenv("BQ_PROJECT_ID") or ""
+    ).strip()
+    if not project_id:
+        return {"status": "failed", "error": "missing_project"}
+    raw_dataset = _dataset_id("microsoft")
+    mart_dataset = _mart_dataset_id()
+    client = _client(project_id)
+    bigquery = _bigquery()
+    client.create_dataset(bigquery.Dataset(f"{project_id}.{mart_dataset}"), exists_ok=True)
+    raw_table_id = f"{project_id}.{raw_dataset}.goal_daily"
+    try:
+        client.get_table(raw_table_id)
+    except Exception:
+        return {"status": "pending_data", "table": None}
+    view_id = f"{project_id}.{mart_dataset}.explorer_microsoft_conversion_action_daily"
+    select_sql = f"""
+    SELECT
+      source,
+      account_id,
+      campaign_id,
+      campaign_name,
+      ad_group_id,
+      ad_group_name,
+      goal_id,
+      goal_name,
+      metric_date AS date,
+      conversions,
+      conversion_value
+    FROM `{raw_table_id}`
+    """
+    _replace_object_with_view(client, view_id, select_sql)
+    return {"status": "success", "table": view_id, "raw_table": raw_table_id}
+
+
 def create_microsoft_ads_mart_view() -> dict[str, Any]:
     """Build the Microsoft Ads campaign explorer view the dashboard queries.
 
@@ -1157,6 +1283,7 @@ _DEFAULT_META_CAMPAIGN_TABLE = "campaign_daily"
 _DEFAULT_META_ADSET_TABLE = "adset_daily"
 _DEFAULT_META_AD_TABLE = "ad_daily"
 _DEFAULT_META_AD_CREATIVE_TABLE = "ad_creative"
+_DEFAULT_META_AD_CONVERSION_ACTION_TABLE = "ad_conversion_action_daily"
 _DEFAULT_META_CAMPAIGN_FACT_TABLE = "fact_meta_ads_campaign_daily"
 _DEFAULT_META_ADSET_FACT_TABLE = "fact_meta_ads_adset_daily"
 _DEFAULT_META_AD_FACT_TABLE = "fact_meta_ads_ad_daily"
@@ -1219,6 +1346,31 @@ def _meta_ad_daily_schema() -> list[Any]:
         bigquery.SchemaField("spend", "FLOAT64", mode="REQUIRED"),
         bigquery.SchemaField("clicks", "INT64", mode="REQUIRED"),
         bigquery.SchemaField("impressions", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("conversions", "FLOAT64", mode="REQUIRED"),
+        bigquery.SchemaField("conversion_value", "FLOAT64", mode="REQUIRED"),
+        bigquery.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"),
+    ]
+
+
+def _meta_ad_conversion_action_schema() -> list[Any]:
+    """Per-result-token daily conversions for one Meta ad.
+
+    No spend/clicks/impressions: a row scoped to one action has no share of the
+    ad's cost. ``is_result`` marks the tokens that make up the ad's headline
+    ``conversions`` (its ad set's optimization goal) — the rest are the other
+    events the same insights call reported.
+    """
+    bigquery = _bigquery()
+    return [
+        bigquery.SchemaField("client_key", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("account_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("ad_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("adset_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("campaign_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("action_token", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("action_label", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("is_result", "BOOL", mode="NULLABLE"),
+        bigquery.SchemaField("metric_date", "DATE", mode="REQUIRED"),
         bigquery.SchemaField("conversions", "FLOAT64", mode="REQUIRED"),
         bigquery.SchemaField("conversion_value", "FLOAT64", mode="REQUIRED"),
         bigquery.SchemaField("synced_at", "TIMESTAMP", mode="REQUIRED"),
@@ -1524,12 +1676,71 @@ def mirror_meta_ad_creative_batch(account_id: str, rows: list[dict[str, Any]], *
     return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
 
 
+def mirror_meta_ad_conversion_action_batch(
+    account_id: str, rows: list[dict[str, Any]], *, client_key: str = ""
+) -> dict[str, Any]:
+    """Replace the per-action breakdown for the days this batch covers.
+
+    DELETE-then-INSERT rather than MERGE, scoped to (account, day): an ad that
+    stopped recording an action would keep a stale row forever under a MERGE,
+    because the key simply stops arriving instead of arriving as a zero.
+    """
+    if not rows:
+        return {"enabled": True, "rows_upserted": 0, "table": None}
+    account_id_clean = str(account_id).strip().lstrip("act_").split(":")[-1]
+    table_id = _ensure_meta_table(
+        _DEFAULT_META_AD_CONVERSION_ACTION_TABLE, _meta_ad_conversion_action_schema()
+    )
+    client = _meta_client()
+    bigquery = _bigquery()
+    synced_at = datetime.now(timezone.utc).isoformat()
+    payload = []
+    days: set[str] = set()
+    for row in rows:
+        aid = str(row.get("ad_id") or "").strip()
+        token = str(row.get("action_token") or "").strip()
+        md = str(row.get("metric_date") or "")[:10]
+        if not aid or not token or not md:
+            continue
+        days.add(md)
+        payload.append({
+            "client_key": client_key or None,
+            "account_id": account_id_clean,
+            "ad_id": aid,
+            "adset_id": str(row.get("adset_id") or "").strip() or None,
+            "campaign_id": str(row.get("campaign_id") or "").strip() or None,
+            "action_token": token,
+            "action_label": str(row.get("action_label") or token),
+            "is_result": bool(row.get("is_result")),
+            "metric_date": md,
+            "conversions": float(row.get("conversions") or 0),
+            "conversion_value": float(row.get("conversion_value") or 0),
+            "synced_at": synced_at,
+        })
+    if not payload:
+        return {"enabled": True, "rows_upserted": 0, "table": table_id}
+
+    client.query(
+        f"DELETE FROM `{table_id}` "
+        f"WHERE account_id = '{account_id_clean}' "
+        f"  AND metric_date BETWEEN '{min(days)}' AND '{max(days)}'"
+    ).result()
+    job_config = bigquery.LoadJobConfig(
+        schema=_meta_ad_conversion_action_schema(), write_disposition="WRITE_APPEND"
+    )
+    client.load_table_from_json(payload, table_id, job_config=job_config).result()
+    return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
+
+
 def ensure_meta_tables() -> None:
     """Create all Meta raw tables if they don't exist. Call before create_meta_mart_views."""
     _ensure_meta_table(_DEFAULT_META_CAMPAIGN_TABLE, _meta_campaign_daily_schema())
     _ensure_meta_table(_DEFAULT_META_ADSET_TABLE, _meta_adset_daily_schema())
     _ensure_meta_table(_DEFAULT_META_AD_TABLE, _meta_ad_daily_schema())
     _ensure_meta_table(_DEFAULT_META_AD_CREATIVE_TABLE, _meta_ad_creative_schema())
+    _ensure_meta_table(
+        _DEFAULT_META_AD_CONVERSION_ACTION_TABLE, _meta_ad_conversion_action_schema()
+    )
 
 
 def create_meta_mart_views() -> dict[str, Any]:
@@ -1608,6 +1819,28 @@ def create_meta_mart_views() -> dict[str, Any]:
     """
     client.query(ad_sql).result()
     views_created.append(ad_fact_id)
+
+    # Per-action breakdown the explorer's Conv. selector reads. Same ad grain as
+    # the ad view above, so the UI matches it on ad_id and rolls it up the tree.
+    conv_view_id = f"{project_id}.{mart_dataset}.explorer_meta_conversion_action_daily"
+    conv_sql = f"""
+    CREATE OR REPLACE VIEW `{conv_view_id}` AS
+    SELECT
+      client_key,
+      account_id,
+      campaign_id,
+      adset_id,
+      ad_id,
+      action_token,
+      action_label,
+      is_result,
+      metric_date AS date,
+      conversions,
+      conversion_value
+    FROM `{project_id}.{dataset_id}.{_DEFAULT_META_AD_CONVERSION_ACTION_TABLE}`
+    """
+    client.query(conv_sql).result()
+    views_created.append(conv_view_id)
 
     return {"enabled": True, "views": views_created}
 

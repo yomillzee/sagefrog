@@ -963,6 +963,89 @@ def _build_linkedin_verified(payload: dict) -> dict:
             "events": events, "by_group_name": by_group, "by_group_name_event": by_group_event}
 
 
+# Platform conversion actions — the split behind the explorer's Conv. selector.
+# Demo numbers are derived from the same explorer metrics the tree shows, so a
+# selected action never exceeds the Conv. it is a slice of, and the shares add
+# up to the whole. Google/Meta are ad-grain; Microsoft is ad-group grain,
+# matching what each real API can actually report.
+_GOOGLE_CONVERSION_ACTIONS = ("Contact form", "Phone call", "Demo request")
+_META_CONVERSION_ACTIONS = ("Leads", "Content views", "Link clicks")
+_MICROSOFT_CONVERSION_ACTIONS = ("Contact form", "Quote request")
+
+
+def _split_conversions(total: float, names: tuple[str, ...], seed: Any) -> dict[str, float]:
+    """Deal ``total`` out across ``names`` as a deterministic, exact partition."""
+    weights = [0.2 + _u(seed, "cs", n) for n in names]
+    denom = sum(weights) or 1.0
+    out: dict[str, float] = {}
+    left = round(float(total), 1)
+    for i, name in enumerate(names):
+        if i == len(names) - 1:
+            share = round(left, 1)
+        else:
+            share = round(float(total) * weights[i] / denom, 1)
+            left = round(left - share, 1)
+        if share > 0:
+            out[name] = share
+    return out
+
+
+def _conversion_action_payload(payload: dict, by_entity: dict, names: tuple[str, ...],
+                               grain: str) -> dict:
+    start, end = _dates(payload)
+    totals: dict[str, float] = {}
+    for actions in by_entity.values():
+        for name, value in actions.items():
+            totals[name] = round(totals.get(name, 0.0) + value, 1)
+    return {
+        "client": "demo",
+        "date_range": _date_range(start, end),
+        "grain": grain,
+        "actions": [
+            {"name": n, "total": totals.get(n, 0.0)}
+            for n in sorted(names, key=lambda n: -totals.get(n, 0.0))
+            if totals.get(n)
+        ],
+        "by_entity": by_entity,
+    }
+
+
+def _build_google_conversion_actions(payload: dict) -> dict:
+    rows = _build_google_ads_explorer(payload)["rows"]
+    by_entity = {
+        r["ad_id"]: _split_conversions(r["conversions"], _GOOGLE_CONVERSION_ACTIONS, r["ad_id"])
+        for r in rows if r.get("ad_id")
+    }
+    return _conversion_action_payload(payload, by_entity, _GOOGLE_CONVERSION_ACTIONS, "ad")
+
+
+def _build_meta_conversion_actions(payload: dict) -> dict:
+    rows = _build_meta_explorer(payload)["rows"]
+    by_entity = {
+        r["ad_id"]: _split_conversions(r["conversions"], _META_CONVERSION_ACTIONS, r["ad_id"])
+        for r in rows if r.get("ad_id")
+    }
+    return _conversion_action_payload(payload, by_entity, _META_CONVERSION_ACTIONS, "ad")
+
+
+def _build_microsoft_conversion_actions(payload: dict) -> dict:
+    rows = _build_microsoft_explorer(payload)["rows"]
+    # Ad-group grain: roll the ad rows up first, then split, so the breakdown
+    # sums to the ad group's Conv. exactly the way the real report does.
+    by_group: dict[str, float] = {}
+    for r in rows:
+        gid = str(r.get("ad_group_id") or "")
+        if gid:
+            by_group[gid] = by_group.get(gid, 0.0) + float(r.get("conversions") or 0)
+    by_entity = {
+        gid: _split_conversions(total, _MICROSOFT_CONVERSION_ACTIONS, gid)
+        for gid, total in by_group.items()
+    }
+    return _conversion_action_payload(
+        payload, by_entity, _MICROSOFT_CONVERSION_ACTIONS, "ad_group"
+    )
+
+
 # --- Builders: Search Console / SEMrush / PageSpeed ---------------------------
 
 def _build_gsc_summary(payload: dict) -> dict:
@@ -1249,6 +1332,9 @@ _BUILDERS = {
     "explorer.meta_verified": _build_meta_verified,
     "explorer.google_verified": _build_google_verified,
     "explorer.linkedin_verified": _build_linkedin_verified,
+    "explorer.google_conversion_actions": _build_google_conversion_actions,
+    "explorer.meta_conversion_actions": _build_meta_conversion_actions,
+    "explorer.microsoft_conversion_actions": _build_microsoft_conversion_actions,
     "gsc.summary": _build_gsc_summary,
     "gsc.keyword_matches": _build_gsc_keyword_matches,
     "gsc.keyword_weekly_trend": _build_gsc_keyword_weekly,

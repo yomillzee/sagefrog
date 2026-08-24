@@ -102,6 +102,18 @@ class MicrosoftAdsConnector(ConnectorHandler):
             ad_rows = microsoft_ads_service.fetch_ad_daily_metrics(
                 account_id, start=start, end=end, access_token=access_token, customer_id=customer_id
             )
+            # Per-goal conversions (Goals and Funnels report) — what the Campaign
+            # Explorer's Conv. selector splits the number by. Best effort: an
+            # account that tracks no goals returns nothing, and the rest of the
+            # sync must not fail over a missing breakdown.
+            goal_rows: list[dict[str, Any]] = []
+            try:
+                goal_rows = microsoft_ads_service.fetch_goal_daily_metrics(
+                    account_id, start=start, end=end,
+                    access_token=access_token, customer_id=customer_id,
+                )
+            except Exception as exc:
+                _log.warning("Microsoft Ads goal report skipped [%s]: %s", client_slug, exc)
             # Enrich ad rows with the full creative copy (RSA headline/description
             # asset lists) from Campaign Management — the reporting API returns
             # blank title parts for responsive search ads. Best-effort: a failure
@@ -128,6 +140,10 @@ class MicrosoftAdsConnector(ConnectorHandler):
                     account_id, ad_rows
                 )
                 rows_written += ad_mirrored.get("rows_upserted") or 0
+                goal_mirrored = bigquery_warehouse.mirror_microsoft_goal_daily_batch(
+                    account_id, goal_rows
+                )
+                rows_written += goal_mirrored.get("rows_upserted") or 0
                 # Rebuild vw_paid_media_daily + mart_health so the dashboard
                 # Overview populates from this sync. Idempotent; includes whichever
                 # of the raw campaign_daily tables currently exist.
@@ -136,6 +152,9 @@ class MicrosoftAdsConnector(ConnectorHandler):
                 # (explorer_microsoft_ads_daily) — ad-level when ad_daily exists,
                 # campaign-level fallback otherwise.
                 bigquery_warehouse.create_microsoft_ads_mart_view()
+                # Per-goal view the Conv. selector reads; no-ops until the
+                # Goals and Funnels report has written a raw table.
+                bigquery_warehouse.create_microsoft_conversion_action_mart_view()
             return SyncResult(rows_loaded=rows_written, range_start=start, range_end=end)
         except Exception as exc:
             _log.warning("Microsoft Ads sync failed [%s]: %s", client_slug, exc)
