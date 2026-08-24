@@ -90,6 +90,7 @@ def all_handlers() -> dict[str, ConnectorHandler]:
 CONNECTOR_ORDER = [
     "linkedin_ads",
     "linkedin_organic",
+    "bluesky",
     "meta_ads",
     "google_ads",
     "microsoft_ads",

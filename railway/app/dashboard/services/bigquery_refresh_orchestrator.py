@@ -25,7 +25,7 @@ def ingestion_window(trigger: str, *, today: date | None = None) -> tuple[date, 
 # Data connectors driven by the daily refresh, in sync order. One per-client
 # path for all of them; GTM (tag-container config, not a BQ data source) stays
 # out. GSC + HubSpot self-route from their connector config like the rest.
-_SYNC_CONNECTORS = ["ga4", "google_ads", "meta_ads", "linkedin_ads", "microsoft_ads", "gsc", "hubspot", "semrush", "pagespeed"]
+_SYNC_CONNECTORS = ["ga4", "google_ads", "meta_ads", "linkedin_ads", "microsoft_ads", "gsc", "hubspot", "semrush", "pagespeed", "bluesky"]
 
 
 def _trigger_date_range(trigger: str) -> str:

@@ -62,6 +62,23 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-08-24",
+        title="Bluesky joins the connector directory",
+        area="Connectors · Bluesky",
+        kind="new",
+        summary=(
+            "You can now connect a client's Bluesky account and sync its "
+            "followers and post engagement on the same nightly schedule as "
+            "every other source — all it needs is the handle."
+        ),
+        details=(
+            "No login or password: paste the handle (or the profile link) and test the connection.",
+            "Each sync records followers, following and post count, plus likes, reposts, replies and quotes for every post in the window.",
+            "Bluesky publishes no impressions, reach or clicks, so those columns stay empty — the network does not measure them.",
+            "Engagement counts keep rising after a post goes out, so each day is stored as its own snapshot and late likes still show up.",
+        ),
+    ),
+    Entry(
         date="2026-08-20",
         title="Three more metrics on Website Analytics' session card",
         area="Client dashboards · Website Analytics",
