@@ -205,6 +205,38 @@ def linkedin_organic_page(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Bluesky page (organic social posts, followers, engagement)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("/dashboard/{client_slug}/bluesky", response_class=HTMLResponse)
+def bluesky_page(
+    client_slug: str,
+    request: Request,
+):
+    slug = validate_client_slug(client_slug)
+    redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug)
+    if redirect:
+        return redirect
+
+    import bluesky_report_service
+    import client_config
+    from dashboard.renderers import bluesky_renderer
+
+    cfg = client_config.load_client_config(slug)
+    label = cfg.label if cfg else slug
+
+    range_days = bluesky_renderer.sanitize_range_days(request.query_params.get("range"))
+    report = bluesky_report_service.build_report(slug, days=range_days)
+    return HTMLResponse(bluesky_renderer.render_bluesky(
+        client_slug=slug,
+        label=label,
+        report=report,
+        range_days=range_days,
+        **_session_kw(access_key, use_session, session_email, session_is_admin),
+    ))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Connector detail page (wizard or management)
 # ──────────────────────────────────────────────────────────────────────────────
 

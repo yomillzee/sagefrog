@@ -93,6 +93,20 @@ def linkedin_organic_page_url(
     return base
 
 
+def bluesky_page_url(
+    *,
+    client_slug: str = "penn",
+    access_key: str | None,
+    use_session: bool,
+) -> str | None:
+    base = f"/dashboard/{client_slug}/bluesky"
+    if use_session:
+        return base
+    if access_key:
+        return f"{base}?key={quote(access_key, safe='')}"
+    return base
+
+
 def gtm_page_url(
     *,
     client_slug: str = "penn",

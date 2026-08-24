@@ -240,6 +240,7 @@ SIDEBAR_TOGGLEABLE_TABS: tuple[str, ...] = (
     "lead_tracking",
     "email_performance",
     "linkedin_organic",
+    "bluesky",
     "event_tracking",
 )
 

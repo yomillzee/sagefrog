@@ -63,6 +63,23 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-24",
+        title="Bluesky has a dashboard page",
+        area="Client dashboards · Bluesky",
+        kind="new",
+        summary=(
+            "Clients with Bluesky connected get a Bluesky item in the sidebar: "
+            "followers, posts and engagement for the selected date range, a "
+            "follower trend, and the posts that earned the most."
+        ),
+        details=(
+            "Every figure compares against the same length of time immediately before the range, the way LinkedIn Organic does.",
+            "Top posts link straight to the post on Bluesky, and the table sorts by any column.",
+            "The page states plainly that Bluesky has no impressions, reach or clicks, so nobody hunts for columns that can't exist.",
+            "Instead of an engagement rate, which would need impressions, it reports engagements per post.",
+        ),
+    ),
+    Entry(
+        date="2026-08-24",
         title="Bluesky joins the connector directory",
         area="Connectors · Bluesky",
         kind="new",
