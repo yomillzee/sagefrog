@@ -24,6 +24,10 @@ from dashboard.renderers.base_layout import (
     site_footer_html,
 )
 from dashboard.renderers import pagespeed_renderer
+# Script-safe JSON for values embedded in the page's inline <script>: escapes
+# < > & so a stored config value (keyword lists, watchlist, event names) can't
+# close the script tag and run as markup.
+from dashboard.utils.formatting import json_for_html_script as _json_script
 
 
 # ── HubSpot MQL tracker formatting helpers ──────────────────────────────────
@@ -1787,6 +1791,13 @@ def render_bigquery_dashboard_page(
     .metric-card:hover {{ border-color:var(--accent); }}
     .metric-card:focus-visible {{ outline:2px solid var(--accent); outline-offset:2px; }}
     .metric-card.active {{ border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; background:#f3f8ff; }}
+    /* The whole card is the tooltip trigger (.ps-tip, from the Site Performance
+       pane's CSS, which this page already carries): hovering or tabbing to a card
+       explains its metric, so the ? stays decoration rather than becoming a
+       second button nested inside the card's own button. */
+    .metric-card .card-title {{ display:flex; align-items:center; gap:5px; }}
+    .metric-card .ps-info {{ cursor:inherit; }}
+    .metric-card:hover .ps-info, .metric-card:focus-visible .ps-info {{ color:var(--accent); border-color:#b9c8dc; }}
     .card-title {{ color:var(--muted); font-size:.65rem; text-transform:uppercase; font-weight:800; letter-spacing:.06em; }}
     .card-value {{ margin-top:7px; font-size:1.5rem; line-height:1.1; color:var(--navy); font-weight:800; letter-spacing:-.02em; }}
     .card-foot {{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:9px; min-height:22px; }}
@@ -2532,7 +2543,6 @@ def render_bigquery_dashboard_page(
 
       <section id="sec-avgduration">
         <div class="sec-head"><h2>Sessions &amp; engagement <span class="cmp-warn" id="avgDurCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="avgDurStatus"></span></div>
-        <p class="sec-note" id="avgDurNote"></p>
         <div class="cards metric-cards" id="avgDurCards" style="margin-bottom:12px"></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:200px"><canvas id="avgDurTrendChart"></canvas></div></div>
         <div class="cmp-legend" id="avgDurTrendLegend"></div>
@@ -2656,20 +2666,20 @@ def render_bigquery_dashboard_page(
     const PAGESPEED_STRATEGIES = {pagespeed_strategies_json};
     const GSC_KEYWORD_CONFIG_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/keyword-config')}";
     const GSC_KEYWORD_MATCHES_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/keyword-matches')}";
-    const GSC_BRANDED_ROOTS = {json.dumps([s.strip() for s in gsc_branded_roots.splitlines() if s.strip()])};
-    const GSC_TARGET_KEYWORDS = {json.dumps([s.strip() for s in gsc_target_keywords.splitlines() if s.strip()])};
-    const GSC_BRANDED_EXCLUDE = {json.dumps([s.strip() for s in gsc_branded_exclude.splitlines() if s.strip()])};
-    const GSC_TARGET_EXCLUDE = {json.dumps([s.strip() for s in gsc_target_exclude.splitlines() if s.strip()])};
+    const GSC_BRANDED_ROOTS = {_json_script([s.strip() for s in gsc_branded_roots.splitlines() if s.strip()])};
+    const GSC_TARGET_KEYWORDS = {_json_script([s.strip() for s in gsc_target_keywords.splitlines() if s.strip()])};
+    const GSC_BRANDED_EXCLUDE = {_json_script([s.strip() for s in gsc_branded_exclude.splitlines() if s.strip()])};
+    const GSC_TARGET_EXCLUDE = {_json_script([s.strip() for s in gsc_target_exclude.splitlines() if s.strip()])};
     const GSC_WATCHLIST_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/watchlist')}";
     const GSC_WATCHLIST_CONFIG_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/watchlist-config')}";
     // [{{kw, page}}] -- the watched keyword and the page it was written for.
-    const GSC_WATCH_ITEMS = {json.dumps(parse_gsc_watchlist(gsc_watch_keywords))};
-    const GSC_BRANDED_RAW = {json.dumps(gsc_branded_roots)};
-    const GSC_TARGET_RAW = {json.dumps(gsc_target_keywords)};
+    const GSC_WATCH_ITEMS = {_json_script(parse_gsc_watchlist(gsc_watch_keywords))};
+    const GSC_BRANDED_RAW = {_json_script(gsc_branded_roots)};
+    const GSC_TARGET_RAW = {_json_script(gsc_target_keywords)};
     const LANDING_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/landing-events')}";
     const TRAFFIC_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-key-events')}";
     const USER_ACQ_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acq-key-events')}";
-    const GA4_KEY_EVENTS_SAVED = {json.dumps([s.strip() for s in ga4_key_events.splitlines() if s.strip()])};
+    const GA4_KEY_EVENTS_SAVED = {_json_script([s.strip() for s in ga4_key_events.splitlines() if s.strip()])};
     // Website Analytics page-path scope: patterns the admin set (empty = whole
     // site). When non-empty, the page-path panels come back pre-scoped from the
     // server; the JS hides the site-wide panels and shows a scope indicator.
@@ -4744,9 +4754,8 @@ def render_bigquery_dashboard_page(
           snote.hidden = false;
           snote.textContent = 'Sessions that viewed a page matching this filter. A session that viewed more than one matching page is counted once per page, the same as GA4’s per-page Sessions metric.';
         }}
-        // Sessions & engagement names its own scope in each metric's note
-        // (AVG_DUR_METRICS[].scopedNote), so there is nothing to overwrite
-        // here -- avgDurUpdateNote() picks the scoped sentence.
+        // Sessions & engagement names its own scope in each card's tooltip
+        // (AVG_DUR_METRICS[].scopedTip), so there is nothing to say here.
         // Demographics keeps its geography half (served page-scoped) and drops
         // age/gender, which are user-scoped in GA4 with no page to scope by —
         // so the section is geography only, and says so.
@@ -6835,26 +6844,26 @@ def render_bigquery_dashboard_page(
       {{
         key:'sessions', label:'Total sessions', color:'#1d6fd0',
         fmt: v => v==null ? '\u2014' : count(v),
-        note:'Sessions on the site in this range, by week (starting Monday) — smooths out ordinary day-to-day swings so a trend is easier to read.',
-        scopedNote:'Sessions that started on a page matching this filter, by week (starting Monday).',
+        tip:'Sessions on the site in this range, by week (starting Monday) — smooths out ordinary day-to-day swings so a trend is easier to read.',
+        scopedTip:'Sessions that started on a page matching this filter, by week (starting Monday).',
       }},
       {{
         key:'new_users', label:'New users', color:'#0a7f3f',
         fmt: v => v==null ? '\u2014' : count(v),
-        note:'Visitors GA4 had not seen before, by week (starting Monday).',
-        scopedNote:'Visitors GA4 had not seen before whose session started on a page matching this filter, by week (starting Monday).',
+        tip:'Visitors GA4 had not seen before, by week (starting Monday).',
+        scopedTip:'Visitors GA4 had not seen before whose session started on a page matching this filter, by week (starting Monday).',
       }},
       {{
         key:'engagement_rate', label:'Engagement rate', color:'#7c3aed',
         fmt: v => v==null ? '\u2014' : num(v).toFixed(1)+'%',
-        note:'Share of sessions GA4 counts as engaged — lasted 10+ seconds, fired a key event, or viewed 2+ pages — re-derived from each week\u2019s totals rather than averaging daily rates.',
-        scopedNote:'Share of the sessions that viewed a page matching this filter that GA4 counts as engaged — lasted 10+ seconds, fired a key event, or viewed 2+ pages.',
+        tip:'Share of sessions GA4 counts as engaged — lasted 10+ seconds, fired a key event, or viewed 2+ pages — re-derived from each week\u2019s totals rather than averaging daily rates.',
+        scopedTip:'Share of the sessions that viewed a page matching this filter that GA4 counts as engaged — lasted 10+ seconds, fired a key event, or viewed 2+ pages.',
       }},
       {{
         key:'avg_session_duration_seconds', label:'Avg session duration', color:'#b8600a',
         fmt: v => v==null ? '\u2014' : fmtDuration(v),
-        note:'How long a session lasted on average, weighted by how many sessions each landing page brought in. One point per week (starting Monday) — a single day\u2019s average swings too hard on a handful of visits to be worth reading.',
-        scopedNote:'How long a session that started on a page matching this filter lasted on average, weighted by how many sessions each of those pages brought in. One point per week (starting Monday).',
+        tip:'How long a session lasted on average, weighted by how many sessions each landing page brought in. One point per week (starting Monday) — a single day\u2019s average swings too hard on a handful of visits to be worth reading.',
+        scopedTip:'How long a session that started on a page matching this filter lasted on average, weighted by how many sessions each of those pages brought in. One point per week (starting Monday).',
       }},
     ];
     let avgDurMetric = 'avg_session_duration_seconds';
@@ -6908,25 +6917,28 @@ def render_bigquery_dashboard_page(
       if (key === 'avg_session_duration_seconds') return secs / sess;
       return null;
     }}
-    // Under a page-path scope every one of these metrics reads only the
-    // matching pages, so the note keeps saying so whichever card is selected --
-    // the scoped sentence replaces the site-wide one rather than being
-    // overwritten by it once data lands.
-    function avgDurUpdateNote() {{
-      const note = document.getElementById('avgDurNote');
-      if (!note) return;
-      const m = avgDurMetricDef();
-      note.textContent = pathFilterActive() ? (m.scopedNote || m.note) : m.note;
+    // What a card says on hover. Under a page-path scope every one of these
+    // metrics reads only the matching pages, so the scoped sentence is the one
+    // that explains it. Every card carries its own, rather than one line under
+    // the heading that could only describe whichever card was selected.
+    function avgDurTip(m) {{
+      return (pathFilterActive() ? (m.scopedTip || m.tip) : m.tip) || '';
     }}
     function renderAvgDurCards() {{
       const host = document.getElementById('avgDurCards');
       if (!host) return;
-      host.innerHTML = AVG_DUR_METRICS.map(m => {{
+      host.innerHTML = AVG_DUR_METRICS.map((m, i) => {{
         const v = avgDurMetricValue(avgDurCache.cur, m.key);
         const pv = avgDurMetricValue(avgDurCache.prev, m.key);
-        return `<button type="button" class="card metric-card${{m.key===avgDurMetric?' active':''}}" `
-          + `data-metric="${{esc(m.key)}}" aria-pressed="${{m.key===avgDurMetric?'true':'false'}}">`
-          + `<div class="card-title">${{esc(m.label)}}</div><div class="card-value">${{m.fmt(v)}}</div>${{deltaHtml(v,pv)}}</button>`;
+        const tip = esc(avgDurTip(m));
+        // The first and last bubbles align to their own card edge so they stay
+        // inside the panel instead of hanging off it.
+        const edge = i === 0 ? ' ps-tip--start' : (i === AVG_DUR_METRICS.length - 1 ? ' ps-tip--end' : '');
+        return `<button type="button" class="card metric-card ps-tip ps-tip--wide${{edge}}${{m.key===avgDurMetric?' active':''}}" `
+          + `data-metric="${{esc(m.key)}}" data-tip="${{tip}}" aria-pressed="${{m.key===avgDurMetric?'true':'false'}}">`
+          + `<div class="card-title">${{esc(m.label)}}<span class="ps-info" aria-hidden="true">?</span></div>`
+          + `<div class="card-value">${{m.fmt(v)}}</div>${{deltaHtml(v,pv)}}`
+          + `<span class="sr-only">${{tip}}</span></button>`;
       }}).join('');
       host.querySelectorAll('.metric-card').forEach(btn => btn.addEventListener('click', () => {{
         if (btn.dataset.metric === avgDurMetric) return;
@@ -6936,7 +6948,6 @@ def render_bigquery_dashboard_page(
           b.classList.toggle('active', active);
           b.setAttribute('aria-pressed', active ? 'true' : 'false');
         }});
-        avgDurUpdateNote();
         renderAvgDurTrend();
       }}));
     }}
@@ -6990,7 +7001,6 @@ def render_bigquery_dashboard_page(
     async function loadSessionDuration() {{
       setStatus('avgDurStatus','Loading\u2026');
       document.getElementById('avgDurCards').innerHTML = skelCards(4);
-      avgDurUpdateNote();
       skelChart('avgDurTrendChart','trend-md-svg');
       try {{
         const [cur, prev] = await Promise.all([

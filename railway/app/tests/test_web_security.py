@@ -198,7 +198,17 @@ class WebSecurityMiddlewareTests(unittest.TestCase):
         self.assertEqual(
             c.post("/ga4/query", content=b"body", headers={"X-API-Key": "k"}).status_code, 200
         )
-        self.assertEqual(c.post("/ga4/query?key=legacy", content=b"body").status_code, 200)
+
+    def test_query_param_is_not_a_bypass(self) -> None:
+        """A ``?key=`` in the URL must not exempt a cookie-authed write.
+
+        The legacy share-link mechanism is retired, and a query parameter is
+        attacker-controlled anyway: a cross-site form can point its action at
+        ``...?key=anything``, so honoring it would hand back the CSRF hole the
+        token exists to close."""
+        c = TestClient(self.app)
+        c.get("/page")  # establish session cookie
+        self.assertEqual(c.post("/ga4/query?key=legacy", content=b"body").status_code, 403)
 
     def test_no_session_bypasses(self) -> None:
         c = TestClient(self.app)

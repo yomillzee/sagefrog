@@ -22,6 +22,7 @@ if "httpx" not in sys.modules:
     sys.modules["httpx"] = types.ModuleType("httpx")
 
 import linkedin_organic_service as organic  # noqa: E402
+import linkedin_service  # noqa: E402
 
 
 class OrganicHelpersTests(unittest.TestCase):
@@ -77,12 +78,21 @@ class OrganicFetchTests(unittest.TestCase):
         "_share_stats_by_urn", "_total_followers", "_reactions_by_urn",
     )
 
+    # Reference-data lookups go through linkedin_service's transport (the v2
+    # base lives there), so that module's getters are snapshotted too.
+    _PATCHED_SERVICE = ("_linkedin_get", "_linkedin_get_with_versions")
+
     def setUp(self) -> None:
         self._orig = {name: getattr(organic, name) for name in self._PATCHED}
+        self._orig_service = {
+            name: getattr(linkedin_service, name) for name in self._PATCHED_SERVICE
+        }
 
     def tearDown(self) -> None:
         for name, fn in self._orig.items():
             setattr(organic, name, fn)
+        for name, fn in self._orig_service.items():
+            setattr(linkedin_service, name, fn)
 
     # ── Post pagination ───────────────────────────────────────────────────────
     # Getting this wrong is invisible in production: page 1 returns 50 real
@@ -392,25 +402,51 @@ class OrganicFetchTests(unittest.TestCase):
         self.assertEqual(rows[0]["unique_impressions"], 320)
         self.assertAlmostEqual(rows[0]["engagement_rate"], 0.07)
 
-    def test_reference_label_uses_correct_endpoint(self) -> None:
+    def test_reference_label_uses_correct_endpoint_and_v2_base(self) -> None:
         seen = {}
 
         def _get(path, **kw):
             seen["path"] = path
+            seen["base"] = kw.get("base")
             return {"name": {"localized": {"en_US": "Hospitals & Health Care"}}}
 
-        organic._linkedin_get_with_versions = _get  # type: ignore
+        linkedin_service._linkedin_get = _get  # type: ignore
         label = organic._resolve_reference_label(
             "industry", "2063", access_token="TOK", env=None, cache={}  # type: ignore
         )
         self.assertEqual(seen["path"], "/industries/2063")  # not "/industrys/"
+        # Standardized data is only served from the v2 base — through the
+        # versioned /rest base this resolves to nothing and the label degrades to
+        # "Industry 2063".
+        self.assertEqual(seen["base"], linkedin_service.LINKEDIN_API_V2_BASE)
         self.assertEqual(label, "Hospitals & Health Care")
+
+    def test_geo_label_resolves_a_metro_area(self) -> None:
+        linkedin_service._linkedin_get = (  # type: ignore
+            lambda path, **kw: {"defaultLocalizedName": {"value": "Greater Boston"}}
+        )
+        label = organic._resolve_reference_label(
+            "geo", "90000007", access_token="TOK", env=None, cache={}  # type: ignore
+        )
+        self.assertEqual(label, "Greater Boston")
+
+    def test_original_industry_codes_need_no_api_call(self) -> None:
+        def _boom(path, **kw):
+            raise AssertionError(f"no lookup expected, got {path}")
+
+        linkedin_service._linkedin_get = _boom  # type: ignore
+        linkedin_service._linkedin_get_with_versions = _boom  # type: ignore
+        label = organic._demographic_label(
+            "industry", "urn:li:industry:105",
+            token="TOK", env=None, cache={},  # type: ignore
+        )
+        self.assertEqual(label, "Professional Training & Coaching")
 
     def test_reference_label_falls_back_readably(self) -> None:
         def _boom(path, **kw):
             raise RuntimeError("404")
 
-        organic._linkedin_get_with_versions = _boom  # type: ignore
+        linkedin_service._linkedin_get = _boom  # type: ignore
         label = organic._resolve_reference_label(
             "geo", "90000077", access_token="TOK", env=None, cache={}  # type: ignore
         )

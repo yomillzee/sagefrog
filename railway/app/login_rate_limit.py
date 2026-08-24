@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 import psycopg
 import db
 
+import db_migrate
 import web_users
 
 log = logging.getLogger(__name__)
@@ -74,12 +75,36 @@ def lockout_seconds() -> int:
         return 900
 
 
+# Guarded the same way as web_users (#297) and dashboard_registry: this
+# ensure_schema() is still called from a read/write path, and its DDL takes an
+# AccessExclusiveLock held until the surrounding transaction commits — two
+# concurrent runs are what deadlocked (DeadlockDetected -> HTTP 500) in #297.
+# Two guards keep it off the hot path: a process-level flag (with a lock, since
+# sync FastAPI handlers run in a threadpool) so the DDL runs at most once per
+# process, and a transaction-scoped advisory lock shared with the central
+# migration runner so this path and the runner serialize on one lock.
+_schema_ready = False
+_schema_lock = threading.Lock()
+_SCHEMA_ADVISORY_LOCK_KEY = db_migrate.SCHEMA_ADVISORY_LOCK_KEY
+
+
 def ensure_schema() -> bool:
+    global _schema_ready
     if not _get_db_url():
         return False
-    with db.connection() as conn:
-        for stmt in SCHEMA_SQL_STATEMENTS:
-            conn.execute(stmt)
+    if _schema_ready:
+        return True
+    with _schema_lock:
+        if _schema_ready:
+            return True
+        with db.connection() as conn:
+            # Only one process runs the DDL at a time; the rest block here, then
+            # re-run the IF NOT EXISTS statements as cheap no-ops. The lock is
+            # released when the transaction commits or rolls back.
+            conn.execute("SELECT pg_advisory_xact_lock(%s)", (_SCHEMA_ADVISORY_LOCK_KEY,))
+            for stmt in SCHEMA_SQL_STATEMENTS:
+                conn.execute(stmt)
+        _schema_ready = True
     return True
 
 

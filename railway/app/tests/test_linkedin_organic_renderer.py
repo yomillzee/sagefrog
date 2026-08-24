@@ -187,6 +187,74 @@ class NewPanelsTests(unittest.TestCase):
         self.assertNotIn('id="loEngagementChart"', html)
 
 
+class PeriodDeltaTests(unittest.TestCase):
+    """Every KPI card compares its window against the preceding one, so the
+    Performance row answers "better or worse than last time?" for more than
+    followers."""
+
+    def setUp(self) -> None:
+        self._orig_shell = R.render_client_shell_page
+        R.render_client_shell_page = lambda **kw: kw["content_html"]  # type: ignore
+
+    def tearDown(self) -> None:
+        R.render_client_shell_page = self._orig_shell  # type: ignore
+
+    def _report_with_prior(self) -> LinkedInOrganicReport:
+        r = _report()
+        r.avg_engagement_rate = 0.05
+        r.total_unique_impressions = 2600
+        r.prev_post_count = 4                  # 2 posts vs 4  -> down 50%
+        r.prev_total_impressions = 3000        # 3,528 vs 3,000 -> up 17.6%
+        r.prev_total_unique_impressions = 2000  # 2,600 vs 2,000 -> up 30%
+        r.prev_total_likes = 140               # 169 vs 140    -> up 20.7%
+        r.prev_total_comments = 2              # 2 vs 2        -> no change
+        r.prev_avg_engagement_rate = 0.04      # 5.0% vs 4.0%  -> up 1 point
+        r.prev_total_page_views = 1000         # 1,132 vs 1,000 -> up 13.2%
+        return r
+
+    def _html(self, report=None, range_days=90) -> str:
+        return R.render_linkedin_organic(
+            client_slug="nixon", label="Nixon Medical",
+            report=self._report_with_prior() if report is None else report,
+            range_days=range_days, use_session=True,
+        )
+
+    def test_every_card_carries_a_change_badge(self) -> None:
+        html = self._html()
+        self.assertIn("\u25bc 50.0%", html)    # Posts
+        self.assertIn("\u25b2 17.6%", html)    # Impressions
+        self.assertIn("\u25b2 30.0%", html)    # Reach
+        self.assertIn("\u25b2 20.7%", html)    # Reactions
+        self.assertIn("\u25b2 13.2%", html)    # Page views
+
+    def test_a_flat_metric_says_so_rather_than_showing_zero(self) -> None:
+        # Comments held at 2 across both windows.
+        self.assertIn('class="lo-delta flat"', self._html())
+
+    def test_engagement_rate_moves_in_points_not_percent(self) -> None:
+        # 4.0% -> 5.0% is a point of engagement, not a 25% rise.
+        html = self._html()
+        self.assertIn("1.00 pts", html)
+        self.assertNotIn("25.0%", html)
+
+    def test_prior_figure_is_available_on_hover(self) -> None:
+        html = self._html()
+        self.assertIn('title="140 in the previous 90 days"', html)
+
+    def test_comparison_window_tracks_the_selected_range(self) -> None:
+        html = self._html(range_days=30)
+        self.assertIn("vs previous 30 days", html)
+        self.assertIn('title="140 in the previous 30 days"', html)
+
+    def test_no_prior_data_means_no_badges(self) -> None:
+        """A client whose sync only reaches back one window shouldn't see every
+        metric flagged as a record — a percentage off zero says nothing."""
+        html = self._html(report=_report())
+        self.assertNotIn("vs previous", html)
+        # The follower card's own in-window gain badge is the only one left.
+        self.assertEqual(html.count("lo-delta"), 1)
+
+
 class DateRangeFilterTests(unittest.TestCase):
     def setUp(self) -> None:
         self._orig_shell = R.render_client_shell_page

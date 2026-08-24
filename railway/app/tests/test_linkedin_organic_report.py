@@ -110,7 +110,7 @@ class BuildReportTests(unittest.TestCase):
         def fake_run_query(sql, **kw):
             calls["n"] += 1
             low = sql.lower()
-            if "count(*) as post_count" in low:
+            if "as post_count" in low:
                 return post_totals
             if "post_stats" in low:
                 return posts
@@ -168,9 +168,9 @@ class BuildReportTests(unittest.TestCase):
             low = sql.lower()
             if "reactions_by_type" in low:
                 return reach
-            if "sum(unique_impressions) as reach" in low:
+            if "as reach" in low:
                 return [{"reach": 510}]
-            if "count(*) as post_count" in low:
+            if "as post_count" in low:
                 return [{"post_count": 2, "impressions": 600, "clicks": 11,
                          "likes": 25, "comments": 4, "shares": 2,
                          "avg_engagement_rate": 0.07}]
@@ -202,6 +202,39 @@ class BuildReportTests(unittest.TestCase):
         self.assertEqual(report.page_mobile_views, 20)
         self.assertIn({"label": "Careers", "views": 12}, report.page_sections)
 
+    def test_unresolved_categories_are_relabelled_or_hidden(self):
+        _install_routing()
+        demographics = [
+            # Stored by a sync whose reference lookups failed: the label is the
+            # raw id dressed up, but the URN next to it still says what it is.
+            {"dimension": "industry", "category": "Industry 105",
+             "category_urn": "urn:li:industry:105",
+             "organic_followers": 9, "paid_followers": 0, "total_followers": 9},
+            {"dimension": "industry", "category": "Industry 1862",
+             "category_urn": "urn:li:industry:1862",
+             "organic_followers": 4, "paid_followers": 0, "total_followers": 4},
+            {"dimension": "region", "category": "Region 90000070",
+             "category_urn": "urn:li:geo:90000070",
+             "organic_followers": 7, "paid_followers": 0, "total_followers": 7},
+        ]
+
+        def fake_run_query(sql, **kw):
+            return demographics if "follower_demographics" in sql.lower() else []
+
+        svc.bigquery_service.run_query = fake_run_query  # type: ignore
+        report = svc.build_report("acme")
+
+        # The original industry codes are known locally, so the label is fixed on
+        # read — no waiting for the next sync.
+        self.assertEqual(
+            [r["category"] for r in report.follower_demographics["industry"]],
+            ["Professional Training & Coaching"],
+        )
+        # Nothing names geo id 90000070 or industry 1862 yet, and a client
+        # shouldn't be shown a LinkedIn id as if it were a demographic — so the
+        # region card disappears instead.
+        self.assertNotIn("region", report.follower_demographics)
+
     def test_totals_come_from_window_aggregate_not_capped_listing(self):
         """The Top-posts read is capped at 50 rows; the KPI totals must not be
         summed from it, or the Performance card stops responding to ?range=."""
@@ -225,9 +258,9 @@ class BuildReportTests(unittest.TestCase):
 
         def fake_run_query(sql, **kw):
             low = sql.lower()
-            if "count(*) as post_count" in low:
+            if "as post_count" in low:
                 return [aggregates[window["days"]]]
-            if "reactions_by_type" in low or "sum(unique_impressions) as reach" in low:
+            if "reactions_by_type" in low or "as reach" in low:
                 return []
             if "post_stats" in low:
                 return listing
@@ -247,6 +280,87 @@ class BuildReportTests(unittest.TestCase):
         self.assertAlmostEqual(wide.avg_engagement_rate, 0.04)
         # The listing itself stays capped at 50 rows.
         self.assertEqual(len(wide.top_posts), 50)
+
+    def test_prior_window_totals_ride_along_with_the_aggregate(self):
+        """The KPI cards compare against the preceding window, and the reads
+        cover both in one query rather than paying for a second round trip."""
+        _install_routing()
+        seen = []
+
+        def fake_run_query(sql, **kw):
+            seen.append(sql)
+            low = sql.lower()
+            if "as post_count" in low:
+                return [{"post_count": 6, "impressions": 900, "clicks": 20,
+                         "likes": 40, "comments": 8, "shares": 3,
+                         "avg_engagement_rate": 0.06,
+                         "prev_post_count": 4, "prev_impressions": 600,
+                         "prev_likes": 25, "prev_comments": 10, "prev_shares": 1,
+                         "prev_avg_engagement_rate": 0.05}]
+            if "as reach" in low:
+                return [{"reach": 700, "prev_reach": 500}]
+            if "reactions_by_type" in low:
+                return []
+            if "post_stats" in low:
+                return [{"org_id": "777", "post_id": "1", "title": "P", "post_type": "text",
+                         "published_at": "2026-06-10", "impressions": 900, "clicks": 20,
+                         "likes": 40, "comments": 8, "shares": 3, "engagement_rate": 0.06}]
+            return []
+
+        svc.bigquery_service.run_query = fake_run_query  # type: ignore
+        report = svc.build_report("acme", days=30)
+
+        self.assertEqual(report.post_count, 6)
+        self.assertEqual(report.prev_post_count, 4)
+        self.assertEqual(report.prev_total_impressions, 600)
+        self.assertEqual(report.prev_total_likes, 25)
+        self.assertEqual(report.prev_total_comments, 10)
+        self.assertEqual(report.prev_total_shares, 1)
+        self.assertEqual(report.prev_total_unique_impressions, 500)
+        self.assertAlmostEqual(report.prev_avg_engagement_rate, 0.05)
+        # One aggregate read, not one per window.
+        self.assertEqual(len([q for q in seen if "as post_count" in q.lower()]), 1)
+
+    def test_prior_days_feed_the_comparison_not_the_charts(self):
+        """The follower/page reads span both windows, but the series the charts
+        plot must still hold only the selected range."""
+        _install_routing()
+        today = svc.date.today()
+        in_window = (today - svc.timedelta(days=5)).isoformat()
+        before_window = (today - svc.timedelta(days=40)).isoformat()
+
+        followers = [
+            {"metric_date": before_window, "organic_follower_gain": 7, "paid_follower_gain": 0,
+             "total_follower_gain": 7, "total_followers": 1100},
+            {"metric_date": in_window, "organic_follower_gain": 4, "paid_follower_gain": 1,
+             "total_follower_gain": 5, "total_followers": 1200},
+        ]
+        pages = [
+            {"metric_date": before_window, "page_views": 90, "unique_visitors": 60},
+            {"metric_date": in_window, "page_views": 40, "unique_visitors": 30},
+        ]
+
+        def fake_run_query(sql, **kw):
+            low = sql.lower()
+            if "follower_daily" in low:
+                return followers
+            if "sum(desktop_page_views" in low:
+                return []
+            if "page_daily" in low:
+                return pages
+            return []
+
+        svc.bigquery_service.run_query = fake_run_query  # type: ignore
+        report = svc.build_report("acme", days=30)
+
+        self.assertEqual([r["metric_date"] for r in report.follower_series], [in_window])
+        self.assertEqual(report.follower_gain, 5)
+        self.assertEqual(report.prev_follower_gain, 7)
+        self.assertEqual([r["metric_date"] for r in report.page_series], [in_window])
+        self.assertEqual(report.total_page_views, 40)
+        self.assertEqual(report.total_unique_visitors, 30)
+        self.assertEqual(report.prev_total_page_views, 90)
+        self.assertEqual(report.prev_total_unique_visitors, 60)
 
     def test_undated_posts_excluded_from_window(self):
         """A NULL published_at can't be attributed to a window, so it must not

@@ -79,6 +79,68 @@ ENTRIES: tuple[Entry, ...] = (
         ),
     ),
     Entry(
+        date="2026-08-22",
+        title="LinkedIn Ads figures count only the connected ad account",
+        area="Client dashboards · LinkedIn Ads",
+        kind="fixed",
+        summary=(
+            "Spend, clicks, impressions, conversions and the campaign table were "
+            "totalling every LinkedIn ad account stored for the client, not the one "
+            "the dashboard is set up against. Any client running a second ad account "
+            "was seeing the two blended into one set of numbers."
+        ),
+        details=(
+            "No figures change for a client with a single ad account, which is every client today.",
+            "Creative performance was already scoped correctly and is unaffected.",
+            "A client with no ad account configured still sees everything held for them, as before.",
+        ),
+    ),
+    Entry(
+        date="2026-08-22",
+        title="Every LinkedIn Organic metric now shows period-over-period change",
+        area="Client dashboards · LinkedIn Organic",
+        kind="improved",
+        summary=(
+            "Only Followers told you whether the number was going the right way. "
+            "Posts, Impressions, Reach, Reactions, Comments, Avg. engagement and "
+            "Page views now each carry an up/down badge against the same length "
+            "of time immediately before the selected range."
+        ),
+        details=(
+            "Change the date range and the comparison moves with it — last 30 days is measured against the 30 days before that.",
+            "Hover a badge to see the previous period's figure.",
+            "Avg. engagement is shown in percentage points, so 4.0% \u2192 5.0% reads as +1.00 pts rather than +25%.",
+            "A metric with no history that far back shows no badge instead of a meaningless jump from zero.",
+        ),
+    ),
+    Entry(
+        date="2026-08-22",
+        title="Follower demographics name industries instead of numbering them",
+        area="Client dashboards · LinkedIn Organic",
+        kind="fixed",
+        summary=(
+            "The By industry panel read “Industry 11”, “Industry 105” — LinkedIn "
+            "ids, not industries. It now names them (“Management Consulting”, "
+            "“Professional Training & Coaching”), and any category that still "
+            "can't be named is left out rather than shown as an id."
+        ),
+        details=(
+            "Existing dashboards fix themselves on the next page load — no re-sync needed.",
+            "By region and the paid Job title / Industry breakdowns were looking names up the wrong way and get the same fix; regions fill in on the next overnight sync.",
+        ),
+    ),
+    Entry(
+        date="2026-08-20",
+        title="Each Sessions & engagement metric explains itself",
+        area="Client dashboards · Website Analytics",
+        kind="improved",
+        summary=(
+            "The paragraph under the heading only ever described the card you "
+            "had selected. Hover any of the four cards and it explains that "
+            "metric — what it counts, and how the weekly points are built."
+        ),
+    ),
+    Entry(
         date="2026-08-20",
         title="Three more metrics on Website Analytics' session card",
         area="Client dashboards · Website Analytics",

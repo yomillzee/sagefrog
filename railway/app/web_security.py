@@ -17,9 +17,11 @@ Two concerns live here, both driven from ``main.py`` middleware:
   token from either channel.
 
 CSRF only engages for cookie-authenticated browser requests: header-authed API
-callers (Bearer / X-API-Key), the cron secret, and the legacy ``?key=`` path
-are exempt, and the whole mechanism is inert when no session middleware is
-installed (e.g. local dev without Postgres).
+callers (Bearer / X-API-Key) and the cron secret are exempt — a cross-site page
+cannot set those headers — and the whole mechanism is inert when no session
+middleware is installed (e.g. local dev without Postgres). A query parameter is
+*not* an exemption: anything an attacker can put in their own form's action URL
+proves nothing about the caller.
 """
 
 from __future__ import annotations
@@ -38,10 +40,10 @@ CSRF_HEADER_NAME = "X-CSRF-Token"
 # Methods that never mutate state and so never need a CSRF token.
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 
-# Header/query credentials that indicate a non-cookie caller (API key, bearer
-# token, cron secret, or the legacy dashboard access key). Such requests are not
-# CSRF-prone — the browser does not attach these automatically — so they skip
-# the token check to avoid breaking API-key callers, cron, and ?key= links.
+# Headers that indicate a non-cookie caller (API key, bearer token, cron
+# secret). Such requests are not CSRF-prone — a browser does not attach these
+# automatically and a cross-site page cannot set them — so they skip the token
+# check to avoid breaking API-key callers and cron.
 _API_CREDENTIAL_HEADERS = ("authorization", "x-api-key", "x-cron-secret")
 
 
@@ -114,8 +116,6 @@ def requires_csrf(request: Request) -> bool:
     for header in _API_CREDENTIAL_HEADERS:
         if request.headers.get(header):
             return False
-    if request.query_params.get("key"):
-        return False
     return True
 
 

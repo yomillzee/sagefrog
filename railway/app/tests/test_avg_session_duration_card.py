@@ -13,8 +13,8 @@ import marketing_service as ms
 
 # Website Analytics carries a "Sessions & engagement" module between Audience
 # and Demographics: four clickable cards (Total sessions, New users,
-# Engagement rate, Avg session duration) and a weekly line chart for whichever
-# one is selected. GA4 only reports averageSessionDuration next to a
+# Engagement rate, Avg session duration), each explaining itself on hover, and a
+# weekly line chart for whichever one is selected. GA4 only reports averageSessionDuration next to a
 # dimension, so that figure is rebuilt from the landing-page report: each
 # page's average is weighted by its sessions, never averaged flat — and the
 # range figure is re-weighted from the daily series the same way, so a quiet
@@ -175,12 +175,19 @@ class RendererCardTests(unittest.TestCase):
         self.assertIn("New users", html)
         self.assertIn("Engagement rate", html)
         self.assertIn("Avg session duration", html)
-        # Under a page-path scope each metric says which scope it is reading,
-        # and the note is not overwritten with site-wide copy when a card is
-        # clicked -- the scope branch used to write avgDurNote itself, which the
-        # per-metric note then clobbered as soon as the data landed.
-        self.assertIn("scopedNote", html)
-        self.assertIn("pathFilterActive() ? (m.scopedNote || m.note) : m.note", html)
+        # Each card explains its own metric on hover, reusing the Site
+        # Performance pane's tooltip bubble. There is no longer one shared line
+        # under the heading, which could only ever describe the selected card.
+        self.assertIn("function avgDurTip", html)
+        self.assertIn('data-tip="${tip}"', html)
+        self.assertIn("ps-tip ps-tip--wide", html)
+        self.assertNotIn('id="avgDurNote"', html)
+        # The ? is decoration: a real button there would nest inside the card's
+        # own button, which is invalid and unreachable by keyboard.
+        self.assertIn('<span class="ps-info" aria-hidden="true">?</span>', html)
+        # Under a page-path scope each tooltip says which scope it is reading.
+        self.assertIn("scopedTip", html)
+        self.assertIn("pathFilterActive() ? (m.scopedTip || m.tip) : m.tip", html)
         self.assertNotIn("adnote", html)
         # Ordering is the point of the request: the card sits above Demographics.
         self.assertLess(
