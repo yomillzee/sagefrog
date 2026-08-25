@@ -273,6 +273,7 @@ class SelectionLogicTests(unittest.TestCase):
             "let selectedKeyEvent='__all__';\n"
             "let verifiedByGoogleCampaignId={},verifiedByGoogleCampaignIdEvent={};\n"
             "let verifiedByLinkedinGroup={},verifiedByLinkedinGroupEvent={};\n"
+            "let verifiedByMicrosoftCampaign={},verifiedByMicrosoftCampaignEvent={};\n"
             "function normalizeLiName(n){return String(n||'').trim().toLowerCase();}\n"
             "let explorerSort={key:'spend',dir:'desc'};\n"
             + "\n".join(

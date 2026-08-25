@@ -92,6 +92,8 @@ class DemoDataShapeTests(unittest.TestCase):
         self.assertIn("by_campaign_id", google)
         li = demo_data.generate("explorer.linkedin_verified", _payload())
         self.assertIn("by_group_name", li)
+        ms = demo_data.generate("explorer.microsoft_verified", _payload())
+        self.assertIn("by_campaign_name", ms)
 
     def test_analytics_shapes(self) -> None:
         conv = demo_data.generate("analytics.conversions", _payload())
