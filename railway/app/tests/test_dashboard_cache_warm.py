@@ -331,6 +331,10 @@ class OverviewWindowTests(unittest.TestCase):
         self.assertEqual(
             self._win("last_quarter"), ("2026-04-01", "2026-06-30", "2026-01-01", "2026-03-31")
         )
+        # this_year: year-to-yesterday vs the same span into the prior year.
+        self.assertEqual(
+            self._win("this_year"), ("2026-01-01", "2026-08-13", "2025-01-01", "2025-08-13")
+        )
 
     def test_this_month_comparison_clamps_to_a_shorter_month(self) -> None:
         # March 30th has no counterpart in February, so the comparison end clamps

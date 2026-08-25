@@ -94,7 +94,7 @@ def _overview_windows(
     days = _TRAILING_DAYS.get(preset)
     if days is None and preset not in (
         "this_week", "last_week", "this_month",
-        "last_month", "this_quarter", "last_quarter",
+        "last_month", "this_quarter", "last_quarter", "this_year",
     ):
         days = _TRAILING_DAYS[DEFAULT_PRESET]
 
@@ -148,12 +148,20 @@ def _overview_windows(
         cmp_end = min(cmp_start + (cur_end - cur_start), prev_q_end)
         return (cur_start, cur_end), (cmp_start, cmp_end)
 
-    # last_quarter
-    qs = _quarter_start(today)
-    cur_start = _shift_month(qs, -3)
-    cur_end = qs - timedelta(days=1)
-    cmp_start = _shift_month(qs, -6)
-    return (cur_start, cur_end), (cmp_start, cur_start - timedelta(days=1))
+    if preset == "last_quarter":
+        qs = _quarter_start(today)
+        cur_start = _shift_month(qs, -3)
+        cur_end = qs - timedelta(days=1)
+        cmp_start = _shift_month(qs, -6)
+        return (cur_start, cur_end), (cmp_start, cur_start - timedelta(days=1))
+
+    # this_year
+    cur_start = date(today.year, 1, 1)
+    cur_end = max(yesterday, cur_start)
+    cmp_start = date(today.year - 1, 1, 1)
+    prev_y_end = date(today.year - 1, 12, 31)
+    cmp_end = min(cmp_start + (cur_end - cur_start), prev_y_end)
+    return (cur_start, cur_end), (cmp_start, cmp_end)
 
 
 def _client_default_preset(client_slug: str) -> str:
