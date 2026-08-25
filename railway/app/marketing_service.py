@@ -116,6 +116,18 @@ def _microsoft_ads_explorer_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.explorer_microsoft_ads_daily`"
 
 
+def _google_ads_conversion_action_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.explorer_google_ads_conversion_action_daily`"
+
+
+def _microsoft_conversion_action_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.explorer_microsoft_conversion_action_daily`"
+
+
+def _meta_conversion_action_table() -> str:
+    return f"`{_project_id()}.{_dataset_id()}.explorer_meta_conversion_action_daily`"
+
+
 def _linkedin_creative_table() -> str:
     return f"`{_project_id()}.{_dataset_id()}.fact_linkedin_ads_creative_daily`"
 
@@ -1148,6 +1160,184 @@ def fetch_meta_explorer(
         "row_count": len(rows),
         "rows": rows,
     }
+
+
+# ---------------------------------------------------------------------------
+# Platform conversion actions
+#
+# The explorer's `Conv.` column is each platform's own pre-summed conversion
+# count. These three reads split it into the individual conversion actions the
+# account records, so the column's selector can isolate one ("Contact form",
+# "Phone call", "Leads").
+#
+# All three return the SAME envelope so the dashboard has one code path:
+#
+#   {"actions": [{"name", "label", "meta"...}],   # catalog, biggest first
+#    "grain": "ad" | "ad_group",                  # what the map is keyed by
+#    "by_entity": {entity_id: {action_name: conversions}}}
+#
+# `grain` is the honest part. Google and Meta report per action at ad grain, so
+# the explorer can show a selected action on every row of the tree. Microsoft's
+# Goals and Funnels report stops at the ad group, so its map is keyed by ad
+# group and the ad rows below show a dash rather than a made-up split. LinkedIn
+# has no equivalent read at all — its rows stay dashed — because the Marketing
+# API pivots analytics by ONE dimension at a time, so a conversion pivot cannot
+# also carry the campaign it belongs to.
+#
+# A missing table (client synced before this shipped) is not an error: it yields
+# an empty catalog, the selector offers only "All conversions", and the column
+# behaves exactly as it did before.
+# ---------------------------------------------------------------------------
+
+
+def _empty_conversion_actions(
+    start_date: date, end_date: date, grain: str
+) -> dict[str, Any]:
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "grain": grain,
+        "actions": [],
+        "by_entity": {},
+    }
+
+
+def _conversion_action_payload(
+    rows: list[dict[str, Any]],
+    *,
+    start_date: date,
+    end_date: date,
+    grain: str,
+    entity_key: str,
+    name_key: str,
+    extra: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Fold breakdown rows into the shared {actions, by_entity} envelope.
+
+    Actions are ordered by total conversions descending so the selector opens
+    with the ones that carry the account, not alphabetical noise. Totals are
+    rounded to one decimal: Google reports fractional conversions, and a raw
+    float would render as 3.0000000000000004 in the dropdown.
+    """
+    totals: dict[str, float] = {}
+    attrs: dict[str, dict[str, Any]] = {}
+    by_entity: dict[str, dict[str, float]] = {}
+    for row in rows:
+        entity = str(row.get(entity_key) or "").strip()
+        name = str(row.get(name_key) or "").strip()
+        if not entity or not name:
+            continue
+        value = float(row.get("conversions") or 0)
+        totals[name] = totals.get(name, 0.0) + value
+        by_entity.setdefault(entity, {})
+        by_entity[entity][name] = round(by_entity[entity].get(name, 0.0) + value, 4)
+        if extra and name not in attrs:
+            attrs[name] = {out: row.get(src) for out, src in extra.items()}
+    actions = [
+        {"name": name, "total": round(total, 1), **attrs.get(name, {})}
+        for name, total in sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "grain": grain,
+        "actions": actions,
+        "by_entity": by_entity,
+    }
+
+
+def _run_breakdown_query(
+    sql: str, *, start_date: date, end_date: date
+) -> list[dict[str, Any]] | None:
+    """Run a breakdown query; None when the mart view isn't there yet."""
+    try:
+        return _run_query(
+            sql,
+            params={
+                "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            },
+            max_rows=200000,
+        )
+    except Exception as exc:
+        if "not found" in str(exc).lower():
+            return None
+        raise
+
+
+def fetch_google_ads_conversion_actions(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Google Ads conversions split by conversion action, per ad id."""
+    sql = f"""
+    SELECT ad_id, conversion_action_name, ANY_VALUE(conversion_category) AS conversion_category,
+           SUM(conversions) AS conversions
+    FROM {_google_ads_conversion_action_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY ad_id, conversion_action_name
+    """
+    rows = _run_breakdown_query(sql, start_date=start_date, end_date=end_date)
+    if rows is None:
+        return _empty_conversion_actions(start_date, end_date, "ad")
+    return _conversion_action_payload(
+        rows, start_date=start_date, end_date=end_date, grain="ad",
+        entity_key="ad_id", name_key="conversion_action_name",
+        extra={"category": "conversion_category"},
+    )
+
+
+def fetch_meta_conversion_actions(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Meta conversions split by result action, per ad id.
+
+    ``is_result`` rides along on the catalog so the dashboard can mark which
+    actions actually add up to the ad's headline Conv. number (its ad set's
+    optimization goal) versus the other events Meta reported alongside them.
+    """
+    sql = f"""
+    SELECT ad_id, action_label, LOGICAL_OR(is_result) AS is_result,
+           SUM(conversions) AS conversions
+    FROM {_meta_conversion_action_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY ad_id, action_label
+    """
+    rows = _run_breakdown_query(sql, start_date=start_date, end_date=end_date)
+    if rows is None:
+        return _empty_conversion_actions(start_date, end_date, "ad")
+    return _conversion_action_payload(
+        rows, start_date=start_date, end_date=end_date, grain="ad",
+        entity_key="ad_id", name_key="action_label",
+        extra={"is_result": "is_result"},
+    )
+
+
+def fetch_microsoft_conversion_actions(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Microsoft Ads conversions split by goal, per ad group id.
+
+    Ad-group grain, not ad: the Goals and Funnels report has no AdId column.
+    """
+    sql = f"""
+    SELECT ad_group_id, goal_name, SUM(conversions) AS conversions
+    FROM {_microsoft_conversion_action_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY ad_group_id, goal_name
+    """
+    rows = _run_breakdown_query(sql, start_date=start_date, end_date=end_date)
+    if rows is None:
+        return _empty_conversion_actions(start_date, end_date, "ad_group")
+    return _conversion_action_payload(
+        rows, start_date=start_date, end_date=end_date, grain="ad_group",
+        entity_key="ad_group_id", name_key="goal_name",
+    )
 
 
 def fetch_meta_verified_conversions(

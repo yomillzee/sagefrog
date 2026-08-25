@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import traceback
 from datetime import date, timedelta
+from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, HTTPException, Query, Request
@@ -1135,6 +1136,82 @@ def nixon_linkedin_verified_conversions(
         raise _bq_endpoint_failure(exc) from exc
 
 
+# Platform conversion actions — one endpoint per ad platform, all returning the
+# same {actions, grain, by_entity} envelope (see marketing_service). They power
+# the Conv. selector on the Campaign Explorer, so they are cached on the same
+# 15-minute TTL as the explorer rows they annotate.
+@router.get(
+    "/api/clients/nixon/google-ads/conversion-actions",
+    summary="Nixon Google Ads conversions split by conversion action, per ad id",
+)
+def nixon_google_ads_conversion_actions(
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        return _cached_bq_read(
+            "nixon.explorer.google_conversion_actions",
+            {"start": start.isoformat(), "end": end.isoformat()},
+            ttl_seconds=900,
+            fetch=lambda: marketing_service.fetch_google_ads_conversion_actions(
+                start_date=start, end_date=end,
+            ),
+        )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/nixon/meta/conversion-actions",
+    summary="Nixon Meta conversions split by result action, per ad id",
+)
+def nixon_meta_conversion_actions(
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        return _cached_bq_read(
+            "nixon.explorer.meta_conversion_actions",
+            {"start": start.isoformat(), "end": end.isoformat()},
+            ttl_seconds=900,
+            fetch=lambda: marketing_service.fetch_meta_conversion_actions(
+                start_date=start, end_date=end,
+            ),
+        )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/nixon/microsoft-ads/conversion-actions",
+    summary="Nixon Microsoft Ads conversions split by goal, per ad group id",
+)
+def nixon_microsoft_conversion_actions(
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        return _cached_bq_read(
+            "nixon.explorer.microsoft_conversion_actions",
+            {"start": start.isoformat(), "end": end.isoformat()},
+            ttl_seconds=900,
+            fetch=lambda: marketing_service.fetch_microsoft_conversion_actions(
+                start_date=start, end_date=end,
+            ),
+        )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
 @router.get(
     "/api/clients/nixon/pages/top",
     summary="Nixon top pages (all traffic) from BigQuery",
@@ -1490,6 +1567,93 @@ def client_microsoft_ads_explorer(
                 fetch=lambda: marketing_service.fetch_microsoft_explorer(
                     start_date=start, end_date=end,
                 ),
+            )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+# Platform conversion actions, generic-client variants. Same {actions, grain,
+# by_entity} envelope for all three; a client whose mart lacks the breakdown
+# view gets an empty catalog rather than an error, so the Conv. selector simply
+# doesn't appear.
+@router.get(
+    "/api/clients/{client_key}/google-ads/conversion-actions",
+    summary="Client Google Ads conversions split by conversion action, per ad id",
+)
+def client_google_ads_conversion_actions(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    return _client_conversion_actions(
+        client_key, request, start_date, end_date,
+        suffix="google_conversion_actions",
+        fetch=marketing_service.fetch_google_ads_conversion_actions,
+    )
+
+
+@router.get(
+    "/api/clients/{client_key}/meta/conversion-actions",
+    summary="Client Meta conversions split by result action, per ad id",
+)
+def client_meta_conversion_actions(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    return _client_conversion_actions(
+        client_key, request, start_date, end_date,
+        suffix="meta_conversion_actions",
+        fetch=marketing_service.fetch_meta_conversion_actions,
+    )
+
+
+@router.get(
+    "/api/clients/{client_key}/microsoft-ads/conversion-actions",
+    summary="Client Microsoft Ads conversions split by goal, per ad group id",
+)
+def client_microsoft_conversion_actions(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    return _client_conversion_actions(
+        client_key, request, start_date, end_date,
+        suffix="microsoft_conversion_actions",
+        fetch=marketing_service.fetch_microsoft_conversion_actions,
+    )
+
+
+def _client_conversion_actions(
+    client_key: str,
+    request: Request,
+    start_date: date | None,
+    end_date: date | None,
+    *,
+    suffix: str,
+    fetch: Any,
+) -> dict:
+    """Shared body for the three per-platform breakdown reads.
+
+    They differ only by cache suffix and marketing_service call, and each one
+    written out longhand was three copies of the same auth/route/cache dance.
+    """
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        with marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer.{suffix}",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: fetch(start_date=start, end_date=end),
             )
     except Exception as exc:
         raise _bq_endpoint_failure(exc) from exc

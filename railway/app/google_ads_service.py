@@ -669,6 +669,173 @@ def fetch_keyword_daily_metrics(
     return list(by_key.values())
 
 
+# ---- Conversion actions ----------------------------------------------------
+#
+# `Conv.` on the Campaign Explorer is metrics.conversions — one pre-summed
+# number covering every conversion action the account counts. Segmenting by
+# segments.conversion_action splits it into the individual actions ("Contact
+# form", "Phone call", "Demo request"), which is what the explorer's Conv.
+# selector reads.
+#
+# Two things about this segment decide the shape below:
+#
+#   * **It drops the zero rows.** Google only returns (entity × action × day)
+#     combinations that actually recorded a conversion, so the row count is
+#     bounded by real conversions rather than by ads × actions × days. That is
+#     why this can be stored at ad grain without exploding the table.
+#   * **Only conversion metrics survive the segment.** cost/impressions/clicks
+#     are not meaningful once a row is scoped to one action (they would repeat
+#     the ad's totals against every action), so the projection asks for
+#     conversions and conversions_value only.
+#
+# Performance Max and Smart campaigns have no ad_group_ad rows at all, exactly
+# as in fetch_ad_daily_metrics — so a second campaign-grain pass covers the
+# campaigns the ad pass never saw, emitting rows keyed the way
+# explorer_google_ads_daily synthesizes its PMax nodes (ad_id = campaign_id).
+# Without that pass a PMax campaign would show "—" for every action.
+
+
+def _conversion_action_id(resource_name: Any) -> str:
+    """'customers/123/conversionActions/456' -> '456'."""
+    tail = str(resource_name or "").rstrip("/").rsplit("/", 1)[-1].strip()
+    return tail
+
+
+def fetch_conversion_action_daily_metrics(
+    customer_id: str,
+    *,
+    start: date,
+    end: date,
+    client: GoogleAdsClient | None = None,
+) -> list[dict[str, Any]]:
+    """Per-conversion-action daily conversions, at ad grain where ads exist.
+
+    One row per (ad, conversion action, day): {campaign_id, campaign_name,
+    ad_group_id, ad_group_name, ad_id, conversion_action_id,
+    conversion_action_name, conversion_category, metric_date, conversions,
+    conversion_value}.
+
+    Campaigns with no ad_group_ad rows (Performance Max / Smart) get a second
+    campaign-grain pass whose rows carry ad_group_id = ad_id = campaign_id, so
+    they line up with the synthetic single-node campaigns
+    explorer_google_ads_daily already creates for them.
+    """
+    customer_id = str(customer_id).replace("-", "").strip()
+    start_key = start.isoformat()
+    end_key = end.isoformat()
+    client = client or build_client()
+
+    ad_query = f"""
+        SELECT
+          campaign.id,
+          campaign.name,
+          ad_group.id,
+          ad_group.name,
+          ad_group_ad.ad.id,
+          segments.date,
+          segments.conversion_action,
+          segments.conversion_action_name,
+          segments.conversion_action_category,
+          metrics.conversions,
+          metrics.conversions_value
+        FROM ad_group_ad
+        WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
+          AND ad_group_ad.status != 'REMOVED'
+    """
+    rows = search(customer_id, ad_query, client=client)
+
+    by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    campaigns_with_ads: set[str] = set()
+    for row in rows:
+        aid = str(_dig(row, "ad_group_ad", "ad", "id") or "").strip()
+        day = str(_dig(row, "segments", "date") or "").strip()
+        action = str(_dig(row, "segments", "conversion_action_name") or "").strip()
+        if not aid or not day or not action:
+            continue
+        cid = str(_dig(row, "campaign", "id") or "").strip()
+        if cid:
+            campaigns_with_ads.add(cid)
+        key = (aid, action, day)
+        if key not in by_key:
+            by_key[key] = {
+                "campaign_id": cid,
+                "campaign_name": _dig(row, "campaign", "name") or "",
+                "ad_group_id": str(_dig(row, "ad_group", "id") or ""),
+                "ad_group_name": _dig(row, "ad_group", "name") or "",
+                "ad_id": aid,
+                "conversion_action_id": _conversion_action_id(
+                    _dig(row, "segments", "conversion_action")
+                ),
+                "conversion_action_name": action,
+                "conversion_category": str(
+                    _dig(row, "segments", "conversion_action_category") or ""
+                ),
+                "metric_date": day,
+                "conversions": 0.0,
+                "conversion_value": 0.0,
+            }
+        rec = by_key[key]
+        rec["conversions"] += float(_dig(row, "metrics", "conversions") or 0)
+        rec["conversion_value"] += float(_dig(row, "metrics", "conversions_value") or 0)
+
+    # Campaign-grain pass for whatever the ad pass could not see. Failing this
+    # leaves the ad-grain rows intact — a PMax campaign losing its per-action
+    # split is worth less than losing the whole breakdown.
+    try:
+        campaign_query = f"""
+            SELECT
+              campaign.id,
+              campaign.name,
+              campaign.advertising_channel_type,
+              segments.date,
+              segments.conversion_action,
+              segments.conversion_action_name,
+              segments.conversion_action_category,
+              metrics.conversions,
+              metrics.conversions_value
+            FROM campaign
+            WHERE segments.date BETWEEN '{start_key}' AND '{end_key}'
+        """
+        for row in search(customer_id, campaign_query, client=client):
+            cid = str(_dig(row, "campaign", "id") or "").strip()
+            day = str(_dig(row, "segments", "date") or "").strip()
+            action = str(_dig(row, "segments", "conversion_action_name") or "").strip()
+            if not cid or not day or not action or cid in campaigns_with_ads:
+                continue
+            channel = str(_dig(row, "campaign", "advertising_channel_type") or "CAMPAIGN")
+            key = (cid, action, day)
+            if key not in by_key:
+                by_key[key] = {
+                    "campaign_id": cid,
+                    "campaign_name": _dig(row, "campaign", "name") or "",
+                    "ad_group_id": cid,
+                    "ad_group_name": channel.replace("_", " ").title(),
+                    "ad_id": cid,
+                    "conversion_action_id": _conversion_action_id(
+                        _dig(row, "segments", "conversion_action")
+                    ),
+                    "conversion_action_name": action,
+                    "conversion_category": str(
+                        _dig(row, "segments", "conversion_action_category") or ""
+                    ),
+                    "metric_date": day,
+                    "conversions": 0.0,
+                    "conversion_value": 0.0,
+                }
+            rec = by_key[key]
+            rec["conversions"] += float(_dig(row, "metrics", "conversions") or 0)
+            rec["conversion_value"] += float(
+                _dig(row, "metrics", "conversions_value") or 0
+            )
+    except Exception as exc:
+        _log.warning(
+            "Google Ads campaign-grain conversion-action pass failed [account=%s]: %s",
+            customer_id, exc,
+        )
+
+    return list(by_key.values())
+
+
 # ---- Demographic segments (age / gender) ----------------------------------
 #
 # Google reports demographics as ordinary ad-group criteria, one report resource

@@ -119,6 +119,7 @@ def sync_meta_to_bq(
     campaign_rows: list[dict[str, Any]] = []
     adset_rows: list[dict[str, Any]] = []
     ad_rows: list[dict[str, Any]] = []
+    ad_action_rows: list[dict[str, Any]] = []
     creative_rows: list[dict[str, Any]] = []
     errors: dict[str, str] = {}
 
@@ -143,7 +144,7 @@ def sync_meta_to_bq(
                           start=start, end=end, access_token=access_token, resolver=resolver)
         _af = pool.submit(meta_service.fetch_adset_daily_metrics, account_id_clean,
                           start=start, end=end, access_token=access_token, resolver=resolver)
-        _adf = pool.submit(meta_service.fetch_ad_daily_metrics, account_id_clean,
+        _adf = pool.submit(meta_service.fetch_ad_daily_metrics_with_actions, account_id_clean,
                            start=start, end=end, access_token=access_token, resolver=resolver)
         _crf = pool.submit(meta_service.fetch_ad_creative_metadata, account_id_clean,
                            access_token=access_token)
@@ -156,7 +157,12 @@ def sync_meta_to_bq(
         except Exception as exc:
             errors["meta_adset_fetch"] = str(exc)[:400]
         try:
-            ad_rows = _adf.result()
+            ad_fetch = _adf.result()
+            ad_rows = ad_fetch.rows
+            # The per-action split comes out of the same insights call, so it
+            # always covers exactly the ad rows above -- no second request, no
+            # window mismatch.
+            ad_action_rows = ad_fetch.action_rows
         except Exception as exc:
             errors["meta_ad_fetch"] = str(exc)[:400]
         try:
@@ -172,6 +178,9 @@ def sync_meta_to_bq(
     adset_mirror = bigquery_warehouse.mirror_meta_adset_daily_batch(account_id_clean, adset_rows, client_key=client_key)
     ad_mirror = bigquery_warehouse.mirror_meta_ad_daily_batch(account_id_clean, ad_rows, client_key=client_key)
     creative_mirror = bigquery_warehouse.mirror_meta_ad_creative_batch(account_id_clean, creative_rows, client_key=client_key)
+    action_mirror = bigquery_warehouse.mirror_meta_ad_conversion_action_batch(
+        account_id_clean, ad_action_rows, client_key=client_key
+    )
 
     _log.info("sync_meta_to_bq bq: campaign=%d adset=%d ad=%d creative=%d",
               campaign_mirror.get("rows_upserted", 0), adset_mirror.get("rows_upserted", 0),
@@ -185,6 +194,7 @@ def sync_meta_to_bq(
         "adset_rows": adset_mirror.get("rows_upserted", 0),
         "ad_rows": ad_mirror.get("rows_upserted", 0),
         "creative_rows": creative_mirror.get("rows_upserted", 0),
+        "conversion_action_rows": action_mirror.get("rows_upserted", 0),
         "views": views.get("views", []),
         "errors": errors,
     }

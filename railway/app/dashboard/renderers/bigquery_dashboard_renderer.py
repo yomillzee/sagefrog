@@ -2193,8 +2193,20 @@ def render_bigquery_dashboard_page(
     #explorerTable th.ga4-col .ke-select:hover {{ border-color:#c79a2e; }}
     #explorerTable th.ga4-col .ke-select:focus-visible {{ outline:none; border-color:#b8922e; box-shadow:0 0 0 2px rgba(184,146,46,0.2); }}
     /* Active state: a specific key event is isolated, so the control reads as a live filter. */
-    .ke-select-wrap.active .ke-select {{ background:rgba(184,146,46,0.13); border-color:#b8922e; color:#755a11; font-weight:700; }}
+    #explorerTable th .ke-select-wrap.active .ke-select {{ background:rgba(184,146,46,0.13); border-color:#b8922e; color:#755a11; font-weight:700; }}
     .ke-select-wrap.active .ke-select-ico, .ke-select-wrap.active .ke-select-caret {{ color:#8a6d1f; }}
+    /* Campaign explorer: the platform-conversion selector on the Conv. column.
+       Same control as the GA4 key-event picker beside it, but in the neutral
+       navy -- the gold accent has to keep meaning "this number came from GA4,
+       not from the ad platform", and two gold selectors would erase that. */
+    #explorerTable th .cv-select {{ -webkit-appearance:none; appearance:none; max-width:158px; font-size:.68rem; font-weight:600; text-transform:none; letter-spacing:0; color:var(--navy); background:#fff; border:1px solid var(--line); border-radius:999px; padding:3px 22px 3px 23px; cursor:pointer; text-overflow:ellipsis; transition:border-color .12s, background .12s, box-shadow .12s; }}
+    #explorerTable th .cv-select:hover {{ border-color:#8fa3bd; }}
+    #explorerTable th .cv-select:focus-visible {{ outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(20,54,99,0.15); }}
+    .ke-select-wrap.cv .ke-select-ico, .ke-select-wrap.cv .ke-select-caret {{ color:#7a8ba3; }}
+    #explorerTable th .ke-select-wrap.cv.active .cv-select {{ background:#eef3fa; border-color:var(--accent); color:var(--navy); font-weight:700; }}
+    .ke-select-wrap.cv.active .ke-select-ico, .ke-select-wrap.cv.active .ke-select-caret {{ color:var(--accent); }}
+    .cv-head {{ display:inline-flex; flex-direction:column; align-items:flex-end; gap:6px; }}
+    .cv-head-top {{ display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }}
     .pill {{ display:inline-block; padding:1px 7px; border-radius:999px; font-size:.64rem; font-weight:800; letter-spacing:.03em; text-transform:uppercase; vertical-align:middle; margin-right:7px; }}
     .pill-google {{ background:#e8f0fe; color:#1a73e8; }}
     .pill-linkedin {{ background:#e6f0f8; color:#0a66c2; }}
@@ -2644,6 +2656,10 @@ def render_bigquery_dashboard_page(
     const LINKEDIN_DEMOGRAPHICS_API = "{_aurl(f'/api/clients/{api_client_key}/linkedin/demographics')}";
     const META_EXPLORER_API    = "{_aurl(f'/api/clients/{api_client_key}/meta/explorer')}";
     const MICROSOFT_EXPLORER_API= "{_aurl(f'/api/clients/{api_client_key}/microsoft-ads/explorer')}";
+    // Platform conversion actions -- the split behind the Conv. column's selector.
+    const GOOGLE_CONV_ACTIONS_API   = "{_aurl(f'/api/clients/{api_client_key}/google-ads/conversion-actions')}";
+    const META_CONV_ACTIONS_API     = "{_aurl(f'/api/clients/{api_client_key}/meta/conversion-actions')}";
+    const MICROSOFT_CONV_ACTIONS_API= "{_aurl(f'/api/clients/{api_client_key}/microsoft-ads/conversion-actions')}";
     const META_VERIFIED_API    = "{_aurl(f'/api/clients/{api_client_key}/meta/verified-conversions')}";
     const GOOGLE_VERIFIED_API  = "{_aurl(f'/api/clients/{api_client_key}/google-ads/verified-conversions')}";
     const LINKEDIN_VERIFIED_API= "{_aurl(f'/api/clients/{api_client_key}/linkedin/verified-conversions')}";
@@ -4680,7 +4696,7 @@ def render_bigquery_dashboard_page(
       {{key:'impressions',label:'Impr.',format:count}},
       {{key:'clicks',label:'Clicks',format:count}},
       {{key:'ctr',label:'CTR',format:pct}},
-      {{key:'conversions',label:'Conv.',format:count}},
+      {{key:'conversions',label:'Conv.',format:count,convSelect:true,title:'Conversions as the ad platform counts them. Use the selector to isolate a single conversion action; rows whose platform does not report that far down show a dash rather than a guess.'}},
       {{key:'verified_sel',label:'Verified conv.',format:count,cls:'ga4-col',keSelect:true,title:'GA4-verified conversions, matched to the Meta ad by id (utm_content) and rolled up. Independent of the platform-reported Conv. Use the selector to isolate a single GA4 key event.'}},
     ];
     // Explorer table sort — click a column header to sort every tree level (campaigns,
@@ -4688,6 +4704,9 @@ def render_bigquery_dashboard_page(
     let explorerSort = {{ key:'spend', dir:'desc' }};
     function explorerMetricVal(m, key) {{
       if (key==='ctr') return num(m.impressions) ? num(m.clicks)/num(m.impressions)*100 : 0;
+      // Sorting by Conv. has to follow whatever the column is showing, or the
+      // arrow orders the table by a number that isn't on screen.
+      if (key==='conversions' && convSelectionActive()) return num(m.conversions_sel);
       return num(m[key]);
     }}
     function explorerAdName(a) {{ return String(a.ad_name||a.ad_label||a.ad_id||''); }}
@@ -4877,6 +4896,16 @@ def render_bigquery_dashboard_page(
     let verifiedByLinkedinGroup = {{}};
     let verifiedByLinkedinGroupEvent = {{}};
     let keyEventList = [];
+    // Platform conversion actions. Google and Meta report the split at ad grain
+    // (keyed by ad id); Microsoft's Goals and Funnels report stops at the ad
+    // group, so its map is keyed by ad group id and the ad rows underneath show
+    // a dash. LinkedIn has no equivalent read at all -- its analytics pivot by
+    // one dimension at a time, so a conversion pivot cannot also say which
+    // campaign it belongs to -- so LinkedIn rows stay dashed too.
+    let convActionList = [];
+    let convByGoogleAdId = {{}};
+    let convByMetaAdId = {{}};
+    let convByMicrosoftGroupId = {{}};
     function normalizeLiName(name) {{ return String(name||'').replace(/\\+/g,' ').replace(/\\s+/g,' ').trim().toLowerCase(); }}
     const KE_STORAGE_KEY = 'ce_verified_ke_{api_client_key}';
     let selectedKeyEvent = (function(){{ try {{ return localStorage.getItem(KE_STORAGE_KEY) || '__all__'; }} catch(e) {{ return '__all__'; }} }})();
@@ -4886,6 +4915,31 @@ def render_bigquery_dashboard_page(
         r.verified = num(verifiedByAdId[id]);
         r.verified_sel = (selectedKeyEvent==='__all__') ? r.verified : num((verifiedByAdIdEvent[id]||{{}})[selectedKeyEvent]);
       }}
+    }}
+    const CONV_STORAGE_KEY = 'ce_conv_action_{api_client_key}';
+    let selectedConvAction = (function(){{ try {{ return localStorage.getItem(CONV_STORAGE_KEY) || '__all__'; }} catch(e) {{ return '__all__'; }} }})();
+    function convSelectionActive() {{ return selectedConvAction!=='__all__'; }}
+    // Resolve the selected action onto every row. With no selection the column is
+    // the platform's own Conv. exactly as before -- the selector is additive, it
+    // never changes the default reading of the table.
+    function applyConvSelection(rows) {{
+      const all=!convSelectionActive();
+      for (const r of rows) {{
+        if (all) {{ r.conversions_sel=num(r.conversions); r._convSelNa=false; continue; }}
+        const p=(r.platform||'').toLowerCase();
+        if (p==='google') {{ r.conversions_sel=num((convByGoogleAdId[String(r.ad_id||'')]||{{}})[selectedConvAction]); r._convSelNa=false; }}
+        else if (p==='meta') {{ r.conversions_sel=num((convByMetaAdId[String(r.ad_id||'')]||{{}})[selectedConvAction]); r._convSelNa=false; }}
+        // Microsoft resolves at the ad-group node in buildExplorerTree; LinkedIn
+        // has nothing to resolve. Both leave the ad row itself dashed.
+        else {{ r.conversions_sel=0; r._convSelNa=true; }}
+      }}
+    }}
+    function convSelectHtml() {{
+      if (!convActionList.length) return '';
+      const opts=[['__all__','All conversions'],...convActionList.map(a=>[a,a])]
+        .map(([v,l])=>`<option value="${{esc(v)}}"${{selectedConvAction===v?' selected':''}}>${{esc(l)}}</option>`).join('');
+      const target='<svg class="ke-select-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.4"/></svg>';
+      return `<span class="ke-select-wrap cv${{convSelectionActive()?' active':''}}">${{target}}<select class="cv-select" title="Show platform-reported conversions for a single conversion action">${{opts}}</select><span class="ke-select-caret" aria-hidden="true">&#9662;</span></span>`;
     }}
     function keSelectHtml() {{
       if (!keyEventList.length) return '';
@@ -4972,8 +5026,8 @@ def render_bigquery_dashboard_page(
       const platOk=!platformFilter.size||[...platformFilter].some(k=>k.toLowerCase()===(row.platform||''));
       return platOk;
     }}
-    function zeroMetrics() {{ return {{spend:0,impressions:0,clicks:0,conversions:0,verified:0,verified_sel:0}}; }}
-    function addMetrics(acc,r) {{ acc.spend+=num(r.spend);acc.impressions+=num(r.impressions);acc.clicks+=num(r.clicks);acc.conversions+=num(r.conversions);acc.verified+=num(r.verified);acc.verified_sel+=num(r.verified_sel); }}
+    function zeroMetrics() {{ return {{spend:0,impressions:0,clicks:0,conversions:0,conversions_sel:0,verified:0,verified_sel:0}}; }}
+    function addMetrics(acc,r) {{ acc.spend+=num(r.spend);acc.impressions+=num(r.impressions);acc.clicks+=num(r.clicks);acc.conversions+=num(r.conversions);acc.conversions_sel+=num(r.conversions_sel);acc.verified+=num(r.verified);acc.verified_sel+=num(r.verified_sel); }}
     function withCtr(m) {{ return {{...m,ctr:m.impressions?(num(m.clicks)/num(m.impressions)*100):0}}; }}
     function buildExplorerTree(rows) {{
       const campaigns=new Map();
@@ -4983,8 +5037,9 @@ def render_bigquery_dashboard_page(
         const camp=campaigns.get(cKey);
         addMetrics(camp.metrics,r);
         const gName=r.ad_group_name||'—';
-        if (!camp.groups.has(gName)) camp.groups.set(gName,{{name:gName,metrics:zeroMetrics(),ads:[]}});
+        if (!camp.groups.has(gName)) camp.groups.set(gName,{{name:gName,ad_group_id:'',metrics:zeroMetrics(),ads:[]}});
         const grp=camp.groups.get(gName);
+        if (!grp.ad_group_id && r.ad_group_id) grp.ad_group_id=String(r.ad_group_id);
         if (r._verifiedNa) grp.metrics._verifiedNa=true;
         addMetrics(grp.metrics,r);
         grp.ads.push(r);
@@ -5033,6 +5088,31 @@ def render_bigquery_dashboard_page(
         for (const grp of camp.groups.values()) {{
           grp.ads.sort((a,b)=> key==='name' ? cmpName(explorerAdName(a),explorerAdName(b)) : cmpMetric(a,b));
         }}
+        // Selected conversion action, resolved per level. Microsoft only
+        // reports it at ad-group grain, so the value lands on the group node
+        // and the ads below keep their dash; every other platform already
+        // summed correctly from the ad rows. The campaign is then re-totalled
+        // from its groups so it is always exactly the sum of the rows shown
+        // under it, whichever grain those rows came from.
+        if (convSelectionActive()) {{
+          if (camp.platform==='microsoft') {{
+            for (const grp of camp.groups.values()) {{
+              const gid=String(grp.ad_group_id||'');
+              const hit=gid ? convByMicrosoftGroupId[gid] : null;
+              if (hit) {{ grp.metrics.conversions_sel=num(hit[selectedConvAction]); grp.metrics._convSelNa=false; }}
+              else {{ grp.metrics._convSelNa=true; }}
+            }}
+          }} else if (camp.platform==='linkedin') {{
+            for (const grp of camp.groups.values()) grp.metrics._convSelNa=true;
+          }}
+          let campSel=0, anyGroup=false;
+          for (const grp of camp.groups.values()) {{
+            if (grp.metrics._convSelNa) continue;
+            anyGroup=true; campSel+=num(grp.metrics.conversions_sel);
+          }}
+          camp.metrics.conversions_sel=campSel;
+          camp.metrics._convSelNa=!anyGroup;
+        }}
         camp.groups=new Map([...camp.groups.entries()].sort(cmpNode));
       }}
       return new Map([...campaigns.entries()].sort(cmpNode));
@@ -5045,6 +5125,14 @@ def render_bigquery_dashboard_page(
       const wc=withCtr(m), prevWc=prevM?withCtr(prevM):null;
       return METRIC_COLS.map(c=>{{
         if (c.key==='verified_sel') {{ const cell=m._verifiedNa?'—':c.format(wc[c.key]); return `<td${{c.cls?` class="${{c.cls}}"`:''}}>${{cell}}</td>`; }}
+        // A selected conversion action has no comparison-window figure behind
+        // it (the breakdown is only fetched for the current window), so the
+        // vs-previous chip is dropped rather than compared against the
+        // unfiltered total, which would read as a collapse.
+        if (c.key==='conversions' && convSelectionActive()) {{
+          const cell=m._convSelNa?'—':c.format(num(m.conversions_sel));
+          return `<td${{c.cls?` class="${{c.cls}}"`:''}}>${{cell}}</td>`;
+        }}
         const cell=c.format(wc[c.key]);
         const delta=prevWc?summaryDeltaHtml(wc[c.key],prevWc[c.key],EXPLORER_METRIC_DIR[c.key]):'';
         return `<td${{c.cls?` class="${{c.cls}}"`:''}}>${{cell}}${{delta?`<div class="expl-row-delta">${{delta}}</div>`:''}}</td>`;
@@ -5058,12 +5146,18 @@ def render_bigquery_dashboard_page(
     // never averaged. Verified stays "—" only when no campaign in view has data.
     function explorerTotals(tree) {{
       const t=zeroMetrics();
-      let anyVerified=false;
+      let anyVerified=false, anyConvSel=false;
+      t.conversions_sel=0;
       for (const camp of tree.values()) {{
         addMetrics(t, camp.metrics);
         if (!camp.metrics._verifiedNa) anyVerified=true;
+        if (!camp.metrics._convSelNa) anyConvSel=true;
       }}
       if (!anyVerified) t._verifiedNa=true;
+      // The total is the sum of the campaigns that could answer, and says so
+      // with a dash only when none of them could. Read only while an action is
+      // selected -- with none selected no campaign is ever flagged.
+      if (!anyConvSel) t._convSelNa=true;
       return t;
     }}
     // Brand marks for the platform column — inline SVG so the tree reads as a
@@ -5229,20 +5323,32 @@ def render_bigquery_dashboard_page(
       // LinkedIn verified is campaign-group-level (name-matched); add once per group.
       const liSeen=new Set(); let linkedinVerifiedTotal=0;
       for (const r of filtered) {{ if (r.platform==='linkedin') {{ const gn=normalizeLiName(r.campaign_name||''); if (gn && !liSeen.has(gn)) {{ liSeen.add(gn); linkedinVerifiedTotal+=num(verifiedByLinkedinGroup[gn]); }} }} }}
+      const el=document.getElementById('explorerTable');
+      const tree=buildExplorerTree(filtered);
+      // The Conversions card follows the column's selector, and it is totalled
+      // from the tree rather than the raw rows: Microsoft resolves its split at
+      // the ad-group node, so summing rows would report zero for it.
+      const treeTotals=explorerTotals(tree);
+      const convActive=convSelectionActive();
       const scards=document.getElementById('explorerSummaryCards');
       if (scards) scards.innerHTML=[
         ['spend','Spend',v=>money(v)],['impressions','Impressions',v=>count(v)],['clicks','Clicks',v=>count(v)],['ctr','CTR',v=>num(v).toFixed(2)+'%'],
         ['conversions','Conversions',v=>count(v)],
       ].map(([k,l,fmt])=>{{
+        if (k==='conversions' && convActive) {{
+          const val=treeTotals._convSelNa?'—':count(num(treeTotals.conversions_sel));
+          return `<div class="card"><div class="card-title">${{esc(selectedConvAction)}}</div><div class="card-value">${{val}}</div><div class="card-foot"><span class="cmp-delta flat">of ${{count(agg.conversions)}} conversions</span></div></div>`;
+        }}
         const delta=aggPrev?summaryDeltaHtml(agg[k],aggPrev[k],EXPLORER_METRIC_DIR[k]):'';
         return `<div class="card"><div class="card-title">${{l}}</div><div class="card-value">${{fmt(agg[k])}}</div>${{delta?`<div class="card-foot">${{delta}}</div>`:''}}</div>`;
       }}).join('') + `<div class="card"><div class="card-title">Verified conv. (GA4)</div><div class="card-value">${{count(num(agg.verified)+googleVerifiedTotal+linkedinVerifiedTotal)}}</div></div>`;
-      const el=document.getElementById('explorerTable');
-      const tree=buildExplorerTree(filtered);
       if (!tree.size) {{ el.innerHTML=`<tbody><tr><td class="empty">No campaigns match these filters.</td></tr></tbody>`; }} else {{
         const sArrow=k=>explorerSort.key===k?(explorerSort.dir==='asc'?' ▲':' ▼'):'';
+        const convSel=convSelectHtml();
         const thInner=c=>c.keSelect
           ? `<span class="ga4-head"><span class="ga4-head-top"><span class="ga4-badge">GA4</span><span class="ga4-head-label">${{esc(c.label)}}</span>${{sArrow(c.key)}}</span>${{keSelectHtml()}}</span>`
+          : (c.convSelect && convSel)
+          ? `<span class="cv-head"><span class="cv-head-top">${{esc(c.label)}}${{sArrow(c.key)}}</span>${{convSel}}</span>`
           : `${{esc(c.label)}}${{sArrow(c.key)}}`;
         const head=`<thead><tr><th class="left expl-sort${{explorerSort.key==='name'?' active':''}}" data-key="name">Campaign / Ad group / Ad${{sArrow('name')}}</th>${{METRIC_COLS.map(c=>`<th class="expl-sort${{c.cls?' '+c.cls:''}}${{explorerSort.key===c.key?' active':''}}" data-key="${{c.key}}"${{c.title?` title="${{esc(c.title)}}"`:''}}>${{thInner(c)}}</th>`).join('')}}</tr></thead>`;
         let body='', cIdx=0;
@@ -5310,7 +5416,7 @@ def render_bigquery_dashboard_page(
         // back to the served title parts when creative copy hasn't synced.
         const heads=r.headlines||[r.title_part_1,r.title_part_2,r.title_part_3].filter(Boolean);
         const descs=r.descriptions||[r.description_1,r.description_2].filter(Boolean);
-        out.push({{platform:'microsoft',campaign_id:r.campaign_id,campaign_name:r.campaign_name,ad_group_name:r.ad_group_name||'',ad_id:r.ad_id,ad_label:r.ad_title||r.title_part_1||'',ad_name:r.ad_title||'',headlines:heads,descriptions:descs,headline_1:r.title_part_1,headline_2:r.title_part_2,headline_3:r.title_part_3,description_1:r.description_1,description_2:r.description_2,final_url:r.final_url,ad_type:r.ad_type,media_type:r.ad_type||'',thumbnail_url:'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions),_verifiedNa:true}});
+        out.push({{platform:'microsoft',campaign_id:r.campaign_id,campaign_name:r.campaign_name,ad_group_id:r.ad_group_id||'',ad_group_name:r.ad_group_name||'',ad_id:r.ad_id,ad_label:r.ad_title||r.title_part_1||'',ad_name:r.ad_title||'',headlines:heads,descriptions:descs,headline_1:r.title_part_1,headline_2:r.title_part_2,headline_3:r.title_part_3,description_1:r.description_1,description_2:r.description_2,final_url:r.final_url,ad_type:r.ad_type,media_type:r.ad_type||'',thumbnail_url:'',spend:num(r.spend),impressions:num(r.impressions),clicks:num(r.clicks),conversions:num(r.conversions),_verifiedNa:true}});
       }}
       return out;
     }}
@@ -5965,7 +6071,8 @@ def render_bigquery_dashboard_page(
       // The Compare picker's window (previous period/year) — fetched only when
       // set, so a page load with no comparison configured yet skips these.
       const cmpOn = !!compareStart;
-      const [g,l,m,ms,kw,ver,gver,lver,gPrev,lPrev,mPrev,msPrev,paid,paidPrev]=await Promise.all([
+      const EMPTY_CONV={{actions:[],by_entity:{{}}}};
+      const [g,l,m,ms,kw,ver,gver,lver,gconv,mconv,msconv,gPrev,lPrev,mPrev,msPrev,paid,paidPrev]=await Promise.all([
         getJson(withDates(EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(LINKEDIN_EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(META_EXPLORER_API)).catch(()=>({{rows:[]}})),
@@ -5974,6 +6081,12 @@ def render_bigquery_dashboard_page(
         getJson(withDates(META_VERIFIED_API)).catch(()=>({{by_ad_id:{{}}}})),
         getJson(withDates(GOOGLE_VERIFIED_API)).catch(()=>({{by_campaign_id:{{}}}})),
         getJson(withDates(LINKEDIN_VERIFIED_API)).catch(()=>({{by_group_name:{{}}}})),
+        // Conversion-action breakdowns. Fetched for the current window only --
+        // the selector's job is "which action is this", not "how did this action
+        // move", and the Conv. column drops its delta while one is selected.
+        getJson(withDates(GOOGLE_CONV_ACTIONS_API)).catch(()=>EMPTY_CONV),
+        getJson(withDates(META_CONV_ACTIONS_API)).catch(()=>EMPTY_CONV),
+        getJson(withDates(MICROSOFT_CONV_ACTIONS_API)).catch(()=>EMPTY_CONV),
         cmpOn ? getJson(withDatesRange(EXPLORER_API, compareStart, compareEnd)).catch(()=>({{rows:[]}})) : Promise.resolve({{rows:[]}}),
         cmpOn ? getJson(withDatesRange(LINKEDIN_EXPLORER_API, compareStart, compareEnd)).catch(()=>({{rows:[]}})) : Promise.resolve({{rows:[]}}),
         cmpOn ? getJson(withDatesRange(META_EXPLORER_API, compareStart, compareEnd)).catch(()=>({{rows:[]}})) : Promise.resolve({{rows:[]}}),
@@ -5995,9 +6108,27 @@ def render_bigquery_dashboard_page(
       const linkedinEvents=(lver&&lver.events)?lver.events:[];
       keyEventList=[...new Set([...metaEvents,...googleEvents,...linkedinEvents])];
       if (selectedKeyEvent!=='__all__' && keyEventList.indexOf(selectedKeyEvent)<0) selectedKeyEvent='__all__';
+      convByGoogleAdId=(gconv&&gconv.by_entity)?gconv.by_entity:{{}};
+      convByMetaAdId=(mconv&&mconv.by_entity)?mconv.by_entity:{{}};
+      convByMicrosoftGroupId=(msconv&&msconv.by_entity)?msconv.by_entity:{{}};
+      // One selector across every platform, so the same action name coming from
+      // two platforms is one option that sums both. Ordered by total conversions
+      // (each payload is already biggest-first) rather than alphabetically.
+      convActionList=[...new Set([
+        ...((gconv&&gconv.actions)||[]).map(a=>a.name),
+        ...((mconv&&mconv.actions)||[]).map(a=>a.name),
+        ...((msconv&&msconv.actions)||[]).map(a=>a.name),
+      ])].filter(Boolean);
+      // An action that no longer exists in this window would otherwise leave the
+      // column dashed everywhere with no way back except reloading.
+      if (selectedConvAction!=='__all__' && convActionList.indexOf(selectedConvAction)<0) {{
+        selectedConvAction='__all__';
+        try {{ localStorage.removeItem(CONV_STORAGE_KEY); }} catch(e) {{}}
+      }}
       explorerRows=normalizeExplorerRows(g,l,m,ms);
       explorerPrevRows=cmpOn ? normalizeExplorerRows(gPrev,lPrev,mPrev,msPrev) : [];
       applyVerifiedSelection();
+      applyConvSelection(explorerRows);
       renderExplorer();
       // Keyword table: only show the section when this client actually has
       // Google Ads search-keyword data (empty for LinkedIn/Meta-only clients).
@@ -7594,7 +7725,7 @@ def render_bigquery_dashboard_page(
         moreBtn.textContent = extra.hidden ? moreBtn.dataset.moreLabel : 'Show less';
         return;
       }}
-      if (ev.target.closest('.ke-select-wrap')) return;  // filter select handles its own change
+      if (ev.target.closest('.ke-select-wrap')) return;  // filter selects handle their own change
       const sortTh=ev.target.closest('th.expl-sort');
       if (sortTh) {{
         const key=sortTh.dataset.key;
@@ -7607,6 +7738,14 @@ def render_bigquery_dashboard_page(
       if (row) toggleExplorerRow(row);
     }});
     document.getElementById('explorerTable').addEventListener('change',ev=>{{
+      const conv=ev.target.closest('.cv-select');
+      if (conv) {{
+        selectedConvAction = conv.value || '__all__';
+        try {{ localStorage.setItem(CONV_STORAGE_KEY, selectedConvAction); }} catch(e) {{}}
+        applyConvSelection(explorerRows);
+        renderExplorer();
+        return;
+      }}
       const sel=ev.target.closest('.ke-select');
       if (!sel) return;
       selectedKeyEvent = sel.value || '__all__';

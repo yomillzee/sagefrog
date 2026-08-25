@@ -353,6 +353,84 @@ def fetch_ad_daily_metrics(
     return out
 
 
+def fetch_goal_daily_metrics(
+    account_id: str,
+    *,
+    start: date,
+    end: date,
+    access_token: str,
+    customer_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Run a daily GoalsAndFunnelsReport and return per-goal conversion rows.
+
+    One row per (campaign, ad group, goal, day): {campaign_id, campaign_name,
+    ad_group_id, ad_group_name, goal_id, goal_name, metric_date, conversions,
+    conversion_value}. This is what splits Microsoft's ``Conv.`` into the
+    individual conversion goals the account tracks.
+
+    **Ad group is as fine as this report goes.** Microsoft's Goals and Funnels
+    report exposes no AdId column, so the breakdown attaches to the ad group and
+    the explorer shows a dash on the ad rows underneath rather than inventing a
+    per-ad split. No spend/clicks/impressions either — a row scoped to one goal
+    has no share of the ad group's cost.
+    """
+    if customer_id is None:
+        customer_id = get_authenticated_customer_id(access_token)
+
+    report_request = {
+        "Type": "GoalsAndFunnelsReportRequest",
+        "ReportName": "SagefrogGoalsAndFunnelsDaily",
+        "Format": "Csv",
+        "Aggregation": "Daily",
+        "ExcludeReportHeader": True,
+        "ExcludeReportFooter": True,
+        "ExcludeColumnHeaders": False,
+        "ReturnOnlyCompleteData": False,
+        "Columns": [
+            "TimePeriod",
+            "CampaignId",
+            "CampaignName",
+            "AdGroupId",
+            "AdGroupName",
+            "Goal",
+            "GoalId",
+            "Conversions",
+            "Revenue",
+        ],
+        "Scope": {"AccountIds": [int(str(account_id).strip())]},
+        "Time": {
+            "CustomDateRangeStart": {"Year": start.year, "Month": start.month, "Day": start.day},
+            "CustomDateRangeEnd": {"Year": end.year, "Month": end.month, "Day": end.day},
+        },
+    }
+
+    raw_rows = _run_report(
+        report_request, access_token=access_token, customer_id=customer_id,
+        account_id=str(account_id), start=start, end=end, label="goals",
+    )
+    out: list[dict[str, Any]] = []
+    for raw in raw_rows:
+        metric_date = _parse_report_date(raw.get("TimePeriod") or raw.get("GregorianDate") or "")
+        campaign_id = str(raw.get("CampaignId") or "").strip()
+        goal_name = str(raw.get("Goal") or "").strip()
+        if not metric_date or not campaign_id or not goal_name:
+            continue
+        out.append({
+            "source": "microsoft",
+            "account_id": str(account_id),
+            "campaign_id": campaign_id,
+            "campaign_name": str(raw.get("CampaignName") or "").strip(),
+            "ad_group_id": str(raw.get("AdGroupId") or "").strip(),
+            "ad_group_name": str(raw.get("AdGroupName") or "").strip(),
+            "goal_id": str(raw.get("GoalId") or "").strip(),
+            "goal_name": goal_name,
+            "metric_date": metric_date,
+            "conversions": _to_float(raw.get("Conversions")),
+            "conversion_value": _to_float(raw.get("Revenue")),
+        })
+    return out
+
+
 def fetch_ad_assets(
     account_id: str,
     ad_group_ids: list[str],

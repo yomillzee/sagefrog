@@ -5,7 +5,7 @@ import logging
 import re
 import time
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
@@ -674,6 +674,98 @@ def _parse_insight_row(
     }
 
 
+# Display names for the result tokens above. The token is the stable key the
+# warehouse stores; this is only what the Campaign Explorer's Conv. selector
+# shows, so relabelling never needs a backfill.
+_RESULT_TOKEN_LABELS: dict[str, str] = {
+    "purchase": "Purchases",
+    "lead": "Leads",
+    "complete_registration": "Registrations",
+    "submit_application": "Applications",
+    "add_to_cart": "Adds to cart",
+    "initiate_checkout": "Checkouts started",
+    "view_content": "Content views",
+    "search": "Searches",
+    "contact": "Contacts",
+    "add_payment_info": "Payment info added",
+    "add_to_wishlist": "Wishlist adds",
+    "subscribe": "Subscriptions",
+    "start_trial": "Trials started",
+    "donate": "Donations",
+    "schedule": "Appointments scheduled",
+    "link_click": "Link clicks",
+    "landing_page_view": "Landing page views",
+    "post_engagement": "Post engagements",
+    "like": "Page likes",
+    "rsvp": "Event responses",
+    "video_view": "Video views",
+    "thruplay": "ThruPlays",
+    "app_install": "App installs",
+    "messaging_conversation": "Messaging conversations",
+}
+
+
+def result_token_label(token: str) -> str:
+    """Human label for a result token ('lead' -> 'Leads')."""
+    key = str(token or "").strip()
+    return _RESULT_TOKEN_LABELS.get(key, key.replace("_", " ").capitalize() or key)
+
+
+def _action_breakdown(
+    row: dict[str, Any], *, result_tokens: set[str] | None = None
+) -> list[dict[str, Any]]:
+    """Split one insights row's actions into per-token conversion rows.
+
+    Returns [{action_token, action_label, is_result, conversions,
+    conversion_value}] for every token that actually fired, de-duplicated by the
+    same first-candidate-wins rule ``_sum_result_tokens`` uses — so a lead
+    reported under four redundant buckets is one row worth one lead, not four.
+
+    ``is_result`` flags the tokens that make up this row's ``conversions``
+    (the ad set's optimization goal). The explorer uses it to say which actions
+    add up to the Conv. column and which are extra context.
+    """
+    by_type = _actions_by_type(row.get("actions"))
+    values_by_type = _actions_by_type(row.get("action_values"))
+    if not by_type and not values_by_type:
+        return []
+    result_set = set(result_tokens) if result_tokens is not None else set(_FALLBACK_TOKENS)
+
+    def _first(source: dict[str, float], candidates: tuple[str, ...]) -> float:
+        for candidate in candidates:
+            if candidate in source:
+                return source[candidate]
+        return 0.0
+
+    out: list[dict[str, Any]] = []
+    for token, candidates in _RESULT_CANDIDATES.items():
+        count = _first(by_type, candidates)
+        value = _first(values_by_type, candidates)
+        if not count and not value:
+            continue
+        out.append({
+            "action_token": token,
+            "action_label": result_token_label(token),
+            "is_result": token in result_set,
+            "conversions": float(count),
+            "conversion_value": float(value),
+        })
+    return out
+
+
+class AdDailyFetch(NamedTuple):
+    """Ad-grain daily rows plus the per-action split of the same insights call.
+
+    Both come out of one Graph request: the breakdown is computed from the
+    ``actions`` array already on every row, so surfacing it costs no extra API
+    quota. Kept as one return value precisely so the two can never be fetched
+    against different windows and disagree.
+    """
+
+    rows: list[dict[str, Any]]
+    action_rows: list[dict[str, Any]]
+
+
 def fetch_result_resolver(
     account_id: str,
     *,
@@ -1094,7 +1186,7 @@ def fetch_adset_daily_metrics(
     return out
 
 
-def fetch_ad_daily_metrics(
+def fetch_ad_daily_metrics_with_actions(
     account_id: str,
     *,
     start: date,
@@ -1102,12 +1194,16 @@ def fetch_ad_daily_metrics(
     access_token: str | None = None,
     env: MetaEnv | None = None,
     resolver: ResultResolver | None = None,
-) -> list[dict[str, Any]]:
-    """Per-ad daily metrics for BQ warehouse storage.
+) -> AdDailyFetch:
+    """Per-ad daily metrics for BQ warehouse storage, plus the per-action split.
 
     When ``resolver`` is provided, ``conversions`` is the result event of the
     ad's parent ad set (its optimization goal); otherwise it falls back to
     de-duplicated conversion counting.
+
+    ``action_rows`` breaks the same insights out by result token so the Campaign
+    Explorer's Conv. selector can isolate one action. It is derived from the
+    rows already returned by this call, never a second request.
     """
     import logging
     _log = logging.getLogger(__name__)
@@ -1133,6 +1229,7 @@ def fetch_ad_daily_metrics(
     _log.info("Meta insights ad: api_rows=%d", len(rows))
 
     out: list[dict[str, Any]] = []
+    action_out: list[dict[str, Any]] = []
     for row in rows:
         metric_day = str(row.get("date_start") or "")[:10]
         ad_id = str(row.get("ad_id") or "").strip()
@@ -1142,17 +1239,38 @@ def fetch_ad_daily_metrics(
             resolver.adset_tokens(row.get("adset_id")) if resolver else None
         )
         parsed = _parse_insight_row(row, result_tokens=result_tokens)
-        out.append({
+        ids = {
             "ad_id": ad_id,
-            "ad_name": str(row.get("ad_name") or ""),
             "adset_id": str(row.get("adset_id") or "").strip(),
-            "adset_name": str(row.get("adset_name") or ""),
             "campaign_id": str(row.get("campaign_id") or "").strip(),
+        }
+        out.append({
+            **ids,
+            "ad_name": str(row.get("ad_name") or ""),
+            "adset_name": str(row.get("adset_name") or ""),
             "campaign_name": str(row.get("campaign_name") or ""),
             "metric_date": metric_day,
             **parsed,
         })
-    return out
+        for action in _action_breakdown(row, result_tokens=result_tokens):
+            action_out.append({**ids, "metric_date": metric_day, **action})
+    return AdDailyFetch(rows=out, action_rows=action_out)
+
+
+def fetch_ad_daily_metrics(
+    account_id: str,
+    *,
+    start: date,
+    end: date,
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+    resolver: ResultResolver | None = None,
+) -> list[dict[str, Any]]:
+    """Per-ad daily metrics only — see fetch_ad_daily_metrics_with_actions."""
+    return fetch_ad_daily_metrics_with_actions(
+        account_id, start=start, end=end, access_token=access_token,
+        env=env, resolver=resolver,
+    ).rows
 
 
 def sync_account_to_warehouse(

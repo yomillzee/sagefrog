@@ -189,6 +189,31 @@ def _schema_demographic_daily(bq):
     ]
 
 
+def _schema_conversion_action_daily(bq):
+    """Per-conversion-action daily conversions, at ad grain.
+
+    Carries no spend/clicks/impressions on purpose: a row scoped to one
+    conversion action has no share of the ad's cost, and repeating the ad totals
+    against each action is exactly how a breakdown table starts lying.
+    """
+    return [
+        bq.SchemaField("client_key",             "STRING",    mode="REQUIRED"),
+        bq.SchemaField("account_id",             "STRING",    mode="REQUIRED"),
+        bq.SchemaField("campaign_id",            "STRING",    mode="REQUIRED"),
+        bq.SchemaField("campaign_name",          "STRING",    mode="NULLABLE"),
+        bq.SchemaField("ad_group_id",            "STRING",    mode="REQUIRED"),
+        bq.SchemaField("ad_group_name",          "STRING",    mode="NULLABLE"),
+        bq.SchemaField("ad_id",                  "STRING",    mode="REQUIRED"),
+        bq.SchemaField("conversion_action_id",   "STRING",    mode="NULLABLE"),
+        bq.SchemaField("conversion_action_name", "STRING",    mode="REQUIRED"),
+        bq.SchemaField("conversion_category",    "STRING",    mode="NULLABLE"),
+        bq.SchemaField("metric_date",            "DATE",      mode="REQUIRED"),
+        bq.SchemaField("conversions",            "FLOAT64",   mode="NULLABLE"),
+        bq.SchemaField("conversion_value",       "FLOAT64",   mode="NULLABLE"),
+        bq.SchemaField("synced_at",              "TIMESTAMP", mode="NULLABLE"),
+    ]
+
+
 def ensure_google_ads_tables() -> None:
     bq = _bq()
     client = _client()
@@ -202,6 +227,7 @@ def ensure_google_ads_tables() -> None:
         ("ad_daily", _schema_ad_daily),
         ("keyword_daily", _schema_keyword_daily),
         ("demographic_daily", _schema_demographic_daily),
+        ("conversion_action_daily", _schema_conversion_action_daily),
     ]:
         table_id = f"{dataset_ref}.{table_name}"
         schema = schema_fn(bq)
@@ -321,6 +347,34 @@ def create_google_ads_mart_views() -> dict[str, Any]:
         }
     except Exception:
         _demo_view = {}
+
+    # Conversion-action breakdown, gated the same way: a client synced before
+    # this report existed has no raw conversion_action_daily until it re-syncs.
+    _conv_view: dict[str, str] = {}
+    try:
+        client.get_table(f"{project}.{raw_dataset}.conversion_action_daily", timeout=15)
+        _conv_view = {
+            "explorer_google_ads_conversion_action_daily": f"""
+                SELECT
+                  'google_ads' AS source,
+                  client_key,
+                  account_id,
+                  campaign_id,
+                  campaign_name,
+                  ad_group_id,
+                  ad_group_name,
+                  ad_id,
+                  conversion_action_id,
+                  conversion_action_name,
+                  conversion_category,
+                  metric_date AS date,
+                  conversions,
+                  conversion_value
+                FROM `{project}.{raw_dataset}.conversion_action_daily`
+            """,
+        }
+    except Exception:
+        _conv_view = {}
 
     views = {
         "fact_google_ads_ad_daily": f"""
@@ -445,6 +499,7 @@ def create_google_ads_mart_views() -> dict[str, Any]:
     }
     views.update(_kw_view)
     views.update(_demo_view)
+    views.update(_conv_view)
 
     results: dict[str, Any] = {}
     for view_name, select_sql in views.items():
@@ -583,6 +638,38 @@ def _write_demographic_daily(
     client.load_table_from_json(rows, table_id, job_config=job_config).result(timeout=180)
     _log.info(
         "Google Ads wrote %d rows → demographic_daily [client=%s account=%s]",
+        len(rows), client_key, account_id,
+    )
+    return len(rows)
+
+
+def _write_conversion_action_daily(
+    rows: list[dict[str, Any]],
+    *,
+    client_key: str,
+    account_id: str,
+    start: str,
+    end: str,
+) -> int:
+    if not rows:
+        _log.info("Google Ads conversion_action_daily — 0 rows from API, skipping write")
+        return 0
+    bq = _bq()
+    client = _client()
+    table_id = _table_ref("conversion_action_daily")
+    client.query(
+        f"DELETE FROM `{table_id}` "
+        f"WHERE client_key = '{client_key}' "
+        f"  AND account_id = '{account_id}' "
+        f"  AND metric_date BETWEEN '{start}' AND '{end}'"
+    ).result(timeout=120)
+    job_config = bq.LoadJobConfig(
+        schema=_schema_conversion_action_daily(bq),
+        write_disposition="WRITE_APPEND",
+    )
+    client.load_table_from_json(rows, table_id, job_config=job_config).result(timeout=180)
+    _log.info(
+        "Google Ads wrote %d rows → conversion_action_daily [client=%s account=%s]",
         len(rows), client_key, account_id,
     )
     return len(rows)
@@ -796,6 +883,42 @@ def sync_google_ads_to_bq(
         _log.warning("Google Ads demographic_daily sync failed [%s]: %s", client_key, exc)
         errors["demographic_daily"] = str(exc)[:300]
 
+    # Per-conversion-action conversions (segments.conversion_action). Non-fatal:
+    # an account that counts no conversions at all returns nothing here, and the
+    # explorer's Conv. selector simply has no actions to offer.
+    n_conv = 0
+    try:
+        conv_raw = google_ads_service.fetch_conversion_action_daily_metrics(
+            customer_id_clean, start=start_date, end=end_date, client=ads_client
+        )
+        conv_rows = [
+            {
+                "client_key": client_key,
+                "account_id": customer_id_clean,
+                "campaign_id": str(r.get("campaign_id") or ""),
+                "campaign_name": r.get("campaign_name"),
+                "ad_group_id": str(r.get("ad_group_id") or ""),
+                "ad_group_name": r.get("ad_group_name"),
+                "ad_id": str(r.get("ad_id") or ""),
+                "conversion_action_id": str(r.get("conversion_action_id") or "") or None,
+                "conversion_action_name": r.get("conversion_action_name") or "",
+                "conversion_category": r.get("conversion_category") or None,
+                "metric_date": r.get("metric_date") or "",
+                "conversions": float(r.get("conversions") or 0.0),
+                "conversion_value": float(r.get("conversion_value") or 0.0),
+                "synced_at": now,
+            }
+            for r in conv_raw
+            if r.get("ad_id") and r.get("conversion_action_name") and r.get("metric_date")
+        ]
+        n_conv = _write_conversion_action_daily(
+            conv_rows, client_key=client_key, account_id=customer_id_clean,
+            start=start, end=end,
+        )
+    except Exception as exc:
+        _log.warning("Google Ads conversion_action_daily sync failed [%s]: %s", client_key, exc)
+        errors["conversion_action_daily"] = str(exc)[:300]
+
     # Rebuild mart views (explorer_google_ads_daily + fact_ views)
     mart_errors: dict[str, str] = {}
     try:
@@ -806,13 +929,14 @@ def sync_google_ads_to_bq(
         mart_errors["mart_views"] = str(exc)[:300]
     errors.update(mart_errors)
 
-    total = n_campaign + n_ad + n_kw + n_demo
+    total = n_campaign + n_ad + n_kw + n_demo + n_conv
     _log.info(
         "Google Ads sync complete [%s]: campaign_daily=%d ad_daily=%d keyword_daily=%d "
-        "demographic_daily=%d",
-        client_key, n_campaign, n_ad, n_kw, n_demo,
+        "demographic_daily=%d conversion_action_daily=%d",
+        client_key, n_campaign, n_ad, n_kw, n_demo, n_conv,
     )
     return {
         "total_rows": total, "campaign_rows": n_campaign, "ad_rows": n_ad,
-        "keyword_rows": n_kw, "demographic_rows": n_demo, "errors": errors,
+        "keyword_rows": n_kw, "demographic_rows": n_demo,
+        "conversion_action_rows": n_conv, "errors": errors,
     }
