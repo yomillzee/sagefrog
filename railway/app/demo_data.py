@@ -963,6 +963,20 @@ def _build_linkedin_verified(payload: dict) -> dict:
             "events": events, "by_group_name": by_group, "by_group_name_event": by_group_event}
 
 
+def _build_microsoft_verified(payload: dict) -> dict:
+    start, end = _dates(payload)
+    days = max(1, (end - start).days + 1)
+    events = _verified_events_catalog()
+    by_campaign: dict[str, int] = {}
+    by_campaign_event: dict[str, dict] = {}
+    for cid, name in _MICROSOFT_CAMPAIGNS:
+        total = int((3 + 30 * _u("msv", cid)) * days / 10)
+        by_campaign[name] = total
+        by_campaign_event[name] = {ev: int(total * (0.2 + 0.5 * _u("msve", cid, ev))) for ev in events}
+    return {"client": "demo", "date_range": _date_range(start, end),
+            "events": events, "by_campaign_name": by_campaign, "by_campaign_name_event": by_campaign_event}
+
+
 # Platform conversion actions — the split behind the explorer's Conv. selector.
 # Demo numbers are derived from the same explorer metrics the tree shows, so a
 # selected action never exceeds the Conv. it is a slice of, and the shares add
@@ -1332,6 +1346,7 @@ _BUILDERS = {
     "explorer.meta_verified": _build_meta_verified,
     "explorer.google_verified": _build_google_verified,
     "explorer.linkedin_verified": _build_linkedin_verified,
+    "explorer.microsoft_verified": _build_microsoft_verified,
     "explorer.google_conversion_actions": _build_google_conversion_actions,
     "explorer.meta_conversion_actions": _build_meta_conversion_actions,
     "explorer.microsoft_conversion_actions": _build_microsoft_conversion_actions,

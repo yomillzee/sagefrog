@@ -2664,6 +2664,7 @@ def render_bigquery_dashboard_page(
     const META_VERIFIED_API    = "{_aurl(f'/api/clients/{api_client_key}/meta/verified-conversions')}";
     const GOOGLE_VERIFIED_API  = "{_aurl(f'/api/clients/{api_client_key}/google-ads/verified-conversions')}";
     const LINKEDIN_VERIFIED_API= "{_aurl(f'/api/clients/{api_client_key}/linkedin/verified-conversions')}";
+    const MICROSOFT_VERIFIED_API= "{_aurl(f'/api/clients/{api_client_key}/microsoft/verified-conversions')}";
     const BACKFILL_API         = "{_aurl(f'/api/clients/{api_client_key}/backfill-linkedin')}";
     const PAGES_TOP_API        = "{_aurl(f'/api/clients/{api_client_key}/pages/top')}";
     const PAGES_SOURCES_API    = "{_aurl(f'/api/clients/{api_client_key}/pages/sources')}";
@@ -4896,6 +4897,8 @@ def render_bigquery_dashboard_page(
     let verifiedByGoogleCampaignIdEvent = {{}};
     let verifiedByLinkedinGroup = {{}};
     let verifiedByLinkedinGroupEvent = {{}};
+    let verifiedByMicrosoftCampaign = {{}};
+    let verifiedByMicrosoftCampaignEvent = {{}};
     let keyEventList = [];
     // Platform conversion actions. Google and Meta report the split at ad grain
     // (keyed by ad id); Microsoft's Goals and Funnels report stops at the ad
@@ -5053,6 +5056,7 @@ def render_bigquery_dashboard_page(
       // No verified data yet (table not synced) -> show "—", not a misleading 0.
       const gHasData = Object.keys(verifiedByGoogleCampaignId).length > 0;
       const lHasData = Object.keys(verifiedByLinkedinGroup).length > 0;
+      const mHasData = Object.keys(verifiedByMicrosoftCampaign).length > 0;
       for (const camp of campaigns.values()) {{
         // Google verified is a campaign-level number (native GA4 link); attach it
         // to the campaign node — sub-levels stay "—" (no reliable per-ad id).
@@ -5082,9 +5086,20 @@ def render_bigquery_dashboard_page(
             camp.metrics._verifiedNa=true;
           }}
         }}
-        // Microsoft/Bing has no GA4 verified-conversion mapping — show "—".
+        // Microsoft/Bing verified is campaign-level, matched by normalized name
+        // (no native GA4 link, like LinkedIn). Sub-levels (ad group / ad) stay
+        // "—" via the row-level _verifiedNa set above.
         else if (camp.platform==='microsoft') {{
-          camp.metrics._verifiedNa=true;
+          if (mHasData) {{
+            const mname=normalizeLiName(camp.name);
+            const mv=num(verifiedByMicrosoftCampaign[mname]);
+            camp.metrics.verified=mv;
+            camp.metrics.verified_sel=(selectedKeyEvent==='__all__')
+              ? mv
+              : num((verifiedByMicrosoftCampaignEvent[mname]||{{}})[selectedKeyEvent]);
+          }} else {{
+            camp.metrics._verifiedNa=true;
+          }}
         }}
         for (const grp of camp.groups.values()) {{
           grp.ads.sort((a,b)=> key==='name' ? cmpName(explorerAdName(a),explorerAdName(b)) : cmpMetric(a,b));
@@ -5324,6 +5339,9 @@ def render_bigquery_dashboard_page(
       // LinkedIn verified is campaign-group-level (name-matched); add once per group.
       const liSeen=new Set(); let linkedinVerifiedTotal=0;
       for (const r of filtered) {{ if (r.platform==='linkedin') {{ const gn=normalizeLiName(r.campaign_name||''); if (gn && !liSeen.has(gn)) {{ liSeen.add(gn); linkedinVerifiedTotal+=num(verifiedByLinkedinGroup[gn]); }} }} }}
+      // Microsoft verified is campaign-level (name-matched); add once per campaign.
+      const msSeen=new Set(); let microsoftVerifiedTotal=0;
+      for (const r of filtered) {{ if (r.platform==='microsoft') {{ const mn=normalizeLiName(r.campaign_name||''); if (mn && !msSeen.has(mn)) {{ msSeen.add(mn); microsoftVerifiedTotal+=num(verifiedByMicrosoftCampaign[mn]); }} }} }}
       const el=document.getElementById('explorerTable');
       const tree=buildExplorerTree(filtered);
       // The Conversions card follows the column's selector, and it is totalled
@@ -5342,7 +5360,7 @@ def render_bigquery_dashboard_page(
         }}
         const delta=aggPrev?summaryDeltaHtml(agg[k],aggPrev[k],EXPLORER_METRIC_DIR[k]):'';
         return `<div class="card"><div class="card-title">${{l}}</div><div class="card-value">${{fmt(agg[k])}}</div>${{delta?`<div class="card-foot">${{delta}}</div>`:''}}</div>`;
-      }}).join('') + `<div class="card"><div class="card-title">Verified conv. (GA4)</div><div class="card-value">${{count(num(agg.verified)+googleVerifiedTotal+linkedinVerifiedTotal)}}</div></div>`;
+      }}).join('') + `<div class="card"><div class="card-title">Verified conv. (GA4)</div><div class="card-value">${{count(num(agg.verified)+googleVerifiedTotal+linkedinVerifiedTotal+microsoftVerifiedTotal)}}</div></div>`;
       if (!tree.size) {{ el.innerHTML=`<tbody><tr><td class="empty">No campaigns match these filters.</td></tr></tbody>`; }} else {{
         const sArrow=k=>explorerSort.key===k?(explorerSort.dir==='asc'?' ▲':' ▼'):'';
         const convSel=convSelectHtml();
@@ -5411,7 +5429,9 @@ def render_bigquery_dashboard_page(
       // text ads. The served title parts / descriptions map onto the same
       // headline_1..3 / description_1..2 fields adCell renders. Before ad-level
       // data syncs, the rows are campaign-grain (ad fields blank) and collapse to
-      // a single campaign node. No GA4 verified mapping for Bing → verified "—".
+      // a single campaign node. _verifiedNa here dashes the ad group / ad rows;
+      // buildExplorerTree resolves the real campaign-level verified figure by
+      // name match, same as LinkedIn.
       for (const r of (microsoft&&microsoft.rows?microsoft.rows:[])) {{
         // Prefer the full RSA asset lists (JSON from Campaign Management); fall
         // back to the served title parts when creative copy hasn't synced.
@@ -6073,7 +6093,7 @@ def render_bigquery_dashboard_page(
       // set, so a page load with no comparison configured yet skips these.
       const cmpOn = !!compareStart;
       const EMPTY_CONV={{actions:[],by_entity:{{}}}};
-      const [g,l,m,ms,kw,ver,gver,lver,gconv,mconv,msconv,gPrev,lPrev,mPrev,msPrev,paid,paidPrev]=await Promise.all([
+      const [g,l,m,ms,kw,ver,gver,lver,mver,gconv,mconv,msconv,gPrev,lPrev,mPrev,msPrev,paid,paidPrev]=await Promise.all([
         getJson(withDates(EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(LINKEDIN_EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(META_EXPLORER_API)).catch(()=>({{rows:[]}})),
@@ -6082,6 +6102,7 @@ def render_bigquery_dashboard_page(
         getJson(withDates(META_VERIFIED_API)).catch(()=>({{by_ad_id:{{}}}})),
         getJson(withDates(GOOGLE_VERIFIED_API)).catch(()=>({{by_campaign_id:{{}}}})),
         getJson(withDates(LINKEDIN_VERIFIED_API)).catch(()=>({{by_group_name:{{}}}})),
+        getJson(withDates(MICROSOFT_VERIFIED_API)).catch(()=>({{by_campaign_name:{{}}}})),
         // Conversion-action breakdowns. Fetched for the current window only --
         // the selector's job is "which action is this", not "how did this action
         // move", and the Conv. column drops its delta while one is selected.
@@ -6104,10 +6125,13 @@ def render_bigquery_dashboard_page(
       verifiedByGoogleCampaignIdEvent=(gver&&gver.by_campaign_id_event)?gver.by_campaign_id_event:{{}};
       verifiedByLinkedinGroup=(lver&&lver.by_group_name)?lver.by_group_name:{{}};
       verifiedByLinkedinGroupEvent=(lver&&lver.by_group_name_event)?lver.by_group_name_event:{{}};
+      verifiedByMicrosoftCampaign=(mver&&mver.by_campaign_name)?mver.by_campaign_name:{{}};
+      verifiedByMicrosoftCampaignEvent=(mver&&mver.by_campaign_name_event)?mver.by_campaign_name_event:{{}};
       const metaEvents=(ver&&ver.events)?ver.events:[];
       const googleEvents=(gver&&gver.events)?gver.events:[];
       const linkedinEvents=(lver&&lver.events)?lver.events:[];
-      keyEventList=[...new Set([...metaEvents,...googleEvents,...linkedinEvents])];
+      const microsoftEvents=(mver&&mver.events)?mver.events:[];
+      keyEventList=[...new Set([...metaEvents,...googleEvents,...linkedinEvents,...microsoftEvents])];
       if (selectedKeyEvent!=='__all__' && keyEventList.indexOf(selectedKeyEvent)<0) selectedKeyEvent='__all__';
       convByGoogleAdId=(gconv&&gconv.by_entity)?gconv.by_entity:{{}};
       convByMetaAdId=(mconv&&mconv.by_entity)?mconv.by_entity:{{}};

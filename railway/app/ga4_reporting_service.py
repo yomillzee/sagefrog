@@ -543,6 +543,53 @@ def fetch_paid_linkedin_key_event_daily(
     return out
 
 
+def fetch_paid_microsoft_key_event_daily(
+    property_id: str, start: str, end: str, access_token: str,
+    *, client_key: str = "",
+) -> list[dict[str, Any]]:
+    """Microsoft/Bing key events split by event name, per campaign name.
+
+    Microsoft Ads has no native GA4 link (that only exists for Google Ads via
+    gclid auto-tagging), so matching is name-based at the campaign level —
+    same convention as LinkedIn. Scoped to Bing sessions by source; keeps
+    only key_events > 0. Joins to explorer_microsoft_ads_daily by normalized
+    campaign_name in the reader.
+    """
+    try:
+        rows = _run_report(
+            property_id,
+            dimensions=["date", "sessionSource", "sessionCampaignName", "eventName"],
+            metrics=["keyEvents"],
+            start=start, end=end, access_token=access_token,
+        )
+    except RuntimeError as exc:
+        _log.warning(
+            "GA4 microsoft_key_event_daily skipped — API rejected dimension/metric combination "
+            "or returned error. Table will be empty for this sync. Error: %s", exc,
+        )
+        return []
+    synced_at = _now()
+    out = []
+    for r in rows:
+        source = (r.get("sessionSource") or "").lower()
+        campaign = r.get("sessionCampaignName") or ""
+        key_events = int(float(r.get("keyEvents") or 0))
+        if "bing" not in source and "microsoft" not in source:
+            continue
+        if campaign in ("", "(not set)") or key_events <= 0:
+            continue
+        out.append({
+            "client_key": client_key,
+            "property_id": property_id,
+            "date": _parse_date(r.get("date", "")),
+            "campaign_name": campaign,
+            "event_name": r.get("eventName") or "(not set)",
+            "key_events": key_events,
+            "synced_at": synced_at,
+        })
+    return out
+
+
 def fetch_paid_google_key_event_daily(
     property_id: str, start: str, end: str, access_token: str,
     *, client_key: str = "",
@@ -911,6 +958,15 @@ GA4_REPORTS = [
         "grain": ["date", "campaign_name", "event_name"],
         "required": False,
         "notes": "LinkedIn key events split by event name, per campaign-group name (utm_campaign). Name-matched to fact_linkedin_ads_campaign_daily — LinkedIn has no ids in GA4. Only key_events > 0 kept.",
+    },
+    {
+        "report_key": "paid_microsoft_key_event",
+        "table_name": "ga4_microsoft_key_event_daily",
+        "dimensions": ["date", "sessionSource", "sessionCampaignName", "eventName"],
+        "metrics": ["keyEvents"],
+        "grain": ["date", "campaign_name", "event_name"],
+        "required": False,
+        "notes": "Microsoft/Bing key events split by event name, per campaign name. Name-matched to explorer_microsoft_ads_daily — Microsoft has no native GA4 link like Google Ads. Only key_events > 0 kept.",
     },
     {
         "report_key": "paid_google_key_event",

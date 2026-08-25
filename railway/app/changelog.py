@@ -63,6 +63,23 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-25",
+        title="Campaign explorer: Verified conv. (GA4) now covers Microsoft Ads",
+        area="Client dashboards · Campaign explorer",
+        kind="new",
+        summary=(
+            "Microsoft/Bing campaigns now get a GA4-verified conversions figure "
+            "in the explorer, matched the same way LinkedIn already is."
+        ),
+        details=(
+            "Matched by campaign name (Microsoft has no native GA4 link, like "
+            "Google Ads does), so figures can differ from the platform's own "
+            "Conv. column when a campaign's GA4 name doesn't line up.",
+            "Shown at the campaign row; ad group and ad rows underneath still "
+            "show a dash.",
+        ),
+    ),
+    Entry(
+        date="2026-08-25",
         title="Date range picker has a This Year option",
         area="Client dashboards · Range picker",
         kind="new",
