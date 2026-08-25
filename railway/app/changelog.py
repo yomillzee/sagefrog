@@ -62,6 +62,17 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-08-25",
+        title="Date range picker has a This Year option",
+        area="Client dashboards · Range picker",
+        kind="new",
+        summary=(
+            "The Range dropdown now offers \"This year\" alongside the other "
+            "calendar presets, for a year-to-date view compared against the "
+            "same stretch of last year."
+        ),
+    ),
+    Entry(
         date="2026-08-24",
         title="Campaign explorer: see one conversion action at a time",
         area="Client dashboards · Campaign explorer",

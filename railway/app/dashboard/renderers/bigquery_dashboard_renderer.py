@@ -812,7 +812,7 @@ def render_bigquery_dashboard_page(
     _DATE_PRESETS = (
         "last_7", "last_30", "last_90", "last_365",
         "this_week", "last_week", "this_month", "last_month",
-        "this_quarter", "last_quarter",
+        "this_quarter", "last_quarter", "this_year",
     )
     effective_default_preset = (
         default_date_preset if default_date_preset in _DATE_PRESETS else "last_30"
@@ -824,6 +824,7 @@ def render_bigquery_dashboard_page(
         ("this_week", "This week"), ("last_week", "Last week"),
         ("this_month", "This month"), ("last_month", "Last month"),
         ("this_quarter", "This quarter"), ("last_quarter", "Last quarter"),
+        ("this_year", "This year"),
     ]
     date_preset_labels_json = json.dumps(dict(_DATE_PRESET_LABELS))
     # One picker next to the Range control, listing every comparison the page
@@ -7466,6 +7467,17 @@ def render_bigquery_dashboard_page(
         e=new Date(qs.getFullYear(), qs.getMonth(), 0);
         cs=new Date(qs.getFullYear(), qs.getMonth()-6, 1);
         ce=new Date(qs.getFullYear(), qs.getMonth()-3, 0);
+      }} else if (name==='this_year') {{
+        // Year-to-date, ending yesterday like the other "this_*" presets.
+        // Previous period = the same number of days into the prior year,
+        // clamped to that year's last day (leap years differ by a day).
+        s=new Date(today.getFullYear(),0,1);
+        e=(yesterday>=s)?yesterday:s;
+        cs=new Date(today.getFullYear()-1,0,1);
+        const prevYEnd=new Date(today.getFullYear()-1,11,31);
+        const daysIn=Math.round((e-s)/86400000);
+        ce=new Date(cs); ce.setDate(cs.getDate()+daysIn);
+        if (ce>prevYEnd) ce=prevYEnd;
       }} else if (name==='last_7') lastN(7);
       else if (name==='last_30') lastN(30);
       else if (name==='last_90') lastN(90);

@@ -108,6 +108,30 @@ class QuarterPresetsTest(unittest.TestCase):
         self.assertEqual(offered - set(cdc.DATE_RANGE_PRESETS), set())
 
 
+class YearPresetTest(unittest.TestCase):
+    def test_this_year_preset_is_a_savable_default(self):
+        self.assertIn("this_year", cdc.DATE_RANGE_PRESETS)
+        self.assertEqual(cdc._normalize_date_preset("this_year"), "this_year")
+
+    def test_renderer_offers_this_year_row(self):
+        html = _render()
+        self.assertIn('data-preset="this_year"', html)
+        self.assertIn("This year", html)
+
+    def test_stored_this_year_default_lands_and_labels_the_toggle(self):
+        cfg = cdc.ClientConfigRow(
+            client_slug="demo", label="Demo",
+            google_customer_id=None, linkedin_account_id=None,
+            meta_account_id=None, ga4_client_key=None,
+            default_date_preset="this_year",
+        )
+        with patch.object(cdc, "get_config", return_value=cfg):
+            html = _render()
+        self.assertIn('const DEFAULT_DATE_PRESET = "this_year"', html)
+        self.assertIn('<span id="rangeToggleLabel">This year</span>', html)
+        self.assertIn('class="range-opt active" role="option" data-preset="this_year"', html)
+
+
 class CustomRangeTest(unittest.TestCase):
     def test_picker_offers_a_custom_range_row_and_form(self):
         html = _render()
