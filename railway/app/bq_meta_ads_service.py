@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
-from datetime import date
-from typing import Any
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, NamedTuple
 
 import bigquery_service
 import bigquery_warehouse
@@ -16,6 +16,93 @@ _DEFAULT_MART_DATASET = "marketing_marts"
 _DEFAULT_CAMPAIGN_FACT = "fact_meta_ads_campaign_daily"
 _DEFAULT_ADSET_FACT = "fact_meta_ads_adset_daily"
 _DEFAULT_AD_FACT = "fact_meta_ads_ad_daily"
+
+# Creative metadata (thumbnails, video previews, creative names) is the most
+# expensive thing this sync fetches: it pages every ad the account has ever run
+# with a heavy creative{...} field expansion, plus a video lookup per video
+# creative. It is what exhausts the ad account Ads API call budget -- Meta error
+# code 17 / subcode 2446079, "Ad Account Has Too Many API Calls", which is a
+# per-account limit derived from spend and active ad count and so is unaffected
+# by the app Marketing API tier.
+#
+# It also changes far less often than daily metrics, so it no longer runs every
+# cycle. An ad gets its creatives refetched when it has no creative row yet (a
+# new ad needs its thumbnail promptly) or when that row has aged past this
+# window; otherwise the warehouse keeps serving the creatives it already has.
+_CREATIVE_REFRESH_HOURS = 20.0
+# Past this many ads needing creatives, the targeted multi-get stops being
+# cheaper than a single full paged fetch.
+_CREATIVE_TARGETED_MAX_ADS = 200
+
+
+class _CreativePlan(NamedTuple):
+    """How much of the creative fetch a sync needs to spend API calls on."""
+    mode: str  # "skip" | "targeted" | "full"
+    ad_ids: tuple[str, ...]
+    reason: str
+
+
+def _creative_refresh_hours() -> float:
+    import os
+    raw = os.getenv("META_CREATIVE_REFRESH_HOURS")
+    if not raw:
+        return _CREATIVE_REFRESH_HOURS
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return _CREATIVE_REFRESH_HOURS
+
+
+def _creative_row_is_stale(synced_at: Any, cutoff: datetime) -> bool:
+    """True when an ad has no creative row, or one older than the refresh window."""
+    if synced_at is None:
+        return True
+    tzinfo = getattr(synced_at, "tzinfo", "missing")
+    if tzinfo == "missing":
+        return True
+    try:
+        ts = synced_at if tzinfo else synced_at.replace(tzinfo=timezone.utc)
+        return ts < cutoff
+    except (TypeError, ValueError):
+        return True
+
+
+def _plan_creative_fetch(
+    account_id: str,
+    ad_rows: list[dict[str, Any]],
+    *,
+    ad_fetch_failed: bool,
+) -> _CreativePlan:
+    """Decide whether to skip, target, or fully re-run the creative fetch.
+
+    Driven off what the insights calls just returned and what the warehouse
+    already holds, so a routine sync of an account whose ads have not changed
+    spends zero calls here. Every uncertain case resolves to "full" -- a wrong
+    skip silently leaves the explorer without thumbnails, which is worse than a
+    wasted fetch.
+    """
+    if ad_fetch_failed:
+        return _CreativePlan("full", (), "ad insights failed; cannot tell which ads matter")
+
+    needed = {str(row.get("ad_id") or "").strip() for row in ad_rows}
+    needed.discard("")
+    if not needed:
+        return _CreativePlan("skip", (), "no ads delivered in this window")
+
+    coverage = bigquery_warehouse.meta_ad_creative_coverage(account_id)
+    if not coverage.get("available"):
+        return _CreativePlan("full", (), "creative coverage unreadable")
+
+    synced_at = coverage.get("synced_at") or {}
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=_creative_refresh_hours())
+    stale = sorted(aid for aid in needed if _creative_row_is_stale(synced_at.get(aid), cutoff))
+    if not stale:
+        return _CreativePlan("skip", (), f"all {len(needed)} ads have fresh creatives")
+    if len(stale) > _CREATIVE_TARGETED_MAX_ADS:
+        return _CreativePlan("full", (), f"{len(stale)} ads need creatives")
+    return _CreativePlan(
+        "targeted", tuple(stale), f"{len(stale)} of {len(needed)} ads need creatives"
+    )
 
 
 # Per-client routing override. Default None â†’ Penn env fallback, so Penn /
@@ -139,15 +226,13 @@ def sync_meta_to_bq(
             "conversion counting", client_key, exc,
         )
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         _cf = pool.submit(meta_service.fetch_campaign_daily_metrics, account_id_clean,
                           start=start, end=end, access_token=access_token, resolver=resolver)
         _af = pool.submit(meta_service.fetch_adset_daily_metrics, account_id_clean,
                           start=start, end=end, access_token=access_token, resolver=resolver)
         _adf = pool.submit(meta_service.fetch_ad_daily_metrics_with_actions, account_id_clean,
                            start=start, end=end, access_token=access_token, resolver=resolver)
-        _crf = pool.submit(meta_service.fetch_ad_creative_metadata, account_id_clean,
-                           access_token=access_token)
         try:
             campaign_rows = _cf.result()
         except Exception as exc:
@@ -165,8 +250,29 @@ def sync_meta_to_bq(
             ad_action_rows = ad_fetch.action_rows
         except Exception as exc:
             errors["meta_ad_fetch"] = str(exc)[:400]
+
+    # The creative fetch runs after the insights calls rather than alongside
+    # them: all four spend the same ad account call budget, and this is the
+    # expensive one, so having it compete with three concurrent insights calls is
+    # what pushed the account over its limit. Running it last also lets it be
+    # skipped or narrowed based on which ads the insights above actually named.
+    creative_plan = _plan_creative_fetch(
+        account_id_clean, ad_rows, ad_fetch_failed="meta_ad_fetch" in errors
+    )
+    _log.info("sync_meta_to_bq creative: mode=%s ads=%d (%s)",
+              creative_plan.mode, len(creative_plan.ad_ids), creative_plan.reason)
+    if creative_plan.mode == "targeted":
         try:
-            creative_rows = _crf.result()
+            creative_rows = meta_service.fetch_ad_creative_metadata_for_ads(
+                account_id_clean, creative_plan.ad_ids, access_token=access_token,
+            )
+        except Exception as exc:
+            errors["meta_creative_fetch"] = str(exc)[:400]
+    elif creative_plan.mode == "full":
+        try:
+            creative_rows = meta_service.fetch_ad_creative_metadata(
+                account_id_clean, access_token=access_token,
+            )
         except Exception as exc:
             errors["meta_creative_fetch"] = str(exc)[:400]
 
@@ -194,6 +300,7 @@ def sync_meta_to_bq(
         "adset_rows": adset_mirror.get("rows_upserted", 0),
         "ad_rows": ad_mirror.get("rows_upserted", 0),
         "creative_rows": creative_mirror.get("rows_upserted", 0),
+        "creative_fetch": creative_plan.mode,
         "conversion_action_rows": action_mirror.get("rows_upserted", 0),
         "views": views.get("views", []),
         "errors": errors,
