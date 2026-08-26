@@ -63,6 +63,39 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-26",
+        title="Paid trends can chart several metrics at once",
+        area="Client dashboards · Campaign explorer",
+        kind="improved",
+        summary=(
+            "The metric chips above Paid trends are now toggles rather than a "
+            "one-of-six pick, so spend, clicks and CTR can sit on the same "
+            "timeline instead of being compared by flipping back and forth."
+        ),
+        details=(
+            "Each chip carries the colour of the line it adds, and the legend under the chart totals every selected metric over the window.",
+            "Every metric keeps its own scale, so adding CTR to a spend line does not flatten either of them.",
+            "The dashed comparison-period line still shows while exactly one metric is picked; with two or more the legend carries the vs-previous change instead.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
+        title="Campaign explorer settings moved into one menu, and GA4-verified conversions can be hidden",
+        area="Client dashboards · Campaign explorer",
+        kind="improved",
+        summary=(
+            "The Campaigns and Edit filters buttons now live behind a single "
+            "options menu at the right of the Campaign explorer heading, which "
+            "also has a new switch for turning the GA4-verified conversion "
+            "column and card off."
+        ),
+        details=(
+            "The heading keeps just the Platform filter and the row count, so it stays readable on a laptop.",
+            "The GA4-verified switch is available to everyone, not only admins, and remembers itself per browser — it changes what you see, not the client's settings.",
+            "With it off, the explorer table, its total row and the summary cards drop the GA4 column entirely.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
         title="Meta ad thumbnails stop going missing on busy accounts",
         area="Client dashboards · Campaign explorer",
         kind="fixed",
