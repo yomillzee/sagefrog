@@ -75,16 +75,17 @@ class ExplorerTotalRowMarkupTests(unittest.TestCase):
         self.assertIn("metricCells(totals,aggPrev)", self.html)
 
     def test_footer_reuses_the_metric_columns(self):
-        # metricCells() walks METRIC_COLS for every row level (campaign, ad
+        # metricCells() walks metricCols() -- METRIC_COLS minus whatever the
+        # kebab's switches have turned off -- for every row level (campaign, ad
         # group, ad) and the footer alike, so they all keep the same column
-        # count, order and formatting — including ga4-col. Its optional second
+        # count, order and formatting, including ga4-col. Its optional second
         # argument (a comparison-period aggregate) adds a vs-previous delta;
         # the footer passes aggPrev, and so do campaign rows (matched into the
         # comparison-window tree), while ad-group/ad rows omit it.
         totals = _js_block(self.html, "function explorerTotals(")
         self.assertNotIn("METRIC_COLS", totals)
         cells = _js_block(self.html, "function metricCells(")
-        self.assertIn("METRIC_COLS", cells)
+        self.assertIn("metricCols()", cells)
         self.assertIn("metricCells(camp.metrics, prevCamp?prevCamp.metrics:null)", self.html)
 
     def test_footer_labels_the_campaign_count(self):

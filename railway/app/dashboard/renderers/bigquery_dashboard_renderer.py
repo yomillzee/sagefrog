@@ -957,6 +957,26 @@ def render_bigquery_dashboard_page(
           </div>
         </div>"""
 
+    # Everything that configures the Campaign explorer without being part of
+    # reading it lives behind one kebab in the section head: the two admin
+    # editors above plus the GA4-verified conversions switch (every viewer gets
+    # that one — it only decides whether the GA4 column and card are drawn).
+    # The head itself keeps just the Platform chips and the status line.
+    explorer_adv_items = (explorer_campaigns_edit_html + explorer_filters_edit_html)
+    explorer_adv_menu_html = f"""<div class="adv-menu" id="explorerAdv">
+          <button type="button" class="adv-btn" id="explorerAdvBtn" aria-haspopup="true" aria-expanded="false" title="More options" aria-label="More options">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="12" cy="19" r="1.9"/></svg>
+          </button>
+          <div class="adv-pop" id="explorerAdvPop" hidden>
+            <div class="adv-pop-head">Explorer options</div>
+            <label class="adv-switch-row">
+              <span class="adv-switch-txt">GA4-verified conv.<small>Show the GA4-matched conversion column and card</small></span>
+              <input type="checkbox" class="adv-switch" id="explorerVerifiedToggle">
+            </label>
+            {'<div class="adv-sep"></div>' + explorer_adv_items if explorer_adv_items else ''}
+          </div>
+        </div>"""
+
     connectors_url = _api_url(f"/dashboard/{client_slug}/connectors", access_key=access_key)
     onboarding_html = "" if has_connectors else f"""
       <section class="onboarding-card onboarding-steps">
@@ -1239,7 +1259,7 @@ def render_bigquery_dashboard_page(
     # empty panel never shows an edit bar either.
     panel_explorer_main = f"""
       <section id="sec-explorer">
-        <div class="sec-head"><h2>Campaign explorer</h2><div class="sec-head-actions">{platform_chips_explorer_html}{explorer_campaigns_edit_html}{explorer_filters_edit_html}<span class="status" id="explorerStatus"></span></div></div>
+        <div class="sec-head"><h2>Campaign explorer</h2><div class="sec-head-actions">{platform_chips_explorer_html}<span class="status" id="explorerStatus"></span>{explorer_adv_menu_html}</div></div>
         <div class="cards" id="explorerSummaryCards" style="margin-bottom:14px"></div>
         <!-- Filter groups (Product / Region / Business line …) live in the sticky
              top bar (#explorerFilterBar) as dropdowns; built by buildExplorerFilters()
@@ -1305,17 +1325,18 @@ def render_bigquery_dashboard_page(
         <p class="gd-note" id="gdemoNote"></p>
       </section>"""
 
-    # Paid trends — one metric at a time over the selected range, with the
-    # comparison window overlaid and the timeline's ads-scoped annotations drawn
-    # on top. It reads the same paid-media summary the Overview cards do, so a
-    # spike here and a card up there can never disagree; the metric chips just
-    # re-cut rows already in memory. Hidden for a client with no paid data.
+    # Paid trends — one or more metrics over the selected range (each on its own
+    # auto-scaled axis), with the comparison window overlaid while a single
+    # metric is picked and the timeline's ads-scoped annotations drawn on top. It
+    # reads the same paid-media summary the Overview cards do, so a spike here
+    # and a card up there can never disagree; the metric chips just re-cut rows
+    # already in memory. Hidden for a client with no paid data.
     panel_paid_trends = """
       <section id="sec-paid_trends" style="display:none">
         <div class="sec-head">
           <h2>Paid trends</h2>
           <div class="sec-head-actions">
-            <div class="chips seg" id="paidTrendMetricChips"></div>
+            <div class="chips multi" id="paidTrendMetricChips" role="group" aria-label="Metrics on the chart (pick one or more)"></div>
             <div class="chips seg" id="paidTrendGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div>
             <span class="status" id="paidTrendStatus"></span>
           </div>
@@ -1591,6 +1612,12 @@ def render_bigquery_dashboard_page(
     .chips.seg .chip:hover {{ background:#fff; color:var(--navy); }}
     .chips.seg .chip.active {{ background:#fff; color:var(--navy); border-color:transparent; box-shadow:0 1px 2px rgba(16,33,67,.14); }}
     .chips.seg .chip.active:hover {{ background:#fff; }}
+    /* Multi-select chip row (Paid trends metrics): each chip carries the colour
+       of the line it adds (--chip-dot), so the row doubles as the chart legend
+       and reads as a set of independent toggles rather than one-of-N. */
+    .chips.multi .chip {{ display:inline-flex; align-items:center; gap:6px; padding:4px 11px; font-size:.78rem; }}
+    .chips.multi .chip::before {{ content:""; width:8px; height:8px; border-radius:999px; background:var(--chip-dot,#9aa7bd); opacity:.45; flex-shrink:0; transition:opacity .12s, box-shadow .12s; }}
+    .chips.multi .chip[aria-pressed="true"]::before {{ opacity:1; box-shadow:0 0 0 2px rgba(255,255,255,.5); }}
     /* A filter that belongs to one card rather than the page sits in that
        card's head (Platform on Paid summary / Campaign explorer), sized down a
        notch so it reads as part of the heading row. */
@@ -1729,6 +1756,36 @@ def render_bigquery_dashboard_page(
        sessions series counts). Hidden unless the page sets its text. */
     .sec-note {{ margin:-4px 0 12px; font-size:.78rem; line-height:1.5; color:var(--muted); }}
     .sec-note[hidden] {{ display:none; }}
+    /* Campaign explorer: the "more options" kebab in the section head. It holds
+       the GA4-verified switch plus (for an admin) the Campaigns and Edit filters
+       editors, whose own .ef-pop popovers open to the LEFT of the menu so they
+       clear the card edge. */
+    .adv-menu {{ position:relative; flex-shrink:0; }}
+    .adv-btn {{ display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border:1px solid var(--line); border-radius:999px; background:var(--card); color:var(--muted); padding:0; font:inherit; cursor:pointer; transition:color .14s, border-color .14s, background .14s; }}
+    .adv-btn:hover {{ color:var(--accent); border-color:#b9c8dc; background:#f4f8fd; }}
+    .adv-btn[aria-expanded="true"] {{ color:var(--accent); border-color:#9bbfe6; background:#eef5fd; }}
+    .adv-pop {{ position:absolute; top:calc(100% + 8px); right:0; width:264px; max-width:82vw; background:var(--card); border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 38px rgba(16,33,67,.22); z-index:60; padding:6px; text-align:left; }}
+    .adv-pop[hidden] {{ display:none; }}
+    .adv-pop-head {{ padding:6px 9px 7px; font-size:.72rem; font-weight:800; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }}
+    .adv-sep {{ height:1px; background:var(--line-soft); margin:5px 3px; }}
+    .adv-switch-row {{ display:flex; align-items:flex-start; gap:10px; padding:7px 9px; border-radius:8px; cursor:pointer; }}
+    .adv-switch-row:hover {{ background:#f4f8fd; }}
+    .adv-switch-txt {{ display:flex; flex-direction:column; gap:2px; font-size:.82rem; font-weight:700; color:var(--navy); line-height:1.3; }}
+    .adv-switch-txt small {{ font-size:.72rem; font-weight:500; color:var(--muted); line-height:1.4; }}
+    .adv-switch {{ margin:2px 0 0 auto; flex-shrink:0; cursor:pointer; accent-color:var(--accent); width:15px; height:15px; }}
+    /* The two admin editors become menu rows: full width, no button chrome. */
+    .adv-pop .ef-edit-btn {{ width:100%; justify-content:flex-start; border:0; border-radius:8px; background:none; padding:8px 9px; font-weight:700; }}
+    .adv-pop .ef-edit-btn:hover, .adv-pop .ef-edit-btn[aria-expanded="true"] {{ background:#f4f8fd; }}
+    .adv-pop .ef-pop {{ top:-6px; right:calc(100% + 10px); }}
+    @media (max-width:760px) {{
+      /* The head's actions wrap on a phone, which would leave the kebab
+         mid-row with a right-anchored menu hanging off the left edge. Pin it to
+         the end of its line, keep the menu inside the viewport, and drop the
+         sub-popovers underneath -- there is no room beside them. */
+      .sec-head-actions .adv-menu {{ margin-left:auto; }}
+      .adv-pop {{ width:min(264px, calc(100vw - 28px)); }}
+      .adv-pop .ef-pop {{ top:calc(100% + 6px); right:0; }}
+    }}
     /* Campaign explorer: admin "Campaigns" allowlist picker (checklist popover) */
     .ec-badge {{ display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:var(--accent); color:#fff; font-size:.66rem; font-weight:800; }}
     .ec-badge[hidden] {{ display:none; }}
@@ -3085,6 +3142,10 @@ def render_bigquery_dashboard_page(
         fill: !!s.fill, borderWidth: 2.25, tension: 0.35,
         borderDash: s.dashed ? [5, 4] : [],
         pointRadius: opts.points ? 2.5 : 0, pointHoverRadius: 4, pointBackgroundColor: s.color,
+        // A series can ride its own axis (`axisId`, declared in opts.extraScales)
+        // when one chart carries metrics of different magnitudes -- the paid
+        // trends multi-select does this rather than flattening the smaller line.
+        yAxisID: s.axisId || 'y',
         _raw: s.raw || s.data, _fmt: s.fmt || count,
       }}));
       const chart = __chart(id, {{
@@ -3097,6 +3158,7 @@ def render_bigquery_dashboard_page(
             y: {{ display: opts.yDisplay !== false, reverse: !!opts.yReverse, beginAtZero: opts.beginAtZero !== false,
                  grid: {{ color: '#f1f4f9' }}, border: {{ display: false }},
                  ticks: {{ maxTicksLimit: 4, callback: opts.yFmt || (v => v) }} }},
+            ...(opts.extraScales || {{}}),
           }},
           plugins: {{
             legend: {{ display: false }},
@@ -4701,6 +4763,17 @@ def render_bigquery_dashboard_page(
       {{key:'conversions',label:'Conv.',format:count,convSelect:true,title:'Conversions as the ad platform counts them. Use the selector to isolate a single conversion action; rows whose platform does not report that far down show a dash rather than a guess.'}},
       {{key:'verified_sel',label:'Verified conv.',format:count,cls:'ga4-col',keSelect:true,title:'GA4-verified conversions, matched to the Meta ad by id (utm_content) and rolled up. Independent of the platform-reported Conv. Use the selector to isolate a single GA4 key event.'}},
     ];
+    // GA4-verified conversions are a second, differently-sourced answer to "how
+    // many conversions", which is exactly what some clients do not want on the
+    // page. The kebab's switch drops the column (and the summary card) for this
+    // browser only -- it is a reading preference, not portal config, so it lives
+    // in localStorage rather than being saved per client. Default on.
+    const EXPLORER_VERIFIED_PREF_KEY = 'sf.explorer.verifiedConv';
+    let showVerifiedConv = true;
+    try {{ showVerifiedConv = localStorage.getItem(EXPLORER_VERIFIED_PREF_KEY) !== '0'; }} catch(e) {{}}
+    function metricCols() {{
+      return showVerifiedConv ? METRIC_COLS : METRIC_COLS.filter(c=>c.key!=='verified_sel');
+    }}
     // Explorer table sort — click a column header to sort every tree level (campaigns,
     // ad groups, ads) by it. 'name' sorts the label column alphabetically.
     let explorerSort = {{ key:'spend', dir:'desc' }};
@@ -4715,6 +4788,39 @@ def render_bigquery_dashboard_page(
     // Client-configured filter chip groups: [{{id,label,chips:[{{label,phrases}}]}}].
     // phrases are pre-lowercased server-side; a chip matches a campaign whose
     // (lowercased) name contains any of its phrases.
+    // The Campaign explorer's "more options" kebab. It owns the GA4-verified
+    // switch and hosts the admin editors; those keep their own popovers, which
+    // stop click propagation, so opening one does not close the menu.
+    (function(){{
+      const btn=document.getElementById('explorerAdvBtn'); if (!btn) return;
+      const pop=document.getElementById('explorerAdvPop');
+      const setOpen=(o)=>{{ pop.hidden=!o; btn.setAttribute('aria-expanded', o?'true':'false'); }};
+      btn.addEventListener('click',(e)=>{{ e.stopPropagation(); setOpen(pop.hidden); }});
+      pop.addEventListener('click',(e)=>e.stopPropagation());
+      document.addEventListener('click',()=>setOpen(false));
+      document.addEventListener('keydown',(e)=>{{ if (e.key==='Escape') setOpen(false); }});
+      // Both editors live in one narrow column now, so they would overlap if
+      // both were open; opening one closes the other.
+      pop.querySelectorAll('.ef-edit-btn').forEach(b=>b.addEventListener('click',()=>{{
+        pop.querySelectorAll('.ef-edit').forEach(w=>{{
+          if (w.contains(b)) return;
+          const sub=w.querySelector('.ef-pop'), other=w.querySelector('.ef-edit-btn');
+          if (sub) sub.hidden=true;
+          if (other) other.setAttribute('aria-expanded','false');
+        }});
+      }}));
+      const cb=document.getElementById('explorerVerifiedToggle');
+      if (!cb) return;
+      cb.checked=showVerifiedConv;
+      cb.addEventListener('change',()=>{{
+        showVerifiedConv=cb.checked;
+        try {{ localStorage.setItem(EXPLORER_VERIFIED_PREF_KEY, showVerifiedConv?'1':'0'); }} catch(e) {{}}
+        // Sorting by a column that just left the table would leave the arrow on
+        // nothing, so fall back to the default sort.
+        if (!showVerifiedConv && explorerSort.key==='verified_sel') explorerSort={{key:'spend',dir:'desc'}};
+        if (explorerLoaded) renderExplorer();
+      }});
+    }})();
     const EXPLORER_FILTER_GROUPS = {explorer_filter_groups_json};
     const EXPLORER_FILTERS_API = "{_aurl(f'/api/clients/{api_client_key}/explorer/filters')}";
     // Admin "Edit filters" popover in the Campaign explorer header. Saves the raw
@@ -5139,7 +5245,7 @@ def render_bigquery_dashboard_page(
     // ad rows call this with prevM omitted and get plain cells.
     function metricCells(m, prevM) {{
       const wc=withCtr(m), prevWc=prevM?withCtr(prevM):null;
-      return METRIC_COLS.map(c=>{{
+      return metricCols().map(c=>{{
         if (c.key==='verified_sel') {{ const cell=m._verifiedNa?'—':c.format(wc[c.key]); return `<td${{c.cls?` class="${{c.cls}}"`:''}}>${{cell}}</td>`; }}
         // A selected conversion action has no comparison-window figure behind
         // it (the breakdown is only fetched for the current window), so the
@@ -5360,7 +5466,7 @@ def render_bigquery_dashboard_page(
         }}
         const delta=aggPrev?summaryDeltaHtml(agg[k],aggPrev[k],EXPLORER_METRIC_DIR[k]):'';
         return `<div class="card"><div class="card-title">${{l}}</div><div class="card-value">${{fmt(agg[k])}}</div>${{delta?`<div class="card-foot">${{delta}}</div>`:''}}</div>`;
-      }}).join('') + `<div class="card"><div class="card-title">Verified conv. (GA4)</div><div class="card-value">${{count(num(agg.verified)+googleVerifiedTotal+linkedinVerifiedTotal+microsoftVerifiedTotal)}}</div></div>`;
+      }}).join('') + (showVerifiedConv ? `<div class="card"><div class="card-title">Verified conv. (GA4)</div><div class="card-value">${{count(num(agg.verified)+googleVerifiedTotal+linkedinVerifiedTotal+microsoftVerifiedTotal)}}</div></div>` : '');
       if (!tree.size) {{ el.innerHTML=`<tbody><tr><td class="empty">No campaigns match these filters.</td></tr></tbody>`; }} else {{
         const sArrow=k=>explorerSort.key===k?(explorerSort.dir==='asc'?' ▲':' ▼'):'';
         const convSel=convSelectHtml();
@@ -5369,7 +5475,7 @@ def render_bigquery_dashboard_page(
           : (c.convSelect && convSel)
           ? `<span class="cv-head"><span class="cv-head-top">${{esc(c.label)}}${{sArrow(c.key)}}</span>${{convSel}}</span>`
           : `${{esc(c.label)}}${{sArrow(c.key)}}`;
-        const head=`<thead><tr><th class="left expl-sort${{explorerSort.key==='name'?' active':''}}" data-key="name">Campaign / Ad group / Ad${{sArrow('name')}}</th>${{METRIC_COLS.map(c=>`<th class="expl-sort${{c.cls?' '+c.cls:''}}${{explorerSort.key===c.key?' active':''}}" data-key="${{c.key}}"${{c.title?` title="${{esc(c.title)}}"`:''}}>${{thInner(c)}}</th>`).join('')}}</tr></thead>`;
+        const head=`<thead><tr><th class="left expl-sort${{explorerSort.key==='name'?' active':''}}" data-key="name">Campaign / Ad group / Ad${{sArrow('name')}}</th>${{metricCols().map(c=>`<th class="expl-sort${{c.cls?' '+c.cls:''}}${{explorerSort.key===c.key?' active':''}}" data-key="${{c.key}}"${{c.title?` title="${{esc(c.title)}}"`:''}}>${{thInner(c)}}</th>`).join('')}}</tr></thead>`;
         let body='', cIdx=0;
         for (const camp of tree.values()) {{
           const cId='c'+(cIdx++), gCount=camp.groups.size;
@@ -5951,11 +6057,14 @@ def render_bigquery_dashboard_page(
     }}
 
     // ---- Campaign Explorer: paid trends ----
-    // The explorer answers "which campaign", the tree cannot answer "when". One
-    // metric at a time, because two metrics on one axis (impressions and clicks
-    // differ by two orders of magnitude) either flattens one line or needs a
-    // second axis nobody reads correctly. Chips switch the metric; the rows are
-    // already in memory, so switching costs nothing.
+    // The explorer answers "which campaign", the tree cannot answer "when".
+    // Chips pick one *or more* metrics; the rows are already in memory, so
+    // switching costs nothing. Metrics differ by orders of magnitude
+    // (impressions vs CTR), so every series gets its own auto-scaled axis and
+    // only the single-metric view draws tick labels — with two lines on screen a
+    // shared axis would flatten one of them and two label columns would be read
+    // against the wrong line. Shapes (spend/clicks totals vs a CTR curve) and
+    // the legend's per-metric totals are what the multi-metric view is for.
     const PAID_TREND_METRICS = [
       {{key:'spend',        label:'Spend',       fmt:money, fill:true,  color:'#1769aa', additive:true,  dir:'neutral'}},
       {{key:'impressions',  label:'Impressions', fmt:count, fill:true,  color:'#7c3aed', additive:true,  dir:'up'}},
@@ -5964,11 +6073,15 @@ def render_bigquery_dashboard_page(
       {{key:'ctr',          label:'CTR',         fmt:pct,   fill:false, color:'#b8600a', additive:false, dir:'neutral'}},
       {{key:'cpc',          label:'CPC',         fmt:money, fill:false, color:'#d6336c', additive:false, dir:'down'}},
     ];
-    let paidTrendMetric = 'spend';
+    // Selected metric keys, kept in PAID_TREND_METRICS order so the series,
+    // legend and colours line up however the chips were clicked. Never empty:
+    // clicking the last active chip is a no-op rather than an empty chart.
+    let paidTrendMetrics = new Set(['spend']);
     let paidTrendGran = 'daily';
     let paidTrendCur = null, paidTrendPrev = null;
-    function paidTrendDef() {{
-      return PAID_TREND_METRICS.find(m=>m.key===paidTrendMetric) || PAID_TREND_METRICS[0];
+    function paidTrendDefs() {{
+      const defs=PAID_TREND_METRICS.filter(m=>paidTrendMetrics.has(m.key));
+      return defs.length?defs:[PAID_TREND_METRICS[0]];
     }}
     // Weeks start Monday and are labelled by their start date, matching the
     // Daily/Weekly toggle on the GA4 trends. Ratios are re-derived from the
@@ -5999,13 +6112,20 @@ def render_bigquery_dashboard_page(
     function buildPaidTrendChips() {{
       const host=document.getElementById('paidTrendMetricChips');
       if (!host) return;
+      const paint=()=>host.querySelectorAll('.chip').forEach(x=>{{
+        const on=paidTrendMetrics.has(x.dataset.metric);
+        x.classList.toggle('active', on);
+        x.setAttribute('aria-pressed', on?'true':'false');
+      }});
       host.innerHTML=PAID_TREND_METRICS.map(m=>
-        `<button type="button" class="chip${{m.key===paidTrendMetric?' active':''}}" data-metric="${{esc(m.key)}}">${{esc(m.label)}}</button>`
+        `<button type="button" class="chip${{paidTrendMetrics.has(m.key)?' active':''}}" aria-pressed="${{paidTrendMetrics.has(m.key)?'true':'false'}}" data-metric="${{esc(m.key)}}" style="--chip-dot:${{m.color}}">${{esc(m.label)}}</button>`
       ).join('');
       host.querySelectorAll('.chip').forEach(b=>b.addEventListener('click',()=>{{
-        if (b.dataset.metric===paidTrendMetric) return;
-        paidTrendMetric=b.dataset.metric;
-        host.querySelectorAll('.chip').forEach(x=>x.classList.toggle('active', x===b));
+        const k=b.dataset.metric;
+        // Last one standing stays on -- an empty selection has nothing to plot.
+        if (paidTrendMetrics.has(k)) {{ if (paidTrendMetrics.size===1) return; paidTrendMetrics.delete(k); }}
+        else paidTrendMetrics.add(k);
+        paint();
         renderPaidTrends();
       }}));
     }}
@@ -6042,19 +6162,29 @@ def render_bigquery_dashboard_page(
         return;
       }}
       sec.style.display=''; unit.style.display='';
-      const m=paidTrendDef();
+      const defs=paidTrendDefs();
+      const multi=defs.length>1;
+      const primary=defs[0];
       const prevRows=paidTrendPrev?paidTrendRows(paidTrendPrev):[];
-      const vals=rows.map(r=>num(r[m.key]));
-      const prevVals=prevRows.map(r=>num(r[m.key]));
-      const hasPrev=prevVals.length>0;
+      const hasPrev=prevRows.length>0;
       const labels=rows.map(r=>String(r.date).slice(5));
-      const series=[];
-      // Previous first so the current line draws over it.
-      if (hasPrev) series.push({{label:cmpSeriesLabel(), data:prevVals.slice(0,vals.length), color:'#9aa7bd', dashed:true, fmt:m.fmt}});
-      series.push({{label:'Current', data:vals, color:m.color, fill:m.fill, fmt:m.fmt}});
+      const series=[], extraScales={{}};
+      // Previous first so the current line draws over it. Only while a single
+      // metric is picked: a dashed twin per metric would make three metrics six
+      // lines, and the legend still reports each metric's vs-previous delta.
+      if (hasPrev && !multi) series.push({{label:cmpSeriesLabel(), data:prevRows.map(r=>num(r[primary.key])).slice(0,rows.length), color:'#9aa7bd', dashed:true, fmt:primary.fmt}});
+      defs.forEach((m,i)=>{{
+        const axisId=i===0?'y':('y'+i);
+        // Own axis per extra metric, hidden: the shapes are the comparison, and
+        // the legend carries the numbers.
+        if (i>0) extraScales[axisId]={{display:false, beginAtZero:true}};
+        series.push({{label:multi?m.label:'Current', data:rows.map(r=>num(r[m.key])), color:m.color, fill:!multi&&m.fill, fmt:m.fmt, axisId}});
+      }});
       lineChart('paidTrendChart', labels, series, {{
-        yFmt: v => m.fmt(v),
-        tooltip: {{ label: c => `${{c.dataset.label}}: ${{m.fmt(c.raw)}}` }},
+        yDisplay: !multi,
+        yFmt: v => primary.fmt(v),
+        extraScales,
+        tooltip: {{ label: c => `${{c.dataset.label}}: ${{c.dataset._fmt(c.raw)}}` }},
         dates: rows.map(r=>String(r.date)),
         // Ads events only: a site migration marked "analytics trends" has no
         // business explaining a spend line.
@@ -6062,7 +6192,7 @@ def render_bigquery_dashboard_page(
       }});
       // Additive metrics total over the window; a ratio is re-derived from the
       // window's parts, because the mean of daily CTRs is not the window's CTR.
-      const roll=(rs)=>{{
+      const roll=(rs,m)=>{{
         if (!rs.length) return null;
         if (m.additive) return rs.reduce((a,r)=>a+num(r[m.key]),0);
         const t=rs.reduce((a,r)=>{{a.spend+=num(r.spend);a.impressions+=num(r.impressions);a.clicks+=num(r.clicks);a.conversions+=num(r.conversions);return a;}},
@@ -6071,11 +6201,13 @@ def render_bigquery_dashboard_page(
         if (m.key==='cpc') return t.clicks?t.spend/t.clicks:0;
         return t.conversions?t.spend/t.conversions:0;
       }};
-      const curTot=roll(rows), prevTot=hasPrev?roll(prevRows):null;
       if (legend) {{
-        legend.innerHTML=`<span class="cmp-item"><span class="cmp-swatch cur"></span>`
-          +`${{esc(m.label)}} ${{m.additive?'total':'over the window'}} · ${{m.fmt(curTot)}} ${{summaryDeltaHtml(curTot, prevTot, m.dir)}}</span>`
-          +(hasPrev?`<span class="cmp-item"><span class="cmp-swatch prev"></span>${{esc(cmpSeriesLabel())}} · ${{m.fmt(prevTot)}}</span>`:'');
+        legend.innerHTML=defs.map(m=>{{
+          const curTot=roll(rows,m), prevTot=hasPrev?roll(prevRows,m):null;
+          return `<span class="cmp-item"><span class="cmp-swatch" style="border-top-color:${{m.color}}"></span>`
+            +`${{esc(m.label)}} ${{m.additive?'total':'over the window'}} · ${{m.fmt(curTot)}} ${{summaryDeltaHtml(curTot, prevTot, m.dir)}}</span>`;
+        }}).join('')
+          +((hasPrev && !multi)?`<span class="cmp-item"><span class="cmp-swatch prev"></span>${{esc(cmpSeriesLabel())}} · ${{primary.fmt(roll(prevRows,primary))}}</span>`:'');
       }}
       const platTag=platformFilter.size?` · ${{[...platformFilter].join(', ')}}`:'';
       setStatus('paidTrendStatus', `${{rows.length}} ${{paidTrendGran==='weekly'?'week':'day'}}${{rows.length===1?'':'s'}}${{platTag}}`);
