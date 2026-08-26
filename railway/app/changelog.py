@@ -63,6 +63,21 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-26",
+        title="Campaign explorer's summary cards now chart the metric they show",
+        area="Client dashboards · Campaign Explorer",
+        kind="new",
+        summary=(
+            "Click Spend, Impressions, Clicks, CTR, Conversions, or Verified conv. "
+            "(GA4) above the campaign table to see that metric plotted over time, "
+            "in a chart between the cards and the table."
+        ),
+        details=(
+            "Follows the Platform chips, the campaign explorer's own filter dropdowns, and the campaign allowlist — the line always matches what the table below it is showing.",
+            "Collapsible: click the chart's header to hide it, and it stays collapsed on your next visit.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
         title="HubSpot connections need re-authorizing once per client",
         area="Connectors · HubSpot",
         kind="improved",
