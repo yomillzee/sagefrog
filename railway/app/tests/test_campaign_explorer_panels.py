@@ -134,15 +134,25 @@ class ExplorerPanelTests(unittest.TestCase):
         for column in ("Window", "Breakdown", "Category", "Impressions", "CTR %"):
             self.assertIn(f"'{column}'", html, column)
 
-    def test_linkedin_audience_panel_leads_with_summary_cards(self) -> None:
-        pane = _explorer_pane(self._html())
-        self.assertIn('id="lidemoCards"', pane)
+    def test_linkedin_audience_panel_has_no_summary_cards(self) -> None:
+        # The "top company / most clicks / best CTR" cards are gone: the table
+        # already ranks by impressions, so they only restated its first row.
         html = self._html()
-        self.assertIn("function renderLidemoCards()", html)
-        # The cards name the dimension on screen rather than assuming companies.
-        self.assertIn("LIDEMO_SINGULAR", html)
-        # A CTR crown needs real reach behind it.
-        self.assertIn("LIDEMO_CTR_MIN_IMPRESSIONS", html)
+        self.assertNotIn('id="lidemoCards"', html)
+        self.assertNotIn("renderLidemoCards", html)
+
+    def test_demographic_tables_show_ten_rows_with_a_show_all_toggle(self) -> None:
+        pane = _explorer_pane(self._html())
+        for host in ('id="lidemoMore"', 'id="gdemoMore"'):
+            self.assertIn(host, pane)
+        html = self._html()
+        self.assertIn("const TABLE_TOP_N=10;", html)
+        self.assertIn("function tableVisibleRows(", html)
+        # Both demographic tables render through the limiter and own a toggle.
+        for table in ("'lidemoTable'", "'gdemoTable'"):
+            self.assertIn(f"tableVisibleRows({table},rows)", html, table)
+        self.assertIn("renderTableMore('lidemoMore','lidemoTable'", html)
+        self.assertIn("renderTableMore('gdemoMore','gdemoTable'", html)
 
 
 if __name__ == "__main__":
