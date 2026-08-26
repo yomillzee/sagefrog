@@ -1,0 +1,34 @@
+{
+  "uid": "sagefrog_portal_connector",
+  "type": "app",
+  "config": {
+    "name": "Sagefrog Client Portal",
+    "description": "Reads contacts, deals, and marketing email performance from a client's HubSpot portal into the Sagefrog client dashboard.",
+    "distribution": "marketplace",
+    "auth": {
+      "type": "oauth",
+      "redirectUrls": [
+        "https://sagefrog-production.up.railway.app/oauth/hubspot/callback"
+      ],
+      "requiredScopes": [
+        "oauth",
+        "crm.objects.contacts.read",
+        "crm.objects.deals.read"
+      ],
+      "optionalScopes": [
+        "content"
+      ],
+      "conditionallyRequiredScopes": []
+    },
+    "permittedUrls": {
+      "fetch": ["https://api.hubapi.com"],
+      "iframe": [],
+      "img": []
+    },
+    "support": {
+      "supportEmail": "mikem@sagefrog.com",
+      "documentationUrl": "https://www.sagefrog.com",
+      "supportUrl": "https://www.sagefrog.com"
+    }
+  }
+}
