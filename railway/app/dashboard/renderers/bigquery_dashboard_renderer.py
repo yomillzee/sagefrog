@@ -709,6 +709,18 @@ def render_bigquery_dashboard_page(
             overview_layout = _stored_layout("overview")
             explorer_layout = _stored_layout("explorer")
             gsc_layout = _stored_layout("gsc")
+        # Every write goes to the URL slug — the inline goal POST
+        # (/dashboard/<client_slug>/budget), the settings page save and the
+        # active-days POST all key on client_slug — but the read above prefers
+        # the API client key. The two differ only for Nixon (nixon-bq-test vs
+        # nixon), whose dashboard therefore re-rendered an empty goal after
+        # every save while the value sat safely in the slug's row. Read that
+        # row back for the fields those endpoints own. (Same fix the Nixon
+        # settings page already carries; the dashboard never got it.)
+        if client_slug and (_kwcfg is None or _kwcfg.client_slug != client_slug):
+            _slugcfg = _cdc.get_config(client_slug)
+            if _slugcfg is not None and _slugcfg.monthly_budget_usd is not None:
+                monthly_budget_val = _slugcfg.monthly_budget_usd
         pagespeed_targets_stored = (
             _cdc.get_pagespeed_targets(api_client_key)
             or _cdc.get_pagespeed_targets(client_slug)
