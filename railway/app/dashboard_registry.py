@@ -520,6 +520,13 @@ def delete_client(
             "updated_at = NOW() WHERE %s = ANY(allowed_client_slugs)",
             (slug, slug),
         )
+        # ...and from the account's Sagefrog team, so a slug reused later can't
+        # inherit the old account's staffing. The table is created by the startup
+        # migration runner (client_team:0001_baseline), so it is always present here.
+        conn.execute(
+            "DELETE FROM client_team_members WHERE client_slug = %s",
+            (slug,),
+        )
         deleted = conn.execute(
             "DELETE FROM dashboard_clients WHERE client_slug = %s RETURNING client_slug",
             (slug,),

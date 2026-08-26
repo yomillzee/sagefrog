@@ -35,6 +35,12 @@ _ICON_FAB = (
     '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>'
 )
 
+_ICON_COMMENT = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>'
+)
+
 _ICON_SPARK = (
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
     'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -149,6 +155,40 @@ def _fr_panel_inner_html() -> str:
       </div>"""
 
 
+def _comment_panel_inner_html() -> str:
+    """Comment composer + the thread already on this page.
+
+    Unlike a feature request (which goes to the admin inbox), a comment is
+    addressed to the people staffed on *this* client — so the subtitle says who
+    will hear about it, and the thread above the box shows what has already been
+    said here.
+    """
+    close_btn = (
+        '<button type="button" class="sfnote-icon-btn" id="sfcmClose" '
+        'title="Close" aria-label="Close comments">'
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
+        '</button>'
+    )
+    return f"""
+      <div class="sfnote-head">
+        <div class="sfnote-head-titles">
+          <span class="sfnote-title">Comments</span>
+          <span class="sfnote-sub">The team on this account is notified</span>
+        </div>
+        <div class="sfnote-head-actions">{close_btn}</div>
+      </div>
+      <div class="sfcm-context" id="sfcmContext" aria-live="polite"></div>
+      <div class="sfcm-thread" id="sfcmThread" role="log" aria-label="Comments on this page"></div>
+      <div class="sfcm-reply-to" id="sfcmReplyTo" hidden></div>
+      <textarea class="sfnote-body sfcm-body" id="sfcmBody" placeholder="Leave a comment about this page…" aria-label="Comment" spellcheck="true"></textarea>
+      <div class="sfnote-footer">
+        <span class="sfnote-status" id="sfcmStatus" role="status" aria-live="polite"></span>
+        <button type="button" class="sfnote-btn sfnote-btn--primary" id="sfcmSend">Comment</button>
+      </div>"""
+
+
 # ── Styles ──────────────────────────────────────────────────────────────────
 # Shared editor/panel styling. The FAB + fixed-panel chrome lives in
 # ``_embedded_css`` (only needed inside the dashboard); the popup window reuses
@@ -203,18 +243,40 @@ _EMBEDDED_CSS = """
   .sfnote-menu-item svg { width:16px; height:16px; color:#123a63; }
   .sfnote-menu-item--fr svg { color:#7c3aed; }
   /* Collapse the dock while a panel is open so the FAB doesn't cover it. */
-  body.sfnote-open .sfnote-dock, body.sffr-open .sfnote-dock { opacity:0; pointer-events:none; }
+  body.sfnote-open .sfnote-dock, body.sffr-open .sfnote-dock, body.sfcm-open .sfnote-dock { opacity:0; pointer-events:none; }
   .sfnote-panel { position:fixed; bottom:24px; right:24px; z-index:201; width:min(380px, calc(100vw - 32px)); max-height:min(70vh, 620px); display:flex; flex-direction:column; background:#fff; border:1px solid #e2e8f0; border-radius:16px; box-shadow:0 18px 48px rgba(10,37,64,.24); opacity:0; transform:translateY(12px) scale(.98); transform-origin:bottom right; pointer-events:none; transition:opacity .18s, transform .18s; }
   body.sfnote-open .sfnote-panel { opacity:1; transform:none; pointer-events:auto; }
   .sfnote-panel .sfnote-body { min-height:180px; }
   /* Feature-request panel reuses the notes-panel chrome. */
   .sffr-panel { position:fixed; bottom:24px; right:24px; z-index:201; width:min(380px, calc(100vw - 32px)); max-height:min(70vh, 620px); display:flex; flex-direction:column; background:#fff; border:1px solid #e2e8f0; border-radius:16px; box-shadow:0 18px 48px rgba(10,37,64,.24); opacity:0; transform:translateY(12px) scale(.98); transform-origin:bottom right; pointer-events:none; transition:opacity .18s, transform .18s; }
   body.sffr-open .sffr-panel { opacity:1; transform:none; pointer-events:auto; }
+  /* Comments panel reuses the same floating-card chrome. */
+  .sfcm-panel { position:fixed; bottom:24px; right:24px; z-index:201; width:min(380px, calc(100vw - 32px)); max-height:min(76vh, 660px); display:flex; flex-direction:column; background:#fff; border:1px solid #e2e8f0; border-radius:16px; box-shadow:0 18px 48px rgba(10,37,64,.24); opacity:0; transform:translateY(12px) scale(.98); transform-origin:bottom right; pointer-events:none; transition:opacity .18s, transform .18s; }
+  body.sfcm-open .sfcm-panel { opacity:1; transform:none; pointer-events:auto; }
+  .sfnote-menu-item--cm svg { color:#2563eb; }
   .sffr-context { display:flex; align-items:center; gap:8px; margin:12px 16px 6px; padding:8px 11px; border-radius:9px; background:#f5f3ff; border:1px solid #e4defb; color:#4c1d95; font-size:.78rem; }
   .sffr-context svg { width:14px; height:14px; flex-shrink:0; }
   .sffr-context .sffr-page { font-weight:650; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .sffr-body { min-height:150px; margin-top:6px; }
-  @media (max-width:520px) { .sfnote-dock { right:16px; bottom:16px; } .sfnote-panel, .sffr-panel { left:16px; right:16px; bottom:16px; width:auto; } }
+  /* Comments panel: a scrolling thread above a short composer. */
+  .sfcm-context { display:flex; align-items:center; gap:8px; margin:12px 16px 6px; padding:8px 11px; border-radius:9px; background:#eff6ff; border:1px solid #d6e4f7; color:#0a2540; font-size:.78rem; }
+  .sfcm-context svg { width:14px; height:14px; flex-shrink:0; }
+  .sfcm-context .sffr-page { font-weight:650; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sfcm-thread { flex:1 1 auto; min-height:80px; overflow-y:auto; padding:4px 16px 0; display:flex; flex-direction:column; gap:10px; }
+  .sfcm-empty { color:#64748b; font-size:.8rem; padding:10px 0; }
+  .sfcm-item { border-left:2px solid #e2e8f0; padding-left:10px; }
+  .sfcm-item.is-reply { margin-left:16px; border-left-color:#cbd5e1; }
+  .sfcm-item-head { display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; }
+  .sfcm-author { font-size:.8rem; font-weight:700; color:#0a2540; }
+  .sfcm-when { font-size:.72rem; color:#94a3b8; }
+  .sfcm-text { margin:2px 0 0; font-size:.84rem; color:#334155; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .sfcm-actions { display:flex; gap:10px; margin-top:3px; }
+  .sfcm-action { appearance:none; border:0; background:none; padding:0; font:inherit; font-size:.73rem; font-weight:650; color:#64748b; cursor:pointer; }
+  .sfcm-action:hover { color:#0a2540; text-decoration:underline; }
+  .sfcm-action.is-danger:hover { color:#b91c1c; }
+  .sfcm-reply-to { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:8px 16px 0; padding:6px 10px; border-radius:8px; background:#f1f5f9; color:#334155; font-size:.76rem; }
+  .sfcm-body { min-height:70px; margin-top:6px; }
+  @media (max-width:520px) { .sfnote-dock { right:16px; bottom:16px; } .sfnote-panel, .sffr-panel, .sfcm-panel { left:16px; right:16px; bottom:16px; width:auto; } }
 """
 
 _WINDOW_CSS = """
@@ -520,6 +582,191 @@ _FEATURE_REQUEST_JS = r"""
 """
 
 
+# ── Comments controller (static; reads window.__sfNotesCfg) ────────────────
+# Loads the thread for the page the user is standing on, posts new comments and
+# replies, and lets an author remove their own. Every write notifies the
+# account's assigned team server-side (see page_comments), which is what makes
+# the panel worth opening: the reply lands in someone's inbox, not just here.
+_COMMENTS_JS = r"""
+(function () {
+  var cfg = window.__sfNotesCfg;
+  if (!cfg || !cfg.base) return;
+  var thread = document.getElementById('sfcmThread');
+  var body = document.getElementById('sfcmBody');
+  var send = document.getElementById('sfcmSend');
+  var status = document.getElementById('sfcmStatus');
+  var context = document.getElementById('sfcmContext');
+  var replyTo = document.getElementById('sfcmReplyTo');
+  if (!thread || !body || !send) return;
+
+  var PIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6-5.686-6-10a6 6 0 0 1 12 0c0 4.314-6 10-6 10z"/><circle cx="12" cy="11" r="2"/></svg>';
+  var me = '';
+  var parentId = null;
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"\']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function currentPath() {
+    try { return window.location.pathname + window.location.search; } catch (e) { return ''; }
+  }
+  function setStatus(msg, kind) {
+    if (!status) return;
+    status.textContent = msg || '';
+    status.className = 'sfnote-status' + (kind ? ' is-' + kind : '');
+  }
+  // "3h ago" — recency is what matters in a thread you are standing in.
+  function ago(iso) {
+    if (!iso) return '';
+    var then = Date.parse(iso);
+    if (isNaN(then)) return '';
+    var mins = Math.floor((Date.now() - then) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    var hours = Math.floor(mins / 60);
+    if (hours < 24) return hours + 'h ago';
+    return Math.floor(hours / 24) + 'd ago';
+  }
+  function clearReplyTarget() {
+    parentId = null;
+    if (replyTo) { replyTo.hidden = true; replyTo.innerHTML = ''; }
+    body.placeholder = 'Leave a comment about this page…';
+    send.textContent = 'Comment';
+  }
+  function setReplyTarget(id, author) {
+    parentId = id;
+    if (replyTo) {
+      replyTo.hidden = false;
+      replyTo.innerHTML = '<span>Replying to ' + escapeHtml(author || 'this thread') + '</span>' +
+        '<button type="button" class="sfcm-action" data-cancel-reply>Cancel</button>';
+    }
+    body.placeholder = 'Write a reply…';
+    send.textContent = 'Reply';
+    body.focus();
+  }
+  function itemHtml(c) {
+    var mine = me && c.created_by && c.created_by.toLowerCase() === me.toLowerCase();
+    var actions = '<button type="button" class="sfcm-action" data-reply="' + c.id + '" ' +
+      'data-author="' + escapeHtml(c.author_name || '') + '">Reply</button>';
+    if (mine) {
+      actions += '<button type="button" class="sfcm-action is-danger" data-delete="' + c.id + '">Delete</button>';
+    }
+    return '<div class="sfcm-item' + (c.parent_id ? ' is-reply' : '') + '">' +
+      '<div class="sfcm-item-head"><span class="sfcm-author">' + escapeHtml(c.author_name || 'Someone') + '</span>' +
+      '<span class="sfcm-when">' + escapeHtml(ago(c.created_at)) + '</span></div>' +
+      '<p class="sfcm-text">' + escapeHtml(c.body || '') + '</p>' +
+      '<div class="sfcm-actions">' + actions + '</div></div>';
+  }
+  function render(comments) {
+    if (!comments || !comments.length) {
+      thread.innerHTML = '<p class="sfcm-empty">No comments on this page yet. Start the thread — ' +
+        'everyone on this account hears about it.</p>';
+      return;
+    }
+    // Replies follow their root so the thread reads top to bottom.
+    var roots = comments.filter(function (c) { return !c.parent_id; });
+    var byParent = {};
+    comments.forEach(function (c) {
+      if (!c.parent_id) return;
+      (byParent[c.parent_id] = byParent[c.parent_id] || []).push(c);
+    });
+    var html = '';
+    roots.forEach(function (root) {
+      html += itemHtml(root);
+      (byParent[root.id] || []).forEach(function (reply) { html += itemHtml(reply); });
+    });
+    thread.innerHTML = html;
+    thread.scrollTop = thread.scrollHeight;
+  }
+  function load() {
+    thread.innerHTML = '<p class="sfcm-empty">Loading…</p>';
+    fetch(cfg.base + '/comments?page=' + encodeURIComponent(currentPath()), {
+      credentials: 'same-origin',
+      headers: { 'Accept': 'application/json' },
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || j.ok === false) throw new Error('Could not load comments');
+      me = j.me || '';
+      render(j.comments || []);
+    }).catch(function () {
+      thread.innerHTML = '<p class="sfcm-empty">Could not load comments.</p>';
+    });
+  }
+
+  // Prime when the panel opens: the path changes as the user moves around the
+  // dashboard, so both the chip and the thread are per-open, not per-load.
+  window.__sfCmPrime = function () {
+    if (context) {
+      var lbl = cfg.label || currentPath() || 'this page';
+      context.innerHTML = PIN + '<span class="sffr-page">' + escapeHtml(lbl) + '</span>';
+    }
+    clearReplyTarget();
+    setStatus('');
+    load();
+  };
+
+  thread.addEventListener('click', function (e) {
+    var replyBtn = e.target.closest('[data-reply]');
+    if (replyBtn) {
+      setReplyTarget(replyBtn.getAttribute('data-reply'), replyBtn.getAttribute('data-author'));
+      return;
+    }
+    var delBtn = e.target.closest('[data-delete]');
+    if (!delBtn) return;
+    if (!window.confirm('Delete this comment?')) return;
+    fetch(cfg.base + '/comments/' + delBtn.getAttribute('data-delete') + '/delete', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Accept': 'application/json' },
+    }).then(function (r) {
+      if (!r.ok) throw new Error('Could not delete');
+      load();
+    }).catch(function () { setStatus('Could not delete that comment', 'error'); });
+  });
+
+  if (replyTo) {
+    replyTo.addEventListener('click', function (e) {
+      if (e.target.closest('[data-cancel-reply]')) clearReplyTarget();
+    });
+  }
+
+  send.addEventListener('click', function () {
+    var text = (body.value || '').trim();
+    if (!text) { setStatus('Write something first.', 'error'); body.focus(); return; }
+    send.disabled = true;
+    setStatus('Sending…');
+    var form = new URLSearchParams();
+    form.set('body', text);
+    form.set('page', currentPath());
+    form.set('page_label', cfg.label || '');
+    if (parentId) form.set('parent_id', parentId);
+    fetch(cfg.base + '/comments', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+      body: form.toString(),
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok || (j && j.ok === false)) {
+          throw new Error((j && j.detail) || ('Request failed (' + r.status + ')'));
+        }
+        return j;
+      });
+    }).then(function () {
+      body.value = '';
+      clearReplyTarget();
+      setStatus('Posted — the team on this account has been notified.', 'saved');
+      load();
+    }).catch(function (e) {
+      setStatus(e.message || 'Could not post comment', 'error');
+    }).then(function () {
+      send.disabled = false;
+    });
+  });
+})();
+"""
+
+
 def widget_html(*, client_slug: str, label: str) -> str:
     """FAB + slide-up notes panel for injection before ``</body>`` on a dashboard.
 
@@ -531,12 +778,14 @@ def widget_html(*, client_slug: str, label: str) -> str:
         '<div class="sfnote-menu" id="sfnoteMenu" role="menu" aria-label="Notes actions">'
         '<button type="button" class="sfnote-menu-item" id="sfnoteOpen" role="menuitem">'
         f'{_ICON_NOTE}<span>Notes</span></button>'
+        '<button type="button" class="sfnote-menu-item sfnote-menu-item--cm" id="sfcmOpen" role="menuitem">'
+        f'{_ICON_COMMENT}<span>Comment</span></button>'
         '<button type="button" class="sfnote-menu-item sfnote-menu-item--fr" id="sffrOpen" role="menuitem">'
         f'{_ICON_SPARK}<span>Feature request</span></button>'
         '</div>'
         '<button type="button" class="sfnote-fab" id="sfnoteFab" '
         'aria-haspopup="true" aria-expanded="false" '
-        'aria-label="Notes and feature requests">'
+        'aria-label="Notes, comments and feature requests">'
         f'{_ICON_FAB}</button>'
         '</div>'
     )
@@ -552,16 +801,25 @@ def widget_html(*, client_slug: str, label: str) -> str:
         f'{_fr_panel_inner_html()}'
         '</aside>'
     )
+    comment_panel = (
+        '<aside class="sfcm-panel" id="sfcmPanel" role="dialog" '
+        'aria-label="Comments on this page" aria-hidden="true">'
+        f'{_comment_panel_inner_html()}'
+        '</aside>'
+    )
     toggle_js = """
     (function(){
       var dock=document.getElementById('sfnoteDock');
       var fab=document.getElementById('sfnoteFab');
       var notesOpen=document.getElementById('sfnoteOpen');
       var frOpen=document.getElementById('sffrOpen');
+      var cmOpen=document.getElementById('sfcmOpen');
       var panel=document.getElementById('sfnotePanel');
       var frPanel=document.getElementById('sffrPanel');
+      var cmPanel=document.getElementById('sfcmPanel');
       var close=document.getElementById('sfnoteClose');
       var frClose=document.getElementById('sffrClose');
+      var cmClose=document.getElementById('sfcmClose');
       var popout=document.getElementById('sfnotePopout');
       var cfg=window.__sfNotesCfg||{};
       if(!dock||!fab) return;
@@ -586,14 +844,23 @@ def widget_html(*, client_slug: str, label: str) -> str:
         if(open){closeMenu();if(window.__sfFrPrime)window.__sfFrPrime();var b=document.getElementById('sffrBody');if(b)setTimeout(function(){b.focus();},60);}
       }
 
+      function setCmOpen(open){
+        document.body.classList.toggle('sfcm-open',open);
+        if(cmPanel)cmPanel.setAttribute('aria-hidden',open?'false':'true');
+        if(open){closeMenu();if(window.__sfCmPrime)window.__sfCmPrime();var b=document.getElementById('sfcmBody');if(b)setTimeout(function(){b.focus();},60);}
+      }
+
       if(notesOpen)notesOpen.addEventListener('click',function(){setNotesOpen(true);});
       if(frOpen)frOpen.addEventListener('click',function(){setFrOpen(true);});
+      if(cmOpen)cmOpen.addEventListener('click',function(){setCmOpen(true);});
       if(close)close.addEventListener('click',function(){setNotesOpen(false);});
       if(frClose)frClose.addEventListener('click',function(){setFrOpen(false);});
+      if(cmClose)cmClose.addEventListener('click',function(){setCmOpen(false);});
       document.addEventListener('keydown',function(e){
         if(e.key!=='Escape')return;
         if(document.body.classList.contains('sfnote-open'))setNotesOpen(false);
         else if(document.body.classList.contains('sffr-open'))setFrOpen(false);
+        else if(document.body.classList.contains('sfcm-open'))setCmOpen(false);
         else closeMenu();
       });
       if(popout)popout.addEventListener('click',function(){
@@ -608,8 +875,10 @@ def widget_html(*, client_slug: str, label: str) -> str:
     {dock}
     {panel}
     {fr_panel}
+    {comment_panel}
     <script>{_CONTROLLER_JS}</script>
     <script>{_FEATURE_REQUEST_JS}</script>
+    <script>{_COMMENTS_JS}</script>
     <script>{toggle_js}</script>"""
 
 

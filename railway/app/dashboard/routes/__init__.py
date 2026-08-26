@@ -12,6 +12,7 @@ from dashboard.routes.consent_routes import router as consent_router
 from dashboard.routes.core_routes import router as core_router
 from dashboard.routes.files_routes import router as files_router
 from dashboard.routes.notes_routes import router as notes_router
+from dashboard.routes.notifications_routes import router as notifications_router
 from dashboard.routes.settings_routes import router as settings_router
 
 
@@ -25,4 +26,5 @@ def register_dashboard_routes(app: FastAPI) -> None:
     app.include_router(core_router)
     app.include_router(files_router)
     app.include_router(notes_router)
+    app.include_router(notifications_router)
     app.include_router(annotations_router)
