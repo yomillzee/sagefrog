@@ -63,6 +63,24 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-26",
+        title="HubSpot connections need re-authorizing once per client",
+        area="Connectors · HubSpot",
+        kind="improved",
+        summary=(
+            "HubSpot now connects through Sagefrog's own app on our partner "
+            "account. Each client's existing HubSpot connection has to be "
+            "re-authorized once — until it is, that client's lead and pipeline "
+            "numbers stop updating."
+        ),
+        details=(
+            "Reconnect from the client's Connectors page; it needs someone who can log into that client's HubSpot.",
+            "Nothing else changes — the same contacts, deals and marketing email data comes across afterwards.",
+            "Lead Tracking keeps showing the last synced numbers until the reconnect happens, so a stale page is the symptom to watch for.",
+            "Marketing email stats still depend on the client's HubSpot tier, exactly as before.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
         title="The Lead Tracking trend chart draws again, and GSC tables sort again",
         area="Lead Tracking · Search Console · Semrush",
         kind="fixed",
