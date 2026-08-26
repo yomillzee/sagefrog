@@ -107,7 +107,11 @@ class ExplorerOptionsMenuTests(unittest.TestCase):
     def test_the_switch_drops_the_summary_card_too(self) -> None:
         html = self._html(admin=False)
         self.assertIn(
-            "(showVerifiedConv ? `<div class=\"card\"><div class=\"card-title\">Verified conv. (GA4)</div>",
+            "+ (showVerifiedConv ? (()=>{",
+            html,
+        )
+        self.assertIn(
+            "<div class=\"card-title\">Verified conv. (GA4)</div>",
             html,
         )
 

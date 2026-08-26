@@ -914,6 +914,82 @@ def _build_meta_explorer(payload: dict) -> dict:
     return {"client": "demo", "date_range": _date_range(start, end), "row_count": len(rows), "rows": rows}
 
 
+# --- Campaign explorer "metrics over time" trend ------------------------------
+# One row per (campaign, day) -- the demo counterpart of the *_explorer_trend
+# marketing_service fetches, which group the same source tables by date
+# instead of by ad. Reuses each platform's existing campaign catalog and
+# per-ad economics (base spend / ctr / conversion rate / cpc), scaled by the
+# same per-campaign ad/creative count the whole-window explorer builders use,
+# so the trend's window total lands in the same neighborhood as the summary
+# cards above it (both are independently-seeded synthetic series, so they
+# were never going to match exactly -- only the real BigQuery-backed
+# endpoints, which share one source table with the cards, do that exactly).
+
+def _explorer_trend_rows(entries: list[tuple[Any, str, float]], name_field: str,
+                          base_fn: Any, ctr: float, conv_rate: float, cpc: float,
+                          start: date, end: date) -> list[dict]:
+    rows = []
+    for seed, name, n_ads in entries:
+        for d in _each_day(start, end):
+            spend = n_ads * base_fn(seed) * _season(d) * _jit((seed, "ts", d))
+            eff_cpc = cpc * _jit((seed, "tc", d), 0.85, 1.15)
+            clicks = max(1, round(spend / max(eff_cpc, 0.5)))
+            impressions = round(clicks / max(ctr, 0.001))
+            conversions = round(clicks * conv_rate * _jit((seed, "tv", d), 0.7, 1.3), 1)
+            rows.append({
+                "date": d.isoformat(), name_field: name,
+                "spend": _round2(spend), "impressions": int(impressions),
+                "clicks": int(clicks), "conversions": float(conversions),
+            })
+    return rows
+
+
+def _build_google_ads_explorer_trend(payload: dict) -> dict:
+    start, end = _dates(payload)
+    entries = [(cid, cname, 2 + int(2 * _u(cid, "nads"))) for cid, cname in _GOOGLE_CAMPAIGNS]
+    rows = _explorer_trend_rows(
+        entries, "campaign_name",
+        lambda cid: 22.0 + 60 * _u(cid, "tb"), 0.045, 0.05, 2.6, start, end,
+    )
+    return {"client": "demo", "date_range": _date_range(start, end), "row_count": len(rows), "rows": rows}
+
+
+def _build_microsoft_explorer_trend(payload: dict) -> dict:
+    start, end = _dates(payload)
+    entries = [(cid, cname, 2 + int(2 * _u(cid, "mads"))) for cid, cname in _MICROSOFT_CAMPAIGNS]
+    rows = _explorer_trend_rows(
+        entries, "campaign_name",
+        lambda cid: 16.0 + 40 * _u(cid, "tb"), 0.038, 0.045, 2.2, start, end,
+    )
+    return {"client": "demo", "date_range": _date_range(start, end), "row_count": len(rows), "rows": rows}
+
+
+def _build_linkedin_explorer_trend(payload: dict) -> dict:
+    start, end = _dates(payload)
+    group_counts: dict[str, int] = {}
+    for _, _, group_name, _ in _LINKEDIN_CREATIVES:
+        group_counts[group_name] = group_counts.get(group_name, 0) + 1
+    entries = [(g, g, n) for g, n in sorted(group_counts.items())]
+    rows = _explorer_trend_rows(
+        entries, "campaign_group_name",
+        lambda g: 55.0 + 60 * _u(g, "tb"), 0.006, 0.03, 9.0, start, end,
+    )
+    return {"client": "demo", "date_range": _date_range(start, end), "row_count": len(rows), "rows": rows}
+
+
+def _build_meta_explorer_trend(payload: dict) -> dict:
+    start, end = _dates(payload)
+    campaign_counts: dict[str, int] = {}
+    for _, _, campaign_name, _ in _META_ADS:
+        campaign_counts[campaign_name] = campaign_counts.get(campaign_name, 0) + 1
+    entries = [(c, c, n) for c, n in sorted(campaign_counts.items())]
+    rows = _explorer_trend_rows(
+        entries, "campaign_name",
+        lambda c: 45.0 + 55 * _u(c, "tb"), 0.018, 0.037, 1.4, start, end,
+    )
+    return {"client": "demo", "date_range": _date_range(start, end), "row_count": len(rows), "rows": rows}
+
+
 def _verified_events_catalog() -> list[str]:
     return ["form_submit", "generate_lead", "phone_call_click"]
 
@@ -975,6 +1051,62 @@ def _build_microsoft_verified(payload: dict) -> dict:
         by_campaign_event[name] = {ev: int(total * (0.2 + 0.5 * _u("msve", cid, ev))) for ev in events}
     return {"client": "demo", "date_range": _date_range(start, end),
             "events": events, "by_campaign_name": by_campaign, "by_campaign_name_event": by_campaign_event}
+
+
+# --- Verified-conversions trend -------------------------------------------------
+# One row per (campaign, day) -- the demo counterpart of the *_verified_trend
+# marketing_service fetches. Same identity per platform as the whole-window
+# builders above (campaign id for Google, ad id for Meta, campaign/group name
+# for LinkedIn/Microsoft), just spread across days instead of summed.
+
+def _verified_trend_rows(entries: list[tuple[Any, str]], id_field: str,
+                          magnitude_fn: Any, start: date, end: date) -> list[dict]:
+    rows = []
+    for seed, ident in entries:
+        base = magnitude_fn(seed)
+        for d in _each_day(start, end):
+            ke = int(round(base * _season(d) * _jit((seed, "tv2", d), 0.5, 1.5)))
+            if ke <= 0:
+                continue
+            rows.append({"date": d.isoformat(), id_field: ident, "key_events": ke})
+    return rows
+
+
+def _build_google_verified_trend(payload: dict) -> dict:
+    start, end = _dates(payload)
+    rows = _verified_trend_rows(
+        [(cid, cid) for cid, _ in _GOOGLE_CAMPAIGNS], "campaign_id",
+        lambda cid: 0.4 + 5.5 * _u("gv", cid), start, end,
+    )
+    return {"client": "demo", "date_range": _date_range(start, end), "row_count": len(rows), "rows": rows}
+
+
+def _build_linkedin_verified_trend(payload: dict) -> dict:
+    start, end = _dates(payload)
+    groups = ["NWH | Employer Solutions", "NWH | Thought Leadership"]
+    rows = _verified_trend_rows(
+        [(g, g) for g in groups], "campaign_name",
+        lambda g: 0.3 + 3.0 * _u("lv", g), start, end,
+    )
+    return {"client": "demo", "date_range": _date_range(start, end), "row_count": len(rows), "rows": rows}
+
+
+def _build_microsoft_verified_trend(payload: dict) -> dict:
+    start, end = _dates(payload)
+    rows = _verified_trend_rows(
+        [(cid, name) for cid, name in _MICROSOFT_CAMPAIGNS], "campaign_name",
+        lambda cid: 0.3 + 3.0 * _u("msv", cid), start, end,
+    )
+    return {"client": "demo", "date_range": _date_range(start, end), "row_count": len(rows), "rows": rows}
+
+
+def _build_meta_verified_trend(payload: dict) -> dict:
+    start, end = _dates(payload)
+    rows = _verified_trend_rows(
+        [(adid, adid) for adid, *_ in _META_ADS], "ad_id",
+        lambda adid: 0.3 + 4.0 * _u("mv", adid), start, end,
+    )
+    return {"client": "demo", "date_range": _date_range(start, end), "row_count": len(rows), "rows": rows}
 
 
 # Platform conversion actions — the split behind the explorer's Conv. selector.
@@ -1347,6 +1479,14 @@ _BUILDERS = {
     "explorer.google_verified": _build_google_verified,
     "explorer.linkedin_verified": _build_linkedin_verified,
     "explorer.microsoft_verified": _build_microsoft_verified,
+    "explorer_trend.google_ads": _build_google_ads_explorer_trend,
+    "explorer_trend.microsoft_ads": _build_microsoft_explorer_trend,
+    "explorer_trend.linkedin": _build_linkedin_explorer_trend,
+    "explorer_trend.meta": _build_meta_explorer_trend,
+    "explorer_trend.google_verified": _build_google_verified_trend,
+    "explorer_trend.linkedin_verified": _build_linkedin_verified_trend,
+    "explorer_trend.microsoft_verified": _build_microsoft_verified_trend,
+    "explorer_trend.meta_verified": _build_meta_verified_trend,
     "explorer.google_conversion_actions": _build_google_conversion_actions,
     "explorer.meta_conversion_actions": _build_meta_conversion_actions,
     "explorer.microsoft_conversion_actions": _build_microsoft_conversion_actions,
