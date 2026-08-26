@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import client_notes
 import feature_requests
+import page_comments
 import web_auth
 from dashboard.renderers import notes_widget
 from dashboard.routes.helpers import validate_client_slug
@@ -176,4 +177,89 @@ def delete_client_note(
     deleted = client_notes.delete_notepad(slug, notepad_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Note not found.")
+    return JSONResponse({"ok": True, "deleted": True})
+
+
+# ── Page comments ───────────────────────────────────────────────────────────
+# The FAB's third action: a thread of internal comments attached to the page the
+# author was standing on. Writing one notifies the account's assigned team (see
+# client_team / notifications), which is the point of the feature — the comment
+# reaches the people staffed on the client rather than sitting on the page
+# waiting to be found.
+
+
+def _comment_view(comment: page_comments.Comment) -> dict:
+    """A comment as the FAB renders it: the row plus a display name for its author."""
+    data = comment.to_dict()
+    data["author_name"] = page_comments.display_name(comment.created_by)
+    return data
+
+
+@router.get(
+    "/dashboard/{client_slug}/notes/comments",
+    summary="List the comment thread for one dashboard page",
+)
+def list_page_comments(client_slug: str, request: Request, page: str = "") -> JSONResponse:
+    slug = validate_client_slug(client_slug)
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
+    user = _require_agency(auth)
+    comments = page_comments.list_for_page(slug, page)
+    return JSONResponse(
+        {
+            "ok": True,
+            "me": _author(user),
+            "comments": [_comment_view(c) for c in comments],
+        }
+    )
+
+
+@router.post(
+    "/dashboard/{client_slug}/notes/comments",
+    summary="Leave a comment on a dashboard page",
+)
+def create_page_comment(
+    client_slug: str,
+    request: Request,
+    body: str = Form(""),
+    page: str = Form(""),
+    page_label: str = Form(""),
+    parent_id: str = Form(""),
+) -> JSONResponse:
+    slug = validate_client_slug(client_slug)
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
+    user = _require_agency(auth)
+    parent = (parent_id or "").strip()
+    try:
+        comment = page_comments.create_comment(
+            client_slug=slug,
+            body=body,
+            page_path=page,
+            page_label=page_label,
+            parent_id=int(parent) if parent.isdigit() else None,
+            created_by=_author(user),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"ok": True, "comment": _comment_view(comment)}, status_code=201)
+
+
+@router.post(
+    "/dashboard/{client_slug}/notes/comments/{comment_id:int}/delete",
+    summary="Delete a comment (author or admin only)",
+)
+def delete_page_comment(client_slug: str, comment_id: int, request: Request) -> JSONResponse:
+    slug = validate_client_slug(client_slug)
+    auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
+    user = _require_agency(auth)
+    comment = page_comments.get_comment(comment_id)
+    if not comment or comment.client_slug != slug:
+        raise HTTPException(status_code=404, detail="Comment not found.")
+    # Anyone may say their own piece and take it back; admins can clear anyone's.
+    author = (comment.created_by or "").strip().lower()
+    me = (_author(user) or "").strip().lower()
+    if author != me and getattr(user, "role", None) != "admin":
+        raise HTTPException(status_code=403, detail="You can only delete your own comments.")
+    page_comments.delete_comment(comment_id, deleted_by=me or None)
     return JSONResponse({"ok": True, "deleted": True})

@@ -121,9 +121,10 @@ class SidebarConsistencyTests(unittest.TestCase):
 
     def test_footer_nav_identical_on_every_page(self) -> None:
         # Connectors + Insights moved into the collapsible admin section, so the
-        # always-visible footer nav is just the client-facing Files link.
+        # always-visible footer nav is the client-facing Files link plus the
+        # agency user's notification bell (comments left on this account).
         pages = self._render_all()
-        expected = ["Files"]
+        expected = ["Files", "Notifications"]
         for name, html in pages.items():
             self.assertEqual(_footer_items(html), expected, f"footer nav differs on {name}")
 

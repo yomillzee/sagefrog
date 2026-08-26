@@ -15,6 +15,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import audit_log
 import client_config
 import client_industries
+import client_team
 import web_users
 from security import is_production, session_signing_secret
 from web_users import WebUser
@@ -1113,6 +1114,16 @@ _SVG_PENCIL_SM = (
 )
 
 
+def _person_label(email: str | None) -> str:
+    """"sam@sagefrog.com" -> "Sam" — a roster of first names reads faster than
+    a roster of addresses, and the address is still on the checkbox next to it."""
+    local = (email or "").split("@", 1)[0].strip()
+    if not local:
+        return "Someone"
+    parts = [p for p in local.replace(".", " ").replace("_", " ").split() if p]
+    return " ".join(p.capitalize() for p in parts) or "Someone"
+
+
 def _label_initials(label: str) -> str:
     """Up to two initials from a display label (dashboard card icon)."""
     parts = [p for p in (label or "").split() if p]
@@ -1581,6 +1592,16 @@ def render_admin_page(
     dashboard_manage_html = ""
     client_slug_options = ""
     client_slug_datalist = ""
+    # The Sagefrog team on each account, for the row chip and the "Team…" panel.
+    # Both come from data already in hand (`users`) plus one query, so the grid
+    # stays a fixed number of queries no matter how many accounts there are.
+    agency_roster = [u for u in users if u.get("role") in client_team.AGENCY_ROLES]
+    try:
+        saved_teams = client_team.teams_by_slug()
+    except Exception:
+        saved_teams = {}
+    default_teams = client_team.default_team_map(agency_roster)
+
     try:
         import dashboard_registry
 
@@ -1619,6 +1640,9 @@ def render_admin_page(
                              '<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>')
                 _svg_back = ('<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
                             '<path d="M15 18l-6-6 6-6"/></svg>')
+                _svg_people = ('<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+                              '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>'
+                              '<path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>')
                 _svg_tag = ('<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
                            '<path d="M20.6 13.4 12 22l-9-9V4a1 1 0 0 1 1-1h8z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>')
 
@@ -1665,6 +1689,42 @@ def render_admin_page(
                   <button type="submit" class="dash-kebab-submit primary">Save industries</button>
                 </form>"""
 
+                # Who at Sagefrog is on this account. An account with no saved
+                # team falls back to whoever already has access (client_team),
+                # which is also what the panel opens pre-ticked with — so the
+                # first save just confirms the inferred list.
+                team_emails = saved_teams.get(slug) or default_teams.get(slug, ())
+                team_names = [_person_label(e) for e in team_emails]
+                shown = ", ".join(team_names[:3])
+                if len(team_names) > 3:
+                    shown += f" +{len(team_names) - 3}"
+                team_chip = (
+                    f'<span class="dash-team" title="Sagefrog team — notified when '
+                    f'someone comments on this account\'s pages">{_esc(shown)}</span>'
+                    if team_names
+                    else '<span class="dash-team unset" title="Nobody is on this account yet — '
+                         'comments left on it notify no one">No team</span>'
+                )
+                team_options = "".join(
+                    f'<label class="dash-kebab-check">'
+                    f'<input type="checkbox" name="team_emails" value="{_esc(u["email"])}"'
+                    f'{" checked" if (u["email"] or "").lower() in team_emails else ""}>'
+                    f'<span>{_esc(_person_label(u["email"]))} '
+                    f'<span class="hint-inline">{_esc(u["email"])}</span></span></label>'
+                    for u in agency_roster
+                )
+                team_panel = f"""
+                <form method="post" action="/admin/dashboards/{_esc(slug)}/team" class="dash-kebab-panel" data-panel="team" hidden>
+                  <button type="button" class="dash-kebab-back" data-kebab-panel="menu">{_svg_back}<span>Back</span></button>
+                  <label class="dash-kebab-label">Sagefrog team</label>
+                  <div class="dash-kebab-checks" role="group" aria-label="Team members">
+                    {team_options or '<p class="hint">No agency users yet.</p>'}
+                  </div>
+                  <p class="hint">These people get a notification when anyone comments
+                    on a page for this account. Tick none to send comments to no one.</p>
+                  <button type="submit" class="dash-kebab-submit primary">Save team</button>
+                </form>"""
+
                 # Delete is destructive → super admins only; "penn" is protected.
                 if slug == "penn":
                     delete_item = '<div class="dash-kebab-note">Protected — can’t be deleted</div>'
@@ -1692,7 +1752,13 @@ def render_admin_page(
                 # doubles as "show me the manufacturing book" — and a
                 # multi-tagged account turns up under either of its buckets.
                 search_terms = " ".join(industry_labels) or client_industries.UNASSIGNED_LABEL
-                search_key = _esc(f"{label} {slug} {search_terms}".lower())
+                search_key = _esc(
+                    " ".join(
+                        part
+                        for part in (label, slug, search_terms, *team_names)
+                        if part
+                    ).lower()
+                )
                 dash_rows.append(f"""
         <div class="dash-row" data-search="{search_key}">
           {logo_cell}
@@ -1700,6 +1766,7 @@ def render_admin_page(
             <span class="dash-row-name">{_esc(label)}</span>
             <span class="dash-row-slug mono">/dashboard/{_esc(slug)}</span>
             {industry_chip}
+            {team_chip}
           </a>
           <div class="dash-row-actions">
             <details class="dash-kebab">
@@ -1709,6 +1776,7 @@ def render_admin_page(
                   <a class="dash-kebab-item" role="menuitem" href="/dashboard/{_esc(slug)}">{_svg_open}<span>Open dashboard</span></a>
                   <button type="button" class="dash-kebab-item" role="menuitem" data-kebab-panel="rename">{_svg_pencil}<span>Rename…</span></button>
                   <button type="button" class="dash-kebab-item" role="menuitem" data-kebab-panel="industry">{_svg_tag}<span>Industry…</span></button>
+                  <button type="button" class="dash-kebab-item" role="menuitem" data-kebab-panel="team">{_svg_people}<span>Team…</span></button>
                   {delete_item}
                 </div>
                 <form method="post" action="/admin/dashboards/{_esc(slug)}/rename" class="dash-kebab-panel" data-panel="rename" hidden>
@@ -1719,6 +1787,7 @@ def render_admin_page(
                   <button type="submit" class="dash-kebab-submit primary">Save name</button>
                 </form>
                 {industry_panel}
+                {team_panel}
                 {delete_panel}
               </div>
             </details>
@@ -2267,6 +2336,12 @@ def render_admin_page(
       border-radius: 999px; background: #eef4fd; color: var(--accent-d); font-size: .7rem; font-weight: 700;
       letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
     .dash-industry.unset {{ background: #f1f4f8; color: var(--muted); font-weight: 600; }}
+    /* Who at Sagefrog is on the account — the people a comment on it notifies. */
+    .dash-team {{ max-width: 100%; padding: 2px 8px; border-radius: 999px;
+      background: #ecfdf5; color: #047857; font-size: .7rem; font-weight: 700;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .dash-team.unset {{ background: #f1f4f8; color: var(--muted); font-weight: 600; }}
+    .hint-inline {{ color: var(--muted); font-weight: 500; font-size: .95em; }}
     /* Industry picker: a scrollable checkbox list inside the kebab panel — the
        whole taxonomy has to be reachable without the popover running off-card. */
     .dash-kebab-checks {{ display: flex; flex-direction: column; gap: 1px; max-height: 208px;
@@ -2552,8 +2627,10 @@ def render_admin_page(
             "Sagefrog staff and client portal logins, plus the client groups that grant dashboard access.",
         ),
         "feature-requests": (
-            "Notifications",
-            "The team's inbox — requests raised from the notes FAB on any client dashboard.",
+            "Feature requests",
+            "The team's ask list — requests raised from the notes FAB on any client "
+            "dashboard. Comments on a specific account go to that team's Notifications "
+            "instead.",
         ),
         "advanced": (
             "Advanced",

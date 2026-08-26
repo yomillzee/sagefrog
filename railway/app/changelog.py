@@ -63,6 +63,56 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-26",
+        title="Comment on a dashboard page and the account's team hears about it",
+        area="Client dashboards · Notes button",
+        kind="new",
+        summary=(
+            "The floating pencil button now has a Comment action: say something "
+            "about the page you are on, and everyone on that account's Sagefrog "
+            "team gets a notification instead of the remark living in a chat "
+            "thread nobody can find later."
+        ),
+        details=(
+            "Comments are per page — the Analytics view keeps its own thread, and a date-range change stays in the same one.",
+            "Replies notify the account team plus everyone already in the thread; you never get notified about your own comment.",
+            "Internal only: clients never see the button, the comments, or the notifications.",
+            "You can delete your own comments; admins can delete anyone's.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
+        title="Notifications: your own inbox, in the sidebar",
+        area="Notifications",
+        kind="new",
+        summary=(
+            "A bell at the foot of the sidebar shows how many comments are "
+            "waiting for you, and opens an inbox of what has been said on the "
+            "accounts you are on the team for. Clicking a notification takes you "
+            "to the page it is about and marks it read."
+        ),
+        details=(
+            "Every Sagefrog login has one — you no longer need admin access to be told something.",
+            "The admin page that used to be called Notifications is now called Feature requests, which is what it always held.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
+        title="Each account now says who at Sagefrog is on it",
+        area="Admin · Accounts",
+        kind="new",
+        summary=(
+            "Every account card carries a team chip, and the row menu has a "
+            "Team… picker. That list is who gets notified when someone comments "
+            "on the account's pages, and it doubles as a roster of who works on "
+            "what."
+        ),
+        details=(
+            "Accounts nobody has set a team for fall back to whoever already has access to them, so comments route sensibly before anyone touches this.",
+            "Team names join the account filter box — type a colleague's name to see their book.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
         title="Nixon's active-day setting now drives the pacing advice",
         area="Client dashboards · Campaign explorer",
         kind="fixed",

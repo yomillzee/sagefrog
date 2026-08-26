@@ -1338,6 +1338,58 @@ def _sidebar_admin_nav_html(
     )
 
 
+_NAV_ICON_BELL = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>'
+    '<path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>'
+)
+
+
+def _sidebar_notifications_link_html(*, email: str | None, session_is_admin: bool, active_nav: str) -> str:
+    """Footer link to the signed-in person's notification inbox, with its badge.
+
+    Agency users only — a comment on a client dashboard is internal, so a
+    'client'-role login must never see the bell, let alone a count. The unread
+    lookup fails closed to a plain link: a database hiccup should cost the badge,
+    not the sidebar.
+    """
+    if not email:
+        return ""
+    role = "admin" if session_is_admin else ""
+    try:
+        import web_users
+        u = web_users.get_user_by_email(email) if web_users.enabled() else None
+        if u:
+            role = u.role
+    except Exception:
+        pass
+    if role not in ("admin", "standard"):
+        return ""
+
+    unread = 0
+    try:
+        import notifications
+        unread = notifications.unread_count(email)
+    except Exception:
+        unread = 0
+
+    badge = (
+        f'<span class="dash-sidebar-badge" aria-hidden="true">{"9+" if unread > 9 else unread}</span>'
+        if unread
+        else ""
+    )
+    # The count is a chip, so spell it out for screen readers on the link itself.
+    label = f"Notifications, {unread} unread" if unread else "Notifications"
+    active = " active" if active_nav == "notifications" else ""
+    aria = ' aria-current="page"' if active else ""
+    return (
+        f'<a href="/notifications" class="dash-sidebar-link{active}"{aria} '
+        f'aria-label="{_esc(label)}">'
+        f'{_NAV_ICON_BELL}<span>Notifications</span>{badge}</a>'
+    )
+
+
 def _sidebar_footer_tools_html(*, email: str | None) -> str:
     """Sidebar footer: a profile dropdown (avatar + name) holding Sign out.
 
@@ -1477,7 +1529,11 @@ def render_sidebar(
         admin_context=admin_context,
     )
 
-    # Footer: a profile dropdown (avatar + name) holding Sign out.
+    # Footer: the notification bell (agency users) then a profile dropdown
+    # (avatar + name) holding Sign out.
+    notifications_btn = _sidebar_notifications_link_html(
+        email=session_email, session_is_admin=session_is_admin, active_nav=active_nav
+    )
     account_html = _sidebar_footer_tools_html(email=session_email)
 
     return f"""
@@ -1510,6 +1566,7 @@ def render_sidebar(
       <div class="dash-sidebar-footer">
         <nav class="dash-sidebar-links" aria-label="Account navigation">
           {files_btn}
+          {notifications_btn}
         </nav>
         {account_html}
       </div>
@@ -1827,6 +1884,14 @@ _ADMIN_NAV_ICONS: dict[str, str] = {
         '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>'
         '<path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>'
     ),
+    # "Notifications" — the signed-in person's own inbox (comments on the
+    # accounts they are staffed on), so a bell rather than a list.
+    "notifications": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>'
+        '<path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>'
+    ),
     # "Advanced settings" — debug tools, connections, credentials, audit log.
     "advanced": (
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
@@ -1895,8 +1960,13 @@ _ADMIN_NAV_ITEMS: tuple[tuple[str, str, str], ...] = (
     # "Hours" is the Harvest burn-up view (hours logged vs monthly goal for
     # every client this month).
     ("hours", "Hours", "/admin/client-hours"),
-    # "Notifications" is the team inbox raised from the notes FAB.
-    ("feature-requests", "Notifications", "/admin/feature-requests"),
+    # "Notifications" is the signed-in person's own inbox — comments left on the
+    # accounts they are on the team for. Distinct from "Feature requests" below,
+    # which is the whole team's ask list and identical for every super admin.
+    ("notifications", "Notifications", "/notifications"),
+    # "Feature requests" is the team inbox raised from the notes FAB. It was
+    # labelled "Notifications" until the per-user inbox above took that name.
+    ("feature-requests", "Feature requests", "/admin/feature-requests"),
     # "Advanced" collects the debug / platform-plumbing tools that used to hide
     # behind a fold on Overview.
     ("advanced", "Advanced", "/admin/advanced"),
@@ -1937,6 +2007,7 @@ def render_admin_shell_page(
     session_is_admin: bool = True,
     extra_css: str = "",
     body_end_html: str = "",
+    nav_html: str | None = None,
 ) -> str:
     """Full HTML for an admin page rendered inside the shared navy-sidebar shell.
 
@@ -1956,7 +2027,9 @@ def render_admin_shell_page(
         session_email=session_email,
         show_files=False,
         show_connectors=False,
-        view_nav_html=admin_sidebar_nav_html(active_nav=active_nav),
+        view_nav_html=(
+            admin_sidebar_nav_html(active_nav=active_nav) if nav_html is None else nav_html
+        ),
         admin_context=True,
     )
     return f"""<!DOCTYPE html>
@@ -2856,6 +2929,20 @@ SIDEBAR_CSS = """
     .dash-sidebar-link svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.85; }
     .dash-sidebar-link:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
     .dash-sidebar-link.active { background: rgba(255, 255, 255, 0.15); color: #fff; }
+    /* Unread count on the notification bell. Pushed to the right of the row so
+       it stays visible while the label is clipped in the collapsed sidebar. */
+    .dash-sidebar-link .dash-sidebar-badge {
+      margin-left: auto;
+      min-width: 19px;
+      padding: 0 5px;
+      border-radius: 999px;
+      background: #ef4444;
+      color: #fff;
+      font-size: 0.7rem;
+      font-weight: 800;
+      line-height: 19px;
+      text-align: center;
+    }
     /* Shield glyph shared by the client switcher's "Admin panel" row and the
        Admin page's tab-strip title. */
     .dash-admin-shield { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.85; }

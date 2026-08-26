@@ -3143,6 +3143,42 @@ def admin_set_dashboard_industry(
     )
 
 
+@app.post("/admin/dashboards/{client_slug}/team", include_in_schema=False)
+def admin_set_dashboard_team(
+    client_slug: str,
+    request: Request,
+    team_emails: list[str] = Form(default=[]),
+    user: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    """Set the Sagefrog team on an account — who a comment on its pages notifies.
+
+    One ``team_emails`` value per ticked box; ticking none is a real answer
+    ("nobody"), which is why an empty post clears the list rather than falling
+    back to the access-derived default. Non-agency and unknown addresses are
+    dropped by ``client_team.set_team`` rather than stored and never delivered.
+    """
+    import client_team
+
+    slug = (client_slug or "").strip().lower()
+    ctx = audit_log.request_context(request)
+    try:
+        saved = client_team.set_team(slug, team_emails, updated_by=user.email)
+    except Exception as exc:
+        return RedirectResponse(
+            url=f"/admin/clients?err=Could+not+set+team:+{quote(str(exc)[:120])}",
+            status_code=303,
+        )
+    audit_log.record(
+        action="dashboard.team_set",
+        actor_email=user.email,
+        detail={"client_slug": slug, "team": list(saved)},
+        **ctx,
+    )
+    count = len(saved)
+    msg = "Team cleared" if not count else f"Team set ({count})"
+    return RedirectResponse(url=f"/admin/clients?msg={quote(msg)}", status_code=303)
+
+
 @app.post("/admin/dashboards/{client_slug}/mode", include_in_schema=False)
 def admin_convert_dashboard_mode(
     client_slug: str,
