@@ -42,6 +42,19 @@ def json_for_html_script(data: Any) -> str:
     )
 
 
+def json_for_html_attr(data: Any) -> str:
+    """Embed JSON in an HTML *attribute* value.
+
+    :func:`json_for_html_script` is for use inside a ``<script>`` tag: it escapes
+    only what could close that tag and deliberately leaves quotes alone. Putting
+    its output in an attribute truncates the value at the first quote *in the
+    data* — a month label like ``Apr '26`` is enough — and the browser turns the
+    remainder into stray attributes, so the reader silently loses the value with
+    no parse error anywhere. Escape the quotes as well.
+    """
+    return html.escape(json.dumps(data, default=str, ensure_ascii=False), quote=True)
+
+
 def platform_error(exc: Exception) -> str:
     return str(exc)[:500]
 

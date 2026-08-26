@@ -8,7 +8,7 @@ from typing import Any
 import dashboard_theme
 from dashboard.renderers.base_layout import render_client_shell_page
 from dashboard.utils.formatting import esc as _esc
-from dashboard.utils.formatting import json_for_html_script as _json
+from dashboard.utils.formatting import json_for_html_attr as _json_attr
 from hubspot_reports_service import LeadTrackingReport
 
 # Categorical palette for source breakdowns, drawn from the client theme so the
@@ -223,7 +223,7 @@ def _area_chart(series: list[tuple[int, int, int]], accent: str,
     return (
         '<div class="lt-chart-host">'
         f'<canvas id="ltTrend" role="img" aria-label="Monthly {_esc(noun_plural)} trend" '
-        f"data-labels='{_json(labels)}' data-values='{_json(values)}' "
+        f'data-labels="{_json_attr(labels)}" data-values="{_json_attr(values)}" '
         f'data-accent="{_esc(accent)}" data-noun="{_esc(noun_plural)}"></canvas>'
         '</div>'
     )

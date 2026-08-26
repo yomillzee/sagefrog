@@ -63,6 +63,22 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-26",
+        title="The Lead Tracking trend chart draws again, and GSC tables sort again",
+        area="Lead Tracking · Search Console · Semrush",
+        kind="fixed",
+        summary=(
+            "\"MQLs over time\" was blank on every client dashboard, and Search "
+            "Console tables stopped sorting for any client whose queries contain "
+            "an apostrophe. Both are fixed; no numbers changed, they were simply "
+            "not being drawn."
+        ),
+        details=(
+            "The chart was blank for every client since it shipped, not just ones with thin history — the totals above it were always right.",
+            "Search Console and Semrush keyword tables were affected by the same thing, so column sorting works again on queries like \"children's daycare\".",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
         title="Comment on a dashboard page and the account's team hears about it",
         area="Client dashboards · Notes button",
         kind="new",

@@ -6,9 +6,16 @@ import json
 from typing import Any
 
 from dashboard.utils.formatting import esc as _esc
+from dashboard.utils.formatting import json_for_html_attr as _attr_json
 
 
 def _safe_json(obj: Any) -> str:
+    """JSON for embedding inside a ``<script>`` tag.
+
+    Escapes only what could close the tag; quotes are left alone. For an HTML
+    *attribute* value use ``_attr_json`` instead — quotes in the data (an
+    apostrophe in a search query is enough) truncate the attribute otherwise.
+    """
     return (
         json.dumps(obj, default=str, ensure_ascii=False)
         .replace("<", "\\u003c")
@@ -215,7 +222,7 @@ def semrush_section_html(data: dict[str, Any]) -> str:
             </tr>"""
         kw_table_html = f"""
         <div class="table-wrap">
-          <table class="data-table smr-table" id="smrKeywordsTable" data-rows='{_safe_json(keywords[:200])}'>
+          <table class="data-table smr-table" id="smrKeywordsTable" data-rows="{_attr_json(keywords[:200])}">
             <thead>{thead}</thead>
             <tbody>{tbody_rows}</tbody>
           </table>

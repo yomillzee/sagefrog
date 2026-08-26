@@ -6,9 +6,16 @@ import json
 from typing import Any
 
 from dashboard.utils.formatting import esc as _esc
+from dashboard.utils.formatting import json_for_html_attr as _attr_json
 
 
 def _safe_json(obj: Any) -> str:
+    """JSON for embedding inside a ``<script>`` tag.
+
+    Escapes only what could close the tag; quotes are left alone. For an HTML
+    *attribute* value use ``_attr_json`` instead — quotes in the data (an
+    apostrophe in a search query is enough) truncate the attribute otherwise.
+    """
     return (
         json.dumps(obj, default=str, ensure_ascii=False)
         .replace("<", "\\u003c")
@@ -109,8 +116,8 @@ def _gsc_table(rows: list[dict], columns: list[tuple[str, str, str, str]]) -> st
         tbody_rows += f"<tr>{cells}</tr>"
     return f"""
     <div class="table-wrap">
-      <table class="data-table gsc-table" data-rows='{_safe_json(rows)}'
-             data-cols='{_safe_json(col_spec)}'>
+      <table class="data-table gsc-table" data-rows="{_attr_json(rows)}"
+             data-cols="{_attr_json(col_spec)}">
         <thead><tr>{head_cells}</tr></thead>
         <tbody>{tbody_rows}</tbody>
       </table>
