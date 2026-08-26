@@ -1272,7 +1272,7 @@ def render_bigquery_dashboard_page(
     panel_explorer_main = f"""
       <section id="sec-explorer">
         <div class="sec-head"><h2>Campaign explorer</h2><div class="sec-head-actions">{platform_chips_explorer_html}<span class="status" id="explorerStatus"></span>{explorer_adv_menu_html}</div></div>
-        <div class="cards" id="explorerSummaryCards" style="margin-bottom:14px"></div>
+        <div class="cards" id="explorerSummaryCards" style="margin-bottom:14px" role="group" aria-label="Metrics on the chart below (pick one or more)"></div>
         <!-- Filter groups (Product / Region / Business line …) live in the sticky
              top bar (#explorerFilterBar) as dropdowns; built by buildExplorerFilters()
              from the client-configured chip rules; see EXPLORER_FILTER_GROUPS.
@@ -5505,15 +5505,16 @@ def render_bigquery_dashboard_page(
       const convActive=convSelectionActive();
       const scards=document.getElementById('explorerSummaryCards');
       // A card without a matching chart metric (Verified conv. hidden for this
-      // client) can't stay selected -- fall back to Spend rather than leave the
-      // chart on a metric no card shows as active.
-      if (explorerTrendMetric==='verified' && !showVerifiedConv) explorerTrendMetric='spend';
+      // client) can't stay selected -- drop it, and fall back to Spend rather
+      // than leave the chart with nothing to plot.
+      if (!showVerifiedConv) explorerTrendMetrics.delete('verified');
+      if (!explorerTrendMetrics.size) explorerTrendMetrics.add('spend');
       if (scards) {{
         scards.innerHTML=[
           ['spend','Spend',v=>money(v)],['impressions','Impressions',v=>count(v)],['clicks','Clicks',v=>count(v)],['ctr','CTR',v=>num(v).toFixed(2)+'%'],
           ['conversions','Conversions',v=>count(v)],
         ].map(([k,l,fmt])=>{{
-          const active=explorerTrendMetric===k;
+          const active=explorerTrendMetrics.has(k);
           if (k==='conversions' && convActive) {{
             const val=treeTotals._convSelNa?'—':count(num(treeTotals.conversions_sel));
             return `<button type="button" class="card metric-card${{active?' active':''}}" data-metric="${{k}}" aria-pressed="${{active?'true':'false'}}"><div class="card-title">${{esc(selectedConvAction)}}</div><div class="card-value">${{val}}</div><div class="card-foot"><span class="cmp-delta flat">of ${{count(agg.conversions)}} conversions</span></div></button>`;
@@ -5521,15 +5522,19 @@ def render_bigquery_dashboard_page(
           const delta=aggPrev?summaryDeltaHtml(agg[k],aggPrev[k],EXPLORER_METRIC_DIR[k]):'';
           return `<button type="button" class="card metric-card${{active?' active':''}}" data-metric="${{k}}" aria-pressed="${{active?'true':'false'}}"><div class="card-title">${{l}}</div><div class="card-value">${{fmt(agg[k])}}</div>${{delta?`<div class="card-foot">${{delta}}</div>`:''}}</button>`;
         }}).join('') + (showVerifiedConv ? (()=>{{
-          const active=explorerTrendMetric==='verified';
+          const active=explorerTrendMetrics.has('verified');
           return `<button type="button" class="card metric-card${{active?' active':''}}" data-metric="verified" aria-pressed="${{active?'true':'false'}}"><div class="card-title">Verified conv. (GA4)</div><div class="card-value">${{count(num(agg.verified)+googleVerifiedTotal+linkedinVerifiedTotal+microsoftVerifiedTotal)}}</div></button>`;
         }})() : '');
+        // Multi-select, like the paid-trends metric chips: a card toggles its
+        // metric on or off instead of replacing the selection, so Spend and
+        // Clicks can be read against each other on one chart.
         scards.querySelectorAll('.metric-card').forEach(btn=>btn.addEventListener('click',()=>{{
           const k=btn.dataset.metric;
-          if (k===explorerTrendMetric) return;
-          explorerTrendMetric=k;
+          // Last one standing stays on -- an empty selection has nothing to plot.
+          if (explorerTrendMetrics.has(k)) {{ if (explorerTrendMetrics.size===1) return; explorerTrendMetrics.delete(k); }}
+          else explorerTrendMetrics.add(k);
           scards.querySelectorAll('.metric-card').forEach(b=>{{
-            const a=b.dataset.metric===k;
+            const a=explorerTrendMetrics.has(b.dataset.metric);
             b.classList.toggle('active',a);
             b.setAttribute('aria-pressed', a?'true':'false');
           }});
@@ -6267,9 +6272,10 @@ def render_bigquery_dashboard_page(
     }}
 
     // ---- Campaign Explorer: metrics over time ----
-    // A single-metric line chart between the summary cards and the tree table,
-    // same interaction as the GA4 Sessions & engagement cards: clicking a card
-    // above swaps which metric is drawn. It reads the same campaign-name /
+    // A line chart between the summary cards and the tree table. The cards
+    // above are its metric picker, and they multi-select the way the paid-trends
+    // chips do: a card toggles its metric onto or off the chart, so Spend and
+    // Clicks can be read against each other. It reads the same campaign-name /
     // platform filters explorerRowMatches already applies to the table, so the
     // line never disagrees with what the cards and tree are currently showing.
     // Its own daily-per-campaign fetch (EXPLORER_TREND_API and siblings) is
@@ -6286,8 +6292,15 @@ def render_bigquery_dashboard_page(
       {{key:'conversions',  label:'Conversions',          color:'#0891b2', fmt:count, additive:true}},
       {{key:'verified',     label:'Verified conv. (GA4)', color:'#8a6d1f', fmt:count, additive:true}},
     ];
-    function explorerTrendMetricDef() {{ return EXPLORER_TREND_METRICS.find(m=>m.key===explorerTrendMetric) || EXPLORER_TREND_METRICS[0]; }}
-    let explorerTrendMetric = 'spend';
+    // Selected metric keys. Read back in EXPLORER_TREND_METRICS order so the
+    // series, legend and colours line up however the cards were clicked -- the
+    // same rule the paid-trends chips follow. Never empty: clicking the last
+    // active card is a no-op rather than an empty chart.
+    let explorerTrendMetrics = new Set(['spend']);
+    function explorerTrendDefs() {{
+      const defs=EXPLORER_TREND_METRICS.filter(m=>explorerTrendMetrics.has(m.key));
+      return defs.length?defs:[EXPLORER_TREND_METRICS[0]];
+    }}
     const EXPL_TREND_COLLAPSE_KEY = 'ce_expl_trend_collapsed_{api_client_key}';
     let explorerTrendCollapsed = (function(){{ try {{ return localStorage.getItem(EXPL_TREND_COLLAPSE_KEY)==='1'; }} catch(e) {{ return false; }} }})();
     // The eight daily payloads (base metrics x4 platforms, verified x4
@@ -6361,10 +6374,27 @@ def render_bigquery_dashboard_page(
       const btn=document.getElementById('explorerTrendToggle');
       return !btn || btn.getAttribute('aria-expanded')!=='false';
     }}
+    // The panel title names the selection while it is short enough to read;
+    // past three metrics the legend below the chart is the readable list.
+    function explorerTrendTitleText(defs) {{
+      if (defs.length===1) return `${{defs[0].label}} over time`;
+      if (defs.length<=3) return `${{defs.map(m=>m.label).join(' · ')}} over time`;
+      return `${{defs.length}} metrics over time`;
+    }}
+    // Additive metrics total over the window; CTR is re-derived from the
+    // window's clicks and impressions, because the mean of daily CTRs is not
+    // the window's CTR.
+    function explorerTrendRoll(rows, m) {{
+      if (m.additive) return rows.reduce((a,r)=>a+num(r[m.key]),0);
+      const t=rows.reduce((a,r)=>{{a.clicks+=num(r.clicks);a.impressions+=num(r.impressions);return a;}},{{clicks:0,impressions:0}});
+      return t.impressions?t.clicks/t.impressions*100:0;
+    }}
     function renderExplorerTrend() {{
       const titleEl=document.getElementById('explorerTrendTitle');
-      const m=explorerTrendMetricDef();
-      if (titleEl) titleEl.textContent = `${{m.label}} over time`;
+      const defs=explorerTrendDefs();
+      const multi=defs.length>1;
+      const primary=defs[0];
+      if (titleEl) titleEl.textContent = explorerTrendTitleText(defs);
       if (!explorerTrendExpanded()) return;
       if (!explorerTrendRaw || explorerTrendKey!==(currentStart+'|'+currentEnd)) {{
         if (!explorerTrendFetching) fetchExplorerTrend();
@@ -6380,19 +6410,30 @@ def render_bigquery_dashboard_page(
         return;
       }}
       const labels=rows.map(r=>String(r.date).slice(5));
-      lineChart('explorerTrendChart', labels, [
-        {{ label:m.label, data:rows.map(r=>num(r[m.key])), color:m.color, fill:true }},
-      ], {{
-        yFmt: v => m.fmt(v),
-        tooltip: {{ label: c => `${{c.dataset.label}}: ${{m.fmt(c.raw)}}` }},
+      // Same axis rule as the paid-trends multi-select: metrics differ by
+      // orders of magnitude (impressions vs CTR), so every extra series rides
+      // its own hidden auto-scaled axis and only the single-metric view draws
+      // tick labels or an area fill. Shapes are the comparison; the legend
+      // carries each metric's number.
+      const series=[], extraScales={{}};
+      defs.forEach((m,i)=>{{
+        const axisId=i===0?'y':('y'+i);
+        if (i>0) extraScales[axisId]={{display:false, beginAtZero:true}};
+        series.push({{label:m.label, data:rows.map(r=>num(r[m.key])), color:m.color, fill:!multi, fmt:m.fmt, axisId}});
+      }});
+      lineChart('explorerTrendChart', labels, series, {{
+        yDisplay: !multi,
+        yFmt: v => primary.fmt(v),
+        extraScales,
+        tooltip: {{ label: c => `${{c.dataset.label}}: ${{c.dataset._fmt(c.raw)}}` }},
         dates: rows.map(r=>String(r.date)),
         annoScope: 'ads',
       }});
-      const total = m.additive
-        ? rows.reduce((a,r)=>a+num(r[m.key]),0)
-        : (()=>{{ const t=rows.reduce((a,r)=>{{a.clicks+=num(r.clicks);a.impressions+=num(r.impressions);return a;}},{{clicks:0,impressions:0}}); return t.impressions?t.clicks/t.impressions*100:0; }})();
       if (legend) {{
-        legend.innerHTML=`<span class="cmp-item"><span class="cmp-swatch" style="border-top-color:${{m.color}}"></span>${{esc(m.label)}} ${{m.additive?'total':'over the window'}} · ${{m.fmt(total)}}</span>`;
+        legend.innerHTML=defs.map(m=>
+          `<span class="cmp-item"><span class="cmp-swatch" style="border-top-color:${{m.color}}"></span>`
+          +`${{esc(m.label)}} ${{m.additive?'total':'over the window'}} · ${{m.fmt(explorerTrendRoll(rows,m))}}</span>`
+        ).join('');
       }}
       const platTag=platformFilter.size?` · ${{[...platformFilter].join(', ')}}`:'';
       setStatus('explorerTrendStatus', `${{rows.length}} day${{rows.length===1?'':'s'}}${{platTag}}`);

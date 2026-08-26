@@ -63,6 +63,21 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-26",
+        title="Put more than one metric on the campaign explorer's chart",
+        area="Client dashboards · Campaign Explorer",
+        kind="improved",
+        summary=(
+            "The summary cards above the campaign table now pick metrics for the "
+            "chart the way the Paid trends chips do — click a second card to add "
+            "its line rather than swap the first one out."
+        ),
+        details=(
+            "Click an active card again to take its line off; the last one stays on, so the chart is never empty.",
+            "Each metric is scaled on its own, so Impressions and CTR can share a timeline without either flattening out, and the legend under the chart carries every selected metric's total for the window.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
         title="Campaign explorer's summary cards now chart the metric they show",
         area="Client dashboards · Campaign Explorer",
         kind="new",
