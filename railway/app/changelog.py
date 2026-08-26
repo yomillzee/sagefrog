@@ -63,6 +63,21 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-26",
+        title="Nixon's active-day setting now drives the pacing advice",
+        area="Client dashboards · Campaign explorer",
+        kind="fixed",
+        summary=(
+            "Picking which weekdays Nixon runs ads on saved, but the suggested "
+            "daily budget carried on using auto-detected days. The setting now "
+            "reaches the recommendation it is meant to change."
+        ),
+        details=(
+            "A client that pauses on weekends is no longer read as sliding behind pace on a Saturday.",
+            "\"Reset to auto\" goes back to detection as it says, rather than falling back to an older saved list.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
         title="Nixon's monthly budget goal stays saved",
         area="Client dashboards · Campaign explorer",
         kind="fixed",
