@@ -63,6 +63,21 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-26",
+        title="Nixon's monthly budget goal stays saved",
+        area="Client dashboards · Campaign explorer",
+        kind="fixed",
+        summary=(
+            "On the Nixon dashboard the monthly goal came back blank after "
+            "every reload, so the budget looked like it never saved. It was "
+            "saving all along — the card was reading the wrong record."
+        ),
+        details=(
+            "The pacing line and the projected month end were also computing against no goal; both now read the saved figure.",
+            "Other clients were never affected — Nixon is the only dashboard whose data key differs from its address.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
         title="Shorter demographic tables on the Campaign explorer",
         area="Client dashboards · Campaign explorer",
         kind="improved",
