@@ -63,6 +63,32 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-26",
+        title="Budget tracking leads with the projection, and hides its settings",
+        area="Client dashboards · Campaign explorer",
+        kind="improved",
+        summary=(
+            "The budget card now shows the projected month end and the pacing "
+            "line, with the monthly goal and active-day settings tucked behind "
+            "a kebab menu in its header."
+        ),
+        details=(
+            "Spent to date, the monthly goal and the suggested daily amount lost their cards — the pacing line under the chart already says all three.",
+            "The goal box and the weekday picker (which days count as active) now open from the ⋮ menu next to the range chips, for admins only.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
+        title="Keyword Performance drops its summary banner",
+        area="Client dashboards · Campaign explorer",
+        kind="improved",
+        summary=(
+            "The blue line above the keyword table — top-keyword spend share and "
+            "keywords spending without a conversion — is gone; the table below it "
+            "already shows both, sortable."
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
         title="Paid trends can chart several metrics at once",
         area="Client dashboards · Campaign explorer",
         kind="improved",

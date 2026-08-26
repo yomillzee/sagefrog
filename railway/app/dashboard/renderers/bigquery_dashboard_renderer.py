@@ -1270,7 +1270,6 @@ def render_bigquery_dashboard_page(
     panel_keywords = """
       <section id="sec-keywords" style="display:none">
         <div class="sec-head"><h2>Keyword Performance</h2><div class="sec-head-actions"><span class="kw-window" id="keywordWindow"></span><span class="status" id="keywordStatus"></span></div></div>
-        <div class="kw-insight" id="keywordInsight" hidden></div>
         <div class="kw-toolbar">
           <input type="search" id="keywordSearch" class="kw-search" placeholder="Search keywords…" autocomplete="off">
           <div class="chips" id="keywordMatchChips"></div>
@@ -2121,13 +2120,7 @@ def render_bigquery_dashboard_page(
     .bar-fill {{ height:100%; background:var(--accent); border-radius:4px; transition:width .3s; }}
     .bar-count {{ flex:0 0 100px; font-size:.82rem; color:var(--navy); text-align:right; font-variant-numeric:tabular-nums; }}
     .bar-pct {{ color:var(--muted); font-size:.74rem; margin-left:4px; }}
-    /* Keyword Performance: insight banner, toolbar, match badges and in-cell bars. */
-    .kw-insight {{ display:flex; flex-wrap:wrap; align-items:center; gap:8px 22px; padding:11px 15px; margin-bottom:14px; border:1px solid var(--line-soft); border-radius:var(--radius-sm); background:#f6f9fd; font-size:.82rem; color:var(--navy); }}
-    .kw-insight[hidden] {{ display:none; }}
-    .kw-insight .kw-ins {{ display:inline-flex; align-items:center; gap:8px; }}
-    .kw-insight strong {{ font-weight:800; }}
-    .kw-ins-icon {{ flex:0 0 auto; width:15px; height:15px; }}
-    .kw-ins.kw-ins-warn {{ color:#8a5a00; }}
+    /* Keyword Performance: toolbar, match badges and in-cell bars. */
     .kw-toolbar {{ display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin-bottom:14px; }}
     .kw-search {{ border:1px solid var(--line); border-radius:var(--radius-sm); padding:7px 12px; font:inherit; font-size:.84rem; color:#102033; min-width:230px; background:#fff; }}
     .kw-search:focus {{ outline:none; border-color:var(--accent); }}
@@ -5621,27 +5614,6 @@ def render_bigquery_dashboard_page(
       }});
       return rows;
     }}
-    function renderKeywordInsight() {{
-      const el=document.getElementById('keywordInsight');
-      if (!el) return;
-      const items=[];
-      const bySpend=kwScoped().sort((a,b)=>num(b.spend)-num(a.spend));
-      const total=bySpend.reduce((s,r)=>s+num(r.spend),0);
-      const topN=Math.min(3, bySpend.length);
-      if (total>0 && topN) {{
-        const topSpend=bySpend.slice(0,topN).reduce((s,r)=>s+num(r.spend),0);
-        const pct=Math.round(topSpend/total*100);
-        const info='<svg class="kw-ins-icon" viewBox="0 0 24 24" fill="none" stroke="#1d6fd0" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.1" fill="#1d6fd0" stroke="none"/></svg>';
-        items.push(`<span class="kw-ins">${{info}}<span><strong>${{pct}}% of spend</strong> came from the top ${{topN}} keyword${{topN===1?'':'s'}}.</span></span>`);
-      }}
-      const wasteful=kwScoped().filter(r=>num(r.spend)>100 && !num(r.conversions)).length;
-      if (wasteful) {{
-        const warn='<svg class="kw-ins-icon" viewBox="0 0 24 24" fill="none" stroke="#c98a00" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 1.8 20.5h20.4z"/><path d="M12 10v4"/><circle cx="12" cy="17.4" r="0.6" fill="#c98a00" stroke="none"/></svg>';
-        items.push(`<span class="kw-ins kw-ins-warn">${{warn}}<span><strong>${{wasteful}} keyword${{wasteful===1?'':'s'}}</strong> spent over $100 without a conversion.</span></span>`);
-      }}
-      el.innerHTML=items.join('');
-      el.hidden=!items.length;
-    }}
     function buildKeywordControls() {{
       const host=document.getElementById('keywordMatchChips');
       if (!host) return;
@@ -5741,7 +5713,6 @@ def render_bigquery_dashboard_page(
     }}
     function renderKeywords() {{
       renderKeywordWindow();
-      renderKeywordInsight();
       renderKeywordTable();
     }}
     // ---- CSV download ----

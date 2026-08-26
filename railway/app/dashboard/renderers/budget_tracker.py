@@ -76,6 +76,26 @@ def css() -> str:
     .budget-goal-prefix { position:absolute; left:9px; color:var(--muted); font-size:.85rem; pointer-events:none; }
     .budget-goal-input input { width:130px; padding:6px 10px 6px 18px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--navy); font:inherit; font-size:.86rem; text-transform:none; letter-spacing:0; }
     .budget-goal-save { cursor:pointer; }
+    /* Settings kebab in the section head: the monthly goal and the active-day
+       override. Self-contained (the settings host has no global .adv-menu). */
+    #sec-budget .bt-menu { position:relative; flex-shrink:0; }
+    #sec-budget .bt-menu-btn { display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border:1px solid var(--line); border-radius:999px; background:var(--card); color:var(--muted); padding:0; font:inherit; cursor:pointer; transition:color .14s, border-color .14s, background .14s; }
+    #sec-budget .bt-menu-btn:hover { color:var(--accent); border-color:#b9c8dc; background:#f4f8fd; }
+    #sec-budget .bt-menu-btn[aria-expanded="true"] { color:var(--accent); border-color:#9bbfe6; background:#eef5fd; }
+    #sec-budget .bt-pop { position:absolute; top:calc(100% + 8px); right:0; width:270px; max-width:calc(100vw - 28px); background:var(--card); border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 38px rgba(16,33,67,.22); z-index:60; padding:10px 12px 12px; text-align:left; }
+    #sec-budget .bt-pop[hidden] { display:none; }
+    #sec-budget .bt-pop-head { font-size:.72rem; font-weight:800; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); margin-bottom:8px; }
+    #sec-budget .bt-sep { height:1px; background:var(--line-soft); margin:10px 0; }
+    /* Inside the popover the editors stack instead of running along a row. */
+    #sec-budget .bt-pop .budget-goal-editor { display:block; margin:0; }
+    #sec-budget .bt-pop .budget-goal-editor label { display:block; margin-bottom:5px; }
+    #sec-budget .bt-pop .budget-goal-input { display:flex; }
+    #sec-budget .bt-pop .budget-goal-input input { width:100%; }
+    #sec-budget .bt-pop .budget-goal-save { margin-top:8px; }
+    #sec-budget .bt-pop .status { display:block; margin-top:6px; font-size:.74rem; }
+    #sec-budget .bt-pop .budget-active-days { margin-top:0; }
+    #sec-budget .bt-pop .budget-adays-form { margin-top:8px; }
+    #sec-budget .bt-pop .budget-adays-form label { flex:0 0 auto; }
     /* Loading skeletons (self-contained: the settings host has no global .skel) */
     @keyframes budgetShimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
     .budget-skel { display:block; height:9px; border-radius:5px;
@@ -88,21 +108,37 @@ def css() -> str:
 
 
 def section_html(*, can_edit: bool, header_extra_html: str = "") -> str:
-    """The budget module <section>. ``can_edit`` shows the inline goal editor.
+    """The budget module <section>. ``can_edit`` adds the settings kebab (the
+    monthly goal + active-day overrides).
 
     ``header_extra_html`` is injected at the start of the header actions row —
     the Insights page uses it to fold the "show on Campaign Explorer" toggle
     into this card's title instead of a separate section."""
-    goal_editor = "" if not can_edit else """
-        <form class="budget-goal-editor" id="budgetGoalForm" autocomplete="off">
-          <label for="budgetGoalInput">Monthly goal (USD)</label>
-          <div class="budget-goal-input">
-            <span class="budget-goal-prefix">$</span>
-            <input type="number" id="budgetGoalInput" name="monthly_budget_usd" min="0" step="100" placeholder="e.g. 25000">
-          </div>
-          <button type="submit" class="chip budget-goal-save">Save goal</button>
-          <span class="status" id="budgetGoalStatus"></span>
-        </form>"""
+    # Everything that *configures* the tracker — the monthly goal and the
+    # active-day detection — sits behind one kebab in the section head, so the
+    # card itself is just the reading. Admin-only: a viewer has nothing to set.
+    # The active-days block is filled in by renderPacing() once the pacing read
+    # lands (it needs the detected days), hence the empty host here.
+    kebab = "" if not can_edit else """
+            <div class="bt-menu" id="budgetMenu">
+              <button type="button" class="bt-menu-btn" id="budgetMenuBtn" aria-haspopup="true" aria-expanded="false" title="Budget settings" aria-label="Budget settings">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="12" cy="19" r="1.9"/></svg>
+              </button>
+              <div class="bt-pop" id="budgetMenuPop" hidden>
+                <div class="bt-pop-head">Budget settings</div>
+                <form class="budget-goal-editor" id="budgetGoalForm" autocomplete="off">
+                  <label for="budgetGoalInput">Monthly goal (USD)</label>
+                  <div class="budget-goal-input">
+                    <span class="budget-goal-prefix">$</span>
+                    <input type="number" id="budgetGoalInput" name="monthly_budget_usd" min="0" step="100" placeholder="e.g. 25000">
+                  </div>
+                  <button type="submit" class="chip budget-goal-save">Save goal</button>
+                  <span class="status" id="budgetGoalStatus"></span>
+                </form>
+                <div class="bt-sep"></div>
+                <div class="bt-pop-sub" id="budgetADaysHost"></div>
+              </div>
+            </div>"""
     _help = (
         "Cumulative paid spend by platform against the monthly budget. Spend "
         "resets at the start of each calendar month; the projection extends the "
@@ -126,9 +162,9 @@ def section_html(*, can_edit: bool, header_extra_html: str = "") -> str:
               <button type="button" class="chip active" data-range="month">This month</button>
               <button type="button" class="chip" data-range="last3m">Last 3 months</button>
             </div>
+            {kebab}
           </div>
         </div>
-        {goal_editor}
         <div class="budget-stats" id="budgetStats"></div>
         <div class="budget-pacing" id="budgetPacing"></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:260px"><canvas id="budgetChart"></canvas></div></div>
@@ -144,7 +180,6 @@ _JS_BODY = r"""
   if (!section) return;
 
   const money = v => new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format(Number(v||0));
-  const money0 = v => new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(Number(v||0));
   const num = v => Number(v||0);
   const escHtml = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const fmtDate = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -195,9 +230,10 @@ _JS_BODY = r"""
   }
   function showBudgetSkeleton(){
     const stats=document.getElementById('budgetStats');
-    if (stats) stats.innerHTML = Array.from({length:3},()=>
+    // One card only (the projection), so one skeleton.
+    if (stats) stats.innerHTML =
       '<div class="budget-stat"><span class="budget-skel" style="width:58%"></span>'
-      + '<span class="budget-skel" style="height:18px;width:74%;margin-top:7px"></span></div>').join('');
+      + '<span class="budget-skel" style="height:18px;width:74%;margin-top:7px"></span></div>';
     const host=document.getElementById('budgetChart');
     if (host && host.parentElement) host.parentElement.classList.add('is-loading');
   }
@@ -330,28 +366,14 @@ _JS_BODY = r"""
     });
     setStatus('budgetStatus','');
   }
+  // Only the projection gets a card. "Spent to date", the goal itself and the
+  // suggested daily all restate what the pacing line right below already says
+  // (and the goal is a setting, now in the kebab), so they were dropped.
   function renderStats(spent,goal,projected,pacing){
     const el=document.getElementById('budgetStats'); if (!el) return;
-    const pills=[];
-    pills.push(`<div class="budget-stat"><div class="budget-stat-label">Spent to date</div><div class="budget-stat-value">${money(spent)}</div></div>`);
-    if (goal>0){
-      const usePct=spent/goal*100;
-      pills.push(`<div class="budget-stat"><div class="budget-stat-label">Monthly goal</div><div class="budget-stat-value">${money(goal)}</div><div class="budget-stat-sub">${usePct.toFixed(0)}% used</div></div>`);
-      if (projected!==null&&projected!==undefined){
-        const over=projected>goal, diff=Math.abs(projected-goal);
-        pills.push(`<div class="budget-stat ${over?'is-over':'is-under'}"><div class="budget-stat-label">Projected month end</div><div class="budget-stat-value">${money(projected)}</div><div class="budget-stat-sub">${over?money(diff)+' over':money(diff)+' under'} goal</div></div>`);
-      }
-      // Suggested daily budget on the client's active days — the actionable
-      // "what to change" number. Only in the current-month view.
-      if (pacing && pacing.suggested_daily!=null){
-        const days = pacing.active_weekdays_label ? ('on '+pacing.active_weekdays_label) : 'per active day';
-        pills.push(`<div class="budget-stat"><div class="budget-stat-label">Suggested daily</div><div class="budget-stat-value">${money0(pacing.suggested_daily)}</div><div class="budget-stat-sub">${escHtml(days)}</div></div>`);
-      }
-    } else {
-      const hint=BT_CFG.canEdit?'Set a goal above':'Set one in Settings';
-      pills.push(`<div class="budget-stat"><div class="budget-stat-label">Monthly goal</div><div class="budget-stat-value">—</div><div class="budget-stat-sub">${hint}</div></div>`);
-    }
-    el.innerHTML=pills.join('');
+    if (!(goal>0) || projected===null || projected===undefined){ el.innerHTML=''; return; }
+    const over=projected>goal, diff=Math.abs(projected-goal);
+    el.innerHTML=`<div class="budget-stat ${over?'is-over':'is-under'}"><div class="budget-stat-label">Projected month end</div><div class="budget-stat-value">${money(projected)}</div><div class="budget-stat-sub">${over?money(diff)+' over':money(diff)+' under'} goal</div></div>`;
   }
 
   const _REC_ICONS={
@@ -366,39 +388,45 @@ _JS_BODY = r"""
   // concept. Never throws; degrades to empty when the pacing read was unavailable.
   function renderPacing(pacing){
     const el=document.getElementById('budgetPacing'); if (!el) return;
-    if (!pacing || budgetRange!=='month'){ el.innerHTML=''; return; }
+    if (!pacing || budgetRange!=='month'){ el.innerHTML=''; renderADaysMenu(null); return; }
     const status=pacing.status||'early';
     const ico=_REC_ICONS[status]||_REC_ICONS.early;
     let html=`<div class="budget-rec is-${status}"><span class="budget-rec-ico">${ico}</span><span>${escHtml(pacing.message||'')}</span></div>`;
-    if (status!=='no_budget') html+=activeDaysNote(pacing);
+    // Without a kebab (a non-admin viewer) the detected days are still worth
+    // saying out loud, so they stay under the recommendation.
+    if (status!=='no_budget' && !BT_CFG.canEdit) html+=activeDaysNote(pacing);
     el.innerHTML=html;
-    wireActiveDaysForm();
+    renderADaysMenu(pacing);
   }
-  function activeDaysNote(pacing){
+  function activeDaysLine(pacing){
     const label=pacing.active_weekdays_label||'—';
     const src=pacing.active_weekdays_source==='override'?'set by admin'
       :(pacing.active_weekdays_source==='auto'?'auto-detected':'default');
-    let note=`<div class="budget-active-days"><span>Active days: <strong>${escHtml(label)}</strong> (${src})</span>`;
-    if (BT_CFG.canEdit) note+=` <button type="button" class="budget-adays-edit" id="budgetADaysEdit">Adjust</button>`;
-    note+=`<span class="status" id="budgetADaysStatus"></span></div>`;
-    if (BT_CFG.canEdit){
-      const active=new Set((pacing.active_weekdays||[]).map(Number));
-      let boxes='';
-      for (let i=1;i<=7;i++) boxes+=`<label><input type="checkbox" name="adow" value="${i}" ${active.has(i)?'checked':''}>${DOW_ABBR[i-1]}</label>`;
-      note+=`<form class="budget-adays-form" id="budgetADaysForm" hidden>${boxes}`
-        +`<button type="submit" class="chip budget-adays-save">Save</button>`
-        +`<button type="button" class="budget-adays-edit" id="budgetADaysReset">Reset to auto</button></form>`;
-    }
-    return note;
+    return `<span>Active days: <strong>${escHtml(label)}</strong> (${src})</span>`;
+  }
+  function activeDaysNote(pacing){
+    return `<div class="budget-active-days">${activeDaysLine(pacing)}</div>`;
+  }
+  // The day-detection editor inside the settings kebab: the detected days, the
+  // weekday checkboxes that override them, and a reset back to auto.
+  function renderADaysMenu(pacing){
+    const host=document.getElementById('budgetADaysHost'); if (!host) return;
+    if (!pacing){ host.innerHTML='<div class="budget-active-days"><span>Active days apply to the current month.</span></div>'; return; }
+    const active=new Set((pacing.active_weekdays||[]).map(Number));
+    let boxes='';
+    for (let i=1;i<=7;i++) boxes+=`<label><input type="checkbox" name="adow" value="${i}" ${active.has(i)?'checked':''}>${DOW_ABBR[i-1]}</label>`;
+    host.innerHTML=`<div class="budget-active-days">${activeDaysLine(pacing)}</div>`
+      +`<form class="budget-adays-form" id="budgetADaysForm">${boxes}`
+      +`<button type="submit" class="chip budget-adays-save">Save days</button>`
+      +`<button type="button" class="budget-adays-edit" id="budgetADaysReset">Reset to auto</button></form>`
+      +`<span class="status" id="budgetADaysStatus"></span>`;
+    wireActiveDaysForm();
   }
   function wireActiveDaysForm(){
-    if (!BT_CFG.canEdit) return;
-    const editBtn=document.getElementById('budgetADaysEdit');
-    const form=document.getElementById('budgetADaysForm');
-    if (editBtn && form) editBtn.addEventListener('click',()=>{ form.hidden=!form.hidden; });
+    const form=document.getElementById('budgetADaysForm'); if (!form) return;
     const reset=document.getElementById('budgetADaysReset');
     if (reset) reset.addEventListener('click',()=>saveActiveDays(''));
-    if (form) form.addEventListener('submit',e=>{
+    form.addEventListener('submit',e=>{
       e.preventDefault();
       const vals=[...form.querySelectorAll('input[name="adow"]:checked')].map(c=>c.value);
       saveActiveDays(vals.join(','));
@@ -415,6 +443,18 @@ _JS_BODY = r"""
       loadBudget();
     } catch(err){ setStatus('budgetADaysStatus','Save failed: '+(err.message||'error')); }
   }
+
+  // Settings kebab (admin only). Clicks inside it must not bubble to the
+  // document dismiss handler, or typing in the goal field would close the menu.
+  (function(){
+    const btn=document.getElementById('budgetMenuBtn'); if (!btn) return;
+    const pop=document.getElementById('budgetMenuPop');
+    const setOpen=o=>{ pop.hidden=!o; btn.setAttribute('aria-expanded', o?'true':'false'); };
+    btn.addEventListener('click',e=>{ e.stopPropagation(); setOpen(pop.hidden); });
+    pop.addEventListener('click',e=>e.stopPropagation());
+    document.addEventListener('click',()=>setOpen(false));
+    document.addEventListener('keydown',e=>{ if (e.key==='Escape') setOpen(false); });
+  })();
 
   const chips=document.getElementById('budgetRangeChips');
   if (chips) chips.addEventListener('click', e=>{
