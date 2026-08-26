@@ -1676,6 +1676,52 @@ def mirror_meta_ad_creative_batch(account_id: str, rows: list[dict[str, Any]], *
     return {"enabled": True, "rows_upserted": len(payload), "table": table_id}
 
 
+def meta_ad_creative_coverage(account_id: str) -> dict[str, Any]:
+    """When each of an ad account's ads last had its creative metadata synced.
+
+    Returns ``{"available": bool, "synced_at": {ad_id: datetime}}``. The creative
+    fetch is the most expensive call in the Meta sync -- it is the one that trips
+    the ad account's Ads API call limit -- so callers use this to skip it when the
+    warehouse already holds fresh creatives for every ad in the window.
+
+    Fails open with ``available=False`` and empty coverage: an unreadable table
+    must mean "go fetch", never "skip". Deliberately does not call
+    ``_ensure_meta_table`` -- a read path should not create or alter a table.
+    """
+    empty: dict[str, Any] = {"available": False, "synced_at": {}}
+    account_id_clean = str(account_id).strip().lstrip("act_").split(":")[-1]
+    if not account_id_clean:
+        return empty
+    try:
+        project_id = _meta_project_id()
+        dataset_id = _meta_dataset_id()
+        client = _meta_client()
+        bigquery = _bigquery()
+    except Exception:
+        return empty
+    sql = f"""
+    SELECT ad_id, MAX(synced_at) AS synced_at
+    FROM `{project_id}.{dataset_id}.{_DEFAULT_META_AD_CREATIVE_TABLE}`
+    WHERE account_id = @account_id
+    GROUP BY ad_id
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("account_id", "STRING", account_id_clean)
+        ]
+    )
+    try:
+        rows = list(client.query(sql, job_config=job_config).result())
+    except Exception:
+        return empty
+    synced_at: dict[str, Any] = {}
+    for row in rows:
+        aid = str(row.get("ad_id") or "").strip() if hasattr(row, "get") else ""
+        if aid and row.get("synced_at") is not None:
+            synced_at[aid] = row.get("synced_at")
+    return {"available": True, "synced_at": synced_at}
+
+
 def mirror_meta_ad_conversion_action_batch(
     account_id: str, rows: list[dict[str, Any]], *, client_key: str = ""
 ) -> dict[str, Any]:

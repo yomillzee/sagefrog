@@ -1660,6 +1660,10 @@ _VIDEO_DETAIL_FIELDS = "id,source,picture,title,permalink_url"
 # account under its Ads API call limit (code 17 / subcode 2446079) on accounts
 # with many video creatives.
 _VIDEO_DETAIL_BATCH = 50
+# Ads per `?ids=` multi-get in the targeted creative fetch. Well under Meta's
+# limit of 50 because creative{...} is an expensive expansion per object and a
+# multi-get carries no `limit` for _graph_get's reduce-data shrink to fall back on.
+_AD_MEDIA_ID_BATCH = 25
 
 
 def _dig_dict(data: dict[str, Any], *keys: str) -> dict[str, Any]:
@@ -1970,6 +1974,99 @@ def fetch_ad_creative_metadata(
             return []
         raise
 
+    return _creative_rows_from_ads(ad_rows, access_token=access_token, env=env)
+
+
+def fetch_ad_creative_metadata_for_ads(
+    account_id: str,
+    ad_ids: list[str] | set[str],
+    *,
+    access_token: str | None = None,
+    env: MetaEnv | None = None,
+) -> list[dict[str, Any]]:
+    """Creative metadata for specific ads, via Meta multi-get (`?ids=`).
+
+    Same row shape as fetch_ad_creative_metadata, but for a known set of ads
+    instead of the whole account. The full-account variant pages /act_x/ads with
+    the heavy creative{...} expansion over every ad the account has ever run --
+    the single most expensive call in the sync, and the one that trips the ad
+    account Ads API call limit (code 17 / subcode 2446079). When only a handful
+    of ads need creatives (a new ad appeared, or a row aged out), this costs
+    ceil(N/25) calls instead of a page per 50 lifetime ads plus the video
+    lookups for all of them.
+
+    Batched at 25 rather than the multi-get maximum of 50 because the creative
+    expansion is expensive per object and a multi-get carries no `limit` for
+    _graph_get reduce-data shrinking to fall back on. A batch that fails
+    wholesale (one inaccessible id poisons the whole multi-get) is retried per
+    id, so one bad ad cannot blank the rest.
+    """
+    env = env or load_meta_env(access_token=access_token)
+    access_token = access_token or env.access_token
+    if not _normalize_account_id(account_id):
+        raise ValueError("account_id is required")
+
+    wanted = [str(a).strip() for a in sorted(ad_ids) if str(a).strip()]
+    if not wanted:
+        return []
+
+    ads: list[dict[str, Any]] = []
+    for chunk in _chunked(wanted, _AD_MEDIA_ID_BATCH):
+        try:
+            payload = _graph_get(
+                "/",
+                access_token=access_token,
+                params={"ids": ",".join(chunk), "fields": _AD_MEDIA_FIELDS},
+                env=env,
+            )
+        except Exception as exc:
+            if _is_meta_ads_read_error(exc):
+                return []
+            ads.extend(_fetch_ads_individually(chunk, access_token=access_token, env=env))
+            continue
+        for ad_id in chunk:
+            item = payload.get(ad_id) if isinstance(payload, dict) else None
+            if isinstance(item, dict):
+                item.setdefault("id", ad_id)
+                ads.append(item)
+
+    return _creative_rows_from_ads(ads, access_token=access_token, env=env)
+
+
+def _fetch_ads_individually(
+    ad_ids: list[str],
+    *,
+    access_token: str,
+    env: MetaEnv,
+) -> list[dict[str, Any]]:
+    """Per-id ad fetches, for when a `?ids=` multi-get fails as a whole."""
+    ads: list[dict[str, Any]] = []
+    for ad_id in ad_ids:
+        try:
+            payload = _graph_get(
+                f"/{ad_id}",
+                access_token=access_token,
+                params={"fields": _AD_MEDIA_FIELDS},
+                env=env,
+            )
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            payload.setdefault("id", ad_id)
+            ads.append(payload)
+    return ads
+
+
+def _creative_rows_from_ads(
+    ad_rows: list[dict[str, Any]],
+    *,
+    access_token: str,
+    env: MetaEnv,
+) -> list[dict[str, Any]]:
+    """Turn raw Meta ad objects (with creative{...} expanded) into creative rows.
+
+    Shared by the full-account and targeted fetches so both write identical rows.
+    """
     out: list[dict[str, Any]] = []
     video_ids: set[str] = set()
     interim: list[dict[str, Any]] = []

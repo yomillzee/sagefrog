@@ -62,6 +62,22 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-08-26",
+        title="Meta ad thumbnails stop going missing on busy accounts",
+        area="Client dashboards · Campaign explorer",
+        kind="fixed",
+        summary=(
+            "New Meta ads sometimes showed up in the explorer with no creative "
+            "preview — Meta was cutting the sync off partway through fetching "
+            "thumbnails on accounts with a lot of ads. The sync now asks for far "
+            "fewer of them, so previews keep up with the ads."
+        ),
+        details=(
+            "Only ads that are actually missing a preview get looked up, instead of every ad the account has ever run.",
+            "Spend, clicks and conversions were never affected — those come from a separate request and were always complete.",
+        ),
+    ),
+    Entry(
         date="2026-08-25",
         title="Campaign explorer: Verified conv. (GA4) now covers Microsoft Ads",
         area="Client dashboards · Campaign explorer",
