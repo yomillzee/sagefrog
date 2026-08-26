@@ -63,6 +63,22 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-26",
+        title="Shorter demographic tables on the Campaign explorer",
+        area="Client dashboards · Campaign explorer",
+        kind="improved",
+        summary=(
+            "The LinkedIn audience and Google Ads demographics tables now show "
+            "the top ten rows, with a button to open the full list, and the "
+            "LinkedIn summary cards are gone."
+        ),
+        details=(
+            "“Top company by impressions”, “Most clicks”, “Best CTR” and “Reported reach” are removed — the table below them already ranked the same rows.",
+            "Each table opens with its ten biggest rows and a “Show all …” button underneath; switching breakdown or date range collapses it again.",
+            "Export CSV still contains every row of every breakdown, not just the ten on screen.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
         title="Budget tracking leads with the projection, and hides its settings",
         area="Client dashboards · Campaign explorer",
         kind="improved",

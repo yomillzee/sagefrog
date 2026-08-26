@@ -1296,9 +1296,9 @@ def render_bigquery_dashboard_page(
             <span class="status" id="lidemoStatus"></span>
           </div>
         </div>
-        <div class="cards lid-cards" id="lidemoCards"></div>
         <div class="pnl-tabs lid-tabs" role="tablist" aria-label="Demographic breakdown" id="lidemoTabs"></div>
         <div class="table-wrap"><table id="lidemoTable" class="compact"></table></div>
+        <div class="tbl-more" id="lidemoMore"></div>
         <p class="lid-note" id="lidemoNote"></p>
       </section>"""
 
@@ -1321,6 +1321,7 @@ def render_bigquery_dashboard_page(
         <div class="pnl-tabs gd-tabs" role="tablist" aria-label="Demographic dimension" id="gdemoTabs"></div>
         <div class="gd-recs" id="gdemoRecs" hidden></div>
         <div class="table-wrap"><table id="gdemoTable" class="compact"></table></div>
+        <div class="tbl-more" id="gdemoMore"></div>
         <p class="gd-note" id="gdemoNote"></p>
       </section>"""
 
@@ -2272,11 +2273,13 @@ def render_bigquery_dashboard_page(
     .lid-note {{ margin:12px 2px 0; font-size:.72rem; line-height:1.5; color:var(--muted); }}
     .lid-export {{ border:1px solid var(--line); background:var(--card); color:var(--muted); border-radius:var(--radius-sm); padding:4px 10px; font:inherit; font-size:.72rem; font-weight:700; cursor:pointer; white-space:nowrap; }}
     .lid-export:hover {{ border-color:#c9d6e6; color:var(--navy); }}
-    .lid-cards {{ margin:2px 0 14px; }}
-    /* A category name is the *value* of these cards, and LinkedIn names run
-       long ("Information Technology & Services"), so it gets a readable size
-       and wraps to two lines instead of the numeric card's display type. */
-    .lid-card-name {{ font-size:.95rem; line-height:1.3; font-weight:750; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }}
+    /* "Show all N" accordion under a table that renders its top rows only. It
+       sits outside .table-wrap so it stays put while the table scrolls. */
+    .tbl-more {{ display:flex; justify-content:center; margin-top:10px; }}
+    .tbl-more:empty {{ display:none; }}
+    .tbl-more-btn {{ display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); background:var(--card); color:var(--muted); border-radius:999px; padding:5px 14px; font:inherit; font-size:.75rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s, color .12s; }}
+    .tbl-more-btn:hover {{ border-color:#b9c8dc; background:#f4f8fd; color:var(--navy); }}
+    .tbl-more-caret {{ font-size:.62rem; line-height:1; }}
     #lidemoTable td.lid-cat {{ max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
     .lid-bar {{ position:relative; display:block; height:6px; min-width:120px; border-radius:3px; background:rgba(10,102,194,.13); }}
     .lid-bar span {{ position:absolute; inset:0 auto 0 0; border-radius:3px; background:#0a66c2; }}
@@ -5736,6 +5739,36 @@ def render_bigquery_dashboard_page(
       setTimeout(() => URL.revokeObjectURL(url), 0);
     }}
 
+    // ---- "Show all N" accordion for a table that renders its top rows only ----
+    // A breakdown with two hundred companies in it is a wall, not a finding, so
+    // these tables show the top ten and keep the rest one click away. The rows
+    // are already in memory and the CSV export still carries every one of them,
+    // so this only ever changes how much of the table is on screen.
+    const TABLE_TOP_N=10;
+    // Collapsed state per table id — collapsed by default, and reset by the
+    // caller whenever the underlying rows change (a new tab, a new date range).
+    const tableExpanded={{}};
+    function tableIsExpanded(id) {{ return !!tableExpanded[id]; }}
+    function tableVisibleRows(id, rows) {{
+      return tableIsExpanded(id) ? rows : rows.slice(0, TABLE_TOP_N);
+    }}
+    // `noun` is plural ("companies", "segments"); `rerender` redraws the table.
+    function renderTableMore(hostId, tableId, total, noun, rerender) {{
+      const host=document.getElementById(hostId);
+      if (!host) return;
+      if (total<=TABLE_TOP_N) {{ host.innerHTML=''; return; }}
+      const open=tableIsExpanded(tableId);
+      const label=open
+        ? `Show top ${{TABLE_TOP_N}}`
+        : `Show all ${{count(total)}} ${{esc(noun)}}`;
+      host.innerHTML=`<button type="button" class="tbl-more-btn" aria-expanded="${{open?'true':'false'}}" aria-controls="${{esc(tableId)}}">`
+        +`<span>${{label}}</span><span class="tbl-more-caret" aria-hidden="true">${{open?'▲':'▼'}}</span></button>`;
+      host.querySelector('.tbl-more-btn').onclick=()=>{{
+        tableExpanded[tableId]=!open;
+        rerender();
+      }};
+    }}
+
     // ---- LinkedIn audience (member demographics) ----
     // These rows are per-window totals, NOT a daily series: LinkedIn's MEMBER_*
     // pivots carry no date dimension and withhold categories below a minimum
@@ -5748,6 +5781,11 @@ def render_bigquery_dashboard_page(
       ['seniority','Seniority'],['industry','Industry'],['company_size','Company size'],
     ];
     const LIDEMO_WINDOW_LABELS={{'LAST_30_DAYS':'Last 30 days','LAST_90_DAYS':'Last 90 days'}};
+    // How the "show all" button names the rows it is about to reveal — which
+    // categories LinkedIn reports differs by dimension, so does the noun.
+    const LIDEMO_PLURAL={{company:'companies',job_title:'job titles',
+      job_function:'job functions',seniority:'seniority levels',
+      industry:'industries',company_size:'company sizes'}};
     let lidemoData=null, lidemoDim='';
     function lidemoWindowLabel(w) {{
       return LIDEMO_WINDOW_LABELS[w]||String(w||'').replace(/_/g,' ').toLowerCase();
@@ -5767,56 +5805,12 @@ def render_bigquery_dashboard_page(
       ).join('');
       host.classList.toggle('one-tab',dims.length===1);
     }}
-    // Summary cards for the breakdown on screen. Which categories LinkedIn will
-    // report differs by dimension, so the cards are dimension-aware rather than
-    // hard-coded to companies: "top company by impressions" on the Company tab,
-    // "top industry" on Industry, and so on.
-    const LIDEMO_SINGULAR={{company:'company',job_title:'job title',job_function:'job function',
-      seniority:'seniority',industry:'industry',company_size:'company size'}};
-    // The floor a category has to clear before its CTR is worth calling out —
-    // one click on nine impressions is not an 11% CTR, it is noise.
-    const LIDEMO_CTR_MIN_IMPRESSIONS=250;
     function lidemoCtr(r) {{
       const imp=num(r.impressions);
       if (r.ctr===null||r.ctr===undefined) return imp?num(r.clicks)/imp:0;
       return num(r.ctr);
     }}
     function lidemoLabel(r) {{ return r.category||r.category_urn||'—'; }}
-    function renderLidemoCards() {{
-      const host=document.getElementById('lidemoCards');
-      if (!host) return;
-      const rows=lidemoRows(lidemoDim);
-      if (!rows.length) {{ host.innerHTML=''; return; }}
-      const noun=LIDEMO_SINGULAR[lidemoDim]||'category';
-      const totalImp=rows.reduce((a,r)=>a+num(r.impressions),0);
-      const totalClicks=rows.reduce((a,r)=>a+num(r.clicks),0);
-      const topImp=rows.reduce((b,r)=>num(r.impressions)>num(b.impressions)?r:b, rows[0]);
-      const topClick=rows.reduce((b,r)=>num(r.clicks)>num(b.clicks)?r:b, rows[0]);
-      // Only categories with enough reach get to hold the CTR card; with none
-      // above the floor the card says so rather than crowning a rounding error.
-      const ctrPool=rows.filter(r=>num(r.impressions)>=LIDEMO_CTR_MIN_IMPRESSIONS);
-      const topCtr=ctrPool.length
-        ? ctrPool.reduce((b,r)=>lidemoCtr(r)>lidemoCtr(b)?r:b, ctrPool[0])
-        : null;
-      const nameCard=(title,label,foot)=>`<div class="card"><div class="card-title">${{esc(title)}}</div>`
-        +`<div class="card-value lid-card-name" title="${{esc(label)}}">${{esc(label)}}</div>`
-        +`<div class="card-foot">${{foot}}</div></div>`;
-      const cards=[
-        nameCard(`Top ${{noun}} by impressions`, lidemoLabel(topImp),
-          `${{count(topImp.impressions)}} impressions · ${{pct(totalImp?num(topImp.impressions)/totalImp*100:0)}} of those reported`),
-        nameCard('Most clicks', lidemoLabel(topClick),
-          `${{count(topClick.clicks)}} clicks · ${{pct(lidemoCtr(topClick)*100)}} CTR`),
-        topCtr
-          ? nameCard('Best CTR', lidemoLabel(topCtr),
-              `${{pct(lidemoCtr(topCtr)*100)}} on ${{count(topCtr.impressions)}} impressions`)
-          : `<div class="card"><div class="card-title">Best CTR</div><div class="card-value">—</div>`
-            +`<div class="card-foot">No ${{esc(noun)}} reached ${{count(LIDEMO_CTR_MIN_IMPRESSIONS)}} impressions</div></div>`,
-        `<div class="card"><div class="card-title">Reported reach</div>`
-          +`<div class="card-value">${{count(totalImp)}}</div>`
-          +`<div class="card-foot">across ${{count(rows.length)}} ${{esc(noun)}}${{rows.length===1?'':'s'}} · ${{count(totalClicks)}} clicks</div></div>`,
-      ];
-      host.innerHTML=cards.join('');
-    }}
     // One file for the whole window, every breakdown stacked under a Breakdown
     // column — the panel only shows one tab at a time, but the thing someone
     // wants in a spreadsheet is all of them.
@@ -5850,11 +5844,14 @@ def render_bigquery_dashboard_page(
       }});
     }})();
     function renderLidemo() {{
-      renderLidemoCards();
       const rows=lidemoRows(lidemoDim);
       const el=document.getElementById('lidemoTable');
       if (!el) return;
-      if (!rows.length) {{ el.innerHTML=''; return; }}
+      if (!rows.length) {{
+        el.innerHTML='';
+        renderTableMore('lidemoMore','lidemoTable',0,'categories',renderLidemo);
+        return;
+      }}
       // Share of reach is relative to the top category in this dimension, so the
       // bars compare like with like even though the dimensions don't partition
       // the same total (a member with no listed job title lands in no bucket).
@@ -5864,7 +5861,7 @@ def render_bigquery_dashboard_page(
       const moneyCell=v=>(v===null||v===undefined)?'—':money(v);
       const head='<thead><tr><th class="left">Category</th><th>Impressions</th>'
         +'<th>Share of reach</th><th>Clicks</th><th>CTR</th><th>Spend</th></tr></thead>';
-      const body=rows.map(r=>{{
+      const body=tableVisibleRows('lidemoTable',rows).map(r=>{{
         const imp=num(r.impressions);
         const share=top?(imp/top*100):0;
         const ctrVal=(r.ctr===null||r.ctr===undefined)?(imp?num(r.clicks)/imp:0):num(r.ctr);
@@ -5875,6 +5872,8 @@ def render_bigquery_dashboard_page(
           +`<td>${{count(r.clicks)}}</td><td>${{pct(ctrVal*100)}}</td><td>${{moneyCell(r.spend)}}</td></tr>`;
       }}).join('');
       el.innerHTML=head+`<tbody>${{body}}</tbody>`;
+      renderTableMore('lidemoMore','lidemoTable',rows.length,
+        LIDEMO_PLURAL[lidemoDim]||'categories',renderLidemo);
     }}
     async function loadLinkedinDemographics() {{
       const sec=document.getElementById('sec-lidemo');
@@ -5885,6 +5884,8 @@ def render_bigquery_dashboard_page(
       setStatus('lidemoStatus','Loading…');
       const d=await getJson(withDates(LINKEDIN_DEMOGRAPHICS_API)).catch(()=>null);
       lidemoData=d;
+      // New window of rows: back to the top ten.
+      tableExpanded['lidemoTable']=false;
       const dims=lidemoLiveDims();
       if (!dims.length) {{
         sec.style.display='none'; unit.style.display='none';
@@ -5949,7 +5950,11 @@ def render_bigquery_dashboard_page(
       const el=document.getElementById('gdemoTable');
       if (!el) return;
       const rows=gdemoRows(gdemoDim);
-      if (!rows.length) {{ el.innerHTML=''; return; }}
+      if (!rows.length) {{
+        el.innerHTML='';
+        renderTableMore('gdemoMore','gdemoTable',0,'segments',renderGdemo);
+        return;
+      }}
       // Spend share and conversion share are both percentages of this
       // dimension's total, so they share one scale — that is the whole point of
       // stacking them, and rescaling either one separately would invent a
@@ -5958,7 +5963,7 @@ def render_bigquery_dashboard_page(
       const head='<thead><tr><th class="left">Segment</th><th>Spend</th>'
         +'<th title="Top bar: share of this dimension\\'s spend. Bottom bar: share of its conversions.">Spend vs conversions</th>'
         +'<th>Clicks</th><th>Conversions</th><th>Cost / conv.</th></tr></thead>';
-      const body=rows.map(r=>{{
+      const body=tableVisibleRows('gdemoTable',rows).map(r=>{{
         const spendW=Math.min(100,num(r.spend_share)/scale*100);
         const convW=Math.min(100,num(r.conversion_share)/scale*100);
         const label=r.segment_label||r.segment_value||'—';
@@ -5982,6 +5987,7 @@ def render_bigquery_dashboard_page(
           +`<td>${{count(r.clicks)}}</td><td>${{count(r.conversions)}}</td><td>${{cpa}}</td></tr>`;
       }}).join('');
       el.innerHTML=head+`<tbody>${{body}}</tbody>`;
+      renderTableMore('gdemoMore','gdemoTable',rows.length,'segments',renderGdemo);
 
       const dim=gdemoDimData(gdemoDim)||{{}};
       const badge=document.getElementById('gdemoCoverage');
@@ -6014,6 +6020,7 @@ def render_bigquery_dashboard_page(
       setStatus('gdemoStatus','Loading…');
       const d=await getJson(withDates(GOOGLE_ADS_DEMOGRAPHICS_API)).catch(()=>null);
       gdemoData=d;
+      tableExpanded['gdemoTable']=false;
       const dims=gdemoLiveDims();
       if (!dims.length) {{
         sec.style.display='none'; unit.style.display='none';
@@ -7902,6 +7909,8 @@ def render_bigquery_dashboard_page(
       const btn=ev.target.closest('.pnl-tab[data-lidim]');
       if (!btn) return;
       lidemoDim=btn.dataset.lidim;
+      // A new breakdown is a new set of rows: collapse back to the top ten.
+      tableExpanded['lidemoTable']=false;
       renderLidemoTabs();
       renderLidemo();
     }});
@@ -7913,6 +7922,7 @@ def render_bigquery_dashboard_page(
       const btn=ev.target.closest('.pnl-tab[data-gdim]');
       if (!btn) return;
       gdemoDim=btn.dataset.gdim;
+      tableExpanded['gdemoTable']=false;
       renderGdemoTabs();
       renderGdemo();
     }});
