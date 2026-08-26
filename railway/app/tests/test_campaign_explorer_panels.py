@@ -114,12 +114,12 @@ class ExplorerPanelTests(unittest.TestCase):
         self.assertIn("if (kwAllRows.length) renderKeywords();", html)
         self.assertIn("renderPaidTrends();", html)
 
-    def test_keyword_insight_and_chips_read_the_same_scoped_rows(self) -> None:
-        # A banner counting keywords the table is filtering out is worse than no
-        # banner: it reads as a contradiction rather than a caveat.
+    def test_keyword_panel_has_no_insight_banner(self) -> None:
+        # The banner restated what the table already showed, so it was dropped;
+        # the row count under the table still reads the same scoped rows.
         html = self._html()
-        self.assertIn("const bySpend=kwScoped()", html)
-        self.assertIn("const wasteful=kwScoped()", html)
+        self.assertNotIn('id="keywordInsight"', html)
+        self.assertNotIn("kw-insight", html)
         self.assertIn("const total=kwScoped().length;", html)
 
     # ---- LinkedIn audience ----
