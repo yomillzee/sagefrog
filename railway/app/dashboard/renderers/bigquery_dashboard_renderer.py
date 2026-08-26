@@ -250,7 +250,6 @@ OVERVIEW_PINNABLE_CARDS: dict[str, str] = {
 # ``show_budget`` below and the Hide/Show handling in the edit JS.
 EXPLORER_LAYOUT_CARDS: dict[str, str] = {
     "explorer": "Campaign explorer",
-    "paid_trends": "Paid trends",
     "keywords": "Keyword Performance",
     "gdemo": "Google Ads demographics",
     "lidemo": "LinkedIn audience",
@@ -1281,10 +1280,7 @@ def render_bigquery_dashboard_page(
              renderExplorerTrend(). -->
         <div class="expl-trend" id="explorerTrendSec">
           <div class="expl-trend-head">
-            <button type="button" class="expl-trend-toggle" id="explorerTrendToggle" aria-expanded="true" aria-controls="explorerTrendBody">
-              <span class="caret"></span>
-              <span id="explorerTrendTitle">Spend over time</span>
-            </button>
+            <span class="expl-trend-title" id="explorerTrendTitle">Spend over time</span>
             <span class="status" id="explorerTrendStatus"></span>
           </div>
           <div id="explorerTrendBody">
@@ -1353,29 +1349,13 @@ def render_bigquery_dashboard_page(
         <p class="gd-note" id="gdemoNote"></p>
       </section>"""
 
-    # Paid trends — one or more metrics over the selected range (each on its own
-    # auto-scaled axis), with the comparison window overlaid while a single
-    # metric is picked and the timeline's ads-scoped annotations drawn on top. It
-    # reads the same paid-media summary the Overview cards do, so a spike here
-    # and a card up there can never disagree; the metric chips just re-cut rows
-    # already in memory. Hidden for a client with no paid data.
-    panel_paid_trends = """
-      <section id="sec-paid_trends" style="display:none">
-        <div class="sec-head">
-          <h2>Paid trends</h2>
-          <div class="sec-head-actions">
-            <div class="chips multi" id="paidTrendMetricChips" role="group" aria-label="Metrics on the chart (pick one or more)"></div>
-            <div class="chips seg" id="paidTrendGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div>
-            <span class="status" id="paidTrendStatus"></span>
-          </div>
-        </div>
-        <div class="chart-wrap"><div class="chart-canvas-host" style="height:210px"><canvas id="paidTrendChart"></canvas></div></div>
-        <div class="cmp-legend" id="paidTrendLegend"></div>
-      </section>"""
+    # The stand-alone "Paid trends" panel that used to sit here is gone: the
+    # campaign explorer's own chart, driven by the summary cards above the tree,
+    # plots the same metrics over the same window against the same filters, and
+    # two charts answering one question is how they end up disagreeing.
 
     ex_units: list[tuple[str, str]] = [
         ("explorer", panel_explorer_main),
-        ("paid_trends", panel_paid_trends),
         ("keywords", panel_keywords),
         ("gdemo", panel_gdemo),
         ("lidemo", panel_lidemo),
@@ -1640,12 +1620,6 @@ def render_bigquery_dashboard_page(
     .chips.seg .chip:hover {{ background:#fff; color:var(--navy); }}
     .chips.seg .chip.active {{ background:#fff; color:var(--navy); border-color:transparent; box-shadow:0 1px 2px rgba(16,33,67,.14); }}
     .chips.seg .chip.active:hover {{ background:#fff; }}
-    /* Multi-select chip row (Paid trends metrics): each chip carries the colour
-       of the line it adds (--chip-dot), so the row doubles as the chart legend
-       and reads as a set of independent toggles rather than one-of-N. */
-    .chips.multi .chip {{ display:inline-flex; align-items:center; gap:6px; padding:4px 11px; font-size:.78rem; }}
-    .chips.multi .chip::before {{ content:""; width:8px; height:8px; border-radius:999px; background:var(--chip-dot,#9aa7bd); opacity:.45; flex-shrink:0; transition:opacity .12s, box-shadow .12s; }}
-    .chips.multi .chip[aria-pressed="true"]::before {{ opacity:1; box-shadow:0 0 0 2px rgba(255,255,255,.5); }}
     /* A filter that belongs to one card rather than the page sits in that
        card's head (Platform on Paid summary / Campaign explorer), sized down a
        notch so it reads as part of the heading row. */
@@ -1884,18 +1858,12 @@ def render_bigquery_dashboard_page(
     .metric-card .card-title {{ display:flex; align-items:center; gap:5px; }}
     .metric-card .ps-info {{ cursor:inherit; }}
     .metric-card:hover .ps-info, .metric-card:focus-visible .ps-info {{ color:var(--accent); border-color:#b9c8dc; }}
-    /* Campaign explorer's "metrics over time" chart -- a collapsible panel
-       between the summary cards and the tree table. The toggle's caret reuses
-       the tree table's chevron look but isn't scoped to .tree-row, since this
-       header sits outside the table. */
+    /* Campaign explorer's "metrics over time" chart -- the panel between the
+       summary cards and the tree table. Its title names whichever metrics the
+       cards above have selected. */
     .expl-trend {{ margin-bottom:14px; border:1px solid var(--line-soft); border-radius:var(--radius-sm); background:#fff; }}
     .expl-trend-head {{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; }}
-    .expl-trend-toggle {{ appearance:none; -webkit-appearance:none; background:none; border:none; font:inherit; display:flex; align-items:center; gap:7px; cursor:pointer; padding:2px 4px; margin:-2px -4px; border-radius:6px; color:var(--navy); font-weight:700; font-size:.86rem; }}
-    .expl-trend-toggle:hover {{ background:#f3f8ff; color:var(--accent); }}
-    .expl-trend-toggle:focus-visible {{ outline:2px solid var(--accent); outline-offset:2px; }}
-    .expl-trend-toggle .caret {{ transform:rotate(90deg); }}
-    .expl-trend-toggle[aria-expanded="false"] .caret {{ transform:rotate(0deg); }}
-    .expl-trend-toggle .caret::before {{ content:''; width:5px; height:5px; border-top:1.7px solid currentColor; border-right:1.7px solid currentColor; transform:translateX(-1px) rotate(45deg); }}
+    .expl-trend-title {{ color:var(--navy); font-weight:700; font-size:.86rem; }}
     #explorerTrendBody {{ padding:0 14px 14px; }}
     .card-title {{ color:var(--muted); font-size:.65rem; text-transform:uppercase; font-weight:800; letter-spacing:.06em; }}
     .card-value {{ margin-top:7px; font-size:1.5rem; line-height:1.1; color:var(--navy); font-weight:800; letter-spacing:-.02em; }}
@@ -5584,7 +5552,6 @@ def render_bigquery_dashboard_page(
       // re-renders the tree (a chip, a dropdown, a new range) re-renders them
       // too — otherwise they sit there contradicting the table above them.
       if (kwAllRows.length) renderKeywords();
-      renderPaidTrends();
       explorerTrendKeys = explorerTrendFilterKeys(filtered);
       renderExplorerTrend();
     }}
@@ -6114,163 +6081,6 @@ def render_bigquery_dashboard_page(
       renderGdemo();
     }}
 
-    // ---- Campaign Explorer: paid trends ----
-    // The explorer answers "which campaign", the tree cannot answer "when".
-    // Chips pick one *or more* metrics; the rows are already in memory, so
-    // switching costs nothing. Metrics differ by orders of magnitude
-    // (impressions vs CTR), so every series gets its own auto-scaled axis and
-    // only the single-metric view draws tick labels — with two lines on screen a
-    // shared axis would flatten one of them and two label columns would be read
-    // against the wrong line. Shapes (spend/clicks totals vs a CTR curve) and
-    // the legend's per-metric totals are what the multi-metric view is for.
-    const PAID_TREND_METRICS = [
-      {{key:'spend',        label:'Spend',       fmt:money, fill:true,  color:'#1769aa', additive:true,  dir:'neutral'}},
-      {{key:'impressions',  label:'Impressions', fmt:count, fill:true,  color:'#7c3aed', additive:true,  dir:'up'}},
-      {{key:'clicks',       label:'Clicks',      fmt:count, fill:true,  color:'#0a7f3f', additive:true,  dir:'up'}},
-      {{key:'conversions',  label:'Conversions', fmt:count, fill:true,  color:'#0891b2', additive:true,  dir:'up'}},
-      {{key:'ctr',          label:'CTR',         fmt:pct,   fill:false, color:'#b8600a', additive:false, dir:'neutral'}},
-      {{key:'cpc',          label:'CPC',         fmt:money, fill:false, color:'#d6336c', additive:false, dir:'down'}},
-    ];
-    // Selected metric keys, kept in PAID_TREND_METRICS order so the series,
-    // legend and colours line up however the chips were clicked. Never empty:
-    // clicking the last active chip is a no-op rather than an empty chart.
-    let paidTrendMetrics = new Set(['spend']);
-    let paidTrendGran = 'daily';
-    let paidTrendCur = null, paidTrendPrev = null;
-    function paidTrendDefs() {{
-      const defs=PAID_TREND_METRICS.filter(m=>paidTrendMetrics.has(m.key));
-      return defs.length?defs:[PAID_TREND_METRICS[0]];
-    }}
-    // Weeks start Monday and are labelled by their start date, matching the
-    // Daily/Weekly toggle on the GA4 trends. Ratios are re-derived from the
-    // week's summed parts rather than averaged across its days.
-    function paidTrendWeekly(rows) {{
-      if (!rows || !rows.length) return [];
-      const out=[]; let cur=null;
-      for (const r of rows) {{
-        const dt=new Date(String(r.date)+'T00:00:00');
-        const dow=(dt.getDay()+6)%7;
-        const mon=new Date(dt); mon.setDate(dt.getDate()-dow);
-        const key=`${{mon.getFullYear()}}-${{String(mon.getMonth()+1).padStart(2,'0')}}-${{String(mon.getDate()).padStart(2,'0')}}`;
-        if (!cur || cur.date!==key) {{ cur={{date:key,spend:0,impressions:0,clicks:0,conversions:0}}; out.push(cur); }}
-        cur.spend+=num(r.spend); cur.impressions+=num(r.impressions);
-        cur.clicks+=num(r.clicks); cur.conversions+=num(r.conversions);
-      }}
-      for (const d of out) {{
-        d.cpc=d.clicks?d.spend/d.clicks:0;
-        d.cpa=d.conversions?d.spend/d.conversions:0;
-        d.ctr=d.impressions?d.clicks/d.impressions*100:0;
-      }}
-      return out;
-    }}
-    function paidTrendRows(payload) {{
-      const daily=buildPaidDaily(payload);
-      return paidTrendGran==='weekly' ? paidTrendWeekly(daily) : daily;
-    }}
-    function buildPaidTrendChips() {{
-      const host=document.getElementById('paidTrendMetricChips');
-      if (!host) return;
-      const paint=()=>host.querySelectorAll('.chip').forEach(x=>{{
-        const on=paidTrendMetrics.has(x.dataset.metric);
-        x.classList.toggle('active', on);
-        x.setAttribute('aria-pressed', on?'true':'false');
-      }});
-      host.innerHTML=PAID_TREND_METRICS.map(m=>
-        `<button type="button" class="chip${{paidTrendMetrics.has(m.key)?' active':''}}" aria-pressed="${{paidTrendMetrics.has(m.key)?'true':'false'}}" data-metric="${{esc(m.key)}}" style="--chip-dot:${{m.color}}">${{esc(m.label)}}</button>`
-      ).join('');
-      host.querySelectorAll('.chip').forEach(b=>b.addEventListener('click',()=>{{
-        const k=b.dataset.metric;
-        // Last one standing stays on -- an empty selection has nothing to plot.
-        if (paidTrendMetrics.has(k)) {{ if (paidTrendMetrics.size===1) return; paidTrendMetrics.delete(k); }}
-        else paidTrendMetrics.add(k);
-        paint();
-        renderPaidTrends();
-      }}));
-    }}
-    (function wirePaidTrendGran() {{
-      document.querySelectorAll('#paidTrendGranChips .chip').forEach(btn=>
-        btn.addEventListener('click',()=>{{
-          if (btn.dataset.gran===paidTrendGran) return;
-          paidTrendGran=btn.dataset.gran;
-          document.querySelectorAll('#paidTrendGranChips .chip').forEach(b=>b.classList.toggle('active', b===btn));
-          renderPaidTrends();
-        }})
-      );
-    }})();
-    // An annotation edit has to redraw this the same way it redraws the GA4
-    // trends, or a new marker only appears after the next range change.
-    registerAnnotatedChart(()=>{{ if (paidTrendCur) renderPaidTrends(); }});
-    function renderPaidTrends() {{
-      const sec=document.getElementById('sec-paid_trends');
-      if (!sec) return;
-      const unit=sec.closest('.ov-unit')||sec;
-      const rows=paidTrendRows(paidTrendCur);
-      const legend=document.getElementById('paidTrendLegend');
-      // No paid data for this client at all — hide the panel rather than leave
-      // an empty axis, the same rule the keyword table follows. A client that
-      // does have paid data but nothing in this slice keeps the panel and says
-      // so, because that is a finding rather than a missing connector.
-      if (!rows.length) {{
-        __destroyChart('paidTrendChart');
-        if (legend) legend.innerHTML='';
-        const everHadData=!!(paidTrendCur && paidTrendCur.daily && paidTrendCur.daily.length);
-        sec.style.display=everHadData?'':'none';
-        unit.style.display=everHadData?'':'none';
-        setStatus('paidTrendStatus', everHadData?'No spend in this range for the selected platforms.':'');
-        return;
-      }}
-      sec.style.display=''; unit.style.display='';
-      const defs=paidTrendDefs();
-      const multi=defs.length>1;
-      const primary=defs[0];
-      const prevRows=paidTrendPrev?paidTrendRows(paidTrendPrev):[];
-      const hasPrev=prevRows.length>0;
-      const labels=rows.map(r=>String(r.date).slice(5));
-      const series=[], extraScales={{}};
-      // Previous first so the current line draws over it. Only while a single
-      // metric is picked: a dashed twin per metric would make three metrics six
-      // lines, and the legend still reports each metric's vs-previous delta.
-      if (hasPrev && !multi) series.push({{label:cmpSeriesLabel(), data:prevRows.map(r=>num(r[primary.key])).slice(0,rows.length), color:'#9aa7bd', dashed:true, fmt:primary.fmt}});
-      defs.forEach((m,i)=>{{
-        const axisId=i===0?'y':('y'+i);
-        // Own axis per extra metric, hidden: the shapes are the comparison, and
-        // the legend carries the numbers.
-        if (i>0) extraScales[axisId]={{display:false, beginAtZero:true}};
-        series.push({{label:multi?m.label:'Current', data:rows.map(r=>num(r[m.key])), color:m.color, fill:!multi&&m.fill, fmt:m.fmt, axisId}});
-      }});
-      lineChart('paidTrendChart', labels, series, {{
-        yDisplay: !multi,
-        yFmt: v => primary.fmt(v),
-        extraScales,
-        tooltip: {{ label: c => `${{c.dataset.label}}: ${{c.dataset._fmt(c.raw)}}` }},
-        dates: rows.map(r=>String(r.date)),
-        // Ads events only: a site migration marked "analytics trends" has no
-        // business explaining a spend line.
-        annoScope: 'ads',
-      }});
-      // Additive metrics total over the window; a ratio is re-derived from the
-      // window's parts, because the mean of daily CTRs is not the window's CTR.
-      const roll=(rs,m)=>{{
-        if (!rs.length) return null;
-        if (m.additive) return rs.reduce((a,r)=>a+num(r[m.key]),0);
-        const t=rs.reduce((a,r)=>{{a.spend+=num(r.spend);a.impressions+=num(r.impressions);a.clicks+=num(r.clicks);a.conversions+=num(r.conversions);return a;}},
-          {{spend:0,impressions:0,clicks:0,conversions:0}});
-        if (m.key==='ctr') return t.impressions?t.clicks/t.impressions*100:0;
-        if (m.key==='cpc') return t.clicks?t.spend/t.clicks:0;
-        return t.conversions?t.spend/t.conversions:0;
-      }};
-      if (legend) {{
-        legend.innerHTML=defs.map(m=>{{
-          const curTot=roll(rows,m), prevTot=hasPrev?roll(prevRows,m):null;
-          return `<span class="cmp-item"><span class="cmp-swatch" style="border-top-color:${{m.color}}"></span>`
-            +`${{esc(m.label)}} ${{m.additive?'total':'over the window'}} · ${{m.fmt(curTot)}} ${{summaryDeltaHtml(curTot, prevTot, m.dir)}}</span>`;
-        }}).join('')
-          +((hasPrev && !multi)?`<span class="cmp-item"><span class="cmp-swatch prev"></span>${{esc(cmpSeriesLabel())}} · ${{primary.fmt(roll(prevRows,primary))}}</span>`:'');
-      }}
-      const platTag=platformFilter.size?` · ${{[...platformFilter].join(', ')}}`:'';
-      setStatus('paidTrendStatus', `${{rows.length}} ${{paidTrendGran==='weekly'?'week':'day'}}${{rows.length===1?'':'s'}}${{platTag}}`);
-    }}
-
     // ---- Campaign Explorer: metrics over time ----
     // A line chart between the summary cards and the tree table. The cards
     // above are its metric picker, and they multi-select the way the paid-trends
@@ -6281,9 +6091,9 @@ def render_bigquery_dashboard_page(
     // Its own daily-per-campaign fetch (EXPLORER_TREND_API and siblings) is
     // necessary because the table's own explorer rows are ad-grain totals for
     // the whole window with no date on them -- they can't drive a trend by
-    // themselves. Collapsible and lazy: nothing is fetched until the panel is
-    // actually expanded, and it stays collapsed across reloads once a user
-    // collapses it.
+    // themselves. Those eight payloads are fetched once per date range and
+    // re-sliced client-side on every filter change, so only a range change
+    // costs a round trip.
     const EXPLORER_TREND_METRICS = [
       {{key:'spend',        label:'Spend',                color:'#1769aa', fmt:money, additive:true}},
       {{key:'impressions',  label:'Impressions',          color:'#7c3aed', fmt:count, additive:true}},
@@ -6301,8 +6111,6 @@ def render_bigquery_dashboard_page(
       const defs=EXPLORER_TREND_METRICS.filter(m=>explorerTrendMetrics.has(m.key));
       return defs.length?defs:[EXPLORER_TREND_METRICS[0]];
     }}
-    const EXPL_TREND_COLLAPSE_KEY = 'ce_expl_trend_collapsed_{api_client_key}';
-    let explorerTrendCollapsed = (function(){{ try {{ return localStorage.getItem(EXPL_TREND_COLLAPSE_KEY)==='1'; }} catch(e) {{ return false; }} }})();
     // The eight daily payloads (base metrics x4 platforms, verified x4
     // platforms), fetched once per date range and re-sliced client-side on
     // every filter change -- see buildExplorerTrendDaily().
@@ -6370,10 +6178,6 @@ def render_bigquery_dashboard_page(
       for (const d of out) d.ctr = d.impressions ? d.clicks/d.impressions*100 : 0;
       return out;
     }}
-    function explorerTrendExpanded() {{
-      const btn=document.getElementById('explorerTrendToggle');
-      return !btn || btn.getAttribute('aria-expanded')!=='false';
-    }}
     // The panel title names the selection while it is short enough to read;
     // past three metrics the legend below the chart is the readable list.
     function explorerTrendTitleText(defs) {{
@@ -6395,7 +6199,6 @@ def render_bigquery_dashboard_page(
       const multi=defs.length>1;
       const primary=defs[0];
       if (titleEl) titleEl.textContent = explorerTrendTitleText(defs);
-      if (!explorerTrendExpanded()) return;
       if (!explorerTrendRaw || explorerTrendKey!==(currentStart+'|'+currentEnd)) {{
         if (!explorerTrendFetching) fetchExplorerTrend();
         return;
@@ -6465,23 +6268,6 @@ def render_bigquery_dashboard_page(
       }}
     }}
     registerAnnotatedChart(()=>{{ if (explorerTrendRaw) renderExplorerTrend(); }});
-    (function wireExplorerTrendToggle() {{
-      const btn=document.getElementById('explorerTrendToggle');
-      const body=document.getElementById('explorerTrendBody');
-      if (!btn || !body) return;
-      btn.setAttribute('aria-expanded', explorerTrendCollapsed?'false':'true');
-      body.hidden=explorerTrendCollapsed;
-      btn.addEventListener('click', ()=>{{
-        const open=btn.getAttribute('aria-expanded')==='false';
-        btn.setAttribute('aria-expanded', open?'true':'false');
-        body.hidden=!open;
-        try {{ localStorage.setItem(EXPL_TREND_COLLAPSE_KEY, open?'0':'1'); }} catch(e) {{}}
-        if (open) {{
-          if (!explorerTrendRaw || explorerTrendKey!==(currentStart+'|'+currentEnd)) fetchExplorerTrend();
-          else renderExplorerTrend();
-        }}
-      }});
-    }})();
 
     async function loadExplorer() {{
       setStatus('explorerStatus','Loading…');
@@ -6495,7 +6281,7 @@ def render_bigquery_dashboard_page(
       // set, so a page load with no comparison configured yet skips these.
       const cmpOn = !!compareStart;
       const EMPTY_CONV={{actions:[],by_entity:{{}}}};
-      const [g,l,m,ms,kw,ver,gver,lver,mver,gconv,mconv,msconv,gPrev,lPrev,mPrev,msPrev,paid,paidPrev]=await Promise.all([
+      const [g,l,m,ms,kw,ver,gver,lver,mver,gconv,mconv,msconv,gPrev,lPrev,mPrev,msPrev]=await Promise.all([
         getJson(withDates(EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(LINKEDIN_EXPLORER_API)).catch(()=>({{rows:[]}})),
         getJson(withDates(META_EXPLORER_API)).catch(()=>({{rows:[]}})),
@@ -6515,12 +6301,7 @@ def render_bigquery_dashboard_page(
         cmpOn ? getJson(withDatesRange(LINKEDIN_EXPLORER_API, compareStart, compareEnd)).catch(()=>({{rows:[]}})) : Promise.resolve({{rows:[]}}),
         cmpOn ? getJson(withDatesRange(META_EXPLORER_API, compareStart, compareEnd)).catch(()=>({{rows:[]}})) : Promise.resolve({{rows:[]}}),
         cmpOn ? getJson(withDatesRange(MICROSOFT_EXPLORER_API, compareStart, compareEnd)).catch(()=>({{rows:[]}})) : Promise.resolve({{rows:[]}}),
-        // The paid trend chart's series. Same endpoint the Overview's paid cards
-        // read, so the chart and those cards can never disagree about a day.
-        HAS_PAID_ADS ? getJson(withDates(SUMMARY_API)).catch(()=>null) : Promise.resolve(null),
-        (HAS_PAID_ADS && cmpOn) ? getJson(withDatesRange(SUMMARY_API, compareStart, compareEnd)).catch(()=>null) : Promise.resolve(null),
       ]);
-      paidTrendCur=paid; paidTrendPrev=paidPrev;
       verifiedByAdId=(ver&&ver.by_ad_id)?ver.by_ad_id:{{}};
       verifiedByAdIdEvent=(ver&&ver.by_ad_id_event)?ver.by_ad_id_event:{{}};
       verifiedByGoogleCampaignId=(gver&&gver.by_campaign_id)?gver.by_campaign_id:{{}};
@@ -8141,7 +7922,6 @@ def render_bigquery_dashboard_page(
 
     // ---- Explorer chips ----
     buildExplorerFilters();
-    buildPaidTrendChips();
 
     document.getElementById('explorerTable').addEventListener('click',ev=>{{
       const shuf=ev.target.closest('.gads-shuffle');

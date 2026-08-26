@@ -1,15 +1,18 @@
 """Campaign explorer's "metrics over time" chart: the summary cards drive it.
 
-The cards above the campaign tree are the chart's metric picker, and they
-multi-select the way the Paid trends chips do — a card toggles its metric onto
-or off the chart rather than replacing the selection, so Spend and Clicks can be
-read against each other on one timeline. Two promises a reader would notice
+Since this is now the explorer pane's only trend chart, it carries what the
+retired "Paid trends" panel used to: the cards above the campaign tree are its
+metric picker, and they multi-select — a card toggles its metric onto or off the
+chart rather than replacing the selection, so Spend and Clicks can be read
+against each other on one timeline. Three promises a reader would notice
 breaking:
 
 * Clicking a second card *adds* a line; clicking the last active one is a no-op
   rather than an empty chart.
 * Metrics of different magnitudes each ride their own auto-scaled axis, and the
   legend carries every selected metric's number for the window.
+* The chart is simply there — no collapse toggle standing between the cards and
+  the line they describe.
 """
 
 from __future__ import annotations
@@ -116,6 +119,18 @@ class ExplorerTrendChartTests(unittest.TestCase):
         # CTR is re-derived from the window's parts: the mean of daily CTRs is
         # not the window's CTR.
         self.assertIn("return t.impressions?t.clicks/t.impressions*100:0;", trend)
+
+    # ---- The panel itself ----
+
+    def test_the_chart_is_not_behind_a_collapse_toggle(self) -> None:
+        # It reads as one thing with the cards above it, so there is nothing to
+        # expand and no remembered collapsed state to come back to.
+        html = self._html()
+        self.assertIn('<span class="expl-trend-title" id="explorerTrendTitle">', html)
+        self.assertNotIn("explorerTrendToggle", html)
+        self.assertNotIn("expl-trend-toggle", html)
+        self.assertNotIn("aria-controls=\"explorerTrendBody\"", html)
+        self.assertNotIn("ce_expl_trend_collapsed", html)
 
     def test_the_panel_title_follows_the_selection(self) -> None:
         html = self._html()

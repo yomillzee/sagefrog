@@ -63,6 +63,21 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-26",
+        title="One trend chart on the Campaign explorer, not two",
+        area="Client dashboards · Campaign Explorer",
+        kind="improved",
+        summary=(
+            "The separate Paid trends panel is gone — the chart under the "
+            "summary cards plots the same metrics over the same window, and it "
+            "is always open now rather than hiding behind a header you click."
+        ),
+        details=(
+            "Two charts answering the same question meant they could disagree in a client call; there is now one.",
+            "What went with the old panel: the Daily/Weekly toggle, CPC as a metric, and the dashed previous-period line. Ask if you want any of them on the chart that stayed.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
         title="Put more than one metric on the campaign explorer's chart",
         area="Client dashboards · Campaign Explorer",
         kind="improved",

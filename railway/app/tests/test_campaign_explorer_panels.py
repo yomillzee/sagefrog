@@ -1,11 +1,12 @@
-"""Campaign Explorer panels: paid trends, keyword scoping, LinkedIn audience.
+"""Campaign Explorer panels: the trend chart, keyword scoping, LinkedIn audience.
 
 Three separate promises, all of them things a reader of the page would notice
 going wrong rather than implementation detail:
 
-* The **paid trends** chart draws only the timeline events scoped to ads, so a
-  site migration marked "analytics trends" never turns up explaining a spend
-  line.
+* The explorer's **metrics over time** chart draws only the timeline events
+  scoped to ads, so a site migration marked "analytics trends" never turns up
+  explaining a spend line. It is the pane's only trend chart — the stand-alone
+  "Paid trends" panel that used to duplicate it is gone.
 * **Keyword Performance** is sliced by the same Platform chips, filter-group
   dropdowns and campaign allowlist as the tree above it — the table used to
   contradict the one it sits under — and it names the window it is showing.
@@ -66,22 +67,30 @@ class ExplorerPanelTests(unittest.TestCase):
             use_session=True, session_is_admin=True,
         )
 
-    # ---- Paid trends ----
+    # ---- Metrics over time ----
 
-    def test_paid_trends_panel_lives_on_the_explorer_pane(self) -> None:
+    def test_the_trend_chart_lives_between_the_cards_and_the_tree(self) -> None:
         pane = _explorer_pane(self._html())
-        self.assertIn('id="sec-paid_trends"', pane)
-        self.assertIn('id="paidTrendChart"', pane)
-        self.assertIn('id="paidTrendMetricChips"', pane)
-        # Daily/Weekly, same toggle the GA4 trends carry.
-        self.assertIn('id="paidTrendGranChips"', pane)
+        cards = pane.index('id="explorerSummaryCards"')
+        chart = pane.index('id="explorerTrendChart"')
+        table = pane.index('id="explorerTable"')
+        self.assertLess(cards, chart)
+        self.assertLess(chart, table)
 
-    def test_paid_trends_cycles_the_metrics_the_explorer_tree_shows(self) -> None:
+    def test_the_pane_carries_no_second_trend_chart(self) -> None:
+        # "Paid trends" was a second answer to the same question, on the same
+        # pane, free to disagree with this one. It is gone.
+        pane = _explorer_pane(self._html())
+        self.assertNotIn("Paid trends", pane)
+        self.assertNotIn('id="sec-paid_trends"', pane)
+        self.assertNotIn("paidTrendChart", pane)
+
+    def test_the_trend_chart_plots_the_metrics_the_summary_cards_show(self) -> None:
         html = self._html()
-        for metric in ("spend", "impressions", "clicks", "conversions", "ctr", "cpc"):
+        for metric in ("spend", "impressions", "clicks", "ctr", "conversions", "verified"):
             self.assertIn(f"key:'{metric}'", html, metric)
 
-    def test_paid_trends_draws_only_the_ads_scoped_timeline_events(self) -> None:
+    def test_the_trend_chart_draws_only_the_ads_scoped_timeline_events(self) -> None:
         html = self._html()
         self.assertIn("annoScope: 'ads'", html)
         # The chart helpers thread the scope into both halves of a marker (the
@@ -112,7 +121,7 @@ class ExplorerPanelTests(unittest.TestCase):
         self.assertIn("return kwAllRows.filter(kwCampaignAllowed);", html)
         # And every path that re-renders the tree re-renders the table with it.
         self.assertIn("if (kwAllRows.length) renderKeywords();", html)
-        self.assertIn("renderPaidTrends();", html)
+        self.assertIn("renderExplorerTrend();", html)
 
     def test_keyword_panel_has_no_insight_banner(self) -> None:
         # The banner restated what the table already showed, so it was dropped;
