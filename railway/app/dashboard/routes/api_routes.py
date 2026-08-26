@@ -234,6 +234,7 @@ def _pacing_read(
     project_id: str | None = None,
     dataset_id: str | None = None,
     budget_hint: float | None = None,
+    config_slug: str | None = None,
 ) -> dict:
     """Weekday-aware budget-pacing recommendation for one client.
 
@@ -243,6 +244,9 @@ def _pacing_read(
     ``client_dashboard_config`` the Budget tracking card reads; ``budget_hint``
     (the goal already injected into the card) is the fallback when the client's
     budget lives outside that table.
+
+    ``config_slug`` is the dashboard's URL slug when it differs from the API
+    client key — Nixon alone, and the key every write from the card uses.
     """
     today = date.today()
     as_of = today - timedelta(days=1)
@@ -261,11 +265,29 @@ def _pacing_read(
     override: list[int] = []
     try:
         import client_dashboard_config as cdc
-        cfg = cdc.get_config(normalized)
-        if cfg:
-            if cfg.monthly_budget_usd is not None:
-                monthly_budget = float(cfg.monthly_budget_usd)
-            override = cdc.parse_active_weekdays(cfg.pacing_active_weekdays)
+        # Everything the Budget tracking card saves — the monthly goal and the
+        # active-day override — keys on the dashboard's URL slug. That is the
+        # same string as the API client key for every client but Nixon
+        # (nixon-bq-test vs nixon, with a real config row under each), whose
+        # saved active days were read from the wrong row and silently fell back
+        # to auto-detection. Prefer the slug's row, then the API key's.
+        rows = [
+            row
+            for row in (
+                cdc.get_config(config_slug) if config_slug and config_slug != normalized else None,
+                cdc.get_config(normalized),
+            )
+            if row is not None
+        ]
+        for row in rows:
+            if row.monthly_budget_usd is not None:
+                monthly_budget = float(row.monthly_budget_usd)
+                break
+        # An empty override is a real setting ("auto"), not a missing value, so
+        # the first row that exists decides. Falling through to the other row
+        # would resurrect a stale override right after a "Reset to auto".
+        if rows:
+            override = cdc.parse_active_weekdays(rows[0].pacing_active_weekdays)
     except Exception:
         logger.warning("pacing: config read failed for %s", normalized, exc_info=True)
 
@@ -601,7 +623,9 @@ def client_budget_pacing(
     if normalized == "nixon":
         web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
         try:
-            return _pacing_read("nixon", budget_hint=budget)
+            return _pacing_read(
+                "nixon", budget_hint=budget, config_slug="nixon-bq-test",
+            )
         except Exception as exc:
             raise _bq_endpoint_failure(exc) from exc
     project_id, dataset_id = _load_bq_test_config(normalized)
