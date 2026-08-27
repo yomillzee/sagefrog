@@ -85,8 +85,12 @@ class LastSeenFormatTests(unittest.TestCase):
 
 
 class UserTableTests(unittest.TestCase):
-    def test_last_session_column_header(self) -> None:
-        self.assertIn("<th>Last session</th>", _render())
+    def test_last_session_column_header_is_sortable(self) -> None:
+        # The header is a sort control now, not plain text: clicking it re-stacks
+        # the roster by recency.
+        html = _render()
+        self.assertIn('data-sort="seen"', html)
+        self.assertIn("Last session", html)
 
     def test_last_session_cells(self) -> None:
         html = _render()

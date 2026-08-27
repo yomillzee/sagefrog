@@ -2741,6 +2741,7 @@ def _render_users_page(
 def admin_create_user(
     request: Request,
     email: str = Form(...),
+    full_name: str = Form(""),
     password: str = Form(""),
     setup_mode: str = Form("invite"),
     role: str = Form("client"),
@@ -2766,6 +2767,7 @@ def admin_create_user(
             client_slug=client_slug,
             allowed_client_slugs=allowed_client_slugs,
             group_id=_parse_group_id(group_id),
+            full_name=full_name,
         )
     except ValueError as e:
         return _render_users_page(admin=user, error=str(e), status_code=400)
@@ -2966,6 +2968,37 @@ def admin_set_user_avatar(
         **audit_log.request_context(request),
     )
     return JSONResponse({"ok": True, "avatar": stored})
+
+
+@app.post("/admin/users/{user_id}/name", include_in_schema=False)
+def admin_set_user_name(
+    user_id: int,
+    request: Request,
+    full_name: str = Form(""),
+    admin: web_users.WebUser = Depends(web_auth.require_admin),
+):
+    """Set (or clear) a user's display name — the name their account chip and
+    the roster show instead of the email's local part."""
+    target = web_users.get_user_record(user_id)
+    if not target:
+        return RedirectResponse(url="/admin/users?err=User+not+found", status_code=303)
+    try:
+        ok = web_users.set_full_name(user_id, full_name)
+    except ValueError as exc:
+        return RedirectResponse(url=f"/admin/users?err={quote(str(exc))}", status_code=303)
+    if not ok:
+        return RedirectResponse(url="/admin/users?err=Name+update+failed", status_code=303)
+    cleared = not (full_name or "").strip()
+    audit_log.record(
+        action="user.name_changed",
+        actor_user_id=admin.id,
+        actor_email=admin.email,
+        subject_email=target.email,
+        detail={"full_name": (full_name or "").strip() or None, "cleared": cleared},
+        **audit_log.request_context(request),
+    )
+    msg = "Name cleared" if cleared else "Name updated"
+    return RedirectResponse(url=f"/admin/users?msg={quote(msg)}", status_code=303)
 
 
 @app.post("/admin/users/{user_id}/role", include_in_schema=False)

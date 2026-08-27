@@ -905,6 +905,37 @@ _USER_SEARCH_JS = """
     });
   });
   if (input) input.addEventListener('input', apply);
+
+  // "Last session" is sortable in place: the roster ships in role/name order,
+  // and one click re-stacks it by recency so the accounts nobody has used in
+  // months surface without an admin reading every row. Sorting is per table,
+  // so the team and the client roster keep their own order.
+  panels.forEach(function (panel) {
+    var btn = panel.querySelector('.sort-btn[data-sort="seen"]');
+    var body = panel.querySelector('tbody');
+    if (!btn || !body) return;
+    var dir = 0; // 0 = as rendered, 1 = most recent first, 2 = least recent first
+    var original = Array.prototype.slice.call(body.querySelectorAll('tr'));
+    btn.addEventListener('click', function () {
+      dir = (dir + 1) % 3;
+      var rows = original.slice();
+      if (dir !== 0) {
+        var sign = (dir === 1) ? -1 : 1;
+        rows.sort(function (a, b) {
+          var av = parseInt(a.getAttribute('data-seen') || '0', 10);
+          var bv = parseInt(b.getAttribute('data-seen') || '0', 10);
+          if (av !== bv) return sign * (av - bv);
+          // Same stamp (or both "never"): fall back to name so the order is stable.
+          return (a.getAttribute('data-name') || '').localeCompare(b.getAttribute('data-name') || '');
+        });
+      }
+      rows.forEach(function (row) { body.appendChild(row); });
+      btn.setAttribute('data-dir', dir === 0 ? 'none' : (dir === 1 ? 'desc' : 'asc'));
+      var th = btn.closest('th');
+      if (th) th.setAttribute('aria-sort', dir === 0 ? 'none' : (dir === 1 ? 'descending' : 'ascending'));
+    });
+  });
+
   apply();
 })();
 """
@@ -1124,6 +1155,19 @@ def _person_label(email: str | None) -> str:
     return " ".join(p.capitalize() for p in parts) or "Someone"
 
 
+# Stable per-slug tint for a client mark that has no uploaded logo. Same palette
+# as the client switcher, so a given account looks the same in both places.
+_MARK_COLORS = (
+    "#0ea5e9", "#6366f1", "#8b5cf6", "#d946ef", "#ec4899",
+    "#f43f5e", "#f59e0b", "#10b981", "#14b8a6", "#3b82f6",
+)
+
+
+def _slug_color(slug: str) -> str:
+    key = (slug or "").strip().lower() or "?"
+    return _MARK_COLORS[sum(ord(c) for c in key) % len(_MARK_COLORS)]
+
+
 def _label_initials(label: str) -> str:
     """Up to two initials from a display label (dashboard card icon)."""
     parts = [p for p in (label or "").split() if p]
@@ -1189,16 +1233,21 @@ def render_admin_page(
     # group dashboards). Sourced from the dashboard registry so it matches what
     # can_access_client gates on.
     client_choices: list[tuple[str, str]] = []
+    client_logos: dict[str, str] = {}
     try:
         import dashboard_registry as _dreg
 
         if _dreg.enabled():
-            client_choices = [
-                (r.client_slug, r.label or r.client_slug)
-                for r in _dreg.list_clients(with_logos=False)
-            ]
+            # Logos are pulled here (not with_logos=False) because the access
+            # column now shows each client's mark instead of its name — a row
+            # granting eight dashboards is a strip of marks, not a wall of text.
+            for r in _dreg.list_clients(with_logos=True):
+                client_choices.append((r.client_slug, r.label or r.client_slug))
+                if getattr(r, "logo", None):
+                    client_logos[r.client_slug] = str(r.logo)
     except Exception:
         client_choices = []
+        client_logos = {}
     client_labels = {slug: label for slug, label in client_choices}
 
     def _client_checkboxes(
@@ -1240,6 +1289,42 @@ def render_admin_page(
     def _labels_for(slugs) -> list[str]:
         return [client_labels.get(s, s) for s in (slugs or [])]
 
+    # How many client marks a row shows before collapsing the rest into a "+N".
+    # Enough to recognise a small portfolio at a glance without the column
+    # stretching the table.
+    _ACCESS_MARK_LIMIT = 7
+
+    def _client_mark(slug: str) -> str:
+        """One client's avatar: its logo when the account has uploaded one, else
+        colour-coded initials. The label rides in the tooltip (and the row's
+        search key), so the column stays a strip of recognisable marks."""
+        label = client_labels.get(slug, slug)
+        inner = (
+            f'<img src="{_esc(client_logos[slug])}" alt="">'
+            if slug in client_logos
+            else f'<span class="mark-initials">{_esc(_label_initials(label))}</span>'
+        )
+        tint = "" if slug in client_logos else f' style="background:{_slug_color(slug)}"'
+        return (
+            f'<span class="client-mark" title="{_esc(label)}"{tint}>'
+            f'{inner}<span class="sr-only">{_esc(label)}</span></span>'
+        )
+
+    def _access_marks(slugs, *, empty: str) -> str:
+        slugs = [s for s in (slugs or [])]
+        if not slugs:
+            return f'<span class="chip-none">{_esc(empty)}</span>'
+        shown = slugs[:_ACCESS_MARK_LIMIT]
+        rest = slugs[_ACCESS_MARK_LIMIT:]
+        marks = "".join(_client_mark(s) for s in shown)
+        if rest:
+            more = ", ".join(client_labels.get(s, s) for s in rest)
+            marks += (
+                f'<span class="client-mark client-mark--more" title="{_esc(more)}">'
+                f"+{len(rest)}</span>"
+            )
+        return f'<div class="mark-row">{marks}</div>'
+
     def _access_chips(labels: list[str], *, empty: str) -> str:
         if not labels:
             return f'<span class="chip-none">{_esc(empty)}</span>'
@@ -1254,12 +1339,17 @@ def render_admin_page(
         uid = int(u["id"])
         email = str(u.get("email") or "")
         role = str(u.get("role") or "")
+        full_name = u.get("full_name") or ""
+        display_name = str(
+            u.get("display_name") or web_users.display_name_for(email, full_name or None)
+        )
         group_name = u.get("group_name")
         avatar = u.get("avatar")
         av_inner = (
             f'<img src="{_esc(str(avatar))}" alt="" class="avatar-img" id="avimg-{uid}">'
             if avatar
-            else f'<span class="avatar-initials" id="avimg-{uid}">{_esc(_user_initials(email))}</span>'
+            else f'<span class="avatar-initials" id="avimg-{uid}">'
+            f"{_esc(_label_initials(display_name) if full_name else _user_initials(email))}</span>"
         )
         avatar_cell = (
             f'<label class="avatar" title="Upload headshot">'
@@ -1268,18 +1358,26 @@ def render_admin_page(
             f'<span class="avatar-edit" aria-hidden="true">{_SVG_PENCIL_SM}</span></label>'
         )
         invite_pending = bool(u.get("invite_pending"))
+        # Status rode in a column of its own, which spent a sixth of the table on
+        # a word that is "Active" for nearly every row. It is now a dot beside
+        # the name: green active, amber waiting on an invite, grey deactivated —
+        # the exceptions are the only ones that catch the eye, and the full
+        # wording stays in the tooltip.
         if not u.get("is_active"):
-            status_badge = '<span class="pill pill-off">Inactive</span>'
+            status_kind, status_word = "off", "Inactive"
+            status_hint = "Deactivated — this account can no longer sign in"
         elif invite_pending:
-            # The account exists and is scoped, but has no usable password until
-            # the invite is redeemed — worth calling out so an admin doesn't
-            # wonder why the user has never signed in.
-            status_badge = (
-                '<span class="pill pill-invite" title="Waiting on the invite link to be '
-                'redeemed — this account cannot sign in yet">Invite pending</span>'
+            status_kind, status_word = "invite", "Invite pending"
+            status_hint = (
+                "Waiting on the invite link to be redeemed — this account cannot sign in yet"
             )
         else:
-            status_badge = '<span class="pill pill-on">Active</span>'
+            status_kind, status_word = "on", "Active"
+            status_hint = "Active — this account can sign in"
+        status_dot = (
+            f'<span class="status-dot status-{status_kind}" title="{_esc(status_hint)}">'
+            f'<span class="sr-only">{_esc(status_word)}</span></span>'
+        )
         # Prefer last activity (any authenticated request) over last login: a
         # long-lived session means a week-old login can hide someone who's been
         # back every day. Fall back to the login stamp for rows recorded before
@@ -1291,6 +1389,10 @@ def render_admin_page(
         last_login_cell = (
             f'<span class="{ll_cls}" title="{_esc(ll_abs)}">{_esc(ll_rel)}</span>'
         )
+        # Sort key for the "Last session" column header. Epoch seconds, 0 for a
+        # user who has never signed in, so "never" always sorts to the stale end.
+        _seen_dt = _parse_iso_utc(last_activity)
+        last_seen_sort = int(_seen_dt.timestamp()) if _seen_dt else 0
 
         # ---- Row actions: one kebab (vertical dots) menu, not four loose links ----
         # Every action opens a panel inside that menu, so a row never grows a
@@ -1298,6 +1400,25 @@ def render_admin_page(
         # the Accounts rows, so both registers are operated the same way.
         items: list[str] = []
         panels: list[str] = []
+
+        # Editing the name comes first: it is the one thing an admin changes on
+        # a row that isn't about access or credentials.
+        items.append(
+            '<button type="button" class="dash-kebab-item" role="menuitem" '
+            f'data-kebab-panel="name-{uid}">{_SVG_PENCIL_SM}<span>Edit name…</span></button>'
+        )
+        panels.append(f"""
+                <form method="post" action="/admin/users/{uid}/name" class="dash-kebab-panel" data-panel="name-{uid}" hidden>
+                  <button type="button" class="dash-kebab-back" data-kebab-panel="menu">{_SVG_BACK}<span>Back</span></button>
+                  <label class="dash-kebab-label">Full name</label>
+                  <input type="text" name="full_name" value="{_esc(full_name)}"
+                    maxlength="{web_users.FULL_NAME_MAX_CHARS}" autocomplete="off"
+                    placeholder="{_esc(web_users.display_name_for(email))}" aria-label="Full name">
+                  <p class="hint">Shown on their account chip in the sidebar and across this
+                    roster. Leave it blank to fall back to
+                    <strong>{_esc(web_users.display_name_for(email))}</strong>.</p>
+                  <button type="submit" class="dash-kebab-submit primary">Save name</button>
+                </form>""")
 
         items.append(
             '<button type="button" class="dash-kebab-item" role="menuitem" '
@@ -1397,19 +1518,23 @@ def render_admin_page(
         # Resolve the human-readable dashboards this user can reach (used for
         # both the visible access cell and the search key).
         if role == "admin":
+            access_slugs: list[str] = []
             access_labels = ["All clients"]
         elif role == "standard":
-            access_labels = _labels_for(u.get("allowed_client_slugs"))
+            access_slugs = list(u.get("allowed_client_slugs") or [])
+            access_labels = _labels_for(access_slugs)
         elif u.get("group_id"):
-            access_labels = _labels_for(u.get("group_client_slugs"))
+            access_slugs = list(u.get("group_client_slugs") or [])
+            access_labels = _labels_for(access_slugs)
         else:
             single = u.get("client_slug")
-            access_labels = _labels_for([single] if single else [])
+            access_slugs = [single] if single else []
+            access_labels = _labels_for(access_slugs)
         search_key = _esc(
             " ".join(
                 filter(
                     None,
-                    (email, role, str(group_name or ""), " ".join(access_labels)),
+                    (display_name, email, role, str(group_name or ""), " ".join(access_labels)),
                 )
             ).lower()
         )
@@ -1419,8 +1544,11 @@ def render_admin_page(
         you_chip = '<span class="you-chip">You</span>' if uid == user.id else ""
         identity_cell = (
             f'<td class="col-user" data-label="User"><div class="user-cell">{avatar_cell}'
-            f'<span class="user-ident"><span class="user-email">{_esc(email)}</span>'
-            f'{you_chip}</span></div></td>'
+            f'<span class="user-ident">'
+            f'<span class="user-name">{status_dot}<span class="user-name-text">'
+            f'{_esc(display_name)}</span>{you_chip}</span>'
+            f'<span class="user-email" title="{_esc(email)}">{_esc(email)}</span>'
+            f'</span></div></td>'
         )
 
         if kind == "team":
@@ -1428,14 +1556,13 @@ def render_admin_page(
             access_cell = (
                 '<span class="chip-all">All clients</span>'
                 if role == "admin"
-                else _access_chips(access_labels, empty="No access")
+                else _access_marks(access_slugs, empty="No access")
             )
             cells = (
                 f"{identity_cell}"
                 f'<td data-label="Role">{role_badge}</td>'
                 f'<td class="col-access" data-label="Client access">{access_cell}</td>'
-                f'<td data-label="Last session">{last_login_cell}</td>'
-                f'<td data-label="Status">{status_badge}</td>'
+                f'<td class="col-seen" data-label="Last session">{last_login_cell}</td>'
                 f'<td class="col-actions">{actions}</td>'
             )
         else:  # client
@@ -1444,16 +1571,18 @@ def render_admin_page(
                 if group_name
                 else '<span class="chip-none">Ungrouped</span>'
             )
-            access_cell = _access_chips(access_labels, empty="No dashboards")
+            access_cell = _access_marks(access_slugs, empty="No dashboards")
             cells = (
                 f"{identity_cell}"
                 f'<td data-label="Group">{group_cell}</td>'
                 f'<td class="col-access" data-label="Dashboards">{access_cell}</td>'
-                f'<td data-label="Last session">{last_login_cell}</td>'
-                f'<td data-label="Status">{status_badge}</td>'
+                f'<td class="col-seen" data-label="Last session">{last_login_cell}</td>'
                 f'<td class="col-actions">{actions}</td>'
             )
-        return f'<tr class="user-row" data-search="{search_key}">{cells}</tr>'
+        return (
+            f'<tr class="user-row" data-search="{search_key}" '
+            f'data-seen="{last_seen_sort}" data-name="{_esc(display_name.lower())}">{cells}</tr>'
+        )
 
     # Split the roster in two: internal Sagefrog accounts (admin + standard) vs
     # external client portal logins. Each gets its own audience-tuned table so
@@ -1464,10 +1593,10 @@ def render_admin_page(
     client_count = len(client_rows)
     user_count = len(users)
     team_body = "\n".join(team_rows) or (
-        '<tr class="empty-row"><td colspan="6" class="muted">No Sagefrog team members yet.</td></tr>'
+        '<tr class="empty-row"><td colspan="5" class="muted">No Sagefrog team members yet.</td></tr>'
     )
     client_body = "\n".join(client_rows) or (
-        '<tr class="empty-row"><td colspan="6" class="muted">No client portal users yet.</td></tr>'
+        '<tr class="empty-row"><td colspan="5" class="muted">No client portal users yet.</td></tr>'
     )
 
     # NOTE: the "View as user" card that used to live here has been removed —
@@ -2163,12 +2292,40 @@ def render_admin_page(
     .user-table tbody tr.user-row {{ transition: background .12s; }}
     .user-table tbody tr.user-row:hover {{ background: #f7fafd; }}
     .user-table tbody tr.user-row:last-child td {{ border-bottom: 0; }}
-    /* Identity cell: avatar + email as one unit, so the eye lands on the person. */
+    /* Identity cell: avatar + name over email as one unit, so the eye lands on
+       the person rather than on an address. */
     .user-cell {{ display: flex; align-items: center; gap: 11px; min-width: 0; }}
-    .user-ident {{ display: flex; align-items: center; gap: 7px; min-width: 0; flex-wrap: wrap; }}
-    .user-email {{ font-weight: 650; color: var(--navy); overflow-wrap: anywhere; }}
+    .user-ident {{ display: flex; flex-direction: column; gap: 1px; min-width: 0; }}
+    .user-name {{ display: flex; align-items: center; gap: 7px; min-width: 0; }}
+    .user-name-text {{ font-weight: 700; color: var(--navy); overflow-wrap: anywhere; }}
+    .user-email {{ font-size: .79rem; color: var(--muted); overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }}
     .you-chip {{ padding: 1px 7px; border-radius: 999px; background: #eef2f7; color: var(--muted);
       font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }}
+    /* Status: a dot beside the name, not a column. Green reads as "nothing to
+       do here", so only the amber and grey rows pull the eye. */
+    .status-dot {{ width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }}
+    .status-on {{ background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.16); }}
+    .status-invite {{ background: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,.18); }}
+    .status-off {{ background: #cbd5e1; box-shadow: 0 0 0 3px rgba(148,163,184,.16); }}
+    /* Client access as a strip of client marks — the account's logo when it has
+       one, else its tinted initials. The name lives in the tooltip. */
+    .mark-row {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }}
+    .client-mark {{ width: 26px; height: 26px; border-radius: 8px; overflow: hidden; flex-shrink: 0;
+      display: grid; place-items: center; background: #eef2f7; border: 1px solid var(--border); }}
+    .client-mark img {{ width: 100%; height: 100%; object-fit: cover; display: block; }}
+    .mark-initials {{ color: #fff; font-weight: 800; font-size: .62rem; letter-spacing: .02em; }}
+    .client-mark--more {{ background: #eef2f7; color: var(--muted); font-size: .68rem; font-weight: 800; }}
+    /* Sortable column header */
+    .th-sort {{ padding-right: 0; }}
+    .sort-btn {{ display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent;
+      padding: 0; font: inherit; color: inherit; cursor: pointer; }}
+    .sort-btn:hover {{ color: var(--accent); }}
+    .sort-caret {{ width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent;
+      border-top: 5px solid currentColor; opacity: .3; transition: opacity .12s, transform .12s; }}
+    .sort-btn[data-dir="desc"] .sort-caret {{ opacity: 1; }}
+    .sort-btn[data-dir="asc"] .sort-caret {{ opacity: 1; transform: rotate(180deg); }}
+    .col-seen {{ white-space: nowrap; }}
     /* The users kebab carries a role picker and a dashboard checklist, so it
        needs a little more room than the account rows' rename/delete panels. */
     .user-kebab .dash-kebab-menu {{ width: 296px; }}
@@ -2433,7 +2590,10 @@ def render_admin_page(
         letter-spacing: .3px; color: var(--muted);
       }}
       .user-table td.col-access {{ align-items: flex-start; }}
-      .user-table td.col-access .chip-row {{ justify-content: flex-end; }}
+      .user-table td.col-access .chip-row,
+      .user-table td.col-access .mark-row {{ justify-content: flex-end; }}
+      /* The email truncates against the card's width, not a desktop max. */
+      .user-table td.col-user .user-email {{ max-width: 100%; }}
       /* Actions sit beside the email on a card, not on a labelled line of
          their own — the kebab is a 34px button, it needs no row. */
       .user-table td.col-actions {{ order: 2; flex: 0 0 auto; padding: 0 0 0 10px; margin: 0; border-top: 0; }}
@@ -2498,6 +2658,11 @@ def render_admin_page(
                 <input id="email" name="email" type="email" required placeholder="name@company.com">
               </div>
               <div>
+                <label for="full_name">Full name <span class="hint-inline">(optional)</span></label>
+                <input id="full_name" name="full_name" type="text" autocomplete="off"
+                  maxlength="{web_users.FULL_NAME_MAX_CHARS}" placeholder="Leave blank to use their email name">
+              </div>
+              <div>
                 <label for="role">Role</label>
                 <select id="role" name="role" class="role-select">
                   <option value="client">client — external portal login</option>
@@ -2550,7 +2715,7 @@ def render_admin_page(
           <span class="users-showing" aria-live="polite"><b id="userCount">{user_count}</b> shown</span>
           <div class="dash-search">
             {_SVG_SEARCH}
-            <input type="search" id="userSearch" placeholder="Filter by email, group, or dashboard…"
+            <input type="search" id="userSearch" placeholder="Filter by name, email, group, or dashboard…"
               autocomplete="off" aria-label="Filter users">
           </div>
           {add_user_html}
@@ -2568,7 +2733,7 @@ def render_admin_page(
         </div>
         <div class="user-table-wrap">
           <table class="user-table">
-            <thead><tr><th>User</th><th>Role</th><th>Client access</th><th>Last session</th><th>Status</th><th class="col-actions"><span class="sr-only">Actions</span></th></tr></thead>
+            <thead><tr><th>User</th><th>Role</th><th>Client access</th><th class="col-seen th-sort"><button type="button" class="sort-btn" data-sort="seen" aria-label="Sort by last session">Last session<span class="sort-caret" aria-hidden="true"></span></button></th><th class="col-actions"><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>{team_body}</tbody>
           </table>
           <p class="users-empty muted" hidden>No Sagefrog team members match your filter.</p>
@@ -2586,7 +2751,7 @@ def render_admin_page(
         </div>
         <div class="user-table-wrap">
           <table class="user-table">
-            <thead><tr><th>User</th><th>Group</th><th>Dashboards</th><th>Last session</th><th>Status</th><th class="col-actions"><span class="sr-only">Actions</span></th></tr></thead>
+            <thead><tr><th>User</th><th>Group</th><th>Dashboards</th><th class="col-seen th-sort"><button type="button" class="sort-btn" data-sort="seen" aria-label="Sort by last session">Last session<span class="sort-caret" aria-hidden="true"></span></button></th><th class="col-actions"><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>{client_body}</tbody>
           </table>
           <p class="users-empty muted" hidden>No client portal users match your filter.</p>

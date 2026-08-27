@@ -103,12 +103,51 @@ SCHEMA_SQL_STATEMENTS = [
     """,
 ]
 
+# Added after the baseline shipped, so it carries its own migration id (the
+# baseline's ledger row already exists on live databases and would never re-run).
+FULL_NAME_SQL_STATEMENTS = [
+    # The name a person is shown by — in the sidebar account chip and across the
+    # admin roster. Optional: when it is NULL we fall back to the email's local
+    # part ("mikem@..." -> "Mikem"), which is what every account showed before.
+    """
+    ALTER TABLE web_users ADD COLUMN IF NOT EXISTS full_name TEXT
+    """,
+]
+
+# Everything the startup safety net (ensure_schema) applies: the baseline plus
+# every migration added after it. SCHEMA_SQL_STATEMENTS itself stays exactly the
+# baseline, so its recorded migration keeps its checksum.
+ALL_SCHEMA_STATEMENTS = [*SCHEMA_SQL_STATEMENTS, *FULL_NAME_SQL_STATEMENTS]
+
 # Register this module's schema with the central migration runner. The runner
 # applies + records this once at startup as web_users:0001_baseline; the
 # read/write helpers no longer run schema DDL themselves (Phase 2).
 db_migrate.register(
-    [db_migrate.Migration(id="web_users:0001_baseline", statements=tuple(SCHEMA_SQL_STATEMENTS))]
+    [
+        db_migrate.Migration(
+            id="web_users:0001_baseline", statements=tuple(SCHEMA_SQL_STATEMENTS)
+        ),
+        db_migrate.Migration(
+            id="web_users:0002_full_name", statements=tuple(FULL_NAME_SQL_STATEMENTS)
+        ),
+    ]
 )
+
+
+def display_name_for(email: str | None, full_name: str | None = None) -> str:
+    """The name to show a person by: their stored full name when they have one,
+    otherwise the email's local part title-cased ("mikem@x" -> "Mikem",
+    "mike.miller@x" -> "Mike Miller"). Never blank for a real address."""
+    name = (full_name or "").strip()
+    if name:
+        return name
+    local = (email or "").split("@", 1)[0]
+    for sep in (".", "-", "_", "+"):
+        local = local.replace(sep, " ")
+    parts = [p for p in local.split() if p]
+    if not parts:
+        return (email or "").strip()
+    return " ".join(p[:1].upper() + p[1:] for p in parts)
 
 
 def _normalize_slug_list(slugs: list[str] | tuple[str, ...] | None) -> list[str]:
@@ -131,6 +170,9 @@ class WebUser:
     client_slug: str | None
     is_active: bool
     avatar: str | None = None
+    # Optional display name. None means "derive one from the email" — see
+    # display_name_for / the display_name property.
+    full_name: str | None = None
     # Client slugs a 'standard' user may access. Empty means no access.
     allowed_client_slugs: tuple[str, ...] = ()
     # Group membership for 'client' users (None = ungrouped / legacy single-slug).
@@ -138,6 +180,10 @@ class WebUser:
     # Resolved slug list of the user's group, if any. Populated via LEFT JOIN in
     # the user queries; drives access for grouped 'client' users.
     group_client_slugs: tuple[str, ...] = ()
+
+    @property
+    def display_name(self) -> str:
+        return display_name_for(self.email, self.full_name)
 
     def accessible_client_slugs(self) -> tuple[str, ...]:
         """Every client slug this user may access (empty for admins = all)."""
@@ -208,7 +254,7 @@ def ensure_schema() -> bool:
             # then re-run the IF NOT EXISTS statements as cheap no-ops. The lock
             # is released automatically when the transaction commits or rolls back.
             conn.execute("SELECT pg_advisory_xact_lock(%s)", (_SCHEMA_ADVISORY_LOCK_KEY,))
-            for stmt in SCHEMA_SQL_STATEMENTS:
+            for stmt in ALL_SCHEMA_STATEMENTS:
                 conn.execute(stmt)
         _schema_ready = True
     return True
@@ -249,6 +295,7 @@ def _row_to_user(row: tuple[Any, ...]) -> WebUser:
         client_slug=str(row[3]) if row[3] is not None else None,
         is_active=bool(row[4]),
         avatar=str(row[5]) if len(row) > 5 and row[5] is not None else None,
+        full_name=str(row[9]) if len(row) > 9 and row[9] is not None else None,
         allowed_client_slugs=tuple(str(s) for s in allowed),
         group_id=group_id,
         group_client_slugs=tuple(str(s) for s in group_slugs),
@@ -259,7 +306,7 @@ def _row_to_user(row: tuple[Any, ...]) -> WebUser:
 # is folded in so grouped 'client' users resolve their access in one query.
 _USER_SELECT = (
     "u.id, u.email, u.role, u.client_slug, u.is_active, u.avatar, "
-    "u.allowed_client_slugs, u.group_id, g.client_slugs"
+    "u.allowed_client_slugs, u.group_id, g.client_slugs, u.full_name"
 )
 _USER_FROM = "FROM web_users u LEFT JOIN client_groups g ON g.id = u.group_id"
 
@@ -378,7 +425,8 @@ def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
     cols = (
         "u.id, u.email, u.role, u.client_slug, u.is_active, u.created_at, "
         "u.avatar, u.allowed_client_slugs, u.group_id, g.name, g.client_slugs, "
-        "u.last_login_at, u.last_seen_at, (u.password_hash = %(invite_pending)s)"
+        "u.last_login_at, u.last_seen_at, (u.password_hash = %(invite_pending)s), "
+        "u.full_name"
     )
     where = "" if include_inactive else "WHERE u.is_active = TRUE"
     with db.connection() as conn:
@@ -408,6 +456,12 @@ def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:
                 # True until the user redeems their invite link and picks a
                 # password; drives the "Invite pending" badge on the roster.
                 "invite_pending": bool(row[13]) if len(row) > 13 else False,
+                "full_name": str(row[14]) if len(row) > 14 and row[14] else None,
+                # Pre-resolved so every roster/sidebar surface shows the same
+                # name without each one re-deriving it from the email.
+                "display_name": display_name_for(
+                    str(row[1]), str(row[14]) if len(row) > 14 and row[14] else None
+                ),
             }
         )
     return out
@@ -425,6 +479,33 @@ def set_avatar(user_id: int, avatar: str | None) -> bool:
             WHERE id = %s AND is_active = TRUE
             """,
             (avatar, user_id),
+        )
+        return cur.rowcount > 0
+
+
+# A display name is a label, not a key — keep it short enough to sit in the
+# sidebar chip and a table cell without wrapping the layout.
+FULL_NAME_MAX_CHARS = 80
+
+
+def set_full_name(user_id: int, full_name: str | None) -> bool:
+    """Set (or clear, with None/blank) a user's display name.
+
+    Clearing it puts the account back on the email-derived default rather than
+    leaving it nameless."""
+    if not enabled():
+        return False
+    name = (full_name or "").strip()
+    if len(name) > FULL_NAME_MAX_CHARS:
+        raise ValueError(f"Name must be {FULL_NAME_MAX_CHARS} characters or fewer.")
+    with db.connection() as conn:
+        cur = conn.execute(
+            """
+            UPDATE web_users
+            SET full_name = %s, updated_at = NOW()
+            WHERE id = %s AND is_active = TRUE
+            """,
+            (name or None, user_id),
         )
         return cur.rowcount > 0
 
@@ -469,6 +550,7 @@ def create_user(
     client_slug: str | None = None,
     allowed_client_slugs: list[str] | None = None,
     group_id: int | None = None,
+    full_name: str | None = None,
 ) -> WebUser:
     """Create (or reactivate) a user.
 
@@ -490,6 +572,9 @@ def create_user(
     slug, gid = _resolve_client_scope(role, client_slug, group_id)
     # Only 'standard' users carry a per-client access list; other roles store NULL.
     allowed = _normalize_slug_list(allowed_client_slugs) if role == "standard" else None
+    name = (full_name or "").strip() or None
+    if name and len(name) > FULL_NAME_MAX_CHARS:
+        raise ValueError(f"Name must be {FULL_NAME_MAX_CHARS} characters or fewer.")
 
     now = datetime.now(tz=UTC)
     pw_hash = INVITE_PENDING_HASH if password is None else hash_password(password)
@@ -515,21 +600,22 @@ def create_user(
                     client_slug = %s,
                     allowed_client_slugs = %s,
                     group_id = %s,
+                    full_name = %s,
                     is_active = TRUE,
                     updated_at = %s
                 WHERE id = %s
                 """,
-                (normalized_email, pw_hash, role, slug, allowed, gid, now, new_id),
+                (normalized_email, pw_hash, role, slug, allowed, gid, name, now, new_id),
             )
         else:
             try:
                 row = conn.execute(
                     """
-                    INSERT INTO web_users (email, password_hash, role, client_slug, allowed_client_slugs, group_id, is_active, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s, %s)
+                    INSERT INTO web_users (email, password_hash, role, client_slug, allowed_client_slugs, group_id, full_name, is_active, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
                     RETURNING id
                     """,
-                    (normalized_email, pw_hash, role, slug, allowed, gid, now, now),
+                    (normalized_email, pw_hash, role, slug, allowed, gid, name, now, now),
                 ).fetchone()
                 new_id = int(row[0])
             except psycopg.errors.UniqueViolation as e:
