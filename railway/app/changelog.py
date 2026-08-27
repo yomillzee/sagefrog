@@ -63,6 +63,23 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-27",
+        title="Your account, Files and notifications moved to the top right",
+        area="Navigation",
+        kind="improved",
+        summary=(
+            "Files, the notification bell and your avatar have left the bottom "
+            "of the blue sidebar for the top right of the bar that runs across "
+            "every page — the same place they sit in most tools."
+        ),
+        details=(
+            "Your name and email now read inside the menu the avatar opens, along with Sign out.",
+            "Same three items in the same spot on every page, so nothing moves as you navigate.",
+            "The unread count still rides the bell.",
+            "The sidebar keeps the logo, the client switcher and the section nav.",
+        ),
+    ),
+    Entry(
+        date="2026-08-27",
         title="Date range and comparison sit at the top of the page",
         area="Dashboard · Filters",
         kind="improved",
