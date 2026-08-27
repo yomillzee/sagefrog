@@ -16,7 +16,6 @@ from urllib.parse import urlencode
 
 from dashboard.renderers.base_layout import (
     SIDEBAR_CSS,
-    account_topbar_html,
     dashboard_topbar_js,
     favicon_head_html,
     dashboard_sidebar_view_nav_html,
@@ -29,7 +28,6 @@ from dashboard.renderers import pagespeed_renderer
 # < > & so a stored config value (keyword lists, watchlist, event names) can't
 # close the script tag and run as markup.
 from dashboard.utils.formatting import json_for_html_script as _json_script
-from dashboard.utils.urls import files_page_url as _files_page_url
 
 
 # ── HubSpot MQL tracker formatting helpers ──────────────────────────────────
@@ -1066,19 +1064,6 @@ def render_bigquery_dashboard_page(
         session_can_switch_clients=session_can_switch_clients,
     )
 
-    # Files / notifications / avatar, top right of the sticky bar. The dashboard
-    # has its own bar (.date-bar) so it takes the cluster alone rather than
-    # dash_topbar_html's wrapper; every other page gets the wrapper.
-    account_bar_html = account_topbar_html(
-        session_email=session_email,
-        session_is_admin=session_is_admin,
-        active_nav="overview",
-        files_url=_files_page_url(
-            client_slug=client_slug, access_key=access_key, use_session=use_session
-        ) or "",
-        show_files=_docs_enabled(),
-    )
-
     admin_class = "is-admin" if session_is_admin else ""
     # The "View as user" tool used to live in a floating admin bubble here; it
     # now has its own card on the /admin page (see web_auth.render_admin_page),
@@ -1111,7 +1096,7 @@ def render_bigquery_dashboard_page(
     # Show a lightweight traffic/search snapshot in their place instead.
     # The Platform chips only ever filtered the two paid views (Paid summary and
     # Campaign explorer), so they sit in those card heads rather than in the
-    # global filter row next to Range/Compare, which apply page-wide. Both rows drive
+    # sticky bar next to Range/Compare, which apply page-wide. Both rows drive
     # the one platformFilter Set -- see buildPlatformChips() below.
     def _platform_chip_row(dom_id: str) -> str:
         if not has_paid_ads:
@@ -1287,8 +1272,8 @@ def render_bigquery_dashboard_page(
       <section id="sec-explorer">
         <div class="sec-head"><h2>Campaign explorer</h2><div class="sec-head-actions">{platform_chips_explorer_html}<span class="status" id="explorerStatus"></span>{explorer_adv_menu_html}</div></div>
         <div class="cards" id="explorerSummaryCards" style="margin-bottom:14px" role="group" aria-label="Metrics on the chart below (pick one or more)"></div>
-        <!-- Filter groups (Product / Region / Business line …) live in the global
-             filter row at the top of the page (#explorerFilterBar) as dropdowns; built by buildExplorerFilters()
+        <!-- Filter groups (Product / Region / Business line …) live in the sticky
+             top bar (#explorerFilterBar) as dropdowns; built by buildExplorerFilters()
              from the client-configured chip rules; see EXPLORER_FILTER_GROUPS.
              The trend chart below reads the same campaign-name / platform filters
              and the metric a summary card above has selected -- see
@@ -1541,27 +1526,16 @@ def render_bigquery_dashboard_page(
     main {{ max-width:1320px; margin:0 auto; padding:20px 28px 56px; }}
     h2 {{ margin:0; color:var(--navy); font-size:1.05rem; font-weight:750; letter-spacing:-.005em; }}
     p {{ margin:6px 0 0; color:var(--muted); }}
-    /* ---- Global banner (sticky) ---- */
-    /* Full-bleed sticky bar — flush to the very top of the content area (no
-       gap above), spanning the full width of the main column, with an inner
-       wrapper that keeps its contents on the same 1320px/28px grid as the
-       cards below. A hairline border + soft shadow separate it from the
-       scrolling content. The filters moved down into .page-filters; what rides
-       here now is the account cluster (Files / notifications / avatar) at the
-       right end, with the left end free for banner-level content. */
+    /* ---- Date bar (sticky) ---- */
+    /* Full-bleed sticky filter header — flush to the very top of the content
+       area (no gap above), spanning the full width of the main column, with an
+       inner wrapper that keeps the chips aligned to the same 1320px/28px grid
+       as the cards below. A hairline border + soft shadow separate it from the
+       scrolling content. */
     .date-bar {{ position:sticky; top:0; z-index:50; background:var(--card); border-bottom:1px solid var(--line); box-shadow:0 1px 0 rgba(16,33,67,.04), 0 6px 16px -12px rgba(16,33,67,.28); }}
     .date-bar[hidden] {{ display:none; }}
-    /* Row, not column, now that the account cluster lives here: .acct-bar's own
-       margin-left:auto pins it right and leaves the left end open. The 13px
-       padding around a 30px avatar matches .dash-topbar-inner on every other
-       page, so the avatar doesn't hop as you move between them. */
-    .date-bar-inner {{ max-width:1320px; margin:0 auto; padding:13px 28px; min-height:30px; display:flex; flex-direction:row; align-items:center; gap:10px; }}
+    .date-bar-inner {{ max-width:1320px; margin:0 auto; padding:13px 28px; display:flex; flex-direction:column; gap:10px; }}
     .date-bar-top {{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }}
-    /* ---- Global filters (static, top of the page) ---- */
-    /* Sits inside <main>, so it already shares the content grid and padding;
-       it scrolls with the page instead of riding the sticky bar. */
-    .page-filters {{ margin:0 0 18px; }}
-    .page-filters[hidden] {{ display:none; }}
     .date-bar-bottom {{ display:flex; flex-wrap:wrap; gap:20px; align-items:center; }}
     label {{ display:grid; gap:5px; color:var(--muted); font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }}
     input[type=date] {{ border:1px solid var(--line); border-radius:var(--radius-sm); padding:8px 11px; font:inherit; font-size:.88rem; background:#fff; color:#102033; }}
@@ -1659,10 +1633,7 @@ def render_bigquery_dashboard_page(
     .ke-dropdown.open .ke-dd-toggle {{ border-color:var(--accent); }}
     .ke-dd-caret {{ color:var(--muted); font-size:.7rem; transition:transform .12s; }}
     .ke-dropdown.open .ke-dd-caret {{ transform:rotate(180deg); }}
-    /* Above the sticky banner (z-index:50): the filter row is right under it,
-       so an open panel scrolls into the bar and used to slide behind it once
-       the filters left the bar's own stacking context. */
-    .ke-dd-panel {{ position:absolute; z-index:60; top:calc(100% + 4px); left:0; width:280px; background:#fff; border:1px solid var(--line); border-radius:var(--radius-sm); box-shadow:var(--shadow); padding:8px; }}
+    .ke-dd-panel {{ position:absolute; z-index:30; top:calc(100% + 4px); left:0; width:280px; background:#fff; border:1px solid var(--line); border-radius:var(--radius-sm); box-shadow:var(--shadow); padding:8px; }}
     .ke-dd-search {{ width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:6px; padding:7px 10px; font:inherit; font-size:.82rem; color:var(--navy); margin-bottom:6px; }}
     .ke-dd-search:focus {{ outline:none; border-color:var(--accent); }}
     .ke-dd-list {{ max-height:260px; overflow-y:auto; display:flex; flex-direction:column; gap:1px; }}
@@ -2454,7 +2425,6 @@ def render_bigquery_dashboard_page(
       /* Bar and content share one padding so the pickers line up with the
          cards below them. */
       .date-bar-inner {{ padding:11px 16px; }}
-      .page-filters {{ margin-bottom:14px; }}
       main {{ padding:16px 16px 44px; }}
       /* A long money value ($17,428.47) overflowed a half-width card at this
          size; scale the figure with the viewport instead of clipping it. */
@@ -2483,20 +2453,9 @@ def render_bigquery_dashboard_page(
     {sidebar_html}
     <div class="dash-main">
 
-    <!-- Sticky global banner (full-bleed, flush to top). Carries the account
-         cluster (Files / notifications / avatar) at its right end; the left end
-         is free for banner-level content. The global filters used to live in
-         here and now sit static at the top of the page (.page-filters, below). -->
+    <!-- Sticky filter header (full-bleed, flush to top) -->
     <div class="date-bar">
-      <div class="date-bar-inner">{account_bar_html}</div>
-    </div>
-
-  <main>
-
-    <!-- Global filters (Range / Compare / Events / Explorer groups). Static at
-         the top of whichever view is open -- they share one row above the
-         panes, so every page gets them without duplicating the markup. -->
-    <div class="page-filters" id="pageFilters">
+      <div class="date-bar-inner">
       <div class="date-bar-bottom">
         <div class="filter-group">
           <div class="ke-dropdown range-dd" id="rangeDropdown">
@@ -2570,7 +2529,10 @@ def render_bigquery_dashboard_page(
         </div>
         <div class="filter-group" id="explorerFilterBar" hidden></div>
       </div>
+      </div>
     </div>
+
+  <main>
 
     <!-- ===== OVERVIEW TAB ===== -->
     <div id="pane-overview" class="ov-editable" data-edit-pane="overview">
@@ -3585,11 +3547,10 @@ def render_bigquery_dashboard_page(
       const efb = document.getElementById('explorerFilterBar');
       if (efb) efb.hidden = !(tab === 'explorer' && EXPLORER_FILTER_GROUPS.length);
       // Site Performance shows one latest PageSpeed snapshot plus its own trend,
-      // so the Range/Compare filters have nothing to act on — hide the whole
-      // filter row on that tab rather than leaving dead controls. The sticky
-      // banner above it stays: it is not scoped to any one tab.
-      const pageFilters = document.getElementById('pageFilters');
-      if (pageFilters) pageFilters.hidden = tab === 'site_performance';
+      // so the sticky Range/Compare filters have nothing to act on — hide the
+      // whole filter bar on that tab rather than leaving dead controls.
+      const dateBar = document.querySelector('.date-bar');
+      if (dateBar) dateBar.hidden = tab === 'site_performance';
       currentTab = tab;
       // Keep the tab in the URL so a refresh reopens the same page (not
       // Overview), and so switching clients can carry the tab across. Overview
@@ -3758,7 +3719,7 @@ def render_bigquery_dashboard_page(
       applyPanelCards(modules);
       updateKeyEventBar();
     }}
-    // The Events dropdown now lives in the shared global filter row, so it must only
+    // The Events dropdown now lives in the shared sticky bar, so it must only
     // show on the Website Analytics tab — and only when a panel it drives
     // (Top pages / Traffic / Landing / User acquisition) is enabled.
     function updateKeyEventBar() {{

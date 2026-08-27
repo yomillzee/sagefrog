@@ -13,7 +13,6 @@ from __future__ import annotations
 from dashboard.renderers.base_layout import (
     SIDEBAR_CSS,
     admin_top_tabs_html,
-    dash_topbar_html,
     dashboard_topbar_js,
     favicon_head_html,
     dashboard_sidebar_view_nav_html,
@@ -27,7 +26,6 @@ from dashboard.services import metric_goals as metric_goals_service
 from dashboard.utils.formatting import esc as _esc
 from dashboard.utils.urls import accessibility_page_url as _accessibility_page_url
 from dashboard.utils.urls import consent_page_url as _consent_page_url
-from dashboard.utils.urls import files_page_url as _files_page_url
 
 
 def _docs_enabled() -> bool:
@@ -93,18 +91,6 @@ def render_bigquery_settings_page(
         # exists (otherwise the link only appears once one is connected).
         show_connectors=True,
         view_nav_html=view_nav_html,
-    )
-
-    # Files / notifications / avatar, top right -- the same bar every other page
-    # carries, so the avatar doesn't move as you come here from the dashboard.
-    topbar_html = dash_topbar_html(
-        session_email=session_email,
-        session_is_admin=session_is_admin,
-        active_nav="settings",
-        files_url=_files_page_url(
-            client_slug=client_slug, access_key=access_key, use_session=use_session
-        ) or "",
-        show_files=_docs_enabled(),
     )
 
     # The Insights page is the "Insights" tab of the Admin surface, so admins get
@@ -581,7 +567,6 @@ def render_bigquery_settings_page(
   <div class="app-shell {admin_class}" id="appShell">
     {sidebar_html}
     <div class="dash-main">
-    {topbar_html}
   <main>
     {admin_tabs_html}
     <div class="page-head">

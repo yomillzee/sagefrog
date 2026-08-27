@@ -1346,15 +1346,16 @@ _NAV_ICON_BELL = (
 )
 
 
-def _notifications_state(*, email: str | None, session_is_admin: bool) -> tuple[bool, int]:
-    """Whether to show the notification bell, and the unread count on it.
+def _sidebar_notifications_link_html(*, email: str | None, session_is_admin: bool, active_nav: str) -> str:
+    """Footer link to the signed-in person's notification inbox, with its badge.
 
     Agency users only — a comment on a client dashboard is internal, so a
-    'client'-role login must never see the bell, let alone a count. Both lookups
-    fail closed: a database hiccup should cost the badge, not the whole bar.
+    'client'-role login must never see the bell, let alone a count. The unread
+    lookup fails closed to a plain link: a database hiccup should cost the badge,
+    not the sidebar.
     """
     if not email:
-        return (False, 0)
+        return ""
     role = "admin" if session_is_admin else ""
     try:
         import web_users
@@ -1364,91 +1365,55 @@ def _notifications_state(*, email: str | None, session_is_admin: bool) -> tuple[
     except Exception:
         pass
     if role not in ("admin", "standard"):
-        return (False, 0)
+        return ""
 
+    unread = 0
     try:
         import notifications
-        return (True, notifications.unread_count(email))
+        unread = notifications.unread_count(email)
     except Exception:
-        return (True, 0)
+        unread = 0
+
+    badge = (
+        f'<span class="dash-sidebar-badge" aria-hidden="true">{"9+" if unread > 9 else unread}</span>'
+        if unread
+        else ""
+    )
+    # The count is a chip, so spell it out for screen readers on the link itself.
+    label = f"Notifications, {unread} unread" if unread else "Notifications"
+    active = " active" if active_nav == "notifications" else ""
+    aria = ' aria-current="page"' if active else ""
+    return (
+        f'<a href="/notifications" class="dash-sidebar-link{active}"{aria} '
+        f'aria-label="{_esc(label)}">'
+        f'{_NAV_ICON_BELL}<span>Notifications</span>{badge}</a>'
+    )
 
 
-def _person_avatar_for(email: str) -> str | None:
-    """The signed-in person's uploaded headshot URL, or None to fall back to
-    initials. Fails closed so an unavailable user store costs the photo only."""
+def _sidebar_footer_tools_html(*, email: str | None) -> str:
+    """Sidebar footer: a profile dropdown (avatar + name) holding Sign out.
+
+    The trigger shows the signed-in person's avatar and name; clicking it opens a
+    small popover. Settings used to live in here too — it now sits in the
+    sidebar's own "Admin" bucket (see ``_sidebar_admin_nav_html``), so the popover
+    is purely account actions. **Sign out** is available to every signed-in user.
+    """
+    if not email:
+        return ""
+
+    # Resolve the signed-in person's avatar so the trigger can show a real
+    # headshot; falls back to initials when the lookup is unavailable.
+    avatar: str | None = None
     try:
         import web_users
         u = web_users.get_user_by_email(email) if web_users.enabled() else None
-        return u.avatar if u else None
+        if u:
+            avatar = u.avatar
     except Exception:
-        return None
+        pass
 
-
-def account_topbar_html(
-    *,
-    session_email: str | None,
-    session_is_admin: bool,
-    active_nav: str,
-    files_url: str = "",
-    show_files: bool = False,
-) -> str:
-    """The account cluster that sits at the top right of every page's sticky bar.
-
-    Three things, in reading order: Files, the notification bell with its unread
-    badge, then the signed-in person's avatar. The avatar is the whole trigger —
-    the name and email read inside the menu it opens, which is what keeps the
-    cluster narrow enough to sit beside the page filters on a phone.
-
-    This used to be the sidebar footer, which is why the wrapper keeps the
-    ``dash-profile`` class and the ``dashProfile*`` ids: the popover JS in
-    ``dashboard_topbar_js`` drives it unchanged. ``--top`` flips the menu to open
-    downward, since the bar now sits at the top of the page rather than at the
-    bottom of the sidebar.
-    """
-    if not session_email:
-        return ""
-
-    files_btn = ""
-    if show_files and files_url:
-        files_active = active_nav in ("files", "insights-upload")
-        aria = ' aria-current="page"' if files_active else ""
-        cls = " active" if files_active else ""
-        files_btn = (
-            f'<a href="{_esc(files_url)}" class="acct-btn{cls}"{aria} '
-            f'title="Files" aria-label="Files">{_NAV_ICON_FILES}</a>'
-        )
-
-    bell_btn = ""
-    show_bell, unread = _notifications_state(
-        email=session_email, session_is_admin=session_is_admin
-    )
-    if show_bell:
-        badge = (
-            f'<span class="acct-badge" aria-hidden="true">{"9+" if unread > 9 else unread}</span>'
-            if unread
-            else ""
-        )
-        # The count is a chip, so spell it out for screen readers on the link.
-        label = f"Notifications, {unread} unread" if unread else "Notifications"
-        active = " active" if active_nav == "notifications" else ""
-        aria = ' aria-current="page"' if active else ""
-        bell_btn = (
-            f'<a href="/notifications" class="acct-btn{active}"{aria} '
-            f'title="Notifications" aria-label="{_esc(label)}">'
-            f'{_NAV_ICON_BELL}{badge}</a>'
-        )
-
-    name = _display_name_from_email(session_email)
-    avatar_html = _person_avatar_html(
-        email=session_email, avatar=_person_avatar_for(session_email)
-    )
-
-    admin_item = ""
-    if session_is_admin:
-        admin_item = (
-            f'<a href="/admin" class="dash-profile-item" role="menuitem">'
-            f'{_ADMIN_SECTION_ICON}<span>Admin</span></a>'
-        )
+    name = _display_name_from_email(email)
+    avatar_html = _person_avatar_html(email=email, avatar=avatar)
 
     signout_item = (
         '<form method="post" action="/logout" class="dash-profile-signout">'
@@ -1456,58 +1421,27 @@ def account_topbar_html(
         f'{_TOOL_ICON_SIGNOUT}<span>Sign out</span></button></form>'
     )
 
+    caret = (
+        '<svg class="dash-profile-caret" viewBox="0 0 24 24" fill="none" '
+        'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+        'stroke-linejoin="round" aria-hidden="true"><polyline points="6 15 12 9 18 15"/></svg>'
+    )
+
     return f"""
-        <div class="acct-bar">
-          {files_btn}
-          {bell_btn}
-          <div class="dash-profile dash-profile--top" role="group" aria-label="Account">
-            <button type="button" class="dash-profile-trigger acct-ava-trigger" id="dashProfileTrigger"
-              aria-haspopup="true" aria-expanded="false" aria-controls="dashProfileMenu"
-              title="{_esc(session_email)}" aria-label="Account: {_esc(name)}">
-              {avatar_html}
-            </button>
-            <div class="dash-profile-menu" id="dashProfileMenu" role="menu" hidden>
-              <div class="dash-profile-who">
-                <span class="dash-profile-name">{_esc(name)}</span>
-                <span class="dash-profile-email" title="{_esc(session_email)}">{_esc(session_email)}</span>
-              </div>
-              {admin_item}
-              {signout_item}
-            </div>
+        <div class="dash-profile" role="group" aria-label="Account">
+          <button type="button" class="dash-profile-trigger" id="dashProfileTrigger"
+            aria-haspopup="true" aria-expanded="false" aria-controls="dashProfileMenu">
+            {avatar_html}
+            <span class="dash-profile-text">
+              <span class="dash-profile-name">{_esc(name)}</span>
+              <span class="dash-profile-email" title="{_esc(email)}">{_esc(email)}</span>
+            </span>
+            {caret}
+          </button>
+          <div class="dash-profile-menu" id="dashProfileMenu" role="menu" hidden>
+            {signout_item}
           </div>
         </div>"""
-
-
-def dash_topbar_html(
-    *,
-    session_email: str | None,
-    session_is_admin: bool,
-    active_nav: str,
-    files_url: str = "",
-    show_files: bool = False,
-) -> str:
-    """The sticky bar itself, for the pages that don't already have one.
-
-    The dashboard has its own (``.date-bar``, which also fences off the page
-    filters below it) and drops the cluster straight into that; settings, files,
-    connectors and admin get this one. Same height and hairline either way, so
-    the avatar doesn't hop as you move between pages.
-    """
-    cluster = account_topbar_html(
-        session_email=session_email,
-        session_is_admin=session_is_admin,
-        active_nav=active_nav,
-        files_url=files_url,
-        show_files=show_files,
-    )
-    # A key-based (signed-out) client link has no account to show, and an empty
-    # bar is just a stray hairline above the content -- drop it entirely.
-    if not cluster.strip():
-        return ""
-    return f"""
-    <div class="dash-topbar">
-      <div class="dash-topbar-inner">{cluster}</div>
-    </div>"""
 
 
 def render_sidebar(
@@ -1529,12 +1463,8 @@ def render_sidebar(
 
     Top to bottom: the Sagefrog logo, the client (workspace) switcher directly
     under it, the scrolling section nav with the internal-only "Admin" bucket at
-    its foot, then the collapse control pinned at the very bottom.
-
-    Files, the notification bell and the account dropdown used to close out the
-    footer; they now sit top right in every page's sticky bar instead — see
-    ``account_topbar_html``. ``show_files`` is kept in the signature because
-    callers still pass it straight through to that bar.
+    its foot, then the footer — Files, the account dropdown, and the collapse
+    control pinned at the very bottom.
 
     ``admin_context=True`` renders the same chrome for the Admin environment: the
     top nav is the admin menu (passed in ``view_nav_html``), the per-client
@@ -1563,9 +1493,14 @@ def render_sidebar(
         admin_context=admin_context,
     )
 
-    # Files moved to the sticky top bar (account_topbar_html); the sidebar no
-    # longer renders it, but callers still pass the flag through to that bar.
-    del show_files, files_url
+    files_btn = ""
+    if show_files and not admin_context:
+        files_active = " active" if active_nav in ("files", "insights-upload") else ""
+        aria = ' aria-current="page"' if files_active else ""
+        files_btn = (
+            f'<a href="{_esc(files_url)}" class="dash-sidebar-link{files_active}"{aria}>'
+            f'{_NAV_ICON_FILES}<span>Files</span></a>'
+        )
 
     # Connectors + Insights (Settings) are agency-only, so they no longer live in
     # the always-visible footer nav — they're reached via the "Admin" bucket in
@@ -1594,6 +1529,13 @@ def render_sidebar(
         admin_context=admin_context,
     )
 
+    # Footer: the notification bell (agency users) then a profile dropdown
+    # (avatar + name) holding Sign out.
+    notifications_btn = _sidebar_notifications_link_html(
+        email=session_email, session_is_admin=session_is_admin, active_nav=active_nav
+    )
+    account_html = _sidebar_footer_tools_html(email=session_email)
+
     return f"""
     <div class="dash-mobile-bar">
       <button type="button" class="dash-sidebar-toggle" id="sidebarToggle"
@@ -1620,6 +1562,13 @@ def render_sidebar(
       <div class="dash-sidebar-collapse-row">
         <button type="button" class="dash-sidebar-collapse" id="sidebarCollapse"
           aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">{_NAV_ICON_COLLAPSE}</button>
+      </div>
+      <div class="dash-sidebar-footer">
+        <nav class="dash-sidebar-links" aria-label="Account navigation">
+          {files_btn}
+          {notifications_btn}
+        </nav>
+        {account_html}
       </div>
     </aside>
     <button type="button" class="dash-sidebar-reopen" id="sidebarReopen"
@@ -1686,15 +1635,6 @@ def render_client_shell_page(
         show_connectors=show_connectors,
         view_nav_html=view_nav_html,
     )
-    topbar = dash_topbar_html(
-        session_email=session_email,
-        session_is_admin=session_is_admin,
-        active_nav=active_nav,
-        files_url=_files_page_url(
-            client_slug=client_slug, access_key=access_key, use_session=use_session
-        ) or "",
-        show_files=show_files,
-    )
     admin_tabs_html = ""
     if admin_tab and session_is_admin:
         admin_tabs_html = admin_top_tabs_html(
@@ -1729,7 +1669,6 @@ def render_client_shell_page(
   <div class="app-shell">
     {sidebar}
     <div class="dash-main">
-      {topbar}
       <div class="dash-content">
         <div class="wrap">
           {admin_tabs_html}
@@ -2093,13 +2032,6 @@ def render_admin_shell_page(
         ),
         admin_context=True,
     )
-    # No per-client Files in the admin environment, so the bar carries the bell
-    # and the avatar only.
-    topbar = dash_topbar_html(
-        session_email=session_email,
-        session_is_admin=session_is_admin,
-        active_nav=active_nav,
-    )
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2121,7 +2053,6 @@ def render_admin_shell_page(
   <div class="app-shell">
     {sidebar}
     <div class="dash-main">
-      {topbar}
       {content_html}
       {site_footer_html()}
     </div>
@@ -2618,6 +2549,16 @@ SIDEBAR_CSS = """
     .app-shell.sidebar-collapsed .dash-view-menu { display: none !important; }
     .app-shell.sidebar-collapsed .dash-sidebar-nav .dash-view-item:hover .dash-view-btn { padding-right: 13px; }
 
+    /* Footer: Files + account + the collapse control */
+    .dash-sidebar-footer {
+      margin-top: auto;
+      flex-shrink: 0;
+      /* 13px left so the footer items' icons land on the same 25px rail as the
+         section nav (13 + the link's 12px inner padding = 25). */
+      padding: 14px 13px 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(0, 0, 0, 0.12);
+    }
     .dash-sidebar-client .topbar-client-switcher,
     .dash-sidebar-client .topbar-client-label {
       display: block;
@@ -2970,80 +2911,47 @@ SIDEBAR_CSS = """
       white-space: nowrap;
       border: 0;
     }
-    /* ---- Sticky top bar + the account cluster in its right end ----
-       Files, the notification bell and the avatar used to close out the navy
-       sidebar footer; they now ride the top right of every page. The bar itself
-       is only rendered for pages that don't already have one — the dashboard
-       drops the cluster into its own .date-bar instead — so the two must agree
-       on height: 13px vertical padding around a 30px avatar either way. */
-    .dash-topbar {
-      position: sticky;
-      top: 0;
-      z-index: 50;
-      flex-shrink: 0;
-      background: var(--card, #fff);
-      border-bottom: 1px solid var(--line, var(--border, #e4eaf2));
-      box-shadow: 0 1px 0 rgba(16, 33, 67, 0.04), 0 6px 16px -12px rgba(16, 33, 67, 0.28);
-    }
-    .dash-topbar-inner {
+    .dash-sidebar-links { display: flex; flex-direction: column; gap: 3px; }
+    .dash-sidebar-link {
       display: flex;
       align-items: center;
-      justify-content: flex-end;
-      min-height: 30px;
-      padding: 13px 32px;
-    }
-    /* The cluster itself: icon buttons then the avatar trigger. Pushed to the
-       right end of whichever bar hosts it, so a bar with content on its left
-       (the dashboard's, later) needs no extra alignment rule. */
-    .acct-bar {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-left: auto;
-    }
-    .acct-btn {
-      position: relative;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 34px;
-      height: 34px;
-      flex-shrink: 0;
+      gap: 12px;
+      padding: 10px 12px;
       border-radius: 9px;
-      color: var(--muted, #5a6b82);
+      color: #c3d2e6;
+      font-family: inherit;
+      font-size: 0.9rem;
+      font-weight: 600;
+      line-height: 1.2;
       text-decoration: none;
       transition: background 0.15s, color 0.15s;
     }
-    .acct-btn svg { width: 19px; height: 19px; }
-    .acct-btn:hover { background: rgba(16, 33, 67, 0.06); color: var(--navy, #0a2540); }
-    .acct-btn.active { background: rgba(29, 111, 208, 0.1); color: var(--accent, #1d6fd0); }
-    .acct-btn:focus-visible { outline: 2px solid #9bbfe6; outline-offset: 1px; }
-    /* Unread count, tucked into the bell's top-right corner. It sits on the
-       light bar now rather than in a full-width sidebar row, so it rides the
-       icon instead of being pushed to the end of a line. */
-    .acct-badge {
-      position: absolute;
-      top: 2px;
-      right: 1px;
-      min-width: 16px;
-      padding: 0 4px;
+    .dash-sidebar-link svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.85; }
+    .dash-sidebar-link:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+    .dash-sidebar-link.active { background: rgba(255, 255, 255, 0.15); color: #fff; }
+    /* Unread count on the notification bell. Pushed to the right of the row so
+       it stays visible while the label is clipped in the collapsed sidebar. */
+    .dash-sidebar-link .dash-sidebar-badge {
+      margin-left: auto;
+      min-width: 19px;
+      padding: 0 5px;
       border-radius: 999px;
-      border: 2px solid var(--card, #fff);
       background: #ef4444;
       color: #fff;
-      font-size: 0.62rem;
+      font-size: 0.7rem;
       font-weight: 800;
-      line-height: 14px;
+      line-height: 19px;
       text-align: center;
     }
     /* Shield glyph shared by the client switcher's "Admin panel" row and the
        Admin page's tab-strip title. */
     .dash-admin-shield { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.85; }
-    /* Profile dropdown. In the top bar the trigger is the avatar alone and the
-       name/email read inside the menu (.dash-profile-who) — that is what keeps
-       the cluster narrow enough to share a phone row with the page filters. */
+    /* Footer: profile dropdown (avatar + name) holding Sign out. No divider of
+       its own — the footer's border-top already fences this region off, and the
+       Files link above it may be absent for some clients. */
     .dash-profile {
       position: relative;
+      margin-top: 10px;
     }
     .dash-profile-trigger {
       display: flex;
@@ -3066,19 +2974,6 @@ SIDEBAR_CSS = """
       border-color: rgba(255, 255, 255, 0.32);
     }
     .dash-profile-trigger:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
-    /* Avatar-only trigger: no frame of its own, so the photo reads as the
-       control. Sized to match the .acct-btn icons beside it. */
-    .acct-ava-trigger {
-      width: auto;
-      gap: 0;
-      padding: 2px;
-      border-color: transparent;
-      background: transparent;
-    }
-    .acct-ava-trigger:hover {
-      background: rgba(16, 33, 67, 0.06);
-      border-color: transparent;
-    }
     .dash-profile-ava {
       display: inline-flex;
       align-items: center;
@@ -3127,8 +3022,8 @@ SIDEBAR_CSS = """
     }
     .dash-profile-trigger:hover .dash-profile-caret { color: #fff; }
     .dash-profile.is-open .dash-profile-caret { transform: rotate(180deg); }
-    /* Pop-up menu. The default anchors above the trigger; --top flips it below,
-       right-aligned, for the sticky bar at the top of the page. */
+    /* Pop-up menu, anchored above the trigger (the footer sits at the sidebar
+       bottom, so the menu opens upward). */
     .dash-profile-menu {
       position: absolute;
       left: 0;
@@ -3145,27 +3040,6 @@ SIDEBAR_CSS = """
       box-shadow: 0 -10px 30px rgba(3, 12, 24, 0.5);
     }
     .dash-profile-menu[hidden] { display: none; }
-    .dash-profile--top .dash-profile-menu {
-      left: auto;
-      right: 0;
-      bottom: auto;
-      top: calc(100% + 8px);
-      width: max-content;
-      min-width: 208px;
-      max-width: min(280px, calc(100vw - 24px));
-      box-shadow: 0 12px 30px rgba(3, 12, 24, 0.32);
-    }
-    /* Who is signed in, now that the trigger shows the avatar only. Reads as a
-       caption above the actions rather than another menu item, so it carries no
-       role and doesn't take focus. */
-    .dash-profile-who {
-      display: flex;
-      flex-direction: column;
-      gap: 1px;
-      padding: 8px 12px 10px;
-      margin-bottom: 4px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-    }
     .dash-profile-signout { display: block; margin: 0; }
     .dash-profile-item {
       display: flex;
