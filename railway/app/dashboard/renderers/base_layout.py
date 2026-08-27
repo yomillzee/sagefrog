@@ -1173,7 +1173,10 @@ def _sidebar_view_as_options(*, current_email: str | None) -> str:
         role = str(u.get("role") or "")
         slug = str(u.get("client_slug") or "").strip()
         meta = role + (f" · {slug}" if slug else "")
-        label_txt = f"{addr} — {meta}" if meta else addr
+        # Lead with the person's name — the address only disambiguates.
+        who = str(u.get("display_name") or addr)
+        who = who if who == addr else f"{who} ({addr})"
+        label_txt = f"{who} — {meta}" if meta else who
         opts.append(f'<option value="{int(u["id"])}">{_esc(label_txt)}</option>')
     return "".join(opts)
 
@@ -1250,9 +1253,9 @@ def admin_top_tabs_html(
       </div>"""
 
 
-def _person_initials(email: str) -> str:
-    """Up to two initials from an email's local part (avatar fallback)."""
-    local = (email or "").split("@")[0]
+def _person_initials(name_or_email: str) -> str:
+    """Up to two initials from a display name, or from an email's local part."""
+    local = (name_or_email or "").split("@")[0]
     for sep in (".", "-", "_", "+"):
         local = local.replace(sep, " ")
     parts = [p for p in local.split(" ") if p]
@@ -1261,20 +1264,16 @@ def _person_initials(email: str) -> str:
     return _esc((local[:2] or "?").upper())
 
 
-def _display_name_from_email(email: str) -> str:
-    """A human-ish display name derived from an email (there is no stored name):
-    the local part split on separators and title-cased — "mike.miller@x" → "Mike
-    Miller". Falls back to the raw email when the local part is empty."""
-    local = (email or "").split("@")[0]
-    for sep in (".", "-", "_", "+"):
-        local = local.replace(sep, " ")
-    parts = [p for p in local.split() if p]
-    if not parts:
-        return email or ""
-    return " ".join(p[:1].upper() + p[1:] for p in parts)
+def _display_name_from_email(email: str, full_name: str | None = None) -> str:
+    """The name to show a person by: their stored full name when they have set
+    one, else the email's local part split on separators and title-cased —
+    "mike.miller@x" → "Mike Miller"."""
+    import web_users
+
+    return web_users.display_name_for(email, full_name)
 
 
-def _person_avatar_html(*, email: str, avatar: str | None) -> str:
+def _person_avatar_html(*, email: str, avatar: str | None, name: str | None = None) -> str:
     """Avatar chip for the signed-in person: their uploaded headshot when one
     exists, else colour-coded initials (colour derived from the email so it stays
     stable). Mirrors the client-switcher avatar treatment."""
@@ -1285,7 +1284,7 @@ def _person_avatar_html(*, email: str, avatar: str | None) -> str:
         )
     return (
         f'<span class="dash-profile-ava" style="background:{_client_avatar_color(email)}" '
-        f'aria-hidden="true">{_person_initials(email)}</span>'
+        f'aria-hidden="true">{_person_initials(name or email)}</span>'
     )
 
 
@@ -1404,16 +1403,18 @@ def _sidebar_footer_tools_html(*, email: str | None) -> str:
     # Resolve the signed-in person's avatar so the trigger can show a real
     # headshot; falls back to initials when the lookup is unavailable.
     avatar: str | None = None
+    full_name: str | None = None
     try:
         import web_users
         u = web_users.get_user_by_email(email) if web_users.enabled() else None
         if u:
             avatar = u.avatar
+            full_name = u.full_name
     except Exception:
         pass
 
-    name = _display_name_from_email(email)
-    avatar_html = _person_avatar_html(email=email, avatar=avatar)
+    name = _display_name_from_email(email, full_name)
+    avatar_html = _person_avatar_html(email=email, avatar=avatar, name=name)
 
     signout_item = (
         '<form method="post" action="/logout" class="dash-profile-signout">'

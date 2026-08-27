@@ -63,6 +63,29 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-27",
+        title="People have names, and the roster sorts by who has gone quiet",
+        area="Admin · Users",
+        kind="improved",
+        summary=(
+            "A user can now be given a full name — it replaces the email-derived "
+            "\u201cMikem\u201d on their account chip in the sidebar and leads their row "
+            "on the roster. The user list also traded its Status column for a "
+            "dot and gained a sort by last session."
+        ),
+        details=(
+            "Set a name from a row\u2019s ⋮ menu → Edit name, or when creating the user. "
+            "Leave it blank and the email keeps supplying the name, as before.",
+            "Each row now reads name over email, so you scan people rather than addresses.",
+            "Active / Invite pending / Inactive is a coloured dot beside the name "
+            "instead of its own column \u2014 hover it for the wording.",
+            "Client access shows each account\u2019s logo instead of its name; hover a "
+            "mark for the account, and rows with more than seven collapse to \u201c+N\u201d.",
+            "Click the \u201cLast session\u201d header to sort by recency \u2014 once for most "
+            "recent, again for the accounts nobody has touched, again to reset.",
+        ),
+    ),
+    Entry(
+        date="2026-08-27",
         title="The LinkedIn Followers card says what its numbers mean",
         area="Overview · LinkedIn Followers",
         kind="improved",

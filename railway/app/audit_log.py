@@ -48,6 +48,7 @@ _ACTION_LABELS = {
     "user.invite_rejected": "Invalid invite link",
     "user.deactivated": "Deactivated user",
     "user.role_changed": "Changed role",
+    "user.name_changed": "Changed display name",
     "user.bootstrap_admin": "Bootstrap admin created",
     "group.created": "Created client group",
     "group.updated": "Updated client group",
@@ -229,6 +230,11 @@ def format_detail(event: dict[str, Any]) -> str:
             parts.append(f"client={slug}")
         if role == "standard" and isinstance(allowed, list):
             parts.append(f"clients={', '.join(allowed) if allowed else 'none'}")
+    elif action == "user.name_changed":
+        if detail.get("cleared"):
+            parts.append("cleared — back to the email-derived name")
+        elif detail.get("full_name"):
+            parts.append(str(detail["full_name"]))
     elif action in ("group.created", "group.updated", "group.deleted"):
         name = detail.get("name")
         slugs = detail.get("client_slugs")
