@@ -63,6 +63,24 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-27",
+        title="Email Performance plots your selected emails over time",
+        area="Email Performance",
+        kind="new",
+        summary=(
+            "A Trends chart above the table plots every email you have selected "
+            "by its send date, so a run of falling opens or a spiking unsubscribe "
+            "rate is visible before you read a single number."
+        ),
+        details=(
+            "Four lines: deliveries, open rate, click rate and unsub rate.",
+            "Deliveries use the left axis and the three rates the right one.",
+            "Click a legend key to hide a line — useful for reading the unsub "
+            "rate on its own, since it is much smaller than the open rate.",
+            "The chart follows the same “Choose emails” selection as the table.",
+        ),
+    ),
+    Entry(
+        date="2026-08-27",
         title="The Overview keyword lists lead with the most-searched query",
         area="Overview · Search Console",
         kind="improved",

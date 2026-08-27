@@ -100,6 +100,13 @@ _EXTRA_CSS = """
 .ep-save-status.ok { color:var(--ok); }
 .ep-save-status.err { color:var(--err); }
 
+/* Trend chart -- Chart.js on the shared card, one line per metric. Deliveries
+   are a count and the three rates are percentages, so they ride separate axes
+   (counts left, rates right); the legend is clickable, which is how you isolate
+   the unsub line from the much larger open-rate line. */
+.ep-chart-host { position:relative; height:300px; }
+.ep-chart-empty { color:var(--muted); font-size:.86rem; padding:26px 4px; text-align:center; }
+
 /* Table -- the dashboard's table chrome: bordered scroller, sticky uppercase
    header, numbers right-aligned by default, .left for the label column. */
 .ep-table-wrap { overflow:auto; border:1px solid var(--line-soft); border-radius:9px; }
@@ -239,6 +246,96 @@ _EP_JS = """
     setText('ep-kpi-unsub', pct(uns, del, 2));
   }
 
+  // Trend chart: one point per selected email, always in send-date order
+  // (independent of the table's sort), so the x axis reads left-to-right as
+  // time. Deliveries are a count and the rest are percentages, so deliveries
+  // get the left axis and the three rates share the right one.
+  var chartHost  = document.getElementById('ep-chart-host');
+  var chartEl    = document.getElementById('ep-chart');
+  var chartEmpty = document.getElementById('ep-chart-empty');
+  var chart = null;
+
+  function chartOrder() {
+    return selected.filter(function (id) { return byId[id]; }).sort(function (a, b) {
+      var ta = String(byId[a]._ts || ''), tb = String(byId[b]._ts || '');
+      if (ta < tb) return -1;
+      if (ta > tb) return 1;
+      return String(byId[a].name || '').localeCompare(String(byId[b].name || ''));
+    });
+  }
+
+  function ratePct(num, den) {
+    var d = Number(den || 0);
+    return d > 0 ? 100 * Number(num || 0) / d : null;   // no deliveries = gap
+  }
+
+  function lineFor(label, color, data, axis, dp, suffix) {
+    return {
+      label: label, data: data, borderColor: color, backgroundColor: color,
+      yAxisID: axis, borderWidth: 2, tension: 0.3, pointRadius: 3,
+      pointHoverRadius: 5, spanGaps: true, _dp: dp, _suffix: suffix,
+    };
+  }
+
+  function renderChart() {
+    if (!chartEl || !window.Chart) { if (chartHost) chartHost.style.display = 'none'; return; }
+    var ids = chartOrder();
+    if (chartEmpty) chartEmpty.style.display = ids.length ? 'none' : '';
+    if (chartHost) chartHost.style.display = ids.length ? '' : 'none';
+    if (chart) { chart.destroy(); chart = null; }
+    if (!ids.length) return;
+
+    var rows = ids.map(function (id) { return byId[id]; });
+    var cfg = {
+      type: 'line',
+      data: {
+        labels: rows.map(function (e) { return e.date; }),
+        datasets: [
+          lineFor('Deliveries', '#1d6fd0', rows.map(function (e) { return Number(e._delivered || 0); }), 'yCount', 0, ''),
+          lineFor('Open rate', '#0a7f3f', rows.map(function (e) { return ratePct(e._opens, e._delivered); }), 'yRate', 1, '%'),
+          lineFor('Click rate', '#7c3aed', rows.map(function (e) { return ratePct(e._clicks, e._delivered); }), 'yRate', 2, '%'),
+          lineFor('Unsub rate', '#d6336c', rows.map(function (e) { return ratePct(e._unsub, e._delivered); }), 'yRate', 2, '%'),
+        ],
+      },
+      options: {
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: { grid: { display: false }, border: { display: false },
+               ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 10 } },
+          yCount: { position: 'left', beginAtZero: true, grid: { color: '#f1f4f9' },
+                    border: { display: false }, title: { display: true, text: 'Deliveries' },
+                    ticks: { maxTicksLimit: 5, callback: function (v) { return fmtInt(v); } } },
+          yRate: { position: 'right', beginAtZero: true, grid: { display: false },
+                   border: { display: false }, title: { display: true, text: 'Rate' },
+                   ticks: { maxTicksLimit: 5, callback: function (v) { return v + '%'; } } },
+        },
+        plugins: {
+          legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 8, padding: 14 } },
+          tooltip: {
+            backgroundColor: '#0b1020', titleColor: '#e8eefc', bodyColor: '#e8eefc',
+            padding: 9, cornerRadius: 8, boxPadding: 4, usePointStyle: true,
+            callbacks: {
+              // The date label alone doesn't say which email a point is, so the
+              // tooltip leads with the email's name.
+              title: function (items) {
+                var e = rows[items[0].dataIndex];
+                return e ? [e.name, e.date] : '';
+              },
+              label: function (c) {
+                var ds = c.dataset;
+                if (c.parsed.y == null) return ds.label + ': —';
+                var v = ds._suffix === '%' ? c.parsed.y.toFixed(ds._dp) : fmtInt(c.parsed.y);
+                return ds.label + ': ' + v + ds._suffix;
+              },
+            },
+          },
+        },
+      },
+    };
+    chart = new Chart(chartEl.getContext('2d'), cfg);
+  }
+
   function renderTable() {
     tbodyEl.innerHTML = '';
     if (!selected.length) {
@@ -264,6 +361,7 @@ _EP_JS = """
       });
     }
     renderTiles();
+    renderChart();
     updateCount();
     renderSortHeaders();
   }
@@ -586,6 +684,22 @@ def render_email_performance(
         '</div></div>'
     )
 
+    # Trend card -- the selected emails plotted over their send dates, so the
+    # table's rows can be read as a shape (a run of weak opens, a spiking
+    # unsub) before anyone scans the numbers. Same selection as the table.
+    chart_card = (
+        '<div class="ep-card">'
+        '<div class="ep-card-head">'
+        '<div class="ep-card-head-titles"><h2>Trends</h2>'
+        '<span class="ep-card-note">Selected emails by send date. '
+        'Click a legend key to hide or show a line.</span></div>'
+        '</div>'
+        '<div class="ep-chart-host" id="ep-chart-host"><canvas id="ep-chart"></canvas></div>'
+        '<div class="ep-chart-empty" id="ep-chart-empty" style="display:none">'
+        'No emails selected — use “Choose emails” to plot a trend.</div>'
+        '</div>'
+    )
+
     card = (
         '<div class="ep-card">'
         '<div class="ep-card-head">'
@@ -610,11 +724,13 @@ def render_email_performance(
     saved_script = f'<script type="application/json" id="ep-saved">{_json(saved_ids)}</script>'
     ep_js = _EP_JS.replace("%DEFAULT%", str(_DEFAULT_SELECTED))
 
-    content = f'<div class="ep-wrap">{head}{tiles}{card}</div>{data_script}{saved_script}{ep_js}'
-    return _shell(client_slug, label, content, access_key, use_session, session_email, session_is_admin)
+    content = f'<div class="ep-wrap">{head}{tiles}{chart_card}{card}</div>{data_script}{saved_script}{ep_js}'
+    return _shell(client_slug, label, content, access_key, use_session, session_email,
+                  session_is_admin, include_chartjs=True)
 
 
-def _shell(client_slug, label, content, access_key, use_session, session_email, session_is_admin) -> str:
+def _shell(client_slug, label, content, access_key, use_session, session_email,
+           session_is_admin, include_chartjs: bool = False) -> str:
     return render_client_shell_page(
         client_slug=client_slug,
         label=label,
@@ -627,4 +743,5 @@ def _shell(client_slug, label, content, access_key, use_session, session_email, 
         session_email=session_email,
         session_is_admin=session_is_admin,
         extra_css=_EXTRA_CSS,
+        include_chartjs=include_chartjs,
     )
