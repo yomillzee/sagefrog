@@ -181,6 +181,78 @@ def _li_follower_sparkline(follower_series, accent: str = "#0A66C2") -> str:
     )
 
 
+# The LinkedIn wordmark glyph, used as the "LinkedIn Followers" panel's heading
+# mark. It replaces the generic coloured dot the other Overview panels use: the
+# dot only said "this panel has a brand colour", where the glyph says which
+# network the numbers came from.
+_LI_GLYPH_SVG = (
+    '<svg class="li-glyph" viewBox="0 0 24 24" fill="#0A66C2" aria-hidden="true">'
+    '<path d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 '
+    '2.94v5.67H9.35V9h3.42v1.56h.04c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 '
+    '5.45v6.29zM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13zm1.78 '
+    '13.02H3.55V9h3.57v11.45zM22.22 0H1.77C.79 0 0 .78 0 1.73v20.54C0 23.23.79 24 '
+    '1.77 24h20.45c.98 0 1.78-.77 1.78-1.73V1.73C24 .78 23.2 0 22.22 0z"/></svg>'
+)
+
+
+def _li_weekly_follower_bars(follower_series, *, weeks: int = 12,
+                             accent: str = "#0A66C2") -> str:
+    """Weekly net-follower bars for the Overview "Net new followers" card.
+
+    A single number left that card nearly empty, so the same daily series that
+    feeds the sparkline is bucketed into ISO weeks and drawn as a small bar
+    chart: it answers "is the gain steady or was it one good week?" without a
+    second query. Bars hang off a zero baseline, so a losing week reads as a bar
+    below the line rather than a shorter bar above it.
+
+    Returns "" with fewer than two plottable weeks, so the caller keeps the
+    plain number card.
+    """
+    from datetime import date as _date
+
+    buckets: dict[tuple[int, int], int] = {}
+    for r in (follower_series or []):
+        day = str(r.get("metric_date") or "")
+        try:
+            iso = _date.fromisoformat(day[:10]).isocalendar()
+        except ValueError:
+            continue
+        key = (iso[0], iso[1])
+        buckets[key] = buckets.get(key, 0) + int(r.get("total_follower_gain") or 0)
+
+    if len(buckets) < 2:
+        return ""
+    values = [buckets[k] for k in sorted(buckets)][-weeks:]
+    if len(values) < 2:
+        return ""
+
+    w, h, pad = 132.0, 34.0, 2.0
+    hi, lo = max(values + [0]), min(values + [0])
+    span = (hi - lo) or 1
+    zero = pad + (hi / span) * (h - 2 * pad)
+    n = len(values)
+    slot = (w - 2 * pad) / n
+    bw = max(2.0, slot - 2.0)
+
+    bars = []
+    for i, v in enumerate(values):
+        x = pad + i * slot + (slot - bw) / 2
+        y = pad + ((hi - max(v, 0)) / span) * (h - 2 * pad)
+        height = max(1.5, abs(v) / span * (h - 2 * pad))
+        bars.append(
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" height="{height:.1f}" '
+            f'rx="1" fill="{accent}" fill-opacity="{0.85 if v >= 0 else 0.35:.2f}"/>'
+        )
+    return (
+        f'<svg class="mql-spark" viewBox="0 0 {w:.0f} {h:.0f}" preserveAspectRatio="none" '
+        f'role="img" aria-label="Net new followers by week">'
+        f'{"".join(bars)}'
+        f'<line x1="{pad:.1f}" y1="{zero:.1f}" x2="{w - pad:.1f}" y2="{zero:.1f}" '
+        f'stroke="{accent}" stroke-opacity="0.28" stroke-width="1"/>'
+        f'</svg>'
+    )
+
+
 def _li_section_bars(sections, *, top: int = 4) -> str:
     """Ranked "views by page section" bars for the Overview LinkedIn card.
 
@@ -488,10 +560,10 @@ def linkedin_followers_section_html(
 
     Reads the organic connector's follower series (see
     ``linkedin_organic_report_service.build_report``): a "Total followers" card
-    with a growth sparkline, plus a "Net new followers" card with the
-    organic/paid split over the window. Mirrors the MQL tracker's card markup so
-    it inherits the same Overview styling. Returns "" when nothing has synced yet
-    so the whole card drops rather than showing an empty shell.
+    with a growth sparkline, plus a "Net new followers" card with weekly bars.
+    Mirrors the MQL tracker's card markup so it inherits the same Overview
+    styling. Returns "" when nothing has synced yet so the whole card drops
+    rather than showing an empty shell.
     """
     if report is None or not getattr(report, "configured", False):
         return ""
@@ -509,11 +581,32 @@ def linkedin_followers_section_html(
         return ""
 
     def _delta(n: int) -> str:
+        """Window change as a signed count plus growth against the start count.
+
+        The count alone ("32") reads as small or large depending on how big the
+        page already is, so it is paired with the percentage it represents —
+        computed against the follower count at the start of the window
+        (``total - net``), which is what "growth" means here. The percentage
+        drops out when that start count is unknown or zero.
+        """
+        start_count = total_followers - n
+        pct = (abs(n) / start_count * 100.0) if start_count > 0 else None
+        tail = ""
+        if pct is not None:
+            fmt = f"{pct:.0f}" if pct >= 10 else f"{pct:.1f}"
+            tail = f' · {fmt}% {"growth" if n > 0 else "decline"}'
+        window = f'title="Change over the last {window_days} days"'
         if n > 0:
-            return f'<span class="mql-delta up">▲ {_int(n)} in {window_days} days</span>'
+            return f'<span class="mql-delta up" {window}>+{_int(n)} followers{tail}</span>'
         if n < 0:
-            return f'<span class="mql-delta down">▼ {_int(abs(n))} in {window_days} days</span>'
-        return f'<span class="mql-delta flat">No change in {window_days} days</span>'
+            return (
+                f'<span class="mql-delta down" {window}>'
+                f'−{_int(abs(n))} followers{tail}</span>'
+            )
+        return (
+            f'<span class="mql-delta flat" {window}>'
+            f'No change in {window_days} days</span>'
+        )
 
     cards: list[str] = []
     if total_followers:
@@ -523,28 +616,49 @@ def linkedin_followers_section_html(
             f'{_li_follower_sparkline(series)}'
             f'<div class="card-foot">{_delta(net_gain)}</div></div>'
         )
-    split = (
-        f'<span class="mql-sub">{_int(organic)} organic · {_int(paid)} paid</span>'
-        if (organic or paid)
-        else ""
-    )
+
+    # Net new followers. The organic/paid split is only worth a line when paid
+    # has actually done something — a permanent "· 0 paid" on a page that has
+    # never run a follower ad is noise, and it made the number look qualified.
+    weekly = _li_weekly_follower_bars(series)
+    if paid:
+        foot = f'<span class="mql-sub">{_int(organic)} organic · {_int(paid)} paid</span>'
+    elif weekly:
+        foot = '<span class="mql-sub">By week</span>'
+    else:
+        foot = ""
     cards.append(
         '<div class="card"><div class="card-title">Net new followers</div>'
         f'<div class="card-value">{_int(net_gain)}</div>'
-        f'<div class="card-foot">{split}</div></div>'
+        f'{weekly}'
+        f'<div class="card-foot">{foot}</div></div>'
     )
 
     # Third column: which tabs of the company page people actually landed on,
     # ranked. Drops out for pages whose section split hasn't synced (the column
     # set post-dates v1 of the page table) so the card falls back to two cards.
-    section_bars = _li_section_bars(getattr(report, "page_sections", None))
+    sections = getattr(report, "page_sections", None) or []
+    section_bars = _li_section_bars(sections)
     if section_bars:
+        section_total = sum(int(s.get("views") or 0) for s in sections)
         page_views = int(getattr(report, "total_page_views", 0) or 0)
-        foot = (
-            f'<span class="mql-sub">{_int(page_views)} page views '
-            f'in {window_days} days</span>'
-            if page_views else ""
-        )
+        # The bars only cover the tabs LinkedIn breaks out, so they sum to less
+        # than the page's total views — the rest are the main page and posts.
+        # Show both numbers rather than a total the rows visibly don't add up to.
+        if page_views > section_total:
+            foot = (
+                '<span class="mql-sub" title="LinkedIn reports views for these '
+                'page tabs only. The remaining views are the main page and '
+                f'posts.">{_int(section_total)} of {_int(page_views)} page views '
+                f'in {window_days} days</span>'
+            )
+        elif section_total:
+            foot = (
+                f'<span class="mql-sub">{_int(section_total)} page views '
+                f'in {window_days} days</span>'
+            )
+        else:
+            foot = ""
         cards.append(
             '<div class="card li-sections">'
             '<div class="card-title">Views by page section</div>'
@@ -560,9 +674,9 @@ def linkedin_followers_section_html(
         if more_url else ""
     )
     return (
-        '<section class="ov-panel">'
+        '<section class="ov-panel li-panel">'
         '<div class="sec-head"><h2>'
-        '<span class="mql-dot" style="background:#0A66C2"></span>LinkedIn Followers</h2>'
+        f'{_LI_GLYPH_SVG}LinkedIn Followers</h2>'
         f'<div class="ov-actions">{more}</div></div>'
         f'<div class="cards">{"".join(cards)}</div></section>'
     )
@@ -1942,6 +2056,12 @@ def render_bigquery_dashboard_page(
     .mql-delta.down {{ color:var(--bad); }}
     .mql-delta.flat {{ color:var(--muted); font-weight:600; }}
     .mql-spark {{ width:100%; height:30px; display:block; margin:7px 0 2px; }}
+    /* LinkedIn Overview panel. Its heading carries the LinkedIn glyph in place of
+       a .mql-dot, and its card labels stay sentence case — the condensed
+       all-caps treatment the other panels use is harder to scan at this size. */
+    .li-glyph {{ width:14px; height:14px; margin-right:8px; vertical-align:-2px; }}
+    .li-panel .card-title {{ text-transform:none; letter-spacing:0; font-size:.74rem;
+      font-weight:700; }}
     /* LinkedIn Overview card — ranked "views by page section" column. Wants more
        room than a number card, so it claims two grid tracks where they exist. */
     .li-sections {{ grid-column:span 2; min-width:0; }}
