@@ -63,6 +63,23 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-27",
+        title="The filters and your account go back where they were",
+        area="Navigation",
+        kind="fixed",
+        summary=(
+            "Today's two layout changes are reverted. The date range and "
+            "comparison pickers ride the bar at the top of the page again, and "
+            "Files, notifications and your avatar are back at the bottom of the "
+            "blue sidebar."
+        ),
+        details=(
+            "The filters follow you down a long page again, as they did before this morning.",
+            "Your name reads next to your avatar in the sidebar, rather than inside a menu.",
+            "Nothing about what the filters or those links do has changed — only where they sit.",
+        ),
+    ),
+    Entry(
+        date="2026-08-27",
         title="Your account, Files and notifications moved to the top right",
         area="Navigation",
         kind="improved",

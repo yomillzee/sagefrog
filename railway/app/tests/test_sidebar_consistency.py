@@ -10,10 +10,9 @@ APP_DIR = Path(__file__).resolve().parents[1]
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-# A Nixon-style dashboard must present the identical chrome on every page --
-# same section nav in the sidebar, same account cluster (Files / notifications /
-# avatar) top right in the sticky bar -- so items never appear/vanish as the user
-# moves between the dashboard, settings, connectors, and files pages.
+# A Nixon-style dashboard must present the identical sidebar on every page --
+# same section nav and same footer links -- so items never appear/vanish as the
+# user moves between the dashboard, settings, connectors, and files pages.
 
 
 def _section_items(html: str) -> list[str]:
@@ -25,16 +24,10 @@ def _section_items(html: str) -> list[str]:
     )
 
 
-def _account_bar_items(html: str) -> list[str]:
-    """What the top-right account cluster offers, in order: the icon buttons by
-    their title, then "Avatar" for the profile trigger that closes it out."""
-    m = re.search(r'<div class="acct-bar">(.*?)\n        </div>', html, re.S)
-    assert m, "no account bar found"
-    inner = m.group(1)
-    items = re.findall(r'class="acct-btn[^"]*"[^>]*title="([^"]+)"', inner)
-    if 'id="dashProfileTrigger"' in inner:
-        items.append("Avatar")
-    return items
+def _footer_items(html: str) -> list[str]:
+    m = re.search(r'<nav class="dash-sidebar-links"[^>]*>(.*?)</nav>', html, re.S)
+    assert m, "no footer nav found"
+    return re.findall(r'<span>([^<]+)</span>', m.group(1))
 
 
 def _admin_bucket_items(html: str) -> list[str]:
@@ -126,23 +119,14 @@ class SidebarConsistencyTests(unittest.TestCase):
         for name, html in self._render_all().items():
             self.assertEqual(_section_items(html), expected, f"section nav differs on {name}")
 
-    def test_account_bar_identical_on_every_page(self) -> None:
-        # Files, the notification bell and the avatar left the sidebar footer for
-        # the top right of every page's sticky bar. Same three, same order, on
-        # every page -- that is the whole point of moving them somewhere shared.
+    def test_footer_nav_identical_on_every_page(self) -> None:
+        # Connectors + Insights moved into the collapsible admin section, so the
+        # always-visible footer nav is the client-facing Files link plus the
+        # agency user's notification bell (comments left on this account).
         pages = self._render_all()
-        expected = ["Files", "Notifications", "Avatar"]
+        expected = ["Files", "Notifications"]
         for name, html in pages.items():
-            self.assertEqual(_account_bar_items(html), expected,
-                             f"account bar differs on {name}")
-
-    def test_account_bar_is_the_only_home_for_those_items(self) -> None:
-        # They must not also linger in the sidebar footer, which is gone.
-        for name, html in self._render_all().items():
-            self.assertNotIn('<div class="dash-sidebar-footer">', html,
-                             f"sidebar footer still rendered on {name}")
-            self.assertNotIn('class="dash-sidebar-links"', html,
-                             f"sidebar footer nav still rendered on {name}")
+            self.assertEqual(_footer_items(html), expected, f"footer nav differs on {name}")
 
     def test_settings_lives_in_the_sidebar_admin_bucket(self) -> None:
         # Settings moved out of the profile popover into an "Admin" bucket at the
@@ -164,8 +148,8 @@ class SidebarConsistencyTests(unittest.TestCase):
 
     def test_sidebar_layout_order(self) -> None:
         # Logo → client switcher → section nav (with the Admin bucket at its
-        # foot) → collapse control, which is now the last thing in the rail: the
-        # footer that used to sit under it moved to the top bar.
+        # foot) → collapse control → footer. The collapse control sits above the
+        # footer's Files divider, not below it.
         for name, html in self._render_all().items():
             order = [
                 html.index('class="dash-sidebar-head"'),
@@ -173,26 +157,17 @@ class SidebarConsistencyTests(unittest.TestCase):
                 html.index('<div class="dash-sidebar-scroll">'),
                 html.index('<nav class="dash-sidebar-nav dash-sidebar-nav--admin"'),
                 html.index('class="dash-sidebar-collapse-row"'),
+                html.index('<div class="dash-sidebar-footer">'),
             ]
             self.assertEqual(order, sorted(order), f"sidebar order wrong on {name}")
 
     def test_profile_dropdown_present_on_every_page(self) -> None:
-        # Every page carries the profile dropdown trigger (the avatar) and a Sign
-        # out item inside it. The name and email moved into the menu when the
-        # trigger shrank to the avatar alone, so assert they still read there.
+        # Every page carries the profile dropdown trigger (avatar + name) and a
+        # Sign out item inside it.
         pages = self._render_all()
         for name, html in pages.items():
             self.assertIn('id="dashProfileTrigger"', html, f"profile trigger missing on {name}")
             self.assertIn("<span>Sign out</span>", html, f"Sign out missing on {name}")
-            self.assertIn('class="dash-profile-who"', html, f"who-am-I missing on {name}")
-            self.assertIn("admin@sf.com", html, f"signed-in email missing on {name}")
-
-    def test_profile_menu_opens_downward_from_the_top_bar(self) -> None:
-        # The menu used to hang above a trigger pinned to the sidebar's bottom.
-        # From the top bar it has to drop below, or it opens off-screen.
-        for name, html in self._render_all().items():
-            self.assertIn("dash-profile dash-profile--top", html,
-                          f"profile menu still anchored upward on {name}")
 
     def test_admin_tab_strip_carries_the_agency_options(self) -> None:
         # The Admin surface pages (Connectors, Insights) render the same top tab
@@ -349,15 +324,9 @@ class SidebarConsistencyTests(unittest.TestCase):
             web_users.get_user_by_email = lambda email: types.SimpleNamespace(
                 role="client", avatar=None
             )
-            bar = base_layout.account_topbar_html(
-                session_email="person@example.com",
-                session_is_admin=False,
-                active_nav="files",
-            )
-            self.assertIn('id="dashProfileTrigger"', bar)
-            self.assertIn("<span>Sign out</span>", bar)
-            # …but no bell: a comment on a client dashboard is internal.
-            self.assertNotIn('href="/notifications"', bar)
+            footer = base_layout._sidebar_footer_tools_html(email="person@example.com")
+            self.assertIn('id="dashProfileTrigger"', footer)
+            self.assertIn("<span>Sign out</span>", footer)
         finally:
             web_users.enabled = orig_enabled
             web_users.get_user_by_email = orig_lookup
@@ -377,13 +346,9 @@ class SidebarConsistencyTests(unittest.TestCase):
             ),
             "",
         )
-        bar = base_layout.account_topbar_html(
-            session_email="admin@sf.com",
-            session_is_admin=True,
-            active_nav="connectors",
-        )
-        self.assertNotIn("<span>Settings</span>", bar)
-        self.assertIn("<span>Sign out</span>", bar)
+        footer = base_layout._sidebar_footer_tools_html(email="admin@sf.com")
+        self.assertNotIn("<span>Settings</span>", footer)
+        self.assertIn("<span>Sign out</span>", footer)
 
 
 if __name__ == "__main__":
