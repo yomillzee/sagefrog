@@ -7648,12 +7648,17 @@ def render_bigquery_dashboard_page(
     function renderKwLeaderboard(tableId, rows, configured) {{
       const el=document.getElementById(tableId); if(!el) return;
       if (!configured) {{ el.innerHTML=`<tbody><tr><td class="empty">No keywords set — add them on the Search Console tab.</td></tr></tbody>`; return; }}
+      // Ordered by impressions, not by rank. Sorting on avg_position floated
+      // whichever long-tail phrasing happened to sit at #1 (a PDF filename, say)
+      // above the brand term itself, so the Overview's top row disagreed with
+      // the Search Console tab's. Impressions put the keywords people actually
+      // search first, and match how the full table reads.
       const top=(rows||[]).slice()
-        .sort((a,b)=>num(a.avg_position)-num(b.avg_position))
+        .sort((a,b)=>num(b.impressions)-num(a.impressions) || num(b.clicks)-num(a.clicks))
         .slice(0,OV_KW_LEADERS);
       if (!top.length) {{ el.innerHTML=`<tbody><tr><td class="empty">No matching queries in this range.</td></tr></tbody>`; return; }}
-      const head=`<thead><tr><th class="left">Keyword</th><th>Clicks</th><th>Position</th>${{compareStart?'<th>Movement</th>':''}}</tr></thead>`;
-      const body=top.map(r=>`<tr><td class="left" title="${{esc(r.query)}}"><span>${{esc(r.query)}}</span></td><td>${{count(r.clicks)}}</td><td>${{gscPos(r.avg_position)}}</td>${{compareStart?`<td>${{gscDelta(r.delta_position)}}</td>`:''}}</tr>`).join('');
+      const head=`<thead><tr><th class="left">Keyword</th><th>Impressions</th><th>Position</th>${{compareStart?'<th>Movement</th>':''}}</tr></thead>`;
+      const body=top.map(r=>`<tr><td class="left" title="${{esc(r.query)}}"><span>${{esc(r.query)}}</span></td><td>${{count(r.impressions)}}</td><td>${{gscPos(r.avg_position)}}</td>${{compareStart?`<td>${{gscDelta(r.delta_position)}}</td>`:''}}</tr>`).join('');
       el.innerHTML=head+`<tbody>${{body}}</tbody>`;
     }}
     // Website analytics + AI traffic trends. Every other Overview card is
@@ -7688,7 +7693,7 @@ def render_bigquery_dashboard_page(
         setStatus('ovSessionsStatus', msg, true); setStatus('ovAiStatus', msg, true);
       }}
     }}
-    // Search Console — branded & target keyword leaderboard (top by rank) plus
+    // Search Console — branded & target keyword leaderboard (top by impressions) plus
     // the weekly avg-position trend over time. The whole card is dropped when
     // GSC isn't connected (and can be hidden by an admin), so bail out unless
     // it's actually on the page.
