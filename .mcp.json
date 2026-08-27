@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cookieyes": {
+      "type": "http",
+      "url": "https://app.cookieyes.com/mcp"
+    }
+  }
+}
