@@ -63,6 +63,22 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-27",
+        title="The Overview keyword lists lead with the most-searched query",
+        area="Overview · Search Console",
+        kind="improved",
+        summary=(
+            "The branded and target keyword lists on Overview now rank by "
+            "impressions instead of by average position, so the top row is the "
+            "keyword people actually search rather than whichever long-tail "
+            "phrasing happened to sit at #1."
+        ),
+        details=(
+            "The Clicks column in those two lists is now Impressions, matching the sort.",
+            "The full tables on the Search Console tab are unchanged — still sorted by clicks, still sortable by any column.",
+        ),
+    ),
+    Entry(
+        date="2026-08-27",
         title="People have names, and the roster sorts by who has gone quiet",
         area="Admin · Users",
         kind="improved",
