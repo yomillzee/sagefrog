@@ -1,15 +1,14 @@
-"""Campaign explorer head: the options kebab, and Paid trends multi-select.
+"""Campaign explorer head: the options kebab and the GA4-verified switch.
 
-Two promises a reader of the page would notice breaking:
+One promise a reader of the page would notice breaking: everything that
+*configures* the explorer (the admin Campaigns allowlist and filter-chip
+editors) plus the GA4-verified switch sits behind one kebab, so the section head
+keeps only the Platform chips and the row count. The switch is for every viewer
+— it decides whether the GA4 column and card are drawn, which is a reading
+preference, not client config — while the two editors stay admin-only.
 
-* Everything that *configures* the explorer (the admin Campaigns allowlist and
-  filter-chip editors) plus the GA4-verified switch sits behind one kebab, so
-  the section head keeps only the Platform chips and the row count. The switch
-  is for every viewer — it decides whether the GA4 column and card are drawn,
-  which is a reading preference, not client config — while the two editors stay
-  admin-only.
-* **Paid trends** metric chips are independent toggles, each series on its own
-  axis, so spend and CTR can share one timeline without either being flattened.
+The multi-select those chips used to test now lives on the explorer's summary
+cards; see test_explorer_trend_chart.py.
 """
 
 from __future__ import annotations
@@ -107,7 +106,11 @@ class ExplorerOptionsMenuTests(unittest.TestCase):
     def test_the_switch_drops_the_summary_card_too(self) -> None:
         html = self._html(admin=False)
         self.assertIn(
-            "(showVerifiedConv ? `<div class=\"card\"><div class=\"card-title\">Verified conv. (GA4)</div>",
+            "+ (showVerifiedConv ? (()=>{",
+            html,
+        )
+        self.assertIn(
+            "<div class=\"card-title\">Verified conv. (GA4)</div>",
             html,
         )
 
@@ -123,32 +126,6 @@ class ExplorerOptionsMenuTests(unittest.TestCase):
             "if (!showVerifiedConv && explorerSort.key==='verified_sel') explorerSort={key:'spend',dir:'desc'};",
             html,
         )
-
-    # ---- Paid trends multi-select ----
-
-    def test_metric_chips_are_toggles_not_a_one_of_six_pick(self) -> None:
-        html = self._html(admin=True)
-        self.assertIn('id="paidTrendMetricChips" role="group"', html)
-        self.assertIn("let paidTrendMetrics = new Set(['spend']);", html)
-        self.assertIn("if (paidTrendMetrics.size===1) return;", html)
-
-    def test_every_selected_metric_gets_its_own_axis(self) -> None:
-        html = self._html(admin=True)
-        # Impressions and CTR differ by orders of magnitude; one shared axis
-        # would flatten whichever is smaller.
-        self.assertIn("const axisId=i===0?'y':('y'+i);", html)
-        self.assertIn("if (i>0) extraScales[axisId]={display:false, beginAtZero:true};", html)
-        self.assertIn("yAxisID: s.axisId || 'y',", html)
-        self.assertIn("...(opts.extraScales || {}),", html)
-        # Tick labels only make sense while one metric is on screen.
-        self.assertIn("yDisplay: !multi,", html)
-
-    def test_the_legend_totals_each_selected_metric(self) -> None:
-        html = self._html(admin=True)
-        self.assertIn("const curTot=roll(rows,m), prevTot=hasPrev?roll(prevRows,m):null;", html)
-        # The comparison line is drawn only for a single metric; the delta chip
-        # per metric is how a multi-metric view reports vs previous.
-        self.assertIn("if (hasPrev && !multi) series.push(", html)
 
 
 if __name__ == "__main__":  # pragma: no cover

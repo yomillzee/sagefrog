@@ -1169,6 +1169,179 @@ def fetch_meta_explorer(
 
 
 # ---------------------------------------------------------------------------
+# Campaign explorer trends -- daily spend/impressions/clicks/conversions per
+# campaign, one query per platform. Same source tables as the four explorer
+# fetches above, just grouped by date + campaign instead of by ad, so the
+# Campaign Explorer's "metrics over time" chart gets a real per-day series
+# without paying for the ad-level grain it doesn't need. The chart re-derives
+# CTR client-side and applies the same campaign-name / platform filters the
+# table already does, so this only has to carry the additive metrics.
+# ---------------------------------------------------------------------------
+
+def fetch_google_ads_explorer_trend(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    sql = f"""
+    SELECT
+      CAST(date AS STRING) AS date,
+      campaign_name,
+      ROUND(SUM(spend), 2) AS spend,
+      SUM(impressions) AS impressions,
+      SUM(clicks) AS clicks,
+      SUM(conversions) AS conversions
+    FROM {_google_ads_explorer_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY date, campaign_name
+    ORDER BY date
+    """
+    rows = _run_query(
+        sql,
+        params={
+            "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+            "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+        },
+        max_rows=20000,
+    )
+    return {
+        "client": _client_key(),
+        "date_range": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
+def fetch_microsoft_explorer_trend(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    sql = f"""
+    SELECT
+      CAST(date AS STRING) AS date,
+      campaign_name,
+      ROUND(SUM(spend), 2) AS spend,
+      SUM(impressions) AS impressions,
+      SUM(clicks) AS clicks,
+      SUM(conversions) AS conversions
+    FROM {_microsoft_ads_explorer_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY date, campaign_name
+    ORDER BY date
+    """
+    try:
+        rows = _run_query(
+            sql,
+            params={
+                "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            },
+            max_rows=20000,
+        )
+    except Exception:
+        # No explorer view yet -- same degrade-to-empty rule as
+        # fetch_microsoft_explorer, so the trend chart just omits Microsoft.
+        rows = []
+    return {
+        "client": _client_key(),
+        "date_range": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
+def fetch_linkedin_explorer_trend(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """Daily spend/impressions/clicks/conversions per LinkedIn campaign group.
+
+    Campaign-group grain only (the tree's "campaign" level) -- the trend chart
+    has no use for the creative-level table fetch_linkedin_explorer falls back
+    to for thumbnails, and campaign-level data covers every client that has
+    LinkedIn synced at all.
+    """
+    sql = f"""
+    SELECT
+      CAST(date AS STRING) AS date,
+      campaign_group_name,
+      ROUND(SUM(spend), 2) AS spend,
+      SUM(impressions) AS impressions,
+      SUM(clicks) AS clicks,
+      SUM(conversions) AS conversions
+    FROM {_linkedin_campaign_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY date, campaign_group_name
+    ORDER BY date
+    """
+    try:
+        rows = _run_query(
+            sql,
+            params={
+                "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            },
+            max_rows=20000,
+        )
+    except Exception:
+        rows = []
+    return {
+        "client": _client_key(),
+        "date_range": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
+def fetch_meta_explorer_trend(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    sql = f"""
+    SELECT
+      CAST(date AS STRING) AS date,
+      campaign_name,
+      ROUND(SUM(spend), 2) AS spend,
+      SUM(impressions) AS impressions,
+      SUM(clicks) AS clicks,
+      SUM(conversions) AS conversions
+    FROM {_meta_ad_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+    GROUP BY date, campaign_name
+    ORDER BY date
+    """
+    rows = _run_query(
+        sql,
+        params={
+            "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+            "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+        },
+        max_rows=20000,
+    )
+    return {
+        "client": _client_key(),
+        "date_range": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Platform conversion actions
 #
 # The explorer's `Conv.` column is each platform's own pre-summed conversion
@@ -1648,6 +1821,156 @@ def fetch_microsoft_verified_key_events(
         "events": ordered_events,
         "by_campaign_name": by_campaign,
         "by_campaign_name_event": by_campaign_event,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Verified-conversions trends -- the blended (all key events) figure per day,
+# feeding the "Verified conv. (GA4)" line on the Campaign Explorer's trend
+# chart. Same tables and matching keys as the whole-window verified fetches
+# above (campaign id for Google, ad id for Meta, raw campaign name for
+# LinkedIn/Microsoft -- normalized client-side same as the whole-window
+# totals), just with date added and the event-name split dropped since the
+# chart only ever shows the blended total.
+# ---------------------------------------------------------------------------
+
+def fetch_google_verified_conversions_trend(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    sql = f"""
+    SELECT CAST(date AS STRING) AS date, campaign_id, SUM(key_events) AS key_events
+    FROM {_ga4_google_entity_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+      AND campaign_id NOT IN ('', '(not set)')
+    GROUP BY date, campaign_id
+    ORDER BY date
+    """
+    try:
+        rows = _run_query(
+            sql,
+            params={
+                "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            },
+            max_rows=50000,
+        )
+    except Exception as exc:
+        if "not found" in str(exc).lower():
+            rows = []
+        else:
+            raise
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
+def fetch_linkedin_verified_trend(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    sql = f"""
+    SELECT CAST(date AS STRING) AS date, campaign_name, SUM(key_events) AS key_events
+    FROM {_ga4_linkedin_key_event_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+      AND campaign_name NOT IN ('', '(not set)')
+    GROUP BY date, campaign_name
+    ORDER BY date
+    """
+    try:
+        rows = _run_query(
+            sql,
+            params={
+                "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            },
+            max_rows=50000,
+        )
+    except Exception as exc:
+        if "not found" in str(exc).lower():
+            rows = []
+        else:
+            raise
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
+def fetch_microsoft_verified_trend(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    sql = f"""
+    SELECT CAST(date AS STRING) AS date, campaign_name, SUM(key_events) AS key_events
+    FROM {_ga4_microsoft_key_event_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+      AND campaign_name NOT IN ('', '(not set)')
+    GROUP BY date, campaign_name
+    ORDER BY date
+    """
+    try:
+        rows = _run_query(
+            sql,
+            params={
+                "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            },
+            max_rows=50000,
+        )
+    except Exception as exc:
+        if "not found" in str(exc).lower():
+            rows = []
+        else:
+            raise
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "row_count": len(rows),
+        "rows": rows,
+    }
+
+
+def fetch_meta_verified_trend(
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    sql = f"""
+    SELECT CAST(date AS STRING) AS date, manual_ad_content AS ad_id, SUM(key_events) AS key_events
+    FROM {_ga4_paid_entity_table()}
+    WHERE date BETWEEN @start_date AND @end_date
+      AND manual_ad_content NOT IN ('', '(not set)', '(other)')
+    GROUP BY date, ad_id
+    ORDER BY date
+    """
+    try:
+        rows = _run_query(
+            sql,
+            params={
+                "start_date": bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                "end_date": bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            },
+            max_rows=50000,
+        )
+    except Exception as exc:
+        if "not found" in str(exc).lower():
+            rows = []
+        else:
+            raise
+    return {
+        "client": _client_key(),
+        "date_range": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
+        "row_count": len(rows),
+        "rows": rows,
     }
 
 

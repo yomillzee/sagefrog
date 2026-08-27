@@ -1946,6 +1946,130 @@ def client_meta_explorer(
         raise _bq_endpoint_failure(exc) from exc
 
 
+# Campaign explorer trends -- daily spend/impressions/clicks/conversions per
+# campaign, one per platform. Feeds the Campaign Explorer's "metrics over
+# time" chart; same {rows: [...]} envelope as the explorer endpoints above,
+# just grouped by date + campaign instead of by ad.
+@router.get(
+    "/api/clients/{client_key}/google-ads/explorer-trend",
+    summary="Client Google Ads daily spend/impressions/clicks/conversions per campaign (generic BQ-test clients)",
+)
+def client_google_ads_explorer_trend(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        with marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer_trend.google_ads",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: marketing_service.fetch_google_ads_explorer_trend(
+                    start_date=start, end_date=end,
+                ),
+            )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/microsoft-ads/explorer-trend",
+    summary="Client Microsoft Ads daily spend/impressions/clicks/conversions per campaign (generic BQ-test clients)",
+)
+def client_microsoft_ads_explorer_trend(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        with marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer_trend.microsoft_ads",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: marketing_service.fetch_microsoft_explorer_trend(
+                    start_date=start, end_date=end,
+                ),
+            )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/linkedin/explorer-trend",
+    summary="Client LinkedIn daily spend/impressions/clicks/conversions per campaign group (generic BQ-test clients)",
+)
+def client_linkedin_explorer_trend(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        with marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer_trend.linkedin",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: marketing_service.fetch_linkedin_explorer_trend(
+                    start_date=start, end_date=end,
+                ),
+            )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/meta/explorer-trend",
+    summary="Client Meta daily spend/impressions/clicks/conversions per campaign (generic BQ-test clients)",
+)
+def client_meta_explorer_trend(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        with marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer_trend.meta",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: marketing_service.fetch_meta_explorer_trend(
+                    start_date=start, end_date=end,
+                ),
+            )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
 @router.get(
     "/api/clients/{client_key}/meta/verified-conversions",
     summary="Client GA4-verified conversions per Meta ad id from BigQuery (generic BQ-test clients)",
@@ -2061,6 +2185,132 @@ def client_microsoft_verified_conversions(
                 {"start": start.isoformat(), "end": end.isoformat()},
                 ttl_seconds=900,
                 fetch=lambda: marketing_service.fetch_microsoft_verified_key_events(
+                    start_date=start, end_date=end,
+                ),
+            )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+# GA4-verified conversions trends -- the blended (all key events) figure per
+# day, one per platform. Feeds the "Verified conv. (GA4)" line on the
+# Campaign Explorer's trend chart; the frontend rolls each row up to a
+# campaign the same way it already does for the whole-window totals above
+# (campaign id for Google, ad id for Meta, normalized campaign name for
+# LinkedIn/Microsoft).
+@router.get(
+    "/api/clients/{client_key}/google-ads/verified-conversions-trend",
+    summary="Client GA4-verified conversions per Google Ads campaign id, per day (generic BQ-test clients)",
+)
+def client_google_verified_conversions_trend(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        with marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer_trend.google_verified",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: marketing_service.fetch_google_verified_conversions_trend(
+                    start_date=start, end_date=end,
+                ),
+            )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/linkedin/verified-conversions-trend",
+    summary="Client GA4-verified conversions per LinkedIn campaign group name, per day (generic BQ-test clients)",
+)
+def client_linkedin_verified_conversions_trend(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        with marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer_trend.linkedin_verified",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: marketing_service.fetch_linkedin_verified_trend(
+                    start_date=start, end_date=end,
+                ),
+            )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/microsoft/verified-conversions-trend",
+    summary="Client GA4-verified conversions per Microsoft/Bing campaign name, per day (generic BQ-test clients)",
+)
+def client_microsoft_verified_conversions_trend(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        with marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer_trend.microsoft_verified",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: marketing_service.fetch_microsoft_verified_trend(
+                    start_date=start, end_date=end,
+                ),
+            )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
+@router.get(
+    "/api/clients/{client_key}/meta/verified-conversions-trend",
+    summary="Client GA4-verified conversions per Meta ad id, per day (generic BQ-test clients)",
+)
+def client_meta_verified_conversions_trend(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None, description="Inclusive start date."),
+    end_date: date | None = Query(default=None, description="Inclusive end date."),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        with marketing_service.route(
+            client_key=normalized, project_id=project_id, mart_dataset_id=dataset_id,
+        ):
+            return _cached_bq_read(
+                f"{normalized}.explorer_trend.meta_verified",
+                {"start": start.isoformat(), "end": end.isoformat()},
+                ttl_seconds=900,
+                fetch=lambda: marketing_service.fetch_meta_verified_trend(
                     start_date=start, end_date=end,
                 ),
             )

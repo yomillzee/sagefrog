@@ -79,6 +79,51 @@ ENTRIES: tuple[Entry, ...] = (
     ),
     Entry(
         date="2026-08-26",
+        title="One trend chart on the Campaign explorer, not two",
+        area="Client dashboards · Campaign Explorer",
+        kind="improved",
+        summary=(
+            "The separate Paid trends panel is gone — the chart under the "
+            "summary cards plots the same metrics over the same window, and it "
+            "is always open now rather than hiding behind a header you click."
+        ),
+        details=(
+            "Two charts answering the same question meant they could disagree in a client call; there is now one.",
+            "What went with the old panel: the Daily/Weekly toggle, CPC as a metric, and the dashed previous-period line. Ask if you want any of them on the chart that stayed.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
+        title="Put more than one metric on the campaign explorer's chart",
+        area="Client dashboards · Campaign Explorer",
+        kind="improved",
+        summary=(
+            "The summary cards above the campaign table now pick metrics for the "
+            "chart the way the Paid trends chips do — click a second card to add "
+            "its line rather than swap the first one out."
+        ),
+        details=(
+            "Click an active card again to take its line off; the last one stays on, so the chart is never empty.",
+            "Each metric is scaled on its own, so Impressions and CTR can share a timeline without either flattening out, and the legend under the chart carries every selected metric's total for the window.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
+        title="Campaign explorer's summary cards now chart the metric they show",
+        area="Client dashboards · Campaign Explorer",
+        kind="new",
+        summary=(
+            "Click Spend, Impressions, Clicks, CTR, Conversions, or Verified conv. "
+            "(GA4) above the campaign table to see that metric plotted over time, "
+            "in a chart between the cards and the table."
+        ),
+        details=(
+            "Follows the Platform chips, the campaign explorer's own filter dropdowns, and the campaign allowlist — the line always matches what the table below it is showing.",
+            "Collapsible: click the chart's header to hide it, and it stays collapsed on your next visit.",
+        ),
+    ),
+    Entry(
+        date="2026-08-26",
         title="HubSpot connections need re-authorizing once per client",
         area="Connectors · HubSpot",
         kind="improved",
