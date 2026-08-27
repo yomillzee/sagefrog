@@ -63,6 +63,24 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-27",
+        title="The Paid summary cards read as a chart, not a scribble",
+        area="Overview · Paid summary",
+        kind="improved",
+        summary=(
+            "The seven cards above the campaign tree got a pass: shorter "
+            "numbers, tidier trend lines, and no more placeholder dash under "
+            "values that have nothing to compare against."
+        ),
+        details=(
+            "Values abbreviate ($1.10K, 4.14K, $219). Hover any shortened number for the exact figure.",
+            "Each trend line now sits on a faint baseline with a soft fill under it.",
+            "All seven lines share one colour — the old rainbow implied a meaning it never had.",
+            "With no comparison period set, the dash is gone and the trend line uses the full width of the card.",
+            "The Platform pills highlight on hover and show a focus ring when tabbed to.",
+        ),
+    ),
+    Entry(
+        date="2026-08-27",
         title="The filters and your account go back where they were",
         area="Navigation",
         kind="fixed",
