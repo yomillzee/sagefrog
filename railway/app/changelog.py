@@ -86,6 +86,25 @@ ENTRIES: tuple[Entry, ...] = (
     ),
     Entry(
         date="2026-08-27",
+        title="The LinkedIn Followers card says what its numbers mean",
+        area="Overview · LinkedIn Followers",
+        kind="improved",
+        summary=(
+            "Follower growth now reads as a percentage as well as a count, the "
+            "Net new followers card carries a week-by-week chart, and the page "
+            "section views no longer look like they should add up to the page "
+            "total."
+        ),
+        details=(
+            "“▲ 32 in 90 days” is now “+32 followers · 2.5% growth” — growth against the follower count at the start of the window.",
+            "Net new followers gained a small bar chart of the last 12 weeks, so a steady climb reads differently from one good week.",
+            "Views by page section states both numbers (“290 of 1,228 page views”); LinkedIn only reports views for the named tabs, and the rest are the main page and posts.",
+            "The organic/paid split only appears when the page actually gained paid followers, instead of a permanent “· 0 paid”.",
+            "The heading carries the LinkedIn mark in place of a blue dot, and the card labels are sentence case rather than condensed capitals.",
+        ),
+    ),
+    Entry(
+        date="2026-08-27",
         title="The Paid summary cards read as a chart, not a scribble",
         area="Overview · Paid summary",
         kind="improved",

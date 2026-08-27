@@ -71,6 +71,64 @@ class SparklineTests(unittest.TestCase):
         )
 
 
+class WeeklyBarTests(unittest.TestCase):
+    def test_needs_two_weeks(self) -> None:
+        from dashboard.renderers.bigquery_dashboard_renderer import (
+            _li_weekly_follower_bars,
+        )
+        # The 4-day sample all lands in one ISO week — nothing to compare.
+        self.assertEqual(_li_weekly_follower_bars(_sample_series()), "")
+        self.assertEqual(_li_weekly_follower_bars([]), "")
+
+    def test_one_bar_per_week(self) -> None:
+        from dashboard.renderers.bigquery_dashboard_renderer import (
+            _li_weekly_follower_bars,
+        )
+        rows = [
+            {"metric_date": f"2026-06-{d:02d}", "total_follower_gain": 2}
+            for d in range(1, 22)          # 3 ISO weeks
+        ]
+        svg = _li_weekly_follower_bars(rows)
+        self.assertEqual(svg.count("<rect"), 3)
+        self.assertIn('aria-label="Net new followers by week"', svg)
+
+    def test_capped_at_window(self) -> None:
+        from dashboard.renderers.bigquery_dashboard_renderer import (
+            _li_weekly_follower_bars,
+        )
+        rows = [
+            {"metric_date": f"2026-{m:02d}-{d:02d}", "total_follower_gain": 1}
+            for m in (1, 2, 3, 4, 5, 6) for d in (1, 8, 15, 22)
+        ]
+        self.assertEqual(_li_weekly_follower_bars(rows).count("<rect"), 12)
+
+    def test_bad_dates_ignored(self) -> None:
+        from dashboard.renderers.bigquery_dashboard_renderer import (
+            _li_weekly_follower_bars,
+        )
+        rows = [
+            {"metric_date": "", "total_follower_gain": 9},
+            {"metric_date": "not-a-date", "total_follower_gain": 9},
+            {"metric_date": "2026-06-01", "total_follower_gain": 2},
+            {"metric_date": "2026-06-09", "total_follower_gain": 3},
+        ]
+        self.assertEqual(_li_weekly_follower_bars(rows).count("<rect"), 2)
+
+    def test_losing_week_draws_below_the_baseline(self) -> None:
+        from dashboard.renderers.bigquery_dashboard_renderer import (
+            _li_weekly_follower_bars,
+        )
+        rows = [
+            {"metric_date": "2026-06-01", "total_follower_gain": 10},
+            {"metric_date": "2026-06-09", "total_follower_gain": -10},
+        ]
+        svg = _li_weekly_follower_bars(rows)
+        self.assertEqual(svg.count("<rect"), 2)
+        # A negative week is drawn faded, hanging off the zero line.
+        self.assertIn('fill-opacity="0.35"', svg)
+        self.assertIn("<line", svg)
+
+
 class SectionHtmlTests(unittest.TestCase):
     def test_absent_when_unconfigured(self) -> None:
         from dashboard.renderers.bigquery_dashboard_renderer import (
@@ -100,10 +158,12 @@ class SectionHtmlTests(unittest.TestCase):
         self.assertIn("Total followers", html)
         self.assertIn("1,200", html)
         self.assertIn("Net new followers", html)
-        # organic (13) / paid (3) split summed over the window.
+        # organic (13) / paid (3) split summed over the window — shown because
+        # this page has paid follower activity.
         self.assertIn("13 organic · 3 paid", html)
-        # Net gain delta over the window.
-        self.assertIn("▲ 16 in 90 days", html)
+        # Net gain as a signed count plus growth against the window's start
+        # count (16 gained on a 1,184 base = 1.4%).
+        self.assertIn("+16 followers · 1.4% growth", html)
         # "See more" links to the standalone page.
         self.assertIn('href="/dash/linkedin-organic"', html)
 
@@ -152,7 +212,28 @@ class SectionHtmlTests(unittest.TestCase):
         self.assertIn("337<span>32%</span>", html)
         # Top bar is full width; the rest scale against it.
         self.assertIn('style="width:100.0%"', html)
+        # The four tabs sum to 1,056 of the page's 1,056 window views here, so
+        # the footer states the one number.
         self.assertIn("1,056 page views in 90 days", html)
+
+    def test_section_footer_names_both_totals_when_they_differ(self) -> None:
+        from dashboard.renderers.bigquery_dashboard_renderer import (
+            linkedin_followers_section_html,
+        )
+        # Tabs cover only part of the page's views; the footer must not imply the
+        # rows add up to the page total.
+        html = linkedin_followers_section_html(
+            _report(
+                total_page_views=1228,
+                page_sections=[
+                    {"label": "Overview", "views": 200},
+                    {"label": "Careers", "views": 90},
+                ],
+            ),
+            "/x",
+        )
+        self.assertIn("290 of 1,228 page views in 90 days", html)
+        self.assertIn("page tabs only", html)
 
     def test_section_column_capped_at_four(self) -> None:
         from dashboard.renderers.bigquery_dashboard_renderer import (
@@ -187,7 +268,40 @@ class SectionHtmlTests(unittest.TestCase):
             linkedin_followers_section_html,
         )
         html = linkedin_followers_section_html(_report(follower_gain=-5), "/x")
-        self.assertIn("▼ 5 in 90 days", html)
+        self.assertIn("−5 followers · 0.4% decline", html)
+
+    def test_growth_pct_dropped_without_start_count(self) -> None:
+        from dashboard.renderers.bigquery_dashboard_renderer import (
+            linkedin_followers_section_html,
+        )
+        # Whole page gained inside the window → start count is 0, so there is no
+        # base to grow from and only the count is shown.
+        html = linkedin_followers_section_html(
+            _report(total_followers=16, follower_gain=16), "/x"
+        )
+        self.assertIn("+16 followers", html)
+        self.assertNotIn("% growth", html)
+
+    def test_paid_split_hidden_when_no_paid_activity(self) -> None:
+        from dashboard.renderers.bigquery_dashboard_renderer import (
+            linkedin_followers_section_html,
+        )
+        organic_only = [
+            dict(r, paid_follower_gain=0) for r in _sample_series()
+        ]
+        html = linkedin_followers_section_html(
+            _report(follower_series=organic_only), "/x"
+        )
+        self.assertNotIn("paid", html)
+        self.assertIn("Net new followers", html)
+
+    def test_heading_uses_linkedin_glyph_not_a_dot(self) -> None:
+        from dashboard.renderers.bigquery_dashboard_renderer import (
+            linkedin_followers_section_html,
+        )
+        html = linkedin_followers_section_html(_report(), "/x")
+        self.assertIn('class="li-glyph"', html)
+        self.assertNotIn("mql-dot", html)
 
 
 class OverviewIntegrationTests(unittest.TestCase):
