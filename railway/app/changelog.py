@@ -62,6 +62,22 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-08-27",
+        title="Date range and comparison sit at the top of the page",
+        area="Dashboard · Filters",
+        kind="improved",
+        summary=(
+            "The Range, Compare and Events pickers no longer follow you down "
+            "the page — they now sit at the top of whichever view you are on "
+            "and scroll away with the rest of the content."
+        ),
+        details=(
+            "They work exactly as before, and still apply to the whole page.",
+            "The bar across the top stays, so nothing shifts up; it is being freed up for page-wide notices.",
+            "Site Performance still hides the filters, since it shows one latest snapshot.",
+        ),
+    ),
+    Entry(
         date="2026-08-26",
         title="One trend chart on the Campaign explorer, not two",
         area="Client dashboards · Campaign Explorer",
