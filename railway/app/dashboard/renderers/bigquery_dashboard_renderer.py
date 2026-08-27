@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 
 from dashboard.renderers.base_layout import (
     SIDEBAR_CSS,
+    account_topbar_html,
     dashboard_topbar_js,
     favicon_head_html,
     dashboard_sidebar_view_nav_html,
@@ -28,6 +29,7 @@ from dashboard.renderers import pagespeed_renderer
 # < > & so a stored config value (keyword lists, watchlist, event names) can't
 # close the script tag and run as markup.
 from dashboard.utils.formatting import json_for_html_script as _json_script
+from dashboard.utils.urls import files_page_url as _files_page_url
 
 
 # ── HubSpot MQL tracker formatting helpers ──────────────────────────────────
@@ -1064,6 +1066,19 @@ def render_bigquery_dashboard_page(
         session_can_switch_clients=session_can_switch_clients,
     )
 
+    # Files / notifications / avatar, top right of the sticky bar. The dashboard
+    # has its own bar (.date-bar) so it takes the cluster alone rather than
+    # dash_topbar_html's wrapper; every other page gets the wrapper.
+    account_bar_html = account_topbar_html(
+        session_email=session_email,
+        session_is_admin=session_is_admin,
+        active_nav="overview",
+        files_url=_files_page_url(
+            client_slug=client_slug, access_key=access_key, use_session=use_session
+        ) or "",
+        show_files=_docs_enabled(),
+    )
+
     admin_class = "is-admin" if session_is_admin else ""
     # The "View as user" tool used to live in a floating admin bubble here; it
     # now has its own card on the /admin page (see web_auth.render_admin_page),
@@ -1531,11 +1546,16 @@ def render_bigquery_dashboard_page(
        gap above), spanning the full width of the main column, with an inner
        wrapper that keeps its contents on the same 1320px/28px grid as the
        cards below. A hairline border + soft shadow separate it from the
-       scrolling content. It is currently empty: the filters moved down into
-       .page-filters, and banner-level content takes their place here. */
+       scrolling content. The filters moved down into .page-filters; what rides
+       here now is the account cluster (Files / notifications / avatar) at the
+       right end, with the left end free for banner-level content. */
     .date-bar {{ position:sticky; top:0; z-index:50; background:var(--card); border-bottom:1px solid var(--line); box-shadow:0 1px 0 rgba(16,33,67,.04), 0 6px 16px -12px rgba(16,33,67,.28); }}
     .date-bar[hidden] {{ display:none; }}
-    .date-bar-inner {{ max-width:1320px; margin:0 auto; padding:13px 28px; min-height:22px; display:flex; flex-direction:column; gap:10px; }}
+    /* Row, not column, now that the account cluster lives here: .acct-bar's own
+       margin-left:auto pins it right and leaves the left end open. The 13px
+       padding around a 30px avatar matches .dash-topbar-inner on every other
+       page, so the avatar doesn't hop as you move between them. */
+    .date-bar-inner {{ max-width:1320px; margin:0 auto; padding:13px 28px; min-height:30px; display:flex; flex-direction:row; align-items:center; gap:10px; }}
     .date-bar-top {{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }}
     /* ---- Global filters (static, top of the page) ---- */
     /* Sits inside <main>, so it already shares the content grid and padding;
@@ -2463,12 +2483,12 @@ def render_bigquery_dashboard_page(
     {sidebar_html}
     <div class="dash-main">
 
-    <!-- Sticky global banner (full-bleed, flush to top). The global filters
-         used to live in here; they now sit static at the top of the page
-         (.page-filters, below) so they scroll away with the content. The bar
-         stays put for banner-level content. -->
+    <!-- Sticky global banner (full-bleed, flush to top). Carries the account
+         cluster (Files / notifications / avatar) at its right end; the left end
+         is free for banner-level content. The global filters used to live in
+         here and now sit static at the top of the page (.page-filters, below). -->
     <div class="date-bar">
-      <div class="date-bar-inner"></div>
+      <div class="date-bar-inner">{account_bar_html}</div>
     </div>
 
   <main>
