@@ -1612,6 +1612,7 @@ def render_bigquery_dashboard_page(
     .chips {{ display:flex; flex-wrap:wrap; gap:5px; }}
     .chip {{ border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:4px 12px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s, color .12s; }}
     .chip:hover {{ border-color:#b9c8dc; background:#f4f8fd; }}
+    .chip:focus-visible {{ outline:2px solid var(--accent); outline-offset:2px; }}
     .chip.active {{ background:var(--navy); color:#fff; border-color:var(--navy); }}
     .chip.active:hover {{ background:#0d2c4d; }}
     /* Compact segmented toggle (e.g. Daily/Weekly) that sits on the card title line. */
@@ -1625,7 +1626,14 @@ def render_bigquery_dashboard_page(
        notch so it reads as part of the heading row. */
     .card-filter {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }}
     .card-filter .filter-label {{ font-size:.64rem; }}
-    .chips.platform-chips .chip {{ padding:3px 10px; font-size:.75rem; }}
+    /* These pills are the only control on the Paid summary head, and at rest
+       they were quiet enough to read as labels. The hover state moves: accent
+       border, tinted ground and a small lift, so a pointer over one says
+       "clickable" before it is clicked. */
+    .chips.platform-chips .chip {{ padding:3px 10px; font-size:.75rem; transition:background .12s, border-color .12s, color .12s, box-shadow .12s, transform .12s; }}
+    .chips.platform-chips .chip:hover {{ border-color:var(--accent); background:#eaf2fd; color:var(--accent); box-shadow:0 1px 3px rgba(16,33,67,.12); transform:translateY(-1px); }}
+    .chips.platform-chips .chip.active:hover {{ background:#0d2c4d; color:#fff; border-color:#0d2c4d; }}
+    @media (prefers-reduced-motion: reduce) {{ .chips.platform-chips .chip:hover {{ transform:none; }} }}
     /* ---- Key-event searchable dropdown ---- */
     .ke-dropdown {{ position:relative; display:inline-block; }}
     .ke-dd-toggle {{ display:inline-flex; align-items:center; gap:8px; min-width:190px; justify-content:space-between; border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:var(--radius-sm); padding:6px 12px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; transition:border-color .12s; }}
@@ -1870,8 +1878,16 @@ def render_bigquery_dashboard_page(
     .card-foot {{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:9px; min-height:22px; }}
     .card-foot .cmp-delta {{ font-size:.74rem; white-space:nowrap; }}
     .cmp-delta.flat {{ color:var(--muted); }}
-    .spark {{ width:66px; height:22px; flex:0 0 auto; opacity:.85; }}
+    .spark {{ width:66px; height:22px; flex:0 0 auto; opacity:.9; }}
+    .spark-fill {{ opacity:.13; }}
+    .spark-base {{ opacity:.3; stroke-width:1; }}
     .spark-empty {{ width:66px; height:22px; flex:0 0 auto; }}
+    /* A card with no comparison period has nothing to put on the left of its
+       footer, so the spark takes the whole width rather than sitting next to a
+       placeholder dash. Browsers without :has() keep the 66px spark — the row
+       just stays right-aligned. */
+    .card-foot:not(:has(.cmp-delta)) .spark {{ width:100%; height:30px; }}
+    .card-value[title] {{ cursor:help; }}
     .card-delta {{ margin-top:4px; font-size:.76rem; font-weight:700; }}
     .card-delta.up {{ color:var(--ok); }}
     .card-delta.down {{ color:var(--bad); }}
@@ -3109,6 +3125,26 @@ def render_bigquery_dashboard_page(
     const money  = v => dollars.format(num(v));
     const count  = v => nums.format(Math.round(num(v)));
     const pct    = v => `${{num(v).toFixed(2)}}%`;
+    // Card-sized numbers. A headline value is read at a glance, so it gets three
+    // significant figures and a magnitude suffix ($1.10K, 4.14K, $219); the exact
+    // figure is never lost -- every card that abbreviates carries the full number
+    // in its title attribute.
+    const sigFix = x => {{ const a=Math.abs(x); return x.toFixed(a<10 ? 2 : (a<100 ? 1 : 0)); }};
+    const compactNum = v => {{
+      const n=num(v), a=Math.abs(n);
+      if (a>=1e9) return sigFix(n/1e9)+'B';
+      if (a>=1e6) return sigFix(n/1e6)+'M';
+      if (a>=1e3) return sigFix(n/1e3)+'K';
+      return null;
+    }};
+    // Cents only where they carry information: $2.35 for a CPC, $219 for a CPA.
+    const moneyCompact = v => {{
+      const c=compactNum(v);
+      if (c!=null) return '$'+c;
+      const n=num(v);
+      return '$'+(Math.abs(n)<10 ? n.toFixed(2) : Math.round(n).toLocaleString('en-US'));
+    }};
+    const countCompact = v => {{ const c=compactNum(v); return c!=null ? c : nums.format(Math.round(num(v))); }};
     function fmtDuration(secs) {{
       secs = Math.round(num(secs));
       if (secs < 60) return secs + 's';
@@ -3738,11 +3774,18 @@ def render_bigquery_dashboard_page(
     // looks like, and is good news if conversions came with it. Colouring a CTR
     // dip red tells people to fix something that may not be broken, so the
     // number and its arrow are reported and the judgement is left to the reader.
+    // Compact form per metric; the `format` in SUMMARY_CARDS stays the exact one
+    // and becomes the hover title. CTR is already short, so it is its own.
+    const CARD_COMPACT = {{ spend:moneyCompact, impressions:countCompact, clicks:countCompact,
+      conversions:countCompact, cpc:moneyCompact, cpa:moneyCompact, ctr:pct }};
     const SUMMARY_CARDS = [
       ['spend','Spend',money,'neutral'],['impressions','Impressions',count,'up'],['clicks','Clicks',count,'up'],
       ['conversions','Conversions',count,'up'],['cpc','CPC',money,'down'],['cpa','CPA',money,'down'],['ctr','CTR',pct,'neutral'],
     ];
-    const SPARK_COLORS = {{ spend:'#1769aa', impressions:'#7c3aed', clicks:'#0a7f3f', conversions:'#0891b2', cpc:'#d97706', cpa:'#dc2626', ctr:'#0891b2' }};
+    // One colour for every summary spark. A per-metric palette implied that the
+    // colours meant something -- they never did, and seven of them across one row
+    // read as decoration.
+    const SPARK_COLOR = '#1d6fd0';
     const platformFilter = new Set();
     let summaryPayload = null;
     let compareSummaryPayload = null;
@@ -3768,15 +3811,29 @@ def render_bigquery_dashboard_page(
       const clean=vals.filter(v=>v!=null&&isFinite(v));
       if (clean.length<2) return '<span class="spark-empty"></span>';
       const n=vals.length, w=66, h=22, mn=Math.min(...clean), mx=Math.max(...clean), span=(mx-mn)||1;
-      const pts=vals.map((v,i)=>`${{(n===1?w/2:i/(n-1)*w).toFixed(1)}},${{(h-1-((num(v)-mn)/span)*(h-2)).toFixed(1)}}`).join(' ');
-      return `<svg class="spark" viewBox="0 0 ${{w}} ${{h}}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${{pts}}" fill="none" stroke="${{color}}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+      const xy=vals.map((v,i)=>[(n===1?w/2:i/(n-1)*w), (h-2-((num(v)-mn)/span)*(h-4))]);
+      const pts=xy.map(([x,y])=>`${{x.toFixed(1)}},${{y.toFixed(1)}}`).join(' ');
+      // A faint fill down to a baseline rule. A bare stroke floats in the middle
+      // of the card and reads as a scribble; given a floor to sit on and an area
+      // under it, the same line reads as a chart.
+      const area=`${{xy[0][0].toFixed(1)}},${{h}} ${{pts}} ${{xy[xy.length-1][0].toFixed(1)}},${{h}}`;
+      // Strokes are non-scaling: these boxes stretch horizontally (the spark
+      // goes full-width on a card with no comparison), and a scaled stroke
+      // would thin out as it did.
+      return `<svg class="spark" viewBox="0 0 ${{w}} ${{h}}" preserveAspectRatio="none" aria-hidden="true">`
+        + `<polygon class="spark-fill" points="${{area}}" fill="${{color}}"/>`
+        + `<line class="spark-base" x1="0" y1="${{h-0.5}}" x2="${{w}}" y2="${{h-0.5}}" stroke="${{color}}" vector-effect="non-scaling-stroke"/>`
+        + `<polyline points="${{pts}}" fill="none" stroke="${{color}}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>`;
     }}
     // % change vs the comparison period, colored by whether the move is good for
     // that metric (dir from SUMMARY_CARDS). Arrow always shows the raw direction.
     // (Distinct from the snapshot-card deltaHtml above — this one is a compact
     // inline chip for the paid summary cards.)
     function summaryDeltaHtml(cur, prev, dir) {{
-      if (prev==null || num(prev)===0 || cur==null) return '<span class="cmp-delta flat">—</span>';
+      // Nothing to compare against: say nothing. An em dash under every value is
+      // a placeholder for a number that is never coming, and the card's footer
+      // gives the room back to the spark line instead (see .card-foot CSS).
+      if (prev==null || num(prev)===0 || cur==null) return '';
       const ch=(num(cur)-num(prev))/num(prev)*100;
       const tip=`vs ${{cmpNoun()}} (${{compareStart}} – ${{compareEnd}})`;
       if (Math.abs(ch)<0.5) return `<span class="cmp-delta flat" title="${{tip}}">0%</span>`;
@@ -3872,9 +3929,11 @@ def render_bigquery_dashboard_page(
       const daily = buildChartDaily();
       summaryCards.innerHTML = SUMMARY_CARDS.map(([key,label,format,dir]) => {{
         const delta = summaryDeltaHtml(s[key], (prev && prev[key]!=null) ? prev[key] : null, dir);
-        const spark = sparkSvg(daily.map(d=>num(d[key])), SPARK_COLORS[key]||'#1769aa');
+        const spark = sparkSvg(daily.map(d=>num(d[key])), SPARK_COLOR);
         const extra = goalRowHtml(key, s[key]) + benchRowHtml(key, s[key]);
-        return `<div class="card"><div class="card-title">${{label}}</div><div class="card-value">${{format(s[key])}}</div><div class="card-foot">${{delta}}${{spark}}</div>${{extra}}</div>`;
+        const exact = format(s[key]), shown = (CARD_COMPACT[key]||format)(s[key]);
+        const vTip = shown===exact ? '' : ` title="${{esc(exact)}}"`;
+        return `<div class="card"><div class="card-title">${{label}}</div><div class="card-value"${{vTip}}>${{shown}}</div><div class="card-foot">${{delta}}${{spark}}</div>${{extra}}</div>`;
       }}).join('');
     }}
 
