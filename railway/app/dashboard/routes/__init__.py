@@ -14,6 +14,7 @@ from dashboard.routes.files_routes import router as files_router
 from dashboard.routes.notes_routes import router as notes_router
 from dashboard.routes.notifications_routes import router as notifications_router
 from dashboard.routes.settings_routes import router as settings_router
+from dashboard.routes.web_mentions_routes import router as web_mentions_router
 
 
 def register_dashboard_routes(app: FastAPI) -> None:
@@ -28,3 +29,4 @@ def register_dashboard_routes(app: FastAPI) -> None:
     app.include_router(notes_router)
     app.include_router(notifications_router)
     app.include_router(annotations_router)
+    app.include_router(web_mentions_router)

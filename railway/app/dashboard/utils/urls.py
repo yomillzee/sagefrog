@@ -121,6 +121,20 @@ def gtm_page_url(
     return base
 
 
+def web_mentions_page_url(
+    *,
+    client_slug: str = "penn",
+    access_key: str | None,
+    use_session: bool,
+) -> str | None:
+    base = f"/dashboard/{client_slug}/web-mentions"
+    if use_session:
+        return base
+    if access_key:
+        return f"{base}?key={quote(access_key, safe='')}"
+    return base
+
+
 def consent_page_url(
     *,
     client_slug: str = "penn",

@@ -62,6 +62,32 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-08-28",
+        title="Web Mentions brings Google Alerts into the dashboard",
+        area="Web Mentions",
+        kind="new",
+        summary=(
+            "A new client page collects the results of an account's Google Alerts "
+            "so brand, competitor and executive coverage is reported next to "
+            "everything else instead of sitting in somebody's inbox."
+        ),
+        details=(
+            "Summary tiles: total mentions with the change vs the previous period, "
+            "brand and competitor counts, and how many publications ran something.",
+            "A mentions-over-time chart and a recent-mentions feed you can filter by "
+            "date range, alert, category and publication.",
+            "Share of mentions splits coverage across the brand and competitor names "
+            "the account monitors — labelled on the page as monitored web mentions, "
+            "not market share.",
+            "Admins add alerts on the page itself: paste the RSS link from a Google "
+            "Alert, name it, categorise it, and activate or deactivate it. Each alert "
+            "shows its last successful sync, and there is a Sync now button.",
+            "Feeds are polled daily. A feed that breaks is flagged on that alert alone "
+            "— every other alert keeps collecting, and deactivating an alert keeps the "
+            "mentions it already found.",
+        ),
+    ),
+    Entry(
         date="2026-08-27",
         title="Email Performance plots your selected emails over time",
         area="Email Performance",

@@ -41,12 +41,16 @@ def main() -> int:
 
     # CRON_JOB selects which job this worker runs. Unset (or "sync-bq") keeps the
     # original BigQuery refresh behavior; "consent-scan-due" targets the Consent &
-    # Tracking Health scheduled-scan endpoint instead, so a second Railway cron
-    # service (same root dir) on its own schedule can drive consent scans.
+    # Tracking Health scheduled-scan endpoint, and "web-mentions" the Google Alerts
+    # RSS ingest. Additional Railway cron services (same root dir, own schedule)
+    # drive those jobs without a second codebase.
     job = (_strip_env(os.getenv("CRON_JOB")) or "sync-bq").lower()
     if job in ("consent", "consent-scan-due"):
         url = f"{base.rstrip('/')}/internal/consent/scan-due"
         slug = ""  # the consent endpoint is always hands-off (all due clients)
+    elif job in ("web-mentions", "web-mentions-ingest"):
+        url = f"{base.rstrip('/')}/internal/web-mentions/ingest-due"
+        slug = ""  # polls every client that has an active Google Alerts feed
     elif slug:
         url = f"{base.rstrip('/')}/internal/sync-bq/{slug}?date_range={date_range}"
     else:
@@ -80,6 +84,13 @@ def main() -> int:
                     run = data.get("refresh_run") or {}
                     print(
                         f"refresh_run: status={run.get('status')} date_range={run.get('date_range')}",
+                        flush=True,
+                    )
+                elif job in ("web-mentions", "web-mentions-ingest"):
+                    print(
+                        f"{data.get('status')}: {data.get('clients')} client(s) with active "
+                        "alerts — new mentions land on each client's Web Mentions page, "
+                        "not here.",
                         flush=True,
                     )
                 else:
